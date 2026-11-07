@@ -880,6 +880,22 @@ def test_a_refused_read_is_listed_with_its_message_escaped_and_bounded(tmp_path,
     assert rows["good.pt"].problem is None and rows["good.pt"].sha256 == good
 
 
+def test_a_problem_line_is_the_first_line_escaped_and_bounded():
+    """K8-6e.1: `problem_line` is the one rule a reason line follows, split out
+    of `refusal_line`, whose behaviour is unchanged: the first non-empty line,
+    each character that is not printable escaped, at most 300 characters.
+    HEAD: no `problem_line`."""
+    from src.utils.checkpoint_paths import problem_line, refusal_line
+
+    assert problem_line("\n  \nfirst line \nsecond") == "first line"
+    assert problem_line("a\udc80b\x00") == "a\\udc80b\\x00"
+    long = problem_line("k" * 500)
+    assert len(long) == 300 and long.endswith("...")
+    assert problem_line("") == "" and problem_line("\n\n") == ""
+    assert refusal_line(ValueError("bad\nmore")) == "ValueError: bad"
+    assert refusal_line(ValueError("")) == "ValueError"
+
+
 def test_importing_the_listing_does_not_import_torch():
     """`checkpoint_paths` promises no torch at import, so the API's lighter
     callers can import it; the read imports torch only when it runs."""

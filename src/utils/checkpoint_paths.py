@@ -481,25 +481,33 @@ class ListedCheckpoint(NamedTuple):
     model_record: Optional[Dict[str, Any]] = None
 
 
-#: How much of a refusal's text a reason keeps (`refusal_line`): its first line,
+#: How much of a problem's text a reason keeps (`problem_line`): its first line,
 #: bounded, so a multi-paragraph loader message stays one readable reason.
 _PROBLEM_LIMIT = 300
+
+
+def problem_line(text: Any) -> str:
+    """A problem's text as one reason line: its first non-empty line, each
+    character that is not printable written as its escape (``\\udc80``,
+    ``\\x00``), then bounded to `_PROBLEM_LIMIT` characters. The text can
+    carry what a file itself holds (torch's legacy loader names the protocol
+    version the file holds; a ledger record's field names), and a lone
+    surrogate there made every list that showed the reason answer HTTP 500;
+    escaped, it is text any answer carries. "" for a text with no line."""
+    line = next((part.strip() for part in str(text).splitlines() if part.strip()), "")
+    if not line.isprintable():
+        line = "".join(c if c.isprintable() else repr(c)[1:-1] for c in line)
+    if len(line) > _PROBLEM_LIMIT:
+        line = line[:_PROBLEM_LIMIT - 3] + "..."
+    return line
 
 
 def refusal_line(exc: BaseException) -> str:
     """A refused read of a checkpoint as a reason shows it, the listing's
     (`_read_one`) and the training status's (`TrainingManager.latest_snapshot`):
-    the exception's kind and the first line of its message, each character
-    that is not printable written as its escape (``\\udc80``, ``\\x00``), then
-    bounded (`_PROBLEM_LIMIT`). The message can carry text from the file
-    itself (torch's legacy loader names the protocol version the file holds),
-    and a lone surrogate there made every list that showed the reason answer
-    HTTP 500; escaped, it is text any answer carries."""
-    text = next((line.strip() for line in str(exc).splitlines() if line.strip()), "")
-    if not text.isprintable():
-        text = "".join(c if c.isprintable() else repr(c)[1:-1] for c in text)
-    if len(text) > _PROBLEM_LIMIT:
-        text = text[:_PROBLEM_LIMIT - 3] + "..."
+    the exception's kind and the first line of its message (`problem_line`:
+    escaped and bounded)."""
+    text = problem_line(str(exc))
     return f"{type(exc).__name__}: {text}" if text else type(exc).__name__
 
 
@@ -948,6 +956,7 @@ __all__ = [
     "list_runs",
     "propose_run_dir",
     "read_run_checkpoints",
+    "problem_line",
     "refusal_line",
     "refuse_retired_locations",
     "run_architecture",

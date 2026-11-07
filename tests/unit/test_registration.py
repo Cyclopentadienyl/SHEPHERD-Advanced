@@ -2789,12 +2789,21 @@ def test_show_prints_each_records_run_and_the_possible_overlaps(tmp_path, checkp
 
     data = json.loads(ledger_path.read_text())
     data["records"][1].pop("run_id")
+    data["records"][0]["metrics"] = "/srv/x/case-0042"
     ledger_path.write_text(json.dumps(data))
     caplog.clear()
     with caplog.at_level(logging.INFO, logger=record_evaluation.logger.name):
         assert record_evaluation.main(["--checkpoint-dir", str(checkpoints), "--show",
                                        DIGEST]) == 0
-    assert "record 2: its run cannot be read: its run identity is missing" in caplog.text
+    # K8-6e.1: each record the readers' one listing cannot read is said by its
+    # index with that listing's reason, never as a result and never with the
+    # value; the JSON still prints both as written. HEAD: the identity line
+    # only, and the record with malformed metrics read like a result.
+    assert ("record 2 (the ledger's record 1) cannot be read as a result: its run identity "
+            "is missing") in caplog.text
+    assert ("record 1 (the ledger's record 0) cannot be read as a result: metrics: Input "
+            "should be a valid dictionary") in caplog.text
+    assert "case-0042" not in caplog.text
 
 
 @pytest.mark.parametrize("case", ["another run's byte-identical report", "an old merged record"])

@@ -1811,7 +1811,9 @@ Mode C。Mode D 的數字不是模型的核准排名，也不描述目前的診�
 - **之後查看**：`python scripts/record_evaluation.py --checkpoint <file> --show
   <checkpoint sha256>` 讀取服務為該檔案所讀的 ledger，也就是其解析後路徑旁的那一個。它照原樣
   印出紀錄（JSON），再為每筆紀錄印一行：它的執行（在每次執行各有自己的紀錄之前寫入的紀錄為「not
-  recorded」），以及這種紀錄與具名執行之間可能的重疊。若改用
+  recorded」），以及這種紀錄與具名執行之間可能的重疊。共用檢查無法當作結果讀取的紀錄，則改印
+  "record N (the ledger's record I) cannot be read as a result: <原因>"（自 K8-6e.1 起），原因與 API
+  及 Models 所給的相同；JSON 仍照原樣印出它。若改用
   `--checkpoint-dir <dir>`，`--show` 讀的是該目錄內的 `evaluations.json`；對一個放連結的目錄
   而言，那不是服務所讀的 ledger。空的回答代表這個 ledger 沒有這組權重的結果，不代表它們從未被
   評估過。
@@ -1852,7 +1854,9 @@ checkpoint 檔核對報告。
 **自 M5-2 起（2026-10-21），Diagnosis 頁面只以狀態顯示目前載入之 checkpoint 已登錄的測試**，
 位於「Model in use」卡片上："Recorded tests: 3 · runs differ for 1"、"3 · comparison incomplete"（未設定
 registry，或沒有任何一筆紀錄的 cohort 版本或其報告存放處能讀取；絕不顯示為一致）、"3 · runs differ
-for 1; comparison incomplete for 1"（分開計數）、"none in ledger"、
+for 1; comparison incomplete for 1"（分開計數）、"3 · 1 not readable"（自 K8-6e.1 起：3 筆結果，以及 1 筆
+共用檢查無法當作結果讀取的紀錄，分開計數，絕不算作結果；只有這一筆時為 "0 · 1 not readable"）、
+"none in ledger"（兩者皆無）、
 "no ledger"、"ledger not readable" 或 "not read"，與該 checkpoint 在「Change model…」中那一列的用語相同，並以
 checkpoint 的 digest 而不是檔名來找（換成另一個模型之後，絕不會顯示前一個模型的狀態）。它的 ›
 會打開 Details 的 Evidence，同一個狀態在那裡與訓練器的驗證數值並列（任務模型為 "Validation pooled MRR
@@ -1868,8 +1872,16 @@ checkpoint 的 digest 而不是檔名來找（換成另一個模型之後，絕�
 （同樣條件下的執行結果不同，附上不同的欄位與每一個帶有不同報告的執行）與 `cannot_be_checked`
 （比較不完整，絕不視為一致）對 API 用戶端保留同樣的字串，但都不再隱藏、排除或拒絕任何紀錄。每筆
 紀錄也附上 `run_id`（登錄它的那次執行；在每次執行各有自己的紀錄之前寫入的紀錄為 `null`，顯示為
-「not recorded」）與 `historical_overlap`（它可能與之為同一次執行的紀錄序號，從未確認）。無法讀取
-執行身分的紀錄計入 `records_not_shown`。調查備註（investigation notes）不會顯示（BACKLOG 40）：
+「not recorded」）與 `historical_overlap`（它可能與之為同一次執行的紀錄序號，從未確認）。**自
+K8-6e.1 起，這組權重中共用檢查無法當作結果讀取的紀錄**（無法讀取執行身分，或不符登錄寫出的形狀）
+依 ledger 中的順序列在 `unreadable_records`：它在 ledger 紀錄清單中的 `index`（從 0 起算，與寫入端
+拒絕時所稱的編號相同）、仍可讀取時的登錄 `sequence`、`source_artifact_digest` 與 `run_id`（否則為
+`null`），以及 `reason`：一行、至多 300 字元，以 ledger 紀錄中的路徑（也就是手動修正時要改的鍵）
+指名每個被拒絕的欄位，絕不寫出其值（例如 "n_ranked: missing"、"environment.facts.gpu: missing" 或
+"the regime's device is neither CUDA nor CPU"）；紀錄本身在某個物件內帶有的鍵（例如指標名稱或排除
+原因）照原樣寫出，與可讀紀錄的指標名稱照原樣顯示相同。它絕不是結果，ledger 也照原樣保留它。`records_not_shown` 的意義不變，且一律等於這份清單的長度。不是物件、或未指名 checkpoint
+digest 的紀錄不屬於任何模型，不會列出；整份無法讀取的 ledger 仍是 `ledger_not_read`，其中任何紀錄都
+不列出。調查備註（investigation notes）不會顯示（BACKLOG 40）：
 
 - 紀錄區塊開頭（第一筆紀錄之前）出現一次 **"Disease ranking by the model, approved scorer
   policy (Mode C)."** 與說明 **"This is the model's own Mode C disease ranking. Until B-1 ships,
@@ -1884,9 +1896,13 @@ checkpoint 的 digest 而不是檔名來找（換成另一個模型之後，絕�
   且開或關 deterministic algorithms，或 CPU）與 GPU；dataset 來源（合成 workspace 會特別標出）；
   登錄序號與時間、它的執行，以及在每次執行各有自己的紀錄之前併入它的報告數。
 - 沒有紀錄時改為一句話：載入的 checkpoint 旁沒有 ledger；ledger 未讀取，附原因，原因會指出
-  檔案、絕不指出其目錄（例如下述的 schema 2 檔案）；這個 ledger 沒有這組權重的結果；有些紀錄
-  因不符登錄寫出的形狀而未顯示；或 "The loaded model changed while its recorded results were
-  read; refresh the page."。
+  檔案、絕不指出其目錄（例如下述的 schema 2 檔案）；這個 ledger 沒有這組權重的結果；或 "The
+  loaded model changed while its recorded results were read; refresh the page."。
+- **共用檢查無法當作結果讀取的紀錄**（不符登錄寫出的形狀，或無法讀取執行身分；自 K8-6e.1 起）
+  列在結果之下，沒有結果時則單獨列出：一句附 ▲ 的琥珀色句子（"1 record for these weights cannot
+  be read as a result. The ledger keeps it as written."）與一張表格 Index · Registration · Report ·
+  Reason，各欄取自 route 的 `unreadable_records`（紀錄未以可讀形式帶有的序號或報告 digest 顯示為
+  "not readable"）。它們絕不計為結果。
 - **這個 route** 不接受任何參數，每次請求都讀取載入之 checkpoint 旁的 ledger，不寫入任何東西，
   也不回傳任何路徑、case id 或排名。「旁」指的是 pipeline 載入時所讀 checkpoint 之解析後路徑的
   目錄，所以之後未重新載入而被改指向的連結，不會讓查找離開服務中位元組的 ledger。它掛在自己的
@@ -3074,7 +3090,11 @@ Lineage 欄。沒有任何排列方式依測試分數為模型排名：依測試
   （若有），以及這種紀錄與具名執行之間的「possible overlap with record N (not recorded)」；接著是
   各項關係、該紀錄的其他指標、以狀態顯示的 R10（*unverifiable* 是一個原因，從不是 0）、執行環境、
   資料集，以及附上其執行的登錄資訊（在每次執行各有自己的紀錄之前寫入的紀錄為「not recorded」）。
-  每一筆紀錄都會顯示，這些描述不會隱藏或排除任何紀錄；
+  每一筆紀錄都會顯示，這些描述不會隱藏或排除任何紀錄。這組權重中無法當作結果讀取的紀錄（自
+  K8-6e.1 起）絕不顯示為結果、也不算作結果：表格下方是 "▲ 1 record for these weights cannot be read
+  as a result. The ledger keeps it as written." 與一張小表 Index · Registration · Report · Reason
+  （它未以可讀形式帶有的序號或報告 digest 顯示為 "not readable"）；此時分頁標籤為 "Recorded test
+  results · 3 (1 not readable)"。唯讀檢視列出同樣的項目，取自該 route；
 - **Usage history**：每一個已列出的 cohort version 的使用紀錄中提及此 checkpoint 的項目，最新的在前：
   測試執行與登錄，以及 K8-6d 之前留下的模型載入，依其記錄內容顯示（「ordered by」加上它記錄的指標名稱，
   以及它的 scoring semantics）。

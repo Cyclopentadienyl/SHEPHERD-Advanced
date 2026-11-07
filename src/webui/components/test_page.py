@@ -1062,16 +1062,24 @@ def _row_chip(run: Mapping[str, Any]) -> str:
                   else "registration not checked", "neutral")
 
 
+def _why_not_kept(state: Mapping[str, Any]) -> str:
+    """Why a run kept no report, in the registration helper's words."""
+    return str(state.get("why_kept") or "the registration's helper gave no reason")
+
+
 def _row_state(run: Mapping[str, Any], roots: Sequence[Tuple[str, str]]) -> str:
-    """The row's state line, true to what the disk says."""
+    """The row's state line, true to what the disk says. A run that kept no
+    report says why in the registration helper's own words (`report_state`'s
+    ``why_kept``, redacted): no report.json, one that is not a report, or
+    bytes other than the run published. A file that is there is never said
+    to be absent (K8-6e.1, policy rev 16)."""
     if run.get("problem"):
         return e(redact(run["problem"], roots))
     state = run.get("state") or {}
     contest = run.get("contest") or {}
     kept = state.get("kept")
     if kept == "not_kept":
-        return ("no report kept: report.json, the run's commit point, is not there (an "
-                "interrupted or refused run); nothing in it is registered")
+        return f"no report kept: {e(redact(_why_not_kept(state), roots))}"
     if kept != "kept":
         return f"whether a report was kept cannot be checked: {e(redact(state.get('why_kept'), roots))}"
     registered = state.get("registered")
@@ -1637,10 +1645,13 @@ def result_html(reports: Mapping[str, Any], run_id: Optional[str],
             parts.append(_reason_html("This report cannot be shown or compared: "
                                       + redact(why, roots)))
         else:
+            # The helper's own reason (K8-6e.1): a report.json that is there
+            # but is not a report, or holds other bytes, is never "not there".
             parts.append(_reason_html(
-                "No report was kept in this run directory: report.json, the run's commit "
-                "point, is not there (an interrupted, cancelled or refused run). Nothing in it "
-                "is registered, and nothing here can be."))
+                "No report was kept in this run directory: "
+                + redact(_why_not_kept(state), roots) + ". report.json is the run's commit "
+                "point, which an interrupted, cancelled or refused run never writes; nothing "
+                "here can be registered."))
     else:
         parts.append(_record_html(record, run, state))
     parts.append(_registration_reason_html(state, roots))

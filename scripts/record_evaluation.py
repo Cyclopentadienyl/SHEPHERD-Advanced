@@ -65,7 +65,11 @@ Usage:
 `--show` prints the records as the ledger holds them (JSON on stdout), and
 for each one its run, "not recorded" for a record merged before each run had
 its own record, and its possible overlaps with records naming a run (on the
-log); a record whose run identity cannot be read is said with its reason.
+log). A record the shared check cannot read as a result (its run identity
+cannot be read, or it does not have the shape registration writes) is said
+instead by its index in the ledger with its reason, through the readers' one
+listing (`src.api.routes.evaluations.read_records`, as the API and Models
+list it); the JSON still shows it as written.
 
 Every refusal exits non-zero with one message that says nothing was written.
 
@@ -93,6 +97,7 @@ from src.evaluation.registration import (  # noqa: E402
 )
 from src.evaluation.sidecar import (  # noqa: E402
     LEDGER_FILENAME,
+    indexed_records_for,
     possible_overlaps,
     read_ledger,
     record_identities,
@@ -153,7 +158,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(json.dumps(found, indent=2, sort_keys=True))
         if not found:
             logger.info("%s: %s", ledger_path, RECORD_ABSENCE)
-        for line in _run_lines(ledger, found):
+        for line in _run_lines(ledger, args.show):
             logger.info("%s", line)
         return 0
 
@@ -182,23 +187,30 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     return 0
 
 
-def _run_lines(ledger: dict, shown: list) -> list:
-    """One line per shown record: its sequence and its run, as the file's
-    run-identity boundary reads it (`record_identities`): "not recorded" for a
-    record merged before each run had its own record, or why its identity
-    cannot be read; then its possible overlaps (`possible_overlaps`), never
-    confirmed. The two kinds of record stay apart."""
+def _run_lines(ledger: dict, checkpoint_digest: str) -> list:
+    """One line per record for these weights. A record the readers' one listing cannot read
+    as a result (`read_records`): its sequence and its index in the ledger,
+    "cannot be read as a result", and the listing's reason (its run identity
+    included). Any other: its sequence and its run, as the file's run-identity
+    boundary reads it (`record_identities`): "not recorded" for a record merged
+    before each run had its own record; then its possible overlaps
+    (`possible_overlaps`), never confirmed. The two kinds of record stay
+    apart."""
+    from src.api.routes.evaluations import read_records
+
     records = ledger.get("records") if isinstance(ledger.get("records"), list) else []
     by_record = {id(record): (identity, overlaps) for record, identity, overlaps in
                  zip(records, record_identities(ledger), possible_overlaps(ledger))}
+    unreadable = {item.index: item for item in read_records(ledger, checkpoint_digest)[1]}
     lines = []
-    for record in shown:
+    for index, record in indexed_records_for(ledger, checkpoint_digest):
         identity, overlaps = by_record[id(record)]
         registration = record.get("registration")
         sequence = registration.get("sequence") if isinstance(registration, dict) else None
         name = f"record {sequence}" if type(sequence) is int else "a record without a sequence"
-        if identity.problem is not None:
-            lines.append(f"{name}: its run cannot be read: {identity.problem}")
+        if index in unreadable:
+            lines.append(f"{name} (the ledger's record {index}) cannot be read as a result: "
+                         f"{unreadable[index].reason}")
             continue
         run = identity.run_id or ("not recorded (registered before each run had its own "
                                   "record)")

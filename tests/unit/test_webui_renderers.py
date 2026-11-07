@@ -148,6 +148,29 @@ def test_the_row_shows_recorded_tests_as_a_state_never_a_number():
         "Recorded tests: 2 · comparison incomplete")
 
 
+def test_records_that_cannot_be_read_are_named_apart_from_the_results():
+    """K8-6e.1 (R3): a record the shared check cannot read is never counted as
+    a recorded test; the row says how many with one " · ", before the group
+    descriptions, and "none in ledger" only when there is neither. HEAD: no
+    count of them, so 0 results and 1 unreadable read "none in ledger"."""
+    text = r.recorded_tests_text
+    assert text(r.RecordedTests("records", 3, 0, unreadable=1)) == (
+        "Recorded tests: 3 · 1 not readable")
+    assert text(r.RecordedTests("records", 0, 0, unreadable=1)) == (
+        "Recorded tests: 0 · 1 not readable")
+    assert text(r.RecordedTests("records", 0, None, unreadable=2)) == (
+        "Recorded tests: 0 · 2 not readable")
+    assert text(r.RecordedTests("records", 3, 1, unchecked=1, unreadable=2)) == (
+        "Recorded tests: 3 · 2 not readable; runs differ for 1; comparison incomplete for 1")
+    assert text(r.RecordedTests("records", 3, 1, unreadable=2)).count(" · ") == 1
+    assert r.recorded_tests_cell(r.RecordedTests("records", 3, 0, unreadable=1)) == (
+        "3 · 1 not readable")
+    html = r.model_row_html(checkpoint(), [workspace()],
+                            recorded=r.RecordedTests("records", 0, 0, unreadable=1))
+    assert "Recorded tests: 0 · 1 not readable" in text_of(html)
+    assert "none in ledger" not in text_of(html)
+
+
 def test_an_unreadable_checkpoint_is_greyed_and_cannot_be_loaded():
     html = r.model_row_html(checkpoint(sha=None, problem="UnpicklingError: no"), [workspace()])
     assert 'aria-disabled="true"' in html and "shep-row-dis" in html

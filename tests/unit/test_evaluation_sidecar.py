@@ -1223,6 +1223,59 @@ def test_an_environment_with_no_class_is_refused_not_guessed(regime):
         environment_class(regime)
 
 
+def test_an_environment_refusal_names_the_field_never_its_value():
+    """K8-6e.1 (reason safety): a reader lists a record with these words, so
+    a hand-edited device or flag (a server path, a lone surrogate) is named as
+    a field, never echoed. HEAD echoed the value with ``repr``."""
+    path = "/srv/" + "d" * 600 + "/case-0042\udc80"
+    with pytest.raises(ValueError) as device:
+        environment_class({"device": path, "deterministic_algorithms": True})
+    assert str(device.value) == "the regime's device is neither CUDA nor CPU"
+    with pytest.raises(ValueError) as flag:
+        environment_class({"device": "cuda", "deterministic_algorithms": path})
+    assert str(flag.value) == "the regime's deterministic_algorithms is not a boolean"
+
+
+def test_records_for_and_its_indexed_form_share_one_predicate():
+    """K8-6e.1: `indexed_records_for` gives `records_for`'s records with their
+    places in the ledger's records list, counted from 0 as the writer's
+    refusals name them; a record that is not an object or names another (or
+    no) digest is no record of these weights. HEAD: no indexed form."""
+    from src.evaluation.sidecar import indexed_records_for, records_for
+
+    mine = {"checkpoint_digest": CHECKPOINT, "n": 1}
+    ledger = {"records": ["a string", mine, {"checkpoint_digest": "0" * 64}, {},
+                          {"checkpoint_digest": CHECKPOINT, "n": 2}, None]}
+    indexed = indexed_records_for(ledger, CHECKPOINT)
+    assert [index for index, _ in indexed] == [1, 4]
+    assert [record for _, record in indexed] == records_for(ledger, CHECKPOINT)
+    assert indexed[0][1] is mine
+    assert indexed_records_for({"records": "not a list"}, CHECKPOINT) == []
+
+
+def test_an_identity_reason_names_the_field_never_its_value():
+    """K8-6e.1 (rev6 with reason safety): a run id or a boundary a hand edit
+    made into something else is named as a field in the identity's reason,
+    which every reader lists; neither value is echoed. HEAD echoed both."""
+    from src.evaluation.sidecar import record_identities
+
+    path = "/srv/registry/versions/v/reports/../../case-0042"
+    named = build_record(registered_report(), REPORT_A)
+    named.update(run_id=path, corroborating_reports=[],
+                 registration={"sequence": 1, "registered_at": WHEN})
+    ledger = {"schema_version": 4, "run_identity_from_sequence": 1, "records": [named]}
+    (identity,) = record_identities(ledger)
+    assert identity.problem == (
+        "its run identity cannot be read: its run_id is not a run directory's name")
+    named["run_id"] = None
+    ledger["run_identity_from_sequence"] = path
+    (identity,) = record_identities(ledger)
+    assert identity.problem == (
+        "whether it names its run cannot be told: the file's run-identity boundary "
+        "(run_identity_from_sequence) cannot be read (it is not an integer)")
+    assert all("case-0042" not in (i.problem or "") for i in record_identities(ledger))
+
+
 # ---------------------------------------------------------------------------
 # Writing, and the stale-write guard
 # ---------------------------------------------------------------------------

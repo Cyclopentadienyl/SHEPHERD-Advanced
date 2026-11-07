@@ -49,7 +49,9 @@ run, or "not recorded" for a record merged before each run had its own record;
 a possible overlap between such a record and a named run; "runs under these
 conditions differ" (neutral; amber with "— investigate" only for a group that
 records deterministic algorithms on) or "comparison incomplete" per record, never
-agreeing by default, and never hiding or ordering out a record)
+agreeing by default, and never hiding or ordering out a record; a record for
+these weights that cannot be read as a result is listed apart, by its index,
+registration and report with its reason, and never counted as one, K8-6e.1)
 and "Usage history" (the entries of every listed cohort version's usage history
 that name this checkpoint, newest first, each shown as it was recorded).
 
@@ -518,12 +520,15 @@ def record_view(record: Mapping[str, Any], reading: Optional[Sequence[Any]] = No
     the page needs beside it: the condition group, the device and whether
     deterministic algorithms were on. `reading` is the record's
     ``[run_id, historical, problem, overlaps]`` as its ledger's boundary reads it
-    (`model_list.ledger_records`). None when the record does not have the shape
-    registration writes or its run identity cannot be read (it is counted,
-    never shown half-read, never shown as historical), and the server's log
-    says why, naming `ledger` (the file it was read from) when given, as the
-    API's route logs a record it does not show."""
-    from src.api.routes.evaluations import _record_view
+    (`model_list.ledger_records`). The listing gives this only the records the
+    shared check already read as results (`evaluations.read_records`, which
+    lists every other one with its reason), so None, for a record that does
+    not have the shape registration writes or whose run identity cannot be
+    read (never shown half-read, never shown as historical), is a defensive
+    case here; the server's log then says why in the listing's one bounded
+    line (`unreadable_reason`, never an input value), naming `ledger` (the
+    file it was read from) when given."""
+    from src.api.routes.evaluations import _record_view, unreadable_reason
     from src.evaluation.sidecar import RecordIdentity, record_key
 
     identity, overlaps = None, ()
@@ -535,7 +540,7 @@ def record_view(record: Mapping[str, Any], reading: Optional[Sequence[Any]] = No
         key = record_key(dict(record))
     except ValueError as exc:
         logger.warning("A ledger record%s is not shown: %s",
-                       f" in {ledger}" if ledger else "", exc)
+                       f" in {ledger}" if ledger else "", unreadable_reason(exc))
         return None
     regime = record.get("regime") if isinstance(record.get("regime"), Mapping) else {}
     flag = regime.get("deterministic_algorithms")
@@ -930,10 +935,10 @@ def _metric_order(name: str) -> Tuple[int, int, int, str]:
 
 
 def records_block_html(views: Sequence[Mapping[str, Any]], contest: Mapping[str, Any], *,
-                       not_shown: int = 0) -> str:
+                       unreadable: Sequence[Mapping[str, Any]] = ()) -> str:
     """Each shown mode's label and note once (the Mode C note beside Mode C
-    records only), the dataset line, the table, the count of records not shown,
-    and the R10 definitions behind a ⓘ."""
+    records only), the dataset line, the table, the R10 definitions behind a
+    ⓘ, and the records that cannot be read as results (`unreadable_html`)."""
     parts = []
     if views:
         groups = _by_mode(views)
@@ -960,13 +965,46 @@ def records_block_html(views: Sequence[Mapping[str, Any]], contest: Mapping[str,
                   "The Trainer validation figure is not among these records' metrics.")
         parts.append(f'<p class="shep-note">R10 labels '
                      f'{help_button("models-r10", "R10 labels")} · {sets}{figure}</p>')
-    if not_shown:
-        many = not_shown != 1
-        parts.append(f'<p class="shep-mp-p shep-amber-t">{not_shown} record{"s" if many else ""} '
-                     f'for these weights {"are" if many else "is"} not shown: '
-                     f'{"they do" if many else "it does"} not have the shape registration writes, '
-                     "or the run identity cannot be read (the server's log says why).</p>")
+    parts.append(unreadable_html(unreadable))
     return "".join(parts)
+
+
+def unreadable_html(items: Sequence[Mapping[str, Any]]) -> str:
+    """The records for these weights that cannot be read as results, as the
+    readers' one listing gives them (`evaluations.read_records`; the API's
+    ``unreadable_records``, K8-6e.1): one sentence in amber with ▲ (needs
+    attention, blocks nothing; skill §6), then a small table, Index ·
+    Registration · Report · Reason, every value escaped. A sequence or report
+    digest the record does not carry readably is "not readable", never a
+    dash. The reason is the listing's one line (`unreadable_reason`), which
+    names each refused field by its path in the ledger record and never its
+    value; a key the record itself carries inside an object (a metric's
+    name, an exclusion reason) is named as written, as a readable record's
+    metric names are shown. Nothing when there is none."""
+    if not items:
+        return ""
+    many = len(items) != 1
+    rows = []
+    for item in items:
+        sequence = item.get("sequence")
+        digest = item.get("source_artifact_digest")
+        registration = (f"#{sequence}" if _number(sequence) else
+                        '<span class="shep-muted">not readable</span>')
+        report = (f'<code>{r.e(r.short_hex(digest))}</code>' if r.is_digest(digest) else
+                  '<span class="shep-muted">not readable</span>')
+        rows.append(f'<tr><td class="shep-num">{r.e(item.get("index"))}</td>'
+                    f'<td class="shep-nowrap">{registration}</td><td>{report}</td>'
+                    f'<td>{r.e(item.get("reason"))}</td></tr>')
+    return (f'<p class="shep-mp-p shep-mp-unread-p shep-amber-t">{r.WARN_MARK} {len(items)} record'
+            f'{"s" if many else ""} for these weights cannot be read as '
+            f'{"results" if many else "a result"}. The ledger keeps {"them" if many else "it"} '
+            'as written.</p>'
+            '<div class="shep-tbl-wrap shep-mp-recwrap shep-mp-unreadwrap"><table '
+            'class="shep-tbl shep-mp-unread" '
+            'aria-label="Records that cannot be read"><thead><tr>'
+            '<th scope="col" class="shep-num">Index</th><th scope="col">Registration</th>'
+            '<th scope="col">Report</th><th scope="col">Reason</th></tr></thead><tbody>'
+            + "".join(rows) + "</tbody></table></div>")
 
 
 # ---------------------------------------------------------------------------
@@ -1269,45 +1307,52 @@ def detail_parts(listing: Mapping[str, Any], data: Mapping[str, Any], key: Any,
     top = (ident + f'<div class="shep-mp-trained">{trained} {" ".join(marks)}</div>'
            + identity_html(item, family_row(listing, ml.item_key(item))) + validation + warnings)
     ledger = (data.get("ledgers") or {}).get(ml.item_key(item))
-    records, count, contested = _records_for_item(ledger, data)
+    records, count, contested, unreadable = _records_for_item(ledger, data)
     usage, n_usage = usage_html(item, data)
+    # The results, then the rest named apart: one " · " (skill §5).
+    notes = [f"{unreadable} not readable"] if unreadable else []
+    if contested:
+        notes.append(f"{contested} where runs differ")
     seg_records = f"Recorded test results · {count}" + (
-        f" ({contested} where runs differ)" if contested else "")
+        f" ({'; '.join(notes)})" if notes else "")
     return {"header": header, "top": top, "records": records, "usage": usage,
             "seg": [(seg_records, RECORDS), (f"Usage history · {n_usage}", USAGE)]}
 
 
 def _records_for_item(ledger: Optional[Mapping[str, Any]], data: Mapping[str, Any]
-                      ) -> Tuple[str, int, int]:
+                      ) -> Tuple[str, int, int, int]:
+    """The ledger entry's block, how many records read as results, how many of
+    them are in a group whose runs differ, and how many records cannot be read
+    as results: the listing classified them once (`ml.ledger_records`, the
+    readers' one listing), so a record is never counted as both."""
     from src.evaluation.sidecar import LEDGER_FILENAME
 
     if ledger is None:
         return ('<p class="shep-mp-p shep-muted">The ledger beside this checkpoint was not '
-                'read.</p>', 0, 0)
+                'read.</p>', 0, 0, 0)
     if ledger["state"] == "not_read":
         return (f'<p class="shep-mp-p shep-amber-t">The ledger (<code>{LEDGER_FILENAME}</code>) '
                 f'beside this checkpoint was not read, so none of its records are shown: '
-                f'{r.e(ledger.get("problem"))}</p>', 0, 0)
+                f'{r.e(ledger.get("problem"))}</p>', 0, 0, 0)
     if ledger["state"] == "no_ledger":
         return (f'<p class="shep-mp-p">No ledger (<code>{LEDGER_FILENAME}</code>) is beside this '
                 'checkpoint, so no recorded result can be shown; that does not mean these '
-                'weights were never evaluated.</p>', 0, 0)
+                'weights were never evaluated.</p>', 0, 0, 0)
     if ledger["state"] == "none":
-        return f'<p class="shep-mp-p">{r.e(RECORD_ABSENCE)}</p>', 0, 0
-    views, not_shown = [], 0
+        return f'<p class="shep-mp-p">{r.e(RECORD_ABSENCE)}</p>', 0, 0, 0
+    views = []
     readings = ledger.get("readings") or [None] * len(ledger["records"])
     for record, reading in zip(ledger["records"], readings):
         view = record_view(record, reading, ledger=ledger.get("ledger"))
-        if view is None:
-            not_shown += 1
-        else:
+        if view is not None:  # read as a result by the listing; the view adds the page's extras
             views.append(view)
     views.sort(key=lambda v: -(_get(v, "registration", "sequence") or 0))
+    unreadable = [item for item in ledger.get("unreadable") or [] if isinstance(item, Mapping)]
     contest = data.get("contest") or {}
     contested = sum(1 for v in views
                     if (contest.get(key_text(v["key"])) or {}).get("state") == "contested")
-    return (records_block_html(views, contest, not_shown=not_shown),
-            len(views) + not_shown, contested)
+    return (records_block_html(views, contest, unreadable=unreadable),
+            len(views), contested, len(unreadable))
 
 
 def usage_entry_html(entry: Mapping[str, Any]) -> str:
@@ -1425,7 +1470,9 @@ def readonly_parts(data: Mapping[str, Any]) -> Dict[str, Any]:
                  for rec in answer.get("records") or [] if isinstance(rec, Mapping)]
         views.sort(key=lambda v: -(_get(v, "registration", "sequence") or 0))
         body = records_block_html(views, data.get("contest") or {},
-                                  not_shown=int(answer.get("records_not_shown") or 0))
+                                  unreadable=[item for item in
+                                              answer.get("unreadable_records") or []
+                                              if isinstance(item, Mapping)])
     return {"header": header, "top": top, "records": body + note, "usage": "", "seg": None}
 
 
@@ -1687,12 +1734,16 @@ PAGE_CSS = f"""
 {_PAGE} .shep-mp-lbl {{ font-size: 15px; color: var(--shep-text-2); white-space: nowrap; }}
 {_PAGE} .shep-mp-back {{ display: none; }}
 {_PAGE} .shep-mp-p {{ margin: 0; font-size: 15px; color: var(--shep-text-2); line-height: 1.45; }}
+{_PAGE} .shep-mp-p.shep-amber-t {{ color: var(--shep-amber-800); }}
 {_PAGE} .shep-mp-trained {{ display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; font-size: 15px; }}
 {_PAGE} .shep-mp-val {{ padding: 10px 12px; }}
 {_PAGE} .shep-mp-valbd {{ display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; font-size: 15px; }}
 {_PAGE} .shep-mp-recwrap {{ margin: 0 !important; }}
 {_PAGE} .shep-mp-recwrap + .shep-mp-p {{ margin-top: 16px; }}
-{_PAGE} .shep-mp-rec td, {_PAGE} .shep-mp-usage td {{ overflow-wrap: anywhere; }}
+{_PAGE} .shep-note + .shep-mp-unread-p {{ margin-top: 16px; }}
+{_PAGE} .shep-mp-unread-p + .shep-mp-recwrap {{ margin-top: 8px !important; }}
+{_PAGE} .shep-mp-unreadwrap + .shep-note {{ margin-top: 16px; }}
+{_PAGE} .shep-mp-rec td, {_PAGE} .shep-mp-usage td, {_PAGE} .shep-mp-unread td {{ overflow-wrap: anywhere; }}
 {_PAGE} .shep-mp-rec {{ table-layout: fixed; }}
 {_PAGE} .shep-mp-rec .shep-mp-c1 {{ width: 24%; }}
 {_PAGE} .shep-mp-rec .shep-mp-c2 {{ width: 14%; }}

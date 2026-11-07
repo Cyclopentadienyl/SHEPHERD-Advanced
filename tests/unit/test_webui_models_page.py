@@ -257,6 +257,12 @@ def _text(markup):
     return html_lib.unescape(re.sub(r"<[^>]+>", "", markup)).replace("\xa0", " ")
 
 
+def _words(markup):
+    """What a reader sees of a block, cell by cell: each tag a space, every
+    run of white space one space."""
+    return " ".join(html_lib.unescape(re.sub(r"<[^>]+>", " ", markup)).split())
+
+
 #: The controls as the page builds them by default: every task, newest first.
 NEWEST_CTL = {"task": "all", "order": "newest"}
 
@@ -574,6 +580,62 @@ def test_the_detail_keeps_validation_and_mode_c_apart(world, monkeypatch):
     assert f"role {r.ident_html('research_selection')}" in records
     assert f"role {r.ident_html('institutional_acceptance')}" in records
     assert "<wbr>" not in records
+
+
+def test_a_record_that_cannot_be_read_is_named_apart_from_the_results(world, monkeypatch):
+    """K8-6e.1 (R3): model-05's ledger holds three records; one loses
+    ``n_ranked`` by a hand edit. The segment counts the results and names the
+    rest with one " · " ("Recorded test results · 2 (1 not readable; 1 where
+    runs differ)"); the detail lists it by index, registration, report and
+    reason under the amber sentence, never as a result and never pointing to
+    the server's log; the row reads "2 · 1 not readable; runs differ for 1".
+    HEAD: "Recorded test results · 3 (1 where runs differ)", "the server's log
+    says why", and the row counted 3."""
+    ledger_path = world["paths"]["model-05.pt"].parent / "evaluations.json"
+    data = json.loads(ledger_path.read_text())
+    (index, bad), = [(i, rec) for i, rec in enumerate(data["records"])
+                     if rec["checkpoint_digest"] == world["shas"]["model-05.pt"]
+                     and rec["registration"]["sequence"] == 2]
+    del bad["n_ranked"]
+    ledger_path.write_text(json.dumps(data, indent=2))
+    listing, page = _read(world, monkeypatch)
+    detail = mp.detail_parts(listing, page, _key(world, "model-05.pt"), NEWEST_CTL)
+
+    assert detail["seg"][0] == (
+        "Recorded test results · 2 (1 not readable; 1 where runs differ)", mp.RECORDS)
+    assert detail["seg"][0][0].count(" · ") == 1
+    said = _words(detail["records"])
+    assert ("▲ 1 record for these weights cannot be read as a result. The ledger keeps it as "
+            "written.") in said
+    assert (f"Index Registration Report Reason {index} #2 "
+            f"{bad['source_artifact_digest'][:12]} n_ranked: missing") in said
+    assert "registered #2" not in detail["records"]
+    assert "server's log" not in said
+    assert r.recorded_tests_text(ml._recorded(listing, _key(world, "model-05.pt"))) == (
+        "Recorded tests: 2 · 1 not readable; runs differ for 1")
+
+
+def test_the_pages_amber_sentences_are_amber_and_the_note_after_the_list_stands_apart():
+    """K8-6e.1 review (skill §6, §2): the page's ``.shep-mp-p`` rule, scoped
+    by the page's id, outranks the plain ``.shep-amber-t`` class, so a
+    sentence marked amber (the ▲ sentence over the records that cannot be
+    read, "the ledger was not read") was drawn in body grey (sampled
+    rgb(67,74,88) at 1850 x 960). A rule of the same scope gives it the amber
+    token. In the read-only view the closing note sat 6 px under the
+    unreadable records' table and read as its caption; it now stands 16 px
+    apart, and the records table's own R10 note is not moved."""
+    css = mp.PAGE_CSS.replace("{{", "{").replace("}}", "}")
+    base = f"{mp._PAGE} .shep-mp-p {{ margin: 0;".replace("{{", "{")
+    amber = f"{mp._PAGE} .shep-mp-p.shep-amber-t {{ color: var(--shep-amber-800); }}".replace(
+        "{{", "{").replace("}}", "}")
+    assert base in css and amber in css and css.index(base) < css.index(amber)
+    gap = f"{mp._PAGE} .shep-mp-unreadwrap + .shep-note {{ margin-top: 16px; }}".replace(
+        "{{", "{").replace("}}", "}")
+    assert gap in css and ".shep-mp-recwrap + .shep-note" not in css
+    html = mp.unreadable_html([{"index": 0, "sequence": None, "source_artifact_digest": None,
+                                "reason": "n_ranked: missing"}])
+    assert '<p class="shep-mp-p shep-mp-unread-p shep-amber-t">' in html
+    assert '<div class="shep-tbl-wrap shep-mp-recwrap shep-mp-unreadwrap">' in html
 
 
 def test_unverifiable_is_a_word_and_never_a_count(world, monkeypatch):
@@ -1657,12 +1719,10 @@ def test_a_merged_record_and_a_named_run_show_their_possible_overlap(world):
     """G7, A7 (d) (K8-6r.2): a record merged before each run had its own record
     shows its run as "not recorded" and its merged report counted; it and the
     named run whose report it holds each show "possible overlap with record N
-    (not recorded)"; a record whose run identity cannot be read is counted as
-    not shown, never shown as merged. HEAD: no run, no overlap, "1
-    corroborating report"."""
+    (not recorded)"; a record whose run identity cannot be read is listed apart
+    with its reason (K8-6e.1), never shown as merged and never counted as a
+    result. HEAD: no run, no overlap, "1 corroborating report"."""
     import copy as _copy
-
-    from src.api.routes.evaluations import record_reading
 
     named = _copy.deepcopy(dict(world["det"]))
     named["registration"] = {"sequence": 2, "registered_at": "2026-11-07T10:00:00Z"}
@@ -1676,33 +1736,30 @@ def test_a_merged_record_and_a_named_run_show_their_possible_overlap(world):
     lost["registration"] = {"sequence": 3, "registered_at": "2026-11-07T11:00:00Z"}
     ledger = {"schema_version": 4, "run_identity_from_sequence": 2,
               "records": [merged, named, lost]}
-    reading = record_reading(ledger)
-    entry = {"state": "records", "records": ledger["records"],
-             "readings": [[found.run_id, found.historical, found.problem, list(overlaps)]
-                          for found, overlaps in (reading[id(r)] for r in ledger["records"])]}
+    entry = ml.ledger_entry(ledger, named["checkpoint_digest"])
 
-    html, count, _contested = mp._records_for_item(entry, {"contest": {}})
+    html, count, _contested, unreadable = mp._records_for_item(entry, {"contest": {}})
 
-    assert count == 3
+    assert (count, unreadable) == (2, 1)
     assert "from run not recorded, report dddddddddddd" in html
     assert f"from run {named['run_id']}, report" in html
     assert "1 report merged into this record before each run had its own record" in html
     assert "possible overlap with record 2 (not recorded)" in html
     assert "possible overlap with record 1 (not recorded)" in html
-    assert "1 record for these weights is not shown" in html
+    assert "1 record for these weights cannot be read as a result" in _words(html)
+    assert (f"2 #3 {lost['source_artifact_digest'][:12]} its run identity is missing"
+            in _words(html))
     assert "corroborating" not in html
 
 
-def test_records_whose_run_cannot_be_told_are_counted_and_the_log_says_why(world, caplog):
-    """A8 (review of K8-6r.2): with the file's run-identity boundary lost,
-    each record that names no run is counted as not shown (never shown as
-    merged), and the server's log says why, naming the ledger file, as the
-    page says it does; the record that names its run is shown. Before the fix
-    the page claimed the log said why and nothing was logged."""
+def test_records_whose_run_cannot_be_told_are_listed_with_the_boundary_reason(world):
+    """A8 (review of K8-6r.2), K8-6e.1: with the file's run-identity boundary
+    lost, each record that names no run is listed on the page by its index,
+    registration and report with the reason the boundary gives (never shown as
+    merged, never counted as a result), and the page names no path and no
+    server log; the record that names its run is shown. HEAD: counted, with
+    "(the server's log says why)"."""
     import copy as _copy
-    import logging
-
-    from src.api.routes.evaluations import record_reading
 
     named = _copy.deepcopy(dict(world["det"]))
     named["registration"] = {"sequence": 2, "registered_at": "2026-11-07T10:00:00Z"}
@@ -1710,23 +1767,19 @@ def test_records_whose_run_cannot_be_told_are_counted_and_the_log_says_why(world
     unnamed.pop("run_id")
     unnamed["registration"] = {"sequence": 1, "registered_at": "2026-10-01T10:00:00Z"}
     ledger = {"schema_version": 4, "records": [unnamed, named]}   # no boundary
-    reading = record_reading(ledger)
-    entry = {"state": "records", "records": ledger["records"],
-             "ledger": "/srv/x/evaluations.json",
-             "readings": [[found.run_id, found.historical, found.problem, list(overlaps)]
-                          for found, overlaps in (reading[id(r)] for r in ledger["records"])]}
+    entry = ml.ledger_entry(ledger, named["checkpoint_digest"], "/srv/x/evaluations.json")
 
-    with caplog.at_level(logging.WARNING, logger=mp.__name__):
-        html, count, _contested = mp._records_for_item(entry, {"contest": {}})
+    html, count, _contested, unreadable = mp._records_for_item(entry, {"contest": {}})
 
-    assert count == 2
+    assert (count, unreadable) == (1, 1)
     assert f"from run {named['run_id']}, report" in html
-    assert "1 record for these weights is not shown" in html
     assert "from run not recorded" not in html
-    (logged,) = [rec.getMessage() for rec in caplog.records]
-    assert logged.startswith("A ledger record in /srv/x/evaluations.json is not shown: ")
-    assert ("the file's run-identity boundary (run_identity_from_sequence) cannot be read "
-            "(it is missing while the file holds 2 records)") in logged
+    said = _words(html)
+    assert "▲ 1 record for these weights cannot be read as a result." in said
+    assert ("0 #1 " + named["source_artifact_digest"][:12] + " whether it names its run cannot "
+            "be told: the file's run-identity boundary (run_identity_from_sequence) cannot be "
+            "read (it is missing while the file holds 2 records)") in said
+    assert "/srv/x" not in html and "server's log" not in said
 
 
 def test_an_old_corroborated_usage_entry_is_shown_as_recorded():

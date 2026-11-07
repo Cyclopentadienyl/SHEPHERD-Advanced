@@ -12,7 +12,9 @@ one gated Load, no second implementation).
 workspace (SPEC_4 C3), so it is an operator control: D8's helper is asked on the
 triggering request first, and a read-only request gets the reason and no list.
 Each row's recorded tests are a state read from the ledger beside the
-checkpoint (`read_ledger`, `records_for`) and, for how each record's condition
+checkpoint (`read_ledger`, then the readers' one listing, `evaluations.read_records`:
+the records that read as results, and apart from them those that cannot, never
+counted as results) and, for how each record's condition
 group compares (runs that differ, a comparison incomplete), from the cohort
 version's report store (`record_states.contest_states`, the one implementation
 the API's route shares): never a number of a result, and a description that
@@ -235,19 +237,23 @@ def ledger_records(workspace_dir: Path, items: Sequence[Mapping[str, Any]]
                    ) -> Dict[str, Dict[str, Any]]:
     """For each listed checkpoint with a digest, what the ledger beside it holds
     for its weights, read through the one ledger reader (`read_ledger`, once per
-    directory) and `records_for`: ``state`` (``records``, ``none``,
-    ``no_ledger`` or ``not_read``), the records as the ledger holds them (kept
-    on the server, in the session's state; never sent to the browser as they
-    are), ``readings`` beside them (each record's run as the file's boundary
-    reads it and its possible overlaps, `evaluations.record_reading`, as
-    ``[run_id, historical, problem, overlaps]``), ``problem`` (naming the file,
-    never its directory) and ``ledger`` (the ledger's resolved path, which only
-    tells two ledgers apart).
+    directory) and **classified once, by the readers' one listing**
+    (`evaluations.read_records`, K8-6e.1): ``state`` (``records`` when it holds
+    a result or a record that cannot be read as one, ``none``, ``no_ledger`` or
+    ``not_read``), ``records``: those that read as results, as the ledger holds
+    them (kept on the server, in the session's state; never sent to the browser
+    as they are), ``readings`` beside them (each record's run as the file's
+    boundary reads it and its possible overlaps, `evaluations.record_reading`,
+    as ``[run_id, historical, problem, overlaps]``), ``unreadable``: every other
+    record for these weights as the API lists it (`UnreadableRecord`: index,
+    sequence, report digest, run and reason; never a result), ``problem``
+    (naming the file, never its directory) and ``ledger`` (the ledger's resolved
+    path, which only tells two ledgers apart).
 
     The checkpoint file is never opened: its path is the run layout's, resolved
     to find the directory its ledger is in, as registration writes it."""
-    from src.api.routes.evaluations import _ledger_problem, record_reading
-    from src.evaluation.sidecar import LEDGER_FILENAME, read_ledger, records_for
+    from src.api.routes.evaluations import _ledger_problem
+    from src.evaluation.sidecar import LEDGER_FILENAME, read_ledger
     from src.utils.checkpoint_paths import RUN_CHECKPOINTS_DIRNAME, RUNS_DIRNAME
 
     workspace_dir = Path(workspace_dir).resolve()
@@ -262,11 +268,11 @@ def ledger_records(workspace_dir: Path, items: Sequence[Mapping[str, Any]]
         try:
             directory = file.resolve().parent
         except (OSError, RuntimeError):
-            out[key] = {"state": "not_read", "records": [], "ledger": None,
+            out[key] = {"state": "not_read", "records": [], "unreadable": [], "ledger": None,
                         "problem": "the checkpoint's directory cannot be resolved"}
             continue
         if directory != workspace_dir and workspace_dir not in directory.parents:
-            out[key] = {"state": "not_read", "records": [], "ledger": None,
+            out[key] = {"state": "not_read", "records": [], "unreadable": [], "ledger": None,
                         "problem": "the checkpoint resolves outside the workspace"}
             continue
         ledger_path = directory / LEDGER_FILENAME
@@ -278,28 +284,45 @@ def ledger_records(workspace_dir: Path, items: Sequence[Mapping[str, Any]]
                 read[directory] = (None, _ledger_problem(exc, ledger_path), True)
         ledger, problem, present = read[directory]
         if problem is not None:
-            out[key] = {"state": "not_read", "records": [], "ledger": str(ledger_path),
-                        "problem": problem}
+            out[key] = {"state": "not_read", "records": [], "unreadable": [],
+                        "ledger": str(ledger_path), "problem": problem}
         elif not present:
-            out[key] = {"state": "no_ledger", "records": [], "ledger": str(ledger_path),
-                        "problem": None}
+            out[key] = {"state": "no_ledger", "records": [], "unreadable": [],
+                        "ledger": str(ledger_path), "problem": None}
         else:
-            records = records_for(ledger, item["sha256"])
-            reading = record_reading(ledger)
-            readings = [[found.run_id, found.historical, found.problem, list(overlaps)]
-                        for found, overlaps in (reading[id(record)] for record in records)]
-            out[key] = {"state": "records" if records else "none", "records": records,
-                        "readings": readings, "ledger": str(ledger_path), "problem": None}
+            out[key] = ledger_entry(ledger, item["sha256"], str(ledger_path))
     return out
+
+
+def ledger_entry(ledger: Mapping[str, Any], checkpoint_digest: str,
+                 ledger_path: Optional[str] = None) -> Dict[str, Any]:
+    """One checkpoint's entry of `ledger_records` from a ledger already read:
+    the readers' one listing (`evaluations.read_records`) splits its records
+    for these weights into results (``records``, with their ``readings``) and
+    the rest (``unreadable``, each item as the API lists it), once."""
+    from src.api.routes.evaluations import read_records, record_reading
+
+    ledger = dict(ledger)
+    viewed, unreadable = read_records(ledger, checkpoint_digest)
+    records = [record for record, _view in viewed]
+    reading = record_reading(ledger)
+    readings = [[found.run_id, found.historical, found.problem, list(overlaps)]
+                for found, overlaps in (reading[id(record)] for record in records)]
+    return {"state": "records" if records or unreadable else "none",
+            "records": records, "readings": readings,
+            "unreadable": [item.model_dump(mode="json") for item in unreadable],
+            "ledger": ledger_path, "problem": None}
 
 
 def recorded_tests(ledgers: Mapping[str, Mapping[str, Any]],
                    contest: Mapping[str, Mapping[str, Any]]) -> Dict[str, r.RecordedTests]:
     """Each checkpoint's recorded tests as a state, from what `ledger_records`
-    and `contest_states` read: how many records, how many in a group whose runs
-    differ and how many whose comparison is incomplete, counted apart (M5-3
-    review EVAL-3: one uncheckable record hid a known difference). Counts that
-    describe; nothing is hidden or refused by them."""
+    and `contest_states` read: how many records read as results, how many of
+    them in a group whose runs differ and how many whose comparison is
+    incomplete, counted apart (M5-3 review EVAL-3: one uncheckable record hid a
+    known difference), and how many records cannot be read as results, counted
+    apart from the results and never as one (K8-6e.1). Counts that describe;
+    nothing is hidden or refused by them."""
     from src.evaluation.sidecar import record_key
 
     out: Dict[str, r.RecordedTests] = {}
@@ -320,7 +343,8 @@ def recorded_tests(ledgers: Mapping[str, Mapping[str, Any]],
             elif state != "uncontested":
                 unchecked += 1
         out[key] = r.RecordedTests("records", len(entry.get("records") or []), contested,
-                                   unchecked=unchecked)
+                                   unchecked=unchecked,
+                                   unreadable=len(entry.get("unreadable") or []))
     return out
 
 

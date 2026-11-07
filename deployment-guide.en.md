@@ -1471,7 +1471,10 @@ registration of another report.
   <checkpoint sha256>` reads the ledger the service reads for that file, beside its resolved
   path. It prints the records as written (JSON), then one line each with its run ("not
   recorded" for a record written before each run had its own record) and any possible
-  overlap between such a record and a named run. With `--checkpoint-dir <dir>` instead, `--show` reads the `evaluations.json` inside that
+  overlap between such a record and a named run. A record the shared check cannot read as a
+  result is said instead as "record N (the ledger's record I) cannot be read as a result:
+  <reason>" (since K8-6e.1), with the reason the API and Models give; the JSON still prints it as
+  written. With `--checkpoint-dir <dir>` instead, `--show` reads the `evaluations.json` inside that
   directory, which for a directory of links is not the one the service reads. An empty answer
   means this ledger holds no result for those weights, not that they were never evaluated.
 - **Registrations into one ledger take turns.** A registration holds the ledger's lock
@@ -1520,7 +1523,9 @@ report, as before.
 state only**, on its "Model in use" card: "Recorded tests: 3 · runs differ for 1", "3 ·
 comparison incomplete" (no registry is set, or no record's cohort version or report store can be
 read; never shown as agreeing), "3 · runs differ for 1; comparison incomplete for 1" (counted
-apart), "none in ledger", "no ledger", "ledger not
+apart), "3 · 1 not readable" (since K8-6e.1: 3 results and 1 record the shared check cannot read
+as a result, counted apart and never as a result; "0 · 1 not readable" when it is the only one),
+"none in ledger" (neither), "no ledger", "ledger not
 readable" or "not read", the same words as the checkpoint's row in
 "Change model…", found by the checkpoint's digest, not its file name (after another model is
 loaded the previous model's state is never shown). Its › opens Details at Evidence, where the same
@@ -1542,7 +1547,20 @@ agreeing) stay as the same strings for API clients, but none of them hides, orde
 refuses a record any more. Each record also carries `run_id` (the run it was registered from, or
 `null` for a record written before each run had its own record, shown as "not recorded") and
 `historical_overlap` (the sequences of the records it may be one execution with, never
-confirmed). A record whose run identity cannot be read is counted in `records_not_shown`.
+confirmed). **Since K8-6e.1 a record for these weights that the shared check cannot read as a
+result** (its run identity cannot be read, or it does not have the shape registration writes) is
+listed in `unreadable_records`, in ledger order: its `index` in the ledger's records list
+(counted from 0, as the writer's refusals name it), its registration `sequence`, its
+`source_artifact_digest` and its `run_id` where it still carries them readably (`null`
+otherwise), and its `reason`, one line of at most 300 characters that names each refused field
+by its path in the ledger record, the key a hand edit corrects, and never its value (for example
+"n_ranked: missing", "environment.facts.gpu: missing" or "the regime's device is neither CUDA nor
+CPU"); a key the record itself carries inside an object, such as a metric's name or an exclusion
+reason, is named as written, as a readable record's metric names are shown. It is never a
+result, and the ledger keeps it as written. `records_not_shown` keeps
+its meaning and always equals the list's length. A record that is not an object, or names no
+checkpoint digest, belongs to no model and is not listed; a ledger unreadable as a whole is
+still `ledger_not_read`, with none of its records listed.
 Investigation notes are not shown (BACKLOG 40):
 
 - The records are introduced once, above the first, by **"Disease ranking by the model,
@@ -1562,9 +1580,14 @@ Investigation notes are not shown (BACKLOG 40):
   own record.
 - Instead of records, a sentence: no ledger beside the loaded checkpoint; the ledger was not read,
   with the reason, which names the file and never its directory (for example a schema 2 file,
-  below); this ledger holds no result for these weights; some records not shown because they do
-  not have the shape registration writes; or "The loaded model changed while its recorded results
-  were read; refresh the page."
+  below); this ledger holds no result for these weights; or "The loaded model changed while its
+  recorded results were read; refresh the page."
+- **Records the shared check cannot read as results** (they do not have the shape registration
+  writes, or their run identity cannot be read; since K8-6e.1) are listed under the results, or
+  alone when there are none: one amber sentence with ▲ ("1 record for these weights cannot be
+  read as a result. The ledger keeps it as written.") and a table, Index · Registration · Report
+  · Reason, each with the route's `unreadable_records` values (a sequence or report digest the
+  record does not carry readably reads "not readable"). They are never counted as results.
 - **The route** takes no parameters, reads the ledger beside the loaded checkpoint on every
   request, writes nothing, and returns no path, case id or rank. "Beside" is the directory of the
   checkpoint's resolved path as the pipeline read it at load, so a link retargeted since, without
@@ -2979,7 +3002,12 @@ card, any warning, and two segments:
   named run; then the relations, the record's other metrics, R10 as states (*unverifiable* is a
   reason, never 0), the environment, the dataset and the registration with its run ("not
   recorded" for a record written before each run had its own record). Every record is shown;
-  none is hidden or ordered out by these descriptions;
+  none is hidden or ordered out by these descriptions. A record for these weights that cannot be
+  read as a result (since K8-6e.1) is never shown or counted as one: under the tables, "▲ 1
+  record for these weights cannot be read as a result. The ledger keeps it as written." and a
+  small table, Index · Registration · Report · Reason (a sequence or report digest it does not
+  carry readably reads "not readable"); the segment then reads "Recorded test results · 3 (1 not
+  readable)". The read-only view lists the same items, from the route;
 - **Usage history**: the entries that name this checkpoint in every listed cohort version's
   usage history, newest first: test runs and registrations, and any model load kept from before
   K8-6d, shown as recorded ("ordered by" its metric's name, and its scoring semantics).

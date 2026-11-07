@@ -821,7 +821,8 @@ def run_identity_boundary(ledger: Dict[str, Any]) -> Tuple[Optional[int], Option
                       f"record{'' if len(records) == 1 else 's'}")
     value = ledger[RUN_IDENTITY_FROM_SEQUENCE]
     if type(value) is not int:
-        return None, f"it is {value!r}, not an integer"
+        # Not echoed: every reader lists a record with this reason (K8-6e.1).
+        return None, "it is not an integer"
     if value < 1:
         return None, f"it is {value}, below 1"
     following = max((s for s in map(_readable_sequence, records) if s is not None),
@@ -888,9 +889,11 @@ def record_identities(ledger: Dict[str, Any]) -> List[RecordIdentity]:
         elif "run_id" not in record:
             out.append(RecordIdentity(None, False, "its run identity is missing"))
         else:
+            # The field is named, never its value: a reader lists the record
+            # with these words (K8-6e.1), and a hand edit can put a server
+            # path there.
             out.append(RecordIdentity(None, False, (
-                f"its run identity cannot be read: run_id {record['run_id']!r} is not a run "
-                "directory's name")))
+                "its run identity cannot be read: its run_id is not a run directory's name")))
     return out
 
 
@@ -1394,8 +1397,24 @@ def checkpoint_matches(path: Path, digest: str) -> bool:
     return path.is_file() and file_sha256(path) == digest
 
 
+def indexed_records_for(ledger: Dict[str, Any],
+                        checkpoint_digest: str) -> List[Tuple[int, Dict[str, Any]]]:
+    """`records_for`'s records, each with its index in the ledger's records
+    list (a count from 0, the number the writer's refusals name a record by):
+    the one predicate, so a reader that lists a record it cannot read names
+    the record the file and the writer name."""
+    records = ledger.get("records")
+    if not isinstance(records, list):
+        return []
+    return [
+        (index, record)
+        for index, record in enumerate(records)
+        if isinstance(record, dict) and record.get("checkpoint_digest") == checkpoint_digest
+    ]
+
+
 def records_for(ledger: Dict[str, Any], checkpoint_digest: str) -> List[Dict[str, Any]]:
-    """Every result this ledger holds for one set of weights.
+    """Every record this ledger holds for one set of weights.
 
     An empty list is the honest answer to "what has this checkpoint been measured
     on", scoped to this ledger. It is never an answer to "has it been evaluated".
@@ -1403,16 +1422,11 @@ def records_for(ledger: Dict[str, Any], checkpoint_digest: str) -> List[Dict[str
     **Tolerates hand edits.** Correcting a record means editing the file, so a
     record that lost its digest or is not an object is simply not one of this
     checkpoint's; it does not make the lookup raise. Whether a matching record is
-    whole is the reader's to check before showing it.
+    whole is the reader's to check before showing it (the readers' one listing,
+    `src.api.routes.evaluations.read_records`, lists one that is not with its
+    index and reason).
     """
-    records = ledger.get("records")
-    if not isinstance(records, list):
-        return []
-    return [
-        record
-        for record in records
-        if isinstance(record, dict) and record.get("checkpoint_digest") == checkpoint_digest
-    ]
+    return [record for _index, record in indexed_records_for(ledger, checkpoint_digest)]
 
 
 def environment_class(record_or_regime: Dict[str, Any]) -> str:
@@ -1426,7 +1440,9 @@ def environment_class(record_or_regime: Dict[str, Any]) -> str:
     is in the key).
 
     A device that is neither, or a determinism flag that is not a boolean, is
-    refused rather than classed: there is no class to guess.
+    refused rather than classed: there is no class to guess. **The refusal
+    names the field, never its value** (K8-6e.1): a reader lists the record
+    with these words, and a hand-edited value can be a server path.
     """
     if not isinstance(record_or_regime, dict):
         raise ValueError("a record or a regime is an object")
@@ -1438,12 +1454,10 @@ def environment_class(record_or_regime: Dict[str, Any]) -> str:
     if kind == "cpu":
         return ENVIRONMENT_CLASSES[2]
     if kind != "cuda":
-        raise ValueError(f"the regime's device is {device!r}, neither CUDA nor CPU")
+        raise ValueError("the regime's device is neither CUDA nor CPU")
     deterministic = regime.get("deterministic_algorithms")
     if type(deterministic) is not bool:
-        raise ValueError(
-            f"the regime's deterministic_algorithms is {deterministic!r}, not a boolean"
-        )
+        raise ValueError("the regime's deterministic_algorithms is not a boolean")
     return ENVIRONMENT_CLASSES[0] if deterministic else ENVIRONMENT_CLASSES[1]
 
 
@@ -1568,6 +1582,7 @@ __all__ = [
     "group_differences",
     "held_record",
     "historical_overlap",
+    "indexed_records_for",
     "ledger_digest",
     "ledger_lock",
     "ledger_lock_path",

@@ -52,8 +52,8 @@ named records whose report it holds. **The two kinds stay apart**: an overlap
 is never confirmed, and a merged record and a named run are never counted as
 two runs confirmed to be independent. A record whose run identity cannot be
 read (at or after the boundary without a readable ``run_id``, or the boundary
-itself unreadable) is not shown as a result; it is counted in
-``records_not_shown``, never shown as historical.
+itself unreadable) is not shown as a result; it is listed in
+``unreadable_records`` with its reason, never shown as historical.
 
 **Each record's group description** (``contest``; BACKLOG 36, the M5 review's
 P2-6): how the reports its cohort version's store keeps under the record's
@@ -74,17 +74,24 @@ here, nor by the Models page; only the Test page lists them (BACKLOG 40).
 **Aggregates only** (D7). A record is shown as its counts, metrics, relation
 states, R10 states and counts, environment class and GPU, dataset origin,
 registration, its run, digests and group description (field names, run ids and
-values; never a problem's words, which may name a server path). No path (a record's R10
+values; never a problem's words, which may name a server path: an unreadable
+record's reason is built from field names and fixed words only). No path (a record's R10
 evidence paths among them), no case id, no rank; a ledger problem names the
 file, never its directory.
 
 **Expected failures are states; nothing else is swallowed.** A ledger that cannot
 be read as a whole is ``ledger_not_read`` with its reason, and none of its
 records are shown; a schema-4 ledger whose run-identity boundary cannot be read
-is still read, its records naming a run shown and the others counted. A record
+is still read, its records naming a run shown and the others listed. A record
 for these weights that does not have the shape registration writes, after a
-hand edit (the sanctioned correction path), is counted in ``records_not_shown``
-rather than raised: a 500 here would take the model status with it. Any other
+hand edit (the sanctioned correction path), is not raised (a 500 here would
+take the model status with it) and never shown as a result: **it is listed in
+``unreadable_records``** (K8-6e.1; `read_records`, the one listing every reader
+uses) by its index in the ledger, its registration sequence, report digest and
+run where it still carries them readably, and the reason in one line of at most
+300 characters that names the refused fields by their path in the ledger
+record, never their values (`unreadable_reason`). ``records_not_shown`` keeps its meaning and equals the
+list's length. The server log says the same line with the index. Any other
 exception is a defect and reaches the client as one.
 
 No write, no `find_checkpoint`, no `torch.load`.
@@ -120,11 +127,14 @@ from src.evaluation.sidecar import (
     RUN_ID_PATTERN,
     RecordIdentity,
     environment_class,
+    indexed_records_for,
     possible_overlaps,
     read_ledger,
     record_identities,
-    records_for,
 )
+# How long an unreadable record's reason may be: `problem_line`'s own bound,
+# so the line it gives always fits the field.
+from src.utils.checkpoint_paths import _PROBLEM_LIMIT as _REASON_LIMIT
 
 if TYPE_CHECKING:
     from src.utils.fingerprint import ReadIdentity
@@ -409,6 +419,34 @@ class LoadedRecordView(RecordView):
     contest: RecordContest
 
 
+class UnreadableRecord(_Strict):
+    """A ledger record for these weights that the shared check (`_record_view`)
+    cannot read as a result (K8-6e.1, policy rev 15 and rev 16): named by its
+    place in the ledger and, where it still carries them readably, its
+    registration sequence, report digest and run, with the reason in one
+    bounded line that names the refused fields and never their values. It is
+    never a result: it carries no metric, count or state. The ledger keeps it
+    as written."""
+
+    index: _Count = Field(
+        ..., description="Its place in the ledger's records list, counted from 0: the number "
+        "the writer's refusals name a record by")
+    sequence: Optional[_Sequence] = Field(
+        ..., description="Its registration sequence, or null when it carries none that reads "
+        "(not an integer of at least 1)")
+    source_artifact_digest: Optional[_Digest] = Field(
+        ..., description="SHA-256 of the report it names, or null when it carries none that "
+        "reads")
+    run_id: Optional[_RunId] = Field(
+        ..., description="The run it names, or null when it names none (a record written before "
+        "each run had its own record) or its run cannot be read")
+    reason: Annotated[str, Field(min_length=1, max_length=_REASON_LIMIT)] = Field(
+        ..., description="Why it cannot be read as a result: the refused fields (at most three, "
+        "then how many more), each by its path in the ledger record, and what is wrong with "
+        "each, never their values (a key the record itself carries inside an object, such as a "
+        "metric's name, is named as written); one line")
+
+
 class LoadedModelEvaluations(_Strict):
     """What the ledger beside the loaded checkpoint holds for its weights, each
     record with its run and its group's description (`RecordContest`)."""
@@ -428,8 +466,14 @@ class LoadedModelEvaluations(_Strict):
         ..., description="Every readable record, sorted by registration sequence, each with "
         "its run (null: not recorded) and its group's description")
     records_not_shown: _Count = Field(
-        ..., description="Records for these weights that do not have the shape "
-        "registration writes, or whose run identity cannot be read")
+        ..., description="How many records for these weights cannot be read as a result "
+        "(they do not have the shape registration writes, or their run identity cannot be "
+        "read): always the length of unreadable_records, which lists each with its reason")
+    unreadable_records: List[UnreadableRecord] = Field(
+        ..., description="Each record for these weights that cannot be read as a result, in "
+        "ledger order, with its index, what identifies it and the reason. Never a result; the "
+        "ledger keeps it as written. A record that is not an object, or names no checkpoint "
+        "digest, belongs to no model and is not listed here")
 
     @model_validator(mode="after")
     def _the_state_says_what_the_fields_hold(self) -> "LoadedModelEvaluations":
@@ -444,9 +488,12 @@ class LoadedModelEvaluations(_Strict):
                 raise ValueError(f"state {self.state!r} with ledger sha256 {self.ledger.sha256!r}")
             if (self.state == "ledger_not_read") != (self.ledger.problem is not None):
                 raise ValueError(f"state {self.state!r} with ledger problem {self.ledger.problem!r}")
-        if (self.state == "records") != bool(self.records or self.records_not_shown):
+        if self.records_not_shown != len(self.unreadable_records):
+            raise ValueError(f"records_not_shown {self.records_not_shown} with "
+                             f"{len(self.unreadable_records)} unreadable record(s) listed")
+        if (self.state == "records") != bool(self.records or self.unreadable_records):
             raise ValueError(f"state {self.state!r} with {len(self.records)} record(s) shown "
-                             f"and {self.records_not_shown} not shown")
+                             f"and {len(self.unreadable_records)} not readable")
         return self
 
 
@@ -491,6 +538,9 @@ def _record_view(record: Dict[str, Any], identity: Optional[RecordIdentity] = No
     (`possible_overlaps`). Every reader of a ledger passes both; without
     ``identity`` (a record read alone, outside its ledger) its own ``run_id``
     is shown as written.
+
+    A field taken from another place in the record is listed in
+    `_RECORD_PATHS`, so a refusal names the record's own path.
     """
     if identity is not None and identity.problem is not None:
         raise ValueError(identity.problem)
@@ -592,35 +642,132 @@ def _recorded_results(read: "ReadIdentity") -> LoadedModelEvaluations:
         return LoadedModelEvaluations(
             state="ledger_not_read", checkpoint_sha256=digest,
             ledger=_ledger_view(problem=_ledger_problem(exc, ledger_path)),
-            records=[], records_not_shown=0,
+            records=[], records_not_shown=0, unreadable_records=[],
         )
     if ledger_sha is None:
         return LoadedModelEvaluations(
             state="no_ledger", checkpoint_sha256=digest, ledger=_ledger_view(),
-            records=[], records_not_shown=0,
+            records=[], records_not_shown=0, unreadable_records=[],
         )
 
-    viewed: List[Tuple[Dict[str, Any], RecordView]] = []
-    not_shown = 0
-    # Each record's run, by the file's boundary, and its possible overlaps:
-    # read from the whole ledger once, then matched to this checkpoint's records.
-    read_as = record_reading(ledger)
-    for record in records_for(ledger, digest):
-        try:
-            viewed.append((record, _record_view(record, *read_as[id(record)])))
-        except ValueError as exc:
-            not_shown += 1
-            logger.warning(
-                "A ledger record for checkpoint %s... is not shown: %s", digest[:12], exc
-            )
+    viewed, unreadable = read_records(ledger, digest)
+    for item in unreadable:
+        logger.warning("A ledger record for checkpoint %s... is not shown: the ledger's record "
+                       "%d: %s", digest[:12], item.index, item.reason)
     contest = _contest_states([record for record, _ in viewed])
     shown = [LoadedRecordView(**dict(view), contest=contest(record)) for record, view in viewed]
     shown.sort(key=lambda view: view.registration.sequence)
     return LoadedModelEvaluations(
-        state="records" if shown or not_shown else "no_records",
+        state="records" if shown or unreadable else "no_records",
         checkpoint_sha256=digest, ledger=_ledger_view(sha256=ledger_sha),
-        records=shown, records_not_shown=not_shown,
+        records=shown, records_not_shown=len(unreadable), unreadable_records=unreadable,
     )
+
+
+def unreadable_reason(exc: ValueError) -> str:
+    """Why the shared check refused a record, as one bounded line that names
+    the refused fields and never their values (K8-6e.1).
+
+    For pydantic's refusal, at most three of its errors, each "<field path>:
+    missing" (a field the record lacks, `_NOT_THERE`) or "<field path>: <what
+    is wrong>" (pydantic's words, its "Value error, " prefix left out), then
+    how many more; the input it was given is never written (pydantic's own
+    text carries it, with a documentation link, over several lines). **The
+    field path is the ledger record's** (`_record_path`), not the API view's
+    name for it: the key a hand edit of the ledger corrects. A key the record
+    itself carries inside an object (a metric's name, an exclusion reason) is
+    a step of that path and is named as written, as a readable record's
+    metric names are shown. For any other `ValueError`, its own words:
+    `_record_view`'s and the shared checks' refusals name a field, never its
+    value. Either way through `problem_line`: one line, each character that
+    is not printable escaped (a field name is a key a hand edit may have
+    written), at most 300 characters."""
+    from pydantic import ValidationError
+
+    from src.utils.checkpoint_paths import problem_line
+
+    if isinstance(exc, ValidationError):
+        errors = exc.errors(include_url=False)
+        parts = []
+        for error in errors[:3]:
+            where = ".".join(_printable(step) for step in _record_path(error.get("loc") or ())
+                             ) or "the record"
+            if error.get("type") == "missing" or error.get("input") is _NOT_THERE:
+                parts.append(f"{where}: missing")
+                continue
+            words = str(error.get("msg") or "is not valid")
+            if words.startswith("Value error, "):
+                words = words[len("Value error, "):]
+            parts.append(f"{where}: {words}")
+        if len(errors) > 3:
+            parts.append(f"{len(errors) - 3} more")
+        text = "; ".join(parts)
+    else:
+        text = str(exc)
+    return problem_line(text) or "it does not have the shape registration writes"
+
+
+#: Where each field `_record_view` takes from another place sits in the ledger
+#: record, by the view's path: a reason names the record's own path, the key a
+#: hand edit of the ledger corrects. Every other field has one path in both.
+_RECORD_PATHS: Dict[Tuple[str, ...], Tuple[str, ...]] = {
+    ("cohort", "version_manifest_sha256"): ("cohort_digest",),
+    ("counts",): ("cohort", "counts"),
+    ("mode",): ("scoring", "mode"),
+    ("score_semantics",): ("scoring", "score_semantics"),
+    ("gpu",): ("environment", "facts", "gpu"),
+    ("dataset_origin",): ("dataset_record", "origin"),
+}
+
+
+def _record_path(loc: Sequence[Any]) -> Tuple[Any, ...]:
+    """Pydantic's location in `RecordView` as the path in the ledger record
+    (`_RECORD_PATHS`): the longest view path it starts with is replaced."""
+    loc = tuple(loc)
+    for size in (2, 1):
+        moved = _RECORD_PATHS.get(loc[:size]) if len(loc) >= size else None
+        if moved is not None:
+            return moved + loc[size:]
+    return loc
+
+
+def _printable(step: Any) -> str:
+    """One step of a field path as text, each character that is not
+    printable escaped, so a newline in a hand-written key cannot end the line."""
+    text = str(step)
+    return text if text.isprintable() else "".join(
+        c if c.isprintable() else repr(c)[1:-1] for c in text)
+
+
+def read_records(ledger: Dict[str, Any], checkpoint_digest: str
+                 ) -> Tuple[List[Tuple[Dict[str, Any], RecordView]], List[UnreadableRecord]]:
+    """**The one listing of a ledger's records for one set of weights**
+    (K8-6e.1), for every reader (this route, Models' operator view through
+    the shared model list, `record_evaluation.py --show`): the records the
+    shared check (`_record_view`) reads as results, each with its view, and
+    every other record as an `UnreadableRecord` with its index and reason, in
+    ledger order. Each record's run is read by the file's boundary, and its
+    possible overlaps, from the whole ledger once (`record_reading`).
+
+    Reading one record never waits on or hides another; nothing is repaired,
+    edited or dropped (a record that is not an object, or names no checkpoint
+    digest, belongs to no model: `indexed_records_for` does not give it)."""
+    from src.evaluation.sidecar import _is_digest, _readable_sequence
+
+    read_as = record_reading(ledger)
+    viewed: List[Tuple[Dict[str, Any], RecordView]] = []
+    unreadable: List[UnreadableRecord] = []
+    for index, record in indexed_records_for(ledger, checkpoint_digest):
+        identity, overlaps = read_as[id(record)]
+        try:
+            viewed.append((record, _record_view(record, identity, overlaps)))
+        except ValueError as exc:
+            source = record.get("source_artifact_digest")
+            unreadable.append(UnreadableRecord(
+                index=index, sequence=_readable_sequence(record),
+                source_artifact_digest=source if _is_digest(source) else None,
+                run_id=identity.run_id, reason=unreadable_reason(exc)))
+    return viewed, unreadable
 
 
 def record_reading(ledger: Dict[str, Any]) -> Dict[int, Tuple[RecordIdentity, Tuple[int, ...]]]:
@@ -693,6 +840,7 @@ def _finite_or_null(value: Any) -> Optional[float]:
 def _nothing_to_look_up(state: str) -> LoadedModelEvaluations:
     return LoadedModelEvaluations(
         state=state, checkpoint_sha256=None, ledger=None, records=[], records_not_shown=0,
+        unreadable_records=[],
     )
 
 
@@ -723,6 +871,9 @@ __all__ = [
     "LoadedRecordView",
     "RecordContest",
     "RecordView",
+    "UnreadableRecord",
     "get_loaded_model_evaluations",
+    "read_records",
     "router",
+    "unreadable_reason",
 ]

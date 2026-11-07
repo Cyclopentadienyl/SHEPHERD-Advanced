@@ -10,8 +10,9 @@ ledgers written by the real registration (`register_report`):
 - every state: no pipeline, no ledger, a ledger that is not read (schema 2,
   damaged, unopenable, with no server directory in its problem whatever the
   directory's name), no records for these weights, records;
-- a record that does not have the shape registration writes is counted and not
-  shown, never a 500, and never hides a good one;
+- a record that does not have the shape registration writes is listed in
+  ``unreadable_records`` with its reason, never shown as a result, never a 500,
+  and never hides a good one;
 - records are found by digest: a model replaced by other bytes never shows its
   predecessor's records, and the same bytes moved with their ledger find theirs;
 - the ledger is the one beside the served read, not beside a path in application
@@ -73,7 +74,8 @@ from tests.unit.test_served_identity import (  # noqa: E402, F401 (fixtures foun
 ROUTE = "/api/v1/evaluations/loaded-model"
 WHEN = "2026-10-16T12:00:00Z"
 OTHER_CHECKPOINT = "c" * 64
-RESPONSE_KEYS = {"state", "checkpoint_sha256", "ledger", "records", "records_not_shown"}
+RESPONSE_KEYS = {"state", "checkpoint_sha256", "ledger", "records", "records_not_shown",
+                 "unreadable_records"}
 RECORD_VIEW_KEYS = {
     "cohort", "counts", "mode", "score_semantics", "metrics", "n_ranked", "relations", "r10",
     "environment_class",
@@ -196,7 +198,7 @@ def test_no_pipeline_has_nothing_to_look_up(app):
     body = _get(app)
 
     assert body == {"state": "no_model", "checkpoint_sha256": None, "ledger": None,
-                    "records": [], "records_not_shown": 0}
+                    "records": [], "records_not_shown": 0, "unreadable_records": []}
 
 
 def test_the_not_identified_state_is_gone():
@@ -213,7 +215,7 @@ def test_the_not_identified_state_is_gone():
     assert states == {"no_model", "no_ledger", "ledger_not_read", "no_records", "records"}
     with pytest.raises(ValidationError):
         LoadedModelEvaluations(state="not_identified", checkpoint_sha256=None, ledger=None,
-                               records=[], records_not_shown=0)
+                               records=[], records_not_shown=0, unreadable_records=[])
 
 
 # ---------------------------------------------------------------------------
@@ -228,7 +230,7 @@ def test_no_ledger_beside_the_checkpoint(app, served):
         "state": "no_ledger", "checkpoint_sha256": _sha(checkpoint),
         "ledger": {"file": "evaluations.json", "where": "beside the loaded checkpoint",
                    "sha256": None, "problem": None},
-        "records": [], "records_not_shown": 0,
+        "records": [], "records_not_shown": 0, "unreadable_records": [],
     }
 
 
@@ -533,6 +535,17 @@ def test_a_record_whose_run_cannot_be_read_is_not_shown_as_historical(
     assert body["state"] == "records" and body["records_not_shown"] == 1
     (view,) = body["records"]
     assert view["run_id"] == twin.parent.name
+    # K8-6e.1 (rev6): listed with the reason its identity gives, its run null,
+    # never as a historical record; with the boundary lost, the file is still
+    # read (never ledger_not_read) and the reason says the boundary cannot be read.
+    (item,) = body["unreadable_records"]
+    assert (item["index"], item["sequence"], item["run_id"]) == (0, 1, None)
+    assert item["source_artifact_digest"] == _sha(kept)
+    assert item["reason"] == (
+        "its run identity is missing" if damage == "no run_id" else
+        "whether it names its run cannot be told: the file's run-identity boundary "
+        "(run_identity_from_sequence) cannot be read (it is missing while the file holds 2 "
+        "records)")
 
 
 def test_records_for_other_weights_only_are_no_records(app, served, tmp_path):
@@ -565,6 +578,7 @@ def test_an_earlier_schema_ledger_is_not_read_and_shows_nothing(app, served):
 
     assert body["state"] == "ledger_not_read"
     assert body["records"] == [] and body["records_not_shown"] == 0
+    assert body["unreadable_records"] == []      # the whole file's state (K8-6e.1)
     problem = body["ledger"]["problem"]
     assert problem.startswith("evaluations.json is ledger schema 2")
     assert "evaluations.v2.json" in problem and "re-measure with this revision" in problem
@@ -586,7 +600,10 @@ def test_a_damaged_ledger_is_not_read(app, served, damage, says):
     body = _get(app)
 
     assert body["state"] == "ledger_not_read"
-    assert body["records"] == []
+    # A file unreadable as a whole is its own state (K8-6e.1): no record of it
+    # is listed as unreadable, and nothing is recovered from it.
+    assert body["records"] == [] and body["unreadable_records"] == []
+    assert body["records_not_shown"] == 0
     assert body["ledger"]["problem"].startswith("evaluations.json")
     assert says in body["ledger"]["problem"]
     assert str(checkpoint.parent) not in json.dumps(body)
@@ -631,7 +648,8 @@ def test_an_unopenable_ledger_names_no_directory_whatever_its_name(
 
 
 # ---------------------------------------------------------------------------
-# 5. A record of the wrong shape is counted, not shown, never a 500
+# 5. A record of the wrong shape is listed in unreadable_records with its reason,
+#    never shown as a result, never a 500
 # ---------------------------------------------------------------------------
 def _set(path, value):
     def edit(record):
@@ -697,19 +715,56 @@ MALFORMED = {
     "sequence zero": _set(("registration", "sequence"), 0),
     "report digest not hex": _set(("source_artifact_digest",), "e" * 63),
     "no scoring digest": _delete("scoring_semantics_digest"),
+    "scoring a list": _set(("scoring",), []),
+    "environment a string": _set(("environment",), "x"),
+    "dataset_record a number": _set(("dataset_record",), 3),
 }
 
 
+#: The reasons some edits above are listed with (K8-6e.1), pinned word for
+#: word: the refused field's path in the ledger record (never the API view's
+#: name for it) and what is wrong, never the value.
+MALFORMED_REASONS = {
+    "a metric as text": "metrics.pooled_mrr: Input should be a valid number",
+    "no cohort digest": "cohort_digest: missing",
+    "registration with no sequence": "registration.sequence: missing",
+    "sequence zero": "registration.sequence: Input should be greater than or equal to 1",
+    "report digest not hex": ("source_artifact_digest: String should match pattern "
+                              "'^[0-9a-f]{64}$'"),
+    "a device neither CUDA nor CPU": "the regime's device is neither CUDA nor CPU",
+    "determinism not a boolean": "the regime's deterministic_algorithms is not a boolean",
+    "exclusions do not add up to n_excluded": (
+        "cohort.counts: the exclusion counts do not add up to n_excluded"),
+    "scoring a list": "scoring.mode: missing; scoring.score_semantics: missing",
+    "environment a string": "environment.facts.gpu: missing",
+    "dataset_record a number": "dataset_record.origin: missing",
+    "corroborating reports not a list": "its corroborating_reports is not a list",
+    "r10 null": ("r10.training.evidence: missing; r10.training.disease_overlap: missing; "
+                 "r10.training.phenotype_set_overlap: missing; 3 more"),
+}
+UNREADABLE_KEYS = {"index", "sequence", "source_artifact_digest", "run_id", "reason"}
+
+
 @pytest.mark.parametrize("name", sorted(MALFORMED))
-def test_a_malformed_record_for_these_weights_is_counted_not_shown(app, served, tmp_path,
-                                                                   name, caplog):
+def test_a_malformed_record_for_these_weights_is_listed_with_its_reason_not_shown(
+    app, served, tmp_path, name, caplog
+):
     """Each edit makes the record one registration never writes. Catches a view
     that shows it half-read, and one that raises: the route would 500 and the
-    model status with it."""
+    model status with it. K8-6e.1 (R3): it is listed in ``unreadable_records``
+    at index 0 with a one-line reason of 1 to 300 characters naming no value,
+    each refused field by its path in the ledger record (a reason that named
+    the view's path, "gpu: missing" for a record whose ``environment`` is
+    text, would send the operator to a key the file does not have); its sequence is null exactly where the edit took it, its report digest
+    null exactly where the edit broke it, and its run is the one it names;
+    ``records_not_shown`` counts it, and the server log says the same line.
+    HEAD: no ``unreadable_records``, and the log carried pydantic's multi-line
+    text with the input."""
     _, _, checkpoint = served
     _register(_report_for(_sha(checkpoint)), checkpoint.parent, tmp_path / "reports")
-    _edit_ledger(checkpoint.parent / "evaluations.json",
-                 lambda ledger: MALFORMED[name](ledger["records"][0]))
+    ledger_path = checkpoint.parent / "evaluations.json"
+    written = json.loads(ledger_path.read_text())["records"][0]
+    _edit_ledger(ledger_path, lambda ledger: MALFORMED[name](ledger["records"][0]))
 
     body = _get(app)
 
@@ -717,6 +772,30 @@ def test_a_malformed_record_for_these_weights_is_counted_not_shown(app, served, 
     assert body["records"] == []
     assert body["records_not_shown"] == 1
     assert "is not shown" in caplog.text
+    (item,) = body["unreadable_records"]
+    assert set(item) == UNREADABLE_KEYS
+    assert item["index"] == 0
+    assert item["sequence"] == (
+        None if name in ("registration with no sequence", "sequence zero") else 1)
+    assert item["source_artifact_digest"] == (
+        None if name == "report digest not hex" else written["source_artifact_digest"])
+    assert item["run_id"] == written["run_id"]
+    reason = item["reason"]
+    assert 1 <= len(reason) <= 300 and reason.isprintable()
+    if name in MALFORMED_REASONS:
+        assert reason == MALFORMED_REASONS[name]
+    # Every field the reason names is a path the record registration wrote
+    # has: the key a hand edit corrects, never the view's name for it.
+    for part in reason.split("; "):
+        if ": " in part and not part.startswith(("its ", "the ")):
+            target = written
+            for step in part.split(": ", 1)[0].split("."):
+                assert isinstance(target, dict) and step in target, (part, step)
+                target = target[step]
+    assert "input_value" not in reason and "errors.pydantic.dev" not in reason
+    assert f"the ledger's record 0: {reason}" in caplog.text
+    assert "input_value" not in caplog.text
+    assert str(tmp_path) not in json.dumps(body)
 
 
 def test_the_unedited_record_is_shown_where_the_edits_are_not(app, served, tmp_path):
@@ -745,6 +824,7 @@ def test_a_malformed_record_does_not_hide_a_good_one(app, served, tmp_path):
     assert body["state"] == "records"
     assert [view["cohort"]["label"] for view in body["records"]] == ["mygene2-2026-11"]
     assert body["records_not_shown"] == 1
+    assert [item["index"] for item in body["unreadable_records"]] == [0]
 
 
 def _samples_file(path, rows):
@@ -830,6 +910,8 @@ def test_a_record_that_is_not_an_object_or_names_no_digest_is_not_these_weights(
     body = _get(app)
 
     assert len(body["records"]) == 1 and body["records_not_shown"] == 0
+    # They belong to no model (policy rev 15): no model's view lists them.
+    assert body["unreadable_records"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -1110,8 +1192,10 @@ def test_an_answer_whose_fields_contradict_its_state_is_refused():
     from src.api.routes.evaluations import LoadedModelEvaluations, _ledger_view
 
     good = dict(state="no_ledger", checkpoint_sha256="a" * 64, ledger=_ledger_view(),
-                records=[], records_not_shown=0)
+                records=[], records_not_shown=0, unreadable_records=[])
     LoadedModelEvaluations(**good)
+    item = {"index": 0, "sequence": None, "source_artifact_digest": None, "run_id": None,
+            "reason": "n_ranked: missing"}
     for wrong in (
         {"state": "records"},
         {"state": "no_records"},
@@ -1124,6 +1208,22 @@ def test_an_answer_whose_fields_contradict_its_state_is_refused():
     ):
         with pytest.raises(ValidationError):
             LoadedModelEvaluations(**{**good, **wrong})
+    # K8-6e.1: the count and the list never disagree, and a listed item makes
+    # the state "records" (never "no_records"). HEAD: no field.
+    listed = dict(good, state="records", ledger=_ledger_view(sha256="b" * 64))
+    LoadedModelEvaluations(**{**listed, "records_not_shown": 1, "unreadable_records": [item]})
+    for wrong in (
+        {"records_not_shown": 1, "unreadable_records": []},
+        {"records_not_shown": 0, "unreadable_records": [item]},
+        {"records_not_shown": 1, "unreadable_records": [item], "state": "no_records"},
+        {"records_not_shown": 1, "unreadable_records": [{**item, "reason": ""}]},
+        {"records_not_shown": 1, "unreadable_records": [{**item, "reason": "x" * 301}]},
+        {"records_not_shown": 1, "unreadable_records": [{**item, "index": -1}]},
+        {"records_not_shown": 1, "unreadable_records": [{**item, "sequence": 0}]},
+        {"records_not_shown": 1, "unreadable_records": [{**item, "run_id": "/srv/x"}]},
+    ):
+        with pytest.raises(ValidationError):
+            LoadedModelEvaluations(**{**listed, **wrong})
 
 
 # ---------------------------------------------------------------------------
@@ -1334,3 +1434,184 @@ def test_reading_a_schema_3_ledger_shows_its_records_as_merged_and_leaves_its_by
     (view,) = body["records"]
     assert (view["run_id"], view["historical_overlap"], view["n_corroborating"]) == (None, [], 0)
     assert path.read_bytes() == before
+
+
+# ---------------------------------------------------------------------------
+# 9. Records the shared check cannot read: listed by every reader, each with
+#    its reason (K8-6e.1, R3; policy rev 15 and rev 16)
+# ---------------------------------------------------------------------------
+def _operator_entry(tmp_path, checkpoint, digest):
+    """What Models' operator view and the Diagnosis card read for the served
+    checkpoint, through the shared model list (`model_list.read_recorded`): the
+    checkpoint placed in a workspace's run layout by a link, which the listing
+    resolves to the directory of the ledger beside it."""
+    from src.webui.components import model_list as ml
+
+    link = tmp_path / "runs" / "gatv2" / "r1" / "checkpoints" / "best.pt"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(checkpoint)
+    item = {"architecture": "gatv2", "run": "r1", "filename": "best.pt", "sha256": digest,
+            "problem": None}
+    ledgers, contest = ml.read_recorded(tmp_path, [item])
+    key = ml.item_key(item)
+    return ledgers[key], contest, ml.recorded_tests(ledgers, contest)[key]
+
+
+def _text(markup):
+    import html
+    import re
+
+    return " ".join(html.unescape(re.sub(r"<[^>]+>", " ", markup)).split())
+
+
+def test_a_mixed_ledger_lists_its_unreadable_record_the_same_way_in_every_reader(
+    app, served, tmp_path, monkeypatch
+):
+    """The mixed ledger of B rev 6 §3.5 (iv) (R3): a Mode C, a Mode D and a
+    disease record (sequences 1-3), then a disease record that lost
+    ``n_ranked`` (sequence 4, its own report digest). The API shows records
+    1, 2 and 3 and lists the fourth at index 3 with "#4", its digest, its run
+    and "n_ranked: missing"; the request leaves the ledger's bytes as they
+    were. Models' operator details (through the shared listing) and its
+    read-only view (through this route) list the same item and never point to
+    the server's log; the row and the Diagnosis card read "Recorded tests: 3 ·
+    1 not readable". Registering a new disease, C and D report appends records
+    5, 6 and 7, and the unreadable record stays as written at index 3. HEAD: no
+    ``unreadable_records``, "the server's log says why", and the row counted
+    4 recorded tests."""
+    from src.webui.components import diagnosis_card
+    from src.webui.components import models_page as mp
+    from src.webui.components import renderers as r
+    from tests.unit.test_evaluation_sidecar import mode_c_report, mode_d_report
+
+    _, _, checkpoint = served
+    digest = _sha(checkpoint)
+    registry = tmp_path / "reports"
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(registry))
+    digests = _report_for(digest)["manifest"]["artifact_digests"]
+    reports = [mode_c_report(artifact_digests=digests), mode_d_report(artifact_digests=digests),
+               _report_for(digest), _report_for(digest, batch_size=8)]
+    results = [_register(report, checkpoint.parent, registry) for report in reports]
+    assert [result.outcome for result in results] == ["registered"] * 4
+    ledger_path = checkpoint.parent / "evaluations.json"
+    _edit_ledger(ledger_path, lambda ledger: ledger["records"][3].pop("n_ranked"))
+    bad = json.loads(ledger_path.read_text())["records"][3]
+    before = ledger_path.read_bytes()
+
+    body = _get(app)
+
+    assert ledger_path.read_bytes() == before, "reading never edits the ledger"
+    assert body["state"] == "records"
+    assert [v["registration"]["sequence"] for v in body["records"]] == [1, 2, 3]
+    assert [v["mode"] for v in body["records"]] == ["C", "D", "disease"]
+    assert body["records_not_shown"] == 1
+    assert body["unreadable_records"] == [{
+        "index": 3, "sequence": 4, "source_artifact_digest": bad["source_artifact_digest"],
+        "run_id": bad["run_id"], "reason": "n_ranked: missing"}]
+
+    # Models, operator: the shared listing classified the records once.
+    entry, contest, recorded = _operator_entry(tmp_path, checkpoint, digest)
+    assert entry["state"] == "records" and len(entry["records"]) == 3
+    assert entry["unreadable"] == body["unreadable_records"]
+    operator, count, _contested, unreadable = mp._records_for_item(entry, {"contest": contest})
+    assert (count, unreadable) == (3, 1)
+    # Models, read-only: the route's answer.
+    readonly = mp.readonly_parts({"readonly": True, "answer": body, "served_sha": digest,
+                                  "status_at": "now", "contest": {}})["records"]
+    row = f"3 #4 {bad['source_artifact_digest'][:12]} n_ranked: missing"
+    for shown in (operator, readonly):
+        said = _text(shown)
+        assert ("▲ 1 record for these weights cannot be read as a result. The ledger keeps it "
+                "as written.") in said
+        assert "Index Registration Report Reason " + row in said
+        assert "server's log" not in said and "not shown:" not in said
+        assert 'aria-label="Records that cannot be read"' in shown
+        assert str(tmp_path) not in shown
+    # The row and the Diagnosis card count results only, and name the rest.
+    assert (recorded.count, recorded.unreadable) == (3, 1)
+    assert r.recorded_tests_text(recorded).startswith("Recorded tests: 3 · 1 not readable")
+    card = _text(diagnosis_card._recorded_html({"recorded": recorded._asdict()}, grey=False))
+    assert card.startswith("Recorded tests: 3 · 1 not readable")
+
+    # Appending goes on past it; the unreadable record stays as written.
+    more = [_report_for(digest, batch_size=16), mode_c_report(artifact_digests=digests,
+                                                              batch_size=16),
+            mode_d_report(artifact_digests=digests, batch_size=2)]
+    appended = [_register(report, checkpoint.parent, registry) for report in more]
+    assert [result.record["registration"]["sequence"] for result in appended] == [5, 6, 7]
+    assert json.loads(ledger_path.read_text())["records"][3] == bad
+    after = _get(app)
+    assert [v["registration"]["sequence"] for v in after["records"]] == [1, 2, 3, 5, 6, 7]
+    assert after["unreadable_records"] == body["unreadable_records"]
+
+
+def test_a_reason_names_the_field_never_its_value(app, served, tmp_path):
+    """Reason safety (K8-6e.1): a device set to a server path of over 500
+    characters with a lone surrogate reads "the regime's device is neither CUDA
+    nor CPU", the path nowhere in the answer; a metric whose key holds a lone
+    surrogate and runs long gives a reason of at most 300 characters that
+    encodes as UTF-8; a run id set to a path is named as a field, not echoed.
+    HEAD: the values were echoed into the server log and no item was listed."""
+    _, _, checkpoint = served
+    digest = _sha(checkpoint)
+    for _ in range(3):
+        _register(_report_for(digest), checkpoint.parent, tmp_path / "reports")
+    path = str(tmp_path / ("secret-dir-" + "d" * 500) / "case-0042") + "\udc80"
+    key = "pooled\udc80" + "k" * 400
+
+    def edit(ledger):
+        ledger["records"][0]["regime"]["device"] = path
+        ledger["records"][1]["metrics"][key] = "0.5"
+        ledger["records"][2]["run_id"] = path
+
+    _edit_ledger(checkpoint.parent / "evaluations.json", edit)
+
+    response = _client(app).get(ROUTE)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    first, second, third = body["unreadable_records"]
+    assert first["reason"] == "the regime's device is neither CUDA nor CPU"
+    # pydantic carries the key it refuses without the lone surrogate (as
+    # replacement characters); either way the line is bounded and encodes.
+    assert len(second["reason"]) == 300 and second["reason"].startswith("metrics.pooled")
+    assert second["reason"].endswith("...") and "\udc80" not in second["reason"]
+    second["reason"].encode("utf-8")
+    assert third["reason"] == (
+        "its run identity cannot be read: its run_id is not a run directory's name")
+    assert third["run_id"] is None
+    for form in ("secret-dir", "case-0042", str(tmp_path)):
+        assert form not in response.text
+    # The pages show the same items: Models' operator details (the shared
+    # listing) and its read-only view (this answer) name no path either.
+    from src.webui.components import models_page as mp
+
+    entry, contest, _recorded = _operator_entry(tmp_path, checkpoint, digest)
+    operator = mp._records_for_item(entry, {"contest": contest})[0]
+    readonly = mp.readonly_parts({"readonly": True, "answer": body, "served_sha": digest,
+                                  "status_at": "now", "contest": {}})["records"]
+    for shown in (operator, readonly):
+        assert "the regime&#x27;s device is neither CUDA nor CPU" in shown
+        for form in ("secret-dir", "case-0042", str(tmp_path)):
+            assert form not in shown
+
+
+def test_an_unreadable_historical_record_is_listed_with_no_run(app, served, tmp_path):
+    """(viii) (K8-6e.1 on K8-6r.2's record model): an unreadable record of a
+    schema 3 file, written before each run had its own record, is listed with
+    ``run_id`` null; it is never shown as a result. HEAD: no item."""
+    from src.evaluation.sidecar import build_record, empty_ledger, write_ledger
+
+    _, _, checkpoint = served
+    record = build_record(_report_for(_sha(checkpoint)), "e" * 64)
+    record.update(registration={"sequence": 1, "registered_at": WHEN},
+                  corroborating_reports=[], metrics=[0.5])
+    path = checkpoint.parent / "evaluations.json"
+    write_ledger(path, {**empty_ledger(), "schema_version": 3, "records": [record]}, None)
+
+    body = _get(app)
+
+    assert body["records"] == []
+    assert body["unreadable_records"] == [{
+        "index": 0, "sequence": 1, "source_artifact_digest": "e" * 64, "run_id": None,
+        "reason": "metrics: Input should be a valid dictionary"}]

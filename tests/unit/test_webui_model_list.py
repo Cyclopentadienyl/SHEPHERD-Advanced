@@ -257,18 +257,28 @@ def test_contested_and_unchecked_are_counted_apart_from_the_report_store(root, m
     list) is counted apart and never as agreeing, and never hides a known
     difference (M5-3 review EVAL-3: one uncheckable record turned
     "2 · 1 contested" into "3 · contested state not checked"). The row keeps
-    one " · " (the skill's §5)."""
+    one " · " (the skill's §5). The four records are real ones, registered in
+    order, since the listing reads every record through the readers' one
+    listing (K8-6e.1): only records that read as results are counted."""
     import src.evaluation.report_store as report_store
     import src.evaluation.sidecar as sidecar
     from src.webui.components import renderers as r
+    from tests.unit.test_evaluation_sidecar import cohort_version, registered_report
 
     sha = root["shas"]["model-12.pt"]
-    records = [{"checkpoint_digest": sha, "cohort_role": "research_selection",
-                "cohort_digest": d, "measurement_semantics_digest": "a" * 64}
-               for d in ("1" * 64, "1" * 64, "2" * 64, "3" * 64)]
-    monkeypatch.setattr(sidecar, "read_ledger", lambda path: ({"records": records}, "x" * 64))
-    monkeypatch.setattr(sidecar, "records_for", lambda ledger, digest: ledger["records"]
-                        if digest == sha else [])
+    ledger = sidecar.empty_ledger()
+    for n, digest in enumerate(("1" * 64, "1" * 64, "2" * 64, "3" * 64), start=1):
+        report = registered_report(
+            artifact_digests={"checkpoint": sha, "samples": "5" * 64, "node_features": "2" * 64,
+                              "edge_indices": "3" * 64, "num_nodes": "4" * 64,
+                              "kg": "1" * 64},
+            split="research_selection",
+            cohort_version=cohort_version(role="research_selection", manifest_sha256=digest))
+        record = sidecar.build_record(report, f"{n:x}" * 64)
+        _, ledger = sidecar.append_record(ledger, record,
+                                          run_id=f"20261016T120000Z-{sha[:12]}-0000000{n}",
+                                          registered_at="2026-10-16T12:00:00Z")
+    monkeypatch.setattr(sidecar, "read_ledger", lambda path: (ledger, "x" * 64))
 
     class Version:
         def __init__(self, digest):
@@ -315,6 +325,14 @@ def test_contested_and_unchecked_are_counted_apart_from_the_report_store(root, m
     result = ml.recorded_tests_for(root["workspace"], [item])[ml.item_key(item)]
     assert r.recorded_tests_text(result) == (
         "Recorded tests: 4 · comparison incomplete for 1")
+    # K8-6e.1: a record that loses a field is counted apart, never as a result,
+    # and never in a group's count; the others still read.
+    del ledger["records"][0]["n_ranked"]
+    states["1" * 64] = "contested"
+    result = ml.recorded_tests_for(root["workspace"], [item])[ml.item_key(item)]
+    assert (result.count, result.contested, result.unchecked, result.unreadable) == (3, 1, 1, 1)
+    assert r.recorded_tests_text(result) == (
+        "Recorded tests: 3 · 1 not readable; runs differ for 1; comparison incomplete for 1")
 
 
 # --------------------------------------------------------------------------- the Load

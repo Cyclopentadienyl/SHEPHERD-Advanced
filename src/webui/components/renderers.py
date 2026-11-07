@@ -397,35 +397,42 @@ class RecordedTests(NamedTuple):
     """What a checkpoint's ledger records for its weights, as a state (never a
     number of a result): `state` is ``records``, ``none`` (the ledger holds no
     record for these weights), ``no_ledger`` or ``not_read``; `count` the
-    records for these weights; `contested` how many of them are in a condition
-    group whose runs differ in their cohort version's report store, and
-    `unchecked` how many whose comparison there is incomplete, counted apart, so
-    a known difference is never hidden by a comparison that is incomplete
-    (`contested` None: no comparison was read). Descriptions only: they hide,
-    order or refuse nothing (policy rev 16)."""
+    records for these weights that read as results; `contested` how many of
+    them are in a condition group whose runs differ in their cohort version's
+    report store, and `unchecked` how many whose comparison there is
+    incomplete, counted apart, so a known difference is never hidden by a
+    comparison that is incomplete (`contested` None: no comparison was read);
+    `unreadable` how many records for these weights cannot be read as results
+    (K8-6e.1), never counted among them. Descriptions only: they hide, order
+    or refuse nothing (policy rev 16)."""
 
     state: str
     count: int = 0
     contested: Optional[int] = None
     problem: Optional[str] = None
     unchecked: int = 0
+    unreadable: int = 0
 
 
 def recorded_tests_text(recorded: Optional[RecordedTests]) -> str:
-    """"Recorded tests: 3 · runs differ for 1; comparison incomplete for 1":
-    states, never a number of a result; a record whose comparison is
-    incomplete is never shown as agreeing. One " · " (the skill's §5)."""
+    """"Recorded tests: 3 · 1 not readable; runs differ for 1; comparison
+    incomplete for 1": states, never a number of a result; a record that
+    cannot be read is never counted as one (K8-6e.1) and a record whose
+    comparison is incomplete is never shown as agreeing. "none in ledger"
+    only when the ledger holds neither. One " · " (the skill's §5)."""
     if recorded is None:
         return "Recorded tests: not read"
     if recorded.state == "no_ledger":
         return "Recorded tests: no ledger"
     if recorded.state == "not_read":
         return "Recorded tests: ledger not readable"
-    if recorded.state == "none" or recorded.count == 0:
+    if recorded.state == "none" or (recorded.count == 0 and not recorded.unreadable):
         return "Recorded tests: none in ledger"
     contested = recorded.contested or 0
     unchecked = recorded.count if recorded.contested is None else recorded.unchecked
     notes = []
+    if recorded.unreadable:
+        notes.append(f"{recorded.unreadable} not readable")
     if contested:
         notes.append(f"runs differ for {contested}")
     if unchecked:

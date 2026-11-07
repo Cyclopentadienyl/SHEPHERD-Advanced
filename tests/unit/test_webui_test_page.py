@@ -931,6 +931,60 @@ def test_a_run_without_a_report_says_none_was_kept(site):
     assert "No report was kept in this run directory" in tp.result_html(reports, interrupted.name, [])
     assert tp.register_state({"access": {"allowed": True}}, reports, interrupted.name) == (
         False, "Disabled: no report was kept in this run.")
+    roots = tp.path_roots()
+    row = _plain(tp._row_state(run, roots))
+    assert row.startswith("no report kept: there is no <registry>/") and "report.json" in row
+    assert str(site.registry) not in row
+
+
+def _plain(html):
+    import html as html_lib
+
+    return " ".join(html_lib.unescape(re.sub(r"<[^>]+>", " ", html)).split())
+
+
+@pytest.mark.parametrize("damage", ["does not parse", "other bytes"])
+def test_a_report_json_that_is_there_is_never_said_to_be_absent(site, damage):
+    """K8-6e.1 (policy rev 16; the webui-design skill keeps "cannot be read"
+    apart from absent): a run directory whose report.json is there but is not
+    a report, or holds bytes other than the run published, keeps no report
+    under the publication contract (``not_kept``), and the Test page's row and
+    Result say why in the registration helper's own words, redacted, never
+    "report.json ... is not there". HEAD: both said the fixed sentence "is not
+    there (an interrupted or refused run)", and the Result then contradicted
+    itself with the comparison's "could not be read"."""
+    from src.evaluation.registration import report_state
+
+    roots = tp.path_roots()
+    if damage == "does not parse":
+        added = _unreadable_copy(site)
+        reports = tp.read_reports(LABEL)
+        run = tp.find(reports["runs"], "run_id", added)
+        wanted = "report.json is not a report: it does not parse as UTF-8 JSON"
+    else:
+        # The refined state (`_refined_state`): the bytes the list read, then
+        # replaced before the registration's helper read them again.
+        reports = tp.read_reports(LABEL)
+        run = tp.find(reports["runs"], "run_id", site.run_id)
+        report = site.reports / site.run_id / "report.json"
+        report.write_bytes(report.read_bytes() + b"\n")
+        fresh = report_state(report, expected_sha256=run["state"]["report_sha256"])
+        run = {**run, "record": None,
+               "state": {**run["state"], "kept": fresh.kept, "why_kept": fresh.why_kept}}
+        reports = {**reports, "runs": [run]}
+        added = site.run_id
+        wanted = "the run's report was replaced or changed"
+    assert run["state"]["kept"] == "not_kept"
+    row = _plain(tp._row_state(run, roots))
+    result = _plain(tp.result_html(reports, added, roots))
+    for text in (row, result):
+        assert wanted in text, text
+        assert "is not there" not in text
+        assert "<registry>/" in text and str(site.registry) not in text
+    assert row.startswith("no report kept: ")
+    assert "No report was kept in this run directory: " in result
+    assert tp.register_state({"access": {"allowed": True}}, reports, added) == (
+        False, "Disabled: no report was kept in this run.")
 
 
 def test_start_waits_for_every_choice_and_says_why(site, monkeypatch):
