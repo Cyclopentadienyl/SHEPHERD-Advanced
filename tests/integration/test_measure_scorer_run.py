@@ -87,8 +87,10 @@ def _measure_once(cohort, *mode):
     store = sorted((cohort.version.directory / "reports").iterdir())
     runs = [path for path in store if RUN_ID.fullmatch(path.name)]
     assert len(runs) == 1, runs
-    # Beside the run directory, only the version's usage history (since M5-1).
-    assert [path.name for path in store if path not in runs] == ["usage.jsonl"], store
+    # Beside the run directory, only the version's usage history (since M5-1)
+    # and its lock file, kept after each append (since K8-6r.1).
+    assert [path.name for path in store if path not in runs] == [
+        "usage.jsonl", "usage.jsonl.lock"], store
     run_dir = runs[0]
 
     def read(path: Path):

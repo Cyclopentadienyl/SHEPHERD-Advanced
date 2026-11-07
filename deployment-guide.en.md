@@ -1442,9 +1442,14 @@ stop the next registration of another report.
   path. With `--checkpoint-dir <dir>` instead, `--show` reads the `evaluations.json` inside that
   directory, which for a directory of links is not the one the service reads. An empty answer
   means this ledger holds no result for those weights, not that they were never evaluated.
-- **One writer at a time.** A registration that finds the ledger changed since it read it is
-  refused rather than overwriting; this is not a lock, so do not register into one directory from
-  two places at once.
+- **Registrations into one ledger take turns.** A registration holds the ledger's lock
+  (`evaluations.json.lock` beside it, kept after use) from reading the ledger to writing it and
+  its usage-history entry, across processes. One that waits more than 10 s is refused as busy:
+  nothing was written this time, the report stays kept, and you register it again (exit 3 for
+  `--record`, 1 for `record_evaluation.py`). If the ledger was written but the usage history
+  was not, it says "the usage history was not written" with the reason, and the record stands.
+  A ledger changed by something that takes no lock, such as a hand edit, is still refused
+  rather than overwritten.
 - Only a **registered cohort version's** report is recorded; a report from `--split` is not.
 
 ### Exit codes
@@ -1639,7 +1644,11 @@ and says so on a `NOTE:` line. Every entry starts a line of its own: an append t
 (a crash, a power loss) leaves a broken last line, which the next entry closes rather than
 continues, and which a reader names as a line that is not an entry. An append whose write fails
 is taken back, so it leaves no part of its entry; if even that fails, the error says the end of
-the file may hold part of it.
+the file may hold part of it. Each append to `usage.jsonl` or `notes.jsonl` holds a lock file beside
+it (`usage.jsonl.lock`, `notes.jsonl.lock`), kept after use: do not remove it. Another writer waits
+up to 10 s for it. Past that, nothing is written to that file: a note asks you to add it again, a
+registration stands and says the usage history was not written, and a measurement stops as above
+(exit 1) with the command that registers it later.
 
 **New `measure_scorer.py` options.** They are there for M5's job runner, and you can use them
 by hand too, in a shell where the GPU lock is configured (§4.11). `--expect-version-sha256` and `--outcome` apply to `--cohort` runs only (exit 2

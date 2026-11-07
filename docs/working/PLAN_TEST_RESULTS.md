@@ -219,8 +219,10 @@ last one says what M4 changed.
   the harness's random streams, not CUDA's arithmetic, so a refusal is "an instruction to look,
   not a proof of a defect" (the module docstring at `1cab39f`). Since R2 a measurement records no
   seed, and the ledger's documentation rests the point on the regime fields alone.
-- **Writing.** It is single-writer: an atomic replace with best-effort stale-write detection,
-  and no locking.
+- **Writing.** An atomic replace with stale-write detection. It was single-writer, with no
+  locking, until K8-6r.1; since then a registration holds the ledger's lock
+  (`evaluations.json.lock` beside it) across processes from its read to its write, and the
+  stale-write check stays as a second guard.
 - **Schema.** A file whose `schema_version` is not 1 is refused, with the instruction to read it
   with the revision that wrote it "rather than reinterpreting its fields under new rules"
   (`read_ledger`). Since R2 the version is 2, so a file written before R2 is refused the same way.
@@ -237,7 +239,8 @@ last one says what M4 changed.
   registered cohort version's report is recorded. `register_report`
   (`src/evaluation/registration.py`) is the one registration function, used by
   `measure_scorer.py --record` and `record_evaluation.py --report`, and parses and identifies the
-  report and the ledger each from one read (BACKLOG item 18). The ledger stays single-writer, and
+  report and the ledger each from one read (BACKLOG item 18). The ledger stayed single-writer
+  until K8-6r.1, which made registrations into one ledger take turns through its lock; it
   sits beside the checkpoint's resolved path on every write path (`--record`, and
   `record_evaluation.py` with `--checkpoint FILE` or `--checkpoint-dir DIR`) and on the read
   side, so a symlinked checkpoint's ledger is beside the link's target. The read-only route

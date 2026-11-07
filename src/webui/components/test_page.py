@@ -2166,6 +2166,7 @@ def add_note(reports: Mapping[str, Any], run_id: Any, who: Any, what: Any, reque
     report's key in the store (`add_investigation_note`). It lifts nothing."""
     from src.api.services.server_lists import ServerListRefused, resolve_cohort_version
     from src.evaluation.report_store import add_investigation_note
+    from src.utils.file_lock import FileLockBusy
 
     access = operator_access(request)
     if not access.allowed:
@@ -2178,6 +2179,12 @@ def add_note(reports: Mapping[str, Any], run_id: Any, who: Any, what: Any, reque
         add_investigation_note(version, tuple(run["key"]), who=str(who or ""), what=str(what or ""))
     except ServerListRefused as exc:
         return False, said(exc, "Nothing was written.")
+    except FileLockBusy as exc:
+        # Another writer held the notes file (K8-6r.1): busy, not refused for
+        # good. The note stays in its box, so the operator can add it again.
+        return False, (f"The note was not kept: another writer held the notes file for the "
+                       f"{exc.grace:g} s this one waited. Nothing was written this time; add it "
+                       "again.")
     except (OSError, ValueError) as exc:
         return False, str(exc)
     return True, "The note was kept with this key's reports. The block stays until the reports agree."

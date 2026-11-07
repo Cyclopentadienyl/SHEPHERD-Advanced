@@ -1883,6 +1883,8 @@ class TrainingManager:
         read once, as the run ends, and the summary says them as that moment's
         reading: a report registered later reads so in the Test page's Result,
         not here (the M5 close-out, 2026-10-25)."""
+        from src.evaluation.registration import USAGE_HISTORY_NOT_WRITTEN
+
         state = self._report_state(report, checkpoint=Path(job.inputs["checkpoint"]),
                                    expected_sha256=published)
         kept = _STATE_ANSWER.get(state.kept)
@@ -1919,7 +1921,11 @@ class TrainingManager:
                      + ("" if why.endswith(".") else ".")
                      + " The record found names the same report bytes, which an earlier run "
                        "of this measurement registered; it says nothing of this run's refusal.")
-        elif registered is not True and isinstance(why, str) and why:
+        elif isinstance(why, str) and why and (
+                registered is not True or USAGE_HISTORY_NOT_WRITTEN in why):
+            # Not registered: the run's own why. Registered, but the usage
+            # history was not written (K8-6r.1; policy rev 16): the run's own
+            # words say so, the record standing.
             said += f" The run said of its registration: {why}"
             said += "" if why.endswith(".") else "."
         if run_outcome is not None and run_outcome.get("complete") is False:

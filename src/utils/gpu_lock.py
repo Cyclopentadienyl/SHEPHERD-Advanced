@@ -33,7 +33,9 @@ like the rest of the backend; nothing here imports a POSIX-only module on
 Windows). The holder keeps it for its whole working life and gives it back
 when it ends normally or by an exception (`release`); when it cannot (SIGTERM,
 SIGKILL, `os._exit`), the kernel releases it once the last descriptor of that
-open file closes. Nothing has to be cleaned up for the next job to start.
+open file closes. Nothing has to be cleaned up for the next job to start. The
+platform primitives are the shared ones of `src/utils/file_lock.py` (K8-6r.1),
+which the ledger and report store locks use too.
 
 **The holder's description** (`<lock file>.json`: job type, command, pid, host,
 start time) is written after the lock is taken and removed before it is
@@ -71,7 +73,6 @@ Module: src/utils/gpu_lock.py
 """
 from __future__ import annotations
 
-import errno
 import json
 import logging
 import os
@@ -85,16 +86,10 @@ from pathlib import Path
 from typing import Any
 
 from src.config import server_settings
+from src.utils.file_lock import open_lock_file as _open_lock_file
+from src.utils.file_lock import try_lock as _try_lock
+from src.utils.file_lock import unlock as _unlock
 from src.utils.file_modes import publish_bytes
-
-if sys.platform == "win32":  # pragma: no cover - the backend is untested on Windows
-    import msvcrt
-
-    fcntl = None
-else:
-    import fcntl
-
-    msvcrt = None
 
 logger = logging.getLogger(__name__)
 
@@ -230,49 +225,6 @@ def describe_holder(holder: Mapping[str, Any] | None) -> str:
 # ---------------------------------------------------------------------------
 # The lock itself
 # ---------------------------------------------------------------------------
-def _busy_errnos() -> tuple:
-    return (errno.EACCES, getattr(errno, "EDEADLOCK", errno.EDEADLK), errno.EDEADLK)
-
-
-def _try_lock(fd: int) -> bool:
-    """Take the lock on `fd` without waiting: True when taken, False when another
-    open file holds it. Any other failure is raised."""
-    if fcntl is not None:
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            return False
-        return True
-    os.lseek(fd, 0, os.SEEK_SET)  # pragma: no cover - Windows
-    try:  # pragma: no cover - Windows
-        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
-    except OSError as exc:  # pragma: no cover - Windows
-        if exc.errno in _busy_errnos():
-            return False
-        raise
-    return True  # pragma: no cover - Windows
-
-
-def _unlock(fd: int) -> None:
-    if fcntl is not None:
-        fcntl.flock(fd, fcntl.LOCK_UN)
-    else:  # pragma: no cover - Windows
-        os.lseek(fd, 0, os.SEEK_SET)
-        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
-
-
-def _open_lock_file(path: Path) -> int:
-    """The lock file opened (created if absent, with the mode `open()` would
-    give), its descriptor close-on-exec. Read-only when this account may not
-    write it: a lock needs only an open file."""
-    try:
-        fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o666)
-    except PermissionError:
-        fd = os.open(path, os.O_RDONLY)
-    os.set_inheritable(fd, False)
-    return fd
-
-
 class GpuLock(AbstractContextManager):
     """The deployment's GPU lock as one process holds it.
 

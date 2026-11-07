@@ -21,6 +21,11 @@ kept in a store by `tests/fixtures/report_store.py`:
   only, refuses a link in place of the file, and names a damaged line; an
   entry after an interrupted append starts its own line, and a failed write is
   taken back (or says it could not be);
+- **one append at a time per store file** (K8-6r.1): one writer's failed append
+  never cuts another's line, across threads and processes and across two
+  ledgers sharing one version's usage history; the lock file is kept, a busy
+  lock refuses after the grace, notes and usage history lock apart, and a lock
+  file that is a link is refused (by name, and not followed when swapped in);
 - a report too deeply nested to build leaves its key "cannot be checked";
 - the registry's helpers it rests on: run ids, the store directory's checks.
 
@@ -32,6 +37,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -555,6 +561,302 @@ def test_an_appended_file_that_is_a_link_is_refused(tmp_path):
                             report_sha256="e" * 64, checkpoint_sha256="c" * 64,
                             outcome="registered", sequence=1, at=WHEN)
     assert target.read_text() == ""
+
+
+# ---------------------------------------------------------------------------
+# One append at a time per store file (K8-6r.1, Decision 4)
+# ---------------------------------------------------------------------------
+POSIX = pytest.mark.skipif(sys.platform == "win32", reason="flock and spawn are tested on POSIX")
+
+
+def _seeded_usage(tmp_path):
+    """A version whose usage history holds one entry (run "seed")."""
+    first = _stored(tmp_path)
+    version = version_of(first)
+    record_registration(version, run_id="seed", report_sha256="0" * 64,
+                        checkpoint_sha256="0" * 64, outcome="registered", sequence=1, at=WHEN)
+    return version, first.parents[1] / "usage.jsonl"
+
+
+def test_one_writers_failed_append_never_cuts_another_writers_line_threads(
+    tmp_path, monkeypatch
+):
+    """F-g, two threads: writer A has read the file's size when writer B
+    appends to the same ``usage.jsonl``; A's write then fails (ENOSPC, after
+    part of its entry) and A undoes it. With the lock B waits until A has cut
+    back its own part and let go, then appends: the file ends with B's line
+    whole and nothing of A's, and A's error names the failed write. (Before
+    K8-6r.1, B returned success and A's undo cut B's line.)"""
+    import os
+    import threading
+
+    version, usage = _seeded_usage(tmp_path)
+    seeded = usage.read_bytes()
+    inode = usage.stat().st_ino
+    sized, b_done = threading.Event(), threading.Event()
+    real_write, real_truncate = os.write, os.ftruncate
+    a_thread: list = []
+
+    def ours(fd):
+        return threading.current_thread() in a_thread and os.fstat(fd).st_ino == inode
+
+    def write(fd, data):
+        if not ours(fd):
+            return real_write(fd, data)
+        sized.set()
+        b_done.wait(1.0)
+        real_write(fd, bytes(data[:10]))
+        raise OSError(28, "No space left on device")
+
+    def ftruncate(fd, length):
+        if ours(fd):
+            b_done.wait(1.0)
+        return real_truncate(fd, length)
+
+    failures: dict = {}
+
+    def writer_a():
+        try:
+            record_test_run(version, run_id="A", report_sha256="a" * 64,
+                            checkpoint_sha256="a" * 64, metrics={"hits@1": 0.5}, n_ranked=8,
+                            deterministic=True, device="cpu", record_requested=False,
+                            mode="disease", at=WHEN)
+        except OSError as exc:
+            failures["A"] = exc
+
+    def writer_b():
+        try:
+            assert sized.wait(30)
+            record_registration(version, run_id="B", report_sha256="b" * 64,
+                                checkpoint_sha256="b" * 64, outcome="registered",
+                                sequence=2, at=WHEN)
+        except Exception as exc:  # noqa: BLE001 - reported by the assertion below
+            failures["B"] = exc
+        finally:
+            b_done.set()
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(os, "write", write)
+        patch.setattr(os, "ftruncate", ftruncate)
+        a, b = threading.Thread(target=writer_a), threading.Thread(target=writer_b)
+        a_thread.append(a)
+        a.start()
+        b.start()
+        a.join(30)
+        b.join(30)
+    assert not a.is_alive() and not b.is_alive(), "a writer hung"
+
+    assert set(failures) == {"A"} and "No space left on device" in str(failures["A"])
+    assert usage.read_bytes().startswith(seeded)
+    entries, problems = read_usage_history(version)
+    assert [e["run_id"] for e in entries] == ["seed", "B"] and problems == []
+
+
+@POSIX
+def test_one_writers_failed_append_never_cuts_another_writers_line_processes(tmp_path):
+    """F-g, two separate processes (`tests/fixtures/concurrent_writers.py`):
+    the same interleaving, A's write and undo each waiting for B. B's line
+    stays whole, nothing of A's is left, and A says its write failed."""
+    from tests.fixtures.concurrent_writers import (
+        CONTEXT,
+        answers_from,
+        append_registration,
+        failing_append,
+        processes,
+    )
+
+    version, usage = _seeded_usage(tmp_path)
+    seeded = usage.read_bytes()
+    registry, label = str(tmp_path / "registry"), version.manifest["label"]
+    sized, b_done, queue = CONTEXT.Event(), CONTEXT.Event(), CONTEXT.Queue()
+    with processes((failing_append, ("A", registry, label, sized, [b_done], queue)),
+                   (append_registration, ("B", registry, label, "B", sized, b_done, queue))):
+        answers = {a["name"]: a for a in answers_from(queue, 2)}
+
+    assert answers["A"]["outcome"] == "failed"
+    assert "No space left on device" in answers["A"]["message"]
+    assert answers["B"]["outcome"] == "appended"
+    assert usage.read_bytes().startswith(seeded)
+    entries, problems = read_usage_history(version)
+    assert [e["run_id"] for e in entries] == ["seed", "B"] and problems == []
+
+
+def _checkpoint_dir(tmp_path, name: str, weights: bytes):
+    directory = tmp_path / "runs" / "shepherd" / name / "checkpoints"
+    directory.mkdir(parents=True)
+    (directory / "best.pt").write_bytes(weights)
+    return directory
+
+
+def _report_of(tmp_path, weights: bytes, **overrides) -> Path:
+    report = registered_report(**overrides)
+    report["manifest"]["artifact_digests"]["checkpoint"] = hashlib.sha256(weights).hexdigest()
+    return store_report(tmp_path / "registry", report)
+
+
+@POSIX
+def test_two_ledgers_sharing_one_versions_usage_history(tmp_path):
+    """F-h: two checkpoints in two directories, each with its own ledger,
+    register reports of one cohort version at once (two processes) while a
+    third process appends a ``test_run`` entry: each ledger holds its own
+    record with its own sequence, and ``usage.jsonl`` holds both
+    ``registered`` entries and the ``test_run`` entry, each a whole line. Then
+    the same with the third writer's append failing after the registrations'
+    entries were written (F-g's mechanism across ledgers): their entries stay.
+    (Before K8-6r.1 that failure cut both registrations' entries.)"""
+    from src.evaluation.sidecar import read_ledger
+    from tests.fixtures.concurrent_writers import (
+        CONTEXT,
+        answers_from,
+        append_test_run,
+        failing_append,
+        processes,
+        register,
+    )
+
+    one, two = b"weights one", b"weights two"
+    first_dir, second_dir = _checkpoint_dir(tmp_path, "r1", one), _checkpoint_dir(tmp_path, "r2", two)
+    reports = [_report_of(tmp_path, one), _report_of(tmp_path, two),
+               _report_of(tmp_path, one, batch_size=8), _report_of(tmp_path, two, batch_size=8)]
+    version = version_of(reports[0])
+    registry, label = str(tmp_path / "registry"), version.manifest["label"]
+    usage = reports[0].parents[1] / "usage.jsonl"
+
+    # At once: two registrations into two ledgers and a test run.
+    start, queue = CONTEXT.Barrier(3), CONTEXT.Queue()
+    with processes((register, ("R1", registry, str(reports[0]), str(first_dir), start, None,
+                               queue)),
+                   (register, ("R2", registry, str(reports[1]), str(second_dir), start, None,
+                               queue)),
+                   (append_test_run, ("T", registry, label, "T-run", start, queue))):
+        answers = {a["name"]: a for a in answers_from(queue, 3)}
+    assert [(answers[n]["outcome"], answers[n]["sequence"], answers[n]["problem"])
+            for n in ("R1", "R2")] == [("registered", 1, None)] * 2
+    assert answers["T"]["outcome"] == "appended"
+
+    # The test-run writer's append fails after both registrations wrote theirs.
+    sized, done_1, done_2 = CONTEXT.Event(), CONTEXT.Event(), CONTEXT.Event()
+    queue = CONTEXT.Queue()
+    with processes((register, ("R3", registry, str(reports[2]), str(first_dir), None, None,
+                               queue, sized, done_1)),
+                   (register, ("R4", registry, str(reports[3]), str(second_dir), None, None,
+                               queue, sized, done_2)),
+                   (failing_append, ("A", registry, label, sized, [done_1, done_2], queue))):
+        answers = {a["name"]: a for a in answers_from(queue, 3)}
+    assert [(answers[n]["outcome"], answers[n]["sequence"], answers[n]["problem"])
+            for n in ("R3", "R4")] == [("registered", 2, None)] * 2
+    assert answers["A"]["outcome"] == "failed"
+
+    for directory, mine in ((first_dir, reports[0::2]), (second_dir, reports[1::2])):
+        records = read_ledger(directory / "evaluations.json")[0]["records"]
+        assert [(r["source_artifact_digest"], r["registration"]["sequence"]) for r in records] \
+            == [(hashlib.sha256(r.read_bytes()).hexdigest(), n) for n, r in enumerate(mine, 1)]
+    entries, problems = read_usage_history(version)
+    assert problems == [] and usage.read_bytes().endswith(b"\n")
+    assert sorted((e["kind"], e["run_id"]) for e in entries) == sorted(
+        [("test_run", "T-run")] + [("registered", r.parent.name) for r in reports])
+
+
+def _usage_lock(path: Path) -> Path:
+    return path.parents[1] / "usage.jsonl.lock"
+
+
+def _test_run(version, run_id="r"):
+    return record_test_run(version, run_id=run_id, report_sha256="a" * 64,
+                           checkpoint_sha256="a" * 64, metrics={"hits@1": 0.5}, n_ranked=8,
+                           deterministic=True, device="cpu", record_requested=False,
+                           mode="disease", at=WHEN)
+
+
+def test_an_append_holds_its_files_lock_which_is_kept(tmp_path, monkeypatch):
+    """`_append_entry`'s lock: two opens of one lock file exclude each other
+    (another holder here is a second open in this process), so an append past
+    the (patched) grace raises `FileLockBusy` naming the lock file, nothing
+    appended; the lock file is kept after use and after a failed append; and a
+    notes append and a usage append of one version do not exclude each other
+    (two files, two locks)."""
+    import src.evaluation.report_store as report_store
+    from src.evaluation.report_store import STORE_LOCK_FILES
+    from src.utils.file_lock import FileLockBusy, exclusive_lock
+
+    assert STORE_LOCK_FILES == ("usage.jsonl.lock", "notes.jsonl.lock")
+    monkeypatch.setattr(report_store, "APPEND_LOCK_GRACE_SECONDS", 0.2)
+    first = _stored(tmp_path)
+    version = version_of(first)
+    lock = _usage_lock(first)
+    _test_run(version, "kept-after-use")
+    assert lock.is_file(), "the lock file is kept after use"
+    usage = first.parents[1] / "usage.jsonl"
+    before = usage.read_bytes()
+
+    with exclusive_lock(lock, grace=0):
+        with pytest.raises(FileLockBusy) as busy:
+            _test_run(version, "while-held")
+        assert str(busy.value) == (f"{lock} is busy: another writer held this lock for the "
+                                   "0.2 s this one waited")
+        assert usage.read_bytes() == before
+        add_investigation_note(version, _key(first), who="ops", what="a note", at=WHEN)
+
+    _failing_write_to(usage, monkeypatch, after=10)
+    with pytest.raises(OSError, match="No space left on device"):
+        _test_run(version, "failed")
+    monkeypatch.undo()
+    assert lock.is_file() and usage.read_bytes() == before, "kept after an exception"
+    _test_run(version, "after")
+    assert [e["run_id"] for e in read_usage_history(version)[0]] == ["kept-after-use", "after"]
+    assert len(read_investigation_notes(version)[0]) == 1
+
+
+@pytest.mark.parametrize("target", ["outside", "dangling"])
+def test_a_store_lock_file_that_is_a_link_is_refused(tmp_path, target):
+    """A ``usage.jsonl.lock`` that is a link, to a file outside the registry or
+    to nothing, is refused by name, naming it: nothing is appended, and the
+    link and its target are as they were (no file created through it)."""
+    import os
+
+    from src.evaluation.cohort_registry import RegistryRefused
+
+    first = _stored(tmp_path)
+    outside = tmp_path / "outside.lock"
+    if target == "outside":
+        outside.write_text("kept")
+    lock = _usage_lock(first)
+    lock.symlink_to(outside)
+
+    with pytest.raises(RegistryRefused, match="not a plain file") as refused:
+        _test_run(version_of(first))
+
+    assert str(lock) in str(refused.value) and "Nothing was written." in str(refused.value)
+    assert not (first.parents[1] / "usage.jsonl").exists()
+    assert lock.is_symlink() and os.readlink(lock) == str(outside)
+    assert (outside.read_text() == "kept") if target == "outside" else not outside.exists()
+
+
+@POSIX
+def test_a_store_lock_link_swapped_in_after_the_check_is_not_followed(tmp_path, monkeypatch):
+    """The by-name check and the open are two steps: a link swapped in between
+    fails to open (``O_NOFOLLOW``), an `OSError` naming the lock file, rather
+    than creating or locking a file outside the registry. Nothing is
+    appended."""
+    import src.evaluation.report_store as report_store
+
+    first = _stored(tmp_path)
+    outside = tmp_path / "outside" / "usage.jsonl.lock"
+    outside.parent.mkdir()
+    lock = _usage_lock(first)
+    real = report_store.exclusive_lock
+
+    def swapped(path, **kwargs):
+        lock.symlink_to(outside)
+        return real(path, **kwargs)
+
+    monkeypatch.setattr(report_store, "exclusive_lock", swapped)
+    with pytest.raises(OSError) as failed:
+        _test_run(version_of(first))
+
+    assert str(lock) in str(failed.value)
+    assert not outside.exists(), "a file was created through the link"
+    assert not (first.parents[1] / "usage.jsonl").exists()
 
 
 def test_a_time_without_a_zone_is_refused(tmp_path):

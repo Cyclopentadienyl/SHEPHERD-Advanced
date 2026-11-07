@@ -126,7 +126,8 @@ REPORT_FILE = "report.json"
 #: The name `create_report_dir` gives a run directory: ``<UTC time>-<checkpoint
 #: digest, 12 hex>-<8 random hex>``. Every reader of the report store takes a
 #: run directory by this name and nothing else, so a file kept beside the run
-#: directories (the usage history, the investigation notes) is never read as one.
+#: directories (the usage history, the investigation notes and their lock files)
+#: is never read as one.
 RUN_ID_PATTERN = re.compile(r"[0-9]{8}T[0-9]{6}Z-([0-9a-f]{12})-[0-9a-f]{8}")
 
 #: What a case that lost some, but not all, of its terms in mapping becomes:
@@ -1357,8 +1358,10 @@ def list_report_runs(version: CohortVersionRead) -> List[ListedRun]:
     writes: one a link takes elsewhere, or an entry that is not a directory
     named as a run id, is listed with its reason. **The store's own files**
     beside the runs, the usage history and the investigation notes
-    (`report_store.STORE_FILES`), are not runs and are not listed, so no
-    caller has to know the store's layout to skip them. Reads no file.
+    (`report_store.STORE_FILES`) and their lock files
+    (`report_store.STORE_LOCK_FILES`, K8-6r.1), are not runs and are not
+    listed, so no caller has to know the store's layout to skip them. Reads no
+    file.
 
     Raises:
         RegistryRefused: ``reports/`` resolves outside the version directory, or
@@ -1368,12 +1371,12 @@ def list_report_runs(version: CohortVersionRead) -> List[ListedRun]:
     directory = _registry_directory(version.directory, within=None, done="Nothing was read.")
     reports = _registry_directory(directory / REPORTS_DIR, within=directory,
                                   done="Nothing was read.")
-    from src.evaluation.report_store import STORE_FILES
+    from src.evaluation.report_store import STORE_FILES, STORE_LOCK_FILES
 
     runs: List[ListedRun] = []
     for entry in sorted(_directory_entries(reports, done="Nothing was read."),
                         key=lambda p: p.name, reverse=True):
-        if entry.name in STORE_FILES:
+        if entry.name in STORE_FILES + STORE_LOCK_FILES:
             continue
         if not _RUN_ID.fullmatch(entry.name):
             runs.append(ListedRun(entry.name, None, (

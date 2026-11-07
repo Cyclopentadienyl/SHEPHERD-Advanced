@@ -9,6 +9,7 @@ directory (`src.evaluation.cohort_registry.report_store_directory`):
         <run id>/ranks.json, <run id>/report.json   one measurement each
         usage.jsonl                                 the version's usage history
         notes.jsonl                                 investigation notes
+        usage.jsonl.lock, notes.jsonl.lock          their locks (K8-6r.1)
 
 **A report is registered only from here** (D5, 2026-10-19). Whether another run
 under a report's key disagrees with it can be checked only against the store
@@ -50,13 +51,16 @@ cohort visible; it does not prevent it (D4). A ``model_load`` entry, written by
 a Load from a list ordered by test score until that ordering retired (K8-6d), is
 kept and read as written; nothing writes one now.
 
-**What it rests on: plain files and one writer at a time** (D2, D7). Deleting a
-disagreeing report lifts the block, and the files can be edited; the tools
-refuse, they do not make the refusal tamper-proof. Each append writes one line
-at the end of a file opened for appending, after closing a line an interrupted
-append left open, and a write that fails is taken back (`_append_entry`);
-nothing locks the store: a scan and a registration that follows it are not
-atomic with a run publishing a new report into the same version at that moment.
+**What it rests on: plain files, and one append at a time per file** (D2, D7;
+K8-6r.1). Deleting a disagreeing report lifts the block, and the files can be
+edited; the tools refuse, they do not make the refusal tamper-proof. Each
+append holds that file's lock (``usage.jsonl.lock``, ``notes.jsonl.lock``,
+beside it, never removed) across processes while it writes one line at the end
+of the file, after closing a line an interrupted append left open, and while it
+takes back a write that fails (`_append_entry`), so one writer's failed append
+never removes another writer's line. The lock is cooperative, and per file: a
+scan and a registration that follows it are still not atomic with a run
+publishing a new report into the same version at that moment.
 
 Module: src/evaluation/report_store.py
 """
@@ -68,6 +72,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Mapping, NamedTuple, Optional, Tuple
 
+from src.utils.file_lock import exclusive_lock
+
 if TYPE_CHECKING:
     from src.evaluation.cohort_registry import CohortVersionRead
 
@@ -77,6 +83,15 @@ NOTES_FILE = "notes.jsonl"
 #: Both: the store's own files, which are not runs
 #: (`cohort_registry.list_report_runs` leaves them out).
 STORE_FILES = (USAGE_FILE, NOTES_FILE)
+#: Each store file's lock, beside it (`_append_entry`): the file's name with
+#: this added. Never removed, never read, and not runs either
+#: (`list_report_runs` leaves them out with `STORE_FILES`).
+STORE_LOCK_SUFFIX = ".lock"
+STORE_LOCK_FILES = tuple(name + STORE_LOCK_SUFFIX for name in STORE_FILES)
+
+#: How long an append waits for another writer of the same store file before
+#: it raises `FileLockBusy`, nothing written; read at each call.
+APPEND_LOCK_GRACE_SECONDS = 10.0
 
 #: What the usage history records (D4): every measurement of the version and every
 #: registration of one of its reports; ``model_load``, a model loaded from a list
@@ -502,7 +517,18 @@ def _append_entry(version: "CohortVersionRead", filename: str, entry: Dict[str, 
     created when absent), and the file must be a plain file there: a link is
     refused (``O_NOFOLLOW`` where the platform has it, and a check by name
     everywhere), so an entry never lands outside the registry. Opened for
-    appending; nothing locks it, so it is one writer at a time, as the ledger is.
+    appending.
+
+    **One append at a time per file, across processes** (K8-6r.1): the file's
+    lock (``<file>.lock`` beside it, `STORE_LOCK_FILES`, never removed) is held
+    from the size read to the failure undo, so no other writer appends between
+    the size recorded and a cut back to it. A lock not obtained within
+    `APPEND_LOCK_GRACE_SECONDS` raises `FileLockBusy` (an `OSError`) naming it,
+    nothing written, and each caller reports it as it reports a failed write.
+    The lock file is refused like the data file when it is a link: by name
+    first, then opened with ``O_NOFOLLOW`` where the platform has it, so a link
+    swapped in after the check fails to open rather than being followed. This
+    calls nothing that takes a ledger or GPU lock.
 
     **An entry always starts a line of its own.** A file whose last byte is not
     a newline ends in an append that was interrupted (a crash, a power loss), and
@@ -524,6 +550,13 @@ def _append_entry(version: "CohortVersionRead", filename: str, entry: Dict[str, 
             "through a link could land outside the registry. Replace it with the file it "
             "names. Nothing was written."
         )
+    lock = reports / (filename + STORE_LOCK_SUFFIX)
+    if lock.is_symlink() or (os.path.lexists(lock) and not lock.is_file()):
+        raise RegistryRefused(
+            f"{lock} is not a plain file, so {path} is not locked through it: a lock taken "
+            "through a link could create or lock a file outside the registry. Replace it "
+            "with a plain file or remove it. Nothing was written."
+        )
     # Read and write: the last byte is read to see whether the file ends a line.
     # With O_APPEND every write still goes to the end, wherever the offset is.
     flags = (os.O_RDWR | os.O_APPEND | os.O_CREAT
@@ -531,33 +564,34 @@ def _append_entry(version: "CohortVersionRead", filename: str, entry: Dict[str, 
              | getattr(os, "O_NOINHERIT", 0)   # Windows: not inherited by children
              | getattr(os, "O_CLOEXEC", 0)
              | getattr(os, "O_NOFOLLOW", 0))   # POSIX: refuse a link swapped in since
-    fd = os.open(path, flags, 0o666)
-    try:
-        size = os.fstat(fd).st_size
-        if size:
-            os.lseek(fd, size - 1, os.SEEK_SET)
-            if os.read(fd, 1) != b"\n":
-                line = b"\n" + line
+    with exclusive_lock(lock, grace=APPEND_LOCK_GRACE_SECONDS, nofollow=True):
+        fd = os.open(path, flags, 0o666)
         try:
-            view = memoryview(line)
-            while view:
-                written = os.write(fd, view)
-                view = view[written:]
-            os.fsync(fd)
-        except OSError as exc:
+            size = os.fstat(fd).st_size
+            if size:
+                os.lseek(fd, size - 1, os.SEEK_SET)
+                if os.read(fd, 1) != b"\n":
+                    line = b"\n" + line
             try:
-                os.ftruncate(fd, size)  # Windows too (`_chsize_s`)
-            except OSError as undo:
-                raise OSError(
-                    exc.errno,
-                    f"{exc.strerror or exc}; and {path} could not be cut back to the "
-                    f"{size} bytes it had ({type(undo).__name__}: {undo}), so its end may "
-                    "hold part of this entry, which a reader names as a line that is not "
-                    "an entry",
-                ) from exc
-            raise
-    finally:
-        os.close(fd)
+                view = memoryview(line)
+                while view:
+                    written = os.write(fd, view)
+                    view = view[written:]
+                os.fsync(fd)
+            except OSError as exc:
+                try:
+                    os.ftruncate(fd, size)  # Windows too (`_chsize_s`)
+                except OSError as undo:
+                    raise OSError(
+                        exc.errno,
+                        f"{exc.strerror or exc}; and {path} could not be cut back to the "
+                        f"{size} bytes it had ({type(undo).__name__}: {undo}), so its end "
+                        "may hold part of this entry, which a reader names as a line that "
+                        "is not an entry",
+                    ) from exc
+                raise
+        finally:
+            os.close(fd)
 
 
 def _read_entries(
@@ -747,7 +781,10 @@ __all__ = [
     "CONTEST_STATES",
     "KeyStatus",
     "NOTES_FILE",
+    "APPEND_LOCK_GRACE_SECONDS",
     "STORE_FILES",
+    "STORE_LOCK_FILES",
+    "STORE_LOCK_SUFFIX",
     "NotInReportStore",
     "NotTheDeploymentRegistry",
     "StoreReport",

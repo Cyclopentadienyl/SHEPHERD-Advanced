@@ -1202,7 +1202,9 @@ Points where the implementation had to decide something this section left open:
   institutional workflow actually appends concurrently. *Since M4* (BACKLOG item 18) that digest
   is the digest of the ledger bytes the writer parsed, from one read, and the report a record is
   derived from is likewise parsed and named by its digest from one read; the window before the
-  replacement stays open.
+  replacement stays open. *Since K8-6r.1* a registration holds the ledger's lock
+  (`evaluations.json.lock`) across processes from its read to its write, so registrations into
+  one ledger take turns, and this check stays as the second line for a writer that takes no lock.
 - **The allocation provenance had to be added upstream first.** A measurement's
   `artifact_digests` did not record `split_manifest.json`, so a `val` number carried no trace of
   which regime cut its cohort. `scripts/measure_scorer.py` now records that role when the workspace

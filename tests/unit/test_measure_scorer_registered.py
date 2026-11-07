@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sys
 import shutil
 from pathlib import Path
@@ -454,12 +455,14 @@ def test_the_same_inputs_measured_again_are_already_registered(cli, cohort, caps
     assert "Already held as record 1; nothing written" in capsys.readouterr().out
 
 
-@pytest.mark.parametrize("case", ["read_only", "schema_2_ledger"])
+@pytest.mark.parametrize("case", ["read_only", "unwritable_directory", "schema_2_ledger"])
 def test_a_refused_registration_keeps_the_report_and_exits_3(
     cli, cohort, monkeypatch, capsys, case
 ):
     """The measurement succeeded, so the report stays; the message names it and
-    the command that registers it later; the ledger is as it was."""
+    the command that registers it later; the ledger is as it was. A checkpoint
+    directory this account cannot write fails at the ledger's lock file, and
+    the message says "Permission denied" (K8-6r.1 review)."""
     import src.evaluation.sidecar as sidecar
 
     ledger = cohort.checkpoint.parent / LEDGER
@@ -467,6 +470,19 @@ def test_a_refused_registration_keeps_the_report_and_exits_3(
         monkeypatch.setattr(sidecar, "create_staging_file", lambda *a, **k: (_ for _ in ()).throw(
             PermissionError(13, "Permission denied", str(cohort.checkpoint.parent))))
         fragment = "Permission denied"
+    elif case == "unwritable_directory":
+        # Every create in the directory refused, as the kernel refuses it (tests
+        # may run as root, which a directory's mode does not stop).
+        directory, real_open = cohort.checkpoint.resolve().parent, os.open
+
+        def guarded(path, flags, *args, **kwargs):
+            if flags & os.O_CREAT and Path(os.fsdecode(path)).parent == directory:
+                raise PermissionError(13, "Permission denied", os.fsdecode(path))
+            return real_open(path, flags, *args, **kwargs)
+
+        monkeypatch.setattr(os, "open", guarded)
+        fragment = (f"could not be opened or taken (PermissionError: [Errno 13] Permission "
+                    f"denied: '{directory / 'evaluations.json.lock'}')")
     else:
         ledger.write_text(json.dumps({"schema_version": 2, "records": []}))
         fragment = "evaluations.v2.json"
@@ -911,6 +927,207 @@ def test_a_usage_history_that_cannot_be_appended_stops_the_run_after_its_report(
     # The outcome file is written all the same: the run published, then stopped.
     outcome = _outcome(out)
     assert outcome["complete"] is False and outcome["registration"]["registered"] is None
+
+
+POSIX = pytest.mark.skipif(sys.platform == "win32", reason="flock and spawn are tested on POSIX")
+
+
+def _test_job_outcome(cohort, out, returncode):
+    """The job runner's reading of a test run that wrote ``out``
+    (`TrainingManager._test_outcome`, with the registration's own report
+    state), as its job summary says it."""
+    from datetime import UTC, datetime
+
+    from src.api.services.training_manager import TrainingManager, _Job
+
+    job = _Job(kind="test", job_id="k86r1", started=datetime.now(UTC),
+               inputs={"checkpoint": str(cohort.checkpoint),
+                       "checkpoint_sha256": cohort.checkpoint_sha256, "record": True},
+               outcome_path=out)
+    return TrainingManager()._test_outcome(job, returncode)
+
+
+def _busy_words(text):
+    """Decision 5's four facts, in the busy refusal's words."""
+    assert "is not registered: the ledger is busy (another registration was writing" in text
+    assert "The report stays where it is kept; register it again." in text
+    assert "this time." in text and "Nothing was written to" in text
+
+
+def test_a_busy_ledger_keeps_the_report_unregistered_at_every_entry_point(
+    cli, cohort, tmp_path, monkeypatch, capsys
+):
+    """F-e and G10 (K8-6r.1): while another registration holds the ledger's
+    lock past the (patched) grace, `measure_scorer --record` exits 3 with
+    ``registered`` False and the busy words in its outcome, the report kept and
+    the register-later command printed; the job runner's summary of that run
+    reads not registered and repeats the run's own why; `record_evaluation`
+    run with the printed command exits non-zero with the busy words. No ledger
+    is written, and once the lock is free the same command registers."""
+    import scripts.record_evaluation as record_evaluation
+    import src.evaluation.sidecar as sidecar
+    from src.evaluation.sidecar import ledger_lock_path
+    from src.utils.file_lock import exclusive_lock
+
+    monkeypatch.setattr(sidecar, "LEDGER_LOCK_GRACE_SECONDS", 0.2)
+    ledger = cohort.checkpoint.resolve().parent / LEDGER
+    out = tmp_path / "jobs" / "outcome.json"
+    out.parent.mkdir()
+    with exclusive_lock(ledger_lock_path(ledger), grace=0):
+        assert cli.main(_argv(cohort, "--record", "--outcome", str(out))) == 3
+        err = capsys.readouterr().err
+        path, _ = _report(cohort)
+        command = ["--report", str(path), "--checkpoint", str(cohort.checkpoint.resolve())]
+        _busy_words(err)
+        assert f"report is kept at {path}" in err
+        assert (f'python scripts/record_evaluation.py --report "{path}" '
+                f'--checkpoint "{cohort.checkpoint.resolve()}"') in err
+        registration = _outcome(out)["registration"]
+        assert (registration["registered"], registration["outcome"]) == (False, "refused")
+        _busy_words(registration["why"])
+
+        summary = _test_job_outcome(cohort, out, 3)
+        assert (summary["kept"], summary["registered"]) == (True, False)
+        assert f"The run said of its registration: {registration['why']}" in summary["summary"]
+
+        with pytest.raises(SystemExit) as refused:
+            record_evaluation.main(command)
+        assert isinstance(refused.value.code, str), "a refusal exits non-zero"
+        _busy_words(refused.value.code)
+    assert not ledger.exists()
+
+    assert record_evaluation.main(command) == 0
+    records = json.loads(ledger.read_text())["records"]
+    assert [r["source_artifact_digest"] for r in records] == [_sha(path)]
+
+
+def test_a_registration_whose_usage_history_was_not_written_says_so_and_stands(
+    cli, cohort, tmp_path, monkeypatch, capsys
+):
+    """F-i at `measure_scorer --record` and the job runner's summary (K8-6r.1
+    review): the ledger is written and the registration's usage-history entry
+    is not. The run exits 0 with a ``NOTE:`` line; its outcome reads
+    registered, with a why that says the usage history was not written and
+    why; the record stands. The job summary reads registered and repeats the
+    run's own words."""
+    import src.evaluation.registration as registration
+
+    def fail(*args, **kwargs):
+        raise PermissionError(13, "Permission denied", "usage.jsonl")
+
+    monkeypatch.setattr(registration, "record_registration", fail)
+    ledger = cohort.checkpoint.resolve().parent / LEDGER
+    out = tmp_path / "jobs" / "outcome.json"
+    out.parent.mkdir()
+
+    assert cli.main(_argv(cohort, "--record", "--outcome", str(out))) == 0
+
+    problem = ("the usage history was not written: PermissionError: [Errno 13] Permission "
+               f"denied: 'usage.jsonl'. The record in {ledger} stands")
+    assert f"NOTE: {problem}." in capsys.readouterr().err
+    said = _outcome(out)["registration"]
+    assert (said["registered"], said["outcome"], said["sequence"]) == (True, "registered", 1)
+    assert said["why"] == f"Registered as record 1; {problem}"
+    assert [r["registration"]["sequence"]
+            for r in json.loads(ledger.read_text())["records"]] == [1]
+
+    summary = _test_job_outcome(cohort, out, 0)
+    assert (summary["kept"], summary["registered"]) == (True, True)
+    assert summary["summary"].endswith(f"The run said of its registration: {said['why']}.")
+
+
+def test_a_measured_registration_takes_gpu_then_ledger_then_usage(cli, cohort, monkeypatch):
+    """F-j (K8-6r.1): `measure_scorer --record` holds the GPU lock for its
+    run; its ``test_run`` entry takes the usage history's lock under the GPU
+    lock only; its registration takes the ledger's lock and, inside it, the
+    usage history's again. Never a ledger or GPU lock while a usage lock is
+    held, nor a GPU lock while the ledger's is."""
+    from contextlib import contextmanager
+
+    import src.evaluation.report_store as report_store
+    import src.evaluation.sidecar as sidecar
+
+    events = []
+    real_take = cli.take_gpu_lock
+
+    @contextmanager
+    def take(*args, **kwargs):
+        with real_take(*args, **kwargs):
+            events.append(("held", "gpu"))
+            try:
+                yield
+            finally:
+                events.append(("left", "gpu"))
+
+    def recording(module, name):
+        real = module.exclusive_lock
+
+        @contextmanager
+        def lock(path, **kwargs):
+            with real(path, **kwargs):
+                events.append(("held", name))
+                try:
+                    yield path
+                finally:
+                    events.append(("left", name))
+
+        monkeypatch.setattr(module, "exclusive_lock", lock)
+
+    monkeypatch.setattr(cli, "take_gpu_lock", take)
+    recording(sidecar, "ledger")
+    recording(report_store, "usage")
+
+    assert cli.main(_argv(cohort, "--record")) == 0
+
+    assert events == [("held", "gpu"), ("held", "usage"), ("left", "usage"),
+                      ("held", "ledger"), ("held", "usage"), ("left", "usage"),
+                      ("left", "ledger"), ("left", "gpu")]
+
+
+@POSIX
+def test_a_busy_usage_history_ends_the_run_after_its_report_and_it_registers_later(
+    cli, cohort, monkeypatch
+):
+    """F-j, final pass (K8-6r.1): another process holds the version's usage
+    history past its (patched) grace when the run appends its ``test_run``
+    entry. The run ends after publishing and before registering
+    (`FailedAfterPublishing`, exit 1 as a program): the message names the busy
+    usage file and carries "The report was written" and the register-later
+    command; the report is kept, no ledger is written, the run reads not
+    registered, and the printed command then registers it. (The
+    ``PermissionError`` case above is the guard this extends.)"""
+    import scripts.record_evaluation as record_evaluation
+    import src.evaluation.report_store as report_store
+    from src.evaluation.registration import report_state
+    from tests.fixtures.concurrent_writers import CONTEXT, WAIT, hold_lock, processes
+
+    monkeypatch.setattr(report_store, "APPEND_LOCK_GRACE_SECONDS", 0.3)
+    reports = cohort.version.directory / "reports"
+    reports.mkdir(exist_ok=True)
+    lock = reports / "usage.jsonl.lock"
+    held, release = CONTEXT.Event(), CONTEXT.Event()
+    with processes((hold_lock, (str(lock), held, release))) as (holder,):
+        assert held.wait(WAIT)
+        with pytest.raises(cli.FailedAfterPublishing) as failed:
+            cli.main(_argv(cohort, "--record"))
+        release.set()
+        holder.join(WAIT)
+
+    said = str(failed.value)
+    path, _ = _report(cohort)
+    assert ("the cohort version's usage history could not be appended, so this run is not in "
+            f"it (FileLockBusy: {lock} is busy") in said
+    assert f"The report was written: {path}." in said
+    command = ["--report", str(path), "--checkpoint", str(cohort.checkpoint.resolve())]
+    assert (f'python scripts/record_evaluation.py --report "{path}" '
+            f'--checkpoint "{cohort.checkpoint.resolve()}"') in said
+    assert not (cohort.checkpoint.parent / LEDGER).exists()
+    state = report_state(path, checkpoint=cohort.checkpoint)
+    assert (state.kept, state.registered) == ("kept", "not_registered")
+
+    assert record_evaluation.main(command) == 0
+    state = report_state(path, checkpoint=cohort.checkpoint)
+    assert (state.registered, state.sequence) == ("registered", 1)
 
 
 def test_a_failed_outcome_write_does_not_keep_a_published_run_out_of_the_history(

@@ -65,10 +65,12 @@ import copy
 import hashlib
 import json
 import os
+from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from src.evaluation.measurement import expected_relations
+from src.utils.file_lock import exclusive_lock
 from src.utils.file_modes import create_staging_file
 
 #: Bumped when a record's shape changes in a way that makes an old file
@@ -87,6 +89,14 @@ LEDGER_SCHEMA_VERSION = 3
 
 #: The conventional file name, beside the checkpoints it describes.
 LEDGER_FILENAME = "evaluations.json"
+
+#: The ledger's lock file is the ledger's name with this added, beside it
+#: (`ledger_lock_path`); it is never removed.
+LEDGER_LOCK_SUFFIX = ".lock"
+
+#: How long a registration waits for another one writing the same ledger
+#: before it is refused as busy (`ledger_lock`), read at each call.
+LEDGER_LOCK_GRACE_SECONDS = 10.0
 
 #: Manifest fields that can change a number, hashed into one semantics digest.
 #:
@@ -955,29 +965,53 @@ def ledger_digest(path: Path) -> Optional[str]:
     return file_sha256(path)
 
 
+def ledger_lock_path(path: Path) -> Path:
+    """The lock file of the ledger at `path`: ``evaluations.json.lock`` beside
+    it. A sibling file, because each write replaces the ledger with a new file
+    (so a lock on the ledger itself would be on the old one), and an open
+    ledger would block that replace on Windows."""
+    path = Path(path)
+    return path.with_name(path.name + LEDGER_LOCK_SUFFIX)
+
+
+def ledger_lock(path: Path) -> AbstractContextManager[Path]:
+    """Hold the lock of the ledger at `path` for a `with` block: **one
+    registration at a time per ledger, across processes** (K8-6r.1).
+
+    The registration holds it from reading the ledger to writing the new file
+    and its usage-history entry (`registration.register_report`). It is keyed by
+    the ledger's own path, beside the checkpoint, never by a setting, so
+    processes started with different settings that write one ledger still take
+    turns. It waits up to `LEDGER_LOCK_GRACE_SECONDS`, read now, and then raises
+    `FileLockBusy`. The lock file is created when absent and never removed:
+    removing it while another process holds it would let a third take a new
+    file under the same name. Cooperative, on the local filesystem, untested on
+    Windows (`src/utils/file_lock.py`).
+    """
+    return exclusive_lock(ledger_lock_path(path), grace=LEDGER_LOCK_GRACE_SECONDS)
+
+
 def write_ledger(
     path: Path, ledger: Dict[str, Any], expected_digest: Optional[str]
 ) -> None:
     """Write the ledger, replacing the old file only once the new one is complete.
 
-    **A partial write is closed; concurrent append is not, and that is stated
-    rather than implied.** Writing to a temporary file in the same directory and
-    renaming it makes the replacement atomic on every platform this runs on, so
-    an interruption cannot leave unparseable JSON where a directory's entire
-    evaluation history used to be — records that are not recoverable from the
-    checkpoints.
+    **A partial write is closed.** Writing to a temporary file in the same
+    directory and renaming it makes the replacement atomic on every platform
+    this runs on, so an interruption cannot leave unparseable JSON where a
+    directory's entire evaluation history used to be — records that are not
+    recoverable from the checkpoints.
 
-    ``expected_digest`` is **best-effort stale-write detection, not mutual
-    exclusion.** It is the digest ``read_ledger`` returned for the bytes it
-    parsed, compared here with a hash of the file by path just before the
-    replacement. It catches the ordinary accident: a writer that read the ledger,
-    another writer replaced it, and the first then writes over that. It does
-    **not** make concurrent append safe — two writers whose check-then-replace
-    windows overlap both pass the comparison and the second replacement still
-    erases the first append, with no trace. It is not compare-and-swap. Closing
-    that needs real exclusion, which is not built: the ledger is
-    **single-writer by operational rule**, and locking earns its place only if
-    the institutional workflow actually appends concurrently.
+    **Concurrent writers take turns through `ledger_lock`, and this check is the
+    second line** (K8-6r.1). The registration holds the ledger's lock from its
+    read to this write, so another registration waits for it. ``expected_digest``
+    is the digest ``read_ledger`` returned for the bytes it parsed, compared
+    here with a hash of the file by path just before the replacement. It catches
+    a writer that takes no lock (a hand edit, a build older than the lock) and
+    replaced the file after this writer read it: that write is refused rather
+    than erased. It is not compare-and-swap: such a writer that replaces the
+    file between this comparison and the rename is still lost; a registration,
+    which holds the lock, never is.
 
     The parameter is required rather than defaulted, so a caller cannot skip the
     check by forgetting it, and ``None`` carries a claim of its own: *I read no
@@ -989,8 +1023,9 @@ def write_ledger(
             f"{path} changed since it was read"
             + ("" if expected_digest is not None else " (this writer expected no "
                "file to exist there)")
-            + ", so appending would erase whatever the other writer added. The "
-            "ledger is single-writer: re-read it and append again."
+            + ", so appending would erase whatever the other writer added. A "
+            "registration holds the ledger's lock, so a writer that does not (a hand "
+            "edit, an older build) changed it: re-read it and append again."
         )
     path.parent.mkdir(parents=True, exist_ok=True)
     handle, staged = create_staging_file(path, binary=False)
@@ -1011,6 +1046,8 @@ __all__ = [
     "ENVIRONMENT_CLASSES",
     "KEY_FIELDS",
     "LEDGER_FILENAME",
+    "LEDGER_LOCK_GRACE_SECONDS",
+    "LEDGER_LOCK_SUFFIX",
     "LEDGER_SCHEMA_VERSION",
     "MAX_REPORT_DEPTH",
     "NON_SEMANTIC_FIELDS",
@@ -1032,6 +1069,8 @@ __all__ = [
     "environment_class",
     "find_checkpoint",
     "ledger_digest",
+    "ledger_lock",
+    "ledger_lock_path",
     "measurement_semantics_digest",
     "read_ledger",
     "record_key",

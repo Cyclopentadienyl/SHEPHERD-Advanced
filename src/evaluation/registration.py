@@ -41,11 +41,17 @@ was being registered therefore cannot be recorded as one file's numbers under
 the other's digest, and another writer's append between this read and this
 write is refused rather than erased.
 
-**Still single-writer.** The guard compares the file by path just before the
-replacement, and the window between that comparison and the replacement stays
-open (`write_ledger`). This is not compare-and-swap and makes no claim of safety
-for concurrent writers; nor is the store's comparison atomic with a run
-publishing a new report into the version at that moment.
+**One registration at a time per ledger, across processes** (K8-6r.1). The
+section from reading the ledger to writing the new file and its usage-history
+entry -- the read, whether the report is already held, the sequence, the write
+and the entry -- runs while the ledger's lock is held (`sidecar.ledger_lock`,
+``evaluations.json.lock`` beside the ledger). It is taken after every check
+that reads the report or hashes the checkpoint. A registration that cannot take
+it within the grace is refused as busy (`LedgerBusy`): nothing was written this
+time, the report stays kept, and it may be registered again. The stale-write
+guard stays as the second line, for a writer that takes no lock. The lock is
+cooperative; nor is the store's comparison atomic with a run publishing a new
+report into the version at that moment.
 
 **One place for the ledger, whichever way a report arrives:** beside the
 checkpoint file's resolved path, the rule the read-only view reads by. The
@@ -76,15 +82,19 @@ nor judges a report itself, to register it or to say whether it is
 registered.
 
 **A registration is in the version's usage history** (D4): a ledger written is
-appended there by this function, so a registration from the command line counts
-as one from the Test tab. If that append fails after the ledger was written, the
-result says so (`usage_history_problem`) rather than claiming either.
+appended there by this function, inside the ledger's lock, so a registration
+from the command line counts as one from the Test tab. The ledger and the usage
+history are two files: if that append fails or finds the usage history busy
+after the ledger was written, the record stands and the result says "the usage
+history was not written" with the reason (`usage_history_problem`); the ledger
+is never rolled back.
 
 **Every expected failure is one refusal** (`RegistrationRefused`) whose message
 names the file and says nothing was written: a missing or damaged report, a file
 that is not a report or not in a report store, a report in a registry other
 than the deployment's (`NotFromTheDeploymentRegistry`), a report that is no
-longer the one shown, a generated split's report, a
+longer the one shown, a ledger another registration is writing (`LedgerBusy`),
+a generated split's report, a
 report that does not name the version it is kept under, runs that disagree
 (`RunsDisagree`) or a store that cannot be checked
 (`DisagreementNotChecked`), a ledger this revision does not read, a
@@ -103,6 +113,7 @@ from __future__ import annotations
 
 import os
 import re
+from contextlib import ExitStack
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Mapping, NamedTuple, Optional, Tuple
@@ -124,10 +135,13 @@ from src.evaluation.sidecar import (
     build_record,
     checkpoint_matches,
     find_checkpoint,
+    ledger_lock,
+    ledger_lock_path,
     read_ledger,
     record_key,
     write_ledger,
 )
+from src.utils.file_lock import FileLockBusy
 from src.utils.fingerprint import ReadIdentity
 from src.utils.interrupts import interrupt_deferred
 
@@ -142,12 +156,25 @@ REGISTERED_STATES: Tuple[str, ...] = ("registered", "not_registered", "cannot_be
 
 _SAYS_NOTHING_WRITTEN = re.compile(r"\s*Nothing was written\.?\s*$")
 
+#: How ``usage_history_problem`` starts: the ledger was written and the usage
+#: history was not (policy rev 16). The job runner's summary repeats a
+#: registered run's own words when they carry it.
+USAGE_HISTORY_NOT_WRITTEN = "the usage history was not written"
+
 #: A report digest as the lists show it: 64 lowercase hexadecimal digits.
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 
 
 class RegistrationRefused(ValueError):
     """A report was not registered, and nothing was written."""
+
+
+class LedgerBusy(RegistrationRefused):
+    """Another registration held the ledger's lock for the whole grace
+    (`sidecar.ledger_lock`), so this one read nothing from the ledger and wrote
+    nothing to it this time. The report stays where it is kept and is not
+    marked invalid: registering it again is expected to work once the other
+    registration has finished."""
 
 
 class NotFromTheDeploymentRegistry(RegistrationRefused):
@@ -211,8 +238,10 @@ class RegistrationResult(NamedTuple):
     for instance, training evidence the first run did not (`corroboration_note`).
 
     ``usage_history_problem`` is `None` unless the ledger was written and the
-    entry in the version's usage history could not be appended; it then says
-    why, and the registration stands.
+    entry in the version's usage history could not be appended (a failed write,
+    or that file's lock busy); it then says "the usage history was not written"
+    with the reason, and the registration stands: the ledger is never rolled
+    back.
     """
 
     outcome: str
@@ -339,6 +368,17 @@ def register_report(
 
     ``registered_at`` is the time the registration is made, now in UTC unless a
     caller passes one.
+
+    **The ledger is held from its read to the usage-history entry**
+    (`sidecar.ledger_lock`, K8-6r.1), after every check of the report and the
+    checkpoint: another registration of the same ledger, from any process,
+    waits for it. One that waits past the grace is refused as `LedgerBusy`,
+    nothing written; the usage history's own lock is taken inside it, never
+    the other way, and no GPU lock is taken here. Where this account may not
+    create or open the lock file (a checkpoint directory it cannot write),
+    nothing can be written: a report the ledger already holds still answers
+    ``already_registered``, read without the lock as every reader reads, and
+    anything else is refused naming that cause.
 
     Returns the outcome — ``registered``, ``already_registered`` (nothing written)
     or ``corroborated`` — the record as the ledger now holds it, for a
@@ -579,51 +619,89 @@ def register_report(
                 "record filed under the wrong address."
             )
 
-    try:
-        ledger, digest_at_read = read_ledger(ledger_path)
-    except (OSError, ValueError) as exc:
-        raise refused(str(exc)) from exc
+    def lock_refused(exc: OSError) -> RegistrationRefused:
+        return refused(
+            f"{report_path} is not registered: the ledger's lock "
+            f"{ledger_lock_path(ledger_path)} could not be opened or taken "
+            f"({type(exc).__name__}: {exc})."
+        )
 
-    when = registered_at if registered_at is not None else (
-        datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    )
-    try:
-        outcome, updated = append_record(ledger, record, registered_at=when)
-    except ValueError as exc:
-        raise refused(f"{report_path} is not registered: {exc}") from exc
-
-    held = next(r for r in updated["records"] if record_key(r) == key)
-    differences: Tuple[str, ...] = ()
-    if outcome == "corroborated":
-        differences = tuple(field for field in CORROBORATION_KEEPS_FIRST
-                            if held.get(field) != record[field])
-    if outcome == "already_registered":
-        return RegistrationResult(outcome, held, ledger_path)
-
-    # **The ledger record and its history entry are one step against a cancel**
-    # (M5-3 review EVAL-1, `interrupt_deferred`): a SIGINT arriving between them
-    # is held until both are written, so a registration never lacks its
-    # "registered" entry because of a cancel.
-    with interrupt_deferred():
+    # **One registration at a time per ledger** (K8-6r.1): from the read to the
+    # usage-history entry, under the ledger's lock. Only the lock's own failures
+    # are mapped here; whatever the section raises keeps its own refusal.
+    with ExitStack() as held_ledger:
+        # Set when this account may not create or open the lock file (a
+        # checkpoint directory it cannot write): then nothing can be written
+        # here, but whether the ledger already holds this report is a read, and
+        # readers take no lock (the replace is atomic). So that answer stays as
+        # it was, and anything that would write is refused with this cause.
+        cannot_lock: Optional[PermissionError] = None
         try:
-            write_ledger(ledger_path, updated, expected_digest=digest_at_read)
+            held_ledger.enter_context(ledger_lock(ledger_path))
+        except FileLockBusy as exc:
+            raise LedgerBusy(
+                f"{report_path} is not registered: the ledger is busy (another "
+                f"registration was writing {ledger_path} for the {exc.grace:g} s this one "
+                "waited). The report stays where it is kept; register it again. Nothing "
+                f"was written to {ledger_path} this time."
+            ) from None
+        except PermissionError as exc:
+            cannot_lock = exc
+        except OSError as exc:
+            raise lock_refused(exc) from exc
+
+        try:
+            ledger, digest_at_read = read_ledger(ledger_path)
         except (OSError, ValueError) as exc:
+            raise refused(str(exc)) from exc
+
+        when = registered_at if registered_at is not None else (
+            datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        )
+        try:
+            outcome, updated = append_record(ledger, record, registered_at=when)
+        except ValueError as exc:
             raise refused(f"{report_path} is not registered: {exc}") from exc
 
-        # **In the version's usage history** (D4), after the ledger was written:
-        # a failure here does not undo the registration, so it is reported with
-        # it.
-        problem: Optional[str] = None
-        try:
-            record_registration(
-                stored.version, run_id=stored.run_id, report_sha256=source_digest,
-                checkpoint_sha256=digest, outcome=outcome,
-                sequence=held["registration"]["sequence"],
-            )
-        except (OSError, ValueError) as exc:
-            problem = (f"the registration was written to {ledger_path}, but the cohort "
-                       f"version's usage history could not be appended "
-                       f"({type(exc).__name__}: {exc})")
+        held = next(r for r in updated["records"] if record_key(r) == key)
+        differences: Tuple[str, ...] = ()
+        if outcome == "corroborated":
+            differences = tuple(field for field in CORROBORATION_KEEPS_FIRST
+                                if held.get(field) != record[field])
+        if outcome == "already_registered":
+            return RegistrationResult(outcome, held, ledger_path)
+        if cannot_lock is not None:
+            raise lock_refused(cannot_lock) from cannot_lock
+
+        # **The ledger record and its history entry are one step against a
+        # cancel** (M5-3 review EVAL-1, `interrupt_deferred`): a SIGINT arriving
+        # between them is held until both are written, so a registration never
+        # lacks its "registered" entry because of a cancel.
+        with interrupt_deferred():
+            try:
+                write_ledger(ledger_path, updated, expected_digest=digest_at_read)
+            except (OSError, ValueError) as exc:
+                raise refused(f"{report_path} is not registered: {exc}") from exc
+
+            # **In the version's usage history** (D4), after the ledger was
+            # written and inside its lock (the order is ledger, then usage
+            # history, never the other way): a failure here, the usage
+            # history's lock busy included, does not undo the registration, so
+            # it is reported with it.
+            problem: Optional[str] = None
+            try:
+                record_registration(
+                    stored.version, run_id=stored.run_id, report_sha256=source_digest,
+                    checkpoint_sha256=digest, outcome=outcome,
+                    sequence=held["registration"]["sequence"],
+                )
+            except FileLockBusy as exc:
+                problem = (f"{USAGE_HISTORY_NOT_WRITTEN}: it was busy (another "
+                           f"writer held {exc.path} for the {exc.grace:g} s this one "
+                           f"waited). The record in {ledger_path} stands")
+            except (OSError, ValueError) as exc:
+                problem = (f"{USAGE_HISTORY_NOT_WRITTEN}: {type(exc).__name__}: "
+                           f"{exc}. The record in {ledger_path} stands")
     return RegistrationResult(outcome, held, ledger_path, differences, problem)
 
 
@@ -832,7 +910,8 @@ def report_state(
     return ReportState(kept, why_kept, "not_registered", looked, digest, None, ledger_path)
 
 
-__all__ = ["DisagreementNotChecked", "KEPT_STATES", "MeasuredRun",
+__all__ = ["DisagreementNotChecked", "KEPT_STATES", "LedgerBusy", "MeasuredRun",
            "NotFromTheDeploymentRegistry", "REGISTERED_STATES", "RegistrationRefused",
            "RegistrationResult", "ReportNotAsPublished", "ReportState", "RunsDisagree",
+           "USAGE_HISTORY_NOT_WRITTEN",
            "corroboration_note", "key_refusal", "register_report", "report_state"]

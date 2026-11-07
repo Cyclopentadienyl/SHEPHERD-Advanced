@@ -816,6 +816,88 @@ def test_register_is_refused_for_a_read_only_request(site, monkeypatch):
     assert not (site.checkpoint.parent / "evaluations.json").exists()
 
 
+def test_a_busy_ledger_refuses_register_inline_and_register_stays_available(
+        site, monkeypatch):
+    """F-e and G10 (K8-6r.1), the Test page's Register: while another
+    registration holds the ledger's lock past the (patched) grace, the handler
+    returns ``(False, message)`` with the four facts -- the ledger is busy,
+    nothing was written this time, the report is kept, register it again --
+    no ledger is written, and Register stays available (the report reads not
+    registered and is never marked invalid). Registering again then works."""
+    import src.evaluation.sidecar as sidecar
+    from src.evaluation.sidecar import ledger_lock_path
+    from src.utils.file_lock import exclusive_lock
+
+    monkeypatch.setattr(sidecar, "LEDGER_LOCK_GRACE_SECONDS", 0.2)
+    page, request = _page(monkeypatch)
+    models = tp.read_models("demo", request)
+    ledger = site.checkpoint.parent / "evaluations.json"
+    with exclusive_lock(ledger_lock_path(ledger), grace=0):
+        done, said = tp.register_selected(page, tp.read_reports(LABEL), models, "demo",
+                                          site.run_id, request)
+    assert done is False
+    assert "is not registered: the ledger is busy (another registration was writing" in said
+    assert "The report stays where it is kept; register it again." in said
+    assert said.endswith("this time.") and "Nothing was written to" in said
+    assert not ledger.exists()
+    assert tp.register_state(page, tp.read_reports(LABEL), site.run_id) == (True, None)
+
+    done, said = tp.register_selected(page, tp.read_reports(LABEL), models, "demo",
+                                      site.run_id, request)
+    assert done is True and said == "Registered as record 1."
+
+
+def test_register_says_when_the_usage_history_was_not_written(site, monkeypatch):
+    """F-i (K8-6r.1): the ledger written and the usage history busy past its
+    (patched) grace: Register succeeds and its message says the usage history
+    was not written, with the reason; the record stands."""
+    import src.evaluation.report_store as report_store
+    from src.utils.file_lock import exclusive_lock
+
+    monkeypatch.setattr(report_store, "APPEND_LOCK_GRACE_SECONDS", 0.2)
+    page, request = _page(monkeypatch)
+    models = tp.read_models("demo", request)
+    with exclusive_lock(site.reports / "usage.jsonl.lock", grace=0):
+        usage_before = _usage_lines(site)
+        done, said = tp.register_selected(page, tp.read_reports(LABEL), models, "demo",
+                                          site.run_id, request)
+        assert _usage_lines(site) == usage_before
+    assert done is True
+    lock = site.reports / "usage.jsonl.lock"
+    assert said.startswith("Registered as record 1. The usage history was not written: it was "
+                           f"busy (another writer held {lock} for the 0.2 s this one waited). ")
+    assert "FileLockBusy" not in said and said.endswith(" stands.")
+    ledger = json.loads((site.checkpoint.parent / "evaluations.json").read_text())
+    assert [r["registration"]["sequence"] for r in ledger["records"]] == [1]
+
+
+def test_a_busy_notes_file_keeps_nothing_and_says_add_it_again(site, monkeypatch):
+    """K8-6r.1, the Test page's note: while another writer holds the notes
+    file's lock past the (patched) grace, the note is refused in words that say
+    the notes file is busy, nothing was written this time, and it may be added
+    again; nothing is appended. Added again, it is kept, and the version's
+    report list still holds the run alone (F-k: the lock files are not runs)."""
+    import src.evaluation.report_store as report_store
+    from src.utils.file_lock import exclusive_lock
+
+    monkeypatch.setattr(report_store, "APPEND_LOCK_GRACE_SECONDS", 0.2)
+    request = operator_request(monkeypatch)
+    reports = tp.read_reports(LABEL)
+    lock = site.reports / "notes.jsonl.lock"
+    with exclusive_lock(lock, grace=0):
+        done, said = tp.add_note(reports, site.run_id, "ops", "found", request)
+    assert done is False
+    assert said == ("The note was not kept: another writer held the notes file for the 0.2 s "
+                    "this one waited. Nothing was written this time; add it again.")
+    assert not (site.reports / "notes.jsonl").exists()
+
+    done, _said = tp.add_note(reports, site.run_id, "ops", "found", request)
+    assert done is True
+    again = tp.read_reports(LABEL)
+    assert [r["run_id"] for r in again["runs"]] == [site.run_id]
+    assert len(again["notes"]) == 1
+
+
 def _usage_lines(site):
     usage = site.reports / "usage.jsonl"
     return usage.read_bytes() if usage.exists() else b""

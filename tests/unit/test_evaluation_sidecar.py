@@ -1185,17 +1185,17 @@ def test_a_failed_write_leaves_the_previous_ledger_intact(tmp_path, monkeypatch)
 
 
 def test_a_writer_holding_a_stale_read_is_refused(tmp_path):
-    """Best-effort stale-write detection, and only that.
+    """Stale-write detection, the second line behind the ledger's lock.
 
     **What this proves:** a writer that read the ledger, had another writer
     replace it, and then writes, is refused instead of erasing that append.
-    That is the ordinary accident -- two terminals, one after the other.
+    That is a writer that takes no lock (a hand edit, an older build).
 
-    **What it does not prove, and what the implementation does not provide:**
-    safety under overlapping writers. Two processes whose check-then-replace
-    windows interleave both pass the comparison and the second replacement still
-    erases the first. Closing that needs real mutual exclusion, which is not
-    built; the ledger is single-writer by operational rule.
+    **What it does not prove:** safety under overlapping writers on its own.
+    Two writers whose check-then-replace windows interleave both pass the
+    comparison. Registrations exclude each other through `ledger_lock` (K8-6r.1,
+    pinned below and in tests/unit/test_registration.py); this check is what
+    stays for a writer that takes no lock.
     """
     path = tmp_path / "evaluations.json"
     write_ledger(path, _registered(), None)
@@ -1207,6 +1207,37 @@ def test_a_writer_holding_a_stale_read_is_refused(tmp_path):
     with pytest.raises(ValueError, match="changed since it was read"):
         write_ledger(path, first, stale)
     assert len(read_ledger(path)[0]["records"]) == 2
+
+
+def test_the_ledger_lock_excludes_a_second_holder_and_is_kept(tmp_path, monkeypatch):
+    """`ledger_lock` (K8-6r.1): ``evaluations.json.lock`` beside the ledger.
+    Two opens of it exclude each other (in one process too), a second taker
+    is refused after the grace (`FileLockBusy`, naming the lock file), the lock
+    is released when the block ends normally or by an exception, and the lock
+    file is kept."""
+    import src.evaluation.sidecar as sidecar
+    from src.evaluation.sidecar import ledger_lock, ledger_lock_path
+    from src.utils.file_lock import FileLockBusy
+
+    monkeypatch.setattr(sidecar, "LEDGER_LOCK_GRACE_SECONDS", 0.1)
+    ledger = tmp_path / "evaluations.json"
+    lock = ledger_lock_path(ledger)
+    assert lock == tmp_path / "evaluations.json.lock"
+
+    with ledger_lock(ledger):
+        with pytest.raises(FileLockBusy) as busy:
+            with ledger_lock(ledger):
+                pytest.fail("a second holder took the ledger's lock")
+        assert str(busy.value) == (f"{lock} is busy: another writer held this lock for the "
+                                   "0.1 s this one waited")
+    with ledger_lock(ledger):
+        pass
+    with pytest.raises(RuntimeError, match="inside"):
+        with ledger_lock(ledger):
+            raise RuntimeError("inside")
+    with ledger_lock(ledger):
+        assert lock.is_file()
+    assert lock.is_file() and not ledger.exists(), "the lock file is kept; no ledger made"
 
 
 def test_a_writer_expecting_no_file_is_refused_when_one_appeared(tmp_path):

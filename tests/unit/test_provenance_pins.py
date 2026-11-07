@@ -111,8 +111,8 @@ ALLOWED = {
     ("src/evaluation/sidecar.py", "ledger_digest", "file_sha256"):
         (1, "the ledger's stale-write guard: compares the file by path at write time with "
             "the digest read_ledger returned for the bytes it parsed (BACKLOG item 18 done); "
-            "identifies nothing parsed; its window to the rename stays open — single-writer, "
-            "not compare-and-swap"),
+            "identifies nothing parsed; the second line behind the ledger's lock (K8-6r.1), "
+            "for a writer that takes no lock; not compare-and-swap"),
     ("src/evaluation/sidecar.py", "read_ledger", "read_once"): (1, _READER),
     ("src/evaluation/sidecar.py", "read_ledger", "json.loads"): (1, _READER),
     # The one reader of a kept report (moved from registration.py in M5-1): the

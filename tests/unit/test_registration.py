@@ -14,8 +14,15 @@ phase 1 step 2). What is pinned here:
     one read, so a report replaced while it is registered is recorded as the
     bytes read, never as one file's numbers under the other's digest; and the
     interleaving that erased a record (writer A reads, writer B appends, A
-    writes) is refused by the stale-write guard. The guard is a path hash at
-    write time and its window stays open: this is not compare-and-swap;
+    writes) is refused by the stale-write guard when B takes no lock. The
+    guard is a path hash at write time, not compare-and-swap: the second line;
+  - **matrix F (K8-6r.1)**: one registration at a time per ledger, across
+    threads and processes (`tests/fixtures/concurrent_writers.py`): two or
+    four at once all persist with their own sequences, the same run resent at
+    once is one record, a busy ledger is refused saying nothing was written
+    and registers once free, a registration inside another's section is
+    excluded, and a written ledger whose usage history is busy or fails says
+    so and stands; the ledger's lock is taken before the usage history's;
   - **where the ledger is**: beside the checkpoint file's resolved path,
     whether the caller names the file (`--checkpoint`, any name), a directory
     searched by digest (`--checkpoint-dir`) or the measurement's own read; a
@@ -554,6 +561,10 @@ def test_a_registration_is_appended_to_the_versions_usage_history(tmp_path, chec
 def test_a_failed_usage_history_append_is_reported_with_the_registration(
     tmp_path, checkpoints, monkeypatch, caplog
 ):
+    """F-i (a), K8-6r.1: the ledger and the usage history are two files. The
+    ledger written and its usage-history entry not: the outcome stays
+    ``registered``, the record stands (never rolled back), and the result and
+    the CLI say "the usage history was not written" with the reason."""
     import logging
 
     import scripts.record_evaluation as record_evaluation
@@ -568,14 +579,17 @@ def test_a_failed_usage_history_append_is_reported_with_the_registration(
     result = _register(report, checkpoints, beside=True)
 
     assert result.outcome == "registered"
-    assert "usage history could not be appended" in result.usage_history_problem
+    assert result.usage_history_problem.startswith("the usage history was not written: ")
     assert "Permission denied" in result.usage_history_problem
+    assert f"The record in {result.ledger_path} stands" in result.usage_history_problem
     assert read_ledger(result.ledger_path)[0]["records"], "the registration stands"
     with caplog.at_level(logging.INFO, logger=record_evaluation.logger.name):
         assert record_evaluation.main(["--checkpoint-dir", str(checkpoints), "--report",
-                                       str(_report(tmp_path, data_dir="/b"))]) == 0
-    assert any("usage history could not be appended" in r.getMessage()
-               for r in caplog.records)
+                                       str(_report(tmp_path, batch_size=8))]) == 0
+    said = [r.getMessage() for r in caplog.records]
+    assert any(m.startswith("Registered record 2 ") for m in said)
+    assert any(m.startswith("NOTE: the usage history was not written: ") for m in said)
+    assert len(read_ledger(result.ledger_path)[0]["records"]) == 2, "never rolled back"
 
 
 @pytest.mark.parametrize(
@@ -690,6 +704,62 @@ def test_a_ledger_that_cannot_be_written_is_a_refusal(tmp_path, checkpoints, mon
     assert not (checkpoints / "evaluations.json").exists()
 
 
+def _no_create_in(directory: Path, monkeypatch) -> None:
+    """A directory this account cannot write, as the kernel refuses it: every
+    open that would create a file there fails with EACCES. (Tests may run as
+    root, which a directory's mode does not stop.)"""
+    real_open = os.open
+
+    def guarded(path, flags, *args, **kwargs):
+        if flags & os.O_CREAT and Path(os.fsdecode(path)).parent == directory:
+            raise PermissionError(13, "Permission denied", str(path))
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", guarded)
+
+
+def test_a_checkpoint_directory_this_account_cannot_write_says_permission_denied(
+    tmp_path, checkpoints, monkeypatch
+):
+    """K8-6r.1 review: the ledger's lock file cannot be created there. The
+    refusal names that cause (``Permission denied``), never a missing lock
+    file; nothing is written and the report stays."""
+    report = _report(tmp_path)
+    _no_create_in(checkpoints, monkeypatch)
+
+    with pytest.raises(RegistrationRefused) as refused:
+        _register(report, checkpoints)
+    said = str(refused.value)
+    assert (f"the ledger's lock {checkpoints / 'evaluations.json.lock'} could not be opened or "
+            "taken (PermissionError: [Errno 13] Permission denied") in said
+    assert "No such file" not in said and said.endswith("Nothing was written to "
+                                                         f"{checkpoints / 'evaluations.json'}.")
+    assert report.exists()
+    assert sorted(p.name for p in checkpoints.iterdir()) == ["best.pt"]
+
+
+def test_a_held_report_from_a_directory_this_account_cannot_write_is_already_registered(
+    tmp_path, checkpoints, monkeypatch
+):
+    """K8-6r.1 review: a ledger written before the lock existed (no lock file
+    beside it), in a directory this account cannot write. Whether it holds the
+    report is a read, which takes no lock, so the answer stays
+    ``already_registered`` with nothing written. Another report, which would
+    need a write, is refused naming the cause."""
+    report = _report(tmp_path)
+    assert _register(report, checkpoints).outcome == "registered"
+    (checkpoints / "evaluations.json.lock").unlink()
+    before = _listing(checkpoints)
+    _no_create_in(checkpoints, monkeypatch)
+
+    result = _register(report, checkpoints)
+
+    assert (result.outcome, result.record["registration"]["sequence"]) == ("already_registered", 1)
+    with pytest.raises(RegistrationRefused, match="Permission denied.*Nothing was written"):
+        _register(_report(tmp_path, batch_size=8), checkpoints)
+    assert _listing(checkpoints) == before
+
+
 # ---------------------------------------------------------------------------
 # BACKLOG 18: one read each, and the interleaving that erased a record
 # ---------------------------------------------------------------------------
@@ -782,16 +852,21 @@ def test_no_path_hash_reaches_the_record(tmp_path, checkpoints, monkeypatch):
 def test_another_writers_append_between_this_read_and_this_write_is_refused(
     tmp_path, checkpoints, monkeypatch
 ):
-    """The interleaving that erased a record (map, BACKLOG 18): writer A reads
-    the ledger, writer B appends, A writes.
+    """F-f (K8-6r.1): the interleaving that erased a record (map, BACKLOG 18),
+    writer A reads the ledger, writer B appends, A writes, in three parts.
 
-    **The control first.** With A's digest taken by path after B's write -- the
-    old order, the ledger parsed and then hashed again -- A's write passes the
-    guard and B's record is gone. **Then the fix:** A's digest is the one its
-    read returned, so the guard refuses A and B's record stays. Still
-    single-writer: the guard's own window, between its hash and the rename, is
-    not closed.
+    **The control.** With A's digest taken by path after B's write -- the old
+    order, the ledger parsed and then hashed again -- A's write passes the
+    guard and B's record is gone. **B through `register_report`** inside A's
+    section is now excluded by the ledger's lock: B waits out its (patched,
+    short) grace and is refused as busy, nothing written; A registers; B's
+    report is kept and registers afterwards with the next sequence. **B taking
+    no lock** (a raw `write_ledger` between A's read and A's write, as a hand
+    edit or an older build would) is caught by the stale-write guard, the
+    second line: A is refused "changed since it was read" and B's write stays.
     """
+    import src.evaluation.sidecar as sidecar
+    from src.evaluation.registration import LedgerBusy
     from src.evaluation.sidecar import append_record, build_record, ledger_digest
     from tests.fixtures.replacement import hook_read_once
 
@@ -802,33 +877,344 @@ def test_another_writers_append_between_this_read_and_this_write_is_refused(
     _register(seed, checkpoints)
     seeded = ledger_path.read_bytes()
 
+    def batches():
+        return [r["regime"]["batch_size"] for r in read_ledger(ledger_path)[0]["records"]]
+
     # The control: the old order erases B's append.
     parsed, _ = read_ledger(ledger_path)
     _register(report_b, checkpoints)
     record_a = build_record(json.loads(report_a.read_text()), _sha(report_a))
     _, with_a = append_record(parsed, record_a, registered_at=WHEN)
     write_ledger(ledger_path, with_a, expected_digest=ledger_digest(ledger_path))
-    batches = [r["regime"]["batch_size"] for r in read_ledger(ledger_path)[0]["records"]]
-    assert batches == [32, 8], "the old order erased B's record"
+    assert batches() == [32, 8], "the old order erased B's record"
 
-    # The fix: the same interleaving through register_report is refused.
+    # B through register_report, inside A's section: excluded, then registered.
+    ledger_path.write_bytes(seeded)
+    b_bytes = report_b.read_bytes()
+    told = []
+
+    def writer_b(path):
+        if told or os.path.realpath(path) != os.path.realpath(ledger_path):
+            return
+        try:
+            told.append(_register(report_b, checkpoints))
+        except LedgerBusy as exc:
+            told.append(exc)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(sidecar, "LEDGER_LOCK_GRACE_SECONDS", 0.2)
+        hook_read_once(patch, on_return=writer_b)
+        first = _register(report_a, checkpoints)
+
+    (busy,) = told
+    assert isinstance(busy, LedgerBusy), "B ran inside A's section and was excluded"
+    assert "the ledger is busy" in str(busy) and "register it again" in str(busy)
+    assert f"Nothing was written to {ledger_path} this time." in str(busy)
+    assert (first.outcome, first.record["registration"]["sequence"]) == ("registered", 2)
+    assert batches() == [32, 8]
+    assert report_b.read_bytes() == b_bytes, "B's report is kept"
+    later = _register(report_b, checkpoints)
+    assert (later.outcome, later.record["registration"]["sequence"]) == ("registered", 3)
+    assert batches() == [32, 8, 16]
+
+    # B taking no lock: the stale-write guard refuses A, and B's write stays.
     ledger_path.write_bytes(seeded)
     fired = []
 
-    def writer_b(path):
+    def raw_writer_b(path):
         if fired or os.path.realpath(path) != os.path.realpath(ledger_path):
             return
         fired.append(path)
-        _register(report_b, checkpoints)
+        current, digest = read_ledger(ledger_path)
+        record_b = build_record(json.loads(report_b.read_text()), _sha(report_b))
+        _, with_b = append_record(current, record_b, registered_at=WHEN)
+        write_ledger(ledger_path, with_b, expected_digest=digest)
 
-    hook_read_once(monkeypatch, on_return=writer_b)
+    hook_read_once(monkeypatch, on_return=raw_writer_b)
     with pytest.raises(RegistrationRefused, match="changed since it was read") as refused:
         _register(report_a, checkpoints)
 
     assert fired, "writer B ran between A's read and A's write"
     assert "Nothing was written" in str(refused.value)
-    batches = [r["regime"]["batch_size"] for r in read_ledger(ledger_path)[0]["records"]]
-    assert batches == [32, 16], "B's record stays and A's is not written"
+    assert batches() == [32, 16], "B's record stays and A's is not written"
+
+
+# ---------------------------------------------------------------------------
+# Matrix F (K8-6r.1): registrations at once, across threads and processes
+# ---------------------------------------------------------------------------
+POSIX = pytest.mark.skipif(sys.platform == "win32", reason="flock and spawn are tested on POSIX")
+
+
+def _hold_after_the_guard(monkeypatch, parties: int):
+    """Hold each registration right after `write_ledger`'s guard reads the
+    ledger's digest -- between the check and the replace -- until ``parties``
+    are there, or 1 s passes (then it goes on alone)."""
+    import threading
+
+    import src.evaluation.sidecar as sidecar
+
+    barrier = threading.Barrier(parties)
+    real = sidecar.ledger_digest
+
+    def ledger_digest(path):
+        digest = real(path)
+        try:
+            barrier.wait(1.0)
+        except threading.BrokenBarrierError:
+            pass
+        return digest
+
+    monkeypatch.setattr(sidecar, "ledger_digest", ledger_digest)
+
+
+def _held(ledger_path: Path) -> dict:
+    """What the ledger holds: each record's sequence by its report's digest."""
+    return {r["source_artifact_digest"]: r["registration"]["sequence"]
+            for r in read_ledger(ledger_path)[0]["records"]}
+
+
+def test_two_threads_registering_two_runs_at_once_both_persist(
+    tmp_path, checkpoints, monkeypatch
+):
+    """F-a: two threads, two different runs, held together right after the
+    guard's real read. Both persist with sequences 1 and 2, each returned
+    sequence is the one the ledger holds for that report, and both reports are
+    unchanged. (Before K8-6r.1 both answered ``registered`` as record 1 and the
+    ledger kept one record.)"""
+    import threading
+
+    reports = [_report(tmp_path, batch_size=8), _report(tmp_path, batch_size=16)]
+    before = [r.read_bytes() for r in reports]
+    _hold_after_the_guard(monkeypatch, 2)
+    results: dict = {}
+
+    def register(report):
+        try:
+            results[report] = _register(report, checkpoints)
+        except Exception as exc:  # noqa: BLE001 - reported by the assertion below
+            results[report] = exc
+
+    threads = [threading.Thread(target=register, args=(r,)) for r in reports]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+    assert not any(thread.is_alive() for thread in threads), "a registration hung"
+
+    held = _held(checkpoints / "evaluations.json")
+    answered = {_sha(r): (results[r].outcome, results[r].record["registration"]["sequence"])
+                for r in reports}
+    assert sorted(answered.values()) == [("registered", 1), ("registered", 2)]
+    assert held == {digest: sequence for digest, (_o, sequence) in answered.items()}
+    assert [r.read_bytes() for r in reports] == before
+
+
+def _register_at_once(tmp_path, checkpoints, reports, *, held_after_guard=True):
+    """Each report registered by a process of its own into the ledger beside
+    ``checkpoints``, all starting together; with ``held_after_guard``, each is
+    held right after the guard's read until the others arrive or 1 s passes."""
+    from tests.fixtures.concurrent_writers import CONTEXT, answers_from, processes, register
+
+    n = len(reports)
+    start = CONTEXT.Barrier(n)
+    barrier = CONTEXT.Barrier(n) if held_after_guard else None
+    queue = CONTEXT.Queue()
+    with processes(*[(register, (f"P{i}", str(tmp_path / "registry"), str(report),
+                                 str(checkpoints), start, barrier, queue))
+                     for i, report in enumerate(reports, start=1)]):
+        answers = answers_from(queue, n)
+    return sorted(answers, key=lambda answer: answer["name"])
+
+
+def _every_success_persists(answers, ledger_path):
+    """Every ``registered`` answer is in the ledger with its own sequence and
+    report; a refusal is only a busy ledger that says nothing was written."""
+    held = _held(ledger_path)
+    registered = [a for a in answers if a["outcome"] == "registered"]
+    for answer in registered:
+        assert held.get(answer["source"]) == answer["sequence"], answer
+    assert len(held) == len(registered) == len({a["sequence"] for a in registered})
+    for answer in answers:
+        if answer["outcome"] == "refused":
+            assert answer["kind"] == "LedgerBusy" and "Nothing was written" in answer["message"]
+    return sorted(a["sequence"] for a in registered)
+
+
+@POSIX
+def test_two_processes_registering_two_runs_at_once_both_persist(tmp_path, checkpoints):
+    """F-b: two separate processes (one ``SHEPHERD_REGISTRY``), two different
+    runs, held together right after the guard's read: every success persists
+    with its own sequence and report. (Before K8-6r.1 both answered
+    ``registered`` as record 1 and the ledger kept one record.)"""
+    reports = [_report(tmp_path, batch_size=8), _report(tmp_path, batch_size=16)]
+
+    answers = _register_at_once(tmp_path, checkpoints, reports)
+
+    assert _every_success_persists(answers, checkpoints / "evaluations.json") == [1, 2]
+    assert {a["source"] for a in answers} == {_sha(r) for r in reports}
+
+
+@POSIX
+def test_four_processes_registering_at_once_get_sequences_one_to_four(tmp_path, checkpoints):
+    """F-b's four-process variant: sequences 1 to 4, each in the ledger with
+    its own report."""
+    reports = [_report(tmp_path, batch_size=size) for size in (8, 16, 24, 40)]
+
+    answers = _register_at_once(tmp_path, checkpoints, reports)
+
+    assert _every_success_persists(answers, checkpoints / "evaluations.json") == [1, 2, 3, 4]
+
+
+@POSIX
+def test_the_same_run_resent_at_once_by_two_processes_is_one_record(tmp_path, checkpoints):
+    """F-c: one report registered by two processes at once: one answers
+    ``registered``, the other ``already_registered``, and the ledger holds one
+    record. (Before K8-6r.1 both answered ``registered``.)"""
+    report = _report(tmp_path)
+
+    answers = _register_at_once(tmp_path, checkpoints, [report, report])
+
+    assert sorted(a["outcome"] for a in answers) == ["already_registered", "registered"]
+    assert {(a["source"], a["sequence"]) for a in answers} == {(_sha(report), 1)}
+    assert _held(checkpoints / "evaluations.json") == {_sha(report): 1}
+
+
+@POSIX
+def test_a_busy_ledger_is_refused_explicitly_and_registers_once_free(
+    tmp_path, checkpoints, monkeypatch
+):
+    """F-d: another process holds ``evaluations.json.lock`` past the (patched)
+    grace. The registration is refused as `LedgerBusy`, a `RegistrationRefused`
+    saying the ledger is busy, nothing was written this time, the report is kept
+    and it may be registered again; no ledger appears and the report's bytes are
+    unchanged. Once the holder lets go, the same call registers."""
+    import src.evaluation.sidecar as sidecar
+    from src.evaluation.registration import LedgerBusy
+    from src.evaluation.sidecar import ledger_lock_path
+    from tests.fixtures.concurrent_writers import CONTEXT, WAIT, hold_lock, processes
+
+    monkeypatch.setattr(sidecar, "LEDGER_LOCK_GRACE_SECONDS", 0.3)
+    ledger_path = checkpoints / "evaluations.json"
+    report = _report(tmp_path)
+    before = report.read_bytes()
+    held, release = CONTEXT.Event(), CONTEXT.Event()
+    with processes((hold_lock, (str(ledger_lock_path(ledger_path)), held, release))) as (holder,):
+        assert held.wait(WAIT), "the holder did not take the ledger's lock"
+        with pytest.raises(LedgerBusy) as busy:
+            _register(report, checkpoints, beside=True)
+        release.set()
+        holder.join(WAIT)
+
+    said = str(busy.value)
+    assert isinstance(busy.value, RegistrationRefused)
+    assert f"{report} is not registered: the ledger is busy" in said
+    assert "for the 0.3 s this one waited" in said
+    assert "The report stays where it is kept; register it again." in said
+    assert said.endswith(f"Nothing was written to {ledger_path} this time.")
+    assert not ledger_path.exists() and report.read_bytes() == before
+    assert sorted(p.name for p in checkpoints.iterdir()) == [
+        "best.pt", "evaluations.json.lock"]
+
+    again = _register(report, checkpoints, beside=True)
+    assert (again.outcome, again.record["registration"]["sequence"]) == ("registered", 1)
+    assert ledger_path.with_name("evaluations.json.lock").exists(), "the lock file is kept"
+
+
+@POSIX
+def test_a_written_ledger_with_a_busy_usage_history_says_so_and_stands(
+    tmp_path, checkpoints, monkeypatch, caplog
+):
+    """F-i (b): the version's usage-history lock is held by another process
+    past its (patched) grace. The ledger is written and the outcome stays
+    ``registered``; `usage_history_problem` says the usage history was not
+    written, naming the busy lock; the CLI prints it and exits 0; the ledger is
+    never rolled back and the usage history holds no entry of these."""
+    import logging
+
+    import scripts.record_evaluation as record_evaluation
+    import src.evaluation.report_store as report_store
+    from tests.fixtures.concurrent_writers import CONTEXT, WAIT, hold_lock, processes
+
+    monkeypatch.setattr(report_store, "APPEND_LOCK_GRACE_SECONDS", 0.3)
+    report = _report(tmp_path)
+    other = _report(tmp_path, batch_size=8)
+    usage_lock = report.parents[1] / "usage.jsonl.lock"
+    held, release = CONTEXT.Event(), CONTEXT.Event()
+    with processes((hold_lock, (str(usage_lock), held, release))) as (holder,):
+        assert held.wait(WAIT), "the holder did not take the usage history's lock"
+        result = _register(report, checkpoints, beside=True)
+        with caplog.at_level(logging.INFO, logger=record_evaluation.logger.name):
+            code = record_evaluation.main(["--checkpoint-dir", str(checkpoints),
+                                           "--report", str(other)])
+        release.set()
+        holder.join(WAIT)
+
+    assert (result.outcome, result.record["registration"]["sequence"]) == ("registered", 1)
+    problem = result.usage_history_problem
+    assert problem.startswith(f"the usage history was not written: it was busy (another writer "
+                              f"held {usage_lock} for the 0.3 s this one waited). ")
+    assert f"The record in {result.ledger_path} stands" in problem
+    assert code == 0
+    said = [r.getMessage() for r in caplog.records]
+    assert any(m.startswith("NOTE: the usage history was not written: it was busy (")
+               for m in said)
+    assert len(read_ledger(result.ledger_path)[0]["records"]) == 2, "never rolled back"
+    assert not (report.parents[1] / "usage.jsonl").exists()
+
+
+@POSIX
+def test_the_ledger_lock_is_taken_before_the_usage_lock_never_after(
+    tmp_path, checkpoints, monkeypatch
+):
+    """F-j: lock order GPU, ledger, usage history, never the other way, and a
+    registration on its own takes no GPU lock. With the version's usage lock
+    held by another process, a registration takes the ledger's lock, writes the
+    ledger, then waits for the usage lock inside it and reports F-i (b); it
+    never deadlocks, and the order of acquisition is recorded through the
+    shared primitive as each caller holds it."""
+    from contextlib import contextmanager
+
+    import src.evaluation.report_store as report_store
+    import src.evaluation.sidecar as sidecar
+    from src.utils import gpu_lock
+    from tests.fixtures.concurrent_writers import CONTEXT, WAIT, hold_lock, processes
+
+    monkeypatch.setattr(report_store, "APPEND_LOCK_GRACE_SECONDS", 0.3)
+    ledger_path = checkpoints / "evaluations.json"
+    events = []
+
+    def recording(module, name):
+        real = module.exclusive_lock
+
+        @contextmanager
+        def lock(path, **kwargs):
+            events.append(("try", name, ledger_path.exists()))
+            with real(path, **kwargs):
+                events.append(("held", name, ledger_path.exists()))
+                try:
+                    yield path
+                finally:
+                    events.append(("left", name, ledger_path.exists()))
+
+        monkeypatch.setattr(module, "exclusive_lock", lock)
+
+    recording(sidecar, "ledger")
+    recording(report_store, "usage")
+    monkeypatch.setattr(gpu_lock.GpuLock, "acquire",
+                        lambda *a, **k: pytest.fail("a registration took the GPU lock"))
+    report = _report(tmp_path)
+    usage_lock = report.parents[1] / "usage.jsonl.lock"
+    held, release = CONTEXT.Event(), CONTEXT.Event()
+    with processes((hold_lock, (str(usage_lock), held, release))) as (holder,):
+        assert held.wait(WAIT)
+        result = _register(report, checkpoints, beside=True)
+        release.set()
+        holder.join(WAIT)
+
+    assert events == [("try", "ledger", False), ("held", "ledger", False),
+                      ("try", "usage", True), ("left", "ledger", True)]
+    assert result.outcome == "registered" and "it was busy" in result.usage_history_problem
+    assert _held(ledger_path) == {_sha(report): 1}
 
 
 # ---------------------------------------------------------------------------

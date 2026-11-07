@@ -916,6 +916,31 @@ class TestTheRegistryListing:
             environ={ss.ENV_REGISTRY: str(cohort.registry)}).items
         assert [r.run_id for r in item.reports] == ["stray.txt", run_id]
 
+    def test_the_stores_lock_files_are_not_runs_and_are_not_listed(self, registered, tmp_path):
+        """F-k (K8-6r.1): each append to the usage history or the notes holds
+        a lock file beside it (`report_store.STORE_LOCK_FILES`), kept after
+        use. The listing leaves them out with the store's data files, so
+        neither the API's version list nor the Test page shows them as runs;
+        a stray file is still listed with why."""
+        from datetime import UTC, datetime
+
+        from src.evaluation.cohort_registry import create_report_dir, list_report_runs
+        from src.evaluation.report_store import STORE_LOCK_FILES
+
+        assert STORE_LOCK_FILES == ("usage.jsonl.lock", "notes.jsonl.lock")
+        cohort = _registry_copy(registered, tmp_path)
+        run_id, _directory = create_report_dir(cohort.version, "a" * 64,
+                                               datetime(2026, 10, 20, tzinfo=UTC))
+        reports = cohort.version.directory / "reports"
+        for name in (*STORE_LOCK_FILES, "stray.txt"):
+            (reports / name).write_text("")
+        listed = list_report_runs(cohort.version)
+        assert [run.run_id for run in listed] == ["stray.txt", run_id]
+        assert "not named as a run id" in listed[0].problem
+        (item,) = sl.list_cohort_versions(
+            environ={ss.ENV_REGISTRY: str(cohort.registry)}).items
+        assert [r.run_id for r in item.reports] == ["stray.txt", run_id]
+
     def test_the_run_id_pattern_matches_what_create_report_dir_makes(self, registered,
                                                                      tmp_path):
         from datetime import datetime, timezone
@@ -1043,6 +1068,36 @@ class TestRoutes:
         assert body["problem"] is None
         assert [v["label"] for v in body["versions"]] == [cohort.version.manifest["label"]]
         assert "offers_ordering" not in body["versions"][0]           # retired in K8-6d
+
+    def test_the_cohorts_route_lists_only_runs_after_appends_took_their_locks(
+            self, client, tmp_path, monkeypatch):
+        """F-k (K8-6r.1), with the locks in place: after a ``test_run``
+        append and an investigation note into one version, its ``reports/``
+        holds both lock files, and GET /api/v1/cohorts lists the run alone."""
+        import hashlib
+        import json
+
+        from src.evaluation.report_store import add_investigation_note, record_test_run
+        from src.evaluation.sidecar import build_record, record_key
+        from tests.fixtures.report_store import store_report, version_of
+        from tests.unit.test_evaluation_sidecar import registered_report
+
+        report = store_report(tmp_path / "registry", registered_report())
+        version = version_of(report)
+        record_test_run(version, run_id=report.parent.name, report_sha256="e" * 64,
+                        checkpoint_sha256="c" * 64, metrics={"pooled_mrr": 0.5}, n_ranked=8,
+                        deterministic=True, device="cpu", record_requested=False,
+                        mode="disease")
+        data = report.read_bytes()
+        key = record_key(build_record(json.loads(data), hashlib.sha256(data).hexdigest()))
+        add_investigation_note(version, key, who="ops", what="compared the environments")
+        assert sorted(p.name for p in report.parents[1].iterdir()) == sorted(
+            [report.parent.name, "notes.jsonl", "notes.jsonl.lock", "usage.jsonl",
+             "usage.jsonl.lock"])
+        monkeypatch.setenv(ss.ENV_REGISTRY, str(tmp_path / "registry"))
+        (listed,) = client.get("/api/v1/cohorts").json()["versions"]
+        assert [r["run_id"] for r in listed["reports"]] == [report.parent.name]
+        assert [r["problem"] for r in listed["reports"]] == [None]
 
     def test_the_cohort_route_reads_each_runs_state_through_the_registration(
             self, client, registered, tmp_path, monkeypatch):
