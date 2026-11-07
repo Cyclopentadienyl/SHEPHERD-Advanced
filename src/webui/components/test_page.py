@@ -202,6 +202,7 @@ _R10_EVIDENCE_WORDS = {
     "not_found": "evidence not found",
     "unreadable": "evidence found, not readable",
     "not_recorded": "evidence not recorded by the checkpoint",
+    "search_incomplete": "evidence search incomplete",
 }
 #: The metrics shown as tiles, in order, by the record's mode (`scoring.mode`);
 #: each is named by `caveats.metric_text`. Mode D's are over the import-eligible

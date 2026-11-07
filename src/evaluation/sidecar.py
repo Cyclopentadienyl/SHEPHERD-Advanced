@@ -35,7 +35,9 @@ report. The report's bytes do not carry it, so the ledger records it.
 - **R10's evidence paths are kept.** The `r10` block is copied as the report
   has it (`src/evaluation/r10.py`), so each scope's `evidence.path` -- the file
   on the measuring machine whose bytes the checkpoint records, when one was
-  found -- is in the record. The read-only view strips it
+  found -- is in the record, and so, for a search left incomplete, are the
+  places that could not be read, in its `evidence.problem`. The read-only view
+  strips both
   (`src/api/routes/evaluations.py`); `record_evaluation.py --show` prints the
   record as it is, on the operator's machine.
 - **No case ids.** The cohort block is aggregates only (`COHORT_VERSION_FIELDS`).

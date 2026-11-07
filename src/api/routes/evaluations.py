@@ -223,9 +223,11 @@ def _check_r10_counts(state: str, k: Optional[int], n: int, *more: Optional[int]
 
 class R10Evidence(_Strict):
     """Whether the inputs the checkpoint records were found; the file's path and
-    any read error stay in the ledger."""
+    any read error stay in the ledger. "search_incomplete" (R10 definition
+    version 2): no file that was read holds them, and a place that may could
+    not be read. A version-1 record's states mean what they meant then."""
 
-    state: Literal["found", "not_found", "unreadable", "not_recorded"]
+    state: Literal["found", "not_found", "unreadable", "not_recorded", "search_incomplete"]
 
 
 class R10DiseaseOverlap(_Strict):

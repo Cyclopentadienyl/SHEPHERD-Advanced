@@ -1349,17 +1349,28 @@ training inputs and has no validation entry at all: training ran no validation p
 - **not recorded by the checkpoint**: it names no file to look for in this scope, and its
   record is not one the pipeline wrote: every training run records its training inputs as a
   digest, so a record without one, or with an entry that is there and is not a digest, cannot
-  come from it. `--training-evidence` cannot help.
+  come from it. `--training-evidence` cannot help;
+- **search incomplete**: no file that was read holds the recorded bytes, and a place that may
+  hold them could not be read: a candidate (permission, an I/O error) or a `--training-evidence`
+  directory that exists and cannot be listed. The console names each place and its error. Make
+  it readable to the process that measures, and measure again.
 
 `none` is not proof of no leakage: it speaks only about the inputs the checkpoint records.
 
-**What refuses the run instead of giving a label.** A `--training-evidence` directory that does
-not exist, is not a directory, or cannot be listed (permission, an I/O error on a network mount)
-is refused before any candidate is read: a directory that is not looked in would report the
-inputs as not found. A candidate that exists but cannot be read (permission, an I/O error)
-refuses the run, and nothing is written, because it may be the evidence; make it readable, or
-leave its directory out of `--training-evidence`. Candidates are read only until every recorded
-digest has been found, so an unreadable file after the match is never reached.
+**A place that cannot be read is recorded, not refused** (since K8-6r.3, R10 definition version
+2). A candidate, or an existing `--training-evidence` directory, that cannot be read leaves its
+scope `unverifiable` with that reason, never "not found" and never a count. The search goes on
+through the remaining candidates, so bytes held by another file are still found, and the
+measurement still runs and its report can be registered. **What still refuses the run:** a
+`--training-evidence` path that does not exist, is not a directory, or cannot itself be checked
+(under a directory this account cannot enter, for one), an argument error before anything is
+read; and the required inputs: a checkpoint, graph file or cohort samples file that is missing,
+cannot be read, or is not the bytes recorded for it. Running out of memory while reading a
+candidate ends the run as a resource failure that names the file: it says nothing about overlap,
+and no kept report or ledger record is changed. Candidates are read only until every recorded
+digest has been found, so an unreadable file after the match is never reached. A report written
+before K8-6r.3 (R10 definition version 1) is read as written: there, "not found" means every
+candidate was read and compared.
 
 **Where the report is kept.** In the registry, under the version:
 `<registry>/versions/<label>/reports/<UTC time>-<first 12 hex of the checkpoint digest>-<8 random

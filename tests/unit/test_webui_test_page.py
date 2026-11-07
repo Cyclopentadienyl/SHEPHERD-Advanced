@@ -351,6 +351,57 @@ def test_unverifiable_is_a_word_never_a_count():
     assert "/srv/secret" not in "".join(lines.values())
 
 
+#: An unverifiable label's words by its scope's evidence state, as the Test
+#: page and Models show them (`caveats.R10_UNVERIFIABLE_REASON`).
+NOT_FOUND_WORDS = ("no file looked at holds the bytes this checkpoint records, so there "
+                   "is no count")
+SEARCH_INCOMPLETE_WORDS = ("a place that may hold the bytes this checkpoint records could "
+                           "not be read, so there is no count. Make it readable to the "
+                           "account that measures, and measure again; the report names "
+                           "the place")
+
+
+@pytest.mark.parametrize("version, state, evidence_words, reason", [
+    (1, "not_found", "evidence not found", NOT_FOUND_WORDS),
+    (2, "search_incomplete", "evidence search incomplete", SEARCH_INCOMPLETE_WORDS),
+], ids=["version-1-not-found", "search-incomplete"])
+def test_a_kept_reports_r10_reads_in_its_states_words_never_a_count(
+    tmp_path, version, state, evidence_words, reason
+):
+    """D11 (guard; Decision 7) and the K8-6r.3 words. A kept report whose R10
+    block is definition version 1 with a `not_found` scope reads with its
+    version-1 meaning, "no file looked at holds the bytes"; a version-2 block
+    whose search was left incomplete says a place could not be read and what
+    to do. Either way the labels are *unverifiable*, with no count, no 0, no
+    dash and no "none", and the place's path is not shown."""
+    from tests.fixtures.model_records import keep
+    from tests.unit.test_evaluation_sidecar import r10_block, registered_report
+
+    block = r10_block()
+    block["definition_version"] = version
+    block["training"]["evidence"] = {
+        "state": state, "path": None,
+        "problem": None if state == "not_found" else (
+            "no candidate that was read holds the recorded bytes, and these places could "
+            "not be looked in: /srv/secret/train_samples.json (PermissionError: "
+            "Permission denied)")}
+    path, record = keep(tmp_path / "registry", registered_report(r10=block))
+    run_id = path.parent.name
+    reports = {"runs": [{"run_id": run_id, "record": record,
+                         "state": {"kept": "kept", "registered": "not_registered"}}]}
+
+    html = tp.result_html(reports, run_id, [], notes=[])
+
+    line = dict(tp._r10_lines(record["r10"]))["R10, training"]
+    assert line.startswith(f'<span class="shep-muted">inputs ({evidence_words}):</span> ')
+    for name in ("Training disease overlap", "Training phenotype-set overlap"):
+        assert f"{name}: <b>unverifiable</b>: {reason}" in line
+    assert line in html
+    text = re.sub(r"<[^>]+>", "", line)
+    assert not re.search(r"\d", text) and "—" not in text and " none" not in text
+    assert "/srv/secret" not in html
+
+
 def test_binding_compares_the_versions_graph_with_the_workspaces(site):
     from src.kg.artifacts import read_split_manifest
 

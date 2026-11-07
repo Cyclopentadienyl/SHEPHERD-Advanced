@@ -195,6 +195,7 @@ from src.utils.interrupts import interrupt_deferred
 if TYPE_CHECKING:
     from src.evaluation.cohort_registry import CohortVersionRead
     from src.evaluation.measurement import ModeResult
+    from src.evaluation.r10 import EvidenceCandidate
     from src.kg.artifacts import DatasetRecord, ManifestRead
     from src.kg.storage.file_storage import GraphArtifactsRead, SamplesRead
     from src.utils.checkpoint_io import CheckpointRead
@@ -394,8 +395,9 @@ def read_measurement_inputs(
     this run's (`verify_cohort_binding`), so a version mapped against another
     graph is refused before the checkpoint is read; then the checkpoint, R3 and
     the model record; then R10 over the evidence candidates, each read at most
-    once and compared before it is parsed. The workspace's `train_samples.json` and
-    `val_samples.json` are read only as R10 candidates.
+    once and compared before it is parsed; a place R10 cannot look in is
+    recorded in its block, never a refusal (`_r10`). The workspace's
+    `train_samples.json` and `val_samples.json` are read only as R10 candidates.
 
     **The digests compared are those of the bytes parsed.** Each tensor's digest
     and, for a generated split, each sample file's digest is compared with the
@@ -564,12 +566,15 @@ def _resolve_generated(data_dir: Path, split: str) -> Tuple[CohortProvenance, Tu
 def _resolve_registered(
     data_dir: Path, label: str, registry: Optional[Path], training_evidence: Sequence[Path],
     *, expected_sha256: Optional[str] = None,
-) -> Tuple[CohortVersionRead, Dict[str, Any], List[Path]]:
+) -> Tuple[CohortVersionRead, Dict[str, Any], List[EvidenceCandidate]]:
     """The evidence candidates (listed, nothing read) and the version (one read
     of its `cohort.json`), with the block its report records.
 
     The evidence directories come first: they are the operator's arguments, and
-    one that is not a directory is refused before anything is read.
+    one that does not exist, is not a directory or cannot itself be checked is
+    refused before anything is read. One that exists and cannot be listed is
+    not refused: it stays in the list as a place R10 could not look in
+    (`evidence_candidates`).
 
     With `expected_sha256` (`--expect-version-sha256`) the read is compared
     before it is decoded: other bytes, or no version, are
@@ -713,24 +718,23 @@ def _read_checkpoint(checkpoint: Path, device: torch.device, *,
         raise UnparseableCheckpoint(checkpoint, exc) from exc
 
 
-def _r10(recorded: Any, samples: SamplesRead, candidates: Sequence[Path]) -> Dict[str, Any]:
+def _r10(recorded: Any, samples: SamplesRead,
+         candidates: Sequence[EvidenceCandidate]) -> Dict[str, Any]:
     """R10 from the checkpoint's own record of its training inputs, taken from
     its one read (`training_input_digests`), and the candidates.
 
-    Recorded, never enforced (contract §5.4). A candidate that cannot be read
-    for a reason other than its absence refuses the run rather than reading as
-    "not found": it may have been the evidence.
+    Recorded, never enforced (contract §5.4). **A candidate or an evidence
+    directory that cannot be read does not stop the run** (K8-6r.3):
+    `compute_r10` records it, reads the remaining candidates, and leaves a
+    scope that none of them holds *unverifiable* with that reason
+    (`search_incomplete`), never "not found". The run's required inputs were
+    verified before this. A `MemoryError` reading a candidate is not converted:
+    `compute_r10` names the candidate and the run ends as a resource failure,
+    before anything is published.
     """
     from src.evaluation.r10 import compute_r10
 
-    try:
-        return compute_r10(recorded, samples.samples, candidates)
-    except OSError as exc:
-        raise ValueError(
-            f"an R10 evidence candidate could not be read ({type(exc).__name__}: {exc}); it "
-            "may hold the inputs the checkpoint records, so the run does not report them "
-            "as not found. Nothing was written."
-        ) from exc
+    return compute_r10(recorded, samples.samples, candidates)
 
 
 def measurement_input_digests(inputs: MeasurementInputs) -> Dict[str, str]:
@@ -1510,8 +1514,10 @@ def _r10_label_text(label: str, value: Mapping[str, Any], evidence_state: str) -
 
     **"unverifiable" and "no validation inputs recorded" are words, never a
     number,** and an unverifiable label gives its scope's reason
-    (`R10_UNVERIFIABLE_REASON`): bytes not found, found and not readable, or a
-    checkpoint that names no such file, which no `--training-evidence` can help.
+    (`R10_UNVERIFIABLE_REASON`): bytes not found, found and not readable, a
+    place that may hold them that could not be read (its path and error are on
+    the evidence line above the labels), or a checkpoint that names no such
+    file, which no `--training-evidence` can help.
     **"none" says it is not evidence about data outside the recorded inputs.**
     The raw state stays in the report, which holds no prose.
     """

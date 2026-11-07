@@ -3445,8 +3445,8 @@ def _the_view_shows(answer: Dict[str, Any], record: Dict[str, Any], ledger_sha25
     assert (view["cohort"]["label"], view["cohort"]["role"], view["n_ranked"]) == (
         record["cohort"]["label"], record["cohort"]["role"], record["n_ranked"])
     for scope in scopes:
-        assert view["r10"][scope]["evidence"]["state"] == "found", (
-            f"the view shows R10's {scope} evidence as not found")
+        state = view["r10"][scope]["evidence"]["state"]
+        assert state == "found", f"the view shows R10's {scope} evidence as {state}, not found"
     # The review's P2-6, seen end to end (root-cause round, INT-1): the route
     # reads the probe's registry, so the record's state is from its store.
     contest = view.get("contest") or {}

@@ -13,7 +13,10 @@ per test:
   evidence-directory check included;
 - each refusal the registered path adds is one `ValueError` naming the file and
   saying nothing was written: a version whose manifest lacks its source format,
-  missing samples, an R10 candidate that cannot be read;
+  missing samples; an R10 candidate that cannot be read is not one of them since
+  K8-6r.3: it is recorded and the run goes on (rows D7-D9 and D12 of plan B rev 6
+  §3.9), while a cohort samples file that cannot be read still refuses, and
+  running out of memory on a candidate ends the run naming it, changing nothing;
 - the manifest records the version as an aggregate block (no case id), the
   relation states a registered run earns, and the R10 block `compute_r10` gives
   for the same inputs; R10's states for the record a disease child writes (the
@@ -204,37 +207,36 @@ def _pre_contract_checkpoint(cohort):
     return "records no training_input_digests"
 
 
-def _unreadable_candidate(cohort, monkeypatch):
+def _refuse_r10_reads(monkeypatch, error, names=("train_samples.json",)):
+    """R10's candidate reads raise `error` for the workspace files named; every
+    other read, the cohort's own samples among them, is the real one. The
+    sandbox runs as root, so a permission bit would not stop the read."""
     import src.evaluation.r10 as r10
 
     real = r10.read_samples_file
 
     def refuse(path, **kwargs):
-        if Path(path).name == "train_samples.json":
-            raise PermissionError(13, "Permission denied", str(path))
+        if Path(path).name in names:
+            raise error
         return real(path, **kwargs)
 
     monkeypatch.setattr(r10, "read_samples_file", refuse)
-    return "R10 evidence candidate could not be read"
 
 
 @pytest.mark.parametrize("case", ["no_source_format", "samples_removed",
-                                  "samples_not_the_count", "pre_contract",
-                                  "unreadable_candidate"])
+                                  "samples_not_the_count", "pre_contract"])
 def test_each_refusal_writes_nothing(cli, cohort, monkeypatch, case):
     """Refusals of the registered path's own and the shared checks it runs late:
     one `ValueError` each, naming what is wrong, and no run directory and no
-    ledger, because nothing is written before every check passes -- R10, the last
-    check, included."""
+    ledger, because nothing is written before every check passes. An R10
+    candidate that cannot be read left this list in K8-6r.3: it is recorded, and
+    the run goes on (`test_an_r10_candidate_that_cannot_be_read_is_recorded_...`)."""
     import src.models.bundle.record as bundle_record
 
-    if case == "unreadable_candidate":
-        message = _unreadable_candidate(cohort, monkeypatch)
-    else:
-        message = {"no_source_format": _without_source_format,
-                   "samples_removed": _samples_removed,
-                   "samples_not_the_count": _samples_not_the_count,
-                   "pre_contract": _pre_contract_checkpoint}[case](cohort)
+    message = {"no_source_format": _without_source_format,
+               "samples_removed": _samples_removed,
+               "samples_not_the_count": _samples_not_the_count,
+               "pre_contract": _pre_contract_checkpoint}[case](cohort)
     monkeypatch.setattr(bundle_record, "load_bundle",
                         lambda *a, **k: pytest.fail("a model was built after a refusal"))
 
@@ -266,6 +268,123 @@ def test_the_internal_entry_refuses_a_request_that_is_neither_or_both_kinds(cli,
             cli.read_measurement_inputs(cohort.checkpoint, cohort.data_dir, device,
                                         cohort="demo-test-1", protocol="disease")
     assert not [path for path, n in opens.counts.items() if n], "something was opened"
+
+
+# ---------------------------------------------------------------------------
+# R10 evidence that cannot be read (K8-6r.3, plan B rev 6 §3.9 rows D7-D9, D12)
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("error, state", [
+    (FileNotFoundError(2, "No such file or directory"), "not_found"),
+    (PermissionError(13, "Permission denied"), "search_incomplete"),
+], ids=["vanished", "permission"])
+def test_an_r10_candidate_that_cannot_be_read_leaves_verified_inputs_measurable(
+    cli, cohort, monkeypatch, error, state
+):
+    """D7, the reviewer's case. The graph, checkpoint and cohort samples are
+    verified; the workspace's `train_samples.json`, which holds the training
+    bytes the checkpoint records, cannot be read. Vanished since it was
+    listed: skipped, the training scope `not_found`, as before. Refused by
+    permission: recorded, `search_incomplete` naming the file and the error,
+    its labels *unverifiable* with no count, instead of a `ValueError`. The
+    validation scope is found either way. HEAD: `ValueError` for permission."""
+    _refuse_r10_reads(monkeypatch, error)
+
+    inputs = cli.read_measurement_inputs(
+        cohort.checkpoint, cohort.data_dir, torch.device("cpu"),
+        cohort=cohort.version.manifest["label"], registry=cohort.registry,
+        protocol="disease")
+
+    training = inputs.r10["training"]
+    assert training["evidence"]["state"] == state
+    if state == "search_incomplete":
+        assert training["evidence"]["problem"].endswith(
+            f"{(cohort.data_dir / 'train_samples.json').resolve()} "
+            "(PermissionError: Permission denied)")
+    for label in ("disease_overlap", "phenotype_set_overlap"):
+        assert training[label]["state"] == "unverifiable"
+        assert training[label]["k"] is None
+    assert inputs.r10["validation"]["evidence"]["state"] == "found"
+    assert inputs.r10["candidates_examined"] == 1
+
+
+def test_an_r10_candidate_that_cannot_be_read_is_recorded_and_the_run_registers(
+    cli, cohort, monkeypatch, capsys
+):
+    """D8. `main --cohort --record` with an EACCES on an R10 candidate exits 0:
+    the report is kept, the ledger record carries `search_incomplete` with the
+    R10 definition version 2, and the console gives the place and the reason.
+    HEAD: a `ValueError` (exit 1 as a program), no report, no ledger."""
+    _refuse_r10_reads(monkeypatch, PermissionError(13, "Permission denied"))
+
+    assert cli.main(_argv(cohort, "--record")) == 0
+
+    _, report = _report(cohort)
+    (record,) = json.loads((cohort.checkpoint.parent / LEDGER).read_text())["records"]
+    for r10 in (report["manifest"]["r10"], record["r10"]):
+        assert r10["definition_version"] == 2
+        assert r10["training"]["evidence"]["state"] == "search_incomplete"
+        assert r10["validation"]["evidence"]["state"] == "found"
+    out = capsys.readouterr().out
+    assert ("training evidence: search_incomplete (no candidate that was read holds the "
+            "recorded bytes, and these places could not be looked in: "
+            f"{(cohort.data_dir / 'train_samples.json').resolve()} "
+            "(PermissionError: Permission denied))") in out
+
+
+def test_a_cohort_samples_file_that_cannot_be_read_still_refuses(cli, cohort, monkeypatch):
+    """D9 (guard). The cohort version's own `samples.json` is a required input,
+    not R10 evidence: a `PermissionError` on it still ends the run before
+    anything is written."""
+    import src.kg.storage.file_storage as file_storage
+
+    real = file_storage.read_samples_file
+
+    def refuse(path, **kwargs):
+        if Path(path) == cohort.version.samples_path:
+            raise PermissionError(13, "Permission denied", str(path))
+        return real(path, **kwargs)
+
+    monkeypatch.setattr(file_storage, "read_samples_file", refuse)
+
+    with pytest.raises(PermissionError):
+        cli.main(_argv(cohort, "--record"))
+
+    assert _nothing_written(cohort)
+
+
+def _store_and_ledger(cohort):
+    """Every file under the version's report store and beside the checkpoint,
+    by path, with its bytes."""
+    files = {}
+    for root in (cohort.version.directory / "reports", cohort.checkpoint.parent):
+        for path in sorted(root.rglob("*")):
+            if path.is_file():
+                files[str(path)] = path.read_bytes()
+    return files
+
+
+def test_memory_running_out_on_an_r10_candidate_ends_the_run_and_changes_nothing(
+    cli, cohort, monkeypatch
+):
+    """D12. Out of memory reading an R10 candidate (patched): the run ends as a
+    resource failure naming the candidate -- a `MemoryError`, which
+    `_run_as_program` does not turn into a refusal -- before anything is
+    published; an earlier run's report, ledger record and usage history are
+    byte-equal after. Never `search_incomplete`, never "no overlap". HEAD: the
+    bare `MemoryError` propagates, naming nothing."""
+    assert cli.main(_argv(cohort, "--record")) == 0
+    before = _store_and_ledger(cohort)
+    _refuse_r10_reads(monkeypatch, MemoryError())
+
+    with pytest.raises(MemoryError) as ran_out:
+        cli.main(_argv(cohort, "--record"))
+
+    candidate = (cohort.data_dir / "train_samples.json").resolve()
+    assert str(ran_out.value) == (
+        f"memory ran out reading the R10 evidence candidate {candidate}: a resource "
+        "failure, not a finding about the file or about overlap")
+    assert _store_and_ledger(cohort) == before
+    assert len(_reports(cohort)) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -546,9 +665,9 @@ def test_the_register_later_command_quotes_each_path_for_every_shell():
     assert shlex.split(line)[2:] == ["--report", str(report), "--checkpoint", str(checkpoint)]
 
 
-@pytest.mark.parametrize("evidence_state", ["found", "not_found"])
+@pytest.mark.parametrize("evidence_state", ["found", "not_found", "search_incomplete"])
 def test_the_console_gives_each_r10_label_in_the_caveats_words_and_the_definitions_once(
-    cli, cohort, tmp_path, capsys, evidence_state
+    cli, cohort, tmp_path, capsys, monkeypatch, evidence_state
 ):
     """Finding 9: each label's state is rendered through `R10_STATE_TEXT`, an
     unverifiable one through its scope's `R10_UNVERIFIABLE_REASON`, with no
@@ -561,7 +680,8 @@ def test_the_console_gives_each_r10_label_in_the_caveats_words_and_the_definitio
     re-sampled after it was trained (the same graph and dataset record, other
     train and val cohorts), so neither file it records is found. They used to
     come from a graph-only record, which no measured checkpoint carries now
-    (see `test_r10_states_follow_what_the_checkpoint_records`)."""
+    (see `test_r10_states_follow_what_the_checkpoint_records`). A search left
+    incomplete comes from both workspace files refused by permission (K8-6r.3)."""
     from src.evaluation.caveats import (
         R10_LABEL_TEXT,
         R10_STATE_TEXT,
@@ -572,6 +692,9 @@ def test_the_console_gives_each_r10_label_in_the_caveats_words_and_the_definitio
     if evidence_state == "not_found":
         resampled = write_demo_workspace(tmp_path / "resampled", sample_seed=7)
         argv[argv.index(str(cohort.data_dir))] = str(resampled)
+    elif evidence_state == "search_incomplete":
+        _refuse_r10_reads(monkeypatch, PermissionError(13, "Permission denied"),
+                          names=("train_samples.json", "val_samples.json"))
 
     assert cli.main(argv) == 0
 

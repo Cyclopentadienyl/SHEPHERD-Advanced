@@ -27,15 +27,27 @@ matching evidence that does not parse is *unverifiable* with a problem that
 holds no row data; a candidate that is not even JSON is skipped without a parse
 error; each candidate is opened once even while both scopes are unmatched; the
 raw buffers and the matching samples are released before the next read; an
-evidence directory that is not a directory, or cannot be listed, is refused.
+evidence directory that does not exist, is not a directory or cannot itself be
+checked is refused.
+
+And the places that cannot be looked in (K8-6r.3, plan B rev 6 §3.9, rows D1-D6
+and D12): a candidate that cannot be read, an evidence directory that exists and
+cannot be listed, and a listed path whose stat fails are each recorded, and the
+search goes on through the remaining candidates. A scope found elsewhere is
+found; one found nowhere while such a place exists is `search_incomplete`,
+*unverifiable* with the place and its reason, never `not_found` and never a
+count. Running out of memory reading a candidate is re-raised naming it, never a
+state. The sandbox runs as root, so access errors are injected.
 
 Module: tests/unit/test_r10.py
 """
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
+import pathlib
 import weakref
 
 import pytest
@@ -127,6 +139,17 @@ def workspace(tmp_path):
 # ---------------------------------------------------------------------------
 # evidence_candidates
 # ---------------------------------------------------------------------------
+def _pathlib_as_in_python_3_14(monkeypatch):
+    """`Path.is_file` and `Path.is_dir` as Python 3.14 has them: every
+    `OSError` reads False, so a place that could not be looked at would read
+    as one that is not there. R10 keeps its own rule, so these tests hold
+    whichever Python runs them."""
+    monkeypatch.setattr(pathlib.Path, "is_file",
+                        lambda self, *, follow_symlinks=True: os.path.isfile(self))
+    monkeypatch.setattr(pathlib.Path, "is_dir",
+                        lambda self, *, follow_symlinks=True: os.path.isdir(self))
+
+
 class TestEvidenceCandidates:
     def test_workspace_first_then_each_directory_sorted_and_not_recursive(self, tmp_path,
                                                                            workspace):
@@ -178,6 +201,8 @@ class TestEvidenceCandidates:
     @pytest.mark.parametrize("kind", ["missing", "file"])
     def test_an_evidence_directory_that_is_not_a_directory_is_refused(self, tmp_path,
                                                                       workspace, kind):
+        """D5 (guard). A named path that does not exist or is not a directory
+        stays an argument error (Decision 8), before any directory is listed."""
         root, _, _ = workspace
         named = tmp_path / "not_a_dir"
         if kind == "file":
@@ -190,19 +215,62 @@ class TestEvidenceCandidates:
 
         assert str(named) in str(refused.value)
 
+    @pytest.mark.parametrize("how, says", [
+        ("unsearchable-parent", "PermissionError: Permission denied"),
+        ("name-too-long", "OSError: File name too long"),
+    ])
+    def test_an_evidence_directory_that_cannot_be_checked_is_refused(
+        self, tmp_path, workspace, monkeypatch, how, says
+    ):
+        """Guard, beside D5. A named directory whose own stat fails for a
+        reason other than absence is not shown to exist: behind a parent this
+        account cannot search, a missing directory looks the same as a present
+        one, and a name too long cannot exist. So it is the argument error a
+        missing directory is, named with its reason, as the deployment setting
+        refuses it ("cannot be checked"); never a place recorded and measured
+        past. Nothing is listed or read."""
+        root, _, _ = workspace
+        good = tmp_path / "good"
+        _write(good / "a_samples.json", TEST)
+        if how == "name-too-long":  # a real ENAMETOOLONG, nothing injected
+            named = tmp_path / ("n" * 300)
+        else:
+            named = tmp_path / "locked" / "archive"
+            real_stat = pathlib.Path.stat
+
+            def stat(self, *, follow_symlinks=True):
+                if os.fspath(self) == os.fspath(named):
+                    raise PermissionError(errno.EACCES, "Permission denied", os.fspath(self))
+                return real_stat(self, follow_symlinks=follow_symlinks)
+
+            monkeypatch.setattr(pathlib.Path, "stat", stat)
+        _pathlib_as_in_python_3_14(monkeypatch)
+
+        with count_opens() as opens, pytest.raises(ValueError) as refused:
+            evidence_candidates(root, [good, named])
+
+        assert str(refused.value).startswith(
+            f"Training evidence directory {named} cannot be checked ({says}); nothing was "
+            "read or written.")
+        assert sum(opens.counts.values()) == 0, "no candidate is read"
+
     @pytest.mark.parametrize("error, says", [
         (PermissionError(13, "Permission denied"), "PermissionError: Permission denied"),
         (OSError(5, "Input/output error"), "OSError: Input/output error"),
     ], ids=["permission", "io-error"])
-    def test_an_evidence_directory_that_cannot_be_listed_is_refused(
+    def test_an_evidence_directory_that_cannot_be_listed_is_recorded_with_its_reason(
         self, tmp_path, workspace, monkeypatch, error, says
     ):
-        """A mode-0700 archive of another account, or a stale network mount:
+        """D3. A mode-0700 archive of another account, or a stale network mount:
         `is_dir()` passes and the listing fails. `Path.glob` swallows that error
         and yields nothing, so the checkpoint's inputs, which the archive holds,
-        would be recorded as not found although it was never looked in. Catches a
-        listing that does not refuse."""
-        root, _, _ = workspace
+        would be recorded as not found although it was never looked in. Since
+        K8-6r.3 it is not refused either (Decision 8): it stays in the list, in
+        its place, as an `UnreadCandidate` naming its error; the other
+        directories are still listed, and R10 reads the scope it might hold as
+        *unverifiable* with that reason. Named twice, it is listed once. HEAD:
+        `ValueError`, nothing measured."""
+        root, train, val = workspace
         archive = tmp_path / "archive"
         _write(archive / "run7_train_samples.json", TEST)
         good = tmp_path / "good"
@@ -216,14 +284,57 @@ class TestEvidenceCandidates:
 
         monkeypatch.setattr(os, "scandir", scandir)
 
-        with count_opens() as opens, pytest.raises(ValueError) as refused:
-            evidence_candidates(root, [good, archive])
+        with count_opens() as opens:
+            candidates = evidence_candidates(root, [archive, good, archive])
 
-        message = str(refused.value)
-        assert message.startswith(
-            f"Training evidence directory {archive} could not be listed ({says}); "
-            "nothing was read or written.")
-        assert sum(opens.counts.values()) == 0, "no candidate is read"
+        assert sum(opens.counts.values()) == 0, "listing reads no candidate"
+        assert candidates == [
+            (root / "train_samples.json").resolve(), (root / "val_samples.json").resolve(),
+            r10.UnreadCandidate(archive, says), (good / "a_samples.json").resolve(),
+        ]
+        block = compute_r10({"train_samples": "a" * 64, "val_samples": val}, TEST, candidates)
+        _assert_well_formed(block)
+        training = block["training"]
+        assert training["evidence"]["state"] == "search_incomplete"
+        assert f"{archive} ({says})" in training["evidence"]["problem"]
+        assert block["validation"]["evidence"]["state"] == "found"
+
+    @pytest.mark.parametrize("error, kept", [
+        (PermissionError(errno.EACCES, "Permission denied"),
+         "PermissionError: Permission denied"),
+        (FileNotFoundError(errno.ENOENT, "No such file or directory"), None),
+    ], ids=["permission", "vanished"])
+    def test_a_stat_that_fails_while_listing_is_recorded_with_its_reason(
+        self, tmp_path, workspace, monkeypatch, error, kept
+    ):
+        """D4. A listed path whose stat fails for a reason other than absence
+        (ENOENT, ENOTDIR, EBADF, ELOOP) says nothing about whether it holds the
+        evidence: it is recorded in its place, and the rest of the list is
+        unchanged. A path gone since the listing is skipped. The rule is R10's
+        own, not `Path.is_file`'s, which from Python 3.14 answers False for
+        every error. HEAD: a raw `PermissionError`."""
+        root, _, _ = workspace
+        archive = tmp_path / "archive"
+        _write(archive / "a_samples.json", TEST)
+        _write(archive / "b_samples.json", TEST)
+        target = archive / "a_samples.json"
+        real_stat = pathlib.Path.stat
+
+        def stat(self, *, follow_symlinks=True):
+            if os.fspath(self) == os.fspath(target):
+                raise type(error)(error.errno, error.strerror, os.fspath(self))
+            return real_stat(self, follow_symlinks=follow_symlinks)
+
+        monkeypatch.setattr(pathlib.Path, "stat", stat)
+        _pathlib_as_in_python_3_14(monkeypatch)
+
+        candidates = evidence_candidates(root, [archive])
+
+        expected = [(root / "train_samples.json").resolve(), (root / "val_samples.json").resolve()]
+        if kept is not None:
+            expected.append(r10.UnreadCandidate(target, kept))
+        expected.append((archive / "b_samples.json").resolve())
+        assert candidates == expected
 
 
 # ---------------------------------------------------------------------------
@@ -430,6 +541,137 @@ def test_a_candidate_that_vanished_after_listing_is_skipped(tmp_path):
     _assert_well_formed(block)
     assert block["candidates_examined"] == 1
     assert block["training"]["evidence"]["state"] == "found"
+
+
+def _refusing(monkeypatch, names, error):
+    """`read_samples_file` as R10 calls it, raising `error` for the files named."""
+    real = r10.read_samples_file
+
+    def read(path, **kwargs):
+        if path.name in names:
+            raise error
+        return real(path, **kwargs)
+
+    monkeypatch.setattr(r10, "read_samples_file", read)
+
+
+@pytest.mark.parametrize("how, says", [
+    ("permission", "PermissionError: Permission denied"),
+    ("io-error", "OSError: Input/output error"),
+    ("directory", "IsADirectoryError: Is a directory"),
+])
+def test_an_unreadable_candidate_is_recorded_and_the_evidence_after_it_is_found(
+    tmp_path, monkeypatch, how, says
+):
+    """D1. A candidate that cannot be read (permission, an I/O error, a
+    directory put in its place after listing) comes before the one that holds
+    the recorded bytes: the search goes on, the scope is found and counted, and
+    `candidates_examined` counts only the read that was compared. HEAD: the
+    error propagates and nothing is counted."""
+    blocked = tmp_path / "a_samples.json"
+    if how == "directory":
+        blocked.mkdir()
+    else:
+        _write(blocked, TEST)
+        _refusing(monkeypatch, {blocked.name},
+                  PermissionError(errno.EACCES, "Permission denied") if how == "permission"
+                  else OSError(errno.EIO, "Input/output error"))
+    real = tmp_path / "b_samples.json"
+    digest = _write(real, [_s("other", [11, 10], 1)])
+
+    block = compute_r10({"train_samples": digest}, TEST, [blocked, real])
+
+    _assert_well_formed(block)
+    assert block["candidates_examined"] == 1
+    assert block["training"]["evidence"] == {"state": "found", "path": str(real),
+                                             "problem": None}
+    assert block["training"]["phenotype_set_overlap"] == {"state": "overlap", "k": 1, "n": 4}
+    assert block["training"]["disease_overlap"] == {"state": "overlap", "k": 1, "n": 3,
+                                                    "cases": 2}
+    assert says not in json.dumps(block), "a found scope carries no other place's error"
+
+
+def test_only_unreadable_candidates_leave_the_scope_unverifiable_never_not_found(
+    tmp_path, monkeypatch
+):
+    """D2. No candidate that was read holds the recorded bytes and some could
+    not be read: the scope is `search_incomplete` -- neither found nor
+    not_found, which would say every candidate was read and compared -- with
+    path None and a problem naming each place and its reason, and its labels
+    are *unverifiable*, k and cases None, never 0 and never "none". The other
+    scope, found in a candidate that was read, stays found. HEAD: raises."""
+    first, second = tmp_path / "a_samples.json", tmp_path / "b_samples.json"
+    train_digest = _write(first, [_s("x", [10, 11], 1)])
+    _write(second, [_s("y", [12], 1)])
+    val = tmp_path / "c_samples.json"
+    val_digest = _write(val, [_s("v", [20, 21], 2)])
+    _refusing(monkeypatch, {first.name, second.name},
+              PermissionError(errno.EACCES, "Permission denied"))
+
+    block = compute_r10({"train_samples": train_digest, "val_samples": val_digest}, TEST,
+                        [first, second, val])
+
+    _assert_well_formed(block)
+    assert block["candidates_examined"] == 1
+    training = block["training"]
+    assert training["evidence"] == {
+        "state": "search_incomplete", "path": None,
+        "problem": ("no candidate that was read holds the recorded bytes, and these places "
+                    f"could not be looked in: {first} (PermissionError: Permission denied); "
+                    f"{second} (PermissionError: Permission denied)"),
+    }
+    assert training["disease_overlap"] == {"state": "unverifiable", "k": None, "n": 3,
+                                           "cases": None}
+    assert training["phenotype_set_overlap"] == {"state": "unverifiable", "k": None, "n": 4}
+    assert block["validation"]["evidence"]["state"] == "found"
+    assert block["validation"]["phenotype_set_overlap"]["k"] == 1
+
+
+def test_a_place_that_could_not_be_looked_in_changes_only_a_scope_still_not_found(
+    tmp_path
+):
+    """A place recorded before the evidence leaves every other state as it is:
+    the scope whose matching file does not parse stays `unreadable`, with that
+    file's path and problem, and the scope the checkpoint names no file for
+    stays `not_recorded`. Only a scope that no candidate read holds becomes
+    `search_incomplete`, and the place is named nowhere else."""
+    place = r10.UnreadCandidate(tmp_path / "locked_samples.json",
+                                "PermissionError: Permission denied")
+    junk = b"[not json"
+    broken = tmp_path / "a_samples.json"
+    broken.write_bytes(junk)
+
+    block = compute_r10({"train_samples": _sha(junk)}, TEST, [place, broken])
+
+    _assert_well_formed(block)
+    assert block["training"]["evidence"]["state"] == "unreadable"
+    assert block["training"]["evidence"]["path"] == str(broken)
+    assert block["validation"]["evidence"]["state"] == "not_recorded"
+    assert "search_incomplete" not in json.dumps(block)
+    assert "locked_samples" not in json.dumps(block)
+
+
+def test_memory_running_out_reading_a_candidate_names_it_and_is_never_a_state(
+    tmp_path, monkeypatch
+):
+    """D12, at the function. A `MemoryError` reading an oversized candidate is
+    a resource failure, not a finding: re-raised as a `MemoryError` naming the
+    candidate, chained from the original, never `search_incomplete` and never
+    "not found". HEAD: the bare `MemoryError` propagates, naming nothing."""
+    huge = tmp_path / "a_samples.json"
+    _write(huge, TEST)
+    real = tmp_path / "b_samples.json"
+    digest = _write(real, [_s("other", [11, 10], 1)])
+    original = MemoryError()
+    _refusing(monkeypatch, {huge.name}, original)
+
+    with pytest.raises(MemoryError) as ran_out:
+        compute_r10({"train_samples": digest}, TEST, [huge, real])
+
+    assert str(ran_out.value) == (
+        f"memory ran out reading the R10 evidence candidate {huge}: a resource failure, "
+        "not a finding about the file or about overlap")
+    assert ran_out.value.__cause__ is original
 
 
 def test_a_stranger_that_is_not_even_json_is_skipped_without_a_parse_error(tmp_path):
@@ -640,8 +882,30 @@ def test_training_and_validation_recording_the_same_bytes_are_both_found_from_on
 
 
 def test_the_four_states_are_the_ones_named():
+    """The label states stay four. The evidence states gain `search_incomplete`,
+    so the definition is version 2 (Decision 7): the module's own rule, a state
+    added, bumps it."""
     assert R10_STATES == ("overlap", "none", "unverifiable", "no_validation_inputs_recorded")
-    assert R10_DEFINITION_VERSION == 1
+    assert EVIDENCE_STATES == ("found", "not_found", "unreadable", "not_recorded",
+                               "search_incomplete")
+    assert R10_DEFINITION_VERSION == 2
+
+
+def test_every_reader_of_the_evidence_states_knows_each_one():
+    """D6 (invariant). Every reader that enumerates the evidence states has
+    each one: the caveats' unverifiable reasons (every state but "found"), the
+    API's `R10Evidence`, and the Test and Models pages' words. A state added
+    without its readers would read "not reported", or be refused as malformed."""
+    from typing import get_args
+
+    from src.api.routes.evaluations import R10Evidence
+    from src.evaluation.caveats import R10_UNVERIFIABLE_REASON
+    from src.webui.components import models_page, test_page
+
+    assert set(R10_UNVERIFIABLE_REASON) == set(EVIDENCE_STATES) - {"found"}
+    assert set(get_args(R10Evidence.model_fields["state"].annotation)) == set(EVIDENCE_STATES)
+    assert set(test_page._R10_EVIDENCE_WORDS) == set(EVIDENCE_STATES)
+    assert set(models_page._R10_EVIDENCE) == set(EVIDENCE_STATES)
 
 
 def test_an_empty_test_cohort_is_refused_before_any_read(workspace):

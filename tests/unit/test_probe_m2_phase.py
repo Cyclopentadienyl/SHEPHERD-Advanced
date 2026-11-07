@@ -930,7 +930,10 @@ def test_the_m4_evidence_checks_fire(tmp_path):
         (dict(answer, ledger={"sha256": "M"}), "another ledger"),
         (dict(answer, records=[dict(view, r10={"validation": {"evidence": {"state":
                                                                          "not_found"}}})]),
-         "as not found"),
+         "evidence as not_found, not found"),
+        (dict(answer, records=[dict(view, r10={"validation": {"evidence": {"state":
+                                                                         "search_incomplete"}}})]),
+         "evidence as search_incomplete, not found"),
         (dict(answer, records=[dict(view, contest={"state": "cannot_be_checked",
                                                    "differing": [], "runs": []})]),
          "group description as cannot_be_checked"),

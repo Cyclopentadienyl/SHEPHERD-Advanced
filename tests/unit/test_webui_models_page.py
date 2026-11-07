@@ -589,6 +589,41 @@ def test_unverifiable_is_a_word_and_never_a_count(world, monkeypatch):
     assert "0" not in text.replace("D:", "")
 
 
+@pytest.mark.parametrize("version, state, evidence_words, reason", [
+    (1, "not_found", "not found",
+     "no file looked at holds the bytes this checkpoint records, so there is no count"),
+    (2, "search_incomplete", "search incomplete",
+     "a place that may hold the bytes this checkpoint records could not be read, so there "
+     "is no count. Make it readable to the account that measures, and measure again; "
+     "the report names the place"),
+], ids=["version-1-not-found", "search-incomplete"])
+def test_a_records_r10_reads_in_its_states_words_never_a_count(version, state,
+                                                                evidence_words, reason):
+    """D11 (guard; Decision 7) and the K8-6r.3 words. A ledger record whose R10
+    block is definition version 1 with a `not_found` scope reads with its
+    version-1 meaning; a version-2 search left incomplete says a place could
+    not be read and what to do. Both *unverifiable*, never a number, a dash or
+    "none", and no path."""
+    from tests.unit.test_evaluation_sidecar import r10_block
+
+    block = r10_block()
+    block["definition_version"] = version
+    block["training"]["evidence"] = {
+        "state": state, "path": None,
+        "problem": None if state == "not_found" else "... /srv/secret/x_samples.json ..."}
+
+    html = mp.r10_html(block)
+
+    line = html[:html.index("</span>")]
+    assert line.startswith('<span class="shep-mp-ln"><b>R10, training inputs (evidence '
+                           f'{evidence_words}):</b> ')
+    for name in ("Training disease overlap", "Training phenotype-set overlap"):
+        assert f"{name}: unverifiable: {reason}" in line
+    text = re.sub(r"<[^>]+>", "", line).split("):", 1)[1]  # the labels, after "R10, ..."
+    assert not re.search(r"\d", text) and "—" not in text and " none" not in text
+    assert "/srv/secret" not in html
+
+
 def test_the_usage_history_segment_lists_this_checkpoints_entries_newest_first(world, monkeypatch):
     """A test run and kept model loads (written before By test score retired,
     K8-6d): only the entries naming a listed checkpoint are kept, and the

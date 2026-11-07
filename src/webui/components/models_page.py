@@ -181,7 +181,8 @@ ORIGIN_MEANING = {
     "files": "built from identified source files",
 }
 _R10_EVIDENCE = {"found": "found", "not_found": "not found", "unreadable": "found, not readable",
-                 "not_recorded": "not recorded by the checkpoint"}
+                 "not_recorded": "not recorded by the checkpoint",
+                 "search_incomplete": "search incomplete"}
 _RELATION_SHORT = {"cohort_graph": "cohort↔graph"}
 
 #: The help texts this page's ⓘ name (registered through `ctx.help`).

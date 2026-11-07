@@ -354,16 +354,21 @@ R10_STATE_TEXT = {
 
 #: What an *unverifiable* label says, by its scope's evidence state (the
 #: `EVIDENCE_STATES` of `src/evaluation/r10.py` other than "found"): contract
-#: §5.4's three reasons. Each is the whole text for the label, in
-#: `R10_STATE_TEXT`'s form, rendered in place of `R10_STATE_TEXT["unverifiable"]`.
+#: §5.4's three reasons and, from R10 definition version 2 (K8-6r.3), a search
+#: left incomplete. Each is the whole text for the label, in `R10_STATE_TEXT`'s
+#: form, rendered in place of `R10_STATE_TEXT["unverifiable"]`. A version-1
+#: block's states read with these same words: "not_found" meant then what it
+#: means now, every candidate read and compared.
 #:
 #: **One reason per state, because they call for different actions.** Bytes
 #: that were not found may be found by measuring again with the directory that
 #: holds them (`--training-evidence`); bytes found and not readable need the file
-#: repaired. A checkpoint that names no such file at all is not a record the
-#: pipeline wrote, and no directory can supply evidence for a digest that was
-#: never recorded: telling that operator the inputs "were not found" sends them
-#: looking for files that cannot help.
+#: repaired; a place that could not be read (its path and error are in the
+#: report) needs the account that measures to be able to read it. A checkpoint
+#: that names no such file at all is not a record the pipeline wrote, and no
+#: directory can supply evidence for a digest that was never recorded: telling
+#: that operator the inputs "were not found" sends them looking for files that
+#: cannot help.
 R10_UNVERIFIABLE_REASON = {
     "not_found": (
         "unverifiable: no file looked at holds the bytes this checkpoint records, "
@@ -376,6 +381,11 @@ R10_UNVERIFIABLE_REASON = {
     "not_recorded": (
         "unverifiable: this checkpoint names no such file, and its record is not one "
         "the pipeline wrote, so --training-evidence cannot help; there is no count"
+    ),
+    "search_incomplete": (
+        "unverifiable: a place that may hold the bytes this checkpoint records could "
+        "not be read, so there is no count. Make it readable to the account that "
+        "measures, and measure again; the report names the place"
     ),
 }
 

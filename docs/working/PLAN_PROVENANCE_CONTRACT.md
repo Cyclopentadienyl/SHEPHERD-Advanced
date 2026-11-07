@@ -3372,7 +3372,8 @@ its §4.9 the owner questions, and its "Phase 1 as implemented" the step-by-step
   split; `--output` required) and `--cohort LABEL --registry DIR` (a registered version;
   `--training-evidence DIR` repeatable, `--record` optional, `--output` refused). The registered
   order (`read_measurement_inputs`): the evidence directories listed (nothing read; one that
-  cannot be listed is refused); `resolve_version`, one read of `cohort.json`, refused unless its
+  cannot be listed is refused; *Superseded by K8-6r.3 (2026-11-07):* it is recorded and the run
+  goes on, see R10 below); `resolve_version`, one read of `cohort.json`, refused unless its
   counts are present and consistent (`_counts_problems`: `ranked_eligible` = `samples.n`;
   `source_cases` = `ranked_eligible` + `n_excluded` = `source.n_cases`; `n_excluded` = the sum
   of `excluded` = the exclusions listed); the workspace manifest and graph reads; the version's
@@ -3408,7 +3409,13 @@ its §4.9 the owner questions, and its "Phase 1 as implemented" the step-by-step
   found. A matching file that does not parse makes that scope *unverifiable* (`UnparseableFile`,
   a `ValueError` carrying the read's identity, so the recorded problem names no row). A
   candidate that cannot be read at all (permission, an I/O error) refuses the run, with nothing
-  written, since it may be the evidence. A role with no digest to look for has evidence
+  written, since it may be the evidence. *Superseded by K8-6r.3 (2026-11-07):* such a candidate,
+  a listed path whose stat fails, and an evidence directory that exists and cannot be listed are
+  each recorded (`UnreadCandidate`), and the remaining candidates are still read; a scope that no
+  candidate read holds is `search_incomplete`, *unverifiable* with each place and its error, never
+  `not_found`, and the run goes on (R10 definition version 2; a version-1 block keeps its meaning).
+  A directory that does not exist, is not one or cannot be checked is still refused; running out of
+  memory reading a candidate ends the run naming it. A role with no digest to look for has evidence
   `not_recorded`; a role that is there with a value that is not a non-empty string also carries
   a problem naming the role and the value's kind, never the value. Only an absent `val_samples`
   beside a recorded `train_samples` gives *no validation inputs recorded*; a malformed one leaves
@@ -3419,7 +3426,8 @@ its §4.9 the owner questions, and its "Phase 1 as implemented" the step-by-step
   ids)`; patient ids are ignored and nothing is normalised. **An *unverifiable* label is shown with its
   scope's reason** (`R10_UNVERIFIABLE_REASON` in `src/evaluation/caveats.py`, by evidence state:
   not found, found and unreadable, not recorded), on the console and in the model status, since
-  the three call for different actions; the report keeps the states and no prose.
+  the three call for different actions; the report keeps the states and no prose. *(K8-6r.3 adds
+  a fourth, a search left incomplete: make the place readable and measure again.)*
 - **Ledger schema 3** (`src/evaluation/sidecar.py`). The key: `checkpoint_digest`, `cohort_role`,
   `cohort_digest`, now the version manifest's SHA-256 (it binds the samples, the source, the
   graph, the mapping policy and the counts, so two versions with identical samples are two
@@ -3764,7 +3772,7 @@ own.
 |---|---|
 | R1–R5, R7 | **Required**: anything but *verified* refuses |
 | R6, R11 | **Recorded**, and displayed beside results. An environment difference never refuses |
-| R10 | **Recorded as four labels** (§5.4). No label refuses, because the true label is written, *unverifiable* included. The run is refused only when evidence cannot be looked at: an evidence directory that cannot be listed, or a candidate that cannot be read, which may be the evidence (M4) |
+| R10 | **Recorded as four labels** (§5.4). No label refuses, because the true label is written, *unverifiable* included. The run is refused only when evidence cannot be looked at: an evidence directory that cannot be listed, or a candidate that cannot be read, which may be the evidence (M4). *Superseded by K8-6r.3 (2026-11-07):* neither refuses; each is recorded, the search goes on, and the scope is *unverifiable* with that reason (§5.4). A named directory that does not exist, is not a directory or cannot itself be checked is still refused |
 
 **Capability checks are a separate matter, and they stay.**
 - That an environment difference never refuses is a provenance policy. It does not waive a
@@ -3908,7 +3916,10 @@ evidence.
   - the candidate that holds them does not parse. *As implemented in M4:* a candidate that
     cannot be read at all (permission, an I/O error) refuses the run instead, with nothing
     written, because it may be the evidence and its bytes were never compared; so does an
-    evidence directory that cannot be listed;
+    evidence directory that cannot be listed. *Superseded by K8-6r.3 (2026-11-07):* each is
+    recorded and the search goes on; a scope that no candidate read holds, while such a place
+    exists, is *unverifiable* (evidence `search_incomplete`, with each place and its error), never
+    "not found";
   - for the training scope, the checkpoint names no `train_samples` at all. Every training run
     records it, so its absence means the record is not one the pipeline wrote.
 
@@ -3945,7 +3956,8 @@ role and the value's kind, never the value. For validation that gives *unverifia
 validation inputs recorded*, which only an absent `val_samples` beside a recorded `train_samples`
 gives: a malformed entry names validation inputs, which may be the ones early stopping used. The
 definition is unchanged (`R10_DEFINITION_VERSION` 1); only records the pipeline never writes are
-labelled differently.
+labelled differently. *(K8-6r.3, 2026-11-07, made it 2 when it added the evidence state
+`search_incomplete`; a version-1 block keeps its meaning.)*
 
 ## 6. The claim boundary
 

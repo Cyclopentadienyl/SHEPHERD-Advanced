@@ -24,12 +24,25 @@ because one read is compared against both digests. A file that holds the
 recorded bytes and does not parse leaves its scope *unverifiable*, with the
 problem recorded.
 
+**A place that cannot be looked in is recorded, and the search goes on**
+(K8-6r.3). A candidate that cannot be read (permission, a directory put in its
+place, an I/O error), a listed path whose stat fails, and an evidence directory
+that exists and cannot be listed are each an `UnreadCandidate`: its bytes were
+never compared, so it may have held the evidence. The remaining candidates are
+still read, and a scope found in one of them is found. A scope still not found
+once the search ends, while some place could not be looked in, is
+`search_incomplete`: *unverifiable*, with a problem naming each such place and
+its reason, never "not found" and never a count. Running out of memory while
+reading a candidate is a resource failure, not a finding: it is re-raised as a
+`MemoryError` naming the candidate, and no state is recorded for it.
+
 **Four states per label, and a number only where there is evidence.** *overlap*
 and *none* need the evidence found and parsed, and carry `k`. Two states carry
 `k = None` and `cases = None`, never 0, so no reader can take either for "no
 leakage":
 - *unverifiable*: the recorded bytes were not found, or could not be parsed, or
-  the record names no training file at all, so it is not one the pipeline wrote;
+  a place that may hold them could not be looked in, or the record names no
+  training file at all, so it is not one the pipeline wrote;
 - *no_validation_inputs_recorded*: the record names a training file and has no
   `val_samples` entry at all, because training ran no validation pass. With
   neither file recorded, validation is *unverifiable* instead: such a record
@@ -64,20 +77,25 @@ the test keys it contains and released before the next candidate is read.
 
 **What the block holds.** Digests, counts, states, the path of each evidence
 file and, for an unreadable one, a problem that names what its bytes failed to
-parse as, never a row of them; for a role recorded with a value that is not a
-digest, a problem naming the role and the value's kind, never the value. The block is copied into the report and into the
-ledger beside the checkpoint, and a checkpoint can sit inside the repository
+parse as, never a row of them; for a search left incomplete, a problem naming
+each place that could not be looked in and its error, never a byte of it; for a
+role recorded with a value that is not a digest, a problem naming the role and
+the value's kind, never the value. The block is copied into the report and into
+the ledger beside the checkpoint, and a checkpoint can sit inside the repository
 tree.
 
 Module: src/evaluation/r10.py
 """
 from __future__ import annotations
 
+import errno
 import fnmatch
 import os
+import stat
 from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, FrozenSet, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, FrozenSet, List, Optional, Tuple, Union
 
 from src.kg.storage.file_storage import (
     SamplesDigestMismatch,
@@ -94,20 +112,32 @@ __all__ = [
     "R10_LABELS",
     "R10_SCOPES",
     "R10_STATES",
+    "UnreadCandidate",
     "compute_r10",
     "evidence_candidates",
 ]
 
 #: Bumped when a unit, a state or the evidence rule changes, so two blocks are
 #: compared only under one definition.
-R10_DEFINITION_VERSION = 1
+#:
+#: Version 2 (K8-6r.3) adds the evidence state "search_incomplete": a place that
+#: could not be looked in no longer ends the run. A version-1 block is read as
+#: written, with its original meaning, by the same readers: it has no
+#: "search_incomplete", and its "not_found" meant every candidate was read and
+#: compared, since under version 1 a candidate that could not be read refused
+#: the run. "not_found" means the same under version 2, so no block is migrated.
+R10_DEFINITION_VERSION = 2
 
 #: Every state a label can take. Only the first two carry a count.
 R10_STATES: Tuple[str, ...] = ("overlap", "none", "unverifiable", "no_validation_inputs_recorded")
 
 #: What became of a scope's evidence: found and parsed; recorded but held by no
-#: candidate; held by a candidate that does not parse; not recorded at all.
-EVIDENCE_STATES: Tuple[str, ...] = ("found", "not_found", "unreadable", "not_recorded")
+#: candidate, every one read and compared; held by a candidate that does not
+#: parse; not recorded at all; recorded and held by no candidate that was read,
+#: while at least one place could not be looked in (version 2).
+EVIDENCE_STATES: Tuple[str, ...] = (
+    "found", "not_found", "unreadable", "not_recorded", "search_incomplete",
+)
 
 #: Scope -> the `training_input_digests` role that names its file.
 R10_SCOPES: Tuple[Tuple[str, str], ...] = (
@@ -127,10 +157,61 @@ _WORKSPACE_CANDIDATES: Tuple[str, ...] = ("train_samples.json", "val_samples.jso
 #: What counts as a candidate inside an evidence directory (non-recursive).
 _EVIDENCE_PATTERN = "*_samples.json"
 
+#: The stat errors that say a path is not there, as Python 3.12's `Path.is_file`
+#: treats them; any other is a place that could not be looked at.
+_ABSENT_ERRNOS = frozenset({errno.ENOENT, errno.ENOTDIR, errno.EBADF, errno.ELOOP})
+
 _CaseKey = Tuple[int, FrozenSet[int]]
 
 
-def evidence_candidates(data_dir: Path, evidence_dirs: Sequence[Path]) -> List[Path]:
+@dataclass(frozen=True)
+class UnreadCandidate:
+    """A place R10 could not look in: a candidate that could not be read, a
+    listed path whose stat failed, or an evidence directory that exists and
+    could not be listed. Its bytes were never compared, so it may hold the
+    evidence. `reason` is "<ErrorType>: <strerror>"; nothing of the content."""
+
+    path: Path
+    reason: str
+
+
+#: What `evidence_candidates` lists and `compute_r10` takes: a file to read, or
+#: a place already known to be unreadable, in its place in the order.
+EvidenceCandidate = Union[Path, UnreadCandidate]
+
+
+def _reason(exc: OSError) -> str:
+    """"<ErrorType>: <strerror>", as every place R10 could not look at is named."""
+    reason = exc.strerror or (f"errno {exc.errno}" if exc.errno is not None
+                              else "no reason given")
+    return f"{type(exc).__name__}: {reason}"
+
+
+def _unread(path: Path, exc: OSError) -> UnreadCandidate:
+    return UnreadCandidate(Path(path), _reason(exc))
+
+
+def _mode(path: Path) -> Optional[int]:
+    """`path`'s `st_mode`, links followed; None when it is not there (an errno
+    in `_ABSENT_ERRNOS`, or a path the platform cannot encode).
+
+    Any other stat error is raised. Explicit, because `Path.is_file` and
+    `Path.is_dir` do not keep one rule: from Python 3.14 they answer False for
+    every `OSError`, so a place that could not be looked at would read as one
+    that is not there.
+    """
+    try:
+        return path.stat().st_mode
+    except OSError as exc:
+        if exc.errno in _ABSENT_ERRNOS:
+            return None
+        raise
+    except ValueError:
+        return None
+
+
+def evidence_candidates(data_dir: Path,
+                        evidence_dirs: Sequence[Path]) -> List[EvidenceCandidate]:
     """The files R10 looks at, in order, each once.
 
     The measurement workspace's `train_samples.json` and `val_samples.json`
@@ -146,61 +227,77 @@ def evidence_candidates(data_dir: Path, evidence_dirs: Sequence[Path]) -> List[P
 
     **An evidence directory that does not exist or is not a directory is
     refused,** before any directory is listed: the operator named it as a place
-    to look, and skipping it would turn their mistake into "not found".
+    to look, and skipping it would turn their mistake into "not found". **So is
+    one that cannot itself be checked** (its own stat fails for a reason other
+    than absence: a parent this account cannot search, a name too long): it is
+    not shown to exist, so it is the same argument error, named with its
+    reason, as `SHEPHERD_TRAINING_EVIDENCE_DIRS` refuses it.
 
-    **So is one that cannot be listed** (permission, an I/O error on a network
-    mount), before any candidate is read. Each directory is listed with
-    `os.scandir` rather than `Path.glob`, which swallows the error and yields
-    nothing: the archive's files would become "not found" although none of them
-    was looked at, while one unreadable file inside a listable directory refuses
-    the run (`compute_r10`).
+    **A place that cannot be looked at is returned in its place, as an
+    `UnreadCandidate`, and nothing is refused for it** (K8-6r.3): an evidence
+    directory that exists and cannot be listed (permission, an I/O error on a
+    network mount), and a listed path whose stat fails for a reason other than
+    its absence. `compute_r10` records it, so a scope it might have held reads
+    *unverifiable* with that reason, never "not found", and the remaining
+    candidates are still read. Each directory is listed with `os.scandir`
+    rather than `Path.glob`, which swallows the error and yields nothing: the
+    archive's files would become "not found" although none of them was looked
+    at. With no such place the list holds paths only.
     """
     directories = [Path(directory) for directory in evidence_dirs]
     for directory in directories:
-        if not directory.is_dir():
+        try:
+            mode = _mode(directory)
+        except OSError as exc:
+            raise ValueError(
+                f"Training evidence directory {directory} cannot be checked "
+                f"({_reason(exc)}); nothing was read or written. The account that "
+                "measures must be able to reach it and every directory above it."
+            ) from exc
+        if mode is None or not stat.S_ISDIR(mode):
             raise ValueError(
                 f"Training evidence directory {directory} does not exist or is not a "
                 "directory; nothing was read or written. Name a directory that holds "
                 "the *_samples.json files the checkpoint was trained on."
             )
-    listed = [Path(data_dir) / name for name in _WORKSPACE_CANDIDATES]
+    listed: List[EvidenceCandidate] = [Path(data_dir) / name for name in _WORKSPACE_CANDIDATES]
     for directory in directories:
-        listed.extend(directory / name for name in _evidence_names(directory))
-    candidates: List[Path] = []
+        listed.extend(_evidence_names(directory))
+    candidates: List[EvidenceCandidate] = []
     seen = set()
-    for path in listed:
-        if not path.is_file():
-            continue
-        resolved = path.resolve()
-        if resolved not in seen:
-            seen.add(resolved)
-            candidates.append(resolved)
+    for item in listed:
+        if isinstance(item, Path):
+            try:
+                mode = _mode(item)
+            except OSError as exc:
+                item = _unread(item, exc)
+            else:
+                if mode is None or not stat.S_ISREG(mode):
+                    continue
+                item = item.resolve()
+        if item not in seen:
+            seen.add(item)
+            candidates.append(item)
     return candidates
 
 
-def _evidence_names(directory: Path) -> List[str]:
-    """The names in `directory` that match `_EVIDENCE_PATTERN`, sorted, or a
-    refusal naming the directory when it cannot be listed."""
+def _evidence_names(directory: Path) -> List[EvidenceCandidate]:
+    """The paths in `directory` whose names match `_EVIDENCE_PATTERN`, sorted
+    by name; or, when it cannot be listed, the directory itself as one
+    `UnreadCandidate` naming the error."""
     try:
         with os.scandir(directory) as entries:
             names = [entry.name for entry in entries
                      if fnmatch.fnmatchcase(entry.name, _EVIDENCE_PATTERN)]
     except OSError as exc:
-        reason = exc.strerror or (f"errno {exc.errno}" if exc.errno is not None
-                                  else "no reason given")
-        raise ValueError(
-            f"Training evidence directory {directory} could not be listed "
-            f"({type(exc).__name__}: {reason}); nothing was read or written. A "
-            "directory that is not looked in would report the checkpoint's inputs as "
-            "not found; name one this process can list."
-        ) from exc
-    return sorted(names)
+        return [_unread(directory, exc)]
+    return [directory / name for name in sorted(names)]
 
 
 def compute_r10(
     recorded: Optional[Mapping[str, Any]],
     test_samples: Sequence[DiagnosisSample],
-    candidates: Sequence[Path],
+    candidates: Sequence[EvidenceCandidate],
 ) -> Dict[str, Any]:
     """The R10 block for one test cohort against one checkpoint's record.
 
@@ -212,23 +309,30 @@ def compute_r10(
             `val_samples` beside a recorded `train_samples` is *no validation
             inputs recorded*; a malformed one leaves validation *unverifiable*.
         test_samples: the test cohort's samples, as the measurement reads them.
-        candidates: the files to look at, from `evidence_candidates`.
+        candidates: the files to look at, from `evidence_candidates`, with any
+            place it could not look at in its place (`UnreadCandidate`).
 
     Pure apart from the candidate reads. A candidate is read only while some
     recorded digest is still unmatched, against all of them at once: a
     mismatch or a file that has vanished since it was listed is skipped; a
-    match that does not parse makes its scope's evidence `unreadable`. Any other
-    failure to read a candidate (permission, a directory put in its place)
-    propagates: it may have been the evidence, and "not found" would say more
-    than is known.
+    match that does not parse makes its scope's evidence `unreadable`. **Any
+    other failure to read a candidate** (permission, a directory put in its
+    place, an I/O error) **is recorded, and the search goes on** (K8-6r.3): the
+    candidate may have been the evidence, so a scope that no candidate read
+    holds, while such a place exists, is `search_incomplete`, with path None
+    and a problem naming each place and its reason, never `not_found`. A scope
+    found in another candidate stays `found`.
 
     `candidates_examined` counts the candidates whose bytes were read and
-    compared.
+    compared; a place that could not be read is not among them.
 
     Raises:
         ValueError: `test_samples` is empty. "none" over nobody would read as a
             finding, and an empty cohort has no result for it to describe (Mode
             C's metrics refuse one too).
+        MemoryError: memory ran out reading a candidate. A resource failure,
+            not a finding about the file or about overlap, so it is never a
+            state: re-raised naming the candidate, chained from the original.
     """
     if not test_samples:
         raise ValueError(
@@ -250,6 +354,7 @@ def compute_r10(
         for scope, role in R10_SCOPES
     }
     found: Dict[str, Tuple[FrozenSet[int], FrozenSet[_CaseKey]]] = {}
+    unread: List[UnreadCandidate] = []
     examined = 0
     for candidate in candidates:
         unmatched = {
@@ -258,10 +363,18 @@ def compute_r10(
         }
         if not unmatched:
             break
+        if isinstance(candidate, UnreadCandidate):
+            unread.append(candidate)
+            continue
         try:
             read = read_samples_file(Path(candidate), expected_sha256=unmatched)
         except FileNotFoundError:
             continue
+        except MemoryError as exc:
+            raise MemoryError(
+                f"memory ran out reading the R10 evidence candidate {candidate}: a resource "
+                "failure, not a finding about the file or about overlap"
+            ) from exc
         except SamplesDigestMismatch:
             examined += 1
             continue
@@ -273,6 +386,11 @@ def compute_r10(
                     "unreadable", path=str(refused.identity.path), problem=problem
                 )
             continue
+        except OSError as exc:
+            # Never compared: it may hold the evidence. Recorded, and the
+            # remaining candidates are still read.
+            unread.append(_unread(Path(candidate), exc))
+            continue
         examined += 1
         identity = read.identity
         keys = _keys_in(read.samples, test_diseases, test_case_set)
@@ -281,6 +399,16 @@ def compute_r10(
         for scope in _scopes_wanting(wanted, evidence, identity.sha256):
             evidence[scope] = _evidence("found", path=str(identity.path))
             found[scope] = keys
+    if unread:
+        # "not_found" would say every candidate was read and compared.
+        problem = (
+            "no candidate that was read holds the recorded bytes, and these places "
+            "could not be looked in: "
+            + "; ".join(f"{place.path} ({place.reason})" for place in unread)
+        )
+        for scope in evidence:
+            if evidence[scope]["state"] == "not_found":
+                evidence[scope] = _evidence("search_incomplete", problem=problem)
 
     # Only an absent entry says training ran no validation pass. One that is
     # there and is not a digest names validation inputs that cannot be looked

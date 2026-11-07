@@ -319,6 +319,68 @@ def test_no_path_case_id_or_rank_reaches_the_response(app, served, tmp_path):
     assert "\"problem\"" not in records and "recorded_sha256" not in records
 
 
+def _search_incomplete(tmp_path):
+    """An R10 block as R10 definition version 2 writes it when the training
+    bytes are held by no candidate that was read and one could not be read: its
+    problem names that place on this machine."""
+    block = r10_block()
+    block["definition_version"] = 2
+    place = tmp_path / "archive" / "run7_train_samples.json"
+    block["training"]["evidence"] = {
+        "state": "search_incomplete", "path": None,
+        "problem": ("no candidate that was read holds the recorded bytes, and these places "
+                    f"could not be looked in: {place} (PermissionError: Permission denied)"),
+    }
+    return block
+
+
+def test_a_search_left_incomplete_is_shown_as_recorded_and_names_no_place(
+    app, served, tmp_path
+):
+    """D10 (K8-6r.3). The API's `R10Evidence` takes "search_incomplete": the
+    record is shown, its training labels *unverifiable* with no count, and the
+    place that could not be read, which the ledger keeps, never reaches the
+    response. HEAD: the record fails `R10Evidence` and is counted not shown."""
+    _, _, checkpoint = served
+    _register(_report_for(_sha(checkpoint), r10=_search_incomplete(tmp_path)),
+              checkpoint.parent, tmp_path / "reports")
+
+    response = _client(app).get(ROUTE)
+    body = response.json()
+
+    assert body["records_not_shown"] == 0
+    (view,) = body["records"]
+    assert view["r10"]["training"] == {
+        "evidence": {"state": "search_incomplete"},
+        "disease_overlap": {"state": "unverifiable", "k": None, "n": 50, "cases": None},
+        "phenotype_set_overlap": {"state": "unverifiable", "k": None, "n": 80},
+    }
+    assert str(tmp_path) not in response.text and "PermissionError" not in response.text
+
+
+def test_a_version_1_block_is_read_with_its_version_1_meaning(app, served, tmp_path):
+    """D11 (guard; Decision 7). A record whose R10 block is definition version
+    1, with a `not_found` scope, is read as written by the same reader: under
+    version 1 "not_found" meant every candidate was read and compared, and it
+    is shown as `not_found`, *unverifiable* with no count; nothing migrates it."""
+    _, _, checkpoint = served
+    block = r10_block()
+    assert block["definition_version"] == 1
+    assert block["training"]["evidence"]["state"] == "not_found"
+    _register(_report_for(_sha(checkpoint), r10=block), checkpoint.parent,
+              tmp_path / "reports")
+    stored = (checkpoint.parent / "evaluations.json").read_bytes()
+
+    (view,) = _get(app)["records"]
+
+    assert view["r10"]["training"] == {
+        "evidence": {"state": "not_found"},
+        "disease_overlap": {"state": "unverifiable", "k": None, "n": 50, "cases": None},
+        "phenotype_set_overlap": {"state": "unverifiable", "k": None, "n": 80},
+    }
+    assert (checkpoint.parent / "evaluations.json").read_bytes() == stored
+
+
 def test_records_are_sorted_by_registration_sequence(app, served, tmp_path):
     _, _, checkpoint = served
     digest = _sha(checkpoint)
@@ -716,6 +778,9 @@ def _computed_r10(tmp_path, situation):
         return compute_r10(recorded, test, [train])
     if situation == "evidence not found":
         return compute_r10({"train_samples": "a" * 64, "val_samples": "b" * 64}, test, [])
+    if situation == "search incomplete":
+        train.mkdir(parents=True)  # a directory in a candidate's place: never read
+        return compute_r10({"train_samples": "a" * 64}, test, [train])
     if situation == "evidence unreadable":
         train.parent.mkdir(parents=True, exist_ok=True)
         train.write_bytes(b"not json")
@@ -728,7 +793,7 @@ def _computed_r10(tmp_path, situation):
 @pytest.mark.parametrize("situation", [
     "found, overlap and none", "no validation inputs recorded",
     "validation entry not a digest", "evidence not found", "evidence unreadable",
-    "nothing recorded",
+    "search incomplete", "nothing recorded",
 ])
 def test_every_block_r10_computes_is_shown_as_computed(tmp_path, situation):
     """The view's R10 rules are R10's own: a block `compute_r10` writes is never
