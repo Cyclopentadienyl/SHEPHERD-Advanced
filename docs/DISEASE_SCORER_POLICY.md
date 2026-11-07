@@ -3,6 +3,144 @@
 **Status:** Accepted (2026-08) by the deploying institution. **Not yet implemented** — see the
 status table in §2. Implementation is work item B-1, which remains gated (§6).
 
+**Revision: rev 16 (dated by the commit that lands it). No normative change to the institution's
+serving-scoring decision: the seven normative statements (§1), the institution's disease SP-context
+decision (§1.2) and the gates (§6) are unchanged. This revision changes engineering rules of the
+research platform that rev 15 recorded: it withdraws rev 15's protections against "a conflict
+under one key" and its refusals keyed on a record's condition group, keeps only the refusals a safe
+append needs, and states how every result is kept. Those protections were the owner's engineering
+decisions of 2026-11-06, not the institution's.** K8 on `claude/paper-aligned-two-stage`, by the
+owner's decisions of 2026-11-06: every valid result of every real execution is kept, and the
+necessary provenance and fingerprint checks stay. Each change names the group that makes it true
+("from K8-6r.2"). Until that group lands, the code behaves as it does at the commit that lands this
+revision; a valid report that registration refuses meanwhile stays in its run directory, kept and
+readable, and is registrable under the rules below once K8-6r.2 has landed. No result is made to
+agree with another by a tolerance, a deleted report, a changed seed or mode, or a forced
+deterministic re-run: none is needed.
+- **What is withdrawn, from K8-6r.2.** Rev 15's second case, "a conflict under one key": the report
+  store's refusal of every registration under a key whose runs differ in a compared field ("runs
+  disagree"), with the refusal the code gives while that cannot be checked, and the writer's refusal
+  of a report that differs from the first record under its key (the contradiction), with the
+  sentence "Either way it is a conflict to be cleared up [...]". Results that differ are not a
+  conflict the ledger settles. Also withdrawn, from rev 15's first case: a record that has lost a
+  key field no longer refuses every append to its ledger, and a record that has lost its list of
+  corroborating reports no longer refuses the appends under its key. What a record written before
+  K8-6r.2 lacks (its group or compared fields, a report digest, its corroborating reports), and how
+  its results differ from another run's, are never a reason to refuse a verified new run. Only an
+  uncertainty that keeps this ledger write from completing safely pauses the append: the ledger does
+  not parse, the next registration sequence cannot be allocated safely, or whether this run is
+  already registered cannot be told ("What stands from rev 15", below). None of these is judged by
+  mode, historical identity, equal conditions or equal results, and the original results are kept.
+- **A run and its condition group are two things.** A run is one real execution: the run
+  directory of the cohort version's report store that keeps its report and ranks, verified
+  together with its cohort version, its report's digest and its checkpoint. Its condition group is
+  what a record is keyed by today (the checkpoint, the cohort role and version, the measurement
+  semantics): it groups runs to show and compare them, and it is never a reason to refuse one.
+  Neither the group nor a report's digest stands in for a run's identity. From K8-6r.2:
+  - each record registered from K8-6r.2 on names its run. The writer first looks for this run
+    among those records, before it looks at any record written earlier: the same run with the
+    same report answers `already_registered` and writes nothing; the same run offered with other
+    bytes is refused, since a run's report is sealed when it is published;
+  - a verified run that no record names is registered as a record of its own, whether its values
+    equal another run's or differ, whatever its report's bytes and whatever the times involved,
+    also when those bytes equal a report that an earlier record holds;
+  - a difference between runs is described (which runs, which fields), never a reason to refuse
+    registering, showing, querying, exporting or comparing a run. A run whose regime records
+    deterministic algorithms and whose values differ from another run of its group is kept and
+    registered like any run, and flagged for investigation;
+  - a report in the store that the shared checks cannot read (a broken file, a key that cannot be
+    told, a field the current format does not know, a link) is listed by its run with its reason,
+    kept as written, never repaired and never assigned to a model by guessing. It never blocks or
+    marks another run's registration. Registration is still refused when the selected run's own
+    report, its place in the store, its model or its data cannot be verified;
+  - no run is made its group's representative for being first, deterministic or best (K8-6d
+    retires the one ordering that did, and none of its preferences moves into the shared data);
+  - the command line, the API, a job's status, the Test page's Register, the Models page and the
+    usage history say the same: none disables or refuses a run because of another run. The state
+    names `uncontested`, `contested` and `cannot_be_checked` stay as machine values with a new
+    meaning: they describe differences or missing information within a group and decide nothing.
+- **Records written before K8-6r.2 are read as written.** Such a record names no run: it is shown
+  with its run "not recorded". It may stand for several runs (its corroborating reports) and keeps
+  its first run's environment, R10 and registration. Nothing is invented for it (no run, no
+  environment), and no record that reads today is refused because it names no run. It is never taken
+  as proof that a later run was already registered: a run whose report has bytes such a record holds
+  is registered as a record of its own, and the possible overlap is described as not confirmed ("its
+  relation to record N, merged before each run had its own record, is not recorded"). Both are kept
+  and shown apart in every view and export; they are never counted as two runs confirmed to be
+  independent. Such a record whose digests or group fields cannot be read is listed with its reason
+  and kept, and those losses refuse no verified run. What this costs: the old files never recorded
+  which run each report came from, so whether an old merged record and a named run are one execution
+  can stay unknown, and a run registered before K8-6r.2 that is sent again gets a named record
+  beside the old one, marked as a possible overlap. Whether a run registered before K8-6r.2 had its
+  report replaced cannot be checked either; from a run's first named record on, a replacement is
+  refused. No date rule and no second reader recover the missing history. The usage history may be
+  cited as a clue in such a note; it never decides an outcome.
+- **The ledger format, from K8-6r.2: schema 4.** A record now names its run, and a repeated
+  registration is recognised by its run, not by its condition group or its bytes. That changes
+  what a record means and the rules a writer follows, so the format version changes. The shared
+  reader reads schema 3 and schema 4 files; reading never rewrites a file. An append writes the
+  file as schema 4 and leaves every earlier record as written, with no run invented for it. The
+  file records the registration sequence from which every record names its run: a record before
+  it is historical ("not recorded"); a record from it on without a readable run is damaged, listed
+  with its reason, and never taken for a historical one. A file that holds no record and names no
+  such sequence yet is not damaged: its first append records it. If that sequence cannot be read, a
+  record that names its run still reads, every other record is listed with the reason that whether
+  it names its run cannot be told, and nothing is appended until the sequence is restored from a
+  trusted backup. A build that does not know schema 4 refuses such a file instead of applying the
+  old merge and duplicate rules to it, so the file is read and written by builds that know schema 4.
+  The bump keeps readable files readable and stops writers that do not know the new rules; it
+  refuses no kept report.
+- **No result is lost on the way in.** From K8-6r.1 a registration holds the ledger, across
+  processes, from reading it to writing the new file and its usage-history entry: two
+  registrations at once both end in the ledger, each with its own sequence, or the one that cannot
+  hold it says that the ledger is busy, that nothing was written this time, that its report is
+  kept and that it may be retried; none answers `registered` and is then lost. The check that the
+  ledger is still the one read stays as a second guard. Each append to a cohort version's usage
+  history or investigation notes holds that file across processes, so one writer's failed append
+  never removes another writer's line. Each lock covers one file; where more than one is held, they
+  are taken in the order GPU, ledger, usage history, never the other way, and a registration on its
+  own takes no GPU lock. The ledger and the usage history are two files: when the ledger record is
+  written and its usage-history entry is not, registration says "registered; the usage history was
+  not written" with the reason, and the ledger record stands. From K8-6r.4 a generated split's
+  measurement never replaces an earlier run's report or ranks and never leaves one run's report
+  beside another run's ranks: a place already taken is never overwritten, and no earlier file is
+  deleted to make room; an empty claimed report file, or ranks with no report beside them, is a
+  failed publication, never a result. A generated split's report is not registered because the
+  ledger does not yet support that kind of data identity (it has no registered cohort version), not
+  because such a result is lesser; extending the ledger to it is later work. From K8-6r.3 an R10
+  evidence candidate, or an existing named evidence directory, that cannot be read leaves its scope
+  *unverifiable* with that reason, never "no overlap"; the search goes on through the remaining
+  candidates, and a measurement whose required inputs are verified still runs. Running out of memory
+  may still end a measurement, as a resource failure that claims nothing about overlap and changes
+  no kept result.
+- **The necessary checks stay.** Refused, as before: a report whose digest is not the bytes
+  selected; a checkpoint whose bytes are not the weights a report names; a spec, weights, graph
+  view, data role or repeated record of one artifact that contradict each other; weights read
+  against a graph or mapping they were not trained on (a cross-graph run needs an explicit mapping
+  and a protocol that supports it); a new measurement whose protocol lacks a component, a label or a
+  scorer (never a reason to hide a kept result); a missing or changed checkpoint, graph or cohort
+  sample; an out-of-range or negative raw id, an unknown field that may change a meaning, a wrong
+  type or an unrepresentable value (an undefined metric is never filled in); a resume whose restored
+  optimizer, precision, schedule, data or rules are not the parent's; and the path, operator,
+  deployment-registry, resource-lock and single-read boundaries. None refuses a result because
+  another result differs.
+- **What stands from rev 15.** The withdrawal of every rule keyed on the mode names C or D and of
+  rev 13's and rev 14's limits on kept C and D reports; its first bullet, where "a repeat" is the
+  same run's same report; the generic display (from K8-6e); the listing of reports and ledger
+  records the shared checks cannot read, with their reasons; the meaning of "archived"; and its
+  "What stands" bullet, whose "exceptions above" are now the structural case alone. Appends
+  continue whenever the writer can safely determine the new record's sequence and whether this run
+  is already registered. When it cannot, it keeps the originals and refuses that one uncertain
+  write, and it never guesses, skips, deletes or renumbers a record. It refuses a write to a ledger
+  that does not parse or whose schema 4 sequence boundary cannot be read, and a write where a record
+  is not an object or has lost its registration sequence (every append, naming its index), where a
+  record names this run without a readable cohort version, checkpoint or report digest, or where a
+  record from the boundary on has a run that cannot be read and could be this run. No recorded value
+  is edited to make a registration pass. A manual repair only restores a certain omission from the
+  original report or a trusted backup, and keeps the file as it was before the repair together with
+  a record of the repair. This protection is about the ledger's integrity; it never limits which
+  experiments are run, kept or compared.
+
 **Revision: rev 15 (dated by the commit that lands it). No normative change to the institution's
 serving-scoring decision: the seven normative statements (§1), the institution's disease SP-context
 decision (§1.2) and the gates (§6) are unchanged. This revision does change engineering rules of
@@ -418,14 +556,20 @@ implementation waits for the gates (§6). Each line names
 what exists to build on, so B-1 extends it rather than writing a second copy.
 
 **What exists and is to be reused.**
-- The cosine: `cosine_score_matrix` and `cosine_scores` (`src/inference/scoring.py`), already
-  shared by serving and Mode C. The trainer computes its validation cosine itself, by design:
+- The cosine: `cosine_score_matrix` and `cosine_scores` (`src/inference/scoring.py`). No module
+  in src or scripts calls them now. The trainer computes its validation cosine itself, by design:
   `tests/unit/test_trainer_validation_values.py` checks it against `cosine_score_matrix`, and the
   `layers` and `scorer-independence` contracts in `.import-linter.ini` keep the two separate.
-- The canonical order: Mode C's `canonical_ranking` (`src/evaluation/measurement.py`), score
-  descending, ties to the lower global disease id, non-finite scores refused. Serving cannot import
-  it where it is (the layers contract in `.import-linter.ini` puts `src.evaluation` above
-  `src.inference`), so B-1 moves it down into `src/inference` and Mode C imports it from there.
+  *(Corrected in rev 16, a statement of fact: "already shared by serving and Mode C" no longer
+  holds; serving stopped calling them in K8-4, and Mode C retired in K8-6b.)*
+- The canonical order: each task evaluator ranks by score, highest first, and exact ties share
+  their average rank (`average_ranks` in `src/models/bundle/metrics.py`, called by the disease,
+  gene and patients-like-me rankers in `src/models/tasks/`); every task manifest records it as
+  `average-rank/v1`. A served result orders equal scores by a stable id and names that order in
+  its `tie_policy` (`src/core/types.py`). Both modules sit below `src.evaluation` and
+  `src.inference` in the layers contract, so nothing has to move. *(Corrected in rev 16, a
+  statement of fact: Mode C's `canonical_ranking`, named here before, retired with its executor
+  in K8-6b; B-1a's "shared canonical order", below, meant it.)*
 - The SP primitive with its availability mask: `sp_mean_distances` (`src/inference/sp_index.py`).
 - The per-result description: the served identity's `scoring_mode` (provenance contract M3c).
 - The evidence panel and the result's evidence fields, which B-1c fills from a different source.
@@ -473,17 +617,19 @@ at K7 (2026-10-29) by the owner's decision: nothing is served without a model, a
 `/diagnose` and `/ready` answer 503.)*
 
 **Gate 1's evidence.** Mode C is built and has run on synthetic and demo cohorts (M4 acceptance,
-`2c94a4e`; M5 close-out, `773dc4a`). Mode D (the served ranking measured on the same cohort,
-B-0.5) is built (Batch 3, 2026-10-26; reviewed, and run once on a synthetic cohort on the GB10,
-2026-10-27: `scripts/measure_scorer.py --mode D`; design
-and as-built record in `working/scorer-measurement/PLAN_B05.md`). The design problem it resolves
-is recorded in `working/scorer-measurement/PLAN_B03.md` §4:
-the public entry point truncates to `top_k` and builds paths and explanations, so getting an
-untruncated served rank without duplicating candidate construction is an open design problem. A
-second problem, not in that plan, follows from the BFS gate (§2, first row): a disease the gate does
-not discover has no served rank at all, so the two measurements do not rank the same set. Mode D,
-or any comparison, reuses the formal implementations (Mode C's `run_mode_c` and the served
-`DiagnosisPipeline`): Modes A and B are not revived and no second evaluation engine is built. No
+`2c94a4e`; M5 close-out, `773dc4a`). Mode D (the served ranking measured on the same cohort, B-0.5)
+is built (Batch 3, 2026-10-26; reviewed, and run once on a synthetic cohort on the GB10, 2026-10-27:
+`scripts/measure_scorer.py --mode D`; design and as-built record in
+`working/scorer-measurement/PLAN_B05.md`). The design problem it resolves is recorded in
+`working/scorer-measurement/PLAN_B03.md` §4: the public entry point truncates to `top_k` and builds
+paths and explanations, so getting an untruncated served rank without duplicating candidate
+construction is an open design problem. A second problem, not in that plan, follows from the BFS
+gate (§2, first row): a disease the gate does not discover has no served rank at all, so the two
+measurements do not rank the same set. Any comparison reuses the formal implementations, today the
+protocols' task evaluators (`src/evaluation/task_measurement.py`) and the served `DiagnosisPipeline`
+(`src/inference/pipeline.py`): Modes A and B are not revived and no second evaluation engine is
+built. *(Corrected in rev 16, a statement of fact: Mode D retired in K7 and Mode C's executor,
+`run_mode_c`, in K8-6b; their kept reports are read by the shared readers, rev 15.)* No
 institutional run and no report exist (BACKLOG 7b, 8a, 8b).
 
 **Who decides what.**
