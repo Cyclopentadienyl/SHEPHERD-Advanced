@@ -603,10 +603,12 @@ def _resolve_registered(
     of its `cohort.json`), with the block its report records.
 
     The evidence directories come first: they are the operator's arguments, and
-    one that does not exist, is not a directory or cannot itself be checked is
-    refused before anything is read. One that exists and cannot be listed is
-    not refused: it stays in the list as a place R10 could not look in
-    (`evidence_candidates`).
+    one known not to be a directory (absent, a file, a link loop, a name too
+    long to exist) is refused before anything is read. One that exists and
+    cannot be listed, or whose own state cannot be learned (its stat fails
+    otherwise: a parent this account may not enter, an I/O error), is not
+    refused: it stays in the list as a place R10 could not look in
+    (`evidence_candidates`; K8-6 completion review, 2026-11-08).
 
     With `expected_sha256` (`--expect-version-sha256`) the read is compared
     before it is decoded: other bytes, or no version, are
@@ -1077,7 +1079,10 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
                              "records, for R10, after the workspace's own splits. Only "
                              "bytes whose digest the checkpoint records count; a scope "
                              "whose bytes are found nowhere is unverifiable, never "
-                             "zero. Repeatable; --cohort only")
+                             "zero. A path that is not a directory is refused; one that "
+                             "cannot be checked or listed is not looked in, and R10 "
+                             "names it for a scope found nowhere else. Repeatable; "
+                             "--cohort only")
     parser.add_argument("--record", action="store_true",
                         help="Register the kept report in evaluations.json beside the "
                              "checkpoint, as scripts/record_evaluation.py --report "

@@ -27,13 +27,15 @@ matching evidence that does not parse is *unverifiable* with a problem that
 holds no row data; a candidate that is not even JSON is skipped without a parse
 error; each candidate is opened once even while both scopes are unmatched; the
 raw buffers and the matching samples are released before the next read; an
-evidence directory that does not exist, is not a directory or cannot itself be
-checked is refused.
+evidence directory known not to be one (missing, a file, a name too long to
+exist) is refused.
 
 And the places that cannot be looked in (K8-6r.3, plan B rev 6 §3.9, rows D1-D6
 and D12): a candidate that cannot be read, an evidence directory that exists and
 cannot be listed, and a listed path whose stat fails are each recorded, and the
-search goes on through the remaining candidates. A scope found elsewhere is
+search goes on through the remaining candidates. So are a listed path whose
+resolve fails and a named evidence directory whose own state cannot be learned
+(K8-6 completion review, 2026-11-08, P2-A and P2-B). A scope found elsewhere is
 found; one found nowhere while such a place exists is `search_incomplete`,
 *unverifiable* with the place and its reason, never `not_found` and never a
 count. Running out of memory reading a candidate is re-raised naming it, never a
@@ -142,12 +144,28 @@ def workspace(tmp_path):
 def _pathlib_as_in_python_3_14(monkeypatch):
     """`Path.is_file` and `Path.is_dir` as Python 3.14 has them: every
     `OSError` reads False, so a place that could not be looked at would read
-    as one that is not there. R10 keeps its own rule, so these tests hold
-    whichever Python runs them."""
+    as one that is not there. R10 and `server_settings.is_directory` keep their
+    own rule, so these tests hold whichever Python runs them."""
     monkeypatch.setattr(pathlib.Path, "is_file",
                         lambda self, *, follow_symlinks=True: os.path.isfile(self))
     monkeypatch.setattr(pathlib.Path, "is_dir",
                         lambda self, *, follow_symlinks=True: os.path.isdir(self))
+
+
+def _stat_fails(monkeypatch, target, error):
+    """Every stat of `target` raises a copy of `error` naming it: `os.stat`
+    itself, so `Path.stat` and the `os.path.isdir` that Python 3.14's
+    `Path.is_dir` calls both meet it, as they would behind a parent this
+    account may not search. Every other path is the real stat."""
+    name = os.fspath(target)
+    real = os.stat
+
+    def stat(path, *args, **kwargs):
+        if not isinstance(path, int) and os.fspath(path) == name:
+            raise type(error)(error.errno, error.strerror, name)
+        return real(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "stat", stat)
 
 
 class TestEvidenceCandidates:
@@ -198,61 +216,78 @@ class TestEvidenceCandidates:
         ]
         assert len(set(candidates)) == len(candidates)
 
-    @pytest.mark.parametrize("kind", ["missing", "file"])
-    def test_an_evidence_directory_that_is_not_a_directory_is_refused(self, tmp_path,
-                                                                      workspace, kind):
-        """D5 (guard). A named path that does not exist or is not a directory
-        stays an argument error (Decision 8), before any directory is listed."""
+    @pytest.mark.parametrize("kind", ["missing", "file", "name-too-long"])
+    def test_an_evidence_directory_known_not_to_be_one_is_refused(self, tmp_path, workspace,
+                                                                 monkeypatch, kind):
+        """D5 (guard). A named path that does not exist, is not a directory or
+        has a name too long to exist (a real ENAMETOOLONG, nothing injected)
+        stays an argument error (Decision 8), before any directory is listed or
+        any candidate read: the operator's mistake never becomes "not found".
+        Under Python 3.14's `Path.is_dir` too. Since the K8-6 completion review
+        (2026-11-08) a name too long is refused as one that cannot exist, no
+        longer as "cannot be checked"."""
         root, _, _ = workspace
-        named = tmp_path / "not_a_dir"
+        named = tmp_path / ("n" * 300 if kind == "name-too-long" else "not_a_dir")
         if kind == "file":
             _write(named, TEST)
         good = tmp_path / "good"
         _write(good / "a_samples.json", TEST)
-
-        with pytest.raises(ValueError, match="is not a directory; nothing was read") as refused:
-            evidence_candidates(root, [good, named])
-
-        assert str(named) in str(refused.value)
-
-    @pytest.mark.parametrize("how, says", [
-        ("unsearchable-parent", "PermissionError: Permission denied"),
-        ("name-too-long", "OSError: File name too long"),
-    ])
-    def test_an_evidence_directory_that_cannot_be_checked_is_refused(
-        self, tmp_path, workspace, monkeypatch, how, says
-    ):
-        """Guard, beside D5. A named directory whose own stat fails for a
-        reason other than absence is not shown to exist: behind a parent this
-        account cannot search, a missing directory looks the same as a present
-        one, and a name too long cannot exist. So it is the argument error a
-        missing directory is, named with its reason, as the deployment setting
-        refuses it ("cannot be checked"); never a place recorded and measured
-        past. Nothing is listed or read."""
-        root, _, _ = workspace
-        good = tmp_path / "good"
-        _write(good / "a_samples.json", TEST)
-        if how == "name-too-long":  # a real ENAMETOOLONG, nothing injected
-            named = tmp_path / ("n" * 300)
-        else:
-            named = tmp_path / "locked" / "archive"
-            real_stat = pathlib.Path.stat
-
-            def stat(self, *, follow_symlinks=True):
-                if os.fspath(self) == os.fspath(named):
-                    raise PermissionError(errno.EACCES, "Permission denied", os.fspath(self))
-                return real_stat(self, follow_symlinks=follow_symlinks)
-
-            monkeypatch.setattr(pathlib.Path, "stat", stat)
         _pathlib_as_in_python_3_14(monkeypatch)
 
         with count_opens() as opens, pytest.raises(ValueError) as refused:
             evidence_candidates(root, [good, named])
 
-        assert str(refused.value).startswith(
-            f"Training evidence directory {named} cannot be checked ({says}); nothing was "
-            "read or written.")
-        assert sum(opens.counts.values()) == 0, "no candidate is read"
+        assert str(refused.value) == (
+            f"Training evidence directory {named} does not exist or is not a directory; "
+            "nothing was read or written. Name a directory that holds the *_samples.json "
+            "files the checkpoint was trained on.")
+        assert sum(opens.counts.values()) == 0 and sum(opens.listings.values()) == 0
+
+    @pytest.mark.parametrize("error, says", [
+        (PermissionError(errno.EACCES, "Permission denied"),
+         "PermissionError: Permission denied"),
+        (OSError(errno.EIO, "Input/output error"), "OSError: Input/output error"),
+    ], ids=["unsearchable-parent", "io-error"])
+    def test_an_evidence_directory_that_cannot_be_checked_is_recorded_in_its_place(
+        self, tmp_path, workspace, monkeypatch, error, says
+    ):
+        """P2-B of the K8-6 completion review (2026-11-08). A named directory
+        whose own stat fails for a reason that does not say it is absent
+        (behind a parent this account may not search, an I/O error) is neither
+        shown to exist nor shown absent: it is an `UnreadCandidate` in its
+        place, the directories after it are still listed, and nothing of it is
+        listed or read. R10 then finds a scope a later directory holds and
+        leaves one nothing read holds `search_incomplete` naming the
+        directory. The stat fails for `Path.stat` and for Python 3.14's
+        `Path.is_dir` alike, which would read it as absent. Named twice, it is
+        listed once. HEAD: `ValueError` "cannot be checked", nothing measured."""
+        root, train, val = workspace
+        named = tmp_path / "archive"
+        _write(named / "run7_train_samples.json", TEST)
+        good = tmp_path / "good"
+        found_digest = _write(good / "a_samples.json", [_s("g", [10, 11], 1)])
+        _stat_fails(monkeypatch, named, error)
+        _pathlib_as_in_python_3_14(monkeypatch)
+
+        with count_opens() as opens:
+            candidates = evidence_candidates(root, [named, good, named])
+
+        assert candidates == [
+            (root / "train_samples.json").resolve(), (root / "val_samples.json").resolve(),
+            r10.UnreadCandidate(named, says), (good / "a_samples.json").resolve(),
+        ]
+        assert sum(opens.counts.values()) == 0, "listing reads no candidate"
+        assert opens.listings[os.path.realpath(named)] == 0, "the directory is not listed"
+        later = compute_r10({"train_samples": found_digest, "val_samples": val}, TEST,
+                            candidates)
+        assert later["training"]["evidence"]["state"] == "found"
+        held = compute_r10({"train_samples": "a" * 64, "val_samples": val}, TEST, candidates)
+        _assert_well_formed(held)
+        assert held["training"]["evidence"] == {
+            "state": "search_incomplete", "path": None,
+            "problem": ("no candidate that was read holds the recorded bytes, and these "
+                        f"places could not be looked in: {named} ({says})")}
+        assert held["validation"]["evidence"]["state"] == "found"
 
     @pytest.mark.parametrize("error, says", [
         (PermissionError(13, "Permission denied"), "PermissionError: Permission denied"),
@@ -302,8 +337,9 @@ class TestEvidenceCandidates:
     @pytest.mark.parametrize("error, kept", [
         (PermissionError(errno.EACCES, "Permission denied"),
          "PermissionError: Permission denied"),
+        (OSError(errno.ENAMETOOLONG, "File name too long"), "OSError: File name too long"),
         (FileNotFoundError(errno.ENOENT, "No such file or directory"), None),
-    ], ids=["permission", "vanished"])
+    ], ids=["permission", "name-too-long", "vanished"])
     def test_a_stat_that_fails_while_listing_is_recorded_with_its_reason(
         self, tmp_path, workspace, monkeypatch, error, kept
     ):
@@ -312,7 +348,9 @@ class TestEvidenceCandidates:
         evidence: it is recorded in its place, and the rest of the list is
         unchanged. A path gone since the listing is skipped. The rule is R10's
         own, not `Path.is_file`'s, which from Python 3.14 answers False for
-        every error. HEAD: a raw `PermissionError`."""
+        every error. A name too long to stat was listed, so it exists: a place
+        not looked in, unlike a named directory with such a name, which cannot
+        exist (guard, K8-6 completion review). HEAD: a raw `PermissionError`."""
         root, _, _ = workspace
         archive = tmp_path / "archive"
         _write(archive / "a_samples.json", TEST)
@@ -335,6 +373,41 @@ class TestEvidenceCandidates:
             expected.append(r10.UnreadCandidate(target, kept))
         expected.append((archive / "b_samples.json").resolve())
         assert candidates == expected
+
+    @pytest.mark.parametrize("error, says", [
+        (PermissionError(errno.EACCES, "Permission denied"),
+         "PermissionError: Permission denied"),
+        (OSError(errno.EIO, "Input/output error"), "OSError: Input/output error"),
+    ], ids=["permission", "io-error"])
+    def test_a_resolve_that_fails_while_listing_is_recorded_with_its_reason(
+        self, tmp_path, workspace, monkeypatch, error, says
+    ):
+        """P2-A of the K8-6 completion review (2026-11-08). A listed path whose
+        stat passes and whose `resolve()` then fails (permission, a readlink or
+        I/O failure) is a place R10 could not look in, as one whose stat fails:
+        it is recorded in its place under the path it was listed by, never
+        resolved, and the rest of the list is unchanged. HEAD: the
+        `PermissionError` escapes, and the measurement keeps no report."""
+        root, _, _ = workspace
+        archive = tmp_path / "archive"
+        _write(archive / "a_samples.json", TEST)
+        _write(archive / "b_samples.json", TEST)
+        target = archive / "a_samples.json"
+        real_resolve = pathlib.Path.resolve
+
+        def resolve(self, strict=False):
+            if os.fspath(self) == os.fspath(target):
+                raise type(error)(error.errno, error.strerror, os.fspath(self))
+            return real_resolve(self, strict)
+
+        monkeypatch.setattr(pathlib.Path, "resolve", resolve)
+
+        candidates = evidence_candidates(root, [archive])
+
+        assert candidates == [
+            (root / "train_samples.json").resolve(), (root / "val_samples.json").resolve(),
+            r10.UnreadCandidate(target, says), (archive / "b_samples.json").resolve(),
+        ]
 
 
 # ---------------------------------------------------------------------------

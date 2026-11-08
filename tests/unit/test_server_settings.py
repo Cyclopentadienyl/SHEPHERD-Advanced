@@ -12,14 +12,20 @@ default path, and one directory rule shared with `--registry`.
 - **the registry and the intake directory** must be absolute, existing, and
   outside the repository (a symlink into it too), by the same rule
   `validate_registry` applies to `--registry`;
-- **the evidence directories** are `os.pathsep`-separated, and one bad entry
-  refuses the whole setting;
+- **the evidence directories** are `os.pathsep`-separated, and one entry known
+  not to be a directory refuses the whole setting; one whose state cannot be
+  learned is kept, in its place, and noted (K8-6 completion review,
+  2026-11-08), while a required directory in that state is still refused;
+- **whether a named path is a directory** is one explicit stat
+  (`is_directory`), never `Path.is_dir`, which from Python 3.14 reads an
+  unknown state as absent;
 - **each read sees the environment as it is now**: no value is cached.
 
 Module: tests/unit/test_server_settings.py
 """
 from __future__ import annotations
 
+import errno
 import os
 from pathlib import Path
 
@@ -180,37 +186,61 @@ class TestOneRuleForTheRegistry:
 
 class TestADirectoryThatCannotBeChecked:
     """A parent the service account may not enter (the guide's `mkdir -m 700`
-    for another account): `Path.is_dir` raises EACCES rather than answer. The
-    setting is refused with why, never a bare error (M5-1 review)."""
+    for another account): the stat the directory rule makes (`is_directory`,
+    through `Path.stat`) raises EACCES rather than answer. Each required
+    setting is refused with why, never a bare error (M5-1 review), and its
+    words are as they were; the optional evidence setting keeps the entry and
+    notes it (K8-6 completion review, 2026-11-08)."""
 
     @pytest.fixture
     def locked(self, tmp_path, monkeypatch):
         locked = (tmp_path / "locked").resolve()
         locked.mkdir()
-        original = Path.is_dir
+        original = Path.stat
 
-        def is_dir(self, *args, **kwargs):
+        def stat(self, *args, **kwargs):
             if self == locked:
                 raise PermissionError(13, "Permission denied", str(self))
             return original(self, *args, **kwargs)
 
-        monkeypatch.setattr(Path, "is_dir", is_dir)
+        monkeypatch.setattr(Path, "stat", stat)
         return locked
 
     def test_the_rule_refuses_it_and_says_why(self, locked):
-        with pytest.raises(ss.DirectoryRefused,
-                           match=r"cannot be checked \(PermissionError: Permission denied\)"):
+        with pytest.raises(ss.DirectoryUncheckable) as refused:
             ss.check_operator_directory(locked, what="the registry", holds="x",
                                         outside_repository=True)
+        assert isinstance(refused.value, ss.DirectoryRefused)
+        assert str(refused.value) == (
+            f"the registry {locked} cannot be checked (PermissionError: Permission denied). "
+            "The account that runs this must be able to reach it and every directory above it.")
+        assert (refused.value.path, refused.value.reason) == (
+            locked, "PermissionError: Permission denied")
 
     @pytest.mark.parametrize("reader, key", [
         (ss.workspaces_root, "WORKSPACES_ROOT"), (ss.cohort_registry, "REGISTRY"),
         (ss.intake_directory, "INTAKE_DIR"),
-        (ss.training_evidence_dirs, "TRAINING_EVIDENCE_DIRS"),
     ])
-    def test_each_setting_is_refused_not_raised(self, locked, reader, key):
+    def test_each_required_setting_is_refused_not_raised(self, locked, reader, key):
         setting = reader(_env(**{key: str(locked)}))
         assert setting.value is None and "cannot be checked" in setting.problem
+        assert not setting.available and setting.note is None
+
+    def test_the_optional_evidence_setting_keeps_it_and_says_why(self, locked, tmp_path):
+        """P2-B of the K8-6 completion review. The entry is optional evidence:
+        it stays in the value, in its place, the setting stays available, and
+        the note names it, its reason and what a run does with it: R10 names it
+        only for inputs found nowhere else, never for every run (review
+        round). HEAD: the whole setting refused ("cannot be checked")."""
+        good = (tmp_path / "good").resolve()
+        good.mkdir()
+        setting = ss.training_evidence_dirs(
+            _env(TRAINING_EVIDENCE_DIRS=os.pathsep.join([str(good), str(locked)])))
+        assert setting.available and setting.problem is None
+        assert setting.value == (good, locked)
+        assert setting.note == (
+            f"Cannot be checked: {locked} (PermissionError: Permission denied). R10 cannot "
+            "look in it: inputs found nowhere else read unverifiable, naming it.")
 
     def test_a_status_view_still_reads_every_setting(self, locked):
         settings = ss.all_settings(_env(REGISTRY=str(locked), WORKSPACES_ROOT=str(locked)))
@@ -253,6 +283,178 @@ class TestTrainingEvidenceDirs:
     def test_a_relative_entry_is_refused_not_read_from_the_working_directory(self, tmp_path):
         setting = ss.training_evidence_dirs(_env(TRAINING_EVIDENCE_DIRS="evidence"))
         assert setting.value is None and "not an absolute path" in setting.problem
+
+    @pytest.mark.parametrize("kind", ["missing", "file", "name-too-long", "beside-unknown"])
+    def test_an_entry_known_not_to_be_a_directory_refuses_the_whole_setting(
+            self, tmp_path, monkeypatch, kind):
+        """Guard (K8-6 completion review, 2026-11-08). A missing path, a file
+        and a name too long to exist (a real ENAMETOOLONG) refuse the setting
+        as before, beside an entry whose state cannot be learned too: Start
+        stays disabled. Under Python 3.14's `Path.is_dir` too."""
+        from tests.unit.test_r10 import _pathlib_as_in_python_3_14, _stat_fails
+
+        unknown = tmp_path / "unknown"
+        unknown.mkdir()
+        _stat_fails(monkeypatch, unknown, PermissionError(13, "Permission denied"))
+        _pathlib_as_in_python_3_14(monkeypatch)
+        bad = tmp_path / ("n" * 300 if kind == "name-too-long" else "bad")
+        if kind == "file":
+            bad.write_text("x")
+        entries = [str(unknown), str(bad)] if kind == "beside-unknown" else [str(bad)]
+        setting = ss.training_evidence_dirs(
+            _env(TRAINING_EVIDENCE_DIRS=os.pathsep.join(entries)))
+        assert setting.value is None and not setting.available and setting.note is None
+        assert setting.problem == (
+            f"SHEPHERD_TRAINING_EVIDENCE_DIRS is refused: evidence directory {len(entries)} "
+            f"{bad} does not exist or is not a directory. The operator creates it; nothing "
+            "creates one, so a mistyped path cannot become a directory nobody chose. No "
+            "evidence directory is offered until it is corrected.")
+
+    @pytest.mark.parametrize("error, says", [
+        (PermissionError(13, "Permission denied"), "PermissionError: Permission denied"),
+        (OSError(5, "Input/output error"), "OSError: Input/output error"),
+    ], ids=["permission", "io-error"])
+    def test_an_entry_whose_state_cannot_be_learned_is_kept_in_its_place(
+            self, tmp_path, monkeypatch, error, says):
+        """P2-B of the K8-6 completion review (2026-11-08): neither assumed to
+        exist nor assumed absent. The entry stays in the value, in its place,
+        resolved, kept once; the setting is available; the note names each
+        such entry and its reason, and says what a run does with it. Under
+        Python 3.14's `Path.is_dir` too, which would read it as absent. HEAD:
+        the whole setting refused."""
+        from tests.unit.test_r10 import _pathlib_as_in_python_3_14, _stat_fails
+
+        first, good, second = (tmp_path / name for name in ("first", "good", "second"))
+        for directory in (first, good, second):
+            directory.mkdir()
+        for directory in (first, second):
+            _stat_fails(monkeypatch, directory.resolve(), error)
+        _pathlib_as_in_python_3_14(monkeypatch)
+        raw = os.pathsep.join([str(first), str(good), str(first), str(second)])
+
+        setting = ss.training_evidence_dirs(_env(TRAINING_EVIDENCE_DIRS=raw))
+
+        assert setting.available and setting.problem is None
+        assert setting.value == (first.resolve(), good.resolve(), second.resolve())
+        assert setting.note == (
+            f"Cannot be checked: {first.resolve()} ({says}); {second.resolve()} ({says}). "
+            "R10 cannot look in them: inputs found nowhere else read unverifiable, naming "
+            "them.")
+
+    def test_an_unknown_entry_named_through_a_link_is_kept_once_by_its_resolved_path(
+            self, tmp_path, monkeypatch):
+        """Review round of the K8-6 completion review (2026-11-08). The entry
+        is kept by the path the rule checked, resolved, not as given: named
+        through a link and then directly, it is one directory, kept and noted
+        once. The run is given that path, as for an entry that can be
+        checked."""
+        from tests.unit.test_r10 import _stat_fails
+
+        real = (tmp_path / "real").resolve()
+        real.mkdir()
+        link = tmp_path / "link"
+        link.symlink_to(real)
+        _stat_fails(monkeypatch, real, PermissionError(13, "Permission denied"))
+
+        setting = ss.training_evidence_dirs(
+            _env(TRAINING_EVIDENCE_DIRS=os.pathsep.join([str(link), str(real)])))
+
+        assert setting.available and setting.value == (real,)
+        assert setting.note == (
+            f"Cannot be checked: {real} (PermissionError: Permission denied). R10 cannot "
+            "look in it: inputs found nowhere else read unverifiable, naming it.")
+
+    def test_an_entry_whose_resolve_fails_is_kept_as_given(self, tmp_path, monkeypatch):
+        """Its resolve failing for a reason that does not say it is absent is
+        the same unknown state: the entry is kept under the path given. A
+        required directory in that state is still refused, in the words it
+        had ("cannot be resolved")."""
+        entry = tmp_path / "remote"
+        real = Path.resolve
+
+        def resolve(self, strict=False):
+            if self == entry:
+                raise OSError(5, "Input/output error", str(self))
+            return real(self, strict)
+
+        monkeypatch.setattr(Path, "resolve", resolve)
+
+        setting = ss.training_evidence_dirs(_env(TRAINING_EVIDENCE_DIRS=str(entry)))
+        assert setting.available and setting.value == (entry,)
+        assert setting.note == (f"Cannot be checked: {entry} (OSError: Input/output error). "
+                                "R10 cannot look in it: inputs found nowhere else read "
+                                "unverifiable, naming it.")
+        registry = ss.cohort_registry(_env(REGISTRY=str(entry)))
+        assert registry.value is None and registry.problem.startswith(
+            f"SHEPHERD_REGISTRY is refused: the registry {entry} cannot be resolved (OSError: ")
+
+    @pytest.mark.parametrize("error", [
+        FileNotFoundError(errno.ENOENT, "No such file or directory"),
+        OSError(errno.ELOOP, "Too many levels of symbolic links"),
+    ], ids=["absent", "link-loop"])
+    def test_a_resolve_error_that_says_the_entry_cannot_exist_refuses_the_setting(
+            self, tmp_path, monkeypatch, error):
+        """Guard, review round of the K8-6 completion review (2026-11-08). Only
+        a resolve error that leaves the state unknown keeps the entry; one that
+        says it is absent or a link loop is the known-invalid entry it names,
+        and refuses the whole setting as a missing directory does."""
+        entry = tmp_path / "gone"
+        real = Path.resolve
+
+        def resolve(self, strict=False):
+            if self == entry:
+                raise type(error)(error.errno, error.strerror, str(self))
+            return real(self, strict)
+
+        monkeypatch.setattr(Path, "resolve", resolve)
+
+        setting = ss.training_evidence_dirs(_env(TRAINING_EVIDENCE_DIRS=str(entry)))
+
+        assert setting.value is None and not setting.available and setting.note is None
+        assert setting.problem.startswith(
+            f"SHEPHERD_TRAINING_EVIDENCE_DIRS is refused: evidence directory 1 {entry} cannot "
+            f"be resolved ({type(error).__name__}: ")
+
+
+class TestIsDirectory:
+    """`is_directory`, the one explicit stat both the setting and R10's
+    `--training-evidence` check use (K8-6 completion review, 2026-11-08)."""
+
+    def test_a_directory_and_a_link_to_one_are_directories(self, tmp_path):
+        (tmp_path / "d").mkdir()
+        (tmp_path / "link").symlink_to(tmp_path / "d")
+        assert ss.is_directory(tmp_path / "d") is True
+        assert ss.is_directory(str(tmp_path / "link")) is True
+
+    @pytest.mark.parametrize("kind", ["missing", "file", "under-a-file", "loop",
+                                      "name-too-long", "null-byte"])
+    def test_what_cannot_be_a_directory_is_false(self, tmp_path, monkeypatch, kind):
+        from tests.unit.test_r10 import _pathlib_as_in_python_3_14
+
+        (tmp_path / "file").write_text("x")
+        (tmp_path / "loop").symlink_to(tmp_path / "loop")
+        path = {"missing": tmp_path / "missing", "file": tmp_path / "file",
+                "under-a-file": tmp_path / "file" / "below", "loop": tmp_path / "loop",
+                "name-too-long": tmp_path / ("n" * 300),
+                "null-byte": f"{tmp_path}/bad\0name"}[kind]
+        _pathlib_as_in_python_3_14(monkeypatch)
+        assert ss.is_directory(path) is False
+
+    @pytest.mark.parametrize("error", [PermissionError(13, "Permission denied"),
+                                       OSError(5, "Input/output error")],
+                             ids=["permission", "io-error"])
+    def test_an_unknown_state_is_raised_never_false(self, tmp_path, monkeypatch, error):
+        """A9: under Python 3.14's `Path.is_dir`, which answers False for it,
+        the state is still unknown, never absent."""
+        from tests.unit.test_r10 import _pathlib_as_in_python_3_14, _stat_fails
+
+        target = tmp_path / "d"
+        target.mkdir()
+        _stat_fails(monkeypatch, target, error)
+        _pathlib_as_in_python_3_14(monkeypatch)
+        assert target.is_dir() is False, "the simulation reads it as absent"
+        with pytest.raises(type(error)):
+            ss.is_directory(target)
 
 
 def test_all_settings_in_the_documented_order():

@@ -1351,23 +1351,25 @@ training inputs and has no validation entry at all: training ran no validation p
   digest, so a record without one, or with an entry that is there and is not a digest, cannot
   come from it. `--training-evidence` cannot help;
 - **search incomplete**: no file that was read holds the recorded bytes, and a place that may
-  hold them could not be read: a candidate (permission, an I/O error) or a `--training-evidence`
-  directory that exists and cannot be listed. The console names each place and its error. Make
-  it readable to the process that measures, and measure again.
+  hold them could not be read: a candidate (permission, an I/O error), or a `--training-evidence`
+  directory that cannot be listed or cannot be checked. The console names each place and its
+  error. Make it readable to the process that measures, and measure again.
 
 `none` is not proof of no leakage: it speaks only about the inputs the checkpoint records.
 
 **A place that cannot be read is recorded, not refused** (since K8-6r.3, R10 definition version
-2). A candidate, or an existing `--training-evidence` directory, that cannot be read leaves its
-scope `unverifiable` with that reason, never "not found" and never a count. The search goes on
+2). A candidate that cannot be read, or a `--training-evidence` directory that cannot be listed
+or cannot itself be checked (under a directory this account cannot enter, for one; since the
+K8-6 completion review, same version), leaves its scope `unverifiable` with that reason, never
+"not found" and never a count. The search goes on
 through the remaining candidates, so bytes held by another file are still found, and the
 measurement still runs and its report can be registered. **What still refuses the run:** a
-`--training-evidence` path that does not exist, is not a directory, or cannot itself be checked
-(under a directory this account cannot enter, for one), an argument error before anything is
-read; and the required inputs: a checkpoint, graph file or cohort samples file that is missing,
-cannot be read, or is not the bytes recorded for it. Running out of memory while reading a
-candidate ends the run as a resource failure that names the file: it says nothing about overlap,
-and no kept report or ledger record is changed. Candidates are read only until every recorded
+`--training-evidence` path known not to be a directory (it does not exist, is a file, is a link
+loop, or has a name too long to exist), an argument error before anything is read; and the
+required inputs: a checkpoint, graph file or cohort samples file that is missing, cannot be read,
+or is not the bytes recorded for it. Running out of memory while reading a candidate ends the run
+as a resource failure that names the file: it says nothing about overlap, and no kept report or
+ledger record is changed. Candidates are read only until every recorded
 digest has been found, so an unreadable file after the match is never reached. A report written
 before K8-6r.3 (R10 definition version 1) is read as written: there, "not found" means every
 candidate was read and compared.
@@ -2096,7 +2098,7 @@ repository's `data/workspaces/` included.
 | `SHEPHERD_WORKSPACES_ROOT` | absolute path of an existing directory; its subdirectories are the workspaces, and `.shepherd-gpu.lock` directly under it is the GPU lock (§4.11) | no workspace is listed, and no GPU lock: every training and test run is refused |
 | `SHEPHERD_REGISTRY` | the cohort registry (§4.9), the directory the commands take as `--registry`: absolute, existing, outside the repository; the only registry reports are registered from and `--cohort` runs measure in, for the service and the commands alike | no cohort version is listed; every registration and `--cohort` measurement is refused |
 | `SHEPHERD_INTAKE_DIR` | an existing directory outside the repository where you place `shepherd-cases/1` files to import; absolute | no import source is offered |
-| `SHEPHERD_TRAINING_EVIDENCE_DIRS` | optional: R10 evidence directories, as `--training-evidence` takes them, separated by `:` (`;` on Windows); each absolute and existing | none; one bad entry refuses the whole setting |
+| `SHEPHERD_TRAINING_EVIDENCE_DIRS` | optional: R10 evidence directories, as `--training-evidence` takes them, separated by `:` (`;` on Windows); each absolute and existing | none; an entry known not to be a directory refuses the whole setting; one that cannot be checked is kept and noted |
 
 ```bash
 export SHEPHERD_DEPLOYMENT_MODE=M1
@@ -2123,11 +2125,16 @@ export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
   `SHEPHERD_REGISTRY` are checked by the same function. Create both where only the accounts that
   run the service and the commands can read them, for example `mkdir -m 700`.
 - **A directory the service account cannot reach** (a parent it may not enter) is refused as
-  "cannot be checked", with the error, and its feature is off. Inside the registry, a `versions/`
-  the service cannot read refuses the cohort list with that reason; a version, a `reports/` or a
-  run directory it cannot read is listed with the reason, and the rest of the list stands.
+  "cannot be checked", with the error, and its feature is off; an evidence directory is the
+  exception (next item). Inside the registry, a `versions/` the service cannot read refuses the
+  cohort list with that reason; a version, a `reports/` or a run directory it cannot read is
+  listed with the reason, and the rest of the list stands.
 - **Evidence directories**: an empty entry (a doubled or trailing separator) is skipped, never
-  read as the working directory. A repeated one is kept once.
+  read as the working directory. A repeated one is kept once. One the service account cannot
+  check (a parent it may not enter, an I/O error) is optional evidence, so it is kept: the Test
+  page names it in amber, and Start stays enabled. R10 cannot look in it: a scope found
+  elsewhere stays found, and one found nowhere else reads `unverifiable`, naming it. A relative
+  path, a missing directory and a file still refuse the setting.
 
 ### What the server lists
 

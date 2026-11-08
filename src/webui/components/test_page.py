@@ -562,7 +562,7 @@ def read_page(request: Any, *, environ: Optional[Mapping[str, str]] = None) -> D
         "versions": [version_row(item) for item in versions.items] if versions else [],
         "versions_problem": versions.problem if versions is not None else None,
         "evidence": {"names": [Path(d).name for d in (evidence.value or ())],
-                     "problem": evidence.problem},
+                     "problem": evidence.problem, "note": evidence.note},
         "device": device,
     }
 
@@ -1282,17 +1282,28 @@ def model_html(page: Mapping[str, Any], models: Mapping[str, Any], key: Optional
 
 
 def evidence_html(page: Mapping[str, Any], workspace: Optional[str]) -> str:
+    """The R10 evidence row: the measured workspace, then the setting's
+    directories, or why the setting is refused. A directory the server cannot
+    check stays in the list and does not block Start: the setting's note says
+    which and why on a line of its own, in amber with ▲ (needs attention, does
+    not block), redacted as the problem is."""
     evidence = page.get("evidence") or {}
     names = evidence.get("names") or []
+    roots = page.get("roots") or []
     measured = f"{e(workspace)} (measured, always)" if workspace else "the measured workspace (always)"
+    note = ""
     if evidence.get("problem"):
-        extra = f' · <span class="shep-amber-t">{e(redact(evidence["problem"], page.get("roots") or []))}</span>'
+        extra = f' · <span class="shep-amber-t">{e(redact(evidence["problem"], roots))}</span>'
     elif names:
         extra = " · " + ", ".join(f"<code>{e(n)}</code>" for n in names) + " (the server's setting)"
+        if evidence.get("note"):
+            note = (f'<span></span><span class="shep-amber-t">{r.WARN_MARK} '
+                    f'{e(redact(evidence["note"], roots))}</span>')
     else:
         extra = " · no other evidence directory is set on the server"
     return (f'<div class="shep-test-kv"><span class="shep-k">R10 evidence'
-            f'{help_button("test-evidence", "R10 evidence")}</span><span>{measured}{extra}</span></div>')
+            f'{help_button("test-evidence", "R10 evidence")}</span><span>{measured}{extra}</span>'
+            f'{note}</div>')
 
 
 def fixed_html(page: Mapping[str, Any]) -> str:

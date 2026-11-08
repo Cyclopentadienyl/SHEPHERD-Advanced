@@ -177,19 +177,21 @@ def test_a_root_that_cannot_name_a_lock_is_refused_never_defaulted(monkeypatch, 
 
 
 def _unsearchable(monkeypatch, below: Path) -> None:
-    """`Path.is_dir` as Python 3.12 answers for a path under a directory this
-    account may not search: it raises (EACCES) instead of answering. Simulated,
-    since the tests may run as root, which the real check does not stop."""
+    """`Path.stat`, the stat the directory rule makes
+    (`server_settings.is_directory`), as it fails for a path under a directory
+    this account may not search: it raises (EACCES) instead of answering.
+    Simulated, since the tests may run as root, which the real check does not
+    stop."""
     import errno
 
-    real = Path.is_dir
+    real = Path.stat
 
-    def is_dir(self, *args, **kwargs):
+    def stat(self, *args, **kwargs):
         if str(self).startswith(str(below)):
             raise PermissionError(errno.EACCES, "Permission denied", str(self))
         return real(self, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "is_dir", is_dir)
+    monkeypatch.setattr(Path, "stat", stat)
 
 
 def test_a_location_that_cannot_be_checked_is_refused_with_its_reason(monkeypatch, tmp_path):

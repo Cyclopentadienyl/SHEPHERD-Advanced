@@ -28,6 +28,10 @@ Research › Evaluate › Test (M5-2, UI-D): import, run, keep and register.
   can be registered; a note is kept with who, when and what and lifts nothing;
 - **D7**: the preview shows exclusion reasons and their counts, never a case
   id; there is no upload control;
+- **R10 evidence**: an evidence directory the server cannot check never
+  disables Start; the row says which and why in amber with ▲, redacted, and
+  the run is given it; one known not to be a directory still disables Start
+  (K8-6 completion review, 2026-11-08);
 - **every message true**: the job's pill is never green for a failed or
   cancelled run; the outcome is the runner's (kept, registered, "no report was
   published"); *unverifiable* is a word, never a 0; no absolute server path is
@@ -1055,6 +1059,79 @@ def test_start_passes_the_digests_shown_and_the_servers_paths(site, monkeypatch)
     assert inputs.version_counts == tp.find(page["versions"], "label", LABEL)["counts"]
     assert inputs.evidence_dirs == (evidence.resolve(),)
     assert inputs.record is True and inputs.deterministic is True
+
+
+def _start_inputs(site, monkeypatch):
+    """A listed disease child, the page and the session's models and binding,
+    as Start reads them."""
+    _path, child = _put_bundle(site)
+    page, request = _page(monkeypatch)
+    models = tp.read_models("demo", request)
+    binding = tp.workspace_binding(site.demo, tp.find(page["workspaces"], "name", "demo"))
+    return page, request, models, binding, child
+
+
+def test_an_evidence_directory_that_cannot_be_checked_never_disables_start(site, monkeypatch):
+    """A8, P2-B of the K8-6 completion review (2026-11-08). The setting names
+    an evidence directory whose own stat fails (behind a parent the service
+    account may not search) and one that is fine. Start stays enabled; the
+    R10 evidence row lists both and, on a line of its own, in amber with ▲ and
+    words (readable without colour), which one cannot be checked and why, its
+    path redacted and the reason escaped; the start passes both, in order, as
+    `--training-evidence` in the job's command line. HEAD: Start disabled
+    ("the evidence directories setting is refused") and the start refused."""
+    import errno
+    import os
+
+    from src.api.services.training_manager import build_test_argv
+    from src.webui.components.renderers import WARN_MARK
+    from tests.unit.test_r10 import _stat_fails
+
+    locked, good = (site.root / "locked-evidence").resolve(), (site.root / "evidence").resolve()
+    locked.mkdir()
+    good.mkdir()
+    monkeypatch.setenv("SHEPHERD_TRAINING_EVIDENCE_DIRS", os.pathsep.join([str(locked),
+                                                                          str(good)]))
+    _stat_fails(monkeypatch, locked, PermissionError(errno.EACCES, "Permission <denied>"))
+    page, request, models, binding, child = _start_inputs(site, monkeypatch)
+
+    assert tp.start_state(page, models, "demo", LABEL, child, binding, ("none", ""),
+                          protocol="disease") == (True, None)
+    row = tp.evidence_html(page, "demo")
+    assert ("<code>locked-evidence</code>, <code>evidence</code> (the server's setting)</span>"
+            f'<span></span><span class="shep-amber-t">{WARN_MARK} Cannot be checked: '
+            "&lt;evidence 1&gt; (PermissionError: Permission &lt;denied&gt;). R10 cannot look "
+            "in it: inputs found nowhere else read unverifiable, naming it.</span></div>") in row
+    assert str(site.root) not in row and "<denied>" not in row
+    manager = FakeManager()
+    result = tp.start_test_run(page, models, "demo", LABEL, child, False, False, request,
+                               protocol="disease", manager=manager)
+    assert result["success"] is True
+    (inputs,) = manager.started
+    assert inputs.evidence_dirs == (locked, good)
+    argv = build_test_argv(inputs, None, site.root / "outcome.json")
+    assert [argv[i + 1] for i, arg in enumerate(argv) if arg == "--training-evidence"] == [
+        str(locked), str(good)]
+
+
+def test_an_evidence_entry_that_is_not_a_directory_still_disables_start(site, monkeypatch):
+    """A8 (guard). An entry known not to be a directory (here missing) still
+    refuses the whole setting: Start is disabled saying so, the start is
+    refused, and nothing is started."""
+    monkeypatch.setenv("SHEPHERD_TRAINING_EVIDENCE_DIRS", str(site.root / "missing"))
+    page, request, models, binding, child = _start_inputs(site, monkeypatch)
+
+    allowed, why = tp.start_state(page, models, "demo", LABEL, child, binding, ("none", ""),
+                                  protocol="disease")
+    assert allowed is False
+    assert why.startswith("Disabled: the evidence directories setting is refused: "
+                          "SHEPHERD_TRAINING_EVIDENCE_DIRS is refused: evidence directory 1 ")
+    assert "does not exist or is not a directory" in why
+    manager = FakeManager()
+    result = tp.start_test_run(page, models, "demo", LABEL, child, False, False, request,
+                               protocol="disease", manager=manager)
+    assert result["success"] is False and "does not exist or is not a directory" in result["error"]
+    assert manager.started == []
 
 
 def test_start_runs_only_what_the_session_was_shown(site, monkeypatch):

@@ -1643,3 +1643,17 @@ def test_an_unreadable_historical_record_is_listed_with_no_run(app, served, tmp_
     assert body["unreadable_records"] == [{
         "index": 0, "sequence": 1, "source_artifact_digest": "e" * 64, "run_id": None,
         "reason": "metrics: Input should be a valid dictionary"}]
+
+
+def test_the_record_path_helpers_annotations_resolve():
+    """P3 of the K8-6 completion review (2026-11-08). `_record_path` annotates
+    `Sequence`, which the module did not import: annotations are deferred, so
+    serving was unaffected, but resolving its type hints raised `NameError`.
+    HEAD: `NameError: name 'Sequence' is not defined`."""
+    import typing
+    from collections.abc import Sequence
+
+    from src.api.routes import evaluations
+
+    hints = typing.get_type_hints(evaluations._record_path)
+    assert typing.get_origin(hints["loc"]) is Sequence

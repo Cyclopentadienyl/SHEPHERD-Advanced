@@ -17,6 +17,11 @@ per test:
   K8-6r.3: it is recorded and the run goes on (rows D7-D9 and D12 of plan B rev 6
   §3.9), while a cohort samples file that cannot be read still refuses, and
   running out of memory on a candidate ends the run naming it, changing nothing;
+- an optional `--training-evidence` directory whose own state cannot be learned,
+  and a listed candidate whose resolve fails, are places R10 could not look in:
+  the run completes and registers, a scope found elsewhere stays found and one
+  found nowhere is `search_incomplete`; a path known not to be a directory, and
+  every required input, still refuse (K8-6 completion review, 2026-11-08);
 - the manifest records the version as an aggregate block (no case id), the
   relation states a registered run earns, and the R10 block `compute_r10` gives
   for the same inputs; R10's states for the record a disease child writes (the
@@ -34,6 +39,7 @@ Module: tests/unit/test_measure_scorer_registered.py
 """
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
@@ -348,6 +354,240 @@ def test_a_cohort_samples_file_that_cannot_be_read_still_refuses(cli, cohort, mo
 
     with pytest.raises(PermissionError):
         cli.main(_argv(cohort, "--record"))
+
+    assert _nothing_written(cohort)
+
+
+# ---------------------------------------------------------------------------
+# Optional evidence whose state cannot be learned (K8-6 completion review,
+# 2026-11-08, P2-A and P2-B): a place R10 could not look in, named only for
+# a scope found nowhere else, never a refusal; what is known not to be a
+# directory, and every required input, still refuses
+# ---------------------------------------------------------------------------
+def _resolve_fails(monkeypatch, target, message="Permission denied"):
+    """`Path.resolve` of `target` alone raises EACCES, after its stat passed:
+    a permission change, a readlink or an I/O failure between the two. The
+    sandbox runs as root, so the error is injected (the reviewer's probe)."""
+    real = Path.resolve
+
+    def resolve(self, strict=False):
+        if os.fspath(self) == os.fspath(target):
+            raise PermissionError(errno.EACCES, message, os.fspath(self))
+        return real(self, strict)
+
+    monkeypatch.setattr(Path, "resolve", resolve)
+
+
+def _ledger_records(cohort):
+    return json.loads((cohort.checkpoint.parent / LEDGER).read_text())["records"]
+
+
+@pytest.mark.parametrize("fail_resolve", [False, True], ids=["control", "resolve-denied"])
+def test_an_r10_candidate_whose_resolve_fails_is_recorded_and_the_run_registers(
+    cli, cohort, monkeypatch, fail_resolve
+):
+    """A1, P2-A (the reviewer's probe, through the real CLI). The workspace's
+    `train_samples.json`, which holds the training bytes the checkpoint
+    records, is listed and its stat passes; then its `resolve()` fails. It is
+    a place R10 could not look in: the run completes with `--record`, the
+    report is kept and registered, the training evidence is
+    `search_incomplete` naming the file and the reason, and validation is
+    found. The control finds both. HEAD: the `PermissionError` ended the run,
+    no report."""
+    target = cohort.data_dir / "train_samples.json"
+    if fail_resolve:
+        _resolve_fails(monkeypatch, target, "optional candidate unavailable")
+
+    assert cli.main(_argv(cohort, "--record")) == 0
+
+    _, report = _report(cohort)
+    (record,) = _ledger_records(cohort)
+    for r10 in (report["manifest"]["r10"], record["r10"]):
+        assert r10["validation"]["evidence"]["state"] == "found"
+        training = r10["training"]["evidence"]
+        if fail_resolve:
+            assert training["state"] == "search_incomplete"
+            assert training["problem"].endswith(
+                f"could not be looked in: {target} (PermissionError: optional candidate "
+                "unavailable)")
+        else:
+            assert training == {"state": "found", "path": str(target.resolve()),
+                                "problem": None}
+
+
+@pytest.mark.parametrize("fail_stat", [False, True], ids=["control", "stat-denied"])
+def test_an_evidence_directory_that_cannot_be_checked_never_stops_a_measurement(
+    cli, cohort, monkeypatch, fail_stat
+):
+    """A2, P2-B (the reviewer's probe, through the real CLI). An extra
+    `--training-evidence` directory exists, and its own stat fails (EACCES:
+    behind a parent this account may not search). The workspace holds both
+    recorded files, so both scopes are found and stay found; the run completes
+    and registers. The control names the same directory with nothing
+    injected. HEAD: `ValueError` "cannot be checked" before anything was read,
+    no report."""
+    from tests.unit.test_r10 import _stat_fails
+
+    archive = cohort.data_dir.parent / "optional-archive"
+    archive.mkdir()
+    if fail_stat:
+        _stat_fails(monkeypatch, archive,
+                    PermissionError(errno.EACCES, "optional archive unavailable"))
+
+    assert cli.main(_argv(cohort, "--training-evidence", str(archive), "--record")) == 0
+
+    _, report = _report(cohort)
+    (record,) = _ledger_records(cohort)
+    for r10 in (report["manifest"]["r10"], record["r10"]):
+        for scope in ("training", "validation"):
+            assert r10[scope]["evidence"]["state"] == "found"
+            assert r10[scope]["evidence"]["problem"] is None
+
+
+@pytest.mark.parametrize("as_in_3_14", [False, True], ids=["python-3.12", "python-3.14"])
+def test_an_uncheckable_evidence_directory_that_alone_may_hold_the_bytes_is_search_incomplete(
+    cli, cohort, monkeypatch, as_in_3_14
+):
+    """A3 and A9, P2-B. The training bytes the checkpoint records have moved
+    out of the workspace into a directory whose own stat fails; nothing else
+    holds them. Training evidence is `search_incomplete` naming the directory
+    and its reason, its labels *unverifiable* with no count; validation is
+    found; the report registers; and the Test page's Result and Models read
+    the record with "evidence search incomplete" (their existing renderers).
+    With Python 3.14's `Path.is_dir`, which would read the directory as
+    absent, the same. HEAD: `ValueError` "cannot be checked", no report."""
+    pytest.importorskip("gradio")
+    from src.evaluation.r10 import R10_LABELS
+    from src.webui.components import models_page as mp
+    from src.webui.components import test_page as tp
+    from tests.unit.test_r10 import _pathlib_as_in_python_3_14, _stat_fails
+
+    archive = cohort.data_dir.parent / "locked-archive"
+    archive.mkdir()
+    shutil.move(str(cohort.data_dir / "train_samples.json"),
+                str(archive / "run7_train_samples.json"))
+    _stat_fails(monkeypatch, archive, PermissionError(errno.EACCES, "Permission denied"))
+    if as_in_3_14:
+        _pathlib_as_in_python_3_14(monkeypatch)
+
+    assert cli.main(_argv(cohort, "--training-evidence", str(archive), "--record")) == 0
+
+    path, report = _report(cohort)
+    (record,) = _ledger_records(cohort)
+    for r10 in (report["manifest"]["r10"], record["r10"]):
+        training = r10["training"]
+        assert training["evidence"] == {
+            "state": "search_incomplete", "path": None,
+            "problem": ("no candidate that was read holds the recorded bytes, and these "
+                        f"places could not be looked in: {archive} (PermissionError: "
+                        "Permission denied)")}
+        for label in R10_LABELS:
+            assert training[label]["state"] == "unverifiable"
+            assert training[label]["k"] is None
+        assert r10["validation"]["evidence"]["state"] == "found"
+    reports = tp.read_reports(cohort.version.manifest["label"])
+    run = tp.find(reports["runs"], "run_id", path.parent.name)
+    assert run["state"]["registered"] == "registered"
+    result = tp.result_html(reports, path.parent.name, tp.path_roots(), notes=[])
+    assert "inputs (evidence search incomplete):" in result
+    assert "R10, training inputs (evidence search incomplete):" in mp.r10_html(record["r10"])
+
+
+def test_evidence_in_a_later_directory_is_found_past_one_that_cannot_be_checked(
+    cli, cohort, monkeypatch
+):
+    """A4. The first named directory's state cannot be learned; a later one
+    holds the training bytes. The search goes on past the first: training is
+    found in the later directory, and nothing is left incomplete."""
+    from tests.unit.test_r10 import _stat_fails
+
+    locked, kept = cohort.data_dir.parent / "locked", cohort.data_dir.parent / "kept"
+    locked.mkdir()
+    kept.mkdir()
+    moved = kept / "run7_train_samples.json"
+    shutil.move(str(cohort.data_dir / "train_samples.json"), str(moved))
+    _stat_fails(monkeypatch, locked, PermissionError(errno.EACCES, "Permission denied"))
+
+    assert cli.main(_argv(cohort, "--training-evidence", str(locked),
+                          "--training-evidence", str(kept), "--record")) == 0
+
+    r10 = _report(cohort)[1]["manifest"]["r10"]
+    assert r10["training"]["evidence"] == {"state": "found", "path": str(moved.resolve()),
+                                           "problem": None}
+    assert r10["validation"]["evidence"]["state"] == "found"
+
+
+@pytest.mark.parametrize("kind", ["missing", "file", "name-too-long"])
+def test_an_evidence_path_known_not_to_be_a_directory_is_refused_before_anything_is_read(
+    cli, cohort, monkeypatch, kind
+):
+    """A5 (guard). A missing path, a file, and a name too long to exist (a
+    real ENAMETOOLONG) stay the argument error they were: refused before the
+    version or any input is read, nothing written."""
+    import src.evaluation.cohort_registry as cohort_registry
+
+    named = cohort.data_dir.parent / ("n" * 300 if kind == "name-too-long" else "named")
+    if kind == "file":
+        named.write_text("x")
+    monkeypatch.setattr(cohort_registry, "resolve_version",
+                        lambda *a, **k: pytest.fail("the version was read"))
+
+    with pytest.raises(ValueError) as refused:
+        cli.main(_argv(cohort, "--training-evidence", str(named), "--record"))
+
+    assert str(refused.value) == (
+        f"Training evidence directory {named} does not exist or is not a directory; nothing "
+        "was read or written. Name a directory that holds the *_samples.json files the "
+        "checkpoint was trained on.")
+    assert _nothing_written(cohort)
+
+
+def _other_checkpoint_bytes(cohort, monkeypatch):
+    import scripts.measure_scorer as module
+
+    return (("--expect-checkpoint-sha256", "0" * 64), module.ExpectedDigestMismatch,
+            "this run was started for")
+
+
+def _samples_missing(cohort, monkeypatch):
+    cohort.version.samples_path.unlink()
+    return (), ValueError, "is missing, though"
+
+
+def _samples_unreadable(cohort, monkeypatch):
+    import src.kg.storage.file_storage as file_storage
+
+    real = file_storage.read_samples_file
+
+    def refuse(path, **kwargs):
+        if Path(path) == cohort.version.samples_path:
+            raise PermissionError(errno.EACCES, "Permission denied", str(path))
+        return real(path, **kwargs)
+
+    monkeypatch.setattr(file_storage, "read_samples_file", refuse)
+    return (), PermissionError, "Permission denied"
+
+
+@pytest.mark.parametrize("case", [_other_checkpoint_bytes, _samples_missing,
+                                  _samples_unreadable],
+                         ids=["checkpoint-other-bytes", "samples-missing", "samples-unreadable"])
+def test_required_inputs_still_refuse_beside_an_evidence_directory_that_cannot_be_checked(
+    cli, cohort, monkeypatch, case
+):
+    """A6 (guard). An evidence directory whose state cannot be learned changes
+    nothing about the required inputs: a checkpoint that is not the bytes the
+    run was started for, and the version's samples missing or unreadable, are
+    refused by their own checks, with no report and no ledger. HEAD refused
+    each of these for the evidence directory first ("cannot be checked")."""
+    from tests.unit.test_r10 import _stat_fails
+
+    locked = cohort.data_dir.parent / "locked"
+    locked.mkdir()
+    _stat_fails(monkeypatch, locked, PermissionError(errno.EACCES, "Permission denied"))
+    extra, refusal, says = case(cohort, monkeypatch)
+
+    with pytest.raises(refusal, match=says):
+        cli.main(_argv(cohort, "--training-evidence", str(locked), "--record", *extra))
 
     assert _nothing_written(cohort)
 

@@ -3415,7 +3415,12 @@ its §4.9 the owner questions, and its "Phase 1 as implemented" the step-by-step
   candidate read holds is `search_incomplete`, *unverifiable* with each place and its error, never
   `not_found`, and the run goes on (R10 definition version 2; a version-1 block keeps its meaning).
   A directory that does not exist, is not one or cannot be checked is still refused; running out of
-  memory reading a candidate ends the run naming it. A role with no digest to look for has evidence
+  memory reading a candidate ends the run naming it. *Superseded in part by the K8-6 completion
+  review (2026-11-08):* a named directory whose state cannot be learned (its stat fails for a
+  reason that does not say it is absent) is no longer refused but recorded as such a place, in its
+  place, and so is a listed candidate whose resolve fails; only a directory known not to be one
+  (absent, a file, a link loop, a name too long to exist) is still refused, and the deployment
+  setting keeps such an entry with a note. A role with no digest to look for has evidence
   `not_recorded`; a role that is there with a value that is not a non-empty string also carries
   a problem naming the role and the value's kind, never the value. Only an absent `val_samples`
   beside a recorded `train_samples` gives *no validation inputs recorded*; a malformed one leaves
@@ -3777,7 +3782,7 @@ own.
 |---|---|
 | R1–R5, R7 | **Required**: anything but *verified* refuses |
 | R6, R11 | **Recorded**, and displayed beside results. An environment difference never refuses |
-| R10 | **Recorded as four labels** (§5.4). No label refuses, because the true label is written, *unverifiable* included. The run is refused only when evidence cannot be looked at: an evidence directory that cannot be listed, or a candidate that cannot be read, which may be the evidence (M4). *Superseded by K8-6r.3 (2026-11-07):* neither refuses; each is recorded, the search goes on, and the scope is *unverifiable* with that reason (§5.4). A named directory that does not exist, is not a directory or cannot itself be checked is still refused |
+| R10 | **Recorded as four labels** (§5.4). No label refuses, because the true label is written, *unverifiable* included. The run is refused only when evidence cannot be looked at: an evidence directory that cannot be listed, or a candidate that cannot be read, which may be the evidence (M4). *Superseded by K8-6r.3 (2026-11-07):* neither refuses; each is recorded, the search goes on, and the scope is *unverifiable* with that reason (§5.4). A named directory that does not exist, is not a directory or cannot itself be checked is still refused. *Superseded in part by the K8-6 completion review (2026-11-08):* one that cannot itself be checked is recorded the same way; only one known not to be a directory is still refused |
 
 **Capability checks are a separate matter, and they stay.**
 - That an environment difference never refuses is a provenance policy. It does not waive a

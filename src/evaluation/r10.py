@@ -26,15 +26,17 @@ problem recorded.
 
 **A place that cannot be looked in is recorded, and the search goes on**
 (K8-6r.3). A candidate that cannot be read (permission, a directory put in its
-place, an I/O error), a listed path whose stat fails, and an evidence directory
-that exists and cannot be listed are each an `UnreadCandidate`: its bytes were
+place, an I/O error), a listed path whose stat or resolve fails, an evidence
+directory that exists and cannot be listed, and a named evidence directory
+whose own state cannot be learned are each an `UnreadCandidate`: its bytes were
 never compared, so it may have held the evidence. The remaining candidates are
 still read, and a scope found in one of them is found. A scope still not found
 once the search ends, while some place could not be looked in, is
 `search_incomplete`: *unverifiable*, with a problem naming each such place and
 its reason, never "not found" and never a count. Running out of memory while
 reading a candidate is a resource failure, not a finding: it is re-raised as a
-`MemoryError` naming the candidate, and no state is recorded for it.
+`MemoryError` naming the candidate, and no state is recorded for it. Only a
+named evidence directory known not to be one is refused, as an argument error.
 
 **Four states per label, and a number only where there is evidence.** *overlap*
 and *none* need the evidence found and parsed, and carry `k`. Two states carry
@@ -97,6 +99,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, FrozenSet, List, Optional, Tuple, Union
 
+from src.config.server_settings import is_directory
 from src.kg.storage.file_storage import (
     SamplesDigestMismatch,
     UnparseableFile,
@@ -126,6 +129,10 @@ __all__ = [
 #: "search_incomplete", and its "not_found" meant every candidate was read and
 #: compared, since under version 1 a candidate that could not be read refused
 #: the run. "not_found" means the same under version 2, so no block is migrated.
+#:
+#: Still 2 since a named evidence directory whose state cannot be learned is
+#: one more such place (K8-6 completion review, 2026-11-08): no state's meaning
+#: changed, and no earlier block can hold one, because that run was refused.
 R10_DEFINITION_VERSION = 2
 
 #: Every state a label can take. Only the first two carry a count.
@@ -167,9 +174,10 @@ _CaseKey = Tuple[int, FrozenSet[int]]
 @dataclass(frozen=True)
 class UnreadCandidate:
     """A place R10 could not look in: a candidate that could not be read, a
-    listed path whose stat failed, or an evidence directory that exists and
-    could not be listed. Its bytes were never compared, so it may hold the
-    evidence. `reason` is "<ErrorType>: <strerror>"; nothing of the content."""
+    listed path whose stat or resolve failed, an evidence directory that exists
+    and could not be listed, or a named one whose own state could not be
+    learned. Its bytes were never compared, so it may hold the evidence.
+    `reason` is "<ErrorType>: <strerror>"; nothing of the content."""
 
     path: Path
     reason: str
@@ -225,56 +233,61 @@ def evidence_candidates(data_dir: Path,
     does not read the same bytes twice, and the report names each file by where
     its bytes are.
 
-    **An evidence directory that does not exist or is not a directory is
-    refused,** before any directory is listed: the operator named it as a place
-    to look, and skipping it would turn their mistake into "not found". **So is
-    one that cannot itself be checked** (its own stat fails for a reason other
-    than absence: a parent this account cannot search, a name too long): it is
-    not shown to exist, so it is the same argument error, named with its
-    reason, as `SHEPHERD_TRAINING_EVIDENCE_DIRS` refuses it.
+    **A named evidence directory known not to be one is refused,** before any
+    directory is listed: one that does not exist, is not a directory, is a
+    link loop, has a name too long to exist or cannot be encoded. The operator
+    named it as a place to look, and skipping it would turn their mistake into
+    "not found". Whether it is one is `server_settings.is_directory`, the
+    explicit stat `SHEPHERD_TRAINING_EVIDENCE_DIRS` is checked by too, so the
+    command line and the Test page read a directory alike.
 
     **A place that cannot be looked at is returned in its place, as an
     `UnreadCandidate`, and nothing is refused for it** (K8-6r.3): an evidence
     directory that exists and cannot be listed (permission, an I/O error on a
-    network mount), and a listed path whose stat fails for a reason other than
-    its absence. `compute_r10` records it, so a scope it might have held reads
+    network mount), and a listed path whose stat or resolve fails for a reason
+    other than its absence. **So is a named evidence directory whose own state
+    cannot be learned** (K8-6 completion review, 2026-11-08: its stat fails
+    otherwise, behind a parent this account may not enter, say): it is neither
+    shown to exist nor shown absent, so it is not listed and not refused.
+    `compute_r10` records each, so a scope it might have held reads
     *unverifiable* with that reason, never "not found", and the remaining
     candidates are still read. Each directory is listed with `os.scandir`
     rather than `Path.glob`, which swallows the error and yields nothing: the
     archive's files would become "not found" although none of them was looked
-    at. With no such place the list holds paths only.
+    at. A listed path keeps R10's own rule (`_mode`): one whose name is too
+    long to stat was listed, so it is a place not looked in, not an absent
+    one. With no such place the list holds paths only.
     """
-    directories = [Path(directory) for directory in evidence_dirs]
-    for directory in directories:
+    named: list[EvidenceCandidate] = []
+    for given in evidence_dirs:
+        directory = Path(given)
         try:
-            mode = _mode(directory)
+            known = is_directory(directory)
         except OSError as exc:
-            raise ValueError(
-                f"Training evidence directory {directory} cannot be checked "
-                f"({_reason(exc)}); nothing was read or written. The account that "
-                "measures must be able to reach it and every directory above it."
-            ) from exc
-        if mode is None or not stat.S_ISDIR(mode):
+            named.append(_unread(directory, exc))
+            continue
+        if not known:
             raise ValueError(
                 f"Training evidence directory {directory} does not exist or is not a "
                 "directory; nothing was read or written. Name a directory that holds "
                 "the *_samples.json files the checkpoint was trained on."
             )
+        named.append(directory)
     listed: List[EvidenceCandidate] = [Path(data_dir) / name for name in _WORKSPACE_CANDIDATES]
-    for directory in directories:
-        listed.extend(_evidence_names(directory))
+    for directory in named:
+        listed.extend([directory] if isinstance(directory, UnreadCandidate)
+                      else _evidence_names(directory))
     candidates: List[EvidenceCandidate] = []
     seen = set()
     for item in listed:
         if isinstance(item, Path):
             try:
                 mode = _mode(item)
-            except OSError as exc:
-                item = _unread(item, exc)
-            else:
                 if mode is None or not stat.S_ISREG(mode):
                     continue
                 item = item.resolve()
+            except OSError as exc:
+                item = _unread(item, exc)
         if item not in seen:
             seen.add(item)
             candidates.append(item)
