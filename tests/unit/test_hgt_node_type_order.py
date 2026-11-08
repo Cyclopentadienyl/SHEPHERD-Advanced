@@ -43,7 +43,8 @@ METADATA = (
         ("phenotype", "rev_has_phenotype", "disease"),
     ],
 )
-#: The order the training loader hands the types over: its seed types first.
+#: An order other than the model's: the ShepherdGNN training loader's (its seed
+#: types first), which handed the types over in it until K8-7; any caller may.
 LOADER_ORDER = ["phenotype", "disease", "gene"]
 HIDDEN = 32
 
@@ -142,7 +143,7 @@ def test_the_output_does_not_depend_on_the_input_order(grouped, flag):
     {"disease": 0, "phenotype": 0, "gene": 3},
 ], ids=["7-5-3", "5-7-3", "5-5-3", "0-0-3"])
 def test_the_grouped_branch_agrees_with_the_loop(grouped, rows):
-    """Input in the loader's order, as training hands it over."""
+    """Input in another order than the model's (`LOADER_ORDER`)."""
     calls, set_flag = grouped
     layer = _layer()
     x_dict, edges = _inputs(rows, METADATA[1], LOADER_ORDER)
@@ -221,67 +222,3 @@ def test_ten_node_types_take_the_grouped_branch_by_default_and_agree_with_the_lo
     assert calls, "PyG's default did not take the grouped branch at ten types"
     for node_type, value in loop_out.items():
         torch.testing.assert_close(default_out[node_type], value)
-
-
-def test_the_formal_build_paths_agree_across_branches(grouped, tmp_path):
-    """The formal paths: the model `train_model` builds over a workspace, on a
-    batch from the loader training uses, whose type order differs from the
-    model's; and its checkpoint, as the Trainer writes it, rebuilt by serving's
-    `build_shepherd_model` over the full graph. (`build_index` rebuilt the same
-    checkpoint by its own builder until K7 removed its `--checkpoint`, TM10.)"""
-    import scripts.train_model as train_model
-    from src.kg.data_loader import DataLoaderConfig, create_diagnosis_dataloader
-    from src.kg.storage.file_storage import read_graph_artifacts, read_samples
-    from src.models.gnn.shepherd_gnn import build_shepherd_model
-    from src.training.trainer import Trainer, TrainerConfig
-    from tests.fixtures.synthetic_workspace import build_workspace
-
-    calls, set_flag = grouped
-    data_dir, _ = build_workspace(tmp_path)
-    graph_data = read_graph_artifacts(data_dir).graph_data
-    torch.manual_seed(0)
-    model = train_model.create_model_from_config(
-        train_model.TrainConfig(conv_type="hgt", hidden_dim=HIDDEN, num_layers=2,
-                                num_heads=4, dropout=0.0),
-        graph_data,
-    )
-    model.eval()
-    batch = next(iter(create_diagnosis_dataloader(
-        samples=read_samples(data_dir, "test").samples, graph_data=graph_data,
-        config=DataLoaderConfig(batch_size=3, num_workers=0, shuffle=False),
-    )))
-    assert list(batch["subgraph_x_dict"]) != list(graph_data["num_nodes_dict"]), (
-        "the loader's order matches the model's, so this proves nothing"
-    )
-
-    checkpoint_path = tmp_path / "hgt.pt"
-    Trainer(model, train_dataloader=[], config=TrainerConfig(device="cpu")).save_checkpoint(
-        checkpoint_path
-    )
-    served = build_shepherd_model(
-        torch.load(checkpoint_path, map_location="cpu", weights_only=True), graph_data
-    )
-    assert served.config.conv_type == "hgt"
-
-    paths = {
-        "training batch": lambda: model(
-            batch["subgraph_x_dict"], batch["subgraph_edge_index_dict"]
-        ),
-        "serving, full graph": lambda: served(
-            graph_data["x_dict"], graph_data["edge_index_dict"]
-        ),
-    }
-    for path, embed in paths.items():
-        set_flag(False)
-        with torch.no_grad():
-            loop_out = embed()
-        assert calls == [], path
-        set_flag(True)
-        with torch.no_grad():
-            grouped_out = embed()
-        assert calls, f"{path}: the grouped branch did not run"
-        calls.clear()
-
-        assert loop_out, path
-        for node_type, value in loop_out.items():
-            torch.testing.assert_close(grouped_out[node_type], value, msg=path)

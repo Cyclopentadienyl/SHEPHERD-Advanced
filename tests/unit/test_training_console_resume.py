@@ -123,7 +123,8 @@ def test_cli_resume_docstring_names_the_run_layout():
     text = Path("scripts/train_model.py").read_text(encoding="utf-8")
     assert "--resume checkpoints/last.pt" not in text  # stale flat example gone
     assert "/checkpoints/hgt/last.pt" not in text      # the M2 layout is gone too
-    assert "runs/hgt/<run>/checkpoints/last.pt" in text
+    # A run is filed under its model spec's encoder kind (gatv2, the reference).
+    assert "runs/gatv2/<run>/checkpoints/last.pt" in text
 
 
 # --------------------------------------------------------------- continue block (M3a)

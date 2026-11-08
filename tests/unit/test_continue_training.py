@@ -16,7 +16,9 @@ stage's, not the task's: a finetune child continues by the same plan and Trainer
   parent's best-k file;
 - what the parent's state does not allow is refused with the reason, and a
   schedule the parent's record cannot rebuild is refused before the run
-  directory exists.
+  directory exists;
+- a rules-1 parent that records settings this build no longer has is resumed,
+  extended and branched as one that does not record them.
 
 Not claimed: identical weights with and without a pause. Random state is not
 restored (the plan, "Not claimed").
@@ -33,7 +35,10 @@ import pytest
 torch = pytest.importorskip("torch")
 
 from tests.fixtures.base_workspace import write_base_workspace  # noqa: E402
-from tests.fixtures.trained_children import small_base_spec  # noqa: E402
+from tests.fixtures.trained_children import (  # noqa: E402
+    RULES_1_RETIRED_SETTINGS,
+    small_base_spec,
+)
 
 #: The base workspace's 48 nodes, each a source once an epoch, in batches of
 #: 16 give 3 batches an epoch; an accumulation of 2 makes that 2 updates (one
@@ -291,11 +296,11 @@ def test_an_explicit_learning_setting_that_differs_is_refused_not_ignored(parent
     (lambda r: r.update(checkpoint_kind="weights", weights_from={"kind": "best", "epoch": 0}),
      "holds weights only"),
     (lambda r: r["config"].update(requested=None), "does not record the settings"),
-    (lambda r: r["config"]["requested"].update(no_such_setting=1), "no_such_setting"),
+    (lambda r: r["config"]["requested"].pop("max_grad_norm"), "does not record max_grad_norm"),
     (lambda r: r["config"]["effective"]["amp"].update(enabled=True, dtype="float16"),
      "mixed precision on"),
 ], ids=["finished", "stopped-early", "pre-M3a", "weights-only", "no-settings",
-        "unknown-setting", "amp-differs"])
+        "missing-setting", "amp-differs"])
 def test_what_the_parents_state_does_not_allow_is_refused_with_the_reason(parent, edit, message):
     import copy
 
@@ -307,6 +312,98 @@ def test_what_the_parents_state_does_not_allow_is_refused_with_the_reason(parent
     edit(record)
     with pytest.raises(RunPlanRefused, match=message):
         _plan(record, path, request)
+
+
+@pytest.mark.parametrize("edit, refused", [
+    (lambda requested: None, None),
+    (lambda requested: requested.update(no_such_setting=1, conv_type="gat"), None),
+    (lambda requested: requested.pop("max_grad_norm"), "does not record max_grad_norm"),
+], ids=["normal", "a-recorded-setting-this-build-has-not", "a-current-setting-missing"])
+def test_the_preview_and_the_process_decide_alike(parent, tmp_path, train_model, edit, refused):
+    """The closeout review §2: the preview builds its request from the current
+    settings (`training_fields.names()`), as the process's is its TrainConfig;
+    after the same rules check, only current settings are inherited, and a
+    parent missing one is refused by both. A setting the parent records that
+    this build no longer has (a ShepherdGNN key a rules-1 bundle recorded) is
+    not inherited, by either, and nothing is refused for it."""
+    import copy
+
+    from src.api.services.training_manager import TrainingManager
+    from src.models.bundle.record import MODEL_RECORD_VERSION
+    from src.utils.checkpoint_io import read_checkpoint
+    from src.utils.run_plan import OPERATIONAL_FIELDS, RunPlanRefused
+
+    path, record = parent
+    record = copy.deepcopy(record)
+    edit(record["config"]["requested"])
+    target = tmp_path / "checkpoints" / "edited.pt"
+    target.parent.mkdir()
+    torch.save(record, target)
+
+    preview = TrainingManager().preview_continuation(str(target), device="cpu",
+                                                     requested={"learning_stage": "base"})
+    config = train_model.TrainConfig(learning_stage="base", resume_from=str(target),
+                                     device="cpu")
+    read = read_checkpoint(target, map_location="cpu", weights_only=True)
+    if refused:
+        assert preview["ok"] is False and refused in preview["reason"]
+        with pytest.raises(RunPlanRefused, match=refused):
+            train_model.plan_from_parent(read, config, {"learning_stage", "resume_from",
+                                                        "device"}, "cpu",
+                                         record_version=MODEL_RECORD_VERSION)
+        return
+    plan, _ = train_model.plan_from_parent(read, config, {"learning_stage", "resume_from",
+                                                          "device"}, "cpu",
+                                           record_version=MODEL_RECORD_VERSION)
+    assert preview["ok"] is True, preview.get("reason")
+    assert (preview["mode"], preview["start_epoch"], preview["end_epoch"]) == (
+        plan.mode, plan.start_epoch, plan.end_epoch)
+    assert preview["inherited"] == plan.inherited
+    for name in ("no_such_setting", "conv_type"):
+        assert name not in plan.inherited and name not in plan.settings
+    assert set(plan.inherited) == (set(record["config"]["requested"]) & set(plan.settings)) - (
+        {"learning_stage"} | OPERATIONAL_FIELDS)
+
+
+@pytest.mark.parametrize("operation", ["resume", "extend", "branch"])
+def test_a_rules_1_parent_recording_retired_settings_is_continued_and_branched_alike(
+        parent, operation):
+    """A rules-1 bundle written before K8-7 records the ShepherdGNN settings
+    this build no longer has (`RULES_1_RETIRED_SETTINGS`). Retiring them is no
+    rules change, so it is resumed, extended and branched as the same parent
+    without them: the same plan, none of them inherited, carried into the
+    settings or refused (the C1b contract review: each operation's own path)."""
+    import copy
+
+    from src.models.bundle.record import MODEL_RECORD_VERSION
+    from src.utils.run_plan import plan_branch
+
+    path, record = parent
+    assert record["training_rules"] == 1
+    if operation == "extend":
+        record = _finished(record, 2e-5)
+    older = copy.deepcopy(record)
+    older["config"]["requested"].update(RULES_1_RETIRED_SETTINGS)
+    request = _request(record, extend_epochs=2 if operation == "extend" else None)
+    rate = record["config"]["requested"]["learning_rate"]
+
+    def plan(read):
+        if operation == "branch":
+            return plan_branch(read, Path(path), {**request, "resume_from": None,
+                                                  "branch_from": str(path),
+                                                  "learning_rate": rate * 10},
+                               {"learning_rate"}, device="cpu",
+                               record_version=MODEL_RECORD_VERSION)
+        return _plan(read, path, request)
+
+    expected, planned = plan(record), plan(older)
+
+    assert planned == expected
+    assert not set(RULES_1_RETIRED_SETTINGS) & (set(planned.settings) | set(planned.inherited))
+    if operation == "branch":
+        assert planned.changes == {"learning_rate": {"parent": rate, "new": rate * 10}}
+    else:
+        assert planned.mode == operation
 
 
 def test_extend_epochs_on_an_unfinished_parent_is_refused(parent):

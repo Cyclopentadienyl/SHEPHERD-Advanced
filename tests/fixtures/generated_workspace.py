@@ -72,13 +72,15 @@ def one_sample_per_disease(split: str, ids: Sequence[int], profiles) -> List[Dic
 def training_samples_per_disease(
     split: str, ids: Sequence[int], profiles
 ) -> List[Dict[str, Any]]:
-    """`one_sample_per_disease`, with the two optional fields training reads.
+    """`one_sample_per_disease`, each row also carrying `gene_ids` and
+    `candidate_disease_ids`, as a generated row and a row written before K8-7
+    carry them.
 
-    Training reads `candidate_disease_ids` and `gene_ids` as well
-    (`read_samples(..., training_fields=True)`, from `scripts/train_model.py`'s
-    `read_training_inputs`); measurement reads neither. Every row here
-    carries both, so a test of training's read is about the fields and not only
-    about the flag that asks for them.
+    No reader reads either by default (`read_samples` reads `patient_id`,
+    `phenotype_ids` and `disease_id`; the ShepherdGNN path that read both
+    retired in K8-7, and the generator keeps writing `gene_ids`). The rows keep
+    both so the default read is shown to read such rows unchanged, never to
+    refuse them for keys it does not read.
     """
     candidates = sorted({int(d) for d in ids})
     rows = one_sample_per_disease(split, ids, profiles)
@@ -174,7 +176,8 @@ def write_generated_workspace(
 
     Graph files a test has already written, or passes in `graph_bytes`, are kept;
     the rest are written by `write_graph_export`. `training_fields` gives the
-    default rows the two fields only training reads.
+    default rows the two optional keys a generated or an older row carries
+    (`training_samples_per_disease`), which the default read does not read.
 
     **A synthetic dataset record is written and bound** (contract M3b), through
     the production writer, naming the `kg.json` the workspace holds: training,

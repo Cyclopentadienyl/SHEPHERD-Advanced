@@ -9,9 +9,9 @@ The KG is written by ``src/kg/builder.py`` as files under
 ``data/workspaces/<kg>/`` (``kg.json``, ``node_features.pt``,
 ``edge_indices.pt``, ``num_nodes.json``).
 
-**Reading them is no longer duplicated.** ``src/kg/data_loader.py`` does *not*
-read these files — it receives an already-loaded ``graph_data`` dictionary.
-Measurement, serving and training read them through ``file_storage``, and
+**Reading them is no longer duplicated.** Measurement, serving and training
+read them through ``file_storage`` (``src/kg/data_loader.py`` holds only the
+sample a samples row is read into, `DiagnosisSample`), and
 ``scripts/setup_demo.py`` reads them through training; the last independent
 copy, ``scripts/build_index.py``'s, went with its ``--checkpoint`` (K7).
 

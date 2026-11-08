@@ -506,15 +506,25 @@ def test_both_writers_carry_the_record(tmp_path):
                 assert_primitive(value, key)
 
 
-def test_trainer_without_a_record_keeps_the_m3a_version(tmp_path):
-    from src.utils.checkpoint_io import CHECKPOINT_RECORD_VERSION
+@pytest.mark.parametrize("weights_only", [False, True])
+def test_a_trainer_without_a_record_writes_nothing(tmp_path, weights_only):
+    """TM13: record version 1 (contract M3a's, the ShepherdGNN path's) retired
+    with its writer. A trainer that carries no model record has no checkpoint
+    to write: both writers refuse it and no file is left, for a training state
+    and for weights only."""
+    from src.training.checkpoint_payload import build_checkpoint_payload
 
     trainer = _trainer(tmp_path, torch.nn.Linear(2, 1))
-    path = tmp_path / "old.pt"
-    trainer.save_checkpoint(path)
-    payload = torch.load(path, map_location="cpu", weights_only=True)
-    assert payload["record_version"] == CHECKPOINT_RECORD_VERSION
-    assert "model_spec" not in payload
+    with pytest.raises(ValueError, match="carries no model record"):
+        build_checkpoint_payload(trainer, epoch=0, logs={}, weights_only=weights_only)
+    by_trainer, by_callback = tmp_path / "t.pt", tmp_path / "c.pt"
+    with pytest.raises(ValueError, match="carries no model record"):
+        trainer.save_checkpoint(by_trainer)
+    with pytest.raises(ValueError, match="carries no model record"):
+        ModelCheckpoint(ModelCheckpointConfig(dirpath=str(tmp_path)))._save_checkpoint(
+            trainer, by_callback, epoch=0, logs={"val_pooled_mrr": 0.1})
+    assert not by_trainer.exists() and not by_callback.exists()
+    assert sorted(p.name for p in tmp_path.iterdir()) == []
 
 
 def test_record_reads_without_torch():

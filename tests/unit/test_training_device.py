@@ -86,8 +86,6 @@ def test_the_demo_passes_its_device_through(monkeypatch, tmp_path):
         ("base", None, "cpu"), ("finetune", "disease", "cpu")]
     assert seen[1].finetune_from == str(Path(seen[0].run_dir) / "checkpoints" / "last.pt")
     assert child == Path(seen[1].run_dir) / "checkpoints" / "last.pt"
-    assert not any(c.conv_type != train_model.TrainConfig().conv_type for c in seen), (
-        "no ShepherdGNN setting is given")
 
 
 def test_the_demo_refuses_when_a_run_writes_no_checkpoint(monkeypatch, tmp_path):

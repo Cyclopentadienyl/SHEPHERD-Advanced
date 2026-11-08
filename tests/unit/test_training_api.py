@@ -276,10 +276,11 @@ class TestTrainingManagerStartStop:
         manager = TrainingManager()
         parent = tmp_path / "old.pt"
         import torch
-        torch.save({"state_dict": {}}, parent)   # no M3a record
+        torch.save({"state_dict": {}}, parent)   # no record at all
         with patch("subprocess.Popen") as popen:
             result = manager.start_training({"resume_from": str(parent)})
-        assert result["success"] is False and "before contract M3a" in result["error"]
+        assert result["success"] is False
+        assert "written before the model spec (record version None, not 2)" in result["error"]
         popen.assert_not_called()
 
     def test_a_continued_run_is_placed_under_its_parents_architecture(self, tmp_path):
@@ -907,16 +908,17 @@ class TestTheBaseStartThroughTheRunner:
 
     def test_a_parent_that_is_not_a_base_is_refused(self, specless_parent,
                                                      trained_disease_child, real_client):
-        """A finetune child (here continued by extending it) and a checkpoint
-        with no model spec are not bases: the runner's preview of the parent
-        refuses the stage asked for, on its one read, before anything starts."""
+        """A finetune child (here continued by extending it) is not a base: the
+        runner's preview of the parent refuses the stage asked for, on its one
+        read, before anything starts. A checkpoint with no model spec (record
+        version 1) is refused before that, by its record version."""
         client, popen, manager = real_client
         for ws, parent, extra, said in (
                 (trained_disease_child["data_dir"], trained_disease_child["disease"],
                  {"extend_epochs": 1}, "learning_stage: the parent's 'finetune', requested "
                                        "'base'"),
-                (*specless_parent, {}, "learning_stage: the parent's None, requested "
-                                       "'base'")):
+                (*specless_parent, {}, "written before the model spec (record version 1, "
+                                       "not 2)")):
             resp = client.post("/api/v1/training/start", json={
                 "data_dir": str(ws), "learning_stage": "base", "resume_from": str(parent),
                 "device": "cpu", **extra})

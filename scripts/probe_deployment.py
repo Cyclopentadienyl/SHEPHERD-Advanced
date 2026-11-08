@@ -674,16 +674,11 @@ def phase_environment(
 
     def _against_lock() -> Tuple[str, Dict[str, Any]]:
         collected = installed_against_lock(project_root / "uv.lock")
-        collected["temporary_directory"] = _socket_room()
         facts["installed_against_lock"] = collected
         # **Stated, never hidden** (M5-3): a homelab whose packages moved away
         # from the committed lock says so on the console too, here and again
         # beside the acceptance's verdict at the end (`environment_verdict`).
         print(f"         {lock_sentence(collected)}")
-        if collected["temporary_directory"]["socket_fits"] is False:
-            print("         a DataLoader worker's socket cannot be made under the temporary "
-                  "directory (its path is too long; see A5's facts): training with workers "
-                  "fails here; use a short TMPDIR, such as TMPDIR=/tmp")
         differ, outside = collected["version_differs"], collected["installed_not_in_lock"]
         missing = collected.get("declared_not_installed") or []
         said = ("the installed versions are the lock's" if not differ and not missing else
@@ -1165,58 +1160,6 @@ def lock_sentence(facts: Mapping[str, Any]) -> str:
         ) if text)
     parts.append(said)
     return f"installed packages against {which}: " + "; ".join(parts)
-
-
-#: Run by `_socket_room` in a fresh interpreter: one AF_UNIX listener opened and
-#: closed as `multiprocessing` opens one for DataLoader workers sharing tensors
-#: (its resource sharer), under the temporary directory it is given. Whatever
-#: that Python does with a long one (3.12 fails; 3.13 falls back to /tmp), this
-#: is what it does.
-_SOCKET_CHECK = (
-    "import json\n"
-    "from multiprocessing.connection import Listener\n"
-    "try:\n"
-    "    Listener(family='AF_UNIX').close()\n"
-    "    said = {'fits': True}\n"
-    "except OSError as exc:\n"
-    "    said = {'fits': False, 'error': type(exc).__name__,\n"
-    "            'path_too_long': 'path too long' in str(exc)}\n"
-    "print(json.dumps(said))\n"
-)
-
-
-def _socket_room(python: Optional[str] = None) -> Dict[str, Any]:
-    """Whether a DataLoader worker's socket can be made under this process's
-    temporary directory: under a long one (a scratch path as ``TMPDIR``)
-    training with workers fails with ``OSError: AF_UNIX path too long`` on
-    Python 3.12 (M5-0's audit), while 3.13 puts its sockets under /tmp
-    instead. **Asked, not computed**: `python` (this interpreter by default,
-    the one the job runner starts) opens and closes one listener there, in a
-    process of its own (`_SOCKET_CHECK`). ``socket_fits`` is None when the
-    check could not run. The path's length only, never the path."""
-    import subprocess
-    import tempfile
-
-    temp = tempfile.gettempdir()
-    facts: Dict[str, Any] = {"path_bytes": len(os.fsencode(temp)), "socket_fits": None,
-                             "refusal": None}
-    if sys.platform == "win32":  # pragma: no cover - no AF_UNIX listener there
-        return {**facts, "socket_fits": True, "checked": "not used on Windows"}
-    facts["checked"] = ("an AF_UNIX listener opened and closed under it, as multiprocessing "
-                        "opens one for DataLoader workers")
-    try:
-        done = subprocess.run([python or sys.executable, "-I", "-c", _SOCKET_CHECK],
-                              env={**os.environ, "TMPDIR": temp}, capture_output=True,
-                              text=True, timeout=120)
-        said = json.loads((done.stdout.strip().splitlines() or ["{}"])[-1])
-    except (OSError, subprocess.SubprocessError, ValueError):
-        return {**facts, "checked": "the check could not run"}
-    if said.get("fits") is True:
-        return {**facts, "socket_fits": True}
-    if said.get("fits") is False:
-        return {**facts, "socket_fits": False, "refusal": (
-            "AF_UNIX path too long" if said.get("path_too_long") else str(said.get("error")))}
-    return {**facts, "checked": "the check could not run"}
 
 
 # =============================================================================

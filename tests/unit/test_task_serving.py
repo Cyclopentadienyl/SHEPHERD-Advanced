@@ -36,7 +36,10 @@ from src.core.types import (  # noqa: E402
     PatientPhenotypes,
 )
 from tests.fixtures.registered_cohort import write_demo_workspace  # noqa: E402
-from tests.fixtures.trained_children import train_children  # noqa: E402
+from tests.fixtures.trained_children import (  # noqa: E402
+    RULES_1_RETIRED_SETTINGS,
+    train_children,
+)
 
 
 @pytest.fixture(scope="module")
@@ -92,6 +95,27 @@ def test_a_gene_child_ranks_the_submitted_candidates(trained):
                for w in repeated.warnings)
     first = result.candidates[0]
     assert first.score == pytest.approx(0.5 * first.embsim + 0.5 * first.sp_similarity, rel=1e-5)
+
+
+def test_a_rules_1_child_written_before_k8_7_still_serves(trained, tmp_path):
+    """TM2 (Q19 (a)): retiring the ShepherdGNN settings is no rules change. A
+    rules-1 child written before K8-7 records them among its requested
+    settings; serving reads its model record, not those, so it serves as a
+    child of this build does, with the same ranking."""
+    payload = torch.load(trained["gene"], map_location="cpu", weights_only=True)
+    assert payload["training_rules"] == 1
+    requested = {**payload["config"]["requested"], **RULES_1_RETIRED_SETTINGS}
+    older = tmp_path / "written-before-k8-7.pt"
+    torch.save({**payload, "config": {**payload["config"], "requested": requested}}, older)
+    patient = PatientPhenotypes(patient_id="g1", phenotypes=["HP:0001250", "HP:0001263"],
+                                candidate_genes=["SCN1A", "disgenet:PTEN", "MECP2"])
+
+    served = [_pipeline({**trained, "gene": path}, "gene").run(patient, top_k=10)
+              for path in (trained["gene"], older)]
+
+    assert [(c.gene_name, c.score) for c in served[1].candidates] == [
+        (c.gene_name, c.score) for c in served[0].candidates]
+    assert len(served[1].candidates) == 3
 
 
 def test_a_gene_child_without_candidates_ranks_nothing(trained):

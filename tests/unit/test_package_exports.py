@@ -15,8 +15,8 @@ the lazy map and ``__all__`` name the same set, and checks that each retired
 name is gone rather than kept as an alias.
 
 It also pins what the deletions keep (the K7 working sheet's must-not-delete
-list): HeteroGNNLayer, AdaptiveAttentionBackend, DiagnosisSample, the
-subgraph loader stack and RankingMetrics, which wait for K8.
+list): HeteroGNNLayer, AdaptiveAttentionBackend, DiagnosisSample (the loader
+stack beside it retired in K8-7) and RankingMetrics, which waits for K8.
 
 Module: tests/unit/test_package_exports.py
 """
@@ -100,7 +100,7 @@ KEPT = {
     "src.models": ("HeteroGNNLayer", "AdaptiveAttentionBackend"),
     "src.models.attention": ("AdaptiveAttentionBackend",),
     "src.models.gnn": ("HeteroGNNLayer",),
-    "src.kg.data_loader": ("DiagnosisSample", "SubgraphSampler"),
+    "src.kg.data_loader": ("DiagnosisSample",),
     "src.utils.metrics": ("RankingMetrics",),
 }
 

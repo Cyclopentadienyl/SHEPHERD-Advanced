@@ -377,7 +377,7 @@ def test_a_new_base_run_is_filed_under_its_spec_encoder_with_only_what_was_sent(
 
     from src.models.bundle import reference_spec
 
-    jobs = [FakeProcess(pid=1), FakeProcess(pid=2), FakeProcess(pid=3)]
+    jobs = [FakeProcess(pid=1), FakeProcess(pid=2)]
     calls = popen(*jobs)
     manager = TrainingManager()
     sent = {"data_dir": str(base[0]), "learning_stage": "base", "device": "cpu",
@@ -399,12 +399,23 @@ def test_a_new_base_run_is_filed_under_its_spec_encoder_with_only_what_was_sent(
     jobs[1].finish(0)
     _wait(lambda: manager.active_job() is None)
 
-    # A ShepherdGNN start is decided as before: its conv type, its settings.
-    started = manager.start_training({"data_dir": str(base[0]), "conv_type": "gat",
-                                      "hidden_dim": 8})
-    assert started["success"], started
-    assert "/runs/gat/" in started["run_dir"]
-    jobs[2].finish(0)
+
+@pytest.mark.parametrize("config", [
+    {}, {"conv_type": "gat", "hidden_dim": 8}, {"learning_stage": None, "learning_rate": 1e-3},
+], ids=["nothing", "the-retired-shepherdgnn-start", "a-null-stage"])
+def test_a_new_run_without_a_stage_is_refused_before_anything_starts(base, popen, config):
+    """TM12: every new run is a model bundle stage. A start without one (the
+    retired stage-less path's request among them) is refused as invalid
+    settings naming `learning_stage` "base", nothing spawned, named or written;
+    never filed under a default layout key."""
+    calls = popen(FakeProcess(pid=1))
+    manager = TrainingManager()
+    refused = manager.start_training({"data_dir": str(base[0]), "device": "cpu", **config})
+    assert refused["success"] is False and refused["invalid_settings"] is True
+    assert 'learning_stage "base"' in refused["error"]
+    assert refused["error"].endswith("Nothing was started.")
+    assert calls.calls == [] and manager.run_dir is None
+    assert not (base[0] / "runs" / "gat").exists()
 
 
 @pytest.mark.parametrize("change, fragment", [
@@ -471,6 +482,8 @@ def test_a_bundle_parent_is_previewed_by_its_own_record(base, tmp_path):
     import dataclasses
     import sys
 
+    from src.utils.checkpoint_io import TRAINING_RULES_VERSION
+
     sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
     import train_model
 
@@ -483,7 +496,7 @@ def test_a_bundle_parent_is_previewed_by_its_own_record(base, tmp_path):
               "progress": {"end": "paused", "completed_epochs": 1,
                            "stage": {"kind": "original", "start_epoch": 0, "target_epochs": 2,
                                      "schedule": {"type": "constant"}}},
-              "config": {"requested": requested}, "training_rules": 1}
+              "config": {"requested": requested}, "training_rules": TRAINING_RULES_VERSION}
     target = tmp_path / "paused.pt"
     torch.save(paused, target)
     preview = TrainingManager().preview_continuation(str(target), device="cpu",

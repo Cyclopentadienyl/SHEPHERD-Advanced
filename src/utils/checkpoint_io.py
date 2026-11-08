@@ -32,11 +32,6 @@ from typing import Any, NamedTuple, Optional
 
 from src.utils.fingerprint import ReadIdentity
 
-#: The checkpoint record's schema (contract M3a). 1 is M3a's first. Written by
-#: `src.training.checkpoint_payload`; read by `src.utils.run_plan` to decide
-#: whether a checkpoint holds a state a run can continue from.
-CHECKPOINT_RECORD_VERSION = 1
-
 #: **The training rules a model bundle's training-state checkpoint was written
 #: under** (its `training_rules`), read by `src.utils.run_plan` before a run
 #: continues one: a resume, an extension or a branch keeps its parent's rules,
@@ -44,7 +39,19 @@ CHECKPOINT_RECORD_VERSION = 1
 #: (the reviewer's K5 review, P2-1). Rules 1 are K5's: early stopping is on
 #: exactly when a patience is in effect, and the base validates on the pairs its
 #: split fixes (seeded by the split's seed, in fixed batches), whatever a run's
-#: seed and batch size. Raise it when a rule a continued run depends on changes.
+#: seed and batch size.
+#:
+#: **The continuation contract.** A continued run inherits its parent's learning
+#: settings, the current settings only (`run_plan._inherit_settings`): a setting
+#: the parent records that this build no longer has is not inherited, and a
+#: current one the parent does not record is refused. Removing a setting no
+#: rules-1 run reads (K8-7: the ShepherdGNN path's architecture, loader and loss
+#: settings) is not a rules change. **A change of what a setting means, or of
+#: which learning settings a run of these rules reads, raises this constant**,
+#: with a new entry for the new version in the pin of released rules
+#: (`RULES_LEARNING_SETTINGS`, tests/unit/test_training_fields.py) and a
+#: behaviour test for the setting whose meaning changed. A released entry is
+#: never edited.
 TRAINING_RULES_VERSION = 1
 
 __all__ = ["CheckpointChanged", "CheckpointRead", "TRAINING_RULES_VERSION", "read_checkpoint",

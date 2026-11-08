@@ -26,9 +26,6 @@ logger = logging.getLogger(__name__)
 # architecture = implement its branch in HeteroGNNLayer AND add its name here.
 SUPPORTED_CONV_TYPES = ("hgt", "gat", "sage")
 
-# Default when a conv type is missing or unrecognised.
-DEFAULT_CONV_TYPE = "gat"
-
 # Encoder kinds a model bundle's spec can name (src/models/bundle/spec.py,
 # README §3.3): the reference homogeneous GATv2 and the non-reference
 # heterogeneous encoders behind the same contract. Here, torch-free, so the run
@@ -228,5 +225,5 @@ def resolve_arch_params(
     return params
 
 
-__all__ = ["SUPPORTED_CONV_TYPES", "DEFAULT_CONV_TYPE", "ENCODER_KINDS", "MODEL_RECORD_KEYS",
+__all__ = ["SUPPORTED_CONV_TYPES", "ENCODER_KINDS", "MODEL_RECORD_KEYS",
            "MODEL_RECORD_READ_KEYS", "resolve_arch_params"]

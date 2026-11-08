@@ -234,9 +234,6 @@ ALLOWED = {
         (1, _PROBE + "M5: Gradio's HTTP answer naming a called event's id; not a file"),
     ("scripts/probe_deployment.py", "_check_allowed", "json.loads"):
         (1, _PROBE + "M5: the gated checkpoint list's HTTP answer; not a file"),
-    ("scripts/probe_deployment.py", "_socket_room", "json.loads"):
-        (1, _PROBE + "A5: the socket check's one-line answer on a child Python's standard "
-            "output; not a file"),
     ("scripts/probe_deployment.py", "_editable_install_of", "json.loads"):
         (1, _PROBE + "A5 (BACKLOG 59): an installed distribution's direct_url.json, read to "
             "tell this checkout's editable install; the environment's description, not an "

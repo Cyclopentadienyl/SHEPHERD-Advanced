@@ -81,6 +81,20 @@ def test_a_parent_without_its_settings_is_refused(parent, fragment):
         _plan(parent, learning_rate=1e-3)
 
 
+@pytest.mark.parametrize("parent", [[], None, "x", 3])
+def test_a_read_that_is_not_a_record_is_refused_not_raised_on(parent):
+    """A direct caller may hand the planner a read that is no checkpoint record
+    at all: it is refused with the reason, for a resume, an extension and a
+    branch alike, never an AttributeError."""
+    for extend in (None, 1):
+        with pytest.raises(RunPlanRefused, match="holds no checkpoint record"):
+            plan_continuation(parent, Path("/runs/p/checkpoints/last.pt"),
+                              {**RECORDED, "extend_epochs": extend}, set(), device="cpu",
+                              record_version=2)
+    with pytest.raises(RunPlanRefused, match="holds no checkpoint record"):
+        _plan(parent, learning_rate=1e-3)
+
+
 @pytest.mark.parametrize("rules", [None, TRAINING_RULES_VERSION + 1])
 def test_a_parent_trained_under_other_rules_is_neither_continued_nor_branched(rules):
     """The reviewer's K5 review, P2-1: a resume, an extension and a branch keep
@@ -98,13 +112,18 @@ def test_a_parent_trained_under_other_rules_is_neither_continued_nor_branched(ru
             plan_continuation(parent, Path("/runs/p/checkpoints/last.pt"),
                               {**RECORDED, "extend_epochs": extend}, set(), device="cpu",
                               record_version=2)
-    # The ShepherdGNN path (record version 1) records no bundle training rules
-    # and keeps resuming under M3a's until K8 retires it.
+    # Record version 1 (contract M3a's ShepherdGNN checkpoint) retired with its
+    # writer (K8-7): the version is checked first, and every caller states the
+    # version it continues.
     shepherd = _parent(end="paused", record_version=1)
     shepherd.pop("training_rules")
-    plan = plan_continuation(shepherd, Path("/runs/p/checkpoints/last.pt"), dict(RECORDED),
-                             set(), device="cpu")
-    assert plan.mode == "resume"
+    with pytest.raises(RunPlanRefused, match=r"written before the model spec \(record "
+                                             r"version 1, not 2\)"):
+        plan_continuation(shepherd, Path("/runs/p/checkpoints/last.pt"), dict(RECORDED),
+                          set(), device="cpu", record_version=2)
+    with pytest.raises(TypeError, match="record_version"):
+        plan_continuation(shepherd, Path("/runs/p/checkpoints/last.pt"), dict(RECORDED),
+                          set(), device="cpu")
 
 
 def test_mixed_precision_must_take_effect_alike_unless_it_is_changed():

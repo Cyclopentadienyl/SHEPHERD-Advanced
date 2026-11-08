@@ -11,8 +11,6 @@ job, that what they rest on holds and that their checks fire:
   package installed twice, the deploy scripts' packages told from leftovers,
   whether the lock is the committed one, all said again at the end of a run;
   without a lock it is skipped, so an acceptance is incomplete;
-- a temporary directory in which a DataLoader worker's socket cannot be made
-  is said, as the Python that runs the jobs answers it, and RW3 stops early;
 - the M5 settings are the probe's own while it runs and are put back, so an
   operator's shell holding the deployment's settings changes nothing; the
   deployment's own lock is read and stated, once in each phase and as it is
@@ -452,7 +450,6 @@ def test_a5_states_a_differing_set_on_the_console_and_in_the_environment(
     assert "1 from the deploy scripts" in said and "pyg-lib" not in said
     assert environment["installed_against_lock"]["version_differs"] == _differing()[
         "version_differs"]
-    assert "socket_fits" in environment["installed_against_lock"]["temporary_directory"]
 
 
 def test_a5_is_said_again_beside_the_acceptance_verdict(probe, monkeypatch):
@@ -502,54 +499,6 @@ def test_the_committed_lock_is_read_as_it_is(probe):
     assert all(set(entry) == {"name", "version", "why"} and entry["why"] in (
         probe.OUTSIDE_LOCK_DEPLOY, probe.OUTSIDE_LOCK_REQUIRED, probe.OUTSIDE_LOCK_LEFTOVER)
         for entry in recorded["installed_not_in_lock"])
-
-
-def _long_directory(base: Path, length: int) -> Path:
-    """A real directory whose path is `length` bytes long, under `base`."""
-    pad = length - len(str(base)) - 1
-    if pad < 1:
-        pytest.skip("the test's temporary directory is already too long")
-    path = base / ("d" * pad)
-    path.mkdir()
-    assert len(str(path)) == length
-    return path
-
-
-@pytest.mark.skipif(sys.platform != "linux", reason="Linux's AF_UNIX path limit")
-def test_a_temporary_directory_a_worker_socket_cannot_be_made_in_is_said(
-        probe, tmp_path, monkeypatch):
-    """Asked of Python, not computed: a listener opened and closed under the
-    temporary directory, as multiprocessing opens one for DataLoader workers."""
-    import tempfile
-
-    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
-    short = probe._socket_room()
-    assert short["socket_fits"] is True and short["path_bytes"] == len(str(tmp_path))
-    if sys.version_info[:2] != (3, 12):
-        pytest.skip("the failing case is Python 3.12's")
-    monkeypatch.setattr(tempfile, "tempdir", str(_long_directory(tmp_path, 100)))
-    long = probe._socket_room()
-    assert long == {"path_bytes": 100, "socket_fits": False, "refusal": "AF_UNIX path too long",
-                    "checked": long["checked"]}
-    assert str(tmp_path) not in json.dumps(long)
-
-
-@pytest.mark.skipif(sys.platform != "linux" or not Path("/usr/bin/python3.13").exists(),
-                    reason="needs Linux and a Python 3.13 beside this one")
-def test_python_3_13_makes_its_sockets_under_tmp_whatever_the_temporary_directory(
-        probe, tmp_path, monkeypatch):
-    """`requires-python` is >=3.12: on 3.13 a long TMPDIR does not fail
-    training with workers (its sockets fall back to /tmp), so A5 and RW3 must
-    not say it does. A computed path length said it did."""
-    import tempfile
-
-    monkeypatch.setattr(tempfile, "tempdir", str(_long_directory(tmp_path, 100)))
-    assert probe._socket_room("/usr/bin/python3.13")["socket_fits"] is True
-
-
-def test_a_socket_check_that_cannot_run_says_so(probe, tmp_path):
-    room = probe._socket_room(str(tmp_path / "no-such-python"))
-    assert room["socket_fits"] is None and room["checked"] == "the check could not run"
 
 
 # --------------------------------------------------------------------------- settings

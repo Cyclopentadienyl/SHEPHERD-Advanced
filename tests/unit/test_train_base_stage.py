@@ -104,13 +104,65 @@ def test_pause_and_resume_strictly(workspace, tmp_path):
 def test_refusals_before_anything_is_written(workspace, tmp_path):
     import train_model
 
-    config, explicit = _config(workspace, tmp_path / "x", hidden_dim=64)
-    with pytest.raises(ValueError, match="ShepherdGNN path"):
-        train_model.train(config, explicit | {"hidden_dim"})
+    # A setting this build does not have is no TrainConfig field (a YAML that
+    # names one is refused by `load_config_with_explicit`, "names settings this
+    # version does not have").
+    with pytest.raises(TypeError, match="hidden_dim"):
+        _config(workspace, tmp_path / "x", hidden_dim=64)
     config, explicit = _config(workspace, tmp_path / "y", num_neighbors=[4, 4, 4])
     with pytest.raises(ValueError, match="one hop per encoder layer"):
         train_model.train(config, explicit)
     assert not (tmp_path / "x").exists() and not (tmp_path / "y").exists()
+
+
+def _no_read(monkeypatch, train_model):
+    """Every read `train` makes starts with the workspace's manifest
+    (`read_training_inputs`); failing it shows a refusal came before any read."""
+    monkeypatch.setattr(train_model, "read_training_inputs",
+                        lambda *a, **k: pytest.fail("read before the refusal"))
+    monkeypatch.setattr(train_model, "read_resume_checkpoint",
+                        lambda *a, **k: pytest.fail("read before the refusal"))
+
+
+def test_the_operators_set_is_required_never_inferred(workspace, tmp_path, monkeypatch):
+    """P2-1: a setting stated at its default value is the operator's, so the
+    set of stated fields is required. A missing set, or `None`, is a TypeError
+    before anything is read or written, never "whatever differs from the
+    defaults"; so is `plan_from_parent`'s."""
+    from types import SimpleNamespace
+
+    import train_model
+
+    _no_read(monkeypatch, train_model)
+    config, _ = _config(workspace, tmp_path / "run")
+    with pytest.raises(TypeError):
+        train_model.train(config)
+    with pytest.raises(TypeError, match="never inferred"):
+        train_model.train(config, None)
+    monkeypatch.setattr("src.utils.run_plan.plan_continuation",
+                        lambda *a, **k: pytest.fail("planned without the set"))
+    parent = SimpleNamespace(checkpoint={}, identity=SimpleNamespace(path="p.pt", sha256="0" * 64))
+    with pytest.raises(TypeError, match="never inferred"):
+        train_model.plan_from_parent(parent, config, None, "cpu",
+                                     record_version=MODEL_RECORD_VERSION)
+    assert not (tmp_path / "run").exists()
+
+
+@pytest.mark.parametrize("stage", [None, "pretrain"])
+def test_a_run_without_a_learning_stage_is_refused_before_any_read(workspace, tmp_path,
+                                                                   monkeypatch, stage):
+    """Every run is a model bundle stage: one without a stage (the retired
+    stage-less path), a resume included, is refused naming the stage and
+    `--stage`, before anything is read or written."""
+    import train_model
+
+    _no_read(monkeypatch, train_model)
+    for extra in ({}, {"resume_from": str(tmp_path / "parent.pt")}):
+        config = train_model.TrainConfig(data_dir=str(workspace), run_dir=str(tmp_path / "run"),
+                                         learning_stage=stage, device="cpu", **extra)
+        with pytest.raises(ValueError, match=r"learning stage \(learning_stage, --stage\)"):
+            train_model.train(config, {"device", *extra})
+    assert not (tmp_path / "run").exists()
 
 
 def test_parent_without_a_model_spec_is_refused(workspace, tmp_path):
@@ -131,6 +183,45 @@ def test_parent_without_a_model_spec_is_refused(workspace, tmp_path):
     with pytest.raises(RunPlanRefused, match="written before the model spec"):
         train_model.train(resumed, {"learning_stage", "resume_from", "device"})
     assert not (tmp_path / "q").exists()
+
+
+def test_a_record_version_1_file_is_never_continued(workspace, tmp_path):
+    """TM13: record version 1 (contract M3a's ShepherdGNN checkpoint, no model
+    spec) retired with its writer. Resume, extension and branch of such a file
+    are refused before anything is written, and the training service's preview
+    says the same, by the one record-version check."""
+    import train_model
+
+    from src.api.services.training_manager import TrainingManager
+    from src.config.model_types import MODEL_RECORD_KEYS
+    from src.utils.run_plan import RunPlanRefused
+
+    config, explicit = _config(workspace, tmp_path / "p", num_epochs=3, pause_after_epoch=1)
+    train_model.train(config, explicit)
+    payload = torch.load(tmp_path / "p" / "checkpoints" / "last.pt", map_location="cpu",
+                         weights_only=True)
+    old_file = {k: v for k, v in payload.items()
+                if k not in MODEL_RECORD_KEYS and k != "training_rules"}
+    old_file["record_version"] = 1
+    old = tmp_path / "old" / "checkpoints" / "last.pt"
+    old.parent.mkdir(parents=True)
+    torch.save(old_file, old)
+
+    base = {"data_dir": str(workspace), "learning_stage": "base", "device": "cpu"}
+    attempts = {
+        "resume": {"resume_from": str(old)},
+        "extend": {"resume_from": str(old), "extend_epochs": 1},
+        "branch": {"branch_from": str(old), "learning_rate": 5e-4},
+    }
+    for name, fields in attempts.items():
+        run = tmp_path / name
+        refused = train_model.TrainConfig(run_dir=str(run), **base, **fields)
+        with pytest.raises(RunPlanRefused, match="written before the model spec"):
+            train_model.train(refused, set(base) | set(fields))
+        assert not run.exists(), f"a refused {name} wrote its run directory"
+    preview = TrainingManager().preview_continuation(str(old), device="cpu")
+    assert preview["ok"] is False
+    assert "written before the model spec (record version 1, not 2)" in preview["reason"]
 
 
 def _with_earlier_rules(payload):

@@ -50,21 +50,18 @@ itself; a description whose process has exited is never named as the holder.
   There is no cross-process inference scheduling.
 - **Inherited descriptors.** The descriptor is close-on-exec, so a program the
   holder starts (`subprocess`, any `exec`) does not keep the lock. A process
-  forked without exec (DataLoader workers under the `fork` start method, say)
+  forked without exec (a worker pool under the `fork` start method, say)
   shares the open file: a holder that ends normally releases the lock for it
   too, but a holder that is killed or exits without releasing (`os._exit`)
   leaves the lock with that child until it exits; the message then says the
   recorded holder has exited. A job the runner starts leads its own process
   group, which a stop's SIGTERM and SIGKILL reach whole and which the runner
   ends before it frees the slot (`training_manager`). A training CLI
-  (`train_model.py`, `setup_demo.py --train-model`) whose main process alone
-  is ended, by `kill <pid>` or `kill -9 <pid>`, leaves its forked DataLoader
-  workers holding the lock until they notice (torch's 5 s watchdog plus the
-  sample in progress, longer if one hangs); `kill -INT <pid>` (Ctrl-C's
-  signal, the runner's own graceful step) releases it at once, even sent to
-  the main process alone, and `kill -TERM -- -<pid>` ends the whole group
-  when the CLI leads one (a job of an interactive shell). `measure_scorer.py`
-  forks no workers.
+  (`train_model.py`, `setup_demo.py --train-model`) forks no workers: its
+  stage samplers draw batches in the main process, so ending its main
+  process, by any signal, releases the lock; `kill -TERM -- -<pid>` ends the
+  whole group when the CLI leads one (a job of an interactive shell).
+  `measure_scorer.py` forks no workers either.
 - **Local machine.** The lock file, so the workspaces root, belongs on a local
   filesystem; the liveness hint in the message is only given for a holder on
   this host.

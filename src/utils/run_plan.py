@@ -30,12 +30,18 @@ each change; a new optimizer, schedule and stage.
 
 Each refusal says why. Nothing falls back to training from scratch.
 
-**Learning settings are inherited and locked** (decision 8). Every
-`TrainConfig` field outside `OPERATIONAL_FIELDS` takes the parent's recorded
-value (`config.requested`). A field the operator set explicitly to another
-value is refused, never ignored; one left at its default is inherited and shown
-in the plan. Changing settings from a parent is a branch (`plan_branch`), and
-only the settings on its closed list.
+**Learning settings are inherited and locked** (decision 8). Every field of
+the request outside `OPERATIONAL_FIELDS` takes the parent's recorded value
+(`config.requested`); the request holds the current settings only (the
+`TrainConfig` fields, `src.config.training_fields.names()` for a preview), so
+a setting a parent records and this build no longer has is not inherited, and
+a current setting the parent does not record is refused. A field the operator
+set is the operator's, whatever its value, a default included: set to
+another value than the parent's it is refused, never ignored; one not set is
+inherited and shown in the plan. Changing settings from a parent is a branch
+(`plan_branch`), and only the settings on its closed list. Which settings a
+continued run reads is fixed by the rules it was trained under
+(`TRAINING_RULES_VERSION`, checked first).
 
 **Provenance and mode rules stay apart.** Whether the parent was trained on
 this workspace's data and graph is M2.3's check (`train_model.check_resume_
@@ -58,14 +64,14 @@ from pathlib import Path
 from typing import Any, Collection, Dict, List, Mapping, Optional
 
 from src.config.recipe import branch_settings
-from src.utils.checkpoint_io import CHECKPOINT_RECORD_VERSION, TRAINING_RULES_VERSION
+from src.utils.checkpoint_io import TRAINING_RULES_VERSION
 
 #: Fields that say where a run reads and writes, how it is run on this host, or
 #: how this run is continued: never inherited, free to differ from the parent.
 #: Every other `TrainConfig` field is a learning setting.
 OPERATIONAL_FIELDS = frozenset({
     "data_dir", "config_file", "run_name", "run_dir", "resume_from",
-    "device", "num_workers", "compile",
+    "device", "compile",
     "pause_after_epoch", "extend_epochs", "extend_lr",
     # The model bundle path: a finetune's or a branch's parent is in its model
     # record, not a setting a continued run inherits.
@@ -157,7 +163,7 @@ def plan_continuation(
     *,
     device: str,
     parent_sha256: Optional[str] = None,
-    record_version: int = CHECKPOINT_RECORD_VERSION,
+    record_version: int,
 ) -> ContinuationPlan:
     """Decide how a run over `request` continues from `parent`.
 
@@ -173,9 +179,10 @@ def plan_continuation(
         parent_sha256: the digest of the read `parent` came from. The parent
             is named by it when it is itself the file of early stopping's best
             epoch, so the child's checkpoints can name it in turn.
-        record_version: the record version the continuing run writes: M3a's
-            for the ShepherdGNN path, the model bundle's (2) for that path. A
-            parent of another version is refused.
+        record_version: the record version the continuing run writes, the
+            model bundle's (`src.models.bundle.record.MODEL_RECORD_VERSION`,
+            which every caller passes: `src.utils` does not import
+            `src.models`). A parent of another version is refused.
 
     Raises:
         RunPlanRefused: with the reason and the remedy.
@@ -263,8 +270,16 @@ def plan_continuation(
 
 
 def _check_record_version(parent: Any, record_version: int, where: str) -> None:
-    if (isinstance(parent, Mapping) and record_version != CHECKPOINT_RECORD_VERSION
-            and parent.get("record_version") != record_version):
+    """The record and the rules a continued run keeps, checked before anything
+    else of the parent is read."""
+    if not isinstance(parent, Mapping):
+        # A read that is not a checkpoint record at all (a list, a number):
+        # only a direct caller can pass one; the training service's preview
+        # reads such a file as an empty record.
+        raise RunPlanRefused(
+            f"{where} holds no checkpoint record this version can continue (it holds a "
+            f"{type(parent).__name__}, not a record). Start a new run.")
+    if parent.get("record_version") != record_version:
         # The model bundle path (record version 2, contract §9.3 hazard 1): a
         # parent written before the model spec, or by another path, is not
         # continued across the boundary.
@@ -272,14 +287,7 @@ def _check_record_version(parent: Any, record_version: int, where: str) -> None:
             f"{where} was written before the model spec (record version "
             f"{parent.get('record_version')!r}, not {record_version}); its spec cannot be "
             "known without guessing. Start a new run.")
-    if not isinstance(parent, Mapping) or parent.get("record_version") != record_version:
-        raise RunPlanRefused(
-            f"{where} holds no training state this version can continue: it was written "
-            "before contract M3a's checkpoint record, so its schedule, progress and "
-            "callback state are unknown. Start a new run; to keep its weights as a "
-            "reference, serve or measure it by path.")
-    if record_version != CHECKPOINT_RECORD_VERSION \
-            and parent.get("training_rules") != TRAINING_RULES_VERSION:
+    if parent.get("training_rules") != TRAINING_RULES_VERSION:
         # A model bundle trained under other rules (the reviewer's K5 review,
         # P2-1): continuing it would change early stopping and the base's
         # validation pairs mid-run, beside its restored best value and history.
@@ -362,11 +370,6 @@ def _inherit_settings(
         raise RunPlanRefused(
             f"{where} does not record the settings it was trained with, so they cannot "
             "be inherited.")
-    unknown = sorted(set(recorded) - set(request))
-    if unknown:
-        raise RunPlanRefused(
-            f"{where} records settings this version does not have ({', '.join(unknown)}); "
-            "continuing would silently drop them.")
 
     settings = dict(request)
     inherited: Dict[str, Any] = {}

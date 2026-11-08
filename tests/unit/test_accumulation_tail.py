@@ -72,6 +72,21 @@ def _trainer(tmp_path, values, *, accumulation, scheduler_type="none", num_epoch
     )
 
 
+def test_a_trainer_without_a_task_is_refused(tmp_path):
+    """TM21: the task module is the Trainer's one training path (no default
+    loss is built for a Trainer without one): a Trainer asked for without it,
+    or with `None`, is refused before anything is built."""
+    from src.training.trainer import Trainer, TrainerConfig
+
+    config = TrainerConfig(device="cpu", use_amp=False, scheduler_type="none",
+                           checkpoint_dir=str(tmp_path / "ckpt"), log_dir=str(tmp_path / "logs"))
+    with pytest.raises(TypeError):
+        Trainer(model=_Toy(), train_dataloader=_batches([1]), config=config)
+    with pytest.raises(TypeError, match="task module"):
+        Trainer(model=_Toy(), train_dataloader=_batches([1]), config=config, task=None)
+    assert not (tmp_path / "ckpt").exists()
+
+
 def test_the_tail_is_one_more_update_applying_the_mean_of_its_batches(tmp_path):
     trainer = _trainer(tmp_path, [1, 2, 3], accumulation=2)
 

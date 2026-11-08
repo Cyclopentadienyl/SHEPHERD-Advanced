@@ -897,7 +897,8 @@ class SubgraphSamplerProtocol(Protocol):
     子圖採樣協議
 
     實現模組: src/retrieval/subgraph_sampler.py (PLANNED)
-      ↳ 該路徑不存在。實際實作為 src/kg/data_loader.py 的 SubgraphSampler (IMPLEMENTED)
+      ↳ 該路徑不存在。訓練時的子圖採樣由各階段的 sampler 負責
+        (src/training/lp_task.py 的 BaseLPSampler, PyG NeighborSampler)，不實作此協議
     """
 
     def sample_subgraph(
@@ -1169,19 +1170,6 @@ class TrainerProtocol(Protocol):
 
         Returns:
             Training history/metrics
-        """
-        ...
-
-    def evaluate(
-        self,
-        model: DiagnosisModelProtocol,
-        test_data: Any,
-    ) -> Dict[str, float]:
-        """
-        評估模型
-
-        Returns:
-            Evaluation metrics
         """
         ...
 

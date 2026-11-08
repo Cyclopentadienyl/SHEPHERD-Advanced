@@ -61,8 +61,6 @@ DATED = {
         "metric schema 1 is a kept Mode C report's",
     ("src/inference/scoring.py", "and Mode C's offline measurement in `src/evaluation`"):
         "what the scorer served until K8-4",
-    ("src/kg/data_loader.py", "(Mode C's range check at the measurement's own"):
-        "Mode C's range check, moved in K8-6b",
     ("src/models/gnn/shepherd_gnn.py", "and measurement's Mode C to encode with production"):
         "what the model served until K8-4",
     ("src/webui/components/models_page.py", "its role list, its Mode C rule and"):

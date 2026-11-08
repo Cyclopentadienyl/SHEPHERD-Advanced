@@ -3,7 +3,7 @@ Training reads each recorded input once, and records those reads.
 =================================================================
 Contract M2.1, S8. Before the run directories, `config.yaml` and `runtime.json`,
 `train` reads the manifest, the graph tensors and both sample files once each
-(`read_training_inputs`, `training_fields=True`) and verifies from those reads,
+(`read_training_inputs`) and verifies from those reads,
 with the `kg.json` identification check (decision 1). The resume parent is read
 once with `read_checkpoint`, at the top since M2.3 (`test_resume_parent.py`),
 and the trainer restores from the dict that read parsed. `training_input_digests`
@@ -33,8 +33,6 @@ input, the samples among them, since a base reads the graph alone:
   split is the samples reader's own refusal, before the graph is read; an empty
   training split is refused before anything is written, and so is a split with
   a case not in phenotype normal form (N2);
-- training trains on both optional sample fields (`training_fields=True`), on
-  the ShepherdGNN path (left for K8-7, which retires it);
 - a parent that does not parse leaves no run artifact (it is read at the top
   since M2.3), after a line that names it;
 - the path forms are gone, not kept beside the read forms.
@@ -52,10 +50,7 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from tests.fixtures.generated_workspace import (  # noqa: E402
-    recut_cohorts,
-    write_generated_workspace,
-)
+from tests.fixtures.generated_workspace import recut_cohorts  # noqa: E402
 from tests.fixtures.opens import count_opens  # noqa: E402
 from tests.fixtures.path_forms import POISON, poison_path_forms  # noqa: E402
 from tests.fixtures.replacement import HOWS, hook_read_once, replace_after_read  # noqa: E402
@@ -437,35 +432,6 @@ def test_an_empty_training_split_is_refused_before_anything_is_written(
     assert _run_artifacts(run) == [], "a run artifact was written before the refusal"
 
 
-def test_training_trains_on_both_optional_sample_fields(
-    train_model, captured, tmp_path
-):
-    """`training_fields=True` at the entry point: every row's `gene_ids` and
-    `candidate_disease_ids` reach the samples trained on. Dropping the flag would
-    leave both `None` and change the subgraph seeds silently.
-
-    Left for K8-7: a ShepherdGNN subject. Only its data loader trains on the two
-    fields (its subgraph seeds); a bundle finetune binds a case's phenotypes and
-    disease alone, and the gene task reads its own fixture. K8-7 retires this
-    stage-less run with the path."""
-    workspace = write_generated_workspace(tmp_path / "ws", train_ids=[0, 1, 2], val_ids=[3],
-                                          training_fields=True)[0]
-    train_model.train(train_model.TrainConfig(
-        data_dir=str(workspace), run_dir=str(tmp_path / "run"), device="cpu", hidden_dim=16,
-        num_layers=1, num_heads=2, num_workers=0, use_amp=False))
-
-    trainer = captured["trainer"]
-    for split, loader in (("train", trainer.train_dataloader),
-                          ("val", trainer.val_dataloader)):
-        rows = json.loads((workspace / f"{split}_samples.json").read_text(encoding="utf-8"))
-        expected = {row["patient_id"]: (row["gene_ids"], row["candidate_disease_ids"])
-                    for row in rows}
-        trained_on = {sample.patient_id: (sample.gene_ids, sample.candidate_disease_ids)
-                      for sample in loader.dataset.samples}
-        assert trained_on == expected, split
-        assert all(genes and candidates for genes, candidates in trained_on.values()), split
-
-
 def test_an_unrelated_split_is_never_opened(train_model, captured, workspace, tmp_path):
     (workspace / "test_samples.json").write_text("[]")
 
@@ -535,6 +501,9 @@ def test_the_path_forms_are_gone_from_training():
     assert hasattr(TrainerProtocol, "continue_from")
     assert not hasattr(TrainerProtocol, "load_checkpoint")
     assert not hasattr(TrainerProtocol, "restore_checkpoint")
+    # K8-7: the ShepherdGNN evaluation pass retired with its loader; a task
+    # validates itself (`Trainer._validate`), and nothing else evaluates.
+    assert not hasattr(Trainer, "evaluate") and not hasattr(TrainerProtocol, "evaluate")
 
     source = (REPO_ROOT / "scripts" / "train_model.py").read_text(encoding="utf-8")
     names = {node.id for node in ast.walk(ast.parse(source)) if isinstance(node, ast.Name)}

@@ -36,17 +36,17 @@ What the parity tests mechanically pin:
       and real choices.
 
 Phase status:
-    - PR-4b (done): ``temperature`` / ``label_smoothing`` / ``margin`` are wired through
-      ``TrainConfig`` into ``LossConfig``. They were previously accepted and validated by both
-      surfaces but silently dropped by ``load_config``'s ``hasattr`` gate, so LossConfig always
-      used its own defaults. The TrainConfig defaults added there match LossConfig exactly, so
-      runs that do not set them are unchanged; runs that do now get the advertised effect.
-      No field is ``effective=False`` any more.
+    - PR-4b (done): ``temperature`` / ``label_smoothing`` / ``margin`` were wired through
+      ``TrainConfig`` into the ShepherdGNN path's loss, which had silently dropped them. They
+      retired with that path in K8-7, with its architecture, loader and loss-weight fields: a
+      model bundle's architecture is its model spec, its loss the stage's. No field is
+      ``effective=False``.
 
-    - PR-4c (done): the API now enforces the target policy — closed enums for ``conv_type`` /
+    - PR-4c (done): the API now enforces the target policy — closed enums for
       ``scheduler_type`` / ``amp_dtype``, the PyTorch device grammar for ``device`` (so ``cuda:N``
-      stays available on multi-GPU hosts), ``min_lr_ratio <= 1.0``, the ``num_neighbors``
-      non-empty/element policy, and the conv-type-conditional divisibility rule. The CLI
+      stays available on multi-GPU hosts), ``min_lr_ratio <= 1.0`` and the ``num_neighbors``
+      non-empty/element policy (its ``conv_type`` enum and the conv-type-conditional
+      divisibility rule retired with the ShepherdGNN fields in K8-7). The CLI
       ``--device`` follows the same grammar. The WebUI form of that time kept its conservative
       ranges; its only change was replacing the silent ``num_neighbors`` fallback with a
       validation error.
@@ -82,8 +82,8 @@ _PROJECTION_EXEMPT_SCOPES = ("runtime_setting",)
 class CrossFieldRule:
     """A constraint spanning more than one field, represented structurally.
 
-    ``when`` is an optional applicability guard: ``{"conv_type": ("hgt", "gat")}`` means the rule
-    applies only when ``conv_type`` holds one of those values.
+    ``when`` is an optional applicability guard: ``{"scheduler_type": ("onecycle",)}`` means the
+    rule applies only when ``scheduler_type`` holds one of those values.
     """
 
     name: str
@@ -97,23 +97,6 @@ class CrossFieldRule:
 
 
 CROSS_FIELD_RULES: Tuple[CrossFieldRule, ...] = (
-    CrossFieldRule(
-        name="hidden_dim_divisible_by_num_heads",
-        kind="divisible_by",
-        subject="hidden_dim",
-        operand="num_heads",
-        when={"conv_type": ("hgt", "gat")},
-        enforced_in="none since K7: the API's ShepherdGNN request, its only enforcement, is "
-                    "gone (POST /training/start is a strict base start, which takes neither "
-                    "field), and a CLI ShepherdGNN run never checked it; it retires with the "
-                    "ShepherdGNN fields (K8)",
-        description=(
-            "hidden_dim % num_heads == 0. Required for hgt (HGTConv splits out_channels across "
-            "heads) and gat (GATConv uses hidden_dim // num_heads with concat=True, so a "
-            "non-divisible value truncates and breaks the residual add / LayerNorm(hidden_dim)). "
-            "NOT applicable to sage: SAGEConv takes no heads."
-        ),
-    ),
     CrossFieldRule(
         name="onecycle_requires_positive_min_lr_ratio",
         kind="min_exclusive",
@@ -191,8 +174,9 @@ class FieldSpec:
 # The spec. current_api transcribed from src/api/routes/training.py::TrainingStartRequest, since
 # K7 the strict base start: the run keys, the continuation keys and the reference recipe's base
 # settings (src.config.recipe.BASE), each setting unset by default (the recipe's value, never the
-# request's); every ShepherdGNN field is current_api=None.
-# scope/projects_to from the scripts/train_model.py projection into the downstream configs.
+# request's).
+# scope/projects_to from the scripts/train_model.py projection: into TrainConfig, or on into the
+# TrainerConfig it builds.
 # =============================================================================================
 FIELDS: Tuple[FieldSpec, ...] = (
     # ---- paths (effective -> they DO project into TrainConfig) ------------------------------
@@ -227,8 +211,8 @@ FIELDS: Tuple[FieldSpec, ...] = (
                               "/training/start send learning_stage='base' (required there, and "
                               "only 'base', K7); the Fine-tune page and POST /training/finetune "
                               "start finetunes.",
-              description="Model bundle stage: base (KG link prediction) or finetune. Unset is "
-                          "the ShepherdGNN path, which retires with the switch."),
+              description="Model bundle stage: base (KG link prediction) or finetune; "
+                          "required, a run without one is refused before anything is read."),
     FieldSpec("model_spec", "dict", None, "model", projects_to="TrainConfig.model_spec",
               current_api=None,
               known_divergence=True,
@@ -283,56 +267,19 @@ FIELDS: Tuple[FieldSpec, ...] = (
               known_divergence=True, divergence_note="Unset is the task's reference (U14).",
               description="Rarely seen genes added to each gene-task patient's list in training."),
 
-    # ---- model (ShepherdGNNConfig) ----------------------------------------------------------
-    FieldSpec("conv_type", "str", "gat", "model", projects_to="ShepherdGNNConfig.conv_type",
-              choices=("gat", "hgt", "sage"),
-              current_api=None,
-              description="GNN convolution type."),
-    FieldSpec("hidden_dim", "int", 256, "model", projects_to="ShepherdGNNConfig.hidden_dim",
-              valid={"ge": 32},
-              current_api=None,
-              description="Hidden dimension size (see "
-                          "CROSS_FIELD_RULES.hidden_dim_divisible_by_num_heads)."),
-    FieldSpec("num_layers", "int", 4, "model", projects_to="ShepherdGNNConfig.num_layers",
-              valid={"ge": 1, "le": 16},
-              current_api=None,
-              description="Number of GNN layers."),
-    FieldSpec("num_heads", "int", 8, "model", projects_to="ShepherdGNNConfig.num_heads",
-              valid={"ge": 1},
-              current_api=None,
-              description="Number of attention heads; used only when conv_type is hgt or gat."),
-    FieldSpec("dropout", "float", 0.1, "model", projects_to="ShepherdGNNConfig.dropout",
-              valid={"ge": 0.0, "le": 0.9},
-              current_api=None,
-              description="Dropout rate."),
-    FieldSpec("use_ortholog_gate", "bool", True, "model", projects_to="ShepherdGNNConfig.use_ortholog_gate",
-              current_api=None,
-              description="Use the cross-species ortholog gate."),
-
-    # ---- dataloader (DataLoaderConfig) ------------------------------------------------------
-    FieldSpec("batch_size", "int", 32, "dataloader", projects_to="DataLoaderConfig.batch_size",
+    # ---- sampling (the stage samplers, from TrainConfig) ------------------------------------
+    FieldSpec("batch_size", "int", 32, "dataloader", projects_to="TrainConfig.batch_size",
               valid={"ge": 1, "le": 2048},
               current_api={"ge": 1, "le": 2048},
               description="Batch size."),
     FieldSpec("num_neighbors", "list[int]", (15, 10, 5), "dataloader",
-              projects_to="DataLoaderConfig.num_neighbors",
+              projects_to="TrainConfig.num_neighbors",
               item_valid={"ge": 1}, min_length=1,
               current_api={}, current_api_item={"ge": 1}, current_api_min_length=1,
               known_divergence=True,
-              divergence_note="len(num_neighbors) vs num_layers is deliberately left unlinked "
-                              "(documented non-constraint).",
+              divergence_note="One hop per layer of the model spec's encoder (`hops_problem`), "
+                              "checked by the base start and by the run.",
               description="Neighbor fan-out per sampling hop."),
-    FieldSpec("max_subgraph_nodes", "int", 5000, "dataloader", projects_to="DataLoaderConfig.max_subgraph_nodes",
-              valid={"ge": 100},
-              current_api=None,
-              description="Max nodes per sampled subgraph."),
-    FieldSpec("num_workers", "int", 4, "dataloader", projects_to="DataLoaderConfig.num_workers",
-              valid={"ge": 0}, current_api=None,
-              description="DataLoader worker processes."),
-    FieldSpec("num_negative_samples", "int", 5, "dataloader", projects_to="DataLoaderConfig.num_negative_samples",
-              valid={"ge": 1}, current_api=None,
-              description="Negative samples per positive (train loader only)."),
-
     # ---- trainer (TrainerConfig) ------------------------------------------------------------
     FieldSpec("num_epochs", "int", 100, "trainer", projects_to="TrainerConfig.num_epochs",
               valid={"ge": 1, "le": 10000},
@@ -397,38 +344,6 @@ FIELDS: Tuple[FieldSpec, ...] = (
               valid={"ge": 0, "le": 2**32 - 1},
               current_api={"ge": 0, "le": 2**32 - 1},
               description="Global RNG seed (numpy legal range)."),
-
-    # ---- loss weights (LossConfig — projected) ---------------------------------------------
-    FieldSpec("diagnosis_weight", "float", 1.0, "loss", projects_to="LossConfig.diagnosis_weight",
-              valid={"ge": 0.0},
-              current_api=None,
-              description="Diagnosis-task loss weight."),
-    FieldSpec("link_prediction_weight", "float", 0.5, "loss", projects_to="LossConfig.link_prediction_weight",
-              valid={"ge": 0.0},
-              current_api=None,
-              description="Link-prediction loss weight."),
-    FieldSpec("contrastive_weight", "float", 0.3, "loss", projects_to="LossConfig.contrastive_weight",
-              valid={"ge": 0.0},
-              current_api=None,
-              description="Contrastive loss weight."),
-    FieldSpec("ortholog_weight", "float", 0.2, "loss", projects_to="LossConfig.ortholog_weight",
-              valid={"ge": 0.0},
-              current_api=None,
-              description="Ortholog loss weight."),
-
-    # ---- loss shape knobs (wired through TrainConfig -> LossConfig in PR-4b) -----------------
-    FieldSpec("temperature", "float", 0.07, "loss", projects_to="LossConfig.temperature",
-              valid={"gt": 0},
-              current_api=None,
-              description="Contrastive temperature."),
-    FieldSpec("label_smoothing", "float", 0.1, "loss", projects_to="LossConfig.label_smoothing",
-              valid={"ge": 0.0, "le": 1.0},
-              current_api=None,
-              description="Diagnosis-loss label smoothing."),
-    FieldSpec("margin", "float", 1.0, "loss", projects_to="LossConfig.margin",
-              valid={"gt": 0},
-              current_api=None,
-              description="Ranking-loss margin."),
 
     # ---- continuing from a parent (contract M3a-3, M3a-4) -----------------------------------
     # The parent is `resume_from`; what happens is decided by its record (src/utils/run_plan).

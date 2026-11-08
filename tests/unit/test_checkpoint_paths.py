@@ -184,6 +184,21 @@ def test_a_run_directory_is_new_named_and_claimed(tmp_path, monkeypatch):
     assert second != first and "_run_" in second.name
 
 
+@pytest.mark.parametrize("key", ["", None, "  "])
+def test_a_run_without_a_layout_key_is_never_filed_under_a_default(tmp_path, key):
+    """TM4: a run is filed under its model spec's encoder kind. An empty key
+    used to file it under the ShepherdGNN default `gat`; it raises, and no
+    directory is proposed or made."""
+    from src.utils import checkpoint_paths as cp
+
+    for call in (lambda: cp.normalize_run_layout_key(key),
+                 lambda: cp.runs_root(tmp_path, key),
+                 lambda: cp.propose_run_dir(tmp_path, key, "x")):
+        with pytest.raises(ValueError, match="layout key is required"):
+            call()
+    assert not (tmp_path / "runs").exists()
+
+
 def test_a_colliding_run_id_is_drawn_again_never_reused(tmp_path, monkeypatch):
     from datetime import datetime
 

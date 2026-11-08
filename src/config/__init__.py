@@ -16,8 +16,9 @@ Config authority (decision record: docs/CONFIG_AUTHORITY.md):
     the WebUI — will live in a small field-spec module (docs/CONFIG_AUTHORITY.md, B-lite).
 
 Contents:
-    - model_types.py       : torch-free conv-type constants
-                             (SUPPORTED_CONV_TYPES, DEFAULT_CONV_TYPE).
+    - model_types.py       : torch-free model-type constants
+                             (SUPPORTED_CONV_TYPES, ENCODER_KINDS, the model
+                             record's keys).
     - server_settings.py   : the service's M5 settings, read from the environment
                              at each use (deployment mode, workspaces root,
                              cohort registry, intake directory, R10 evidence
@@ -36,5 +37,5 @@ Module: src/config/__init__.py
 """
 
 # No package-level re-exports: import config submodules directly, e.g.
-#   from src.config.model_types import SUPPORTED_CONV_TYPES, DEFAULT_CONV_TYPE
+#   from src.config.model_types import SUPPORTED_CONV_TYPES, ENCODER_KINDS
 __all__: list[str] = []

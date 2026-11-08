@@ -15,7 +15,7 @@ whenever a byte moved would stop being a compatibility check.
 no comparison against a current workspace, no registry, no locking and no
 transactional loading — the fingerprint is recorded and compared by nothing at
 load (identity is `verify_training_record`'s). Since contract M2.1's S8 every recorded digest is that of the bytes a reader
-parsed (`read_training_inputs`, `read_resume_parent`), so the record and
+parsed (`read_training_inputs`, `read_resume_checkpoint`), so the record and
 the inputs trained on come from the same reads; the entry-point acceptance for
 that is `tests/unit/test_training_reads.py`.
 
@@ -259,37 +259,43 @@ def _parent(path: Path, data_dir: Path, **contents) -> Path:
     return path
 
 
-def test_no_resume_requested_reads_nothing_and_records_nothing(tmp_path):
+def _read_and_accept(path, inputs):
+    """A resume parent as `train()` takes it: the one read
+    (`read_resume_checkpoint`), then the comparison with this run's inputs
+    (`accept_resume_parent`, contract M2.3), which refuses or returns nothing."""
+    from scripts.train_model import accept_resume_parent, read_resume_checkpoint
+
+    parent = read_resume_checkpoint(str(path), "cpu")
+    accept_resume_parent(parent, inputs)
+    return parent
+
+
+def test_no_resume_requested_reads_nothing_and_records_nothing():
     """The production decision, not a helper's response to an argument.
 
     These tests exist because an earlier version built the role map from a path
     or `None` and assumed `train()` chose correctly. That assumption is what the
     earlier mirrored-role-map defect was made of.
     """
-    from scripts.train_model import read_resume_parent
+    from scripts.train_model import read_resume_checkpoint
 
-    inputs = _inputs(_workspace(tmp_path / "ws"))
-
-    assert read_resume_parent(None, inputs, "cpu") is None
-    assert read_resume_parent("", inputs, "cpu") is None
+    assert read_resume_checkpoint(None, "cpu") is None
+    assert read_resume_checkpoint("", "cpu") is None
 
 
 def test_a_requested_but_missing_parent_is_refused(tmp_path):
     """M2.3: the run does not train from scratch instead, as it did when this
     only warned."""
-    from scripts.train_model import read_resume_parent
-
-    inputs = _inputs(_workspace(tmp_path / "ws"))
+    from scripts.train_model import read_resume_checkpoint
 
     with pytest.raises(FileNotFoundError, match="does not train from scratch"):
-        read_resume_parent(str(tmp_path / "not_here.pt"), inputs, "cpu")
+        read_resume_checkpoint(str(tmp_path / "not_here.pt"), "cpu")
 
 
 def test_the_parent_checked_and_the_identity_returned_come_from_one_read(tmp_path):
     """The returned dict and identity **are** those of the one read, which
-    `train` restores from and records; that it does is shown at the entry point
-    (`test_training_reads.py`)."""
-    from scripts.train_model import read_resume_parent
+    `train` checks, restores from and records; that it does is shown at the
+    entry point (`test_training_reads.py`). The check reads nothing again."""
     from tests.fixtures.opens import count_opens
 
     data_dir = _workspace(tmp_path / "ws")
@@ -298,7 +304,7 @@ def test_the_parent_checked_and_the_identity_returned_come_from_one_read(tmp_pat
     inputs = _inputs(data_dir)
 
     with count_opens() as opens:
-        returned = read_resume_parent(str(parent), inputs, "cpu")
+        returned = _read_and_accept(parent, inputs)
 
     assert opens.opens(parent) == 1
     assert returned.identity.sha256 == _sha256(parent)
@@ -308,12 +314,10 @@ def test_the_parent_checked_and_the_identity_returned_come_from_one_read(tmp_pat
 
 def test_the_decision_feeds_the_record_end_to_end(tmp_path):
     """The two halves joined: a real decision, then the record built from it."""
-    from scripts.train_model import read_resume_parent
-
     data_dir = _workspace(tmp_path / "ws")
     parent = _parent(tmp_path / "parent.pt", data_dir, state_dict={})
 
-    restored = read_resume_parent(str(parent), _inputs(data_dir), "cpu")
+    restored = _read_and_accept(parent, _inputs(data_dir))
     record = _training_record(data_dir, parent=restored.identity)
     assert record["resume_checkpoint"] == _sha256(parent)
 
@@ -321,14 +325,12 @@ def test_the_decision_feeds_the_record_end_to_end(tmp_path):
 def test_two_parents_with_different_bytes_are_distinguishable(tmp_path):
     """The case the field exists for: identical workspace files, different
     parents. Without the parent role these two runs carried the same record."""
-    from scripts.train_model import read_resume_parent
-
     data_dir = _workspace(tmp_path / "ws")
     first = _parent(tmp_path / "a.pt", data_dir, state_dict={"w": torch.zeros(1)})
     second = _parent(tmp_path / "b.pt", data_dir, state_dict={"w": torch.ones(1)})
 
     def record_for(parent):
-        restored = read_resume_parent(str(parent), _inputs(data_dir), "cpu")
+        restored = _read_and_accept(parent, _inputs(data_dir))
         return _training_record(data_dir, parent=restored.identity)
 
     a, b = record_for(first), record_for(second)
@@ -492,8 +494,8 @@ def test_the_touched_files_reference_no_undefined_names():
     """The failure the mirrored helper hid, checked by the tool that already does
     this correctly.
 
-    `val_samples` is bound in `create_dataloaders` while the provenance wiring
-    lives in `train`. Reading it there is a `NameError` at runtime — and every
+    `val_samples` was bound in `create_dataloaders` (retired in K8-7) while the
+    provenance wiring lived in `train`. Reading it there was a `NameError` at runtime — and every
     test in this file passed anyway, because the first version rebuilt the role
     map beside the source instead of calling it.
 

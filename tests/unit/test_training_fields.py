@@ -19,7 +19,6 @@ import pytest
 
 from src.config import training_fields as tf
 
-WIRED_IN_PR4B = ("temperature", "label_smoothing", "margin")  # were no-ops until PR-4b
 DEVICE_ACCEPTS = ("auto", "cpu", "mps", "cuda", "cuda:0", "cuda:1", "cuda:7")
 # Trailing-newline cases matter: Python's ``$`` matches just before a final newline, so a
 # ``re.match`` guard would let "cuda\n" through and it would only fail deep in the subprocess.
@@ -57,7 +56,8 @@ def test_constraint_dicts_are_well_formed():
 
 
 def test_no_field_is_marked_ineffective():
-    """PR-4b wired the last three no-op knobs; nothing should be accepted-but-ineffective now."""
+    """Nothing is accepted-but-ineffective (PR-4b wired the last no-op knobs, which
+    retired with the ShepherdGNN path in K8-7)."""
     assert {f.name for f in tf.FIELDS if not f.effective} == set()
 
 
@@ -68,30 +68,18 @@ def test_ineffective_fields_would_not_be_projected():
             assert f.projects_to is None, f"{f.name}: no-op field must not declare a projection"
 
 
-def test_pr4b_loss_knobs_are_effective_and_projected():
-    for name in WIRED_IN_PR4B:
-        f = tf.by_name(name)
-        assert f.effective, f"{name} must be effective after PR-4b"
-        assert f.projects_to == f"LossConfig.{name}", f"{name} must project into LossConfig"
-
-
 # ------------------------------------------------- wiring parity (source-level, torch-free)
 def _train_model_source() -> ast.Module:
     path = Path(__file__).resolve().parents[2] / "scripts" / "train_model.py"
     return ast.parse(path.read_text(encoding="utf-8"))
 
 
-def _call_kwargs(tree: ast.Module, func_name: str) -> dict:
-    """Return {kwarg: source-expression} for the first call to func_name in the module."""
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Call) and getattr(node.func, "id", None) == func_name:
-            return {kw.arg: ast.unparse(kw.value) for kw in node.keywords if kw.arg}
-    return {}
-
-
-def test_trainconfig_declares_every_projected_field():
+def test_trainconfig_declares_every_spec_field():
     """Source-level: a field only has runtime effect if TrainConfig has the attribute
-    (load_config copies YAML keys behind a hasattr gate)."""
+    (load_config copies YAML keys behind a hasattr gate). Every spec field, not only a
+    projecting one: the training service previews a continuation over the spec's names
+    (`training_fields.names()`) and the process plans it over TrainConfig's fields, so
+    the two must be one set (with `test_trainconfig_defaults_match_spec`, the reverse)."""
     tree = _train_model_source()
     declared = {
         t.target.id
@@ -102,25 +90,10 @@ def test_trainconfig_declares_every_projected_field():
     }
     assert declared, "could not locate TrainConfig field declarations"
     for f in tf.FIELDS:
-        if f.projects_to:
-            assert f.name in declared, (
-                f"{f.name} projects to {f.projects_to} but TrainConfig does not declare it — "
-                f"load_config's hasattr gate would silently drop it"
-            )
-
-
-def test_projected_loss_fields_reach_the_lossconfig_call():
-    """Declaring the field on TrainConfig is not enough: it must also be passed into
-    LossConfig(...), otherwise the value is carried and then ignored (the PR-4b bug)."""
-    kwargs = _call_kwargs(_train_model_source(), "LossConfig")
-    assert kwargs, "could not locate the LossConfig(...) construction in train_model.py"
-    for f in tf.FIELDS:
-        if f.projects_to and f.projects_to.startswith("LossConfig."):
-            attr = f.projects_to.split(".", 1)[1]
-            assert attr in kwargs, f"{f.name}: LossConfig(...) never receives {attr}"
-            assert kwargs[attr] == f"config.{f.name}", (
-                f"{f.name}: LossConfig({attr}=...) is wired to {kwargs[attr]!r}, expected config.{f.name}"
-            )
+        assert f.name in declared, (
+            f"{f.name} is a spec field but TrainConfig does not declare it — load_config's "
+            f"hasattr gate would refuse it and a continuation's preview would differ"
+        )
 
 
 def test_projection_rule_is_exception_based():
@@ -132,7 +105,7 @@ def test_projection_rule_is_exception_based():
 
 
 def test_closed_enums_have_choices_and_device_has_a_pattern():
-    for name in ("conv_type", "scheduler_type", "amp_dtype"):
+    for name in ("scheduler_type", "amp_dtype"):
         f = tf.by_name(name)
         assert f.choices and f.valid_pattern is None
     dev = tf.by_name("device")
@@ -162,13 +135,6 @@ def test_cross_field_rules_are_structured_and_reference_real_fields():
                     f"{rule.name}: guard values {allowed} not in {guard_field} choices {spec_choices}"
                 )
         assert rule.enforced_in, f"{rule.name}: must record where it is enforced"
-
-
-def test_divisibility_rule_is_conditional_on_conv_type():
-    """Regression guard for the approved refinement: sage must NOT be subject to divisibility."""
-    rule = next(r for r in tf.CROSS_FIELD_RULES if r.name == "hidden_dim_divisible_by_num_heads")
-    assert rule.kind == "divisible_by"
-    assert set(rule.when["conv_type"]) == {"hgt", "gat"}, "sage takes no heads — must be excluded"
 
 
 def test_accessors_and_bounds_helper():
@@ -367,14 +333,13 @@ def test_api_enforces_num_neighbors_policy():
 
 def test_cross_field_rules_report_where_they_are_enforced():
     """After PR-4c no rule may still be marked as merely planned: each is
-    enforced now, or says since when nothing does (the head rule, whose only
-    enforcement was the API's ShepherdGNN request, gone in K7)."""
+    enforced now (the head-divisibility rule, which nothing enforced since K7,
+    retired with the ShepherdGNN fields in K8-7)."""
     for rule in tf.CROSS_FIELD_RULES:
-        assert rule.enforced_in.startswith(("current", "none since K7")), (
+        assert rule.enforced_in.startswith("current"), (
             f"{rule.name}: still marked '{rule.enforced_in}' — PR-4c should have enforced it"
         )
-    assert [r.name for r in tf.CROSS_FIELD_RULES if not r.enforced_in.startswith("current")] == [
-        "hidden_dim_divisible_by_num_heads"]
+    assert [r.name for r in tf.CROSS_FIELD_RULES if not r.enforced_in.startswith("current")] == []
 
 
 def test_cli_device_accepts_pytorch_grammar():
@@ -429,15 +394,9 @@ def _field_names(cls) -> set:
 def _projection_classes():
     pytest.importorskip("torch")
     pytest.importorskip("torch_geometric")
-    from src.models.gnn.shepherd_gnn import ShepherdGNNConfig
-    from src.kg.data_loader import DataLoaderConfig
     from src.training.trainer import TrainerConfig
-    from src.training.loss_functions import LossConfig
     return {
-        "ShepherdGNNConfig": ShepherdGNNConfig,
-        "DataLoaderConfig": DataLoaderConfig,
         "TrainerConfig": TrainerConfig,
-        "LossConfig": LossConfig,
         "TrainConfig": _load_trainconfig(),
     }
 
@@ -470,10 +429,6 @@ def test_trainconfig_defaults_match_spec():
         got = list(tc_default) if isinstance(tc_default, (list, tuple)) else tc_default
         assert got == spec_default, f"{name}: TrainConfig default {got} != spec default {spec_default}"
 
-    # PR-4b: the formerly-dropped loss knobs must now exist here, with LossConfig's defaults.
-    for n in WIRED_IN_PR4B:
-        assert n in fields, f"{n} missing from TrainConfig — PR-4b wiring regressed"
-
 
 # --------------------------------------------------------- the released rules (pin per version)
 #: Released `TRAINING_RULES_VERSION` -> the sorted names of the learning settings a
@@ -501,16 +456,14 @@ def _released_entry():
 
 
 def test_the_learning_settings_are_the_released_rules_entry():
-    """TrainConfig's fields, less the operational and location ones (and,
-    while the ShepherdGNN path stands, the fields only it reads), are exactly
-    the current rules' entry: a learning setting added, removed or renamed
-    without a new rules version fails here."""
+    """TrainConfig's fields, less the operational and location ones, are
+    exactly the current rules' entry: a learning setting added, removed or
+    renamed without a new rules version fails here."""
     from src.utils.run_plan import OPERATIONAL_FIELDS
 
     train_model = _load_train_model()
     fields = {f.name for f in dataclasses.fields(train_model.TrainConfig)}
-    assert (fields - OPERATIONAL_FIELDS - train_model.LOCATION_FIELDS
-            - train_model.SHEPHERD_ONLY_FIELDS) == _released_entry()
+    assert fields - OPERATIONAL_FIELDS - train_model.LOCATION_FIELDS == _released_entry()
 
 
 def test_the_recipe_and_the_run_definition_provide_the_released_rules_entry():

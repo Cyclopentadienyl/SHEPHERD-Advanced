@@ -1,27 +1,18 @@
 """
-A synthetic data directory and checkpoint, built so sampling randomness cannot
-change the answer.
+A synthetic data directory and checkpoint, of a shape no sampling can change.
 ======================================================================
-The dataloader seeds nothing: neighbour sampling uses `random.sample` /
-`random.choice` (`src/kg/data_loader.py:220,263`) and negatives use
-`np.random.choice` / `random.randint` (`:534-597`). Two processes running the
-same command can therefore build different subgraphs.
-
-Rather than seed the RNG — which would mean reaching into production code — the
-graph is shaped so the draw cannot matter:
+The graph is shaped so that no draw could matter:
 
   - **every node's degree is at or below the neighbour-sampling limit**
-    (`num_neighbors = [15, 10, 5]`), so `random.sample` never has a choice to
-    make;
+    (`num_neighbors = [15, 10, 5]`), so a sampler never has a choice to make;
   - **every gene links every phenotype to every disease**, so the 2-hop expansion
-    from any disease seed reaches all diseases. Whichever negatives are drawn,
-    the candidate universe is the same set.
+    from any disease seed reaches all diseases.
 
-The tests that drive the sampling loader over this workspace (the Trainer's
-validation values, `tests/unit/test_trainer_validation_values.py`) rely on that
-shape. A task measurement uses no sampler: it scores every disease, so the shape
-matters to it only in that it is degenerate — no rank from this workspace is
-evidence about the scorer.
+It was shaped for the ShepherdGNN path's sampling loader, which seeded nothing;
+that loader and the tests that drove it retired in K8-7, and nothing that reads
+this workspace samples now. A task measurement scores every disease, so the
+shape matters to it only in that it is degenerate: no rank from this workspace
+is evidence about the scorer.
 
 The checkpoint is written in the shape the training writer produces (weights,
 config, epoch, logs, and the graph roles of `training_input_digests`): there is
@@ -145,8 +136,7 @@ def build_workspace(
     **The size arguments default to the original fixture**, so every existing
     caller gets exactly the workspace it got before. They exist because a
     four-disease cohort cannot exercise anything that only happens above twenty
-    candidates — the Trainer keeps the first twenty columns of its validation
-    ranking, and a top-20 window and no window are the same list at four columns.
+    candidates: a top-20 window and no window are the same list at four columns.
     See `_graph` for the precondition a wider workspace carries.
     """
     from src.models.gnn.shepherd_gnn import ShepherdGNN, ShepherdGNNConfig

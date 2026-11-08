@@ -1,26 +1,19 @@
 """
 SHEPHERD-Advanced Training Module
 ==================================
-Training infrastructure for ShepherdGNN model.
+Training infrastructure for model bundles.
 
 Module: src/training/__init__.py
 Absolute Path: /home/user/SHEPHERD-Advanced/src/training/__init__.py
 
 Purpose:
-    Provide complete training infrastructure including:
-    - Multi-task loss functions for disease diagnosis
+    Provide the training infrastructure every stage shares:
     - Callback system for checkpointing and monitoring
-    - Trainer class for orchestrating training loops
+    - Trainer class for the training loop a stage's task module drives
+    The stages' task modules are `src.training.lp_task` (the KG base) and
+    `src.training.finetune_task` (the task finetunes), imported directly.
 
 Components (re-exported):
-    From loss_functions:
-        - LossConfig: Loss weight configuration
-        - DiagnosisLoss: Classification + ranking loss
-        - LinkPredictionLoss: KG embedding loss
-        - ContrastiveLoss: InfoNCE for discriminative embeddings
-        - OrthologConsistencyLoss: Cross-species alignment
-        - MultiTaskLoss: Weighted combination of all losses
-
     From callbacks:
         - Callback: Base callback class
         - CallbackList: Callback manager
@@ -36,23 +29,13 @@ Components (re-exported):
 
 Dependencies:
     - torch: Training operations
-    - Internal: src.training.loss_functions, src.training.callbacks, src.training.trainer
+    - Internal: src.training.callbacks, src.training.trainer
 
 Usage:
-    from src.training import Trainer, TrainerConfig, MultiTaskLoss
+    from src.training import Trainer, TrainerConfig
 
 Version: 1.0.0
 """
-
-# Loss functions
-from src.training.loss_functions import (
-    LossConfig,
-    DiagnosisLoss,
-    LinkPredictionLoss,
-    ContrastiveLoss,
-    OrthologConsistencyLoss,
-    MultiTaskLoss,
-)
 
 # Callbacks
 from src.training.callbacks import (
@@ -76,13 +59,6 @@ from src.training.trainer import (
 
 
 __all__ = [
-    # Loss functions
-    "LossConfig",
-    "DiagnosisLoss",
-    "LinkPredictionLoss",
-    "ContrastiveLoss",
-    "OrthologConsistencyLoss",
-    "MultiTaskLoss",
     # Callbacks
     "Callback",
     "CallbackList",

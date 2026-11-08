@@ -102,16 +102,22 @@ def test_matching_bytes_are_parsed_whatever_form_the_expectation_takes(samples_f
     assert result.samples == SAMPLES
 
 
-def test_training_fields_are_read_as_read_samples_reads_them(tmp_path):
+def test_an_older_rows_unread_keys_are_neither_read_nor_refused(tmp_path):
+    """A row written before K8-7 carries `candidate_disease_ids` and `gene_ids`,
+    which only the retired ShepherdGNN path read: the default read reads the
+    three fields it reads and nothing else, and the gene fields' read reads
+    `gene_ids` as the gene tasks do."""
     path = tmp_path / "x_samples.json"
     path.write_text(json.dumps([{"patient_id": "p", "phenotype_ids": [1], "disease_id": 2,
                                  "candidate_disease_ids": [2, 3], "gene_ids": [7]}]))
 
     plain = read_samples_file(path).samples[0]
-    full = read_samples_file(path, training_fields=True).samples[0]
+    genes = read_samples_file(path, gene_fields=True).samples[0]
 
-    assert (plain.candidate_disease_ids, plain.gene_ids) == (None, None)
-    assert (full.candidate_disease_ids, full.gene_ids) == ([2, 3], [7])
+    assert (plain.patient_id, plain.phenotype_ids, plain.disease_id, plain.gene_ids) == (
+        "p", [1], 2, None)
+    assert not hasattr(plain, "candidate_disease_ids")
+    assert genes.gene_ids == [7]
 
 
 # ---------------------------------------------------------------------------
@@ -438,9 +444,9 @@ def test_read_samples_delegates_to_the_one_parser(monkeypatch, tmp_path):
 
     monkeypatch.setattr(file_storage, "read_samples_file", spy)
 
-    result = read_samples(tmp_path, "val", training_fields=True)
+    result = read_samples(tmp_path, "val", gene_fields=True)
 
-    assert calls == [(path, {"training_fields": True, "gene_fields": False})]
+    assert calls == [(path, {"gene_fields": True})]
     assert result.identity.path == path
 
 

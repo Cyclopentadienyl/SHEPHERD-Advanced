@@ -1,8 +1,8 @@
 """A workspace the base stage (KG link prediction) can train on.
 
-`trainable_workspace` has two relations without reverse twins and two
-dozen edges, too few for a validation split in which every relation has a
-second tail. This graph is the shape the KG builder exports: each relation
+A graph with a few relations without reverse twins and two dozen edges is
+too small for a validation split in which every relation has a second tail.
+This graph is the shape the KG builder exports: each relation
 with its `rev_` twin, three node types, a few hundred edges, one component.
 Samples are written only because a workspace's manifest binds them; the base
 stage does not read them.

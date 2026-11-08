@@ -219,21 +219,14 @@ class TestReadSamples:
         assert _holds_no_bytes(tuple(result))
 
     def test_three_fields_by_default(self, workspace):
-        """Measurement reads three fields; the file carries five here."""
+        """Training and measurement read three fields; the file carries five
+        here (a generated row's `gene_ids` and an older row's
+        `candidate_disease_ids`), which the default read does not read."""
         samples = read_samples(workspace, "train").samples
 
         assert samples
-        assert all(s.candidate_disease_ids is None and s.gene_ids is None for s in samples)
-
-    def test_training_fields_carry_both_optional_fields(self, workspace):
-        rows = json.loads((workspace / "train_samples.json").read_text(encoding="utf-8"))
-
-        samples = read_samples(workspace, "train", training_fields=True).samples
-
-        assert [(s.candidate_disease_ids, s.gene_ids) for s in samples] == [
-            (row["candidate_disease_ids"], row["gene_ids"]) for row in rows
-        ]
-        assert all(s.candidate_disease_ids and s.gene_ids for s in samples)
+        assert all(s.gene_ids is None for s in samples)
+        assert not any(hasattr(s, "candidate_disease_ids") for s in samples)
 
     def test_the_file_is_opened_once(self, workspace):
         with count_opens() as opens:
@@ -251,21 +244,21 @@ class TestReadSamples:
         path.write_bytes(junk)
 
         with pytest.raises(ValueError, match="could not be parsed as UTF-8 JSON") as refused:
-            read_samples(workspace, "train", training_fields=True)
+            read_samples(workspace, "train")
 
         assert str(path) in str(refused.value)
 
-    @pytest.mark.parametrize("training_fields", [False, True])
+    @pytest.mark.parametrize("gene_fields", [False, True])
     @pytest.mark.parametrize("junk", [b'[{"tampered": true}]', b'{"samples": []}',
                                       b'[[1, 2, 3]]', b"null"])
     def test_json_that_is_not_sample_rows_is_refused_under_its_name(
-        self, workspace, junk, training_fields
+        self, workspace, junk, gene_fields
     ):
         path = workspace / "train_samples.json"
         path.write_bytes(junk)
 
         with pytest.raises(ValueError, match="could not be parsed as a samples file") as refused:
-            read_samples(workspace, "train", training_fields=training_fields)
+            read_samples(workspace, "train", gene_fields=gene_fields)
 
         assert str(path) in str(refused.value)
         assert refused.value.__cause__ is not None
@@ -288,7 +281,7 @@ class TestReadSamples:
 
     def test_the_buffer_is_released(self, monkeypatch, workspace):
         _, reads = check_release(
-            monkeypatch, lambda: read_samples(workspace, "val", training_fields=True)
+            monkeypatch, lambda: read_samples(workspace, "val")
         )
 
         assert reads == (workspace / "val_samples.json",)

@@ -133,9 +133,11 @@ logger = logging.getLogger(__name__)
 #: appears only in the display code that asked for it. So a checkpoint showed its
 #: losses and none of its ranking metrics. Those names are not kept as a fallback.
 #:
-#: `val_loss` and the ranking metrics are the trainer's own validation numbers,
-#: computed as `Trainer._run_evaluation_pass` computes them; `train_loss` is its
-#: training loss. None of them is a test result.
+#: The ranking metrics are a trainer's own validation numbers as the checkpoint
+#: records them (a stage's task reports its selection metric, `Trainer._validate`
+#: prefixes it); `train_loss` is its training loss. `val_loss` is copied when an
+#: existing checkpoint's logs hold it; this build's Trainer writes none. Each is
+#: copied only when a checkpoint holds it. None of them is a test result.
 CHECKPOINT_LOG_METRICS: Tuple[str, ...] = ("val_loss", "train_loss", *RANKING_SCORE_KEYS)
 
 

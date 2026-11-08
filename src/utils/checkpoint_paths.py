@@ -5,7 +5,7 @@ Single source of truth for the on-disk run layout, shared by the training entry
 point (write path), the training service and console (listing, resume source),
 and the inference reload route (read path), so all of them agree:
 
-    {data_dir}/runs/{conv_type}/{date}_{name}_{run_id}/
+    {data_dir}/runs/{layout key}/{date}_{name}_{run_id}/
         config.yaml  runtime.json  final_metrics.json
         checkpoints/   last.pt, model-*.pt
         logs/          train_*.json, progress.json
@@ -47,7 +47,6 @@ ScoreFn = Callable[[Path], Optional[float]]
 AcceptFn = Callable[[Path], bool]
 
 from src.config.model_types import (
-    DEFAULT_CONV_TYPE,
     ENCODER_KINDS,
     MODEL_RECORD_READ_KEYS,
     SUPPORTED_CONV_TYPES,
@@ -160,7 +159,8 @@ def _select_among(pts: List[Path], d: Path, score_fn: Optional[ScoreFn]) -> Opti
 # Run directories (contract M3a-2)
 # =============================================================================
 #: Every training run, new or resumed, writes into a directory of its own:
-#: ``{data_dir}/runs/{conv_type}/{date}_{name}_{run_id}/``, holding the run's
+#: ``{data_dir}/runs/{layout key}/{date}_{name}_{run_id}/``, the layout key a
+#: new run's model spec's encoder kind (``gatv2``), holding the run's
 #: ``config.yaml``, ``runtime.json`` and ``final_metrics.json``, its
 #: ``checkpoints/`` and its ``logs/``. Directories are flat, never nested by
 #: lineage: a resumed run records its parent by digest, not by where it sits.
@@ -187,17 +187,21 @@ RUN_LAYOUT_KEYS = tuple(dict.fromkeys(SUPPORTED_CONV_TYPES + ENCODER_KINDS))
 
 def normalize_run_layout_key(key: Optional[str]) -> str:
     """A run-layout key, lower case: a conv type or an encoder kind (``gatv2``
-    among them); anything else raises."""
+    among them); anything else raises, an empty key too: a run is filed under
+    its model spec's encoder kind, never under a default."""
     k = str(key or "").strip().lower()
     if not k:
-        return DEFAULT_CONV_TYPE
+        raise ValueError("A run layout key is required: a run is filed under its model "
+                         "spec's encoder kind, and none was given.")
     if k not in RUN_LAYOUT_KEYS:
         raise ValueError(f"Unsupported run layout key {key!r}; supported: {RUN_LAYOUT_KEYS}")
     return k
 
 
 def runs_root(data_dir: PathLike, conv_type: Optional[str]) -> Path:
-    """``{data_dir}/runs/{conv_type}``: where an architecture's runs live."""
+    """``{data_dir}/runs/{layout key}``: where an architecture's runs live (a
+    model spec's encoder kind; a conv type for a file written before the model
+    spec)."""
     return Path(data_dir) / RUNS_DIRNAME / normalize_run_layout_key(conv_type)
 
 
@@ -219,7 +223,7 @@ def refuse_retired_locations(values, *, source: str) -> None:
     if named:
         raise ValueError(
             f"{source} sets {', '.join(named)}, which no longer exist: every run writes "
-            "into a directory of its own, {data_dir}/runs/{conv_type}/..., with its "
+            "into a directory of its own, {data_dir}/runs/{encoder kind}/..., with its "
             "checkpoints/ and logs/ inside. Remove them; give run_name to name the run, "
             "or run_dir for an explicit directory that is absent or empty."
         )
@@ -238,7 +242,9 @@ def propose_run_dir(
     now: Optional[datetime] = None,
 ) -> Path:
     """A new run directory's path, not yet created:
-    ``{data_dir}/runs/{conv_type}/{YYYYMMDD-HHMMSS}_{name or 'run'}_{6 hex}``.
+    ``{data_dir}/runs/{conv_type}/{YYYYMMDD-HHMMSS}_{name or 'run'}_{6 hex}``,
+    `conv_type` the run's layout key (its model spec's encoder kind), required:
+    an empty one raises (`normalize_run_layout_key`).
 
     A name already on disk is drawn again. Proposing claims nothing:
     `claim_run_dir` does, so a launcher (the training service) can name the

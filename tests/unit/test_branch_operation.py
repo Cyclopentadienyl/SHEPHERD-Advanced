@@ -139,8 +139,8 @@ REFUSALS = {
     "an extension": (dict(extend_epochs=1, learning_rate=1e-3), RunPlanRefused,
                      "a branch starts a new run: remove them to branch"),
     "no change": (dict(learning_rate=1e-4), RunPlanRefused, "changes at least one setting"),
-    "the ShepherdGNN path": (dict(learning_stage=None, learning_rate=1e-3), ValueError,
-                             "belong to the model bundle path"),
+    "no stage": (dict(learning_stage=None, learning_rate=1e-3), ValueError,
+                 "names its learning stage"),
 }
 
 

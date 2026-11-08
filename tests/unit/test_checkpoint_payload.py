@@ -23,7 +23,7 @@ from src.config.model_types import MODEL_RECORD_KEYS  # noqa: E402
 from src.models.bundle.record import MODEL_RECORD_VERSION  # noqa: E402
 from src.training.callbacks import ModelCheckpoint, ModelCheckpointConfig  # noqa: E402
 from src.training.checkpoint_payload import TENSOR_KEYS, build_checkpoint_payload  # noqa: E402
-from src.utils.checkpoint_io import write_checkpoint  # noqa: E402
+from src.utils.checkpoint_io import TRAINING_RULES_VERSION, write_checkpoint  # noqa: E402
 from src.utils.run_environment import assert_primitive  # noqa: E402
 from tests.fixtures.base_workspace import write_base_workspace  # noqa: E402
 from tests.unit.test_model_record import _record, _stored_task  # noqa: E402
@@ -63,6 +63,9 @@ def test_both_writers_write_the_same_keys_and_load_safely(tmp_path):
     b = torch.load(by_callback, map_location="cpu", weights_only=True)
     assert set(a) == set(b)
     assert a["record_version"] == b["record_version"] == MODEL_RECORD_VERSION
+    # The rules the run trained under, written beside the record, which a
+    # continued run must keep (`run_plan._check_record_version`).
+    assert a["training_rules"] == b["training_rules"] == TRAINING_RULES_VERSION
     for key in ("state_dict", "optimizer_state_dict", "scheduler_state_dict"):
         assert key in a
     assert isinstance(a["state_dict"]["weight"], torch.Tensor)
@@ -195,9 +198,10 @@ def test_a_weights_only_checkpoint_keeps_the_provenance_and_nothing_to_resume(tm
 
     payload = build_checkpoint_payload(trainer, epoch=0, logs={}, weights_only=True)
 
-    assert set(payload) - set(MODEL_RECORD_KEYS) - {"training_rules"} == {
-        "record_version", "checkpoint_kind", "weights_from", "state_dict",
+    assert set(payload) - set(MODEL_RECORD_KEYS) == {
+        "record_version", "training_rules", "checkpoint_kind", "weights_from", "state_dict",
         "training_input_digests", "producer", "environment"}
+    assert payload["training_rules"] == TRAINING_RULES_VERSION
     assert payload["checkpoint_kind"] == "weights"
     assert payload["weights_from"] == {"kind": "latest", "epoch": 0}
 

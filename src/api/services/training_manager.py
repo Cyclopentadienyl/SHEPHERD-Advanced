@@ -25,8 +25,8 @@ Purpose:
       process, then SIGTERM, then SIGKILL to its whole process group; a
       training stop never reaches a test run, nor the reverse
     - **Each job leads its own process group** (review of 8242b47, P2-3), so
-      the DataLoader workers it forks, which share the GPU lock's open file,
-      end with it: after its main process ends the monitor ends what is left
+      any process it forks without exec, which shares the GPU lock's open
+      file, ends with it: after its main process ends the monitor ends what is left
       of the group, and only then records how the job ended and frees the
       slot. A backend being stopped closes the slot, so nothing starts from
       then on, and stops the job it runs (`close`, `end_active_job`, called by
@@ -57,8 +57,7 @@ Architecture Note:
     before it runs the script (`process_group=0`), so it and every process
     it forks form a group of their own, never the backend's. A stop sends
     SIGINT to the main process only, the graceful path (training stops where
-    it stands, measure_scorer says cancelled, a DataLoader ends its own
-    workers as the process exits), and SIGTERM and SIGKILL to the whole
+    it stands, measure_scorer says cancelled), and SIGTERM and SIGKILL to the whole
     group, as systemd's ``KillMode=mixed`` does. Once the main process has
     been waited for, the monitor ends whatever of the group is left
     (SIGTERM, then SIGKILL), reaping any of its zombies this process adopted;
@@ -73,7 +72,7 @@ Architecture Note:
     console process group (CREATE_NEW_PROCESS_GROUP), which CTRL_BREAK_EVENT
     is sent to; a backend with no console cannot send it (`OSError`), and the
     stop goes on to TerminateProcess, which ends the main process only.
-    DataLoader workers are spawned there, not forked, and do not inherit the
+    A child process there is spawned, not forked, and does not inherit the
     lock's handle; the release of a dead process's file lock by the system
     can be delayed. A Job Object, the true equivalent of a process group, is
     not added while the Windows backend is untested.
@@ -180,8 +179,8 @@ _POPEN = subprocess.Popen
 #: (`_stop_on_termination_signals`). A name the platform lacks is skipped.
 JOB_DETACHED_SIGNALS: Tuple[str, ...] = ("SIGINT", "SIGQUIT", "SIGHUP", "SIGTERM", "SIGBREAK")
 #: How long the monitor lets a job's group settle after its main process was
-#: waited for (workers a SIGTERM to the group has just reached, or that a
-#: DataLoader is ending) before it says that processes remain and ends them.
+#: waited for (processes a SIGTERM to the group has just reached, or that are
+#: ending with it) before it says that processes remain and ends them.
 _GROUP_SETTLE_SECONDS = 1.0
 _GROUP_POLL_SECONDS = 0.05
 
@@ -454,23 +453,26 @@ def _recipe_settings_problem(settings: Mapping[str, Any], references: Sequence[M
 
 
 def _new_bundle_run(config: Mapping[str, Any]) -> Tuple[Optional[str], Optional[str]]:
-    """A new model bundle run asked of `start_training` (`learning_stage` set,
-    no `resume_from`): ``(encoder kind, None)``, the run layout key it is filed
-    under (its model spec's encoder kind, the reference recipe's when the
-    request names no spec; never the ShepherdGNN conv-type default), or
-    ``(None, why not)``, decided before anything is read or written.
+    """A new run asked of `start_training` (no `resume_from`): ``(encoder
+    kind, None)``, the run layout key it is filed under (its model spec's
+    encoder kind, the reference recipe's when the request names no spec), or
+    ``(None, why not)``, decided before anything is read or written. A request
+    without a learning stage is refused: every run is a model bundle stage.
 
     Only a base starts here: a finetune is a Fine-tune start's
     (`start_finetune`, one child per task from a base). Its keys are the
     recipe's base settings and `_NEW_RUN_KEYS`, each value one its field spec
     takes (`_recipe_settings_problem`), and its hop list one number per layer
     of the spec's encoder (`hops_problem`, the recipe's list when it names
-    none); a ShepherdGNN setting is refused, never passed on for the process
+    none); a setting outside them is refused, never passed on for the process
     to refuse."""
     from src.config.recipe import reference_settings
     from src.models.bundle.spec import ModelSpec, SpecError, hops_problem, reference_spec
 
     stage = config.get("learning_stage")
+    if stage is None:
+        return None, ('A new run names its learning stage: learning_stage "base" (a '
+                      "finetune is a Fine-tune start).")
     if stage == "finetune":
         return None, ("A finetune is started as a Fine-tune start (one child per task, from a "
                       "base: POST /api/v1/training/finetune), not as a training run.")
@@ -959,7 +961,7 @@ class TrainingManager:
                     errors="replace",
                     # **Each job leads its own process group** (P2-3): on POSIX the
                     # child calls setpgid(0, 0) before it runs the script, so every
-                    # process it forks (DataLoader workers, which share the GPU
+                    # process it forks (one forked without exec shares the GPU
                     # lock's open file) is in the group a stop and the monitor end,
                     # never the backend's; so `JOB_DETACHED_SIGNALS` no longer
                     # reach it, and its host routes them. On Windows
@@ -1048,23 +1050,24 @@ class TrainingManager:
                 that read, and a file replaced after it is refused by the
                 process before it is loaded.
 
-        **A new model bundle run** (`learning_stage` set, no `resume_from`) is
-        a base: its configuration is checked whole first (`_new_bundle_run`:
-        only the recipe's base settings and the run keys, each value its field
-        spec takes; a finetune is refused here, since it starts through
-        `start_finetune`), and it is filed under its model spec's encoder kind.
-        A ShepherdGNN start and every continued run are decided as before; a
-        continued run's request that states a learning stage (the API's base
-        start states ``base``) is refused by the preview unless the parent's
-        record holds that stage, as any explicit setting other than the
-        parent's is.
+        **A new run** (no `resume_from`) is a model bundle base: its
+        configuration is checked whole first (`_new_bundle_run`: its stage
+        ``base``, only the recipe's base settings and the run keys, each value
+        its field spec takes; a request without a stage, and a finetune, which
+        starts through `start_finetune`, are refused here as invalid settings,
+        nothing spawned or written), and it is filed under its model spec's
+        encoder kind. A continued run takes its parent's stage and task from
+        the preview's read of the parent's record; a continued run's request
+        that states a learning stage (the API's base start states ``base``) is
+        refused by the preview unless the parent's record holds that stage, as
+        any explicit setting other than the parent's is.
 
         Returns:
             Status dict with success/error info. Refused while any GPU job is
             running or stopping, or while the GPU lock is held elsewhere.
         """
         bundle_encoder = None
-        if config.get("learning_stage") is not None and not config.get("resume_from"):
+        if not config.get("resume_from"):
             bundle_encoder, refusal = _new_bundle_run(config)
             if refusal:
                 return {"success": False, "invalid_settings": True,
@@ -1086,7 +1089,7 @@ class TrainingManager:
         # The process decides again on the same bytes: it is given the digest
         # of this read and refuses any other (P22-S1). Read before the lock, so
         # the status stays readable meanwhile.
-        architecture = bundle_encoder or config.get("conv_type")
+        architecture = bundle_encoder
         parent_sha256 = None
         if expected_parent_sha256 is not None and not config.get("resume_from"):
             return {"success": False, "status": self.get_job_status_word("training"),
@@ -1662,9 +1665,8 @@ class TrainingManager:
         """Once the job's main process has been waited for: end what is left of
         its process group, SIGTERM then SIGKILL, and return only when nothing
         of it is left, so the slot and the job's final status mean that the
-        whole job has ended, forked workers too (P2-3). A job that ended by
-        itself normally leaves none (a DataLoader ends its workers as its
-        process exits); one that was killed, or crashed, may. A group that
+        whole job has ended, forked processes too (P2-3). A job that ended
+        by itself normally leaves none; one that was killed, or crashed, may. A group that
         SIGKILL cannot end keeps the slot, as a main process would (the
         monitor's `wait` has no limit either)."""
         group = job.group
@@ -2270,11 +2272,10 @@ class TrainingManager:
         workspace's data and graph (M2.3) and decides again on those bytes;
         `start_training` binds it to this preview's read.
         """
+        from src.config.training_fields import names as setting_names
         from src.models.bundle.record import MODEL_RECORD_VERSION, has_model_spec
         from src.utils.run_plan import RunPlanRefused, plan_continuation
-        from src.utils.checkpoint_io import (
-            CHECKPOINT_RECORD_VERSION, CheckpointChanged, read_checkpoint,
-        )
+        from src.utils.checkpoint_io import CheckpointChanged, read_checkpoint
 
         if expected_sha256 is not None and not (
                 isinstance(expected_sha256, str) and _SHA256.fullmatch(expected_sha256)):
@@ -2311,26 +2312,30 @@ class TrainingManager:
             "completed_epochs": progress.get("completed_epochs"),
             "target_epochs": (int(stage.get("start_epoch", 0))
                               + int(stage.get("target_epochs", 0))) if stage else None,
-            # Where a continued run is filed: a model bundle's encoder kind,
-            # else the ShepherdGNN conv type (the run layout's key).
+            # Where a continued run is filed: its model spec's encoder kind (the
+            # run layout's key); None for a parent without a spec, which no run
+            # continues.
             "architecture": (((record.get("model_spec") or {}).get("encoder") or {}).get("kind")
-                             if has_model_spec(record) else
-                             ((record.get("config") or {}).get("model_config") or {}).get(
-                                 "conv_type")),
+                             if has_model_spec(record) else None),
             # The dataset the parent trained on, as it records it (M5-2: the
             # Continue drawer compares it with the workspace's current one).
             "dataset_fingerprint": _recorded_dataset(record),
             # A model bundle parent's learning stage and task, from its record
-            # (None for a ShepherdGNN parent): the run continues that stage.
+            # (None for a parent without a spec): the run continues that stage.
             "learning_stage": record.get("learning_stage") if has_model_spec(record) else None,
             "task": record.get("task") if has_model_spec(record) else None,
         }
-        # The parent's own settings, with the request's fields over them; only
-        # the request's fields count as set explicitly, so every other learning
-        # setting shows as inherited.
+        # The request the training process makes: every current setting
+        # (`training_fields.names()`, the run's TrainConfig fields), the
+        # request's own over the parent's. Only the request's fields count as
+        # set explicitly, so every other learning setting shows as inherited.
+        # A setting the parent records and this build does not have is not in
+        # it, so not inherited; a current one the parent does not record is in
+        # it with nothing behind it, so refused, as the process refuses it.
         explicit = dict(requested or {})
         recorded = (record.get("config") or {}).get("requested")
-        request = {**(recorded if isinstance(recorded, dict) else {}), **explicit,
+        recorded = recorded if isinstance(recorded, dict) else {}
+        request = {**{name: recorded.get(name) for name in setting_names()}, **explicit,
                    "resume_from": str(path), "run_dir": "", "extend_epochs": extend_epochs,
                    "extend_lr": explicit.get("extend_lr"), "pause_after_epoch": None,
                    "device": device}
@@ -2339,8 +2344,7 @@ class TrainingManager:
             plan = plan_continuation(record, path, request, set(explicit),
                                      device=effective_device,
                                      parent_sha256=read.identity.sha256,
-                                     record_version=(MODEL_RECORD_VERSION if has_model_spec(record)
-                                                     else CHECKPOINT_RECORD_VERSION))
+                                     record_version=MODEL_RECORD_VERSION)
         except RunPlanRefused as exc:
             return {**facts, "ok": False, "reason": str(exc)}
         return {**facts, "ok": True, "mode": plan.mode, "action": plan.action,

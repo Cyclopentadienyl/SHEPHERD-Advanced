@@ -52,6 +52,20 @@ _CHILD_SETTINGS: Dict[str, Dict[str, Any]] = {
     "patients_like_me": {"batch_size": 4, "num_neighbors": [3, 3], "sparse_sample_size": 4},
 }
 
+#: The settings a base or child trained before K8-7 (training rules 1) records
+#: in `config.requested` and this build no longer has (the ShepherdGNN path's
+#: architecture, loader and loss settings), at the defaults that build wrote
+#: them with. Retiring them is no rules change: such a model still serves
+#: (test_task_serving) and is resumed, extended and branched
+#: (test_continue_training) as one that does not record them.
+RULES_1_RETIRED_SETTINGS = {
+    "hidden_dim": 256, "num_layers": 4, "num_heads": 8, "conv_type": "gat", "dropout": 0.1,
+    "use_ortholog_gate": True, "num_workers": 4, "max_subgraph_nodes": 5000,
+    "num_negative_samples": 5, "diagnosis_weight": 1.0, "link_prediction_weight": 0.5,
+    "contrastive_weight": 0.3, "ortholog_weight": 0.2, "margin": 1.0, "label_smoothing": 0.1,
+    "temperature": 0.07,
+}
+
 
 def _demo_training() -> Dict[str, Dict[str, Any]]:
     from scripts.setup_demo import demo_task_training
@@ -159,5 +173,6 @@ def serve(trained: Dict[str, Path], task: str = "disease", **kwargs: Any) -> Any
                                  data_dir=str(data_dir), **{"device": "cpu", **kwargs})
 
 
-__all__ = ["BASE_RUN", "CHILD_RUNS", "demo_fixture", "finetune_demo_base", "serve",
-           "small_base_spec", "train_children", "workspace_fixture"]
+__all__ = ["BASE_RUN", "CHILD_RUNS", "RULES_1_RETIRED_SETTINGS", "demo_fixture",
+           "finetune_demo_base", "serve", "small_base_spec", "train_children",
+           "workspace_fixture"]

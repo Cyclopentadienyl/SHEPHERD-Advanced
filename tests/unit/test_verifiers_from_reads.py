@@ -363,11 +363,12 @@ class TestVerifyCohortReads:
         assert result.disease_sets == {"train": frozenset({0, 1, 2}), "val": frozenset({3})}
         assert result.disjointness_claim_checked and result.disjointness_measured
 
-    def test_training_fields_do_not_change_the_verdict(self, tmp_path):
+    def test_rows_carrying_keys_the_read_does_not_read_keep_the_verdict(self, tmp_path):
+        """A generated row's `gene_ids` and an older row's `candidate_disease_ids`
+        are not read, and change nothing the verifier decides."""
         root, _ = write_generated_workspace(tmp_path / "ws", train_ids=[0, 1], val_ids=[2],
                                             training_fields=True)
-        samples = {split: read_samples(root, split, training_fields=True)
-                   for split in ("train", "val")}
+        samples = {split: read_samples(root, split) for split in ("train", "val")}
 
         assert verify_cohort_reads(read_split_manifest(root), samples).verified == (
             "train", "val")
