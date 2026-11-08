@@ -59,8 +59,6 @@ DATED = {
         "the field a kept Mode C report names",
     ("src/evaluation/task_measurement.py", "metric schema 1 a kept Mode C report records."):
         "metric schema 1 is a kept Mode C report's",
-    ("src/inference/scoring.py", "and Mode C's offline measurement in `src/evaluation`"):
-        "what the scorer served until K8-4",
     ("src/webui/components/models_page.py", "its role list, its Mode C rule and"):
         "By test score's Mode C rule retired in K8-6d",
     ("scripts/measure_scorer.py", "**Mode D** (Batch 3's measurement of the served ranking)"):

@@ -15,8 +15,11 @@ the lazy map and ``__all__`` name the same set, and checks that each retired
 name is gone rather than kept as an alias.
 
 It also pins what the deletions keep (the K7 working sheet's must-not-delete
-list): HeteroGNNLayer, AdaptiveAttentionBackend, DiagnosisSample (the loader
-stack beside it retired in K8-7) and RankingMetrics, which waits for K8.
+list, left for K8 to decide): HeteroGNNLayer, AdaptiveAttentionBackend and
+DiagnosisSample. K8 retired the rest, the loader stack beside DiagnosisSample
+(K8-7) and RankingMetrics (K8-8); a module K8 deleted whole leaves these lists
+with its names (src.utils.metrics, src.models.encoders and
+src.models.gnn.shepherd_gnn).
 
 Module: tests/unit/test_package_exports.py
 """
@@ -39,7 +42,6 @@ TOUCHED = (
     "src.models.gnn",
     "src.training",
     "src.training.callbacks",
-    "src.utils.metrics",
     "src.utils.checkpoint_paths",
     "src.api.services.training_manager",
 )
@@ -62,11 +64,6 @@ RETIRED = {
     "src.core.types": ("ModelConfig", "TrainingConfig", "DataConfig"),
     "src.training": ("ProgressBar", "GradientClipping"),
     "src.training.callbacks": ("ProgressBar", "GradientClipping"),
-    "src.utils.metrics": (
-        "OntologyViolationMetrics", "EvidenceCoverageMetrics", "TrainingMetrics",
-        "LinkPredictionMetrics", "DiagnosisMetrics", "compute_hits_at_k", "compute_mrr",
-        "compute_ndcg",
-    ),
     "src.utils.checkpoint_paths": ("allocate_run_dir", "ranking_score_from_logs"),
     "src.api.services.training_manager": ("TrainingStatus",),
 }
@@ -95,7 +92,6 @@ KEPT = {
     "src.models.attention": ("AdaptiveAttentionBackend",),
     "src.models.gnn": ("HeteroGNNLayer",),
     "src.kg.data_loader": ("DiagnosisSample",),
-    "src.utils.metrics": ("RankingMetrics",),
 }
 
 _OPTIONAL_STACK = ("torch", "torch_geometric", "torch_scatter", "torch_sparse", "pyg_lib")
