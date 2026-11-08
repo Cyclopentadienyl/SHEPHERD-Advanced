@@ -258,7 +258,10 @@ before batch 4.
 It settles `PLAN_TEST_RESULTS.md` D3's two open served behaviours, the disease clamp and the
 unknown-phenotype handling, and policy §2.1's "one scorer, not two".
 
-**The home is `src/inference/scoring.py`.**
+**The home is `src/inference/scoring.py`.** *(2026-11-08, superseded: `src/inference/scoring.py`
+was removed in K8-11 (`9d76bbe`) and the `scorer-independence` contract in K8-7 (`e35b2a3`); the one
+scorer a task model uses in validation, measurement and serving is `src/models/tasks/scoring.py`,
+below `src.training` and `src.reasoning` in the layers contract (policy rev 17).)*
 - Serving and Mode C could both import it. *(2026-11-07: Mode C retired in K8-6b, so only serving
   could.)*
 - The trainer cannot, under the `layers` contract. That keeps the trainer's validation values written

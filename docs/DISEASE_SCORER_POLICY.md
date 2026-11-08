@@ -3,6 +3,25 @@
 **Status:** Accepted (2026-08) by the deploying institution. **Not yet implemented** — see the
 status table in §2. Implementation is work item B-1, which remains gated (§6).
 
+**Revision: rev 17 (dated by the commit that lands it). A statement of fact, as rev 16's
+corrections were; no normative change.** The seven normative statements (§1), the institution's
+disease SP-context decision (§1.2), the gates (§6) and rev 16's rules are unchanged: natural
+retirement, the keeping of every valid result, the freedom to run, keep and compare experiments,
+and the provenance and fingerprint checks stand as rev 16 states them. The K8 closeout on
+`claude/paper-aligned-two-stage` (K8-7 and K8-11, 2026-11-08) made part of §2.1's "What exists and
+is to be reused" false; it is corrected there, in notes marked rev 17:
+- **The trainer computes no validation cosine of its own any more.** Its ShepherdGNN validation
+  pass retired in K8-7 with the ShepherdGNN training path, together with
+  `tests/unit/test_trainer_validation_values.py`, which checked it, and the `scorer-independence`
+  contract in `.import-linter.ini`, which kept the two apart (four contracts remain). A stage's
+  validation is its task module's (`task.validate`), and the Trainer selects by that task's
+  selection metric (a base's `val_lp_accuracy`, a task model's `val_pooled_mrr`).
+- **`src/inference/scoring.py` is removed** (K8-11), with `cosine_score_matrix` and `cosine_scores`,
+  which nothing in src or scripts called. The home of the scoring a task model uses in validation,
+  measurement and serving is `src/models/tasks/scoring.py` (with the task heads,
+  `src/models/tasks/`), which the layers contract keeps below `src.training`, `src.reasoning`,
+  `src.inference` and `src.evaluation`. §3.2 and §3.3 stay as dated evidence.
+
 **Revision: rev 16 (dated by the commit that lands it). No normative change to the institution's
 serving-scoring decision: the seven normative statements (§1), the institution's disease SP-context
 decision (§1.2) and the gates (§6) are unchanged. This revision changes engineering rules of the
@@ -561,7 +580,12 @@ what exists to build on, so B-1 extends it rather than writing a second copy.
   `tests/unit/test_trainer_validation_values.py` checks it against `cosine_score_matrix`, and the
   `layers` and `scorer-independence` contracts in `.import-linter.ini` keep the two separate.
   *(Corrected in rev 16, a statement of fact: "already shared by serving and Mode C" no longer
-  holds; serving stopped calling them in K8-4, and Mode C retired in K8-6b.)*
+  holds; serving stopped calling them in K8-4, and Mode C retired in K8-6b.)* *(Corrected in rev
+  17, a statement of fact: this bullet no longer holds. The trainer's own validation cosine,
+  `tests/unit/test_trainer_validation_values.py` and the `scorer-independence` contract retired in
+  K8-7, and `src/inference/scoring.py`, with both functions, in K8-11. What is reused is the task
+  scorer, `src/models/tasks/scoring.py`, which a finetuned task's validation, task measurement and
+  serving share.)*
 - The canonical order: each task evaluator ranks by score, highest first, and exact ties share
   their average rank (`average_ranks` in `src/models/bundle/metrics.py`, called by the disease,
   gene and patients-like-me rankers in `src/models/tasks/`); every task manifest records it as
@@ -583,6 +607,10 @@ dropped silently. Mode C refuses an out-of-range index; an unmappable term is ke
 import under a recorded policy, not refused. **Designed:** the boundary in
 `working/results-review/SPEC_1_RESULTS_REVIEW.md` §2.2: one composed scorer in
 `src/inference/scoring.py`, an unknown term dropped and stated, a node with no row refused.)*
+*(Corrected in rev 17, a statement of fact: `src/inference/scoring.py` is removed (K8-11); the
+home of the one scorer is `src/models/tasks/scoring.py`, where a case's phenotypes are bound to the
+view, a phenotype outside it dropped and counted, and a case whose truth is outside it, or with
+no phenotype left, excluded and counted.)*
 
 **B-1a — the canonical ranking.** Score every disease in the graph by raw cosine and order it by the
 shared canonical order; remove the BFS gate and its two caps from candidate selection (§2, first

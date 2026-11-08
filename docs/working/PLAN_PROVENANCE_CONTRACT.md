@@ -2334,7 +2334,10 @@ implemented" below). Line numbers are at `0142436`, whose code is `main`'s `9fe5
 
 **M3a-2 — one run directory per training run** (decision 9).
 - **Every run, new or resumed, writes into a directory no run has used:**
-  `{workspace}/runs/{conv_type}/{date}_{optional name}_{run_id}/`.
+  `{workspace}/runs/{conv_type}/{date}_{optional name}_{run_id}/`. *(2026-11-08, superseded in
+  part: a run is filed under its model spec's encoder kind, `runs/{encoder kind}/…`, with no
+  conv-type default since K8-7 `e35b2a3`, and since K8-7b `ecc367f` the lists read every directory
+  under `runs/`, whatever its name.)*
   - Its checkpoint, output and log directories are all inside it.
   - Directories are flat, never nested by lineage.
   - A colliding run id is drawn again, never reused.
@@ -2638,6 +2641,11 @@ building, is stated here.
     API passes on only the fields a caller set (`exclude_unset`); a library caller that builds
     `TrainConfig` itself counts a field that differs from its default. Mixed precision that would
     take effect differently on the requested device is refused as a settings change.
+    *(2026-11-08, superseded by K8-7 `e35b2a3`: `num_workers` is no longer a `TrainConfig` field;
+    only the settings this version has are inherited, and a recorded one it no longer has is
+    neither inherited nor refused. Explicit means what the operator states, also when it equals
+    its default: a library caller passes its set to `train(config, explicit)`, and nothing is
+    inferred from defaults.)*
   - `Trainer.continue_from` replaces `restore_checkpoint`; the rebuilt schedule must equal the
     recorded one before the scheduler's progress is loaded. Early stopping's best-weights file is
     read once and accepted only with its recorded SHA-256. A parent's best-k files are ranked but
@@ -4121,7 +4129,9 @@ comparing.
 **One switch (the reviewer's R2, adopted by the owner).** When the integration is delivered, active
 training, inference and evaluation accept only this contract.
 - A checkpoint without a `model_spec` is listed as history. The new system never runs it, never
-  guesses its spec from weight names and never re-registers its reports.
+  guesses its spec from weight names and never re-registers its reports. *(2026-11-08, superseded
+  in part by K8-7b `ecc367f`: it is listed as a record this build cannot read, "written before
+  the model spec: not readable by this build; start a new run", never as history.)*
 - Historical checkpoints, reports, ledgers, registries, workspaces and fixed Git revisions stay as
   they are: not overwritten, not migrated in bulk.
 - Old code and environments are preserved by fixed revisions and existing evidence, never by a
@@ -4132,7 +4142,10 @@ The six hazards found in the verification, each with its rule:
 
 1. **A new record version means old checkpoints do not resume.** The extension raises the record
    version for checkpoints written by the new path.
-   - Checkpoints written before it stay readable as history and keep their records.
+   - Checkpoints written before it stay readable as history and keep their records. *(2026-11-08,
+     superseded in part: they stay on disk and listed with their SHA-256, records and usage
+     history, as records this build cannot read (K8-7b `ecc367f`); record version 1 retired in
+     K8-7 `e35b2a3`.)*
    - Resume across the boundary is refused with the reason ("written before the model spec; start a
      new run"). No missing field is filled in by guessing.
    - While old and new paths coexist inside the build, the new version and the `model_spec`

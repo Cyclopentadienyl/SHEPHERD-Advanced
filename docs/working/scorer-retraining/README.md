@@ -365,7 +365,11 @@ model spec (versioned, self-describing)
   and evaluation import it. No second NCA, multi-similarity loss or metrics module exists for another
   entry.
 - **The contract still holds.** `scorer-independence` (`.import-linter.ini`) only forbids
-  `src.inference.scoring` from importing `src.training`.
+  `src.inference.scoring` from importing `src.training`. *(2026-11-08, superseded by K8-7 `e35b2a3`
+  and K8-11 `9d76bbe`: the contract retired with row 23, the Trainer value test it protected, and
+  `src/inference/scoring.py` with K8-11; the shared math lives in `src.models`, which the layers
+  contract keeps below `src.training`, `src.reasoning`, `src.inference` and `src.evaluation`. The
+  K8 record in §8.)*
 - **What changes is the oracle.** Tests use hand arithmetic or a short, independently written
   computation. **Expected and actual never both call the code under test.**
 - **No new dependency.** pytorch-metric-learning and allennlp are not added. The small tensor losses
@@ -457,7 +461,10 @@ weights-only base **with a model spec** may be a finetune parent; strict resume 
 **One switch (R2).**
 - When the work is delivered, active training, inference and evaluation accept only the new
   contract. A checkpoint without a model spec is listed as history; the new system never runs it,
-  never guesses its spec and never re-registers its reports.
+  never guesses its spec and never re-registers its reports. *(2026-11-08, superseded in part by
+  K8-7b `ecc367f`: such a file is listed as a record this build cannot read ("Record not readable",
+  "written before the model spec: not readable by this build; start a new run"), with its SHA-256,
+  records and usage history, never as history; the K8 record in §8.)*
 - History stays as it is: checkpoints, reports, ledgers, registries, workspaces and fixed Git
   revisions are not overwritten or migrated. A registry or ledger that holds historical records is
   never refused as a whole; new records are grouped by explicit model, task and metric semantics.
@@ -612,29 +619,35 @@ owner's authorisation; the K7 record in §8).
 | The path-reasoning fallback ranking (`path_reasoning/v1`), with its scoring mode, the "absent" checkpoint and "unverified" graph states, PathReasoner's path-score ranking (`aggregate_path_scores`, `get_top_candidates`, `aggregation_method`), the no-model `create_diagnosis_pipeline` and the WebUI's no-trained-model state | `src/inference/pipeline.py`; `src/core/types.py`; `src/reasoning/path_reasoning.py`; the API and the Diagnosis page | Refusal when a graph has no model (owner decision): `/diagnose` and `/ready` answer 503. PathReasoner's `find_paths` and `score_paths` stay as evidence | **removed in K7** |
 | The demo answer (`demo/v1`) and the in-memory model and graph seams (`DiagnosisPipeline(model=, graph_data=)`, the `supplied_in_memory` / `in_memory` states) | `src/api/routes/diagnose.py`; `src/inference/pipeline.py`; `src/core/types.py`; the Diagnosis page | Owner decision (DEMO1): with no pipeline `/diagnose` and `/ready` answer 503 from one predicate, `/health` stays 200. A served model is always read from a checkpoint over a verified workspace | **removed in K7** |
 | Mode D (`run_mode_d`, the `run_mode_c` observer, `--mode D`, the serving hooks only it read, probe T7) | `src/evaluation/mode_d.py` (deleted); `scripts/measure_scorer.py`; `src/inference/pipeline.py`; `scripts/probe_deployment.py` | Archived (owner decision); kept reports and records stay readable; a kept D report registers by the general rules under its own mode (K7's refusal in `register_report` went in K8-6c, policy rev 15) | **removed in K7** |
-| Mode C's masked-mean raw-cosine recipe | `src/evaluation/measurement.py`; `scripts/measure_scorer.py` (`--mode` default C) | Task measurement through the same entry, with task, metric and scoring semantics (K3, K4). Shared ranking, metrics, readers, registry, report store, ledger and GPU lock are kept. Command line only; probe M3, M7, M11, T2–T4, R5 and RT2 still run it. Its registration gate goes in `register_report` with them | K8 |
-| Structural inference and old-checkpoint execution (`build_shepherd_model`, `resolve_arch_params`, `create_model_from_config`) | `src/models/gnn/shepherd_gnn.py`; `scripts/train_model.py` | The one builder and the model spec. The probe chain and the API's reload of a history file still use them (`create_model` was removed in K7) | K8 |
-| `OrthologGate`, the edge-type split, `use_ortholog_gate`, `ortholog_gate_type` | `src/models/gnn/layers.py`; `src/models/gnn/shepherd_gnn.py` | S1–S3 (§3.3). Its weights are in every ShepherdGNN checkpoint the probe trains | K8 |
-| Positional encoder | `src/models/encoders/position_encoder.py`; built in `shepherd_gnn.py` | Unfed (no caller passes `pos_encoding_dict`), but its state is in every ShepherdGNN checkpoint. Its orphaned producer was removed in K7 (the positional-encoding preprocessing row below) | K8 |
-| Ortholog consistency loss | `src/training/loss_functions.py` | No data reaches it (BACKLOG 57). The weight slider went with the ShepherdGNN form (K6) | K8 |
-| The disease objective CE + hinge + InfoNCE on raw cosine over a masked mean; `LinkPredictionLoss`; `MultiTaskLoss` uncertainty weighting | `loss_functions.py`; `src/training/trainer.py` | The disease head's NCA; the LP head's hinge; the two named loss weights | K8 |
+| Mode C's masked-mean raw-cosine recipe | `src/evaluation/measurement.py`; `scripts/measure_scorer.py` (`--mode` default C) | Task measurement through the same entry, with task, metric and scoring semantics (K3, K4). Shared ranking, metrics, readers, registry, report store, ledger and GPU lock are kept. Command line only; probe M3, M7, M11, T2–T4, R5 and RT2 still run it. Its registration gate goes in `register_report` with them | **removed in K8-6a** (`22487a6`, the command line) **and K8-6b** (`f35bb93`, the executor) |
+| Structural inference and old-checkpoint execution (`build_shepherd_model`, `resolve_arch_params`, `create_model_from_config`) | `src/models/gnn/shepherd_gnn.py`; `scripts/train_model.py` | The one builder and the model spec. The probe chain and the API's reload of a history file still use them (`create_model` was removed in K7) | **removed in K8-7** (`e35b2a3`, `create_model_from_config`) **and K8-10** (`822452b`, `build_shepherd_model`, `resolve_arch_params`) |
+| `OrthologGate`, the edge-type split, `use_ortholog_gate`, `ortholog_gate_type` | `src/models/gnn/layers.py`; `src/models/gnn/shepherd_gnn.py` | S1–S3 (§3.3). Its weights are in every ShepherdGNN checkpoint the probe trains | **removed in K8-7** (`e35b2a3`, the settings) **and K8-10** (`822452b`) |
+| Positional encoder | `src/models/encoders/position_encoder.py`; built in `shepherd_gnn.py` | Unfed (no caller passes `pos_encoding_dict`), but its state is in every ShepherdGNN checkpoint. Its orphaned producer was removed in K7 (the positional-encoding preprocessing row below) | **removed in K8-10** (`822452b`) |
+| Ortholog consistency loss | `src/training/loss_functions.py` | No data reaches it (BACKLOG 57). The weight slider went with the ShepherdGNN form (K6) | **removed in K8-7** (`e35b2a3`) |
+| The disease objective CE + hinge + InfoNCE on raw cosine over a masked mean; `LinkPredictionLoss`; `MultiTaskLoss` uncertainty weighting | `loss_functions.py`; `src/training/trainer.py` | The disease head's NCA; the LP head's hinge; the two named loss weights | **removed in K8-7** (`e35b2a3`) |
 | The decoders package: `DiagnosisHead`, `LinkPredictionHead`, `NodeClassificationHead`, `ExplanationHead` | `src/models/decoders/` (deleted) | Unwired, not paper parts: the LP head is `bundle/lp_head.py`, the task heads `models/tasks/heads.py` | **removed in K7** |
 | `PhenotypeDiseaseMatcher`, `EdgeTypeEncoder`, `FlexHeteroAttention` (with its ontology and species score mods), ShepherdGNN's layer-output capture | `shepherd_gnn.py`; `src/models/encoders/type_encoder.py`; `src/models/attention/flex_attention.py` (deleted) | Unwired: the paper's patient encoder and heads; GATv2Encoder's relation embedding; PyG attention and S1–S3. `AdaptiveAttentionBackend` and `HeteroGNNLayer` stay | **removed in K7** |
 | The positional-encoding preprocessing and its stub (`src/kg/preprocessing.py`, `scripts/preprocess_data.py`, `KnowledgeGraph.metadata` and `to_pyg_hetero_data`) | `src/kg/` (deleted); `scripts/` (deleted) | Orphaned: the encoder it fed is unfed, and relation metadata comes from the graph view | **removed in K7** |
-| The ShepherdGNN data-loader stack (`SubgraphSampler`, `NegativeSampler`, `DiagnosisDataset`, `DiagnosisDataLoader`, `create_diagnosis_dataloader`) | `src/kg/data_loader.py` | The stage samplers and task binders. `DiagnosisSample` stays (the samples reader and R10 use it). One consumer, the stage-less `train()`, which the probe still runs | K8 |
-| The unwired metric classes beside `RankingMetrics` and the `compute_*` helpers; the core `ModelConfig`, `TrainingConfig`, `DataConfig` | `src/utils/metrics.py`; `src/core/types.py` | Bundle metrics; the spec, the recipe and `TrainConfig`. `RankingMetrics` stays for the ShepherdGNN validation and Mode C until K8 | **removed in K7** |
-| Separate pooling and scoring copies (Trainer, measurement, pipeline) | `trainer.py`; `src/evaluation/measurement.py`; `src/inference/scoring.py` | The bundle's shared math | K8 |
+| The ShepherdGNN data-loader stack (`SubgraphSampler`, `NegativeSampler`, `DiagnosisDataset`, `DiagnosisDataLoader`, `create_diagnosis_dataloader`) | `src/kg/data_loader.py` | The stage samplers and task binders. `DiagnosisSample` stays (the samples reader and R10 use it). One consumer, the stage-less `train()`, which the probe still runs | **removed in K8-7** (`e35b2a3`); `DiagnosisSample` stays |
+| The unwired metric classes beside `RankingMetrics` and the `compute_*` helpers; the core `ModelConfig`, `TrainingConfig`, `DataConfig` | `src/utils/metrics.py`; `src/core/types.py` | Bundle metrics; the spec, the recipe and `TrainConfig`. `RankingMetrics` stays for the ShepherdGNN validation and Mode C until K8 | **removed in K7**; `RankingMetrics` **in K8-8** (`9d76bbe`) |
+| Separate pooling and scoring copies (Trainer, measurement, pipeline) | `trainer.py`; `src/evaluation/measurement.py`; `src/inference/scoring.py` | The bundle's shared math | **removed**: measurement's in K8-6b (`f35bb93`), the Trainer's in K8-7 (`e35b2a3`), `src/inference/scoring.py` in K8-11 (`9d76bbe`) |
 | The hop-capped SP file: producer, sidecar binding, index and reader (`compute_shortest_paths`, `sp_artifact`, `sp_index`, `_load_shortest_paths`, `sp_analysis_records`), with their oracle and tests | `scripts/compute_shortest_paths.py`; `src/inference/sp_artifact.py`; `src/inference/sp_index.py`; `src/inference/pipeline.py`; `scripts/sp_scan_reference.py` | Exact distances computed in process from the view (§6, as built at K4); they serve only the mixture and the probe (R1's pre-check, M4, R6) and leave with it. Its benchmark `scripts/benchmark_sp_lookup.py` was removed in K7. Documents no longer teach the table as a build step (K7); one transition note says what the probe needs until then. **Done at K8-5**: the reader and `sp_analysis_records` were removed in K8-4; the producer, sidecar binding, index, oracle and their tests in K8-5 | K8-4, K8-5 |
-| `read_samples`' `training_fields` and the generator's disease genes in `gene_ids` | `src/kg/storage/file_storage.py`; `src/kg/sample_generator.py` | Their one reader is ShepherdGNN's `DiagnosisDataset`. `gene_ids` now means a gene-task candidate list, read with `gene_fields` | K8 |
+| `read_samples`' `training_fields` | `src/kg/storage/file_storage.py` | Its one reader was ShepherdGNN's `DiagnosisDataset`. Training reads the three default fields; the gene and patients-like-me task data read candidate genes through `gene_fields`, with their type and source checks | **removed in K8-7** (`e35b2a3`) |
+| The ordinary generator's disease genes in `gene_ids` (K8-9 / TM27) | `src/kg/sample_generator.py` | **Not changed; deferred out of K8.** The generator keeps writing `gene_ids`, which the training read path no longer uses; the gene and patients-like-me task data still read candidate genes through `gene_fields`, with their type and source checks. A later change of the generator's output raises `GENERATION_ALGORITHM_VERSION` and never refuses an old workspace (`../BACKLOG.md` 67) | deferred |
 
 **Kept:** PathReasoner evidence (`find_paths`, `score_paths`); the KG builder's cross-species
 option; build_index (retrieval stays for planned natural-language work), which since K7 reads
 exported embeddings only (`--embeddings`) and builds no model; the heterogeneous GAT/HGT/SAGE
-encoders behind the contract; every historical artifact.
+encoders behind the contract; every historical artifact. *(2026-11-08: the ShepherdGNN encoders
+package went in K8-10, `822452b`; the GAT, HGT and SAGE layers are kept as `HeteroGNNLayer`
+(`src/models/gnn/layers.py`) and come behind the `GraphEncoder` contract in the
+multi-architecture milestone, not yet built.)*
 
 **Listed at K6 for K7, as K7 closed them** (checkpoint check 6). Each part stayed because a file
 without a model spec (history) could still be served or trained outside the WebUI, or an old report
 had to stay readable (item 8: read, never run); each is deleted, not adapted, when its reason goes.
+*(2026-11-08: every "Until K8" below is closed or deferred as the K8 record in §8 says; the
+bullets stay as K7 left them.)*
 - **ShepherdGNN starts outside the WebUI.** K7: `POST /training/start` is a strict base start
   (`learning_stage` must be `base`; ShepherdGNN and unknown fields refused; owner decision 2).
   Until K8: `scripts/train_model.py`'s ShepherdGNN path (`SHEPHERD_ONLY_FIELDS`),
@@ -864,7 +877,11 @@ inherited (§4).
 - `lint-imports`: 6 contracts kept, none broken.
 - Carried to K8: the commit that removes inherited `TrainConfig` fields must raise
   `TRAINING_RULES_VERSION` in the same commit, with a test that the older version is refused and
-  the new one resumes. Writing `training_rules` into an old file by hand is not a fix.
+  the new one resumes. Writing `training_rules` into an old file by hand is not a fix. *(Closed by
+  Q19 (a), the owner's K8 decision, in K8-7 `e35b2a3` (2026-11-08): the removed fields were never
+  read by a bundle run, so the rules stay 1, with no bump; the 25 learning settings of rules 1 are
+  pinned per released version, a rules-1 parent still resumes, extends and branches, none of the
+  removed settings is inherited, and a parent missing a current setting is still refused.)*
 - Not run by the reviewer: the full suite, GPU, the GB10 or a browser.
 
 **The reviewer's K7 deletion-list audit (2026-10-29).** The split of the 127-row list holds (43
@@ -980,6 +997,50 @@ children or narrow layouts; the deployment
 guides' prose beyond the checks that read documents (`tests/unit/test_entry_documents.py`,
 `tests/unit/test_docs_index.py` and the guide checks in the settings, SP-binding and Datasets
 tests).
+
+**K8 record (closeout, 2026-11-08): completed per the converged scope; TM27 not changed.** The
+scope is the reviewer's closeout assessment at `af3a8a9`, which the owner adopted (2026-11-08),
+and the owner's authorisation of the 19 whole-file deletions with defaults D1–D4 and the request
+review's R1 and R2 (2026-11-09). K8-1 to K8-6 landed before it (up to `af3a8a9`); the closeout,
+one integration branch from `af3a8a9`, in commits split by reason:
+- **C0 `64387f2`** (K8-13): a test run cancelled while its interpreter still starts is recorded
+  cancelled, not failed (SIGINT held at the start until `measure_scorer` takes it); the M5 stop
+  race fixed at its root, with a regression.
+- **C1a `1ebf556`, C1b `e35b2a3`, C1c `5ca24cd`** (K8-7): the moves and D1's added tests first
+  (AP, V1, H, I, GD4, RPN); then the one training entry, `train(config, explicit)`, with the
+  operator's explicit settings and a required learning stage; the ShepherdGNN loader, loss,
+  settings (`num_workers` among them) and record version 1 retire with rows 20–26; the
+  `scorer-independence` contract goes (D2 (b); four contracts remain); probe A5's DataLoader socket
+  fact retires (D3 (a)); the Trainer's monitor follows its task's selection metric (no `val_mrr`
+  default). Training rules stay 1 (Q19 (a)).
+- **C2a `b16ea5b`, C2b `822452b`, C2c `9d76bbe`, C2 review `734f1eb`** (K8-10, K8-8, K8-11): the
+  ShepherdGNN wrapper, its encoders, `OrthologGate` and the weight-name architecture readers retire
+  with rows 29–36, `RankingMetrics` with rows 27–28, `src/inference/scoring.py` with rows 10–11;
+  `HeteroGNNLayer` and its order and gradient tests stay; row 37's shared fixture parts stay.
+- **C3 `ecc367f`, its fix `c769df7`** (K8-7b): every directory under `runs/` is listed and a file
+  is what its own record says; a file without a model spec is "Record not readable", with the one
+  phrase "written before the model spec: not readable by this build; start a new run"; the
+  history kind, filter and charts and the old selection keys retire; the shared `val_loss`
+  reading and the Loss chart stay (R1); every `train_model.py` refusal before its run directory
+  is claimed is one line.
+- **C4** (K8-12): the documents C0–C3 made false, policy rev 17 (a statement of fact), these
+  records and `../BACKLOG.md` 65–69.
+
+The 19 whole files deleted are exactly the authorised ones (rows 10, 11, 20–36); row 37
+(`tests/fixtures/synthetic_workspace.py`) is kept. No user model, data, ledger or report was
+changed; old files under `runs/gat` stay listed with their SHA-256, records and usage history.
+**Not changed, deferred out of K8:** K8-9 / TM27, the ordinary generator's `gene_ids` (§7: the
+training read path no longer uses them, while gene and patients-like-me task data still read
+candidate genes through `gene_fields` with their checks; a later output change raises
+`GENERATION_ALGORITHM_VERSION` and never refuses old workspaces); the multi-architecture port
+(HGT, hetero GAT and SAGE behind `GraphEncoder`); N1 (the base's formal KG test), joint
+multi-head training, N2, N3, the patients-like-me reference set and R10's exposure scope; M1's
+served resource and latency measurement (pending re-attachment, `../BACKLOG.md` 64); the D1 offers
+left as gaps (`../BACKLOG.md` 65); a run or file name that is not valid text, which still fails
+both checkpoint lists as before K8 (`../BACKLOG.md` 66); cosmetics (`../BACKLOG.md` 68, 69). **Still to come:** the one
+full suite on the integrated tree, one external review of `af3a8a9` to the head, and the GB10
+acceptance on the reviewed head, whose results are added here when they exist; this record claims
+no hardware acceptance.
 
 **BACKLOG items in scope, bounded:** 23 (branch's closed list and lineage), 54 (shared validation and
 unknown-field refusal for the training API, CLI and UI touched here, without the unsupported HGT/AMP

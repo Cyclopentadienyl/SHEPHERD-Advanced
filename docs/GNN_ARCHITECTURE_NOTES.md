@@ -13,6 +13,13 @@
 
 ## Current Architecture
 
+> **Note (2026-11-08): no longer current.** The ShepherdGNN path that offered the three conv types
+> below, its `--conv-type` flag and its "production default" GAT were removed in K8 (its training
+> path in K8-7, the wrapper and its encoders in K8-10). A model bundle's encoder is its model spec's
+> (the reference GATv2, `src/models/bundle/encoders.py`). `HeteroGNNLayer`
+> (`src/models/gnn/layers.py`) keeps the GAT, HGT and SAGE layers for the multi-architecture port,
+> not yet behind the `GraphEncoder` contract. The table stays as the survey it was.
+
 SHEPHERD-Advanced supports three GNN conv types via PyG's `HeteroConv` wrapper:
 
 | Conv Type | PyG Class | AMP | Heterogeneous | VRAM (batch=128, 52K KG) | Status |

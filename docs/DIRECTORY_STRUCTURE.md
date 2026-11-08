@@ -39,8 +39,9 @@ data/workspaces/{name}/
 ├── node_features.pt         # Node feature vectors (GNN input)
 ├── edge_indices.pt          # Edge connectivity (with reverse edges)
 ├── num_nodes.json           # Node counts per type
-├── runs/                    # Training runs on THIS KG, one folder per run (M3a-2)
-│   └── {conv_type}/
+├── runs/                    # Training runs on THIS KG, one folder per run (M3a-2);
+│   │                        # the lists read every folder here, whatever its name
+│   └── {encoder kind}/      # where a new run is filed: its model spec's encoder (gatv2)
 │       └── {date-time}_{run name}_{run id}/
 │           ├── config.yaml          # the settings in effect
 │           ├── runtime.json         # the allocator
@@ -62,7 +63,7 @@ new folder and records its parent by SHA-256.
    kg.export_graph_data()   → node_features.pt, edge_indices.pt, num_nodes.json
 
 2. Training (may run many times with different hyperparameters):
-   train_model.py reads from workspace root, writes to its own runs/{conv}/{run}/
+   train_model.py reads from workspace root, writes to its own runs/{encoder kind}/{run}/
 
 3. Inference (ongoing):
    Pipeline loads kg.json + graph data + chosen checkpoint
@@ -77,7 +78,7 @@ new folder and records its parent by SHA-256.
 | `node_features.pt` | Data prep (once) | No | GNN input features |
 | `edge_indices.pt` | Data prep (once) | No | Graph connectivity |
 | `num_nodes.json` | Data prep (once) | No | Node count statistics |
-| `runs/{conv}/{run}/checkpoints/*.pt` | Every training epoch | **Yes** (new runs) | Learned GNN weights |
+| `runs/{encoder kind}/{run}/checkpoints/*.pt` | Every training epoch | **Yes** (new runs) | Learned GNN weights |
 
 The first 4 files are **static** — shared by all training runs within the
 workspace. Only run folders accumulate over time.
@@ -171,9 +172,10 @@ and checkpoints within that workspace.
 ### In Training Console
 
 The **Data Directory** field points to a workspace. Each run gets a new folder
-under `{workspace}/runs/{conv_type}/`, named after the optional **Run name**;
+under `{workspace}/runs/{encoder kind}/`, named after the optional **Run name**;
 Status shows it once training starts. **Continue Training** lists the
-architecture's runs, or takes a typed checkpoint path, through one check.
+workspace's runs, from every folder under `runs/` (since K8-7b, 2026-11-08), or
+takes a typed checkpoint path, through one check.
 
 ---
 

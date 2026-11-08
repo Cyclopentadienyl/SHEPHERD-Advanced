@@ -181,6 +181,9 @@ against the served primitives `masked_mean_pool` and `cosine_score_matrix`
 only while the two are separately written, so `.import-linter.ini` keeps
 `src.training` below `src.inference` (layers) and forbids
 `src.inference.scoring` from importing `src.training` (`scorer-independence`).
+*(2026-11-08, superseded: the Trainer value test, the Trainer's own validation ranking and the
+`scorer-independence` contract retired in K8-7 (`e35b2a3`), and `src/inference/scoring.py` in
+K8-11 (`9d76bbe`); policy rev 17.)*
 
 **Do not pre-empt any of this with machinery** — no manifest subclass hierarchy,
 no schema framework, no discriminated union over mode, no artifact registry or

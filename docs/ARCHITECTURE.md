@@ -21,7 +21,13 @@
 > **K8-4 (2026-11-03):** the served mixture is removed and serving refuses a checkpoint without a
 > model spec at load, before any model is built; Mode C, which still ran such a file, left the
 > command line in K8-6a and its executor went in K8-6b. §8 describes what is served now.
-> The §1 "Running" block and the rows marked K7 or K8-4 below say what runs on the branch; the rest
+> **K8 closeout (2026-11-08):** the ShepherdGNN training path is removed (K8-7: its loader, its
+> `MultiTaskLoss`, its settings, `num_workers` and checkpoint record version 1), with the
+> ShepherdGNN wrapper, its encoders and `OrthologGate` (K8-10), `RankingMetrics` (K8-8) and
+> `src/inference/scoring.py` (K8-11). Every run names its learning stage; a checkpoint without a
+> model spec is listed as a record this build cannot read, with the reason "written before the
+> model spec: not readable by this build; start a new run", never as history (K8-7b).
+> The §1 "Running" block and the rows marked K7, K8-4 or K8 below say what runs on the branch; the rest
 > of this file still describes `416a242` where it says so.
 
 ---
@@ -45,8 +51,10 @@ reference cohort's patients. Evidence paths explain disease rows after ranking; 
 is on every result; with no model loaded nothing is served (503). The research tools around it:
 workspaces, base training and Fine-tune, test cohorts, measurement by a protocol this build
 implements for the model's learning stage and task head, registration. A checkpoint without a
-model spec (a ShepherdGNN history file) is listed as history, refused at load by serving (since
-K8-4) and refused by measurement (since K8-6a, when Mode C left the command line).
+model spec (a ShepherdGNN history file) is listed as a record this build cannot read (since K8-7b;
+"history" before), refused at load by serving (since K8-4), refused by measurement (since K8-6a,
+when Mode C left the command line), and never trained from (K8-7 removed the path that wrote
+such files).
 **Running at `416a242`** (the last `main` this file was synced to): disease ranking by the interim
 served mixture (§8, retired on the branch in K8-4), with the research tools above except the task
 models.
@@ -56,8 +64,9 @@ PyTorch, `torch_geometric` (PyG's core) and the rest of the locked set in `pypro
 `uv.lock`; PyG's native extensions per platform (§9, BACKLOG 50).
 **Graph layers**: a model bundle's encoder is its model spec's (the reference is the paper's
 homogeneous GATv2 over a learned node table, `working/scorer-retraining/README.md` §2–§3). The
-ShepherdGNN path's GAT, HGT and SAGE (`--conv-type`) remain only on its training path, which
-writes history files, until K8 (Mode C's measurement of those files retired in K8-6b).
+ShepherdGNN path's GAT, HGT and SAGE (`--conv-type`) left with its training path in K8-7 and its
+wrapper in K8-10 (2026-11-08); `HeteroGNNLayer` (`src/models/gnn/layers.py`) is kept for the
+multi-architecture port and is not yet behind the `GraphEncoder` contract.
 **Extension (not implemented)**: fuzzy input, free text to HPO/MONDO (`src/nlp/`).
 
 ---
@@ -220,7 +229,15 @@ inside the model and merged only at scoring time:
 
 ## 5. Training
 
-**What runs: one joint multi-task run.** `scripts/train_model.py` (also started by the job runner)
+**On the integration branch since K8-7 (2026-11-08)** the joint run this section describes is
+removed: `MultiTaskLoss` and `src/training/loss_functions.py` went with the ShepherdGNN training
+path and its loader. Every run names its learning stage: a base trained by KG link prediction
+(`src/training/lp_task.py`) or a task model finetuned from a base (`src/training/finetune_task.py`),
+each with its task's own sampler, loss and validation. The Trainer selects by the task's selection
+metric (a base's `val_lp_accuracy`, a task model's `val_pooled_mrr`) unless a monitor is stated;
+there is no top-20 measure. Validation stays the Trainer's own on the val split, never a test.
+
+**What runs at `416a242`: one joint multi-task run.** `scripts/train_model.py` (also started by the job runner)
 trains on a generated workspace's simulated patients with one loss, `MultiTaskLoss`
 (`src/training/loss_functions.py`, wired by `src/training/trainer.py`). Its default weights are
 diagnosis 1.0, contrastive 0.3, link prediction 0.5 and ortholog consistency 0.2, but only the
@@ -269,12 +286,13 @@ Layer 1 (Config):      src/config/        server settings, allocator presets, se
                                           training field spec, model-type constants
 Layer 2 (Data):        src/ontology/      HPO/MONDO/GO via pronto
                        src/data_sources/  ortholog, pubmed (Phase 2)
-Layer 3 (Knowledge):   src/kg/            graph, builder, data_loader
+Layer 3 (Knowledge):   src/kg/            graph, builder, data_loader (`DiagnosisSample` only since K8-7)
                        src/nlp/           fuzzy input (NOT YET IMPLEMENTED)
-Layer 4 (Models):      src/models/        bundle (spec, builder), task heads, encoders, GNN, attention
+Layer 4 (Models):      src/models/        bundle (spec, builder, encoders), task heads and scorer,
+                                          GNN layers (kept for the port), attention
                        src/retrieval/     vector index (cuVS/Voyager)
 Layer 5 (Reasoning):   src/reasoning/     path_reasoning (auxiliary), explanation
-Layer 6 (Training):    src/training/      trainer, loss_functions
+Layer 6 (Training):    src/training/      trainer, the stages' task modules (lp_task, finetune_task)
 Layer 7 (Inference):   src/inference/      pipeline (GNN-primary scoring)
 Layer 7b (Evaluation): src/evaluation/    measurement by protocol, test cohort registry, R10, evaluation ledger
 Layer 8 (Interface):   src/api/           FastAPI REST endpoints; src/api/services: job runner,
@@ -295,11 +313,11 @@ Layer 8 (Interface):   src/api/           FastAPI REST endpoints; src/api/servic
 
 | Component | File | Key Responsibility |
 |-----------|------|-------------------|
-| GNN Model | `src/models/gnn/shepherd_gnn.py` | Heterogeneous message passing, node embedding generation |
-| GNN Layers | `src/models/gnn/layers.py` | HeteroGNNLayer + OrthologGate |
+| Model bundle | `src/models/bundle/` (`spec.py`, `builder.py`, `encoders.py`) | The model spec, the one builder, the input module and the `GraphEncoder` contract with its reference `GATv2Encoder` (the ShepherdGNN wrapper, `src/models/gnn/shepherd_gnn.py`, was removed in K8-10) |
+| GNN Layers | `src/models/gnn/layers.py` | `HeteroGNNLayer`, kept for the multi-architecture port and not yet behind the `GraphEncoder` contract (`OrthologGate` was removed in K8-10) |
 | Task heads | `src/models/tasks/heads.py` | The patient encoder and the disease, gene and patients-like-me heads of a model bundle (the unwired `src/models/decoders/` heads were deleted in K7) |
-| Loss Functions | `src/training/loss_functions.py` | Multi-task loss (diagnosis, link pred, contrastive, ortholog) |
-| Trainer | `src/training/trainer.py` | Training loop with mixed precision |
+| Stage tasks | `src/training/lp_task.py`, `src/training/finetune_task.py` | Each stage's sampler, loss and validation (the multi-task loss, `src/training/loss_functions.py`, was removed in K8-7) |
+| Trainer | `src/training/trainer.py` | Training loop with mixed precision, driven by its stage's task |
 | Inference Pipeline | `src/inference/pipeline.py` | The served Diagnosis: the task model's ranking (§8), evidence and explanations |
 | PathReasoner | `src/reasoning/path_reasoning.py` | BFS path enumeration (`find_paths`, `score_paths`): the evidence for a disease row (the mixture's candidate discovery went with it in K8-4, §2.3). Its path-score ranking (`aggregate_path_scores`, `get_top_candidates`) was removed in K7 |
 | Knowledge Graph | `src/kg/graph.py` | KG data structure with PyG export |
@@ -487,7 +505,7 @@ and integration tests sit beside each module.
 | **Demo workspace**, optionally with a small trained model: since K7 `--train-model` trains a base and one disease child through the production trainer | `scripts/setup_demo.py` | the same writer; `train_model.train`; the GPU lock | none | CLI only | probe B1 at `b14c4de` writes the demo graph (`build_demo_kg`) through the shared writer; `setup_demo.py` itself and its `--train-model` lock have no GB10 record | none |
 | **Workspace list, dataset and build records, Datasets page** (read-only, compare, "Use for training") | `GET /api/v1/workspaces`; `server_lists` | `src/api/services/server_lists.py`, `src/kg/artifacts.py`, `src/webui/components/workspaces.py` | Datasets; the Training run bar; Test's workspace | Connected | W1, RW1 at `b14c4de` | the open route returns problem texts with absolute paths (BACKLOG 53) |
 | **Inventory before deployment** (M2.6) and dataset audits | `scripts/audit_checkpoint_family.py --inventory`, `scripts/audit_*.py` | the readers they audit | none | CLI only | M2's acceptance | two audits record a digest from a second read of what they parsed (BACKLOG 19.9; 19.12, optional) |
-| **Start a training run** | `scripts/train_model.py`; `POST /api/v1/training/start` (D8; a strict base start since K7); the job runner | `src/training/trainer.py`, `src/utils/checkpoint_paths.py` (the run directory), `src/api/services/training_manager.py` | Training run bar, Start | Connected | W11, RW3 at `b14c4de`; manual Start at `b14c4de` | the API takes raw paths (BACKLOG 54; unknown keys are refused since K5); two of the four loss terms never run, so their weights change nothing (BACKLOG 57) |
+| **Start a training run** | `scripts/train_model.py`; `POST /api/v1/training/start` (D8; a strict base start since K7); the job runner | `src/training/trainer.py`, `src/utils/checkpoint_paths.py` (the run directory), `src/api/services/training_manager.py` | Training run bar, Start | Connected | W11, RW3 at `b14c4de`; manual Start at `b14c4de` | the API takes raw paths (BACKLOG 54; unknown keys are refused since K5); the two loss terms that never ran (BACKLOG 57) went with `MultiTaskLoss` in K8-7 (2026-11-08) |
 | **Resume and extend** (inherited settings; extend at a fixed rate). Not branch | CLI flags; the API's `resume_from`; the job runner | `src/utils/run_plan.py`, the trainer, `checkpoint_paths.py` | Continue… drawer: Run → Checkpoint, Check, preview | Connected | M2, M9, M10, R3, R4 at `b14c4de` (the CLI path); Continue preview by hand at `f9202b6`; no GB10 record of a resume started from the drawer (unit tests cover it) | the API takes `resume_from` as a raw path (BACKLOG 54) and, since K5, refuses `extend_lr` (422) instead of dropping it; the drawer sends no `extend_lr` either, so a parent whose rate ended at 0 is extended from the CLI only. A model bundle run is resumed through the runner with its stage and task from its own record (K5) |
 | **Pause after epoch N** | `train_model.py --pause-after-epoch` | the trainer | none, by decision | CLI only | probe M2 | the API refuses the field (422) since K5, instead of dropping it (BACKLOG 54) |
 | **Stop training** | `POST /api/v1/training/stop` (D8); the runner | `training_manager.py` | Stop, with its question | Connected | W11, RW3; by hand at `b14c4de` | none |
@@ -616,14 +634,18 @@ it replaces an old entry**.
 - **One disease scorer** (Batch 2 design, §11.1). The paper-aligned disease model scores a patient
   through one function in validation, measurement and serving (`patient_vectors` and the task
   head's scores, `src/models/tasks/scoring.py`); Mode C's raw-cosine ranking (`canonical_ranking`)
-  retired in K8-6b. There is no copy and no test-only scorer. The trainer's validation scorer stays
-  separately written, on purpose (the `scorer-independence` contract).
+  retired in K8-6b. There is no copy and no test-only scorer. *(2026-11-08, superseded: "The
+  trainer's validation scorer stays separately written, on purpose (the `scorer-independence`
+  contract)" no longer holds. That scorer retired with the ShepherdGNN training path in K8-7, with
+  the contract and the test it protected; a finetuned task's validation scores through the same
+  `src/models/tasks/scoring.py`, and the oracle tests are hand-computed.)*
 - **The served ranking was measured through serving's own method.** Mode D called
   `DiagnosisPipeline.rank()`, which `run()` itself calls (removed in K7 with Mode D). There was no
   second candidate construction, and Modes A and B are not revived.
 - **Evidence never touches the ranking.** It takes an immutable result and returns records.
-  `src.inference.scoring` never imports `src.reasoning` (the `ranking-without-evidence` contract,
-  batch 5).
+  The task scorers (`src.models.tasks`) never import `src.reasoning`: the layers contract keeps
+  `src.models` below it. *(2026-11-08: `src.inference.scoring`, which this rule named, was removed
+  in K8-11.)*
 - **A value that could not be computed is a status, never a number**, in every result kind, export
   and measurement.
 - **Dependency versions**: the formal deployment installs the currently verified set, its versions kept

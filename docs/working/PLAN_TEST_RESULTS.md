@@ -498,7 +498,9 @@ pool, the cosine, the candidate universe and the tie rule. Today only the cosine
 This is recorded as a **constraint on B-1**. It is not built here. **Designed (Batch 2,
 2026-10-26):** `results-review/SPEC_1_RESULTS_REVIEW.md` §2.2 puts the shared boundary in
 `src/inference/scoring.py` (one composed `score_patients`, `canonical_ranking` moved there, the
-clamp replaced by a refusal) and settles the second behaviour: an unknown phenotype is dropped and
+clamp replaced by a refusal; *2026-11-08: that module was removed in K8-11, and the one task scorer
+is `src/models/tasks/scoring.py`, policy rev 17*) and settles the second behaviour: an unknown
+phenotype is dropped and
 always stated, never scored around silently, and a graph node with no tensor row is refused. The
 statement above that the drop is "silent" was already only half true at `60feb6d`: a phenotype the
 graph lacks is dropped with a warning and listed in the result's phenotype account; a graph node
@@ -1699,7 +1701,9 @@ contract and BACKLOG stay the record, and no new planning document is added.
   its forked DataLoader workers holding the lock until they notice (torch's 5 s watchdog plus
   the sample in progress, longer if one hangs); `kill -INT <pid>` releases it at once, even sent
   to the main process alone, and `kill -TERM -- -<pid>` ends the whole group when the CLI leads
-  one; `measure_scorer.py` forks no workers (a worker's PR_SET_PDEATHSIG, the critic's optional
+  one *(2026-11-08, superseded by K8-7: a training CLI forks no DataLoader workers any more, so
+  ending its main process releases the lock; deployment guide §4.11)*; `measure_scorer.py` forks
+  no workers (a worker's PR_SET_PDEATHSIG, the critic's optional
   measure, is not added). **Stopping the backend stops its jobs** (the owner's decision,
   2026-10-22): the backend stops the runner's active job (`TrainingManager.end_active_job`,
   bounded by the stop's escalation) from the shutdown signal on: `src/api/main.py` wraps the

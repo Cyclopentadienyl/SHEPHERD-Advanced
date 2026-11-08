@@ -15,7 +15,9 @@
 *Model architecture (corrected at K7, 2026-10-29):* the model spec has been the architecture's
 authority since K1: every model bundle is rebuilt from the spec its checkpoint records, through
 the one builder. `ShepherdGNNConfig` (`src/models/gnn/shepherd_gnn.py`) describes only the
-ShepherdGNN path, which stays for history files until K8.
+ShepherdGNN path, which stays for history files until K8. *(K8, 2026-11-08: that path is gone.
+Its settings left `TrainConfig` in K8-7, and `ShepherdGNNConfig` with
+`src/models/gnn/shepherd_gnn.py` in K8-10; the model spec is the architecture's only authority.)*
 
 - **No central `HyperparameterManager`.** `src/config/hyperparameters.py` is **removed**: it
   was never on the live runtime path (only re-exported from `config/__init__.py` and exercised

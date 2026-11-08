@@ -1384,10 +1384,12 @@ mixture 的欄位（`sp_ready`、`eta_configured`、`sp_max_hops`、`sp_hop_boun
 
 **沒有 model spec 的 checkpoint（ShepherdGNN 歷史檔）在載入時就被拒絕**（自 K8-4 起）：啟動時，
 以及帶或不帶任務的 reload，都在建出任何模型之前拒絕，原因為 "written before the model spec:
-listed as history and never run by this build; start a new run"。provenance contract 之前的
-檔案連訓練輸入也沒有紀錄，會先因此被拒絕（"records no training_input_digests"）。被拒絕的
-啟動不發布任何東西（503，見上）；被拒絕的 reload 讓使用中的模型繼續服務。這些檔案仍留在磁碟上、
-以歷史檔列出；過去服務它們的 mixture 已移除。
+not readable by this build; start a new run"（自 K8-7b，2026-11-08 起，拒絕這類檔案時一律用這一句）。
+provenance contract 之前的檔案連訓練輸入也沒有紀錄，會先因此被拒絕（"records no
+training_input_digests"）。被拒絕的啟動不發布任何東西（503，見上）；被拒絕的 reload 讓使用中的
+模型繼續服務。這些檔案仍留在磁碟上，連同其 SHA-256、紀錄與使用紀錄一起列出，作為本版無法讀取的紀錄
+（「Record not readable」，附上那一句；自 K8-7b 起不再是「History · never run」）；過去服務它們的
+mixture 已移除。
 
 **紀錄以兩種方式指稱同一份輸入的 checkpoint 也同樣被拒絕**（自 K8-4r 起），例如
 `data_roles.kg` 與其 `training_input_digests.kg` 不同："the record contradicts itself:
@@ -1681,8 +1683,10 @@ finetune 模型的每個 task head 各一種。報告的 mode 就是協定的名
 立即檢查，早於 workspace 與 checkpoint；checkpoint 的模型紀錄必須是協定所接受的 stage 與 task
 head，在讀入 checkpoint 後立即檢查。base 會以「This model is a base: its formal test (link
 prediction on held-out knowledge-graph edges) is not implemented yet. A model finetuned from it
-can be measured.」被拒絕，沒有 model spec 的 checkpoint（ShepherdGNN 歷史檔）則作為歷史檔被
-拒絕。Test 頁傳入操作者選擇的協定（§4.14）。自 K8-6a 起沒有任何命令執行 Mode C，即任務出現
+can be measured.」被拒絕，沒有 model spec 的 checkpoint（ShepherdGNN 歷史檔）則以紀錄讀取器的
+那一句 "written before the model spec: not readable by this build; start a new run" 被拒絕（自
+K8-7b，2026-11-08 起；過去是「作為歷史檔」被拒絕）。Test 頁傳入操作者選擇的協定（§4.14）。
+自 K8-6a 起沒有任何命令執行 Mode C，即任務出現
 之前模型自己的疾病排名：沒有 `--mode` 的執行會被參數解析器拒絕（結束碼 2），`--mode C` 也
 一樣，因為它不是協定。已保存的 Mode C 報告與紀錄由共用的讀取器讀取（policy rev 15）。
 
@@ -2191,6 +2195,15 @@ measure_scorer: refused: the GPU lock /srv/shepherd/workspaces/.shepherd-gpu.loc
 先檢查鎖，並以同樣的占用者拒絕這次啟動（"Nothing was started."）；工作自己的行程隨後再自行
 取鎖。
 
+**`train_model.py` 的每一個拒絕都只有一行**（自 K8-7b，2026-11-08 起）：它在佔用自己的 run 目錄
+之前拒絕的任何事，都以 `train_model: refused: <原因> Nothing was written.` 說明，結束碼 1，不附
+traceback（traceback 只在 `--debug` 下記錄）。其中包括：沒有 `--stage` 的執行（每次執行都要指明
+stage，續接的執行也一樣：`--resume <checkpoint>` 加上它所續接之執行的 `--stage`）、已有檔案的
+run 目錄，以及寫了本版沒有之設定的 `--config` 檔（"The configuration … names settings this
+version does not have: num_workers."；自 K8-7 起，`num_workers` 與舊的模型設定如 `conv_type`、
+`hidden_dim` 都屬此類，`--conv-type`、`--hidden-dim` 與 `--num-layers` 也已移除）。佔用 run 目錄
+之後發生的錯誤則是一次失敗的執行，以 "Training failed:" 連同 traceback 記錄。
+
 **請在服務與執行 CLI 的 shell 中設定同一個根目錄**（例如你在 systemd unit 中設定的
 `Environment=` 行（§4.12；unit 的範本為根目錄與 registry 各留有一行註解掉的設定）——unit 本身不讀取
 任何環境檔——或一個同時由 unit 的 `EnvironmentFile=` 與你的 shell 讀取的檔案）。看不到根目錄的
@@ -2224,19 +2237,18 @@ registry 中運作，它未設定時一律拒絕（§4.9）。`EnvironmentFile=`
 - **它是合作式的。** 不取鎖的 GPU 程式不會被它擋住。推論服務不取這把鎖，可能占用 GPU 記憶體；
   拿不到記憶體的測試執行會以執行失敗回報，不登錄任何東西。
 - **繼承的檔案描述子。** 工作啟動的程式不會保有這把鎖（描述子設為 close-on-exec）。工作以 fork
-  產生、卻沒有啟動新程式的行程——例如 `fork` 啟動方式下的 DataLoader worker——與工作共用這把鎖：
+  產生、卻沒有啟動新程式的行程——例如 `fork` 啟動方式下的 worker pool——與工作共用這把鎖：
   工作正常結束時，鎖也會一併對該行程釋放；但工作被強制結束（或未釋放就結束）時，該行程會保有
   鎖直到它自己結束；這時拒絕訊息會說明所記錄的持有者已經結束。**服務啟動的工作各自是自己行程群組
   的 leader**（自 8242b47 的審查起），停止與 job runner 會結束整個群組，包括這些行程（見下）。
-  訓練 CLI（`train_model.py`、`setup_demo.py --train-model`）若只有主行程被結束——`kill <pid>`
-  或 `kill -9 <pid>`——它 fork 出的 DataLoader worker 會保有鎖，直到它們察覺為止（torch 的 5 秒
-  watchdog 加上正在處理的樣本，若有 worker 卡住則更久）；`kill -INT <pid>`（Ctrl-C 的訊號，也是
-  runner 自己的正常停止步驟）即使只送給主行程也會立即釋放鎖，而當 CLI 是自己群組的 leader 時
-  （在互動式 shell 中啟動的 CLI 透過 job control 就是），`kill -TERM -- -<pid>` 會結束整個群組。
-  `measure_scorer.py` 不會 fork 任何 worker。
+  訓練 CLI（`train_model.py`、`setup_demo.py --train-model`）不會 fork 任何 worker（自 K8-7，
+  2026-11-08 起：它的各階段 sampler 在主行程中取出 batch，過去 fork 出的 DataLoader worker 已隨
+  ShepherdGNN 的 loader 一併移除），所以不論以哪個訊號結束它的主行程，都會釋放鎖；當 CLI 是自己
+  群組的 leader 時（在互動式 shell 中啟動的 CLI 透過 job control 就是），`kill -TERM -- -<pid>`
+  會結束整個群組。`measure_scorer.py` 也不會 fork 任何 worker。
 - **工作區根目錄（鎖檔所在之處）請放在本機檔案系統上。**
 - **Windows** 使用 `msvcrt.locking` 鎖住檔案的第一個位元組；Windows 後端尚未測試。在那裡
-  DataLoader worker 是以 spawn 而非 fork 產生，不會繼承鎖的 handle；系統釋放已結束行程的檔案鎖可能
+  子行程是以 spawn 而非 fork 產生，不會繼承鎖的 handle；系統釋放已結束行程的檔案鎖可能
   有延遲；停止時對工作的主控台行程群組送出 CTRL_BREAK_EVENT，沒有主控台、無法送出的後端會改用
   TerminateProcess，它只結束主行程。在 Windows 後端未經測試之前，不加入行程群組真正的對應物 Job
   Object。
@@ -2251,8 +2263,8 @@ Training Console 與訓練 API 背後的服務現在執行兩種工作，各自�
   會被拒絕（以前會被接受，可能在正被停止的行程旁再啟動第二個行程）。
 - **停止只作用於自己的工作類型**：訓練的停止永遠不會停止測試執行，反之亦然。它先對工作的主行程送
   SIGINT（它的正常停止），30 秒後對工作的整個行程群組送 SIGTERM，再過 10 秒對群組送 SIGKILL，並在
-  工作沒有任何行程留下之後才回應：每個工作是自己行程群組的 leader，所以它 fork 出、與它共用 GPU 鎖的
-  DataLoader worker 會跟著結束；主行程結束後，runner 先結束群組中剩下的行程，才說明工作如何結束並
+  工作沒有任何行程留下之後才回應：每個工作是自己行程群組的 leader，所以它未經 exec 而 fork 出、
+  與它共用 GPU 鎖的任何行程會跟著結束；主行程結束後，runner 先結束群組中剩下的行程，才說明工作如何結束並
   釋出 GPU（自 8242b47 的審查起：以前 worker 可能在停止回答 "stopped" 之後仍存活並保有鎖）。成為
   zombie 的 worker（PID 1 從不回收的容器中）不持有任何東西，不會占住 GPU。
   `POST /api/v1/training/stop` 等待期間不再卡住 API 的其他部分與儀表板。**行程已經自行結束後
@@ -2261,7 +2273,11 @@ Training Console 與訓練 API 背後的服務現在執行兩種工作，各自�
 - **工作如何結束：** 訓練為 `completed`、`failed` 或 `stopped`（與以前相同）；測試執行為
   `completed`、`failed` 或 `cancelled`，只有在取消確實結束了它時才是 `cancelled`（取消送達時
   正好自行結束的執行，保留它自己的結束狀態）。因訊號而失敗時會說明是哪個訊號（例如記憶體不足被系統
-  結束時為 `Process ended by SIGKILL`）。
+  結束時為 `Process ended by SIGKILL`）。**在測試執行的直譯器仍在啟動時送達的取消，也是取消**（自
+  K8-13，2026-11-08 起）：在 POSIX 上，runner 啟動測試執行時暫擋 SIGINT，`measure_scorer.py` 一裝好
+  自己的 handler 就接手，所以這次執行會印出 "measure_scorer: cancelled" 並因 SIGINT 結束。以前它會
+  讓啟動以結束碼 1 或 2 結束（Python 匯入 `site` 時的 "Fatal Python error"），並被記錄為 `failed`。
+  訓練執行不以這種方式啟動。
 - **測試執行結束後，它的報告從磁碟讀取。** 每次測試執行都把它的 outcome 檔
   （`measure_scorer.py --outcome`，§4.9）寫進一個只屬於這個工作的目錄，其中寫明它發布的報告與那些
   位元組的 digest；這份報告是否保留、是否登錄，接著由登錄流程本身的 helper 以這個 digest 從
@@ -2379,25 +2395,38 @@ export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
   - 它是否**可訓練**，以及不可訓練的原因：沒有可讀取的 `split_manifest.json`、資料集紀錄未
     通過驗證，或 manifest 綁定的某個檔案不存在或無法檢查。清單不計算任何圖檔案的雜湊。訓練
     執行時會以實際讀取的位元組檢查每個檔案，仍可能拒絕。
-- **某個 workspace 的 checkpoint**：某個已列出 workspace 的 run 版面中的 checkpoint，所有
-  架構或單一架構，最新的 run 在前。每個檔案只讀取一次，且只載入權重，並顯示：
+- **某個 workspace 的 checkpoint**：某個已列出 workspace 的 run checkpoint，最新的 run 在前，
+  來自它的 `runs/` 之下的每一個目錄，不論目錄名稱為何（自 K8-7b，2026-11-08 起；以前只讀取版面中
+  各架構的目錄，所以放在其他名稱之下的模型在哪裡都不會列出），或只來自其中一個目錄。檔案是什麼
+  取決於它自己的紀錄，絕不取決於它所在的目錄。每個檔案只讀取一次，且只載入權重，並顯示：
   - 所讀位元組的 SHA-256；
-  - Trainer 的驗證數字：trainer 的 top-20 選擇指標，絕不是測試結果；檔案沒有記錄時為無；
+  - Trainer 的驗證數字：Trainer 記錄的、該階段的選擇指標（base 為 LP accuracy，任務模型為
+    pooled MRR），絕不是測試結果；檔案沒有記錄、或其紀錄無法讀取時為無；
+  - 其模型紀錄的摘要：`record` 為 `model`，或為附原因的 `refused`（沒有 model spec 的檔案：
+    "written before the model spec: not readable by this build; start a new run"）；自 K8-7b 起
+    不再有 `history` 紀錄、家族群組或任務篩選；
   - checkpoint 記錄的資料集指紋，以及它是否就是這個 workspace 目前的指紋；
   - 無法讀取的檔案會附上原因（包括目標已不存在的連結）。沒有任何檔案被略去；
   - 解析後落在 workspace 之外的檔案（以 symlink 指向 workspace 之外的 run 或 checkpoint）只
     附上這個原因：它絕不會被開啟，因此不顯示 digest、大小或紀錄。
 
-  每個項目都以清單中的名稱指稱 workspace：對 `current -> builds/2026-10-20` 而言，它寫的是
-  `current`。列出時會開啟每個 checkpoint，SPEC_4 將此歸類為 checkpoint 檢視（C3），而 D8 只在
-  操作者控制項所在之處提供它：它以 `GET /api/v1/workspaces/{name}/checkpoints` 提供（例如
-  `?architecture=gat` 只列一種架構），位於 D8 的檢查之後（§4.13），被拒絕的請求不會開啟任何檔案。
+  `runs/` 之下無法列出的目錄會成為一個附原因的項目，其他 run 仍照常列出；只有 `runs/` 本身失敗時
+  整份清單才失敗。名稱不是有效文字的目錄也是這樣的項目，其名稱以反斜線跳脫寫出（`runs/bad\xff`；
+  自 K8-7b 之後的修正起）。run 或檔案本身的名稱不是有效文字時，這份清單與下面那份仍會回應
+  HTTP 500，與 K8 之前相同（BACKLOG 66）；請將它改名。每個項目都以清單中的名稱指稱 workspace：對
+  `current -> builds/2026-10-20` 而言，它寫的是 `current`。列出時會開啟每個 checkpoint，SPEC_4
+  將此歸類為 checkpoint 檢視（C3），而 D8 只在操作者控制項所在之處提供它：它以
+  `GET /api/v1/workspaces/{name}/checkpoints` 提供（`?architecture=<目錄>` 只列 `runs/` 之下某一個
+  目錄的 run，以完全相同的名稱比對；沒有任何目錄叫這個名稱時，清單為空），位於 D8 的檢查之後
+  （§4.13），被拒絕的請求不會開啟任何檔案。
 - **既有的 checkpoint 清單**（`GET /api/v1/training/checkpoints`；自 M5-2 起，Training
-  頁面的 parent 清單是上面那份依 workspace 的清單）以同樣的方式讀取每個檔案。每個項目新增
+  頁面的 parent 清單是上面那份依 workspace 的清單）以同樣的方式、在 workspace 之內讀取每個檔案：
+  自 K8-7b 起，經由連結到 workspace 之外才到達的檔案會附上 "resolves outside the workspace, so it
+  is not read" 列出，與伺服器清單自 K8-1r 起的做法相同（以前它會被讀取並計算雜湊）。每個項目新增
   `sha256`、`validation`、`dataset_fingerprint` 與 `metadata_problem`，全部來自同一次讀取。以前它載入每個檔案卻不保留
   digest，而且載入錯誤時一聲不響地略過。讀取時已經不存在的檔案（目標已被移除的連結）沒有
-  大小或時間可顯示，會從這份清單中略去；它不再讓整份清單失敗。自 M5-1 起，D8 像檢查控制項
-  一樣檢查它（§4.13）。
+  大小或時間可顯示，會從這份清單中略去；它不再讓整份清單失敗。`runs/` 之下無法列出的目錄會保留，
+  附上原因，大小為 0.0，沒有時間。自 M5-1 起，D8 像檢查控制項一樣檢查它（§4.13）。
 - **Cohort 版本**（`GET /api/v1/cohorts`）：registry 中的每個版本，以 label 及其 `cohort.json`
   的 SHA-256 識別，附上它的角色。它也顯示版本的計數、所綁定的圖與
   資料集紀錄，以及匯入時間。清單絕不顯示病例識別碼或排除清單：D7 把它們留在這台機器上的
@@ -2762,9 +2791,12 @@ model spec 確認為 HGT 的 checkpoint；在那之前，本版不服務任何 H
 實際開啟的檔案判斷（伺服器向已開啟的檔案詢問它位於何處，而不是看它的名稱），所以被選中的檔案若
 在讀取前被換成 workspace 外的檔案，會被拒絕，不從中讀取任何內容、也不發布，使用中的模型維持
 不變；伺服器無法判斷已開啟檔案位於何處時，自動選擇會拒絕它；明確指定的 `checkpoint_path` 則不論
-位於何處都會讀取（自 K8-4r 起）。回應中的 `architecture` 是已載入 model spec 的 encoder 種類，
-指定任務或路徑時都一樣；run 目錄的名稱只用來定位檔案，原因則以 `<layout key>/<run>` 指稱該 run
-（自 K8-4r 起）。
+位於何處都會讀取（自 K8-4r 起）。自 K8-7b（2026-11-08）起，它讀取 `runs/` 之下每一個目錄的
+run，不論目錄名稱為何，所以放在其他名稱之下的模型也會被找到並服務；它無法列出的 `runs/` 之下的
+目錄，會在原因中最先指名，並列入它沒有讀取的項目，絕不悄悄略過。回應中的 `architecture` 是
+已載入 model spec 的 encoder 種類，指定任務或路徑時都一樣；run 目錄的名稱只用來定位檔案，原因則以
+`<目錄>/<run>` 指稱該 run，即放置它的 `runs/` 之下的目錄（自 K8-4r 起；自 K8-7b 起可為任何目錄
+名稱）。
 
 ### Research › Prepare › Datasets
 
@@ -2881,8 +2913,10 @@ reference settings: Epochs 5 (200)」；欄位拒絕的值會在這一行指出�
 **Continue…** 會打開一個取代參數欄的抽屜：run bar 所選 workspace 的模型紀錄，也就是 base 與任務
 模型（自 K6 起，沒有 model spec 的檔案永遠不會從儀表板繼續訓練；伺服器的清單：列出時會開啟每個
 checkpoint，所以是操作者控制項），分兩步選擇，或手動輸入其中某個 checkpoint 的路徑。**Run**：
-各個 run，最新的在前，每個以名稱、架構與開始時間表示（「base-a · GATv2 · 2026-10-28 13:57」；
-沒有命名的 run 只有架構與時間）。**Checkpoint**：該 run 的檔案，最新的在前，每個最多 40 個字元，
+各個 run，最新的在前，來自 `runs/` 之下的每一個目錄（自 K8-7b，2026-11-08 起），每個以名稱、
+目錄與開始時間表示（「base-a · GATv2 · 2026-10-28 13:57」：目錄名稱轉成大寫，`gatv2` 則寫成
+「GATv2」；它是位置，不是模型的架構，架構由紀錄指明；沒有命名的 run 只有目錄與時間）。
+**Checkpoint**：該 run 的檔案，最新的在前，每個最多 40 個字元，
 說明它是什麼以及訓練到哪裡：「Latest save · 195 epochs completed」，或「Top-k save · 21 epochs
 completed」（訓練器因驗證數值保留的檔案）；epoch 數取自檔案的進度紀錄（沒有進度紀錄的檔案只說它
 記錄的 epoch，從不由此推算完成數），只保存權重或無法讀取的檔案會直接說明（「weights only」、
@@ -2893,8 +2927,11 @@ completed」（訓練器因驗證數值保留的檔案）；epoch 數取自檔�
 自 M5-3 起，手動輸入的路徑只會找到該清單中的 checkpoint，其他任何檔案都會在開啟之前被拒絕（`PLAN_TEST_RESULTS.md` D8）。
 **Check checkpoint** 顯示繼續訓練會做什麼，並比較 parent 記錄的資料集指紋與 workspace 目前的
 指紋：相同時為 ✓，不同時為琥珀色（附上相符的已列出 workspace，或「matches no listed
-workspace」）。抽屜打開期間，run bar 顯示 Start（停用：「close Continue… to start a new
-run」）、**🔒 Continue Training**（資料集不同時停用，並附原因）與 **Cancel**。從清單選的
+workspace」）。自 K8-7（2026-11-08）起，續接的執行只繼承本版仍有的設定：parent 記錄了、但本版
+已沒有的設定（`num_workers`、舊的模型設定如 `conv_type`）既不繼承，也不構成拒絕的理由；缺少
+目前某個設定的 parent 會被拒絕；Check checkpoint 與訓練行程的判斷相同，用語也相同。抽屜打開
+期間，run bar 顯示 Start（停用：「close Continue… to start a new run」）、
+**🔒 Continue Training**（資料集不同時停用，並附原因）與 **Cancel**。從清單選的
 checkpoint 會在伺服器的清單中重新找到。**繼續訓練所用的就是所顯示的模型指紋**（於根因修正輪
 實作）。從清單選的 checkpoint，Check checkpoint 與 Continue Training 都送出清單上的指紋；手動
 輸入的路徑，則由 Check checkpoint 讀取檔案並顯示它的指紋，Continue Training 再送出所顯示的那個。
@@ -2933,9 +2970,13 @@ checkpoint（相對於 workspace 根目錄；執行中為最新的一個）、�
 to train further, use Continue…」、「Stopped early (…) · … · cannot be continued」、「Running ·
 epoch 12 of 100」或「No checkpoint saved, so nothing can be continued」；沒有 run 目錄的 run（在
 建立 run 目錄之前就被拒絕）會如實說明：沒有 checkpoint、沒有日誌，也沒有可畫的圖。下方是一張共用 epoch 軸的四格圖：Loss（train，以及以虛線表示的
-validation）、該 run 的驗證值與其伴隨指標，以及對數軸的 learning rate（0 或缺少的值為空隙）。
-中間兩張依 run 記錄的內容而定：base 畫 LP accuracy，再畫 ROC-AUC 與 AP；任務模型畫 pooled MRR，
-再畫 pooled top-k；沒有 model spec 的 run（history）畫 MRR（Trainer top-20），再畫 Hits@K。圖下是資源列（GPU 與記憶體）。
+validation：記錄下來的 `val_loss` 或 `val_lp_loss`，不論是哪種 run）、該 run 的驗證值與其伴隨
+指標，以及對數軸的 learning rate（0 或缺少的值為空隙）。中間兩張依 run 記錄的內容而定：base 畫
+LP accuracy，再畫 ROC-AUC 與 AP；任務模型畫 pooled MRR，再畫 pooled top-k。驗證項目兩種數值都
+沒有的日誌（例如沒有 model spec 的檔案）在那裡不畫任何序列，標題為「No other figure charted:
+Export CSV has every logged figure」與「No further figure charted」（自 K8-7b，2026-11-08 起；
+它的 MRR 與 Hits@K 圖已移除），它的 Loss 與 learning rate 圖則與任何 run 一樣畫出；第一次驗證之前，
+這兩張圖照舊等待。圖下是資源列（GPU 與記憶體）。
 
 - **縮放與平移**：在圖上滾動滾輪會以指標為中心縮放；在 epoch 軸上只縮放 epoch（四張圖一起），
   在數值軸上只縮放該圖的數值。拖曳可平移；雙擊或 **Reset view** 會重新容納全部資料；+ 與 −
@@ -2985,7 +3026,10 @@ checkpoint：run 標題的標籤顯示「dataset not shown · operator control�
   以 `--mode <protocol>` 傳入的協定（§4.9）：選項是這個 build 所實作、且所選模型的紀錄符合其
   learning stage 與 task head 的協定，目前 finetune 模型的每個 task head 各一種（Disease、Gene
   或 Patients-like-me）。只有一個選項時它已被選取；有多個時，在你選擇之前都不選取；沒有任何
-  選項時（base，其正式測試尚未實作），Start 會說明原因。它和模型一樣是操作者控制項。Mode C 與
+  選項時（base，其正式測試尚未實作），Start 會說明原因。紀錄無法讀取的檔案同樣沒有任何選項，
+  Start 為停用，並附上紀錄自己的原因（沒有 model spec 的檔案為「Record not readable (written
+  before the model spec: not readable by this build; start a new run): not measured here. Choose
+  a model finetuned for a task」；自 K8-7b，2026-11-08 起）。它和模型一樣是操作者控制項。Mode C 與
   Mode D 都不是協定，因此沒有任何頁面或命令會執行它們。接著是執行時會尋找的 R10 證據（被量測的
   workspace，以及 `SHEPHERD_TRAINING_EVIDENCE_DIRS`）、**Register the result**、
   **Deterministic execution**，以及由伺服器固定的 batch size 與裝置（量測程式的預設值；
@@ -3053,20 +3097,26 @@ repository 之下的路徑以其名稱書寫（`<registry>/versions/…`），�
 ### Research › Evaluate › Models
 
 這是 Diagnosis 分頁「Change model…」所用的同一份模型清單的研究檢視，列出伺服器為某一個 workspace
-列出的 checkpoint（選擇 **Workspace**；自 K6 起以 **Task** 縮小清單：All、Base、Disease、Gene、
-Patients-like-me 或 History）。Workspace 選單下方會再次列出所選
+列出的 checkpoint（選擇 **Workspace**；自 K6 起以 **Task** 縮小清單：All、Base、Disease、Gene 或
+Patients-like-me；History 以及它所選的「history」紀錄已於 K8-7b，2026-11-08 移除，所以紀錄無法讀取的
+檔案只列在 All 之下）。Workspace 選單下方會再次列出所選
 workspace 的資料集識別（建置時間、資料集指紋、`synthetic`、紀錄的狀態），因此即使選單截斷了很長的
-workspace 名稱，這些資訊也不會被遮住。所有 run 都會顯示，最新的在前。各欄：
+workspace 名稱，這些資訊也不會被遮住。所有 run 都會顯示，最新的在前，來自 workspace 的 `runs/`
+之下的每一個目錄，不論其名稱（自 K8-7b 起）。各欄：
 
-- **Model**：先說明檔案是什麼（Base、Disease、Gene、Patients-like-me、「History · never run」、
-  「Record not readable」或「Record not read」），然後是架構、run 的開始時間、epoch；正在提供服務的
-  checkpoint 標示 **In use (Diagnosis)**（以完整的模型指紋比對）；
+- **Model**：先說明檔案是什麼（Base、Disease、Gene、Patients-like-me、「Record not readable」或
+  「Record not read」；沒有 model spec 的檔案為「Record not readable」，附上 "written before the
+  model spec: not readable by this build; start a new run"，自 K8-7b 起不再是「History · never
+  run」），然後是 run 的目錄（轉成大寫，`gatv2` 寫成「GATv2」：它是位置，不是架構，架構由紀錄
+  指明）、run 的開始時間、epoch；正在提供服務的 checkpoint 標示 **In use (Diagnosis)**（以完整的
+  模型指紋比對）；
 - **Fingerprints: model · dataset trained on**：模型指紋（checkpoint 的 SHA-256 的前 12 個十六進位
   數字），下方是 checkpoint 所記錄的完整資料集指紋所對應的已列出 workspace，或「matches no listed
   workspace」；`synthetic` 以琥珀色顯示；
 - **Validation (Trainer)**：Trainer 自己在 val 樣本上的數值，也就是訓練用來挑選 checkpoint 的
-  指標，數值下方寫出它的名稱（base 為 LP accuracy，任務模型為 pooled MRR，沒有 model spec 的檔案
-  為其前 20 名的 MRR）。它從來不是測試結果，也從不與測試結果放在同一欄；
+  指標，數值下方寫出它的名稱（base 為 LP accuracy，任務模型為 pooled MRR）；紀錄無法讀取的檔案
+  為無（自 K8-7b 起不再顯示歷史檔前 20 名的 MRR；其原始數值仍留在檔案中，明細寫「Validation
+  (Trainer): not read (record not readable)」）。它從來不是測試結果，也從不與測試結果放在同一欄；
 - **Recorded tests**：checkpoint 旁的 ledger 所記錄的內容，以狀態顯示（「none in ledger」、「no
   ledger」、「3 · runs differ for 1」……），從不顯示某個結果的數值。
 
@@ -3116,7 +3166,10 @@ Lineage 欄。沒有任何排列方式依測試分數為模型排名：依測試
 
 **🔒 Load this model** 是共用的 Load（與 Diagnosis 的「Change model…」相同的確認；確認開啟時會蓋住
 細節區，不論視窗多矮，它的按鈕都留在表格下方的可見範圍內；按 Close 回到細節區，且仍選取同一個
-checkpoint）。Load 不會寫入任何使用紀錄。頁面在顯示時、更換 workspace 時以及每一次 Load 之後讀取，
+checkpoint）。對 base 以及紀錄無法讀取的檔案，它在讀取任何東西之前就是停用的，原因寫在旁邊（沒有
+model spec 的檔案為「Record not readable: written before the model spec: not readable by this
+build; start a new run.」）。Load 不會寫入任何使用紀錄。頁面在顯示時、更換 workspace 時以及
+每一次 Load 之後讀取，
 包括沒有改變任何服務內容的 Load（重新載入被拒絕、再次載入正在使用的模型），因此期間發生的變化會顯示
 出來；頁面上沒有任何東西依計時器執行。
 
@@ -3146,7 +3199,10 @@ pyparsing 3.3.3、xxhash 4.0.2：與 M5 GB10 驗收時的版本相同）。`uv s
 `uv sync --inexact` 會把已安裝的 2.8.0.post1 換成 2.8.1：這是環境變更，之前做的驗收不會延續過來。
 
 **A5 的說法**：已安裝的 `torch_geometric` 版本不同時，會列出兩個版本；專案宣告了但沒有安裝時，
-會列出 lock 的版本；這兩種情況下 A5 都不再顯示「已安裝版本與 lock 相同」。
+會列出 lock 的版本；這兩種情況下 A5 都不再顯示「已安裝版本與 lock 相同」。自 K8-7（2026-11-08）
+起，A5 不再記錄 DataLoader worker 的 socket 能否放在暫存目錄之下，也不再印出 TMPDIR 提示：本版
+沒有任何東西會啟動 DataLoader worker。它的其他事實（與 lock 的比較、環境）不變，較早的報告則保留
+它們當時記錄的這項事實。
 
 **這裡固定的是目前正式部署的組合，不是對 PyG、torch 或 CUDA 版本的永久限制。** 版本只存在於
 依賴與部署層：訓練、推理與 UI 的程式都不檢查套件版本（執行時的檢查只問 torch 與 PyG 能否匯入），

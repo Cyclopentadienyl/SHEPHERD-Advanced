@@ -142,24 +142,36 @@ here builds `shortest_paths.pt`, and the GB10 acceptance probe accepts a workspa
    MRR; **Stop** there names the queued children it cancels.
 
 **Every run writes into a new folder of its own** (contract M3a-2):
-`$WS/runs/<arch>/<date-time>_<run name>_<id>/`, holding `config.yaml`,
-`runtime.json`, `final_metrics.json`, `checkpoints/` (`last.pt`, written every
-epoch, and the top-K `model-<epoch>-<metric>.pt`) and `logs/`. The optional
+`$WS/runs/<encoder kind>/<date-time>_<run name>_<id>/` (`gatv2` for the
+reference recipe), holding `config.yaml`, `runtime.json`, `final_metrics.json`,
+`checkpoints/` (`last.pt`, written every epoch, and the top-K
+`model-<epoch>-<metric>.pt`) and `logs/`. The optional
 **Run name** field names it; the run view's header names the run once training
-starts. No run writes into or prunes another run's folder.
+starts. No run writes into or prunes another run's folder. The lists read
+every folder under `$WS/runs/`, whatever its name (since K8-7b, 2026-11-08): a
+model moved into a folder of another name is still listed, chosen and served,
+judged by its own record.
 
 **Continue Training** (contract M3a-3, M3a-4): open **Continue…**, pick a
 model checkpoint (a base or a task model) of the run bar's dataset from the run
 list or type its path, click **Check checkpoint**, then **Continue Training**.
-A file without a model spec is listed on Research › Models but never continued
-from the dashboard. What happens is decided by the checkpoint's own record:
+A file without a model spec is listed on Research › Models ("Record not readable")
+but never continued. What happens is decided by the checkpoint's own record:
 
 - an unfinished run (stopped between epochs, or paused) is resumed with its own
   settings, shown read-only; only its remaining epochs run;
 - a finished run can be extended by a number of extra epochs at its final
   learning rate, held fixed;
 - a run that stopped early, a weights-only file or one trained before the M3a
-  record is refused, with the reason.
+  record is refused, with the reason, and so is a file without a model spec
+  ("written before the model spec: not readable by this build; start a new
+  run").
+
+Only the current settings are inherited (since K8-7, 2026-11-08): a setting the
+parent recorded that this version no longer has (`num_workers`, the old model
+settings such as `conv_type`) is neither inherited nor a reason to refuse, and a
+parent missing a current setting is refused. Check checkpoint and the run decide
+alike.
 
 The child is a new run in its own folder and records its parent by SHA-256. To
 train from a checkpoint with other settings, start a new run: changing settings
@@ -173,13 +185,21 @@ from a parent (a branch) is not available from the dashboard yet.
 > `scripts/train_model.py --data-dir "$WS" --stage base [--run-name NAME]`, or
 > `--config <yaml>`; then each task model with
 > `--stage finetune --task <task> --finetune-from <the base's checkpoint>`.
-> `--resume <checkpoint>` continues a parent as above,
+> Every run names its `--stage`, a continued one included (a run without it is
+> refused, naming `--stage`): `--resume <checkpoint>`, with that run's
+> `--stage`, continues a parent as above,
 > `--extend-epochs N` extends a finished one, `--extend-lr LR` replaces a rate
 > that ended at 0 (and only such a rate), and `--pause-after-epoch N` stops with
 > a resumable checkpoint after N epochs of total progress. `--run-dir` writes into
 > an explicit folder, which must be absent or empty. The old `--output-dir` and
 > `--checkpoint-dir` are gone, and a configuration that still sets `output_dir`,
-> `checkpoint_dir` or `log_dir` is refused.
+> `checkpoint_dir` or `log_dir` is refused. So is one naming a setting this
+> version does not have ("names settings this version does not have: …"); since
+> K8-7 `num_workers` and the old model settings (`conv_type`, `hidden_dim`, …) are
+> among them, and `--conv-type`, `--hidden-dim` and `--num-layers` are gone.
+> A refusal is one line, `train_model: refused: <why> Nothing was written.`,
+> exit 1 (since K8-7b); an error after the run's folder is made is a failed run,
+> logged as "Training failed:" with its traceback.
 >
 > Checkpoints from before this layout (`$WS/checkpoints/`) are not listed or
 > selected automatically; they stay on disk, reached by explicit path only. A
@@ -246,8 +266,7 @@ in use is unchanged." with that reason.
 
 A checkpoint whose record matches but which carries no model spec (a
 ShepherdGNN history file) is refused next, still before any model is built:
-"written before the model spec: listed as history and never run by this build;
-start a new run".
+"written before the model spec: not readable by this build; start a new run".
 
 The structural fingerprint is **recorded, and compared by nothing at load**
 (since K8-4): the record's digests above are the graph's identity. The pipeline

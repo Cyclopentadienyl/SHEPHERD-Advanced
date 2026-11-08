@@ -958,12 +958,14 @@ model…". A reload that fails keeps the model in use and its ready state.
 
 **A checkpoint without a model spec (a ShepherdGNN history file) is refused at
 load** (since K8-4), at startup and on a reload with or without a task, before
-any model is built: "written before the model spec: listed as history and never
-run by this build; start a new run". A file from before the provenance contract,
-which records no training inputs either, is refused first for that ("records no
-training_input_digests"). A refused startup publishes nothing (503, above); a
-refused reload leaves the model in use serving. Such files stay on disk and
-listed as history; the mixture that used to serve them is removed.
+any model is built: "written before the model spec: not readable by this build;
+start a new run" (since K8-7b, 2026-11-08, the one phrase every refusal of such a file gives). A
+file from before the provenance contract, which records no training inputs either, is refused
+first for that ("records no training_input_digests"). A refused startup publishes nothing (503,
+above); a refused reload leaves the model in use serving. Such files stay on disk and listed,
+with their SHA-256, records and usage history, as a record this build cannot read ("Record not
+readable", with that phrase; no longer "History · never run" since K8-7b); the mixture that used
+to serve them is removed.
 
 **A checkpoint whose record names one input two ways is refused the same way**
 (since K8-4r), for example a `data_roles.kg` that differs from its
@@ -1309,7 +1311,9 @@ causal and candidate genes, `patients_like_me` causal genes), checked right afte
 be of the stage and task head the protocol takes, checked right after the checkpoint is read. A
 base is refused with "This model is a base: its formal test (link prediction on held-out
 knowledge-graph edges) is not implemented yet. A model finetuned from it can be measured.", and a
-checkpoint without a model spec (a ShepherdGNN history file) as history. The Test page passes the
+checkpoint without a model spec (a ShepherdGNN history file) with the record reader's phrase,
+"written before the model spec: not readable by this build; start a new run" (since K8-7b,
+2026-11-08; it used to be refused "as history"). The Test page passes the
 protocol the operator chose (§4.14). Since K8-6a no command runs Mode C, the model's own disease
 ranking from before the tasks: a run without `--mode` is refused by the argument parser (exit 2),
 and so is `--mode C`, which is not a protocol. Kept Mode C reports and records are read by the
@@ -1929,6 +1933,17 @@ measure_scorer: refused: the GPU lock /srv/shepherd/workspaces/.shepherd-gpu.loc
 check the lock before starting a job and refuse the start with the same holder
 ("Nothing was started."); the job's own process then takes the lock itself.
 
+**Every refusal of `train_model.py` is one line** (since K8-7b, 2026-11-08): whatever it refuses
+before it claims its run directory is said as `train_model: refused: <why> Nothing was
+written.`, exit 1, with no traceback (it is logged at `--debug` only). Among them: a run without
+`--stage` (every run names its stage, a continued one included: `--resume <checkpoint>` with the
+`--stage` of the run it continues), a run directory that already holds files, and a
+`--config` file naming a setting this version does not have ("The configuration … names
+settings this version does not have: num_workers."; since K8-7, `num_workers` and the old model
+settings such as `conv_type` and `hidden_dim` are such settings, and `--conv-type`,
+`--hidden-dim` and `--num-layers` are gone). An error after the claim is a failed run, logged as
+"Training failed:" with its traceback.
+
 **Set the root for the service and in the shell where you run the CLIs** (for example, the
 `Environment=` lines you set in the systemd unit (§4.12; its template has a commented line for
 the root and one for the registry), which reads no environment file of its own, or one file that
@@ -1968,22 +1983,20 @@ What the lock does and does not guarantee:
   service does not take it and may hold GPU memory; a test run that cannot get memory fails as a
   run, is reported, and registers nothing.
 - **Inherited descriptors.** A program a job starts does not keep the lock (the descriptor is
-  close-on-exec). A process the job forks without starting a new program — DataLoader workers
-  under the `fork` start method, for example — shares it: a job that ends normally releases it
+  close-on-exec). A process the job forks without starting a new program — a worker pool under
+  the `fork` start method, for example — shares it: a job that ends normally releases it
   for that process too, but when the job is killed (or exits without releasing), that process
   keeps the lock until it exits; the refusal then says the recorded holder has exited. **A job
   the service starts leads its own process group** (since the review of 8242b47), and a stop and
   the runner end the whole group, those processes included (below). A training CLI
-  (`train_model.py`, `setup_demo.py --train-model`) whose main process alone is ended, by
-  `kill <pid>` or `kill -9 <pid>`, leaves its forked DataLoader workers holding the lock until
-  they notice (torch's 5 s watchdog plus the sample in progress, longer if one hangs);
-  `kill -INT <pid>` (Ctrl-C's signal, the runner's own graceful step) releases it at once, even
-  sent to the main process alone, and `kill -TERM -- -<pid>` ends the whole group when the CLI
-  leads one (a CLI started in an interactive shell does, through job control).
-  `measure_scorer.py` forks no workers.
+  (`train_model.py`, `setup_demo.py --train-model`) forks no workers (since K8-7, 2026-11-08: its
+  stage samplers draw batches in the main process, and the DataLoader workers it used to fork
+  went with the ShepherdGNN loader), so ending its main process, by any signal, releases the
+  lock; `kill -TERM -- -<pid>` ends the whole group when the CLI leads one (a CLI started in an
+  interactive shell does, through job control). `measure_scorer.py` forks no workers either.
 - **Keep the workspaces root, where the lock file is, on a local filesystem.**
 - **Windows** uses `msvcrt.locking` on the file's first byte; a Windows backend is untested.
-  There DataLoader workers are spawned, not forked, and do not inherit the lock's handle; the
+  There a child process is spawned, not forked, and does not inherit the lock's handle; the
   system's release of a dead process's file lock can be delayed; a stop sends CTRL_BREAK_EVENT
   to the job's console process group, and a backend with no console, which cannot send it, goes
   on to TerminateProcess, which ends the main process only. A Job Object, the true equivalent of
@@ -2001,8 +2014,8 @@ cohort version, the same CLI an operator runs). One job at a time:
 - **A stop reaches only its own job type**: a training stop never stops a test run, nor the
   reverse. It sends SIGINT to the job's main process (its graceful stop), then SIGTERM to the
   job's whole process group after 30 s, then SIGKILL to the group after 10 s more, and answers
-  once no process of the job is left: each job leads its own process group, so the DataLoader
-  workers it forked, which share the GPU lock, end with it, and once the main process has ended
+  once no process of the job is left: each job leads its own process group, so any process it
+  forked without exec, which shares the GPU lock, ends with it, and once the main process has ended
   the runner ends what is left of the group before it says how the job ended and frees the slot
   (since the review of 8242b47: a worker used to outlive a stop that said "stopped" and keep the
   lock). A worker left as a zombie (a container whose PID 1 never reaps) holds nothing and does
@@ -2013,7 +2026,12 @@ cohort version, the same CLI an operator runs). One job at a time:
 - **How a job ended:** training `completed`, `failed` or `stopped` (as before); a test run
   `completed`, `failed` or `cancelled`, `cancelled` only when the cancel is what ended it (a run
   that ended on its own as the cancel arrived keeps that ending). A failure caused by a signal
-  says which (`Process ended by SIGKILL`, for the out-of-memory killer).
+  says which (`Process ended by SIGKILL`, for the out-of-memory killer). **A cancel that lands
+  while a test run's interpreter is still starting is a cancel too** (since K8-13, 2026-11-08): on
+  POSIX the runner starts a test run with SIGINT held, and `measure_scorer.py` takes it as soon as
+  its own handler is in place, so the run says "measure_scorer: cancelled" and ends by SIGINT. It
+  used to end the start with exit 1 or 2 ("Fatal Python error" while Python imported `site`) and
+  be recorded `failed`. Training runs are not started this way.
 - **A test run's report is read from the disk once it ends.** Each test run writes its outcome
   file (`measure_scorer.py --outcome`, §4.9) into a directory made for that job alone, naming the
   report it published and the digest of those bytes; whether that report is kept and registered
@@ -2155,30 +2173,46 @@ and a file, or a label, and the server finds that name in its own list again.
     that is not verified, or a file the manifest binds is missing or cannot be checked. The list
     hashes no graph file. A training run checks every file on the bytes it reads, and may still
     refuse.
-- **A workspace's checkpoints**: the run layout's checkpoints of one listed workspace, every
-  architecture's or one's, latest run first. Each file is read once, weights only, and shows:
+- **A workspace's checkpoints**: the run checkpoints of one listed workspace, latest run first,
+  from every directory under its `runs/` whatever the directory's name (since K8-7b, 2026-11-08;
+  before, only the layout's architecture directories were read, so a model under another name
+  was listed nowhere), or from one directory's. What a file is comes from its own record, never
+  from its directory. Each file is read once, weights only, and shows:
   - the SHA-256 of the bytes read;
-  - the Trainer's validation figure: the trainer's top-20 selection metric, never a test result,
-    and none when the file records none;
+  - the Trainer's validation figure: the stage's selection metric the Trainer logged (a base's
+    LP accuracy, a task model's pooled MRR), never a test result, and none when the file records
+    none or its record cannot be read;
+  - its model record's summary: `record` is `model`, or `refused` with the reason (a file
+    without a model spec: "written before the model spec: not readable by this build; start a
+    new run"); since K8-7b there is no `history` record, family group or task filter;
   - the dataset fingerprint the checkpoint records, and whether it is this workspace's now;
   - for a file that cannot be read, why (a link whose target is gone included). No file is
     dropped;
   - for a file that resolves outside the workspace (a run or a checkpoint that is a symlink out of
     it), that reason only: it is never opened, so it shows no digest, size or record.
 
-  Each item names the workspace as the list does: for `current -> builds/2026-10-20`, it says
-  `current`. Listing opens every checkpoint, which SPEC_4 classes as checkpoint inspection (C3),
-  and D8 offers that only where the operator controls are: it is served as
-  `GET /api/v1/workspaces/{name}/checkpoints` (`?architecture=gat`, say, for one architecture)
-  behind D8's check (§4.13), and a refused request opens nothing.
+  A directory under `runs/` that cannot be listed is one item with its reason, and every other
+  run is still listed; only `runs/` itself failing fails the list. A directory whose name is not
+  valid text is such an item, its name written with backslash escapes (`runs/bad\xff`; since
+  the fix after K8-7b). A run or file whose own name is not valid text still makes this list and
+  the one below answer HTTP 500, as before K8 (BACKLOG 66); rename it.
+  Each item names the workspace as the list does: for
+  `current -> builds/2026-10-20`, it says `current`. Listing opens every checkpoint, which SPEC_4
+  classes as checkpoint inspection (C3), and D8 offers that only where the operator controls
+  are: it is served as `GET /api/v1/workspaces/{name}/checkpoints` (`?architecture=<directory>`
+  for the runs of one directory under `runs/`, matched by its exact name; a name no directory
+  has lists nothing) behind D8's check (§4.13), and a refused request opens nothing.
 - **The existing checkpoint list** (`GET /api/v1/training/checkpoints`; since M5-2 the
-  Training page's parent list is the per-workspace list above) reads each file the same way.
-  Each entry gains `sha256`, `validation`, `dataset_fingerprint` and `metadata_problem`, all
-  from the one read. Before, it loaded each
+  Training page's parent list is the per-workspace list above) reads each file the same way,
+  inside the workspace: since K8-7b a file reached through a link out of it is listed with "resolves
+  outside the workspace, so it is not read", as the server list has said since K8-1r (it used to
+  be read and hashed). Each entry gains `sha256`, `validation`, `dataset_fingerprint` and
+  `metadata_problem`, all from the one read. Before, it loaded each
   file without keeping its digest, and dropped a load error without a word. A file that is gone
   by the time it is read (a link whose target was removed) has no size or time to show and is
-  left out of this list; it no longer fails the whole list. Since M5-1 D8 checks it like the
-  controls (§4.13).
+  left out of this list; it no longer fails the whole list. A directory under `runs/` that
+  cannot be listed is kept, with its reason, a size of 0.0 and no time. Since M5-1 D8 checks it
+  like the controls (§4.13).
 - **Cohort versions** (`GET /api/v1/cohorts`): each version in the registry, by label and the
   SHA-256 of its `cohort.json`, with its role. It also shows
   its counts, the graph and dataset record it is bound to, and when it was imported. The list
@@ -2602,10 +2636,13 @@ the workspace**, judged on the file each of its reads actually opens (the server
 file where it lies, not its name), so a selected file replaced by one outside the workspace
 before it is read is refused, nothing is read from it or published and the model in use stays;
 where the server cannot tell where an opened file lies, automatic selection refuses it; an
-explicit `checkpoint_path` is read wherever it is (since K8-4r). The response's
+explicit `checkpoint_path` is read wherever it is (since K8-4r). Since K8-7b (2026-11-08) it
+reads the runs of every directory under `runs/`, whatever the directory's name, so a model filed
+under another name is found and served; a directory under `runs/` it cannot list is named first
+in its reason and among what it did not read, never passed over in silence. The response's
 `architecture` is the loaded model spec's encoder kind, for a task or a path alike; a run
-directory's name only locates the file, and the reason names the run as `<layout key>/<run>`
-(since K8-4r).
+directory's name only locates the file, and the reason names the run as `<directory>/<run>`, the
+directory under `runs/` that holds it (since K8-4r; any directory's name since K8-7b).
 
 ### Research › Prepare › Datasets
 
@@ -2742,8 +2779,10 @@ window.
 workspace, bases and task models (since K6 a file without a model spec is never continued from the
 dashboard; the server's list: an operator control, since listing opens every checkpoint), chosen
 in two steps, or the path of one of those checkpoints typed by hand. **Run**: the runs, latest
-first, each as its name, architecture and start time ("base-a · GATv2 · 2026-10-28 13:57"; an
-unnamed run is its architecture and time). **Checkpoint**: that run's files, newest first, each in
+first, from every directory under `runs/` (since K8-7b, 2026-11-08), each as its name, directory
+and start time ("base-a · GATv2 · 2026-10-28 13:57": the directory's name, upper-cased but
+`gatv2`, which reads "GATv2"; a location, not the model's architecture, which its record names;
+an unnamed run is its directory and time). **Checkpoint**: that run's files, newest first, each in
 at most 40 characters saying what it is and how far it trained: "Latest save · 195 epochs
 completed", or "Top-k save · 21 epochs completed" (a file the trainer kept for its validation
 figure); the epochs are the file's progress record (a file without one says the epoch it records,
@@ -2756,7 +2795,11 @@ not a test result), its model fingerprint (Copy gives all 64) and its run's dire
 a typed path only finds a checkpoint that list holds, and any other file is refused without being
 opened (`PLAN_TEST_RESULTS.md` D8). **Check checkpoint** shows what continuing would do, and the
 dataset fingerprint the parent recorded against the workspace's current one: ✓ the same, or amber
-when it differs (with the listed workspace it matches, or "matches no listed workspace"). While
+when it differs (with the listed workspace it matches, or "matches no listed workspace"). Since
+K8-7 (2026-11-08) a continued run inherits only the settings this version has: a setting the
+parent recorded that this version no longer has (`num_workers`, the old model settings such as
+`conv_type`) is neither inherited nor a reason to refuse, a parent missing a current setting is
+refused, and Check checkpoint and the training process decide alike, in the same words. While
 the drawer is open the run bar shows Start (disabled: "close Continue… to start a new run"),
 **🔒 Continue Training** (disabled while the datasets differ, with the reason) and **Cancel**.
 A listed checkpoint is found again in the server's list. **The model fingerprint shown is the one
@@ -2806,11 +2849,15 @@ further, use Continue…", "Stopped early (…) · … · cannot be continued", 
 100", or "No checkpoint saved, so nothing can be continued"; a run that has no run directory
 (refused before it made its run directory) says so, with no checkpoint, no log and nothing to
 chart. Below them, one figure of four charts sharing the epoch
-axis: Loss (train, and validation dashed), the run's validation figure and its companions, and
-the learning rate on a log axis (a 0 or a missing value is a gap). The middle two follow what the
-run logged: a base charts LP accuracy, then ROC-AUC and AP; a task model pooled MRR, then pooled
-top-k; a run without a model spec (history) MRR (Trainer top-20), then Hits@K. Under it, the
-resources line (GPU and memory).
+axis: Loss (train, and validation dashed: a logged `val_loss` or `val_lp_loss`, whatever the run),
+the run's validation figure and its companions, and the learning rate on a log axis (a 0 or a
+missing value is a gap). The middle two follow what the run logged: a base charts LP accuracy,
+then ROC-AUC and AP; a task model pooled MRR, then pooled top-k. A log whose validation entries
+hold neither figure (a file without a model spec, say) draws no series there, under the titles
+"No other figure charted: Export CSV has every logged figure" and "No further figure charted"
+(since K8-7b, 2026-11-08; its MRR and Hits@K charts are gone), and its Loss and learning-rate
+charts are drawn as for any run; before the first validation the two wait, as before.
+Under it, the resources line (GPU and memory).
 
 - **Zoom and pan**: the wheel over a chart zooms around the pointer; over the epoch axis it zooms
   only the epochs (the four charts follow), over a value axis only that chart's values. Drag pans;
@@ -2871,7 +2918,11 @@ and register it. Three panels:
   stage and task head the chosen model's record meets, today one for each task head of a
   finetuned model (Disease, Gene or Patients-like-me). A single option is chosen already; of
   several, none is until you choose one; with none (a base, whose formal test is not implemented
-  yet), Start says why. Like the model, it is an operator control. Mode C and Mode D are not
+  yet), Start says why. A file whose record cannot be read offers none either, and Start is off
+  with the record's own reason ("Record not readable (written before the model spec: not
+  readable by this build; start a new run): not measured here. Choose a model finetuned for a
+  task" for a file without a model spec; since K8-7b, 2026-11-08). Like the model, it is an
+  operator control. Mode C and Mode D are not
   protocols, so no page or command runs them. Then the R10 evidence the run will look in (the
   measured workspace, and `SHEPHERD_TRAINING_EVIDENCE_DIRS`), **Register the result**,
   **Deterministic execution**, and the batch size and device the server fixes (the measurement's
@@ -2961,21 +3012,28 @@ root, the intake directory, an evidence directory or the repository is written u
 
 The research view of the same model list the Diagnosis tab's "Change model…" uses, over the
 checkpoints the server lists for one workspace (choose the **Workspace**; since K6 **Task**
-narrows the list: All, Base, Disease, Gene, Patients-like-me or History). Under the workspace
+narrows the list: All, Base, Disease, Gene or Patients-like-me; History, and the "history" record
+it chose, went in K8-7b, 2026-11-08, so a file whose record cannot be read is listed under All
+only). Under the workspace
 select, the chosen workspace's dataset identity is said again (build time, dataset fingerprint,
 `synthetic`, the record's state), so a long workspace name that the select cuts never hides it.
-Every run is shown, newest first. Columns:
+Every run is shown, newest first, from every directory under the workspace's `runs/` whatever
+its name (since K8-7b). Columns:
 
-- **Model**: what the file is first (Base, Disease, Gene, Patients-like-me, "History · never
-  run", "Record not readable" or "Record not read"), then the architecture, the run's start
-  time, the epoch; **In use (Diagnosis)** on the checkpoint being served (matched by its full
-  model fingerprint);
+- **Model**: what the file is first (Base, Disease, Gene, Patients-like-me, "Record not readable"
+  or "Record not read"; a file without a model spec is "Record not readable", with "written
+  before the model spec: not readable by this build; start a new run", and no longer "History ·
+  never run" since K8-7b), then the run's directory (upper-cased, "GATv2" for `gatv2`: a location,
+  not the architecture, which the record names), the run's start time, the epoch; **In use
+  (Diagnosis)** on the checkpoint being served (matched by its full model fingerprint);
 - **Fingerprints: model · dataset trained on**: the model fingerprint (12 hex digits of the
   checkpoint's SHA-256) over the listed workspace whose full dataset fingerprint the checkpoint
   records, or "matches no listed workspace"; `synthetic` in amber;
 - **Validation (Trainer)**: the Trainer's own figure on the val samples, the metric training
-  selects by, named under its value (a base's LP accuracy, a task model's pooled MRR, a history
-  file's MRR over its top 20). It is never a test result and never shares a column with one;
+  selects by, named under its value (a base's LP accuracy, a task model's pooled MRR); none for a
+  file whose record cannot be read (since K8-7b a history file's MRR over its top 20 is no longer
+  shown; its raw values stay in the file, and the detail says "Validation (Trainer): not read
+  (record not readable)"). It is never a test result and never shares a column with one;
 - **Recorded tests**: what the ledger beside the checkpoint holds, as a state ("none in
   ledger", "no ledger", "3 · runs differ for 1", …), never a number of a result.
 
@@ -3037,7 +3095,10 @@ card, any warning, and two segments:
 
 **🔒 Load this model** is the shared Load (the same confirmation as Diagnosis' "Change model…";
 it covers the detail while it is open, its buttons stay in view under its table however short
-the window, and Close returns to the detail with the same checkpoint still selected). A Load
+the window, and Close returns to the detail with the same checkpoint still selected). It is off,
+with the reason beside it, for a base and for a file whose record cannot be read, before anything
+is read ("Record not readable: written before the model spec: not readable by this build; start
+a new run." for a file without a model spec). A Load
 writes nothing to a usage history. The page is read when it is shown, when the workspace changes
 and after every Load, including one that changed nothing served (a refused reload, the model in
 use loaded again), so what changed meanwhile is shown; nothing on it runs on a timer.
@@ -3073,7 +3134,11 @@ carry over.
 
 **What A5 says**: an installed `torch_geometric` at another version is named with both versions;
 one the project declares but that is not installed is named with the lock's version; in either
-case A5 no longer reads "the installed versions are the lock's".
+case A5 no longer reads "the installed versions are the lock's". Since K8-7 (2026-11-08) A5 no
+longer records whether a DataLoader worker's socket fits under the temporary directory, nor
+prints a TMPDIR hint: nothing in this build starts DataLoader workers. Its other facts (the
+comparison with the lock, the environment) are unchanged, and earlier reports keep the fact as
+they recorded it.
 
 **This pins today's formal deployment set, not a permanent limit** on PyG, torch or CUDA. The
 versions live in the dependency and deployment layer only: no training, inference or UI code
