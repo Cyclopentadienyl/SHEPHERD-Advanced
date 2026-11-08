@@ -33,13 +33,14 @@ from typing import Any, Iterable, List, Mapping, Optional, Tuple
 #:
 #: **Permanent, and more important since the split became disease-disjoint, not
 #: less.** Whatever `val` contains, the standard workflow selects the checkpoint
-#: on it (``early_stopping_monitor=val_mrr``), so a number measured there is a
-#: selection metric. That does not depend on how the split was cut.
+#: on it (by the finetuned task's selection metric, ``val_pooled_mrr``), so a
+#: number measured there is a selection metric. That does not depend on how the
+#: split was cut.
 SELECTION_CONTAMINATION = (
     "**Not an independent evaluation.** In the standard workflow `val` is the "
-    "split early stopping and checkpoint selection run on "
-    "(`early_stopping_monitor=val_mrr`), so a metric measured on it is a "
-    "selection metric rather than an independent test estimate. This says "
+    "split early stopping and checkpoint selection run on (by the finetuned "
+    "task's selection metric, `val_pooled_mrr`), so a metric measured on it is "
+    "a selection metric rather than an independent test estimate. This says "
     "nothing about how an arbitrary explicit checkpoint passed to this script "
     "was chosen — it may have been selected on some other workspace, or not "
     "selected at all."

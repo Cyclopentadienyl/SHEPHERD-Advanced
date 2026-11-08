@@ -47,7 +47,7 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Mapping, Optional, Union
 
@@ -115,7 +115,10 @@ class TrainerConfig:
     # the full schedule runs and ModelCheckpoint keeps the best file.
     early_stopping: bool = True
     early_stopping_patience: int = 10
-    early_stopping_monitor: str = "val_mrr"
+    # The metric early stopping and ModelCheckpoint select by. None: the
+    # task's own selection metric (`task.selection_metric`), which the
+    # Trainer puts in its config when it is built.
+    early_stopping_monitor: Optional[str] = None
     early_stopping_mode: str = "max"
 
     # Logging
@@ -219,12 +222,17 @@ class Trainer:
                 `StepResult` (a loss, or None for a step with nothing to learn
                 from), and `validate(model, device)` returns the validation
                 metrics. It is the Trainer's one training path; `None` is
-                refused (a TypeError).
+                refused (a TypeError). When the config states no
+                `early_stopping_monitor`, the Trainer selects by the task's
+                `selection_metric`.
         """
         if task is None:
             raise TypeError("Trainer needs the stage's task module (task): it computes each "
                             "step's loss and the validation metrics")
         self.config = config or TrainerConfig()
+        if self.config.early_stopping_monitor is None:
+            # A copy: the caller's config is left as given.
+            self.config = replace(self.config, early_stopping_monitor=task.selection_metric)
         self.device = torch.device(self.config.device)
 
         # Model

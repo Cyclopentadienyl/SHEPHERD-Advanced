@@ -34,7 +34,7 @@ def _tiny_trainer(tmp_path, **config):
 
     defaults = dict(device="cpu", scheduler_type="cosine", warmup_steps=0, use_amp=False,
                     num_epochs=3, checkpoint_dir=str(tmp_path / "ckpt"),
-                    log_dir=str(tmp_path / "logs"))
+                    log_dir=str(tmp_path / "logs"), early_stopping_monitor="val_pooled_mrr")
     defaults.update(config)
     trainer = Trainer(model=torch.nn.Linear(2, 1), train_dataloader=[{}] * 4,
                       config=TrainerConfig(**defaults), task=_stored_task())
@@ -283,7 +283,7 @@ def _end_epoch(trainer, epoch, value):
         trainer.model.weight.fill_(float(epoch))
     trainer.state.epoch = epoch
     trainer.state.completed_epochs = epoch + 1
-    trainer.callbacks.on_epoch_end(trainer, epoch, {"val_mrr": value})
+    trainer.callbacks.on_epoch_end(trainer, epoch, {"val_pooled_mrr": value})
 
 
 def test_early_stoppings_best_file_survives_a_top_k_it_no_longer_ranks_in(tmp_path):
@@ -335,7 +335,8 @@ def test_a_model_holding_restored_best_weights_is_written_as_weights_only(tmp_pa
         optimizer=torch.optim.SGD(model.parameters(), lr=1.0, momentum=0.9),
         config=TrainerConfig(device="cpu", scheduler_type="none", use_amp=False,
                              num_epochs=2, checkpoint_dir=str(tmp_path / "ckpt"),
-                             log_dir=str(tmp_path / "logs")),
+                             log_dir=str(tmp_path / "logs"),
+                             early_stopping_monitor="val_pooled_mrr"),
         task=_stored_task(),
     )
     trainer.model_record = _record()[1]
@@ -346,7 +347,7 @@ def test_a_model_holding_restored_best_weights_is_written_as_weights_only(tmp_pa
         trainer.optimizer.step()
         trainer.optimizer.zero_grad()
         trainer.state.epoch, trainer.state.completed_epochs = epoch, epoch + 1
-        trainer.callbacks.on_epoch_end(trainer, epoch, {"val_mrr": value})
+        trainer.callbacks.on_epoch_end(trainer, epoch, {"val_pooled_mrr": value})
     latest_weight = model.weight.detach().clone()
     latest_momentum = trainer.optimizer.state_dict()["state"][0]["momentum_buffer"].clone()
 

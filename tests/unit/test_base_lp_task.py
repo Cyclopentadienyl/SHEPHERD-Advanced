@@ -351,3 +351,35 @@ def test_validation_calls_each_hook_once_and_tracks_the_monitored_metric():
     trainer._validate(7)
     assert trainer.state.best_metric is None
     assert len(trainer.state.val_metric_history) == 5
+
+
+def test_a_trainer_given_no_monitor_selects_by_its_task_s_selection_metric(tmp_path):
+    """C1c (K8-7 map default 1): `TrainerConfig.early_stopping_monitor` is None
+    unless stated, and the Trainer then selects by its task's own selection
+    metric (`selection_metric`; the base stage's is `val_lp_accuracy`): early
+    stopping, the best-k checkpoints and their file names, and the best value
+    validation tracks all follow it. The config handed in is left as given."""
+    from src.training.trainer import Trainer, TrainerConfig
+
+    view, split = _toy_view()
+    task, sampler = _task_and_sampler(view, split)
+    config = TrainerConfig(device="cpu", num_epochs=1, scheduler_type="none", use_amp=False,
+                           checkpoint_dir=str(tmp_path / "ckpt"),
+                           log_dir=str(tmp_path / "logs"), seed=0)
+    assert config.early_stopping_monitor is None, "no metric is named by default"
+
+    trainer = Trainer(model=build_bundle(_spec(), view), train_dataloader=sampler,
+                      config=config, task=task)
+
+    assert task.selection_metric == "val_lp_accuracy"
+    assert trainer.config.early_stopping_monitor == "val_lp_accuracy"
+    assert config.early_stopping_monitor is None, "the caller's config is unchanged"
+    selecting = {type(c).__name__: c.config for c in trainer.callbacks.callbacks
+                 if type(c).__name__ in ("EarlyStopping", "ModelCheckpoint")}
+    assert {name: c.monitor for name, c in selecting.items()} == {
+        "EarlyStopping": "val_lp_accuracy", "ModelCheckpoint": "val_lp_accuracy"}
+    assert "{val_lp_accuracy:.4f}" in selecting["ModelCheckpoint"].filename
+
+    task.validate = lambda model, device: {"lp_accuracy": 0.75, "lp_roc_auc": 0.5}
+    trainer._validate(0)
+    assert (trainer.state.best_metric, trainer.state.best_epoch) == (0.75, 0)

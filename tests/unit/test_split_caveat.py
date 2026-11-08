@@ -100,7 +100,7 @@ def test_the_split_caveat_names_two_distinct_limits(script):
     """
     _, help_text = _split_help(script)
 
-    assert "early_stopping_monitor=val_mrr" in help_text, "checkpoint selection"
+    assert "task's selection metric, `val_pooled_mrr`" in help_text, "checkpoint selection"
     assert "disease-disjoint from `train`, by construction" in help_text, "the contract"
     assert "identical" in help_text and "phenotype content" in help_text, (
         "the channel the disease-level cut does not close"
