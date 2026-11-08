@@ -260,20 +260,3 @@ def recut_cohorts(root: Path, **rows: list[dict[str, Any]]) -> Path:
         val_ids=sorted({int(r["disease_id"]) for r in kept["val"]}), profiles=profiles,
         train_samples=kept["train"], val_samples=kept["val"])
     return root
-
-
-def graph_record(root: Path) -> Dict[str, str]:
-    """The four graph roles a checkpoint trained on this workspace records.
-
-    Taken as training takes them (contract M2.2): the digests the workspace's
-    manifest binds, returned by `verify_graph_reads` after the tensors were
-    checked against it, `kg` the manifest-bound source graph. A fixture
-    checkpoint carrying this as its `training_input_digests` is one serving and
-    measurement accept for this workspace (M2.4), and no other.
-    """
-    from src.kg.artifacts import read_split_manifest, verify_graph_reads
-    from src.kg.storage.file_storage import read_graph_artifacts
-
-    return dict(verify_graph_reads(
-        read_split_manifest(root), read_graph_artifacts(root, map_location="cpu").reads
-    ))

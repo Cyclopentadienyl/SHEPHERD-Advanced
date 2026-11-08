@@ -86,7 +86,7 @@ GONE_MEMBERS = (
     ("src.core.protocols", "ConfigLoaderProtocol", "get_data_config"),
 )
 
-#: What the deletions keep until K8 (the working sheet's must-not-delete list).
+#: What K8 kept of the deletions' must-not-delete list (the K7 working sheet's).
 KEPT = {
     "src.models": ("HeteroGNNLayer", "AdaptiveAttentionBackend"),
     "src.models.attention": ("AdaptiveAttentionBackend",),
@@ -159,7 +159,7 @@ def test_the_retired_members_are_gone(name, cls, member):
 
 
 @pytest.mark.parametrize("name,kept", sorted(KEPT.items()))
-def test_what_waits_for_k8_is_kept(name, kept):
+def test_what_k8_kept_is_still_there(name, kept):
     module = _import(name)
     for item in kept:
-        assert hasattr(module, item), f"{name}.{item} was deleted; it waits for K8"
+        assert hasattr(module, item), f"{name}.{item} was deleted; K8 kept it"
