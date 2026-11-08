@@ -24,8 +24,8 @@ is matched by the **full** model fingerprint the status serves and marks the
 checkpoint only.
 
 **The two presets** (`PRESETS`), each row of either leading with what its
-file is (`renderers.record_kind_text`: "Disease", "Base", "History · never
-run" …), under every view and order:
+file is (`renderers.record_kind_text`: "Disease", "Base", "Record not
+readable" …), under every view and order:
 
 - ``clinical`` (the drawer): rows (`renderers.model_row_html`), "In use now"
   pinned on top, the latest 4 runs, then "Show older runs"; **models
@@ -39,7 +39,7 @@ run" …), under every view and order:
 **A page shapes its view** through ``ModelList.view`` (a `gr.State` the page
 sets; the list redraws on its ``.change``), never by drawing rows itself:
 ``{"task": "disease"}`` lists the rows of one filter (`TASK_FILTERS`: all,
-base, disease, gene, patients_like_me, history, task_models; `matches`, on the
+base, disease, gene, patients_like_me, task_models; `matches`, on the
 server's one predicate `server_lists.record_matches`); ``"keys"`` lists exactly
 those rows instead (a family view's, its context rows included); ``"groups":
 [{"title", "keys"}]`` draws the rows in those groups, in that order
@@ -57,8 +57,8 @@ components (a filter, links) in the list's header and footer rows.
 
 1. "🔒 Load this model" (`request_load`): D8 on that request; **a row that is
    never loaded is refused before anything of its file is read**
-   (`load_refusal`: a base offers no diagnosis, a file without a model spec is
-   history and never run, a record this build refused is said with why; the
+   (`load_refusal`: a base offers no diagnosis, a record this build refused,
+   a file without a model spec among them, is said with why; the
    research Load button is off for such a row, its reason beside it); the item
    is found in the server's list again (`resolve_checkpoint`, never a client
    path) and its bytes hashed again, so a list read earlier is caught (a file
@@ -176,24 +176,21 @@ NOTHING_RELOADED = "Nothing was reloaded; check the rows again, then reload or k
 REST_TITLE = "Other checkpoints · newest first"
 
 #: **The list's one filter vocabulary** (``view["task"]``, `matches`): every
-#: row; the bases; one task's finetuned models; the files without a model spec
-#: (history, never run); every model finetuned for a task.
-TASK_FILTERS = ("all", "base", "disease", "gene", "patients_like_me", "history", "task_models")
+#: row; the bases; one task's finetuned models; every model finetuned for a
+#: task.
+TASK_FILTERS = ("all", "base", "disease", "gene", "patients_like_me", "task_models")
 #: Each filter as the count line ("· Disease only, of 9 listed") and the empty
 #: state ("No disease model is listed in this workspace.") name it.
 FILTER_WORDS: Dict[str, Tuple[str, str]] = {
     "all": ("All", "checkpoint"),
     "base": ("Base", "base"),
     **{task: (name, f"{name.lower()} model") for task, name in TASK_NAMES.items()},
-    "history": ("History", "file without a model spec"),
     "task_models": ("Task models", "model finetuned for a task"),
 }
 
-#: Why a listed row is never loaded (`load_refusal`), said before anything of
-#: its file is read: README §5 ("a base offers no diagnosis") and §4 (a file
-#: without a model spec is listed as history and never run; K6 decision 1).
+#: Why a base row is never loaded (`load_refusal`), said before anything of
+#: its file is read: README §5 ("a base offers no diagnosis").
 BASE_REFUSAL = "A base offers no diagnosis: load a model finetuned for a task."
-HISTORY_REFUSAL = "No model spec: listed as history, never run."
 
 
 @dataclass(frozen=True)
@@ -211,7 +208,7 @@ class Preset:
     layout: str = "rows"
     #: The rows this preset ever shows (a `TASK_FILTERS` name), whatever the
     #: view asks: the drawer lists models finetuned for a task only, so a view
-    #: of None (a direct call) never lists a base or a history file there.
+    #: of None (a direct call) never lists a base or a refused file there.
     rows: str = "all"
     #: Whether its listing carries the family view (`family_views`).
     family: bool = False
@@ -374,8 +371,8 @@ def empty_listing(problem: Optional[str] = None) -> Dict[str, Any]:
             "status_read": False}
 
 
-#: The filters a family view is drawn for (`family_views`): the history group
-#: is the whole view's (``all``), and a family holds no history file.
+#: The filters a family view is drawn for (`family_views`): the refused group
+#: is the whole view's (``all``), and a family holds no refused file.
 FAMILY_FILTERS = ("all", "base", *TASK_NAMES)
 
 
@@ -481,12 +478,10 @@ def matches(item: Mapping[str, Any], name: str) -> bool:
     """Whether a listed checkpoint is a row of the filter `name`
     (`TASK_FILTERS`), judged by its model record through the server's one
     predicate (`server_lists.record_matches`): a base, a model finetuned for
-    that task, any model finetuned for a task, or a file without a model spec.
-    A file whose record was refused or not read is a row of ``all`` only."""
+    that task, or any model finetuned for a task. A file whose record was
+    refused or not read is a row of ``all`` only."""
     if name == "all":
         return True
-    if name == "history":
-        return item.get("record") == "history"
     if name == "base":
         return record_matches(item, learning_stage="base")
     if name == "task_models":
@@ -589,8 +584,8 @@ def _groups(items: Sequence[Mapping[str, Any]], view: Any
 
 def _kind_line(item: Mapping[str, Any], tag: str) -> str:
     """A row's first line: what its file is, in the one word every page leads
-    with (`renderers.record_kind_text`: "Disease", "Base", "History · never
-    run", "Record not read" …), escaped."""
+    with (`renderers.record_kind_text`: "Disease", "Base", "Record not
+    readable", "Record not read" …), escaped."""
     css = "shep-row-sub" if tag == "span" else "shep-sub"
     return f'<{tag} class="{css} shep-row-kind">{r.e(r.record_kind_text(item))}</{tag}>'
 
@@ -774,8 +769,8 @@ def loadable(item: Optional[Mapping[str, Any]]) -> bool:
 def load_refusal(item: Mapping[str, Any]) -> Optional[str]:
     """Why a listed checkpoint is never loaded, from its listed model record
     alone (nothing of its file is read again): a base offers no diagnosis; a
-    file without a model spec is history, never run (K6 decision 1); a record
-    this build refused, or never read, says so. None for a model finetuned for
+    record this build refused (a file without a model spec among them, with
+    the record reader's reason), or never read, says so. None for a model finetuned for
     a task, which the reload serves under that task's scoring mode."""
     record = item.get("record")
     if record == "model":
@@ -784,8 +779,6 @@ def load_refusal(item: Mapping[str, Any]) -> Optional[str]:
         if item.get("task") in TASK_SCORING_MODES:
             return None
         return f"{r.record_kind_text(item)}: its record names no task this build serves."
-    if record == "history":
-        return HISTORY_REFUSAL
     if record == "refused":
         return f"{r.record_kind_text(item)}: {item.get('record_problem') or 'refused'}."
     return f"{r.record_kind_text(item)}."
@@ -1695,7 +1688,6 @@ __all__ = [
     "FAMILY_FILTERS",
     "FILTER_WORDS",
     "FROM_CHANGED",
-    "HISTORY_REFUSAL",
     "IN_USE_NOTE",
     "LoadStep",
     "MODEL_LIST_JS",

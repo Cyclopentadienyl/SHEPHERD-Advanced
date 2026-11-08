@@ -552,7 +552,7 @@ def read_measurement_inputs(
     )
     # **The model the protocol takes**: the record's stage and head against the
     # protocol's requirement, never its name. A file without a model spec is
-    # refused by the record reader itself (history, never run by this build).
+    # refused by the record reader itself (not readable by this build).
     record = read_model_record(read.checkpoint)
     why = protocols.model_refusal(protocol, record.learning_stage, record.task)
     if why is not None:

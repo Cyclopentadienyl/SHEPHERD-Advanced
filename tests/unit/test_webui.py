@@ -158,17 +158,21 @@ class TestTrainingConsoleHelpers:
         assert loss["x"] == [1, 2]
         assert loss["series"][0]["values"] == [2.5, 2.0]
 
-    def test_the_hits_chart(self):
+    def test_the_companions_chart(self):
+        """A task model's companions by cut-off, from the keys its log holds
+        (the chart that a file without a model spec's Hits@K used to fill)."""
         from src.webui.components.training_console import training_charts
 
         val_data = [
-            {"epoch": 0, "val_hits@1": 0.05, "val_hits@10": 0.2},
-            {"epoch": 1, "val_hits@1": 0.1, "val_hits@10": 0.3},
+            {"epoch": 0, "val_pooled_mrr": 0.1, "val_pooled_top1": 0.05,
+             "val_pooled_top10": 0.2},
+            {"epoch": 1, "val_pooled_mrr": 0.2, "val_pooled_top1": 0.1,
+             "val_pooled_top10": 0.3},
         ]
-        hits = training_charts({"train": [], "validation": val_data})[2]
-        assert [s["label"] for s in hits["series"]] == ["Hits@1", "Hits@10"]
+        companions = training_charts({"train": [], "validation": val_data})[2]
+        assert [s["label"] for s in companions["series"]] == ["top-1", "top-10"]
         # Epochs should be 1-indexed for display
-        assert hits["x"] == [1, 2]
+        assert companions["x"] == [1, 2]
 
     def test_the_base_start_takes_compile_from_the_runtime_settings(self, monkeypatch, tmp_path):
         """torch.compile is sourced from Runtime Settings, not a Training widget:

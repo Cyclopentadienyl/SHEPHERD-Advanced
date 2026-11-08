@@ -5690,7 +5690,7 @@ def phase_m2_demo(
 
     def _inventory() -> Tuple[str, Dict[str, Any]]:
         import scripts.audit_checkpoint_family as audit
-        from src.models.bundle.record import HISTORY_ONLY
+        from src.config.model_types import WRITTEN_BEFORE_SPEC
 
         assert "other" in state, "the same-shaped workspace (M1) is not available"
         root = m2 / "inventory_root"
@@ -5725,7 +5725,8 @@ def phase_m2_demo(
         assert crossed["verdict"] == "refused" and "kg differs" in crossed["reason"]
         specless = verdicts("a", "a/checkpoints/m2/no_model_spec.pt")
         for use, verdict in specless.items():
-            assert verdict["verdict"] == "refused" and HISTORY_ONLY in (verdict["reason"] or ""), (
+            assert (verdict["verdict"] == "refused"
+                    and WRITTEN_BEFORE_SPEC in (verdict["reason"] or "")), (
                 f"a file without a model spec reads {verdict['verdict']} for {use}")
         return ("the inventory lists what M2 accepts and refuses, and refuses a file without "
                 "a model spec for both uses"), {
@@ -6219,7 +6220,7 @@ def phase_m2_real(
     def _history_refused() -> Tuple[str, Dict[str, Any]]:
         import src.api.main as api
         from src.inference.pipeline import PipelineBuildError
-        from src.models.bundle.record import HISTORY_ONLY
+        from src.config.model_types import WRITTEN_BEFORE_SPEC
         from src.utils.run_plan import RunPlanRefused
 
         assert "child" in state, "R4.finetune did not pass"
@@ -6259,7 +6260,7 @@ def phase_m2_real(
                     refuses(lambda: api.build_pipeline(
                         kg_path=str(real / "kg.json"), checkpoint_path=str(stripped),
                         data_dir=str(real), device=device,
-                    ), PipelineBuildError, HISTORY_ONLY)
+                    ), PipelineBuildError, WRITTEN_BEFORE_SPEC)
                 assert builds == [], "a model was built from a file without a model spec"
                 assert api.app_state.pipeline is served, "the served pipeline changed"
                 refused["serving"] = "refused at load before any model was built"
@@ -6299,7 +6300,7 @@ def phase_m2_real(
 
     def _inventory() -> Tuple[str, Dict[str, Any]]:
         import scripts.audit_checkpoint_family as audit
-        from src.models.bundle.record import HISTORY_ONLY
+        from src.config.model_types import WRITTEN_BEFORE_SPEC
 
         assert "child" in state, "R4.finetune did not pass"
         facts: Dict[str, Any] = {}
@@ -6320,7 +6321,7 @@ def phase_m2_real(
             refusal = next((fact for fragment, fact in (
                 ("records no training_input_digests", "no record"),
                 ("kg is not recorded", "no kg role"),
-                (HISTORY_ONLY, "no model spec"),
+                (WRITTEN_BEFORE_SPEC, "no model spec"),
             ) if fragment in reason), None)
             assert refusal is not None, (
                 "the history file was refused for something other than its missing kg "

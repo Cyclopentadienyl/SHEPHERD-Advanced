@@ -24,12 +24,23 @@ def _touch(path: Path, mtime: float) -> Path:
 # --------------------------------------------------------------- resolve dir
 # ---------------------------------------------------------- ranking score reader
 def test_ranking_score_key_priority():
-    assert ranking_score_detail({"val_mrr": 0.7, "val_hits@10": 0.9}) == ("val_mrr", 0.7)
-    # val_mrr missing -> falls back to val_hits@10 (Codex case 7)
-    assert ranking_score_detail({"val_hits@10": 0.75, "val_hits@1": 0.2}) == (
-        "val_hits@10", 0.75,
-    )
-    assert ranking_score_detail({"val_hits@1": 0.3}) == ("val_hits@1", 0.3)
+    assert ranking_score_detail({"val_pooled_mrr": 0.7, "val_lp_accuracy": 0.9}) == (
+        "val_pooled_mrr", 0.7)
+    assert ranking_score_detail({"val_lp_accuracy": 0.75}) == ("val_lp_accuracy", 0.75)
+
+
+def test_the_ranking_keys_are_the_stages_selection_metrics_and_never_a_loss():
+    """N9 (K8-7b): a checkpoint is ranked by the figure its stage selects by,
+    a base's LP accuracy and a task model's pooled MRR, and by nothing else: a
+    log holding only figures no stage of this build selects by (an earlier
+    trainer's MRR or Hits@K) gives no ranking figure, and a loss never does."""
+    from src.training.finetune_task import FINETUNE_SELECTION_METRIC
+    from src.training.lp_task import BASE_SELECTION_METRIC
+    from src.utils.checkpoint_paths import RANKING_SCORE_KEYS
+
+    assert set(RANKING_SCORE_KEYS) == {BASE_SELECTION_METRIC, FINETUNE_SELECTION_METRIC}
+    assert "val_loss" not in RANKING_SCORE_KEYS
+    assert ranking_score_detail({"val_mrr": 0.7, "val_hits@10": 0.9, "val_loss": 0.1}) is None
 
 
 def test_ranking_score_ignores_invalid():
@@ -38,8 +49,8 @@ def test_ranking_score_ignores_invalid():
     assert ranking_score_detail({"val_pooled_mrr": True}) is None  # bool is not a numeric score
     # An integer past a float's range (the safe loader reads one) has no finite
     # figure; `math.isfinite` raised OverflowError out of the list.
-    assert ranking_score_detail({"val_mrr": 2 ** 2000, "val_pooled_mrr": 2 ** 200}) == (
-        "val_pooled_mrr", float(2 ** 200))
+    assert ranking_score_detail({"val_pooled_mrr": 2 ** 2000, "val_lp_accuracy": 2 ** 200}) == (
+        "val_lp_accuracy", float(2 ** 200))
     assert ranking_score_detail({}) is None
     assert ranking_score_detail(None) is None
 
@@ -385,6 +396,67 @@ def test_equal_recency_is_ordered_by_name_not_by_the_filesystem(tmp_path):
            1_700_000_900)
     assert select_auto_run_checkpoint(tmp_path)[1] == "sage", (
         "newer training wins over the name")
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_one_run_name_in_two_directories_keeps_one_order(tmp_path, monkeypatch, reverse):
+    """N5 (C2): every directory under runs/ is listed, so one run name can sit
+    in two of them at one recency. The order is a total key (newest checkpoint,
+    the run's name, then its directory's name), so the list and automatic
+    selection are the same whichever order `iterdir()` gives."""
+    from src.utils.checkpoint_paths import list_runs, select_auto_run_checkpoint
+
+    root = tmp_path / "runs"
+    for layout in ("gatv2", "hgt"):
+        _touch(root / layout / "20261001-000000_run_aaaaaa" / "checkpoints" / "last.pt", 100)
+    original = Path.iterdir
+
+    def iterdir(self):
+        entries = sorted(original(self))
+        return iter(entries[::-1] if reverse else entries)
+
+    monkeypatch.setattr(Path, "iterdir", iterdir)
+    assert [(r.parent.name, r.name) for r in list_runs(tmp_path)] == [
+        ("hgt", "20261001-000000_run_aaaaaa"), ("gatv2", "20261001-000000_run_aaaaaa")]
+    assert select_auto_run_checkpoint(tmp_path)[1] == "hgt"
+
+
+def test_any_directory_under_runs_is_listed_and_a_name_is_never_joined(tmp_path):
+    """N1/N4 at the listing (C1, C9): a run under a directory no writer of this
+    build uses (an earlier build's ``gat``, one an operator named) is listed
+    like any other, and a name given to keep one directory is matched against
+    the listed names, never joined onto a path: ``.``, ``..``, ``a/b`` and
+    ``""`` name no directory."""
+    from src.utils.checkpoint_paths import list_run_checkpoints, list_runs
+
+    ws = tmp_path / "ws"
+    root = ws / "runs"
+    for layout, day, mtime in (("gat", 1, 100), ("my_runs", 2, 200), ("gatv2", 3, 300)):
+        _touch(root / layout / f"2026100{day}-000000_r_aaaaaa" / "checkpoints" / "last.pt",
+               mtime)
+    (root / "not_a_directory").write_text("x", encoding="utf-8")
+    assert [r.parent.name for r in list_runs(ws)] == ["gatv2", "my_runs", "gat"]
+    assert [r.parent.name for r in list_runs(ws, "my_runs")] == ["my_runs"]
+    for name in (".", "..", "a/b", "", "runs", "my_runs/..", "GAT"):
+        assert list_runs(ws, name) == [], name
+        assert list_run_checkpoints(ws, name) == [], name
+    assert list_runs(tmp_path / "no_such_workspace") == []
+
+
+def test_new_runs_are_filed_under_an_encoder_kind_only(tmp_path):
+    """N3: the writer's closed set is the model spec's encoder kinds
+    (`RUN_LAYOUT_KEYS == ENCODER_KINDS`); any other name, an operator's
+    directory name included, is never proposed for a new run, while the
+    listing reads it."""
+    from src.config.model_types import ENCODER_KINDS
+    from src.utils import checkpoint_paths as cp
+
+    assert cp.RUN_LAYOUT_KEYS == ENCODER_KINDS
+    for kind in ENCODER_KINDS:
+        assert cp.propose_run_dir(tmp_path, kind).parent == tmp_path / "runs" / kind
+    with pytest.raises(ValueError, match="Unsupported run layout key 'my_runs'"):
+        cp.propose_run_dir(tmp_path, "my_runs")
+    assert not (tmp_path / "runs" / "my_runs").exists()
 
 
 def test_an_explicit_run_directory_must_be_free(tmp_path):

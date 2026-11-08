@@ -322,10 +322,13 @@ def test_the_run_suffix_and_a_validation_figure_by_its_name():
     assert r.run_suffix("20261017-091500_run_3fa9c1") == "run_3fa9c1"
     assert r.run_suffix("my-run") is None
     # The column says "Validation (Trainer)": each cell names its own figure.
-    assert r.validation_cell({"metric": "val_mrr", "value": 0.24101}) == (
-        '0.2410<div class="shep-sub">Validation MRR (Trainer, top-20)</div>')
-    assert "Validation Hits@10 (Trainer)" in r.validation_cell({"metric": "val_hits@10",
-                                                                 "value": 0.5})
+    assert r.validation_cell({"metric": "val_pooled_mrr", "value": 0.24101}) == (
+        '0.2410<div class="shep-sub">Validation pooled MRR (Trainer)</div>')
+    assert "Validation LP accuracy (Trainer)" in r.validation_cell(
+        {"metric": "val_lp_accuracy", "value": 0.5})
+    # The names are those of the figures selection ranks by, and no other.
+    from src.utils.checkpoint_paths import RANKING_SCORE_KEYS
+    assert set(r.VALIDATION_LABELS) == set(RANKING_SCORE_KEYS)
     assert "—" in r.validation_cell(None)
     assert r.MODEL_TABLE_COLUMNS[2] == "Validation (Trainer)"
 
@@ -386,7 +389,7 @@ def test_a_listed_checkpoint_leads_with_its_kind_word():
     assert r.record_kind_text(_record(stage="base", task=None)) == "Base"
     assert [r.record_kind_text(_record(task=t)) for t in TASKS] == [
         "Disease", "Gene", "Patients-like-me"]
-    assert r.record_kind_text(_record("history")) == "History · never run"
+    # A file without a model spec is a refused record, in the refused word.
     assert r.record_kind_text(_record("refused")) == "Record not readable"
     # A record never read keeps its own word (skill §6), apart from a refused one.
     assert r.record_kind_text({**checkpoint(problem="torn"), "record": None}) == (
@@ -469,9 +472,8 @@ def test_model_facts_show_the_task_and_the_configuration_escaped():
     assert (changed.task, changed.configuration) == ("Base", "GATv2 · recipe changed in 2 fields")
     one = r.configuration_text(_record(differences=("input.dim",)))
     assert one == "GATv2 · recipe changed in 1 field"
-    history = r.facts_from_checkpoint(_record("history"), [workspace()])
-    assert (history.task, history.configuration) == ("History · never run", "No model spec")
-    assert r.configuration_text(_record("refused")) == "Not readable"
+    refused = r.facts_from_checkpoint(_record("refused"), [workspace()])
+    assert (refused.task, refused.configuration) == ("Record not readable", "Not readable")
     assert r.configuration_text({**checkpoint(), "record": None}) == "Not read"
     # An item built without reading a record (the Diagnosis card's served item)
     # shows neither row: the card names its task in the name line (decision 4).

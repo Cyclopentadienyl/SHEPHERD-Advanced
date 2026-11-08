@@ -530,16 +530,18 @@ def run_reload(request: PipelineReloadRequest) -> PipelineReloadResponse:
         if request.checkpoint_path:
             hint = f"{request.checkpoint_path} does not exist."
         elif selected is None and not_read:
-            # Nothing chosen, and some runs behind a link out of the workspace.
-            # Whether a new run can be trained here depends on where the link
-            # is (`run_dir_outside` refuses only a run that would land outside),
-            # so the boundary is stated and the task's own hint follows it.
-            hint = (f"{len(not_read)} checkpoint file(s) of the workspace's runs resolve "
-                    "outside the workspace, so automatic selection does not read them; keep "
-                    "the runs inside the workspace (runs/ and its layout directories not "
-                    "links out of it), or pass an explicit checkpoint_path."
-                    f" No run inside the workspace holds a model finetuned for the "
-                    f"{request.task} task.")
+            # Nothing chosen, and some of the runs not read: files behind a
+            # link out of the workspace, or a directory under runs/ this
+            # account cannot list (each named in the reason). Whether a new
+            # run can be trained here depends on where the link is
+            # (`run_dir_outside` refuses only a run that would land outside),
+            # so what was not read is stated and the task's own hint follows.
+            hint = (f"Automatic selection did not read {len(not_read)} item(s) of the "
+                    "workspace's runs (named above: a checkpoint file that resolves outside "
+                    "the workspace, or a directory under runs/ that cannot be listed); keep "
+                    "the runs inside the workspace (runs/ and its directories not links out "
+                    "of it) and listable, or pass an explicit checkpoint_path."
+                    f" No run it read holds a model finetuned for the {request.task} task.")
         else:
             hint = (f"No run holds a model finetuned for the {request.task} task; a base, "
                     "another task's model and a checkpoint without a model spec are not "

@@ -5,7 +5,7 @@ The Test page's start, outcome and registration with a real test run (M5-2, UI-D
 `scripts/measure_scorer.py` (CPU, the fixture cohort, a base and a disease
 child trained for one epoch by `tests/fixtures/trained_children.train_children`
 into the workspace's `runs/gatv2`, beside a checkpoint without a model spec
-kept as history): the page offers the child the one measurement its record
+under `runs/hgt`, listed with its record refused): the page offers the child the one measurement its record
 admits (disease), and Start hands the runner the inputs from the server's
 lists, the digests shown, that measurement and, apart from it, the model's
 learning stage and task the listing's model record names; once the run has
@@ -14,8 +14,9 @@ without "Register the result") and which measurement it ran, the version's
 report store lists the new report under that measurement's own metrics, and
 the page's Register files it in the ledger beside the listed child, under
 `runs/gatv2`, after which the page reads it as registered. The base and the
-history file are listed, offered no measurement, and Start says why it does
-not measure them (for the base, the base message).
+file without a model spec are listed, offered no measurement, and Start says
+why it does not measure them (for the base, the base message; for the other,
+the record reader's one phrase).
 
 > The model is trained for one epoch on CPU and the graph is synthetic: nothing
 > here is a result about the model, only about the page's flow.
@@ -31,11 +32,12 @@ import pytest
 pytest.importorskip("torch")
 pytest.importorskip("gradio")
 
+from src.config.model_types import WRITTEN_BEFORE_SPEC  # noqa: E402
 from tests.fixtures.operator_access import operator_request  # noqa: E402
 from tests.fixtures.trained_children import BASE_RUN, CHILD_RUNS  # noqa: E402
 
 #: The run of a checkpoint without a model spec, kept beside the bundles:
-#: listed as history, never run.
+#: listed, its record refused, never run.
 HISTORY_RUN = "20261017-091500_run_3fa9c1"
 LABEL = "demo-test-1"
 
@@ -150,7 +152,8 @@ def test_a_run_started_from_the_page_is_kept_shown_and_registered(site, monkeypa
         "at that time: ", 1)[0]
 
 
-def test_a_base_and_a_history_file_are_listed_and_never_started(site, monkeypatch):
+def test_a_base_and_a_file_without_a_model_spec_are_listed_and_never_started(site,
+                                                                              monkeypatch):
     """On the records the production path wrote: the base and the checkpoint
     without a model spec are listed, led by what they are, and offered no
     measurement; Start says why it does not measure them (for the base, the
@@ -169,14 +172,14 @@ def test_a_base_and_a_history_file_are_listed_and_never_started(site, monkeypatc
     history = _key(models, "hgt", HISTORY_RUN, "best.pt")
     child = _key(models, "gatv2", CHILD_RUNS["disease"])
     assert labels[base].startswith("Base · ") and labels[child].startswith("Disease · ")
-    assert labels[history].startswith("History · never run · ")
+    assert labels[history].startswith("Record not readable · ")
 
     class Unasked:
         def start_test(self, inputs):
             raise AssertionError("the runner was asked to start a refused checkpoint")
 
     for key, says in ((base, protocols.BASE_MESSAGE),
-                      (history, "History · never run (no model spec: a ShepherdGNN checkpoint)")):
+                      (history, f"Record not readable ({WRITTEN_BEFORE_SPEC})")):
         assert tp.measurement_choices(tp.find_model(models, key)) == []
         allowed, why = tp.start_state(page, models, "demo", LABEL, key, binding, ("none", ""))
         assert allowed is False and why.startswith(f"Disabled: {says}"), why

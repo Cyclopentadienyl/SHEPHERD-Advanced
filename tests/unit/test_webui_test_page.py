@@ -65,6 +65,7 @@ import pytest
 gr = pytest.importorskip("gradio")
 pytest.importorskip("torch")
 
+from src.config.model_types import WRITTEN_BEFORE_SPEC  # noqa: E402
 from src.webui.components import test_page as tp  # noqa: E402
 from tests.fixtures.operator_access import (  # noqa: E402
     OPERATOR_BASE_URL,
@@ -84,7 +85,7 @@ LABEL = "demo-test-1"
 def built(trained_disease_child, tmp_path_factory):
     """A workspaces root with the demo workspace holding two runs: the
     session's trained disease child (`trained_disease_child`, copied) and a
-    checkpoint without a model spec, which the listing reads as history; a
+    checkpoint without a model spec, which the listing lists as refused; a
     registry with one version holding one kept, unregistered report (the real
     disease task measurement of the child, on CPU: a 1-epoch model, so no
     number here is a result); and an intake directory with one source."""
@@ -167,7 +168,7 @@ def _models(page, request):
 
 
 #: Synthetic bundle runs filed beside the fixture's trained child and its file
-#: without a model spec (which the listing reads as history, K6 decision 1).
+#: without a model spec (listed, its record refused with why; K6 decision 1).
 CHILD_RUN = "20261020-000000_disease_bbbbbb"
 BUNDLE_BASE_RUN = "20261019-000000_base_aaaaaa"
 
@@ -453,8 +454,8 @@ def test_an_operator_lists_the_workspaces_checkpoints(site, monkeypatch):
     assert f"model fingerprint {site.history_sha[:12]}" in history
     assert f"model fingerprint {site.sha[:12]}" in child
     # Each is listed led by what it is: the fixture's file without a model
-    # spec as history, its trained child by its task.
-    assert history.startswith("History · never run · epoch ")
+    # spec as a record not readable, its trained child by its task.
+    assert history.startswith("Record not readable · epoch ")
     assert child.startswith("Disease · epoch ")
 
 
@@ -1016,10 +1017,11 @@ def test_start_waits_for_every_choice_and_says_why(site, monkeypatch):
     another = dict(binding, graph={**binding["graph"], "kg": "0" * 64})
     allowed, why = tp.start_state(page, models, "demo", LABEL, child, another, ("none", ""))
     assert allowed is False and "mapped against another graph" in why
-    # The fixture's file without a model spec is history: listed, never measured.
+    # The fixture's file without a model spec: listed, never measured, with
+    # the record reader's one phrase (N2).
     assert state("demo", LABEL, site.history_key) == (
-        False, "Disabled: History · never run (no model spec: a ShepherdGNN checkpoint): not "
-               "measured here. Choose a model finetuned for a task.")
+        False, f"Disabled: Record not readable ({WRITTEN_BEFORE_SPEC}): not measured here. "
+               "Choose a model finetuned for a task.")
 
 
 # --------------------------------------------------------------------------- the operator controls
@@ -2968,7 +2970,8 @@ def test_the_ledger_order_is_the_file_then_the_workspace_the_run_read(site, monk
     newer = site.demo / "runs" / "hgt" / "20261019-080000_run_aaaaaa" / "checkpoints"
     newer.mkdir(parents=True)
     # Written now, so its run is the most recently trained (`list_runs` orders
-    # runs by their newest file): it lists before the fixture's history file too.
+    # runs by their newest file): it lists before the fixture's file without a
+    # model spec too.
     shutil.copy(site.checkpoint, newer / "best.pt")
     page, request = _page(monkeypatch)
     models = tp.read_models("demo", request)
@@ -3114,16 +3117,16 @@ def test_measure_refusal_says_why_each_kind_is_not_measured():
     for protocol in (None, "disease", "gene"):
         assert refusal(_model(None, "base"), {"counts": NO_GENES}, protocol) == (
             protocols.BASE_MESSAGE)
-    history, refused, unread = ({"record": "history"},
-                                {"record": "refused", "record_problem": "record version 9"},
-                                {"record": None})
-    for item in (history, refused, unread):
+    specless, refused, unread = ({"record": "refused", "record_problem": WRITTEN_BEFORE_SPEC},
+                                 {"record": "refused", "record_problem": "record version 9"},
+                                 {"record": None})
+    for item in (specless, refused, unread):
         for protocol in (None, "disease"):
             said = refusal(item, None, protocol)
             assert said.startswith(r.record_kind_text(item)) and said.endswith(
                 tp.NOT_MEASURED_HERE), said
-    assert refusal(history, None, None) == (
-        "History · never run (no model spec: a ShepherdGNN checkpoint): " + tp.NOT_MEASURED_HERE)
+    assert refusal(specless, None, None) == (
+        f"Record not readable ({WRITTEN_BEFORE_SPEC}): " + tp.NOT_MEASURED_HERE)
     assert refusal(refused, None, None) == (
         "Record not readable (record version 9): " + tp.NOT_MEASURED_HERE)
     assert refusal(unread, None, None) == "Record not read: " + tp.NOT_MEASURED_HERE
@@ -3190,7 +3193,7 @@ def test_a_measurement_needs_a_version_that_lists_its_genes(protocol, counts, mi
 
 def test_start_and_its_reason_refuse_what_is_not_measured_with_one_rule(site, monkeypatch):
     """The listing's real records: a base, a record this build refuses and the
-    fixture's history file are listed; Start says why (`start_state`,
+    fixture's file without a model spec are listed; Start says why (`start_state`,
     "Disabled: …") and the start refuses them before the runner is asked
     ("… Nothing was started."), from the one rule (`measure_refusal`). A gene
     child on the fixture version, which lists no genes, is refused for that
@@ -3210,7 +3213,7 @@ def test_start_and_its_reason_refuse_what_is_not_measured_with_one_rule(site, mo
         f"gatv2/{BUNDLE_BASE_RUN}/last.pt": (None, protocols.BASE_MESSAGE),
         "gatv2/20261021-000000_refused_cccccc/last.pt":
             (None, "Record not readable (checkpoint record version 999"),
-        site.history_key: (None, "History · never run (no model spec"),
+        site.history_key: (None, f"Record not readable ({WRITTEN_BEFORE_SPEC})"),
         gene: ("gene", protocols.inputs_refusal("gene", counts)),
     }
     assert cases[gene][1].startswith("this cohort version lists no causal genes")
@@ -3269,7 +3272,7 @@ def test_every_checkpoint_is_listed_led_by_what_it_is(site, monkeypatch):
     leads = sorted(label.split(" · epoch ")[0] for label in labels)
     # Two disease children: the fixture's trained one and the one put here.
     assert leads == sorted(["Base", "Disease", "Disease", "Gene", "Patients-like-me",
-                            "History · never run", "Record not readable"])
+                            "Record not readable", "Record not readable"])
 
 
 def _task_record(mode, **metrics):
@@ -3458,7 +3461,8 @@ def test_the_measurement_options_are_the_protocols_the_record_admits():
         assert choices == [(words, task)]
         assert tp.chosen_measurement(choices, None) == task
         assert tp.chosen_measurement(choices, "another") == task
-    for item in (None, _model(None, "base"), _model("C"), {"record": "history"},
+    for item in (None, _model(None, "base"), _model("C"),
+                 {"record": "refused", "record_problem": WRITTEN_BEFORE_SPEC},
                  {"record": None}, {"record": "refused", "record_problem": "x"}):
         assert tp.measurement_choices(item) == []
     assert tp.chosen_measurement([], "disease") is None

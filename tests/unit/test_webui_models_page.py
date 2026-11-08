@@ -22,8 +22,8 @@ registry's report store (`tests/fixtures/model_records.py`):
   short, unique); every row's kind in the shared list's Model cell, under
   every order; By family's groups (parent first, indented Lineage cells, a
   context row in grey with ○, an unavailable parent in amber with ▲, escaped;
-  the history, not-read and not-readable groups under All, each under its own
-  word), the Order switch on for every operator's list;
+  the not-readable and not-read groups under All, each under its own word),
+  the Order switch on for every operator's list;
 - **the detail**: what the model is (kind, operation, parent and where it is,
   family, encoder, relation to the paper) without Model Facts' Task and
   Configuration rows; Trainer validation in its own card, the test records in
@@ -199,8 +199,9 @@ def _key(world, name):
     raise KeyError(name)
 
 
-#: Model bundles beside the ShepherdGNN files (which are history: every record
-#: the world fixture registers is theirs): a base and its disease and gene
+#: Model bundles beside the files written before the model spec (refused
+#: records, listed with why: every record the world fixture registers is
+#: theirs): a base and its disease and gene
 #: children, filed under ``gatv2``, older than every file above so the orders
 #: over those stay.
 BASE_RUN = "20261001-000000_base_aaaaaa"
@@ -443,7 +444,7 @@ def test_newest_first_gives_the_load_no_ordering(world, monkeypatch):
     view = mp.shape(listing, data, ctl)
     assert view == {"task": "all", "note": mp.LOAD_NOTE}
     html = ml.list_html(listing, None, ml.PRESETS["research"], view=view)
-    for key, kind in ((_key(world, "model-05.pt"), "History · never run"),
+    for key, kind in ((_key(world, "model-05.pt"), "Record not readable"),
                       (_key(world, "broken.pt"), "Record not read"),
                       (bundle_key("base"), "Base"), (bundle_key("gene"), "Gene")):
         row = html[html.index(f'data-key="{key}"'):]
@@ -1143,8 +1144,7 @@ def test_the_task_and_order_options_are_short_unique_and_plain():
         assert len(set(labels)) == len(labels) and len(set(values)) == len(values)
         assert all(len(label) <= 40 and label.count(" · ") <= 1 for label in labels)
     assert mp.TASK_CHOICES == [("All", "all"), ("Base", "base"), ("Disease", "disease"),
-                               ("Gene", "gene"), ("Patients-like-me", "patients_like_me"),
-                               ("History", "history")]
+                               ("Gene", "gene"), ("Patients-like-me", "patients_like_me")]
     assert {value for _label, value in mp.TASK_CHOICES} <= set(ml.TASK_FILTERS)
     assert mp.ORDER_CHOICES == [("Newest first", mp.NEWEST), ("By family", mp.BY_FAMILY)]
     title, text = mp.PAGE_HELP["models-ordering"]
@@ -1159,9 +1159,9 @@ def test_by_family_draws_each_family_parent_first_with_its_lineage(world, monkey
     """By family: one group per family,
     the base first and its children under it, indented, each with its kind,
     operation and exact parent; a child whose parent is not available says so
-    in amber with ▲ and its words, escaped; under All the history files and the
-    records not readable follow as two groups; a task's view keeps its base as
-    a context row."""
+    in amber with ▲ and its words, escaped; under All the records not readable
+    (the files without a model spec among them) and the records not read
+    follow as two groups; a task's view keeps its base as a context row."""
     shas = _add_bundles(world, orphan_parent_run=EVIL)
     listing, data = _read(world, monkeypatch)
     ctl = mp.controls(data, mp.BY_FAMILY, None)
@@ -1170,16 +1170,16 @@ def test_by_family_draws_each_family_parent_first_with_its_lineage(world, monkey
     assert view["column"] == mp.LINEAGE_COLUMN
     titles = [g["title"] for g in view["groups"]]
     # A file whose record was never read is under its own word, "Record not
-    # read" (`record_kind_text`), never under "Record not readable"; the
-    # history files under the word each of their rows leads with (K6 closing
-    # review: the page kept its own "History · listed, never run").
-    history = r.record_kind_text({"record": "history"})
+    # read" (`record_kind_text`), never under "Record not readable"; the files
+    # without a model spec, refused by the record reader, under the word each
+    # of their rows leads with (K6 closing review: no page word of its own).
+    refused_word = r.record_kind_text({"record": "refused"})
     assert titles == ["Family from run 2026-10-01 00:00 · 3 files",
                       "Family from run 2026-10-04 00:00 · 1 file",
-                      history, "Record not read"]
+                      refused_word, "Record not read"]
     assert not hasattr(mp, "GROUP_HISTORY")
     assert {r.record_kind_text(ml.find_item(listing, key))
-            for key in view["groups"][2]["keys"]} == {history}
+            for key in view["groups"][2]["keys"]} == {refused_word}
     assert view["groups"][0]["keys"] == [bundle_key("base"), bundle_key("disease"),
                                          bundle_key("gene")]
     assert view["groups"][3]["keys"] == [_key(world, "broken.pt")]
@@ -1201,7 +1201,7 @@ def test_by_family_draws_each_family_parent_first_with_its_lineage(world, monkey
     # The shared list draws them: groups in order, the Lineage column.
     html = ml.list_html(listing, None, ml.PRESETS["research"], view=view)
     assert ">Lineage</th>" in html and EVIL not in html
-    assert html.index("Family from run 2026-10-01") < html.index(f">{history}<")
+    assert html.index("Family from run 2026-10-01") < html.index(f">{refused_word}<")
     # A record this build refused and a file never read: two groups, each
     # titled with its own word (skill §6: missing states are never merged).
     broken = ml.find_item(listing, _key(world, "broken.pt"))
@@ -1210,10 +1210,10 @@ def test_by_family_draws_each_family_parent_first_with_its_lineage(world, monkey
     row = {**mp.family_row(listing, _key(world, "broken.pt")), "key": ml.item_key(refused)}
     both = {**listing, "items": [*listing["items"], refused],
             "family": {**listing["family"], "all": [*listing["family"]["all"], row]}}
-    groups = mp.family_view(both, mp.ALL_TASKS)["groups"]
-    assert [(g["title"], g["keys"]) for g in groups[-2:]] == [
-        ("Record not read", [_key(world, "broken.pt")]),
-        ("Record not readable", [ml.item_key(refused)])]
+    groups = {g["title"]: g["keys"] for g in mp.family_view(both, mp.ALL_TASKS)["groups"]}
+    assert groups["Record not read"] == [_key(world, "broken.pt")]
+    assert groups["Record not readable"][-1] == ml.item_key(refused)
+    assert _key(world, "broken.pt") not in groups["Record not readable"]
     # A task's view: its base as a context row, grey, ○ and its words.
     ctl = mp.controls(data, mp.BY_FAMILY, "gene")
     view = mp.shape(listing, data, ctl)
@@ -1221,10 +1221,9 @@ def test_by_family_draws_each_family_parent_first_with_its_lineage(world, monkey
     assert ('<div class="shep-sub shep-mp-ctx"><span aria-hidden="true">○</span> '
             'Context: parent of a shown file</div>') in view["cells"][bundle_key("base")]
     assert mp.shown_view(listing, ctl) == {"keys": [bundle_key("base"), bundle_key("gene")]}
-    # History alone; the CSS gives the marks their status tokens.
-    ctl = mp.controls(data, mp.BY_FAMILY, "history")
-    view = mp.shape(listing, data, ctl)
-    assert [g["title"] for g in view["groups"]] == [history]
+    # No filter sets the files without a model spec apart (an unknown filter
+    # is All); the CSS gives the marks their status tokens.
+    assert mp.controls(data, mp.BY_FAMILY, "history")["task"] == mp.ALL_TASKS
     assert ".shep-mp-warn {{ color: var(--shep-status-warn); }}".replace(
         "{{", "{").replace("}}", "}") in mp.PAGE_CSS.replace(f"{mp._PAGE} ", "")
     assert "var(--shep-status-neutral)" in mp.PAGE_CSS
@@ -1265,8 +1264,8 @@ def test_the_detail_says_what_the_model_is_and_its_relation_to_the_paper(world, 
     """The detail's identity (README §5): kind, operation, the exact parent
     and where it is, family, encoder and axis 2 (the fields that differ, or
     "matches the reference recipe" with what that recipe is); Model Facts'
-    Task and Configuration rows are not repeated; a history file says its
-    kind only; Load is refused for a base with its reason."""
+    Task and Configuration rows are not repeated; a file without a model
+    spec says its kind only; Load is refused for a base with its reason."""
     shas = _add_bundles(world)
     listing, data = _read(world, monkeypatch)
     ctl = mp.controls(data, mp.NEWEST, None)
@@ -1281,11 +1280,11 @@ def test_the_detail_says_what_the_model_is_and_its_relation_to_the_paper(world, 
     assert "Family" in text and "run 2026-10-01 00:00" in text
     assert "differs in: " in text and "encoder.hidden" in text   # a shrunk test spec
     assert "Configuration" not in top and ">Task<" not in top
-    history = mp.detail_parts(listing, data, _key(world, "model-05.pt"), ctl)["top"]
-    ident = history[history.index('<div class="shep-kv shep-mp-ident">'):]
+    specless = mp.detail_parts(listing, data, _key(world, "model-05.pt"), ctl)["top"]
+    ident = specless[specless.index('<div class="shep-kv shep-mp-ident">'):]
     ident = ident[:ident.index("</span></div>") + 13]
     assert re.findall(r'<span class="shep-k">([^<]*)</span>', ident) == ["Kind"]
-    assert "History · never run" in ident
+    assert "Record not readable" in ident
     # Axis 2 for a reference spec, and for a parent elsewhere or unavailable.
     item = {"record": "model", "learning_stage": "finetune", "task": "gene",
             "operation": "finetune", "family_id": BASE_RUN, "encoder": "gatv2",

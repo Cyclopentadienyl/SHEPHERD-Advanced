@@ -20,7 +20,7 @@ it shapes the list through the handle's ``view`` (a task filter, its rows and
 groups, one extra column, the note beside Load).
 
 **Task and order (README §8: "Models with the family and a task filter").**
-The Task select (All, Base, Disease, Gene, Patients-like-me, History) is the
+The Task select (All, Base, Disease, Gene, Patients-like-me) is the
 shared list's one filter vocabulary (`model_list.TASK_FILTERS`); a file whose
 record was refused or not read is listed under All only. Every row says what
 its file is (the shared list's first line, `renderers.record_kind_text`),
@@ -30,11 +30,11 @@ family draws the families of the listing's family view
 children, with a Lineage column (the operation and the exact parent file,
 indented by depth; a task's base kept as a context row; a parent that is not
 available said in amber, "▲ parent unavailable: …"), and under All the
-history files, the records not read and the records not readable as groups
-after them. Every record is shown in the detail with its own metrics, as
+records not read and the records not readable (a file without a model spec
+among them) as groups after them. Every record is shown in the detail with its own metrics, as
 recorded (`RECORD_COLUMNS` names the two shown in columns for a measurement this
 build describes).
-Load is refused for a base, a history file or a record not readable before
+Load is refused for a base or a record not readable before
 anything is read (`model_list.load_refusal`), its reason beside the button.
 
 **The detail** of the selected checkpoint: its full model fingerprint (Copy), what
@@ -147,13 +147,13 @@ ORDER_CHOICES = [("Newest first", NEWEST), ("By family", BY_FAMILY)]
 #: list's own words (`model_list.FILTER_WORDS`); "all" first, short, so the
 #: workspace select beside it keeps the room its value needs.
 TASK_CHOICES = [(ml.FILTER_WORDS[name][0], name)
-                for name in ("all", "base", *TASK_NAMES, "history")]
+                for name in ("all", "base", *TASK_NAMES)]
 ALL_TASKS = "all"
 RECORDS, USAGE = "records", "usage"
 
-#: By family's groups and extra column (the history files, and the files
-#: whose record was refused or never read, are each grouped under their own
-#: `record_kind_text` word, the one their rows lead with).
+#: By family's groups and extra column (the files whose record was refused or
+#: never read are each grouped under their own `record_kind_text` word, the
+#: one their rows lead with).
 FAMILY_TITLE = "Family from run {run} · {count} file{s}"
 LINEAGE_COLUMN = "Lineage"
 FAMILY_NOT_READ = "the family view was not read with this list"
@@ -1058,7 +1058,7 @@ def lineage_cell_html(item: Mapping[str, Any], row: Mapping[str, Any]) -> str:
     """A row's Lineage cell in By family: its operation and the exact parent
     file (or that the parent is not available, in amber, or that it is only a
     context row), indented by its depth in the family; "—" for a file with no
-    lineage (history, a record not read). Its kind is the row's own line (the
+    lineage (a record not readable or not read). Its kind is the row's own line (the
     shared list's Model cell)."""
     depth = min(int(row.get("depth") or 0), 3)
     lines = []
@@ -1087,16 +1087,13 @@ def family_view(listing: Mapping[str, Any], task: str) -> Optional[Dict[str, Any
     """By family's rows for the Task filter, from the listing's family view
     (`model_list.family_views`, one listing): ``keys`` (context rows
     included), ``groups`` (one per family, parent first, in the view's order;
-    under All the history files, then the files whose record was not read and
-    those whose record is not readable, each group under its own
-    `record_kind_text` word; History is its group alone) and the Lineage
-    ``cells``. None when the listing carries no family view."""
+    under All the files whose record was not read and those whose record is
+    not readable, each group under its own `record_kind_text` word) and the
+    Lineage ``cells``. None when the listing carries no family view."""
     views = listing.get("family")
     if not isinstance(views, Mapping) or "all" not in views:
         return None
-    rows = views.get("all" if task in (ALL_TASKS, "history") else task) or []
-    if task == "history":
-        rows = [row for row in rows if row.get("group") == "history"]
+    rows = views.get(task) or []
     items = {ml.item_key(i): i for i in listing.get("items") or []}
     groups: Dict[Tuple[Any, Any], Dict[str, Any]] = {}
     cells: Dict[str, str] = {}
@@ -1108,10 +1105,9 @@ def family_view(listing: Mapping[str, Any], task: str) -> Optional[Dict[str, Any
         if kind == "family":
             name = row.get("family_id")
         else:
-            # The history files under their rows' own word; the server groups
-            # every file without a usable record as "refused", and a record
-            # never read and a record refused say different things (skill §6),
-            # each under its own word.
+            # The server groups every file without a usable record as
+            # "refused", and a record never read and a record refused say
+            # different things (skill §6), each under its own word.
             name = r.record_kind_text(items[key])
         group = (kind, name)
         groups.setdefault(group, {"group": group, "keys": []})["keys"].append(key)
@@ -1299,7 +1295,8 @@ def detail_parts(listing: Mapping[str, Any], data: Mapping[str, Any], key: Any,
     facts = r.facts_from_checkpoint(item, workspaces)
     validation = (f'<div class="shep-card shep-mp-val"><div class="shep-mp-valbd"><b>Validation '
                   f'(Trainer)</b>{help_button("validation-trainer", "Validation (Trainer)")} '
-                  f'<span>{r.e(r.validation_text(facts.validation))}</span></div></div>')
+                  f'<span>{r.e(r.validation_text(facts.validation, read=facts.validation_read))}'
+                  '</span></div></div>')
     # Model Facts' warnings, but its synthetic banner: that one speaks of "the
     # served workspace", which a listed checkpoint need not be; the amber chip
     # above and the records' dataset line say synthetic for this checkpoint.
@@ -1723,7 +1720,8 @@ PAGE_CSS = f"""
 {_PAGE} #shep-models-research-facts {{ display: none !important; }}
 {_PAGE} {_LIST} > .shep-model-foot {{
   grid-area: foot; min-height: 0; display: grid !important; margin: 0 !important;
-  grid-template-columns: auto minmax(0, auto) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, auto) minmax(min(16em, 33%), 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
   grid-template-areas: "detail detail detail" "load reason note";
   align-items: center; gap: 0 12px !important; padding: 0 !important;
   background: var(--shep-panel); border: 1px solid var(--shep-border); border-radius: 10px;

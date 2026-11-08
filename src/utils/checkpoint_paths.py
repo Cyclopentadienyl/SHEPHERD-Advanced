@@ -5,16 +5,18 @@ Single source of truth for the on-disk run layout, shared by the training entry
 point (write path), the training service and console (listing, resume source),
 and the inference reload route (read path), so all of them agree:
 
-    {data_dir}/runs/{layout key}/{date}_{name}_{run_id}/
+    {data_dir}/runs/{layout directory}/{date}_{name}_{run_id}/
         config.yaml  runtime.json  final_metrics.json
         checkpoints/   last.pt, model-*.pt
         logs/          train_*.json, progress.json
 
 **One directory per training run** (contract decision 9, M3a-2). A run, new or
 resumed, writes only into a directory no run has used, so no run overwrites or
-prunes another's files. Runs sit side by side under their architecture, never
-nested by lineage: a resumed run records its parent by SHA-256, not by where it
-sits.
+prunes another's files. A new run is filed under its model spec's encoder kind
+(`RUN_LAYOUT_KEYS`), never nested by lineage: a resumed run records its parent
+by SHA-256, not by where it sits. **The listing reads every directory under
+``runs/``**, whatever its name (`list_runs`): what a file is comes from its own
+record, never from the directory it sits in.
 
 No torch / PyG imports — safe to import from training scripts and API services.
 
@@ -49,7 +51,6 @@ AcceptFn = Callable[[Path], bool]
 from src.config.model_types import (
     ENCODER_KINDS,
     MODEL_RECORD_READ_KEYS,
-    SUPPORTED_CONV_TYPES,
 )
 from src.utils.fingerprint import ReadOutside, lies_within, stat_identity
 
@@ -59,16 +60,14 @@ PathLike = Union[str, Path]
 # "higher is better". The best checkpoint is decided from a checkpoint's own
 # ``logs`` metadata — NOT from the filename. The number in ``model-<epoch>-
 # <value>.pt`` has no stable meaning (it is whatever ModelCheckpoint's
-# monitor/filename is configured to, e.g. val_mrr here, val_loss by default), so
-# it must never be used to choose a model. val_loss is deliberately excluded — it
-# is a poor quality signal for this task; ranking metrics are what matter.
+# monitor/filename is configured to), so it must never be used to choose a
+# model. A loss is not a selection figure here; ranking metrics are what matter.
 # A model bundle run monitors its stage's metric: a base val_lp_accuracy, a
 # finetune val_pooled_mrr (src.training.lp_task.BASE_SELECTION_METRIC and
 # finetune_task.FINETUNE_SELECTION_METRIC, which this layer cannot import; a
 # test pins them equal). One run has one stage and task, so the first one
 # available is that run's own.
-RANKING_SCORE_KEYS = ("val_mrr", "val_hits@10", "val_hits@1", "val_pooled_mrr",
-                      "val_lp_accuracy")
+RANKING_SCORE_KEYS = ("val_pooled_mrr", "val_lp_accuracy")
 
 
 def ranking_score_detail(logs) -> Optional[Tuple[str, float]]:
@@ -180,15 +179,17 @@ def slugify_run_name(name: Optional[str]) -> str:
     return slug[:_RUN_NAME_LIMIT].strip("-")
 
 
-#: The keys runs are filed under: the ShepherdGNN conv types and the model
-#: bundle's encoder kinds (README §3.3), each its own directory.
-RUN_LAYOUT_KEYS = tuple(dict.fromkeys(SUPPORTED_CONV_TYPES + ENCODER_KINDS))
+#: The keys new runs are filed under: the model bundle's encoder kinds (README
+#: §3.3), each its own directory. The writer's closed set only: a reader lists
+#: every directory under ``runs/`` (`list_runs`), whatever its name.
+RUN_LAYOUT_KEYS = ENCODER_KINDS
 
 
 def normalize_run_layout_key(key: Optional[str]) -> str:
-    """A run-layout key, lower case: a conv type or an encoder kind (``gatv2``
-    among them); anything else raises, an empty key too: a run is filed under
-    its model spec's encoder kind, never under a default."""
+    """A new run's layout key, lower case: an encoder kind (``gatv2`` among
+    them); anything else raises, an empty key too: a run is filed under its
+    model spec's encoder kind, never under a default. The writer's check only
+    (`runs_root`, `propose_run_dir`); no reader asks it."""
     k = str(key or "").strip().lower()
     if not k:
         raise ValueError("A run layout key is required: a run is filed under its model "
@@ -199,9 +200,8 @@ def normalize_run_layout_key(key: Optional[str]) -> str:
 
 
 def runs_root(data_dir: PathLike, conv_type: Optional[str]) -> Path:
-    """``{data_dir}/runs/{layout key}``: where an architecture's runs live (a
-    model spec's encoder kind; a conv type for a file written before the model
-    spec)."""
+    """``{data_dir}/runs/{layout key}``: where a new run of a model spec's
+    encoder kind is filed."""
     return Path(data_dir) / RUNS_DIRNAME / normalize_run_layout_key(conv_type)
 
 
@@ -388,40 +388,77 @@ def _run_recency(run_dir: Path) -> float:
     return max((_mtime(p) for p in run_checkpoints(run_dir)), default=0.0)
 
 
-def list_runs(data_dir: PathLike, conv_type: Optional[str] = None) -> List[Path]:
+def list_runs(data_dir: PathLike, conv_type: Optional[str] = None, *,
+              unlisted: Optional[List[Tuple[Path, str]]] = None) -> List[Path]:
     """A workspace's run directories, most recently trained first.
 
-    Every architecture's, or one's. Ordered by the newest checkpoint each holds,
-    then by name, latest first (the name starts with the run's start time), so
-    the order never depends on the filesystem's listing order.
+    **Every directory under ``runs/``, found by listing it**, whatever its name
+    (an encoder kind this build files new runs under, a name an earlier build
+    used, one an operator gave): what a file is comes from its own record,
+    never from where it sits. `conv_type` keeps the runs of the one directory
+    whose name equals it; a name is compared with the listed names, never
+    joined to a path, so ``.``, ``..``, ``a/b`` or ``""`` names none.
+
+    Ordered by the newest checkpoint each holds, then by the run's name, then
+    by its directory's, latest first (the name starts with the run's start
+    time), so the order never depends on the filesystem's listing order.
+
+    **Only ``runs/`` itself failing to list fails the list** (its `OSError`
+    propagates). A directory under it that cannot be listed hides nothing
+    else: its runs are not read, and it is appended to `unlisted` with why
+    (the error's kind and the system's words, never a path) when the caller
+    gives one, by name, so their order never depends on the filesystem's
+    either.
     """
     base = Path(data_dir) / RUNS_DIRNAME
-    architectures = ([normalize_run_layout_key(conv_type)] if conv_type
-                     else list(RUN_LAYOUT_KEYS))
     runs: List[Path] = []
-    for architecture in architectures:
-        directory = base / architecture
-        if directory.is_dir():
-            runs.extend(p for p in directory.iterdir() if p.is_dir())
-    return sorted(runs, key=lambda r: (_run_recency(r), r.name), reverse=True)
+    if not base.is_dir():
+        return runs
+    refused: List[Tuple[Path, str]] = []
+    for directory in base.iterdir():
+        if conv_type is not None and directory.name != conv_type:
+            continue
+        try:
+            if not directory.is_dir():
+                continue
+            found = [p for p in directory.iterdir() if p.is_dir()]
+        except OSError as exc:  # a directory this account may not enter
+            # Its kind and the system's words, never the path it names.
+            refused.append((directory, f"{type(exc).__name__}: {exc.strerror}"
+                            if exc.strerror else refusal_line(exc)))
+            continue
+        runs.extend(found)
+    if unlisted is not None:
+        unlisted.extend(sorted(refused, key=lambda entry: entry[0].name))
+    return sorted(runs, key=lambda r: (_run_recency(r), r.name, r.parent.name), reverse=True)
+
+
+def unlisted_problem(directory: Path, why: str) -> str:
+    """What every reader of the runs says of a directory under ``runs/`` it
+    cannot list (`list_runs`' `unlisted`): the listing's entry and automatic
+    selection's reason, in one sentence."""
+    return f"{RUNS_DIRNAME}/{directory.name} cannot be listed ({why}), so no run in it is read"
 
 
 def run_architecture(run_dir: PathLike) -> str:
-    """The architecture a run directory belongs to (its parent's name)."""
+    """The layout directory a run directory sits in (its parent's name): a
+    location, never the model's architecture, which its record names."""
     return Path(run_dir).parent.name
 
 
 def list_run_checkpoints(
-    data_dir: PathLike, conv_type: Optional[str] = None, *, run: Optional[str] = None
+    data_dir: PathLike, conv_type: Optional[str] = None, *, run: Optional[str] = None,
+    unlisted: Optional[List[Tuple[Path, str]]] = None,
 ) -> List[Tuple[Path, Path]]:
     """Every checkpoint in a workspace's runs, as ``(run_dir, checkpoint)``:
-    runs most recently trained first (`list_runs`), and within a run the newest
-    file first, then by name. The one listing the console, the training service
-    and the API show; what a file is comes from its own record, read by the
-    caller, never from where it sits. `run`, a run directory's name, lists that
-    run alone (a parent looked up by the run its child records)."""
+    runs most recently trained first (`list_runs`, `conv_type` and `unlisted`
+    as there), and within a run the newest file first, then by name. The one
+    listing the console, the training service and the API show; what a file
+    is comes from its own record, read by the caller, never from where it
+    sits. `run`, a run directory's name, lists that run alone (a parent looked
+    up by the run its child records)."""
     entries: List[Tuple[Path, Path]] = []
-    for run_dir in list_runs(data_dir, conv_type):
+    for run_dir in list_runs(data_dir, conv_type, unlisted=unlisted):
         if run is not None and run_dir.name != run:
             continue
         files = sorted(run_checkpoints(run_dir), key=lambda p: (_mtime(p), p.name), reverse=True)
@@ -436,8 +473,8 @@ class ListedCheckpoint(NamedTuple):
     fingerprint, which a ledger record and a served identity name. The rest is
     the file's own record, parsed from those same bytes: its kind, its epoch,
     its `logs` (`{}` when it records none), the Trainer's validation figure
-    (`ranking_score_detail` of those logs: the trainer's top-20 selection
-    metric, never a test result) and the dataset fingerprint it was trained on
+    (`ranking_score_detail` of those logs: the selection metric of the run's
+    stage, never a test result) and the dataset fingerprint it was trained on
     (`training_input_digests["split_manifest"]`, the SHA-256 of that
     workspace's `split_manifest.json`).
 
@@ -450,7 +487,9 @@ class ListedCheckpoint(NamedTuple):
     names of figures, each string text, `text_problem`), with no metadata. A file
     that resolves outside the directory the caller bounds the listing by, or
     whose open lands outside it, is listed with `problem` and is not read at
-    all (`read_run_checkpoints`' `within`).
+    all (`read_run_checkpoints`' `within`). A directory under ``runs/`` that
+    cannot be listed is one entry, its `run_dir` and `path` that directory,
+    with `problem` only.
 
     `size_bytes` is the file's size as listed (a `stat` beside the read,
     descriptive only); `None` for a file not read because it is outside, or one
@@ -848,12 +887,19 @@ def read_run_checkpoints(
     listed file unbounded, as before. It is the boundary automatic selection
     applies too (`checkpoint_not_read`), so a file the list refuses is never chosen.
 
+    **A directory under ``runs/`` that cannot be listed is listed, after the
+    files, as one entry** whose `run_dir` and `path` are that directory and
+    whose `problem` says why (`list_runs`' `unlisted`): what it holds is not
+    read, and nothing else is hidden. Only ``runs/`` itself failing to list
+    raises.
+
     torch is imported only here, when a file is read, so this module stays
     importable without it.
     """
     bound = Path(within).resolve() if within is not None else None
     entries: List[ListedCheckpoint] = []
-    for run_dir, path in list_run_checkpoints(data_dir, conv_type, run=run):
+    unlisted: List[Tuple[Path, str]] = []
+    for run_dir, path in list_run_checkpoints(data_dir, conv_type, run=run, unlisted=unlisted):
         problem = checkpoint_not_read(run_dir, path, bound) if bound is not None else None
         if problem is not None:
             entries.append(ListedCheckpoint(run_dir, path, problem=problem))
@@ -867,6 +913,8 @@ def read_run_checkpoints(
         entry, opened = _read_one(run_dir, path, bound)
         _remember(path, bound, identity, opened, started_ns, entry)
         entries.append(entry)
+    entries.extend(ListedCheckpoint(directory, directory, problem=unlisted_problem(directory, why))
+                   for directory, why in unlisted)
     return entries
 
 
@@ -916,10 +964,10 @@ def select_auto_run_checkpoint(
     data_dir: PathLike, score_fn: Optional[ScoreFn] = None,
     accept: Optional[AcceptFn] = None, not_read: Optional[List[str]] = None,
 ) -> Tuple[Optional[Path], Optional[str], str]:
-    """Auto selection over runs: the most recently trained run, filed under
-    any run-layout key (`RUN_LAYOUT_KEYS`), holding a candidate, then the
+    """Auto selection over runs: the most recently trained run, in any
+    directory under ``runs/`` (`list_runs`), holding a candidate, then the
     existing in-run ordering. Returns
-    ``(checkpoint_path, run layout key, reason)``. Only the run layout is
+    ``(checkpoint_path, run layout directory, reason)``. Only the run layout is
     searched; checkpoints elsewhere are reached by an explicit path.
 
     **Inside the workspace only** (the reviewer's K8-1 recheck): a file that
@@ -927,13 +975,18 @@ def select_auto_run_checkpoint(
     included, is no candidate and is never read, as the listing refuses it
     (`checkpoint_not_read`); the reason names it in the listing's words
     (the first `NOT_READ_NAMED`, then a count), and a list given as
-    `not_read` is extended with every one.
+    `not_read` is extended with every one. **A directory under ``runs/`` it
+    cannot list is named the same way, first** (`unlisted_problem`, the
+    listing's entry): the run chosen is then the latest of the runs read,
+    never silently the latest of all.
 
     **With ``accept``, the record decides, never the directory** (provenance
     §9.3, hazard 3): a run counts only when it holds a file ``accept`` takes
     (the reload's rule: a model bundle finetuned for the task asked for)."""
-    run, candidates, outside = _first_run_holding(
-        list_runs(data_dir), accept, Path(data_dir).resolve())
+    unlisted: List[Tuple[Path, str]] = []
+    runs = list_runs(data_dir, unlisted=unlisted)
+    run, candidates, outside = _first_run_holding(runs, accept, Path(data_dir).resolve())
+    outside = [unlisted_problem(directory, why) for directory, why in unlisted] + outside
     if not_read is not None:
         not_read.extend(outside)
     if run is None:
@@ -975,6 +1028,7 @@ __all__ = [
     "slugify_run_name",
     "ranking_score_detail",
     "text_problem",
+    "unlisted_problem",
     "whole_number_problem",
     "with_not_read",
     "normalize_run_layout_key",

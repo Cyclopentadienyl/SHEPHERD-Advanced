@@ -1,9 +1,12 @@
-"""Backlog item 10 — the two scripts that make M1-M4 reproducible.
+"""Backlog item 10 — the evidence scripts: M4 reproducible, and the M2.6 inventory.
 
-Those facts were established by reading artifacts in a review thread and have
-existed as pasted text since. M1-M3 are what established that the frozen
-evaluator cannot be the calibration oracle, and M4 bounds every number the
-project reports on `val`.
+Those facts were established by reading artifacts in a review thread and had
+existed as pasted text. M4 bounds every number the project reports on `val`.
+The M1-M3 family scan (`audit_checkpoint_family.py --checkpoint-dir`) retired
+with the checkpoints it read, files written before the model spec (K8-7b);
+its recorded evidence stays as it was, and the script keeps its `--inventory`,
+whose vocabulary, refusal to overwrite and report contract are checked here and
+in test_m2_inventory.py.
 
 **What these tests are for.** The institutional run happens on the deployment's
 machine and cannot happen here. What can be checked here is that each script
@@ -24,161 +27,11 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-#: A checkpoint's projection weights are `(hidden_dim, in_channels)`, so M2's
-#: input width is the last dimension. 128 is the width M2 records.
-IN_CHANNELS = 128
-HIDDEN = 256
-
-
-def _state_dict(in_channels: int = IN_CHANNELS) -> dict:
-    return {
-        f"feature_encoder.projections.{node_type}.weight":
-            torch.zeros(HIDDEN, in_channels)
-        for node_type in ("phenotype", "gene", "disease")
-    }
-
-
-def _checkpoint(tmp_path: Path, name: str, *, val_mrr=None, state=True, extra=None) -> Path:
-    payload = {}
-    if state:
-        payload["state_dict"] = _state_dict()
-    if val_mrr is not None:
-        payload["logs"] = {"val_mrr": val_mrr}
-    payload.update(extra or {})
-    path = tmp_path / name
-    torch.save(payload, path)
-    return path
-
 
 def _run(script: str, argv: list):
     import importlib
 
     return importlib.import_module(f"scripts.{script}").main(argv)
-
-
-# ---------------------------------------------------------------------------
-# M1-M3 — the family scan
-# ---------------------------------------------------------------------------
-def test_an_unreadable_checkpoint_is_recorded_rather_than_fatal(tmp_path):
-    """M1 exists because the frozen evaluator's loader failed on this family, so a
-    scan that stopped at the first unreadable file would destroy the evidence it
-    was run to collect."""
-    ck = tmp_path / "ck"
-    ck.mkdir()
-    _checkpoint(ck, "model-1-0.5000.pt", val_mrr=0.5)
-    (ck / "corrupt.pt").write_bytes(b"not a checkpoint")
-    out = tmp_path / "m1.json"
-
-    _run("audit_checkpoint_family", ["--checkpoint-dir", str(ck), "--output", str(out)])
-    summary = json.loads(out.read_text())["summary"]
-
-    assert summary["n_checkpoints_found"] == 2
-    assert summary["n_loaded"] == 1
-    assert summary["unreadable_filenames"] == ["corrupt.pt"]
-    assert summary["load_error_categories"], "the failure category must be recorded"
-
-
-def test_a_load_failure_records_a_category_and_not_its_message(tmp_path):
-    """Torch and filesystem errors interpolate the path they failed on, and §5.2
-    forbids absolute paths here. A stable class name says what a reader needs and
-    cannot carry a path, a username or a mount point out with it."""
-    ck = tmp_path / "secretdir"
-    ck.mkdir()
-    _checkpoint(ck, "ok-1-0.5000.pt", val_mrr=0.5)
-    (ck / "corrupt.pt").write_bytes(b"nope")
-    out = tmp_path / "m1.json"
-
-    _run("audit_checkpoint_family", ["--checkpoint-dir", str(ck), "--output", str(out)])
-    text = out.read_text()
-
-    assert "secretdir" not in text and str(tmp_path) not in text
-    for category in json.loads(text)["summary"]["load_error_categories"]:
-        assert category.isidentifier(), f"{category!r} is a message, not a category"
-
-
-@pytest.mark.parametrize("name,logged,expected", [
-    ("model-45-0.6975.pt", 0.697543, "agree"),        # rounded rendering
-    ("model-1-0.7000.pt", 0.7, "agree"),              # trailing zeroes preserved
-    ("model-1-0.7000.pt", 0.70004, "agree"),          # inside the written precision
-    ("model-1-0.7000.pt", 0.7005, "disagree"),        # outside it
-    ("model-46-0.9999.pt", 0.1, "disagree"),
-    ("model-45.pt", 0.5, "uncomparable"),             # an epoch, not a score
-    ("last.pt", 0.5, "uncomparable"),
-])
-def test_the_filename_score_is_compared_at_the_precision_it_was_written(
-        tmp_path, name, logged, expected):
-    """M3. An earlier version parsed the token to `float` and recovered its
-    precision from `repr`, so `0.7000` became one decimal place and the tolerance
-    widened by three orders of magnitude — and `model-45.pt` was read as a score
-    of 45."""
-    ck = tmp_path / "ck"
-    ck.mkdir()
-    _checkpoint(ck, name, val_mrr=logged)
-    out = tmp_path / "m3.json"
-
-    _run("audit_checkpoint_family", ["--checkpoint-dir", str(ck), "--output", str(out)])
-    comparison = json.loads(out.read_text())["summary"]["filename_vs_logs"]
-
-    assert comparison[expected] == 1
-    assert sum(comparison[k] for k in ("agree", "disagree", "uncomparable")) == 1
-
-
-def test_the_input_width_is_read_from_the_projection_weights(tmp_path):
-    """M2. Read from the weight rather than a config field, because a config
-    records what was asked for and this records what was built."""
-    ck = tmp_path / "ck"
-    ck.mkdir()
-    _checkpoint(ck, "model-1-0.5000.pt", val_mrr=0.5)
-    _checkpoint(ck, "model-2-0.6000.pt", val_mrr=0.6)
-    out = tmp_path / "m2.json"
-
-    _run("audit_checkpoint_family", ["--checkpoint-dir", str(ck), "--output", str(out)])
-    widths = json.loads(out.read_text())["summary"]["in_channels"]
-
-    assert widths["value_counts"] == {str(IN_CHANNELS): 6}  # 3 node types x 2 files
-    assert widths["n_loaded_exposing_projection_widths"] == 2
-    assert widths["established"] is True
-
-
-def test_a_family_exposing_no_projection_widths_says_so(tmp_path):
-    """A family whose projection weights are named differently would otherwise
-    produce an empty summary that reads like a normal result — M2 unestablished,
-    reported as M2 measured."""
-    ck = tmp_path / "ck"
-    ck.mkdir()
-    torch.save({"state_dict": {"other.weight": torch.zeros(4, 4)},
-                "logs": {"val_mrr": 0.5}}, ck / "model-1-0.5000.pt")
-    out = tmp_path / "m2.json"
-
-    _run("audit_checkpoint_family", ["--checkpoint-dir", str(ck), "--output", str(out)])
-    widths = json.loads(out.read_text())["summary"]["in_channels"]
-
-    assert widths["established"] is False
-    assert widths["n_loaded_without_projection_widths"] == 1
-
-
-def test_an_empty_checkpoint_directory_is_refused(tmp_path):
-    """Zero checkpoints reported as a finding would read as a fact about the
-    family rather than about the directory that was pointed at."""
-    ck = tmp_path / "ck"
-    ck.mkdir()
-
-    with pytest.raises(SystemExit, match="no \\*.pt files"):
-        _run("audit_checkpoint_family",
-             ["--checkpoint-dir", str(ck), "--output", str(tmp_path / "x.json")])
-
-
-def test_a_family_where_nothing_loads_is_refused(tmp_path):
-    """Partial failure is evidence; total failure says only that this reader could
-    not open anything."""
-    ck = tmp_path / "ck"
-    ck.mkdir()
-    (ck / "a.pt").write_bytes(b"nope")
-    (ck / "b.pt").write_bytes(b"nope")
-
-    with pytest.raises(SystemExit, match="could be\\s+loaded|none of the"):
-        _run("audit_checkpoint_family",
-             ["--checkpoint-dir", str(ck), "--output", str(tmp_path / "x.json")])
 
 
 # ---------------------------------------------------------------------------
@@ -464,14 +317,13 @@ def test_an_unknown_label_is_refused(registered, tmp_path):
 #: Keys each artifact must carry. Required contract, **not** exact equality: a
 #: later additive aggregate must not have to edit a test to be allowed.
 _REQUIRED = {
-    "m1": ("fact", "checkpoint_digests", "summary", "runtime", "deployment_relationship"),
     "m4": ("fact", "digests", "counts", "overlap", "deployment_relationship"),
 }
 
 #: Which backlog fact each report claims to be. Pinned by value: two files whose
 #: `fact` keys merely exist are not distinguishable from each other, and the whole
 #: point of the field is that a reader can tell which claim they are holding.
-_FACT = {"m1": "M1-M3", "m4": "M4"}
+_FACT = {"m4": "M4"}
 
 #: Substrings that must not appear anywhere in a published artifact, whatever
 #: shape a future field takes.
@@ -487,13 +339,6 @@ _FORBIDDEN_SUBSTRINGS = ("patient_id", "sample_id", "SECRET", "/home/", "/tmp/",
 #: Types and bounds only — no exact object equality, and no rule against a future
 #: additive aggregate, which would make the schema harder to extend than to freeze.
 _NESTED = {
-    "m1": [
-        (("summary", "n_loaded"), lambda v: _is_int(v) and v >= 1),
-        (("summary", "in_channels", "established"), lambda v: isinstance(v, bool)),
-        (("summary", "in_channels", "value_counts"), lambda v: isinstance(v, dict)),
-        (("summary", "filename_vs_logs", "agree"), lambda v: _is_int(v)),
-        (("runtime", "torch"), lambda v: isinstance(v, str) and v),
-    ],
     "m4": [
         (("counts", "train_diseases"), lambda v: _is_int(v) and v >= 1),
         (("counts", "demo_diseases"), lambda v: _is_int(v) and v >= 1),
@@ -530,11 +375,6 @@ def _at(report, path):
 
 
 def test_every_artifact_carries_its_required_contract(tmp_path, registered):
-    ck = tmp_path / "ck"
-    ck.mkdir()
-    _checkpoint(ck, "model-1-0.5000.pt", val_mrr=0.5)
-    _run("audit_checkpoint_family",
-         ["--checkpoint-dir", str(ck), "--output", str(tmp_path / "m1.json")])
     _registered(registered, tmp_path / "m4.json")
 
     for name, required in _REQUIRED.items():
@@ -556,22 +396,11 @@ def test_every_artifact_carries_its_required_contract(tmp_path, registered):
             expected = hashlib.sha256((sources[name] / filename).read_bytes()).hexdigest()
             assert _at(report, path) == expected, f"{name}{list(path)} is not {filename}"
 
-    m1 = json.loads((tmp_path / "m1.json").read_text())
-    assert m1["checkpoint_digests"] == {
-        "model-1-0.5000.pt": hashlib.sha256((ck / "model-1-0.5000.pt").read_bytes()).hexdigest()
-    }
-
 
 def test_no_artifact_carries_a_forbidden_identifier_or_path(tmp_path, registered):
     """Checked as substrings over the serialised file, so a future field cannot
     reintroduce one under a new key. The registered workspace and registry live
     under the pytest tmp directory, so a path to either would carry `/tmp/`."""
-    ck = tmp_path / "ck"
-    ck.mkdir()
-    _checkpoint(ck, "model-1-0.5000.pt", val_mrr=0.5)
-    (ck / "corrupt.pt").write_bytes(b"nope")
-    _run("audit_checkpoint_family",
-         ["--checkpoint-dir", str(ck), "--output", str(tmp_path / "m1.json")])
     _registered(registered, tmp_path / "m4.json")
 
     for name in _REQUIRED:
@@ -597,9 +426,9 @@ def test_the_deployment_relationship_is_a_bounded_vocabulary(tmp_path, registere
 
 
 def test_the_three_scripts_offer_one_vocabulary(tmp_path):
-    """An institutional reader reads both reports for one machine. If M1
-    accepted a spelling M4 rejected, or the two disagreed on what silence looks
-    like, the claims could not be compared.
+    """An institutional reader reads both reports for one machine. If the
+    inventory accepted a spelling M4 rejected, or the two disagreed on what
+    silence looks like, the claims could not be compared.
 
     Asserted through the parsers — the published behaviour — rather than through
     object identity. A shared constant is how this is implemented today, and the
@@ -611,7 +440,7 @@ def test_the_three_scripts_offer_one_vocabulary(tmp_path):
     from src.utils.provenance import DEPLOYMENT_RELATIONSHIPS, UNSTATED_RELATIONSHIP
 
     scripts = {
-        "audit_checkpoint_family": ["--checkpoint-dir", "."],
+        "audit_checkpoint_family": ["--inventory", "."],
         "audit_split_overlap": ["--data-dir", "."],
     }
     out = ["--output", str(tmp_path / "unused.json")]
@@ -635,7 +464,7 @@ def test_the_three_scripts_offer_one_vocabulary(tmp_path):
 
 
 @pytest.mark.parametrize("script,args", [
-    ("audit_checkpoint_family", ["--checkpoint-dir", "."]),
+    ("audit_checkpoint_family", ["--inventory", "."]),
     ("audit_split_overlap", ["--data-dir", "."]),
 ])
 def test_no_evidence_file_is_replaced_silently(tmp_path, script, args):

@@ -82,7 +82,6 @@ RENDERER_HELP = {
         "The Trainer's own figure on the val samples, recorded in the checkpoint.\n"
         "• Base: LP accuracy.\n"
         "• Task model: pooled MRR.\n"
-        "• File without a model spec: MRR over its top 20, or Hits@K.\n"
         "Training selects a checkpoint by it, so it is not an independent test; recorded "
         "test results are kept apart from it.",
     ),
@@ -92,9 +91,6 @@ RENDERER_HELP = {
 #: (K6 decision 8: the Models table, Model Facts and Training's checkpoint
 #: options read this one map).
 VALIDATION_LABELS = {
-    "val_mrr": "Validation MRR (Trainer, top-20)",
-    "val_hits@10": "Validation Hits@10 (Trainer)",
-    "val_hits@1": "Validation Hits@1 (Trainer)",
     "val_pooled_mrr": "Validation pooled MRR (Trainer)",
     "val_lp_accuracy": "Validation LP accuracy (Trainer)",
 }
@@ -447,8 +443,10 @@ _ARCHITECTURE_NAMES = {"gatv2": "GATv2"}
 
 
 def architecture_label(architecture: Any) -> str:
-    """A run layout key as a person reads it: "GATv2" for ``gatv2``, a
-    ShepherdGNN conv type upper-cased ("GAT", "HGT"), "MODEL" when none."""
+    """A run directory's layout name as a person reads it: "GATv2" for
+    ``gatv2``, any other name upper-cased ("HGT", "GAT", a name an operator
+    gave), "MODEL" when none. A location, never the model's architecture,
+    which its record names."""
     key = str(architecture or "")
     return _ARCHITECTURE_NAMES.get(key, key.upper()) or "MODEL"
 
@@ -505,9 +503,10 @@ def record_kind_text(item: Any) -> str:
     """**What a listed checkpoint is, in the one word every page leads with**
     (K6 decision 6), from its model record (`listed_record`): "Base", the task's
     name (`caveats.TASK_NAMES`: "Disease", "Gene", "Patients-like-me"),
-    "History · never run" for a file without a model spec, "Record not
-    readable" for a record this build refused, or "Record not read" for a file
-    whose record was never read (skill §6: missing states keep their own words)."""
+    "Record not readable" for a record this build refused (a file without a
+    model spec among them, its reason the record's), or "Record not read" for
+    a file whose record was never read (skill §6: missing states keep their
+    own words)."""
     record = _get(item, "record")
     if record == "model":
         if _get(item, "learning_stage") == "base":
@@ -515,8 +514,6 @@ def record_kind_text(item: Any) -> str:
         task = _get(item, "task")
         if task in TASK_NAMES:
             return TASK_NAMES[task]
-    elif record == "history":
-        return "History · never run"
     elif record is None:
         return "Record not read"
     return "Record not readable"
@@ -526,11 +523,9 @@ def configuration_text(item: Any) -> str:
     """A listed model's configuration (README §5, axis 1): its encoder and
     whether its spec is the reference recipe, "GATv2 · reference recipe" or
     "GATv2 · recipe changed in 3 fields" (`differences`: which fields is axis
-    2's, shown where the full list fits). A file without a model spec says so;
-    a record refused or never read says which."""
+    2's, shown where the full list fits). A record refused or never read says
+    which."""
     record = _get(item, "record")
-    if record == "history":
-        return "No model spec"
     if record is None:
         return "Not read"
     differences = _get(item, "differences")
@@ -710,6 +705,10 @@ class ModelFacts(NamedTuple):
     serving_note: Optional[str] = None
     task: Optional[str] = None
     configuration: Optional[str] = None
+    #: Whether the file's record was read: False for a record this build
+    #: refuses or a file not read, whose missing figure is "not read", never
+    #: "not recorded" (`validation_text`).
+    validation_read: bool = True
 
 
 def facts_from_checkpoint(item: Any, workspaces: Sequence[Any], *,
@@ -769,12 +768,25 @@ def facts_from_checkpoint(item: Any, workspaces: Sequence[Any], *,
         task=record_kind_text(item) if _get(item, "record") is not None else None,
         configuration=(configuration_text(item) if _get(item, "record") is not None
                        else None),
+        validation_read=record_read(item),
     )
 
 
-def validation_text(validation: Optional[Tuple[str, float]]) -> str:
+def record_read(item: Any) -> bool:
+    """Whether a listed checkpoint's record was read: its file was read and
+    its record is not one this build refuses (an item built without reading
+    one, the Diagnosis card's served item, counts as read)."""
+    return _get(item, "problem") is None and _get(item, "record") != "refused"
+
+
+def validation_text(validation: Optional[Tuple[str, float]], *, read: bool = True) -> str:
+    """The Trainer's validation figure, or why there is none: "not
+    recorded" for a record read that holds none, "not read" for a record this
+    build refuses or a file it did not read (`record_read`), which may well
+    record a figure this build does not read."""
     if validation is None:
-        return "Validation (Trainer): not recorded in this checkpoint"
+        return ("Validation (Trainer): not recorded in this checkpoint" if read
+                else "Validation (Trainer): not read (record not readable)")
     metric, value = validation
     label = VALIDATION_LABELS.get(metric, f"Validation {metric} (Trainer)")
     return f"{label} {value:.4f} — {_VALIDATION_NOTE}"
@@ -851,7 +863,7 @@ def model_facts_html(facts: ModelFacts, *, open_section: str = "identity") -> st
     if facts.serving_note:
         data_parts.append(e(facts.serving_note))
     data_line = " · ".join(data_parts)
-    evidence_line = (f"{e(validation_text(facts.validation))}"
+    evidence_line = (f"{e(validation_text(facts.validation, read=facts.validation_read))}"
                      f"{help_button('validation-trainer', 'Validation (Trainer)')}"
                      f'<br>{e(recorded_tests_text(facts.recorded))}')
     if facts.warnings:
@@ -911,6 +923,7 @@ __all__ = [
     "origin_of",
     "record_chip",
     "record_kind_text",
+    "record_read",
     "record_verified",
     "recorded_tests_cell",
     "recorded_tests_text",

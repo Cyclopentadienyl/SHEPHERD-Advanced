@@ -64,8 +64,8 @@ snapshot sentence (operators: where it can be continued from), the shared
 chart component (`src/webui/components/charts.py`: Loss, the Trainer's
 validation figure and its companions, chosen by the keys the run's log holds
 (a base's LP accuracy, ROC-AUC and AP; a task model's pooled MRR and pooled
-top-k; a file without a model spec's MRR and Hits@K), and the learning rate on
-a log axis, one 2×2 figure sharing the epoch axis; the data from the run's
+top-k; titles that say no figure is charted for a log that holds neither),
+and the learning rate on a log axis, one 2×2 figure sharing the epoch axis; the data from the run's
 metrics log through the component's server function) and the resources line.
 
 **Per browser session, no module state:** the selection, the drawer, the last
@@ -422,16 +422,27 @@ def empty_workspace() -> Dict[str, Any]:
 
 def _latest_run(directory: Optional[Path]) -> Optional[str]:
     """The newest run directory of a workspace, as "<arch>/<run>", from the
-    run layout's one listing (most recently trained first); None for none."""
+    run layout's one listing (most recently trained first); None for none.
+    Only a run inside the workspace, as `resolve_run` finds one: a newer run
+    behind a link out of it is never named, so the page never names a run it
+    then cannot show."""
     if directory is None:
         return None
     from src.utils.checkpoint_paths import list_runs, run_architecture
 
     try:
         runs = list_runs(directory)
-    except OSError:
+        home = Path(directory).resolve()
+    except (OSError, RuntimeError):  # a link loop: RuntimeError before 3.13
         return None
-    return f"{run_architecture(runs[0])}/{runs[0].name}" if runs else None
+    for run in runs:
+        try:
+            inside = home in run.resolve().parents
+        except (OSError, RuntimeError):
+            inside = False
+        if inside:
+            return f"{run_architecture(run)}/{run.name}"
+    return None
 
 
 def workspace_state(name: Optional[str], listed: Optional[Mapping[str, Any]] = None
@@ -1061,11 +1072,11 @@ def _current_run(status: Mapping[str, Any], ws: Mapping[str, Any],
 
 def resolve_run(run_id: Any) -> Optional[Path]:
     """The directory of the run the server lists as `run_id`, or None: a
-    listed workspace's run, found by listing ``runs/<arch>/`` again (never by
-    joining the id onto a path), inside that workspace, for a run layout key
-    (`RUN_LAYOUT_KEYS`: a model bundle's encoder kind, or a ShepherdGNN conv
-    type for a run kept as history); or ``job:<id>``, the job runner's latest
-    training job."""
+    listed workspace's run, found by listing its ``runs/`` and then the
+    directory of that name again (names compared, never joined onto a path,
+    so ``.`` or ``..`` names nothing), inside that workspace, whatever the
+    directory's name (the listing reads every one); or ``job:<id>``, the job
+    runner's latest training job."""
     if not isinstance(run_id, str) or len(run_id) > 400:
         return None
     if run_id.startswith("job:"):
@@ -1077,13 +1088,12 @@ def resolve_run(run_id: Any) -> Optional[Path]:
         return None
     workspace, arch, run = parts
     from src.api.services.server_lists import ServerListRefused, resolve_workspace
-    from src.utils.checkpoint_paths import RUN_LAYOUT_KEYS, RUNS_DIRNAME
+    from src.utils.checkpoint_paths import RUNS_DIRNAME
 
-    if arch not in RUN_LAYOUT_KEYS:
-        return None
     try:
         directory = resolve_workspace(workspace)
-        entries = list((directory / RUNS_DIRNAME / arch).iterdir())
+        layouts = [entry for entry in (directory / RUNS_DIRNAME).iterdir() if entry.name == arch]
+        entries = list(layouts[0].iterdir()) if layouts else []
     except (ServerListRefused, OSError):
         return None
     for entry in entries:
@@ -1305,44 +1315,44 @@ CHART_TITLES = {
     "lr": "Learning rate (log)",
 }
 SHARED_AXIS = "epoch (shared axis)"
-_HITS = re.compile(r"^val_hits@(\d+)$")
 _POOLED_TOP = re.compile(r"^val_pooled_top(\d+)$")
 #: The middle two charts by the run's kind, read from the keys its validation
 #: log holds (`validation_kind`): ``(the figure's title, its series, the
 #: companions' title, theirs)``, each series ``(label, key)``; the companions
 #: by cut-off are filled from the log (`_k_series`). A run that has logged no
 #: validation yet is "none": its two charts wait, titled by what they will
-#: show for any run.
+#: show for any run. A log with validation entries but neither stage's figure
+#: is "other": its two charts say no other figure is charted and that Export
+#: CSV has every one, and draw no series; its Loss chart, learning rate and
+#: Export CSV (every key) are as for any run.
 VALIDATION_CHARTS = {
     "base": ("LP accuracy (validation, Trainer)", (("LP accuracy", "val_lp_accuracy"),),
              "ROC-AUC and AP (validation, Trainer)",
              (("ROC-AUC", "val_lp_roc_auc"), ("AP", "val_lp_average_precision"))),
     "finetune": ("Pooled MRR (validation, Trainer)", (("pooled MRR", "val_pooled_mrr"),),
                  "Pooled top-k (validation, Trainer)", _POOLED_TOP),
-    "history": ("MRR (validation, Trainer top-20)", (("MRR", "val_mrr"),),
-                "Hits@K (validation, Trainer)", _HITS),
+    "other": ("No other figure charted: Export CSV has every logged figure", (),
+              "No further figure charted", ()),
     "none": ("Validation figure (Trainer)", (), "More validation figures (Trainer)", ()),
 }
 
 
 def validation_kind(validation: Sequence[Mapping[str, Any]]) -> str:
-    """Which run a validation log is, by its keys: "history" for a file
-    without a model spec (MRR, Hits@K), "finetune" (pooled MRR), "base" (LP
-    accuracy), or "none" before the first validation."""
+    """Which run a validation log is, by its keys: "finetune" (pooled MRR),
+    "base" (LP accuracy), "other" for validation entries holding neither (no
+    figure this build charts there), or "none" before the first validation."""
     keys = {str(key) for entry in validation for key in entry}
-    if "val_mrr" in keys or any(_HITS.match(key) for key in keys):
-        return "history"
     if "val_pooled_mrr" in keys:
         return "finetune"
     if "val_lp_accuracy" in keys:
         return "base"
-    return "none"
+    return "other" if keys - {"epoch"} else "none"
 
 
 def _k_series(validation: Sequence[Mapping[str, Any]], pattern: Any, words: str
               ) -> List[Tuple[str, str]]:
     """Every cut-off k the log names by `pattern`, in order, as ``(label,
-    key)``: "Hits@1", "top-10"."""
+    key)``: "top-1", "top-10"."""
     found = {}
     for entry in validation:
         for key in entry:
@@ -1377,9 +1387,9 @@ def training_charts(history: Mapping[str, Any]) -> List[Dict[str, Any]]:
     base's ``val_lp_loss``), the Trainer's validation figure and its
     companions as the run's kind logs them (`VALIDATION_CHARTS`: a base's LP
     accuracy, then its ROC-AUC and AP; a task model's pooled MRR, then its
-    pooled top-k; a file without a model spec's MRR, then its Hits@K), and
-    the learning rate on a log axis. A series with no value yet is left out,
-    so no chart draws a figure the run does not log."""
+    pooled top-k; for a log holding neither, titles that say no figure is
+    charted), and the learning rate on a log axis. A series with no value yet
+    is left out, so no chart draws a figure the run does not log."""
     train = [e for e in history.get("train") or [] if isinstance(e, Mapping)]
     val = [e for e in history.get("validation") or [] if isinstance(e, Mapping)]
     specs = []
@@ -1396,7 +1406,7 @@ def training_charts(history: Mapping[str, Any]) -> List[Dict[str, Any]]:
 
     figure_title, figure, others_title, others = VALIDATION_CHARTS[validation_kind(val)]
     if not isinstance(others, tuple):
-        others = _k_series(val, others, "Hits@" if others is _HITS else "top-")
+        others = _k_series(val, others, "top-")
     specs.append(spec("loss", CHART_TITLES["loss"],
                       [("train", _by_epoch(train, "total", "train_loss")),
                        ("validation", _by_epoch(val, "val_loss", "val_lp_loss"))]))
@@ -2177,7 +2187,7 @@ def _progress_words(item: Mapping[str, Any]) -> Optional[str]:
 
 
 def validation_words(item: Mapping[str, Any]) -> Optional[str]:
-    """"Validation MRR (Trainer, top-20) 0.2867": the Trainer's validation
+    """"Validation pooled MRR (Trainer) 0.2867": the Trainer's validation
     figure the file records, in the dashboard's one map of their names
     (`renderers.VALIDATION_LABELS`), never a test result."""
     validation = item.get("validation") or {}
@@ -2288,7 +2298,7 @@ def _list_parents(ws: Mapping[str, Any]) -> Tuple[Dict[str, Any], Optional[str]]
         return {}, problem
     parents = {key: item for key, item in listed.items() if item.get("record") == "model"}
     if listed and not parents:
-        return {}, (f"None of the {len(listed)} checkpoint files of this dataset's runs holds a "
+        return {}, (f"None of the {len(listed)} entries listed for this dataset's runs holds a "
                     "model record; a file without a model spec is never continued here "
                     "(Research › Models lists it).")
     return parents, None
@@ -2848,7 +2858,7 @@ FIELD_HELP = {
     ),
     "continue_run": (
         "Run",
-        "The run to continue from, latest first: its name, architecture and start time.\n\n"
+        "The run to continue from, latest first: its name, directory and start time.\n\n"
         "Continuing trains a new run of its own; the run chosen here is not changed.",
     ),
     "checkpoint_dropdown": (

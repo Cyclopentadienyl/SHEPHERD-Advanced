@@ -594,7 +594,7 @@ FIELD_HELP = {
     ),
     "ft_run": (
         "Run",
-        "The runs holding a base checkpoint, latest first: name, architecture and start time.\n\n"
+        "The runs holding a base checkpoint, latest first: name, directory and start time.\n\n"
         "Only bases are offered: a task model is never a parent (children never chain), and a "
         "file without a model spec is never trained from here.",
     ),

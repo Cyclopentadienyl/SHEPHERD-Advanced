@@ -13,10 +13,12 @@ Module: tests/unit/test_branch_plan.py
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
 
+from src.config.model_types import WRITTEN_BEFORE_SPEC
 from src.config.recipe import branch_settings
 from src.utils.checkpoint_io import TRAINING_RULES_VERSION
 from src.utils.run_plan import RunPlanRefused, plan_branch, plan_continuation
@@ -117,8 +119,8 @@ def test_a_parent_trained_under_other_rules_is_neither_continued_nor_branched(ru
     # version it continues.
     shepherd = _parent(end="paused", record_version=1)
     shepherd.pop("training_rules")
-    with pytest.raises(RunPlanRefused, match=r"written before the model spec \(record "
-                                             r"version 1, not 2\)"):
+    with pytest.raises(RunPlanRefused, match=re.escape(
+            f"The parent last.pt: {WRITTEN_BEFORE_SPEC}")):
         plan_continuation(shepherd, Path("/runs/p/checkpoints/last.pt"), dict(RECORDED),
                           set(), device="cpu", record_version=2)
     with pytest.raises(TypeError, match="record_version"):

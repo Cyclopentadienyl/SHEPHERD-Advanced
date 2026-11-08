@@ -18,7 +18,8 @@ SUPPORTED_CONV_TYPES = ("hgt", "gat", "sage")
 # Encoder kinds a model bundle's spec can name (src/models/bundle/spec.py,
 # README §3.3): the reference homogeneous GATv2 and the non-reference
 # heterogeneous encoders behind the same contract. Here, torch-free, so the run
-# layout (src/utils/checkpoint_paths.py) can key bundle runs by them.
+# layout (src/utils/checkpoint_paths.py) files each new run under its spec's
+# kind; the listing reads every directory under runs/, whatever its name.
 ENCODER_KINDS = ("gatv2", "hetero_gat", "hgt", "sage")
 
 # The top-level keys a model bundle checkpoint's record owns (provenance §9.1),
@@ -36,6 +37,14 @@ MODEL_RECORD_KEYS = ("model_spec", "graph_view", "learning_stage", "task", "oper
 # judges a file as a load of it does.
 MODEL_RECORD_READ_KEYS = MODEL_RECORD_KEYS + ("training_input_digests",)
 
+# What every reader says of a checkpoint without a model spec: the record
+# reader (`read_model_record`, and so every list, load, measurement and
+# training read of one) and the run plan's record-version check
+# (`src.utils.run_plan`), in one phrase. Nothing is guessed from such a file's
+# weights; it stays listed, with this reason.
+WRITTEN_BEFORE_SPEC = ("written before the model spec: not readable by this build; "
+                       "start a new run")
+
 
 __all__ = ["SUPPORTED_CONV_TYPES", "ENCODER_KINDS", "MODEL_RECORD_KEYS",
-           "MODEL_RECORD_READ_KEYS"]
+           "MODEL_RECORD_READ_KEYS", "WRITTEN_BEFORE_SPEC"]

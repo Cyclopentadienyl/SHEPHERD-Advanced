@@ -5,8 +5,8 @@ workspace").
 `family_rows` places a file under the listed file whose SHA-256 its record
 names, never under that run's other files; groups families by the family id of
 their topmost file, the newest family first; says where a parent not listed
-here is (another listed workspace, or unavailable with why); lists history and
-refused files after the families; and, filtered by task or stage, keeps a
+here is (another listed workspace, or unavailable with why); lists the files
+whose record was refused or not read after the families; and, filtered by task or stage, keeps a
 child's ancestors as context rows. `list_family` looks a missing parent up in
 the other listed workspaces' run of the recorded name only, and the API offers
 it behind D8 as it offers the list.
@@ -43,8 +43,8 @@ def _shape(rows):
 
 #: Listing order (latest run first, newest file first): a base run with two
 #: files, its disease and gene children recording its top-k file (not its
-#: last.pt), a branch of the disease child, a second family, history and a
-#: refused file.
+#: last.pt), a branch of the disease child, a second family, a file without a
+#: model spec (its record refused) and a file whose record was not read.
 ITEMS = (
     _item("branch", sha="e" * 64, stage="finetune", task="disease",
           parent=("c" * 64, "disease")),
@@ -54,7 +54,7 @@ ITEMS = (
           parent=("b" * 64, "base")),
     _item("base", "last.pt", sha="a" * 64),
     _item("base", "model-3.pt", sha="b" * 64),
-    _item("old-gnn", sha="9" * 64, record="history"),
+    _item("old-gnn", sha="9" * 64, record="refused"),
     _item("torn", sha=None, record=None, problem="not a checkpoint record"),
 )
 
@@ -68,9 +68,10 @@ def test_children_sit_under_the_exact_file_they_record():
         ("family", "disease", "last.pt", 1, "gatv2/base/model-3.pt", "listed", False),
         ("family", "branch", "last.pt", 2, "gatv2/disease/last.pt", "listed", False),
         ("family", "other-base", "last.pt", 0, None, None, False),
-        ("history", "old-gnn", "last.pt", 0, None, None, False),
+        ("refused", "old-gnn", "last.pt", 0, None, None, False),
         ("refused", "torn", "last.pt", 0, None, None, False),
     ]
+    assert sl.FAMILY_GROUPS == ("family", "refused")
     assert {r.family_id for r in rows if r.group == "family"} == {"fam-a", "fam-b"}
     assert [r.family_id for r in rows[:5]] == ["fam-a"] * 5, "the newest family first"
 
@@ -186,10 +187,10 @@ def test_a_parent_in_another_listed_workspace_is_found_by_its_run_and_bytes(tmp_
 
     listing = sl.list_family("b", environ=environ)
     assert listing.available, listing.problem
-    first, history = listing.items
+    first, specless = listing.items
     assert (first.item.filename, first.parent_state, first.parent_workspace) == (
         "last.pt", "elsewhere", "a")
-    assert (history.group, history.item.architecture) == ("history", "hgt")
+    assert (specless.group, specless.item.architecture) == ("refused", "hgt")
 
     _put(root / "a", "gatv2", BASE_RUN, _record_payload(logs={"val_lp_accuracy": 0.9}), 300)
     rewritten = sl.list_family("b", environ=environ).items[0]

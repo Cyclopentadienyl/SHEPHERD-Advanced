@@ -35,7 +35,7 @@ docstring. Three panels, as the mockup draws them (``test-wide.png``,
   implements that takes the model's record and the version's inputs**
   (`measure_refusal`, one rule for Start's reason and for the start itself,
   which asks `protocols.refusal` after the page's own record states): a
-  history file (no model spec), a record refused or not read, a base (its
+  record refused (a file without a model spec among them) or not read, a base (its
   formal test is not implemented yet), a measurement the model's stage or task
   head does not meet, and a measurement needing genes the version does not
   list are refused with their reason; then the job: its state, elapsed time,
@@ -902,8 +902,8 @@ def gpu_line(*, manager: Any = None, operator: bool = False) -> Tuple[str, str]:
 # ---------------------------------------------------------------------------
 def model_choices(models: Mapping[str, Any]) -> List[Tuple[str, str]]:
     """The model select's options: what the checkpoint is first, from its model
-    record (`renderers.record_kind_text`: "Disease", "Base", "History · never
-    run", …, K6 decision 13: every checkpoint is listed, only a task model is
+    record (`renderers.record_kind_text`: "Disease", "Base", "Record not
+    readable", …, K6 decision 13: every checkpoint is listed, only a task model is
     measured), then the epoch (what tells a run's checkpoints apart when the
     select is narrow and its text ends in an ellipsis), the run, the model
     fingerprint or why a checkpoint cannot be tested, then the file name. The
@@ -1276,7 +1276,7 @@ def model_html(page: Mapping[str, Any], models: Mapping[str, Any], key: Optional
         '<div class="shep-test-model">'
         f'<div class="shep-w600">{e(r.model_name_line(item))} '
         f'<span class="shep-muted">· {e(item.get("filename"))}</span></div>'
-        f'<div class="shep-sub">{e(r.validation_text(figure))}</div>'
+        f'<div class="shep-sub">{e(r.validation_text(figure, read=r.record_read(item)))}</div>'
         f'<div>{r.fingerprint_html("model fingerprint", item["sha256"], help_key="model-fingerprint")}'
         f' · {r.trained_on_html(item.get("dataset_fingerprint"), workspaces)}</div></div>')
 
@@ -1364,9 +1364,9 @@ def measure_refusal(item: Mapping[str, Any], version: Optional[Mapping[str, Any]
     and the start itself (`start_test_run`); the run judges again on the bytes
     it reads.
 
-    A record refused or not read and a file without a model spec (history,
-    never run from the WebUI) are said in the word the Model option leads with
-    (`renderers.record_kind_text`), then this page's reason
+    A record refused (with the record reader's reason; a file without a model
+    spec among them) or not read is said in the word the Model option leads
+    with (`renderers.record_kind_text`), then this page's reason
     (`NOT_MEASURED_HERE`). Otherwise, with no protocol chosen, the reason no
     protocol takes the record (`protocols.available`: a base's is the base
     message) or `CHOOSE_A_MEASUREMENT`; with one, the protocol definition's
@@ -1375,9 +1375,9 @@ def measure_refusal(item: Mapping[str, Any], version: Optional[Mapping[str, Any]
     that lists them). A version whose causal genes are all unmapped passes here
     and the run refuses it."""
     record = item.get("record")
-    if record in ("refused", None, "history"):
-        why = {"refused": f" ({item.get('record_problem') or 'no reason was given'})",
-               "history": " (no model spec: a ShepherdGNN checkpoint)"}.get(record, "")
+    if record in ("refused", None):
+        why = (f" ({item.get('record_problem') or 'no reason was given'})"
+               if record == "refused" else "")
         return f"{r.record_kind_text(item)}{why}: {NOT_MEASURED_HERE}"
     stage, task = item.get("learning_stage"), item.get("task")
     if protocol is None:

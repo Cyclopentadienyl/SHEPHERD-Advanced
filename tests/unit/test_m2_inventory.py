@@ -152,7 +152,7 @@ def test_a_sound_workspace_and_its_recorded_checkpoint_are_accepted(inventory):
 
 
 def test_what_m2_refuses_is_listed_with_its_reason(inventory):
-    from src.models.bundle.record import HISTORY_ONLY
+    from src.config.model_types import WRITTEN_BEFORE_SPEC
 
     _, report, _ = inventory
     a, b = report["workspaces"]["a"], report["workspaces"]["b"]
@@ -172,7 +172,7 @@ def test_what_m2_refuses_is_listed_with_its_reason(inventory):
     specless = a["checkpoints"]["a/checkpoints/m2/no_model_spec.pt"]["m2_contract"]
     for use, verdict in specless.items():
         assert verdict["verdict"] == "refused", use
-        assert verdict["reason"] == f"ModelRecordError: {HISTORY_ONLY}", use
+        assert verdict["reason"] == f"ModelRecordError: {WRITTEN_BEFORE_SPEC}", use
 
     crossed = b["checkpoints"]["b/checkpoints/m2/good.pt"]["m2_contract"]
     assert crossed["serve_and_measure"]["verdict"] == "refused"
@@ -191,5 +191,9 @@ def test_the_report_states_its_scope_and_names_nothing_outside(inventory, tmp_pa
     assert str(tmp_path) not in text and str(root.resolve()) not in text
     assert "source-contract" in report["checkpoint_verdicts_cover"]
     assert "model spec" in report["checkpoint_verdicts_cover"]
+    # The reader's environment and the stated relationship, as every evidence
+    # report carries them (moved from the retired M1-M3 contract, RT).
+    assert report["deployment_relationship"] == "unstated"
+    assert isinstance(report["runtime"]["torch"], str) and report["runtime"]["torch"]
     counts = report["counts"]
     assert counts["checkpoint m2_contract resume:accepted"] == 2      # a and d

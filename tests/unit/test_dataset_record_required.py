@@ -384,7 +384,7 @@ def test_the_inventory_shows_the_record_and_judges_no_checkpoint_over_a_refused_
     is not judged at all."""
     import scripts.audit_checkpoint_family as audit
     from scripts.train_model import read_training_inputs, training_input_digests
-    from src.models.bundle.record import HISTORY_ONLY
+    from src.config.model_types import WRITTEN_BEFORE_SPEC
 
     root = tmp_path / "workspaces"
     sound = write_generated_workspace(root / "a", training_fields=True, **IDS)[0]
@@ -405,7 +405,7 @@ def test_the_inventory_shows_the_record_and_judges_no_checkpoint_over_a_refused_
     assert (a["dataset_record"]["binding"], a["dataset_record"]["origin"]) == (
         "verified", "synthetic")
     judged = a["checkpoints"]["a/checkpoints/hgt/good.pt"]["m2_contract"]["serve_and_measure"]
-    assert judged["verdict"] == "refused" and HISTORY_ONLY in judged["reason"]
+    assert judged["verdict"] == "refused" and WRITTEN_BEFORE_SPEC in judged["reason"]
 
     assert b["graph"]["verdict"] == "accepted"
     assert (b["dataset_record"]["verdict"], b["dataset_record"]["binding"]) == (

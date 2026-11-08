@@ -2273,7 +2273,9 @@ class TrainingManager:
         `start_training` binds it to this preview's read.
         """
         from src.config.training_fields import names as setting_names
-        from src.models.bundle.record import MODEL_RECORD_VERSION, has_model_spec
+        from src.models.bundle.record import (
+            MODEL_RECORD_VERSION, ModelRecordError, has_model_spec, read_model_record,
+        )
         from src.utils.run_plan import RunPlanRefused, plan_continuation
         from src.utils.checkpoint_io import CheckpointChanged, read_checkpoint
 
@@ -2339,6 +2341,14 @@ class TrainingManager:
                    "resume_from": str(path), "run_dir": "", "extend_epochs": extend_epochs,
                    "extend_lr": explicit.get("extend_lr"), "pause_after_epoch": None,
                    "device": device}
+        # **The parent's record first, by the one reader**, as the training
+        # process reads it (`train_model.train`: `read_model_record`, then the
+        # plan), so the two refuse a file that is no record of this build in
+        # the same words (checkpoint A).
+        try:
+            read_model_record(read.checkpoint)
+        except ModelRecordError as exc:
+            return {**facts, "ok": False, "reason": f"The parent {path.name}: {exc}"}
         effective_device = "cuda" if device == "auto" else device
         try:
             plan = plan_continuation(record, path, request, set(explicit),
@@ -2361,12 +2371,15 @@ class TrainingManager:
         """
         List a workspace's run checkpoints with metadata (contract M3a-2).
 
-        Every run's, or one architecture's, through the shared listing, each
-        file read once (`checkpoint_paths.read_run_checkpoints`, M5-1): runs
-        most recently trained first, newest file first within a run. The
-        workspace defaults to the last training request's. What each file is
-        comes from its own record; a listed file is not thereby verified, and a
-        file outside the run layout is reached by its path.
+        Every run's, or those of the one directory under ``runs/`` named
+        `conv_type`, through the shared listing, each file read once
+        (`checkpoint_paths.read_run_checkpoints`, M5-1) **within the
+        workspace**, as the server's list reads it: a file that resolves
+        outside it is listed with that reason and never opened. Runs most
+        recently trained first, newest file first within a run. The workspace
+        defaults to the last training request's. What each file is comes from
+        its own record; a listed file is not thereby verified, and a file
+        outside the run layout is reached by its path.
 
         Each entry carries the SHA-256 of the bytes read (`sha256`), the
         Trainer's validation figure (`validation`: metric and value, or None),
@@ -2387,7 +2400,7 @@ class TrainingManager:
         workspace = self.workspace_path(data_dir)
 
         checkpoints = []
-        for entry in read_run_checkpoints(workspace, conv_type):
+        for entry in read_run_checkpoints(workspace, conv_type, within=workspace):
             try:
                 stat = entry.path.stat()
             except OSError:

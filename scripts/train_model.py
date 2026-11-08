@@ -41,6 +41,11 @@ Usage:
     the job runner always passes for a continued run): other bytes at --resume
     are refused with exit 1 and nothing written, before they are loaded.
 
+    Every refusal comes before the run directory is claimed, and the command
+    line says it in one line, ``train_model: refused: <why> Nothing was
+    written.``, exit 1, with no traceback (a missing --stage among them); an
+    error after the claim is a failed run, logged with its traceback.
+
 Dependencies:
     - argparse: CLI argument parsing
     - yaml: Configuration file loading
@@ -77,7 +82,8 @@ import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import (
-    TYPE_CHECKING, Any, Collection, Dict, List, Mapping, NamedTuple, Optional, Set, Tuple,
+    TYPE_CHECKING, Any, Callable, Collection, Dict, List, Mapping, NamedTuple, Optional, Set,
+    Tuple,
 )
 
 # Add project root to path
@@ -129,6 +135,7 @@ from src.utils.gpu_lock import GpuLockMisconfigured, take_gpu_lock
 # raised by their readers themselves (`expected_sha256=`); `main` says each once.
 from src.kg.artifacts import DatasetChanged
 from src.utils.checkpoint_io import CheckpointChanged
+from src.utils.checkpoint_paths import RunDirectoryTaken
 
 if TYPE_CHECKING:
     from src.kg.artifacts import DatasetRecord, ManifestRead
@@ -1130,7 +1137,8 @@ def read_branch_parent(requested: str, stage: str, task: Optional[str], device: 
 def train(config: TrainConfig, explicit: Collection[str], *,
           expected_dataset_sha256: Optional[str] = None,
           expected_resume_sha256: Optional[str] = None,
-          expected_parent_sha256: Optional[str] = None) -> Dict[str, float]:
+          expected_parent_sha256: Optional[str] = None,
+          on_claim: Optional[Callable[[Path], None]] = None) -> Dict[str, float]:
     """Train a model bundle: `learning_stage` "base" or "finetune" (README §3,
     §4; provenance contract §9). The one training entry point.
 
@@ -1158,6 +1166,10 @@ def train(config: TrainConfig, explicit: Collection[str], *,
             `CheckpointChanged` otherwise. A precondition too.
         expected_parent_sha256: the finetune or branch parent's SHA-256
             (`--expect-parent-sha256`), compared on its one read likewise.
+        on_claim: called with the run directory once it is claimed, the run's
+            first artifact. Every refusal comes before it, so a caller tells a
+            refusal (nothing written) from a failure of a run that started
+            (the command line's `_train_main`).
 
     Returns:
         The final validation metrics; empty for a run that was stopped.
@@ -1447,6 +1459,8 @@ def train(config: TrainConfig, explicit: Collection[str], *,
     del best_weights
 
     claim_run_dir(run_dir, data_dir=config.data_dir)
+    if on_claim is not None:
+        on_claim(run_dir)
     logger.info(f"Run directory: {run_dir}")
     with open(run_dir / "config.yaml", "w") as f:
         yaml.dump({**asdict(config), "run_dir": str(run_dir)}, f)
@@ -1633,6 +1647,25 @@ def _allocator_record() -> Dict[str, Optional[str]]:
     }
 
 
+#: What `train()` refuses with before it claims its run directory: every
+#: refusal it states is a ValueError (its own, `RunPlanRefused`,
+#: `TaskFixtureError`, `ModelRecordError`, `SpecError` among them), a requested
+#: parent that does not exist, a device this host cannot give, or a run
+#: directory that is not free (`RunDirectoryTaken`: it holds files, or another
+#: run claimed it first). Raised after the claim, any of them is a failure of a
+#: run that started.
+TRAINING_REFUSALS = (ValueError, FileNotFoundError, TrainingDeviceUnavailable,
+                     RunDirectoryTaken)
+
+
+def _sentence(exc: BaseException) -> str:
+    """An exception's message as one line and sentence: its lines joined by a
+    space, ended with a full stop when it has none."""
+    text = " ".join(line.strip() for line in str(exc).splitlines() if line.strip())
+    text = text or type(exc).__name__
+    return text if text.endswith((".", "!", "?")) else f"{text}."
+
+
 def main():
     """Main entry point"""
     args = parse_args()
@@ -1671,10 +1704,12 @@ def _train_main(args: argparse.Namespace) -> int:
 
     # Run training. The workspace is checked by its readers, the manifest's
     # first (`read_training_inputs`), each refusal naming the missing file.
+    claimed: List[Path] = []
     try:
         metrics = train(config, explicit, expected_dataset_sha256=args.expect_dataset_sha256,
                         expected_resume_sha256=args.expect_resume_sha256,
-                        expected_parent_sha256=getattr(args, "expect_parent_sha256", None))
+                        expected_parent_sha256=getattr(args, "expect_parent_sha256", None),
+                        on_claim=claimed.append)
         return 0 if metrics else 1
     except DatasetChanged as exc:  # a refusal, said once, not a failure with a traceback
         logger.error(f"train_model: refused: {exc} Nothing was written.")
@@ -1686,6 +1721,16 @@ def _train_main(args: argparse.Namespace) -> int:
         return 1
     except KeyboardInterrupt:
         logger.info("Training interrupted by user")
+        return 1
+    except TRAINING_REFUSALS as exc:
+        if claimed:  # after the run directory: a run that started and failed
+            logger.exception(f"Training failed: {exc}")
+            return 1
+        # **A refusal of `train()`**, before its run directory, its first
+        # artifact (`on_claim`): one line, never a traceback, as the
+        # configuration's refusal above.
+        logger.error(f"train_model: refused: {_sentence(exc)} Nothing was written.")
+        logger.debug("The refusal, as raised:", exc_info=True)
         return 1
     except Exception as e:
         logger.exception(f"Training failed: {e}")

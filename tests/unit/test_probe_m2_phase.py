@@ -176,7 +176,7 @@ def test_r2s_serving_half_refuses_before_a_model_is_built(trained_disease_child,
     after the build would fail R2."""
     import src.models.bundle.builder as builder
     from src.inference.pipeline import PipelineBuildError
-    from src.models.bundle.record import HISTORY_ONLY
+    from src.config.model_types import WRITTEN_BEFORE_SPEC
 
     probe = _probe()
     api = served_state
@@ -197,7 +197,7 @@ def test_r2s_serving_half_refuses_before_a_model_is_built(trained_disease_child,
     stripped = probe._without_model_spec(child, tmp_path / "no_model_spec.pt")
     served, refused = api.app_state.pipeline, []
     with probe._observing_builds(refused):
-        probe.refuses(lambda: build(stripped), PipelineBuildError, HISTORY_ONLY)
+        probe.refuses(lambda: build(stripped), PipelineBuildError, WRITTEN_BEFORE_SPEC)
     assert refused == []
     assert api.app_state.pipeline is served
     assert builder.build_bundle is original

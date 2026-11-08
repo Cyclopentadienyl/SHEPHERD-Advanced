@@ -220,7 +220,7 @@ class CheckpointInfo(BaseModel):
     dataset_fingerprint: Optional[str] = None
     metadata_problem: Optional[str] = None
     # The model record's summary (`src.models.bundle.record.listed_record`):
-    # model, history or refused; a model's stage, task, operation, family and
+    # model or refused (with why); a model's stage, task, operation, family and
     # parent, encoder kind, the spec fields that differ from the reference
     # recipe and whether there are none.
     record: Optional[str] = None

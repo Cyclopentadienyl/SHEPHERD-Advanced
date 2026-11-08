@@ -1,13 +1,13 @@
 """
 The loaded checkpoint's training metrics reach the Diagnosis page.
 ==================================================================
-The pipeline copied `mrr`, `hits_at_1` and `hits_at_10` from a checkpoint's
-`logs` -- names no trainer in this repository has written -- while the trainer
-writes `val_mrr` and `val_hits@k` there. The status line therefore showed the
-losses and none of the ranking metrics.
+The pipeline once copied `mrr`, `hits_at_1` and `hits_at_10` from a
+checkpoint's `logs` -- names no trainer in this repository wrote -- so the
+status line showed the losses and none of the ranking metrics.
 
-The ranking keys now come from `RANKING_SCORE_KEYS`, the list auto-selection ranks
-checkpoints by, so there is one definition of "a checkpoint's ranking metrics".
+The ranking keys come from `RANKING_SCORE_KEYS`, the list auto-selection ranks
+checkpoints by (each stage's selection metric), so there is one definition of
+"a checkpoint's ranking metrics".
 
 The keys the trainer writes are taken from the trainer rather than typed here: the
 training keys from the real `Trainer._train_epoch`, and the validation keys from
@@ -88,10 +88,25 @@ def test_the_metrics_the_trainer_writes_for_the_status_line_are_the_ones_copied(
 
 def test_the_ranking_metrics_shown_are_the_ones_selection_ranks_by():
     from src.inference.pipeline import CHECKPOINT_LOG_METRICS
+    from src.training.finetune_task import FINETUNE_SELECTION_METRIC
+    from src.training.lp_task import BASE_SELECTION_METRIC
     from src.utils.checkpoint_paths import RANKING_SCORE_KEYS
 
     assert set(RANKING_SCORE_KEYS) <= set(CHECKPOINT_LOG_METRICS)
-    assert {"val_mrr", "val_hits@1", "val_hits@10"} <= set(RANKING_SCORE_KEYS)
+    assert {BASE_SELECTION_METRIC, FINETUNE_SELECTION_METRIC} <= set(RANKING_SCORE_KEYS)
+
+
+def test_an_existing_val_loss_is_still_copied():
+    """R1 (the reviewer's K8 closeout review, adopted by the owner): the shared
+    reading keeps `val_loss`. This build's Trainer writes none, but a
+    checkpoint whose logs hold one is shown with it, as before; a writer that
+    stopped writing a plain figure is no reason to hide one that is there.
+    Nothing here lists the keys of an earlier version: what this version
+    writes is checked above, and this checks one figure an existing file may
+    hold is still read."""
+    from src.inference.pipeline import CHECKPOINT_LOG_METRICS
+
+    assert "val_loss" in CHECKPOINT_LOG_METRICS
 
 
 def test_the_ranking_keys_are_not_listed_a_second_time():

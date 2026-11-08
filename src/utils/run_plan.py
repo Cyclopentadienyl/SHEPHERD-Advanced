@@ -63,6 +63,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Collection, Dict, List, Mapping, Optional
 
+from src.config.model_types import WRITTEN_BEFORE_SPEC
 from src.config.recipe import branch_settings
 from src.utils.checkpoint_io import TRAINING_RULES_VERSION
 
@@ -279,14 +280,19 @@ def _check_record_version(parent: Any, record_version: int, where: str) -> None:
         raise RunPlanRefused(
             f"{where} holds no checkpoint record this version can continue (it holds a "
             f"{type(parent).__name__}, not a record). Start a new run.")
-    if parent.get("record_version") != record_version:
+    found = parent.get("record_version")
+    if found != record_version:
         # The model bundle path (record version 2, contract §9.3 hazard 1): a
-        # parent written before the model spec, or by another path, is not
-        # continued across the boundary.
-        raise RunPlanRefused(
-            f"{where} was written before the model spec (record version "
-            f"{parent.get('record_version')!r}, not {record_version}); its spec cannot be "
-            "known without guessing. Start a new run.")
+        # parent written before the model spec, or at another record version,
+        # is not continued across the boundary. Said as the record reader
+        # (`read_model_record`) says it, which the training process and the
+        # service's preview read every parent with first: its one phrase for a
+        # file without a spec, its version sentence for one with a spec.
+        if parent.get("model_spec") is None:
+            raise RunPlanRefused(f"{where}: {WRITTEN_BEFORE_SPEC}")
+        shown = found if found is None or type(found) is int else f"a {type(found).__name__}"
+        raise RunPlanRefused(f"{where}: checkpoint record version {shown} is not "
+                             f"{record_version}; this build reads only its own")
     if parent.get("training_rules") != TRAINING_RULES_VERSION:
         # A model bundle trained under other rules (the reviewer's K5 review,
         # P2-1): continuing it would change early stopping and the base's

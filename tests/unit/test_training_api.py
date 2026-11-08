@@ -29,6 +29,7 @@ pytest.importorskip("fastapi")
 pytest.importorskip("pydantic")
 
 from src.api.services.training_manager import TrainingManager
+from src.config.model_types import WRITTEN_BEFORE_SPEC
 from tests.fixtures.job_processes import FakeProcess
 from tests.fixtures.operator_access import OPERATOR_BASE_URL, operator_mode
 
@@ -280,7 +281,7 @@ class TestTrainingManagerStartStop:
         with patch("subprocess.Popen") as popen:
             result = manager.start_training({"resume_from": str(parent)})
         assert result["success"] is False
-        assert "written before the model spec (record version None, not 2)" in result["error"]
+        assert f"The parent old.pt: {WRITTEN_BEFORE_SPEC}" in result["error"]
         popen.assert_not_called()
 
     def test_a_continued_run_is_placed_under_its_parents_architecture(self, tmp_path):
@@ -917,8 +918,7 @@ class TestTheBaseStartThroughTheRunner:
                 (trained_disease_child["data_dir"], trained_disease_child["disease"],
                  {"extend_epochs": 1}, "learning_stage: the parent's 'finetune', requested "
                                        "'base'"),
-                (*specless_parent, {}, "written before the model spec (record version 1, "
-                                       "not 2)")):
+                (*specless_parent, {}, WRITTEN_BEFORE_SPEC)):
             resp = client.post("/api/v1/training/start", json={
                 "data_dir": str(ws), "learning_stage": "base", "resume_from": str(parent),
                 "device": "cpu", **extra})

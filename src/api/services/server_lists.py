@@ -180,7 +180,8 @@ class CheckpointItem:
     """One checkpoint of a workspace, from one read of its file.
 
     `validation` is the Trainer's validation figure (metric and value, the
-    trainer's top-20 selection metric), never a test result.
+    selection metric of the run's stage: a base's LP accuracy, a task model's
+    pooled MRR), never a test result.
     `dataset_fingerprint` is the dataset the checkpoint records it was trained
     on; `trained_on_this_dataset` compares it in full with the workspace's
     fingerprint now (`None` when either is unknown). A file that cannot be read
@@ -195,8 +196,8 @@ class CheckpointItem:
 
     The model record's summary comes from the same read, through the one
     reader of records (`src.models.bundle.record.listed_record`): `record` is
-    "model", "history" (no model spec: listed, never run) or "refused" (with
-    `record_problem`); a model adds its learning stage, task, operation,
+    "model" or "refused" (with `record_problem`; a file without a model spec
+    among them, with the record reader's one phrase); a model adds its learning stage, task, operation,
     family, parent (`parent_sha256`, the exact parent file, and `parent_run`),
     encoder kind, the names of its spec's fields that differ from the
     reference recipe (`differences`, sorted; empty for the reference) and
@@ -563,14 +564,19 @@ def list_checkpoints(
     task: Optional[str] = None, learning_stage: Optional[str] = None,
     run: Optional[str] = None, environ: Optional[Mapping[str, str]] = None,
 ) -> Listing:
-    """The checkpoints of a listed workspace's runs, every architecture's or
-    one's, in the listing's order (latest run first, newest file first), each
-    from one read of its file (`read_run_checkpoints`).
+    """The checkpoints of a listed workspace's runs, in the listing's order
+    (latest run first, newest file first), each from one read of its file
+    (`read_run_checkpoints`): every directory under ``runs/``, whatever its
+    name, or, with `architecture`, the one directory of that name (compared
+    with the listed names, never joined to a path: a name that names no
+    directory lists nothing).
 
     Opens every checkpoint inside the workspace (SPEC_4 C3). One that
     resolves outside it is listed with that reason and never opened
-    (`read_run_checkpoints`' `within`). Each item names the workspace as the
-    list does, so `resolve_checkpoint` finds it again by that name.
+    (`read_run_checkpoints`' `within`); a directory under ``runs/`` that
+    cannot be listed is one item with why, and only ``runs/`` itself failing
+    makes the list unavailable. Each item names the workspace as the list
+    does, so `resolve_checkpoint` finds it again by that name.
 
     `task` and `learning_stage` keep the files whose model record names them
     (`listed_record`, `record_matches`); a file without a readable record
@@ -580,18 +586,14 @@ def list_checkpoints(
     """
     from src.kg.artifacts import read_split_manifest
     from src.models.bundle.record import listed_record
-    from src.utils.checkpoint_paths import (
-        normalize_run_layout_key,
-        read_run_checkpoints,
-        run_architecture,
-    )
+    from src.utils.checkpoint_paths import read_run_checkpoints, run_architecture
 
     try:
         name, path = _find_workspace(workspace, environ)
-        conv_type = normalize_run_layout_key(architecture) if architecture else None
         _check_record_filter(task, learning_stage)
-    except ValueError as exc:  # ServerListRefused, or an unsupported architecture
+    except ValueError as exc:  # ServerListRefused
         return Listing((), str(exc))
+    conv_type = architecture if architecture else None
     try:
         fingerprint: Optional[str] = read_split_manifest(path).identity.sha256
     except (ValueError, OSError):
@@ -662,10 +664,10 @@ def record_matches(item: Any, task: Optional[str] = None,
 #: ``("absent", None)``.
 ParentLookup = Callable[[str, str], Tuple[str, Optional[str]]]
 
-#: The groups of a family view, in order: the model families, the files
-#: without a model spec (history, never run) and the files whose record or
-#: read was refused (with why).
-FAMILY_GROUPS = ("family", "history", "refused")
+#: The groups of a family view, in order: the model families and the files
+#: whose record or read was refused (with why; a file without a model spec
+#: among them).
+FAMILY_GROUPS = ("family", "refused")
 
 
 @dataclass(frozen=True)
@@ -723,12 +725,13 @@ def family_rows(
     listed workspace, `list_family`), and otherwise reads "parent
     unavailable" with why. Families are grouped by the family id of their
     topmost listed file, the family with the newest file first; within one,
-    each file is followed by its children, in listing order. Files without a
-    model spec are the history group, refused ones the last group.
+    each file is followed by its children, in listing order. Files whose
+    record was refused or not read (a file without a model spec among them)
+    are the last group.
 
     `task` and `learning_stage` keep the matching model files and, as context
-    rows, the listed files they descend from (a task's base); the history and
-    refused groups name neither, so a filter leaves them out.
+    rows, the listed files they descend from (a task's base); the refused
+    group names neither, so a filter leaves it out.
     """
     lookup = lookup or (lambda run, sha256: ("absent", None))
     models = [item for item in items if item.record == "model"]
@@ -832,8 +835,7 @@ def family_rows(
         return tuple(replace(row, context=_row_key(row.item) not in keep)
                      for row in rows if _row_key(row.item) in needed)
     return tuple(rows) + tuple(
-        FamilyRow(item, "history") for item in items if item.record == "history") + tuple(
-        FamilyRow(item, "refused") for item in items if item.record not in ("model", "history"))
+        FamilyRow(item, "refused") for item in items if item.record != "model")
 
 
 def list_family(
@@ -904,7 +906,8 @@ def resolve_checkpoint(
     environ: Optional[Mapping[str, str]] = None,
 ) -> Path:
     """The path of the checkpoint the server lists as `run`/`filename` of
-    `architecture` in `workspace`, found in the listing again; reads no file.
+    the directory `architecture` under the workspace's ``runs/`` (any name
+    the listing shows), found in the listing again; reads no file.
 
     The caller's reader compares the bytes it reads with the digest it was
     shown (a measurement's `--expect-checkpoint-sha256`, a load's
@@ -916,22 +919,15 @@ def resolve_checkpoint(
         ServerListRefused: the workspace or the checkpoint is not listed, or the
             file resolves outside the workspace.
     """
-    from src.utils.checkpoint_paths import (
-        checkpoint_not_read,
-        list_run_checkpoints,
-        normalize_run_layout_key,
-    )
+    from src.utils.checkpoint_paths import checkpoint_not_read, list_run_checkpoints
 
     name, path = _find_workspace(workspace, environ)
-    # An empty name would be read as the default architecture; a request names one.
+    # An empty name would list every directory; a request names one.
     if not (isinstance(architecture, str) and architecture.strip()):
         raise ServerListRefused(f"{_echo(architecture)} is not an architecture")
-    try:
-        # The run layout's key: a ShepherdGNN conv type or a model bundle's
-        # encoder kind (``gatv2``), as the listing files and names them.
-        conv_type = normalize_run_layout_key(architecture)
-    except ValueError as exc:
-        raise ServerListRefused(str(exc)) from None
+    # The directory under runs/ the listing names, matched by name (never
+    # joined): a name no directory has lists nothing, and is refused below.
+    conv_type = architecture
     try:
         listed = list_run_checkpoints(path, conv_type)
     except OSError as exc:  # a runs directory this account may not enter
@@ -946,7 +942,7 @@ def resolve_checkpoint(
                 raise ServerListRefused(f"in the workspace {name!r}, {problem}")
             return checkpoint
     raise ServerListRefused(
-        f"no checkpoint {_echo(filename)} in run {_echo(run)} of {conv_type} is listed in "
+        f"no checkpoint {_echo(filename)} in run {_echo(run)} of {_echo(conv_type)} is listed in "
         f"the workspace {name!r}")
 
 

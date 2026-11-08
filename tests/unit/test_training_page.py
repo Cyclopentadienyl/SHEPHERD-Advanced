@@ -477,8 +477,9 @@ def test_a_run_entry_leaving_its_workspace_or_not_a_directory_is_not_read(root, 
 
 
 def test_an_architecture_that_is_not_one_never_lists_another_directory(root):
-    """M5-3 review ARCH-10 (d): the run id's architecture must be a supported
-    one. ``demo/../runs`` would otherwise list the workspace's own directory
+    """M5-3 review ARCH-10 (d), C1: the run id's directory is matched against
+    the names the workspace's runs/ lists, never joined onto a path.
+    ``demo/../runs`` would otherwise list the workspace's own directory
     (``runs/..``) and find ``runs`` there, inside the workspace, as a "run"."""
     assert (root / "demo" / "runs").is_dir()
     for run_id in ("demo/../runs", "demo/./gatv2", "demo/GAT/20261018-142000_run_d41f8b",
@@ -539,12 +540,66 @@ def test_the_charts_draw_what_a_base_and_a_task_model_log_and_no_empty_chart():
     assert tc.validation_kind(BASE_LOG["validation"]) == "base"
     assert tc.validation_kind(CHILD_LOG["validation"]) == "finetune"
     assert tc.validation_kind([{"epoch": 0, "val_mrr": 0.1, "val_hits@1": 0.05,
-                                "val_hits@10": 0.2}]) == "history"
+                                "val_hits@10": 0.2}]) == "other"
     # Before the first validation the two charts wait, titled for any run.
     waiting = {c["id"]: c for c in tc.training_charts({"train": BASE_LOG["train"],
                                                        "validation": []})}
     assert waiting["mrr"]["title"] == "Validation figure (Trainer)"
     assert waiting["mrr"]["series"] == [] and waiting["loss"]["series"]
+
+
+def test_a_plain_val_loss_log_draws_both_loss_series_and_its_values_unchanged(root):
+    """R1 (the reviewer's K8 closeout review, adopted by the owner): a plain log
+    with epoch, train_loss, learning_rate and val_loss (no model spec, no
+    stage's selection figure, no MRR or Hits@K) still draws the Loss chart with
+    its train and validation series, its values and its CSV as logged. Its
+    middle two charts say no figure is charted for it; nothing reads it as a
+    run without validation."""
+    log = {"train": [{"epoch": 0, "train_loss": 1.0, "learning_rate": 0.001}],
+           "validation": [{"epoch": 0, "val_loss": 0.8}]}
+    charts = {c["id"]: c for c in tc.training_charts(log)}
+    assert [s["label"] for s in charts["loss"]["series"]] == ["train", "validation"]
+    assert charts["loss"]["x"] == [1]
+    assert [s["values"] for s in charts["loss"]["series"]] == [[1.0], [0.8]]
+    assert charts["lr"]["series"][0]["values"] == [0.001]
+    assert tc.validation_kind(log["validation"]) == "other"
+    assert charts["mrr"]["series"] == [] and charts["hits"]["series"] == []
+    assert charts["mrr"]["title"] == tc.VALIDATION_CHARTS["other"][0]
+    assert tc._metrics_csv_text(log).splitlines() == [
+        "epoch,split,learning_rate,train_loss,val_loss",
+        "1,train,0.001,1.0,", "1,validation,,,0.8"]
+
+    run = root / "demo" / "runs" / "gat" / "20261001-000000_plain_aaaaaa"
+    (run / "logs").mkdir(parents=True)
+    (run / "logs" / "train_20261001_000000.json").write_text(json.dumps(log))
+    run_id = "demo/gat/20261001-000000_plain_aaaaaa"
+    assert tc.resolve_run(run_id) == run, "a run under any directory of runs/ is listed"
+    served = {c["id"]: c for c in tc.training_chart_series({"run": run_id, "rev": 2})["charts"]}
+    assert [s["values"] for s in served["loss"]["series"]] == [[1.0], [0.8]]
+    assert tc.training_chart_csv({"run": run_id})["csv"] == tc._metrics_csv_text(log)
+
+
+def test_a_log_with_figures_this_build_does_not_chart_gets_the_generic_state():
+    """N8 (TM28): the history-only MRR and Hits@K charts retired. A log whose
+    validation entries hold only such figures gets one generic state: the
+    middle two charts say no figure is charted and draw no series; its Loss
+    chart and learning rate are as for any run, and the CSV still holds every
+    key it logged."""
+    log = {"train": [{"epoch": e, "train_loss": 1.0 - 0.1 * e, "learning_rate": 1e-3}
+                     for e in range(2)],
+           "validation": [{"epoch": e, "val_mrr": 0.1 * e, "val_hits@1": 0.05,
+                           "val_hits@10": 0.2, "val_loss": 0.9 - 0.1 * e}
+                          for e in range(2)]}
+    assert tc.validation_kind(log["validation"]) == "other"
+    charts = {c["id"]: c for c in tc.training_charts(log)}
+    for chart_id in ("mrr", "hits"):
+        assert charts[chart_id]["series"] == [] and charts[chart_id]["x"] == []
+        assert "No" in charts[chart_id]["title"] and "charted" in charts[chart_id]["title"]
+    assert [s["label"] for s in charts["loss"]["series"]] == ["train", "validation"]
+    assert charts["lr"]["series"]
+    header = tc._metrics_csv_text(log).splitlines()[0].split(",")
+    assert {"val_mrr", "val_hits@1", "val_hits@10", "val_loss", "train_loss",
+            "learning_rate"} <= set(header)
 
 
 def test_the_series_function_returns_the_four_charts_of_a_listed_run(root):
@@ -1713,15 +1768,16 @@ def test_the_parent_list_follows_the_run_bars_workspace_while_the_drawer_is_open
     listed = []
     monkeypatch.setattr(server_lists, "list_checkpoints",
                         lambda name: listed.append(name) or _listing(
-                            [_item(name), _item(name, run="h", record="history"),
-                             _item(name, run="x", record="refused")]))
+                            [_item(name), _item(name, run="h", record="refused"),
+                             _item(name, run="x", record=None)]))
     ws = tc.workspace_state("resampled")
     assert tc._relist_parents(operator, ws, {"drawer": False}) == (gr.update(),) * 7
     assert listed == []
     parents, runs, select, note, compare, preview, extend = tc._relist_parents(
         operator, ws, {"drawer": True})
-    # Only the model record is offered (K6 decision 1): the file without a
-    # model spec and the refused record are never continued from here.
+    # Only the model record is offered (K6 decision 1): a refused record (a
+    # file without a model spec among them) and one not read are never
+    # continued from here.
     assert listed == ["resampled"] and list(parents) == ["gatv2/r/last.pt"]
     assert parents["gatv2/r/last.pt"]["workspace"] == "resampled"
     assert runs["value"] == "gatv2/r" and select["value"] == "gatv2/r/last.pt"

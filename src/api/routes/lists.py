@@ -97,7 +97,7 @@ def get_workspace_checkpoints(name: str, architecture: Optional[str] = None,
 def get_workspace_family(name: str, task: Optional[str] = None,
                          learning_stage: Optional[str] = None) -> Dict[str, Any]:
     """A listed workspace's checkpoints as families: each child under the
-    exact parent file its record names, the history and refused files after.
+    exact parent file its record names, the refused files after (each with why).
     An operator control (D8, SPEC_4 C3), as the list it is built from."""
     return server_lists.list_family(
         name, task=task, learning_stage=learning_stage).as_dict("rows")

@@ -441,7 +441,7 @@ def _without_model_spec(checkpoint, path):
 
 class TestAFileWithoutAModelSpecIsRefusedAtLoad:
     """README §8, regression 7 (K8-4, SG1): a checkpoint without a model spec is
-    refused at load, with `read_model_record`'s own reason (`HISTORY_ONLY`),
+    refused at load, with `read_model_record`'s own reason (`WRITTEN_BEFORE_SPEC`),
     before any graph view, model or vector is built, by every serving entrance:
     the service's build, a reload with an explicit path with and without a
     task, and startup. The training record is still checked first, so a
@@ -469,7 +469,7 @@ class TestAFileWithoutAModelSpecIsRefusedAtLoad:
 
     def test_the_build_refuses_it_before_any_model_is_built(self, monkeypatch, child, tmp_path):
         from src.inference.pipeline import build_served_pipeline
-        from src.models.bundle.record import HISTORY_ONLY
+        from src.config.model_types import WRITTEN_BEFORE_SPEC
 
         data_dir, checkpoint = child
         stripped = _without_model_spec(checkpoint, tmp_path / "stripped.pt")
@@ -479,7 +479,7 @@ class TestAFileWithoutAModelSpecIsRefusedAtLoad:
             build_served_pipeline(data_dir / "kg.json", checkpoint_path=str(stripped),
                                   data_dir=str(data_dir), device="cpu")
 
-        assert HISTORY_ONLY in str(refused.value)
+        assert WRITTEN_BEFORE_SPEC in str(refused.value)
         assert built == [], f"built before the refusal: {built}"
 
     def test_a_pre_contract_file_is_refused_for_its_record_first(self, monkeypatch, child,
@@ -487,7 +487,7 @@ class TestAFileWithoutAModelSpecIsRefusedAtLoad:
         """No model spec and no training record: the record is checked first,
         so the reason is the record's (the order the playbook quotes)."""
         from src.inference.pipeline import build_served_pipeline
-        from src.models.bundle.record import HISTORY_ONLY
+        from src.config.model_types import WRITTEN_BEFORE_SPEC
         from tests.fixtures.registered_cohort import write_checkpoint_without_model_spec
 
         data_dir, _ = child
@@ -500,13 +500,13 @@ class TestAFileWithoutAModelSpecIsRefusedAtLoad:
             build_served_pipeline(data_dir / "kg.json", checkpoint_path=str(old),
                                   data_dir=str(data_dir), device="cpu")
 
-        assert HISTORY_ONLY not in str(refused.value)
+        assert WRITTEN_BEFORE_SPEC not in str(refused.value)
         assert built == []
 
     @pytest.mark.parametrize("task", [None, "disease"])
     def test_a_reload_with_an_explicit_path_refuses_it_and_keeps_what_is_serving(
             self, api, monkeypatch, child, tmp_path, task):
-        from src.models.bundle.record import HISTORY_ONLY
+        from src.config.model_types import WRITTEN_BEFORE_SPEC
 
         data_dir, checkpoint = child
         before = TestAReloadKeepsWhatIsServing._served(api, data_dir, checkpoint)
@@ -517,7 +517,7 @@ class TestAFileWithoutAModelSpecIsRefusedAtLoad:
                          **({} if task is None else {"task": task}))
 
         assert result.success is False
-        assert HISTORY_ONLY in result.message and "still being served" in result.message
+        assert WRITTEN_BEFORE_SPEC in result.message and "still being served" in result.message
         assert built == [], f"built before the refusal: {built}"
         TestAReloadKeepsWhatIsServing._assert_still_serving(api, before)
 

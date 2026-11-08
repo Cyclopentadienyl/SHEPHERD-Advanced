@@ -1,55 +1,38 @@
 #!/usr/bin/env python
 """
-M1-M3 evidence — what a family of checkpoints actually carries.
-===============================================================
-Backlog item 10. Three facts were established by reading checkpoints in a review
-thread and have existed only as pasted text since:
-
-  M1  no scanned checkpoint carries `metadata` or `in_channels_dict`
-  M2  the input width is 128, where the frozen evaluator's hardcoded fallback
-      was 256 (`scripts/evaluate_model.py:144-148` at `7dab728`) — the size
-      mismatch it died on
-  M3  the number in a filename is `val_mrr`
-
-Those three are what established that the frozen evaluator cannot be the
-calibration oracle, which is the largest decision this phase has made. They are
-also the ones a reviewer currently has to take on trust. This script makes them
-reproducible from an artifact rather than from a summary.
-
-**Aggregates only, and the exclusions are the point.** BACKLOG §5.2 fixes what
-these files may contain, because they describe a clinical deployment and are
-committed to the repository. This one records input digests, the checkpoint
-count, a key-presence summary, an `in_channels` summary and the
-filename-versus-`logs` comparison. It records **no tensors, no absolute paths and
-no operator or host names** — only the basename of each checkpoint, which is the
-subject of M3 and carries nothing else.
-
-**A checkpoint that will not load is a finding, not a crash.** M1 exists because
-the frozen evaluator's loader failed on this family, so a scan that stopped at the
-first unreadable file would destroy the evidence it was run to collect.
-
-**`--inventory`: what contract M2 refuses, before a deployment (M2.6).** Given a
-directory of workspaces (`data/workspaces`), it lists, for each workspace, whether
-its graph and its training inputs pass the consumers' checks, and for every
-checkpoint in it whether its training record passes M2's check for serving and
-measurement (M2.4) and for a resume (M2.3), and whether it carries the model
-record this build reads (a file without a model spec is refused for both), each
-with the refusal's reason. The rules are the consumers' own functions, called on
-reads made here, not restated. **Read-only**: it moves, deletes and rewrites
-nothing; it writes only `--output`. What it lists is archived by the owner, not
-deleted. Only names relative to the inventoried directory are recorded.
+What contract M2 refuses in a directory of workspaces, before a deployment.
+===========================================================================
+**`--inventory` (M2.6).** Given a directory of workspaces (`data/workspaces`),
+it lists, for each workspace, whether its graph and its training inputs pass the
+consumers' checks, and for every checkpoint in it whether its training record
+passes M2's check for serving and measurement (M2.4) and for a resume (M2.3),
+and whether it carries the model record this build reads (a file without a model
+spec is refused for both), each with the refusal's reason. The rules are the
+consumers' own functions, called on reads made here, not restated. **Read-only**:
+it moves, deletes and rewrites nothing; it writes only `--output`. What it lists
+is archived by the owner, not deleted. Only names relative to the inventoried
+directory are recorded.
 
 What it does not judge: anything about a checkpoint beyond its training record
 and its model record -- its learning stage or task, whether its weights build a
 model, or a device has the capacity. Checkpoints are read once with
-`read_checkpoint` and the safe loader, as M1-M3 opens them, where serving uses
-the full one, so one the safe loader cannot open is not judged.
+`read_checkpoint` and the safe loader, where serving uses the full one, so one
+the safe loader cannot open is not judged.
+
+**The M1-M3 mode retired with the files it read** (K8-7b). `--checkpoint-dir`
+summarised one directory of checkpoints written before the model spec (the keys
+they carry, their input width, whether a filename's score is their `val_mrr`),
+the facts that established the frozen evaluator could not be the calibration
+oracle (backlog item 10). Its evidence files stay as they were recorded
+(`docs/working/EVIDENCE_M1_M3_gat.json`, `EVIDENCE_M1_M3_hgt.json`); this build
+ranks no checkpoint by `val_mrr` and writes none without a model spec, so the
+mode has nothing of this build's left to read.
+
+**Aggregates and relative names only.** BACKLOG §5.2 fixes what these files may
+contain, because they describe a clinical deployment: no tensors, no absolute
+paths, no operator or host names.
 
 Usage:
-    python scripts/audit_checkpoint_family.py \\
-        --checkpoint-dir data/workspaces/<ws>/runs/hgt/<run>/checkpoints \\
-        --output docs/working/EVIDENCE_M1_M3_checkpoints.json
-
     python scripts/audit_checkpoint_family.py \\
         --inventory data/workspaces --output <outside the repository>/inventory.json
 
@@ -76,177 +59,6 @@ from src.utils.provenance import DEPLOYMENT_RELATIONSHIPS, UNSTATED_RELATIONSHIP
 
 logger = logging.getLogger(__name__)
 
-#: The keys whose presence M1 is about, plus the ones it observed instead.
-KEYS_OF_INTEREST = (
-    "metadata",
-    "in_channels_dict",
-    "config",
-    "data_fingerprint",
-    "training_input_digests",
-    "epoch",
-    "logs",
-    "state_dict",
-    "model_state_dict",
-)
-
-#: `feature_encoder.projections.<node_type>.weight` has shape
-#: `(hidden_dim, in_channels)`, so its last dimension is the input width M2 is
-#: about. Read from the weight rather than from a config field, because a config
-#: records what was asked for and this records what was built.
-_PROJECTION_PREFIX = "feature_encoder.projections."
-_PROJECTION_SUFFIX = ".weight"
-
-
-def filename_score_token(name: str) -> Optional[str]:
-    """The score baked into a checkpoint filename, **as written**, or `None`.
-
-    `model-45-0.6975.pt` gives `"0.6975"`. Returned as text because the text is the
-    evidence: `float("0.7000")` is `0.7`, and `repr` of that recovers one decimal
-    place rather than four, so a precision taken from the parsed value would widen
-    the comparison tolerance by three orders of magnitude.
-
-    **A decimal point is required.** `model-45.pt` carries an epoch and no score,
-    and an earlier version read `45` as one — then compared it against a metric in
-    [0, 1] and recorded a disagreement that was really a filename with nothing in
-    it to compare.
-    """
-    stem = name[: -len(".pt")] if name.endswith(".pt") else name
-    for token in reversed(stem.split("-")):
-        if "." not in token:
-            continue
-        try:
-            float(token)
-        except ValueError:
-            continue
-        return token
-    return None
-
-
-def scores_agree(token: str, value: float) -> bool:
-    """Whether a filename's score and a logs metric are the same number.
-
-    **The rounding rule, stated rather than implied.** A filename carries a
-    rendering of the metric rounded to however many decimals it was written with,
-    so the metric is rounded the same way and the two are compared exactly. An
-    earlier version compared with a tolerance derived from the parsed float, which
-    was both too wide and wrong for trailing zeroes.
-    """
-    decimals = len(token.split(".")[1])
-    return f"{round(value, decimals):.{decimals}f}" == f"{float(token):.{decimals}f}"
-
-
-def inspect_checkpoint(path: Path) -> Dict[str, Any]:
-    """One checkpoint, reduced to the aggregate facts M1-M3 are about."""
-    import torch
-
-    from src.utils.checkpoint_paths import ranking_score_detail
-
-    record: Dict[str, Any] = {
-        "filename": path.name,
-        "filename_score_token": filename_score_token(path.name),
-        "loaded": False,
-        "load_error": None,
-        "keys_present": [],
-        "in_channels": {},
-        "logs_metric": None,
-        "logs_value": None,
-    }
-
-    try:
-        # `weights_only=True` — the safe loader. A checkpoint this cannot read is
-        # itself worth recording; falling back to executing pickled code to widen
-        # the evidence would be the wrong trade in a clinical repository.
-        checkpoint = torch.load(path, map_location="cpu", weights_only=True)
-    except Exception as exc:  # noqa: BLE001 - an unreadable checkpoint is data
-        # **The class, never the message.** Torch and filesystem errors routinely
-        # interpolate the absolute path they failed on, and §5.2 forbids absolute
-        # paths in this file. A stable category says as much as a reader here needs
-        # and cannot carry a path, a username or a mount point out with it.
-        record["load_error"] = type(exc).__name__
-        return record
-
-    if not isinstance(checkpoint, dict):
-        record["load_error"] = "NotADict"
-        return record
-
-    record["loaded"] = True
-    record["keys_present"] = sorted(k for k in KEYS_OF_INTEREST if k in checkpoint)
-
-    state_dict = checkpoint.get("state_dict") or checkpoint.get("model_state_dict") or {}
-    for key, tensor in state_dict.items():
-        if key.startswith(_PROJECTION_PREFIX) and key.endswith(_PROJECTION_SUFFIX):
-            node_type = key[len(_PROJECTION_PREFIX):-len(_PROJECTION_SUFFIX)]
-            if hasattr(tensor, "shape") and len(tensor.shape) >= 1:
-                record["in_channels"][node_type] = int(tensor.shape[-1])
-
-    detail = ranking_score_detail(checkpoint.get("logs"))
-    if detail is not None:
-        record["logs_metric"], record["logs_value"] = detail[0], detail[1]
-    return record
-
-
-def summarise(records: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """The aggregate the three facts are read from.
-
-    **Aggregates and filenames, no per-checkpoint block.** BACKLOG §5.2 asks for a
-    key-presence *summary*, an `in_channels` *summary* and the filename-versus-logs
-    comparison, and an evidence file committed to a clinical repository should not
-    carry more than it was specified to. Filenames appear only where a count alone
-    would strand a reader — which checkpoints were unreadable, which disagreed —
-    and they are already `checkpoint_digests` keys, so no new category leaks.
-    """
-    loaded = [r for r in records if r["loaded"]]
-
-    key_presence = Counter()
-    for record in loaded:
-        key_presence.update(record["keys_present"])
-
-    widths = Counter()
-    n_with_widths = 0
-    for record in loaded:
-        if record["in_channels"]:
-            n_with_widths += 1
-            widths.update(record["in_channels"].values())
-
-    metrics = Counter(r["logs_metric"] for r in loaded if r["logs_metric"])
-
-    agree, disagree, uncomparable = [], [], []
-    for record in loaded:
-        token, value = record["filename_score_token"], record["logs_value"]
-        if token is None or value is None:
-            uncomparable.append(record["filename"])
-        elif scores_agree(token, value):
-            agree.append(record["filename"])
-        else:
-            disagree.append(record["filename"])
-
-    return {
-        "n_checkpoints_found": len(records),
-        "n_loaded": len(loaded),
-        "n_unreadable": len(records) - len(loaded),
-        "unreadable_filenames": sorted(r["filename"] for r in records if not r["loaded"]),
-        "load_error_categories": dict(sorted(
-            Counter(r["load_error"] for r in records if r["load_error"]).items())),
-        "key_presence_counts": dict(sorted(key_presence.items())),
-        # **How many checkpoints could answer M2 at all**, beside the answer. A
-        # family whose projection weights are named differently would otherwise
-        # produce an empty summary that reads like a normal result.
-        "in_channels": {
-            "n_loaded_exposing_projection_widths": n_with_widths,
-            "n_loaded_without_projection_widths": len(loaded) - n_with_widths,
-            "value_counts": {str(k): v for k, v in sorted(widths.items())},
-            "established": bool(widths),
-        },
-        "logs_ranking_metric_counts": dict(sorted(metrics.items())),
-        "filename_vs_logs": {
-            "agree": len(agree),
-            "disagree": len(disagree),
-            "uncomparable": len(uncomparable),
-            "disagreeing_filenames": sorted(disagree),
-            "uncomparable_filenames": sorted(uncomparable),
-        },
-    }
-
 
 def _runtime_facts() -> Dict[str, Any]:
     """The **reader's** environment, without saying where it is or whose it is.
@@ -255,13 +67,13 @@ def _runtime_facts() -> Dict[str, Any]:
     *model* name. No hostname, no serial, no device uuid — §5.2 forbids them and
     none of them would add anything, since nothing here is a join key.
 
-    What these facts are for is narrower than "provenance". M1-M3 opens
+    What these facts are for is narrower than "provenance". The inventory opens
     checkpoints with `weights_only=True`, and whether a given checkpoint loads
-    that way is a property of the torch version doing the opening — so `n_loaded`
-    is only interpretable next to `torch`. The rest is context of the same kind.
-    They say nothing about whether this machine is the deployment's; that claim is
-    `--deployment-relationship`, made by a person, the same split
-    `MeasurementManifest.cuda_executed` already uses.
+    that way is a property of the torch version doing the opening, so a "not
+    judged" verdict is only interpretable next to `torch`. The rest is context
+    of the same kind. They say nothing about whether this machine is the
+    deployment's; that claim is `--deployment-relationship`, made by a person,
+    the same split `MeasurementManifest.cuda_executed` already uses.
     """
     import platform
 
@@ -279,45 +91,6 @@ def _runtime_facts() -> Dict[str, Any]:
     if facts["cuda_available"]:
         facts["device_name"] = torch.cuda.get_device_name(0)
     return facts
-
-
-def build_report(checkpoint_dir: Path, relationship: str) -> Dict[str, Any]:
-    from src.utils.fingerprint import file_sha256
-
-    paths = sorted(checkpoint_dir.glob("*.pt"))
-    if not paths:
-        raise SystemExit(
-            f"{checkpoint_dir} holds no *.pt files. An evidence file reporting zero "
-            "checkpoints would read as a finding about the family rather than about "
-            "the directory that was pointed at."
-        )
-
-    records = [inspect_checkpoint(path) for path in paths]
-    if not any(r["loaded"] for r in records):
-        raise SystemExit(
-            f"none of the {len(paths)} checkpoints in {checkpoint_dir.name} could be "
-            "loaded. Partial failure is evidence — M1 exists because a loader fails "
-            "on this family — but total failure says nothing about what checkpoints "
-            "carry, only that this reader could not open any of them."
-        )
-
-    return {
-        "fact": "M1-M3",
-        "what_this_shows": (
-            "which keys a family of checkpoints carries, the input width they were "
-            "built with, and whether the number in a filename is the ranking metric "
-            "in its logs"
-        ),
-        "checkpoint_digests": {path.name: file_sha256(path) for path in paths},
-        "summary": summarise(records),
-        "runtime": _runtime_facts(),
-        "deployment_relationship": relationship,
-        "excluded_by_design": [
-            "checkpoint tensors",
-            "absolute paths (only basenames are recorded)",
-            "operator and host names",
-        ],
-    }
 
 
 # =============================================================================
@@ -419,8 +192,8 @@ def _checkpoint_verdicts(
     path: Path, root: Path, bound: Optional[Dict[str, str]], inputs: Any,
     workspace_refused: str = "the workspace's graph is refused",
 ) -> Dict[str, Any]:
-    """One checkpoint, read once (`read_checkpoint`, the safe loader on CPU, as
-    M1-M3 opens them), judged from that read; its digest is that read's.
+    """One checkpoint, read once (`read_checkpoint`, the safe loader on CPU),
+    judged from that read; its digest is that read's.
 
     Each use is judged in its consumer's order: serving checks the training
     record of the graph, then reads the model record (`read_model_record`); a
@@ -572,15 +345,11 @@ def build_inventory(root: Path, relationship: str) -> Dict[str, Any]:
 
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="M1-M3 checkpoint family evidence")
-    subject = parser.add_mutually_exclusive_group(required=True)
-    subject.add_argument("--checkpoint-dir", type=Path,
-                         help="One directory of *.pt checkpoints. Not searched recursively: "
-                              "an architecture family is one directory, and mixing two "
-                              "would make the counts describe no family in particular.")
-    subject.add_argument("--inventory", type=Path,
-                         help="A directory of workspaces: list what contract M2 refuses "
-                              "in each, and why (M2.6). Read-only.")
+    parser = argparse.ArgumentParser(
+        description="What contract M2 refuses in a directory of workspaces (M2.6)")
+    parser.add_argument("--inventory", type=Path, required=True,
+                        help="A directory of workspaces: list what contract M2 refuses "
+                             "in each, and why (M2.6). Read-only.")
     parser.add_argument("--output", type=Path, required=True,
                         help="Where the evidence JSON is written")
     parser.add_argument("--overwrite", action="store_true",
@@ -600,7 +369,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     args = parse_args(argv)
 
-    subject = args.inventory or args.checkpoint_dir
+    subject = args.inventory
     if not subject.is_dir():
         raise SystemExit(f"not a directory: {subject}")
     if args.output.exists() and not args.overwrite:
@@ -609,22 +378,10 @@ def main(argv: Optional[List[str]] = None) -> int:
             "elsewhere — an evidence file that was silently replaced is not evidence."
         )
 
-    if args.inventory:
-        report = build_inventory(args.inventory, args.deployment_relationship)
-    else:
-        report = build_report(args.checkpoint_dir, args.deployment_relationship)
+    report = build_inventory(args.inventory, args.deployment_relationship)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2, sort_keys=True, allow_nan=False))
-
-    if args.inventory:
-        logger.info("%s -> %s", report["counts"], args.output)
-        return 0
-    summary = report["summary"]
-    logger.info(
-        "%d checkpoints, %d loaded, %d unreadable -> %s",
-        summary["n_checkpoints_found"], summary["n_loaded"],
-        summary["n_unreadable"], args.output,
-    )
+    logger.info("%s -> %s", report["counts"], args.output)
     return 0
 
 

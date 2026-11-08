@@ -20,6 +20,7 @@ torch = pytest.importorskip("torch")
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
+from src.config.model_types import WRITTEN_BEFORE_SPEC  # noqa: E402
 from src.models.bundle import reference_spec  # noqa: E402
 from src.models.bundle.record import MODEL_RECORD_VERSION, load_bundle  # noqa: E402
 from src.models.bundle.spec import InputSpec  # noqa: E402
@@ -54,9 +55,13 @@ def test_base_run_writes_bundle_checkpoints(workspace, tmp_path):
     import train_model
 
     config, explicit = _config(workspace, tmp_path / "run")
-    metrics = train_model.train(config, explicit)
+    claimed = []
+    metrics = train_model.train(config, explicit, on_claim=claimed.append)
     assert "val_lp_accuracy" in metrics
     run = tmp_path / "run"
+    # The run directory, its first artifact, is reported once claimed: the
+    # boundary the command line tells a refusal from a failed run by.
+    assert claimed == [run]
     for name in ("config.yaml", "graph_view.json", "graph_split.pt", "final_metrics.json"):
         assert (run / name).is_file(), name
     last = torch.load(run / "checkpoints" / "last.pt", map_location="cpu", weights_only=True)
@@ -165,6 +170,143 @@ def test_a_run_without_a_learning_stage_is_refused_before_any_read(workspace, tm
     assert not (tmp_path / "run").exists()
 
 
+def test_the_command_line_says_a_refusal_in_one_line_without_a_traceback(workspace, tmp_path):
+    """Checkpoint A's wording item: the command line run without --stage (a
+    resume among them) is refused by `train()` before anything is written; it
+    says so in one line, ``train_model: refused: … Nothing was written.``,
+    exit 1, never "Training failed:" with a traceback."""
+    import subprocess
+
+    script = Path(__file__).resolve().parents[2] / "scripts" / "train_model.py"
+    for extra in ([], ["--resume", str(tmp_path / "parent.pt")]):
+        done = subprocess.run(
+            [sys.executable, str(script), "--data-dir", str(workspace), "--device", "cpu",
+             "--run-dir", str(tmp_path / "run"), *extra],
+            cwd=script.parents[1], capture_output=True, text=True, timeout=300)
+        assert done.returncode == 1, done.stderr[-2000:]
+        lines = [line for line in done.stderr.splitlines() if "train_model: refused:" in line]
+        assert len(lines) == 1, done.stderr[-2000:]
+        assert lines[0].endswith(
+            "train_model: refused: A run names its learning stage (learning_stage, --stage): "
+            "one of ['base', 'finetune'], not None. Nothing was written."), lines[0]
+        assert "Traceback" not in done.stderr and "Training failed" not in done.stderr
+        assert not (tmp_path / "run").exists()
+
+
+def test_an_error_after_the_run_directory_is_claimed_is_a_failure_not_a_refusal(
+        tmp_path, monkeypatch, caplog):
+    """The claim is the boundary (`train(on_claim=)`): every refusal comes
+    before it, so the command line says a ValueError raised before it as a
+    refusal, and one raised after it as a failed run, with its traceback."""
+    import logging
+
+    import train_model
+
+    claimed = tmp_path / "run"
+    monkeypatch.setattr(train_model, "load_config_with_explicit",
+                        lambda args: (train_model.TrainConfig(data_dir=str(tmp_path)), set()))
+
+    def after_the_claim(config, explicit, *, on_claim, **kwargs):
+        on_claim(claimed)
+        raise ValueError("a shape the model does not take")
+
+    def before_the_claim(config, explicit, *, on_claim, **kwargs):
+        raise ValueError("refused for a reason")
+
+    monkeypatch.setattr(sys, "argv", ["train_model.py", "--data-dir", str(tmp_path),
+                                      "--stage", "base"])
+    args = train_model.parse_args()
+    caplog.set_level(logging.INFO, logger=train_model.logger.name)
+    monkeypatch.setattr(train_model, "train", after_the_claim)
+    assert train_model._train_main(args) == 1
+    failed = [r for r in caplog.records if r.getMessage().startswith("Training failed:")]
+    assert failed and failed[0].exc_info is not None
+    assert not any("refused" in r.getMessage() for r in caplog.records)
+    caplog.clear()
+    monkeypatch.setattr(train_model, "train", before_the_claim)
+    assert train_model._train_main(args) == 1
+    assert [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR] == [
+        "train_model: refused: refused for a reason. Nothing was written."]
+    assert all(r.exc_info is None for r in caplog.records if r.levelno >= logging.ERROR)
+
+
+def test_a_run_directory_that_is_not_free_is_a_refusal_in_one_line(tmp_path, monkeypatch,
+                                                                    caplog):
+    """The review of C3 (listing 2): a run directory that holds files is
+    refused by `train()` before its claim (`RunDirectoryTaken`, a
+    FileExistsError), so the command line says it in one line, never
+    "Training failed:" with a traceback, and the file stays as it was."""
+    import logging
+
+    import train_model
+
+    taken = tmp_path / "taken"
+    taken.mkdir()
+    (taken / "notes.txt").write_text("the operator's")
+    monkeypatch.setattr(sys, "argv", ["train_model.py", "--data-dir", str(tmp_path),
+                                      "--stage", "base", "--device", "cpu",
+                                      "--run-dir", str(taken)])
+    caplog.set_level(logging.INFO, logger=train_model.logger.name)
+    assert train_model._train_main(train_model.parse_args()) == 1
+    errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert len(errors) == 1 and errors[0].exc_info is None, [r.getMessage() for r in errors]
+    said = errors[0].getMessage()
+    assert said.startswith("train_model: refused: ") and said.endswith(" Nothing was written.")
+    assert "already holds files" in said and "Training failed" not in said
+    assert [p.name for p in taken.iterdir()] == ["notes.txt"]
+
+
+@pytest.mark.parametrize("parent", ["list", "specless", "other version", "incomplete"])
+def test_the_preview_and_the_process_say_the_same_of_a_file_that_is_no_record(
+        workspace, tmp_path, parent):
+    """Checkpoint A's wording item, at the shared root: a resume parent that is
+    no checkpoint record (a list), one written before the model spec, one
+    with a spec at another record version, or a record of this version the
+    reader refuses is refused by the training service's preview and by the
+    training process in the same words, the record reader's
+    (`read_model_record`, which both read the parent with first), and nothing
+    is written. The review of C3 (listing 3, display 2): the preview said
+    "written before the model spec" of a file with a spec, where the process
+    named its record version."""
+    import train_model
+
+    from src.api.services.training_manager import TrainingManager
+    from src.models.bundle.record import ModelRecordError, read_model_record
+    from src.utils.checkpoint_io import TRAINING_RULES_VERSION
+    from src.utils.run_plan import RunPlanRefused, plan_continuation
+
+    old = tmp_path / "old" / "checkpoints" / "last.pt"
+    old.parent.mkdir(parents=True)
+    spec = {"encoder": {"kind": "gatv2"}}
+    payload = {"list": [1, 2, 3], "specless": {"record_version": 1, "epoch": 2},
+               "other version": {"model_spec": spec, "record_version": 3, "epoch": 2},
+               "incomplete": {"model_spec": spec, "record_version": 2, "epoch": 2,
+                              "training_rules": TRAINING_RULES_VERSION}}[parent]
+    torch.save(payload, old)
+    said = f"The parent last.pt: {WRITTEN_BEFORE_SPEC}"
+    if parent == "incomplete":
+        with pytest.raises(ModelRecordError) as reader:
+            read_model_record(payload)
+        said = f"The parent last.pt: {reader.value}"
+    if parent == "other version":
+        said = ("The parent last.pt: checkpoint record version 3 is not 2; this build reads "
+                "only its own")
+        # The run plan's own check, for a caller that plans without the
+        # reader, names the version too, never the phrase.
+        with pytest.raises(RunPlanRefused) as planned:
+            plan_continuation(payload, old, {}, set(), device="cpu", record_version=2)
+        assert str(planned.value) == said
+    preview = TrainingManager().preview_continuation(str(old), device="cpu")
+    assert (preview["ok"], preview["reason"]) == (False, said)
+    config = train_model.TrainConfig(data_dir=str(workspace), run_dir=str(tmp_path / "q"),
+                                     learning_stage="base", resume_from=str(old), device="cpu")
+    with pytest.raises(RunPlanRefused) as refused:
+        train_model.train(config, {"learning_stage", "resume_from", "device"},
+                          on_claim=lambda run: pytest.fail(f"a refusal claimed {run}"))
+    assert str(refused.value) == said
+    assert not (tmp_path / "q").exists()
+
+
 def test_parent_without_a_model_spec_is_refused(workspace, tmp_path):
     import train_model
     from src.utils.run_plan import RunPlanRefused
@@ -221,7 +363,9 @@ def test_a_record_version_1_file_is_never_continued(workspace, tmp_path):
         assert not run.exists(), f"a refused {name} wrote its run directory"
     preview = TrainingManager().preview_continuation(str(old), device="cpu")
     assert preview["ok"] is False
-    assert "written before the model spec (record version 1, not 2)" in preview["reason"]
+    # The preview says what the process says of the same file, in the record
+    # reader's one phrase (checkpoint A's wording item).
+    assert preview["reason"] == f"The parent last.pt: {WRITTEN_BEFORE_SPEC}"
 
 
 def _with_earlier_rules(payload):

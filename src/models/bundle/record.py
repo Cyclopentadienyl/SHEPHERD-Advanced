@@ -7,8 +7,9 @@ serving, measurement and the operations read them through `read_model_record`
 and build through `load_bundle`, so no consumer reads a spec its own way.
 
 **Record version 2** marks a checkpoint the bundle path wrote. A checkpoint
-without a `model_spec` was written before it: it is listed as history and
-never run, and nothing is guessed from its weight names (§9.3, hazard 1).
+without a `model_spec` was written before it: every reader refuses it with
+one phrase (`WRITTEN_BEFORE_SPEC`), a list keeps it listed with that reason,
+and nothing is guessed from its weight names (§9.3, hazard 1).
 
 **Task first** (hazard 3): `load_bundle` compares the learning stage and task a
 caller needs with the record before it builds anything.
@@ -37,7 +38,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
-from src.config.model_types import MODEL_RECORD_KEYS
+from src.config.model_types import MODEL_RECORD_KEYS, WRITTEN_BEFORE_SPEC
 from src.models.bundle.spec import LEARNING_STAGES, TASKS, ModelSpec, SpecError, ViewShape, _shown
 from src.utils.checkpoint_paths import text_problem
 
@@ -52,10 +53,6 @@ RECORD_KEYS = MODEL_RECORD_KEYS
 
 class ModelRecordError(ValueError):
     """A checkpoint the bundle path cannot run, with the reason."""
-
-
-HISTORY_ONLY = ("written before the model spec: listed as history and never run by this "
-                "build; start a new run")
 
 
 @dataclass
@@ -321,7 +318,7 @@ def read_model_record(payload: Mapping[str, Any]) -> ModelRecord:
     """The model record of a loaded checkpoint, or the reason it has none,
     a record that contradicts itself among them (`_SAME_INPUT`)."""
     if not has_model_spec(payload):
-        raise ModelRecordError(HISTORY_ONLY)
+        raise ModelRecordError(WRITTEN_BEFORE_SPEC)
     if _differs("record_version", payload.get("record_version"), MODEL_RECORD_VERSION):
         raise ModelRecordError(f"checkpoint record version {_shown(payload.get('record_version'))} "
                                f"is not {MODEL_RECORD_VERSION}; this build reads only its own")
@@ -392,15 +389,6 @@ def finetune_parent_problem(record: ModelRecord, payload: Mapping[str, Any]) -> 
     return None
 
 
-#: What a list says of a checkpoint without a model spec (README §4: listed as
-#: history, never run). The WebUI never loads, measures or continues one, and
-#: serving refuses one at load; only the ShepherdGNN path outside it (the
-#: command line's ShepherdGNN training, which can resume one) still runs such a
-#: file, until K8 retires that path (README §7).
-LISTED_WITHOUT_SPEC = ("no model spec (a ShepherdGNN checkpoint): listed as history and never "
-                       "run from the WebUI; only the ShepherdGNN path outside it (command "
-                       "line) still runs it, until that path is retired (K8)")
-
 #: What a model list shows of a checkpoint's record (`listed_record`).
 LISTED_RECORD_FIELDS = ("record", "record_problem", "learning_stage", "task", "operation",
                         "family_id", "parent_sha256", "parent_run", "encoder", "reference",
@@ -411,9 +399,10 @@ def listed_record(payload: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
     """What a model list shows of a checkpoint's record, read by
     `read_model_record` alone, so the lists apply no rule of their own.
 
-    `record` is "model" (a record this build reads), "history" (no model spec:
-    `LISTED_WITHOUT_SPEC`) or "refused" (a record this build cannot
-    read, its reason in `record_problem`). A model adds its learning stage,
+    `record` is "model" (a record this build reads) or "refused" (a record
+    this build cannot read, its reason in `record_problem`; a file without a
+    model spec, or a read that is no record, says `WRITTEN_BEFORE_SPEC`, as a
+    load of it does). A model adds its learning stage,
     task, operation, family (the root run), parent (the SHA-256 of the exact
     parent file and the parent run), encoder kind, and how its spec stands to
     the reference recipe (README §5, axis 2): `differences`, the sorted names
@@ -421,11 +410,8 @@ def listed_record(payload: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
     (`ModelSpec.differences_from_reference`), and `reference`, true exactly
     when there are none."""
     summary: Dict[str, Any] = dict.fromkeys(LISTED_RECORD_FIELDS)
-    if payload is None or not has_model_spec(payload):
-        summary.update(record="history", record_problem=LISTED_WITHOUT_SPEC)
-        return summary
     try:
-        record = read_model_record(payload)
+        record = read_model_record(payload if payload is not None else {})
     except ModelRecordError as exc:
         summary.update(record="refused", record_problem=str(exc))
         return summary
@@ -459,9 +445,7 @@ def load_bundle(payload: Mapping[str, Any], *, learning_stage: Optional[str] = N
 
 
 __all__ = [
-    "HISTORY_ONLY",
     "LISTED_RECORD_FIELDS",
-    "LISTED_WITHOUT_SPEC",
     "MODEL_RECORD_VERSION",
     "ModelRecord",
     "ModelRecordError",

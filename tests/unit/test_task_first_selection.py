@@ -40,10 +40,9 @@ from src.core.types import (  # noqa: E402
     SERVED_SCORING_MODES,
     TASK_SCORING_MODES,
 )
+from src.config.model_types import WRITTEN_BEFORE_SPEC  # noqa: E402
 from src.models.bundle import build_bundle, finetune_spec_from_parent, reference_spec  # noqa: E402
 from src.models.bundle.record import (  # noqa: E402
-    HISTORY_ONLY,
-    LISTED_WITHOUT_SPEC,
     LISTED_RECORD_FIELDS,
     MODEL_RECORD_VERSION,
     ModelRecord,
@@ -144,7 +143,7 @@ def service(tmp_path, monkeypatch):
         if "model_spec" not in payload:
             from src.models.bundle.record import read_model_record
 
-            read_model_record(payload)       # refuses it: HISTORY_ONLY (SG1)
+            read_model_record(payload)       # refuses it: WRITTEN_BEFORE_SPEC (SG1)
         if payload.get("task") is None:
             raise RuntimeError("a base model is not served")
         else:
@@ -227,7 +226,7 @@ def test_an_explicit_checkpoint_of_another_task_publishes_nothing(service, famil
             "Nothing was published.") in refused.message
     gnn = _reload(service, task="disease", checkpoint_path=str(family["gnn"]))
     assert not gnn.success and service.published == []
-    assert HISTORY_ONLY in gnn.message
+    assert WRITTEN_BEFORE_SPEC in gnn.message
     served = _reload(service, task="gene", checkpoint_path=str(family["gene"]))
     assert served.success and len(service.published) == 1
 
@@ -307,17 +306,16 @@ def test_a_task_child_linked_outside_the_workspace_is_never_chosen_or_read(
         assert service.built == [str(family["disease"])]
     else:
         # Nothing of the workspace's own is left under the linked key. The
-        # hint names the boundary first, then what the task lacks inside the
-        # workspace; it never says "Finetune one": behind a linked layout
+        # hint says first what was not read, then what the task lacks among
+        # the runs read; it never says "Finetune one": behind a linked layout
         # directory training refuses to write too (`run_dir_outside`), and
         # where a run can be trained depends on where the link is.
         assert not result.success and service.built == [] and service.published == []
-        assert ("checkpoint file(s) of the workspace's runs resolve outside the workspace, so "
-                "automatic selection does not read them; keep the runs inside the workspace"
-                in result.message)
+        assert ("item(s) of the workspace's runs (named above: a checkpoint file that resolves "
+                "outside the workspace, or a directory under runs/ that cannot be listed); keep "
+                "the runs inside the workspace" in result.message)
         assert "or pass an explicit checkpoint_path" in result.message
-        assert ("No run inside the workspace holds a model finetuned for the disease task."
-                in result.message)
+        assert "No run it read holds a model finetuned for the disease task." in result.message
         assert "Finetune one" not in result.message
     assert reason in result.selection_reason
     # The explicit path is unchanged: named, it is read by its bytes.
@@ -373,7 +371,8 @@ def test_a_candidate_swapped_out_of_the_workspace_after_the_boundary_check_is_no
     assert f"not read: {words}" in result.selection_reason
     if best is None:
         assert not result.success and service.built == [] and service.published == []
-        assert "1 checkpoint file(s) of the workspace's runs" in result.message
+        assert "Automatic selection did not read 1 item(s) of the workspace's runs" in (
+            result.message)
     else:
         assert result.success, result.message
         assert service.built == [str(best)] and result.checkpoint_path == str(best)
@@ -440,9 +439,12 @@ def test_the_listed_record_states():
     base = listed_record(_listed_form(_record_payload()))
     assert (base["learning_stage"], base["task"], base["operation"], base["parent_sha256"]) == (
         "base", None, "new", None)
-    for history in (None, {"record_version": 1, "epoch": 2}):
-        assert listed_record(history) == {**dict.fromkeys(LISTED_RECORD_FIELDS),
-                                          "record": "history", "record_problem": LISTED_WITHOUT_SPEC}
+    # A file without a model spec, or a read that is no record, is refused by
+    # the one reader of records, in its one phrase, as a load of it is.
+    for specless in (None, {"record_version": 1, "epoch": 2}):
+        assert listed_record(specless) == {**dict.fromkeys(LISTED_RECORD_FIELDS),
+                                           "record": "refused",
+                                           "record_problem": WRITTEN_BEFORE_SPEC}
     refused = listed_record({**_listed_form(_record_payload("disease")), "record_version": 1})
     assert refused["record"] == "refused" and "record version" in refused["record_problem"]
     assert refused["task"] is None, "a refused record states nothing it could not read"
@@ -556,13 +558,17 @@ def test_the_lists_show_a_bundle_run_and_resolve_it_by_its_key(tmp_path):
             "gatv2", False)
         assert item.validation == {"metric": "val_pooled_mrr", "value": 0.3}
     gnn_item = sl.list_checkpoints("ws", "hgt", environ=environ).items[0]
-    assert (gnn_item.record, gnn_item.record_problem) == ("history", LISTED_WITHOUT_SPEC)
+    assert (gnn_item.record, gnn_item.record_problem) == ("refused", WRITTEN_BEFORE_SPEC)
+    # The server's validation field stays the stage's selection figure, and a
+    # file without a model spec has none this build ranks by (Keep, N9).
+    assert gnn_item.validation is None
     assert sl.resolve_checkpoint("ws", "gatv2", "20261002-000000_disease_bbbbbb", "last.pt",
                                  environ=environ) == child
     by_manager = {c["architecture"]: c for c in training_manager.get_checkpoints(str(ws))}
     assert (by_manager["gatv2"]["task"], by_manager["gatv2"]["parent_sha256"]) == (
         "disease", "a" * 64)
-    assert by_manager["hgt"]["record"] == "history"
+    assert (by_manager["hgt"]["record"], by_manager["hgt"]["record_problem"]) == (
+        "refused", WRITTEN_BEFORE_SPEC)
 
 
 # ---------------------------------------------------------------------------
@@ -739,3 +745,112 @@ def test_a_request_with_an_undeclared_field_cannot_be_built_in_process():
     assert refused.value.errors()[0]["type"] == "extra_forbidden"
     assert set(PipelineReloadRequest.model_fields) == {
         "data_dir", "checkpoint_path", "task", "device", "expected_checkpoint_sha256"}
+
+
+# ---------------------------------------------------------------------------
+# Every directory under runs/, identity from the file record (K8-7b, C3)
+# ---------------------------------------------------------------------------
+def test_a_bundle_under_any_run_directory_is_listed_selected_served_and_resolved(
+        service, monkeypatch):
+    """N1 (C9, the reviewer's first control): a model bundle filed under a
+    directory no writer of this build uses (an operator's name) is a run like
+    any other. It is listed, chosen by the reload's task-first selection and
+    served, and found again by `resolve_checkpoint`, `locate_checkpoint` and the
+    run view's `resolve_run`; what it is comes from its record, never the
+    directory."""
+    from src.api.services import server_lists as sl
+    from src.config import server_settings as ss
+    from src.webui.components import training_console as tc
+
+    root = service.data_dir.parent
+    run = "20261002-000000_disease_bbbbbb"
+    child = _put(service.data_dir, "my_runs", run,
+                 _record_payload("disease", logs={"val_pooled_mrr": 0.3}), 600)
+    environ = {ss.ENV_WORKSPACES_ROOT: str(root)}
+    monkeypatch.setenv(ss.ENV_WORKSPACES_ROOT, str(root))
+
+    (item,) = sl.list_checkpoints("ws", environ=environ).items
+    assert (item.architecture, item.run, item.record, item.task) == (
+        "my_runs", run, "model", "disease")
+    assert [i.run for i in sl.list_checkpoints("ws", "my_runs", environ=environ).items] == [run]
+    served = _reload(service, task="disease")
+    assert served.success, served.message
+    assert served.checkpoint_path == str(child) and service.built == [str(child)]
+    assert served.selection_reason.startswith(f"task disease: auto: latest run 'my_runs/{run}'")
+    assert sl.resolve_checkpoint("ws", "my_runs", run, "last.pt", environ=environ) == child
+    assert sl.locate_checkpoint("ws", str(child), environ=environ) == ("my_runs", run, "last.pt")
+    assert tc.resolve_run(f"ws/my_runs/{run}") == child.parent.parent
+    for name in ("..", ".", "my_runs/..", "MY_RUNS"):
+        assert tc.resolve_run(f"ws/{name}/{run}") is None, name
+        with pytest.raises(sl.ServerListRefused):
+            sl.resolve_checkpoint("ws", name, run, "last.pt", environ=environ)
+
+
+def test_a_file_without_a_model_spec_is_listed_refused_by_every_list_and_never_used(
+        service, monkeypatch):
+    """N2 (C8): files written before the model spec, under the directories an
+    earlier build used (``runs/gat``, ``runs/hgt``), stay listed with their
+    SHA-256, each with the record reader's one phrase, by the server's list,
+    the training service's and the API's; nothing is moved or rewritten. The
+    Models Load refuses one before any read, and the Test page's Start is off
+    for it; no filter or group sets it apart."""
+    from dataclasses import asdict
+
+    from fastapi.testclient import TestClient
+
+    from src.api.main import app
+    from src.api.services import server_lists as sl
+    from src.api.services.training_manager import TrainingManager
+    from src.config import server_settings as ss
+    from src.utils.fingerprint import file_sha256
+    from src.webui.components import model_list as ml
+    from src.webui.components import renderers as r
+    from src.webui.components import test_page as tp
+    from tests.fixtures.operator_access import OPERATOR_BASE_URL, operator_mode
+
+    root = service.data_dir.parent
+    files = {layout: _put(service.data_dir, layout, f"2026100{n}-000000_old_aaaaa{n}",
+                          GNN_PAYLOAD, 100 * n)
+             for n, layout in ((1, "gat"), (2, "hgt"))}
+    before = {layout: (path.read_bytes(), path.stat().st_mtime) for layout, path in files.items()}
+    environ = {ss.ENV_WORKSPACES_ROOT: str(root)}
+    monkeypatch.setenv(ss.ENV_WORKSPACES_ROOT, str(root))
+    operator_mode(monkeypatch)
+
+    listed = {i.architecture: i for i in sl.list_checkpoints("ws", environ=environ).items}
+    managed = {c["architecture"]: c for c in TrainingManager().get_checkpoints(
+        str(service.data_dir))}
+    body = TestClient(app, base_url=OPERATOR_BASE_URL).get(
+        "/api/v1/workspaces/ws/checkpoints").json()
+    by_api = {c["architecture"]: c for c in body["checkpoints"]}
+    assert body["problem"] is None
+    for layout, path in files.items():
+        sha = file_sha256(path)
+        for record, problem, digest in (
+                (listed[layout].record, listed[layout].record_problem, listed[layout].sha256),
+                (managed[layout]["record"], managed[layout]["record_problem"],
+                 managed[layout]["sha256"]),
+                (by_api[layout]["record"], by_api[layout]["record_problem"],
+                 by_api[layout]["sha256"])):
+            assert (record, problem, digest) == ("refused", WRITTEN_BEFORE_SPEC, sha), layout
+        item = asdict(listed[layout])
+        assert ml.load_refusal(item) == f"Record not readable: {WRITTEN_BEFORE_SPEC}."
+        assert not ml.can_load(item)
+        said = tp.measure_refusal(item, None, None)
+        assert said == f"Record not readable ({WRITTEN_BEFORE_SPEC}): {tp.NOT_MEASURED_HERE}"
+        # The file records val_mrr, a figure this build no longer reads: its
+        # validation is "not read", never "not recorded" (the review of C3,
+        # display 1), in Model Facts, the Models detail and the Test page.
+        facts = r.facts_from_checkpoint(item, [])
+        assert facts.validation is None and facts.validation_read is False
+        not_read = "Validation (Trainer): not read (record not readable)"
+        assert not_read in r.model_facts_html(facts)
+        assert r.validation_text(None, read=r.record_read(item)) == not_read
+        page = {"roots": [], "workspaces": [], "access": {}}
+        models = {"workspace": "ws", "items": [item]}
+        assert not_read in tp.model_html(page, models, tp.item_key(item))
+        assert "not recorded in this checkpoint" not in tp.model_html(page, models,
+                                                                     tp.item_key(item))
+    assert sl.FAMILY_GROUPS == ("family", "refused") and "history" not in ml.TASK_FILTERS
+    assert {layout: (path.read_bytes(), path.stat().st_mtime)
+            for layout, path in files.items()} == before, "a listed file was changed"

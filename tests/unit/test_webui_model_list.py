@@ -15,12 +15,12 @@ The shared model list and the one Load (M5-2, UI-A).
 - **the presets and the page's view**: the research preset is a table with
   "In use (Diagnosis)" on its own row, not pinned, and its listing carries the
   family view of the same one listing; a page's view lists one filter of the
-  one vocabulary (all, base, a task, history, task models) or its explicit
+  one vocabulary (all, base, a task, task models) or its explicit
   rows, draws its groups in its order (the rest after them), fills one extra
   column, and puts a note beside Load; the list redraws when the view changes;
   each filter's empty state and count say it in its own words;
-- **the Load**: D8 on the "Load" request; a base, a history file or a refused
-  record refused before anything of the file is read (the research Load off
+- **the Load**: D8 on the "Load" request; a base or a refused record (a file
+  without a model spec among them) refused before anything of the file is read (the research Load off
   with its reason); the item found in the server's list again and its bytes
   hashed again (a list read earlier is caught), one confirmation (from → to:
   the task and scoring mode from the one table, the SP row a state of the
@@ -59,6 +59,7 @@ import pytest
 
 gr = pytest.importorskip("gradio")
 
+from src.config.model_types import WRITTEN_BEFORE_SPEC  # noqa: E402
 from src.utils.fingerprint import file_sha256  # noqa: E402
 from src.webui.components import model_list as ml  # noqa: E402
 from tests.fixtures.operator_access import (  # noqa: E402
@@ -72,8 +73,9 @@ from tests.fixtures.operator_access import (  # noqa: E402
 BASE_RUN = "20261001-000000_base_aaaaaa"
 #: (architecture, run, files, kind) newest run first, as the listing orders
 #: them: model bundles filed under ``gatv2`` (a base and its disease, gene and
-#: patients-like-me children), a file without a model spec (history) under
-#: ``hgt`` and one that cannot be read under ``sage``.
+#: patients-like-me children), a file without a model spec under ``hgt``
+#: (an earlier build's directory, listed like any other) and one that cannot
+#: be read under ``sage``.
 RUNS = [
     ("gatv2", "20261018-091200_disease_8c2e7a", ("model-12.pt", "model-08.pt"), "disease"),
     ("gatv2", "20261017-091500_disease_3fa9c1", ("model-05.pt",), "disease"),
@@ -81,7 +83,7 @@ RUNS = [
     ("gatv2", "20261015-080000_gene_aaaaaa", ("model-03.pt",), "gene"),
     ("gatv2", "20261014-080000_patients_like_me_bbbbbb", ("model-02.pt",), "patients_like_me"),
     ("gatv2", "20261013-080000_disease_cccccc", ("model-01.pt",), "disease"),
-    ("hgt", "20261012-080000_run_dddddd", ("model-07.pt",), "history"),
+    ("hgt", "20261012-080000_run_dddddd", ("model-07.pt",), "specless"),
     ("gatv2", BASE_RUN, ("base.pt",), "base"),
 ]
 
@@ -97,10 +99,10 @@ def _key(name):
 def payload(kind, epoch, fingerprint, parent=None):
     """A checkpoint's payload as the trainer writes it: a model bundle's record
     (a base, or a child of `parent` for a task; `test_task_first_selection`'s
-    writer) or, for ``history``, a ShepherdGNN file without a model spec."""
+    writer) or, for ``specless``, a file written before the model spec."""
     meta = {"checkpoint_kind": "weights", "epoch": epoch,
             "training_input_digests": {"split_manifest": fingerprint}}
-    if kind == "history":
+    if kind == "specless":
         return {**meta, "logs": {"val_mrr": 0.3 + epoch / 100}}
     from tests.unit import test_task_first_selection as bundles
 
@@ -212,7 +214,7 @@ def test_an_operator_lists_the_serving_workspace_with_in_use_pinned(root, servin
     assert html.count('shep-tag-accent">In use<') == 1
     assert "in use, pinned above" in html
     # the clinical preset: models finetuned for a task only (a base offers no
-    # diagnosis; history and unreadable files are never run), the latest four
+    # diagnosis; refused and unreadable files are never run), the latest four
     # runs, then the rest on request
     for other in ("base_aaaaaa", "run_dddddd", "run_e4c2a9", "metadata not readable"):
         assert other not in html, other
@@ -438,13 +440,13 @@ def _refused_record(root):
     return f"gatv2/{run}/model-09.pt"
 
 
-def test_a_base_a_history_file_and_a_refused_record_are_refused_before_any_read(
+def test_a_base_a_file_without_a_model_spec_and_a_refused_record_are_refused_before_any_read(
         root, serving, monkeypatch):
-    """README §5 ("a base offers no diagnosis"), §4 and K6 decision 1 (a file
-    without a model spec is history, never run): such a row is refused from
-    its listed record, before the file is resolved, hashed or the status read
-    (the pipeline would refuse a base only after reading the graph, and would
-    still serve a history file)."""
+    """README §5 ("a base offers no diagnosis"), §4 and K6 decision 1: a base,
+    a file without a model spec (its record refused by the one reader, in its
+    one phrase) and any other refused record are refused from the listed
+    record, before the file is resolved, hashed or the status read (the
+    pipeline would refuse a base only after reading the graph)."""
     from src.api.services import server_lists
     from src.evaluation import sidecar
 
@@ -454,7 +456,8 @@ def test_a_base_a_history_file_and_a_refused_record_are_refused_before_any_read(
     for target, name in ((server_lists, "resolve_checkpoint"), (sidecar, "checkpoint_matches"),
                          (ml, "read_status")):
         monkeypatch.setattr(target, name, lambda *a, **k: pytest.fail("a refused row was read"))
-    for key, why in ((_key("base.pt"), ml.BASE_REFUSAL), (_key("model-07.pt"), ml.HISTORY_REFUSAL),
+    for key, why in ((_key("base.pt"), ml.BASE_REFUSAL),
+                     (_key("model-07.pt"), f"Record not readable: {WRITTEN_BEFORE_SPEC}."),
                      (refused, "Record not readable: ")):
         plan, html = ml.request_load(listing, key, operator_request(monkeypatch))
         assert plan is None and why in html and "Nothing was done." in html, key
@@ -935,7 +938,9 @@ def test_one_filter_vocabulary_and_the_drawer_lists_task_models_only(root, servi
     """The list's filters (`TASK_FILTERS`) by the server's one predicate; the
     clinical preset shows models finetuned for a task whatever the view asks,
     so a direct call with no view (or one asking for bases) lists no base or
-    history file; each filter's empty state is said in its own words."""
+    refused file; each filter's empty state is said in its own words. No
+    filter sets a file without a model spec apart: it is a row of All, as
+    any refused record is."""
     listing = _listing(root, monkeypatch)
     research, clinical = ml.PRESETS["research"], ml.PRESETS["clinical"]
 
@@ -947,12 +952,13 @@ def test_one_filter_vocabulary_and_the_drawer_lists_task_models_only(root, servi
                                           "model-12.pt"]
     assert shown({"task": "gene"}) == ["model-03.pt"]
     assert shown({"task": "patients_like_me"}) == ["model-02.pt"]
-    assert shown({"task": "history"}) == ["model-07.pt"]
+    assert "history" not in ml.TASK_FILTERS
+    assert shown({"task": "history"}) == shown({"task": "all"})
     assert shown({"task": "task_models"}) == shown(None, clinical) == shown({"task": "all"},
                                                                             clinical)
     assert len(shown({"task": "all"})) == len(shown(None)) == len(shown({"task": "x"})) == 9
     assert "base.pt" not in shown(None, clinical) and "model-07.pt" not in shown(None, clinical)
-    assert shown({"task": "base"}, clinical) == shown({"task": "history"}, clinical) == []
+    assert shown({"task": "base"}, clinical) == []
     assert ml.list_html(listing, None, clinical, view={"task": "base"}) == (
         '<div class="shep-reason">No base is listed in this workspace.</div>')
     no_gene = {**listing, "items": [i for i in listing["items"] if i.get("task") != "gene"]}
@@ -966,7 +972,7 @@ def test_one_filter_vocabulary_and_the_drawer_lists_task_models_only(root, servi
     assert ml.count_line(listing, research, False, {"task": "gene"}) == (
         "newest first · 1 checkpoint in 1 run · Gene only, of 9 listed")
     # The drawer's task filter is counted against what the drawer lists (its
-    # six task models), never against the bases and history files it hides;
+    # six task models), never against the bases and refused files it hides;
     # asking for every row it shows names no filter at all.
     assert ml.count_line(listing, clinical, False, {"task": "disease"}) == (
         "newest first · 4 checkpoints in 3 runs · Disease only, of 6 listed")
@@ -999,9 +1005,9 @@ def test_the_list_redraws_when_the_page_changes_its_view(root, serving, monkeypa
                                         handle.listing, handle.selected]
 
 
-def test_the_research_load_is_off_for_a_base_or_history_row_with_its_reason(
+def test_the_research_load_is_off_for_a_base_or_refused_row_with_its_reason(
         root, serving, monkeypatch):
-    """Research › Models lists every row; a base or a history file selected
+    """Research › Models lists every row; a base or a refused record selected
     there turns Load off, its reason beside it (in the selection's, the
     redraw's and the refresh's answers), before anything is asked."""
     from src.webui.shell import standalone_context
@@ -1012,7 +1018,8 @@ def test_the_research_load_is_off_for_a_base_or_history_row_with_its_reason(
     select = next(fn for fn in demo.fns.values() if fn.name == "_select")
     assert select.outputs[-2:] == [handle.load_button, handle.reason]
     listing = _listing(root, monkeypatch)
-    for name, why in (("base.pt", ml.BASE_REFUSAL), ("model-07.pt", ml.HISTORY_REFUSAL)):
+    for name, why in (("base.pt", ml.BASE_REFUSAL),
+                      ("model-07.pt", f"Record not readable: {WRITTEN_BEFORE_SPEC}.")):
         out = select.fn(listing, False, None, gr.EventData(None, {"key": _key(name)}))
         assert out[0] == _key(name) and out[-2]["interactive"] is False
         assert out[-1] == f'<div class="shep-reason shep-reason-grey">{why}</div>'
@@ -1082,7 +1089,7 @@ def test_every_row_says_what_its_file_is_in_both_presets(root, serving, monkeypa
     (`renderers.record_kind_text`), whatever the view or the order: the
     drawer's rows, which list every task's models together, and the research
     table's Model cell under any order (here, a page's group and column), its
-    history and unreadable files included."""
+    refused and unreadable files included."""
     listing = _listing(root, monkeypatch)
     rows = ml.list_html(listing, None, ml.PRESETS["clinical"], show_older=True)
     for name, kind in (("model-12.pt", "Disease"), ("model-05.pt", "Disease"),
@@ -1093,7 +1100,7 @@ def test_every_row_says_what_its_file_is_in_both_presets(root, serving, monkeypa
     view = {"groups": [{"title": "Group A", "keys": [_key("model-07.pt")]}],
             "column": "A page column", "cells": {}}
     table = ml.list_html(listing, None, ml.PRESETS["research"], view=view)
-    for name, kind in (("base.pt", "Base"), ("model-07.pt", "History · never run"),
+    for name, kind in (("base.pt", "Base"), ("model-07.pt", "Record not readable"),
                        ("broken.pt", "Record not read"), ("model-03.pt", "Gene")):
         row = _row_of(table, name)
         assert f'"><td><div class="shep-sub shep-row-kind">{kind}</div>' in row, (name, row)
@@ -1132,7 +1139,8 @@ def test_the_research_listing_carries_the_family_view_from_its_one_listing(
             "model-12.pt", "model-08.pt", "model-05.pt", "model-01.pt")),
         (f"gatv2/{run}/model-04.pt", 0, False)]
     assert all(row["parent"] == _key("base.pt") for row in disease[1:5])
-    assert [row["group"] for row in family["all"]][-2:] == ["history", "refused"]
+    assert [(row["key"], row["group"]) for row in family["all"]][-2:] == [
+        (_key("broken.pt"), "refused"), (_key("model-07.pt"), "refused")]
     assert [row["key"] for row in family["base"]] == [_key("base.pt")]
     assert [row["key"] for row in family["gene"]] == [_key("base.pt"), _key("model-03.pt")]
     lost = disease[-1]

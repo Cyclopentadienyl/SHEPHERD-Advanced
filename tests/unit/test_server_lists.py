@@ -38,6 +38,7 @@ import pytest
 
 from src.api.services import server_lists as sl
 from src.config import server_settings as ss
+from src.config.model_types import WRITTEN_BEFORE_SPEC
 from src.utils.fingerprint import file_sha256
 
 
@@ -377,7 +378,11 @@ class TestCheckpoints:
             ws / "runs/hgt/20261020-120000_new_aaaaaa/checkpoints/best.pt")
         assert (item.workspace, item.architecture, item.run) == (
             "demo", "hgt", "20261020-120000_new_aaaaaa")
-        assert item.validation == {"metric": "val_mrr", "value": 0.0}
+        # Written before the model spec: its record is refused with the one
+        # phrase, its digest and figures still listed; its `val_mrr` is no
+        # figure this build ranks by, so it shows none (Keep: the field stays).
+        assert (item.record, item.record_problem) == ("refused", WRITTEN_BEFORE_SPEC)
+        assert item.validation is None
         assert item.epoch == 1
         assert item.dataset_fingerprint == file_sha256(ws / "split_manifest.json")
         assert item.trained_on_this_dataset is True
@@ -443,14 +448,23 @@ class TestCheckpoints:
         assert sorted(reads) == sorted(
             ["best.pt", "other.pt", "weights.pt", "pickled.pt", "garbage.pt"])
 
-    @pytest.mark.parametrize("workspace, architecture, fragment", [
-        ("missing", None, "is not a workspace the server lists"),
-        ("demo", "gatv9", "Unsupported run layout key"),
-    ])
-    def test_a_name_off_the_list(self, checkpoint_root, workspace, architecture, fragment):
+    def test_a_name_off_the_list(self, checkpoint_root):
         root, _, _ = checkpoint_root
-        listing = sl.list_checkpoints(workspace, architecture, environ=_roots(root))
-        assert listing.items == () and fragment in listing.problem
+        listing = sl.list_checkpoints("missing", None, environ=_roots(root))
+        assert listing.items == () and "is not a workspace the server lists" in listing.problem
+
+    @pytest.mark.parametrize("architecture", ["gatv9", ".", "..", "hgt/..", "../demo/runs/hgt",
+                                              "HGT", "hgt/"])
+    def test_a_directory_name_no_directory_has_lists_nothing(self, checkpoint_root,
+                                                             architecture):
+        """N4 (C1, C7): the filter names a directory under runs/ by equality
+        with the listed names, never joined onto a path, so ``.``, ``..`` or a
+        name with a slash reaches no other directory; a name no directory has
+        lists nothing (the list is available, as for a workspace without that
+        directory), and no file is read."""
+        root, _, _ = checkpoint_root
+        listing = sl.list_checkpoints("demo", architecture, environ=_roots(root))
+        assert listing.available and listing.items == ()
 
     def test_no_item_carries_a_path(self, checkpoint_root):
         root, _, _ = checkpoint_root
@@ -551,7 +565,11 @@ class TestResolveCheckpoint:
         ("hgt", "../sage/20261019-120000_old_bbbbbb", "weights.pt", "is listed"),
         ("", "20261020-120000_new_aaaaaa", "best.pt", "is not an architecture"),
         (None, "20261020-120000_new_aaaaaa", "best.pt", "is not an architecture"),
-        ("gatv9", "20261020-120000_new_aaaaaa", "best.pt", "Unsupported run layout key"),
+        ("gatv9", "20261020-120000_new_aaaaaa", "best.pt", "of 'gatv9' is listed"),
+        ("..", "20261020-120000_new_aaaaaa", "best.pt", "is listed"),
+        (".", "20261020-120000_new_aaaaaa", "best.pt", "is listed"),
+        ("runs/hgt", "20261020-120000_new_aaaaaa", "best.pt", "is listed"),
+        ("hgt/../hgt", "20261020-120000_new_aaaaaa", "best.pt", "is listed"),
     ])
     def test_anything_else_is_refused(self, checkpoint_root, architecture, run, filename,
                                       fragment):
@@ -665,6 +683,128 @@ class TestCheckpointsInAndOut:
                                    "(PermissionError: Permission denied)")
         with pytest.raises(sl.ServerListRefused, match="cannot be listed"):
             sl.resolve_checkpoint("demo", "gatv2", "r", "x.pt", environ=_roots(root))
+
+    def test_a_directory_under_runs_that_cannot_be_listed_hides_nothing_else(
+            self, demo_workspace, tmp_path, monkeypatch):
+        """N6 (C3): every directory under runs/ is listed now, so one this
+        account may not enter (another account's ``mkdir -m 700``; simulated,
+        as root ignores modes) is listed as one item with why, and every other
+        run is still listed, read and selected. Only runs/ itself failing
+        makes the list unavailable."""
+        from src.utils.checkpoint_io import write_checkpoint
+        from src.utils.checkpoint_paths import list_runs, select_auto_run_checkpoint
+        from src.webui.components import training_console as tc
+
+        root = tmp_path / "root"
+        ws = _copy(demo_workspace, root / "demo")
+        run = _run(ws, "gatv2", "20261020-000000_x_aaaaaa")
+        write_checkpoint({"epoch": 1}, run / "last.pt")
+        (ws / "runs" / "someone_elses" / "20261021-000000_y_bbbbbb").mkdir(parents=True)
+        _refuse_iterdir(monkeypatch, "someone_elses")
+
+        listing = sl.list_checkpoints("demo", environ=_roots(root))
+        assert listing.available, listing.problem
+        items = {i.filename: i for i in listing.items}
+        assert items["last.pt"].problem is None and items["last.pt"].sha256
+        unlisted = items["someone_elses"]
+        assert unlisted.problem == ("runs/someone_elses cannot be listed (PermissionError: "
+                                    "Permission denied), so no run in it is read")
+        assert unlisted.sha256 is None and unlisted.record is None
+        assert [r.name for r in list_runs(ws)] == [run.parent.name]
+        # Selection serves the latest run it read and says what it did not
+        # read (the review of C3, listing 1: it named an older run "the latest
+        # run" and said nothing of the directory).
+        not_read = []
+        path, _key, reason = select_auto_run_checkpoint(ws, not_read=not_read)
+        assert path == run / "last.pt"
+        assert reason == (f"auto: latest run 'gatv2/{run.parent.name}'; not read: "
+                          f"{unlisted.problem}")
+        assert not_read == [unlisted.problem]
+        assert select_auto_run_checkpoint(ws, accept=lambda p: False)[2] == (
+            f"no run has a checkpoint; not read: {unlisted.problem}")
+        assert tc._latest_run(ws) == f"gatv2/{run.parent.name}"
+        with pytest.raises(sl.ServerListRefused, match="is listed"):
+            sl.resolve_checkpoint("demo", unlisted.architecture, unlisted.run,
+                                  unlisted.filename, environ=_roots(root))
+
+        _refuse_iterdir(monkeypatch, "runs")
+        refused = sl.list_checkpoints("demo", environ=_roots(root))
+        assert refused.items == () and "the runs of the workspace 'demo' cannot be listed" in (
+            refused.problem)
+
+    def test_directories_that_cannot_be_listed_come_in_name_order(self, tmp_path, monkeypatch):
+        """The review of C3 (listing nit): the entries for directories under
+        runs/ that cannot be listed follow their names, not the filesystem's
+        listing order (here the reverse of it)."""
+        from src.utils.checkpoint_paths import read_run_checkpoints
+
+        for name in ("zz", "aa", "mm"):
+            (tmp_path / "runs" / name / "20261001-000000_r_111111").mkdir(parents=True)
+        original = Path.iterdir
+
+        def reversed_runs(self):
+            if self.name == "runs":
+                return iter(sorted(original(self), reverse=True))
+            return original(self)
+
+        monkeypatch.setattr(Path, "iterdir", reversed_runs)
+        _refuse_iterdir(monkeypatch, "zz")
+        _refuse_iterdir(monkeypatch, "aa")
+        entries = read_run_checkpoints(tmp_path, within=tmp_path)
+        assert [(e.path.name, e.problem is None) for e in entries] == [
+            ("aa", False), ("zz", False)], "mm holds no checkpoint, so it lists none"
+
+    def test_the_latest_run_is_one_inside_the_workspace(self, tmp_path):
+        """The review of C3 (listing nit): the Training page's latest run is
+        the newest run inside the workspace, as `resolve_run` finds one; a
+        newer run behind a link out of it, in any directory under runs/, is
+        not it (it named that run, which `resolve_run` refuses, so the page
+        showed no run)."""
+        import os
+
+        from src.webui.components import training_console as tc
+
+        ws = tmp_path / "ws"
+        inside = _run(ws, "gatv2", "20261020-000000_x_aaaaaa")
+        (inside / "last.pt").write_bytes(b"x")
+        os.utime(inside / "last.pt", (1_700_000_000, 1_700_000_000))
+        far = tmp_path / "outside" / "20261021-000000_y_bbbbbb" / "checkpoints"
+        far.mkdir(parents=True)
+        (far / "last.pt").write_bytes(b"y")
+        os.utime(far / "last.pt", (1_700_000_900, 1_700_000_900))
+        (ws / "runs" / "elsewhere").symlink_to(far.parent.parent, target_is_directory=True)
+
+        assert tc._latest_run(ws) == f"gatv2/{inside.parent.name}"
+
+    def test_the_training_services_list_never_reads_a_run_linked_out(
+            self, demo_workspace, tmp_path, monkeypatch):
+        """N7 (C4): the training service's list (GET /training/checkpoints)
+        is bound to its workspace as the server's list is: a run directory
+        linked out of it is listed with why, its file never opened."""
+        import src.utils.checkpoint_io as checkpoint_io
+        from src.api.services.training_manager import TrainingManager
+        from src.utils.checkpoint_io import write_checkpoint
+
+        root = tmp_path / "root"
+        ws = _copy(demo_workspace, root / "demo")
+        far = tmp_path / "outside" / "20261009-000000_far_ffffff" / "checkpoints"
+        far.mkdir(parents=True)
+        write_checkpoint({"epoch": 9, "logs": {"val_pooled_mrr": 0.9}}, far / "secret.pt")
+        (ws / "runs" / "gatv2").mkdir(parents=True)
+        (ws / "runs" / "gatv2" / far.parent.name).symlink_to(far.parent,
+                                                             target_is_directory=True)
+        original, reads = checkpoint_io.read_checkpoint, []
+
+        def counting(path, **kwargs):
+            reads.append(Path(path).resolve())
+            return original(path, **kwargs)
+
+        monkeypatch.setattr(checkpoint_io, "read_checkpoint", counting)
+        (entry,) = TrainingManager().get_checkpoints(str(ws))
+        assert reads == []
+        assert entry["filename"] == "secret.pt" and entry["sha256"] is None
+        assert "resolves outside the workspace, so it is not read" in entry["metadata_problem"]
+        assert entry.get("metrics") is None and entry.get("record") is None
 
 
 # ---------------------------------------------------------------------------

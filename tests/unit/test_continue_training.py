@@ -290,9 +290,10 @@ def test_an_explicit_learning_setting_that_differs_is_refused_not_ignored(parent
     (lambda r: r["progress"].update(end="stopped_early", stop_reason="early stopping: x"),
      "stopped early"),
     # A record without its version: a bundle run continues record version 2
-    # only, so the bundle's refusal names the model spec it cannot know
-    # (`_check_record_version`), where the ShepherdGNN path named contract M3a.
-    (lambda r: r.pop("record_version"), "written before the model spec"),
+    # only (`_check_record_version`). The record has a model spec, so the
+    # refusal names the version, as the record reader does (the review of C3:
+    # "written before the model spec" is said only of a file without one).
+    (lambda r: r.pop("record_version"), "checkpoint record version None is not 2"),
     (lambda r: r.update(checkpoint_kind="weights", weights_from={"kind": "best", "epoch": 0}),
      "holds weights only"),
     (lambda r: r["config"].update(requested=None), "does not record the settings"),
