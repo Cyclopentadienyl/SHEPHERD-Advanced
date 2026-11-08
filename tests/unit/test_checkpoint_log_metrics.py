@@ -10,61 +10,36 @@ The ranking keys now come from `RANKING_SCORE_KEYS`, the list auto-selection ran
 checkpoints by, so there is one definition of "a checkpoint's ranking metrics".
 
 The keys the trainer writes are taken from the trainer rather than typed here: the
-training keys from the real `Trainer._train_epoch`, the validation keys from the
-real `Trainer._validate` over the real `RankingMetrics`, and, for a model bundle
-run, over the real reports its stage's task validates with (the base's LP
-metrics, a finetune's ranking report). A rename on either side fails this file
-instead of silently emptying the display again. One step is copied rather than
-run: `_run_evaluation_pass` needs a model and data, so its
-`RankingMetrics().compute_all(...)` call, with default k values, is repeated here.
+training keys from the real `Trainer._train_epoch`, and the validation keys from
+the real `Trainer._validate` over the real reports a stage's task validates with
+(the base's LP metrics, a finetune's ranking report). A rename on either side
+fails this file instead of silently emptying the display again. The check runs
+one way: what this trainer writes for the status line must be copied. A key
+the pipeline copies that this trainer does not write (one an existing
+checkpoint's logs may carry) is a reading of what is there, not an error.
 """
 from types import SimpleNamespace
 
 import pytest
 
 
-def _current_trainer_logs():
-    """What `ModelCheckpoint._save_checkpoint` stores as `logs` for one epoch.
-
-    `Trainer.train` passes `{**train_metrics, **val_metrics}` to the callbacks,
-    and the checkpoint callback saves it verbatim. Both halves come from the real
-    methods, run against a stub that supplies only what each reads:
-    `train_metrics` from `Trainer._train_epoch` over an empty training set, and
-    `val_metrics` from `Trainer._validate`.
-    """
+def _training_logs():
+    """What `Trainer._train_epoch` adds to an epoch's logs (`train_loss` and
+    the rest), from the real method over an empty training set, against a stub
+    that supplies only what it reads."""
     pytest.importorskip("torch")
     from src.training.trainer import Trainer
-    from src.utils.metrics import RankingMetrics
-
-    ranking = RankingMetrics().compute_all([["d1", "d2"], ["d3", "d1"]], ["d1", "d1"])
-    stub = SimpleNamespace(
-        model=SimpleNamespace(eval=lambda: None),
-        callbacks=SimpleNamespace(
-            on_validation_begin=lambda trainer: None,
-            on_validation_end=lambda trainer, metrics: None,
-        ),
-        val_dataloader=None,
-        task=None,
-        _run_evaluation_pass=lambda loader: SimpleNamespace(
-            ranking_metrics=ranking, mean_loss=0.25
-        ),
-        config=SimpleNamespace(early_stopping_monitor="val_mrr", early_stopping_mode="max"),
-        state=SimpleNamespace(best_metric=None, best_epoch=None, val_metric_history=[]),
-    )
-    stub._is_best_metric = lambda value: Trainer._is_best_metric(stub, value)
-    val_metrics = Trainer._validate(stub, 0)
 
     train_stub = SimpleNamespace(
         model=SimpleNamespace(train=lambda: None),
         callbacks=SimpleNamespace(on_epoch_begin=lambda trainer, epoch: None),
         train_dataloader=[],
-        task=None,
+        task=SimpleNamespace(),
         state=SimpleNamespace(train_loss_history=[]),
         optimizer=SimpleNamespace(param_groups=[{"lr": 1e-3}]),
         config=SimpleNamespace(gradient_accumulation_steps=1),
     )
-    train_metrics = Trainer._train_epoch(train_stub, 0)
-    return {**train_metrics, **val_metrics}
+    return Trainer._train_epoch(train_stub, 0)
 
 
 def _task_validation_logs():
@@ -94,17 +69,21 @@ def _task_validation_logs():
     return logs
 
 
-def test_every_metric_the_pipeline_copies_is_one_the_trainer_writes():
-    """No guessed names: a key the trainer never writes is a lookup that can only
-    come back empty, which is how the display lost its ranking metrics. Written
-    is what either validation path writes: the ShepherdGNN pass or a model
-    bundle stage's task."""
+def test_the_metrics_the_trainer_writes_for_the_status_line_are_the_ones_copied():
+    """No guessed names: the display lost its ranking metrics when the pipeline
+    asked for names the trainer never wrote. The training loss and each
+    stage's selection metric, under the names the training epoch and a model
+    bundle stage's task write them, are among the keys the pipeline copies."""
     from src.inference.pipeline import CHECKPOINT_LOG_METRICS
+    from src.training.finetune_task import FINETUNE_SELECTION_METRIC
+    from src.training.lp_task import BASE_SELECTION_METRIC
 
-    written = {**_current_trainer_logs(), **_task_validation_logs()}
+    written = {**_training_logs(), **_task_validation_logs()}
+    shown = {"train_loss", BASE_SELECTION_METRIC, FINETUNE_SELECTION_METRIC}
 
-    missing = [key for key in CHECKPOINT_LOG_METRICS if key not in written]
-    assert not missing, f"the pipeline copies keys the trainer does not write: {missing}"
+    assert shown <= set(written), f"the trainer does not write {sorted(shown - set(written))}"
+    assert shown <= set(CHECKPOINT_LOG_METRICS), (
+        f"the pipeline does not copy {sorted(shown - set(CHECKPOINT_LOG_METRICS))}")
 
 
 def test_the_ranking_metrics_shown_are_the_ones_selection_ranks_by():

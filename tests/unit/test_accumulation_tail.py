@@ -9,7 +9,9 @@ updates, which the schedule counts. Optimizer attempts, successful updates and
 scheduler steps are counted apart: they differ when AMP's scaler skips an
 update.
 
-A one-parameter model and plain SGD make every update computable by hand.
+A one-parameter model and plain SGD make every update computable by hand. The
+Trainer is driven through a task module (README §3.1), its one training path:
+the task's step returns the loss `w * v`, so each update's gradient is visible.
 
 Module: tests/unit/test_accumulation_tail.py
 """
@@ -26,21 +28,37 @@ class _Toy(nn.Module):
         super().__init__()
         self.w = nn.Parameter(torch.zeros(1))
 
-    def forward(self, x_dict, edge_index_dict):
-        return {"w": self.w}
+
+class _Task:
+    """The smallest task module the Trainer drives: a step's loss is
+    `loss(w, v)`, by default `w * v`, so d(loss)/dw = v; nothing to validate.
+    Like every task it names its selection metric, which it never reports:
+    these tests select nothing."""
+
+    selection_metric = "val_toy_metric"
+
+    def __init__(self, loss=lambda w, v: w * v):
+        self.loss = loss
+
+    def training_step(self, model, batch, device):
+        from src.training.lp_task import StepResult
+
+        return StepResult(self.loss(model.w.sum(), batch["v"].sum()))
+
+    def validate(self, model, device):
+        return {}
 
 
 def _batches(values):
-    return [{"batch": {"v": torch.tensor([float(v)])}, "subgraph_x_dict": {},
-             "subgraph_edge_index_dict": {}} for v in values]
+    return [{"v": torch.tensor([float(v)])} for v in values]
 
 
 def _trainer(tmp_path, values, *, accumulation, scheduler_type="none", num_epochs=1,
-             max_grad_norm=0.0):
+             max_grad_norm=0.0, task=None):
     from src.training.trainer import Trainer, TrainerConfig
 
     model = _Toy()
-    trainer = Trainer(
+    return Trainer(
         model=model,
         train_dataloader=_batches(values),
         optimizer=torch.optim.SGD(model.parameters(), lr=1.0),
@@ -50,11 +68,8 @@ def _trainer(tmp_path, values, *, accumulation, scheduler_type="none", num_epoch
             num_epochs=num_epochs, checkpoint_dir=str(tmp_path / "ckpt"),
             log_dir=str(tmp_path / "logs"),
         ),
+        task=task or _Task(),
     )
-    # loss = w * v, so d(loss)/dw = v: each update's gradient is visible.
-    trainer._compute_model_outputs = lambda emb, batch, x, e: emb
-    trainer.loss_fn = lambda batch, outputs: (outputs["w"].sum() * batch["v"].sum(), {})
-    return trainer
 
 
 def test_the_tail_is_one_more_update_applying_the_mean_of_its_batches(tmp_path):
@@ -154,10 +169,51 @@ def test_train_loss_is_the_mean_loss_per_batch(tmp_path, accumulation):
     """Batches with losses 1, 2 and 3 report 2.0 whatever the accumulation: one
     unit and one denominator, kept apart from the number of updates. With an
     accumulation of 2 this was 3.0 (a group sum averaged with a tail mean)."""
-    trainer = _trainer(tmp_path, [1, 2, 3], accumulation=accumulation)
-    trainer.loss_fn = lambda batch, outputs: (
-        outputs["w"].sum() * 0 + batch["v"].sum(), {})
+    trainer = _trainer(tmp_path, [1, 2, 3], accumulation=accumulation,
+                       task=_Task(lambda w, v: w * 0 + v))
 
     metrics = trainer._train_epoch(0)
 
     assert metrics["train_loss"] == pytest.approx(2.0)
+
+
+def test_the_task_step_runs_inside_autocast_and_validation_outside(tmp_path, monkeypatch):
+    """AMP's placement on the task path: each step runs under autocast with
+    the trainer's own setting and dtype; validation runs outside it. On CPU
+    `_setup_amp` turns AMP off, so the setting is put on the built trainer
+    (CPU autocast takes bfloat16) and autocast is traced."""
+    import src.training.trainer as trainer_module
+
+    events = []
+    real = trainer_module.autocast
+
+    class _Traced:
+        def __init__(self, *args, **kwargs):
+            self._inner = real(*args, **kwargs)
+            events.append(("autocast", kwargs.get("enabled"), kwargs.get("dtype")))
+
+        def __enter__(self):
+            events.append("enter")
+            return self._inner.__enter__()
+
+        def __exit__(self, *exc):
+            events.append("exit")
+            return self._inner.__exit__(*exc)
+
+    class _Recording(_Task):
+        def training_step(self, model, batch, device):
+            events.append("step")
+            return super().training_step(model, batch, device)
+
+        def validate(self, model, device):
+            events.append("validate")
+            return {}
+
+    monkeypatch.setattr(trainer_module, "autocast", _Traced)
+    trainer = _trainer(tmp_path, [1], accumulation=1, task=_Recording())
+    trainer.use_amp, trainer.amp_dtype = True, torch.bfloat16
+
+    trainer._train_epoch(0)
+    trainer._validate(0)
+
+    assert events == [("autocast", True, torch.bfloat16), "enter", "step", "exit", "validate"]

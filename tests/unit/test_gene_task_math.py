@@ -14,7 +14,13 @@ import pytest
 torch = pytest.importorskip("torch")
 
 from src.kg.graph_view import exact_distances  # noqa: E402
-from src.models.tasks.gene import augment, mean_distances, neighbour_table, splsim  # noqa: E402
+from src.models.tasks.gene import (  # noqa: E402
+    augment,
+    gene_score,
+    mean_distances,
+    neighbour_table,
+    splsim,
+)
 
 
 def test_the_worked_example_of_section_6():
@@ -129,3 +135,9 @@ def test_a_gene_without_a_neighbour_keeps_its_own_vector():
     out, has = augment(own, torch.zeros(1, 2, 2), torch.zeros(1, 2), torch.tensor([0.0]), 0.7)
     assert has.tolist() == [False]
     assert torch.equal(out, own)
+
+
+def test_the_gene_score_mixes_eta_embsim_with_one_minus_eta_splsim():
+    """The one mix (A8, U12): η·EMBSIM + (1 − η)·SPLSIM, by hand."""
+    got = gene_score(0.3, torch.tensor([1.0, -0.5]), torch.tensor([0.5, 0.25]))
+    assert got.tolist() == pytest.approx([0.3 + 0.7 * 0.5, -0.15 + 0.7 * 0.25])

@@ -19,15 +19,14 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
+from src.config.model_types import MODEL_RECORD_KEYS  # noqa: E402
+from src.models.bundle.record import MODEL_RECORD_VERSION  # noqa: E402
 from src.training.callbacks import ModelCheckpoint, ModelCheckpointConfig  # noqa: E402
-from src.training.checkpoint_payload import (  # noqa: E402
-    CHECKPOINT_RECORD_VERSION,
-    TENSOR_KEYS,
-    build_checkpoint_payload,
-)
+from src.training.checkpoint_payload import TENSOR_KEYS, build_checkpoint_payload  # noqa: E402
 from src.utils.checkpoint_io import write_checkpoint  # noqa: E402
 from src.utils.run_environment import assert_primitive  # noqa: E402
 from tests.fixtures.base_workspace import write_base_workspace  # noqa: E402
+from tests.unit.test_model_record import _record, _stored_task  # noqa: E402
 
 
 def _tiny_trainer(tmp_path, **config):
@@ -37,8 +36,10 @@ def _tiny_trainer(tmp_path, **config):
                     num_epochs=3, checkpoint_dir=str(tmp_path / "ckpt"),
                     log_dir=str(tmp_path / "logs"))
     defaults.update(config)
-    return Trainer(model=torch.nn.Linear(2, 1), train_dataloader=[{}] * 4,
-                   config=TrainerConfig(**defaults))
+    trainer = Trainer(model=torch.nn.Linear(2, 1), train_dataloader=[{}] * 4,
+                      config=TrainerConfig(**defaults), task=_stored_task())
+    trainer.model_record = _record()[1]
+    return trainer
 
 
 def _sha(path):
@@ -61,7 +62,7 @@ def test_both_writers_write_the_same_keys_and_load_safely(tmp_path):
     a = torch.load(by_trainer, map_location="cpu", weights_only=True)
     b = torch.load(by_callback, map_location="cpu", weights_only=True)
     assert set(a) == set(b)
-    assert a["record_version"] == b["record_version"] == CHECKPOINT_RECORD_VERSION
+    assert a["record_version"] == b["record_version"] == MODEL_RECORD_VERSION
     for key in ("state_dict", "optimizer_state_dict", "scheduler_state_dict"):
         assert key in a
     assert isinstance(a["state_dict"]["weight"], torch.Tensor)
@@ -194,8 +195,9 @@ def test_a_weights_only_checkpoint_keeps_the_provenance_and_nothing_to_resume(tm
 
     payload = build_checkpoint_payload(trainer, epoch=0, logs={}, weights_only=True)
 
-    assert set(payload) == {"record_version", "checkpoint_kind", "weights_from", "state_dict",
-                            "training_input_digests", "producer", "environment"}
+    assert set(payload) - set(MODEL_RECORD_KEYS) - {"training_rules"} == {
+        "record_version", "checkpoint_kind", "weights_from", "state_dict",
+        "training_input_digests", "producer", "environment"}
     assert payload["checkpoint_kind"] == "weights"
     assert payload["weights_from"] == {"kind": "latest", "epoch": 0}
 
@@ -330,7 +332,9 @@ def test_a_model_holding_restored_best_weights_is_written_as_weights_only(tmp_pa
         config=TrainerConfig(device="cpu", scheduler_type="none", use_amp=False,
                              num_epochs=2, checkpoint_dir=str(tmp_path / "ckpt"),
                              log_dir=str(tmp_path / "logs")),
+        task=_stored_task(),
     )
+    trainer.model_record = _record()[1]
     trainer.callbacks.on_train_begin(trainer)
     for epoch, value in enumerate([0.9, 0.1]):
         # One SGD step per epoch, so the momentum buffer moves with the weights.

@@ -169,11 +169,10 @@ def test_a_versions_samples_edited_to_a_non_integer_id_are_refused_by_digest(
 
 
 @pytest.mark.parametrize("field, value", [
-    ("candidate_disease_ids", [0, 2.0]),
     ("gene_ids", [True]),
     ("gene_ids", "0"),
 ])
-def test_the_training_fields_are_refused_by_the_same_reader(tmp_path, field, value):
+def test_the_gene_fields_are_refused_by_the_same_reader(tmp_path, field, value):
     from src.kg.storage.file_storage import read_samples
 
     data_dir, _ = build_workspace(tmp_path / "ws")
@@ -181,6 +180,6 @@ def test_the_training_fields_are_refused_by_the_same_reader(tmp_path, field, val
     _rewrite_first_sample(path, field, value)
 
     with pytest.raises(ValueError, match=f"{field}.*refused rather than converted"):
-        read_samples(data_dir, "test", training_fields=True)
-    # Without the training fields they are not read, so not refused.
+        read_samples(data_dir, "test", gene_fields=True)
+    # Without the gene fields they are not read, so not refused.
     read_samples(data_dir, "test")

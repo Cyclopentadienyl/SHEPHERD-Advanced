@@ -18,6 +18,7 @@ from __future__ import annotations
 import copy
 import dataclasses
 import re
+from types import SimpleNamespace
 
 import pytest
 
@@ -468,13 +469,23 @@ def test_a_spec_value_the_reader_cannot_ask_or_show_is_refused_naming_its_field(
         read_model_record(payload)
 
 
+def _stored_task():
+    """The task of a Trainer that only writes checkpoints: the Trainer stores
+    it and neither writer reads it, so it has no step and no validation to
+    run. It names its selection metric, as every task does."""
+    from src.training.lp_task import BASE_SELECTION_METRIC
+
+    return SimpleNamespace(training_step=None, validate=None,
+                           selection_metric=BASE_SELECTION_METRIC)
+
+
 def _trainer(tmp_path, model):
     from src.training.trainer import Trainer, TrainerConfig
 
     config = TrainerConfig(device="cpu", scheduler_type="cosine", warmup_steps=0, use_amp=False,
                            num_epochs=2, checkpoint_dir=str(tmp_path / "ckpt"),
                            log_dir=str(tmp_path / "logs"))
-    return Trainer(model=model, train_dataloader=[{}] * 2, config=config)
+    return Trainer(model=model, train_dataloader=[{}] * 2, config=config, task=_stored_task())
 
 
 def test_both_writers_carry_the_record(tmp_path):

@@ -87,6 +87,17 @@ def test_an_epoch_draws_the_same_stream_after_a_restart():
         assert torch.equal(x.edge_index, y.edge_index)
 
 
+def test_another_seed_draws_another_stream():
+    """The half the restart test cannot show: a constant stream reproduces too.
+    The run's seed is what the sampler's own generator starts from; no worker
+    process draws anything."""
+    edges = _ei([(i, (i + 1) % 10) for i in range(10)] + [((i + 1) % 10, i) for i in range(10)])
+    rels = torch.tensor([0] * 10 + [1] * 10)
+    a = _sampler(10, edges, rels, batch_size=4, seed=5)
+    b = _sampler(10, edges, rels, batch_size=4, seed=6)
+    assert [x.node_ids.tolist() for x in a] != [y.node_ids.tolist() for y in b]
+
+
 def test_each_epoch_visits_every_node_once():
     edges = _ei([(i, (i + 1) % 10) for i in range(10)] + [((i + 1) % 10, i) for i in range(10)])
     sampler = _sampler(10, edges, torch.zeros(20, dtype=torch.long), batch_size=3)
@@ -286,3 +297,57 @@ def test_an_undefined_validation_metric_is_logged_as_none(tmp_path):
     task.validate = lambda model, device: {"lp_accuracy": 0.5, "lp_roc_auc": None, "note": "x"}
     logs = trainer._validate(0)
     assert logs == {"val_lp_accuracy": 0.5, "val_lp_roc_auc": None}
+
+
+def test_validation_calls_each_hook_once_and_tracks_the_monitored_metric():
+    """The Trainer's validation lifecycle around a task's report, which stays when
+    the ShepherdGNN pass retires (moved in K8-7 from
+    test_trainer_validation_characterization.py §3-4): one begin and one end
+    hook per call, the end hook handed exactly the metrics returned; the
+    monitored metric's best value and the epoch it came from; an equal value is
+    not an improvement in mode "max"; every call is kept in the history the
+    checkpoint's `state` records; a monitored name the task does not report
+    leaves the best unset and is still kept in the history."""
+    from src.training.callbacks import Callback
+    from src.training.trainer import Trainer, TrainerConfig
+
+    class Recorder(Callback):
+        def __init__(self):
+            self.events = []
+
+        def on_validation_begin(self, trainer, **kwargs):
+            self.events.append("begin")
+
+        def on_validation_end(self, trainer, logs, **kwargs):
+            self.events.append(("end", dict(logs)))
+
+    view, split = _toy_view()
+    task, sampler = _task_and_sampler(view, split)
+    reports = iter([0.5, 0.5, 0.75, 0.25])
+    task.validate = lambda model, device: {"lp_accuracy": next(reports)}
+    recorder = Recorder()
+    config = TrainerConfig(device="cpu", num_epochs=1, scheduler_type="none", use_amp=False,
+                           early_stopping=False, early_stopping_monitor=task.selection_metric,
+                           early_stopping_mode="max", seed=0)
+    trainer = Trainer(model=build_bundle(_spec(), view), train_dataloader=sampler,
+                      config=config, callbacks=[recorder], task=task)
+
+    first = trainer._validate(3)
+    assert recorder.events == ["begin", ("end", first)]
+    assert (trainer.state.best_metric, trainer.state.best_epoch) == (0.5, 3)
+    trainer._validate(4)
+    assert trainer.state.best_epoch == 3, "an equal value is not an improvement"
+    trainer._validate(5)
+    trainer._validate(6)
+    assert (trainer.state.best_metric, trainer.state.best_epoch) == (0.75, 5)
+    assert [h["val_lp_accuracy"] for h in trainer.state.val_metric_history] == [
+        0.5, 0.5, 0.75, 0.25]
+    assert recorder.events[::2] == ["begin"] * 4
+    assert [logs for _, logs in recorder.events[1::2]] == trainer.state.val_metric_history
+
+    trainer.config.early_stopping_monitor = "val_not_reported"
+    trainer.state.best_metric = None
+    task.validate = lambda model, device: {"lp_accuracy": 0.9}
+    trainer._validate(7)
+    assert trainer.state.best_metric is None
+    assert len(trainer.state.val_metric_history) == 5

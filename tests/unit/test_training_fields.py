@@ -475,6 +475,62 @@ def test_trainconfig_defaults_match_spec():
         assert n in fields, f"{n} missing from TrainConfig — PR-4b wiring regressed"
 
 
+# --------------------------------------------------------- the released rules (pin per version)
+#: Released `TRAINING_RULES_VERSION` -> the sorted names of the learning settings a
+#: model bundle run of those rules reads, as a literal table. A released entry is
+#: never edited: a change of what a setting means or which settings a run reads
+#: raises the version and brings its own entry (src/utils/checkpoint_io.py).
+RULES_LEARNING_SETTINGS = {
+    1: ("amp_dtype", "batch_size", "candidate_sample_size", "candidate_upsample_size",
+        "early_stopping_patience", "eval_every_n_epochs", "gradient_accumulation_steps",
+        "learning_rate", "learning_stage", "lp_loss_weight", "max_grad_norm", "min_lr_ratio",
+        "model_spec", "num_epochs", "num_neighbors", "save_top_k", "scheduler_type", "seed",
+        "sparse_sample_size", "split_seed", "task", "task_loss_weight", "use_amp",
+        "warmup_steps", "weight_decay"),
+}
+
+
+def _released_entry():
+    from src.utils.checkpoint_io import TRAINING_RULES_VERSION
+
+    assert TRAINING_RULES_VERSION in RULES_LEARNING_SETTINGS, (
+        f"rules {TRAINING_RULES_VERSION} has no entry: a new rules version brings its own")
+    entry = RULES_LEARNING_SETTINGS[TRAINING_RULES_VERSION]
+    assert list(entry) == sorted(set(entry))
+    return set(entry)
+
+
+def test_the_learning_settings_are_the_released_rules_entry():
+    """TrainConfig's fields, less the operational and location ones (and,
+    while the ShepherdGNN path stands, the fields only it reads), are exactly
+    the current rules' entry: a learning setting added, removed or renamed
+    without a new rules version fails here."""
+    from src.utils.run_plan import OPERATIONAL_FIELDS
+
+    train_model = _load_train_model()
+    fields = {f.name for f in dataclasses.fields(train_model.TrainConfig)}
+    assert (fields - OPERATIONAL_FIELDS - train_model.LOCATION_FIELDS
+            - train_model.SHEPHERD_ONLY_FIELDS) == _released_entry()
+
+
+def test_the_recipe_and_the_run_definition_provide_the_released_rules_entry():
+    """Every setting of the entry has a source a new run takes it from: the
+    stage recipes, the branch companions, or the run's own definition (its
+    stage, task, model spec, split seed, evaluation cadence and kept files)."""
+    from src.config import recipe
+
+    provided = set(recipe.BASE) | set(recipe.FINETUNE) | set(recipe.BRANCH_COMPANIONS)
+    for task in recipe.FINETUNE_TASKS.values():
+        provided |= set(task)
+    provided |= {"eval_every_n_epochs", "save_top_k", "split_seed", "model_spec",
+                 "learning_stage", "task"}
+    assert provided == _released_entry()
+
+
+def test_every_released_learning_setting_has_a_field_spec():
+    assert _released_entry() <= set(tf.names())
+
+
 def test_a_value_is_checked_by_its_field_spec_without_coercion():
     """`value_problem` (the Fine-tune start's value check): kinds strictly (a
     bool is not a number, a string never coerced), bounds, choices and list
@@ -506,15 +562,17 @@ def test_a_value_outside_its_bounds_is_refused_with_the_bounds_in_words():
 
     assert value_problem("early_stopping_patience", 0) == (
         "early_stopping_patience must be 1 or more, not 0.")
-    assert value_problem("dropout", 1.5) == "dropout must be between 0 and 0.9, not 1.5."
+    assert value_problem("min_lr_ratio", 1.5) == "min_lr_ratio must be between 0 and 1, not 1.5."
     assert value_problem("learning_rate", 0.0) == (
         "learning_rate must be more than 0 and at most 1, not 0.0.")
     assert value_problem("seed", -1) == "seed must be between 0 and 4294967295, not -1."
     assert [bound_words(c) for c in ({"ge": 1}, {"gt": 0}, {"le": 5}, {"lt": 5},
                                      {"ge": 0.0, "le": 1.0}, {"gt": 0, "le": 1.0},
-                                     {"ge": 1, "lt": 5}, {"gt": 0, "lt": 1})] == [
+                                     {"ge": 1, "lt": 5}, {"gt": 0, "lt": 1},
+                                     {"ge": 0.0, "le": 0.9})] == [
         "1 or more", "more than 0", "5 or less", "less than 5", "between 0 and 1",
-        "more than 0 and at most 1", "at least 1 and less than 5", "more than 0 and less than 1"]
+        "more than 0 and at most 1", "at least 1 and less than 5", "more than 0 and less than 1",
+        "between 0 and 0.9"]
     for spec in FIELDS:
         for constraint in (spec.valid, spec.item_valid):
             if constraint:

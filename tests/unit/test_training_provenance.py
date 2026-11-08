@@ -32,6 +32,7 @@ torch = pytest.importorskip("torch")
 
 from src.training.callbacks import ModelCheckpoint, ModelCheckpointConfig  # noqa: E402
 from src.utils.fingerprint import compute_fingerprint, file_sha256  # noqa: E402
+from tests.unit.test_model_record import _record, _stored_task  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -381,9 +382,10 @@ def test_two_runs_over_different_samples_are_distinguishable_from_provenance(tmp
 # The checkpoint writer
 # ---------------------------------------------------------------------------
 def _tiny_trainer(tmp_path, **attrs):
-    """A real `Trainer` over a one-parameter model and no batches. Since M3a-1
-    both writers build their payload from the trainer's own state
-    (`build_checkpoint_payload`), so a stub would have to imitate all of it."""
+    """A real `Trainer` over a one-parameter model and no batches, carrying a
+    model record as every training run's does. Since M3a-1 both writers build
+    their payload from the trainer's own state (`build_checkpoint_payload`), so
+    a stub would have to imitate all of it."""
     from src.training.trainer import Trainer, TrainerConfig
 
     trainer = Trainer(
@@ -393,7 +395,9 @@ def _tiny_trainer(tmp_path, **attrs):
             device="cpu", scheduler_type="none", use_amp=False, num_epochs=2,
             checkpoint_dir=str(tmp_path / "ckpt"), log_dir=str(tmp_path / "logs"),
         ),
+        task=_stored_task(),
     )
+    trainer.model_record = _record()[1]
     for name, value in attrs.items():
         setattr(trainer, name, value)
     return trainer

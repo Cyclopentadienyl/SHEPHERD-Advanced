@@ -317,12 +317,12 @@ def test_the_check_is_the_shared_rule_on_phenotype_ids_only(monkeypatch, tmp_pat
     path = tmp_path / "train_samples.json"
     path.write_text(json.dumps([
         {"patient_id": "p", "phenotype_ids": [3, 4], "disease_id": 1,
-         "candidate_disease_ids": [1, 1], "gene_ids": [9, 9]},
+         "gene_ids": [9, 9], "causal_gene_ids": [9, 9]},
         {"patient_id": "q", "phenotype_ids": [4, 4], "disease_id": 1},
     ]))
 
     with pytest.raises(UnparseableFile, match="rule version 7"):
-        read_samples_file(path, training_fields=True)
+        read_samples_file(path, gene_fields=True)
 
     assert given == [[3, 4], [4, 4]]
 

@@ -465,14 +465,25 @@ def test_a_finetune_waits_for_no_one_while_the_slot_is_busy(base, popen, tmp_pat
 
 def test_a_bundle_parent_is_previewed_by_its_own_record(base, tmp_path):
     """A paused bundle run resumes through the runner's preview, filed under
-    its encoder kind, never under the ShepherdGNN default."""
+    its encoder kind, never under the ShepherdGNN default. The paused file
+    records every setting it was requested with, as a base run of this build
+    does (`config.requested`: the run's TrainConfig less its locations)."""
+    import dataclasses
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+    import train_model
+
     workspace, path, _ = base
+    requested = {name: value for name, value in dataclasses.asdict(
+        train_model.TrainConfig(learning_stage="base", learning_rate=1e-4)).items()
+        if name not in train_model.LOCATION_FIELDS}
     paused = {**torch.load(path, map_location="cpu", weights_only=True),
               "checkpoint_kind": "training_state",
               "progress": {"end": "paused", "completed_epochs": 1,
                            "stage": {"kind": "original", "start_epoch": 0, "target_epochs": 2,
                                      "schedule": {"type": "constant"}}},
-              "config": {"requested": {"learning_rate": 1e-4}}, "training_rules": 1}
+              "config": {"requested": requested}, "training_rules": 1}
     target = tmp_path / "paused.pt"
     torch.save(paused, target)
     preview = TrainingManager().preview_continuation(str(target), device="cpu",

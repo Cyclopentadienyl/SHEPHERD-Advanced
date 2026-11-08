@@ -98,6 +98,41 @@ def test_batch_carries_truths_among_candidates(workspace):
     assert batch.phenotype_mask.sum() == sum(int(m.sum()) for m in batch.phenotype_mask)
 
 
+def test_the_patient_batches_follow_the_run_seed(workspace):
+    """The same seed draws the same patient batches, another seed others: each
+    batch's seeds (its patients' nodes, candidates and sparse sample) are the
+    sampler's own draws. The neighbours PyG's sampler adds follow the process's
+    generator, which training seeds (test_training_seed.py), so they are left out."""
+    view, split = _view(workspace)
+    train = split.mask("train")
+    cases = bind_disease_cases(view, _samples(*[(f"p{i}", [i, i + 1], i % 8)
+                                                for i in range(10)])).cases
+
+    def batches(seed):
+        lp = BaseLPSampler(view.num_nodes, view.edge_index(train), view.rel[train],
+                           view.edge_index(train), view.rel[train], sizes=[3, 3],
+                           batch_size=8, seed=seed)
+        sampler = FinetuneSampler(view, cases, lp, batch_size=4, candidate_sample_size=3,
+                                  sparse_sample_size=5, seed=seed)
+        return [b.lp.node_ids[:b.lp.num_seeds].tolist() for b in sampler]
+
+    assert batches(0) == batches(0)
+    assert batches(0) != batches(1)
+
+
+def test_a_node_that_is_not_a_seed_of_the_batch_is_refused_never_indexed(workspace):
+    """A truth or candidate the batch did not seed has no row of its own; asked
+    for, it is refused, never given another seed's index (or one past the last)."""
+    _, sampler, _ = _task_setup(workspace)
+    lp = next(iter(sampler)).lp
+    seeds = lp.node_ids[:lp.num_seeds]
+    assert lp.node_ids.numel() > lp.num_seeds, "every node is a seed, so this proves nothing"
+    for not_a_seed in (lp.node_ids[lp.num_seeds:lp.num_seeds + 1], seeds[-1:] + 1):
+        assert not bool(torch.isin(not_a_seed, seeds).any())
+        with pytest.raises(ValueError, match="not a seed of this batch"):
+            lp.seed_index(not_a_seed)
+
+
 def test_joint_step_weights_task_and_lp_and_reaches_every_part(workspace):
     view, sampler, task = _task_setup(workspace)
     torch.manual_seed(0)
@@ -155,6 +190,42 @@ def test_validation_ranks_every_disease_with_average_ranks(workspace, monkeypatc
     assert [o.ranks for o in top] == [[1.0]] * len(task.val_cases)
 
 
+def test_validation_reports_the_pooled_mrr_an_independent_computation_gives(workspace):
+    """The value the Trainer logs and selects by (`val_pooled_mrr`) against a
+    computation written here, not taken from the task scorer: node vectors by
+    the bundle's own full-view pass over every edge of the view (G4), each
+    case's patient vector by its patient encoder and patient tower, every
+    disease through the disease tower, the score the negative squared distance
+    of the L2-normalised pair, and each truth's rank counted (blueprint §3.2's
+    oracle rule; the role `test_trainer_validation_values.py` held for the
+    ShepherdGNN pass until K8-7)."""
+    view, _, task = _task_setup(workspace)
+    torch.manual_seed(0)
+    bundle = build_bundle(_finetune_spec(), view)
+    report = task.validate(bundle, torch.device("cpu"))
+
+    bundle.eval()
+    with torch.no_grad():
+        z = bundle.node_vectors_full(view.edge_index(), edge_type=view.rel)
+        diseases = view.type_nodes("disease")
+        candidates = bundle.task_head.disease_tower(z[diseases]).double()
+        candidates = candidates / candidates.norm(dim=1, keepdim=True)
+        reciprocal = []
+        for case in task.val_cases:
+            mask = torch.ones(1, case.phenotypes.numel(), dtype=torch.bool)
+            pooled, _ = bundle.patient_encoder(z[case.phenotypes].unsqueeze(0), mask)
+            patient = bundle.task_head.patient_tower(pooled)[0].double()
+            patient = patient / patient.norm()
+            scores = [-float(((patient - c) ** 2).sum()) for c in candidates]
+            at = int((diseases == case.truths[0]).nonzero())
+            others = scores[:at] + scores[at + 1:]
+            assert all(abs(s - scores[at]) > 1e-4 for s in others), "no near tie at the truth"
+            reciprocal.append(1.0 / (1 + sum(s > scores[at] for s in others)))
+    assert report["pooled_mrr"] == pytest.approx(sum(reciprocal) / len(reciprocal))
+    assert report["conservative_pooled_mrr"] == pytest.approx(
+        sum(reciprocal) / (len(reciprocal) + 1))
+
+
 # --------------------------------------------------------------------------- the CLI
 
 
@@ -205,6 +276,28 @@ def test_finetune_from_a_base(workspace, tmp_path):
     assert "train_samples" in last["training_input_digests"]
     with pytest.raises(Exception, match="not a base"):
         load_bundle(last, learning_stage="base")
+
+
+def test_a_setting_stated_at_its_default_is_recorded_as_the_operator_s(workspace, tmp_path):
+    """A finetune that states `use_amp=True`, TrainConfig's own default and not
+    the disease recipe's value (False), records it as the operator set it:
+    requested True, in the recipe record's `operator_set`, not filled from the
+    recipe. What the operator stated is the set the caller passes, never
+    inferred from which values differ from a default."""
+    import train_model
+
+    parent = _base_run(workspace, tmp_path / "base")
+    config, explicit = _finetune_config(workspace, tmp_path / "child", parent, num_epochs=1,
+                                        use_amp=True)
+    assert config.use_amp == train_model.TrainConfig().use_amp, "stated at its default"
+    train_model.train(config, explicit)
+
+    last = torch.load(tmp_path / "child" / "checkpoints" / "last.pt", map_location="cpu",
+                      weights_only=True)
+    recipe = last["config"]["effective"]["loaders"]["train"]["recipe"]
+    assert last["config"]["requested"]["use_amp"] is True
+    assert "use_amp" in recipe["operator_set"]
+    assert "use_amp" not in recipe["reference_filled"]
 
 
 def test_finetune_refusals(workspace, tmp_path):

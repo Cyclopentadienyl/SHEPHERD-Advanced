@@ -271,3 +271,18 @@ def test_e7_states_kept_apart_and_conservative_reading():
     assert r["conservative_denominator_pairs"] == 2
     with pytest.raises(ValueError):
         QueryOutcome("x", NO_OTHER_POSITIVE, [1.0])
+
+
+def test_e4_no_ranked_unit_gives_no_figure_never_a_zero():
+    """With no ranked unit there is nothing to average: every pooled and macro
+    figure is None, never 0 (E4), and the units are still counted; an
+    assessable unit still adds its positive to the conservative reading as 0
+    (E5). No unit at all gives no coverage either."""
+    r = ranking_report([QueryOutcome("a", MODEL_FAILED, n_positives=1),
+                        QueryOutcome("b", NO_OTHER_POSITIVE)], ks=(1, 10))
+    assert (r["units"], r["ranked_units"], r["positive_pairs"]) == (2, 0, 0)
+    for key in ("pooled_mrr", "pooled_top1", "pooled_top10", "macro_recall@1",
+                "macro_precision@10", "macro_mrr", "best_positive_mrr"):
+        assert r[key] is None, key
+    assert r["conservative_pooled_mrr"] == 0.0 and r["conservative_denominator_pairs"] == 1
+    assert ranking_report([])["coverage"] is None
