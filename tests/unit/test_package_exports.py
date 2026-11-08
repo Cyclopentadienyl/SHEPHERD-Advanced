@@ -23,7 +23,6 @@ Module: tests/unit/test_package_exports.py
 import ast
 import importlib
 import importlib.util
-import inspect
 from pathlib import Path
 
 import pytest
@@ -36,7 +35,6 @@ TOUCHED = (
     "src.kg",
     "src.inference",
     "src.models",
-    "src.models.encoders",
     "src.models.attention",
     "src.models.gnn",
     "src.training",
@@ -54,9 +52,6 @@ RETIRED = {
         "LinkPredictionHead", "NodeClassificationHead", "ExplanationHead",
     ),
     "src.models.gnn": ("PhenotypeDiseaseMatcher", "create_model"),
-    "src.models.gnn.shepherd_gnn": ("PhenotypeDiseaseMatcher", "create_model"),
-    "src.models.encoders": ("EdgeTypeEncoder",),
-    "src.models.encoders.type_encoder": ("EdgeTypeEncoder",),
     "src.models.attention": (
         "FlexHeteroAttention", "create_ontology_score_mod", "create_species_score_mod",
     ),
@@ -87,7 +82,6 @@ GONE_MODULES = (
 GONE_MEMBERS = (
     ("src.kg.graph", "KnowledgeGraph", "metadata"),
     ("src.kg.graph", "KnowledgeGraph", "to_pyg_hetero_data"),
-    ("src.models.gnn.shepherd_gnn", "ShepherdGNN", "get_layer_outputs"),
     ("src.training.trainer", "Trainer", "get_model_info"),
     ("src.core.protocols", "KnowledgeGraphProtocol", "to_pyg_hetero_data"),
     ("src.core.protocols", "ConfigLoaderProtocol", "get_model_config"),
@@ -166,12 +160,6 @@ def test_the_deleted_modules_cannot_be_imported(name):
 @pytest.mark.parametrize("name,cls,member", GONE_MEMBERS)
 def test_the_retired_members_are_gone(name, cls, member):
     assert not hasattr(getattr(_import(name), cls), member), f"{cls}.{member} is still there"
-
-
-def test_shepherd_gnn_forward_no_longer_captures_layer_outputs():
-    shepherd_gnn = _import("src.models.gnn.shepherd_gnn")
-    parameters = inspect.signature(shepherd_gnn.ShepherdGNN.forward).parameters
-    assert "return_all_layers" not in parameters
 
 
 @pytest.mark.parametrize("name,kept", sorted(KEPT.items()))

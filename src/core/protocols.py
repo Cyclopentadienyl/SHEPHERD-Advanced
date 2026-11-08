@@ -521,7 +521,9 @@ class NodeEncoderProtocol(Protocol):
     """
     節點編碼器協議
 
-    實現模組: src/models/encoders/ (IMPLEMENTED)
+    實現模組: src/models/bundle/encoders.py (IMPLEMENTED)
+      ↳ The model bundle's InputModule: a learned input vector per view node,
+        optionally plus a node-type embedding.
     """
 
     def encode(
@@ -550,7 +552,10 @@ class GNNProtocol(Protocol):
     """
     圖神經網路協議
 
-    實現模組: src/models/gnn/ (IMPLEMENTED)
+    實現模組: src/models/bundle/encoders.py (IMPLEMENTED)
+      ↳ The GraphEncoder contract, with GATv2Encoder as its reference encoder.
+        HeteroGNNLayer (src/models/gnn/layers.py) is kept for the
+        multi-architecture port and is not yet behind the contract.
     """
 
     def forward(

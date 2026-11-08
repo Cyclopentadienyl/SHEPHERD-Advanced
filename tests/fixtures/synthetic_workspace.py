@@ -14,10 +14,12 @@ this workspace samples now. A task measurement scores every disease, so the
 shape matters to it only in that it is degenerate: no rank from this workspace
 is evidence about the scorer.
 
-The checkpoint is written in the shape the training writer produces (weights,
-config, epoch, logs, and the graph roles of `training_input_digests`): there is
-no `metadata` or `in_channels_dict` key, so every test built on it builds the
-model the way production does.
+The checkpoint is `write_checkpoint_without_model_spec` over this workspace
+(`tests/fixtures/registered_cohort.py`), written without any model class: no
+weights and no model spec, only its `epoch`, its `logs` and the
+`training_input_digests` record a training run over the workspace writes. Every
+build over it is refused before a model is built, so the tests that use it read
+its data, its bytes or its refusal, never a model (K8-10, F2).
 
 Module: tests/fixtures/synthetic_workspace.py
 """
@@ -36,7 +38,6 @@ N_GENES = 2
 N_DISEASES = 4
 N_SAMPLES = 6
 FEATURE_DIM = 8
-HIDDEN_DIM = 8
 
 
 def _graph(
@@ -128,10 +129,12 @@ def build_workspace(
     n_diseases: int = N_DISEASES,
     n_samples: int = N_SAMPLES,
 ) -> Tuple[Path, Path]:
-    """Write a data directory and a checkpoint. Returns ``(data_dir, checkpoint)``.
+    """Write a data directory and a checkpoint without a model spec. Returns
+    ``(data_dir, checkpoint)``.
 
     The layout is the one the shared readers read (`read_graph_artifacts`,
-    `read_samples`), with the manifest that binds the graph.
+    `read_samples`), with the manifest that binds the graph. The checkpoint is
+    the one the module docstring describes.
 
     **The size arguments default to the original fixture**, so every existing
     caller gets exactly the workspace it got before. They exist because a
@@ -139,8 +142,6 @@ def build_workspace(
     candidates: a top-20 window and no window are the same list at four columns.
     See `_graph` for the precondition a wider workspace carries.
     """
-    from src.models.gnn.shepherd_gnn import ShepherdGNN, ShepherdGNNConfig
-
     data_dir = root / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
 
@@ -159,7 +160,7 @@ def build_workspace(
     # against, `tests/fixtures/registered_cohort.py`). The generated `train` and
     # `val` beside it are cut by `write_generated_workspace`, bound by the
     # manifest, and hold ids inside this graph, so `--split val` measures them.
-    from tests.fixtures.generated_workspace import graph_record, write_generated_workspace
+    from tests.fixtures.generated_workspace import write_generated_workspace
 
     (data_dir / "kg.json").write_text(json.dumps({"synthetic": True}))
     train_ids, val_ids = _generated_diseases(n_diseases)
@@ -173,24 +174,8 @@ def build_workspace(
         val_samples=_generated_samples("val", val_ids, n_phenotypes),
     )
 
-    metadata = (list(num_nodes_dict), list(edge_index_dict))
-    in_channels_dict = {k: FEATURE_DIM for k in num_nodes_dict}
-    config = ShepherdGNNConfig(hidden_dim=HIDDEN_DIM, num_layers=2, num_heads=2)
-
-    torch.manual_seed(20260818)
-    model = ShepherdGNN(metadata=metadata, in_channels_dict=in_channels_dict, config=config)
+    from tests.fixtures.registered_cohort import write_checkpoint_without_model_spec
 
     checkpoint_path = root / "checkpoint.pt"
-    torch.save(
-        {
-            "state_dict": model.state_dict(),
-            "config": {"hidden_dim": HIDDEN_DIM, "num_layers": 2, "num_heads": 2},
-            "epoch": 1,
-            "logs": {"val_mrr": 0.0},
-            # The graph roles training records (M2.2), so serving and
-            # measurement accept it for this workspace (M2.4).
-            "training_input_digests": graph_record(data_dir),
-        },
-        checkpoint_path,
-    )
+    write_checkpoint_without_model_spec(checkpoint_path, data_dir=data_dir)
     return data_dir, checkpoint_path

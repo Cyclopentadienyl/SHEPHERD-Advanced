@@ -7,9 +7,7 @@ Config authority (decision record: docs/CONFIG_AUTHORITY.md):
     Runtime configuration is owned by the dataclasses closest to each concern —
     TrainerConfig (src/training/trainer.py), PipelineConfig (src/inference/pipeline.py),
     and, for model architecture, the model spec (ModelSpec, src/models/bundle/spec.py),
-    with the reference recipe (recipe.py) for lifecycle defaults. ShepherdGNNConfig
-    (src/models/gnn/shepherd_gnn.py) describes only the ShepherdGNN path for history
-    files, until K8. There is intentionally NO
+    with the reference recipe (recipe.py) for lifecycle defaults. There is intentionally NO
     central HyperparameterManager: a single global config object would couple the
     training, inference, model, API and UI layers together. The one genuinely shared
     config concern — training-parameter metadata shared by the API request model and

@@ -594,7 +594,7 @@ def test_a_checkpoint_holding_arbitrary_objects_is_refused(api, workspace, tmp_p
 
     data_dir, checkpoint = workspace
     contents = torch.load(checkpoint, map_location="cpu", weights_only=False)
-    contents["config"]["not_plain"] = Path("x")
+    contents["not_plain"] = Path("x")
     unsafe = tmp_path / "unsafe.pt"
     torch.save(contents, unsafe)
 
