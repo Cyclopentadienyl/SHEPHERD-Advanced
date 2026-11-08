@@ -265,7 +265,8 @@ below `src.training` and `src.reasoning` in the layers contract (policy rev 17).
 - Serving and Mode C could both import it. *(2026-11-07: Mode C retired in K8-6b, so only serving
   could.)*
 - The trainer cannot, under the `layers` contract. That keeps the trainer's validation values written
-  independently, as the `scorer-independence` contract in `.import-linter.ini` intends.
+  independently, as the `scorer-independence` contract in `.import-linter.ini` intends. *(2026-11-08:
+  that contract and the trainer's own validation values retired in K8-7; see the note above.)*
 - `src.reasoning` is not a home: statements 4a and 6 keep ranking and evidence apart.
 - A layer lower down is not a home either: the trainer could adopt it there and undo that independence.
 

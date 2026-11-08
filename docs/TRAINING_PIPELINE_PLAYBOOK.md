@@ -199,7 +199,8 @@ from a parent (a branch) is not available from the dashboard yet.
 > among them, and `--conv-type`, `--hidden-dim` and `--num-layers` are gone.
 > A refusal is one line, `train_model: refused: <why> Nothing was written.`,
 > exit 1 (since K8-7b); an error after the run's folder is made is a failed run,
-> logged as "Training failed:" with its traceback.
+> logged as "Training failed:" with its traceback, as is an unexpected error (one
+> that is no refusal) before it.
 >
 > Checkpoints from before this layout (`$WS/checkpoints/`) are not listed or
 > selected automatically; they stay on disk, reached by explicit path only. A

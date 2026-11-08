@@ -2202,7 +2202,8 @@ stage，續接的執行也一樣：`--resume <checkpoint>` 加上它所續接之
 run 目錄，以及寫了本版沒有之設定的 `--config` 檔（"The configuration … names settings this
 version does not have: num_workers."；自 K8-7 起，`num_workers` 與舊的模型設定如 `conv_type`、
 `hidden_dim` 都屬此類，`--conv-type`、`--hidden-dim` 與 `--num-layers` 也已移除）。佔用 run 目錄
-之後發生的錯誤則是一次失敗的執行，以 "Training failed:" 連同 traceback 記錄。
+之後發生的錯誤則是一次失敗的執行，以 "Training failed:" 連同 traceback 記錄；在那之前發生、並非
+拒絕的意外錯誤也是如此。
 
 **請在服務與執行 CLI 的 shell 中設定同一個根目錄**（例如你在 systemd unit 中設定的
 `Environment=` 行（§4.12；unit 的範本為根目錄與 registry 各留有一行註解掉的設定）——unit 本身不讀取
@@ -2401,10 +2402,12 @@ export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
   取決於它自己的紀錄，絕不取決於它所在的目錄。每個檔案只讀取一次，且只載入權重，並顯示：
   - 所讀位元組的 SHA-256；
   - Trainer 的驗證數字：Trainer 記錄的、該階段的選擇指標（base 為 LP accuracy，任務模型為
-    pooled MRR），絕不是測試結果；檔案沒有記錄、或其紀錄無法讀取時為無；
+    pooled MRR），不論檔案的紀錄如何，都從檔案的 logs 讀取，絕不是測試結果；檔案未被讀取、或其
+    logs 兩者皆無時為無（沒有 model spec 的檔案記錄的是 `val_mrr`，它不會被讀取）；
   - 其模型紀錄的摘要：`record` 為 `model`，或為附原因的 `refused`（沒有 model spec 的檔案：
-    "written before the model spec: not readable by this build; start a new run"）；自 K8-7b 起
-    不再有 `history` 紀錄、家族群組或任務篩選；
+    "written before the model spec: not readable by this build; start a new run"），檔案的紀錄
+    未被讀取時（其 `problem` 說明原因）則為 null；自 K8-7b 起不再有 `history` 紀錄值、History 群組或
+    `history` 篩選（`?task=` 與 `?learning_stage=` 仍保留紀錄寫明它們的檔案）；
   - checkpoint 記錄的資料集指紋，以及它是否就是這個 workspace 目前的指紋；
   - 無法讀取的檔案會附上原因（包括目標已不存在的連結）。沒有任何檔案被略去；
   - 解析後落在 workspace 之外的檔案（以 symlink 指向 workspace 之外的 run 或 checkpoint）只
@@ -2426,7 +2429,8 @@ export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
   `sha256`、`validation`、`dataset_fingerprint` 與 `metadata_problem`，全部來自同一次讀取。以前它載入每個檔案卻不保留
   digest，而且載入錯誤時一聲不響地略過。讀取時已經不存在的檔案（目標已被移除的連結）沒有
   大小或時間可顯示，會從這份清單中略去；它不再讓整份清單失敗。`runs/` 之下無法列出的目錄會保留，
-  附上原因，大小為 0.0，沒有時間。自 M5-1 起，D8 像檢查控制項一樣檢查它（§4.13）。
+  附上原因；其大小與時間是該目錄本身的，名稱不是有效文字時則大小為 0.0、沒有時間（沒有任何路徑
+  叫所顯示的名稱）。自 M5-1 起，D8 像檢查控制項一樣檢查它（§4.13）。
 - **Cohort 版本**（`GET /api/v1/cohorts`）：registry 中的每個版本，以 label 及其 `cohort.json`
   的 SHA-256 識別，附上它的角色。它也顯示版本的計數、所綁定的圖與
   資料集紀錄，以及匯入時間。清單絕不顯示病例識別碼或排除清單：D7 把它們留在這台機器上的
@@ -3114,8 +3118,9 @@ workspace 名稱，這些資訊也不會被遮住。所有 run 都會顯示，�
   數字），下方是 checkpoint 所記錄的完整資料集指紋所對應的已列出 workspace，或「matches no listed
   workspace」；`synthetic` 以琥珀色顯示；
 - **Validation (Trainer)**：Trainer 自己在 val 樣本上的數值，也就是訓練用來挑選 checkpoint 的
-  指標，數值下方寫出它的名稱（base 為 LP accuracy，任務模型為 pooled MRR）；紀錄無法讀取的檔案
-  為無（自 K8-7b 起不再顯示歷史檔前 20 名的 MRR；其原始數值仍留在檔案中，明細寫「Validation
+  指標，數值下方寫出它的名稱（base 為 LP accuracy，任務模型為 pooled MRR），不論檔案的紀錄如何，
+  都從檔案的 logs 讀取；logs 兩者皆無時為無，沒有 model spec 的檔案即是如此，它的 `val_mrr` 不會
+  被讀取（自 K8-7b 起不再顯示歷史檔前 20 名的 MRR；其原始數值仍留在檔案中，明細寫「Validation
   (Trainer): not read (record not readable)」）。它從來不是測試結果，也從不與測試結果放在同一欄；
 - **Recorded tests**：checkpoint 旁的 ledger 所記錄的內容，以狀態顯示（「none in ledger」、「no
   ledger」、「3 · runs differ for 1」……），從不顯示某個結果的數值。

@@ -228,7 +228,11 @@ this candidate?
 **How that is enforced:**
 - **By the interface.** The traversal receives the result read-only and returns records.
 - **By a contract.** A new import-linter contract, `ranking-without-evidence`, forbids
-  `src.inference.scoring` from importing `src.reasoning`.
+  `src.inference.scoring` from importing `src.reasoning`. *(2026-11-08, superseded by K8-11:
+  `src.inference.scoring` was removed (`9d76bbe`). The task scorers are `src/models/tasks/`
+  (`scoring.py`), and the layers contract keeps `src.models` below `src.reasoning`, so they
+  cannot import it; [`ARCHITECTURE.md`](../../ARCHITECTURE.md) §12 states the rule as it stands.
+  No `ranking-without-evidence` contract exists.)*
 - **By a test.** Evidence is computed for every target of a result, and the result's digest is the
   same afterwards.
 
@@ -418,7 +422,8 @@ any target's outcome.
 - **Same rule as today, stated on the raw scale.** Today the panel requires (s+1)/2 ≥ 0.5, which is
   the same as a raw cosine ≥ 0.
 - **Who computes the list.** B-1's pipeline computes it with `src.inference.scoring` and passes it
-  in. `src.reasoning` sits below `src.inference`, so it never needs embeddings.
+  in. `src.reasoning` sits below `src.inference`, so it never needs embeddings. *(2026-11-08:
+  `src.inference.scoring` was removed in K8-11; see §7.1's note.)*
 - **The traversal.** Each analogy runs steps 1–3 against the same patient. The cost counts against
   the same target's budget, the part its own traversal left.
 - **Outcomes.** The analogy part has the same four outcomes as §7.3.

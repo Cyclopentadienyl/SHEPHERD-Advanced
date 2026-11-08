@@ -1037,10 +1037,12 @@ candidate genes through `gene_fields` with their checks; a later output change r
 multi-head training, N2, N3, the patients-like-me reference set and R10's exposure scope; M1's
 served resource and latency measurement (pending re-attachment, `../BACKLOG.md` 64); the D1 offers
 left as gaps (`../BACKLOG.md` 65); a run or file name that is not valid text, which still fails
-both checkpoint lists as before K8 (`../BACKLOG.md` 66); cosmetics (`../BACKLOG.md` 68, 69). **Still to come:** the one
-full suite on the integrated tree, one external review of `af3a8a9` to the head, and the GB10
-acceptance on the reviewed head, whose results are added here when they exist; this record claims
-no hardware acceptance.
+both checkpoint lists as before K8 (`../BACKLOG.md` 66); cosmetic and open items (`../BACKLOG.md`
+68, 69). **Still to come:** the one full suite on the integrated tree, one external review of
+`af3a8a9` to the head, and the GB10 acceptance on the reviewed head, whose results are added here
+when they exist; this record claims no hardware acceptance. AP's autocast check ran on CPU with
+bfloat16 only (float16 with its scaler is GB10's), and the HGT node-order tests skip on a host
+without pyg_lib's grouped matmul.
 
 **BACKLOG items in scope, bounded:** 23 (branch's closed list and lineage), 54 (shared validation and
 unknown-field refusal for the training API, CLI and UI touched here, without the unsupported HGT/AMP

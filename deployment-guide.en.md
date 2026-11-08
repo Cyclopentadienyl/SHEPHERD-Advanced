@@ -1942,7 +1942,8 @@ written.`, exit 1, with no traceback (it is logged at `--debug` only). Among the
 settings this version does not have: num_workers."; since K8-7, `num_workers` and the old model
 settings such as `conv_type` and `hidden_dim` are such settings, and `--conv-type`,
 `--hidden-dim` and `--num-layers` are gone). An error after the claim is a failed run, logged as
-"Training failed:" with its traceback.
+"Training failed:" with its traceback, and so is an unexpected error before it, one that is no
+refusal.
 
 **Set the root for the service and in the shell where you run the CLIs** (for example, the
 `Environment=` lines you set in the systemd unit (§4.12; its template has a commented line for
@@ -2180,11 +2181,14 @@ and a file, or a label, and the server finds that name in its own list again.
   from its directory. Each file is read once, weights only, and shows:
   - the SHA-256 of the bytes read;
   - the Trainer's validation figure: the stage's selection metric the Trainer logged (a base's
-    LP accuracy, a task model's pooled MRR), never a test result, and none when the file records
-    none or its record cannot be read;
+    LP accuracy, a task model's pooled MRR), read from the file's logs whatever its record says,
+    never a test result; none when the file was not read or its logs hold neither (a file
+    without a model spec logs `val_mrr`, which is not read);
   - its model record's summary: `record` is `model`, or `refused` with the reason (a file
     without a model spec: "written before the model spec: not readable by this build; start a
-    new run"); since K8-7b there is no `history` record, family group or task filter;
+    new run"), or null when the file's record was not read (its `problem` says why); since
+    K8-7b there is no `history` record value, History group or `history` filter (`?task=` and
+    `?learning_stage=` still keep the files whose record names them);
   - the dataset fingerprint the checkpoint records, and whether it is this workspace's now;
   - for a file that cannot be read, why (a link whose target is gone included). No file is
     dropped;
@@ -2211,7 +2215,8 @@ and a file, or a label, and the server finds that name in its own list again.
   file without keeping its digest, and dropped a load error without a word. A file that is gone
   by the time it is read (a link whose target was removed) has no size or time to show and is
   left out of this list; it no longer fails the whole list. A directory under `runs/` that
-  cannot be listed is kept, with its reason, a size of 0.0 and no time. Since M5-1 D8 checks it
+  cannot be listed is kept, with its reason; its size and time are the directory's own, or 0.0
+  and no time when its name is not text (no path has the name shown). Since M5-1 D8 checks it
   like the controls (§4.13).
 - **Cohort versions** (`GET /api/v1/cohorts`): each version in the registry, by label and the
   SHA-256 of its `cohort.json`, with its role. It also shows
@@ -3030,10 +3035,12 @@ its name (since K8-7b). Columns:
   checkpoint's SHA-256) over the listed workspace whose full dataset fingerprint the checkpoint
   records, or "matches no listed workspace"; `synthetic` in amber;
 - **Validation (Trainer)**: the Trainer's own figure on the val samples, the metric training
-  selects by, named under its value (a base's LP accuracy, a task model's pooled MRR); none for a
-  file whose record cannot be read (since K8-7b a history file's MRR over its top 20 is no longer
-  shown; its raw values stay in the file, and the detail says "Validation (Trainer): not read
-  (record not readable)"). It is never a test result and never shares a column with one;
+  selects by, named under its value (a base's LP accuracy, a task model's pooled MRR), read from
+  the file's logs whatever its record says; none when the logs hold neither, as for a file
+  without a model spec, whose `val_mrr` is not read (since K8-7b a history file's MRR over its
+  top 20 is no longer shown; its raw values stay in the file, and the detail says "Validation
+  (Trainer): not read (record not readable)"). It is never a test result and never shares a
+  column with one;
 - **Recorded tests**: what the ledger beside the checkpoint holds, as a state ("none in
   ledger", "no ledger", "3 · runs differ for 1", …), never a number of a result.
 
