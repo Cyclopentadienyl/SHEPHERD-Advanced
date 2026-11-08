@@ -2402,14 +2402,20 @@ class TrainingManager:
         checkpoints = []
         for entry in read_run_checkpoints(workspace, conv_type, within=workspace):
             try:
-                stat = entry.path.stat()
+                stat: Optional[os.stat_result] = entry.path.stat()
             except OSError:
-                continue  # removed since it was listed: there is nothing to show
+                if entry.path != entry.run_dir:
+                    continue  # removed since it was listed: there is nothing to show
+                # A directory under runs/ the listing could not list, which it
+                # names as shown when its name is not text: no path has that
+                # name, so it is listed with its reason and no size or time.
+                stat = None
             info: Dict[str, Any] = {
                 "filename": entry.path.name,
                 "filepath": str(entry.path),
-                "size_mb": round(stat.st_size / (1024 * 1024), 2),
-                "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                "size_mb": round(stat.st_size / (1024 * 1024), 2) if stat is not None else 0.0,
+                "modified": (datetime.fromtimestamp(stat.st_mtime).isoformat()
+                             if stat is not None else ""),
                 "run": entry.run_dir.name,
                 "run_dir": str(entry.run_dir),
                 "architecture": run_architecture(entry.run_dir),

@@ -16,7 +16,8 @@ prunes another's files. A new run is filed under its model spec's encoder kind
 (`RUN_LAYOUT_KEYS`), never nested by lineage: a resumed run records its parent
 by SHA-256, not by where it sits. **The listing reads every directory under
 ``runs/``**, whatever its name (`list_runs`): what a file is comes from its own
-record, never from the directory it sits in.
+record, never from the directory it sits in. One it cannot list, a name that is
+not valid text among them, is one entry saying why, and hides nothing else.
 
 No torch / PyG imports — safe to import from training scripts and API services.
 
@@ -388,6 +389,25 @@ def _run_recency(run_dir: Path) -> float:
     return max((_mtime(p) for p in run_checkpoints(run_dir)), default=0.0)
 
 
+#: Why `list_runs` cannot list a directory under ``runs/`` whose name is not
+#: valid text (`unlisted_problem` puts it in its sentence).
+_NAME_NOT_TEXT = ("its name is not valid text, shown here with backslash escapes; "
+                  "it cannot be opened by name")
+
+
+def _shown_name(name: str) -> str:
+    """A name the file system listed, as text every answer can carry: the
+    name itself when it is text (`text_problem`), otherwise its bytes with
+    each one that is not UTF-8 written as a backslash escape (``bad\\xff``)."""
+    if text_problem(name) is None:
+        return name
+    try:
+        raw = os.fsencode(name)
+    except UnicodeEncodeError:  # a surrogate the system's decoding never gives
+        raw = name.encode("utf-8", "backslashreplace")
+    return raw.decode("utf-8", "backslashreplace")
+
+
 def list_runs(data_dir: PathLike, conv_type: Optional[str] = None, *,
               unlisted: Optional[List[Tuple[Path, str]]] = None) -> List[Path]:
     """A workspace's run directories, most recently trained first.
@@ -408,7 +428,12 @@ def list_runs(data_dir: PathLike, conv_type: Optional[str] = None, *,
     else: its runs are not read, and it is appended to `unlisted` with why
     (the error's kind and the system's words, never a path) when the caller
     gives one, by name, so their order never depends on the filesystem's
-    either.
+    either. **A directory whose name is not valid text** (a byte that is not
+    UTF-8, which Python reads as a lone surrogate) is one this listing cannot
+    list: no answer can carry its name and no request can give it, so it is
+    appended to `unlisted` by its name as shown with backslash escapes
+    (`_shown_name`, ``bad\\xff``; no path has that name) and nothing in it
+    is read.
     """
     base = Path(data_dir) / RUNS_DIRNAME
     runs: List[Path] = []
@@ -420,6 +445,9 @@ def list_runs(data_dir: PathLike, conv_type: Optional[str] = None, *,
             continue
         try:
             if not directory.is_dir():
+                continue
+            if text_problem(directory.name) is not None:
+                refused.append((base / _shown_name(directory.name), _NAME_NOT_TEXT))
                 continue
             found = [p for p in directory.iterdir() if p.is_dir()]
         except OSError as exc:  # a directory this account may not enter
@@ -488,8 +516,9 @@ class ListedCheckpoint(NamedTuple):
     that resolves outside the directory the caller bounds the listing by, or
     whose open lands outside it, is listed with `problem` and is not read at
     all (`read_run_checkpoints`' `within`). A directory under ``runs/`` that
-    cannot be listed is one entry, its `run_dir` and `path` that directory,
-    with `problem` only.
+    cannot be listed is one entry, its `run_dir` and `path` that directory
+    as `list_runs` names it (by its name as shown, for a name that is not
+    text), with `problem` only.
 
     `size_bytes` is the file's size as listed (a `stat` beside the read,
     descriptive only); `None` for a file not read because it is outside, or one
@@ -889,9 +918,9 @@ def read_run_checkpoints(
 
     **A directory under ``runs/`` that cannot be listed is listed, after the
     files, as one entry** whose `run_dir` and `path` are that directory and
-    whose `problem` says why (`list_runs`' `unlisted`): what it holds is not
-    read, and nothing else is hidden. Only ``runs/`` itself failing to list
-    raises.
+    whose `problem` says why (`list_runs`' `unlisted`, which names one whose
+    name is not text by its name as shown): what it holds is not read, and
+    nothing else is hidden. Only ``runs/`` itself failing to list raises.
 
     torch is imported only here, when a file is read, so this module stays
     importable without it.

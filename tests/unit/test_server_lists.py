@@ -754,6 +754,95 @@ class TestCheckpointsInAndOut:
         assert [(e.path.name, e.problem is None) for e in entries] == [
             ("aa", False), ("zz", False)], "mm holds no checkpoint, so it lists none"
 
+    def test_a_directory_under_runs_whose_name_is_not_text_is_one_entry_and_every_list_answers(
+            self, demo_workspace, tmp_path, monkeypatch):
+        """Checkpoint B (C3, 11_nontext_probe.txt): since every directory under
+        runs/ is listed, one whose name is not valid text (a byte that is not
+        UTF-8, which Python reads as a lone surrogate no answer can encode)
+        made ``GET /workspaces/<ws>/checkpoints`` answer HTTP 500, every other
+        file with it, where af3a8a9 ignored that directory. It now follows
+        C3's rule for a directory under runs/ that cannot be listed: one entry,
+        named with backslash escapes, saying why; nothing in it is read or
+        selected or resolved; every other run is listed, and the server's
+        list, its family view, the training service's list, their routes and
+        the WebUI's lists answer."""
+        import json
+        import os
+
+        from fastapi.testclient import TestClient
+
+        from src.api.main import app
+        from src.api.routes import training as training_routes
+        from src.api.services.training_manager import TrainingManager
+        from src.utils.checkpoint_io import write_checkpoint
+        from src.utils.checkpoint_paths import read_run_checkpoints, select_auto_run_checkpoint
+        from src.webui.components import model_list as ml
+        from src.webui.components import training_console as tc
+        from tests.fixtures.operator_access import (
+            OPERATOR_BASE_URL,
+            operator_mode,
+            operator_request,
+        )
+
+        root = tmp_path / "root"
+        ws = _copy(demo_workspace, root / "demo")
+        run = _run(ws, "gatv2", "20261020-000000_x_aaaaaa")
+        write_checkpoint({"epoch": 1}, run / "last.pt")
+        os.utime(run / "last.pt", (1_700_000_000, 1_700_000_000))
+        bad = os.fsdecode(b"bad\xff")
+        hidden = _run(ws, bad, "20261021-000000_y_bbbbbb")
+        write_checkpoint({"epoch": 2}, hidden / "last.pt")  # newer: the latest, were it read
+        problem = (r"runs/bad\xff cannot be listed (its name is not valid text, shown here with "
+                   r"backslash escapes; it cannot be opened by name), so no run in it is read")
+
+        operator_mode(monkeypatch)
+        monkeypatch.setenv(ss.ENV_WORKSPACES_ROOT, str(root))
+        monkeypatch.setattr(training_routes.training_manager, "_config", {"data_dir": str(ws)})
+        client = TestClient(app, base_url=OPERATOR_BASE_URL, raise_server_exceptions=False)
+        for route, rows in (("/api/v1/workspaces/demo/checkpoints", "checkpoints"),
+                            ("/api/v1/workspaces/demo/family", "rows"),
+                            ("/api/v1/training/checkpoints", None)):
+            response = client.get(route)  # 500 for the first, before the fix
+            assert response.status_code == 200, (route, response.text[:300])
+            listed = response.json() if rows is None else response.json()[rows]
+            assert len(listed) == 2, (route, listed)
+            unlisted = listed[1].get("item", listed[1])
+            assert problem in unlisted.values(), (route, unlisted)
+
+        def answers(value):  # what a JSON answer does with it: UTF-8 text
+            return json.loads(json.dumps(value, ensure_ascii=False).encode("utf-8"))
+
+        entries = read_run_checkpoints(ws, within=ws)
+        assert [(e.run_dir.name, e.path.name, e.problem) for e in entries] == [
+            (run.parent.name, "last.pt", None), (r"bad\xff", r"bad\xff", problem)]
+        not_read = []
+        path, _key, reason = select_auto_run_checkpoint(ws, not_read=not_read)
+        assert path == run / "last.pt" and not_read == [problem]
+        assert answers(reason) == f"auto: latest run 'gatv2/{run.parent.name}'; not read: {problem}"
+        assert tc._latest_run(ws) == f"gatv2/{run.parent.name}"
+        with pytest.raises(sl.ServerListRefused, match="is listed"):
+            sl.resolve_checkpoint("demo", bad, hidden.parent.name, "last.pt", environ=_roots(root))
+
+        listing = sl.list_checkpoints("demo", environ=_roots(root))
+        assert listing.available, listing.problem
+        items = answers(listing.as_dict("checkpoints"))["checkpoints"]
+        assert [(i["architecture"], i["run"], i["filename"], i["problem"]) for i in items] == [
+            ("gatv2", run.parent.name, "last.pt", None),
+            ("runs", r"bad\xff", r"bad\xff", problem)]
+        assert items[0]["sha256"] == file_sha256(run / "last.pt") and items[1]["sha256"] is None
+
+        training = answers(TrainingManager().get_checkpoints(str(ws)))
+        assert [(t["run"], t["filename"], t["metadata_problem"]) for t in training] == [
+            (run.parent.name, "last.pt", None), (r"bad\xff", r"bad\xff", problem)]
+
+        monkeypatch.setattr(ml, "read_status", lambda: (None, "not read"))
+        listing_ui = ml.list_models("demo", operator_request(monkeypatch), family=True)
+        assert [i["run"] for i in answers(listing_ui["items"])] == [run.parent.name, r"bad\xff"]
+        assert answers(listing_ui["family"])
+        assert r"bad\xff" in ml.list_html(listing_ui, None, ml.PRESETS["research"])
+        assert list(answers(tc.checkpoint_items(listing)[0])) == [
+            f"gatv2/{run.parent.name}/last.pt", r"runs/bad\xff/bad\xff"]
+
     def test_the_latest_run_is_one_inside_the_workspace(self, tmp_path):
         """The review of C3 (listing nit): the Training page's latest run is
         the newest run inside the workspace, as `resolve_run` finds one; a
