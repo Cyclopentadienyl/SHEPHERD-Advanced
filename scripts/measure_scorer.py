@@ -144,7 +144,11 @@ printed), so a parent reads "ended by SIGINT" as before; elsewhere it exits
 not catch). The run unwinds first: a staged file is removed, the GPU lock
 released, nothing more is written, and what it had published stays as it is.
 A cancel while the program's modules still load (`_cancelled_while_loading`)
-prints the same line and ends the same way. **Only the program ends itself**
+prints the same line and ends the same way. The job runner starts a test run
+with SIGINT blocked and the program unblocks it once that handler is in place,
+so a cancel that lands while the interpreter itself still starts waits for it
+and ends the run the same way, never as a start-up failure (K8-13). **Only the
+program ends itself**
 (`_exit_as_program`, the `__main__` entry): an in-process caller of
 `_run_as_program` (the tests) gets the line and then the KeyboardInterrupt
 back, so its own cleanup runs. `main` itself raises its refusals, typed, for
@@ -202,7 +206,9 @@ def _cancelled_while_loading(signum: int, frame: Any) -> None:
     """SIGINT while this program's modules load, before `_run_as_program`
     (importing torch takes seconds, and a Cancel right after Start lands
     there): the same line and ending as a cancel during the run, not an
-    import's traceback. Nothing has been read or written yet."""
+    import's traceback. Nothing has been read or written yet. A SIGINT that
+    arrived before this handler was installed, while the job runner held it
+    blocked, is taken here as soon as `__main__` unblocks it."""
     with contextlib.suppress(OSError, ValueError, AttributeError):
         print(CANCELLED_LINE, file=sys.stderr)
     raise SystemExit(_end_as_cancelled())
@@ -210,6 +216,12 @@ def _cancelled_while_loading(signum: int, frame: Any) -> None:
 
 if __name__ == "__main__":
     signal.signal(signal.SIGINT, _cancelled_while_loading)
+    if hasattr(signal, "pthread_sigmask"):
+        # The job runner starts a test run with SIGINT blocked
+        # (`training_manager._started_with_sigint_held`), so a cancel that
+        # arrived while the interpreter started waits for the handler above;
+        # from here a cancel is taken, a pending one at once.
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGINT})
 
 import torch  # noqa: E402 - after the loading guard, which must cover this import
 

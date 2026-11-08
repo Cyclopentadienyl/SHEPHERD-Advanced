@@ -101,6 +101,7 @@ Version: 2.0.0
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -118,7 +119,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import (
-    Any, Callable, Deque, Dict, List, Mapping, Optional, Sequence, Set, Tuple,
+    Any, Callable, Deque, Dict, Iterator, List, Mapping, Optional, Sequence, Set, Tuple,
 )
 
 import yaml
@@ -631,6 +632,28 @@ def _signal_name(returncode: int) -> str:
         return f"signal {-returncode}"
 
 
+@contextlib.contextmanager
+def _started_with_sigint_held() -> Iterator[None]:
+    """A test run's process is started with SIGINT blocked (POSIX): a child
+    inherits its parent thread's signal mask through fork and exec, so this
+    thread blocks it only while the process is started. A cancel's SIGINT that
+    arrives while the interpreter still starts (importing `site`, before
+    measure_scorer's first line runs) then stays pending, instead of ending
+    the start with an ordinary exit status (Python turns it into a
+    KeyboardInterrupt there and exits 1 or 2, which `_ended_by_stop` must read
+    as the run's own ending); measure_scorer unblocks it once its cancel
+    handler is in place, and the pending SIGINT is taken there. Elsewhere
+    (Windows: the stop is CTRL_BREAK_EVENT) nothing is blocked."""
+    if not hasattr(signal, "pthread_sigmask"):
+        yield
+        return
+    previous = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT})
+    try:
+        yield
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous)
+
+
 # ---------------------------------------------------------------------------
 # A job's process group (P2-3)
 # ---------------------------------------------------------------------------
@@ -908,38 +931,42 @@ class TrainingManager:
                       run_dir: Optional[Path] = None,
                       reports_dir: Optional[Path] = None,
                       reports_before: Optional[Set[str]] = None,
-                      outcome_path: Optional[Path] = None) -> Tuple[Optional[_Job], str]:
+                      outcome_path: Optional[Path] = None,
+                      sigint_held: bool = False) -> Tuple[Optional[_Job], str]:
         """Launch `argv` as a job of `kind` and start its monitor. Called under
         the lock, after `_slot_refusal_locked` found the slot free.
 
         The child inherits the backend's environment (no `env=`): the CUDA
         allocator (tests/unit/test_train_allocator.py) and the GPU lock's
-        settings, so it takes the lock the runner checked.
+        settings, so it takes the lock the runner checked. With `sigint_held`
+        (a test run) the process starts with SIGINT blocked until its program
+        takes it (`_started_with_sigint_held`).
         """
         job_id = f"{kind.name}-{datetime.now():%Y%m%d-%H%M%S}-{secrets.token_hex(3)}"
         logger.info("Starting %s job %s: %s", kind.name, job_id, " ".join(argv))
         try:
-            process = subprocess.Popen(
-                argv,
-                cwd=str(PROJECT_ROOT),
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                # Output that is not valid in the locale's encoding must not stop
-                # the reader: a reader that stops lets the pipe fill and blocks
-                # the job.
-                errors="replace",
-                # **Each job leads its own process group** (P2-3): on POSIX the
-                # child calls setpgid(0, 0) before it runs the script, so every
-                # process it forks (DataLoader workers, which share the GPU
-                # lock's open file) is in the group a stop and the monitor end,
-                # never the backend's; so `JOB_DETACHED_SIGNALS` no longer
-                # reach it, and its host routes them. On Windows
-                # CREATE_NEW_PROCESS_GROUP, which CTRL_BREAK_EVENT is sent to.
-                **({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
-                   if sys.platform == "win32" else {"process_group": 0}),
-            )
+            with _started_with_sigint_held() if sigint_held else contextlib.nullcontext():
+                process = subprocess.Popen(
+                    argv,
+                    cwd=str(PROJECT_ROOT),
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    # Output that is not valid in the locale's encoding must not stop
+                    # the reader: a reader that stops lets the pipe fill and blocks
+                    # the job.
+                    errors="replace",
+                    # **Each job leads its own process group** (P2-3): on POSIX the
+                    # child calls setpgid(0, 0) before it runs the script, so every
+                    # process it forks (DataLoader workers, which share the GPU
+                    # lock's open file) is in the group a stop and the monitor end,
+                    # never the backend's; so `JOB_DETACHED_SIGNALS` no longer
+                    # reach it, and its host routes them. On Windows
+                    # CREATE_NEW_PROCESS_GROUP, which CTRL_BREAK_EVENT is sent to.
+                    **({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+                       if sys.platform == "win32" else {"process_group": 0}),
+                )
         except (OSError, ValueError) as e:
             error = f"The {kind.name} process could not be started: {e}"
             self._last[kind.name] = _Job(kind, job_id, datetime.now(), status="failed",
@@ -1439,7 +1466,7 @@ class TrainingManager:
                 kind, build_test_argv(inputs, device, outcome),
                 inputs={**inputs.summary(), "device": device or "auto"},
                 cleanup=[job_dir], reports_dir=reports_dir, reports_before=before,
-                outcome_path=outcome)
+                outcome_path=outcome, sigint_held=True)
             if job is None:
                 return {"success": False, "error": error, "status": "failed"}
             return {"success": True, "job_id": job.job_id, "pid": job.process.pid,
@@ -1778,7 +1805,11 @@ class TrainingManager:
         On POSIX, only a signal's: measure_scorer turns the stop's SIGINT into
         one "cancelled" line and then ends itself by SIGINT (the signal's
         default action, `_exit_as_program`), as SIGTERM and SIGKILL end it by
-        theirs, and a status of 0 or more is the run's own ending. Windows
+        theirs, and a status of 0 or more is the run's own ending. That holds
+        for a stop that lands while the run's interpreter still starts too:
+        the run is started with SIGINT blocked (`_started_with_sigint_held`),
+        so the signal waits for measure_scorer's handler instead of ending the
+        start with status 1 or 2 (K8-13). Windows
         has no signal statuses (CTRL_BREAK_EVENT and TerminateProcess end it
         with a positive code), so there any status but 0 is taken as the
         stop's. None (the process was not waited for) is taken as the stop's.

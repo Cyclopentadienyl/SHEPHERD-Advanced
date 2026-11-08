@@ -1130,9 +1130,13 @@ _HOLDER_JOB = (
     "time.sleep(120)\n"
 )
 #: A test run's stand-in, for a start that is not refused: a stop's SIGINT
-#: ends it as a stop ends a test run, so the runner says "cancelled".
+#: ends it as a stop ends a test run, so the runner says "cancelled". Like
+#: measure_scorer it takes SIGINT, which the runner starts a test run with
+#: blocked, only once its own handling is in place (here the default action),
+#: so a stop that arrives while its interpreter still starts ends it the same way.
 _TEST_RUN = [sys.executable, "-c",
-             "import signal, time; signal.signal(signal.SIGINT, signal.SIG_DFL); time.sleep(120)"]
+             "import signal, time; signal.signal(signal.SIGINT, signal.SIG_DFL); "
+             "signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGINT}); time.sleep(120)"]
 
 
 class _RunInputs:

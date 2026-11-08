@@ -954,3 +954,53 @@ def test_a_child_killed_outside_the_runner_frees_the_slot_and_the_lock(tmp_path,
         assert manager.active_job() is None and probe(root / LOCK_FILE_NAME) is None
     finally:
         _end_real_job(manager)
+
+
+# --------------------------------------------------------------------------- a cancel as the run starts
+#: Imported by `site` while the test run's interpreter starts, before
+#: measure_scorer's first line, with Python's own SIGINT handler already in
+#: place: it says so, then holds the start until the stop's SIGINT is either
+#: delivered here (a KeyboardInterrupt ends the start) or pending (blocked).
+_STARTING = '''
+import os, pathlib, signal, time
+marker = os.environ.get("SHEPHERD_TEST_STARTING")
+if marker:
+    pathlib.Path(marker).write_text("starting")
+    while signal.SIGINT not in signal.sigpending():
+        time.sleep(0.01)
+'''
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
+def test_a_cancel_that_lands_while_the_run_s_interpreter_starts_is_a_cancel(
+        tmp_path, monkeypatch, inputs):
+    """The M5 stop race (K8-13): a cancel's SIGINT that landed while a test
+    run's interpreter still started (importing `site`, before measure_scorer
+    installs its cancel handler) ended the start with exit status 1 ("Fatal
+    Python error: init_import_site ... KeyboardInterrupt"), which the runner
+    must read as the run's own failure. The run starts with SIGINT blocked
+    and measure_scorer takes it once its handler is in place, so the cancel
+    is a cancel: ended by SIGINT, with the program's own line, never
+    escalated. The cancel is sent once the run is provably inside its start."""
+    hold = tmp_path / "hold"
+    hold.mkdir()
+    (hold / "sitecustomize.py").write_text(_STARTING)
+    marker = tmp_path / "starting.txt"
+    monkeypatch.setenv("PYTHONPATH", os.pathsep.join(
+        part for part in (str(hold), os.environ.get("PYTHONPATH")) if part))
+    monkeypatch.setenv("SHEPHERD_TEST_STARTING", str(marker))
+    monkeypatch.setattr(tm, "STOP_GRACE_SECONDS", 60.0)
+    manager = TrainingManager()
+    try:
+        assert manager.start_test(inputs)["success"]
+        wait_for(marker.exists, 60)
+        answer = manager.cancel_test()
+        job = manager._last["test"]
+        said = job.tail()
+        assert answer["status"] == "cancelled", (job.exit_code, said[-6:])
+        assert job.exit_code == -signal.SIGINT and job.stop_signal == "SIGINT", (
+            job.exit_code, job.stop_signal)
+        assert any(line.startswith("measure_scorer: cancelled") for line in said), said[-6:]
+        assert not any("Fatal Python error" in line for line in said)
+    finally:
+        _end_real_job(manager, "test")
