@@ -485,26 +485,20 @@ class TestTorchCompile:
 class TestGradientFlow:
     """Tests to ensure proper gradient flow"""
 
-    def test_shepherd_gnn_gradients(self, simple_metadata, sample_hetero_data, hidden_dim):
+    def test_hetero_gnn_layer_stack_gradients(self, simple_metadata, sample_hetero_data,
+                                              hidden_dim):
+        """The stack the retired wrapper built by default (two gat layers, eight
+        heads, residual, layer norm, dropout 0.1), now on the kept layer alone."""
         x_dict, edge_index_dict = sample_hetero_data
-
-        # Make inputs require gradients
         x_dict = {k: v.clone().requires_grad_(True) for k, v in x_dict.items()}
-
-        model = ShepherdGNN(
-            metadata=simple_metadata,
-            config=ShepherdGNNConfig(
-                hidden_dim=hidden_dim,
-                num_layers=2,
-            ),
-        )
-
-        out_dict = model(x_dict, edge_index_dict)
-
-        # Compute loss and backprop
-        loss = sum(v.sum() for v in out_dict.values())
+        layers = nn.ModuleList([
+            HeteroGNNLayer(hidden_dim=hidden_dim, metadata=simple_metadata, conv_type="gat")
+            for _ in range(2)
+        ])
+        h_dict = x_dict
+        for layer in layers:
+            h_dict = layer(h_dict, edge_index_dict)
+        loss = sum(v.sum() for v in h_dict.values())
         loss.backward()
-
-        # Check gradients exist
         for k, v in x_dict.items():
             assert v.grad is not None, f"No gradient for {k}"

@@ -3,26 +3,23 @@ A registered test cohort over a workspace with real HPO and MONDO ids.
 =====================================================================
 No other fixture combines the three things M4's flow needs: a workspace whose
 `kg.json` holds real `HP:`/`MONDO:` ids (so a source can be mapped against it),
-a checkpoint built on that workspace's tensors, and a cohort version committed
+a checkpoint recorded over that workspace, and a cohort version committed
 into a registry outside the repository. This builds all three with the
 production functions, never a copy of them:
 
 - the workspace is `scripts/setup_demo.build_demo_kg()` written by
   `src/kg/workspace.write_workspace` (manifest, tensors, synthetic dataset
   record, generated train and val cohorts);
-- the checkpoint is a `ShepherdGNN` built on that workspace's own tensors and
-  written by `write_checkpoint`, carrying the `training_input_digests` training
-  records, built by `scripts/train_model`'s `read_training_inputs` and
-  `training_input_digests` (`train_samples`, `val_samples`, the graph roles,
-  `split_manifest`, `kg`); untrained, so **no rank from it is evidence about
-  the scorer**;
+- the checkpoint is `write_checkpoint_without_model_spec` over that
+  workspace (below): no model and no weights, only the
+  `training_input_digests` record a training run over the workspace writes
+  (`train_samples`, `val_samples`, the graph roles, `split_manifest`, `kg`),
+  so no rank comes from it;
 - the version is imported through `prepare_import` and `commit_import`.
 
-Options cover the R10 cases a record can present: no validation recorded
-(`training_record="no_validation"`), a graph-only record that is not one the
-pipeline writes (`"graph_only"`), and a source built from the workspace's own
-val cases (`source="val_cases"`), so its phenotype-set overlap with validation
-is every case by construction.
+One option: a source built from the workspace's own val cases
+(`source="val_cases"`), so its phenotype-set overlap with validation is every
+case by construction.
 
 The graph source has deliberate exclusions and one repeated term; its expected
 counts are `GRAPH_SOURCE_COUNTS`. CPU, a few seconds, deterministic.
@@ -37,12 +34,12 @@ trains it, nothing here does): its workspace and checkpoint copied, the graph
 source written and a version of it imported. What the disease task's binding
 makes of that version in the demo graph's view is `GRAPH_SOURCE_BINDING`.
 
-`write_checkpoint_without_model_spec` writes the other kind of file a test
-needs: a checkpoint without a model spec, which the lists show as history and
-every runner refuses. It is written without any model class and holds no
-weights: only its `epoch` and `logs`, which the lists show, and, with a
-workspace, its record. Measurement, training's run plan and serving refuse it
-for its missing spec; serving before any model is built.
+`write_checkpoint_without_model_spec` writes that checkpoint, and the one a
+test writes for itself: a checkpoint without a model spec, which the lists
+show as history and every runner refuses. It is written without any model
+class and holds no weights: only its `epoch` and `logs`, which the lists show,
+and, with a workspace, its record. Measurement, training's run plan and
+serving refuse it for its missing spec; serving before any model is built.
 
 Module: tests/fixtures/registered_cohort.py
 """
@@ -65,17 +62,12 @@ LABEL = "demo-test-1"
 ROLE = "demo"
 SOURCE_FILENAME = "cases.json"
 
-TRAINING_RECORDS = ("pipeline", "no_validation", "graph_only")
 SOURCES = ("graph", "val_cases")
 
 #: Well-formed ids that are not nodes of the demo graph.
 UNKNOWN_HPO = "HP:9999999"
 UNKNOWN_HPO_2 = "HP:9999998"
 UNKNOWN_MONDO = "MONDO:9999999"
-
-#: The checkpoint's architecture and seed, as `synthetic_workspace` builds one.
-HIDDEN_DIM = 8
-MODEL_SEED = 20260818
 
 #: What the graph source maps to under each partial-phenotype policy.
 GRAPH_SOURCE_COUNTS: Dict[str, Dict[str, Any]] = {
@@ -196,61 +188,15 @@ def write_source(path: Path, cases: List[Dict[str, Any]]) -> Path:
     return path
 
 
-def write_fixture_checkpoint(data_dir: Path, path: Path, *,
-                             training_record: str = "pipeline") -> str:
-    """A checkpoint built on `data_dir`'s tensors; returns the digest written.
-
-    The model is built on the workspace's own tensors, as training builds it
-    (metadata and input widths from the graph data), so `build_shepherd_model`
-    can rebuild it. Its record is training's, from training's
-    reads of this workspace, then narrowed for the R10 options.
-    """
-    import torch
-
-    from scripts.train_model import read_training_inputs, training_input_digests
-    from src.kg.artifacts import GRAPH_ARTIFACTS
-    from src.models.gnn.shepherd_gnn import ShepherdGNN, ShepherdGNNConfig
-    from src.utils.checkpoint_io import write_checkpoint
-
-    if training_record not in TRAINING_RECORDS:
-        raise ValueError(f"training_record must be one of {TRAINING_RECORDS}")
-    inputs = read_training_inputs(data_dir)
-    digests = training_input_digests(inputs)
-    if training_record == "no_validation":
-        del digests["val_samples"]
-    elif training_record == "graph_only":
-        digests = {role: digests[role] for role in GRAPH_ARTIFACTS}
-
-    x_dict = inputs.graph.graph_data["x_dict"]
-    edge_index_dict = inputs.graph.graph_data["edge_index_dict"]
-    config = {"hidden_dim": HIDDEN_DIM, "num_layers": 2, "num_heads": 2}
-    torch.manual_seed(MODEL_SEED)
-    model = ShepherdGNN(
-        metadata=(list(x_dict), list(edge_index_dict)),
-        in_channels_dict={node_type: x.size(-1) for node_type, x in x_dict.items()},
-        config=ShepherdGNNConfig(**config),
-    )
-    return write_checkpoint(
-        {
-            "state_dict": model.state_dict(),
-            "config": config,
-            "epoch": 1,
-            "logs": {"val_mrr": 0.0},
-            "training_input_digests": digests,
-        },
-        path,
-    )
-
-
 def write_checkpoint_without_model_spec(path: Path, *,
                                         data_dir: Optional[Path] = None) -> str:
     """A checkpoint without a model spec, written without any model class;
     returns the digest written.
 
-    It holds no weights: only its `epoch` and `logs` (`val_mrr` 0.0, as
-    `write_fixture_checkpoint` records) and, with `data_dir`, its record. The
-    lists read whether a `model_spec` is there (none, so the file is listed as
-    history), its `epoch` and `logs` and its record's `split_manifest`.
+    It holds no weights: only its `epoch` and `logs` (`val_mrr` 0.0) and,
+    with `data_dir`, its record. The lists read whether a `model_spec` is
+    there (none, so the file is listed as history), its `epoch` and `logs`
+    and its record's `split_manifest`.
     Measurement and serving compare the record's graph roles first; then both
     refuse the file for its missing model spec, serving before any model is
     built. Training's run plan refuses it as written before the model spec.
@@ -288,7 +234,6 @@ def import_version(registry: Path, data_dir: Path, source: Path, *, label: str =
 def build_registered_cohort(
     root: Path,
     *,
-    training_record: str = "pipeline",
     source: str = "graph",
     label: str = LABEL,
     role: str = ROLE,
@@ -306,8 +251,7 @@ def build_registered_cohort(
 
     data_dir = write_demo_workspace(root / "workspace")
     checkpoint = root / "checkpoints" / "best.pt"
-    checkpoint_sha256 = write_fixture_checkpoint(data_dir, checkpoint,
-                                                 training_record=training_record)
+    checkpoint_sha256 = write_checkpoint_without_model_spec(checkpoint, data_dir=data_dir)
     cases = graph_source_cases(data_dir) if source == "graph" else val_source_cases(data_dir)
     source_path = write_source(root / SOURCE_FILENAME, cases)
     registry = root / "registry"
@@ -392,7 +336,6 @@ __all__ = [
     "ROLE",
     "RegisteredCohort",
     "SOURCES",
-    "TRAINING_RECORDS",
     "UNKNOWN_HPO",
     "UNKNOWN_HPO_2",
     "UNKNOWN_MONDO",
@@ -404,6 +347,5 @@ __all__ = [
     "val_source_cases",
     "write_checkpoint_without_model_spec",
     "write_demo_workspace",
-    "write_fixture_checkpoint",
     "write_source",
 ]

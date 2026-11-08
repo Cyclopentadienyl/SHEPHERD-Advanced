@@ -453,14 +453,12 @@ class TestAFileWithoutAModelSpecIsRefusedAtLoad:
     def _observe_builds(monkeypatch):
         """Each build step a load can take, noted, then made as asked: the
         bundle (`load_bundle` imports `build_bundle` when it is called), the
-        ShepherdGNN factory, the graph view and the view vectors."""
+        graph view and the view vectors."""
         import src.kg.graph_view as graph_view
         import src.models.bundle.builder as builder
-        import src.models.gnn.shepherd_gnn as shepherd_gnn
 
         built = []
-        for owner, name in ((builder, "build_bundle"), (shepherd_gnn, "build_shepherd_model"),
-                            (graph_view, "build_graph_view"),
+        for owner, name in ((builder, "build_bundle"), (graph_view, "build_graph_view"),
                             (DiagnosisPipeline, "_precompute_node_embeddings")):
             def noted(*args, _name=name, _real=getattr(owner, name), **kwargs):
                 built.append(_name)

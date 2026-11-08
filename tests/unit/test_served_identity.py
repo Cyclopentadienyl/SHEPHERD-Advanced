@@ -1118,16 +1118,13 @@ def change_after_the_graph_read(monkeypatch, data_dir, target, data):
 def never_parsed_or_built(monkeypatch):
     """Fail the test if torch is handed a checkpoint's bytes (the reader's
     `BytesIO`; the graph's tensor files are parsed elsewhere, before it) or a
-    model is built, a task's model bundle or a ShepherdGNN."""
+    task's model bundle is built."""
     import src.models.bundle.record as bundle_record
-    import src.models.gnn.shepherd_gnn as shepherd_gnn
     import src.utils.checkpoint_io as checkpoint_io
 
     monkeypatch.setattr(checkpoint_io, "BytesIO",
                         lambda *a, **k: pytest.fail("torch was handed the checkpoint's bytes"))
     monkeypatch.setattr(bundle_record, "load_bundle",
-                        lambda *a, **k: pytest.fail("a model was built from them"))
-    monkeypatch.setattr(shepherd_gnn, "build_shepherd_model",
                         lambda *a, **k: pytest.fail("a model was built from them"))
 
 

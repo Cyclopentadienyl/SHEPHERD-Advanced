@@ -75,7 +75,6 @@ from tests.fixtures.registered_cohort import (
     import_version,
     val_source_cases,
     write_checkpoint_without_model_spec,
-    write_fixture_checkpoint,
     write_source,
 )
 
@@ -1201,21 +1200,6 @@ def test_the_fixture_checkpoint_loads_safely_and_matches_the_workspace_graph(reg
                        ("val_samples", "val_samples.json"),
                        ("split_manifest", "split_manifest.json")):
         assert record[role] == _sha((registered.data_dir / name).read_bytes()), role
-
-
-@pytest.mark.parametrize("option, roles", [
-    ("no_validation", {"train_samples", "node_features", "edge_indices", "num_nodes",
-                       "split_manifest", "kg"}),
-    ("graph_only", {"node_features", "edge_indices", "num_nodes", "kg"}),
-])
-def test_the_fixture_record_options(option, roles, registered, tmp_path):
-    from src.utils.checkpoint_io import read_checkpoint
-
-    path = tmp_path / "ck" / f"{option}.pt"
-    digest = write_fixture_checkpoint(registered.data_dir, path, training_record=option)
-    read = read_checkpoint(path, map_location="cpu", weights_only=True)
-    assert read.identity.sha256 == digest
-    assert set(read.checkpoint["training_input_digests"]) == roles
 
 
 @pytest.mark.parametrize("recorded", [True, False])
