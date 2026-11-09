@@ -903,6 +903,47 @@ def test_the_result_shows_aggregates_and_states_never_a_case_or_a_path(site):
     assert "R1 graph files match the workspace manifest" in html
 
 
+def _native_row(html):
+    """The value of the result's one "Native build" row."""
+    assert html.count('<span class="shep-k">Native build</span>') == 1
+    match = re.search(r'<span class="shep-k">Native build</span><span class="shep-v">(.*?)</span>',
+                      html)
+    return match.group(1)
+
+
+def test_the_result_names_its_native_build_in_one_line(site):
+    """research-comparison Stage 2b: the record's native build identity in the
+    run environment's one projection and wording, as Models shows it; a record
+    whose environment names no components (recorded before) reads "not
+    recorded"; what it shows is escaped."""
+    from src.utils.run_environment import (
+        PYG_NATIVE_KIND,
+        component_facts,
+        native_identity,
+        native_identity_text,
+    )
+
+    reports = tp.read_reports(LABEL)
+    run = tp.find(reports["runs"], "run_id", site.run_id)
+    record = run["record"]
+    components = record["environment"]["facts"]["components"]
+    assert components, "the measured run's environment names its components"
+
+    shown = _plain(_native_row(tp._record_html(record, run, {})))
+    assert shown == native_identity_text(native_identity(components))
+    assert all(name in shown for name in components)
+
+    facts = {key: value for key, value in record["environment"]["facts"].items()
+             if key != "components"}
+    older = {**record, "environment": {**record["environment"], "facts": facts}}
+    assert _native_row(tp._record_html(older, run, {})) == "not recorded"
+    hostile = {**record, "environment": {**record["environment"], "facts": {
+        **facts, "components": {"<img src=x onerror=alert(1)>": component_facts(
+            PYG_NATIVE_KIND, version="<b>1</b>")}}}}
+    row = _native_row(tp._record_html(hostile, run, {}))
+    assert "<img" not in row and "<b>" not in row and "&lt;img src=x" in row
+
+
 def test_a_result_of_another_or_no_mode_is_shown_as_recorded(site):
     """A record whose mode this version does not describe, or whose mode cannot
     be read, is named for what it is by the one display for every mode (R2):

@@ -485,7 +485,13 @@ The evidence modes above and the scorer-measurement modes are unrelated. Evidenc
 require. PyG's native extensions stay out of the lock because they come per platform: the deploy
 scripts take them from the data.pyg.org index for the installed torch (derived, not written a
 second time), or on ARM from the prebuilt release or a local build; A1 and A5 record their
-versions. The launcher's optional accelerators stay out of the lock, and every install of one is
+versions. Since research-comparison Stage 2b (BACKLOG 71) the one run environment collector
+(`src/utils/run_environment.py`), and so every checkpoint, every measurement's manifest, every ledger
+record and A1, also records each extension as a named component: installed, available, selected and
+in effect told apart (what was not observed reads unknown), its native libraries' count and aggregate
+SHA-256 (two builds of one version differ there; no file name is recorded), and the source receipt's
+facts where the receipt matches what is installed. The record views (Models, Test) show that identity
+on one line. Recorded, never a gate. The launcher's optional accelerators stay out of the lock, and every install of one is
 constrained to it (deployment guide §4.15). M5's GB10 acceptances (`b14c4de`, and the WebUI rounds of 2026-10-25) ran torch 2.10.0+cu130 with
 `torch_geometric` 2.8.1, the current baseline, which `deploy.sh` installs from the lock since Batch 1
 (its GB10 deploy and environment check at `0bc5178` passed, 2026-10-26; Windows not run); M4's ran

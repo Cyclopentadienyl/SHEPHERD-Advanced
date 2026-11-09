@@ -39,8 +39,9 @@ gets mistaken for "works":
     (``check_pyg_native_extensions``) — import/presence only, cheap enough to
     run on every page load. That module's install identity (the SHA-256 of
     wheels and installed native libraries, and the source receipt; BACKLOG 70,
-    71) reads and hashes files, so it runs at deploy time and nothing here
-    calls it (tests/unit/test_pyg_install_identity.py);
+    71) reads and hashes files, so it runs at deploy time and once per run in
+    the run environment collector (``src/utils/run_environment.py``), and
+    nothing here calls it (tests/unit/test_pyg_install_identity.py);
   - ``scripts/validate_pyg_ext.py`` — functional: it executes each compiled
     kernel and verifies the numbers.
 Nothing here claims native-kernel correctness; only that the modules import.

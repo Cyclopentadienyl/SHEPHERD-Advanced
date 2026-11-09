@@ -3189,6 +3189,17 @@ is `skip`, as before.
   digests: `scripts/validate_pyg_ext.py` (or `--receipt`) shows per distribution whether what is
   installed now is what it records, and a later install from elsewhere reads as differing, never as
   the receipt's. A record, never a gate: no version is judged anywhere.
+- **What every run records** (since research-comparison Stage 2b, BACKLOG 71). The run environment
+  that training writes into each checkpoint and a measurement into each manifest (and so each ledger
+  record), and the probe's A1, name each extension as a component: whether it is installed and
+  imports, its distribution version, its native libraries' count and aggregate SHA-256 (so two builds
+  of one version read apart), and, only where the receipt above matches what is installed, the
+  receipt's route, requested and resolved source, wheel SHA-256, torch and CUDA build, compiler
+  versions and flags; otherwise "not recorded", with why. Whether PyG used an extension for a given
+  operation is not observed and reads unknown. No file name or path is recorded. The Models and Test
+  pages show the identity on one line ("Native build"); a record written before reads "not
+  recorded". This holds for every route, the Linux index route and `deploy.cmd` included; only the
+  receipt is the two ARM routes'.
 - **What is verified**: these routes run in tests with stand-ins for the ARM host, GitHub, pip and
   the compilers (`tests/unit/test_deploy_pyg_route.py`), which is software simulation. Neither route
   has run on a GB10 since Stage 2a; each counts as verified there only by its own GB10 run.

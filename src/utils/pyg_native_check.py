@@ -25,10 +25,12 @@
 #     the wheel that was meant to be installed, and the path-free source receipt
 #     the deploy layer keeps in the virtual environment. It reads and hashes
 #     files, so it runs at deploy time (scripts/build_pyg_arm.sh, deploy.sh's
-#     prebuilt pull, through scripts/validate_pyg_ext.py), never on a page load.
-#     `stream_sha256` is its one digest. Never a gate on a model or a result: a
-#     difference is recorded, and only an install that is not what was meant to
-#     be installed fails the deploy step that made it.
+#     prebuilt pull, through scripts/validate_pyg_ext.py) and once per process
+#     where a run records its environment (src/utils/run_environment.py: each
+#     training run and measurement, and the deployment probe's A1), never on a
+#     page load. `stream_sha256` is its one digest. Never a gate on a model or a
+#     result: a difference is recorded, and only an install that is not what was
+#     meant to be installed fails the deploy step that made it.
 #   Standard library only, so the deploy layer can run it before anything else.
 # ==============================================================================
 """
@@ -53,8 +55,10 @@ from typing import Any, BinaryIO, Dict, List, Mapping, NamedTuple, Optional, Seq
 
 logger = logging.getLogger(__name__)
 
-# Native extensions PyG can offload kernels to. Tuple order = display order.
-_NATIVE_EXTENSIONS = ("pyg_lib", "torch_scatter", "torch_sparse", "torch_cluster")
+#: Native extensions PyG can offload kernels to, by import name. Tuple order =
+#: display order. Each one's distribution is named alike: PEP 503 compares
+#: ``pyg_lib`` and ``pyg-lib`` equal (`normalised_name`).
+NATIVE_EXTENSIONS = ("pyg_lib", "torch_scatter", "torch_sparse", "torch_cluster")
 
 
 class ExtensionStatus(NamedTuple):
@@ -90,7 +94,7 @@ def check_pyg_native_extensions(force: bool = False) -> Dict[str, ExtensionStatu
     global _cached
     if _cached is not None and not force:
         return _cached
-    _cached = {name: _probe(name) for name in _NATIVE_EXTENSIONS}
+    _cached = {name: _probe(name) for name in NATIVE_EXTENSIONS}
     return _cached
 
 
@@ -99,7 +103,7 @@ def get_missing_extensions(
 ) -> List[str]:
     """Names of extensions that failed to import (i.e. running on fallback)."""
     statuses = statuses or check_pyg_native_extensions()
-    return [name for name in _NATIVE_EXTENSIONS if not statuses[name].available]
+    return [name for name in NATIVE_EXTENSIONS if not statuses[name].available]
 
 
 def format_status_line(
@@ -108,7 +112,7 @@ def format_status_line(
     """One-line human-readable summary for logs."""
     statuses = statuses or check_pyg_native_extensions()
     parts = []
-    for name in _NATIVE_EXTENSIONS:
+    for name in NATIVE_EXTENSIONS:
         st = statuses[name]
         if st.available:
             parts.append(f"{name} {st.version or '?'} OK")
@@ -566,8 +570,12 @@ def receipt_path(prefix: Optional[os.PathLike] = None) -> Path:
     return Path(prefix if prefix is not None else sys.prefix).joinpath(*RECEIPT_LOCATION)
 
 
-def _installed_facts(native: Mapping[str, Optional[str]]) -> Dict[str, Any]:
-    """A set of native libraries, recorded without their names."""
+def installed_native_facts(native: Mapping[str, Optional[str]]) -> Dict[str, Any]:
+    """A set of native libraries, recorded without their names: how many there
+    are, `aggregate_sha256` of their names and digests (None when one cannot be
+    read), and their digests in order. The receipt records them, and the run
+    environment's native identity (`src.utils.run_environment`) is the count and
+    the aggregate, so the two compare as they are."""
     known = {name: digest for name, digest in native.items() if digest is not None}
     return {"native_count": len(native),
             "native_aggregate_sha256": aggregate_sha256(known) if len(known) == len(native)
@@ -612,7 +620,7 @@ def build_receipt(
             "requested": source,
             "resolved": resolved,
             "installed": {"version": check.installed.version,
-                          **_installed_facts(check.installed.native or {})},
+                          **installed_native_facts(check.installed.native or {})},
             "wheel": {"file": wheel.file, "sha256": wheel.sha256},
         })
     return {
@@ -643,17 +651,24 @@ def write_receipt(receipt: Mapping[str, Any], prefix: Optional[os.PathLike] = No
     return target
 
 
+def _no_constant(name: str) -> Any:
+    raise ValueError(f"the receipt holds {name}, which is not a number it records")
+
+
 def read_receipt(prefix: Optional[os.PathLike] = None) -> Optional[Dict[str, Any]]:
     """The receipt kept at `prefix` (default: this interpreter's), or None when
     there is none. A file that is not a receipt of a known schema raises
-    `ValueError`, with what it is not."""
+    `ValueError`, with what it is not (NaN or infinity included)."""
     target = receipt_path(prefix)
     try:
         with target.open("rb") as handle:
             data = handle.read()
     except FileNotFoundError:
         return None
-    receipt = json.loads(data.decode("utf-8"))
+    # A receipt is plain JSON: NaN or infinity is no value it holds, and one
+    # would stop every record that copies the receipt's facts (the ledger's
+    # encoding refuses them).
+    receipt = json.loads(data.decode("utf-8"), parse_constant=_no_constant)
     if not isinstance(receipt, dict) or receipt.get("receipt") != RECEIPT_KIND:
         raise ValueError("the file is not a PyG native source receipt")
     if receipt.get("schema") != RECEIPT_SCHEMA or not isinstance(receipt.get("wheels"), list):
@@ -666,42 +681,52 @@ RECEIPT_MATCHES = "matches"
 RECEIPT_DIFFERS = "differs"
 
 
+def receipt_entry_state(entry: Mapping[str, Any], installed: InstalledIdentity
+                        ) -> Dict[str, Any]:
+    """**The one comparison** of a receipt's entry (one of its ``wheels``) with
+    the distribution installed under its name, as `installed_identity` read it.
+
+    Keyed by the installed native digests: it ``matches`` only when the
+    installed version and the aggregate of the installed native libraries
+    equal the entry's; otherwise it ``differs``, with the reason (fixed words
+    and versions, never a path or a file name). Information only: a difference
+    never refuses anything.
+    """
+    recorded = entry.get("installed")
+    recorded = recorded if isinstance(recorded, Mapping) else {}
+    if installed.copies == 0:
+        reason = "it is not installed now"
+    elif installed.native is None:
+        reason = "its installed file list (RECORD) cannot be read"
+    else:
+        facts = installed_native_facts(installed.native)
+        if installed.version != recorded.get("version"):
+            reason = (f"installed version {installed.version}, the receipt's "
+                      f"{recorded.get('version')}")
+        elif facts["native_aggregate_sha256"] is None:
+            reason = "an installed native library cannot be read"
+        elif facts["native_aggregate_sha256"] != recorded.get("native_aggregate_sha256"):
+            reason = "its installed native libraries are not the ones the receipt records"
+        else:
+            reason = None
+    return ({"state": RECEIPT_MATCHES} if reason is None
+            else {"state": RECEIPT_DIFFERS, "reason": reason})
+
+
 def receipt_against_installed(
     receipt: Mapping[str, Any], path: Optional[Sequence[str]] = None,
 ) -> Dict[str, Dict[str, Any]]:
-    """Each distribution the receipt names, against what is installed now.
-
-    Keyed by the installed native digests: an entry ``matches`` only when the
-    installed version and the aggregate of the installed native libraries
-    equal the receipt's; otherwise it ``differs``, with the reason. Information
-    only: a difference never refuses anything.
-    """
+    """Each distribution the receipt names, against what is installed now
+    (`receipt_entry_state`)."""
     states: Dict[str, Dict[str, Any]] = {}
     for entry in receipt.get("wheels", []):
         name = str(entry.get("distribution"))
-        recorded = entry.get("installed") or {}
-        installed = installed_identity(name, path)
-        if installed.copies == 0:
-            reason = "it is not installed now"
-        elif installed.native is None:
-            reason = "its installed file list (RECORD) cannot be read"
-        else:
-            facts = _installed_facts(installed.native)
-            if installed.version != recorded.get("version"):
-                reason = (f"installed version {installed.version}, the receipt's "
-                          f"{recorded.get('version')}")
-            elif facts["native_aggregate_sha256"] is None:
-                reason = "an installed native library cannot be read"
-            elif facts["native_aggregate_sha256"] != recorded.get("native_aggregate_sha256"):
-                reason = "its installed native libraries are not the ones the receipt records"
-            else:
-                reason = None
-        states[name] = ({"state": RECEIPT_MATCHES} if reason is None
-                        else {"state": RECEIPT_DIFFERS, "reason": reason})
+        states[name] = receipt_entry_state(entry, installed_identity(name, path))
     return states
 
 
 __all__ = [
+    "NATIVE_EXTENSIONS",
     "ExtensionStatus",
     "check_pyg_native_extensions",
     "get_missing_extensions",
@@ -734,5 +759,7 @@ __all__ = [
     "read_receipt",
     "RECEIPT_MATCHES",
     "RECEIPT_DIFFERS",
+    "installed_native_facts",
+    "receipt_entry_state",
     "receipt_against_installed",
 ]

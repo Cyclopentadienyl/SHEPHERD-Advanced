@@ -117,6 +117,7 @@ from src.evaluation.caveats import (
     recorded_metric_lines,
     recorded_value_text,
 )
+from src.utils.run_environment import native_identity_text
 from src.webui.components import model_list as ml
 from src.webui.components import renderers as r
 from src.webui.components.chips import D8_SHORT
@@ -875,6 +876,9 @@ def _mode_table(mode: Optional[str], views: Sequence[Mapping[str, Any]],
         if gpu is not None:
             environment += (f" · GPU {gpu.get('name') or 'name not read'}, driver "
                             f"{gpu.get('driver') or 'not read'}")
+        # The run environment's one wording of the native build identity, as
+        # the Test page shows it.
+        native = native_identity_text(view.get("native_identity"))
         origin = view.get("dataset_origin")
         # The record's run once, here; its merged reports and overlaps are in
         # the Record cell (the skill's rule 1.2).
@@ -886,7 +890,8 @@ def _mode_table(mode: Optional[str], views: Sequence[Mapping[str, Any]],
                 f'{" · " + r.e(" · ".join(others)) if others else ""}</span>'
                 f'{r10_html(view.get("r10"))}{semantics_html(view)}{fold}'
                 f'<span class="shep-mp-ln">Environment: {r.e(environment)} · Dataset: '
-                f'<b>{r.e(origin)}</b> · {r.e(registration)}</span></td></tr>')
+                f'<b>{r.e(origin)}</b> · {r.e(registration)}</span>'
+                f'<span class="shep-mp-ln">Native build: {r.e(native)}</span></td></tr>')
         body.append(main + more)
     heads = (f'<th scope="col" class="shep-num">{_column_head(mode, 0)}</th>'
              f'<th scope="col" class="shep-num">{_column_head(mode, 1)}</th>' if columns else

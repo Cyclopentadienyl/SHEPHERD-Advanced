@@ -147,6 +147,7 @@ from src.evaluation.caveats import (
     mode_note,
     recorded_metric_lines,
 )
+from src.utils.run_environment import native_identity, native_identity_text
 from src.webui.components import renderers as r
 from src.webui.components.chips import D8_SHORT, chips_on_change
 from src.webui.components.help import help_button
@@ -1604,6 +1605,16 @@ def _environment(record: Mapping[str, Any]) -> str:
     return e(text)
 
 
+def _native_build(record: Mapping[str, Any]) -> str:
+    """The record's native build identity in the run environment's one
+    projection and wording (`native_identity`, as the API's record view and
+    Models show it); "not recorded" for a run recorded before its environment
+    named components."""
+    environment = record.get("environment") if isinstance(record.get("environment"), Mapping) else {}
+    facts = environment.get("facts") if isinstance(environment.get("facts"), Mapping) else {}
+    return e(native_identity_text(native_identity(facts.get("components"))))
+
+
 def result_html(reports: Mapping[str, Any], run_id: Optional[str],
                 roots: Sequence[Tuple[str, str]], *, job: Optional[Mapping[str, Any]] = None,
                 notes: Optional[List[Mapping[str, Any]]] = None,
@@ -1806,6 +1817,7 @@ def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
         ("Relations", _relations(record.get("relations"))),
         *_r10_lines(record.get("r10")),
         ("Environment", _environment(record)),
+        ("Native build", _native_build(record)),
     ]
     origin = (record.get("dataset_record") or {}).get("origin") if isinstance(record.get("dataset_record"), Mapping) else None
     meaning = _ORIGIN_MEANING.get(origin)

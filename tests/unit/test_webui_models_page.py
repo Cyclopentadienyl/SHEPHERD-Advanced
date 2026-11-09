@@ -577,6 +577,33 @@ def test_kept_c_and_d_records_are_shown_as_recorded_by_the_one_display():
         assert "reached" not in _text(row) and "import-eligible" not in _text(row)
 
 
+def test_a_records_native_build_is_one_line_of_its_detail():
+    """research-comparison Stage 2b: each record's detail has one "Native
+    build" line, in the run environment's one wording (as the Test page shows
+    it): "not recorded" for the kept records, whose environment names no
+    components, and each component's identity and route for one that does."""
+    from src.utils.run_environment import PYG_NATIVE_KIND, component_facts, native_identity_text
+    from tests.unit.test_evaluation_sidecar import environment_block, registered_report
+
+    environment = environment_block()
+    environment["facts"]["components"] = {"pyg_lib": component_facts(
+        PYG_NATIVE_KIND, installed=True, available=True, version="0.8.0",
+        native={"state": "recorded", "count": 1, "aggregate_sha256": "a" * 64},
+        source={"state": "recorded", "route": "local build", "wheel_sha256": "b" * 64})}
+    records = _kept_c_and_d_records((registered_report(environment=environment), "e" * 64))
+    views = [mp.record_view(record) for record in records]
+
+    raw = mp.records_block_html(views, {})
+
+    words = _words(raw)
+    assert raw.count("Native build:") == 3
+    assert words.count("Native build: not recorded") == 2
+    assert native_identity_text(views[2]["native_identity"]) == (
+        "local build — pyg_lib 0.8.0 aaaaaaaaaaaa")
+    assert "Native build: local build — pyg_lib 0.8.0 aaaaaaaaaaaa" in words
+    assert "b" * 12 not in raw
+
+
 def test_a_mode_never_seen_before_is_shown_as_recorded_with_no_list_of_modes():
     """No list of modes decides what is shown (the reviewer, 2026-11-07: the
     three tasks are not a read whitelist): a record whose mode no build has

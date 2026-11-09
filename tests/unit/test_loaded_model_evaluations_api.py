@@ -60,6 +60,7 @@ from tests.fixtures.opens import count_opens  # noqa: E402
 from tests.fixtures.report_store import IMPORTED_AT, store_report  # noqa: E402
 from tests.unit.test_evaluation_sidecar import (  # noqa: E402
     cohort_version,
+    environment_block,
     r10_block,
     registered_report,
 )
@@ -79,7 +80,7 @@ RESPONSE_KEYS = {"state", "checkpoint_sha256", "ledger", "records", "records_not
 RECORD_VIEW_KEYS = {
     "cohort", "counts", "mode", "score_semantics", "metrics", "n_ranked", "relations", "r10",
     "environment_class",
-    "deterministic_algorithms", "gpu", "dataset_origin", "scoring_semantics_digest", "measurement_semantics_digest",
+    "deterministic_algorithms", "gpu", "native_identity", "dataset_origin", "scoring_semantics_digest", "measurement_semantics_digest",
     "registration", "run_id", "historical_overlap", "n_corroborating", "source_artifact_digest",
     "contest",
 }
@@ -288,6 +289,9 @@ def test_the_loaded_checkpoints_records_are_shown(app, served, tmp_path, monkeyp
     assert view["environment_class"] == "CUDA, deterministic algorithms on"
     assert view["deterministic_algorithms"] is True     # the record's regime says so (M5-3)
     assert view["gpu"] == {"name": "NVIDIA GeForce RTX 4090", "driver": "560.35"}
+    # Its environment names no components (as before research-comparison Stage
+    # 2b): no native build identity, shown as not recorded.
+    assert view["native_identity"] is None
     assert view["dataset_origin"] == "synthetic"
     assert view["scoring_semantics_digest"] == record["scoring_semantics_digest"]
     assert view["measurement_semantics_digest"] == record["measurement_semantics_digest"]
@@ -940,6 +944,98 @@ def test_a_record_that_is_not_an_object_or_names_no_digest_is_not_these_weights(
     assert len(body["records"]) == 1 and body["records_not_shown"] == 0
     # They belong to no model (policy rev 15): no model's view lists them.
     assert body["unreadable_records"] == []
+
+
+# ---------------------------------------------------------------------------
+# 5b. The native build identity (research-comparison Stage 2b, E1): one
+#     projection beside the GPU, validated like every other field
+# ---------------------------------------------------------------------------
+def _components():
+    """Two named components as the collector writes them: an extension built
+    locally, its source receipt matching what was installed, and a component
+    of another kind, selected but fallen back, with no source recorded."""
+    from src.utils.run_environment import PYG_NATIVE_KIND, component_facts
+
+    return {
+        "pyg_lib": component_facts(
+            PYG_NATIVE_KIND, installed=True, available=True, version="0.8.0",
+            native={"state": "recorded", "count": 2, "aggregate_sha256": "a" * 64},
+            source={"state": "recorded", "route": "local build",
+                    "requested": {"kind": "registry", "name": "pyg-lib", "specifier": "==0.8.0"},
+                    "resolved": {"version": "0.8.0"}, "wheel_sha256": "b" * 64,
+                    "compiled_against": {"torch": "2.10.0+cu130", "cuda": "13.0",
+                                         "basis": "the build's target environment"},
+                    "toolchain": {"gcc": "13.3.0"}, "flags": {"MAX_JOBS": "8"}}),
+        "test_attention": component_facts(
+            "attention kernel", installed=True, available=True, selected=True,
+            in_effect=False, fallback_reason="the run's dtype is not supported", version="2.0"),
+    }
+
+
+def _report_with_components(checkpoint_sha):
+    environment = environment_block()
+    environment["facts"]["components"] = _components()
+    return _report_for(checkpoint_sha, environment=environment)
+
+
+def test_a_records_native_build_identity_is_shown_by_component(app, served, tmp_path):
+    """Each component the record's environment names is shown by its identity:
+    kind, version, native libraries and route. Its states, fallback and source
+    details stay in the ledger record; no file name is anywhere."""
+    _, _, checkpoint = served
+    _register(_report_with_components(_sha(checkpoint)), checkpoint.parent,
+              tmp_path / "reports")
+
+    (view,) = _get(app)["records"]
+
+    assert view["native_identity"] == {
+        "pyg_lib": {"kind": "PyG native extension", "version": "0.8.0",
+                    "native": {"state": "recorded", "count": 2, "aggregate_sha256": "a" * 64},
+                    "source": {"state": "recorded", "route": "local build"}},
+        "test_attention": {"kind": "attention kernel", "version": "2.0",
+                           "native": {"state": "not recorded", "count": None,
+                                      "aggregate_sha256": None},
+                           "source": {"state": "not recorded", "route": None}},
+    }
+    shown = json.dumps(view["native_identity"])
+    for detail in ("in_effect", "fallback", "requested", "toolchain", "MAX_JOBS", "b" * 64):
+        assert detail not in shown
+
+
+#: The native identity edited out of the collector's shape: each is listed
+#: with its reason by the ledger record's own path (`_RECORD_PATHS`).
+NATIVE_MALFORMED = {
+    "components not an object": (
+        _set(("environment", "facts", "components"), ["pyg_lib"]),
+        "environment.facts.components: Input should be a valid dictionary"),
+    "a component without its kind": (
+        _delete("environment", "facts", "components", "pyg_lib", "kind"),
+        "environment.facts.components.pyg_lib.kind: missing"),
+    "a native digest not hex": (
+        _set(("environment", "facts", "components", "pyg_lib", "native", "aggregate_sha256"),
+             "a" * 63),
+        "environment.facts.components.pyg_lib.native.aggregate_sha256: String should match "
+        "pattern '^[0-9a-f]{64}$'"),
+    "a recorded source without its route": (
+        _delete("environment", "facts", "components", "pyg_lib", "source", "route"),
+        "environment.facts.components.pyg_lib.source: a route is given exactly when the source "
+        "is recorded"),
+}
+
+
+@pytest.mark.parametrize("name", sorted(NATIVE_MALFORMED))
+def test_a_malformed_native_identity_is_listed_with_its_reason(app, served, tmp_path, name):
+    _, _, checkpoint = served
+    _register(_report_with_components(_sha(checkpoint)), checkpoint.parent,
+              tmp_path / "reports")
+    edit, reason = NATIVE_MALFORMED[name]
+    _edit_ledger(checkpoint.parent / "evaluations.json",
+                 lambda ledger: edit(ledger["records"][0]))
+
+    body = _get(app)
+
+    assert body["records"] == [] and body["records_not_shown"] == 1
+    assert body["unreadable_records"][0]["reason"] == reason
 
 
 # ---------------------------------------------------------------------------

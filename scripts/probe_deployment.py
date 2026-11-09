@@ -173,6 +173,11 @@ package installed more than once, and the packages outside the lock, the deploy
 scripts' (PyG's native extensions, cuVS and what they require) told from the
 ones nothing installed requires (an older lock's leftovers). A set that differs (a homelab's, say) is stated in the report and
 on the console, never hidden, and said again beside the acceptance's verdict.
+Since research-comparison Stage 2b, A1 also records each named component as
+every run's environment does (`src/utils/run_environment.collect_components`:
+the PyG extensions' native build identity, and the source receipt's facts where
+it matches what is installed), and the verdict states each one's identity and
+route.
     Phase M, after T6, on the probe's own deployment under <work>/m5: a copy of
     the demo workspace under its own workspace root, M2's resumed disease
     child copied into a run there, filed under its encoder kind, and T1's
@@ -652,6 +657,11 @@ def phase_environment(
     facts: Dict[str, Any] = {}
 
     def _runtime() -> Tuple[str, Dict[str, Any]]:
+        from src.utils.run_environment import (
+            collect_components,
+            native_identity,
+            native_identity_text,
+        )
         from src.utils.version_checker import probe_runtime
 
         runtime = probe_runtime(force=True)
@@ -669,8 +679,15 @@ def phase_environment(
                 if status.get("available")
             ),
             "runtime_status": runtime.get("status"),
+            # Beside the keys above (research-comparison Stage 2b, BACKLOG 71):
+            # each named component as every run's environment records it (the
+            # one collector, read once per process), its native identity and,
+            # where the source receipt matches what is installed, its source.
+            "components": collect_components(),
         }
         facts.update(collected)
+        print(f"         Native build: "
+              f"{native_identity_text(native_identity(collected['components']))}")
         return "runtime described", collected
 
     report.run("A1", "environment", "the runtime describes itself", _runtime)
@@ -2195,17 +2212,33 @@ def _precision_scope() -> str:
             f"{said(demo)}; the real part's R3 and R4 run in {said(real)}.")
 
 
+def _native_verdict(report: Report) -> Dict[str, Any]:
+    """A1's native build identity in short: each component's identity and
+    route (`native_identity`: its route only where the source receipt matched
+    what is installed, otherwise its source reads "not recorded"), or None
+    when A1 did not pass."""
+    from src.utils.run_environment import native_identity
+
+    a1 = next((probe for probe in report.probes if probe.probe_id == "A1"), None)
+    passed = a1 is not None and a1.status == "passed"
+    return {"A1": a1.status if a1 is not None else "not run",
+            "native_identity": native_identity(a1.facts.get("components")) if passed else None}
+
+
 def environment_verdict(report: Report) -> Dict[str, Any]:
     """A5's record in short, for the end of a run beside its verdict (the
     report's `m2_acceptance` and the console's last lines): whether the lock
     read is the committed one, and the names of what differs from it. A set
-    that differs is said again where the run ends, not only an hour earlier."""
+    that differs is said again where the run ends, not only an hour earlier.
+    Beside it, A1's native build identity (`_native_verdict`)."""
+    native = _native_verdict(report)
     a5 = next((probe for probe in report.probes if probe.probe_id == "A5"), None)
     if a5 is None or a5.status != "passed":
-        return {"A5": a5.status if a5 is not None else "not run"}
+        return {"A5": a5.status if a5 is not None else "not run", **native}
     facts = a5.facts
     outside = facts.get("installed_not_in_lock") or []
     return {
+        **native,
         "A5": "passed",
         "lock_sha256": facts.get("lock_sha256"),
         "lock_is_the_committed_one": facts.get("lock_is_the_committed_one"),

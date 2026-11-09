@@ -3243,6 +3243,14 @@ data.pyg.org 沒有 aarch64 wheel，所以由選單或 `PYG_ARM_STRATEGY` 在預
   `scripts/validate_pyg_ext.py`（或 `--receipt`）會逐一列出目前安裝的內容是否就是收據所記錄的；
   之後從別處安裝的版本會顯示為不符，絕不會被當成收據所記錄的那一份。它只是紀錄，不是關卡：任何
   地方都不判定版本。
+- **每次執行記錄的內容**（自 research-comparison Stage 2b 起，BACKLOG 71）。訓練寫入每個 checkpoint、
+  量測寫入每份 manifest（因此也進入每筆帳本紀錄）的執行環境，以及探針的 A1，都把每個擴充記為一個
+  元件：是否已安裝、能否匯入、套件版本、原生函式庫的數量與彙總 SHA-256（因此同一版本的兩個建置
+  可以區分），以及只有在上述收據與目前安裝的內容相符時，才記錄收據的路徑（route）、所要求與解析到的
+  來源、wheel 的 SHA-256、torch 與 CUDA 版本、編譯器版本與旗標；否則記為「not recorded」並說明原因。
+  PyG 在某個運算是否實際使用了某個擴充並未被觀測，記為未知。不記錄任何檔名或路徑。Models 與 Test
+  頁面以一行（「Native build」）顯示這個身分；在此之前寫入的紀錄顯示「not recorded」。這適用於
+  每一條安裝路徑，包括 Linux 索引路徑與 `deploy.cmd`；只有收據是兩條 ARM 路徑才有的。
 - **已驗證的範圍**：這些路徑在測試中以替身取代 ARM 主機、GitHub、pip 與編譯器執行
   （`tests/unit/test_deploy_pyg_route.py`），屬於軟體模擬。Stage 2a 之後兩條路徑都尚未在 GB10 上
   執行；各自只有在 GB10 上實際跑過才算在那裡驗證過。

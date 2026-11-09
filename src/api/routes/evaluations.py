@@ -72,8 +72,10 @@ validation is shown contested without them. Investigation notes are not shown
 here, nor by the Models page; only the Test page lists them (BACKLOG 40).
 
 **Aggregates only** (D7). A record is shown as its counts, metrics, relation
-states, R10 states and counts, environment class and GPU, dataset origin,
-registration, its run, digests and group description (field names, run ids and
+states, R10 states and counts, environment class, GPU and native build identity
+(each component's version, native libraries' count and aggregate digest, and
+source route; never a file name), dataset origin, registration, its run,
+digests and group description (field names, run ids and
 values; never a problem's words, which may name a server path: an unreadable
 record's reason is built from field names and fixed words only). No path (a record's R10
 evidence paths among them), no case id, no rank; a ledger problem names the
@@ -136,6 +138,7 @@ from src.evaluation.sidecar import (
 # How long an unreadable record's reason may be: `problem_line`'s own bound,
 # so the line it gives always fits the field.
 from src.utils.checkpoint_paths import _PROBLEM_LIMIT as _REASON_LIMIT
+from src.utils.run_environment import native_identity
 
 if TYPE_CHECKING:
     from src.utils.fingerprint import ReadIdentity
@@ -297,6 +300,44 @@ class RecordGpu(_Strict):
     driver: Optional[str]
 
 
+class RecordNativeLibraries(_Strict):
+    """A component's native libraries, without their names: their count and
+    the SHA-256 aggregate of their names and digests
+    (`src.utils.run_environment.read_pyg_native` gives the method)."""
+
+    state: _Text = Field(
+        ..., description="recorded; not installed; cannot be read (the count is set where the "
+        "file list was read); or not recorded. Shown as written")
+    count: Optional[_Count]
+    aggregate_sha256: Optional[_Digest]
+
+
+class RecordComponentSource(_Strict):
+    """Where a component came from: the deploy route of the source receipt,
+    only where that receipt matched what was installed."""
+
+    state: Literal["recorded", "not recorded"]
+    route: Optional[_Text] = None
+
+    @model_validator(mode="after")
+    def _a_route_only_when_recorded(self) -> "RecordComponentSource":
+        if (self.route is not None) != (self.state == "recorded"):
+            raise ValueError("a route is given exactly when the source is recorded")
+        return self
+
+
+class RecordComponent(_Strict):
+    """One named component of the measuring run's environment (E1), by its
+    identity: what it is, its distribution version, its native libraries and
+    its source's route. What was installed, available, selected or in effect
+    stays in the ledger record."""
+
+    kind: _Text
+    version: Optional[str]
+    native: RecordNativeLibraries
+    source: RecordComponentSource
+
+
 class RecordRegistration(_Strict):
     sequence: Annotated[int, Field(strict=True, ge=1)]
     registered_at: _Text
@@ -335,6 +376,15 @@ class RecordView(_Strict):
         "record's regime says (a CPU run's environment class does not carry it); null when the "
         "record does not say")
     gpu: Optional[RecordGpu] = Field(..., description="null for a run off CUDA")
+    native_identity: Optional[Dict[str, RecordComponent]] = Field(
+        ..., description="The native build identity of each named component of the measuring "
+        "run's environment (`environment.facts.components`, recorded since research-comparison "
+        "Stage 2b; today PyG's native extensions), by name: its kind and distribution version, "
+        "its native libraries' count and aggregate SHA-256 (or why not), and its source's "
+        "deploy route where the source receipt matched what was installed. Two builds of one "
+        "version differ in the digest. null for a record whose environment names no "
+        "components (written before; shown as not recorded). Recorded, never compared or "
+        "enforced (R11)")
     dataset_origin: Literal["files", "synthetic"]
     scoring_semantics_digest: _Digest
     measurement_semantics_digest: _Digest
@@ -555,6 +605,9 @@ def _record_view(record: Dict[str, Any], identity: Optional[RecordIdentity] = No
     cohort = _pick(_at(record, "cohort"), RecordCohort.model_fields)
     if isinstance(cohort, dict):
         cohort = {**cohort, "version_manifest_sha256": _at(record, "cohort_digest")}
+    # The run environment's one projection; a record written before its
+    # environment named components has none.
+    components = _at(record, "environment", "facts", "components")
     return RecordView(
         cohort=cohort,
         counts=_pick(_at(record, "cohort", "counts"), RecordCounts.model_fields),
@@ -576,6 +629,7 @@ def _record_view(record: Dict[str, Any], identity: Optional[RecordIdentity] = No
         environment_class=environment_class(record),
         deterministic_algorithms=_recorded_determinism(record),
         gpu=_pick(_at(record, "environment", "facts", "gpu"), RecordGpu.model_fields),
+        native_identity=None if components is _NOT_THERE else native_identity(components),
         dataset_origin=_at(record, "dataset_record", "origin"),
         scoring_semantics_digest=_at(record, "scoring_semantics_digest"),
         measurement_semantics_digest=_at(record, "measurement_semantics_digest"),
@@ -714,6 +768,7 @@ _RECORD_PATHS: Dict[Tuple[str, ...], Tuple[str, ...]] = {
     ("mode",): ("scoring", "mode"),
     ("score_semantics",): ("scoring", "score_semantics"),
     ("gpu",): ("environment", "facts", "gpu"),
+    ("native_identity",): ("environment", "facts", "components"),
     ("dataset_origin",): ("dataset_record", "origin"),
 }
 

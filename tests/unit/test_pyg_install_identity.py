@@ -52,6 +52,7 @@ from src.utils.pyg_native_check import (
     is_native_library,
     read_receipt,
     receipt_against_installed,
+    receipt_entry_state,
     receipt_path,
     stream_sha256,
     strip_credentials,
@@ -375,6 +376,12 @@ def test_the_receipt_is_kept_in_the_virtual_environment_and_read_back(tmp_path, 
     written.write_text(json.dumps({**receipt, "schema": 99}))
     with pytest.raises(ValueError, match="schema 99"):
         read_receipt(venv)
+    # NaN or infinity is no value a receipt records, and a run environment
+    # that copied one would stop its record's write (research-comparison 2b).
+    for constant in ("NaN", "Infinity", "-Infinity"):
+        written.write_text(json.dumps(receipt)[:-1] + f', "x": {constant}}}')
+        with pytest.raises(ValueError, match=f"holds {constant}"):
+            read_receipt(venv)
 
     monkeypatch.setattr(sys, "base_prefix", sys.prefix)
     with pytest.raises(NotAVirtualEnvironment):
@@ -392,6 +399,22 @@ def test_the_receipt_is_keyed_by_the_installed_native_digests(tmp_path):
                                                       "the ones the receipt records"}}
     assert receipt_against_installed(receipt, path=[str(tmp_path / "nothing")]) == {
         "pkg_a": {"state": RECEIPT_DIFFERS, "reason": "it is not installed now"}}
+
+
+def test_one_entry_is_compared_by_the_one_comparison_with_an_identity_already_read(tmp_path):
+    """`receipt_entry_state` is what `receipt_against_installed` does per
+    entry; the run environment collector gives it the identity it has read,
+    so nothing is hashed twice."""
+    receipt, _, site = _receipt_for(tmp_path)
+    (entry,) = receipt["wheels"]
+    installed = installed_identity("pkg_a", path=[str(site)])
+
+    assert receipt_entry_state(entry, installed) == {"state": RECEIPT_MATCHES}
+    assert receipt_entry_state({**entry, "installed": {**entry["installed"], "version": "0.9"}},
+                               installed) == {
+        "state": RECEIPT_DIFFERS, "reason": "installed version 1.0, the receipt's 0.9"}
+    assert receipt_entry_state({**entry, "installed": "not an object"}, installed)[
+        "state"] == RECEIPT_DIFFERS
 
 
 def test_the_installed_identity_reads_the_record_of_the_first_copy(tmp_path):
@@ -428,7 +451,8 @@ def test_the_page_load_reporter_never_reaches_the_hashing_half():
     """version_checker runs on page loads: it uses the import probe only."""
     hashing = {"stream_sha256", "aggregate_sha256", "wheel_identity", "installed_identity",
                "check_installed_against_wheels", "tree_sha256", "describe_source",
-               "read_receipt", "receipt_against_installed", "build_receipt", "write_receipt"}
+               "read_receipt", "receipt_against_installed", "build_receipt", "write_receipt",
+               "installed_native_facts", "receipt_entry_state"}
     tree = ast.parse((REPO / "src" / "utils" / "version_checker.py").read_text(encoding="utf-8"))
     named = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
     named |= {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}

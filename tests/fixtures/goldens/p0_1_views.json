@@ -62,6 +62,7 @@
             "mode": "disease",
             "n_corroborating": 0,
             "n_ranked": 80,
+            "native_identity": null,
             "r10": {
               "training": {
                 "disease_overlap": {
@@ -170,6 +171,7 @@
             "mode": "disease",
             "n_corroborating": 0,
             "n_ranked": 80,
+            "native_identity": null,
             "r10": {
               "training": {
                 "disease_overlap": {
@@ -256,6 +258,7 @@
             "mode": "C",
             "n_corroborating": 0,
             "n_ranked": 80,
+            "native_identity": null,
             "r10": {
               "training": {
                 "disease_overlap": {
@@ -346,6 +349,7 @@
             "mode": "D",
             "n_corroborating": 0,
             "n_ranked": 56,
+            "native_identity": null,
             "r10": {
               "training": {
                 "disease_overlap": {
@@ -457,6 +461,7 @@
             "mode": "disease",
             "n_corroborating": 0,
             "n_ranked": 8,
+            "native_identity": null,
             "r10": {
               "training": {
                 "disease_overlap": {
@@ -568,6 +573,7 @@
             "mode": "gene",
             "n_corroborating": 0,
             "n_ranked": 8,
+            "native_identity": null,
             "r10": {
               "training": {
                 "disease_overlap": {
@@ -679,6 +685,7 @@
             "mode": "patients_like_me",
             "n_corroborating": 0,
             "n_ranked": 2,
+            "native_identity": null,
             "r10": {
               "training": {
                 "disease_overlap": {
@@ -797,6 +804,7 @@
             "mode": "disease",
             "n_corroborating": 1,
             "n_ranked": 80,
+            "native_identity": null,
             "r10": {
               "training": {
                 "disease_overlap": {
@@ -907,6 +915,7 @@
             "mode": "disease",
             "n_corroborating": 0,
             "n_ranked": 80,
+            "native_identity": null,
             "r10": {
               "training": {
                 "disease_overlap": {
@@ -1023,6 +1032,7 @@
             "mode": "disease",
             "n_corroborating": 1,
             "n_ranked": 80,
+            "native_identity": null,
             "r10": {
               "training": {
                 "disease_overlap": {
