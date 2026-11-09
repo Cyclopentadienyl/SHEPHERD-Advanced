@@ -1,0 +1,2639 @@
+{
+  "allocator": {
+    "PYTORCH_ALLOC_CONF": "backend:cudaMallocAsync",
+    "PYTORCH_CUDA_ALLOC_CONF": null,
+    "SHEPHERD_ALLOC_SOURCE": "preset",
+    "backend": "cudaMallocAsync",
+    "source": "saved preset",
+    "torch_imported_before": false
+  },
+  "environment": {
+    "allocator_backend": "cudaMallocAsync",
+    "capability": "12.1",
+    "cuda_arch_support": {
+      "arch_list": [
+        "sm_80",
+        "sm_90",
+        "sm_100",
+        "sm_110",
+        "sm_120",
+        "compute_120"
+      ],
+      "device_capability": "12.1",
+      "native_kernels_expected": false,
+      "natively_compiled_for_this_device": false,
+      "ptx_available": [
+        "compute_120"
+      ]
+    },
+    "cuda_available": true,
+    "device_count": 1,
+    "device_name": "NVIDIA GB10",
+    "installed_against_lock": {
+      "counted_once": [
+        {
+          "name": "shepherd-advanced",
+          "version": "0.2.0",
+          "why": "its editable install and the metadata its build left in the checkout's source tree"
+        }
+      ],
+      "declared_not_installed": [],
+      "installed_distributions": 121,
+      "installed_more_than_once": [],
+      "installed_not_in_lock": [
+        {
+          "name": "cuda-python",
+          "version": "13.0.3",
+          "why": "deploy_scripts"
+        },
+        {
+          "name": "cuda-toolkit",
+          "version": "13.0.2",
+          "why": "deploy_scripts"
+        },
+        {
+          "name": "cuvs-cu13",
+          "version": "26.6.0",
+          "why": "deploy_scripts"
+        },
+        {
+          "name": "libcuvs-cu13",
+          "version": "26.6.0",
+          "why": "deploy_scripts"
+        },
+        {
+          "name": "libraft-cu13",
+          "version": "26.6.0",
+          "why": "deploy_scripts"
+        },
+        {
+          "name": "librmm-cu13",
+          "version": "26.6.0",
+          "why": "deploy_scripts"
+        },
+        {
+          "name": "pip",
+          "version": "26.3",
+          "why": "required_by_nothing_installed"
+        },
+        {
+          "name": "pyg-lib",
+          "version": "0.8.0",
+          "why": "deploy_scripts"
+        },
+        {
+          "name": "pylibraft-cu13",
+          "version": "26.6.0",
+          "why": "deploy_scripts"
+        },
+        {
+          "name": "rapids-logger",
+          "version": "0.2.3",
+          "why": "deploy_scripts"
+        },
+        {
+          "name": "rmm-cu13",
+          "version": "26.6.0",
+          "why": "deploy_scripts"
+        },
+        {
+          "name": "torch-cluster",
+          "version": "1.6.3",
+          "why": "deploy_scripts"
+        },
+        {
+          "name": "torch-scatter",
+          "version": "2.1.2",
+          "why": "deploy_scripts"
+        },
+        {
+          "name": "torch-sparse",
+          "version": "0.6.18",
+          "why": "deploy_scripts"
+        },
+        {
+          "name": "wheel",
+          "version": "0.48.0",
+          "why": "required_by_nothing_installed"
+        }
+      ],
+      "lock_is_the_committed_one": true,
+      "lock_packages": 172,
+      "lock_sha256": "0f92a5ecff12170bb26127c9d7098ab4301ffac8c7c3bcbd4b7dc9723815c356",
+      "locked_not_installed": [
+        "absl-py",
+        "ast-serialize",
+        "audioop-lts",
+        "black",
+        "blis",
+        "catalogue",
+        "cfgv",
+        "cloudpathlib",
+        "colorama",
+        "confection",
+        "coverage",
+        "cymem",
+        "distlib",
+        "execnet",
+        "fhir-core",
+        "fhir-resources",
+        "grimp",
+        "grpcio",
+        "hl7",
+        "identify",
+        "import-linter",
+        "iniconfig",
+        "joblib",
+        "librt",
+        "markdown",
+        "memory-profiler",
+        "murmurhash",
+        "mypy",
+        "mypy-extensions",
+        "nodeenv",
+        "pathspec",
+        "pipdeptree",
+        "platformdirs",
+        "pluggy",
+        "pre-commit",
+        "preshed",
+        "protobuf",
+        "py-spy",
+        "pytest",
+        "pytest-asyncio",
+        "pytest-cov",
+        "pytest-xdist",
+        "python-discovery",
+        "pytokens",
+        "regex",
+        "ruff",
+        "safetensors",
+        "scikit-learn",
+        "sentence-transformers",
+        "smart-open",
+        "spacy",
+        "spacy-legacy",
+        "spacy-loggers",
+        "srsly",
+        "tensorboard",
+        "tensorboard-data-server",
+        "thinc",
+        "threadpoolctl",
+        "tokenizers",
+        "torch-tb-profiler",
+        "transformers",
+        "virtualenv",
+        "wasabi",
+        "weasel",
+        "werkzeug",
+        "wrapt"
+      ],
+      "version_differs": [],
+      "versions_match_lock": true
+    },
+    "platform": "Linux aarch64",
+    "pyg_native_present": [
+      "pyg_lib",
+      "torch_cluster",
+      "torch_scatter",
+      "torch_sparse"
+    ],
+    "python": "3.12.3",
+    "resolved_device": "cuda",
+    "runtime_status": "notice",
+    "torch_cuda_build": "13.0",
+    "torch_geometric": "2.8.1",
+    "torch_version": "2.10.0+cu130",
+    "total_memory_gb": 130.7
+  },
+  "generated_utc": "2026-11-09T07:16:40Z",
+  "m2_acceptance": {
+    "complete": true,
+    "demo": {
+      "complete": true,
+      "not_passed": {},
+      "requested": true,
+      "required": [
+        "A2",
+        "B1",
+        "C1",
+        "D1",
+        "D2",
+        "E1",
+        "E7",
+        "E8",
+        "M1",
+        "M2",
+        "M3",
+        "M4",
+        "M5.pre_contract",
+        "M5.other_graph",
+        "M5.other_samples",
+        "M5.validated_parent",
+        "M5.missing",
+        "M5.no_model_spec",
+        "M6",
+        "M7",
+        "M8",
+        "M9",
+        "M10",
+        "C5.missing",
+        "C5.replaced",
+        "C5.other_graph",
+        "C5.unbound",
+        "C5.unreadable",
+        "C5.unidentified",
+        "B22",
+        "B23",
+        "M11.training",
+        "M11.serving",
+        "M11.measurement",
+        "T1",
+        "T2",
+        "T3",
+        "T4",
+        "T5",
+        "T6",
+        "A5",
+        "W1",
+        "W2",
+        "W3",
+        "W4",
+        "W5",
+        "W6",
+        "W7",
+        "W8",
+        "W9",
+        "W10",
+        "W11"
+      ]
+    },
+    "environment": {
+      "A5": "passed",
+      "declared_not_installed": [],
+      "installed_more_than_once": [],
+      "lock_is_the_committed_one": true,
+      "lock_sha256": "0f92a5ecff12170bb26127c9d7098ab4301ffac8c7c3bcbd4b7dc9723815c356",
+      "not_in_lock": 15,
+      "not_in_lock_from_deploy_scripts": 13,
+      "not_in_lock_required_by_nothing_installed": [
+        "pip",
+        "wheel"
+      ],
+      "version_differs": [],
+      "versions_match_lock": true
+    },
+    "real_data": {
+      "complete": true,
+      "not_passed": {},
+      "requested": true,
+      "required": [
+        "R1",
+        "R2",
+        "R3",
+        "R4",
+        "R4.finetune",
+        "R5",
+        "R6",
+        "R7",
+        "R8",
+        "RT1",
+        "RT2",
+        "RT3",
+        "RW1",
+        "RW2",
+        "RW3"
+      ]
+    },
+    "scope": "M2's source contract on this machine, through the production entry points, on the model-bundle flow: a base trained, paused and resumed, a disease child finetuned from a base, paused and resumed and extended, the child measured by the disease protocol and served for the disease task. The real-data models are short trainings by the reference recipe that show the pipeline and its checks work; they are not models of serving quality, which is chosen by the established training and evaluation. Architecture, as the runs are built: the demo part trains the gatv2 encoder (the demo's model spec) and the real part the gatv2 encoder (the reference recipe's base spec, which R3 trains). Other encoder kinds are refused by the model-bundle builder and are outside this acceptance, their devices and precisions included, until the multi-architecture milestone. Precision, as the runs ask for it: the demo part's M2 and M9 run in mixed precision float16, as stated, and pass only with float16 in effect and a gradient scaler restored from the parent's state; the real part's R3 and R4 run in fp32, as the base recipe asks, with no mixed-precision claim. The run also carries contract M4's flow (T1-T6, RT1-RT3): a synthetic supplied cohort imported, measured, kept, registered and read back through the read-only view. That is a functional check of the flow and its refusals, not a measure of model quality, and not an institutional test, which waits for real data, its terms and a pre-declared protocol. It carries M5's acceptance where it runs headless too (A5, W1-W11, RW1-RW3): the environment against the lock beside the checkout, the server's lists, D8, CORS and the route guard on the service started as the launcher starts it, the GPU lock, and test and training jobs through the job runner, started and stopped; not the dashboard's layout or a browser session, and no long training."
+  },
+  "probes": [
+    {
+      "claim": "the runtime describes itself",
+      "detail": "runtime described",
+      "facts": {
+        "cuda_available": true,
+        "device_name": "NVIDIA GB10",
+        "platform": "Linux aarch64",
+        "pyg_native_present": [
+          "pyg_lib",
+          "torch_cluster",
+          "torch_scatter",
+          "torch_sparse"
+        ],
+        "python": "3.12.3",
+        "runtime_status": "notice",
+        "torch_cuda_build": "13.0",
+        "torch_geometric": "2.8.1",
+        "torch_version": "2.10.0+cu130"
+      },
+      "id": "A1",
+      "phase": "environment",
+      "seconds": 1.496,
+      "status": "passed"
+    },
+    {
+      "claim": "the serving device resolves",
+      "detail": "serving device is cuda",
+      "facts": {
+        "allocator_backend": "cudaMallocAsync",
+        "capability": "12.1",
+        "device_count": 1,
+        "resolved_device": "cuda",
+        "total_memory_gb": 130.7
+      },
+      "id": "A2",
+      "phase": "environment",
+      "seconds": 0.0,
+      "status": "passed"
+    },
+    {
+      "claim": "the build's architectures are recorded (informational)",
+      "detail": "no native kernels for this device \u2014 the expected, permanent state for a capability the vendor ships none for; A4 is what decides whether that matters here",
+      "facts": {
+        "arch_list": [
+          "sm_80",
+          "sm_90",
+          "sm_100",
+          "sm_110",
+          "sm_120",
+          "compute_120"
+        ],
+        "device_capability": "12.1",
+        "native_kernels_expected": false,
+        "natively_compiled_for_this_device": false,
+        "ptx_available": [
+          "compute_120"
+        ]
+      },
+      "id": "A3",
+      "phase": "environment",
+      "seconds": 0.0,
+      "status": "passed"
+    },
+    {
+      "claim": "kernels actually execute on this device and give the right answer",
+      "detail": "kernels execute on the device and agree with the host",
+      "facts": {
+        "matmul_max_abs_error": 4.6e-05
+      },
+      "id": "A4",
+      "phase": "environment",
+      "seconds": 0.372,
+      "status": "passed"
+    },
+    {
+      "claim": "the installed packages are recorded against the lock (informational)",
+      "detail": "the installed versions are the lock's; 15 installed package(s) outside the lock",
+      "facts": {
+        "counted_once": [
+          {
+            "name": "shepherd-advanced",
+            "version": "0.2.0",
+            "why": "its editable install and the metadata its build left in the checkout's source tree"
+          }
+        ],
+        "declared_not_installed": [],
+        "installed_distributions": 121,
+        "installed_more_than_once": [],
+        "installed_not_in_lock": [
+          {
+            "name": "cuda-python",
+            "version": "13.0.3",
+            "why": "deploy_scripts"
+          },
+          {
+            "name": "cuda-toolkit",
+            "version": "13.0.2",
+            "why": "deploy_scripts"
+          },
+          {
+            "name": "cuvs-cu13",
+            "version": "26.6.0",
+            "why": "deploy_scripts"
+          },
+          {
+            "name": "libcuvs-cu13",
+            "version": "26.6.0",
+            "why": "deploy_scripts"
+          },
+          {
+            "name": "libraft-cu13",
+            "version": "26.6.0",
+            "why": "deploy_scripts"
+          },
+          {
+            "name": "librmm-cu13",
+            "version": "26.6.0",
+            "why": "deploy_scripts"
+          },
+          {
+            "name": "pip",
+            "version": "26.3",
+            "why": "required_by_nothing_installed"
+          },
+          {
+            "name": "pyg-lib",
+            "version": "0.8.0",
+            "why": "deploy_scripts"
+          },
+          {
+            "name": "pylibraft-cu13",
+            "version": "26.6.0",
+            "why": "deploy_scripts"
+          },
+          {
+            "name": "rapids-logger",
+            "version": "0.2.3",
+            "why": "deploy_scripts"
+          },
+          {
+            "name": "rmm-cu13",
+            "version": "26.6.0",
+            "why": "deploy_scripts"
+          },
+          {
+            "name": "torch-cluster",
+            "version": "1.6.3",
+            "why": "deploy_scripts"
+          },
+          {
+            "name": "torch-scatter",
+            "version": "2.1.2",
+            "why": "deploy_scripts"
+          },
+          {
+            "name": "torch-sparse",
+            "version": "0.6.18",
+            "why": "deploy_scripts"
+          },
+          {
+            "name": "wheel",
+            "version": "0.48.0",
+            "why": "required_by_nothing_installed"
+          }
+        ],
+        "lock_is_the_committed_one": true,
+        "lock_packages": 172,
+        "lock_sha256": "0f92a5ecff12170bb26127c9d7098ab4301ffac8c7c3bcbd4b7dc9723815c356",
+        "locked_not_installed": [
+          "absl-py",
+          "ast-serialize",
+          "audioop-lts",
+          "black",
+          "blis",
+          "catalogue",
+          "cfgv",
+          "cloudpathlib",
+          "colorama",
+          "confection",
+          "coverage",
+          "cymem",
+          "distlib",
+          "execnet",
+          "fhir-core",
+          "fhir-resources",
+          "grimp",
+          "grpcio",
+          "hl7",
+          "identify",
+          "import-linter",
+          "iniconfig",
+          "joblib",
+          "librt",
+          "markdown",
+          "memory-profiler",
+          "murmurhash",
+          "mypy",
+          "mypy-extensions",
+          "nodeenv",
+          "pathspec",
+          "pipdeptree",
+          "platformdirs",
+          "pluggy",
+          "pre-commit",
+          "preshed",
+          "protobuf",
+          "py-spy",
+          "pytest",
+          "pytest-asyncio",
+          "pytest-cov",
+          "pytest-xdist",
+          "python-discovery",
+          "pytokens",
+          "regex",
+          "ruff",
+          "safetensors",
+          "scikit-learn",
+          "sentence-transformers",
+          "smart-open",
+          "spacy",
+          "spacy-legacy",
+          "spacy-loggers",
+          "srsly",
+          "tensorboard",
+          "tensorboard-data-server",
+          "thinc",
+          "threadpoolctl",
+          "tokenizers",
+          "torch-tb-profiler",
+          "transformers",
+          "virtualenv",
+          "wasabi",
+          "weasel",
+          "werkzeug",
+          "wrapt"
+        ],
+        "version_differs": [],
+        "versions_match_lock": true
+      },
+      "id": "A5",
+      "phase": "environment",
+      "seconds": 0.118,
+      "status": "passed"
+    },
+    {
+      "claim": "CONTROL: a sound workspace is written",
+      "detail": "a sound workspace was written",
+      "facts": {
+        "disjoint": true,
+        "train_diseases": 3,
+        "train_samples": 60,
+        "val_diseases": 1,
+        "val_samples": 20
+      },
+      "id": "B1",
+      "phase": "writer",
+      "seconds": 0.1,
+      "status": "passed"
+    },
+    {
+      "claim": "a zero feature width is refused",
+      "detail": "refused, and wrote nothing",
+      "facts": {},
+      "id": "B2",
+      "phase": "writer",
+      "seconds": 0.001,
+      "status": "passed"
+    },
+    {
+      "claim": "a fractional feature width is refused",
+      "detail": "refused, and wrote nothing",
+      "facts": {},
+      "id": "B3",
+      "phase": "writer",
+      "seconds": 0.0,
+      "status": "passed"
+    },
+    {
+      "claim": "a zero phenotype floor is refused",
+      "detail": "refused, and wrote nothing",
+      "facts": {},
+      "id": "B4",
+      "phase": "writer",
+      "seconds": 0.0,
+      "status": "passed"
+    },
+    {
+      "claim": "a boolean phenotype floor is refused",
+      "detail": "refused, and wrote nothing",
+      "facts": {},
+      "id": "B5",
+      "phase": "writer",
+      "seconds": 0.0,
+      "status": "passed"
+    },
+    {
+      "claim": "a bytes seed is refused",
+      "detail": "refused, and wrote nothing",
+      "facts": {},
+      "id": "B6",
+      "phase": "writer",
+      "seconds": 0.0,
+      "status": "passed"
+    },
+    {
+      "claim": "an object seed is refused",
+      "detail": "refused, and wrote nothing",
+      "facts": {},
+      "id": "B7",
+      "phase": "writer",
+      "seconds": 0.0,
+      "status": "passed"
+    },
+    {
+      "claim": "a boolean seed is refused",
+      "detail": "refused, and wrote nothing",
+      "facts": {},
+      "id": "B8",
+      "phase": "writer",
+      "seconds": 0.0,
+      "status": "passed"
+    },
+    {
+      "claim": "a boolean budget is refused",
+      "detail": "refused, and wrote nothing",
+      "facts": {},
+      "id": "B9",
+      "phase": "writer",
+      "seconds": 0.0,
+      "status": "passed"
+    },
+    {
+      "claim": "a budget too small to cover its partition is refused",
+      "detail": "refused, and wrote nothing",
+      "facts": {},
+      "id": "B10",
+      "phase": "writer",
+      "seconds": 0.0,
+      "status": "passed"
+    },
+    {
+      "claim": "a validation fraction outside (0, 1) is refused",
+      "detail": "refused, and wrote nothing",
+      "facts": {},
+      "id": "B11",
+      "phase": "writer",
+      "seconds": 0.0,
+      "status": "passed"
+    },
+    {
+      "claim": "a universe too small to split is refused",
+      "detail": "refused, and wrote nothing",
+      "facts": {},
+      "id": "B12",
+      "phase": "writer",
+      "seconds": 0.0,
+      "status": "passed"
+    },
+    {
+      "claim": "sources leaving a required input unidentified are refused",
+      "detail": "refused, and wrote nothing",
+      "facts": {},
+      "id": "B23",
+      "phase": "writer",
+      "seconds": 0.0,
+      "status": "passed"
+    },
+    {
+      "claim": "a refusal creates no directory at all",
+      "detail": "no directory was created",
+      "facts": {},
+      "id": "B13",
+      "phase": "writer",
+      "seconds": 0.0,
+      "status": "passed"
+    },
+    {
+      "claim": "a persisted call with an empty recipe is refused",
+      "detail": "refused, and the workspace was untouched",
+      "facts": {},
+      "id": "B15",
+      "phase": "writer",
+      "seconds": 0.001,
+      "status": "passed"
+    },
+    {
+      "claim": "a persisted call with an incomplete recipe is refused",
+      "detail": "refused, and the workspace was untouched",
+      "facts": {},
+      "id": "B16",
+      "phase": "writer",
+      "seconds": 0.0,
+      "status": "passed"
+    },
+    {
+      "claim": "a persisted call with a malformed recipe field is refused",
+      "detail": "refused, and the workspace was untouched",
+      "facts": {},
+      "id": "B17",
+      "phase": "writer",
+      "seconds": 0.0,
+      "status": "passed"
+    },
+    {
+      "claim": "a persisted call missing a graph digest is refused",
+      "detail": "refused, and the workspace was untouched",
+      "facts": {},
+      "id": "B18",
+      "phase": "writer",
+      "seconds": 0.0,
+      "status": "passed"
+    },
+    {
+      "claim": "a digest that is a 64-digit integer is refused",
+      "detail": "refused, and the workspace was untouched",
+      "facts": {},
+      "id": "B19",
+      "phase": "writer",
+      "seconds": 0.0,
+      "status": "passed"
+    },
+    {
+      "claim": "a persisted call that binds no dataset record is refused",
+      "detail": "refused, and the workspace was untouched",
+      "facts": {},
+      "id": "B22",
+      "phase": "writer",
+      "seconds": 0.0,
+      "status": "passed"
+    },
+    {
+      "claim": "a refused persisted call creates no directory at all",
+      "detail": "no directory was created",
+      "facts": {},
+      "id": "B20",
+      "phase": "writer",
+      "seconds": 0.0,
+      "status": "passed"
+    },
+    {
+      "claim": "CONTROL: a sound persisted call writes, and its digests match the files",
+      "detail": "it wrote, and its digests are of the bytes on disk",
+      "facts": {
+        "cohort_digests_verified": 2
+      },
+      "id": "B21",
+      "phase": "writer",
+      "seconds": 0.004,
+      "status": "passed"
+    },
+    {
+      "claim": "rebuilding under trained checkpoints is refused and writes nothing",
+      "detail": "the rebuild was refused and changed nothing",
+      "facts": {},
+      "id": "B14",
+      "phase": "writer",
+      "seconds": 0.018,
+      "status": "passed"
+    },
+    {
+      "claim": "CONTROL: the sound workspace verifies",
+      "detail": "every verifier accepted it",
+      "facts": {
+        "dataset_record": {
+          "binding": "verified",
+          "origin": "synthetic"
+        },
+        "disease_overlap": 0,
+        "kg_digest": "7980bf7d7492f139e92d71cf7cfe971030567a1a3fc79d715b6ef34d8631fae1",
+        "train_diseases": 3,
+        "val_diseases": 1,
+        "workspace_digests": {
+          "edge_indices.pt": "7624169d26decbe534873d25e385817c01485df08e5c6fe3df82222f2c854bec",
+          "kg.json": "7980bf7d7492f139e92d71cf7cfe971030567a1a3fc79d715b6ef34d8631fae1",
+          "kg.provenance.json": "9170959de0d57ea33dce4a05393e8f67232bb6332ac1cc879352a3c9a0af4396",
+          "node_features.pt": "fbe684bb388647b5fcd8d9359f06598e4424dee726691d08af11f0adb4e0581d",
+          "num_nodes.json": "2e747928e24494e04ddb4dd8b2135afbeef63cb5a64172ad4bc24b8b9c509bee",
+          "split_manifest.json": "07d1a98a57ff9030ef838cba0b80c4b4400754d26eae8bfa658ef5d68014e903",
+          "train_samples.json": "bf9675b667c6bdf9cfa63271b1df3418fc47205d82f9a980b4309c7243edc45e",
+          "val_samples.json": "92c8181eeb546d2ccfeb9d982e703cd879a08b762357740328e63b1a9dd63a40"
+        }
+      },
+      "id": "C1",
+      "phase": "workspace",
+      "seconds": 0.005,
+      "status": "passed"
+    },
+    {
+      "claim": "a replaced edge_indices artifact is refused",
+      "detail": "the replacement was refused",
+      "facts": {},
+      "id": "C2.edge_indices",
+      "phase": "workspace",
+      "seconds": 0.02,
+      "status": "passed"
+    },
+    {
+      "claim": "a replaced kg artifact is refused",
+      "detail": "the replacement was refused",
+      "facts": {},
+      "id": "C2.kg",
+      "phase": "workspace",
+      "seconds": 0.004,
+      "status": "passed"
+    },
+    {
+      "claim": "a replaced node_features artifact is refused",
+      "detail": "the replacement was refused",
+      "facts": {},
+      "id": "C2.node_features",
+      "phase": "workspace",
+      "seconds": 0.004,
+      "status": "passed"
+    },
+    {
+      "claim": "a replaced num_nodes artifact is refused",
+      "detail": "the replacement was refused",
+      "facts": {},
+      "id": "C2.num_nodes",
+      "phase": "workspace",
+      "seconds": 0.004,
+      "status": "passed"
+    },
+    {
+      "claim": "a workspace with no manifest is refused",
+      "detail": "an unbound workspace was refused",
+      "facts": {},
+      "id": "C3",
+      "phase": "workspace",
+      "seconds": 0.0,
+      "status": "passed"
+    },
+    {
+      "claim": "another workspace's kg.json is refused",
+      "detail": "another workspace's graph was refused",
+      "facts": {},
+      "id": "C4",
+      "phase": "workspace",
+      "seconds": 0.002,
+      "status": "passed"
+    },
+    {
+      "claim": "a workspace whose dataset record is gone is refused",
+      "detail": "refused",
+      "facts": {
+        "binding": "unverifiable"
+      },
+      "id": "C5.missing",
+      "phase": "workspace",
+      "seconds": 0.002,
+      "status": "passed"
+    },
+    {
+      "claim": "another workspace's dataset record in its place is refused",
+      "detail": "refused",
+      "facts": {
+        "binding": "mismatch"
+      },
+      "id": "C5.replaced",
+      "phase": "workspace",
+      "seconds": 0.002,
+      "status": "passed"
+    },
+    {
+      "claim": "a record of another graph, rebound in the manifest, is refused",
+      "detail": "refused",
+      "facts": {
+        "binding": "mismatch"
+      },
+      "id": "C5.other_graph",
+      "phase": "workspace",
+      "seconds": 0.003,
+      "status": "passed"
+    },
+    {
+      "claim": "a manifest that binds no dataset record is refused",
+      "detail": "refused",
+      "facts": {
+        "binding": "unrecorded"
+      },
+      "id": "C5.unbound",
+      "phase": "workspace",
+      "seconds": 0.002,
+      "status": "passed"
+    },
+    {
+      "claim": "a bound record that is not a record is refused",
+      "detail": "refused",
+      "facts": {
+        "binding": "unverifiable"
+      },
+      "id": "C5.unreadable",
+      "phase": "workspace",
+      "seconds": 0.002,
+      "status": "passed"
+    },
+    {
+      "claim": "a bound files record leaving an input unidentified is refused",
+      "detail": "refused",
+      "facts": {
+        "binding": "verified"
+      },
+      "id": "C5.unidentified",
+      "phase": "workspace",
+      "seconds": 0.004,
+      "status": "passed"
+    },
+    {
+      "claim": "the production trainer runs here",
+      "detail": "the production trainer produced a base and a disease child of it",
+      "facts": {
+        "checkpoint_name": "last.pt",
+        "encoder_kind": "gatv2",
+        "epochs": 3,
+        "metric_names": [
+          "val_best_positive_mrr",
+          "val_conservative_denominator_pairs",
+          "val_conservative_pooled_mrr",
+          "val_coverage",
+          "val_macro_mrr",
+          "val_macro_precision@1",
+          "val_macro_precision@10",
+          "val_macro_precision@3",
+          "val_macro_precision@5",
+          "val_macro_recall@1",
+          "val_macro_recall@10",
+          "val_macro_recall@3",
+          "val_macro_recall@5",
+          "val_pooled_mrr",
+          "val_pooled_top1",
+          "val_pooled_top10",
+          "val_pooled_top3",
+          "val_pooled_top5",
+          "val_positive_pairs",
+          "val_ranked_units",
+          "val_units",
+          "val_units_ranked"
+        ],
+        "training_seconds": {
+          "base": 1.0,
+          "disease": 0.6
+        }
+      },
+      "id": "D1",
+      "phase": "training",
+      "seconds": 1.589,
+      "status": "passed"
+    },
+    {
+      "claim": "the child carries the digests of the workspace it read and names its base",
+      "detail": "the child names the workspace it was trained on and the base it came from",
+      "facts": {
+        "learning_stage": "finetune",
+        "operation": "finetune",
+        "parent_run": "20261109-143025_probe-base_8c7a3f",
+        "parent_sha256": "919ee2ee329f018fe41ca83efe29b4c92323eaea5ef9790c5a6fa09669ae63af",
+        "recorded_roles": [
+          "edge_indices",
+          "kg",
+          "node_features",
+          "num_nodes",
+          "split_manifest",
+          "train_samples",
+          "val_samples"
+        ],
+        "task": "disease"
+      },
+      "id": "D2",
+      "phase": "training",
+      "seconds": 0.016,
+      "status": "passed"
+    },
+    {
+      "claim": "CONTROL: a sound workspace serves",
+      "detail": "the pipeline built, the GNN is ready, and what it serves is identified",
+      "facts": {
+        "kg_nodes": 24,
+        "scoring_mode": "disease_task",
+        "served_identity": {
+          "checkpoint": {
+            "sha256": "f6cfca36e903534ef0899005f278874cf7cacf136ef78ca4ab694053443067df",
+            "state": "verified"
+          },
+          "dataset_record": {
+            "origin": "synthetic",
+            "sha256": "9170959de0d57ea33dce4a05393e8f67232bb6332ac1cc879352a3c9a0af4396",
+            "state": "verified"
+          },
+          "graph": {
+            "kg_sha256": "7980bf7d7492f139e92d71cf7cfe971030567a1a3fc79d715b6ef34d8631fae1",
+            "split_manifest_sha256": "07d1a98a57ff9030ef838cba0b80c4b4400754d26eae8bfa658ef5d68014e903",
+            "state": "verified"
+          },
+          "scoring_mode": "disease_task",
+          "settings": {
+            "device": "cuda:0",
+            "device_requested": "cuda",
+            "eta": null,
+            "max_path_length": 4,
+            "max_paths_per_candidate": 10,
+            "path_length_penalty": 0.9,
+            "phenotype_normalisation_version": 1,
+            "use_direct_path_optimization": true
+          },
+          "shortest_paths": {
+            "state": "absent"
+          }
+        }
+      },
+      "id": "E1",
+      "phase": "serving",
+      "seconds": 2.184,
+      "status": "passed"
+    },
+    {
+      "claim": "checkpoint metadata survives the encoder that serves it",
+      "detail": "metadata is JSON-primitive and the status encodes",
+      "facts": {
+        "metadata_types": {
+          "device": "str",
+          "epoch": "int",
+          "params": "int",
+          "train_loss": "float",
+          "val_pooled_mrr": "float"
+        },
+        "recorded_device": "cuda"
+      },
+      "id": "E2",
+      "phase": "serving",
+      "seconds": 0.0,
+      "status": "passed"
+    },
+    {
+      "claim": "a metric logged as a device tensor normalises rather than crashing",
+      "detail": "metrics recorded as cuda tensors normalise",
+      "facts": {
+        "tensor_device": "cuda"
+      },
+      "id": "E3",
+      "phase": "serving",
+      "seconds": 0.011,
+      "status": "passed"
+    },
+    {
+      "claim": "reloading builds the candidate beside the live pipeline",
+      "detail": "the reload succeeded and its response encodes",
+      "facts": {
+        "allocated_after_mb": 18.94,
+        "allocated_before_mb": 18.52,
+        "double_residency_conclusive": false,
+        "model_parameters": 106704,
+        "peak_during_reload_mb": 18.98,
+        "scoring_mode": "disease_task"
+      },
+      "id": "E4",
+      "phase": "serving",
+      "seconds": 0.062,
+      "status": "passed"
+    },
+    {
+      "claim": "a refused reload leaves the running pipeline serving",
+      "detail": "the refusal left every served field untouched",
+      "facts": {
+        "served_identity_unchanged": true
+      },
+      "id": "E5",
+      "phase": "serving",
+      "seconds": 0.046,
+      "status": "passed"
+    },
+    {
+      "claim": "a workspace with no manifest is named, not merely rejected",
+      "detail": "the missing manifest was named in the file report",
+      "facts": {},
+      "id": "E6",
+      "phase": "serving",
+      "seconds": 0.003,
+      "status": "passed"
+    },
+    {
+      "claim": "a diagnosis runs on this machine",
+      "detail": "a diagnosis ran end to end",
+      "facts": {
+        "candidates": 5,
+        "result_kind": "disease_task/v1",
+        "score_range": [
+          -3.214,
+          -2.7877
+        ],
+        "served_identity_is_the_built_pipelines": true
+      },
+      "id": "E7",
+      "phase": "serving",
+      "seconds": 0.003,
+      "status": "passed"
+    },
+    {
+      "claim": "the served model's parameters are on the requested device",
+      "detail": "every parameter is on cuda",
+      "facts": {
+        "embedding_devices": [
+          "cuda"
+        ],
+        "parameter_devices": [
+          "cuda"
+        ]
+      },
+      "id": "E8",
+      "phase": "serving",
+      "seconds": 0.0,
+      "status": "passed"
+    },
+    {
+      "claim": "PRECONDITION: a valid same-shaped workspace over another graph",
+      "detail": "a valid, same-shaped workspace over another graph",
+      "facts": {
+        "differing_roles": [
+          "kg",
+          "node_features"
+        ],
+        "same_structural_fingerprint": true
+      },
+      "id": "M1",
+      "phase": "m2",
+      "seconds": 0.022,
+      "status": "passed"
+    },
+    {
+      "claim": "CONTROL: a paused run resumes its remaining epoch and records it",
+      "detail": "paused after one of two epochs, resumed only the remaining one",
+      "facts": {
+        "amp_dtype": "float16",
+        "amp_enabled": true,
+        "amp_requested": true,
+        "attempts_per_epoch": 8,
+        "batches": 8,
+        "batches_skipped": 0,
+        "child_end_growth_tracker": 10,
+        "child_end_scale": 16384.0,
+        "child_optimizer_step": 14.0,
+        "child_run_attempts": 8,
+        "child_run_scheduler_steps": 0,
+        "child_run_skipped_updates": 0,
+        "child_run_updates": 8,
+        "child_sha256": "86b47cabb97757519cd123d4652c365da0ace30195a0a95b4a02ed7982c9d61e",
+        "end_values": "recorded, not judged",
+        "epochs_run": 1,
+        "grad_scaler": true,
+        "parent_attempts": 8,
+        "parent_optimizer_step": 6.0,
+        "parent_scaler": {
+          "_growth_tracker": 2,
+          "backoff_factor": 0.5,
+          "growth_factor": 2.0,
+          "growth_interval": 2000,
+          "scale": 16384.0
+        },
+        "parent_sha256": "e58244df4809f91bb17d786a3b94593ce0e719be76f29cfb570cf8479784c95c",
+        "parent_updates": 6,
+        "paused_end": "paused",
+        "precision_asked_by": "stated setting",
+        "recorded_roles": [
+          "edge_indices",
+          "kg",
+          "node_features",
+          "num_nodes",
+          "resume_checkpoint",
+          "split_manifest",
+          "train_samples",
+          "val_samples"
+        ],
+        "scaler_restore": "verified at restore: equal to the parent's before the first update",
+        "weight_tensors": 67,
+        "weight_tensors_changed": 67
+      },
+      "id": "M2",
+      "phase": "m2",
+      "seconds": 0.835,
+      "status": "passed"
+    },
+    {
+      "claim": "CONTROL: measurement accepts the resumed checkpoint over its graph",
+      "detail": "the resumed checkpoint was measured over its own workspace",
+      "facts": {
+        "authoritative_metrics": {
+          "best_positive_mrr": 0.32083333333333325,
+          "conservative_pooled_mrr": 0.32083333333333325,
+          "coverage": 1.0,
+          "macro_mrr": 0.32083333333333325,
+          "macro_precision@1": 0.0,
+          "macro_precision@10": 0.10000000000000002,
+          "macro_precision@100": 0.010000000000000002,
+          "macro_precision@20": 0.05000000000000001,
+          "macro_precision@3": 0.28333333333333327,
+          "macro_precision@5": 0.20000000000000004,
+          "macro_precision@50": 0.020000000000000004,
+          "macro_recall@1": 0.0,
+          "macro_recall@10": 1.0,
+          "macro_recall@100": 1.0,
+          "macro_recall@20": 1.0,
+          "macro_recall@3": 0.85,
+          "macro_recall@5": 1.0,
+          "macro_recall@50": 1.0,
+          "pooled_mrr": 0.32083333333333325,
+          "pooled_top1": 0.0,
+          "pooled_top10": 1.0,
+          "pooled_top100": 1.0,
+          "pooled_top20": 1.0,
+          "pooled_top3": 0.85,
+          "pooled_top5": 1.0,
+          "pooled_top50": 1.0
+        },
+        "checkpoint_sha256": "86b47cabb97757519cd123d4652c365da0ace30195a0a95b4a02ed7982c9d61e",
+        "dataset_record": {
+          "binding": "verified",
+          "origin": "synthetic",
+          "sha256": "9170959de0d57ea33dce4a05393e8f67232bb6332ac1cc879352a3c9a0af4396",
+          "sources": 0
+        },
+        "mode": "disease",
+        "n_ranked": 20,
+        "report_sha256": "e0b66bab0d2a28debd2d68bcac1ebec89e9649d71d26b78d05d0f863ba1c429b"
+      },
+      "id": "M3",
+      "phase": "m2",
+      "seconds": 0.089,
+      "status": "passed"
+    },
+    {
+      "claim": "CONTROL: the resumed model serves its task",
+      "detail": "build, train, resume and serve its task",
+      "facts": {
+        "candidates": 5,
+        "dataset_record": {
+          "binding": "verified",
+          "origin": "synthetic",
+          "sha256": "9170959de0d57ea33dce4a05393e8f67232bb6332ac1cc879352a3c9a0af4396",
+          "sources": 0
+        },
+        "parameter_devices": [
+          "cuda"
+        ],
+        "query": {
+          "case_position": 0,
+          "cases": 20,
+          "cases_bound": 20,
+          "phenotypes": 2,
+          "split": "val"
+        },
+        "result_kind": "disease_task/v1",
+        "scoring_mode": "disease_task",
+        "served_identity": {
+          "checkpoint": {
+            "sha256": "86b47cabb97757519cd123d4652c365da0ace30195a0a95b4a02ed7982c9d61e",
+            "state": "verified"
+          },
+          "dataset_record": {
+            "origin": "synthetic",
+            "sha256": "9170959de0d57ea33dce4a05393e8f67232bb6332ac1cc879352a3c9a0af4396",
+            "state": "verified"
+          },
+          "graph": {
+            "kg_sha256": "7980bf7d7492f139e92d71cf7cfe971030567a1a3fc79d715b6ef34d8631fae1",
+            "split_manifest_sha256": "07d1a98a57ff9030ef838cba0b80c4b4400754d26eae8bfa658ef5d68014e903",
+            "state": "verified"
+          },
+          "scoring_mode": "disease_task",
+          "settings": {
+            "device": "cuda:0",
+            "device_requested": "cuda",
+            "eta": null,
+            "max_path_length": 4,
+            "max_paths_per_candidate": 10,
+            "path_length_penalty": 0.9,
+            "phenotype_normalisation_version": 1,
+            "use_direct_path_optimization": true
+          },
+          "shortest_paths": {
+            "state": "absent"
+          }
+        }
+      },
+      "id": "M4",
+      "phase": "m2",
+      "seconds": 0.042,
+      "status": "passed"
+    },
+    {
+      "claim": "resume refuses a parent from before the contract, before anything is restored or written",
+      "detail": "refused before anything existed",
+      "facts": {
+        "parent_unchanged": true,
+        "run_directory_created": false,
+        "workspace_unchanged": true
+      },
+      "id": "M5.pre_contract",
+      "phase": "m2",
+      "seconds": 0.038,
+      "status": "passed"
+    },
+    {
+      "claim": "resume refuses a parent from a same-shaped other graph, before anything is restored or written",
+      "detail": "refused before anything existed",
+      "facts": {
+        "parent_unchanged": true,
+        "run_directory_created": false,
+        "workspace_unchanged": true
+      },
+      "id": "M5.other_graph",
+      "phase": "m2",
+      "seconds": 0.023,
+      "status": "passed"
+    },
+    {
+      "claim": "resume refuses a parent that read other sample files, before anything is restored or written",
+      "detail": "refused before anything existed",
+      "facts": {
+        "parent_unchanged": true,
+        "run_directory_created": false,
+        "workspace_unchanged": true
+      },
+      "id": "M5.other_samples",
+      "phase": "m2",
+      "seconds": 0.053,
+      "status": "passed"
+    },
+    {
+      "claim": "resume refuses a parent that ran validation, resumed by a run without it, before anything is restored or written",
+      "detail": "refused before anything existed",
+      "facts": {
+        "parent_unchanged": true,
+        "run_directory_created": false,
+        "workspace_unchanged": true
+      },
+      "id": "M5.validated_parent",
+      "phase": "m2",
+      "seconds": 0.036,
+      "status": "passed"
+    },
+    {
+      "claim": "resume refuses a requested parent that does not exist, before anything is restored or written",
+      "detail": "refused, and no run trained from scratch",
+      "facts": {
+        "parent_unchanged": false,
+        "run_directory_created": false,
+        "workspace_unchanged": true
+      },
+      "id": "M5.missing",
+      "phase": "m2",
+      "seconds": 0.009,
+      "status": "passed"
+    },
+    {
+      "claim": "resume refuses a parent without a model spec, before anything is restored or written",
+      "detail": "refused before anything existed",
+      "facts": {
+        "parent_unchanged": true,
+        "run_directory_created": false,
+        "workspace_unchanged": true
+      },
+      "id": "M5.no_model_spec",
+      "phase": "m2",
+      "seconds": 0.04,
+      "status": "passed"
+    },
+    {
+      "claim": "serving refuses a checkpoint over a same-shaped other workspace",
+      "detail": "refused by its record, not its shape",
+      "facts": {},
+      "id": "M6",
+      "phase": "m2",
+      "seconds": 0.012,
+      "status": "passed"
+    },
+    {
+      "claim": "measurement refuses a checkpoint over a same-shaped other workspace",
+      "detail": "refused before any model was built or output written",
+      "facts": {},
+      "id": "M7",
+      "phase": "m2",
+      "seconds": 0.021,
+      "status": "passed"
+    },
+    {
+      "claim": "the inventory lists the demo checkpoints' M2 verdicts, and refuses a file without a model spec for both uses",
+      "detail": "the inventory lists what M2 accepts and refuses, and refuses a file without a model spec for both uses",
+      "facts": {
+        "counts": {
+          "checkpoint m2_contract resume:accepted": 1,
+          "checkpoint m2_contract resume:refused": 3,
+          "checkpoint m2_contract serve_and_measure:accepted": 1,
+          "checkpoint m2_contract serve_and_measure:refused": 3,
+          "dataset_record origin:synthetic": 2,
+          "dataset_record:accepted": 2,
+          "graph:accepted": 2,
+          "training:accepted": 2
+        },
+        "report_sha256": "ddfecd9a3f3b48c01da98d91c9fbeff15ff86a30011ee517de4da791e9701273"
+      },
+      "id": "M8",
+      "phase": "m2",
+      "seconds": 0.063,
+      "status": "passed"
+    },
+    {
+      "claim": "CONTROL: a finished run extends at a fixed rate (M3a-4)",
+      "detail": "extended by one epoch at the finished run's final rate",
+      "facts": {
+        "amp_dtype": "float16",
+        "amp_enabled": true,
+        "amp_requested": true,
+        "child_end_growth_tracker": 18,
+        "child_end_scale": 16384.0,
+        "child_run_updates": 8,
+        "completed_epochs": 3,
+        "end_values": "recorded, not judged",
+        "fixed_rates": [
+          1e-05,
+          1e-05
+        ],
+        "grad_scaler": true,
+        "optimizer_updates": 22,
+        "parent_scaler": {
+          "_growth_tracker": 10,
+          "backoff_factor": 0.5,
+          "growth_factor": 2.0,
+          "growth_interval": 2000,
+          "scale": 16384.0
+        },
+        "precision_asked_by": "stated setting",
+        "scaler_restore": "verified at restore: equal to the parent's before the first update"
+      },
+      "id": "M9",
+      "phase": "m2",
+      "seconds": 0.229,
+      "status": "passed"
+    },
+    {
+      "claim": "resuming a finished run is refused before anything exists",
+      "detail": "a finished run is refused for resume, with the reason",
+      "facts": {
+        "parent_unchanged": true,
+        "run_directory_created": false,
+        "workspace_unchanged": true
+      },
+      "id": "M10",
+      "phase": "m2",
+      "seconds": 0.026,
+      "status": "passed"
+    },
+    {
+      "claim": "training refuses a workspace whose dataset record is missing (M3b)",
+      "detail": "refused before the run directory existed",
+      "facts": {},
+      "id": "M11.training",
+      "phase": "m2",
+      "seconds": 0.002,
+      "status": "passed"
+    },
+    {
+      "claim": "serving refuses a workspace whose dataset record is missing (M3b)",
+      "detail": "refused before the checkpoint was read",
+      "facts": {},
+      "id": "M11.serving",
+      "phase": "m2",
+      "seconds": 0.002,
+      "status": "passed"
+    },
+    {
+      "claim": "measurement refuses a workspace whose dataset record is missing (M3b)",
+      "detail": "refused before any model was built or output written",
+      "facts": {},
+      "id": "M11.measurement",
+      "phase": "m2",
+      "seconds": 0.006,
+      "status": "passed"
+    },
+    {
+      "claim": "M4: an import preview writes nothing and its id commits a version bound to the graph",
+      "detail": "previewed with nothing written, committed by the printed id, bound to the graph",
+      "facts": {
+        "counts": {
+          "cases_with_lost_terms": 1,
+          "cases_with_repeats": 1,
+          "excluded": {
+            "ground_truth_absent": 1,
+            "phenotype_unmappable": 1
+          },
+          "n_excluded": 2,
+          "ranked_eligible": 10,
+          "repeats_removed": 1,
+          "source_cases": 12,
+          "terms_unmappable": 2
+        },
+        "graph_is_the_workspaces": true,
+        "manifest_sha256": "ff23c7bb2b990adace362a735c0ca34834305aef2899d8aa094cfdeca5dc84e8",
+        "partial_phenotypes": "keep",
+        "preview_id": "5a7100ec967fa7fd",
+        "preview_wrote_nothing": true,
+        "samples_sha256": "91b77e24e5fc7023894b5791df156f3c9c5f552e6e2e82168117fae77c45ca6e"
+      },
+      "id": "T1",
+      "phase": "m2",
+      "seconds": 0.02,
+      "status": "passed"
+    },
+    {
+      "claim": "M4: a registered version is measured with --record: report kept, R10 recorded, one record",
+      "detail": "measured, the report kept, R10 recorded, one record from the report's bytes",
+      "facts": {
+        "binding": {
+          "bound": 8,
+          "cases": 10,
+          "excluded": 2,
+          "excluded_no_phenotype_in_view": 2,
+          "phenotypes_outside_view": 4
+        },
+        "checkpoint_sha256": "f6cfca36e903534ef0899005f278874cf7cacf136ef78ca4ab694053443067df",
+        "cohort_manifest_sha256": "ff23c7bb2b990adace362a735c0ca34834305aef2899d8aa094cfdeca5dc84e8",
+        "cuda_executed": true,
+        "exit_code": 0,
+        "ledger_sha256": "117129f0688fb0f6c9e947455bb78e5438d73000f55c47e9de1581c917877e6c",
+        "n_ranked": 8,
+        "r10": {
+          "training": {
+            "disease_overlap": {
+              "cases": 7,
+              "k": 3,
+              "n": 5,
+              "state": "overlap"
+            },
+            "evidence": "found",
+            "phenotype_set_overlap": {
+              "k": 2,
+              "n": 10,
+              "state": "overlap"
+            }
+          },
+          "validation": {
+            "disease_overlap": {
+              "cases": 2,
+              "k": 1,
+              "n": 5,
+              "state": "overlap"
+            },
+            "evidence": "found",
+            "phenotype_set_overlap": {
+              "k": 0,
+              "n": 10,
+              "state": "none"
+            }
+          }
+        },
+        "r10_evidence_in_the_workspace": true,
+        "ranks_rows": 10,
+        "ranks_sha256": "abf6bdea42b9c2caca6f7d953fff360a4782d815c99c72083d9bd5bbe956a232",
+        "record": {
+          "corroborating_reports": 0,
+          "sequence": 1,
+          "source_artifact_digest": "df26fda478144acb3fd998550b4b4efb3ff38e14ba0f19c8e53189b5bbfd9aab"
+        },
+        "relations": {
+          "R1": "verified",
+          "R2": "not_applicable",
+          "R3": "verified",
+          "R5": "verified",
+          "cohort_graph": "verified"
+        },
+        "report_sha256": "df26fda478144acb3fd998550b4b4efb3ff38e14ba0f19c8e53189b5bbfd9aab"
+      },
+      "id": "T2",
+      "phase": "m2",
+      "seconds": 0.101,
+      "status": "passed"
+    },
+    {
+      "claim": "M4: the same report again is already registered, a damaged copy outside the report store and a copy of the whole registry refused, the ledger unchanged",
+      "detail": "already registered, a damaged copy outside the store and a copied registry refused; the ledger unchanged",
+      "facts": {
+        "damaged_copy": "refused",
+        "damaged_copy_bytes": 4530,
+        "damaged_copy_refused_as": "not in the registry's report store",
+        "ledger_unchanged": true,
+        "registry_copy": "refused: not the deployment's registry",
+        "same_report_again": "already_registered"
+      },
+      "id": "T3",
+      "phase": "m2",
+      "seconds": 0.008,
+      "status": "passed"
+    },
+    {
+      "claim": "M4: a version mapped against another graph is refused before the checkpoint is read",
+      "detail": "refused by the binding before the checkpoint was read; nothing written",
+      "facts": {
+        "checkpoint_reads": 0,
+        "differing_roles": [
+          "dataset_record",
+          "kg",
+          "node_features"
+        ],
+        "ledger_unchanged": true,
+        "report_directory_created": false
+      },
+      "id": "T4",
+      "phase": "m2",
+      "seconds": 0.026,
+      "status": "passed"
+    },
+    {
+      "claim": "M4: the read-only view shows the served checkpoint's record, and none for another",
+      "detail": "the served checkpoint's record shown; none for another beside the same ledger",
+      "facts": {
+        "measured": {
+          "checkpoint_sha256": "f6cfca36e903534ef0899005f278874cf7cacf136ef78ca4ab694053443067df",
+          "contest_state": "uncontested",
+          "environment_class": "CUDA, deterministic algorithms off",
+          "n_ranked": 8,
+          "records": 1,
+          "registration_sequence": 1,
+          "source_artifact_digest": "df26fda478144acb3fd998550b4b4efb3ff38e14ba0f19c8e53189b5bbfd9aab",
+          "state": "records"
+        },
+        "other": {
+          "checkpoint_sha256": "86b47cabb97757519cd123d4652c365da0ace30195a0a95b4a02ed7982c9d61e",
+          "records": 0,
+          "same_ledger": true,
+          "state": "no_records"
+        },
+        "served": "reloaded through the reload route's handler with the checkpoint named explicitly and bound to its digest (expected_checkpoint_sha256); read through GET /api/v1/pipeline/status and GET /api/v1/evaluations/loaded-model"
+      },
+      "id": "T5",
+      "phase": "m2",
+      "seconds": 0.088,
+      "status": "passed"
+    },
+    {
+      "claim": "M4: the overlap audit runs on the registered version and records it",
+      "detail": "the registered version audited against train, and recorded",
+      "facts": {
+        "cohort_version": {
+          "label": "probe-demo-1",
+          "manifest_sha256": "ff23c7bb2b990adace362a735c0ca34834305aef2899d8aa094cfdeca5dc84e8",
+          "role": "probe-synthetic",
+          "samples_sha256": "91b77e24e5fc7023894b5791df156f3c9c5f552e6e2e82168117fae77c45ca6e"
+        },
+        "counts": {
+          "probe-synthetic_diseases": 5,
+          "probe-synthetic_diseases_absent_from_train": 2,
+          "probe-synthetic_samples": 10,
+          "shared_diseases": 3,
+          "train_diseases": 3,
+          "train_samples": 60
+        },
+        "overlap": "3 of 5",
+        "report_sha256": "ac41e9d495293aff9680adee522a9653b0c1f6a2bb35c559f298fc383da39418"
+      },
+      "id": "T6",
+      "phase": "m2",
+      "seconds": 0.006,
+      "status": "passed"
+    },
+    {
+      "claim": "M5: the server lists workspaces, checkpoints and cohort versions by name and digest, and resolves only what it lists",
+      "detail": "listed by name and digest, resolved only from the lists, no server path",
+      "facts": {
+        "checkpoints": [
+          {
+            "filename": "last.pt",
+            "listed_with_a_problem": false,
+            "run": "probe-m5-listed",
+            "sha256": "86b47cabb97757519cd123d4652c365da0ace30195a0a95b4a02ed7982c9d61e"
+          },
+          {
+            "filename": "last.pt",
+            "listed_with_a_problem": true,
+            "run": "probe-m5-link-out",
+            "sha256": null
+          }
+        ],
+        "cohort_version": {
+          "label": "probe-demo-1",
+          "manifest_sha256": "ff23c7bb2b990adace362a735c0ca34834305aef2899d8aa094cfdeca5dc84e8",
+          "reports": [
+            {
+              "kept": "kept",
+              "registered": "registered"
+            }
+          ],
+          "role": "probe-synthetic"
+        },
+        "deployment_gpu_lock": {
+          "configured": false,
+          "held": false,
+          "unreadable": false
+        },
+        "items_carry_no_server_path": true,
+        "link_out_of_the_workspace": "listed, not opened",
+        "names_refused_by_resolution": 3,
+        "workspaces": [
+          {
+            "build": "recorded",
+            "dataset_fingerprint": "07d1a98a57ff9030ef838cba0b80c4b4400754d26eae8bfa658ef5d68014e903",
+            "dataset_record": {
+              "binding": "verified",
+              "origin": "synthetic"
+            },
+            "name": "probe-demo",
+            "trainable": true
+          }
+        ]
+      },
+      "id": "W1",
+      "phase": "m2",
+      "seconds": 0.025,
+      "status": "passed"
+    },
+    {
+      "claim": "M5: D8 on the running service allows M1 on loopback and refuses forwarded, foreign-Host, foreign-Origin and cross-site requests on every gated API route and three gated dashboard events",
+      "detail": "allowed in M1 on loopback; refused, nothing done, for each other request",
+      "facts": {
+        "gated": {
+          "api_routes": [
+            "GET /api/v1/training/checkpoints",
+            "GET /api/v1/workspaces/{name}/checkpoints",
+            "GET /api/v1/workspaces/{name}/family",
+            "POST /api/v1/pipeline/config",
+            "POST /api/v1/pipeline/reload",
+            "POST /api/v1/training/finetune",
+            "POST /api/v1/training/start",
+            "POST /api/v1/training/stop"
+          ],
+          "gradio_events": [
+            "training_console._on_stop",
+            "test_page._on_start",
+            "test_page._on_register"
+          ]
+        },
+        "refusals_repeat_no_header_value": true,
+        "requests": {
+          "a foreign Host (DNS rebinding)": {
+            "condition": "host_not_loopback",
+            "gradio_events": {
+              "test_page._on_register": "refused",
+              "test_page._on_start": "refused",
+              "training_console._on_stop": "refused"
+            },
+            "routes": {
+              "GET /api/v1/training/checkpoints": 403,
+              "GET /api/v1/workspaces/{name}/checkpoints": 403,
+              "GET /api/v1/workspaces/{name}/family": 403,
+              "POST /api/v1/pipeline/config": 403,
+              "POST /api/v1/pipeline/reload": 403,
+              "POST /api/v1/training/finetune": 403,
+              "POST /api/v1/training/start": 403,
+              "POST /api/v1/training/stop": 403
+            }
+          },
+          "a foreign Origin": {
+            "condition": "origin_mismatch",
+            "gradio_events": {
+              "test_page._on_register": "refused",
+              "test_page._on_start": "refused",
+              "training_console._on_stop": "refused"
+            },
+            "routes": {
+              "GET /api/v1/training/checkpoints": 403,
+              "GET /api/v1/workspaces/{name}/checkpoints": 403,
+              "GET /api/v1/workspaces/{name}/family": 403,
+              "POST /api/v1/pipeline/config": 403,
+              "POST /api/v1/pipeline/reload": 403,
+              "POST /api/v1/training/finetune": 403,
+              "POST /api/v1/training/start": 403,
+              "POST /api/v1/training/stop": 403
+            }
+          },
+          "a forwarding header (Forwarded)": {
+            "condition": "forwarding_header",
+            "gradio_events": {
+              "test_page._on_register": "refused",
+              "test_page._on_start": "refused",
+              "training_console._on_stop": "refused"
+            },
+            "routes": {
+              "GET /api/v1/training/checkpoints": 403,
+              "GET /api/v1/workspaces/{name}/checkpoints": 403,
+              "GET /api/v1/workspaces/{name}/family": 403,
+              "POST /api/v1/pipeline/config": 403,
+              "POST /api/v1/pipeline/reload": 403,
+              "POST /api/v1/training/finetune": 403,
+              "POST /api/v1/training/start": 403,
+              "POST /api/v1/training/stop": 403
+            }
+          },
+          "a forwarding header (X-Forwarded-For)": {
+            "condition": "forwarding_header",
+            "gradio_events": {
+              "test_page._on_register": "refused",
+              "test_page._on_start": "refused",
+              "training_console._on_stop": "refused"
+            },
+            "routes": {
+              "GET /api/v1/training/checkpoints": 403,
+              "GET /api/v1/workspaces/{name}/checkpoints": 403,
+              "GET /api/v1/workspaces/{name}/family": 403,
+              "POST /api/v1/pipeline/config": 403,
+              "POST /api/v1/pipeline/reload": 403,
+              "POST /api/v1/training/finetune": 403,
+              "POST /api/v1/training/start": 403,
+              "POST /api/v1/training/stop": 403
+            }
+          },
+          "cross-site, no Origin (another site's image or link)": {
+            "condition": "cross_site",
+            "gradio_events": {
+              "test_page._on_register": "refused",
+              "test_page._on_start": "refused",
+              "training_console._on_stop": "refused"
+            },
+            "routes": {
+              "GET /api/v1/training/checkpoints": 403,
+              "GET /api/v1/workspaces/{name}/checkpoints": 403,
+              "GET /api/v1/workspaces/{name}/family": 403,
+              "POST /api/v1/pipeline/config": 403,
+              "POST /api/v1/pipeline/reload": 403,
+              "POST /api/v1/training/finetune": 403,
+              "POST /api/v1/training/start": 403,
+              "POST /api/v1/training/stop": 403
+            }
+          },
+          "loopback, no Origin (a command-line client)": {
+            "condition": "enabled",
+            "gradio_events": {
+              "test_page._on_register": "ran",
+              "test_page._on_start": "ran",
+              "training_console._on_stop": "ran"
+            },
+            "routes": {
+              "GET /api/v1/training/checkpoints": 200,
+              "GET /api/v1/workspaces/{name}/checkpoints": 200,
+              "GET /api/v1/workspaces/{name}/family": 200,
+              "POST /api/v1/pipeline/config": 422,
+              "POST /api/v1/pipeline/reload": 422,
+              "POST /api/v1/training/finetune": 422,
+              "POST /api/v1/training/start": 422,
+              "POST /api/v1/training/stop": 409
+            }
+          },
+          "the dashboard's own page": {
+            "condition": "enabled",
+            "gradio_events": {
+              "test_page._on_register": "ran",
+              "test_page._on_start": "ran",
+              "training_console._on_stop": "ran"
+            },
+            "routes": {
+              "GET /api/v1/training/checkpoints": 200,
+              "GET /api/v1/workspaces/{name}/checkpoints": 200,
+              "GET /api/v1/workspaces/{name}/family": 200,
+              "POST /api/v1/pipeline/config": 422,
+              "POST /api/v1/pipeline/reload": 422,
+              "POST /api/v1/training/finetune": 422,
+              "POST /api/v1/training/start": 422,
+              "POST /api/v1/training/stop": 409
+            }
+          }
+        },
+        "service": {
+          "seconds_to_health": 3.1,
+          "started_as": "uvicorn src.api.main:app on 127.0.0.1, --no-proxy-headers, SHEPHERD_DEPLOYMENT_MODE=M1"
+        }
+      },
+      "id": "W2",
+      "phase": "m2",
+      "seconds": 0.469,
+      "status": "passed"
+    },
+    {
+      "claim": "M5: no cross-origin browser access to /api or /ui",
+      "detail": "no Access-Control-Allow-Origin for a foreign Origin; preflights refused",
+      "facts": {
+        "foreign_origin": {
+          "GET /api": {
+            "access_control_allow_origin": false,
+            "status": 200
+          },
+          "GET /ui/config": {
+            "access_control_allow_origin": false,
+            "status": 200
+          },
+          "GET /ui/config, a LAN Host": {
+            "access_control_allow_origin": false,
+            "status": 200
+          },
+          "preflight /api": {
+            "access_control_allow_origin": false,
+            "status": 400
+          },
+          "preflight /ui": {
+            "access_control_allow_origin": false,
+            "status": 400
+          }
+        },
+        "same_origin_control": 200
+      },
+      "id": "W3",
+      "phase": "m2",
+      "seconds": 0.041,
+      "status": "passed"
+    },
+    {
+      "claim": "M5: the route guard refuses file= URLs, never fetched, and process_recording and uploads before the body is read",
+      "detail": "each file= URL form sent, process_recording and upload refused, no body read",
+      "facts": {
+        "body_routes_refused_with_close": 6,
+        "file_url_forms": 10,
+        "file_url_requests_refused": 20,
+        "in_process_body_requests": {
+          "process_recording": 0,
+          "upload": 0
+        },
+        "interim_100_continue": false,
+        "local_download_control": 200,
+        "upload_progress": 403,
+        "url_fetch_control_past_the_guard": 1,
+        "url_fetches_through_the_guard": 0
+      },
+      "id": "W4",
+      "phase": "m2",
+      "seconds": 5.049,
+      "status": "passed"
+    },
+    {
+      "claim": "M5: without M1 the service refuses every gated API route and the gated dashboard events asked; the read-only routes answer",
+      "detail": "without M1 every gated API route and the dashboard events asked are refused; the read-only routes answer",
+      "facts": {
+        "loopback_request": {
+          "condition": "deployment_mode",
+          "gradio_events": {
+            "test_page._on_register": "refused",
+            "test_page._on_start": "refused",
+            "training_console._on_stop": "refused"
+          },
+          "routes": {
+            "GET /api/v1/training/checkpoints": 403,
+            "GET /api/v1/workspaces/{name}/checkpoints": 403,
+            "GET /api/v1/workspaces/{name}/family": 403,
+            "POST /api/v1/pipeline/config": 403,
+            "POST /api/v1/pipeline/reload": 403,
+            "POST /api/v1/training/finetune": 403,
+            "POST /api/v1/training/start": 403,
+            "POST /api/v1/training/stop": 403
+          }
+        },
+        "read_only_routes": {
+          "/api/v1/cohorts": 200,
+          "/api/v1/workspaces": 200,
+          "/health": 200,
+          "/ui/": 200
+        },
+        "service": {
+          "seconds_to_health": 3.1,
+          "started_as": "uvicorn src.api.main:app on 127.0.0.1, --no-proxy-headers, SHEPHERD_DEPLOYMENT_MODE unset"
+        }
+      },
+      "id": "W5",
+      "phase": "m2",
+      "seconds": 0.195,
+      "status": "passed"
+    },
+    {
+      "claim": "M5: D8 refuses a request that did not arrive on loopback",
+      "detail": "a request off loopback is refused in M1; the loopback control is allowed",
+      "facts": {
+        "arrival": "the ASGI scope's server, set by the test client's base URL",
+        "requests": {
+          "a LAN address": {
+            "checkpoint_list": 403,
+            "condition": "not_loopback",
+            "training_stop": 403
+          },
+          "loopback (control)": {
+            "checkpoint_list": 200,
+            "condition": "enabled",
+            "training_stop": 409
+          }
+        }
+      },
+      "id": "W6",
+      "phase": "m2",
+      "seconds": 0.043,
+      "status": "passed"
+    },
+    {
+      "claim": "M5: a busy GPU lock refuses the runner and the CLIs naming its holder, and a killed holder releases it",
+      "detail": "a busy lock refused the runner and both CLIs, naming its holder; released when the holder was killed",
+      "facts": {
+        "holder": "a process that took the lock through take_gpu_lock",
+        "lock": "under SHEPHERD_WORKSPACES_ROOT, the lock's one name",
+        "nothing_started_or_written": true,
+        "refused": {
+          "measure_scorer.py": "exit 1, named the holder",
+          "runner_test_start": "named the holder",
+          "runner_training_start": "named the holder",
+          "train_model.py": "exit 1, named the holder"
+        },
+        "released_after_SIGKILL": true
+      },
+      "id": "W7",
+      "phase": "m2",
+      "seconds": 2.844,
+      "status": "passed"
+    },
+    {
+      "claim": "M5: a test run through the job runner from the server's lists says kept and registered as the publication contract does; a training stop does not reach it",
+      "detail": "a test run from the server's lists: its report kept, not registered, in the usage history",
+      "facts": {
+        "exit_code": 0,
+        "exit_meaning": "measured (with --record: registered, or already held)",
+        "gpu_lock": "taken by the run itself, released at its end",
+        "inputs": "the version, workspace and checkpoint found in the server's lists again, their digests passed as the expected ones",
+        "kept": true,
+        "measured": {
+          "model": "W1's listed copy of M2's resumed disease child",
+          "protocol": "disease",
+          "run": "probe-m5-listed",
+          "sha256": "86b47cabb97757519cd123d4652c365da0ace30195a0a95b4a02ed7982c9d61e"
+        },
+        "outcome_file_names_the_kept_report": true,
+        "registered": false,
+        "report_sha256": "41cfc95fe1ccee87091b7aee2181e91f7aeb8e36d9af18b7ccc33f111dd26e3c",
+        "status": "completed",
+        "training_stop_while_it_ran": "refused: a training stop does not reach a test run",
+        "usage_history": {
+          "device": "cuda",
+          "kind": "test_run",
+          "n_ranked": 8,
+          "record_requested": false
+        }
+      },
+      "id": "W8",
+      "phase": "m2",
+      "seconds": 3.006,
+      "status": "passed"
+    },
+    {
+      "claim": "M5: a report is registered only from the report store",
+      "detail": "a copy outside the store refused; the store's report registered from the list",
+      "facts": {
+        "copy_outside_the_store": "refused, the ledger unchanged",
+        "ledger": "beside the listed disease child's checkpoint, in its run",
+        "ledger_sha256": "d7bfe9ad8a8f5c510426975e711bd41a95b96a3b07c64d2acb76341d5d678146",
+        "outcome": "registered",
+        "registered_from": "the report the server lists for the run",
+        "report_state": {
+          "kept": "kept",
+          "registered": "registered"
+        },
+        "scoring_mode": "disease",
+        "sequence": 1,
+        "server_list": "kept, registered",
+        "usage_history": "registered"
+      },
+      "id": "W9",
+      "phase": "m2",
+      "seconds": 0.024,
+      "status": "passed"
+    },
+    {
+      "claim": "M5: a test run whose model or cohort is not the chosen one fails before measuring, nothing kept",
+      "detail": "a run whose model or cohort is not the chosen one fails before measuring",
+      "facts": {
+        "checkpoint": {
+          "kept": false,
+          "registered": false,
+          "report_directory": false,
+          "status": "failed",
+          "usage_history_entry": false
+        },
+        "cohort version": {
+          "kept": false,
+          "registered": false,
+          "report_directory": false,
+          "status": "failed",
+          "usage_history_entry": false
+        }
+      },
+      "id": "W10",
+      "phase": "m2",
+      "seconds": 2.019,
+      "status": "passed"
+    },
+    {
+      "claim": "M5: a training job holds the GPU; a test start, a test cancel and the CLI are refused meanwhile; its stop ends it as stopped",
+      "detail": "a training job held the lock; other jobs and the CLI refused; its stop ended only it, as stopped",
+      "facts": {
+        "held_by_its_own_process": true,
+        "lock_file": ".shepherd-gpu.lock",
+        "reached_its_first_epoch": true,
+        "stop": {
+          "exit_code": 1,
+          "lock_released": true,
+          "snapshot_left": true,
+          "status": "stopped"
+        },
+        "while_it_ran": {
+          "cli_exit": 1,
+          "measurement_cli": "refused by the GPU lock, naming the training job's process",
+          "test_cancel": "refused: a test cancel does not reach training",
+          "test_start": "refused: the GPU slot is the training job's"
+        }
+      },
+      "id": "W11",
+      "phase": "m2",
+      "seconds": 3.434,
+      "status": "passed"
+    },
+    {
+      "claim": "the real workspace verifies",
+      "detail": "the workspace's graph and training inputs verify",
+      "facts": {
+        "dataset_record": {
+          "binding": "verified",
+          "incomplete_by_design": [
+            "ontology imports resolved at parse time are not identified",
+            "parser and builder versions are not recorded",
+            "graph construction parameters are not recorded"
+          ],
+          "origin": "files",
+          "sha256": "2c7abdb6660cbbbbcb7579e74797a9bfbcd775114b7b9b93c8de640175e412ef",
+          "sources": {
+            "genes_to_phenotype": {
+              "declared_version": null,
+              "digest": "26cb7ee00c73b5777f6e5ad43323c941e1fcef1d191592f332d7929f3ea1ab3f"
+            },
+            "hpo": {
+              "declared_version": "hp/releases/2026-09-01",
+              "digest": "93dace952fcb3ec4728818857f6ba76bc2d5312f4d83266519b8694b8e798f22"
+            },
+            "mondo": {
+              "declared_version": "releases/2026-09-01",
+              "digest": "50c8367f9bd9978321eedf84d4e2e79cb757efbed514c81effb00b9ad2e49994"
+            },
+            "phenotype_hpoa": {
+              "declared_version": null,
+              "digest": "89004f85b253f980ffe84218d2c080665cbf67a57bbb322111d6a2db5eb31dff"
+            }
+          }
+        },
+        "kg_digest": "6cae2d1a58690eec9aa9c5e3ca9182c2fc942db0f468a5123983251bd4c51e43",
+        "train_diseases": 8990,
+        "val_diseases": 1587
+      },
+      "id": "R1",
+      "phase": "real",
+      "seconds": 5.508,
+      "status": "passed"
+    },
+    {
+      "claim": "a base trained from scratch pauses and records its inputs",
+      "detail": "one epoch of two of a base, by the reference recipe, paused, recorded",
+      "facts": {
+        "encoder_kind": "gatv2",
+        "learning_stage": "base",
+        "optimizer_step": 112.0,
+        "recipe": {
+          "operator_set": [
+            "num_epochs"
+          ],
+          "reference_filled": [
+            "batch_size",
+            "early_stopping_patience",
+            "learning_rate",
+            "max_grad_norm",
+            "num_neighbors",
+            "scheduler_type",
+            "seed",
+            "use_amp",
+            "warmup_steps",
+            "weight_decay"
+          ]
+        },
+        "recorded_roles": [
+          "edge_indices",
+          "kg",
+          "node_features",
+          "num_nodes",
+          "split_manifest"
+        ],
+        "sha256": "a79045ebd9df310d0cc5ce7e6a98f015f67e07d6868fdc0ce7b4fa9cdd9e0d70",
+        "training_rules": 1
+      },
+      "id": "R3",
+      "phase": "real",
+      "seconds": 92.332,
+      "status": "passed"
+    },
+    {
+      "claim": "a resume of the paused run trains its remaining epoch and names it",
+      "detail": "the remaining epoch from the paused base, recorded",
+      "facts": {
+        "amp_dtype": "float32",
+        "amp_enabled": false,
+        "amp_requested": false,
+        "child_optimizer_step": 224.0,
+        "child_sha256": "fb0319bead8e9bd8f6a902cbc68df910ff2f2d329e1e3e0b38228d3727776df5",
+        "grad_scaler": false,
+        "parent_optimizer_step": 112.0,
+        "parent_sha256": "a79045ebd9df310d0cc5ce7e6a98f015f67e07d6868fdc0ce7b4fa9cdd9e0d70",
+        "precision_asked_by": "base recipe",
+        "recorded_roles": [
+          "edge_indices",
+          "kg",
+          "node_features",
+          "num_nodes",
+          "resume_checkpoint",
+          "split_manifest"
+        ],
+        "scaler_restore": "no gradient scaler (fp32 recipe)",
+        "weight_tensors": 34,
+        "weight_tensors_changed": 34
+      },
+      "id": "R4",
+      "phase": "real",
+      "seconds": 70.764,
+      "status": "passed"
+    },
+    {
+      "claim": "a disease child is finetuned from the resumed base",
+      "detail": "a disease child finetuned from R4's resumed base",
+      "facts": {
+        "learning_stage": "finetune",
+        "operation": "finetune",
+        "parent_sha256": "fb0319bead8e9bd8f6a902cbc68df910ff2f2d329e1e3e0b38228d3727776df5",
+        "sha256": "9f94e759c9f57d4b9244fbfa709ebc82f3e3e8190ce50a8af22492a3a4a59928",
+        "task": "disease",
+        "training_seconds": {
+          "disease": 1242.9
+        }
+      },
+      "id": "R4.finetune",
+      "phase": "real",
+      "seconds": 1246.384,
+      "status": "passed"
+    },
+    {
+      "claim": "a file without a model spec is refused by a finetune and a resume, and the stripped copy also by serving before any model is built, on the real workspace, before anything is written",
+      "detail": "a file without a model spec is refused by a finetune and a resume, and the stripped copy also by serving before any model is built",
+      "facts": {
+        "subjects": {
+          "history file given": {
+            "finetune": "refused before anything was written",
+            "resume": "refused before anything was written"
+          },
+          "stripped copy of R4.finetune's child": {
+            "finetune": "refused before anything was written",
+            "resume": "refused before anything was written",
+            "serving": "refused at load before any model was built"
+          }
+        }
+      },
+      "id": "R2",
+      "phase": "real",
+      "seconds": 15.196,
+      "status": "passed"
+    },
+    {
+      "claim": "measurement accepts the new child and measures it by the disease protocol",
+      "detail": "measured by the disease protocol through the production entry point",
+      "facts": {
+        "authoritative_metrics": {
+          "best_positive_mrr": 0.0010645293529231567,
+          "conservative_pooled_mrr": 0.0010645293529231567,
+          "coverage": 1.0,
+          "macro_mrr": 0.0010645293529231567,
+          "macro_precision@1": 6.666666666666667e-05,
+          "macro_precision@10": 0.00012000000000000002,
+          "macro_precision@100": 0.000162,
+          "macro_precision@20": 0.00011,
+          "macro_precision@3": 2.222222222222222e-05,
+          "macro_precision@5": 0.00012,
+          "macro_precision@50": 0.00016133333333333332,
+          "macro_recall@1": 6.666666666666667e-05,
+          "macro_recall@10": 0.0012,
+          "macro_recall@100": 0.0162,
+          "macro_recall@20": 0.0022,
+          "macro_recall@3": 6.666666666666667e-05,
+          "macro_recall@5": 0.0006,
+          "macro_recall@50": 0.008066666666666666,
+          "pooled_mrr": 0.0010645293529231567,
+          "pooled_top1": 6.666666666666667e-05,
+          "pooled_top10": 0.0012,
+          "pooled_top100": 0.0162,
+          "pooled_top20": 0.0022,
+          "pooled_top3": 6.666666666666667e-05,
+          "pooled_top5": 0.0006,
+          "pooled_top50": 0.008066666666666666
+        },
+        "checkpoint_sha256": "9f94e759c9f57d4b9244fbfa709ebc82f3e3e8190ce50a8af22492a3a4a59928",
+        "dataset_record": {
+          "binding": "verified",
+          "origin": "files",
+          "sha256": "2c7abdb6660cbbbbcb7579e74797a9bfbcd775114b7b9b93c8de640175e412ef",
+          "sources": 4
+        },
+        "mode": "disease",
+        "n_ranked": 15000,
+        "report_sha256": "04a5dcf3e3741e495912782c2b8afb4673a26dd244d7ca74a72c5b2572369c87"
+      },
+      "id": "R5",
+      "phase": "real",
+      "seconds": 53.849,
+      "status": "passed"
+    },
+    {
+      "claim": "serving builds the new child and diagnoses",
+      "detail": "served for the disease task, and a diagnosis ran",
+      "facts": {
+        "candidates": 5,
+        "dataset_record": {
+          "binding": "verified",
+          "origin": "files",
+          "sha256": "2c7abdb6660cbbbbcb7579e74797a9bfbcd775114b7b9b93c8de640175e412ef",
+          "sources": 4
+        },
+        "parameter_devices": [
+          "cuda"
+        ],
+        "query": {
+          "case_position": 0,
+          "cases": 15000,
+          "cases_bound": 15000,
+          "phenotypes": 2,
+          "split": "val"
+        },
+        "result_kind": "disease_task/v1",
+        "scoring_mode": "disease_task",
+        "served_identity": {
+          "checkpoint": {
+            "sha256": "9f94e759c9f57d4b9244fbfa709ebc82f3e3e8190ce50a8af22492a3a4a59928",
+            "state": "verified"
+          },
+          "dataset_record": {
+            "origin": "files",
+            "sha256": "2c7abdb6660cbbbbcb7579e74797a9bfbcd775114b7b9b93c8de640175e412ef",
+            "state": "verified"
+          },
+          "graph": {
+            "kg_sha256": "6cae2d1a58690eec9aa9c5e3ca9182c2fc942db0f468a5123983251bd4c51e43",
+            "split_manifest_sha256": "131cdf81cfa20ab8b44609be78473d6dce3f3a18d4436fafd589c6221ddcf664",
+            "state": "verified"
+          },
+          "scoring_mode": "disease_task",
+          "settings": {
+            "device": "cuda:0",
+            "device_requested": "cuda",
+            "eta": null,
+            "max_path_length": 4,
+            "max_paths_per_candidate": 10,
+            "path_length_penalty": 0.9,
+            "phenotype_normalisation_version": 1,
+            "use_direct_path_optimization": true
+          },
+          "shortest_paths": {
+            "state": "absent"
+          }
+        }
+      },
+      "id": "R6",
+      "phase": "real",
+      "seconds": 17.261,
+      "status": "passed"
+    },
+    {
+      "claim": "the inventory passes the new child's record, and refuses a history file given",
+      "detail": "the new child passes; the history file is refused for its missing record or model spec",
+      "facts": {
+        "deployment_counts": {
+          "checkpoint m2_contract resume:refused": 4,
+          "checkpoint m2_contract serve_and_measure:refused": 4,
+          "dataset_record origin:files": 1,
+          "dataset_record:accepted": 1,
+          "graph:accepted": 1,
+          "training:accepted": 1
+        },
+        "deployment_report_sha256": "310af9d6e1eec81af1c6f1d4375b611bbcb6124ed0766cfa67aa96999c511ea6",
+        "new_model_report_sha256": "0ee93fadda1518896fe99582b8741233c4c86e31f159a9f92fe097b940556736",
+        "reference_refusal": "no kg role"
+      },
+      "id": "R7",
+      "phase": "real",
+      "seconds": 3.885,
+      "status": "passed"
+    },
+    {
+      "claim": "M4: a synthetic cohort of real val cases imports with no exclusions on the real graph",
+      "detail": "20 val cases imported with no exclusions, bound to the real graph",
+      "facts": {
+        "counts": {
+          "cases_with_lost_terms": 0,
+          "cases_with_repeats": 0,
+          "excluded": {
+            "ground_truth_absent": 0,
+            "phenotype_unmappable": 0
+          },
+          "n_excluded": 0,
+          "ranked_eligible": 20,
+          "repeats_removed": 0,
+          "source_cases": 20,
+          "terms_unmappable": 0
+        },
+        "graph_is_the_workspaces": true,
+        "manifest_sha256": "f345a95f4e1eee18bb176143de50bea8fd0585429f736446c0a6166ce23a56ea",
+        "preview_id": "eee5ffcede94bbd7",
+        "preview_wrote_nothing": true,
+        "val_cases_not_nameable_skipped": 0,
+        "val_cases_written": 20
+      },
+      "id": "RT1",
+      "phase": "real",
+      "seconds": 15.412,
+      "status": "passed"
+    },
+    {
+      "claim": "M4: the new checkpoint measured on it with --record, R10 as constructed",
+      "detail": "measured and recorded; R10 says what the construction makes true",
+      "facts": {
+        "binding": {
+          "bound": 20,
+          "cases": 20,
+          "excluded": 0,
+          "phenotypes_outside_view": 0
+        },
+        "checkpoint_sha256": "9f94e759c9f57d4b9244fbfa709ebc82f3e3e8190ce50a8af22492a3a4a59928",
+        "cuda_executed": true,
+        "exit_code": 0,
+        "ledger_sha256": "75bec91fc9a5fa3e5c0290c827548485d41ada2f20b354507a0f802d6f00219d",
+        "n_ranked": 20,
+        "r10": {
+          "training": {
+            "disease_overlap": {
+              "cases": 0,
+              "k": 0,
+              "n": 20,
+              "state": "none"
+            },
+            "evidence": "found",
+            "phenotype_set_overlap": {
+              "k": 0,
+              "n": 20,
+              "state": "none"
+            }
+          },
+          "validation": {
+            "disease_overlap": {
+              "cases": 20,
+              "k": 20,
+              "n": 20,
+              "state": "overlap"
+            },
+            "evidence": "found",
+            "phenotype_set_overlap": {
+              "k": 20,
+              "n": 20,
+              "state": "overlap"
+            }
+          }
+        },
+        "r10_evidence_in_the_workspace": true,
+        "ranks_rows": 20,
+        "record": {
+          "sequence": 1,
+          "source_artifact_digest": "c83ad9ced10b2f18e36d3f8198ddf47eefb08aa67b775cbca508172d27c2e215"
+        },
+        "report_sha256": "c83ad9ced10b2f18e36d3f8198ddf47eefb08aa67b775cbca508172d27c2e215"
+      },
+      "id": "RT2",
+      "phase": "real",
+      "seconds": 7.245,
+      "status": "passed"
+    },
+    {
+      "claim": "M4: the read-only view shows that record for the served real checkpoint",
+      "detail": "the served real checkpoint's record is shown by the read-only view",
+      "facts": {
+        "checkpoint_sha256": "9f94e759c9f57d4b9244fbfa709ebc82f3e3e8190ce50a8af22492a3a4a59928",
+        "contest_state": "uncontested",
+        "environment_class": "CUDA, deterministic algorithms off",
+        "n_ranked": 20,
+        "records": 1,
+        "registration_sequence": 1,
+        "served": "reloaded through the reload route's handler with R4.finetune's child named explicitly with its task and bound to its digest (expected_checkpoint_sha256; R6 builds its pipeline without publishing or keeping it); read through GET /api/v1/pipeline/status and GET /api/v1/evaluations/loaded-model",
+        "source_artifact_digest": "c83ad9ced10b2f18e36d3f8198ddf47eefb08aa67b775cbca508172d27c2e215",
+        "state": "records"
+      },
+      "id": "RT3",
+      "phase": "real",
+      "seconds": 8.762,
+      "status": "passed"
+    },
+    {
+      "claim": "M5: the server lists the real workspace by its dataset fingerprint",
+      "detail": "the real workspace listed by its fingerprint, record and build",
+      "facts": {
+        "build": "not_recorded",
+        "dataset_fingerprint": "131cdf81cfa20ab8b44609be78473d6dce3f3a18d4436fafd589c6221ddcf664",
+        "dataset_record": {
+          "binding": "verified",
+          "origin": "files"
+        },
+        "declared_releases": {
+          "genes_to_phenotype": null,
+          "hpo": "hp/releases/2026-09-01",
+          "mondo": "releases/2026-09-01",
+          "phenotype_hpoa": null
+        },
+        "deployment_gpu_lock": {
+          "configured": false,
+          "held": false,
+          "unreadable": false
+        },
+        "item_carries_no_server_path": true,
+        "samples": {
+          "train": 80000,
+          "val": 15000
+        },
+        "trainable": true,
+        "workspaces_listed": 1
+      },
+      "id": "RW1",
+      "phase": "real",
+      "seconds": 0.0,
+      "status": "passed"
+    },
+    {
+      "claim": "M5: a test run through the job runner on the real workspace is kept and registered",
+      "detail": "a test run through the runner on the real workspace, kept and registered",
+      "facts": {
+        "checkpoint": "the probe's disease child, finetuned on the real workspace into the work directory",
+        "device": "cuda",
+        "exit_code": 0,
+        "gpu_lock": "taken by the run itself, released at its end",
+        "kept": true,
+        "measured": {
+          "model": "a disease child finetuned from R4's resumed base, one epoch, by the production trainer, in a run directory of its own",
+          "protocol": "disease",
+          "recipe": "the reference recipe",
+          "sha256": "c529831857490288c3e610c8effd77df725f15cc9bea1ca5e7d6848a7d4149ce",
+          "training_seconds": {
+            "disease": 1191.9
+          }
+        },
+        "n_ranked": 20,
+        "registered": true,
+        "report_sha256": "5b7145a3f70353cce43bf3a02e59890eca9c90e5a383a33951ee12b46a0067dc",
+        "status": "completed",
+        "training_stop_while_it_ran": "refused: a training stop does not reach a test run",
+        "usage_history": [
+          "test_run",
+          "registered"
+        ]
+      },
+      "id": "RW2",
+      "phase": "real",
+      "seconds": 1204.002,
+      "status": "passed"
+    },
+    {
+      "claim": "M5: a training job on the real workspace holds the GPU lock and is stopped as stopped, other jobs refused",
+      "detail": "a training job on the real workspace held the GPU and was stopped",
+      "facts": {
+        "held_by_its_own_process": true,
+        "lock_file": ".shepherd-gpu.lock",
+        "reached_its_first_epoch": true,
+        "stop": {
+          "exit_code": 1,
+          "lock_released": true,
+          "snapshot_left": false,
+          "status": "stopped"
+        },
+        "while_it_ran": {
+          "cli_exit": 1,
+          "measurement_cli": "refused by the GPU lock, naming the training job's process",
+          "test_cancel": "refused: a test cancel does not reach training",
+          "test_start": "refused: the GPU slot is the training job's"
+        }
+      },
+      "id": "RW3",
+      "phase": "real",
+      "seconds": 6.987,
+      "status": "passed"
+    },
+    {
+      "claim": "the real workspace and a history file given are unchanged by listing, size and mtime",
+      "detail": "the same files and directories, sizes and modification times",
+      "facts": {
+        "compared": "listing, size and modification time; not content digests",
+        "entries_checked": 19,
+        "history_file": "unchanged"
+      },
+      "id": "R8",
+      "phase": "real",
+      "seconds": 0.001,
+      "status": "passed"
+    }
+  ],
+  "schema_version": 1,
+  "settings": {
+    "device": "cuda",
+    "download_only": false,
+    "download_requested": false,
+    "epochs": 3,
+    "feature_dim": 32,
+    "m2_acceptance_requested": true,
+    "real_build_requested": false,
+    "real_data_requested": true,
+    "seed": 20260909
+  },
+  "summary": {
+    "error": 0,
+    "failed": 0,
+    "passed": 101,
+    "skipped": 0
+  },
+  "tested_commit": {
+    "commit": "f2c201213fd2da59588af7bef2cb030951bdb5c3",
+    "tracked_files_modified": false
+  }
+}

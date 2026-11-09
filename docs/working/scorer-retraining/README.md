@@ -998,7 +998,7 @@ guides' prose beyond the checks that read documents (`tests/unit/test_entry_docu
 `tests/unit/test_docs_index.py` and the guide checks in the settings, SP-binding and Datasets
 tests).
 
-**K8 record (closeout, 2026-11-08): completed per the converged scope; TM27 not changed.** The
+**K8 record (closeout, 2026-11-08; GB10 acceptance passed 2026-11-09): completed per the converged scope; TM27 not changed.** The
 scope is the reviewer's closeout assessment at `af3a8a9`, which the owner adopted (2026-11-08),
 and the owner's authorisation of the 19 whole-file deletions with defaults D1–D4 and the request
 review's R1 and R2 (2026-11-09). K8-1 to K8-6 landed before it (up to `af3a8a9`); the closeout,
@@ -1038,11 +1038,16 @@ multi-head training, N2, N3, the patients-like-me reference set and R10's exposu
 served resource and latency measurement (pending re-attachment, `../BACKLOG.md` 64); the D1 offers
 left as gaps (`../BACKLOG.md` 65); a run or file name that is not valid text, which still fails
 both checkpoint lists as before K8 (`../BACKLOG.md` 66); cosmetic and open items (`../BACKLOG.md`
-68, 69). **Still to come:** the one full suite on the integrated tree, one external review of
-`af3a8a9` to the head, and the GB10 acceptance on the reviewed head, whose results are added here
-when they exist; this record claims no hardware acceptance. AP's autocast check ran on CPU with
-bfloat16 only (float16 with its scaler is GB10's), and the HGT node-order tests skip on a host
-without pyg_lib's grouped matmul.
+68, 69). **Checked since (2026-11-09):** the full suite on `f2c2012` (6080 passed, 9 skipped, 0
+failed); the reviewer's external review of `af3a8a9..f2c2012`, with no P1 or P2 in the product code
+(its one P2, F1, was in the GB10 acceptance script outside the repository, fixed there); and
+**the GB10 acceptance on the reviewed head, passed** in an explicitly selected local build of the
+PyG extensions, after the prebuilt download failed: 101 of 101 probes, the closing check 110 of
+110 (`../k8-acceptance-2026-11-09/`). It does not cover the prebuilt deployment path at this code,
+gene and patients-like-me on GPU, other architectures, bfloat16 or the WebUI in a browser (that
+record's §3; `../BACKLOG.md` 70, 71). AP's autocast check ran on CPU with bfloat16 only; float16
+with its scaler ran on the GB10 (M2, M9). The HGT node-order tests skip on a host without
+pyg_lib's grouped matmul.
 
 **BACKLOG items in scope, bounded:** 23 (branch's closed list and lineage), 54 (shared validation and
 unknown-field refusal for the training API, CLI and UI touched here, without the unsupported HGT/AMP

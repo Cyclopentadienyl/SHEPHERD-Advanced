@@ -1,0 +1,47 @@
+PyG 升級與 GB10 驗收：唯讀核對及實測
+2026-11-09；Repo f2c201213fd2da59588af7bef2cb030951bdb5c3；未修改 Repo。
+
+結論
+保留現在自編譯的 pyg-lib 0.8.0 作為升級驗收候選，不必為了通過舊基準而降版。原 attempt 01 仍保留 FAIL；後續可明確採用新環境基準，沿用同一套功能驗收。不得刪除資料／模型指紋檢查，也不得要求新舊環境產生完全相同的數值結果。
+
+實際環境及測試
+- torch 2.10.0+cu130；torch_geometric 2.8.1；pyg-lib 0.8.0。
+- torch-scatter 2.1.2；torch-sparse 0.6.18；torch-cluster 1.6.3。
+- NVIDIA GB10，compute capability 12.1，driver 580.178.04。
+- 已執行 Repo 現有 scripts/validate_pyg_ext.py，CUDA 路徑 5/5 通過，exit 0。
+- 包括 pyg-lib 的 segment_matmul 確實執行成功，並非只確認 import。
+- Torch 仍印出 capability 12.1 超出其列示上限 12.0 的警告；上述運算實測通過，不將此解讀為所有運算、AMP 或完整訓練皆已驗證。
+- 尚未執行完整 K8 的 base、暫停／續訓、finetune、量測、登錄與服務驗收。
+- 本次升級的是 pyg-lib 原生擴充，不是把 torch_geometric 一併升到最新版。其他三個原生擴充雖版本名稱相同，也經重新建置／安裝，故測試的是整組實際環境。
+
+更正：手動指定版本的能力已存在
+scripts/build_pyg_arm.sh 已支援 PYGLIB_SPEC、SCATTER_SPEC、SPARSE_SPEC、CLUSTER_SPEC。
+例如指定值 PYGLIB_SPEC=git+https://github.com/pyg-team/pyg-lib.git@0.8.0 可選建置來源（亦可指定完整 commit）。deploy.sh 呼叫 builder 時繼承這些環境變數。
+未指定 PYGLIB_SPEC 時，腳本從目前 Torch／CUDA 對應的 data.pyg.org 索引選最高版本；這次索引解析到 0.8.0，並不是無條件抓 Git HEAD。其他三套件預設 spec 未固定版本。
+因此應記錄的改善是「部署選項不顯眼，下載失敗轉自編譯可能改變套件版本」，不能誤報成完全沒有版本指定能力。
+另需區分建置與安裝：builder 最後以未附版本的套件名配合 --find-links 安裝，不能只憑有 SPEC 選項便保證任何環境下都裝入要求的版本。精確安裝本次產生的 wheel 並核對實裝結果，是更可靠的方式；本次的四個 wheel 與實裝原生程式庫已逐一比對相同。
+
+指紋與溯源現況
+- src/utils/run_environment.py:157 的共用 collector 已記錄 Python、Torch／Torch git revision、CUDA build、cuDNN、GPU／driver、TF32、決定性設定、torch_geometric，以及四個原生擴充的版本及可匯入狀態。
+- scripts/train_model.py:1350 取得此環境；checkpoint_payload.py:325 寫入 checkpoint。scripts/measure_scorer.py:1060 也把同一 collector 的資料寫進量測 manifest。
+- 目前 collector 不記自編譯擴充的來源 commit、wheel／共享程式庫 SHA-256、nvcc／編譯器版本及實際編譯旗標，故「全部已納入完整指紋」並不正確。
+- 資料指紋／模型檔案 digest 與執行環境是不同資訊；不能因為換了 PyG，就假裝原模型或資料內容也換了。
+- sidecar.py 的 environment 欄位保留原始事實，但不納入既有條件摘要；不能只看同一 group digest 就認定 PyG／driver 完全相同。條件分組也不能變成拒絕跨環境比較或登錄的門檻。
+- 本次另保存實裝原生檔案與 wheel SHA-256、完整建置 log。pyg-lib 原始建置 log 解析到 commit 26a2d1a06a4714da9bb804c19049afb4796971d7。
+- 這是本次驗收的外部佐證，未擅自新增產品 schema，也未宣稱日後每次產品執行都會自動得到同等完整資料。
+
+建議後續最小工作
+1. 目前保留現有 clone／環境，不執行先前為回復 0.6.0 準備的重建命令。
+2. 下一次驗收明確記錄採用的環境及產物指紋；使用原 probe 和功能判定，只把固定 Release 的環境身分檢查改為這次選定並凍結的環境。測試前後仍核對未被換檔。
+3. 原 attempt 01 下載失敗與環境基準不符如實保留。新環境功能通過，不等於原先預編譯下載流程已通過。
+4. 部署改善沿用現有 builder：公開版本設定、說明或控制失敗後是否切換建置方式、精確安裝產出的 wheel，並保存建置來源和編譯資訊。不另開產品管線。
+5. 如要提升日常溯源，擴充既有共用 environment 記錄／關聯的環境清單；不可改成要求實驗環境與歷史結果一致。升級差異要能顯示、比較和保留，不以版本名稱拒絕。
+6. DGX OS 更新可能更新 driver／系統 Toolkit，但不會自動改變獨立環境內 Torch 的 CUDA build。對照 torch.__version__、torch.version.cuda；自編譯另核對 nvcc／CUDA_HOME。保留升級能力，不必每次 OS 更新都連帶升級所有套件。
+
+外部來源
+GitHub 2026-11-09 匿名存取逾時事件（與本次 HTTP 504 相符；公告本身沒有逐筆確認本機請求）：
+https://www.githubstatus.com/incidents/c9px7cw2ghrs
+PyG 官方安裝及來源編譯說明：
+https://pytorch-geometric.readthedocs.io/en/latest/install/installation.html
+NVIDIA driver 向後相容說明：
+https://docs.nvidia.com/cuda/archive/13.0.3/cuda-toolkit-release-notes/index.html

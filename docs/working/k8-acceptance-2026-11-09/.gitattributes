@@ -1,0 +1,4 @@
+# Evidence is kept byte for byte (SHA256SUMS): no line-ending normalisation here.
+* -text
+# The acceptance script's diff has context lines that are a single space: evidence, not style.
+source-build-acceptance.diff whitespace=-blank-at-eol
