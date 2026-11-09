@@ -34,6 +34,11 @@ Its settings left `TrainConfig` in K8-7, and `ShepherdGNNConfig` with
     form offers the reference recipe's base settings (`src/config/recipe.py` `BASE`), each checked
     by the field spec's `value_problem` (`src/config/training_fields.py`), the check the job
     runner's start makes again. The record above is left as written.
+  - *Note (2026-11-09):* PR-4 is partly done (4a–4c, see Rollout). `src/config/training_fields.py`
+    is the one lightweight training field-spec (names / types / defaults / ranges / descriptions).
+    The surfaces still write their own constraints, and parity tests assert they agree with the
+    spec (guard, not derive); the job runner's start check, the Training page's base form and the
+    Fine-tune page check values with its `value_problem`. The record above is left as written.
 
 ## Rationale
 
@@ -53,6 +58,8 @@ concern — a modularity violation. Removing it **serves** the principle.
   types (referenced by `ConfigLoaderProtocol` and `TrainerProtocol` in `core/protocols.py`, and
   re-exported by `core/__init__.py`) — **not** runtime authorities. Cleanup **deferred** to the
   future protocols refactor (avoid churning the `protocols` hub for limited immediate value).
+  *(2026-11-09: removed in K7, 2026-10-29; `ConfigLoaderProtocol` and `TrainerProtocol`, which
+  named them, remain in `core/protocols.py`.)*
 - **`runtime_presets.py`:** real runtime-settings source of truth (allocator presets / launch
   settings); **relocated to `src/config/runtime_presets.py`** (PR-2) — `REPO_ROOT` bumped to
   `parents[2]`; all importers/tests updated.
@@ -68,3 +75,6 @@ concern — a modularity violation. Removing it **serves** the principle.
 | PR-2 ✅ | Move `runtime_presets.py` → `src/config/runtime_presets.py` |
 | PR-3 ✅ | Docstring the reserved `config_validator.py` / `schema_loader.py` |
 | PR-4 | B-lite shared training field-spec (with API/WebUI/`TrainerConfig` parity tests) |
+
+*(2026-11-09: PR-4 is partly done, as 4a–4c (`5b1c846` to `dd999e3`): the surfaces are guarded by
+the parity tests, not derived from the spec; the note under the decision above.)*
