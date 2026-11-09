@@ -3141,8 +3141,10 @@ is `skip`, as before.
   the deployment stops and names it: the release is not usable on this host (exit 11: the host's
   torch or CUDA is not the release's, "Case B", or the release has no asset for its Python), the
   download failed (12), the checksum failed or could not be taken (13; such a download is never
-  reported as verified), the install failed (14), or the installed extensions are not the release's
-  wheels (15).
+  reported as verified), the install failed (14), or the check failed: the installed extensions are
+  not shown to be the release's wheels (15). When the wheels are installed and checked but the source
+  receipt (below) cannot be written, it stops with 17 and builds nothing in their place: a build
+  would keep its receipt in the same place.
 - **`PYG_ARM_ON_PULL_FAILURE=build`** lets a failed pull build from source instead, non-interactively
   too; `stop` is the default. On a terminal, choosing the pull in the menu asks this once, right
   then; nothing waits for a person after the pull has started. An unknown value is refused before
@@ -3151,32 +3153,42 @@ is `skip`, as before.
 - **The source build** (`compile`, or a failed pull where allowed: `scripts/build_pyg_arm.sh`)
   builds all four packages with `--no-cache-dir` into a fresh directory per run under
   `PYG_WHEEL_OUT` (default `~/pyg-wheels-arm`; earlier runs' directories are left as they are). Only
-  when all four built does it install them, exactly those four wheels by file path
-  (`--reinstall --no-deps`); it then checks them and that each imports, and exits non-zero when a
-  build (2, nothing installed), the install (3) or the check (4) fails. `SCATTER_SPEC`,
-  `SPARSE_SPEC`, `CLUSTER_SPEC` and `PYGLIB_SPEC` choose each package's source: a registry
-  requirement (`torch-scatter==2.1.2`), a VCS URL (`git+https://github.com/pyg-team/pyg-lib.git@0.6.0`)
-  or a local sdist or tree; `deploy.sh` passes them through. Without them the builder takes the
-  newest pyg-lib tag the data.pyg.org index lists for the installed torch and the unversioned names
-  of the other three, so a build can resolve other versions than the release's; the receipt says
-  which. Under `compile`, a build that did not complete is said and the deployment continues, as
-  before.
+  when all four built does it install them, exactly those four wheels by file path (`--reinstall
+  --no-deps`); it then checks that each imports and that what is installed is exactly those wheels,
+  and only then writes the receipt. It exits non-zero when a build (2, nothing installed), the
+  install (3), an import or the check (4) fails, or when the receipt cannot be written (5).
+  `SCATTER_SPEC`, `SPARSE_SPEC`, `CLUSTER_SPEC` and `PYGLIB_SPEC` choose each package's source: a
+  registry requirement (`torch-scatter==2.1.2`), a VCS URL
+  (`git+https://github.com/pyg-team/pyg-lib.git@0.6.0`) or a local sdist or tree; `deploy.sh` passes
+  them through. Without them the builder takes the newest pyg-lib tag the data.pyg.org index lists
+  for the installed torch and the unversioned names of the other three, so a build can resolve other
+  versions than the release's; the receipt says which. Under `compile`, a build that stopped before
+  its install (nothing installed) is said and the deployment continues, as before. Once the build
+  has installed its wheels, a failed install, import or check stops the deployment (exit 16: what is
+  installed is not verified), and so does a receipt that cannot be written (17). The build a failed
+  pull is allowed to run behaves the same; and when that pull had already installed the release's
+  wheels (its install or its check failed), a build that does not complete stops the deployment too
+  (16), since those wheels stay installed, unverified.
 - **The check** (`scripts/validate_pyg_ext.py --check-wheels`, over `src/utils/pyg_native_check.py`):
   each installed distribution's version, and each installed native library's SHA-256, equal its
   wheel's. Only the two routes above run it: the Linux index route (x86, or no CUDA) and Windows'
   `deploy.cmd` install from the data.pyg.org index by name, as before, and are **not covered** by it.
-- **The source receipt.** After a passing check, either route writes
-  `.venv/share/shepherd-advanced/pyg-native-receipt.json`, outside every distribution, so
-  `uv sync --inexact` leaves it (a test runs uv to show it). Per wheel: the requested source (a
-  registry name and specifier, a VCS URL with the commit it resolved to, or a local source's
-  SHA-256; for the pull, the release tag, the asset and its SHA-256), the resolved and installed
-  version, the wheel's SHA-256 and the installed native libraries' count, digests and aggregate
-  digest. A build adds the torch and CUDA build compiled against, nvcc, gcc and g++, and
-  `TORCH_CUDA_ARCH_LIST`, `FORCE_CUDA` and `MAX_JOBS`; the release carries no compiler facts, and
-  they read unknown. No path, user name or URL credential is recorded. The receipt is keyed by the
-  installed native digests: `scripts/validate_pyg_ext.py` (or `--receipt`) shows per distribution
-  whether what is installed now is what it records, and a later install from elsewhere reads as
-  differing, never as the receipt's. A record, never a gate: no version is judged anywhere.
+- **The source receipt.** After a passing check (for a build, once each extension has imported),
+  either route writes `.venv/share/shepherd-advanced/pyg-native-receipt.json`, outside every
+  distribution, so `uv sync --inexact` leaves it (a test runs uv to show it). It is kept in a
+  virtual environment only: the builder run for an interpreter that is not one keeps none, and says
+  so. Per wheel: the requested source (a registry name and specifier, a VCS URL with the commit it
+  resolved to, or a local source's SHA-256; for the pull, the release tag, the asset and its
+  SHA-256), the resolved and installed version, the wheel's SHA-256 and the installed native
+  libraries' count, digests and aggregate digest. Both routes record the torch and CUDA build
+  compiled against, in one notation (torch `2.10.0+cu130`, CUDA `13.0`): a build its target
+  environment's, the pull the release's declared target. A build adds the version numbers of nvcc,
+  gcc and g++ (never their banners, which can carry a path or a name) and `TORCH_CUDA_ARCH_LIST`,
+  `FORCE_CUDA` and `MAX_JOBS`; the release carries no compiler facts, and they read unknown. No
+  path, user name or URL credential is recorded. The receipt is keyed by the installed native
+  digests: `scripts/validate_pyg_ext.py` (or `--receipt`) shows per distribution whether what is
+  installed now is what it records, and a later install from elsewhere reads as differing, never as
+  the receipt's. A record, never a gate: no version is judged anywhere.
 - **What is verified**: these routes run in tests with stand-ins for the ARM host, GitHub, pip and
   the compilers (`tests/unit/test_deploy_pyg_route.py`), which is software simulation. Neither route
   has run on a GB10 since Stage 2a; each counts as verified there only by its own GB10 run.

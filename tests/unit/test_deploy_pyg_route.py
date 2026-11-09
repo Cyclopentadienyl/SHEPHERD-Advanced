@@ -8,7 +8,8 @@ touch:
 
 - `uname -m` answers `aarch64`;
 - `uv` installs a wheel by unpacking it into the temporary virtual
-  environment (and can be told to fail, or to install a wrong byte);
+  environment (and can be told to fail, to install a wrong byte, or to install
+  a package that does not import);
 - `curl` serves a release tarball made here, or fails like a timed-out GitHub;
 - the target virtual environment is a real one (`python -m venv`), holding a
   fake `torch` (2.10.0+cu130 with one CUDA device, or another version for the
@@ -170,6 +171,10 @@ for wheel in sys.argv[2:]:
     if name == os.environ.get("RIG_UV_TAMPER"):
         library = purelib / name / "_native.so"
         library.write_bytes(library.read_bytes() + b" and something else")
+    if name == os.environ.get("RIG_UV_BREAK_IMPORT"):
+        # Not a native library: the byte check passes, the import does not.
+        with open(purelib / name / "__init__.py", "a") as init:
+            init.write("raise ImportError('rig: undefined symbol')\n")
     print(f"rig uv: installed {pathlib.Path(wheel).name}")
 '''
 
@@ -227,8 +232,10 @@ STUBS = {
     "curl": STUB_CURL,
     "nvcc": ('#!/bin/bash\necho "nvcc: NVIDIA (R) Cuda compiler driver"\n'
              'echo "Cuda compilation tools, release 13.0, V13.0.88"\n'),
-    "gcc": '#!/bin/bash\necho "gcc (Rig 13.3.0) 13.3.0"\n',
-    "g++": '#!/bin/bash\necho "g++ (Rig 13.3.0) 13.3.0"\n',
+    "gcc": ('#!/bin/bash\ncase "${1:-}" in -dumpfullversion) echo 13.3.0 ;;\n'
+            '  *) echo "gcc (Rig 13.3.0) 13.3.0" ;; esac\n'),
+    "g++": ('#!/bin/bash\ncase "${1:-}" in -dumpfullversion) echo 13.3.0 ;;\n'
+            '  *) echo "g++ (Rig 13.3.0) 13.3.0" ;; esac\n'),
     "cmake": '#!/bin/bash\necho "cmake version 3.28.3"\n',
     "ninja": '#!/bin/bash\necho "1.11.1"\n',
 }
@@ -284,7 +291,7 @@ def _wheel_maker(root: Path):
 def make_rig(tmp_path: Path, *, pin_release: bool = True, release_salt: str = "release") -> Rig:
     root = tmp_path / "rig"
     repo, bindir, home, cuda = root / "repo", root / "bin", root / "home", root / "cuda"
-    for directory in (repo / "scripts", bindir, home, cuda / "bin"):
+    for directory in (repo / "scripts", bindir, home, cuda / "bin", root / "tmp"):
         directory.mkdir(parents=True)
     (root / "rig_wheels.py").write_text(WHEEL_MAKER)
     (root / "rig_install.py").write_text(RIG_INSTALL)
@@ -336,6 +343,8 @@ def make_rig(tmp_path: Path, *, pin_release: bool = True, release_salt: str = "r
         "RIG_ROOT": str(root),
         "RIG_LOG": str(log),
         "RIG_TARBALL": str(tarball),
+        # The builder's logs and the pull's download (mktemp) stay in the rig.
+        "TMPDIR": str(root / "tmp"),
     }
     return Rig(root=root, repo=repo, venv=venv, purelib=purelib, log=log, env=env)
 
@@ -354,6 +363,7 @@ def test_a_pull_installs_the_release_wheels_by_path_checks_them_and_keeps_a_rece
     assert done.returncode == 0, done.stdout + done.stderr
     assert "[OK] SHA-256 verified" in done.stdout
     assert "4 of 4 installed exactly as the wheels hold them" in done.stdout
+    assert "installed and checked; source receipt written" in done.stdout
     assert "PyG native route: prebuilt release pyg-arm-cu130-torch2.10.0" in done.stdout
     assert "If the pull fails: stop" in done.stdout
     (install,) = rig.installs()
@@ -365,6 +375,10 @@ def test_a_pull_installs_the_release_wheels_by_path_checks_them_and_keeps_a_rece
     receipt = rig.receipt()
     assert receipt["route"] == "prebuilt release"
     assert receipt["toolchain"] is None and receipt["flags"] is None
+    # The release's declared target, in the notation a source build records
+    # (torch.__version__, torch.version.cuda), so one target reads alike.
+    assert receipt["compiled_against"] == {"torch": "2.10.0+cu130", "cuda": "13.0",
+                                           "basis": "the release's declared target"}
     assert {w["distribution"]: w["resolved"]["version"] for w in receipt["wheels"]} == \
         RELEASE_VERSIONS
     tarball_digest = hashlib.sha256(Path(rig.env["RIG_TARBALL"]).read_bytes()).hexdigest()
@@ -445,8 +459,30 @@ def test_a_wrong_wheel_installed_fails_the_pull_check(tmp_path):
     _assert_stopped_before_completion(done)
     assert ("[FAIL] torch_scatter 2.1.2: native library torch_scatter/_native.so differs "
             "from the wheel's") in done.stdout
-    assert "the installed extensions are not the release's wheels" in done.stdout
+    assert "the installed extensions are not shown to be the release's wheels" in done.stdout
     assert rig.receipt() is None
+
+
+def _block_the_receipt(rig: Rig) -> None:
+    """A file where the receipt's directory goes: the receipt cannot be written."""
+    (rig.venv / "share").mkdir(exist_ok=True)
+    (rig.venv / "share" / "shepherd-advanced").write_text("a file in the way")
+
+
+def test_a_pull_whose_receipt_cannot_be_written_says_so_and_builds_nothing(tmp_path):
+    """The release's wheels passed their check: the receipt, not the check,
+    failed. A build would keep its receipt in the same place, so the build
+    fallback does not apply."""
+    rig = make_rig(tmp_path)
+    _block_the_receipt(rig)
+    done = rig.run("deploy.sh", PYG_ARM_STRATEGY="pull", PYG_ARM_ON_PULL_FAILURE="build")
+
+    assert done.returncode == 17, done.stdout + done.stderr
+    assert "Deployment Complete!" not in done.stdout
+    assert "4 of 4 installed exactly as the wheels hold them" in done.stdout
+    assert "installed and checked, but the source receipt could not be written" in done.stdout
+    assert "not the release's wheels" not in done.stdout
+    assert rig.pip_wheel_calls() == []
 
 
 def test_a_failed_install_of_the_pull_stops(tmp_path):
@@ -539,9 +575,7 @@ def test_the_spec_overrides_reach_the_builder_and_its_receipt(tmp_path):
     assert by_name["torch_cluster"]["requested"] == {"kind": "local source", "form": "tree",
                                                      "sha256": tree}
     assert by_name["pyg_lib"]["resolved"]["version"] == "0.5.0"
-    assert receipt["toolchain"] == {"nvcc": "Cuda compilation tools, release 13.0, V13.0.88",
-                                    "gcc": "gcc (Rig 13.3.0) 13.3.0",
-                                    "g++": "g++ (Rig 13.3.0) 13.3.0"}
+    assert receipt["toolchain"] == {"nvcc": "13.0.88", "gcc": "13.3.0", "g++": "13.3.0"}
     assert receipt["flags"]["FORCE_CUDA"] == "1"
     assert receipt["flags"]["TORCH_CUDA_ARCH_LIST"] == "12.1"
     assert receipt["flags"]["MAX_JOBS"]
@@ -606,6 +640,50 @@ def test_a_failed_install_and_a_wrong_wheel_exit_non_zero(tmp_path):
 
 
 @needs_header
+def test_an_extension_that_does_not_import_fails_the_build_before_its_receipt(tmp_path):
+    rig = make_rig(tmp_path)
+    done = rig.run("scripts/build_pyg_arm.sh", RIG_UV_BREAK_IMPORT="pyg_lib",
+                   PYGLIB_SPEC="git+https://github.com/pyg-team/pyg-lib.git@0.6.0")
+
+    assert done.returncode == 4, done.stdout + done.stderr
+    assert "[--] pyg_lib: rig: undefined symbol" in done.stdout
+    assert "An installed extension does not import" in done.stdout
+    assert rig.receipt() is None
+
+
+@needs_header
+def test_a_build_whose_receipt_cannot_be_written_has_its_own_exit(tmp_path):
+    rig = make_rig(tmp_path)
+    _block_the_receipt(rig)
+    done = rig.run("scripts/build_pyg_arm.sh",
+                   PYGLIB_SPEC="git+https://github.com/pyg-team/pyg-lib.git@0.6.0")
+
+    assert done.returncode == 5, done.stdout + done.stderr
+    assert "4 of 4 installed exactly as the wheels hold them" in done.stdout
+    assert "its source receipt could not be written" in done.stdout
+    assert "source receipt written into the virtual environment" not in done.stdout
+
+
+@needs_header
+def test_a_build_for_an_interpreter_that_is_not_a_virtual_environment_keeps_no_receipt(tmp_path):
+    """The receipt is kept in a virtual environment only; the builder says
+    that none was written, rather than that one was."""
+    rig = make_rig(tmp_path)
+    # A .pth import line runs at every start-up (a distribution's own
+    # sitecustomize, as Ubuntu's, would shadow one in the venv).
+    (rig.purelib / "rig_not_a_venv.pth").write_text(
+        "import os, sys; sys.base_prefix = sys.prefix if os.environ.get('RIG_NOT_A_VENV') "
+        "else sys.base_prefix\n")
+    done = rig.run("scripts/build_pyg_arm.sh", RIG_NOT_A_VENV="1",
+                   PYGLIB_SPEC="git+https://github.com/pyg-team/pyg-lib.git@0.6.0")
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "no source receipt: the target python is not a virtual environment" in done.stdout
+    assert "source receipt written into the virtual environment" not in done.stdout
+    assert rig.receipt() is None
+
+
+@needs_header
 def test_a_failed_source_build_is_said_and_the_deployment_continues(tmp_path):
     """The compile route keeps its meaning: a build that did not complete is
     named, nothing from it is installed, and the deployment goes on."""
@@ -616,6 +694,68 @@ def test_a_failed_source_build_is_said_and_the_deployment_continues(tmp_path):
     assert "PyG native route: none: the source build did not complete" in done.stdout
     assert "This deployment did not install the PyG native extensions" in done.stdout
     assert rig.installs() == []
+    # Its logs stay in the rig's temporary directory.
+    assert any((rig.root / "tmp").glob("*/pyg-lib.log"))
+
+
+def _assert_stopped_unverified(done, rig: Rig) -> None:
+    assert done.returncode == 16, done.stdout + done.stderr
+    assert "Deployment Complete!" not in done.stdout
+    assert "NOT verified" in done.stdout
+    assert "did not install" not in done.stdout and "PyG native route: none" not in done.stdout
+    assert rig.receipt() is None
+
+
+@needs_header
+@pytest.mark.parametrize("fault", [{"RIG_UV_TAMPER": "torch_cluster"},
+                                   {"RIG_UV_BREAK_IMPORT": "torch_cluster"},
+                                   {"RIG_UV_FAIL": "1"}])
+def test_a_source_build_that_installed_but_is_not_verified_stops_the_deployment(tmp_path, fault):
+    """Once the build has installed its wheels, a failed install, check or
+    import leaves bytes nobody has verified: never "nothing installed"."""
+    rig = make_rig(tmp_path)
+    done = rig.run("deploy.sh", PYG_ARM_STRATEGY="compile", **fault)
+
+    _assert_stopped_unverified(done, rig)
+    assert len(rig.installs()) == 1
+
+
+@needs_header
+def test_the_build_after_a_failed_pull_stops_when_its_install_is_not_verified(tmp_path):
+    rig = make_rig(tmp_path)
+    done = rig.run("deploy.sh", PYG_ARM_STRATEGY="pull", RIG_CURL="fail",
+                   PYG_ARM_ON_PULL_FAILURE="build", RIG_UV_TAMPER="torch_cluster")
+
+    _assert_stopped_unverified(done, rig)
+    assert "Building from source instead" in done.stdout
+    assert ("[FAIL] torch_cluster 1.6.3: native library torch_cluster/_native.so differs "
+            "from the wheel's") in done.stdout
+
+
+@needs_header
+def test_a_pull_that_installed_unverified_wheels_stops_when_the_build_does_not_complete(tmp_path):
+    """The pull's check failed after its install, and the build allowed in its
+    place stopped before installing anything: the release's unverified wheels
+    are what is installed, and the deployment says so and stops."""
+    rig = make_rig(tmp_path)
+    done = rig.run("deploy.sh", PYG_ARM_STRATEGY="pull", PYG_ARM_ON_PULL_FAILURE="build",
+                   RIG_UV_TAMPER="torch_scatter", RIG_PIP_FAIL="pyg_lib")
+
+    _assert_stopped_unverified(done, rig)
+    assert "Building from source instead" in done.stdout
+    assert len(rig.installs()) == 1                   # the pull's; the build installed nothing
+    assert rig.installed_native("torch_scatter").endswith(b" and something else")
+
+
+@needs_header
+def test_a_source_build_whose_receipt_cannot_be_written_stops_the_deployment(tmp_path):
+    rig = make_rig(tmp_path)
+    _block_the_receipt(rig)
+    done = rig.run("deploy.sh", PYG_ARM_STRATEGY="compile")
+
+    assert done.returncode == 17, done.stdout + done.stderr
+    assert "Deployment Complete!" not in done.stdout
+    assert "installed and checked, but the source receipt could not be written" in done.stdout
 
 
 # --- The receipt, later ----------------------------------------------------------

@@ -8,7 +8,12 @@ research-comparison Stage 2a). The scripts that use it are run in
 - `stream_sha256` is SHA-256, chunked, from where the stream stands, and the
   aggregate is the specified text's digest, independent of the order given;
 - the install check compares an installed distribution's version and native
-  libraries with a wheel's, and says what differs;
+  libraries with a wheel's, and says what differs; one directory reached by
+  two path entries (a venv's ``lib64`` link) is one install, and a file that
+  is not a wheel is said to be unreadable;
+- `scripts/validate_pyg_ext.py` gives a receipt that cannot be written, and
+  one not kept outside a virtual environment, statuses of their own, and
+  records compiler version numbers, never their banners;
 - a requested source is described with no path, no user name and no
   credential;
 - the receipt is written into the virtual environment, read back, and keyed by
@@ -24,6 +29,7 @@ import ast
 import base64
 import getpass
 import hashlib
+import importlib.util
 import io
 import json
 import subprocess
@@ -204,6 +210,43 @@ def test_a_wheel_without_a_native_library_is_not_a_native_install(tmp_path):
     _install(wheel, tmp_path / "site")
     (check,) = check_installed_against_wheels([wheel], path=[str(tmp_path / "site")])
     assert check.problems == ("the wheel holds no native library",)
+
+
+def test_one_directory_reached_by_two_path_entries_is_one_install(tmp_path):
+    """A virtual environment's ``lib64`` is a link to ``lib``, and where
+    ``sys.platlibdir`` is ``lib64`` (the RHEL, Fedora and SUSE Pythons) `site`
+    puts both names on ``sys.path``: one install, never "installed 2 times"."""
+    (tmp_path / "w").mkdir()
+    wheel = _wheel(tmp_path / "w", "pkg_a", "1.0", NATIVES)
+    venv = tmp_path / "venv"
+    site = venv / "lib" / "python3.12" / "site-packages"
+    _install(wheel, site)
+    (venv / "lib64").symlink_to("lib")
+    both = [str(venv / "lib64" / "python3.12" / "site-packages"), str(site)]
+
+    (check,) = check_installed_against_wheels([wheel], path=both)
+    assert check.ok, check.problems
+    assert check.installed.copies == 1
+    receipt = build_receipt(route="local build", checks=[check],
+                            requested={wheel.name: {"kind": "registry", "name": "pkg_a",
+                                                    "specifier": ""}},
+                            compiled_against={}, toolchain=None, flags=None)
+    assert receipt_against_installed(receipt, path=both) == {"pkg_a": {"state": RECEIPT_MATCHES}}
+    assert installed_identity("pkg_a", path=[str(site), str(site)]).copies == 1
+
+
+def test_a_file_that_is_not_a_wheel_cannot_be_read_and_says_so(tmp_path):
+    broken = tmp_path / "pkg_a-1.0-py3-none-any.whl"
+    broken.write_bytes(b"not a zip archive")
+    with pytest.raises(ValueError, match="pkg_a-1.0-py3-none-any.whl"):
+        wheel_identity(broken)
+
+    done = subprocess.run([sys.executable, str(REPO / "scripts" / "validate_pyg_ext.py"),
+                           "--check-wheels", str(broken)],
+                          capture_output=True, text=True, timeout=120, cwd=tmp_path)
+    assert done.returncode == 1, done.stdout + done.stderr
+    assert "[FAIL] the wheels cannot be read" in done.stdout
+    assert "Traceback" not in done.stderr
 
 
 # --- The requested source, described --------------------------------------------
@@ -393,6 +436,85 @@ def test_the_page_load_reporter_never_reaches_the_hashing_half():
               for alias in node.names}
     assert not named & hashing
     assert "hashlib" not in named
+
+
+@pytest.fixture
+def validator():
+    """`scripts/validate_pyg_ext.py`, as a module."""
+    spec = importlib.util.spec_from_file_location(
+        "validate_pyg_ext_under_test", REPO / "scripts" / "validate_pyg_ext.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _tools(directory: Path, scripts: dict) -> None:
+    directory.mkdir()
+    for name, body in scripts.items():
+        tool = directory / name
+        tool.write_text("#!/bin/sh\n" + body)
+        tool.chmod(0o755)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the stand-in compilers are sh scripts")
+def test_the_receipt_records_compiler_version_numbers_never_their_banners(
+        tmp_path, monkeypatch, validator):
+    """A banner is free text: gcc's configured package version or a vendor's
+    line can carry a path or a person's name, so only the number is kept."""
+    _tools(tmp_path / "bin", {
+        "gcc": 'case "$1" in -dumpfullversion) echo 13.3.0 ;;\n'
+               '  *) echo "gcc (built by jdoe in /home/jdoe/gcc) 13.3.0" ;; esac\n',
+        # A gcc before 7: no -dumpfullversion, a full -dumpversion.
+        "g++": 'case "$1" in -dumpfullversion) exit 1 ;; -dumpversion) echo 6.5.0 ;;\n'
+               '  *) echo "g++ (jdoe) 6.5.0" ;; esac\n',
+        "nvcc": 'echo "nvcc: NVIDIA (R) Cuda compiler driver"\n'
+                'echo "Built on Mon_Jan_01 by jdoe at /home/jdoe/cuda"\n'
+                'echo "Cuda compilation tools, release 12.8, V12.8.93"\n',
+        "cc": 'echo "jdoe special 13"\n',
+    })
+    monkeypatch.setenv("PATH", str(tmp_path / "bin"))
+    assert validator._tool_version("gcc") == "13.3.0"
+    assert validator._tool_version("g++") == "6.5.0"
+    assert validator._tool_version("nvcc") == "12.8.93"
+    assert validator._tool_version("cc") is None             # states no bare number
+    assert validator._tool_version("clang-not-here") is None
+
+
+def _checked_install(tmp_path, monkeypatch):
+    (tmp_path / "w").mkdir()
+    wheel = _wheel(tmp_path / "w", "pkg_a", "1.0", NATIVES)
+    _install(wheel, tmp_path / "site")
+    monkeypatch.syspath_prepend(str(tmp_path / "site"))
+    monkeypatch.setattr(sys, "prefix", str(tmp_path / "venv"))
+    return ["--check-wheels", str(wheel), "--write-receipt", "prebuilt release",
+            "--release-tag", "t", "--release-asset", "a.tar.gz", "--release-asset-sha256", "0" * 64]
+
+
+def test_a_receipt_that_cannot_be_written_has_its_own_status(tmp_path, monkeypatch, capsys,
+                                                             validator):
+    """Not the check's status: the install passed its check, and the caller
+    must say that only the receipt is missing."""
+    argv = _checked_install(tmp_path, monkeypatch)
+    (tmp_path / "venv" / "share").mkdir(parents=True)
+    (tmp_path / "venv" / "share" / "shepherd-advanced").write_text("a file in the way")
+
+    assert validator.main(argv) == validator.EXIT_RECEIPT_NOT_WRITTEN == 3
+    out = capsys.readouterr().out
+    assert "1 of 1 installed exactly as the wheels hold them" in out
+    assert "[FAIL] the source receipt could not be written" in out
+
+
+def test_no_receipt_outside_a_virtual_environment_has_its_own_status(tmp_path, monkeypatch,
+                                                                     capsys, validator):
+    argv = _checked_install(tmp_path, monkeypatch)
+    monkeypatch.setattr(sys, "base_prefix", sys.prefix)
+
+    assert validator.main(argv) == validator.EXIT_NO_RECEIPT_KEPT == 4
+    assert "no source receipt written" in capsys.readouterr().out
+    assert read_receipt(tmp_path / "venv") is None
+    monkeypatch.setattr(sys, "base_prefix", "/somewhere/else")
+    assert validator.main(argv) == 0
+    assert read_receipt(tmp_path / "venv")["route"] == "prebuilt release"
 
 
 def test_the_install_check_imports_no_torch(tmp_path):

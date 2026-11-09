@@ -53,23 +53,27 @@ set -uo pipefail
 #   - installs exactly the four wheels this run built, by file path, with
 #     --reinstall --no-deps, and only when all four built (a part of the set
 #     would mix this build with whatever is installed);
-#   - checks each installed distribution's version and native libraries'
-#     SHA-256 against its wheel (scripts/validate_pyg_ext.py --check-wheels) and
-#     that each extension imports;
-#   - writes the path-free source receipt into the virtual environment
-#     (share/shepherd-advanced/pyg-native-receipt.json): per wheel the requested
-#     source (registry name, VCS URL and its resolved commit, or a local
-#     source's SHA-256), the resolved and installed identity and the wheel's
-#     and native libraries' digests; the torch and CUDA build compiled against;
-#     nvcc, gcc and g++; TORCH_CUDA_ARCH_LIST, FORCE_CUDA, MAX_JOBS. Recorded,
-#     never a gate: no version is judged.
+#   - checks that each extension imports, then each installed distribution's
+#     version and native libraries' SHA-256 against its wheel
+#     (scripts/validate_pyg_ext.py --check-wheels);
+#   - only then writes the path-free source receipt into the virtual
+#     environment (share/shepherd-advanced/pyg-native-receipt.json; none for a
+#     target python that is not a virtual environment, which it says): per
+#     wheel the requested source (registry name, VCS URL and its resolved
+#     commit, or a local source's SHA-256), the resolved and installed identity
+#     and the wheel's and native libraries' digests; the torch and CUDA build
+#     compiled against; the nvcc, gcc and g++ version numbers;
+#     TORCH_CUDA_ARCH_LIST, FORCE_CUDA, MAX_JOBS. Recorded, never a gate: no
+#     version is judged.
 #
-# Exit status: 0 built (and, by default, installed, checked and receipted);
-#   1 a setup problem (wrong architecture; no uv, venv, torch or CUDA; missing
-#     build tools or build deps); 2 a package did not build: nothing installed;
-#   3 the install failed; 4 the check failed: what is installed is not exactly
-#   the wheels built, an extension does not import, or the receipt could not
-#   be written.
+# Exit status: 0 built (and, by default, installed, imported, checked and
+#   receipted); 1 a setup problem (wrong architecture; no uv, venv, torch or
+#   CUDA; missing build tools or build deps); 2 a package did not build:
+#   nothing installed; 3 the install failed: what is installed under these
+#   names is not verified; 4 installed but not verified: an extension does not
+#   import, or what is installed is not exactly the wheels built; 5 installed,
+#   imported and checked, but the source receipt could not be written. Of the
+#   failures, only 1 and 2 leave the target's installed extensions as they were.
 # ============================================================================
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
@@ -375,19 +379,13 @@ say "\n[INFO] Installing exactly this run's 4 wheels into the target venv, by fi
 say "       (--reinstall --no-deps; whatever was installed under these names is replaced):"
 for w in "${BUILT_WHEELS[@]}"; do say "       $(basename "$w")"; done
 if ! uv pip install --python "$TPY" --reinstall --no-deps "${BUILT_WHEELS[@]}"; then
-    say "\n${RED}[ERROR] The install of this run's wheels failed (see above).${NC}"
+    say "\n${RED}[ERROR] The install of this run's wheels failed (see above); what is installed${NC}"
+    say "${RED}        under these names now, whole or in part, is NOT verified.${NC}"
     exit 3
 fi
 
-say "\n[INFO] Checking what is installed against this run's wheels:"
-if ! "$TPY" "$HELPER" --check-wheels "${BUILT_WHEELS[@]}" --write-receipt "local build" \
-        "${SOURCE_ARGS[@]}" ${COMMIT_ARGS[@]+"${COMMIT_ARGS[@]}"} \
-        --compiled-against-torch "$TORCH_VER" --compiled-against-cuda "$TORCH_CUDA"; then
-    say "\n${RED}[ERROR] What is installed is not exactly what this run built, or its receipt${NC}"
-    say "${RED}        could not be written (see above).${NC}"
-    exit 4
-fi
-
+# The import first, the check and the receipt last: a receipt is written only
+# for an install that imports and is exactly the wheels built.
 say "\n[INFO] Import smoke test (in target venv):"
 if ! "$TPY" - <<'PY'
 import importlib, sys, torch
@@ -403,11 +401,27 @@ for mod in ("torch_scatter", "torch_sparse", "torch_cluster", "pyg_lib"):
 sys.exit(1 if failed else 0)
 PY
 then
-    say "\n${RED}[ERROR] An installed extension does not import (see above).${NC}"
+    say "\n${RED}[ERROR] An installed extension does not import (see above); no source receipt is written.${NC}"
     exit 4
 fi
 
-say "\n${GREEN}All 4 wheels built, installed exactly and checked; source receipt written.${NC}"
+say "\n[INFO] Checking what is installed against this run's wheels, then keeping its source receipt:"
+"$TPY" "$HELPER" --check-wheels "${BUILT_WHEELS[@]}" --write-receipt "local build" \
+    "${SOURCE_ARGS[@]}" ${COMMIT_ARGS[@]+"${COMMIT_ARGS[@]}"} \
+    --compiled-against-torch "$TORCH_VER" --compiled-against-cuda "$TORCH_CUDA"
+CHECKED=$?   # scripts/validate_pyg_ext.py --check-wheels' statuses
+case "$CHECKED" in
+    0) RECEIPT_WORDS="source receipt written into the virtual environment" ;;
+    4) RECEIPT_WORDS="no source receipt: the target python is not a virtual environment" ;;
+    3) say "\n${RED}[ERROR] What is installed is exactly what this run built, but${NC}"
+       say "${RED}        its source receipt could not be written (see above).${NC}"
+       exit 5 ;;
+    *) say "\n${RED}[ERROR] What is installed is not exactly what this run built (see above);${NC}"
+       say "${RED}        no source receipt is written.${NC}"
+       exit 4 ;;
+esac
+
+say "\n${GREEN}All 4 wheels built, installed exactly, imported and checked; ${RECEIPT_WORDS}.${NC}"
 say "${CYAN}Next (maintainer):${NC} upload $OUT_DIR/*.whl to a GitHub Release so deploy.sh can fetch them."
 say "${YELLOW}[REMINDER] These wheels are ABI-locked to torch $TORCH_VER (cu$TORCH_CUDA). Rebuild if torch changes.${NC}"
 exit 0

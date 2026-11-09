@@ -14,12 +14,16 @@ status.
 
 The install check (BACKLOG 70; research-comparison Stage 2): each named wheel
 against the distribution installed under its name. The installed version and
-every installed native library's SHA-256 must equal the wheel's; exit 1 when
-any differs. It imports no torch. The ARM source build
-(`scripts/build_pyg_arm.sh`) and `deploy.sh`'s prebuilt pull run it on exactly
-the wheels they installed, and with ``--write-receipt`` it then writes the
-path-free source receipt into the virtual environment (BACKLOG 71). The Linux
-index route and `deploy.cmd` do not run it.
+every installed native library's SHA-256 must equal the wheel's. It imports no
+torch. The ARM source build (`scripts/build_pyg_arm.sh`) and `deploy.sh`'s
+prebuilt pull run it on exactly the wheels they installed, and with
+``--write-receipt`` it then writes the path-free source receipt into the
+virtual environment (BACKLOG 71). The Linux index route and `deploy.cmd` do not
+run it. Its exit status, so that a caller can say which happened: 0 installed
+exactly as the wheels hold them (and the receipt written, when asked); 1 the
+check failed, or the wheels cannot be read; 2 a usage error; 3 the check
+passed, but the receipt could not be written; 4 the check passed, and no
+receipt is kept, this interpreter not being a virtual environment.
 
     .venv/bin/python scripts/validate_pyg_ext.py --receipt
 
@@ -67,6 +71,17 @@ from src.utils.pyg_native_check import (  # noqa: E402 - after the path is set
 #: The build flags a receipt of a local build records, as exported to the build.
 BUILD_FLAGS = ("TORCH_CUDA_ARCH_LIST", "FORCE_CUDA", "MAX_JOBS")
 RECEIPT_WHERE = "/".join(RECEIPT_LOCATION)
+
+#: --check-wheels' exit statuses (argparse's usage error is 2); see the module
+#: docstring. The deploy scripts name each outcome by them.
+EXIT_CHECK_FAILED = 1
+EXIT_RECEIPT_NOT_WRITTEN = 3
+EXIT_NO_RECEIPT_KEPT = 4
+
+#: A version number, as a compiler states it on its own (``13.3.0``).
+_VERSION_NUMBER = re.compile(r"\d+(?:\.\d+)*")
+#: nvcc's statement of its version: ``release 13.0, V13.0.88``.
+_NVCC_RELEASE = re.compile(r"\brelease (\d+(?:\.\d+)+)(?:, V(\d+(?:\.\d+)+))?")
 
 
 # --- The functional kernel checks --------------------------------------------
@@ -204,27 +219,31 @@ def _requested_words(requested: Dict[str, Any]) -> str:
 
 # --- The install check and the receipt ----------------------------------------
 
-def _tool_version(command: str) -> Optional[str]:
-    """A compiler's version line, or None. Only a line with no path in it is
-    kept; otherwise only the version number it states."""
+def _tool_output(argv: List[str]) -> Optional[str]:
+    """What a command prints on success, or None."""
     try:
-        done = subprocess.run([command, "--version"], capture_output=True, timeout=30)
+        done = subprocess.run(argv, capture_output=True, timeout=30)
     except (OSError, subprocess.SubprocessError):
         return None
-    if done.returncode != 0:
-        return None
-    lines = [line.strip() for line in done.stdout.decode("utf-8", "replace").splitlines()
-             if line.strip()]
+    return done.stdout.decode("utf-8", "replace") if done.returncode == 0 else None
+
+
+def _tool_version(command: str) -> Optional[str]:
+    """A compiler's version number, or None when it states none.
+
+    Only the number is recorded, never a banner: a banner is free text (gcc's
+    configured package version, a vendor's or a build host's line) that can
+    carry a path or a person's name. gcc and g++ state it alone with
+    ``-dumpfullversion`` (``-dumpversion`` before gcc 7); nvcc's ``--version``
+    states ``release X.Y, VX.Y.Z``, of which the full ``X.Y.Z`` is kept."""
     if command == "nvcc":
-        stated = [line for line in lines if "release" in line]
-        lines = stated or lines
-    if not lines:
-        return None
-    line = lines[0] if command != "nvcc" else lines[-1]
-    if "/" in line or "\\" in line:
-        numbers = re.findall(r"\d+(?:\.\d+)+", line)
-        return numbers[-1] if numbers else None
-    return line
+        stated = _NVCC_RELEASE.search(_tool_output([command, "--version"]) or "")
+        return (stated.group(2) or stated.group(1)) if stated else None
+    for flag in ("-dumpfullversion", "-dumpversion"):
+        number = (_tool_output([command, flag]) or "").strip()
+        if _VERSION_NUMBER.fullmatch(number):
+            return number
+    return None
 
 
 def _pairs(values: Optional[List[List[str]]]) -> Dict[str, str]:
@@ -237,7 +256,7 @@ def _check_wheels(args: argparse.Namespace) -> int:
         checks = check_installed_against_wheels(wheels)
     except (OSError, ValueError) as exc:
         print(f"  [FAIL] the wheels cannot be read: {exc}")
-        return 1
+        return EXIT_CHECK_FAILED
     print("Install check (each installed distribution against the wheel meant to be installed):")
     for check in checks:
         wheel = check.wheel
@@ -251,7 +270,7 @@ def _check_wheels(args: argparse.Namespace) -> int:
     print(f"{len(checks) - len(failed)} of {len(checks)} installed exactly as the wheels hold them.")
     if failed:
         print("The installed native extensions are NOT the ones this step meant to install.")
-        return 1
+        return EXIT_CHECK_FAILED
     if args.write_receipt is None:
         return 0
     return _write_receipt(args, checks)
@@ -279,10 +298,10 @@ def _write_receipt(args: argparse.Namespace, checks) -> int:
         write_receipt(receipt)
     except NotAVirtualEnvironment as exc:
         print(f"  [WARN] no source receipt written: {exc}")
-        return 0
+        return EXIT_NO_RECEIPT_KEPT
     except (OSError, ValueError) as exc:
         print(f"  [FAIL] the source receipt could not be written: {exc}")
-        return 1
+        return EXIT_RECEIPT_NOT_WRITTEN
     print(f"Source receipt written into this virtual environment ({RECEIPT_WHERE}).")
     return 0
 

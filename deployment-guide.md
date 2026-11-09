@@ -3204,7 +3204,8 @@ data.pyg.org 沒有 aarch64 wheel，所以由選單或 `PYG_ARM_STRATEGY` 在預
   --no-deps`），再核對實際安裝的內容。任一步失敗，部署即停止並指出是哪一步：此主機不能用這個
   release（exit 11：主機的 torch 或 CUDA 與 release 不同，即「Case B」，或 release 沒有對應其 Python
   的檔案）、下載失敗（12）、checksum 不符或無法計算（13；這樣的下載絕不會被報告為已核對）、安裝
-  失敗（14），或已安裝的擴充不是 release 的 wheel（15）。
+  失敗（14），或核對失敗：無法證實已安裝的擴充就是 release 的 wheel（15）。若 wheel 已安裝且核對
+  通過，但來源收據（見下）無法寫入，則以 17 停止，也不會改為編譯：編譯的收據也會寫在同一個位置。
 - **`PYG_ARM_ON_PULL_FAILURE=build`** 允許 pull 失敗時改由原始碼編譯，非互動執行也適用；預設為
   `stop`。在終端機上，於選單選擇 pull 時會當場詢問一次；pull 開始之後不會再等人回應。無法辨識的
   值會在任何動作之前被拒絕（exit 4）。Stage 2a 之前，pull 失敗，以及在 Case B 主機上設定
@@ -3212,24 +3213,33 @@ data.pyg.org 沒有 aarch64 wheel，所以由選單或 `PYG_ARM_STRATEGY` 在預
 - **原始碼編譯**（`compile`，或在允許時於 pull 失敗後：`scripts/build_pyg_arm.sh`）以
   `--no-cache-dir` 編譯全部四個套件，每次執行都放進 `PYG_WHEEL_OUT`（預設 `~/pyg-wheels-arm`）底下
   一個新的目錄（之前執行留下的目錄保持原狀）。只有四個都編譯成功時才安裝，而且只以檔案路徑安裝
-  這次編譯出的四個 wheel（`--reinstall --no-deps`）；接著核對它們並確認每個都能匯入。編譯（2，
-  不安裝任何東西）、安裝（3）或核對（4）失敗時，以非零值結束。`SCATTER_SPEC`、`SPARSE_SPEC`、
+  這次編譯出的四個 wheel（`--reinstall --no-deps`）；接著確認每個都能匯入、已安裝的內容正是這些
+  wheel，之後才寫入收據。編譯（2，不安裝任何東西）、安裝（3）、匯入或核對（4）失敗，或收據無法
+  寫入（5）時，以非零值結束。`SCATTER_SPEC`、`SPARSE_SPEC`、
   `CLUSTER_SPEC`、`PYGLIB_SPEC` 指定各套件的來源：套件索引的需求（`torch-scatter==2.1.2`）、VCS
   網址（`git+https://github.com/pyg-team/pyg-lib.git@0.6.0`）或本機的 sdist 或原始碼目錄；`deploy.sh`
   會原樣傳遞。未指定時，編譯腳本取 data.pyg.org 索引為已安裝 torch 列出的最新 pyg-lib 標籤，其他
   三個用不帶版本的名稱，因此編譯結果可能與 release 的版本不同；收據會記下實際解析到的版本。在
-  `compile` 下，未完成的編譯會被指出，部署照常繼續，與以前相同。
+  `compile` 下，在安裝之前就停止的編譯（沒有安裝任何東西）會被指出，部署照常繼續，與以前相同。
+  編譯一旦安裝了它的 wheel，安裝、匯入或核對失敗都會讓部署停止（exit 16：已安裝的內容未經核實），
+  收據無法寫入也會停止（17）。pull 失敗後經允許改跑的編譯也是如此；而如果該次 pull 已經安裝了
+  release 的 wheel（其安裝或核對失敗），接著的編譯若未完成，部署同樣停止（16），因為那些 wheel
+  仍以未經核實的狀態留在環境中。
 - **核對**（`scripts/validate_pyg_ext.py --check-wheels`，實作在 `src/utils/pyg_native_check.py`）：
   每個已安裝套件的版本，以及每個已安裝原生函式庫的 SHA-256，都必須等於其 wheel 的。只有上述兩條
   路徑會執行它：Linux 索引路徑（x86，或沒有 CUDA）與 Windows 的 `deploy.cmd` 照舊依名稱從
   data.pyg.org 索引安裝，**不在**這項核對的範圍內。
-- **來源收據。** 核對通過後，兩條路徑都會寫入 `.venv/share/shepherd-advanced/pyg-native-receipt.json`；
-  它不屬於任何套件，所以 `uv sync --inexact` 不會移除它（有測試實際執行 uv 證明）。每個 wheel 記錄：
+- **來源收據。** 核對通過後（編譯則還要每個擴充都能匯入），兩條路徑都會寫入
+  `.venv/share/shepherd-advanced/pyg-native-receipt.json`；它不屬於任何套件，所以 `uv sync --inexact`
+  不會移除它（有測試實際執行 uv 證明）。收據只寫在虛擬環境中：編譯腳本若以非虛擬環境的 Python 為
+  目標，就不寫收據，並明白說出來。每個 wheel 記錄：
   所要求的來源（套件索引的名稱與版本條件、VCS 網址及其解析到的 commit，或本機來源的 SHA-256；pull
   則為 release 標籤、檔名與其 SHA-256）、解析到與已安裝的版本、wheel 的 SHA-256，以及已安裝原生
-  函式庫的數量、各自的摘要與彙總摘要。編譯另外記錄編譯時所對應的 torch 與 CUDA 版本、nvcc、gcc、
-  g++，以及 `TORCH_CUDA_ARCH_LIST`、`FORCE_CUDA`、`MAX_JOBS`；release 不帶編譯器資訊，這些記為
-  未知。不記錄任何路徑、使用者名稱或網址中的認證資訊。收據以已安裝原生函式庫的摘要為鍵：
+  函式庫的數量、各自的摘要與彙總摘要。兩條路徑都以同一種寫法記錄編譯時所對應的 torch 與 CUDA 版本
+  （torch `2.10.0+cu130`、CUDA `13.0`）：編譯記錄其目標環境的版本，pull 記錄 release 宣告的目標。
+  編譯另外記錄 nvcc、gcc、g++ 的版本號（絕不記錄它們的版本說明文字，因為其中可能含有路徑或人名），
+  以及 `TORCH_CUDA_ARCH_LIST`、`FORCE_CUDA`、`MAX_JOBS`；release 不帶編譯器資訊，這些記為未知。
+  不記錄任何路徑、使用者名稱或網址中的認證資訊。收據以已安裝原生函式庫的摘要為鍵：
   `scripts/validate_pyg_ext.py`（或 `--receipt`）會逐一列出目前安裝的內容是否就是收據所記錄的；
   之後從別處安裝的版本會顯示為不符，絕不會被當成收據所記錄的那一份。它只是紀錄，不是關卡：任何
   地方都不判定版本。

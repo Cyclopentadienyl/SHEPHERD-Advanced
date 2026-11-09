@@ -279,6 +279,9 @@ from typing import (Any, Callable, Dict, List, Mapping, NamedTuple, Optional, Se
 project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
+# Standard library only (no torch), so it is safe before `_apply_allocator`.
+from src.utils.pyg_native_check import normalised_name as _normalised  # noqa: E402
+
 REPORT_SCHEMA_VERSION = 1
 
 #: How this process's CUDA allocator was chosen, set by `_apply_allocator` when
@@ -812,12 +815,8 @@ def phase_environment(
 
 
 #: What a Python environment records of each installed distribution and what
-#: `uv.lock` pins, compared by normalised name (PEP 503).
-_DISTRIBUTION_NAME = re.compile(r"[-_.]+")
-
-
-def _normalised(name: str) -> str:
-    return _DISTRIBUTION_NAME.sub("-", name).lower()
+#: `uv.lock` pins are compared by normalised name (PEP 503): `_normalised`, the
+#: install identity's one implementation, imported at the top.
 
 
 def _same_version(installed: str, locked: str) -> bool:

@@ -29,6 +29,9 @@ set -u
 #                  stop (default): the deployment stops and names what failed;
 #                  build: it builds from source instead (scripts/build_pyg_arm.sh),
 #                  non-interactively too. Decided once, before anything is fetched.
+#                  A pull whose wheels passed their check but whose source receipt
+#                  could not be written stops either way (17): a build would keep
+#                  its receipt in the same place.
 #   SCATTER_SPEC, SPARSE_SPEC, CLUSTER_SPEC, PYGLIB_SPEC, PYG_WHEEL_OUT - passed to
 #                  the source build (see scripts/build_pyg_arm.sh)
 #
@@ -37,7 +40,13 @@ set -u
 #   menu. A stopped prebuilt pull (ARM + CUDA): 11 the release is not usable on
 #   this host (its torch or CUDA, or its Python, is not the release's); 12 the
 #   download failed; 13 the checksum failed or could not be taken; 14 the install
-#   failed; 15 the installed extensions are not the release's wheels (the check).
+#   failed; 15 the check failed (the installed extensions are not shown to be the
+#   release's wheels).
+#   After an install of PyG native extensions on ARM + CUDA (the pull, or a source
+#   build under compile or PYG_ARM_ON_PULL_FAILURE=build): 16 what is installed is
+#   NOT verified (an install, an import or the check failed after something was
+#   installed, and no later step replaced it); 17 they are installed and checked,
+#   but the source receipt could not be written.
 #
 # Note on Optional Accelerators (xFormers, FlashAttention, SageAttention):
 #   These are NOT installed during deployment. They are auto-installed
@@ -251,7 +260,7 @@ install_pyg_from_index() {  # original non-ARM path: data.pyg.org find-links
     fi
 }
 
-run_source_build() {  # self-compile via the standalone builder
+run_source_build() {  # self-compile via the standalone builder; returns its exit status
     if [ ! -f scripts/build_pyg_arm.sh ]; then
         echo -e "${RED}[ERROR] scripts/build_pyg_arm.sh not found.${NC}"; return 1
     fi
@@ -262,14 +271,47 @@ run_source_build() {  # self-compile via the standalone builder
     ASSUME_YES=1 INSTALL_AFTER_BUILD=1 bash scripts/build_pyg_arm.sh
 }
 
+# An install this run cannot state as checked and receipted stops the
+# deployment: it never ends as if nothing, or something verified, were installed.
+stop_pyg() {  # stop_pyg <exit status: 16 or 17> <what is installed, and what failed>
+    echo -e "\n${RED}[STOP] PyG native extensions: $2.${NC}"
+    echo -e "${RED}       The deployment stops here (exit $1).${NC}"
+    if [ "$1" = 17 ]; then
+        echo -e "${YELLOW}[HINT] Let .venv/share/shepherd-advanced be written (a directory, with free space),${NC}"
+        echo -e "${YELLOW}       and re-run.${NC}"
+    else
+        echo -e "${YELLOW}[HINT] Re-run when the cause is fixed: the pull and the build each reinstall all four${NC}"
+        echo -e "${YELLOW}       by file path. To run on the torch.scatter_reduce fallback instead, remove them:${NC}"
+        echo -e "${YELLOW}         uv pip uninstall pyg-lib torch-scatter torch-sparse torch-cluster${NC}"
+    fi
+    exit "$1"
+}
+
+# What a source build left installed, by scripts/build_pyg_arm.sh's exit status:
+# 0 its wheels, imported and checked; 1 or 2 nothing of its own (it stopped before
+# its install), which the caller states; 5 its wheels, checked, with no receipt;
+# anything else (3 the install, 4 an import or the check) wheels NOT verified.
+stop_if_the_build_installed_unverified() {  # <builder exit status>
+    case "$1" in
+        0|1|2) return 0 ;;
+        5) stop_pyg 17 "the source build's wheels are installed and checked, but the source receipt could not be written (see above)" ;;
+        3) stop_pyg 16 "the install of the source build's wheels failed (see above): what is installed under these names, whole or in part, is NOT verified" ;;
+        *) stop_pyg 16 "the source build's wheels are installed but NOT verified: an extension does not import, or what is installed is not exactly what the build made (see above; builder exit $1)" ;;
+    esac
+}
+
 # The prebuilt pull: fetch, verify, install exactly the release's wheels, check
 # them and write the source receipt. On failure it returns non-zero with
-# PULL_FAILED set to what failed (target, fetch, checksum, install, check); a
-# pull is "verified" only when the checksum matched, and "installed" only when
-# the installed bytes are the release's wheels.
+# PULL_FAILED set to what failed (target, fetch, checksum, install, check,
+# receipt); a pull is "verified" only when the checksum matched, and "installed"
+# only when the installed bytes are the release's wheels. PULL_INSTALLED is 1
+# once the release's wheels went to the installer: from then on a failure leaves
+# them installed, unverified, until something replaces them.
 PULL_FAILED=""
+PULL_INSTALLED=0
+PULL_RECEIPT_WORDS=""
 pull_prebuilt() {
-    local pyver asset url tmp expected_var expected actual pkg found wheels=()
+    local pyver asset url tmp expected_var expected actual pkg found checked wheels=()
     if [ "$PYG_CASE" != "A" ]; then
         echo -e "${RED}[ERROR] Pull not usable: host torch ${TVER:-unknown} is not the release's torch ${PYG_PREBUILT_TORCH}+cu${PYG_PREBUILT_CUDA}.${NC}"
         PULL_FAILED=target; return 1
@@ -314,19 +356,30 @@ pull_prebuilt() {
     done
     echo -e "[INFO] Installing exactly the release's wheels, by file path (--reinstall --no-deps):"
     for w in "${wheels[@]}"; do echo -e "       $(basename "$w")"; done
+    PULL_INSTALLED=1
     if ! uv pip install --python "$PY" --reinstall --no-deps "${wheels[@]}"; then
         echo -e "${RED}[ERROR] Install: installing the release's wheels failed (see above).${NC}"
         rm -rf "$tmp"; PULL_FAILED=install; return 1
     fi
     echo -e "[INFO] Checking what is installed against the release's wheels:"
-    if ! "$PY" scripts/validate_pyg_ext.py --check-wheels "${wheels[@]}" \
-            --write-receipt "prebuilt release" --release-tag "$PYG_RELEASE_TAG" \
-            --release-asset "$asset" --release-asset-sha256 "$actual" \
-            --compiled-against-torch "$PYG_PREBUILT_TORCH" --compiled-against-cuda "$PYG_PREBUILT_CUDA"; then
-        echo -e "${RED}[ERROR] Check: the installed PyG extensions are NOT the release's wheels (see above).${NC}"
-        rm -rf "$tmp"; PULL_FAILED=check; return 1
-    fi
+    # compiled_against in the notation the source build records (torch.__version__
+    # and torch.version.cuda: 2.10.0+cu130, 13.0), so one target reads alike from
+    # both routes. A cuXYZ tag's last digit is its CUDA minor version.
+    "$PY" scripts/validate_pyg_ext.py --check-wheels "${wheels[@]}" \
+        --write-receipt "prebuilt release" --release-tag "$PYG_RELEASE_TAG" \
+        --release-asset "$asset" --release-asset-sha256 "$actual" \
+        --compiled-against-torch "${PYG_PREBUILT_TORCH}+cu${PYG_PREBUILT_CUDA}" \
+        --compiled-against-cuda "${PYG_PREBUILT_CUDA%?}.${PYG_PREBUILT_CUDA: -1}"
+    checked=$?   # scripts/validate_pyg_ext.py --check-wheels' statuses
     rm -rf "$tmp"
+    case "$checked" in
+        0) PULL_RECEIPT_WORDS="source receipt written" ;;
+        4) PULL_RECEIPT_WORDS="no source receipt (the interpreter is not a virtual environment)" ;;
+        3) echo -e "${RED}[ERROR] Receipt: the release's wheels are installed and checked, but the source receipt could not be written (see above).${NC}"
+           PULL_FAILED=receipt; return 1 ;;
+        *) echo -e "${RED}[ERROR] Check: the installed PyG extensions are NOT shown to be the release's wheels (see above).${NC}"
+           PULL_FAILED=check; return 1 ;;
+    esac
     return 0
 }
 
@@ -390,14 +443,20 @@ if [ "$ARCH" = "aarch64" ] && [ "$CUDA_AVAIL" = "1" ]; then
             # too, and it builds only where a build was allowed.
             if pull_prebuilt; then
                 PYG_ROUTE="prebuilt release ${PYG_RELEASE_TAG}: installed and checked against its wheels"
-                echo -e "${GREEN}[OK] Prebuilt PyG wheels installed and checked; source receipt written.${NC}"
+                echo -e "${GREEN}[OK] Prebuilt PyG wheels installed and checked; ${PULL_RECEIPT_WORDS}.${NC}"
             else
+                # The release's wheels passed their check; only their receipt is
+                # missing. A source build would keep its receipt in the same
+                # place, so the build fallback does not apply.
+                if [ "$PULL_FAILED" = receipt ]; then
+                    stop_pyg 17 "the release's wheels are installed and checked, but the source receipt could not be written (see above)"
+                fi
                 case "$PULL_FAILED" in
                     target)   PULL_WORDS="the prebuilt release is not usable on this host"; PULL_EXIT=11 ;;
                     fetch)    PULL_WORDS="the download failed"; PULL_EXIT=12 ;;
                     checksum) PULL_WORDS="the checksum failed or could not be taken (the download is not verified)"; PULL_EXIT=13 ;;
                     install)  PULL_WORDS="the install failed"; PULL_EXIT=14 ;;
-                    *)        PULL_WORDS="the installed extensions are not the release's wheels"; PULL_EXIT=15 ;;
+                    *)        PULL_WORDS="the check failed: the installed extensions are not shown to be the release's wheels"; PULL_EXIT=15 ;;
                 esac
                 if [ "$PYG_ON_PULL_FAILURE" != "build" ]; then
                     echo -e "\n${RED}[STOP] Prebuilt PyG pull failed: ${PULL_WORDS}.${NC}"
@@ -408,19 +467,27 @@ if [ "$ARCH" = "aarch64" ] && [ "$CUDA_AVAIL" = "1" ]; then
                 fi
                 echo -e "${YELLOW}[WARN] Prebuilt PyG pull failed: ${PULL_WORDS}. Building from source instead,${NC}"
                 echo -e "${YELLOW}       as PYG_ARM_ON_PULL_FAILURE=build allows (other versions than the release's may result).${NC}"
-                if run_source_build; then
+                run_source_build; BUILD_STATUS=$?
+                stop_if_the_build_installed_unverified "$BUILD_STATUS"
+                if [ "$BUILD_STATUS" -eq 0 ]; then
                     PYG_ROUTE="local build, after the prebuilt pull failed (${PULL_FAILED}): installed and checked against the wheels it built"
+                elif [ "$PULL_INSTALLED" = 1 ]; then
+                    # The build installed nothing, so the release's wheels the
+                    # pull installed stay, as unverified as its failure left them.
+                    stop_pyg 16 "the prebuilt pull installed the release's wheels but failed (${PULL_FAILED}), and the source build allowed in its place did not complete: what is installed is NOT verified"
                 else
-                    echo -e "${YELLOW}[WARN] The source build did not complete (see its output above).${NC}"
+                    echo -e "${YELLOW}[WARN] The source build did not complete; it installed nothing (see its output above).${NC}"
                     PYG_ROUTE="none: the prebuilt pull failed (${PULL_FAILED}) and the source build did not complete"
                     PYG_FALLBACK_REASON="build-failed"
                 fi
             fi ;;
         compile)
-            if run_source_build; then
+            run_source_build; BUILD_STATUS=$?
+            stop_if_the_build_installed_unverified "$BUILD_STATUS"
+            if [ "$BUILD_STATUS" -eq 0 ]; then
                 PYG_ROUTE="local build: installed and checked against the wheels it built"
             else
-                echo -e "${YELLOW}[WARN] The source build did not complete (see its output above).${NC}"
+                echo -e "${YELLOW}[WARN] The source build did not complete; it installed nothing (see its output above).${NC}"
                 PYG_ROUTE="none: the source build did not complete"
                 PYG_FALLBACK_REASON="build-failed"
             fi ;;
@@ -492,8 +559,8 @@ if [ -n "$PYG_FALLBACK_REASON" ]; then
     if [ "$PYG_FALLBACK_REASON" = "build-failed" ]; then
         echo -e "${YELLOW}       You chose to build PyG from source but the build did not complete${NC}"
         echo -e "${YELLOW}       (commonly: missing system build tools — see the [STAGE 2/5] output above).${NC}"
-        echo -e "${YELLOW}       A build that failed installs nothing; an install or check that failed${NC}"
-        echo -e "${YELLOW}       is named in its output above.${NC}"
+        echo -e "${YELLOW}       It stopped before its install, so it installed nothing (an install, an${NC}"
+        echo -e "${YELLOW}       import or a check that fails after an install stops the deployment).${NC}"
     else
         echo -e "${YELLOW}       You chose to skip the PyG native extensions.${NC}"
     fi

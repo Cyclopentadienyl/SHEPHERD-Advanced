@@ -245,27 +245,34 @@ def _installed_name(member: str) -> Optional[str]:
 
 
 def wheel_identity(wheel: os.PathLike) -> WheelIdentity:
-    """Read a wheel's name, version, file digest and native library digests."""
+    """Read a wheel's name, version, file digest and native library digests.
+
+    A wheel that cannot be read raises `OSError` (the file) or `ValueError`
+    (its content: not a zip archive, a damaged member, no single METADATA
+    naming a Name and a Version)."""
     wheel = Path(wheel)
     with wheel.open("rb") as handle:
         file_digest = stream_sha256(handle)
-    with zipfile.ZipFile(wheel) as archive:
-        members = archive.namelist()
-        metadata = [m for m in members
-                    if m.count("/") == 1 and m.endswith(".dist-info/METADATA")]
-        if len(metadata) != 1:
-            raise ValueError(f"{wheel.name}: expected one .dist-info/METADATA, "
-                             f"found {len(metadata)}")
-        headers = email.parser.BytesHeaderParser().parsebytes(archive.read(metadata[0]))
-        name, version = headers.get("Name"), headers.get("Version")
-        if not name or not version:
-            raise ValueError(f"{wheel.name}: its METADATA names no Name or Version")
-        native = {}
-        for member in members:
-            target = _installed_name(member)
-            if target is not None and is_native_library(target):
-                with archive.open(member) as stream:
-                    native[target] = stream_sha256(stream)
+    try:
+        with zipfile.ZipFile(wheel) as archive:
+            members = archive.namelist()
+            metadata = [m for m in members
+                        if m.count("/") == 1 and m.endswith(".dist-info/METADATA")]
+            if len(metadata) != 1:
+                raise ValueError(f"{wheel.name}: expected one .dist-info/METADATA, "
+                                 f"found {len(metadata)}")
+            headers = email.parser.BytesHeaderParser().parsebytes(archive.read(metadata[0]))
+            name, version = headers.get("Name"), headers.get("Version")
+            if not name or not version:
+                raise ValueError(f"{wheel.name}: its METADATA names no Name or Version")
+            native = {}
+            for member in members:
+                target = _installed_name(member)
+                if target is not None and is_native_library(target):
+                    with archive.open(member) as stream:
+                        native[target] = stream_sha256(stream)
+    except zipfile.BadZipFile as exc:
+        raise ValueError(f"{wheel.name} is not a readable wheel: {exc}") from exc
     return WheelIdentity(name=str(name).strip(), version=str(version).strip(),
                          file=wheel.name, sha256=file_digest, native=native)
 
@@ -274,8 +281,9 @@ def wheel_identity(wheel: os.PathLike) -> WheelIdentity:
 class InstalledIdentity:
     """An installed distribution, as the interpreter's path finds it.
 
-    `copies` is how many distributions of the name are on the path; the other
-    fields describe the first, the one an import uses. `native` is None when
+    `copies` is how many distributions of the name are in the path's distinct
+    locations (`distinct_locations`); the other fields describe the first, the
+    one an import uses. `native` is None when
     its file list (``RECORD``) cannot be read; a listed native library that
     cannot be read maps to None. (One that is listed but gone from disk is left
     out of the file list by `importlib.metadata` itself, so it reads as not
@@ -288,13 +296,33 @@ class InstalledIdentity:
     native: Optional[Dict[str, Optional[str]]]
 
 
+def distinct_locations(path: Sequence[str]) -> List[str]:
+    """`path` with each location once, in order: an entry that resolves to a
+    place an earlier entry already names is left out.
+
+    A virtual environment's ``lib64`` is a link to its ``lib``, and where
+    ``sys.platlibdir`` is ``lib64`` (the RHEL, Fedora and SUSE Pythons) `site`
+    puts both names on ``sys.path``, since it compares absolute paths, not real
+    ones. Searched as given, one installed distribution would be found twice.
+    """
+    seen = set()
+    distinct = []
+    for entry in path:
+        real = os.path.realpath(entry)
+        if real not in seen:
+            seen.add(real)
+            distinct.append(entry)
+    return distinct
+
+
 def installed_identity(name: str, path: Optional[Sequence[str]] = None) -> InstalledIdentity:
     """The installed distribution called `name` (PEP 503 comparison), looked up
-    on `path` (default: ``sys.path``), with its native libraries' digests.
-    Native libraries installed outside site-packages (a ``RECORD`` entry that
-    starts with ``..``) are not compared, as on the wheel side."""
-    found = list(importlib.metadata.distributions(name=name, path=list(path))
-                 if path is not None else importlib.metadata.distributions(name=name))
+    in the distinct locations of `path` (default: ``sys.path``), with its native
+    libraries' digests. Native libraries installed outside site-packages (a
+    ``RECORD`` entry that starts with ``..``) are not compared, as on the wheel
+    side."""
+    locations = distinct_locations(sys.path if path is None else path)
+    found = list(importlib.metadata.distributions(name=name, path=locations))
     if not found:
         return InstalledIdentity(name=name, copies=0, version=None, native=None)
     first = found[0]
@@ -686,6 +714,7 @@ __all__ = [
     "normalised_name",
     "WheelIdentity",
     "wheel_identity",
+    "distinct_locations",
     "InstalledIdentity",
     "installed_identity",
     "WheelCheck",
