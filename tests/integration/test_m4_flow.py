@@ -4,18 +4,19 @@ M4 end to end: import, measure, keep, register, read back -- through the real CL
 Contract M4 (item 14, phase 1) acceptance, spec §6, on CPU. Every case runs the
 production entry points in process -- `scripts/import_cohort.py`,
 `scripts/measure_scorer.py`, `scripts/record_evaluation.py`, each through its
-`main` -- on the demo workspace (real HPO and MONDO ids), a checkpoint over it,
-and a registry in a tmp directory outside the repository, and asserts what they
-leave on disk: the registry, the report store, and the ledger's bytes and
-records.
+`main` -- on the demo workspace (real HPO and MONDO ids), the session's trained
+disease child over it (`trained_disease_child` in tests/conftest.py, both
+copied), measured by the disease protocol (`--mode disease`), and a registry in a tmp
+directory outside the repository, and asserts what they leave on disk: the
+registry, the report store, and the ledger's bytes and records.
 
 The module imports one version through the CLI's preview and commit; each test
 works on its own copy of that tree (`copy_registered_cohort`), so no test sees
 another's reports or ledger.
 
 > **Nothing here is an acceptance result about the scorer.** The checkpoint is
-> untrained and the graph synthetic; what is accepted is the flow: what is
-> refused, what is kept, what is recorded and what each label may claim.
+> trained for one epoch and the graph synthetic; what is accepted is the flow:
+> what is refused, what is kept, what is recorded and what each label may claim.
 
 Module: tests/integration/test_m4_flow.py
 """
@@ -40,16 +41,14 @@ torch = pytest.importorskip("torch")
 
 from tests.fixtures.opens import count_opens  # noqa: E402
 from tests.fixtures.registered_cohort import (  # noqa: E402
+    GRAPH_SOURCE_BINDING,
     GRAPH_SOURCE_COUNTS,
     LABEL,
     ROLE,
-    SOURCE_FILENAME,
-    RegisteredCohort,
-    build_registered_cohort,
     copy_registered_cohort,
-    graph_source_cases,
+    registered_cohort_from_child,
+    val_source_cases,
     write_demo_workspace,
-    write_fixture_checkpoint,
     write_source,
 )
 from tests.fixtures.replacement import HOWS, replace_after_read  # noqa: E402
@@ -89,20 +88,18 @@ def _preview_and_commit(registry, data_dir, source, label):
 
 
 @pytest.fixture(scope="module")
-def flow(tmp_path_factory):
-    """A workspace, a checkpoint and a source, and a version imported through
-    the CLI: the preview first (its effect on the registry recorded), then the
-    commit under the id the preview printed."""
+def flow(tmp_path_factory, trained_disease_child):
+    """The session's trained disease child, its workspace and its checkpoint
+    copied (the session's files stay read-only) and a source written
+    (`registered_cohort_from_child`, with nothing imported there), and a
+    version imported through the CLI: the preview first (its effect on the
+    registry recorded), then the commit under the id the preview printed."""
     from src.evaluation.cohort_registry import resolve_version
 
-    root = tmp_path_factory.mktemp("m4_flow").resolve() / "root"
-    root.mkdir()
-    data_dir = write_demo_workspace(root / "workspace")
-    checkpoint = root / "checkpoints" / "best.pt"
-    checkpoint_sha256 = write_fixture_checkpoint(data_dir, checkpoint)
-    source = write_source(root / SOURCE_FILENAME, graph_source_cases(data_dir))
-    registry = root / "registry"
-    registry.mkdir()
+    copied = registered_cohort_from_child(
+        trained_disease_child, tmp_path_factory.mktemp("m4_flow").resolve() / "root",
+        commit=False)
+    data_dir, source, registry = copied.data_dir, copied.source, copied.registry
 
     before = _tree(registry)
     code, preview_out = _import(registry, data_dir, source, LABEL)
@@ -110,8 +107,7 @@ def flow(tmp_path_factory):
     preview_id = re.search(r"Preview id: ([0-9a-f]{16})", preview_out).group(1)
     committed, commit_out = _import(registry, data_dir, source, LABEL, "--commit", preview_id)
 
-    cohort = RegisteredCohort(data_dir, checkpoint, checkpoint_sha256, registry, source,
-                              resolve_version(registry, LABEL))
+    cohort = copied._replace(version=resolve_version(registry, LABEL))
     return SimpleNamespace(cohort=cohort, preview_code=code, preview_out=preview_out,
                            before=before, after_preview=after_preview,
                            commit_code=committed, commit_out=commit_out)
@@ -132,7 +128,7 @@ def _measure(cohort, *extra, data_dir=None, checkpoint=None, label=LABEL):
     import scripts.measure_scorer as measure_scorer
 
     return measure_scorer.main([
-        "--checkpoint", str(checkpoint or cohort.checkpoint),
+        "--mode", "disease", "--checkpoint", str(checkpoint or cohort.checkpoint),
         "--data-dir", str(data_dir or cohort.data_dir),
         "--cohort", label, "--registry", str(cohort.registry), "--device", "cpu", *extra,
     ])
@@ -261,7 +257,12 @@ def test_measure_and_record_keeps_the_report_and_files_one_record(cohort):
     assert record["cohort_digest"] == _sha(cohort.version.directory / "cohort.json")
     assert record["source_artifact_digest"] == _sha(report)
     assert record["metrics"] == parsed["authoritative_metrics"]
-    assert record["n_ranked"] == GRAPH_SOURCE_COUNTS["keep"]["ranked_eligible"]
+    # The version's eligible cases less those none of whose phenotypes is in
+    # the model's graph view, which the disease task keeps unranked
+    # (`GRAPH_SOURCE_BINDING`, pinned apart from any run).
+    assert parsed["sampler_evidence"]["binding"] == GRAPH_SOURCE_BINDING
+    assert record["n_ranked"] == parsed["n_ranked"] == (
+        GRAPH_SOURCE_COUNTS["keep"]["ranked_eligible"] - GRAPH_SOURCE_BINDING["excluded"])
     assert record["cohort"]["counts"] == GRAPH_SOURCE_COUNTS["keep"]
     assert record["relations"] == REGISTERED_RELATIONS
     assert record["dataset_record"]["origin"] == "synthetic"
@@ -278,11 +279,16 @@ def test_registering_the_same_report_again_is_a_no_op(cohort):
     assert _ledger(cohort).read_bytes() == before
 
 
-def test_a_remeasurement_with_other_report_bytes_corroborates(cohort, tmp_path, capsys):
-    """The same checkpoint and version measured from a copy of the workspace: the
-    report's paths differ, its key and every compared field agree, so its digest
-    joins the first record's corroborating reports; no second record."""
+def test_a_remeasurement_with_other_report_bytes_is_a_record_of_its_own_run(
+    cohort, tmp_path, capsys
+):
+    """A2 end to end (K8-6r.2): the same checkpoint and version measured from a
+    copy of the workspace: the report's paths differ and every compared field
+    agrees, and each run is its own record, naming its run; the first record
+    is unchanged and nothing is merged. HEAD: its digest joined the first
+    record's corroborating reports, no second record."""
     assert _measure(cohort, "--record") == 0
+    (first_record,) = _records(cohort)
     copy = tmp_path / "workspace-copy"
     shutil.copytree(cohort.data_dir, copy)
 
@@ -290,10 +296,13 @@ def test_a_remeasurement_with_other_report_bytes_corroborates(cohort, tmp_path, 
 
     first, second = _reports(cohort)
     assert first.read_bytes() != second.read_bytes()
-    (record,) = _records(cohort)
-    assert record["source_artifact_digest"] == _sha(first)
-    assert record["corroborating_reports"] == [_sha(second)]
-    assert "Agrees with record 1" in capsys.readouterr().out
+    records = _records(cohort)
+    assert records[0] == first_record
+    assert [(r["run_id"], r["source_artifact_digest"], r["corroborating_reports"])
+            for r in records] == [(first.parent.name, _sha(first), []),
+                                  (second.parent.name, _sha(second), [])]
+    out = capsys.readouterr().out
+    assert "Registered as record 2" in out and "Runs under these conditions differ" not in out
 
 
 def _beside_in_the_store(report: Path, data: bytes) -> Path:
@@ -308,23 +317,34 @@ def _beside_in_the_store(report: Path, data: bytes) -> Path:
     return run_dir / "report.json"
 
 
-def test_a_contradicting_run_blocks_its_key_and_the_ledger_is_unchanged(cohort):
-    """D5 (since M5-1): a second run under the same key with an edited metric,
-    kept in the store. Registering it is refused ("runs disagree --
-    investigate"), naming the metric, and so is registering the first report
-    again; the ledger keeps its bytes."""
+def test_a_run_whose_value_differs_is_registered_and_described(cohort, caplog):
+    """A1, G4 end to end (K8-6r.2): a second run of the same group with an
+    edited metric, kept in the store, registers through record_evaluation as
+    record 2 naming its run, and the group note names the metric and record 1;
+    registering the first report again writes nothing. HEAD: both refused
+    ("runs disagree -- investigate")."""
+    import logging
+
     assert _measure(cohort, "--record") == 0
     first = _only_report(cohort)
-    before = _ledger(cohort).read_bytes()
+    (first_record,) = _records(cohort)
     edited = json.loads(first.read_text())
-    edited["authoritative_metrics"]["hits@1"] = 0.5 + edited["authoritative_metrics"]["hits@1"] / 2
+    metrics = edited["authoritative_metrics"]
+    metrics["pooled_top1"] = 0.5 + metrics["pooled_top1"] / 2
     second = _beside_in_the_store(first, json.dumps(edited).encode("utf-8"))
 
-    for report in (second, first):
-        message = _record_refused(report, cohort.checkpoint.parent)
-        assert "runs disagree — investigate" in message and "hits@1" in message
-        assert "Nothing was written" in message
+    with caplog.at_level(logging.INFO):
+        assert _record(second, cohort.checkpoint.parent) == 0
+    said = caplog.text
+    assert "Registered record 2" in said
+    assert (f"Runs under these conditions differ: record 2 (this run) differs from record 1 "
+            f"(run {first.parent.name}) on pooled_top1") in said
+    before = _ledger(cohort).read_bytes()
+    assert _record(first, cohort.checkpoint.parent) == 0
     assert _ledger(cohort).read_bytes() == before
+    records = _records(cohort)
+    assert records[0] == first_record
+    assert [r["run_id"] for r in records] == [first.parent.name, second.parent.name]
 
 
 def test_a_copy_outside_the_store_is_refused_and_the_original_registers(cohort, tmp_path):
@@ -370,7 +390,7 @@ def test_a_report_replaced_while_it_is_registered_cannot_be_paired(
     report = _only_report(cohort)
     a_bytes, a = report.read_bytes(), json.loads(report.read_text())
     b = json.loads(report.read_text())
-    b["authoritative_metrics"]["hits@1"] = 0.5 + b["authoritative_metrics"]["hits@1"] / 2
+    b["authoritative_metrics"]["pooled_top1"] = 0.5 + b["authoritative_metrics"]["pooled_top1"] / 2
     replace = replace_after_read(monkeypatch, after=report, target=report,
                                  data=json.dumps(b).encode("utf-8"), how=how)
 
@@ -549,21 +569,26 @@ def test_not_registering_keeps_the_report_for_a_later_registration(cohort):
     assert record["source_artifact_digest"] == _sha(report)
 
 
-def test_a_generated_split_report_is_refused_by_record_evaluation(tmp_path):
+def test_a_generated_split_report_is_refused_by_record_evaluation(trained_disease_child,
+                                                                  tmp_path):
     """BEHAVIOUR CHANGE (M4 decision 9): the ledger records results on registered
-    test cohort versions only; a generated `val` report is selection data. Since
+    test cohort versions only, and does not yet support a generated split's data
+    identity (reworded in K8-6r.4: not because such a result counts for less). Since
     M5-1 it is refused first for where it is: written to `--output`, never into a
     report store, it is not a report the store holds. (One placed in a store is
     refused by `build_record` as a generated split's,
-    `tests/unit/test_registration.py`.)"""
+    `tests/unit/test_registration.py`.) The session's disease child is copied,
+    so the ledger looked for is this test's own; its workspace is only read."""
     import scripts.measure_scorer as measure_scorer
-    from tests.fixtures.synthetic_workspace import build_workspace
 
-    data_dir, checkpoint = build_workspace(tmp_path / "ws")
+    data_dir = trained_disease_child["data_dir"]
+    checkpoint = tmp_path / "checkpoints" / "best.pt"
+    checkpoint.parent.mkdir()
+    shutil.copyfile(trained_disease_child["disease"], checkpoint)
     output = tmp_path / "out" / "measurement.json"
-    assert measure_scorer.main(["--checkpoint", str(checkpoint), "--data-dir", str(data_dir),
-                                "--split", "val", "--output", str(output),
-                                "--device", "cpu"]) == 0
+    assert measure_scorer.main(["--mode", "disease", "--checkpoint", str(checkpoint),
+                                "--data-dir", str(data_dir), "--split", "val",
+                                "--output", str(output), "--device", "cpu"]) == 0
 
     message = _record_refused(output, checkpoint.parent)
 
@@ -627,8 +652,8 @@ def test_arguments_of_the_other_kind_of_cohort_are_refused(
     import scripts.measure_scorer as measure_scorer
 
     monkeypatch.chdir(tmp_path)
-    common = ["--checkpoint", str(cohort.checkpoint), "--data-dir", str(cohort.data_dir),
-              "--device", "cpu"]
+    common = ["--mode", "disease", "--checkpoint", str(cohort.checkpoint),
+              "--data-dir", str(cohort.data_dir), "--device", "cpu"]
     if extra[0] == "--output":
         argv = [*common, "--cohort", LABEL, "--registry", str(cohort.registry), *extra]
     else:
@@ -669,26 +694,31 @@ def test_the_printed_command_run_as_printed_registers_the_measured_file(
 
 @pytest.mark.parametrize("flag", ["--checkpoint-dir", "--checkpoint"])
 def test_a_report_registered_through_a_link_is_shown_for_the_model_served_through_it(
-    cohort, tmp_path, monkeypatch, flag
+    cohort, trained_disease_child, tmp_path, monkeypatch, flag
 ):
     """Findings 0/2/13/24/25: the deployment serves `served/best.pt`, a link to
     the run's checkpoint. Registering the kept report through the link's
     directory or the link itself files the ledger beside the file the link
     names -- where the service looks -- so the model status shows the record;
-    no second ledger is made beside the link."""
-    assert _measure(cohort) == 0
+    no second ledger is made beside the link. The run's checkpoint is the
+    trained disease child, measured by the disease protocol on the cohort's workspace (a
+    copy of the demo workspace it was trained on)."""
+    child = tmp_path / "run" / "checkpoints" / "best.pt"
+    child.parent.mkdir(parents=True)
+    shutil.copyfile(trained_disease_child["disease"], child)
+    assert _measure(cohort, checkpoint=child) == 0
     served = tmp_path / "served"
     served.mkdir()
-    (served / "best.pt").symlink_to(cohort.checkpoint)
+    (served / "best.pt").symlink_to(child)
 
     assert _record_through(_only_report(cohort), flag,
                            served if flag == "--checkpoint-dir" else served / "best.pt") == 0
 
-    assert len(_records(cohort)) == 1
+    assert len(json.loads((child.parent / LEDGER).read_text())["records"]) == 1
     assert not (served / LEDGER).exists()
     view = _served_view(monkeypatch, cohort, served / "best.pt")
     assert view["state"] == "records"
-    assert view["checkpoint_sha256"] == cohort.checkpoint_sha256
+    assert view["checkpoint_sha256"] == _sha(child)
     assert len(view["records"]) == 1
 
 
@@ -698,14 +728,15 @@ def _record_through(report, flag, named):
     return record_evaluation.main(["--report", str(report), flag, str(named)])
 
 
-def test_a_corroborating_rerun_that_found_r10_evidence_says_the_record_keeps_its_own(
+def test_a_rerun_that_found_r10_evidence_is_its_own_record_with_its_own_r10(
     cohort, tmp_path, capsys
 ):
-    """Finding 3: measured with `--record` from a re-sampled workspace (R10
-    unverifiable), then again with the training workspace as evidence: the
-    second run corroborates, the record keeps its own unverifiable labels, and
-    the console says so, naming the report that holds the labels this run
-    found, rather than reporting plain agreement."""
+    """Finding 3, by run since K8-6r.2 (A2): measured with `--record` from a
+    re-sampled workspace (R10 unverifiable), then again with the training
+    workspace as evidence: the second run is a record of its own, keeping the
+    R10 labels it found, and the first record keeps its own unverifiable
+    labels; nothing is merged. HEAD: the second run was merged into record 1, and its R10
+    was left in its report only."""
     resampled = write_demo_workspace(tmp_path / "resampled", sample_seed=7)
     assert _measure(cohort, "--record", data_dir=resampled) == 0
     capsys.readouterr()
@@ -715,13 +746,12 @@ def test_a_corroborating_rerun_that_found_r10_evidence_says_the_record_keeps_its
 
     out = capsys.readouterr().out
     second = _reports(cohort)[-1]
-    assert "Agrees with record 1" in out
-    assert re.search(
-        r"This report's r10( and environment)? differ from record 1's; they are not "
-        r"compared, so the record keeps its own and this report's are in "
-        + re.escape(str(second)) + r"\.", out), out
-    (record,) = _records(cohort)
-    _unverifiable_everywhere(record["r10"])
+    assert "Registered as record 2" in out
+    first_record, second_record = _records(cohort)
+    _unverifiable_everywhere(first_record["r10"])
+    assert second_record["run_id"] == second.parent.name
+    assert second_record["r10"] == _r10(second)
+    assert second_record["r10"]["training"]["evidence"]["state"] == "found"
     assert _r10(second)["training"]["evidence"]["state"] == "found"
 
 
@@ -788,8 +818,8 @@ def test_a_tampered_samples_file_is_refused_by_digest(cohort):
 
 def test_a_checkpoint_moved_with_unchanged_bytes_keeps_its_records(cohort, tmp_path, capsys):
     """Records are found by digest, not file name: the checkpoint moved with its
-    ledger is found by `--show`, and measuring it from the new place corroborates
-    the record already there."""
+    ledger is found by `--show`, and measuring it from the new place adds the
+    new run's own record beside the one already there (K8-6r.2)."""
     import scripts.record_evaluation as record_evaluation
 
     assert _measure(cohort, "--record") == 0
@@ -803,8 +833,9 @@ def test_a_checkpoint_moved_with_unchanged_bytes_keeps_its_records(cohort, tmp_p
     assert shown["checkpoint_digest"] == cohort.checkpoint_sha256
 
     assert _measure(cohort, "--record", checkpoint=moved / "best.pt") == 0
-    (record,) = json.loads((moved / LEDGER).read_text())["records"]
-    assert len(record["corroborating_reports"]) == 1
+    first, second = json.loads((moved / LEDGER).read_text())["records"]
+    assert first == shown and second["run_id"] != first["run_id"]
+    assert (first["corroborating_reports"], second["corroborating_reports"]) == ([], [])
 
 
 # ---------------------------------------------------------------------------
@@ -897,16 +928,18 @@ def test_r10_missing_or_altered_evidence_is_unverifiable(cohort, case):
     assert r10[kept]["evidence"]["state"] == "found"
 
 
-def test_r10_a_cohort_of_validation_cases_overlaps_validation_entirely(tmp_path, monkeypatch):
-    """A source built from the workspace's own val cases: every test case's
-    phenotype set is a validation case's (k = n), and the allocation keeps its
-    diseases out of training."""
-    cohort = build_registered_cohort(tmp_path / "root", source="val_cases")
-    monkeypatch.setenv("SHEPHERD_REGISTRY", str(cohort.registry))
+def test_r10_a_cohort_of_validation_cases_overlaps_validation_entirely(cohort):
+    """A source built from the workspace's own val cases, imported as another
+    version: every test case's phenotype set is a validation case's (k = n),
+    and the allocation keeps its diseases out of training."""
+    source = write_source(cohort.source.with_name("val_cases.json"),
+                          val_source_cases(cohort.data_dir))
+    _preview_and_commit(cohort.registry, cohort.data_dir, source, "val-cases")
 
-    assert _measure(cohort) == 0
+    assert _measure(cohort, label="val-cases") == 0
 
-    r10 = _r10(_only_report(cohort))
+    (report,) = _reports(cohort, label="val-cases")
+    r10 = _r10(report)
     phenotype_sets = r10["validation"]["phenotype_set_overlap"]
     assert phenotype_sets["state"] == "overlap"
     assert phenotype_sets["k"] == phenotype_sets["n"] == 5
@@ -940,7 +973,9 @@ def test_r10_evidence_not_in_phenotype_normal_form_is_unverifiable_and_the_run_c
     phenotype twice. The shared reader refuses it as `UnparseableFile`, so R10
     records that scope's evidence *unreadable* and its labels *unverifiable*, and
     the measurement completes rather than being refused. Training refuses such a
-    file, so no run records one; the record is rewritten here by hand."""
+    file, so no run records one; the record is rewritten here by hand, both of
+    its claims about the training cases, as a run on that file would write them
+    (a record that names one input two ways is refused, K8-4 review P2-2)."""
     from src.utils.checkpoint_io import read_checkpoint, write_checkpoint
 
     rows = json.loads((cohort.data_dir / "train_samples.json").read_text())
@@ -951,6 +986,7 @@ def test_r10_evidence_not_in_phenotype_normal_form_is_unverifiable_and_the_run_c
     payload = read_checkpoint(cohort.checkpoint, map_location="cpu",
                               weights_only=True).checkpoint
     payload["training_input_digests"]["train_samples"] = _sha(evidence)
+    payload["data_roles"]["task_data"]["train"]["samples"] = _sha(evidence)
     write_checkpoint(payload, cohort.checkpoint)
 
     assert _measure(cohort, "--training-evidence", str(evidence.parent)) == 0

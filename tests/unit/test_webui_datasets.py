@@ -353,16 +353,16 @@ def test_the_build_line_names_only_a_command_that_builds_a_dataset():
         assert "def main(" in text and "argparse" in text, script
 
 
-def test_no_shipped_text_sends_an_operator_to_the_placeholder_script():
-    """The dashboard, the scripts and both deployment guides never tell anyone
-    to run the empty ``preprocess_data.py`` (only the file itself names it)."""
+def test_the_placeholder_script_is_retired_and_no_shipped_text_sends_an_operator_to_it():
+    """K7 (X2): the empty ``scripts/preprocess_data.py`` placeholder is deleted.
+    The guard stays: the dashboard, the scripts and both deployment guides never
+    tell anyone to run it."""
     repo = Path(__file__).resolve().parents[2]
-    stub = repo / "scripts" / "preprocess_data.py"
-    assert _PLANNED_STUB in stub.read_text(encoding="utf-8")
+    assert not (repo / "scripts" / "preprocess_data.py").exists()
     places = [*(repo / "src").rglob("*.py"), *(repo / "scripts").rglob("*.py"),
               repo / "deployment-guide.md", repo / "deployment-guide.en.md"]
     naming = [str(p.relative_to(repo)) for p in places
-              if p != stub and "preprocess_data.py" in p.read_text(encoding="utf-8")]
+              if "preprocess_data.py" in p.read_text(encoding="utf-8")]
     assert naming == []
 
 
@@ -388,7 +388,7 @@ def test_the_training_popover_and_datasets_show_one_details_body(root, monkeypat
     body = r.dataset_details_html(row, row["facts"], problem=row["facts_problem"])
     assert "diseases (train / val)" in body and "What the manifest binds" in body
     assert body in dsp.details_html(data, "demo")
-    state = tc._workspace_state("demo")
+    state = tc.workspace_state("demo")
     assert state["facts"] == row["facts"]
     assert r.dataset_details_html(state["row"], state["facts"]) in tc.details_html(state)
     assert body == r.dataset_details_html(state["row"], state["facts"])
@@ -396,18 +396,30 @@ def test_the_training_popover_and_datasets_show_one_details_body(root, monkeypat
 
 def test_no_page_reaches_into_another_page_or_the_renderers_private_names():
     """The page contract (`src/webui/shell.py`): a page reaches nothing of
-    another page; shared pieces live in renderers.py and workspaces.py."""
+    another page; shared pieces live in renderers.py and workspaces.py. **The
+    one exception, recorded in the contract**: Fine-tune is Training's second
+    form (README §1) and uses training_console's public training-form pieces
+    (as ``tc``), and no other page (K6 closing review: the guard did not check
+    finetune_page at all)."""
     import ast
 
-    pages = {"datasets_page", "diagnosis_panel", "training_console", "test_page",
-             "models_page", "runtime_settings"}
+    from src.webui import shell
+
+    pages = {"datasets_page", "diagnosis_panel", "training_console", "finetune_page",
+             "test_page", "models_page", "runtime_settings"}
+    allowed = {"finetune_page": {"training_console"}}
+    assert "Fine-tune is Training's second form" in " ".join(shell.__doc__.split())
     folder = Path(dsp.__file__).parent
     for page in sorted(pages):
         source = (folder / f"{page}.py").read_text(encoding="utf-8")
+        reached = set()
         for node in ast.walk(ast.parse(source)):
             if isinstance(node, ast.ImportFrom) and node.module:
                 names = {node.module.rsplit(".", 1)[-1], *(a.name for a in node.names)}
-                assert not (names & (pages - {page})), (page, node.module)
+                reached |= names & (pages - {page})
             if isinstance(node, ast.Attribute) and node.attr.startswith("_") \
-                    and isinstance(node.value, ast.Name) and node.value.id == "r":
-                raise AssertionError(f"{page} uses renderers.{node.attr}")
+                    and isinstance(node.value, ast.Name) and node.value.id in ("r", "tc"):
+                raise AssertionError(f"{page} uses {node.value.id}.{node.attr}")
+        assert reached <= allowed.get(page, set()), (page, reached)
+    assert "from src.webui.components import training_console as tc" in (
+        folder / "finetune_page.py").read_text(encoding="utf-8")

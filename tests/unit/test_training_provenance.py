@@ -13,9 +13,9 @@ whenever a byte moved would stop being a compatibility check.
 
 **Scope, and what these tests deliberately do not cover.** Capture only. There is
 no comparison against a current workspace, no registry, no locking and no
-transactional loading — `verify_fingerprint` still checks structure alone and says
-so. Since contract M2.1's S8 every recorded digest is that of the bytes a reader
-parsed (`read_training_inputs`, `read_resume_parent`), so the record and
+transactional loading — the fingerprint is recorded and compared by nothing at
+load (identity is `verify_training_record`'s). Since contract M2.1's S8 every recorded digest is that of the bytes a reader
+parsed (`read_training_inputs`, `read_resume_checkpoint`), so the record and
 the inputs trained on come from the same reads; the entry-point acceptance for
 that is `tests/unit/test_training_reads.py`.
 
@@ -31,11 +31,8 @@ import pytest
 torch = pytest.importorskip("torch")
 
 from src.training.callbacks import ModelCheckpoint, ModelCheckpointConfig  # noqa: E402
-from src.utils.fingerprint import (  # noqa: E402
-    compute_fingerprint,
-    file_sha256,
-    verify_fingerprint,
-)
+from src.utils.fingerprint import compute_fingerprint, file_sha256  # noqa: E402
+from tests.unit.test_model_record import _record, _stored_task  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -262,37 +259,43 @@ def _parent(path: Path, data_dir: Path, **contents) -> Path:
     return path
 
 
-def test_no_resume_requested_reads_nothing_and_records_nothing(tmp_path):
+def _read_and_accept(path, inputs):
+    """A resume parent as `train()` takes it: the one read
+    (`read_resume_checkpoint`), then the comparison with this run's inputs
+    (`accept_resume_parent`, contract M2.3), which refuses or returns nothing."""
+    from scripts.train_model import accept_resume_parent, read_resume_checkpoint
+
+    parent = read_resume_checkpoint(str(path), "cpu")
+    accept_resume_parent(parent, inputs)
+    return parent
+
+
+def test_no_resume_requested_reads_nothing_and_records_nothing():
     """The production decision, not a helper's response to an argument.
 
     These tests exist because an earlier version built the role map from a path
     or `None` and assumed `train()` chose correctly. That assumption is what the
     earlier mirrored-role-map defect was made of.
     """
-    from scripts.train_model import read_resume_parent
+    from scripts.train_model import read_resume_checkpoint
 
-    inputs = _inputs(_workspace(tmp_path / "ws"))
-
-    assert read_resume_parent(None, inputs, "cpu") is None
-    assert read_resume_parent("", inputs, "cpu") is None
+    assert read_resume_checkpoint(None, "cpu") is None
+    assert read_resume_checkpoint("", "cpu") is None
 
 
 def test_a_requested_but_missing_parent_is_refused(tmp_path):
     """M2.3: the run does not train from scratch instead, as it did when this
     only warned."""
-    from scripts.train_model import read_resume_parent
-
-    inputs = _inputs(_workspace(tmp_path / "ws"))
+    from scripts.train_model import read_resume_checkpoint
 
     with pytest.raises(FileNotFoundError, match="does not train from scratch"):
-        read_resume_parent(str(tmp_path / "not_here.pt"), inputs, "cpu")
+        read_resume_checkpoint(str(tmp_path / "not_here.pt"), "cpu")
 
 
 def test_the_parent_checked_and_the_identity_returned_come_from_one_read(tmp_path):
     """The returned dict and identity **are** those of the one read, which
-    `train` restores from and records; that it does is shown at the entry point
-    (`test_training_reads.py`)."""
-    from scripts.train_model import read_resume_parent
+    `train` checks, restores from and records; that it does is shown at the
+    entry point (`test_training_reads.py`). The check reads nothing again."""
     from tests.fixtures.opens import count_opens
 
     data_dir = _workspace(tmp_path / "ws")
@@ -301,7 +304,7 @@ def test_the_parent_checked_and_the_identity_returned_come_from_one_read(tmp_pat
     inputs = _inputs(data_dir)
 
     with count_opens() as opens:
-        returned = read_resume_parent(str(parent), inputs, "cpu")
+        returned = _read_and_accept(parent, inputs)
 
     assert opens.opens(parent) == 1
     assert returned.identity.sha256 == _sha256(parent)
@@ -311,12 +314,10 @@ def test_the_parent_checked_and_the_identity_returned_come_from_one_read(tmp_pat
 
 def test_the_decision_feeds_the_record_end_to_end(tmp_path):
     """The two halves joined: a real decision, then the record built from it."""
-    from scripts.train_model import read_resume_parent
-
     data_dir = _workspace(tmp_path / "ws")
     parent = _parent(tmp_path / "parent.pt", data_dir, state_dict={})
 
-    restored = read_resume_parent(str(parent), _inputs(data_dir), "cpu")
+    restored = _read_and_accept(parent, _inputs(data_dir))
     record = _training_record(data_dir, parent=restored.identity)
     assert record["resume_checkpoint"] == _sha256(parent)
 
@@ -324,14 +325,12 @@ def test_the_decision_feeds_the_record_end_to_end(tmp_path):
 def test_two_parents_with_different_bytes_are_distinguishable(tmp_path):
     """The case the field exists for: identical workspace files, different
     parents. Without the parent role these two runs carried the same record."""
-    from scripts.train_model import read_resume_parent
-
     data_dir = _workspace(tmp_path / "ws")
     first = _parent(tmp_path / "a.pt", data_dir, state_dict={"w": torch.zeros(1)})
     second = _parent(tmp_path / "b.pt", data_dir, state_dict={"w": torch.ones(1)})
 
     def record_for(parent):
-        restored = read_resume_parent(str(parent), _inputs(data_dir), "cpu")
+        restored = _read_and_accept(parent, _inputs(data_dir))
         return _training_record(data_dir, parent=restored.identity)
 
     a, b = record_for(first), record_for(second)
@@ -385,9 +384,10 @@ def test_two_runs_over_different_samples_are_distinguishable_from_provenance(tmp
 # The checkpoint writer
 # ---------------------------------------------------------------------------
 def _tiny_trainer(tmp_path, **attrs):
-    """A real `Trainer` over a one-parameter model and no batches. Since M3a-1
-    both writers build their payload from the trainer's own state
-    (`build_checkpoint_payload`), so a stub would have to imitate all of it."""
+    """A real `Trainer` over a one-parameter model and no batches, carrying a
+    model record as every training run's does. Since M3a-1 both writers build
+    their payload from the trainer's own state (`build_checkpoint_payload`), so
+    a stub would have to imitate all of it."""
     from src.training.trainer import Trainer, TrainerConfig
 
     trainer = Trainer(
@@ -397,7 +397,9 @@ def _tiny_trainer(tmp_path, **attrs):
             device="cpu", scheduler_type="none", use_amp=False, num_epochs=2,
             checkpoint_dir=str(tmp_path / "ckpt"), log_dir=str(tmp_path / "logs"),
         ),
+        task=_stored_task(),
     )
+    trainer.model_record = _record()[1]
     for name, value in attrs.items():
         setattr(trainer, name, value)
     return trainer
@@ -451,35 +453,22 @@ def test_a_trainer_carrying_no_digests_writes_a_checkpoint_without_the_key(tmp_p
 
 
 # ---------------------------------------------------------------------------
-# What was deliberately not built
+# What the fingerprint is for
 # ---------------------------------------------------------------------------
-def test_the_structural_verifier_does_not_pretend_to_check_digests():
-    """An empty warning list means "structurally compatible", never "trained on
-    these files". Comparison against a current workspace is deferred, and the
-    docstring says so — this asserts the behaviour rather than trusting the prose.
-    """
-    graph = {
-        "x_dict": {"disease": torch.zeros(2, 4)},
-        "edge_index_dict": {("disease", "x", "disease"): torch.zeros(2, 0, dtype=torch.long)},
-        "num_nodes_dict": {"disease": 2},
-    }
-    checkpoint = {
-        "data_fingerprint": compute_fingerprint(graph),
-        "training_input_digests": {"train_samples": "a digest from another machine"},
-    }
+def test_a_trained_childs_fingerprint_is_its_workspace_graphs_structure(trained_disease_child):
+    """The fingerprint a run records is `compute_fingerprint` of the graph it
+    trained on: a trained child's `data_fingerprint` equals the structure of its
+    workspace's graph, read as serving reads it. Nothing compares it at load
+    (K8-4 retired the structural check); the training record names the inputs."""
+    from src.kg.storage.file_storage import read_graph_artifacts
 
-    assert verify_fingerprint(checkpoint, graph) == []
+    checkpoint = torch.load(trained_disease_child["disease"], map_location="cpu",
+                            weights_only=True)
+    graph = read_graph_artifacts(Path(trained_disease_child["data_dir"]),
+                                 map_location="cpu").graph_data
 
-
-def test_a_checkpoint_predating_the_field_still_verifies_structurally():
-    """Absence of a digest map means "not recorded" and nothing more."""
-    graph = {
-        "x_dict": {"disease": torch.zeros(2, 4)},
-        "edge_index_dict": {("disease", "x", "disease"): torch.zeros(2, 0, dtype=torch.long)},
-        "num_nodes_dict": {"disease": 2},
-    }
-
-    assert verify_fingerprint({"data_fingerprint": compute_fingerprint(graph)}, graph) == []
+    assert checkpoint["data_fingerprint"] == compute_fingerprint(graph)
+    assert "training_input_digests" not in checkpoint["data_fingerprint"]
 
 
 #: Files this gate covers, **repo-relative**; the test resolves them against the
@@ -488,25 +477,9 @@ def test_a_checkpoint_predating_the_field_still_verifies_structurally():
 #: `Undefined name 'Trainer'` findings from quoted forward references without a
 #: `TYPE_CHECKING` import, none of them from this change and none of them this
 #: item's to fix.
-#:
-#: **The SP files are here for a hazard, not for tidiness.** Backlog item 5a
-#: moved the shortest-path primitive into `src/inference/sp_index.py` and left an
-#: independent reference in `scripts/sp_scan_reference.py`. Both carry
-#: `from __future__ import annotations`, which makes a dataclass field annotated
-#: with a name that is no longer in scope construct *and instantiate* without
-#: error — measured, on the file this replaced: the module imported and all 28 of
-#: its tests passed with the annotation dangling. `make check` runs
-#: `lint-imports` and the tests rather than `make lint`, so F821 — the one check
-#: in the default gate that sees it — was never reached. Listing them costs one
-#: ruff invocation.
 _F821_CLEAN = (
     "scripts/train_model.py",
     "scripts/measure_scorer.py",
-    "scripts/benchmark_sp_lookup.py",
-    "scripts/sp_scan_reference.py",
-    "scripts/audit_sp_reachability.py",
-    "src/inference/sp_index.py",
-    "src/inference/sp_artifact.py",
     "src/utils/fingerprint.py",
     # Contract M2.1, S8: the resume read and its restore moved between these.
     "src/training/trainer.py",
@@ -521,8 +494,8 @@ def test_the_touched_files_reference_no_undefined_names():
     """The failure the mirrored helper hid, checked by the tool that already does
     this correctly.
 
-    `val_samples` is bound in `create_dataloaders` while the provenance wiring
-    lives in `train`. Reading it there is a `NameError` at runtime — and every
+    `val_samples` was bound in `create_dataloaders` (retired in K8-7) while the
+    provenance wiring lived in `train`. Reading it there was a `NameError` at runtime — and every
     test in this file passed anyway, because the first version rebuilt the role
     map beside the source instead of calling it.
 

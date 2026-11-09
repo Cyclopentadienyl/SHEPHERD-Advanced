@@ -118,15 +118,13 @@ validate:
 #
 # The previous `index` target passed only `--config` and therefore failed argument
 # validation on every invocation: build_index.py also requires a source
-# (--checkpoint or --embeddings) and a destination (--output or
-# --export-embeddings). It had never worked. ARGS is a passthrough so both flows
-# are expressible, and an empty ARGS prints usage instead of an argparse error.
+# (--embeddings; a checkpoint is not an input since K7) and a destination
+# (--output or --export-embeddings). It had never worked. ARGS is a passthrough,
+# and an empty ARGS prints usage instead of an argparse error.
 vector-index:
 	@[ -n "$(ARGS)" ] || { \
 	  echo "usage: make vector-index ARGS=\"<build_index.py arguments>\""; \
 	  echo ""; \
-	  echo "  from a checkpoint:"; \
-	  echo "    ARGS=\"--checkpoint <ckpt> --data-dir <workspace> --output <ws>/vector_index\""; \
 	  echo "  from pre-exported embeddings:"; \
 	  echo "    ARGS=\"--embeddings <file.npz> --output <ws>/vector_index\""; \
 	  echo ""; \

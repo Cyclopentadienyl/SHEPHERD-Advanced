@@ -7,9 +7,11 @@ turns sample ids into an index tensor, which truncates `3.7` to `3` and reads
 the reader every caller shares, refuses such an id before any caller converts
 it, naming the file, the patient and the field.
 
-Shown at the Mode C entry point (`main`) on the generated `val` split: the run
-is refused before a model is built or anything is written. A registered cohort
-version's samples cannot carry such an id: the importer writes integers, and a
+Shown at the measurement entry point (`main --mode disease`, measuring the
+session's trained disease child, `trained_disease_child` in tests/conftest.py)
+on the generated `val` split of a copy of its workspace: the run is refused
+before a model is built or anything is written. A registered cohort version's
+samples cannot carry such an id: the importer writes integers, and a
 `samples.json` edited afterwards is refused by the digest its `cohort.json`
 binds before it is parsed, so the id is never converted there either. The
 training fields go through the same reader and are shown on it directly.
@@ -22,6 +24,7 @@ Module: tests/unit/test_measurement_integer_ids.py
 from __future__ import annotations
 
 import json
+import shutil
 
 import pytest
 
@@ -48,26 +51,41 @@ def _rewrite_first_sample(path, field, value):
     return rows[0]["patient_id"]
 
 
-@pytest.mark.parametrize("field, value", BAD, ids=[f"{f}={v!r}" for f, v in BAD])
-def test_mode_c_refuses_a_sample_id_that_is_not_an_integer(tmp_path, monkeypatch, field, value):
-    import scripts.measure_scorer as cli
-    import src.models.gnn.shepherd_gnn as shepherd_gnn
+@pytest.fixture
+def child_copy(trained_disease_child, tmp_path):
+    """The session's trained disease child, ``(data_dir, checkpoint)``, its
+    workspace copied into this test's directory to be edited; the checkpoint is
+    only read."""
+    data_dir = shutil.copytree(trained_disease_child["data_dir"], tmp_path / "ws")
+    return data_dir, trained_disease_child["disease"]
 
-    data_dir, checkpoint = build_workspace(tmp_path / "ws")
+
+def _measure(cli, data_dir, checkpoint, output):
+    return cli.main([
+        "--mode", "disease", "--checkpoint", str(checkpoint), "--data-dir", str(data_dir),
+        "--split", "val", "--output", str(output), "--device", "cpu",
+    ])
+
+
+@pytest.mark.parametrize("field, value", BAD, ids=[f"{f}={v!r}" for f, v in BAD])
+def test_measurement_refuses_a_sample_id_that_is_not_an_integer(
+    child_copy, tmp_path, monkeypatch, field, value
+):
+    import scripts.measure_scorer as cli
+    import src.models.bundle.record as bundle_record
+
+    data_dir, checkpoint = child_copy
     samples_path = data_dir / "val_samples.json"
     patient = _rewrite_first_sample(samples_path, field, value)
 
     def built(*args, **kwargs):
         raise AssertionError("a model was built from samples that should have been refused")
 
-    monkeypatch.setattr(shepherd_gnn, "build_shepherd_model", built)
+    monkeypatch.setattr(bundle_record, "load_bundle", built)
     output = tmp_path / "out" / "measurement.json"
 
     with pytest.raises(ValueError) as refused:
-        cli.main([
-            "--checkpoint", str(checkpoint), "--data-dir", str(data_dir),
-            "--split", "val", "--output", str(output), "--device", "cpu",
-        ])
+        _measure(cli, data_dir, checkpoint, output)
 
     message = str(refused.value)
     assert str(samples_path) in message
@@ -77,26 +95,25 @@ def test_mode_c_refuses_a_sample_id_that_is_not_an_integer(tmp_path, monkeypatch
     assert not output.parent.exists()
 
 
-def test_mode_c_refuses_a_case_not_in_phenotype_normal_form(tmp_path, monkeypatch):
+def test_measurement_refuses_a_case_not_in_phenotype_normal_form(
+    child_copy, tmp_path, monkeypatch
+):
     """N2, through the same reader: a case that lists a phenotype twice is refused,
     not normalised on the way, before a model is built or anything is written,
     naming the file, the patient and the producer that rebuilds it."""
     import scripts.measure_scorer as cli
-    import src.models.gnn.shepherd_gnn as shepherd_gnn
+    import src.models.bundle.record as bundle_record
 
-    data_dir, checkpoint = build_workspace(tmp_path / "ws")
+    data_dir, checkpoint = child_copy
     samples_path = data_dir / "val_samples.json"
     phenotypes = json.loads(samples_path.read_text())[0]["phenotype_ids"]
     patient = _rewrite_first_sample(samples_path, "phenotype_ids", phenotypes * 2)
-    monkeypatch.setattr(shepherd_gnn, "build_shepherd_model",
+    monkeypatch.setattr(bundle_record, "load_bundle",
                         lambda *a, **k: pytest.fail("a model was built"))
     output = tmp_path / "out" / "measurement.json"
 
     with pytest.raises(ValueError, match="not in phenotype normal form") as refused:
-        cli.main([
-            "--checkpoint", str(checkpoint), "--data-dir", str(data_dir),
-            "--split", "val", "--output", str(output), "--device", "cpu",
-        ])
+        _measure(cli, data_dir, checkpoint, output)
 
     message = str(refused.value)
     assert str(samples_path) in message
@@ -105,55 +122,57 @@ def test_mode_c_refuses_a_case_not_in_phenotype_normal_form(tmp_path, monkeypatc
     assert not output.parent.exists()
 
 
-def test_integer_ids_still_measure(tmp_path):
-    """The refusal leaves an ordinary cohort alone: the fixture's integer ids run."""
+def test_integer_ids_still_measure(trained_disease_child, tmp_path):
+    """The refusal leaves an ordinary cohort alone: the workspace's integer ids run."""
     import scripts.measure_scorer as cli
 
-    data_dir, checkpoint = build_workspace(tmp_path / "ws")
     output = tmp_path / "out" / "measurement.json"
 
-    assert cli.main([
-        "--checkpoint", str(checkpoint), "--data-dir", str(data_dir),
-        "--split", "val", "--output", str(output), "--device", "cpu",
-    ]) == 0
+    assert _measure(cli, trained_disease_child["data_dir"], trained_disease_child["disease"],
+                    output) == 0
     assert json.loads(output.read_text())["n_ranked"] > 0
 
 
 @pytest.mark.parametrize("field, value", [("disease_id", 1.0), ("phenotype_ids", [True])])
 def test_a_versions_samples_edited_to_a_non_integer_id_are_refused_by_digest(
-    tmp_path, monkeypatch, field, value
+    trained_disease_child, tmp_path, monkeypatch, field, value
 ):
     """The registered path's form of the rule: the edit changes the bytes, so the
     version's `samples.json` is refused against the digest its `cohort.json`
-    binds, before it is parsed or any id converted, and nothing is written."""
+    binds, before it is parsed or any id converted, and nothing is written. The
+    version is the graph source imported over the session child's workspace
+    (read, not changed) into a registry of this test's own."""
     import scripts.measure_scorer as cli
-    import src.models.gnn.shepherd_gnn as shepherd_gnn
-    from tests.fixtures.registered_cohort import build_registered_cohort
+    import src.models.bundle.record as bundle_record
+    from tests.fixtures.registered_cohort import graph_source_cases, import_version, write_source
 
-    cohort = build_registered_cohort(tmp_path / "root")
+    data_dir = trained_disease_child["data_dir"]
+    registry = tmp_path / "registry"
+    registry.mkdir()
+    version = import_version(registry, data_dir,
+                             write_source(tmp_path / "cases.json", graph_source_cases(data_dir)))
     # The deployment's registry: a --cohort run measures only there (BACKLOG 37).
-    monkeypatch.setenv("SHEPHERD_REGISTRY", str(cohort.registry))
-    _rewrite_first_sample(cohort.version.samples_path, field, value)
-    monkeypatch.setattr(shepherd_gnn, "build_shepherd_model",
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(registry))
+    _rewrite_first_sample(version.samples_path, field, value)
+    monkeypatch.setattr(bundle_record, "load_bundle",
                         lambda *a, **k: pytest.fail("a model was built"))
 
     with pytest.raises(ValueError, match="is not the samples") as refused:
         cli.main([
-            "--checkpoint", str(cohort.checkpoint), "--data-dir", str(cohort.data_dir),
-            "--cohort", cohort.version.manifest["label"], "--registry", str(cohort.registry),
-            "--device", "cpu",
+            "--mode", "disease", "--checkpoint", str(trained_disease_child["disease"]),
+            "--data-dir", str(data_dir), "--cohort", version.manifest["label"],
+            "--registry", str(registry), "--device", "cpu",
         ])
 
     assert "refused rather than converted" not in str(refused.value), "it was parsed"
-    assert not (cohort.version.directory / "reports").exists()
+    assert not (version.directory / "reports").exists()
 
 
 @pytest.mark.parametrize("field, value", [
-    ("candidate_disease_ids", [0, 2.0]),
     ("gene_ids", [True]),
     ("gene_ids", "0"),
 ])
-def test_the_training_fields_are_refused_by_the_same_reader(tmp_path, field, value):
+def test_the_gene_fields_are_refused_by_the_same_reader(tmp_path, field, value):
     from src.kg.storage.file_storage import read_samples
 
     data_dir, _ = build_workspace(tmp_path / "ws")
@@ -161,6 +180,6 @@ def test_the_training_fields_are_refused_by_the_same_reader(tmp_path, field, val
     _rewrite_first_sample(path, field, value)
 
     with pytest.raises(ValueError, match=f"{field}.*refused rather than converted"):
-        read_samples(data_dir, "test", training_fields=True)
-    # Without the training fields they are not read, so not refused.
+        read_samples(data_dir, "test", gene_fields=True)
+    # Without the gene fields they are not read, so not refused.
     read_samples(data_dir, "test")

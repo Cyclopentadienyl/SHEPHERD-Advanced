@@ -20,6 +20,11 @@ dashboard shows besides:
   (`ROOT_REFUSED`). Datasets is the same page for a read-only request, and the
   wording is one for every page.
 
+It also holds the one way a page says whether a registered cohort version was
+mapped against a workspace's graph (`workspace_binding`, `binding_state`,
+`version_row`): the Test page's version select and the Diagnosis panel's
+reference cohorts read the same comparison, the registry's.
+
 Module: src/webui/components/workspaces.py
 """
 from __future__ import annotations
@@ -203,14 +208,75 @@ def read_workspaces(environ: Optional[Mapping[str, str]] = None) -> Dict[str, An
     return {"rows": rows, "directories": directories, "root": root, "problem": problem}
 
 
+# ---------------------------------------------------------------------------
+# A cohort version against a workspace (the Test page; the Diagnosis panel's
+# reference cohorts): one comparison, the registry's
+# ---------------------------------------------------------------------------
+def version_row(item: Any) -> Dict[str, Any]:
+    """A listed cohort version as plain data for a page's state: its fields
+    without the report store's runs, which a page reads on their own."""
+    row = asdict(item)
+    row.pop("reports", None)
+    row.pop("reports_problem", None)
+    return row
+
+
+def workspace_binding(directory: Optional[Path], row: Optional[Mapping[str, Any]]
+                      ) -> Dict[str, Any]:
+    """What a cohort version is compared with to say whether it was mapped
+    against this workspace's graph: the four graph digests its manifest binds
+    (one read of ``split_manifest.json``) and its verified dataset record's
+    digest. A display hint only: the run compares the bytes it reads."""
+    from src.kg.artifacts import GRAPH_ARTIFACTS, read_split_manifest
+
+    if directory is None or row is None:
+        return {"graph": None, "record_sha256": None, "problem": "no workspace is chosen"}
+    try:
+        artifacts = read_split_manifest(directory).manifest.get("artifacts")
+    except (ValueError, OSError):
+        return {"graph": None, "record_sha256": None,
+                "problem": "its split_manifest.json cannot be read"}
+    artifacts = artifacts if isinstance(artifacts, Mapping) else {}
+    record = row.get("dataset_record") or {}
+    sha = record.get("sha256") if record.get("binding") == "verified" else None
+    return {"graph": {role: artifacts.get(role) for role in GRAPH_ARTIFACTS},
+            "record_sha256": sha,
+            "problem": None if sha else "its dataset record is not verified"}
+
+
+def binding_state(version: Mapping[str, Any], binding: Optional[Mapping[str, Any]]
+                  ) -> Tuple[str, str]:
+    """``("bound" | "another" | "unknown", words)``: whether `version` was
+    mapped against the workspace `binding` describes, by the registry's one
+    comparison (`verify_cohort_binding`, R3's)."""
+    from src.evaluation.cohort_registry import CohortBindingMismatch, verify_cohort_binding
+
+    if version.get("problem"):
+        return "unknown", "the version cannot be read"
+    if not binding or binding.get("problem") or not binding.get("graph"):
+        why = (binding or {}).get("problem") or "no workspace is chosen"
+        return "unknown", f"not checked against this workspace: {why}"
+    try:
+        verify_cohort_binding({"graph": version.get("graph"),
+                               "dataset_record": version.get("dataset_record"),
+                               "label": version.get("label")},
+                              binding["graph"], binding["record_sha256"])
+    except CohortBindingMismatch as exc:
+        return "another", f"mapped against another graph ({', '.join(exc.roles)} differ)"
+    return "bound", "bound to this graph"
+
+
 __all__ = [
     "BOUND_ROLES",
     "OUTSIDE_PATH",
     "ROOT_REFUSED",
+    "binding_state",
     "manifest_facts",
     "manifest_state",
     "read_workspaces",
     "redact",
     "redact_paths",
+    "version_row",
+    "workspace_binding",
     "workspaces_root",
 ]

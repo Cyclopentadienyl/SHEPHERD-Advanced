@@ -10,7 +10,14 @@
 |---|---|---|
 | Training runtime | `TrainerConfig` | `src/training/trainer.py` |
 | Inference runtime | `PipelineConfig` | `src/inference/pipeline.py` |
-| Model architecture | `ShepherdGNNConfig` | `src/models/gnn/shepherd_gnn.py` |
+| Model architecture | `ModelSpec` (the model spec a bundle checkpoint records); the reference recipe for lifecycle defaults | `src/models/bundle/spec.py`; `src/config/recipe.py` |
+
+*Model architecture (corrected at K7, 2026-10-29):* the model spec has been the architecture's
+authority since K1: every model bundle is rebuilt from the spec its checkpoint records, through
+the one builder. `ShepherdGNNConfig` (`src/models/gnn/shepherd_gnn.py`) describes only the
+ShepherdGNN path, which stays for history files until K8. *(K8, 2026-11-08: that path is gone.
+Its settings left `TrainConfig` in K8-7, and `ShepherdGNNConfig` with
+`src/models/gnn/shepherd_gnn.py` in K8-10; the model spec is the architecture's only authority.)*
 
 - **No central `HyperparameterManager`.** `src/config/hyperparameters.py` is **removed**: it
   was never on the live runtime path (only re-exported from `config/__init__.py` and exercised
@@ -22,6 +29,11 @@
   It will be consolidated into a **lightweight training field-spec** module
   (names / types / defaults / ranges / descriptions) that the API and WebUI *derive* from —
   **not** by resurrecting a heavyweight manager.
+  - *Note (2026-10-28, K6):* the WebUI form this paragraph names is gone. `_collect_config`, its
+    widgets and `SEED_PARAM_INDEX` were deleted with the ShepherdGNN form; the Training page's base
+    form offers the reference recipe's base settings (`src/config/recipe.py` `BASE`), each checked
+    by the field spec's `value_problem` (`src/config/training_fields.py`), the check the job
+    runner's start makes again. The record above is left as written.
 
 ## Rationale
 

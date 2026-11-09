@@ -34,19 +34,21 @@ from src.api.routes.pipeline import (  # noqa: E402
     _live_status,
     reload_pipeline,
 )
+from src.core.types import TASK_SCORING_MODES  # noqa: E402
 from tests.unit.test_graph_artifact_binding import (  # noqa: E402
     TestTheClinicalPathIsAGraphConsumer,
     _workspace,
 )
 
 
-def _served_identity(digit: str, *, with_sp: bool) -> dict:
+def _served_identity(digit: str, *, gene: bool) -> dict:
     """A coherent served identity (contract M3c) whose digests are `digit`s.
 
     Built through `src.core.types.ServedIdentity`, so its cross-part invariants
-    hold, and given as the JSON form a pipeline's configuration reports. The two
-    pipelines below differ in every digest, so a check that compares them cannot
-    pass by accident.
+    hold, and given as the JSON form a pipeline's configuration reports: a gene
+    task model's (its distances computed, its own η) or a disease task model's.
+    The two pipelines below differ in every digest, so a check that compares
+    them cannot pass by accident.
     """
     from src.core.types import (
         ServedCheckpoint,
@@ -58,20 +60,17 @@ def _served_identity(digit: str, *, with_sp: bool) -> dict:
     )
 
     return ServedIdentity(
-        scoring_mode="gnn_plus_shortest_path" if with_sp else "gnn_only",
+        scoring_mode="gene_task" if gene else "disease_task",
         checkpoint=ServedCheckpoint(state="verified", sha256=digit * 64),
         graph=ServedGraph(state="verified", kg_sha256=(digit + "1") * 32,
                           split_manifest_sha256=(digit + "2") * 32),
-        shortest_paths=(
-            ServedShortestPaths(state="verified", build_id=f"build-{digit}", max_hops=3)
-            if with_sp else ServedShortestPaths(state="absent")
-        ),
+        shortest_paths=ServedShortestPaths(state="computed" if gene else "absent"),
         dataset_record=ServedDatasetRecord(state="verified", origin="synthetic",
                                            sha256=(digit + "3") * 32),
         settings=ServedSettings(
-            device="cpu", device_requested="cpu", eta=0.7 if with_sp else 1.0,
+            device="cpu", device_requested="cpu", eta=0.5 if gene else None,
             max_path_length=4, path_length_penalty=0.9,
-            aggregation_method="weighted_sum", max_paths_per_candidate=10,
+            max_paths_per_candidate=10,
             use_direct_path_optimization=True, phenotype_normalisation_version=1,
         ),
     ).to_dict()
@@ -81,19 +80,17 @@ def _served_identity(digit: str, *, with_sp: bool) -> dict:
 # M3c): the version string these configurations carried, and the copy of it
 # app state kept, are gone. Each carries a served identity instead.
 SERVED_CONFIG = {
-    "served_identity": _served_identity("a", with_sp=True),
+    "served_identity": _served_identity("a", gene=True),
     "scoring_mode": "served-mode",
     "gnn_ready": True,
-    "sp_ready": True,
     "kg_nodes": 11,
     "kg_edges": 22,
     "has_model": True,
 }
 CANDIDATE_CONFIG = {
-    "served_identity": _served_identity("b", with_sp=False),
+    "served_identity": _served_identity("b", gene=False),
     "scoring_mode": "candidate-mode",
     "gnn_ready": True,
-    "sp_ready": False,
     "kg_nodes": 33,
     "kg_edges": 44,
     "has_model": True,
@@ -327,7 +324,8 @@ class TestAFailedReloadReportsWhatIsStillServing:
         "case,expect",
         [
             ("missing_files", "Missing required files"),
-            ("bad_conv_type", "conv_type"),
+            ("neither_task_nor_path",
+             f"Name a task ({', '.join(TASK_SCORING_MODES)}) or a checkpoint_path"),
             ("no_checkpoint", "No checkpoint found"),
         ],
     )
@@ -346,7 +344,8 @@ class TestAFailedReloadReportsWhatIsStillServing:
         else:
             root, _ = _candidate_workspace(monkeypatch, tmp_path)
             kwargs["data_dir"] = str(root)
-            kwargs["conv_type"] = "nonsense" if case == "bad_conv_type" else "auto"
+            if case == "no_checkpoint":
+                kwargs["task"] = "disease"
 
         result = _reload(**kwargs)
 
@@ -627,7 +626,7 @@ class TestNothingLeavesThisEndpointUnencodable:
 
     @pytest.mark.parametrize(
         "case",
-        ["missing_files", "bad_conv_type", "no_checkpoint", "bad_workspace"],
+        ["missing_files", "neither_task_nor_path", "no_checkpoint", "bad_workspace"],
     )
     def test_every_refusal_crosses_the_encoder_before_it_is_returned(
         self, monkeypatch, tmp_path, case
@@ -645,8 +644,8 @@ class TestNothingLeavesThisEndpointUnencodable:
         else:
             root, _ = _candidate_workspace(monkeypatch, tmp_path)
             kwargs["data_dir"] = str(root)
-            if case == "bad_conv_type":
-                kwargs["conv_type"] = "nonsense"
+            if case == "no_checkpoint":
+                kwargs["task"] = "disease"
             elif case == "bad_workspace":
                 other, _ = _candidate_workspace(monkeypatch, tmp_path, "other")
                 (root / "node_features.pt").write_bytes((other / "node_features.pt").read_bytes())
@@ -685,24 +684,28 @@ class TestNothingLeavesThisEndpointUnencodable:
         jsonable_encoder(result)
 
 
-def test_a_checkpoint_whose_metrics_are_tensors_still_loads_and_serves(tmp_path):
+def test_a_checkpoint_whose_metrics_are_tensors_still_loads_and_serves(
+    tmp_path, trained_disease_child
+):
     """The point of normalising at the source is that such a checkpoint *works*.
 
     The encoder before publication would refuse it, which keeps the service
     safe and makes every reload of a perfectly good checkpoint fail. A metric
     written as `loss.detach()` is a training-side slip, not a reason to decline
-    to serve a trained model.
+    to serve a trained model. The checkpoint is a trained task model (K8-2a):
+    the session's disease child, copied with its epoch and metrics as tensors.
     """
     torch = pytest.importorskip("torch")
 
     from src.inference.pipeline import DiagnosisPipeline
     from src.kg.graph import KnowledgeGraph
-    from tests.fixtures.synthetic_workspace import build_workspace
 
-    data_dir, checkpoint_path = build_workspace(tmp_path)
-    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    data_dir = trained_disease_child["data_dir"]
+    checkpoint_path = tmp_path / "checkpoint.pt"
+    checkpoint = torch.load(trained_disease_child["disease"], map_location="cpu",
+                            weights_only=False)
     checkpoint["epoch"] = torch.tensor(3)
-    checkpoint["logs"] = {"val_loss": torch.tensor(0.25), "val_mrr": torch.tensor(0.5)}
+    checkpoint["logs"] = {"val_loss": torch.tensor(0.25), "val_pooled_mrr": torch.tensor(0.5)}
     torch.save(checkpoint, checkpoint_path)
 
     # From the workspace: a checkpoint is loaded only over a graph verified from
@@ -718,7 +721,8 @@ def test_a_checkpoint_whose_metrics_are_tensors_still_loads_and_serves(tmp_path)
     assert meta["epoch"] == 3 and isinstance(meta["epoch"], int)
     assert meta["val_loss"] == pytest.approx(0.25)
     assert isinstance(meta["val_loss"], float)
-    assert meta["val_mrr"] == pytest.approx(0.5) and isinstance(meta["val_mrr"], float)
+    assert meta["val_pooled_mrr"] == pytest.approx(0.5)
+    assert isinstance(meta["val_pooled_mrr"], float)
     assert isinstance(meta["params"], int)
     from fastapi.encoders import jsonable_encoder
 

@@ -5,8 +5,8 @@ The shared ⓘ: one help control for every ordinary help text (M5-2, UI-A).
 an ordinary field's help sits behind one shared "i" control that works with the
 mouse, the keyboard and a click, can be dismissed, and stays readable when the
 pointer moves into the bubble. A refusal's reason, a job's state, the synthetic
-marker, an unverified source and the HGT/AMP refusal stay visible short text,
-never behind it.
+marker, an unverified source and the facts of Diagnosis' Reference cohort
+select stay visible short text, never behind it.
 
 **Which design, and why: H-B, a registry by ``elem_id`` and one shared control**
 (the M5 maps offered H1, an overlay over Gradio's ``info=``, and H-B). Checked
@@ -16,8 +16,10 @@ in Gradio 6.30's DOM before choosing:
   (or ``<fieldset>``), so the help text is part of the field's accessible name
   and its look is Gradio's. H1 would hide that div and rebuild it from
   Gradio's internal markup and sibling order;
-- a state-bearing text set at runtime travels in ``info=`` (the AMP radio's
-  "Disabled: HGT requires full float32 …"), and H1 would have to except it;
+- a state-bearing text set at runtime travels in ``info=`` (Diagnosis' Reference
+  cohort select: the chosen version's fingerprint and whether it was mapped
+  against the served graph, or why it cannot be read), and H1 would have to
+  except it;
 - with H-B the help texts live in Python, escaped once and tested like any other
   value; ``info=`` is left only to the texts that must stay visible; and the one
   page assumption is the component's ``elem_id`` and its label's title element.

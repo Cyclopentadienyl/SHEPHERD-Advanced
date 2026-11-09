@@ -24,16 +24,20 @@ it is shown, after each diagnosis, after a Load ("served model changed") and on
   HH:MM:SS · older than this result";
 - *changed*: a read found something else served than this session's last read
   did: the dismissable "Model changed at HH:MM UTC — was …, now …";
-- what is served: *no model loaded* (no pipeline: Run Diagnosis is disabled
-  with its reason and a bubble), *no trained model* (a graph served for path
-  reasoning: Run stays on), a model *supplied in memory*, or a checkpoint.
+- what is served: *no model loaded* (no pipeline: the service refuses every
+  diagnosis, Run Diagnosis is disabled with its reason and a bubble, and the
+  card offers "Load a model…"), or a model read from its checkpoint.
 
 **What the card names, and where each fact comes from:**
 
 - the name line ("GAT · run 2026-10-17 09:15 · epoch 5") from the checkpoint's
   place in the serving workspace's runs (the status's served paths, found
   again in the server's list by `resolve_checkpoint`, which reads no file) and
-  the status's ``checkpoint_meta``;
+  the status's ``checkpoint_meta``. **A task model is named by its task**
+  (K6 decision 4, the one place the card names it): "Disease task model",
+  with "GATv2 · run … · epoch 5" on the line under it; the task is read from
+  the served identity's scoring mode through the one task table
+  (`served_task`, `src.core.types.SCORING_MODE_TASKS`);
 - "model fingerprint <12 hex> ✓ verified" from the served identity;
 - "trained on <name> · dataset fingerprint <12 hex>" from **the checkpoint's own
   record** (``training_input_digests.split_manifest``: the served file, found
@@ -45,8 +49,7 @@ it is shown, after each diagnosis, after a Load ("served model changed") and on
   control". Only the served file is opened, on a queued refresh, once per
   served model per session (what it records is kept while the served
   identity is the same); the timer's read never opens a checkpoint;
-- the mode chips, only when true: amber "synthetic data", neutral "no SP
-  table", red "no trained model" / "GNN not loaded", amber "unverified";
+- the mode chip, only when true: amber "synthetic data";
 - "Recorded tests: <state>" from the ledger beside the checkpoint and the
   cohort versions' report stores, by the shared model list's own reader
   (`model_list.recorded_tests_for`): a state, never a number of a result, the
@@ -54,14 +57,20 @@ it is shown, after each diagnosis, after a Load ("served model changed") and on
   the listed workspaces (which name the datasets) are read again on every
   queued refresh (Diagnosis shown, a diagnosis, a Load, ↻), so a test recorded
   in Research › Test shows when Diagnosis is shown again; the timer's read
-  keeps them (it reads the status alone).
+  keeps them (it reads the status alone);
+- for a patients-like-me model, **the reference cohort versions** the page's
+  Reference cohort select offers (`reference_cohorts`): every version the
+  registry lists (`list_cohort_versions`, the list ``GET /cohorts`` reads; no
+  report store is scanned), each with whether it was mapped against the
+  serving workspace's graph (`workspaces.binding_state`, the registry's one
+  comparison), read with the rest on a queued refresh and kept on the timer.
+  A hint only: the server checks the version it is sent.
 
 **Details** (the identity drawer's "Model in use") is the shared Model Facts
 summary (`renderers.model_facts_html`) of the served checkpoint, with what only
 a served model has added in this module (`served_facts_html`): the served
-graph's and dataset record's digests with Copy, what serving reads, the
-structural fingerprint warnings and the GNN state, and the link to the full
-records in Research › Models.
+graph's and dataset record's digests with Copy, what serving reads, and the
+link to the full records in Research › Models.
 
 Module: src/webui/components/diagnosis_card.py
 """
@@ -75,6 +84,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
+from src.core.types import SCORING_MODE_TASKS
+from src.evaluation.caveats import TASK_NAMES
 from src.webui.components import renderers as r
 from src.webui.components.chips import D8_SHORT
 from src.webui.components.help import copy_button
@@ -84,6 +95,7 @@ from src.webui.components.served_status import (
     served_checkpoint_sha,
     served_key,
 )
+from src.webui.components.workspaces import redact_paths
 
 logger = logging.getLogger(__name__)
 
@@ -107,9 +119,9 @@ _TIMED_OUT = re.compile(r"timed out \((?P<seconds>[0-9.]+) s\)")
 CARD_HELP = (
     "Model in use",
     "What every session is served now, read from the server's status for this page: the model "
-    "(architecture, run, epoch), its model fingerprint, the dataset it records it was trained "
-    "on, and the states that change results (synthetic data, no shortest-path table, no "
-    "trained model, unverified parts). It is read when the page opens, every 5 s while "
+    "(its task, architecture, run, epoch), its model fingerprint, the dataset it records it was "
+    "trained on, and the state that changes results (synthetic data). With no model loaded, "
+    "diagnoses are refused until one is loaded. It is read when the page opens, every 5 s while "
     "Diagnosis is shown, after each diagnosis, after a model change and with ↻; the recorded "
     "tests and the dataset names are read again each time Diagnosis is shown, after each "
     "diagnosis, after a model change and with ↻. A read that fails or is older than the result "
@@ -177,22 +189,91 @@ def _part(mapping: Any, *keys: str) -> Any:
 
 
 def served_kind(status: Optional[Mapping[str, Any]]) -> str:
-    """``no_model`` (no pipeline), ``no_trained`` (a graph served without a
-    model: path reasoning), ``in_memory`` (a model supplied in memory),
-    ``model`` (a checkpoint read), or ``unknown`` (a status without an
-    identity)."""
+    """``no_model`` (no pipeline: diagnoses are refused), ``model`` (a
+    checkpoint read; every served pipeline is one), or ``unknown`` (a status
+    without an identity)."""
     if not isinstance(status, Mapping):
         return "unknown"
     if not status.get("initialized"):
         return "no_model"
     state = _part(status, "served_identity", "checkpoint", "state")
-    if state == "absent":
-        return "no_trained"
-    if state == "supplied_in_memory":
-        return "in_memory"
     if state == "verified" and served_checkpoint_sha(status):
         return "model"
     return "unknown"
+
+
+def served_task(status: Optional[Mapping[str, Any]]) -> Optional[str]:
+    """**The one reader of the served task** (K6 decision 7): ``"disease"``,
+    ``"gene"`` or ``"patients_like_me"``, from the served identity's scoring
+    mode through the core table (`SCORING_MODE_TASKS`); None for no model.
+    The card's name line, its serving note, and the page's task inputs, Run
+    gating and request all read it."""
+    if not isinstance(status, Mapping) or not status.get("initialized"):
+        return None
+    return SCORING_MODE_TASKS.get(_part(status, "served_identity", "scoring_mode"))
+
+
+def task_model_name(task: str) -> str:
+    """"Disease task model", "Gene task model", "Patients-like-me task model"
+    (`caveats.TASK_NAMES`, the one vocabulary)."""
+    return f"{TASK_NAMES[task]} task model"
+
+
+#: What an absolute path the cohort registry does not hold reads as.
+SERVER_PATH = "a server path"
+
+
+def redacted(text: Any, environ: Optional[Mapping[str, str]] = None) -> str:
+    """`text` with no absolute server path left (`workspaces.redact_paths`, the
+    dashboard's one redaction): a path in the cohort registry reads
+    ``<registry>/…`` (the Test page's name for it), any other "a server path".
+    For the registry's and the reference cohort's refusals, which name the
+    registry's files."""
+    from src.config import server_settings
+
+    roots: List[Tuple[str, str]] = []
+    try:
+        registry = server_settings.cohort_registry(environ)
+        if registry.available:
+            roots.append((str(registry.value), "<registry>"))
+    except Exception:  # noqa: BLE001 - a registry not read is a path shown as "a server path"
+        logger.debug("The cohort registry setting could not be read", exc_info=True)
+    return redact_paths(text, roots, other=SERVER_PATH)
+
+
+def reference_cohorts(serving: Optional[str], rows: List[Mapping[str, Any]],
+                      directories: Mapping[str, Path], *,
+                      environ: Optional[Mapping[str, str]] = None) -> Dict[str, Any]:
+    """The reference cohort versions a patients-like-me model may rank, as
+    plain data: ``{"versions": [...], "problem": ...}``. Every version the
+    registry lists (`list_cohort_versions`, without the report stores), each a
+    `workspaces.version_row` with ``binding`` and ``binding_words``: whether
+    it was mapped against the serving workspace's graph (`binding_state`, the
+    registry's one comparison; a hint, the server checks the version it is
+    sent). ``problem``: why no version is listed (no registry, or one
+    refused). Every text is without a server path (`redacted`)."""
+    from src.api.services.server_lists import list_cohort_versions
+    from src.webui.components.workspaces import binding_state, version_row, workspace_binding
+
+    try:
+        listing = list_cohort_versions(environ=environ)
+    except Exception:  # noqa: BLE001 - said as a problem, never raised
+        logger.exception("The cohort registry could not be listed for the card")
+        return {"versions": [], "problem": "the cohort registry could not be listed"}
+    row = next((w for w in rows if w.get("name") == serving), None)
+    binding = (workspace_binding(directories.get(serving), row)
+               if serving is not None and row is not None
+               else {"graph": None, "record_sha256": None,
+                     "problem": "the serving workspace is not a listed workspace"})
+    versions = []
+    for item in listing.items:
+        version = version_row(item)
+        state, words = binding_state(version, binding)
+        if version.get("problem"):
+            version["problem"] = redacted(version["problem"], environ)
+        versions.append({**version, "binding": state, "binding_words": words})
+    return {"versions": versions,
+            "problem": redacted(listing.problem, environ) if listing.problem else None}
 
 
 def _validation(meta: Any) -> Optional[Dict[str, Any]]:
@@ -283,7 +364,7 @@ def recorded_for(item: Mapping[str, Any], directory: Path, *,
                  environ: Optional[Mapping[str, str]] = None) -> Optional[Dict[str, Any]]:
     """The served checkpoint's recorded tests, as the shared list reads them
     (`model_list.recorded_tests_for`: the ledger beside it, the report stores
-    for contested; no checkpoint is opened)."""
+    for the group descriptions; no checkpoint is opened)."""
     from src.webui.components.model_list import item_key, recorded_tests_for
 
     try:
@@ -304,13 +385,15 @@ def served_facts(status: Mapping[str, Any], *, operator: bool, open_checkpoints:
     refresh of a request D8 allows); otherwise the trained-on dataset is "not read yet"
     (or "not shown" to a request D8 refuses). `trained` is what an earlier
     read of the same served checkpoint found: it is used as it is, and the
-    checkpoint is not opened again."""
+    checkpoint is not opened again. A patients-like-me model adds the
+    reference cohort versions (``cohorts``, `reference_cohorts`; None for
+    any other)."""
     from src.webui.components.served_status import serving_workspace
     from src.webui.components.workspaces import read_workspaces
 
     facts: Dict[str, Any] = {"key": served_key(status), "operator": operator, "workspaces": [],
                              "serving": None, "item": None, "item_problem": None,
-                             "recorded": None, "trained": None}
+                             "recorded": None, "trained": None, "cohorts": None}
     try:
         listed = read_workspaces(environ)
         facts["workspaces"] = listed["rows"]
@@ -320,6 +403,9 @@ def served_facts(status: Mapping[str, Any], *, operator: bool, open_checkpoints:
     except Exception:  # noqa: BLE001 - the card names no workspace then
         logger.exception("The workspaces could not be listed for the card")
         directories = {}
+    if served_task(status) == "patients_like_me":
+        facts["cohorts"] = reference_cohorts(facts["serving"], facts["workspaces"], directories,
+                                             environ=environ)
     if served_kind(status) != "model":
         return facts
     item, why = served_item(status, facts["serving"], environ=environ)
@@ -426,8 +512,7 @@ def advance(state: Optional[Mapping[str, Any]], status: Optional[Mapping[str, An
 
 
 def _kind_word(kind: str) -> str:
-    return {"no_model": "no model loaded", "no_trained": "no trained model",
-            "in_memory": "a model supplied in memory"}.get(kind, "not known")
+    return {"no_model": "no model loaded"}.get(kind, "not known")
 
 
 def dismiss_change(state: Mapping[str, Any]) -> Dict[str, Any]:
@@ -453,9 +538,8 @@ def card_mode(state: Mapping[str, Any], produced_at: Any = None) -> str:
 
 def run_blocked(state: Mapping[str, Any]) -> bool:
     """Run Diagnosis is off when the last read succeeded and found no model
-    loaded (no pipeline). A graph without a trained model leaves it on (path
-    reasoning, said by its banner); an unreadable status leaves it on (the
-    result says what produced it)."""
+    loaded (no pipeline: the service refuses every diagnosis). An unreadable
+    status leaves it on (the service answers, or refuses with its reason)."""
     return bool(state.get("ok")) and served_kind(state.get("status")) == "no_model"
 
 
@@ -465,7 +549,6 @@ def run_blocked(state: Mapping[str, Any]) -> bool:
 _CHECK = ('<svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true" focusable="false">'
           '<path d="M3.2 8.6l3 3 6.6-7.4" fill="none" stroke="currentColor" stroke-width="2.2" '
           'stroke-linecap="round" stroke-linejoin="round"/></svg>')
-_SEP = '<span class="shep-sep" aria-hidden="true"> · </span>'
 
 
 def time_html(state: Mapping[str, Any], produced_at: Any = None) -> str:
@@ -494,18 +577,9 @@ def _trained_html(facts: Mapping[str, Any]) -> str:
 
 def _chips(status: Mapping[str, Any], *, grey: bool) -> List[str]:
     identity = status.get("served_identity") or {}
-    kind = served_kind(status)
     chips: List[Tuple[str, str]] = []
-    if kind == "no_trained":
-        chips.append(("no trained model", "red"))
-    elif kind in ("model", "in_memory") and not status.get("gnn_ready", True):
-        chips.append(("GNN not loaded", "red"))
     if _part(identity, "dataset_record", "origin") == "synthetic":
         chips.append(("synthetic data", "amber"))
-    if kind in ("model", "in_memory") and _part(identity, "shortest_paths", "state") == "absent":
-        chips.append(("no SP table", "neutral"))
-    if _part(identity, "graph", "state") == "unverified":
-        chips.append(("unverified", "amber"))
     return [r.chip(text, "grey shep-tag-dashed" if grey else kind_) for text, kind_ in chips]
 
 
@@ -520,23 +594,6 @@ def _recorded_html(facts: Mapping[str, Any], *, grey: bool) -> str:
     return (f'<span class="shep-dx-tests">{r.e(text)} <button type="button" class="shep-dx-link" '
             'data-key="evidence" aria-label="Recorded tests: open Details at Evidence">›</button>'
             '</span>')
-
-
-def _graph_line(status: Mapping[str, Any], facts: Mapping[str, Any]) -> str:
-    identity = status.get("served_identity") or {}
-    graph_state = _part(identity, "graph", "state")
-    manifest = _part(identity, "graph", "split_manifest_sha256")
-    serving = facts.get("serving")
-    if graph_state == "verified":
-        where = f"graph from workspace <b>{r.e(serving)}</b>" if serving else \
-            'graph from <span class="shep-muted">a workspace the server does not list</span>'
-        return (f'{where}{_SEP}'
-                f'{r.fingerprint_html("dataset fingerprint", manifest, copy=False)}')
-    if graph_state == "unverified":
-        return ('graph read from a file, checked against no workspace manifest'
-                f'{_SEP}<code class="shep-fpv">'
-                f'{r.e(r.short_hex(_part(identity, "graph", "kg_sha256")))}</code>')
-    return '<span class="shep-muted">graph supplied in memory</span>'
 
 
 def body_html(state: Mapping[str, Any], produced_at: Any = None) -> str:
@@ -585,28 +642,26 @@ def body_html(state: Mapping[str, Any], produced_at: Any = None) -> str:
     lines: List[str] = []
     if kind == "no_model":
         lines.append('<p class="shep-dx-name">No model loaded</p>'
-                     '<p class="shep-dx-line">No pipeline is configured on this server; nothing is '
-                     'served.</p>')
-    elif kind == "no_trained":
-        lines.append('<p class="shep-dx-name">No trained model<span class="shep-dx-sub"> · path '
-                     'reasoning only</span></p>'
-                     f'<p class="shep-dx-line">{_graph_line(status, facts)}</p>')
-    elif kind == "in_memory":
-        lines.append('<p class="shep-dx-name">Model supplied in memory<span class="shep-dx-sub"> · '
-                     'no checkpoint file</span></p>'
-                     f'<p class="shep-dx-line">{_graph_line(status, facts)}</p>')
+                     '<p class="shep-dx-line">Nothing is served on this server: diagnoses are '
+                     'refused until a model is loaded.</p>')
     elif kind == "model":
         item = facts.get("item")
         sha = served_checkpoint_sha(status)
+        task = served_task(status)
+        why = ""
         if item:
-            name = r.e(r.model_name_line(item))
+            run = r.e(r.model_name_line(item))
         else:
             meta = status.get("checkpoint_meta") or {}
             epoch = meta.get("epoch") if isinstance(meta, Mapping) else None
-            name = (f"Checkpoint · epoch {r.e(epoch if epoch is not None else '—')}"
-                    f'<span class="shep-dx-sub"> · {r.e(facts.get("item_problem") or "")}</span>')
+            run = f"Checkpoint · epoch {r.e(epoch if epoch is not None else '—')}"
+            why = r.e(facts.get("item_problem") or "")
+        # The task, named once on the card (K6 decision 4); the run under it.
+        # Every served model is a finetuned task's (its scoring mode names one).
+        name = (f'<p class="shep-dx-name">{r.e(task_model_name(task))}</p>'
+                f'<p class="shep-dx-line shep-dx-sub">{run}{f" · {why}" if why else ""}</p>')
         mark = "" if grey else f' <span class="shep-ok-t">{_CHECK} verified</span>'
-        lines.append(f'<p class="shep-dx-name">{name}</p>'
+        lines.append(f'{name}'
                      f'<p class="shep-dx-line">{r.fingerprint_html("model fingerprint", sha, copy=False)}'
                      f'{mark}</p>'
                      f'<p class="shep-dx-line">{_trained_html(facts)}</p>')
@@ -645,7 +700,7 @@ def change_reason_html(state: Mapping[str, Any]) -> str:
 
 def details_visible(state: Mapping[str, Any]) -> bool:
     """Details › is offered whenever something is served (or was last known)."""
-    return served_kind(state.get("status")) in ("model", "no_trained", "in_memory", "unknown") \
+    return served_kind(state.get("status")) in ("model", "unknown") \
         and state.get("status") is not None
 
 
@@ -700,47 +755,12 @@ def _full(digest: Any, what: str) -> str:
 
 
 def served_warnings(status: Mapping[str, Any]) -> List[Tuple[str, str]]:
-    """The served state's warnings in the banners' words: synthetic, no
-    trained model, no shortest-path table."""
+    """The served state's warnings in the banners' words: synthetic data."""
     identity = status.get("served_identity") or {}
     found = []
     if _part(identity, "dataset_record", "origin") == "synthetic":
         found.append(r.IDENTITY_BANNERS["synthetic"])
-    kind = served_kind(status)
-    if kind == "no_trained":
-        found.append(r.IDENTITY_BANNERS["no_model"])
-    elif kind in ("model", "in_memory") and _part(identity, "shortest_paths", "state") == "absent":
-        found.append(r.IDENTITY_BANNERS["no_sp"])
     return found
-
-
-#: The structural comparator's own words (`src.utils.fingerprint.verify_fingerprint`):
-#: its headline before the differences, and its answer for a checkpoint that
-#: records no structural fingerprint (nothing was compared). The tests run the
-#: comparator itself, so a change of its words is seen.
-_STRUCTURE_HEADLINE = "Graph structure differs from the checkpoint's structural fingerprint"
-_STRUCTURE_LEGACY = "Checkpoint does not contain a data fingerprint"
-
-
-def _structure_line(status: Mapping[str, Any]) -> str:
-    """The structural fingerprint line: no warnings; not compared (the
-    checkpoint records no structural fingerprint); or what differs, counted
-    without the comparator's own headline."""
-    warnings = [str(w) for w in status.get("fingerprint_warnings") or []]
-    gnn = "GNN loaded" if status.get("gnn_ready") else "GNN not loaded (path reasoning)"
-    if not warnings:
-        return f'<p class="shep-muted">Graph structural fingerprint: no warnings · {r.e(gnn)}</p>'
-    if len(warnings) == 1 and warnings[0].startswith(_STRUCTURE_LEGACY):
-        return (f'<p class="shep-warn"><b>⚠ Graph structure not compared</b> (the checkpoint records '
-                f'no structural fingerprint: legacy format) · {r.e(gnn)}</p>')
-    differences = [w for w in warnings if not w.startswith(_STRUCTURE_HEADLINE)]
-    items = "".join(f"<li>{r.e(w)}</li>" for w in differences[:3])
-    more = (f'<li class="shep-muted">and {len(differences) - 3} more (the server log lists them)'
-            '</li>' if len(differences) > 3 else "")
-    return (f'<p class="shep-warn"><b>⚠ Graph structure differs from the checkpoint\'s structural '
-            f'fingerprint</b> ({len(differences)}; node types and counts, edge-type count and '
-            f'feature sizes compared, not the graph\'s identity) · {r.e(gnn)}</p>'
-            f'<ul class="shep-dx-list">{items}{more}</ul>')
 
 
 def _serving_note(status: Mapping[str, Any], facts: Mapping[str, Any],
@@ -756,8 +776,7 @@ def _serving_note(status: Mapping[str, Any], facts: Mapping[str, Any],
     graph_state = _part(identity, "graph", "state")
     parts.append("graph ✓" if graph_state == "verified" else f"graph {graph_state or 'not reported'}")
     sp = _part(identity, "shortest_paths", "state")
-    parts.append(f"SP table ✓ build {_part(identity, 'shortest_paths', 'build_id')}"
-                 if sp == "verified" else "no SP table")
+    parts.append("SP from the graph view" if sp == "computed" else "SP not used by this task")
     origin = _part(identity, "dataset_record", "origin")
     if _part(identity, "dataset_record", "state") == "verified":
         parts.append(f"dataset record ✓ {origin}")
@@ -780,8 +799,11 @@ def served_facts_html(state: Mapping[str, Any], *, open_section: str = "identity
                 f'{r.e(hhmmss(state.get("good_at")))}, not current: {r.e(state.get("problem"))}.'
                 '</div>')
     if kind == "no_model":
-        return note + ('<div class="shep-reason">No model loaded: no pipeline is configured on this '
-                       'server, so nothing is served.</div>')
+        return note + ('<div class="shep-reason">No model loaded: nothing is served, and '
+                       'diagnoses are refused until a model is loaded.</div>')
+    if kind == "unknown":
+        return note + ('<div class="shep-reason shep-reason-grey">The status did not say what is '
+                       'served.</div>')
     served_rows = [
         ("Knowledge graph served (kg.json)", _full(_part(identity, "graph", "kg_sha256"),
                                                    "the full knowledge graph digest")),
@@ -790,24 +812,6 @@ def served_facts_html(state: Mapping[str, Any], *, open_section: str = "identity
          _full(_part(identity, "dataset_record", "sha256"), "the full dataset record digest")),
     ]
     warnings = served_warnings(status)
-    if kind != "model":
-        name = "No trained model · path reasoning only" if kind == "no_trained" else \
-            "Model supplied in memory · no checkpoint file"
-        rows = [("Model", r.e(name)),
-                ("Graph from workspace", r.e(facts.get("serving") or "not a listed workspace")),
-                ("Served workspace manifest (split_manifest.json)",
-                 _full(_part(identity, "graph", "split_manifest_sha256"),
-                       "the full dataset fingerprint")), *served_rows]
-        warn = "".join(f'<p class="shep-warn"><b>⚠ {r.e(h)}</b> <span>{r.e(d)}</span></p>'
-                       for h, d in warnings) or '<p class="shep-muted">No warnings.</p>'
-        return note + (
-            '<div class="shep-facts"><details class="shep-facts-sec" data-sec="identity" open>'
-            '<summary><span class="shep-facts-n">1</span> Identity</summary>'
-            f'<div class="shep-facts-bd"><div class="shep-kv">{_kv_rows(rows[:2])}'
-            f'{_kv_rows(rows[2:], wide=True)}</div></div></details>'
-            '<section class="shep-facts-sec shep-facts-warn" data-sec="warnings"><h4>'
-            '<span class="shep-facts-n">5</span> Warnings</h4>'
-            f'<div class="shep-facts-bd">{warn}{_structure_line(status)}</div></section></div>')
     item = dict(facts.get("item") or {})
     if not item:
         sha = served_checkpoint_sha(status)
@@ -860,13 +864,12 @@ def served_facts_html(state: Mapping[str, Any], *, open_section: str = "identity
         html_, "evidence",
         ' · <button type="button" class="shep-dx-link" data-key="models">Full records: '
         'Research › Models ›</button>', "</p></div></details>")
-    html_ = _insert_after_section(html_, "warnings", _structure_line(status),
-                                  "</div></section>")
     return note + html_
 
 
 __all__ = [
     "CARD_HELP",
+    "SERVER_PATH",
     "STATUS_TIMEOUT_SECONDS",
     "TRAINED_NOT_READ_YET",
     "TRAINED_NOT_SHOWN",
@@ -884,13 +887,17 @@ __all__ = [
     "problem_sentence",
     "read_status_within",
     "recorded_for",
+    "redacted",
+    "reference_cohorts",
     "run_blocked",
     "served_facts",
     "served_facts_html",
     "served_item",
     "served_kind",
+    "served_task",
     "served_warnings",
     "stamp",
+    "task_model_name",
     "time_html",
     "trained_on_listed",
 ]

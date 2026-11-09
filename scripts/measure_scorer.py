@@ -1,22 +1,29 @@
 #!/usr/bin/env python
 r"""
-Measure the disease scorer — Mode C, and Mode D beside it.
-==========================================================
-**Mode C** (the default): every patient in a cohort scored against every disease
-in the knowledge graph, with the model the deployed pipeline builds and raw
-cosine. This is the formal Test's measurement (`docs/working/PLAN_TEST_RESULTS.md`,
-"This is Mode C").
+Measure a model on a cohort by an evaluation protocol.
+======================================================
+**`--mode` names the protocol, and is required** (`src/evaluation/protocols.py`):
+a measurement this build implements for a model's learning stage and task
+head, today disease, gene and patients_like_me, one for each task head. A
+protocol states the model record it takes and the evaluator that runs it
+(`src/evaluation/task_measurement.py`, `docs/working/PLAN_TEST_RESULTS.md` §8),
+and the report's `mode` is its name. A registered version's counts are judged
+against what the protocol needs right after its `cohort.json` is read, before
+the workspace or the checkpoint is; the checkpoint's model record is judged
+against the model the protocol takes right after the checkpoint is read. A
+refusal writes nothing. **The Test page runs these**: the job runner passes
+`--mode <protocol>`, the protocol the operator chose among those the listed
+model's record admits.
 
-**Mode D** (`--mode D`, a registered cohort version only): what the Diagnosis
-page serves today, each import-eligible case ranked through the served
-pipeline's own `rank()`, with Mode C run beside it on the same embeddings
-(`docs/working/scorer-measurement/PLAN_B05.md`; `src/evaluation/mode_d.py`). It is
-policy gate 1's comparison, not the approved policy.
+**Mode D** (Batch 3's measurement of the served ranking) was removed in K7: it
+no longer runs, and its kept reports and records are read by the shared
+readers (policy rev 15). A kept Mode D report registers by the general rules,
+under its own mode, and the same run's report again answers `already_registered`.
 
 **A thin CLI.** Argument parsing, one read of each input, manifest assembly, one
-call into `src.evaluation.measurement.run_mode_c` (or `mode_d.run_mode_d`), and
-publishing what it returns. No measurement logic lives here, so the harness stays
-testable without a subprocess.
+call into the protocol's evaluator (`task_measurement.TASK_RUNS`), and
+publishing what it returns. No measurement logic lives here, so the harness
+stays testable without a subprocess.
 
 **Two kinds of cohort, named by the argument that names them** (contract M4,
 decision 8): exactly one of `--split` and `--cohort`.
@@ -24,23 +31,18 @@ decision 8): exactly one of `--split` and `--cohort`.
     # A registered test cohort version: the formal measurement. The report is
     # kept in the registry's report store; --record registers it in the ledger
     # beside the checkpoint.
-    python scripts/measure_scorer.py \
+    python scripts/measure_scorer.py --mode disease \
         --checkpoint <workspace>/runs/<arch>/<run>/checkpoints/best.pt \
         --data-dir <workspace> \
         --cohort mygene2-2026-10 --registry /srv/shepherd/registry \
         [--training-evidence DIR ...] [--record] [--deterministic] \
         [--expect-checkpoint-sha256 HEX] [--expect-version-sha256 HEX] [--outcome FILE]
 
-    # Mode D on the same version: the served ranking, with the same checks,
-    # GPU lock, report store and registration; refused with --split.
-    python scripts/measure_scorer.py --mode D \
-        --checkpoint <workspace>/runs/<arch>/<run>/checkpoints/best.pt \
-        --data-dir <workspace> \
-        --cohort mygene2-2026-10 --registry /srv/shepherd/registry [--record]
-
     # A generated split. --split val is the checkpoint-selection split, not
-    # held-out data, and its report is not registrable (decision 9).
-    python scripts/measure_scorer.py \
+    # held-out data. Its report and ranks are new files at --output, and are
+    # not registered: the ledger does not yet support a generated split's data
+    # identity (it has no registered cohort version).
+    python scripts/measure_scorer.py --mode disease \
         --checkpoint checkpoints/best.pt \
         --data-dir data/processed \
         --split val \
@@ -93,8 +95,37 @@ manifest observes the settings in effect, and they are in the semantics digest,
 so a deterministic run is another key (D5).
 
 **A generated split's report goes to `--output`**, with `<output stem>_ranks.json`
-beside it, both staged and renamed into place; an existing `--output` is
-replaced, as it always was.
+beside it, **and neither ever replaces a file** (K8-6r.4, policy rev 16). Before
+the GPU lock and any read, `_check_generated_targets` refuses a run whose
+`--output` is a directory or whose `--output` or ranks file already exists (a
+link, even a dangling one, included), naming an empty file at `--output` as a
+claimed place whose publication failed and ranks with no report at `--output`
+as an interrupted publication, never as a result (or, for either, another
+run's publication not yet finished; the ranks name may also hold a file
+another `--output` wrote), and leaving them in place: no earlier file is
+deleted or renamed to make room. At publication each file is
+staged and then placed with `publish_bytes(..., replace=False)`, the ranks
+first and the report last as the commit point, so a file that appears after
+the check is not overwritten either: that run fails (`ReportNotWritten`), and
+of two runs on one new `--output` one publishes both files and the other none.
+A run whose report fails after its ranks leaves its own ranks with no report
+beside them, which the next run on that path is refused by, so they are never
+paired with another run's report. The report and ranks are not registered:
+the ledger does not yet support a generated split's data identity (it has no
+registered cohort version), not because such a result counts for less;
+extending the ledger to it is later work.
+
+**Where the filesystem has no hard links** (`publish_bytes`' fallback), each
+file is claimed as a new empty file (`O_CREAT | O_EXCL`) and the staged file is
+then renamed onto that claim. That rename is itself an overwriting call: it
+does not overwrite another run's file only because the target is still the
+empty file this run claimed a moment before, and because every supported
+publisher follows the same claim-then-replace rule (only `_publish_generated`
+publishes a generated output, and it never replaces or removes a claim). It is
+not safe against another writer, or a person, replacing or removing the
+claimed file between the claim and the rename, and nothing here claims to
+close that window. A failure after the claim leaves the empty file at
+`--output` (or at the ranks), which the next run is refused by.
 
 Exit status, run as a program (`_exit_as_program`): 0 measured (and, with
 `--record`, registered or already held); 1 refused before anything was written,
@@ -113,7 +144,11 @@ printed), so a parent reads "ended by SIGINT" as before; elsewhere it exits
 not catch). The run unwinds first: a staged file is removed, the GPU lock
 released, nothing more is written, and what it had published stays as it is.
 A cancel while the program's modules still load (`_cancelled_while_loading`)
-prints the same line and ends the same way. **Only the program ends itself**
+prints the same line and ends the same way. The job runner starts a test run
+with SIGINT blocked and the program unblocks it once that handler is in place,
+so a cancel that lands while the interpreter itself still starts waits for it
+and ends the run the same way, never as a start-up failure (K8-13). **Only the
+program ends itself**
 (`_exit_as_program`, the `__main__` entry): an in-process caller of
 `_run_as_program` (the tests) gets the line and then the KeyboardInterrupt
 back, so its own cleanup runs. `main` itself raises its refusals, typed, for
@@ -138,6 +173,7 @@ import os
 import platform
 import re
 import signal
+import stat
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Mapping, NamedTuple, Optional, Sequence, Tuple
@@ -170,7 +206,9 @@ def _cancelled_while_loading(signum: int, frame: Any) -> None:
     """SIGINT while this program's modules load, before `_run_as_program`
     (importing torch takes seconds, and a Cancel right after Start lands
     there): the same line and ending as a cancel during the run, not an
-    import's traceback. Nothing has been read or written yet."""
+    import's traceback. Nothing has been read or written yet. A SIGINT that
+    arrived before this handler was installed, while the job runner held it
+    blocked, is taken here as soon as `__main__` unblocks it."""
     with contextlib.suppress(OSError, ValueError, AttributeError):
         print(CANCELLED_LINE, file=sys.stderr)
     raise SystemExit(_end_as_cancelled())
@@ -178,6 +216,12 @@ def _cancelled_while_loading(signum: int, frame: Any) -> None:
 
 if __name__ == "__main__":
     signal.signal(signal.SIGINT, _cancelled_while_loading)
+    if hasattr(signal, "pthread_sigmask"):
+        # The job runner starts a test run with SIGINT blocked
+        # (`training_manager._started_with_sigint_held`), so a cancel that
+        # arrived while the interpreter started waits for the handler above;
+        # from here a cancel is taken, a pending one at once.
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGINT})
 
 import torch  # noqa: E402 - after the loading guard, which must cover this import
 
@@ -185,6 +229,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.evaluation import protocols
 from src.evaluation.caveats import COHORT_ARGUMENT_HELP, SPLIT_ARGUMENT_HELP
 from src.evaluation.cohort import GENERATED_SPLITS, CohortProvenance, resolve_cohort
 from src.evaluation.cohort_registry import RANKS_FILE, REPORT_FILE, cohort_version_block
@@ -194,23 +239,20 @@ from src.utils.interrupts import interrupt_deferred
 if TYPE_CHECKING:
     from src.evaluation.cohort_registry import CohortVersionRead
     from src.evaluation.measurement import ModeResult
+    from src.evaluation.r10 import EvidenceCandidate
     from src.kg.artifacts import DatasetRecord, ManifestRead
     from src.kg.storage.file_storage import GraphArtifactsRead, SamplesRead
     from src.utils.checkpoint_io import CheckpointRead
 
 logger = logging.getLogger(__name__)
 
-#: The measurement modes this program runs: Mode C, and Mode D beside it
-#: (`docs/working/scorer-measurement/PLAN_B05.md`).
-MODES = ("C", "D")
-
-#: What Mode C ranks each patient against, as its manifest records it. There is
-#: no expansion to describe: the candidates are every disease in the graph.
-CANDIDATE_CONSTRUCTION = "every disease in the knowledge graph"
-
-#: How the scored model was built: through `build_shepherd_model`, the builder
-#: the deployed pipeline uses.
-MODEL_CONSTRUCTION = "production (build_shepherd_model)"
+#: The semantic fields a measurement's evaluator gives its manifest
+#: (`task_measurement.task_semantics`): every one of them, and never `mode`,
+#: which is the protocol asked (`--mode`), set by `build_manifest`.
+SEMANTIC_FIELDS: Tuple[str, ...] = (
+    "metric_schema_version", "candidate_construction", "batch_size", "score_semantics",
+    "canonical_tie_policy_version", "model_construction",
+)
 
 #: A run's two files in the report store, in the order they are published (the
 #: ranks, then the report that names them by digest: the run's commit point),
@@ -286,20 +328,15 @@ class MeasurementInputs(NamedTuple):
     (contract M2.1, S7; M2.4).
 
     Carried whole from `read_measurement_inputs` to `measurement_input_digests`
-    and the manifest, so the tensors and samples Mode C scores, the checkpoint
-    its model is built from and the digests its manifest records come from the
-    same reads and cannot be paired with another read of a file that changed in
-    between.
+    and the manifest, so the tensors and samples a measurement scores, the
+    checkpoint its model is built from and the digests its manifest records come
+    from the same reads and cannot be paired with another read of a file that
+    changed in between.
 
     Exactly one of `cohort` (a generated split) and `version` (a registered
     cohort version) is set. The other generated split, read for its binding and
     the disjointness check, is not kept: it is checked, not consumed, and no
     role records it; nor are R10's evidence files, which are reduced to counts.
-
-    **A Mode D run reads the workspace through the served pipeline** (Batch 3,
-    `_measure_mode_d`): `manifest` and `graph` are then `None`, `checkpoint`
-    holds the identity of the pipeline's one read and no payload, and `bound`,
-    `dataset_record` and R10 come from that build (`bound_inputs`).
     """
 
     #: The generated split, resolved; `None` for a registered version.
@@ -310,8 +347,8 @@ class MeasurementInputs(NamedTuple):
     #: The version as its report records it (`cohort_version_block`), built from
     #: that one read; `None` for a generated split.
     cohort_version: Optional[Dict[str, Any]]
-    manifest: Optional[ManifestRead]
-    graph: Optional[GraphArtifactsRead]
+    manifest: ManifestRead
+    graph: GraphArtifactsRead
     samples: SamplesRead
     checkpoint: CheckpointRead
     #: The digest the run's one manifest reading binds for each of the four
@@ -328,6 +365,9 @@ class MeasurementInputs(NamedTuple):
     #: The R10 block (contract §5.4) for a registered version; `None` for a
     #: generated split, whose relation to training is the allocation's.
     r10: Optional[Dict[str, Any]]
+    #: A protocol with gene fields over a generated split: the workspace's
+    #: functional fixture read against this manifest reading; `samples` is its split.
+    task_data: Optional[Any] = None
 
 
 def read_measurement_inputs(
@@ -341,9 +381,27 @@ def read_measurement_inputs(
     training_evidence: Sequence[Path] = (),
     expect_checkpoint_sha256: Optional[str] = None,
     expect_version_sha256: Optional[str] = None,
+    protocol: str,
 ) -> MeasurementInputs:
     """Read the manifest, the graph tensors, the cohort and the checkpoint once
     each, and verify from those reads (contract M2.1, S7; M4 §6).
+
+    **`protocol`** names the measurement asked for (`--mode`;
+    `src.evaluation.protocols`), and the inputs are judged by it, never by
+    taking its name for the model's task. A name that is not a protocol is
+    refused before anything is read. A registered version's counts are judged
+    against what the protocol needs (`protocols.inputs_refusal`) right after
+    its `cohort.json` is read, before the workspace and the checkpoint are.
+    The checkpoint's model record is judged against the stage and head the
+    protocol takes (`protocols.model_refusal`, raised as `ModelRecordError`)
+    right after the checkpoint is read and its graph roles compared, before
+    anything protocol-specific (README §8 regression 7: the model filter runs
+    first). For a protocol with `gene_fields`, a registered version's samples
+    are read with their gene fields, and a generated split, once verified as
+    always, is measured through the workspace's functional fixture of that
+    split, read after the model check: its record against this manifest reading
+    and its file against the digest the record names (`read_gene_fixture`).
+    Each of these refusals ends "Nothing was written."
 
     Exactly one of `split` (a generated split) and `cohort` (a registered
     version's label, with `registry`) is given; `training_evidence` applies to a
@@ -373,15 +431,17 @@ def read_measurement_inputs(
 
     **A registered version, in this order** (M4 §6): the evidence directories
     are checked (listed, nothing read); `resolve_version` reads `cohort.json`
-    once; the workspace manifest and tensors are read; the version's
-    `samples.json` is read once and refused **before it is parsed** unless its
-    digest is the one `cohort.json` binds; R1, the `kg.json` identification and
-    R5 as for a split; then the version's four graph digests and dataset record
-    must be this run's (`verify_cohort_binding`), so a version mapped against
-    another graph is refused before the checkpoint is read; then the checkpoint
-    and R3; then R10 over the evidence candidates, each read at most once and
-    compared before it is parsed. The workspace's `train_samples.json` and
-    `val_samples.json` are read only as R10 candidates.
+    once; its counts are judged against the protocol's needs; the workspace
+    manifest and tensors are read; the version's `samples.json` is read once
+    and refused **before it is parsed** unless its digest is the one
+    `cohort.json` binds; R1, the `kg.json` identification and R5 as for a
+    split; then the version's four graph digests and dataset record must be
+    this run's (`verify_cohort_binding`), so a version mapped against another
+    graph is refused before the checkpoint is read; then the checkpoint, R3 and
+    the model record; then R10 over the evidence candidates, each read at most
+    once and compared before it is parsed; a place R10 cannot look in is
+    recorded in its block, never a refusal (`_r10`). The workspace's
+    `train_samples.json` and `val_samples.json` are read only as R10 candidates.
 
     **The digests compared are those of the bytes parsed.** Each tensor's digest
     and, for a generated split, each sample file's digest is compared with the
@@ -402,7 +462,8 @@ def read_measurement_inputs(
     manifest reading binds and names the graph the tensors were verified as.
 
     The graph tensors load on CPU (`map_location="cpu"`, the shared reader's
-    default and what this run passed before); `encode_full_graph` moves them.
+    default and what this run passed before); the evaluator moves what it
+    scores to the run's device.
     The checkpoint keeps this site's options: `map_location` the run's device,
     `weights_only=True`. It is read at its resolved path, so the read's identity
     is the file measured and `--record` files the ledger beside it (M4 decision
@@ -422,6 +483,7 @@ def read_measurement_inputs(
         verify_graph_reads,
     )
     from src.kg.storage.file_storage import read_graph_artifacts
+    from src.models.bundle.record import ModelRecordError, read_model_record
     from src.utils.fingerprint import verify_training_record
 
     if (split is None) == (cohort is None):
@@ -430,6 +492,11 @@ def read_measurement_inputs(
                               or expect_version_sha256 is not None):
         raise ValueError("a registry, training evidence and an expected version digest apply "
                          "to a registered cohort only")
+    asked = protocols.PROTOCOLS.get(protocol) if isinstance(protocol, str) else None
+    if asked is None:
+        # `model_refusal` names a protocol it does not know before it looks at
+        # any record: the same sentence the runner and the Test page give.
+        raise ValueError(f"{protocols.model_refusal(protocol, None, None)} Nothing was written.")
 
     if split is not None:
         resolved, siblings = _resolve_generated(data_dir, split)
@@ -440,13 +507,19 @@ def read_measurement_inputs(
             data_dir, cohort, registry, training_evidence,
             expected_sha256=expect_version_sha256,
         )
+        # **What the protocol needs from the version**, judged on this one read
+        # of its `cohort.json`, before the workspace or the checkpoint is read.
+        why = protocols.inputs_refusal(protocol, version.manifest.get("counts"))
+        if why is not None:
+            raise ValueError(f"{why} Nothing was written.")
 
     manifest = read_split_manifest(data_dir)
     graph = read_graph_artifacts(data_dir, map_location="cpu")
+    gene_fields = asked.gene_fields
     if version is None:
         samples, checked = _read_generated(data_dir, split, siblings)
     else:
-        samples, checked = _read_version_samples(version), {}
+        samples, checked = _read_version_samples(version, gene_fields=gene_fields), {}
 
     bound = verify_graph_reads(manifest, graph.reads)
     check_unparsed_kg_json(data_dir, manifest)
@@ -477,6 +550,21 @@ def read_measurement_inputs(
         recorded_by=f"checkpoint {checkpoint}",
         compared_with=f"the workspace {data_dir}",
     )
+    # **The model the protocol takes**: the record's stage and head against the
+    # protocol's requirement, never its name. A file without a model spec is
+    # refused by the record reader itself (not readable by this build).
+    record = read_model_record(read.checkpoint)
+    why = protocols.model_refusal(protocol, record.learning_stage, record.task)
+    if why is not None:
+        raise ModelRecordError(f"{why} Nothing was written.")
+    task_data = None
+    if gene_fields and version is None:
+        from src.kg.task_fixture import read_gene_fixture
+
+        task_data = read_gene_fixture(data_dir, manifest_sha256=manifest.identity.sha256)
+        if split not in task_data.samples:
+            raise ValueError(f"the functional fixture has no {split!r} split")
+        samples = task_data.samples[split]
     # R3 has passed, so the checkpoint is a mapping that records its inputs.
     r10 = (None if version is None
            else _r10(read.checkpoint.get("training_input_digests"), samples, candidates))
@@ -493,7 +581,7 @@ def read_measurement_inputs(
         dataset_record.identity.sha256[:12],
     )
     return MeasurementInputs(resolved, version, cohort_version, manifest, graph, samples, read,
-                             bound, dataset_record, r10)
+                             bound, dataset_record, r10, task_data)
 
 
 def _changed_since_chosen(what: str, found: Optional[str],
@@ -522,12 +610,17 @@ def _resolve_generated(data_dir: Path, split: str) -> Tuple[CohortProvenance, Tu
 def _resolve_registered(
     data_dir: Path, label: str, registry: Optional[Path], training_evidence: Sequence[Path],
     *, expected_sha256: Optional[str] = None,
-) -> Tuple[CohortVersionRead, Dict[str, Any], List[Path]]:
+) -> Tuple[CohortVersionRead, Dict[str, Any], List[EvidenceCandidate]]:
     """The evidence candidates (listed, nothing read) and the version (one read
     of its `cohort.json`), with the block its report records.
 
     The evidence directories come first: they are the operator's arguments, and
-    one that is not a directory is refused before anything is read.
+    one known not to be a directory (absent, a file, a link loop, a name too
+    long to exist) is refused before anything is read. One that exists and
+    cannot be listed, or whose own state cannot be learned (its stat fails
+    otherwise: a parent this account may not enter, an I/O error), is not
+    refused: it stays in the list as a place R10 could not look in
+    (`evidence_candidates`; K8-6 completion review, 2026-11-08).
 
     With `expected_sha256` (`--expect-version-sha256`) the read is compared
     before it is decoded: other bytes, or no version, are
@@ -556,7 +649,8 @@ def _read_generated(
     return read_samples(data_dir, split), {name: read_samples(data_dir, name) for name in siblings}
 
 
-def _read_version_samples(version: CohortVersionRead) -> SamplesRead:
+def _read_version_samples(version: CohortVersionRead, *,
+                          gene_fields: bool = False) -> SamplesRead:
     """The version's `samples.json`, one read, refused before it is parsed
     unless its digest is the one the version's `cohort.json` binds.
 
@@ -575,7 +669,8 @@ def _read_version_samples(version: CohortVersionRead) -> SamplesRead:
 
     bound = version.manifest["samples"]["sha256"]
     try:
-        samples = read_samples_file(version.samples_path, expected_sha256=bound)
+        samples = read_samples_file(version.samples_path, expected_sha256=bound,
+                                    gene_fields=gene_fields)
     except SamplesDigestMismatch as exc:
         raise CohortVersionRefused(
             f"{version.samples_path} is not the samples {version.identity.path} binds "
@@ -669,25 +764,23 @@ def _read_checkpoint(checkpoint: Path, device: torch.device, *,
         raise UnparseableCheckpoint(checkpoint, exc) from exc
 
 
-def _r10(recorded: Any, samples: SamplesRead, candidates: Sequence[Path]) -> Dict[str, Any]:
+def _r10(recorded: Any, samples: SamplesRead,
+         candidates: Sequence[EvidenceCandidate]) -> Dict[str, Any]:
     """R10 from the checkpoint's own record of its training inputs, taken from
-    its one read (`training_input_digests`: Mode C's read, or for Mode D the
-    served pipeline's, `bound_inputs`), and the candidates.
+    its one read (`training_input_digests`), and the candidates.
 
-    Recorded, never enforced (contract §5.4). A candidate that cannot be read
-    for a reason other than its absence refuses the run rather than reading as
-    "not found": it may have been the evidence.
+    Recorded, never enforced (contract §5.4). **A candidate or an evidence
+    directory that cannot be read does not stop the run** (K8-6r.3):
+    `compute_r10` records it, reads the remaining candidates, and leaves a
+    scope that none of them holds *unverifiable* with that reason
+    (`search_incomplete`), never "not found". The run's required inputs were
+    verified before this. A `MemoryError` reading a candidate is not converted:
+    `compute_r10` names the candidate and the run ends as a resource failure,
+    before anything is published.
     """
     from src.evaluation.r10 import compute_r10
 
-    try:
-        return compute_r10(recorded, samples.samples, candidates)
-    except OSError as exc:
-        raise ValueError(
-            f"an R10 evidence candidate could not be read ({type(exc).__name__}: {exc}); it "
-            "may hold the inputs the checkpoint records, so the run does not report them "
-            "as not found. Nothing was written."
-        ) from exc
+    return compute_r10(recorded, samples.samples, candidates)
 
 
 def measurement_input_digests(inputs: MeasurementInputs) -> Dict[str, str]:
@@ -715,18 +808,10 @@ def measurement_input_digests(inputs: MeasurementInputs) -> Dict[str, str]:
 
     Nothing globs the directory, so an unrelated file beside these does not
     change the record of a run that never read it.
-
-    **A Mode D run's tensors were read by the served pipeline** (`inputs.graph`
-    is None): its workspace check compared each tensor read with the manifest's
-    digest and bound that digest, so the bound digest is the digest of the bytes
-    it parsed (`DiagnosisPipeline.bound_inputs`). Nothing is read again for it.
     """
     from src.kg.artifacts import GRAPH_TENSOR_ROLES
 
-    if inputs.graph is not None:
-        tensors = {role: inputs.graph.reads.get(role) for role in GRAPH_TENSOR_ROLES}
-    else:
-        tensors = {role: inputs.bound.get(role) for role in GRAPH_TENSOR_ROLES}
+    tensors = {role: inputs.graph.reads.get(role) for role in GRAPH_TENSOR_ROLES}
     reads: Dict[str, Any] = {
         "checkpoint": inputs.checkpoint.identity,
         "samples": inputs.samples.identity,
@@ -734,6 +819,8 @@ def measurement_input_digests(inputs: MeasurementInputs) -> Dict[str, str]:
     }
     if inputs.version is None:
         reads["split_manifest"] = inputs.manifest.identity
+    if inputs.task_data is not None:
+        reads["task_fixture"] = inputs.task_data.identity
 
     missing = sorted(role for role, read in reads.items() if read is None)
     if missing:
@@ -741,8 +828,7 @@ def measurement_input_digests(inputs: MeasurementInputs) -> Dict[str, str]:
             f"no read of {', '.join(missing)}, so there is no digest to record; a "
             "measurement record names only bytes a reader parsed"
         )
-    digests = {role: read if isinstance(read, str) else read.sha256
-               for role, read in reads.items()}
+    digests = {role: read.sha256 for role, read in reads.items()}
     digests["kg"] = inputs.bound["kg"]
     return digests
 
@@ -872,8 +958,9 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
                    r10: Optional[Mapping[str, Any]] = None,
                    cuda_executed: Optional[bool] = None,
                    model: Any = None,
-                   semantics: Optional[Mapping[str, Any]] = None) -> Any:
-    """Build the manifest of one Mode C run, or of a Mode D run (`semantics`).
+                   semantics: Mapping[str, Any]) -> Any:
+    """Build the manifest of one measurement: the protocol asked (`args.mode`)
+    measured by its evaluator, whose `semantics` give the semantic fields.
 
     `digests` is the record of what the run read, from
     `measurement_input_digests` (contract M2.1, S7); nothing here hashes a file.
@@ -881,11 +968,10 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
     `dataset_record` is the verified record's summary (`DatasetRecord.summary`,
     contract M3b): its binding state and its origin, recorded apart.
 
-    `regime` is the `AutocastRegime` `encode_full_graph` reported for the
-    embeddings Mode C scores: they are computed before this manifest is built,
-    so the regime observed here could be a different one. It is required, and
-    `run_mode_c` refuses a manifest whose regime is not the embeddings'
-    (`assert_manifest_describes_regime`).
+    `regime` is the `AutocastRegime` observed for the run's device
+    (`observe_autocast_regime`) before the evaluator runs. It is required, and
+    the evaluator refuses a manifest whose regime is not the one in effect when
+    it ranks (`task_measurement._check_regime`).
 
     `model` is optional and is used only to **observe** whether what ran was a
     `torch.compile` wrapper object. Omitting it records
@@ -906,15 +992,17 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
     Without one it is the generated split `args.split`, with no R10. The
     manifest refuses any other combination when it is built.
 
-    **Mode D gives the same fields its own values** (`semantics`, from
-    `mode_d.served_semantics`: mode, metric schema, candidate construction, batch
-    size, score semantics, tie policy) and adds no field
-    (`docs/working/scorer-measurement/PLAN_B05.md` §6). Everything else, the
-    regime, the digests, the relations, R10 and the environment, is built here
-    the same way for both.
+    **The mode is the protocol asked, set here once** (`args.mode`, the
+    `--mode` the run was started with), never by the evaluator. **The
+    evaluator gives every other semantic field** (`semantics`, from
+    `task_measurement.task_semantics`; `SEMANTIC_FIELDS`: the metric schema,
+    candidate construction, batch size, score semantics, tie policy and model
+    construction), and there is no default for any of them: a `semantics` that
+    sets `mode`, lacks one of them or names another field is refused. Everything
+    else, the regime, the digests, the relations, R10 and the environment, is
+    built here the same way for every protocol.
     """
     from src.evaluation.measurement import (
-        METRIC_SCHEMA_VERSION,
         MeasurementManifest,
         expected_relations,
         observe_torch_compile_wrapper,
@@ -922,32 +1010,28 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
     from src.utils.fingerprint import compute_fingerprint
     from src.utils.run_environment import code_revision, collect_environment
 
+    if "mode" in semantics:
+        raise ValueError("an evaluator's semantics do not set the manifest's mode: the mode is "
+                         "the protocol asked (--mode)")
+    missing = [name for name in SEMANTIC_FIELDS if name not in semantics]
+    if missing:
+        raise ValueError(f"the evaluator's semantics lack {missing}")
+    unknown = sorted(set(semantics) - set(SEMANTIC_FIELDS))
+    if unknown:
+        raise ValueError(f"semantic values for fields an evaluator does not set: {unknown}")
     registered = cohort_version is not None
     code = code_revision(PROJECT_ROOT)
-    kind = {
-        "mode": "C",
-        "metric_schema_version": METRIC_SCHEMA_VERSION,
-        "candidate_construction": CANDIDATE_CONSTRUCTION,
-        "batch_size": args.batch_size,
-        "score_semantics": "raw cosine, no eta mixture and no shortest-path term",
-        "canonical_tie_policy_version": "score-desc-then-global-id-asc/v1",
-    }
-    if semantics is not None:
-        unknown = sorted(set(semantics) - set(kind))
-        if unknown:
-            raise ValueError(f"semantic values for fields a mode does not set: {unknown}")
-        kind.update(semantics)
     return MeasurementManifest(
-        mode=kind["mode"],
+        mode=args.mode,
         split=cohort_version["role"] if registered else args.split,
-        metric_schema_version=kind["metric_schema_version"],
+        metric_schema_version=semantics["metric_schema_version"],
         cohort_kind="supplied" if registered else "generated",
         n_samples=n_samples,
-        candidate_construction=kind["candidate_construction"],
-        batch_size=kind["batch_size"],
-        score_semantics=kind["score_semantics"],
-        model_construction=MODEL_CONSTRUCTION,
-        canonical_tie_policy_version=kind["canonical_tie_policy_version"],
+        candidate_construction=semantics["candidate_construction"],
+        batch_size=semantics["batch_size"],
+        score_semantics=semantics["score_semantics"],
+        model_construction=semantics["model_construction"],
+        canonical_tie_policy_version=semantics["canonical_tie_policy_version"],
         checkpoint_path=str(args.checkpoint),
         data_dir=str(args.data_dir),
         graph_fingerprint=compute_fingerprint(graph_data),
@@ -961,8 +1045,8 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
         cuda_version=torch.version.cuda,
         device=str(device),
         dtype=str(torch.get_default_dtype()),
-        # Observed, not asserted. `run_mode_c` opens no autocast context, but a
-        # caller can, and a literal `False` then described a run that did not
+        # Observed, not asserted. The evaluator opens no autocast context, but
+        # a caller can, and a literal `False` then described a run that did not
         # happen.
         amp_enabled=regime.enabled,
         amp_dtype=regime.dtype,
@@ -979,15 +1063,18 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Measure the disease scorer: every patient against every disease (Mode C), "
-                    "or the ranking the Diagnosis page serves today beside it (Mode D)"
+        description="Measure a model on a cohort by an evaluation protocol this build "
+                    "implements for the model's learning stage and task head (what the Test "
+                    "page runs)"
     )
-    parser.add_argument("--mode", choices=MODES, default="C",
-                        help="C (default): the approved scorer, raw cosine over every disease. "
-                             "D: the served ranking (path discovery and the served score), "
-                             "measured through the served pipeline's own rank(), with Mode C "
-                             "run on the same embeddings beside it. D needs --cohort; "
-                             "--batch-size is the C side's chunk")
+    # The protocol names are read now, from the one definition, not copied at import.
+    parser.add_argument("--mode", choices=protocols.names(), required=True,
+                        help="The evaluation protocol: a measurement this build implements "
+                             "for a model's learning stage and task head "
+                             "(src/evaluation/protocols.py), average ranks "
+                             "(docs/working/PLAN_TEST_RESULTS.md §8). The checkpoint's model "
+                             "record must be one the protocol takes; the report's mode is the "
+                             "protocol's name")
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--data-dir", type=Path, required=True)
     cohort = parser.add_mutually_exclusive_group(required=True)
@@ -1004,22 +1091,27 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
                              "records, for R10, after the workspace's own splits. Only "
                              "bytes whose digest the checkpoint records count; a scope "
                              "whose bytes are found nowhere is unverifiable, never "
-                             "zero. Repeatable; --cohort only")
+                             "zero. A path that is not a directory is refused; one that "
+                             "cannot be checked or listed is not looked in, and R10 "
+                             "names it for a scope found nowhere else. Repeatable; "
+                             "--cohort only")
     parser.add_argument("--record", action="store_true",
                         help="Register the kept report in evaluations.json beside the "
                              "checkpoint, as scripts/record_evaluation.py --report "
                              "would. A refused registration exits 3; the report is kept "
                              "unless it is no longer the one the run published. --cohort "
-                             "only: a generated split's report is not registered")
+                             "only: a generated split's report is not registered, because the "
+                             "ledger does not yet support a generated split's data identity; "
+                             "its report and ranks stay at --output")
     parser.add_argument("--output", type=Path, default=None,
-                        help="Where a generated split's measurement JSON is written; the "
-                             "per-sample ranks go beside it, as <output stem>_ranks.json. "
-                             "Required with --split; refused with --cohort, whose report "
-                             "the registry's report store keeps")
+                        help="Where a generated split's measurement JSON is written: a new "
+                             "file. The per-sample ranks go beside it, as <output "
+                             "stem>_ranks.json; neither it nor its ranks file may exist, and "
+                             "neither is ever replaced. Required with --split; refused with "
+                             "--cohort, whose report the registry's report store keeps")
     parser.add_argument("--batch-size", type=_positive_int, default=32,
-                        help="Patients scored per chunk (a positive integer; with --mode "
-                             "D, the Mode C side's). Recorded on the manifest: it can move "
-                             "the numbers at floating-point level")
+                        help="Patients scored per chunk (a positive integer). Recorded on "
+                             "the manifest: it can move the numbers at floating-point level")
     parser.add_argument("--device", default="auto", choices=["auto", "cuda", "cpu"],
                         help="auto requires CUDA and fails without it. Explicit cpu "
                              "is permitted for development and records "
@@ -1054,7 +1146,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
 def _positive_int(value: str) -> int:
     """A positive integer: refused at the command line, before the GPU lock or
-    any read, rather than after Mode D's served pass has ranked every case."""
+    any read."""
     try:
         number = int(value)
     except ValueError:
@@ -1076,12 +1168,6 @@ def _refuse_mixed_arguments(parser: argparse.ArgumentParser, args: argparse.Name
     """Refuse an argument that belongs to the other kind of cohort (M4 decision
     8), before the device is resolved or anything is read. `parser.error` exits
     with status 2 and one message."""
-    if args.mode == "D" and args.split is not None:
-        parser.error(
-            "--mode D measures a registered cohort version (--cohort LABEL --registry DIR) "
-            "only: its comparison with Mode C is reported on a version's import-eligible "
-            "cases, the form policy gate 1's report needs. Nothing was read or written."
-        )
     if args.split is not None:
         given = [flag for flag, value in (("--registry", args.registry),
                                           ("--training-evidence", args.training_evidence),
@@ -1093,7 +1179,8 @@ def _refuse_mixed_arguments(parser: argparse.ArgumentParser, args: argparse.Name
             parser.error(
                 f"{', '.join(given)} apply to a registered cohort version (--cohort LABEL "
                 "--registry DIR) only: a generated split has no version, its report is not "
-                "registered and R10 is not computed for it. Nothing was read or written."
+                "registered (the ledger does not yet support a generated split's data "
+                "identity) and R10 is not computed for it. Nothing was read or written."
             )
         if args.output is None:
             parser.error(
@@ -1114,22 +1201,92 @@ def _refuse_mixed_arguments(parser: argparse.ArgumentParser, args: argparse.Name
         )
 
 
+def _ranks_path(output: Path) -> Path:
+    """Where a generated split's ranks go: `<output stem>_ranks.json` beside
+    `output`. The one name the check, the publication and the failure message
+    use."""
+    return output.with_name(f"{output.stem}_ranks.json")
+
+
+def _check_generated_targets(output: Optional[Path]) -> None:
+    """Refuse a generated split's run whose report or ranks file is already
+    there, before the GPU lock and anything is read (K8-6r.4).
+
+    A ``ValueError`` ending "Nothing was read or written." when `output` is a
+    directory, or when `output` or its ranks file exists (``lexists``: a link,
+    even a dangling one, counts). What is found is named: an empty file at
+    `output` is a place an earlier run claimed and whose publication failed,
+    not a report, and ranks with no report at `output` are an interrupted
+    publication, not a result. Only those two names are looked at, so each
+    is said with what else it may be: another run's publication not yet
+    finished leaves the same files, and the ranks name may hold a file
+    another `--output` wrote (one with the same stem, or one named so). Each
+    is left in place: nothing is deleted or renamed to make room. The check
+    creates no directory. It is not the guarantee: a file that appears after
+    it is still never overwritten (`_publish_generated`).
+    """
+    if output is None:
+        return
+    if output.is_dir():
+        raise ValueError(
+            f"--output {output} is a directory; it names the new file a generated split's "
+            "report is written to. Nothing was read or written.")
+    ranks = _ranks_path(output)
+    report_there = os.path.lexists(output)
+    report_empty = report_there and _empty_file(output)
+    found = []
+    if report_empty:
+        found.append(f"{output} is an empty file: a claimed place whose publication failed, "
+                     "or another run's not yet finished, not a report")
+    elif report_there:
+        found.append(f"{output} exists")
+    if os.path.lexists(ranks):
+        if report_there and not report_empty:
+            found.append(f"{ranks} exists")
+        else:
+            found.append(f"{ranks} exists with no report at {output}: ranks a run on this "
+                         "--output left with no report are an interrupted publication, or "
+                         "another run's not yet finished, not a result; it may also be a file "
+                         "another --output wrote under that name")
+    if found:
+        raise ValueError(
+            f"--output {output} cannot be used: {'; '.join(found)}. A generated split's run "
+            "writes its report and its ranks as new files: it never replaces a file, nor "
+            "deletes or renames one to make room, so what is there stays as it is. Measure "
+            "again to a new --output. Nothing was read or written.")
+
+
+def _empty_file(path: Path) -> bool:
+    """A regular file of no bytes at `path` itself (a link is not followed)."""
+    try:
+        found = os.lstat(path)
+    except OSError:
+        return False
+    return stat.S_ISREG(found.st_mode) and found.st_size == 0
+
+
 def _publish_generated(result: ModeResult, output: Path) -> Tuple[Path, Path]:
-    """A generated split's report at `output` and its ranks beside it.
+    """A generated split's report at `output` and its ranks beside it, each a
+    new file that never replaces one (K8-6r.4).
 
     Both are encoded before anything is written, so a value JSON cannot hold
-    refuses with nothing on disk; then the ranks and the report are each staged
-    and renamed into place, the report last. An existing `output` is replaced,
-    as it always was.
+    refuses with nothing on disk. Then each is staged and placed with
+    `publish_bytes(..., replace=False)`: the ranks first and the report last,
+    as the commit point. A run that finds its ranks file taken (another run's
+    ranks appeared after `_check_generated_targets`) writes nothing; one whose
+    report then fails leaves its own ranks with no report beside them, which
+    the next run on that path is refused by, so they are never paired with
+    another run's report. No earlier file is deleted or renamed. The parent
+    directory is made here, at publication only.
     """
     from src.utils.file_modes import publish_bytes
 
-    ranks_path = output.with_name(f"{output.stem}_ranks.json")
+    ranks_path = _ranks_path(output)
     report_bytes = json.dumps(result.to_dict(), indent=2, allow_nan=False).encode("utf-8")
     ranks_bytes = json.dumps(result.to_ranks(), indent=2, allow_nan=False).encode("utf-8")
     output.parent.mkdir(parents=True, exist_ok=True)
-    publish_bytes(ranks_path, ranks_bytes)
-    publish_bytes(output, report_bytes)
+    publish_bytes(ranks_path, ranks_bytes, replace=False)
+    publish_bytes(output, report_bytes, replace=False)
     return output, ranks_path
 
 
@@ -1179,10 +1336,16 @@ def _publication_failure(
 
     `publish_bytes` leaves its target as it was, and each kind of cohort
     publishes its report last, so a failure leaves at most what was published
-    before it: for a generated split, the ranks beside `output` (whatever was
-    there before, or nothing); for a registered version, a new run directory,
-    empty or holding only `RANKS_FILE`, with no report to commit it. Which of
-    those happened depends on the step that failed, so the message says "may".
+    before it: for a generated split, which replaces no file (K8-6r.4), this
+    run's ranks beside `output` with no report, and, where the filesystem has
+    no hard links, an empty file this run claimed at `output` or at the ranks;
+    for a registered version, a new run directory, empty or holding only
+    `RANKS_FILE`, with no report to commit it. Which of those happened depends
+    on the step that failed, so the message says "may". A generated split's
+    file that is already taken (`FileExistsError` naming it, raised only when
+    something appeared there after `_check_generated_targets`) is said exactly:
+    a taken ranks file means this run wrote no file at all; a taken report
+    means this run's ranks are beside a report that is not this run's.
 
     **`create_report_dir`'s own refusal is kept as it is.** Its text already
     says what it created ("Nothing was written." before the run directory, or
@@ -1194,11 +1357,24 @@ def _publication_failure(
     if isinstance(exc, RegistryRefused):
         return ReportNotWritten(str(exc))
     if inputs.version is None:
-        ranks = output.with_name(f"{output.stem}_ranks.json")
+        ranks = _ranks_path(output)
+        if isinstance(exc, FileExistsError) and exc.filename == str(ranks):
+            return ReportNotWritten(
+                f"{_sentence(exc)} No file was replaced, and this run wrote no file: {ranks} "
+                f"appeared after this run checked it and is not this run's, and {output} was "
+                "not written. Measure again to a new --output."
+            )
+        if isinstance(exc, FileExistsError) and exc.filename == str(output):
+            return ReportNotWritten(
+                f"{_sentence(exc)} No file was replaced. {output} appeared after this run "
+                f"checked it and is not this run's report; {ranks} holds this run's ranks, "
+                "which do not belong to that file. Measure again to a new --output."
+            )
         return ReportNotWritten(
-            f"{_sentence(exc)} {output} was left as it was (whatever was there before, or "
-            f"no file), and {ranks} may already hold this run's ranks, so the two may not "
-            "belong to one run. Measure again to write both."
+            f"{_sentence(exc)} No file was replaced. No report was written at {output}; "
+            f"{ranks} may hold this run's ranks, or an empty file this run claimed, with no "
+            f"report beside it, an interrupted write, and {output} may be an empty file this "
+            "run claimed. Measure again to a new --output."
         )
     return ReportNotWritten(
         f"{_sentence(exc)} No {REPORT_FILE} was published, so this run kept no report and "
@@ -1249,8 +1425,7 @@ def register_later_command(report_path: Path, checkpoint: Path) -> str:
 def _registration_outcome(requested: bool, **fields: Any) -> Dict[str, Any]:
     """The ``registration`` block of the `--outcome` file. Before an attempt it
     says so (``registered`` is `None`: not yet established); without
-    `--record` it says the report was not registered because none was asked,
-    and ``why`` may say what a later registration would meet
+    `--record` it says the report was not registered because none was asked
     (`_offer_later_registration`)."""
     if not requested:
         return {"requested": False, "registered": False, "outcome": "not_requested",
@@ -1280,8 +1455,7 @@ def _register(
 
     A refusal returns `EXIT_NOT_REGISTERED` with the reason. When the report is
     still the one published, it is kept and the command that registers it later
-    is printed -- unless runs under its key disagree (`RunsDisagree`, D5), when
-    no later registration under that key would be accepted either, or its
+    is printed -- unless its
     registry is no longer the deployment's (`NotFromTheDeploymentRegistry`: the
     deployment's `SHEPHERD_REGISTRY` resolves elsewhere than when the run was
     allowed to start, the link it names retargeted during the run, say; the run
@@ -1293,14 +1467,21 @@ def _register(
     may be gone, and the operator is told to re-measure. A registration that
     stands although the version's usage history could not be appended says so
     on stderr.
+
+    **A registered run prints two notes that decide nothing** (policy rev 16,
+    K8-6r.2): how its record differs from the other records of its condition
+    group (`group_note`: every run is kept as recorded; deterministic runs that
+    differ are flagged for investigation), and a possible overlap with records
+    merged before each run had its own record (`historical_note`: not
+    confirmed). No other run's report or result refuses this registration.
     """
     from src.evaluation.registration import (
         MeasuredRun,
         NotFromTheDeploymentRegistry,
         RegistrationRefused,
         ReportNotAsPublished,
-        RunsDisagree,
-        corroboration_note,
+        group_note,
+        historical_note,
         register_report,
     )
 
@@ -1315,15 +1496,6 @@ def _register(
             f"\nNOT REGISTERED. {exc}\n"
             "The measurement itself succeeded; nothing at that path is offered for a "
             "later registration in this run's name.",
-            file=sys.stderr,
-        )
-        return EXIT_NOT_REGISTERED, _registration_outcome(
-            True, registered=False, outcome="refused", why=str(exc))
-    except RunsDisagree as exc:
-        print(
-            f"\nNOT REGISTERED. {exc}\n"
-            f"The measurement succeeded and its report is kept at {report_path}, where the "
-            "investigation can read it beside the others.",
             file=sys.stderr,
         )
         return EXIT_NOT_REGISTERED, _registration_outcome(
@@ -1352,13 +1524,11 @@ def _register(
     said = {
         "registered": f"Registered as record {sequence}",
         "already_registered": f"Already held as record {sequence}; nothing written",
-        "corroborated": (f"Agrees with record {sequence}; this report's digest was added to "
-                         "its corroborating reports"),
     }[registered.outcome]
     print(f"\n{said} in {registered.ledger_path}")
-    note = corroboration_note(registered, report_path)
-    if note is not None:
-        print(note)
+    for note in (group_note(registered), historical_note(registered)):
+        if note is not None:
+            print(note)
     why = said
     if registered.usage_history_problem is not None:
         print(f"NOTE: {registered.usage_history_problem}.", file=sys.stderr)
@@ -1368,43 +1538,16 @@ def _register(
         ledger=str(registered.ledger_path), why=why)
 
 
-def _offer_later_registration(
-    inputs: MeasurementInputs, result: ModeResult, report_path: Path
-) -> Dict[str, Any]:
-    """Without `--record`: say the report was not registered and how to
-    register it later -- unless D5 would refuse that now. Returns what the
-    `--outcome` file says about the registration.
+def _offer_later_registration(inputs: MeasurementInputs, report_path: Path) -> Dict[str, Any]:
+    """Without `--record`: say the report was not registered and print the
+    command that registers it later. Returns what the `--outcome` file says
+    about the registration.
 
-    The store is checked under this report's key (`key_refusal`, the check
-    `register_report` makes), so the message stays true: **while runs under
-    the key disagree no register-later command is printed**, as under
-    `--record`, since none would be accepted; while that cannot be checked,
-    the command is printed saying it is refused until it can be. The key is
-    read from the report this run published (`report_key`, which is the
-    record's key for a report `build_record` accepts).
+    **The command is always printed** (policy rev 16, K8-6r.2): a registration
+    reads only the run it registers, so no other run's report or result can
+    refuse it, and nothing is checked here.
     """
-    from src.evaluation.registration import RunsDisagree, key_refusal
-    from src.evaluation.sidecar import report_key
-
     command = register_later_command(report_path, Path(inputs.checkpoint.identity.path))
-    key = report_key(result.to_dict())
-    block = key_refusal(inputs.version, key) if key is not None else None
-    if isinstance(block, RunsDisagree):
-        print(f"\nNot registered (no --record), and {block}\n"
-              f"The report is kept at {report_path}, where the investigation can read it "
-              "beside the others. No register-later command is offered: none would be "
-              "accepted while the runs disagree.\n")
-        return _registration_outcome(False, why=(
-            f"--record was not given, and {block} The report is kept for the "
-            "investigation; no registration under its key is accepted while the runs "
-            "disagree"))
-    if block is not None:
-        print(f"\nNot registered (no --record), and {block}\n"
-              "A later registration is refused until that can be checked; then register it "
-              f"with:\n  {command}\n")
-        return _registration_outcome(False, why=(
-            f"--record was not given; the report is kept for a later registration, which is "
-            f"refused until this can be checked: {block}"))
     print(f"\nNot registered (no --record). Register it with:\n  {command}\n")
     return _registration_outcome(False)
 
@@ -1513,8 +1656,10 @@ def _r10_label_text(label: str, value: Mapping[str, Any], evidence_state: str) -
 
     **"unverifiable" and "no validation inputs recorded" are words, never a
     number,** and an unverifiable label gives its scope's reason
-    (`R10_UNVERIFIABLE_REASON`): bytes not found, found and not readable, or a
-    checkpoint that names no such file, which no `--training-evidence` can help.
+    (`R10_UNVERIFIABLE_REASON`): bytes not found, found and not readable, a
+    place that may hold them that could not be read (its path and error are on
+    the evidence line above the labels), or a checkpoint that names no such
+    file, which no `--training-evidence` can help.
     **"none" says it is not evidence about data outside the recorded inputs.**
     The raw state stays in the report, which holds no prose.
     """
@@ -1550,15 +1695,8 @@ def _print_registered_summary(inputs: MeasurementInputs, result: ModeResult, run
     excluded = ", ".join(f"{name} {n}" for name, n in counts["excluded"].items())
     print(f"\nCohort version {block['label']} (role {block['role']}), manifest sha256 "
           f"{block['manifest_sha256'][:12]}...")
-    if result.manifest.mode == "D":
-        # Mode D's three case sets, never merged under one name (PLAN_B05 §4).
-        print(f"  {result.n_ranked} reached by the served ranking of "
-              f"{counts['ranked_eligible']} import-eligible cases; {counts['source_cases']} "
-              f"source cases, {counts['n_excluded']} excluded at import ({excluded}), counted "
-              "beside the figures, not in them")
-    else:
-        print(f"  coverage: {result.n_ranked} ranked of {counts['source_cases']} source cases; "
-              f"{counts['n_excluded']} excluded ({excluded})")
+    print(f"  coverage: {result.n_ranked} ranked of {counts['source_cases']} source cases; "
+          f"{counts['n_excluded']} excluded ({excluded})")
     print("\nR10, against the inputs this checkpoint records:")
     for scope, _ in R10_SCOPES:
         entry = inputs.r10[scope]
@@ -1582,6 +1720,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     args = parse_args(argv)
     _check_outcome_target(args.outcome)
+    _check_generated_targets(args.output)
     registry = _refuse_another_registry(args)
     # **One managed GPU job at a time** (M5): the deployment's GPU lock, taken
     # before the device is resolved or anything is read, and held until this
@@ -1642,10 +1781,7 @@ def _run(args: argparse.Namespace, *, registry: Optional[Path]) -> int:
         )
 
     try:
-        if args.mode == "D":
-            inputs, result = _measure_mode_d(args, registry, device, cuda_executed)
-        else:
-            inputs, result = _measure_mode_c(args, registry, device, cuda_executed)
+        inputs, result = _measure_task(args, registry, device, cuda_executed)
     except RuntimeError as exc:
         # **No fallback** (D5): an operation without a deterministic
         # implementation ends the run, before anything is written, saying so.
@@ -1744,8 +1880,7 @@ def _run(args: argparse.Namespace, *, registry: Optional[Path]) -> int:
                 _flush_stdout()
                 status, registration = _register(report_path, report_sha256, inputs)
             else:
-                status, registration = 0, _offer_later_registration(inputs, result,
-                                                                     report_path)
+                status, registration = 0, _offer_later_registration(inputs, report_path)
             if args.outcome is not None:
                 _write_outcome(args.outcome, complete=True, inputs=inputs, run_id=run_id,
                                report_path=report_path, report_sha256=report_sha256,
@@ -1765,144 +1900,80 @@ def _run(args: argparse.Namespace, *, registry: Optional[Path]) -> int:
         raise _failure_after_publishing(exc, inputs, report_path) from exc
 
 
-def _measure_mode_c(args: argparse.Namespace, registry: Optional[Path], device: torch.device,
-                    cuda_executed: bool) -> Tuple[MeasurementInputs, Any]:
-    """Mode C's inputs and result: each input read once, and verified and
-    recorded from those reads, before any model is built or any output written
-    (contract M2.1, S7; M4 §6); then the model, the full-graph forward and
-    `run_mode_c`."""
-    from src.evaluation.measurement import encode_full_graph, run_mode_c
-    from src.models.gnn.shepherd_gnn import build_shepherd_model
+def _measure_task(args: argparse.Namespace, registry: Optional[Path], device: torch.device,
+                  cuda_executed: bool) -> Tuple[MeasurementInputs, Any]:
+    """The protocol asked (`--mode`) measured by its evaluator
+    (`src.evaluation.protocols`, `src.evaluation.task_measurement`).
+
+    Every input read once and verified before anything is built or written,
+    the model record judged against the stage and head the protocol takes
+    right after the checkpoint read (provenance §9.3 hazard 3;
+    `read_measurement_inputs(protocol=)`); then the graph view rebuilt from the
+    graph read by the spec's rule and compared with the record, and the bundle
+    built and strictly loaded with the protocol's stage and task, never its
+    name. The semantics and the run are the protocol's evaluator's, and the
+    manifest's mode is the protocol's name (`build_manifest`). A checkpoint
+    without a model spec is refused: it was written before the switch and is
+    history.
+    """
+    from dataclasses import asdict as _asdict
+
+    from src.evaluation.task_measurement import TASK_RUNS, task_semantics
+    from src.kg.graph_view import build_graph_view
+    from src.models.bundle.record import load_bundle, read_model_record
+    from src.utils.run_environment import observe_autocast_regime
 
     inputs = read_measurement_inputs(
         args.checkpoint, args.data_dir, device, split=args.split, cohort=args.cohort,
         registry=registry, training_evidence=args.training_evidence,
         expect_checkpoint_sha256=args.expect_checkpoint_sha256,
         expect_version_sha256=args.expect_version_sha256,
+        protocol=args.mode,
     )
+    asked = protocols.PROTOCOLS[args.mode]
     graph_data, samples = inputs.graph.graph_data, inputs.samples.samples
-    digests = measurement_input_digests(inputs)
-
-    model = build_shepherd_model(inputs.checkpoint.checkpoint, graph_data, device)
-    # Kept **whole**: `run_mode_c` checks that its manifest describes the regime
-    # these embeddings were computed under, which a bare dict could not carry.
-    encoded = encode_full_graph(model, graph_data, device)
-
-    result = run_mode_c(
-        full_graph_embeddings=encoded,
-        samples=samples,
-        manifest=build_manifest(
-            args, graph_data, len(samples), device, digests=digests,
-            dataset_record=inputs.dataset_record.summary(),
-            cohort_version=inputs.cohort_version, r10=inputs.r10,
-            cuda_executed=cuda_executed, model=model, regime=encoded.regime,
-        ),
-        device=device,
-        batch_size=args.batch_size,
+    record = read_model_record(inputs.checkpoint.checkpoint)
+    rule = _asdict(record.model_spec.graph_view)
+    rule["exclude_relations"] = list(rule["exclude_relations"])
+    view = build_graph_view(graph_data, rule=rule)
+    bundle, record = load_bundle(inputs.checkpoint.checkpoint,
+                                 learning_stage=asked.learning_stage, task=asked.task,
+                                 view_digest=view.digest)
+    bundle.to(device)
+    manifest = build_manifest(
+        args, graph_data, len(samples), device, digests=measurement_input_digests(inputs),
+        dataset_record=inputs.dataset_record.summary(), cohort_version=inputs.cohort_version,
+        r10=inputs.r10, cuda_executed=cuda_executed, model=bundle,
+        regime=observe_autocast_regime(device),
+        semantics=task_semantics(asked.evaluator, args.batch_size, bundle),
     )
-    return inputs, result
-
-
-def _measure_mode_d(args: argparse.Namespace, registry: Optional[Path], device: torch.device,
-                    cuda_executed: bool) -> Tuple[MeasurementInputs, Any]:
-    """Mode D's inputs and result (`docs/working/scorer-measurement/PLAN_B05.md`).
-
-    **The pipeline is built as the service builds it** (`build_served_pipeline`),
-    and the workspace is read by it, once: the graph, the tensors, the manifest,
-    the dataset record, the checkpoint and the shortest-path table, each verified
-    as serving verifies them (R1, R5 and R3 among them). This run reads only
-    what serving does not: the cohort version, resolved first as for Mode C, and
-    its samples. Then the version's graph and dataset record must be the ones
-    the pipeline bound (`cohort_graph`), R10 is computed from the checkpoint's
-    record in the pipeline's one read, and both manifests are built from those
-    reads: Mode D's with its own semantic values, and the C side's as any Mode C
-    run's, for the device and `--batch-size` it runs with.
-    """
-    from src.evaluation.mode_d import (
-        ModeDRefused,
-        kept_mode_c_reports,
-        run_mode_d,
-        served_semantics,
-    )
-    from src.inference.pipeline import PipelineBuildError, build_served_pipeline
-    from src.utils.checkpoint_io import CheckpointChanged, CheckpointRead
-
-    version, cohort_version, candidates = _resolve_registered(
-        args.data_dir, args.cohort, registry, args.training_evidence,
-        expected_sha256=args.expect_version_sha256,
-    )
-    try:
-        pipeline = build_served_pipeline(
-            Path(args.data_dir) / "kg.json", checkpoint_path=str(args.checkpoint),
-            data_dir=str(args.data_dir), device=str(device),
-            expected_checkpoint_sha256=args.expect_checkpoint_sha256,
-        )
-    except CheckpointChanged as exc:
-        resolved = Path(args.checkpoint).resolve()
-        raise _changed_since_chosen(f"the checkpoint {args.checkpoint} (read at {resolved})",
-                                    exc.found, exc.expected) from None
-    except PipelineBuildError as exc:
-        raise ModeDRefused(
-            f"the served pipeline could not be built over {args.data_dir} with "
-            f"{args.checkpoint}: {exc}"
-        ) from exc
-    semantics = served_semantics(pipeline.served_identity())
-    samples = _read_version_samples(version)
-    bound = pipeline.bound_inputs()
-    _verify_version_binding(version, bound.graph, bound.dataset_record)
-    r10 = _r10(bound.checkpoint_training_inputs, samples, candidates)
-    inputs = MeasurementInputs(
-        cohort=None, version=version, cohort_version=cohort_version, manifest=None,
-        graph=None, samples=samples,
-        checkpoint=CheckpointRead(checkpoint=None, identity=bound.checkpoint),
-        bound=dict(bound.graph), dataset_record=bound.dataset_record, r10=r10,
-    )
-    logger.info(
-        "Mode D over cohort version %s: %d cases; served %s; checkpoint sha256 %s",
-        cohort_version["label"], len(samples.samples),
-        pipeline.served_identity().scoring_mode, bound.checkpoint.sha256[:12],
-    )
-    common = dict(
-        digests=measurement_input_digests(inputs),
-        dataset_record=bound.dataset_record.summary(),
-        cohort_version=cohort_version, r10=r10, cuda_executed=cuda_executed,
-        model=pipeline.model, regime=pipeline.embedding_regime,
-    )
-    n = len(samples.samples)
-    result, _mode_c = run_mode_d(
-        pipeline, samples.samples,
-        build_manifest(args, bound.graph_data, n, device, semantics=semantics, **common),
-        build_manifest(args, bound.graph_data, n, device, **common),
-        device=device, batch_size=args.batch_size, cohort_version=cohort_version,
-        kept_mode_c=lambda c_ranks: kept_mode_c_reports(version, bound.checkpoint.sha256,
-                                                        c_ranks),
-    )
+    result = TASK_RUNS[asked.evaluator](bundle=bundle, view=view, samples=samples,
+                                        manifest=manifest, device=device,
+                                        batch_size=args.batch_size)
+    if inputs.task_data is not None:
+        # The split's samples are the fixture's, bound by its record (not by the
+        # workspace manifest, which binds the disease split R2 checked): say
+        # so, with the cases the derivation left out.
+        record = inputs.task_data.record
+        result.sampler_evidence["task_fixture"] = {
+            "record_sha256": inputs.task_data.identity.sha256,
+            "label": record.get("label"), "rule": record.get("rule"),
+            "seed": record.get("seed"), "split": args.split,
+            "derivation": (record.get("counts") or {}).get(args.split)}
     return inputs, result
 
 
 def _print_result(result: Any) -> None:
-    """The run's figures on the console, by its mode, each under its label."""
+    """The run's figures on the console, under its mode's label, and its
+    candidates as its manifest describes them (`candidate_construction`)."""
     from src.evaluation.caveats import mode_label
 
-    print(f"\n{mode_label(result.manifest.mode, result.manifest.score_semantics)}")
-    if result.manifest.mode == "D":
-        outcomes = result.outcomes
-        print(f"  {outcomes['ranked']} ranked, {outcomes['not_reached']} not reached "
-              f"({outcomes['no_candidates']} with no candidates), {outcomes['refused']} "
-              f"refused, of {outcomes['n_import_eligible']} import-eligible cases")
-        for name, value in result.authoritative_metrics.items():
-            print(f"  {name:38s} {value:.6f}")
-        c_side = result.comparison["mode_c"]
-        print(f"\n{result.comparison['statement']}")
-        print(f"{mode_label('C')}, on the same embeddings:")
-        for name, value in c_side["authoritative_metrics"].items():
-            print(f"  {name:38s} {value:.6f}")
-        return
+    print(f"\n{mode_label(result.manifest.mode)}")
     print(f"  {result.n_ranked} ranked, {result.n_ground_truth_absent} absent")
     for name, value in result.authoritative_metrics.items():
         print(f"  {name:38s} {value:.6f}")
-    print(f"  {'candidate diseases per patient':38s} "
-          f"{result.sampler_evidence['candidate_columns']['max']}")
+    most = result.sampler_evidence["candidate_columns"]["max"]
+    print(f"  candidates, {result.manifest.candidate_construction}: at most {most} per case")
 
 
 def _flush_stdout() -> None:

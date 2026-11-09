@@ -188,7 +188,13 @@ day** after the reviewer's review of `7b0162f` (P2-4: what the budget bounds; an
 stated as this project's policy, the view identity, the approval route); the first version is in git
 history. **Approval route:** the reviewer's technical review, then the owner's confirmation, as for
 the project's other designs; no new approval process. The design is not approved yet, so gate 3 is
-not cleared. It is built with B-1, as B-1c, in batch 5.
+not cleared. It is built with B-1, as B-1c, in batch 5. *(2026-10-27: batch 5 is replaced by work
+packages A–C ([`../scorer-retraining/README.md`](../scorer-retraining/README.md) §8; policy rev 11).
+This design and its approval route are unchanged. It is not built in the A + B round, since it
+is not approved: the new disease ranking keeps path evidence as today's post-ranking explanation
+for the displayed candidates, never as a candidate gate. "Batch 5" below reads as the round that
+implements it after approval. The analogy list's similarity (§7, "Who computes the list") is fixed
+with the served model's spec.)*
 
 **Authority:**
 - policy §6, gate 3's seven requirements;
@@ -222,7 +228,11 @@ this candidate?
 **How that is enforced:**
 - **By the interface.** The traversal receives the result read-only and returns records.
 - **By a contract.** A new import-linter contract, `ranking-without-evidence`, forbids
-  `src.inference.scoring` from importing `src.reasoning`.
+  `src.inference.scoring` from importing `src.reasoning`. *(2026-11-08, superseded by K8-11:
+  `src.inference.scoring` was removed (`9d76bbe`). The task scorers are `src/models/tasks/`
+  (`scoring.py`), and the layers contract keeps `src.models` below `src.reasoning`, so they
+  cannot import it; [`ARCHITECTURE.md`](../../ARCHITECTURE.md) §12 states the rule as it stands.
+  No `ranking-without-evidence` contract exists.)*
 - **By a test.** Evidence is computed for every target of a result, and the result's digest is the
   same afterwards.
 
@@ -412,7 +422,8 @@ any target's outcome.
 - **Same rule as today, stated on the raw scale.** Today the panel requires (s+1)/2 ≥ 0.5, which is
   the same as a raw cosine ≥ 0.
 - **Who computes the list.** B-1's pipeline computes it with `src.inference.scoring` and passes it
-  in. `src.reasoning` sits below `src.inference`, so it never needs embeddings.
+  in. `src.reasoning` sits below `src.inference`, so it never needs embeddings. *(2026-11-08:
+  `src.inference.scoring` was removed in K8-11; see §7.1's note.)*
 - **The traversal.** Each analogy runs steps 1–3 against the same patient. The cost counts against
   the same target's budget, the part its own traversal left.
 - **Outcomes.** The analogy part has the same four outcomes as §7.3.

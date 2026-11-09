@@ -9,28 +9,38 @@ before it moved to ``src/utils/provenance.py``: a claim spelled differently in
 two places cannot be compared, and a claim that has to be corrected in two
 places will eventually be corrected in one.
 
-**Constants, and pure lookups over them (`mode_label`, `served_scoring`, `mode_note`,
-`metric_text`). No imports beyond the standard library, no I/O.** These strings
-are rendered into ``--help`` text, where ``argparse`` performs ``%`` substitution,
-so every literal percent sign here is escaped as ``%%``.
+**Constants, and pure lookups over them (`mode_label`, `mode_note`,
+`metric_text`, `recorded_metric_lines`, `recorded_value_text`), with the one
+name of each finetuned task (`TASK_NAMES`). No imports beyond the standard
+library, no I/O.** These strings are rendered into ``--help`` text, where
+``argparse`` performs ``%`` substitution, so every literal percent sign here
+is escaped as ``%%``.
+
+**One display for every recorded mode** (policy rev 15, R2; K8-6e.2). Words
+exist only for the measurements this build describes (`TASK_NAMES`). A record of
+any other mode, a kept one included, is named by its own recorded mode and shown
+as recorded: its metric names and values (`recorded_metric_lines`) and its score
+semantics, never relabelled, hidden or refused for its mode's name.
 
 Module: src/evaluation/caveats.py
 """
 from __future__ import annotations
 
-from typing import Optional
+import json
+from typing import Any, Iterable, List, Mapping, Optional, Tuple
 
 #: Why a metric measured on `val` is not an independent test result.
 #:
 #: **Permanent, and more important since the split became disease-disjoint, not
 #: less.** Whatever `val` contains, the standard workflow selects the checkpoint
-#: on it (``early_stopping_monitor=val_mrr``), so a number measured there is a
-#: selection metric. That does not depend on how the split was cut.
+#: on it (by the finetuned task's selection metric, ``val_pooled_mrr``), so a
+#: number measured there is a selection metric. That does not depend on how the
+#: split was cut.
 SELECTION_CONTAMINATION = (
     "**Not an independent evaluation.** In the standard workflow `val` is the "
-    "split early stopping and checkpoint selection run on "
-    "(`early_stopping_monitor=val_mrr`), so a metric measured on it is a "
-    "selection metric rather than an independent test estimate. This says "
+    "split early stopping and checkpoint selection run on (by the finetuned "
+    "task's selection metric, `val_pooled_mrr`), so a metric measured on it is "
+    "a selection metric rather than an independent test estimate. This says "
     "nothing about how an arbitrary explicit checkpoint passed to this script "
     "was chosen — it may have been selected on some other workspace, or not "
     "selected at all."
@@ -88,7 +98,9 @@ SPLIT_ARGUMENT_HELP = (
     "institutional or external cohort is not a split of the workspace: it is "
     "imported as a registered cohort version (scripts/import_cohort.py) and "
     "measured with --cohort. A generated split's report is not registered in the "
-    "ledger. Two distinct limits apply, and they are not the same limit. (1) "
+    "ledger, which does not yet support a generated split's data identity; its "
+    "report and ranks stay at --output. Two distinct limits apply, and they are "
+    "not the same limit. (1) "
     + SELECTION_CONTAMINATION
     + " (2) "
     + GENERATED_VAL_IS_DISEASE_DISJOINT
@@ -112,114 +124,129 @@ COHORT_ARGUMENT_HELP = (
 # ledger record. Constants only; each surface renders them, none rewords them.
 # ---------------------------------------------------------------------------
 
-#: D3's label for a recorded result: what was ranked, by what, under which
-#: policy. Shown with every recorded number so it cannot be quoted as another.
-MODE_C_RESULT_LABEL = "Disease ranking by the model, approved scorer policy (Mode C)"
-
-#: Why a recorded Mode C number is not the Diagnosis tab's performance yet.
-#:
-#: **Until B-1 the tab does not rank by Mode C.** The served scorer still mixes
-#: the GNN score with the shortest-path term behind the path gate
-#: (`docs/DISEASE_SCORER_POLICY.md`), so a Mode C number describes the model,
-#: not what the tab shows a user. Removed when B-1 lands, not reworded.
-PRE_B1_NOTE = (
-    "This is the model's own Mode C disease ranking. Until B-1 ships, the Diagnosis "
-    "tab ranks by the legacy GNN+SP mixture behind the path gate, so this number "
-    "does not describe the tab's current ranking."
-)
-
-#: Mode D's label for a recorded result (`docs/working/scorer-measurement/
-#: PLAN_B05.md` §5): what the Diagnosis page serves today, which is not the
-#: approved policy. `mode_label` adds the record's scoring mode and mixing
-#: weight from its `score_semantics`.
-_MODE_D_LABEL_HEAD = ("Served ranking today (Mode D): diseases reached by path discovery, "
-                      "scored as the Diagnosis page scores them")
-_MODE_D_LABEL_TAIL = "; not the approved scorer policy"
-MODE_D_RESULT_LABEL = _MODE_D_LABEL_HEAD + _MODE_D_LABEL_TAIL
-
-#: Shown beside a Mode D record, as `PRE_B1_NOTE` is beside a Mode C one.
-MODE_D_NOTE = (
-    "Mode D measures what the Diagnosis page serves today, over the cohort's import-eligible "
-    "cases. Its report sets Mode C beside it on the same embeddings; a Mode C record shown "
-    "here is a separate run. A Mode D number is not the model's approved ranking, and the "
-    "cases excluded at import are counted beside it, not in it."
-)
-
-#: Each recorded mode's label, by the record's `scoring.mode`.
-MODE_RESULT_LABELS = {"C": MODE_C_RESULT_LABEL, "D": MODE_D_RESULT_LABEL}
-
-#: The note each mode's record is shown with.
-MODE_RESULT_NOTES = {"C": PRE_B1_NOTE, "D": MODE_D_NOTE}
+#: **Each finetuned task's name, the one every surface shows** (K6 decision 6):
+#: the Test page's measurement, the Models page's filter and records, the
+#: Fine-tune page's options and the Diagnosis card's name line read it, and
+#: `src.webui.components.renderers.record_kind_text` builds on it. Keyed by
+#: the model spec's tasks (`src.models.bundle.spec.TASKS`, which this
+#: standard-library-only module does not import;
+#: `tests/unit/test_webui_renderers.py` pins the two equal).
+TASK_NAMES = {"disease": "Disease", "gene": "Gene", "patients_like_me": "Patients-like-me"}
 
 
-#: The label of a record whose mode cannot be read: never taken for Mode C.
+def task_list_text(names: Iterable[str]) -> str:
+    """Task names as one phrase, "Gene", "Gene and Patients-like-me",
+    "Disease, Gene and Patients-like-me": the one way every page and the runner
+    name a set of tasks (each name already a `TASK_NAMES` word)."""
+    names = list(names)
+    return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
+
+#: Each described measurement's label, by the record's `scoring.mode`.
+#: A finetuned model bundle's disease task measurement
+#: (`src.evaluation.task_measurement`): its own scoring semantics, never grouped
+#: with a record of another mode.
+DISEASE_TASK_RESULT_LABEL = ("Disease task (model bundle): every disease of the model's "
+                             "graph view, average ranks")
+DISEASE_TASK_NOTE = ("A score from the finetuned model's disease head, uncalibrated. Pooled "
+                     "MRR is over every case's truth; coverage and the conservative reading "
+                     "count the cases the model could not rank.")
+
+GENE_TASK_RESULT_LABEL = ("Gene task (model bundle): each case's own candidate list, average "
+                          "ranks")
+GENE_TASK_NOTE = ("A score mixing the finetuned model's gene head with shortest-path "
+                  "similarity, uncalibrated. Every causal gene is a positive; a rank depends on "
+                  "the list's length, which the report gives.")
+
+PATIENTS_LIKE_ME_RESULT_LABEL = ("Patients-like-me (model bundle): each patient against every "
+                                 "other patient of the cohort, average ranks")
+PATIENTS_LIKE_ME_NOTE = ("A similarity from the finetuned model's patient tower, uncalibrated. A "
+                         "pair is relevant when the two patients share a causal gene; a patient "
+                         "with no other relevant patient has no recall, not a recall of 0.")
+
+MODE_RESULT_LABELS = {"disease": DISEASE_TASK_RESULT_LABEL, "gene": GENE_TASK_RESULT_LABEL,
+                      "patients_like_me": PATIENTS_LIKE_ME_RESULT_LABEL}
+
+#: The note each described measurement's record is shown with.
+MODE_RESULT_NOTES = {"disease": DISEASE_TASK_NOTE, "gene": GENE_TASK_NOTE,
+                     "patients_like_me": PATIENTS_LIKE_ME_NOTE}
+
+
+#: The label of a record whose mode cannot be read: never taken for another mode.
 MODE_NOT_RECORDED_LABEL = "Measurement mode not recorded"
 
 
-def mode_label(mode: Optional[str], score_semantics: Optional[str] = None) -> str:
-    """The label a record of `mode` is shown under. A Mode D record's served
-    scoring mode and mixing weight are added from its `score_semantics`
-    (``served:<scoring mode>:eta=<eta>:sp=<build id>``) when given. A mode this
-    version does not know is named as such, and a mode that cannot be read
-    (None) says so: neither is shown under another mode's label."""
+def mode_label(mode: Optional[str]) -> str:
+    """The label a record of `mode` is shown under: a described measurement's
+    own label; any other mode named by its recorded value as one this version
+    does not describe; a mode that cannot be read (None) says so. Neither of
+    the last two is shown under another mode's label, and neither is refused."""
     if not mode or not mode.strip():
         return MODE_NOT_RECORDED_LABEL
     label = MODE_RESULT_LABELS.get(mode)
     if label is None:
         return f"Mode {mode} (a measurement mode this version does not describe)"
-    served = served_scoring(score_semantics) if mode == "D" else None
-    return f"{_MODE_D_LABEL_HEAD} ({served}){_MODE_D_LABEL_TAIL}" if served else label
-
-
-def served_scoring(score_semantics: Optional[str]) -> Optional[str]:
-    """A Mode D record's served scoring mode and mixing weight, "hybrid, η = 0.5",
-    from its `score_semantics` (``served:<scoring mode>:eta=<eta>:sp=<build id>``);
-    None for any other value."""
-    if not isinstance(score_semantics, str) or not score_semantics.startswith("served:"):
-        return None
-    fields = score_semantics.split(":")
-    parts = dict(part.split("=", 1) for part in fields[2:] if "=" in part)
-    return f"{fields[1]}, \u03b7 = {parts.get('eta', '?')}"
+    return label
 
 
 def mode_note(mode: Optional[str]) -> Optional[str]:
     """The note a record of `mode` is shown with, or None for a mode this
-    version does not know or cannot read."""
+    version does not describe or cannot read."""
     return MODE_RESULT_NOTES.get(mode) if mode and mode.strip() else None
 
 
-#: Mode D's metric families by name prefix (PLAN_B05 §5), as a surface names
-#: their case set: every import-eligible case (0 for one not reached), or the
-#: reached cases only.
-MODE_D_CASE_SETS = {"post_import_": "import-eligible", "reached_": "reached only"}
+def recorded_value_text(value: Any) -> str:
+    """A recorded value as `recorded_metric_lines` shows it: its JSON text,
+    unrounded ("0.5", "3.0", a string quoted)."""
+    try:
+        return json.dumps(value, ensure_ascii=True, allow_nan=True)
+    except (TypeError, ValueError):  # not JSON (never so from a parsed file)
+        return repr(value)
+
+
+def recorded_metric_lines(metrics: Mapping[str, Any]) -> List[Tuple[str, str]]:
+    """**The one rendering of "as recorded"** (R2): each metric of the mapping
+    a page gives, in its order, a ``(name, value)`` pair: the name as written
+    and the value's JSON text, unrounded (`recorded_value_text`). The text is
+    the value as that mapping holds it: a report or usage entry keeps a whole
+    number as written ("1"), while the API's record view holds every metric as
+    a number with a fraction, so a page showing a record through it reads
+    "1.0" for the same value. Every page wraps the pairs in its own markup and
+    escapes them; nothing here names, rounds, orders or drops a metric by its
+    name or its record's mode."""
+    return [(str(name), recorded_value_text(value)) for name, value in metrics.items()]
+
+
+#: A task measurement's metrics (`src.models.bundle.metrics.ranking_report`),
+#: as a surface names them; a family that takes a cut-off k gets it appended.
+_TASK_METRIC_WORDS = {"pooled_mrr": "pooled MRR", "macro_mrr": "macro MRR",
+                      "best_positive_mrr": "best-positive MRR",
+                      "conservative_pooled_mrr": "conservative pooled MRR",
+                      "coverage": "coverage"}
+_TASK_METRIC_FAMILIES = {"pooled_top": "pooled top-", "macro_recall@": "macro recall@",
+                         "macro_precision@": "macro precision@"}
 
 
 def _metric_words(name: str) -> str:
-    if name == "mrr":
-        return "MRR"
-    if name == "mean_rank":
-        return "mean rank"
-    if name.startswith("hits@"):
-        return f"Hits@{name[len('hits@'):]}"
+    if name in _TASK_METRIC_WORDS:
+        return _TASK_METRIC_WORDS[name]
+    for prefix, words in _TASK_METRIC_FAMILIES.items():
+        if name.startswith(prefix):
+            return f"{words}{name[len(prefix):]}"
     return name
 
 
 def metric_text(mode: Optional[str], name: str) -> str:
-    """A recorded metric as a surface names it, never without its mode: "Mode C
-    MRR (untruncated)", "Mode C Hits@10", "Mode D MRR (import-eligible)", "Mode D
-    mean rank (reached only)", "Mode D coverage"; "MRR (mode not recorded)" when
-    the mode cannot be read."""
+    """A recorded metric as a surface names it, never without its mode: a
+    described measurement's in words, by its task's name (`TASK_NAMES`): "Gene
+    pooled MRR", "Disease pooled top-10", "Patients-like-me macro recall@10";
+    any other mode's by its recorded mode and the name as recorded, whatever
+    the mode: "Mode kg_link_prediction pooled_mrr"; "pooled MRR (mode not
+    recorded)" when the mode cannot be read."""
     if not mode or not mode.strip():
         return f"{_metric_words(name)} (mode not recorded)"
-    if mode == "C" and name == "untruncated_mrr":
-        return "Mode C MRR (untruncated)"
-    if mode == "D":
-        if name == "coverage":
-            return "Mode D coverage"
-        for prefix, case_set in MODE_D_CASE_SETS.items():
-            if name.startswith(prefix):
-                return f"Mode D {_metric_words(name[len(prefix):])} ({case_set})"
-    return f"Mode {mode} {_metric_words(name)}"
+    if mode in TASK_NAMES:
+        return f"{TASK_NAMES[mode]} {_metric_words(name)}"
+    return f"Mode {mode} {name}"
 
 
 #: R10's four labels (contract §5.4), keyed as a record's `r10` block is: scope,
@@ -292,16 +319,21 @@ R10_STATE_TEXT = {
 
 #: What an *unverifiable* label says, by its scope's evidence state (the
 #: `EVIDENCE_STATES` of `src/evaluation/r10.py` other than "found"): contract
-#: §5.4's three reasons. Each is the whole text for the label, in
-#: `R10_STATE_TEXT`'s form, rendered in place of `R10_STATE_TEXT["unverifiable"]`.
+#: §5.4's three reasons and, from R10 definition version 2 (K8-6r.3), a search
+#: left incomplete. Each is the whole text for the label, in `R10_STATE_TEXT`'s
+#: form, rendered in place of `R10_STATE_TEXT["unverifiable"]`. A version-1
+#: block's states read with these same words: "not_found" meant then what it
+#: means now, every candidate read and compared.
 #:
 #: **One reason per state, because they call for different actions.** Bytes
 #: that were not found may be found by measuring again with the directory that
 #: holds them (`--training-evidence`); bytes found and not readable need the file
-#: repaired. A checkpoint that names no such file at all is not a record the
-#: pipeline wrote, and no directory can supply evidence for a digest that was
-#: never recorded: telling that operator the inputs "were not found" sends them
-#: looking for files that cannot help.
+#: repaired; a place that could not be read (its path and error are in the
+#: report) needs the account that measures to be able to read it. A checkpoint
+#: that names no such file at all is not a record the pipeline wrote, and no
+#: directory can supply evidence for a digest that was never recorded: telling
+#: that operator the inputs "were not found" sends them looking for files that
+#: cannot help.
 R10_UNVERIFIABLE_REASON = {
     "not_found": (
         "unverifiable: no file looked at holds the bytes this checkpoint records, "
@@ -314,6 +346,11 @@ R10_UNVERIFIABLE_REASON = {
     "not_recorded": (
         "unverifiable: this checkpoint names no such file, and its record is not one "
         "the pipeline wrote, so --training-evidence cannot help; there is no count"
+    ),
+    "search_incomplete": (
+        "unverifiable: a place that may hold the bytes this checkpoint records could "
+        "not be read, so there is no count. Make it readable to the account that "
+        "measures, and measure again; the report names the place"
     ),
 }
 

@@ -31,6 +31,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping, NamedTuple, Optional, Sequence, Tuple
 
+from src.evaluation.caveats import TASK_NAMES
 from src.webui.components.help import copy_button, help_button
 
 #: Hex digits of a digest shown by default.
@@ -46,12 +47,6 @@ SYNTHETIC_FOR_TESTING = "Synthetic workspaces are for testing only."
 #: (headline, detail) for each state a reader must not miss: the Diagnosis tab's
 #: banners and Model Facts' warnings say them in these words.
 IDENTITY_BANNERS = {
-    "demo": (
-        "DEMO ANSWER: not computed.",
-        "No pipeline is configured on this server, so these candidates are "
-        "illustrative, not computed from any model, graph or table. Nothing here "
-        "is a diagnosis.",
-    ),
     "not_reported": (
         "WHAT PRODUCED THIS RESULT WAS NOT REPORTED.",
         "The API's response carried no served identity, so these candidates "
@@ -62,18 +57,6 @@ IDENTITY_BANNERS = {
         "The served workspace's dataset record gives its origin as synthetic: a "
         "generated stand-in, not a clinical knowledge graph. Results are for "
         "testing only.",
-    ),
-    "no_model": (
-        "NO TRAINED MODEL: path-reasoning fallback.",
-        "No checkpoint is served, so candidates are ranked by path reasoning over "
-        "the knowledge graph alone: a disease with no qualifying path is not "
-        "scored, and scores are not comparable with GNN scores.",
-    ),
-    "no_sp": (
-        "NO SHORTEST-PATH TABLE: GNN score alone.",
-        "A trained model is served without a shortest-path table, so each score is "
-        "the GNN's alone (scoring mode gnn_only, mixing weight eta 1.0) and differs "
-        "from one computed with the table.",
     ),
 }
 
@@ -96,18 +79,20 @@ RENDERER_HELP = {
     ),
     "validation-trainer": (
         "Validation (Trainer)",
-        "The Trainer's own figure on the workspace's val samples (MRR over its top 20, or "
-        "Hits@K), recorded in the checkpoint. It is the metric training selects a "
-        "checkpoint by, so it is not an independent test; recorded test results (Mode C, "
-        "Mode D) are kept apart from it.",
+        "The Trainer's own figure on the val samples, recorded in the checkpoint.\n"
+        "• Base: LP accuracy.\n"
+        "• Task model: pooled MRR.\n"
+        "Training selects a checkpoint by it, so it is not an independent test; recorded "
+        "test results are kept apart from it.",
     ),
 }
 
-#: The validation figures a checkpoint may record, as they are named.
-_VALIDATION_LABELS = {
-    "val_mrr": "Validation MRR (Trainer, top-20)",
-    "val_hits@10": "Validation Hits@10 (Trainer)",
-    "val_hits@1": "Validation Hits@1 (Trainer)",
+#: **The validation figures a checkpoint may record, as every page names them**
+#: (K6 decision 8: the Models table, Model Facts and Training's checkpoint
+#: options read this one map).
+VALIDATION_LABELS = {
+    "val_pooled_mrr": "Validation pooled MRR (Trainer)",
+    "val_lp_accuracy": "Validation LP accuracy (Trainer)",
 }
 _VALIDATION_NOTE = "selection metric on val, not an independent test"
 
@@ -117,6 +102,9 @@ _CHECK = ('<svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true" fo
 #: The dashboard's check mark (an inline svg that stays on its line), for a
 #: page's own "✓ …" (M5-3 review ARCH-4: pages used the private name).
 CHECK = _CHECK
+#: The mark of a condition to watch (the skill's §6): ▲ before its words, in
+#: amber, so the colour never carries the meaning alone.
+WARN_MARK = '<span aria-hidden="true">▲</span>'
 
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _RUN_TIME = re.compile(r"^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})")
@@ -127,14 +115,15 @@ def e(value: Any) -> str:
     return html.escape("" if value is None else str(value), quote=True)
 
 
-def ident_html(value: Any) -> str:
+def ident_html(value: Any, *, title: Any = None) -> str:
     """An identifier (a role code, a run, a checkpoint file name) in code style,
     kept whole: never broken inside its name ("research_selection" is never
     "research_" / "selection"), and where it does not fit it ends in an
     ellipsis with its whole value as its title (``.shep-ident``,
-    `src/webui/style.py`)."""
+    `src/webui/style.py`). `title` names the whole identifier when `value` is
+    a short form of it (a run's name part, its whole "arch/run" id)."""
     text = e(value)
-    return f'<code class="shep-ident" title="{text}">{text}</code>'
+    return f'<code class="shep-ident" title="{e(title) if title is not None else text}">{text}</code>'
 
 
 def word_groups(*groups: str) -> str:
@@ -171,6 +160,11 @@ def chip(text: str, kind: str = "neutral", *, title: Optional[str] = None) -> st
     """A small state chip (amber synthetic, green verified, grey, red, accent)."""
     attr = f' title="{e(title)}"' if title else ""
     return f'<span class="shep-tag shep-tag-{kind}"{attr}>{e(text)}</span>'
+
+
+def warn_chip(text: str) -> str:
+    """An amber chip with ▲ before its words: a condition to watch (the skill's §6)."""
+    return f'<span class="shep-tag shep-tag-amber">{WARN_MARK} {e(text)}</span>'
 
 
 def fingerprint_html(label: str, digest: Any, *, digits: int = SHORT_HEX, copy: bool = True,
@@ -399,48 +393,69 @@ class RecordedTests(NamedTuple):
     """What a checkpoint's ledger records for its weights, as a state (never a
     number of a result): `state` is ``records``, ``none`` (the ledger holds no
     record for these weights), ``no_ledger`` or ``not_read``; `count` the
-    records for these weights; `contested` how many of them are contested in
-    their cohort version's report store, and `unchecked` how many whose state
-    there could not be checked, counted apart, so a known contested record is
-    never hidden by another that cannot be checked (`contested` None: none of
-    them could be checked)."""
+    records for these weights that read as results; `contested` how many of
+    them are in a condition group whose runs differ in their cohort version's
+    report store, and `unchecked` how many whose comparison there is
+    incomplete, counted apart, so a known difference is never hidden by a
+    comparison that is incomplete (`contested` None: no comparison was read);
+    `unreadable` how many records for these weights cannot be read as results
+    (K8-6e.1), never counted among them. Descriptions only: they hide, order
+    or refuse nothing (policy rev 16)."""
 
     state: str
     count: int = 0
     contested: Optional[int] = None
     problem: Optional[str] = None
     unchecked: int = 0
+    unreadable: int = 0
 
 
 def recorded_tests_text(recorded: Optional[RecordedTests]) -> str:
-    """"Recorded tests: 3 · 1 contested · contested state of 1 not checked":
-    states, never a number of a result; an unchecked record is never shown as
-    uncontested."""
+    """"Recorded tests: 3 · 1 not readable; runs differ for 1; comparison
+    incomplete for 1": states, never a number of a result; a record that
+    cannot be read is never counted as one (K8-6e.1) and a record whose
+    comparison is incomplete is never shown as agreeing. "none in ledger"
+    only when the ledger holds neither. One " · " (the skill's §5)."""
     if recorded is None:
         return "Recorded tests: not read"
     if recorded.state == "no_ledger":
         return "Recorded tests: no ledger"
     if recorded.state == "not_read":
         return "Recorded tests: ledger not readable"
-    if recorded.state == "none" or recorded.count == 0:
+    if recorded.state == "none" or (recorded.count == 0 and not recorded.unreadable):
         return "Recorded tests: none in ledger"
     contested = recorded.contested or 0
     unchecked = recorded.count if recorded.contested is None else recorded.unchecked
-    parts = [f"Recorded tests: {recorded.count}"]
+    notes = []
+    if recorded.unreadable:
+        notes.append(f"{recorded.unreadable} not readable")
     if contested:
-        parts.append(f"{contested} contested")
+        notes.append(f"runs differ for {contested}")
     if unchecked:
-        parts.append("contested state not checked" if unchecked >= recorded.count
-                     else f"contested state of {unchecked} not checked")
-    return " · ".join(parts)
+        notes.append("comparison incomplete" if unchecked >= recorded.count
+                     else f"comparison incomplete for {unchecked}")
+    return f"Recorded tests: {recorded.count}" + (f" · {'; '.join(notes)}" if notes else "")
+
+
+#: Run layout keys whose name is not their upper case (a model bundle's
+#: encoder kind, as the GATv2 paper writes it).
+_ARCHITECTURE_NAMES = {"gatv2": "GATv2"}
+
+
+def architecture_label(architecture: Any) -> str:
+    """A run directory's layout name as a person reads it: "GATv2" for
+    ``gatv2``, any other name upper-cased ("HGT", "GAT", a name an operator
+    gave), "MODEL" when none. A location, never the model's architecture,
+    which its record names."""
+    key = str(architecture or "")
+    return _ARCHITECTURE_NAMES.get(key, key.upper()) or "MODEL"
 
 
 def run_label(architecture: Any, run: Any) -> str:
-    """"GAT · run 2026-10-17 09:15" from a run directory named by its start time;
-    the run's own name when it is not."""
-    arch = str(architecture or "").upper() or "MODEL"
+    """"GATv2 · run 2026-10-17 09:15" from a run directory named by its start
+    time; the run's own name when it is not."""
     started = run_started(run)
-    return f"{arch} · run {started if started else run}"
+    return f"{architecture_label(architecture)} · run {started if started else run}"
 
 
 def run_label_html(architecture: Any, run: Any) -> str:
@@ -451,8 +466,8 @@ def run_label_html(architecture: Any, run: Any) -> str:
     started = run_started(run)
     if not started:
         return e(run_label(architecture, run))
-    arch = str(architecture or "").upper() or "MODEL"
-    return f'{e(arch)} · <span class="shep-nowrap">run {e(started)}</span>'
+    return (f'{e(architecture_label(architecture))} · '
+            f'<span class="shep-nowrap">run {e(started)}</span>')
 
 
 def run_started(run: Any) -> Optional[str]:
@@ -474,6 +489,53 @@ def run_suffix(run: Any) -> Optional[str]:
         return None
     rest = text[match.end():].lstrip("_-")
     return rest or None
+
+
+def run_name(run: Any) -> Optional[str]:
+    """"smoke-ft-disease" from a run directory named
+    "20261028-140013_smoke-ft-disease_0e8106": its name, between its start
+    time and its 6-hex id; None when it is not named by its start time."""
+    rest = run_suffix(run)
+    return re.sub(r"_[0-9a-f]{6}$", "", rest) if rest else None
+
+
+def record_kind_text(item: Any) -> str:
+    """**What a listed checkpoint is, in the one word every page leads with**
+    (K6 decision 6), from its model record (`listed_record`): "Base", the task's
+    name (`caveats.TASK_NAMES`: "Disease", "Gene", "Patients-like-me"),
+    "Record not readable" for a record this build refused (a file without a
+    model spec among them, its reason the record's), or "Record not read" for
+    a file whose record was never read (skill §6: missing states keep their
+    own words)."""
+    record = _get(item, "record")
+    if record == "model":
+        if _get(item, "learning_stage") == "base":
+            return "Base"
+        task = _get(item, "task")
+        if task in TASK_NAMES:
+            return TASK_NAMES[task]
+    elif record is None:
+        return "Record not read"
+    return "Record not readable"
+
+
+def configuration_text(item: Any) -> str:
+    """A listed model's configuration (README §5, axis 1): its encoder and
+    whether its spec is the reference recipe, "GATv2 · reference recipe" or
+    "GATv2 · recipe changed in 3 fields" (`differences`: which fields is axis
+    2's, shown where the full list fits). A record refused or never read says
+    which."""
+    record = _get(item, "record")
+    if record is None:
+        return "Not read"
+    differences = _get(item, "differences")
+    if record != "model" or differences is None:
+        return "Not readable"
+    if not differences:
+        return f"{architecture_label(_get(item, 'encoder'))} · reference recipe"
+    count = len(differences)
+    return (f"{architecture_label(_get(item, 'encoder'))} · recipe changed in {count} "
+            f"field{'s' if count != 1 else ''}")
 
 
 def model_name_line(item: Any) -> str:
@@ -553,21 +615,21 @@ def recorded_tests_cell(recorded: Optional[RecordedTests]) -> str:
 
 
 def validation_cell(validation: Any) -> str:
-    """A checkpoint's own validation figure for the "Validation MRR (Trainer,
-    top-20)" column, escaped: its value, named when it is another figure."""
+    """A checkpoint's own validation figure for the "Validation (Trainer)"
+    column, escaped: its value over the figure's name (`VALIDATION_LABELS`),
+    since a base, a task model and a file without a model spec each record
+    their own figure."""
     if not isinstance(validation, Mapping) or not isinstance(validation.get("value"), (int, float)):
         return '<span class="shep-muted">—</span>'
     metric, value = str(validation.get("metric")), float(validation["value"])
-    if metric == "val_mrr":
-        return f"{value:.4f}"
-    label = _VALIDATION_LABELS.get(metric, f"Validation {metric} (Trainer)")
+    label = VALIDATION_LABELS.get(metric, f"Validation {metric} (Trainer)")
     return f'{value:.4f}<div class="shep-sub">{e(label)}</div>'
 
 
 #: The research table's fixed columns (Models): an extra column a page fills
 #: goes before the recorded tests.
 MODEL_TABLE_COLUMNS = ("Model", "Fingerprints: model · dataset trained on",
-                       "Validation MRR (Trainer, top-20)", "Recorded tests")
+                       "Validation (Trainer)", "Recorded tests")
 
 
 def model_table_row_html(item: Any, workspaces: Sequence[Any], *,
@@ -624,7 +686,9 @@ def model_table_row_html(item: Any, workspaces: Sequence[Any], *,
 # Model Facts
 # ---------------------------------------------------------------------------
 class ModelFacts(NamedTuple):
-    """What Model Facts shows for one model, from what the server listed."""
+    """What Model Facts shows for one model, from what the server listed.
+    `task` is its record's kind (`record_kind_text`) and `configuration` its
+    encoder and relation to the reference recipe (`configuration_text`)."""
 
     name_line: str
     run: Optional[str]
@@ -639,6 +703,12 @@ class ModelFacts(NamedTuple):
     recorded: Optional[RecordedTests]
     warnings: Tuple[Tuple[str, str], ...]
     serving_note: Optional[str] = None
+    task: Optional[str] = None
+    configuration: Optional[str] = None
+    #: Whether the file's record was read: False for a record this build
+    #: refuses or a file not read, whose missing figure is "not read", never
+    #: "not recorded" (`validation_text`).
+    validation_read: bool = True
 
 
 def facts_from_checkpoint(item: Any, workspaces: Sequence[Any], *,
@@ -692,14 +762,33 @@ def facts_from_checkpoint(item: Any, workspaces: Sequence[Any], *,
         recorded=recorded,
         warnings=tuple(warnings),
         serving_note=serving_note,
+        # Task and Configuration come from the file's model record; an item
+        # built without reading one (the Diagnosis card's served item, which
+        # names its task in the name line, K6 decision 4) shows neither row.
+        task=record_kind_text(item) if _get(item, "record") is not None else None,
+        configuration=(configuration_text(item) if _get(item, "record") is not None
+                       else None),
+        validation_read=record_read(item),
     )
 
 
-def validation_text(validation: Optional[Tuple[str, float]]) -> str:
+def record_read(item: Any) -> bool:
+    """Whether a listed checkpoint's record was read: its file was read and
+    its record is not one this build refuses (an item built without reading
+    one, the Diagnosis card's served item, counts as read)."""
+    return _get(item, "problem") is None and _get(item, "record") != "refused"
+
+
+def validation_text(validation: Optional[Tuple[str, float]], *, read: bool = True) -> str:
+    """The Trainer's validation figure, or why there is none: "not
+    recorded" for a record read that holds none, "not read" for a record this
+    build refuses or a file it did not read (`record_read`), which may well
+    record a figure this build does not read."""
     if validation is None:
-        return "Validation (Trainer): not recorded in this checkpoint"
+        return ("Validation (Trainer): not recorded in this checkpoint" if read
+                else "Validation (Trainer): not read (record not readable)")
     metric, value = validation
-    label = _VALIDATION_LABELS.get(metric, f"Validation {metric} (Trainer)")
+    label = VALIDATION_LABELS.get(metric, f"Validation {metric} (Trainer)")
     return f"{label} {value:.4f} — {_VALIDATION_NOTE}"
 
 
@@ -753,6 +842,8 @@ def model_facts_html(facts: ModelFacts, *, open_section: str = "identity") -> st
                                         if facts.trained_on_names else "")
     identity = _kv([
         ("Model", e(facts.name_line)),
+        *([("Task", e(facts.task))] if facts.task else []),
+        *([("Configuration", e(facts.configuration))] if facts.configuration else []),
         ("Run", f"<code>{e(facts.run)}</code>" if facts.run else "—"),
         ("Checkpoint file", location or "—"),
         (FACTS_MODEL_FP, model_fp),
@@ -772,7 +863,7 @@ def model_facts_html(facts: ModelFacts, *, open_section: str = "identity") -> st
     if facts.serving_note:
         data_parts.append(e(facts.serving_note))
     data_line = " · ".join(data_parts)
-    evidence_line = (f"{e(validation_text(facts.validation))}"
+    evidence_line = (f"{e(validation_text(facts.validation, read=facts.validation_read))}"
                      f"{help_button('validation-trainer', 'Validation (Trainer)')}"
                      f'<br>{e(recorded_tests_text(facts.recorded))}')
     if facts.warnings:
@@ -806,6 +897,8 @@ __all__ = [
     "NO_SPLIT_MANIFEST",
     "RENDERER_HELP",
     "RecordedTests",
+    "VALIDATION_LABELS",
+    "architecture_label",
     "clock_utc",
     "count_text",
     "dataset_details_html",
@@ -813,6 +906,7 @@ __all__ = [
     "SYNTHETIC_FOR_TESTING",
     "built_text",
     "chip",
+    "configuration_text",
     "dataset_identity_html",
     "distinguishing_digits",
     "e",
@@ -828,11 +922,14 @@ __all__ = [
     "not_trainable_short",
     "origin_of",
     "record_chip",
+    "record_kind_text",
+    "record_read",
     "record_verified",
     "recorded_tests_cell",
     "recorded_tests_text",
     "run_label",
     "run_label_html",
+    "run_name",
     "run_started",
     "run_suffix",
     "short_hex",

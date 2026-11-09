@@ -1202,7 +1202,9 @@ Points where the implementation had to decide something this section left open:
   institutional workflow actually appends concurrently. *Since M4* (BACKLOG item 18) that digest
   is the digest of the ledger bytes the writer parsed, from one read, and the report a record is
   derived from is likewise parsed and named by its digest from one read; the window before the
-  replacement stays open.
+  replacement stays open. *Since K8-6r.1* a registration holds the ledger's lock
+  (`evaluations.json.lock`) across processes from its read to its write, so registrations into
+  one ledger take turns, and this check stays as the second line for a writer that takes no lock.
 - **The allocation provenance had to be added upstream first.** A measurement's
   `artifact_digests` did not record `split_manifest.json`, so a `val` number carried no trace of
   which regime cut its cohort. `scripts/measure_scorer.py` now records that role when the workspace
@@ -1213,7 +1215,10 @@ Points where the implementation had to decide something this section left open:
   event.
 - **Only registered cohort versions are recorded** (since M4). A generated split's report is
   refused ("a generated split's report is not registered"): `val` is the selection split
-  (`PLAN_TEST_RESULTS.md` §4.9, M4 question 6). A report written before M4 lacks the fields a
+  (`PLAN_TEST_RESULTS.md` §4.9, M4 question 6). *Reworded in K8-6r.4 (2026-11-07), behaviour
+  unchanged:* the reason is that the ledger does not yet support a generated split's data
+  identity (it has no registered cohort version), not that such a result counts for less; its
+  report and ranks stay at `--output`, and extending the ledger to them is later work. A report written before M4 lacks the fields a
   schema 3 record copies and is refused with an instruction to re-measure; a schema 1 or 2
   ledger is refused, naming the file, and archived by hand, never read or migrated.
 - **The same result again is not a contradiction** (since M4, `PLAN_TEST_RESULTS.md` D5). The

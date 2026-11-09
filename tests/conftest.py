@@ -85,6 +85,31 @@ def _no_deployment_access_settings(monkeypatch):
     monkeypatch.delenv(ENV_BIND_HOST)
 
 
+@pytest.fixture(scope="session")
+def trained_disease_child(tmp_path_factory, _suite_gpu_lock):
+    """A base and one disease child of it, trained for real on CPU once per
+    session (per worker) on a demo workspace (`tests/fixtures/trained_children`):
+    ``{"data_dir", "base", "disease"}``. The model every test serves where it
+    once served a graph with no model, or a model supplied in memory: since K7
+    a served pipeline is always a model read from its checkpoint. Read-only:
+    a test that changes a file copies the workspace first."""
+    from tests.fixtures.registered_cohort import write_demo_workspace
+    from tests.fixtures.trained_children import train_children
+
+    root = tmp_path_factory.mktemp("trained-disease-child")
+    return train_children(write_demo_workspace(root / "workspace"), ("disease",), runs=root)
+
+
+@pytest.fixture(scope="session")
+def disease_pipeline(trained_disease_child):
+    """The pipeline the service builds for `trained_disease_child`'s disease
+    child, built once per session. Shared: a test that changes the pipeline
+    builds its own (`tests.fixtures.trained_children.serve`)."""
+    from tests.fixtures.trained_children import serve
+
+    return serve(trained_disease_child)
+
+
 @pytest.fixture(autouse=True)
 def _no_deployment_registry(monkeypatch):
     """Every test starts with no deployment registry.

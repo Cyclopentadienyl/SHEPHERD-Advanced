@@ -14,41 +14,66 @@ docstring. Three panels, as the mockup draws them (``test-wide.png``,
   and whether its report is registered (the registration's one helper,
   `server_lists.stored_report_state`, asked again for an operator beside the
   listed checkpoint Register would use: `refine_rows`, `ledger_checkpoint`)
-  and D5's state of its key ("runs disagree — investigate"), both from the
-  server's one run listing that ``GET /api/v1/cohorts`` shares
-  (`server_lists.version_item`); a running test, or the last one that ended
-  with nothing in the store, is the top row;
-- **Run**: the model (WP1's checkpoint list of the workspace, by name and model
-  fingerprint: listing opens every checkpoint, so it is an operator control and
-  a read-only request is not shown it), the R10 evidence the server's setting
-  names, "Register the result" and "Deterministic execution", the batch size and
-  device the server fixes (D5), "🔒 Start test" through the job runner
-  (`TrainingManager.start_test`) with the **full digests shown** as the expected
-  ones, so the run refuses before measuring when the file or the version it
-  reads is not the one chosen; then the job: its state, elapsed time, inputs,
-  output tail, "🔒 Cancel" (the runner's stop for test runs only), and once it
-  has ended, **what it left, from the runner** (its outcome file, kept and
-  registered read from disk by WP4's helper; "no report was published" when
-  there is no outcome file; a cancel says what was left);
+  and how its condition group reads ("runs under these conditions differ",
+  "comparison incomplete"), both from the server's one run listing that
+  ``GET /api/v1/cohorts`` shares (`server_lists.version_item`); a running
+  test, or the last one that ended with nothing in the store, is the top row;
+- **Run**: the model (WP1's checkpoint list of the workspace, every checkpoint,
+  each option led by what its model record says it is,
+  `renderers.record_kind_text`: listing opens every checkpoint, so it is an
+  operator control and a read-only request is not shown it), the measurement
+  (a radio of the protocols this build implements that the chosen model's
+  listed record admits, `protocols.available`: the only one is chosen, of
+  several none is until the operator picks one, and with none Start says why),
+  the R10 evidence the server's setting names, "Register the result" and
+  "Deterministic execution", the batch size and device the server fixes (D5),
+  "🔒 Start test" through the job runner (`TrainingManager.start_test`, given
+  the measurement chosen and the model's learning stage and task from the
+  session's listing) with the **full digests shown** as the expected ones, so
+  the run refuses before measuring when the file or the version it reads is
+  not the one chosen. **A run starts only for a measurement this build
+  implements that takes the model's record and the version's inputs**
+  (`measure_refusal`, one rule for Start's reason and for the start itself,
+  which asks `protocols.refusal` after the page's own record states): a
+  record refused (a file without a model spec among them) or not read, a base (its
+  formal test is not implemented yet), a measurement the model's stage or task
+  head does not meet, and a measurement needing genes the version does not
+  list are refused with their reason; then the job: its state, elapsed time,
+  inputs, output tail, "🔒 Cancel" (the runner's stop for test runs only), and
+  once it has ended, **what it left, from the runner** (its outcome file, kept
+  and registered read from disk by WP4's helper; "no report was published"
+  when there is no outcome file; a cancel says what was left);
 - **Result**: the selected report as the record the ledger would hold
-  (`build_record`, through the store's scan): the Mode C metrics over the cases
-  ranked, coverage with every exclusion, relations, R10 in the caveats' words
-  (*unverifiable* is a word, never a 0), environment, dataset origin, whether
-  it is kept and registered; "🔒 Register this report" through the one
+  (`build_record`, through the store's scan), by **one display for every
+  mode** (R2, K8-6e.2): a measurement this build describes in its tiles and
+  words (`caveats.metric_text`) with every metric as recorded one click away;
+  any other mode's metrics, a kept report's included, as recorded
+  (`caveats.recorded_metric_lines`); the score semantics as recorded,
+  coverage with every exclusion, relations, R10 in the
+  caveats' words (*unverifiable* is a word, never a 0), environment, dataset
+  origin, whether it is kept and registered; "🔒 Register this report" through the one
   registration function (`register_report`, the ledger beside the listed
   checkpoint holding the weights it measured, found by digest in the server's
-  checkpoint list, never the report's recorded path); while runs under its key
-  disagree, the block is shown and the button is off, and investigation notes
-  (who, when, what) are listed and added (gated) **without lifting the block**;
-  on a wide screen the note form stays at the panel's foot above Register,
-  outside the scrolling report, so "🔒 Add note" is in view without scrolling.
+  checkpoint list, never the report's recorded path). **Register is enabled
+  for a kept report of this run that the page can confirm** (policy rev 16,
+  K8-6r.2; `register_state`): it is off only for a request that is not an
+  operator's, a run that kept no report, this run already registered, or this
+  run's own report not built (its own reason) or not read by the listing (a
+  store that could not be listed says so, and the run is registered from the
+  command line by naming its report). **Another run never disables it**: how
+  the runs of its condition group compare is a description ("runs under these
+  conditions differ", in neutral words; amber with "— investigate" only when
+  the group records deterministic algorithms on, so its runs were expected to
+  agree; "comparison incomplete"), and investigation notes (who, when, what)
+  are listed and added (gated); they record and change nothing. On a wide
+  screen the note form stays at the panel's foot above Register, outside the
+  scrolling report, so "🔒 Add note" is in view without scrolling.
 
 **Import** (a drawer over Run and Result; D7): the files the operator placed
 in the server's intake directory (`server_lists.list_intake_files`; a request
 names a file and the server finds it in that listing again, refusing any other
-name or a link that leaves the directory); version label, role (with whether it
-offers ordering by test score in Models: `SHEPHERD_ORDERING_ROLES`, and never
-``institutional_acceptance``) and the lost-terms policy; "🔒 Preview" runs the
+name or a link that leaves the directory); version label, role (the version's
+declared purpose) and the lost-terms policy; "🔒 Preview" runs the
 importer (`prepare_import`, in this process on the CPU; it reads the
 workspace's graph) and **shows only the exclusion reasons and their counts**
 (no case id reaches the browser: the CLI preview on the machine and the
@@ -83,10 +108,10 @@ state.
 **Every write of the selection** (the checkpoint listing, the version's
 reports, the report shown, and the list, the result, Start and its reason
 drawn from them) runs in one queued group of one (`SELECTION_CONCURRENCY`):
-page open, the workspace, the version, the model, a report's row, ↻, the read
-after an act or an import, and the read after the poll saw the job or the GPU
-line change (the poll hands that over through a hidden component's
-``.change``, naming what it saw before and what it sees now). Every choice
+page open, the workspace, the version, the model, the measurement, a report's
+row, ↻, the read after an act or an import, and the read after the poll saw
+the job or the GPU line change (the poll hands that over through a hidden
+component's ``.change``, naming what it saw before and what it sees now). Every choice
 joins it, also one made while an earlier one waits. So each starts from the
 selection the one before it wrote, in the order they were asked, and a late
 answer never writes back a selection it started from over one chosen
@@ -110,21 +135,28 @@ from typing import Any, Dict, List, Mapping, NamedTuple, Optional, Sequence, Tup
 
 import gradio as gr
 
+from src.evaluation import protocols
 from src.evaluation.caveats import (
-    MODE_D_NOTE,
-    PRE_B1_NOTE,
     R10_LABEL_TEXT,
     R10_STATE_TEXT,
     R10_UNVERIFIABLE_REASON,
     RELATION_DISPLAY_NAMES,
+    TASK_NAMES,
     metric_text,
     mode_label,
+    mode_note,
+    recorded_metric_lines,
 )
 from src.webui.components import renderers as r
 from src.webui.components.chips import D8_SHORT, chips_on_change
 from src.webui.components.help import help_button
 from src.webui.components.model_list import item_key
-from src.webui.components.workspaces import redact_paths
+from src.webui.components.workspaces import (
+    binding_state,
+    redact_paths,
+    version_row,
+    workspace_binding,
+)
 from src.webui.operator_access import operator_access
 from src.webui.shell import page_elem_id, plain_html
 
@@ -158,9 +190,6 @@ SERVER_PATH = "a server path"
 #: normal name whole.
 NOTE_FIELD_MIN_WIDTH = 240
 
-#: The roles a version may be given that never offer ordering (§4.9 question 1).
-_NEVER_ORDERED = ("institutional_acceptance",)
-
 #: The lost-terms policy, as the select names it.
 POLICY_CHOICES = [("keep case", "keep"),
                   ("exclude case", "exclude")]
@@ -175,21 +204,28 @@ _R10_EVIDENCE_WORDS = {
     "not_found": "evidence not found",
     "unreadable": "evidence found, not readable",
     "not_recorded": "evidence not recorded by the checkpoint",
+    "search_incomplete": "evidence search incomplete",
 }
-#: The metrics shown as tiles, in order, by the record's mode (`scoring.mode`);
-#: each is named by `caveats.metric_text`. Mode D's are over the import-eligible
-#: cases, a case not reached counting 0 (PLAN_B05 §5).
+#: The metrics shown as tiles, in order, by the record's mode (`scoring.mode`),
+#: for a measurement this build describes; each is named by
+#: `caveats.metric_text`. A task's (`src.evaluation.task_measurement`) are
+#: pooled over its positive pairs or a mean over its ranked cases, and its
+#: coverage. A record of any other mode has no tiles: its metrics as recorded
+#: are its main result (`_record_html`).
 _TILES = {
-    "C": ("untruncated_mrr", "hits@1", "hits@5", "hits@10"),
-    "D": ("post_import_mrr", "post_import_hits@1", "post_import_hits@10", "coverage"),
+    "disease": ("pooled_mrr", "pooled_top1", "pooled_top10", "coverage"),
+    "gene": ("pooled_mrr", "pooled_top1", "macro_recall@5", "coverage"),
+    "patients_like_me": ("pooled_mrr", "pooled_top10", "macro_recall@10", "coverage"),
 }
-#: The mean rank each mode reports, over the cases it ranked or reached.
-_MEAN_RANK = {"C": "mean_rank", "D": "reached_mean_rank"}
-#: The ⓘ beside each mode's label.
-_MODE_HELP = {"C": "test-mode-c", "D": "test-mode-d"}
+#: A task record's metric families that take a cut-off k, each shown as one
+#: row (its k values in order), and its single figures shown as a row each.
+_TASK_FAMILIES = ("pooled_top", "macro_recall@", "macro_precision@")
+_TASK_ROWS = ("macro_mrr", "best_positive_mrr")
+#: The ⓘ beside a described measurement's label.
+_MODE_HELP = {task: f"test-mode-{task}" for task in TASK_NAMES}
 #: Each report row's mode, first in its state line: a plain label, the code
 #: beside it. A report of another mode, or one whose mode cannot be read, says so.
-_MODE_ROW_WORDS = {"C": "model ranking (Mode C)", "D": "served ranking (Mode D)"}
+_MODE_ROW_WORDS = {task: f"{name.lower()} task" for task, name in TASK_NAMES.items()}
 #: The job's statuses, as its pill shows them: never green for failed,
 #: stopped or cancelled.
 _PILLS = {
@@ -216,10 +252,24 @@ FIELD_HELP = {
     ),
     "shep-test-model": (
         "Model",
-        "The workspace's checkpoints, read from the server's list (each file is read once "
-        "and named by its model fingerprint). Listing them opens every checkpoint, so it is "
-        "an operator control. The run is given the model fingerprint shown here and refuses "
-        "before measuring if the file it reads holds other bytes.",
+        "The workspace's checkpoints from the server's list, each led by what its record "
+        "says it is.\n"
+        "• A model is measured by a measurement this build implements for its stage and task "
+        "head (Measurement); a base, or a file without a model spec, is listed but not "
+        "measured here.\n"
+        "• Listing opens every checkpoint, so it is an operator control.\n"
+        "• The run is given the model fingerprint shown here and refuses before measuring if "
+        "the file it reads holds other bytes.",
+    ),
+    "shep-test-measurement": (
+        "Measurement",
+        "What the run measures: one of the measurements this build implements for the chosen "
+        "model.\n"
+        "• Each takes a model of one learning stage and task head; the options are those the "
+        "chosen model's record meets.\n"
+        "• A single option is chosen already; of several, choose one.\n"
+        "• A base is listed but not measured yet: its formal test is not implemented.\n"
+        "• The report records the measurement as its mode.",
     ),
     "shep-test-record": (
         "Register the result",
@@ -232,9 +282,10 @@ FIELD_HELP = {
         "Deterministic execution",
         "Runs with PyTorch's deterministic algorithms, cuDNN deterministic and its benchmark "
         "off. An operation with no deterministic implementation refuses the run; it never "
-        "falls back. It is recorded, so a deterministic run is a different measurement key, "
-        "the way forward when runs under one key disagree. It guards against known "
-        "non-deterministic operations; it does not certify a number.",
+        "falls back. It is recorded, so deterministic runs are their own condition group: "
+        "they are expected to agree, and a difference between them asks for an "
+        "investigation. It guards against known non-deterministic operations; it does not "
+        "certify a number.",
     ),
     "shep-test-intake": (
         "File in the intake directory (server)",
@@ -251,9 +302,7 @@ FIELD_HELP = {
     "shep-test-role": (
         "Role",
         "The cohort version's declared purpose, for example mygene2, research_selection or "
-        "institutional_acceptance. Whether Models offers ordering by test score is decided by "
-        "the role (the server's SHEPHERD_ORDERING_ROLES), never by the source's name; "
-        "institutional_acceptance never offers it.",
+        "institutional_acceptance.",
     ),
     "shep-test-partial": (
         "Lost terms",
@@ -266,8 +315,8 @@ FIELD_HELP = {
     ),
     "shep-test-note-what": (
         "What was found",
-        "What the investigation found. The note is kept in the report store with this key's "
-        "reports; it deletes no report and does not lift the block.",
+        "What the investigation found. The note is kept in the report store with this "
+        "condition group's reports; it deletes no report and changes nothing.",
     ),
 }
 #: Help a rendered ⓘ names.
@@ -279,8 +328,8 @@ TOPIC_HELP = {
         "the policy and every count. Commit prepares again from the same inputs and refuses "
         "unless it gives the same id, so what is committed is what was previewed.",
     ),
-    "test-mode-c": ("Mode C result", PRE_B1_NOTE),
-    "test-mode-d": ("Mode D result", MODE_D_NOTE),
+    **{f"test-mode-{task}": (f"{name} task result", mode_note(task))
+       for task, name in TASK_NAMES.items()},
     "test-r10": (
         "R10 labels",
         " · ".join(f"{text['name']}: {text['definition']}"
@@ -288,11 +337,10 @@ TOPIC_HELP = {
     ),
     "test-fixed": (
         "Fixed by the server",
-        "A test run has no reason to vary these, so the job runner fixes them (D5): the "
-        "batch size is the measurement's default and the device the deployment's "
-        "(SHEPHERD_DEVICE), with no fallback. The mode is Mode C, the model's own ranking; "
-        "Mode D, the served ranking, is an operator's command-line run. Only deterministic "
-        "execution is chosen here, and it is recorded.",
+        "A test run has no reason to vary these, so the job runner fixes them (D5).\n"
+        "• Batch size: the measurement's default.\n"
+        "• Device: the deployment's (SHEPHERD_DEVICE), with no fallback.\n"
+        "The measurement and deterministic execution are chosen here; both are recorded.",
     ),
     "test-evidence": (
         "R10 evidence",
@@ -348,23 +396,20 @@ def redact(text: Any, roots: Sequence[Tuple[str, str]]) -> str:
 #: A string literal as Python's ``repr``/``ascii`` writes one: quoted, its
 #: escapes kept, never a raw newline.
 _PY_STR = r"""(?:'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*")"""
-#: Where the importer's and the measurement's refusals name a case: the
-#: importer's ``cases[3] (case_id 'x'): …`` and ``case_id 'x' is not printable``
-#: (`cohort_registry.parse_source`), the measurement's ``sample 'x' has …``
-#: (`measurement._assert_ids_in_range`).
+#: Where the importer's refusals name a case: ``cases[3] (case_id 'x'): …``
+#: and ``case_id 'x' is not printable`` (`cohort_registry.parse_source`).
 _CASE_IDS = (
     (re.compile(r" \(case_id " + _PY_STR + r"\)"), ""),
     (re.compile(r"\bcase_id " + _PY_STR + r"(?= is not printable)"), "case_id"),
-    (re.compile(r"\bsample " + _PY_STR), "a sample"),
 )
 
 
 def case_free(text: Any) -> str:
-    """`text` with the case ids the importer's and the measurement's refusals
-    name taken out (D7: the per-case detail stays on the machine): ``cases[3]
-    (case_id 'x'): missing …`` reads ``cases[3]: missing …``, ``sample 'x' has
-    …`` reads ``a sample has …``. Nothing else of a refusal names a case: the
-    importer describes a term or a disease by its type, never its value."""
+    """`text` with the case ids the importer's refusals name taken out (D7:
+    the per-case detail stays on the machine): ``cases[3] (case_id 'x'):
+    missing …`` reads ``cases[3]: missing …``. Nothing else of an importer
+    refusal names a case: it describes a term or a disease by its type, never
+    its value."""
     flat = str(text if text is not None else "")
     for pattern, replacement in _CASE_IDS:
         flat = pattern.sub(replacement, flat)
@@ -482,58 +527,6 @@ def _number(value: Any) -> str:
 # ---------------------------------------------------------------------------
 # Reading what the page shows (one session's data, plain JSON for gr.State)
 # ---------------------------------------------------------------------------
-def _version_row(item: Any) -> Dict[str, Any]:
-    row = asdict(item)
-    row.pop("reports", None)
-    row.pop("reports_problem", None)
-    return row
-
-
-def workspace_binding(directory: Optional[Path], row: Optional[Mapping[str, Any]]
-                      ) -> Dict[str, Any]:
-    """What a cohort version is compared with to say whether it was mapped
-    against this workspace's graph: the four graph digests its manifest binds
-    (one read of ``split_manifest.json``) and its verified dataset record's
-    digest. A display hint only: the run compares the bytes it reads."""
-    from src.kg.artifacts import GRAPH_ARTIFACTS, read_split_manifest
-
-    if directory is None or row is None:
-        return {"graph": None, "record_sha256": None, "problem": "no workspace is chosen"}
-    try:
-        artifacts = read_split_manifest(directory).manifest.get("artifacts")
-    except (ValueError, OSError):
-        return {"graph": None, "record_sha256": None,
-                "problem": "its split_manifest.json cannot be read"}
-    artifacts = artifacts if isinstance(artifacts, Mapping) else {}
-    record = row.get("dataset_record") or {}
-    sha = record.get("sha256") if record.get("binding") == "verified" else None
-    return {"graph": {role: artifacts.get(role) for role in GRAPH_ARTIFACTS},
-            "record_sha256": sha,
-            "problem": None if sha else "its dataset record is not verified"}
-
-
-def binding_state(version: Mapping[str, Any], binding: Optional[Mapping[str, Any]]
-                  ) -> Tuple[str, str]:
-    """``("bound" | "another" | "unknown", words)``: whether `version` was
-    mapped against the workspace `binding` describes, by the registry's one
-    comparison (`verify_cohort_binding`, R3's)."""
-    from src.evaluation.cohort_registry import CohortBindingMismatch, verify_cohort_binding
-
-    if version.get("problem"):
-        return "unknown", "the version cannot be read"
-    if not binding or binding.get("problem") or not binding.get("graph"):
-        why = (binding or {}).get("problem") or "no workspace is chosen"
-        return "unknown", f"not checked against this workspace: {why}"
-    try:
-        verify_cohort_binding({"graph": version.get("graph"),
-                               "dataset_record": version.get("dataset_record"),
-                               "label": version.get("label")},
-                              binding["graph"], binding["record_sha256"])
-    except CohortBindingMismatch as exc:
-        return "another", f"mapped against another graph ({', '.join(exc.roles)} differ)"
-    return "bound", "bound to this graph"
-
-
 def read_page(request: Any, *, environ: Optional[Mapping[str, str]] = None) -> Dict[str, Any]:
     """The page's server lists for one session: D8's answer for this request,
     the workspaces (the dashboard's one reader), the serving workspace, the
@@ -566,10 +559,10 @@ def read_page(request: Any, *, environ: Optional[Mapping[str, str]] = None) -> D
         "workspaces_problem": listed["problem"],
         "serving": serving,
         "registry_problem": None if registry.available else registry.problem,
-        "versions": [_version_row(item) for item in versions.items] if versions else [],
+        "versions": [version_row(item) for item in versions.items] if versions else [],
         "versions_problem": versions.problem if versions is not None else None,
         "evidence": {"names": [Path(d).name for d in (evidence.value or ())],
-                     "problem": evidence.problem},
+                     "problem": evidence.problem, "note": evidence.note},
         "device": device,
     }
 
@@ -593,13 +586,16 @@ def read_models(workspace: Any, request: Any, *,
 
 def read_reports(label: Any, *, environ: Optional[Mapping[str, str]] = None) -> Dict[str, Any]:
     """One cohort version's report store for one session: every run directory,
-    newest first, with what it kept, whether its report is registered and the
-    D5 state of its key, as the server's one run listing gives them
+    newest first, with what it kept, whether its report is registered and how
+    its condition group reads, as the server's one run listing gives them
     (`server_lists.version_item`, the listing ``GET /api/v1/cohorts`` shares,
-    here with the problems' words for the operator); each run's key and record
-    (the record the ledger would hold) from the same one scan of the store,
-    found by the run's id for the bytes its state read; and the investigation
-    notes kept with the key. The version is read once. Opens no checkpoint."""
+    here with the problems' words for the operator); each run's group and
+    record (the record the ledger would hold) from the same one scan of the
+    store, found by the run's id for the bytes its state read (byte-identical
+    runs are each their own); its own problem when the scan could not build
+    it (``unbuilt``); the store's own listing problem, when the scan could not
+    list it (``store_problem``); and the investigation notes kept with the
+    group. The version is read once. Opens no checkpoint."""
     from src.api.services.record_states import read_report_store
     from src.api.services.server_lists import (
         ServerListRefused,
@@ -610,7 +606,7 @@ def read_reports(label: Any, *, environ: Optional[Mapping[str, str]] = None) -> 
     from src.evaluation.report_store import read_investigation_notes
 
     empty = {"label": label, "runs": [], "problem": None, "notes": [], "notes_problems": [],
-             "version_sha256": None}
+             "version_sha256": None, "store_problem": None}
     if not label:
         return empty
     try:
@@ -618,23 +614,28 @@ def read_reports(label: Any, *, environ: Optional[Mapping[str, str]] = None) -> 
     except ServerListRefused as exc:
         return {**empty, "problem": str(exc)}
     store = read_report_store(version)
-    item = version_item(version, report_state=stored_report_state, store=store, operator=True,
-                        environ=environ)
+    item = version_item(version, report_state=stored_report_state, store=store, operator=True)
     notes, notes_problems = [], []
     try:
         notes, notes_problems = read_investigation_notes(version)
     except Exception as exc:  # noqa: BLE001
         notes_problems = [f"the investigation notes could not be read ({type(exc).__name__})"]
+    # **The store's own listing problem** (Decision 10): with it, no run's
+    # report can be confirmed here, and a run is registered from the command
+    # line by naming its report. Another run's problem is never this.
+    store_problem = store.problem or ("; ".join(
+        problem for run, problem in store.scan.unplaced if run is None) or None)
     runs = []
     for report in item.reports:
-        # By the digest of the bytes the run's state read: no key (and so no
-        # note) for a report replaced since the scan read it; and byte-identical
-        # copies under other runs are one report in the scan, so a run's own
-        # digest names its record.
+        # By the run's id, for the digest of the bytes its state read: no group
+        # (and so no note) for a report replaced since the scan read it; a
+        # byte-identical report of another run is that run's own record.
         digest = (report.state or {}).get("report_sha256")
         placed = store.scan.run_key(report.run_id, digest) if store.scan is not None else None
         key, unbuilt = placed if placed is not None else (None, None)
-        built = store.scan.reports.get(key, {}).get(digest) if key is not None else None
+        built = store.scan.reports.get(key, {}).get(report.run_id) if key is not None else None
+        if built is not None and built[1].get("source_artifact_digest") != digest:
+            built = None
         runs.append({
             "run_id": report.run_id, "when": run_time(report.run_id),
             "sha12": run_sha12(report.run_id), "state": report.state,
@@ -643,7 +644,8 @@ def read_reports(label: Any, *, environ: Optional[Mapping[str, str]] = None) -> 
             "contest": report.contest, "unbuilt": unbuilt,
         })
     return {"label": item.label, "version_sha256": item.manifest_sha256, "runs": runs,
-            "problem": item.reports_problem, "notes": notes, "notes_problems": notes_problems}
+            "problem": item.reports_problem, "notes": notes, "notes_problems": notes_problems,
+            "store_problem": store_problem}
 
 
 class LedgerPlace(NamedTuple):
@@ -792,7 +794,9 @@ def _refined_state(page: Mapping[str, Any], label: Any, run: Mapping[str, Any],
         beside += f" in workspace {place.item.get('workspace')}"
     return {**state, "kept": fresh.kept, "why_kept": fresh.why_kept,
             "registered": fresh.registered, "why_registered": fresh.why_registered,
-            "sequence": fresh.sequence, "checked_beside": beside}
+            "sequence": fresh.sequence, "checked_beside": beside,
+            "historical_overlap": list(fresh.historical_overlap),
+            "replaced_after_registration": fresh.replaced_after_registration}
 
 
 def _operator_listing(page: Mapping[str, Any], models: Mapping[str, Any]) -> bool:
@@ -897,15 +901,19 @@ def gpu_line(*, manager: Any = None, operator: bool = False) -> Tuple[str, str]:
 # Choices
 # ---------------------------------------------------------------------------
 def model_choices(models: Mapping[str, Any]) -> List[Tuple[str, str]]:
-    """The model select's options: the epoch first (what tells a run's
-    checkpoints apart when the select is narrow and its text ends in an
-    ellipsis), the run, the model fingerprint or why a checkpoint cannot be
-    tested, then the file name."""
+    """The model select's options: what the checkpoint is first, from its model
+    record (`renderers.record_kind_text`: "Disease", "Base", "Record not
+    readable", …, K6 decision 13: every checkpoint is listed, only a task model is
+    measured), then the epoch (what tells a run's checkpoints apart when the
+    select is narrow and its text ends in an ellipsis), the run, the model
+    fingerprint or why a checkpoint cannot be tested, then the file name. The
+    values are the listing's keys, whatever the words."""
     choices = []
     for item in models.get("items") or []:
         epoch = item.get("epoch")
         epoch_text = str(epoch) if isinstance(epoch, int) and not isinstance(epoch, bool) else "—"
-        label = f"epoch {epoch_text} · {r.run_label(item.get('architecture'), item.get('run'))}"
+        label = (f"{r.record_kind_text(item)} · epoch {epoch_text} · "
+                 f"{r.run_label(item.get('architecture'), item.get('run'))}")
         if item.get("problem") or not r.is_digest(item.get("sha256")):
             label += " · metadata not readable"
         else:
@@ -1008,8 +1016,6 @@ def version_html(page: Mapping[str, Any], label: Optional[str],
     kind = {"bound": "ok", "another": "amber", "unknown": "grey"}[state]
     chip = r.chip(words, kind) if state != "bound" else (
         f'<span class="shep-tag shep-tag-ok">{e(words)} {OK_MARK}</span>')
-    ordering = ("offers ordering by test score in Models" if version.get("offers_ordering")
-                else "does not offer ordering by test score in Models")
     excluded = counts.get("excluded") if isinstance(counts.get("excluded"), Mapping) else {}
     reasons = " · ".join(f"{str(k).replace('_', ' ')} {_count(v)}" for k, v in excluded.items())
     imported = str(version.get("imported_at") or "").replace("T", " ").replace("Z", " UTC")
@@ -1019,15 +1025,19 @@ def version_html(page: Mapping[str, Any], label: Optional[str],
         f'source cases · {_count(counts.get("ranked_eligible"))} ranked-eligible'
         f'{" (" + e(reasons) + " excluded)" if reasons else ""}</div>'
         f'<div>{r.fingerprint_html("version", version.get("manifest_sha256"))} {chip}</div>'
-        f'<div class="shep-sub">The role {e(ordering)}. Imported {e(imported or "—")} · '
+        f'<div class="shep-sub">Imported {e(imported or "—")} · '
         f'{e(version.get("source_format") or "")}</div></div>')
 
 
 def _row_chip(run: Mapping[str, Any]) -> str:
+    """The row's one chip. In a group that records deterministic algorithms on,
+    "▲ runs differ" (amber) asks for attention, since its runs were expected
+    to agree; elsewhere "runs differ" and "comparison incomplete" (grey)
+    describe the group after the run's own state. None blocks anything."""
     contest = run.get("contest") or {}
     state = run.get("state") or {}
-    if contest.get("state") == "contested":
-        return r.chip("runs disagree", "amber")
+    if contest.get("state") == "contested" and _deterministic_group(run):
+        return r.warn_chip("runs differ")
     if run.get("problem"):
         return r.chip("not read", "grey")
     if state.get("kept") != "kept":
@@ -1037,22 +1047,32 @@ def _row_chip(run: Mapping[str, Any]) -> str:
         seq = state.get("sequence")
         return (f'<span class="shep-tag shep-tag-ok">Registered {OK_MARK}'
                 f'{" #" + str(seq) if isinstance(seq, int) else ""}</span>')
+    if contest.get("state") == "contested":
+        return r.chip("runs differ", "grey")
     if contest.get("state") == "cannot_be_checked":
-        return r.chip("disagreement not checked", "grey")
+        return r.chip("comparison incomplete", "grey")
     return r.chip("not registered" if state.get("registered") == "not_registered"
                   else "registration not checked", "neutral")
 
 
+def _why_not_kept(state: Mapping[str, Any]) -> str:
+    """Why a run kept no report, in the registration helper's words."""
+    return str(state.get("why_kept") or "the registration's helper gave no reason")
+
+
 def _row_state(run: Mapping[str, Any], roots: Sequence[Tuple[str, str]]) -> str:
-    """The row's state line, true to what the disk says."""
+    """The row's state line, true to what the disk says. A run that kept no
+    report says why in the registration helper's own words (`report_state`'s
+    ``why_kept``, redacted): no report.json, one that is not a report, or
+    bytes other than the run published. A file that is there is never said
+    to be absent (K8-6e.1, policy rev 16)."""
     if run.get("problem"):
         return e(redact(run["problem"], roots))
     state = run.get("state") or {}
     contest = run.get("contest") or {}
     kept = state.get("kept")
     if kept == "not_kept":
-        return ("no report kept: report.json, the run's commit point, is not there (an "
-                "interrupted or refused run); nothing in it is registered")
+        return f"no report kept: {e(redact(_why_not_kept(state), roots))}"
     if kept != "kept":
         return f"whether a report was kept cannot be checked: {e(redact(state.get('why_kept'), roots))}"
     registered = state.get("registered")
@@ -1071,18 +1091,25 @@ def _row_state(run: Mapping[str, Any], roots: Sequence[Tuple[str, str]]) -> str:
         seq = state.get("sequence")
         parts.append(f"registered{' #' + str(seq) if isinstance(seq, int) else ''}")
     elif registered == "not_registered":
-        parts.append("not registered")
+        parts.append("not registered" + (" (its report was replaced after it was registered)"
+                                         if state.get("replaced_after_registration") else ""))
     else:
         parts.append("registration cannot be checked from the list")
     line = lead + " · ".join(parts)
+    # The group's description, after a semicolon: the row keeps one " · "
+    # (the skill's §5), and it describes, never disables. In neutral words,
+    # unless the group records deterministic algorithms on: its runs were
+    # expected to agree, so the difference is flagged (amber, ▲, "investigate").
     if contest.get("state") == "contested":
         others = [x for x in contest.get("disagreeing_runs") or [] if x != run.get("run_id")]
-        line += (f' · <span class="shep-amber-t">runs disagree — investigate: they differ on '
-                 f'{e(", ".join(contest.get("differing") or ()))}'
-                 f'{" with " + e(", ".join(run_time(x) or x for x in others)) if others else ""}'
-                 '</span>')
+        what = (f'runs under these conditions differ on '
+                f'{e(", ".join(contest.get("differing") or ()))}'
+                f'{" (with " + e(", ".join(run_time(x) or x for x in others)) + ")" if others else ""}')
+        line += (f'; <span class="shep-amber-t">{r.WARN_MARK} {what} — investigate: deterministic '
+                 'runs were expected to agree</span>' if _deterministic_group(run)
+                 else f"; {what}")
     elif contest.get("state") == "cannot_be_checked":
-        line += " · whether runs under its key disagree cannot be checked"
+        line += "; comparison incomplete"
     return line
 
 
@@ -1249,26 +1276,40 @@ def model_html(page: Mapping[str, Any], models: Mapping[str, Any], key: Optional
         '<div class="shep-test-model">'
         f'<div class="shep-w600">{e(r.model_name_line(item))} '
         f'<span class="shep-muted">· {e(item.get("filename"))}</span></div>'
-        f'<div class="shep-sub">{e(r.validation_text(figure))}</div>'
+        f'<div class="shep-sub">{e(r.validation_text(figure, read=r.record_read(item)))}</div>'
         f'<div>{r.fingerprint_html("model fingerprint", item["sha256"], help_key="model-fingerprint")}'
         f' · {r.trained_on_html(item.get("dataset_fingerprint"), workspaces)}</div></div>')
 
 
 def evidence_html(page: Mapping[str, Any], workspace: Optional[str]) -> str:
+    """The R10 evidence row: the measured workspace, then the setting's
+    directories, or why the setting is refused. A directory the server cannot
+    check stays in the list and does not block Start: the setting's note says
+    which and why on a line of its own, in amber with ▲ (needs attention, does
+    not block), redacted as the problem is."""
     evidence = page.get("evidence") or {}
     names = evidence.get("names") or []
+    roots = page.get("roots") or []
     measured = f"{e(workspace)} (measured, always)" if workspace else "the measured workspace (always)"
+    note = ""
     if evidence.get("problem"):
-        extra = f' · <span class="shep-amber-t">{e(redact(evidence["problem"], page.get("roots") or []))}</span>'
+        extra = f' · <span class="shep-amber-t">{e(redact(evidence["problem"], roots))}</span>'
     elif names:
         extra = " · " + ", ".join(f"<code>{e(n)}</code>" for n in names) + " (the server's setting)"
+        if evidence.get("note"):
+            note = (f'<span></span><span class="shep-amber-t">{r.WARN_MARK} '
+                    f'{e(redact(evidence["note"], roots))}</span>')
     else:
         extra = " · no other evidence directory is set on the server"
     return (f'<div class="shep-test-kv"><span class="shep-k">R10 evidence'
-            f'{help_button("test-evidence", "R10 evidence")}</span><span>{measured}{extra}</span></div>')
+            f'{help_button("test-evidence", "R10 evidence")}</span><span>{measured}{extra}</span>'
+            f'{note}</div>')
 
 
 def fixed_html(page: Mapping[str, Any]) -> str:
+    """What the server fixes for a run (D5): the batch size and the device.
+    The measurement is chosen beside them (the Measurement radio,
+    `measurement_choices`)."""
     device = page.get("device") or {}
     if device.get("problem"):
         shown = f'<span class="shep-amber-t">{e(device["problem"])}</span>'
@@ -1278,18 +1319,82 @@ def fixed_html(page: Mapping[str, Any]) -> str:
     return (f'<div class="shep-test-kv"><span class="shep-k">Batch size'
             f'{help_button("test-fixed", "Fixed by the server")}</span>'
             f'<span>{BATCH_SIZE_SHOWN} · fixed by the server</span>'
-            f'<span class="shep-k">Device</span><span>{shown} · fixed by the server</span>'
-            f'<span class="shep-k">Mode</span><span>{e(_MODE_ROW_WORDS["C"])} · fixed by the '
-            'server</span></div>')
+            f'<span class="shep-k">Device</span><span>{shown} · fixed by the server</span></div>')
+
+
+def measurement_label(name: Any) -> str:
+    """A protocol's words on this page: the words the pages already use for
+    that mode value (`caveats.TASK_NAMES`), or the name as it is."""
+    return TASK_NAMES.get(name, str(name)) if isinstance(name, str) else str(name)
+
+
+def measurement_choices(item: Optional[Mapping[str, Any]]) -> List[Tuple[str, str]]:
+    """The Measurement radio's options for the chosen listing entry `item`
+    (None: no model chosen): the protocols this build implements whose model
+    requirement its listed record meets (`protocols.available`, in their
+    order), each labelled by `measurement_label`, its value the protocol's
+    name. Empty when none does; Start then says why (`measure_refusal`)."""
+    if not item:
+        return []
+    names, _reason = protocols.available(item.get("learning_stage"), item.get("task"))
+    return [(measurement_label(name), name) for name in names]
+
+
+def chosen_measurement(choices: Sequence[Tuple[str, str]], value: Any) -> Optional[str]:
+    """The Measurement radio's value for its `choices`: `value` while it is one
+    of them, the only choice when there is one, else None (of several, none is
+    chosen until the operator picks one)."""
+    values = [v for _label, v in choices]
+    if value in values:
+        return value
+    return values[0] if len(values) == 1 else None
+
+
+#: This page's own reason beside a record's state (`measure_refusal`).
+NOT_MEASURED_HERE = "not measured here. Choose a model finetuned for a task"
+#: Start's reason while the chosen model offers several measurements and none is chosen.
+CHOOSE_A_MEASUREMENT = "choose a measurement"
+
+
+def measure_refusal(item: Mapping[str, Any], version: Optional[Mapping[str, Any]],
+                    protocol: Optional[str]) -> Optional[str]:
+    """Why this page does not measure the listed checkpoint `item` on the
+    listed cohort version `version` by the protocol `protocol` (None: none
+    chosen), or None. **The one rule** behind Start's reason (`start_state`)
+    and the start itself (`start_test_run`); the run judges again on the bytes
+    it reads.
+
+    A record refused (with the record reader's reason; a file without a model
+    spec among them) or not read is said in the word the Model option leads
+    with (`renderers.record_kind_text`), then this page's reason
+    (`NOT_MEASURED_HERE`). Otherwise, with no protocol chosen, the reason no
+    protocol takes the record (`protocols.available`: a base's is the base
+    message) or `CHOOSE_A_MEASUREMENT`; with one, the protocol definition's
+    reason (`protocols.refusal`: the record's stage and task head, then the
+    version's counts, which the importer writes for genes only for a source
+    that lists them). A version whose causal genes are all unmapped passes here
+    and the run refuses it."""
+    record = item.get("record")
+    if record in ("refused", None):
+        why = (f" ({item.get('record_problem') or 'no reason was given'})"
+               if record == "refused" else "")
+        return f"{r.record_kind_text(item)}{why}: {NOT_MEASURED_HERE}"
+    stage, task = item.get("learning_stage"), item.get("task")
+    if protocol is None:
+        names, reason = protocols.available(stage, task)
+        return reason if not names else CHOOSE_A_MEASUREMENT
+    return protocols.refusal(protocol, stage, task, (version or {}).get("counts"))
 
 
 def start_state(page: Mapping[str, Any], models: Mapping[str, Any], workspace: Optional[str],
                 label: Optional[str], key: Optional[str], binding: Optional[Mapping[str, Any]],
-                gpu: Tuple[str, str]) -> Tuple[bool, Optional[str]]:
-    """Whether "Start test" can be used now, and why not, in the order an
-    operator fixes things: a busy or unread GPU lock comes before the choices,
-    since no choice would enable Start while it lasts. Only a display: the
-    handler checks D8 and the runner refuses again at start."""
+                gpu: Tuple[str, str], *, protocol: Optional[str] = None
+                ) -> Tuple[bool, Optional[str]]:
+    """Whether "Start test" can be used now for the measurement `protocol`
+    (the Measurement radio's value; None: none chosen), and why not, in the
+    order an operator fixes things: a busy or unread GPU lock comes before the
+    choices, since no choice would enable Start while it lasts. Only a
+    display: the handler checks D8 and the runner refuses again at start."""
     access = page.get("access") or {}
     roots = page.get("roots") or []
     if not access.get("allowed"):
@@ -1319,6 +1424,9 @@ def start_state(page: Mapping[str, Any], models: Mapping[str, Any], workspace: O
         return False, "Disabled: choose a model."
     if item.get("problem") or not r.is_digest(item.get("sha256")):
         return False, "Disabled: this checkpoint's metadata is not readable."
+    refusal = measure_refusal(item, version, protocol)
+    if refusal:
+        return False, "Disabled: " + said(redact(refusal, roots), "")
     if (page.get("evidence") or {}).get("problem"):
         return False, ("Disabled: the evidence directories setting is refused: "
                        + redact(page["evidence"]["problem"], roots))
@@ -1351,8 +1459,12 @@ def job_body_html(job: Mapping[str, Any], roots: Sequence[Tuple[str, str]],
     inputs = job.get("inputs") or {}
     started = utc_time(job.get("start_time"))
     evidence = inputs.get("evidence_dirs") or []
+    # The run's own measurement, which can differ from the one chosen now.
+    protocol = inputs.get("protocol")
     parts = [e(inputs.get("version_label") or "—"),
              f"model <code>{e(str(inputs.get('checkpoint_sha256') or '')[:12])}</code>",
+             e(f"{measurement_label(protocol)} measurement"
+               if isinstance(protocol, str) and protocol.strip() else "measurement not recorded"),
              f"workspace {e(Path(str(inputs.get('workspace') or '')).name or '—')}",
              f"register {'on' if inputs.get('record') else 'off'}",
              f"deterministic {'on' if inputs.get('deterministic') else 'off'}",
@@ -1525,26 +1637,120 @@ def result_html(reports: Mapping[str, Any], run_id: Optional[str],
                             else "Registration: cannot be checked from the list", "neutral"))
     contest = run.get("contest") or {}
     if contest.get("state") == "contested":
-        chips.append(r.chip("Runs disagree — investigate", "amber"))
+        chips.append(r.warn_chip("Runs differ — investigate") if _deterministic_group(run)
+                     else r.chip("Runs differ", "grey"))
     parts = [f'<div class="shep-test-chips">{"".join(chips)}</div>']
     if run.get("problem"):
         parts.append(_reason_html(redact(run["problem"], roots)))
     if record is None:
         if state.get("kept") == "kept":
-            why = run.get("unbuilt") or "; ".join(
-                (run.get("contest") or {}).get("problems") or []) or (
-                "the report store's comparison did not read it")
+            why = run.get("unbuilt") or reports.get("store_problem") or (
+                "the report store's listing did not read it")
             parts.append(_reason_html("This report cannot be shown or compared: "
                                       + redact(why, roots)))
         else:
+            # The helper's own reason (K8-6e.1): a report.json that is there
+            # but is not a report, or holds other bytes, is never "not there".
             parts.append(_reason_html(
-                "No report was kept in this run directory: report.json, the run's commit "
-                "point, is not there (an interrupted, cancelled or refused run). Nothing in it "
-                "is registered, and nothing here can be."))
+                "No report was kept in this run directory: "
+                + redact(_why_not_kept(state), roots) + ". report.json is the run's commit "
+                "point, which an interrupted, cancelled or refused run never writes; nothing "
+                "here can be registered."))
     else:
         parts.append(_record_html(record, run, state))
+    parts.append(_registration_reason_html(state, roots))
     parts.append(block_html(run, roots, notes or [], notes_problems))
     return head + f'<div class="shep-test-pad shep-test-result">{"".join(parts)}</div>'
+
+
+def _registration_reason_html(state: Mapping[str, Any], roots: Sequence[Tuple[str, str]]) -> str:
+    """Why this run's registration reads as it does, where "not registered"
+    or "cannot be checked" alone would mislead (K8-6r.2): a record names this
+    run with other bytes (its report was replaced after it was registered, so
+    a registration is refused), or the ledger beside the listed checkpoint was
+    read and cannot tell (this run's identity record damaged, the run-identity
+    boundary lost, a record whose sequence cannot be read). The registration's
+    own words (`report_state`), redacted."""
+    why = state.get("why_registered")
+    if state.get("kept") != "kept" or not why:
+        return ""
+    if state.get("registered") == "not_registered" and state.get("replaced_after_registration"):
+        return _reason_html("Not registered: " + redact(why, roots))
+    if state.get("registered") == "cannot_be_checked" and state.get("checked_beside"):
+        return _reason_html("Registration cannot be checked: " + redact(why, roots))
+    return ""
+
+
+def _tile_note(name: str) -> str:
+    """What a described measurement's tile figure is over: its positive pairs
+    (pooled), its ranked cases (macro) or the share of the import-eligible cases
+    ranked (coverage), with no count, since the record's Coverage row says "n of
+    M" once (skill rule 1.2)."""
+    if name == "coverage":
+        return "share of import-eligible cases ranked"
+    if name.startswith("pooled_"):
+        return "pooled over positive pairs"
+    if name.startswith("macro_"):
+        return "mean over the ranked cases"
+    return ""
+
+
+def _figure_words(mode: str, name: str) -> str:
+    """A task metric's words as a row under the record's label, which names
+    the task once: `caveats.metric_text`'s "Disease pooled top-k" less the
+    task's name, "Pooled top-k"."""
+    words = metric_text(mode, name)[len(TASK_NAMES[mode]) + 1:]
+    return words[:1].upper() + words[1:]
+
+
+def _task_rows(mode: str, metrics: Mapping[str, Any], tiles: Sequence[str]
+               ) -> List[Tuple[str, str]]:
+    """A task record's figures past its tiles (README E1, E2, E5): the
+    conservative pooled MRR with what it counts, one row for each family that
+    takes a cut-off k (its k values in order, a tile's left out), the macro
+    and best-positive MRR, and any other figure the record holds. No mean
+    rank: a task reports none."""
+    shown = set(tiles) | {"conservative_pooled_mrr"}
+    conservative = _number(metrics.get("conservative_pooled_mrr"))
+    rows = [(_figure_words(mode, "conservative_pooled_mrr"),
+             (conservative if conservative != "—" else "not reported")
+             + " · an unranked case whose truth can be assessed counts 0")]
+    for prefix in _TASK_FAMILIES:
+        family = sorted((int(name[len(prefix):]), name) for name in metrics
+                        if str(name).startswith(prefix) and str(name)[len(prefix):].isdigit())
+        shown.update(name for _k, name in family)
+        values = [f"k={k} {_number(metrics[name])}" for k, name in family if name not in tiles]
+        if values:
+            rows.append((_figure_words(mode, f"{prefix}k"), e(", ".join(values))))
+    for name in _TASK_ROWS:
+        if name in metrics:
+            shown.add(name)
+            rows.append((_figure_words(mode, name), e(_number(metrics[name]))))
+    other = [f"{metric_text(mode, str(k))} {_number(v)}" for k, v in sorted(metrics.items())
+             if k not in shown]
+    if other:
+        rows.append(("Other metrics", e(" · ".join(other))))
+    return rows
+
+
+def recorded_metrics_html(metrics: Mapping[str, Any]) -> str:
+    """Every metric of a record as recorded, one per line
+    (`caveats.recorded_metric_lines`: the name as written, a code, and the
+    value's JSON text, unrounded), every value escaped; "no metric recorded"
+    when it holds none."""
+    lines = recorded_metric_lines(metrics)
+    if not lines:
+        return '<span class="shep-muted">no metric recorded</span>'
+    return "".join(f"<div><code>{e(name)}</code> {e(value)}</div>" for name, value in lines)
+
+
+def _semantics_text(scoring: Mapping[str, Any]) -> str:
+    """The record's `scoring.score_semantics` exactly as recorded, a code, or
+    "not recorded": never split, interpreted or rebuilt."""
+    raw = scoring.get("score_semantics")
+    if isinstance(raw, str) and raw.strip():
+        return f"<code>{e(raw)}</code>"
+    return '<span class="shep-muted">not recorded</span>'
 
 
 def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
@@ -1554,17 +1760,14 @@ def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
     metrics = record.get("metrics") if isinstance(record.get("metrics"), Mapping) else {}
     n_ranked = record.get("n_ranked")
     counts = cohort.get("counts") if isinstance(cohort.get("counts"), Mapping) else {}
-    # Labelled by the record's own mode, never by Mode C's for every record.
+    # Labelled by the record's own mode, as recorded, never by another's.
     scoring = record.get("scoring") if isinstance(record.get("scoring"), Mapping) else {}
     mode = scoring.get("mode") if isinstance(scoring.get("mode"), str) and \
         scoring.get("mode").strip() else None
-    semantics = scoring.get("score_semantics")
-    label = mode_label(mode, semantics if isinstance(semantics, str) else None)
+    label = mode_label(mode)
     tile_names = _TILES.get(mode, ())
-    mean_name = _MEAN_RANK.get(mode)
+    task = mode in TASK_NAMES
     eligible = _count(counts.get("ranked_eligible"))
-    over = (f"over {eligible} import-eligible" if mode == "D"
-            else f"over {_count(n_ranked)} ranked")
     deterministic = regime.get("deterministic_algorithms")
     line = (f'{e(cohort.get("label"))} (version <code>{e(str(record.get("cohort_digest") or "")[:12])}</code>, '
             f'role {r.ident_html(record.get("cohort_role"))}) · model '
@@ -1574,41 +1777,32 @@ def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
     tiles = "".join(
         f'<div class="shep-test-tile"><div class="shep-test-tile-l">{e(metric_text(mode, name))}</div>'
         f'<div class="shep-test-tile-v">{e(_number(metrics.get(name)))}</div>'
-        f'<div class="shep-test-tile-n">{e(over)}</div></div>'
+        f'<div class="shep-test-tile-n">{e(_tile_note(name))}</div>'
+        '</div>'
         for name in tile_names)
     excluded = counts.get("excluded") if isinstance(counts.get("excluded"), Mapping) else {}
     reasons = " · ".join(f"{str(k).replace('_', ' ')} {_count(v)}" for k, v in excluded.items())
     excluded_text = (f"{e(_count(counts.get('n_excluded')))} excluded"
-                     f"{' at import' if mode == 'D' else ''}"
+                     f"{' at import' if task else ''}"
                      f"{': ' + e(reasons) if reasons else ''}")
-    if mode == "D":
-        coverage = (f"<b>{e(_count(n_ranked))} of {e(eligible)}</b> import-eligible cases reached "
-                    f"by the served pipeline · {e(_count(counts.get('source_cases')))} source "
-                    f"cases; {excluded_text}")
-    elif mode == "C":
-        coverage = (f"<b>{e(_count(n_ranked))} of {e(_count(counts.get('source_cases')))}</b> source "
-                    f"cases ranked ({e(eligible)} eligible) · {excluded_text}")
+    if task:
+        coverage = (f"<b>{e(_count(n_ranked))} of {e(eligible)}</b> import-eligible cases ranked "
+                    f"by the model · {e(_count(counts.get('source_cases')))} source cases; "
+                    f"{excluded_text}")
     else:
         # No claim of what this mode's n_ranked counts.
         coverage = (f"{e(_count(counts.get('source_cases')))} source cases · {excluded_text}; "
                     f"{e(_count(n_ranked))} cases counted by the record; what they are is not "
                     "described for this mode")
-    mean = metrics.get(mean_name) if mean_name else None
-    if mean_name is None:
-        mean_text = "—"
-    elif isinstance(mean, (int, float)) and not isinstance(mean, bool):
-        mean_text = (f"{e(metric_text(mode, mean_name))} "
-                     f"{e(_number(mean).rstrip('0').rstrip('.'))}, over {e(_count(n_ranked))} "
-                     f"{'reached' if mode == 'D' else 'ranked'} cases")
-    else:
-        mean_text = (f"{e(metric_text(mode, mean_name))} not reported"
-                     + (": no case was reached" if mode == "D" and n_ranked == 0 else ""))
+    # One display for every mode (R2): a described measurement's figures in
+    # words, every metric as recorded one click away (below); any other mode's
+    # metrics as recorded are its main result, one per line.
+    figures = (_task_rows(mode, metrics, tile_names) if task
+               else [("Recorded metrics", recorded_metrics_html(metrics))])
     lines = [
         ("Coverage", coverage),
-        ("Mean rank", mean_text),
-        ("Other metrics", " · ".join(f"{e(metric_text(mode, k))} {e(_number(v))}"
-                                     for k, v in sorted(metrics.items())
-                                     if k not in set(tile_names) | {mean_name}) or "—"),
+        *figures,
+        ("Score semantics", _semantics_text(scoring)),
         ("Relations", _relations(record.get("relations"))),
         *_r10_lines(record.get("r10")),
         ("Environment", _environment(record)),
@@ -1622,46 +1816,92 @@ def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
     seq = state.get("sequence")
     beside = state.get("checked_beside")
     where = f" (the ledger beside {e(beside)} was read)" if beside else ""
+    # A record merged before each run had its own record may hold these bytes
+    # (K8-6r.2): said as a possible overlap, never as registered.
+    merged = [n for n in state.get("historical_overlap") or [] if isinstance(n, int)]
+    overlap = (f"; possible overlap with record{'s' if len(merged) != 1 else ''} "
+               f"{', '.join(str(n) for n in merged)}, merged before each run had its own record "
+               "(not recorded whether this run is one of them); registering adds this run's "
+               "own record" if merged and registered != "registered" else "")
     lines.append(("Registration",
-                  f"registered as record {seq}{where}" if registered == "registered" and isinstance(seq, int)
-                  else f"registered{where}" if registered == "registered"
-                  else f"not registered{where}" if registered == "not_registered"
-                  else "none found beside the checkpoint the run read, or its ledger cannot be "
-                       "read (a registration beside another copy of the weights is looked for only "
-                       "with the checkpoint list, an operator control)"))
+                  (f"registered as record {seq}{where}" if registered == "registered" and isinstance(seq, int)
+                   else f"registered{where}" if registered == "registered"
+                   else f"not registered{where}" if registered == "not_registered"
+                   else f"cannot be checked{where}" if beside
+                   else "none found beside the checkpoint the run read, or its ledger cannot be "
+                        "read (a registration beside another copy of the weights is looked for only "
+                        "with the checkpoint list, an operator control)") + e(overlap)))
     # The R10 labels' ⓘ sits beside the first R10 line, which it explains.
     kv = "".join(f'<span class="shep-k">{e(k)}'
                  f'{help_button("test-r10", "R10 labels") if k == "R10, training" else ""}</span>'
                  f'<span class="shep-v">{v}</span>' for k, v in lines)
     topic = _MODE_HELP.get(mode)
     mode_help = help_button(topic, TOPIC_HELP[topic][0]) if topic else ""
+    fold = (f'<details class="shep-test-fold shep-test-recm"><summary>Recorded metrics '
+            f'({len(metrics)})</summary>{recorded_metrics_html(metrics)}</details>'
+            if task and metrics else
+            '<div class="shep-sub shep-test-recm">no metric recorded</div>' if task else "")
     return (f'<div class="shep-sub">{line}</div>'
             f'<div class="shep-test-label">{e(label)}{mode_help}</div>'
-            f'<div class="shep-test-tiles">{tiles}</div><div class="shep-kv shep-test-lines">{kv}</div>')
+            f'<div class="shep-test-tiles">{tiles}</div><div class="shep-kv shep-test-lines">{kv}</div>'
+            f'{fold}')
+
+
+def _deterministic_group(run: Mapping[str, Any]) -> Optional[bool]:
+    """Whether the run's condition group records deterministic algorithms on
+    (True) or off (False): the setting is in the group's semantics, so every
+    run of it shares it. None when the run's record does not say (no record
+    read, or no boolean there): nothing is assumed, and None reads as off."""
+    record = run.get("record") if isinstance(run.get("record"), Mapping) else {}
+    regime = record.get("regime") if isinstance(record.get("regime"), Mapping) else {}
+    value = regime.get("deterministic_algorithms")
+    return value if type(value) is bool else None
 
 
 def block_html(run: Mapping[str, Any], roots: Sequence[Tuple[str, str]],
                notes: Sequence[Mapping[str, Any]], notes_problems: Sequence[str] = ()) -> str:
-    """D5's block on the report's key, and the investigation notes kept with
-    it: who, when, what. A note never lifts the block. Notes that cannot be
+    """How the report's condition group compares in the store, and the
+    investigation notes kept with it: who, when, what. **A description, never
+    a block** (policy rev 16): every run is kept as recorded, and nothing here
+    disables Register. Runs that differ are described in neutral words; only a
+    group that records deterministic algorithms on, whose runs were expected
+    to agree, is flagged for investigation (amber, ▲). Notes that cannot be
     read are said, so "no note is kept" is never shown when one may be."""
     contest = run.get("contest") or {}
     key = run.get("key")
     parts = []
     if contest.get("state") == "contested":
         others = ", ".join(run_time(x) or x for x in contest.get("disagreeing_runs") or ())
-        parts.append(
-            '<div class="shep-notice shep-notice-amber shep-test-block"><b>Runs disagree — '
-            f'investigate.</b> Reports under this key differ on: '
-            f'{e(", ".join(contest.get("differing") or ()))} (runs {e(others)}). While they do, '
-            "no report under this key is registered, checked or unchecked: registering one "
-            "would be choosing between results. Every report stays in the store; compare their "
-            "environment facts first. A deterministic re-run is another key. An investigation "
-            "note records what was found; it does not lift the block.</div>")
+        differing = e(", ".join(contest.get("differing") or ()))
+        deterministic = _deterministic_group(run)
+        if deterministic:
+            parts.append(
+                '<div class="shep-notice shep-notice-amber shep-test-block"><b>'
+                f'{r.WARN_MARK} Runs under these conditions differ — investigate.</b> They differ '
+                f'on: {differing} (runs {e(others)}). Deterministic algorithms were on, so these '
+                "runs were expected to agree. Every run is kept as recorded and each can be "
+                "registered; compare their environment facts first. An investigation note "
+                "records what was found.</div>")
+        else:
+            # "Without deterministic algorithms" only when the record says so:
+            # a determinism not recorded is not asserted either way.
+            parts.append(
+                '<div class="shep-reason shep-reason-grey shep-test-block"><span><b>Runs under '
+                f'these conditions differ</b> on: {differing} (runs {e(others)}). '
+                + ("Without deterministic algorithms, runs can differ; every"
+                   if deterministic is False else "Every")
+                + " run is kept as recorded and each can be registered. An investigation note "
+                "records what was looked at.</span></div>")
     elif contest.get("state") == "cannot_be_checked":
         problems = "; ".join(redact(p, roots) for p in contest.get("problems") or ())
-        parts.append(_reason_html("Whether runs under this key disagree cannot be checked, so no "
-                                  f"report under it is registered: {problems}"))
+        if key:
+            parts.append(_reason_html(f"Comparison incomplete: {problems}. This describes the "
+                                      "group only; it does not stop a registration."))
+        else:
+            # This run's own report could not be placed in a group: its own
+            # reason, which marks no other run (K8-6r.2).
+            parts.append(_reason_html(f"This run's report cannot be compared: {problems}. It "
+                                      "marks no other run."))
     if key:
         from src.evaluation.sidecar import KEY_FIELDS
 
@@ -1676,19 +1916,44 @@ def block_html(run: Mapping[str, Any], roots: Sequence[Tuple[str, str]],
                          f'notes ({len(mine)})</div><ul>{items}</ul></div>')
         if shown and notes_problems:
             parts.append(_reason_html(
-                "The investigation notes cannot all be read, so a note kept for this key may be "
-                "missing here: " + "; ".join(redact(p, roots) for p in notes_problems)))
+                "The investigation notes cannot all be read, so a note kept for this group may "
+                "be missing here: " + "; ".join(redact(p, roots) for p in notes_problems)))
         elif shown and not mine:
-            parts.append('<div class="shep-sub">No investigation note is kept for this key.</div>')
+            parts.append('<div class="shep-sub">No investigation note is kept for this '
+                         'group.</div>')
     return "".join(parts)
+
+
+def _store_not_listed(problem: str, roots: Sequence[Tuple[str, str]], what: str) -> str:
+    """Why Register is off when the store could not be listed (Decision 10):
+    no report can be confirmed here, and the command line registers a named
+    report it verifies. Who acts: the operator, on the server."""
+    return (f"Disabled: the report store could not be listed, so {what}'s report cannot be "
+            f"confirmed here: {redact(problem, roots).rstrip('.')}. Register it from the "
+            "command line by naming its report (scripts/record_evaluation.py --report …).")
 
 
 def register_state(page: Mapping[str, Any], reports: Mapping[str, Any],
                    run_id: Optional[str]) -> Tuple[bool, Optional[str]]:
-    """Whether "Register this report" can be used, and why not."""
+    """Whether "Register this report" can be used, and why not.
+
+    **Enabled for a kept report of this run the page can confirm** (policy rev
+    16, K8-6r.2; Decision 10). Off only when the request is not an
+    operator's, the run kept no report, **this run** is already registered
+    (`report_state` finds the record naming this run with these bytes), or
+    this run's own report was not built (its own reason) or not read by the
+    listing; a store that could not be listed says so and points to the
+    command line, which registers a named report it verifies. How the runs of
+    the condition group compare, and any other run's problem, never disables
+    it."""
     access = page.get("access") or {}
+    roots = page.get("roots") or []
     run = find(reports.get("runs") or [], "run_id", run_id)
     if run is None:
+        # The version was read but its store's runs could not be listed.
+        listing = reports.get("problem") if reports.get("version_sha256") else None
+        if listing and not reports.get("runs") and access.get("allowed"):
+            return False, _store_not_listed(listing, roots, "a run")
         return False, None
     if not access.get("allowed"):
         return False, operator_only(access)
@@ -1697,13 +1962,14 @@ def register_state(page: Mapping[str, Any], reports: Mapping[str, Any],
         return False, "Disabled: no report was kept in this run."
     if state.get("registered") == "registered":
         return False, "Already registered."
-    contest = (run.get("contest") or {}).get("state")
-    if contest == "contested":
-        return False, ("Disabled: runs disagree — investigate. Registering one would be choosing "
-                       "between results; an investigation note does not lift this.")
-    if contest == "cannot_be_checked" or run.get("record") is None:
-        return False, ("Disabled: whether runs under this key disagree cannot be checked, so no "
-                       "report under it is registered.")
+    if run.get("record") is None:
+        if run.get("unbuilt"):
+            return False, ("Disabled: this report cannot be registered: "
+                           f"{redact(run['unbuilt'], roots)}")
+        if reports.get("store_problem"):
+            return False, _store_not_listed(reports["store_problem"], roots, "this run")
+        return False, ("Disabled: the report store's listing did not read this report (it may "
+                       "have been written or replaced since); press ↻ to read it again.")
     return True, None
 
 
@@ -1745,35 +2011,20 @@ def intake_note_html(listing: Mapping[str, Any], roots: Sequence[Tuple[str, str]
     return "".join(notes)
 
 
-def role_line(role: Any, *, environ: Optional[Mapping[str, str]] = None) -> str:
-    """Whether a version with this role offers ordering by test score in Models
-    (`role_offers_ordering`: listed in SHEPHERD_ORDERING_ROLES, never
-    institutional_acceptance)."""
-    from src.config import server_settings
-
+def role_line(role: Any) -> str:
+    """The import form's note under Role: with no role chosen, what to choose;
+    for a chosen role, no note."""
     if not isinstance(role, str) or not role.strip():
         return ("Choose the version's role: its declared purpose (for example mygene2, "
                 "research_selection or institutional_acceptance).")
-    role = role.strip()
-    if role in _NEVER_ORDERED:
-        return (f"Role {role} never offers ordering by test score in Models, until the "
-                "institution's formal evaluation rules exist.")
-    if server_settings.role_offers_ordering(role, environ):
-        return (f"Role {role} offers ordering by test score in Models: it is in the server's "
-                "model-selection roles setting (SHEPHERD_ORDERING_ROLES). "
-                "institutional_acceptance does not.")
-    return (f"Role {role} does not offer ordering by test score in Models: it is not in the "
-            "server's model-selection roles setting (SHEPHERD_ORDERING_ROLES). "
-            "institutional_acceptance never does.")
+    return ""
 
 
-def role_choices(page: Mapping[str, Any], *, environ: Optional[Mapping[str, str]] = None
-                 ) -> List[str]:
-    from src.config import server_settings
-
+def role_choices(page: Mapping[str, Any]) -> List[str]:
+    """The import form's Role choices: the listed versions' own roles, then
+    mygene2 and institutional_acceptance, each once (a role may also be typed)."""
     roles: List[str] = []
-    for role in [*(server_settings.ordering_roles(environ).value or ()),
-                 *(v.get("role") for v in page.get("versions") or []), "mygene2",
+    for role in [*(v.get("role") for v in page.get("versions") or []), "mygene2",
                  "institutional_acceptance"]:
         if isinstance(role, str) and role and role not in roles:
             roles.append(role)
@@ -1803,6 +2054,24 @@ def _source_entry(entry: Any) -> str:
         return "not recorded"
     return (f"digest <code>{e(str(entry.get('digest') or '')[:12])}</code>…, declared version "
             f"{e(entry.get('declared_version') or 'none')}")
+
+
+def _gene_rows(genes: Any) -> List[Tuple[str, str]]:
+    """The preview's gene counts, when the source lists genes (README §8): the
+    operator's check, before commit, that the identifiers map."""
+    if not isinstance(genes, Mapping):
+        return []
+    return [
+        ("Gene identifiers", f"<b>{e(_count(genes.get('identifiers_listed')))}</b> listed: "
+                             f"{e(_count(genes.get('identifiers_unmappable')))} name no gene "
+                             f"of the graph, {e(_count(genes.get('identifiers_repeated')))} "
+                             "repeat an earlier one"),
+        ("Cases with genes", f"{e(_count(genes.get('cases_with_causal_genes')))} with causal "
+                             f"genes ({e(_count(genes.get('cases_with_unmapped_causal_genes')))} "
+                             f"with some unmapped), "
+                             f"{e(_count(genes.get('cases_with_candidate_genes')))} with "
+                             "candidate genes"),
+    ]
 
 
 def preview_html(preview: Optional[Mapping[str, Any]]) -> str:
@@ -1844,6 +2113,7 @@ def preview_html(preview: Optional[Mapping[str, Any]]) -> str:
                             f"{e(_count(counts.get('cases_with_repeats')))} case(s) (phenotype "
                             f"normalisation v{e(mapping.get('phenotype_normalisation_version'))})"),
         ("Partial phenotypes", e(mapping.get("partial_phenotypes"))),
+        *_gene_rows(counts.get("genes")),
         ("Graph", "the workspace manifest’s digests: " + " · ".join(
             f"{e(role)} <code>{e(str(d or '')[:12])}</code>" for role, d in graph.items())),
         ("Dataset record", ('origin <b class="shep-amber-t">synthetic</b>' if record.get("origin") == "synthetic"
@@ -1875,13 +2145,19 @@ def _outcome_box(kind: str, text: str, roots: Sequence[Tuple[str, str]] = ()) ->
 
 def start_test_run(page: Mapping[str, Any], models: Mapping[str, Any], workspace: Any,
                    label: Any, key: Any, record: Any, deterministic: Any, request: Any, *,
-                   manager: Any = None, environ: Optional[Mapping[str, str]] = None
-                   ) -> Dict[str, Any]:
+                   protocol: Any = None, manager: Any = None,
+                   environ: Optional[Mapping[str, str]] = None) -> Dict[str, Any]:
     """"Start test": D8 on this request; the workspace, the version and the
-    checkpoint found in the server's lists again (never a client path); the
-    **digests shown to the operator** passed as the expected ones, so the run
-    refuses before measuring when the checkpoint or the version it reads is
-    not the one chosen; the runner's one start for test runs."""
+    checkpoint found in the server's lists again (never a client path); a
+    measurement `protocol` (the Measurement radio's value) this page does not
+    start for that checkpoint and version refused (`measure_refusal`, the rule
+    Start's reason shows); the **digests shown to the operator** passed as the
+    expected ones, with the protocol apart from the model's learning stage and
+    task from the session's listing and the listed version's counts, so the
+    runner judges again before it starts and the run refuses before measuring
+    when the checkpoint or the version it reads is not the one chosen, or its
+    record is not one the protocol takes; the runner's one start for test
+    runs."""
     from src.api.services.server_lists import (
         ServerListRefused,
         resolve_checkpoint,
@@ -1903,6 +2179,10 @@ def start_test_run(page: Mapping[str, Any], models: Mapping[str, Any], workspace
             or not r.is_digest(item.get("sha256"))):
         return {"success": False, "error": "Choose a model the server lists in this workspace. "
                                            "Nothing was started."}
+    refusal = measure_refusal(item, version, protocol)
+    if refusal:
+        return {"success": False, "error": said(refusal[:1].upper() + refusal[1:],
+                                                "Nothing was started.")}
     registry = server_settings.cohort_registry(environ)
     evidence = server_settings.training_evidence_dirs(environ)
     if not registry.available:
@@ -1918,7 +2198,9 @@ def start_test_run(page: Mapping[str, Any], models: Mapping[str, Any], workspace
     inputs = TestRunInputs(
         registry=registry.value, version_label=str(label),
         version_sha256=version["manifest_sha256"], workspace=data_dir, checkpoint=checkpoint,
-        checkpoint_sha256=item["sha256"], evidence_dirs=tuple(evidence.value),
+        checkpoint_sha256=item["sha256"], protocol=protocol,
+        learning_stage=item["learning_stage"], task=item["task"],
+        version_counts=version["counts"], evidence_dirs=tuple(evidence.value),
         record=bool(record), deterministic=bool(deterministic))
     return manager.start_test(inputs)
 
@@ -1948,10 +2230,17 @@ def register_selected(page: Mapping[str, Any], reports: Mapping[str, Any],
     (`ledger_checkpoint`: the listed file holding the weights the report
     measured, by full digest, the file the run read first; never the report's
     recorded path), then checks the deployment's registry, the store, the
-    version, D5's block and the checkpoint's bytes again. The page reads and
-    judges no report itself (round 3 of the review fixes, F2)."""
+    version and the checkpoint's bytes again. The page reads and judges no
+    report itself (round 3 of the review fixes, F2). A registered run's message
+    carries the two notes that decide nothing (`group_note`,
+    `historical_note`)."""
     from src.api.services.server_lists import ServerListRefused, resolve_report
-    from src.evaluation.registration import RegistrationRefused, corroboration_note, register_report
+    from src.evaluation.registration import (
+        RegistrationRefused,
+        group_note,
+        historical_note,
+        register_report,
+    )
 
     access = operator_access(request)
     if not access.allowed:
@@ -1996,13 +2285,11 @@ def register_selected(page: Mapping[str, Any], reports: Mapping[str, Any],
     # Not named `said`: that would make the module's `said` local to this
     # function, and the refusals above would fail before it is assigned.
     message = {"registered": f"Registered as record {sequence}.",
-               "corroborated": f"Added to record {sequence} as a corroborating report: it agrees "
-                               "on every compared field.",
                "already_registered": f"Already registered as record {sequence}; nothing was "
                                      "written."}.get(result.outcome, result.outcome)
-    note = corroboration_note(result, path)
-    if note:
-        message += f" {note}"
+    for note in (group_note(result), historical_note(result)):
+        if note:
+            message += f" {note}"
     if result.usage_history_problem:
         message += f" {result.usage_history_problem[:1].upper()}{result.usage_history_problem[1:]}."
     return True, message
@@ -2011,24 +2298,32 @@ def register_selected(page: Mapping[str, Any], reports: Mapping[str, Any],
 def add_note(reports: Mapping[str, Any], run_id: Any, who: Any, what: Any, request: Any, *,
              environ: Optional[Mapping[str, str]] = None) -> Tuple[bool, str]:
     """"Add note": D8 on this request; one investigation note kept with the
-    report's key in the store (`add_investigation_note`). It lifts nothing."""
+    report's condition group in the store (`add_investigation_note`). It
+    records what was found and changes nothing."""
     from src.api.services.server_lists import ServerListRefused, resolve_cohort_version
     from src.evaluation.report_store import add_investigation_note
+    from src.utils.file_lock import FileLockBusy
 
     access = operator_access(request)
     if not access.allowed:
         return False, access.refusal
     run = find(reports.get("runs") or [], "run_id", run_id)
     if run is None or not run.get("key"):
-        return False, "Select a report whose key is known first. Nothing was written."
+        return False, "Select a report whose condition group is known first. Nothing was written."
     try:
         version = resolve_cohort_version(reports.get("label"), environ=environ)
         add_investigation_note(version, tuple(run["key"]), who=str(who or ""), what=str(what or ""))
     except ServerListRefused as exc:
         return False, said(exc, "Nothing was written.")
+    except FileLockBusy as exc:
+        # Another writer held the notes file (K8-6r.1): busy, not refused for
+        # good. The note stays in its box, so the operator can add it again.
+        return False, (f"The note was not kept: another writer held the notes file for the "
+                       f"{exc.grace:g} s this one waited. Nothing was written this time; add it "
+                       "again.")
     except (OSError, ValueError) as exc:
         return False, str(exc)
-    return True, "The note was kept with this key's reports. The block stays until the reports agree."
+    return True, "The note was kept with this group's reports. It records what was found and changes nothing."
 
 
 def open_import(request: Any, *, environ: Optional[Mapping[str, str]] = None) -> Dict[str, Any]:
@@ -2180,6 +2475,13 @@ def create_test_page(ctx: Any) -> None:
     binding_state_ = gr.State(None)
     reports_state = gr.State(dict(_EMPTY_REPORTS))
     selected_report = gr.State(None)
+    # The Measurement radio's value as it was last written (`_measurement_outputs`),
+    # which the selection's listeners read in place of the radio itself: the
+    # radio's value an event was asked with can be one the event before it in
+    # the group took away from the radio's choices (a Model pick sends its
+    # input twice, and the first event can empty the radio), and Gradio would
+    # refuse that event with an error before the page's own handling ran.
+    measurement_state = gr.State(None)
     # What this session saw of the job: the poll's alone (`_poll`).
     job_state = gr.State({})
     preview_state = gr.State(None)
@@ -2252,6 +2554,9 @@ def create_test_page(ctx: Any) -> None:
                                              elem_id="shep-test-model-reload",
                                              interactive=False)
                 model_info = plain_html("", elem_id="shep-test-model-info")
+                # The protocols the chosen model's record admits (`measurement_choices`).
+                measurement = gr.Radio(label="Measurement", choices=[], value=None,
+                                       elem_id="shep-test-measurement", interactive=False)
                 evidence = plain_html("", elem_id="shep-test-evidence")
                 with gr.Row(elem_classes=["shep-test-checks"]):
                     record = gr.Checkbox(label="Register the result", value=True,
@@ -2283,8 +2588,9 @@ def create_test_page(ctx: Any) -> None:
                        scale=14, min_width=360):
             with gr.Column(elem_classes=["shep-test-bd", "shep-test-bd-flush"]):
                 result_out = plain_html(result_html({}, None, []), elem_id="shep-test-result-body")
-            # The investigation note form (shown while runs under the report's
-            # key disagree) is outside the scrolling body: on a wide screen it
+            # The investigation note form (shown while the runs of the report's
+            # condition group differ, or their comparison is incomplete) is
+            # outside the scrolling body: on a wide screen it
             # stays at the panel's foot, above Register, so Add note is in view
             # however long the report (in a short window it takes at most half
             # the panel and scrolls in its own region); narrow, it follows the
@@ -2338,12 +2644,24 @@ def create_test_page(ctx: Any) -> None:
     def _gpu(page: Mapping[str, Any]) -> Tuple[str, str]:
         return gpu_line(operator=bool((page.get("access") or {}).get("allowed")))
 
-    def _start_outputs(page, models, binding, ws, label, key, gpu):
-        """Start and its reason, from the selection (`start_outputs`)."""
+    def _start_outputs(page, models, binding, ws, label, key, protocol, gpu):
+        """Start and its reason, from the selection (`start_outputs`); `protocol`
+        is the Measurement radio's value, as it shows it."""
         allowed = bool((page.get("access") or {}).get("allowed"))
-        can_start, why = start_state(page, models, ws, label, key, binding, gpu)
+        can_start, why = start_state(page, models, ws, label, key, binding, gpu,
+                                     protocol=protocol)
         return [gr.update(interactive=can_start),
                 _reason_html(why, kind="lock" if not allowed else "")]
+
+    def _measurement_outputs(page, models, key, protocol):
+        """The Measurement radio for the chosen model, and the value it shows
+        (`chosen_measurement`), which Start's state is then drawn from. Like
+        the Model select, it is interactive for an operator only."""
+        allowed = bool((page.get("access") or {}).get("allowed"))
+        choices = measurement_choices(find_model(models, key))
+        protocol = chosen_measurement(choices, protocol)
+        return gr.update(choices=choices, value=protocol,
+                         interactive=allowed and bool(choices)), protocol
 
     def _card_outputs(page, job, gpu):
         """The job card and Cancel, from the job alone (`card_outputs`)."""
@@ -2356,19 +2674,22 @@ def create_test_page(ctx: Any) -> None:
         return [job_head_html(job), job_body_html(job, roots, gpu),
                 gr.update(interactive=can_cancel), _reason_html(cancel_why, kind="lock")]
 
-    def _run_outputs(page, models, binding, ws, label, key, job, gpu):
+    def _run_outputs(page, models, binding, ws, label, key, protocol, job, gpu):
         allowed = bool((page.get("access") or {}).get("allowed"))
+        radio, protocol = _measurement_outputs(page, models, key, protocol)
         return [
             run_header_html(ws, label),
             _dd(model_choices(models), key, interactive=allowed and bool(models.get("items"))),
             gr.update(interactive=allowed and bool(ws)),
             model_html(page, models, key),
+            radio,
             evidence_html(page, ws),
             fixed_html(page),
-            *_start_outputs(page, models, binding, ws, label, key, gpu),
+            *_start_outputs(page, models, binding, ws, label, key, protocol, gpu),
             *_card_outputs(page, job, gpu),
             gr.update(interactive=allowed),
             gr.update(interactive=allowed),
+            protocol,
         ]
 
     # Start and its reason depend on the selection: only the selection's group
@@ -2376,8 +2697,8 @@ def create_test_page(ctx: Any) -> None:
     # writes them too.
     start_outputs = [start, start_reason]
     card_outputs = [job_head, job_out, cancel, cancel_reason]
-    run_outputs = [run_hd, model, model_reload, model_info, evidence, fixed, *start_outputs,
-                   *card_outputs, record, deterministic]
+    run_outputs = [run_hd, model, model_reload, model_info, measurement, evidence, fixed,
+                   *start_outputs, *card_outputs, record, deterministic, measurement_state]
 
     def _result_outputs(page, reports, models, run_id, job):
         """The list, the result and its controls for `reports` as this session
@@ -2457,9 +2778,9 @@ def create_test_page(ctx: Any) -> None:
     # them), so an event that ended late would write back the selection it
     # started from over one chosen meanwhile. Every listener that writes the
     # selection, or Start and its reason drawn from it, is therefore in one
-    # group of one: the page open, the workspace, the version, the model, a
-    # report's row, ↻, the read after an act or an import, and the read after
-    # the poll saw the job or the GPU line change. They run first
+    # group of one: the page open, the workspace, the version, the model, the
+    # measurement, a report's row, ↻, the read after an act or an import, and
+    # the read after the poll saw the job or the GPU line change. They run first
     # asked, first run, each from what the one before it wrote, and the
     # browser takes a select's value when the event is asked. The group is
     # the server's, as the import's is: two sessions' events wait for each
@@ -2476,7 +2797,7 @@ def create_test_page(ctx: Any) -> None:
     every_one = {"trigger_mode": "multiple"}
 
     # ------------------------------------------------------------------ page open
-    def _refresh(ws, label, key, current_models, current_report, request: gr.Request):
+    def _refresh(ws, label, key, protocol, current_models, current_report, request: gr.Request):
         page = read_page(request)
         ws = default_workspace(page, ws)
         binding = _binding_for(page, ws)
@@ -2488,20 +2809,21 @@ def create_test_page(ctx: Any) -> None:
         reports, run_id = _reports(page, models, label, current_report, job, request)
         return [page, models, binding, reports, run_id,
                 *_cohort_outputs(page, binding, ws, label),
-                *_run_outputs(page, models, binding, ws, label, key, job, gpu),
+                *_run_outputs(page, models, binding, ws, label, key, protocol, job, gpu),
                 *_result_outputs(page, reports, models, run_id, job)]
 
     state_outputs = [page_state, models_state, binding_state_, reports_state, selected_report]
     ctx.on_page_open(PAGE, {
         "fn": _refresh,
-        "inputs": [workspace, version, model, models_state, selected_report],
+        "inputs": [workspace, version, model, measurement_state, models_state, selected_report],
         "outputs": [*state_outputs, *cohort_outputs, *run_outputs, *result_outputs],
         "show_progress": "hidden",
         **one_at_a_time,
     })
 
     # ------------------------------------------------------------------ choices
-    def _on_workspace(page, ws, label, key, current_models, current_report, request: gr.Request):
+    def _on_workspace(page, ws, label, key, protocol, current_models, current_report,
+                      request: gr.Request):
         if not page:
             return [gr.update()] * (6 + len(cohort_outputs) + len(run_outputs) + len(result_outputs))
         binding = _binding_for(page, ws)
@@ -2513,18 +2835,20 @@ def create_test_page(ctx: Any) -> None:
         # An import is made against one workspace: its drawer closes, its preview goes.
         return [models, binding, reports, run_id, None, gr.update(visible=False),
                 *_cohort_outputs(page, binding, ws, label),
-                *_run_outputs(page, models, binding, ws, label, key, job, _gpu(page)),
+                *_run_outputs(page, models, binding, ws, label, key, protocol, job, _gpu(page)),
                 *_result_outputs(page, reports, models, run_id, job)]
 
     workspace.input(_on_workspace,
-                    inputs=[page_state, workspace, version, model, models_state, selected_report],
+                    inputs=[page_state, workspace, version, model, measurement_state,
+                            models_state, selected_report],
                     outputs=[models_state, binding_state_, reports_state, selected_report,
                              preview_state, drawer, *cohort_outputs, *run_outputs,
                              *result_outputs],
                     show_progress="minimal", **one_at_a_time, **every_one) \
         .then(**ctx.chip_refresh)
 
-    def _on_version(page, binding, models, ws, label, key, current_report, request: gr.Request):
+    def _on_version(page, binding, models, ws, label, key, protocol, current_report,
+                    request: gr.Request):
         if not page:
             return [gr.update()] * (4 + len(run_outputs) + len(result_outputs))
         job = read_job()
@@ -2535,40 +2859,63 @@ def create_test_page(ctx: Any) -> None:
                 _dd(version_choices(page, binding), label,
                     interactive=not page.get("registry_problem")),
                 version_html(page, label, binding),
-                *_run_outputs(page, models, binding, ws, label, key, job, _gpu(page)),
+                *_run_outputs(page, models, binding, ws, label, key, protocol, job, _gpu(page)),
                 *_result_outputs(page, reports, models, run_id, job)]
 
     version.input(_on_version,
                   inputs=[page_state, binding_state_, models_state, workspace, version, model,
-                          selected_report],
+                          measurement_state, selected_report],
                   outputs=[reports_state, selected_report, version, version_info, *run_outputs,
                            *result_outputs],
                   show_progress="hidden", **one_at_a_time, **every_one)
 
-    def _on_model(page, models, binding, ws, label, key):
+    def _on_model(page, models, binding, ws, label, key, protocol):
         if not page:
             return [gr.update()] * len(run_outputs)
-        return _run_outputs(page, models, binding, ws, label, key, read_job(), _gpu(page))
+        return _run_outputs(page, models, binding, ws, label, key, protocol, read_job(),
+                            _gpu(page))
 
     # In the selection's group: Start and its reason are written there only,
     # so a read handed over before this choice cannot write them back after it.
     model.input(_on_model, inputs=[page_state, models_state, binding_state_, workspace, version,
-                                   model],
+                                   model, measurement_state],
                 outputs=run_outputs, show_progress="hidden", **one_at_a_time, **every_one)
 
-    def _on_model_reload(page, binding, ws, label, key, current_models, request: gr.Request):
+    def _on_measurement(page, models, binding, ws, label, key, protocol):
+        """A measurement picked: the radio (written back, as the version select
+        is, over a value an event asked before this one wrote), Start and its
+        reason for it, and the value the other listeners read
+        (``measurement_state``). Of the selection's listeners, the one given
+        the radio itself; Start takes it too, as the operator saw it."""
+        if not page:
+            return [gr.update()] * (2 + len(start_outputs))
+        radio, protocol = _measurement_outputs(page, models, key, protocol)
+        return [radio, *_start_outputs(page, models, binding, ws, label, key, protocol,
+                                       _gpu(page)), protocol]
+
+    # In the selection's group, for the same reason as the model's.
+    measurement.input(_on_measurement,
+                      inputs=[page_state, models_state, binding_state_, workspace, version, model,
+                              measurement],
+                      outputs=[measurement, *start_outputs, measurement_state],
+                      show_progress="hidden", **one_at_a_time, **every_one)
+
+    def _on_model_reload(page, binding, ws, label, key, protocol, current_models,
+                         request: gr.Request):
         if not page:
             return [gr.update()] * (1 + len(run_outputs))
         models = _models_for(page, current_models, ws, request, again=True)
         key = key if find_model(models, key) is not None else None
-        return [models, *_run_outputs(page, models, binding, ws, label, key, read_job(), _gpu(page))]
+        return [models, *_run_outputs(page, models, binding, ws, label, key, protocol, read_job(),
+                                      _gpu(page))]
 
     # In the selection's group: the listing it writes is the one the rows'
     # registration and Start are asked from. A second ↻ while one waits is
     # dropped (a click's "once"), which loses nothing: the one waiting lists
     # when it runs.
     model_reload.click(_on_model_reload,
-                       inputs=[page_state, binding_state_, workspace, version, model, models_state],
+                       inputs=[page_state, binding_state_, workspace, version, model,
+                               measurement_state, models_state],
                        outputs=[models_state, *run_outputs], show_progress="minimal",
                        **one_at_a_time) \
         .then(**ctx.chip_refresh)
@@ -2602,7 +2949,7 @@ def create_test_page(ctx: Any) -> None:
                                    prefer_outcome=prefer)
         return job, label, reports, run_id
 
-    def _after_act(page, models, binding, ws, key, current_report, reports,
+    def _after_act(page, models, binding, ws, key, protocol, current_report, reports,
                    request: gr.Request):
         """The read after Start, Cancel, Register or a note: the job card shows
         the job at once. It decides no end: an ended run's report is chosen by
@@ -2610,25 +2957,27 @@ def create_test_page(ctx: Any) -> None:
         job, label, reports, run_id = _job_read_again(page, models, current_report, reports,
                                                       request)
         gpu = _gpu(page)
-        return [reports, run_id, *_start_outputs(page, models, binding, ws, label, key, gpu),
+        return [reports, run_id,
+                *_start_outputs(page, models, binding, ws, label, key, protocol, gpu),
                 *_card_outputs(page, job, gpu),
                 *_result_outputs(page, reports, models, run_id, job)]
 
     after_outputs = [reports_state, selected_report, *start_outputs, *card_outputs,
                      *result_outputs]
-    after_inputs = [page_state, models_state, binding_state_, workspace, model,
+    after_inputs = [page_state, models_state, binding_state_, workspace, model, measurement_state,
                     selected_report, reports_state]
 
-    def _on_start(page, models, ws, label, key, rec, det, request: gr.Request):
-        result = start_test_run(page, models, ws, label, key, rec, det, request)
+    def _on_start(page, models, ws, label, key, protocol, rec, det, request: gr.Request):
+        result = start_test_run(page, models, ws, label, key, rec, det, request,
+                                protocol=protocol)
         roots = (page or {}).get("roots") or []
         if result.get("success"):
             return _outcome_box("ok", "The test run started. It checks the model and the cohort "
                                       "again on the bytes it reads before measuring.")
         return _outcome_box("amber", str(result.get("error") or "Nothing was started."), roots)
 
-    start.click(_on_start, inputs=[page_state, models_state, workspace, version, model, record,
-                                   deterministic],
+    start.click(_on_start, inputs=[page_state, models_state, workspace, version, model,
+                                   measurement, record, deterministic],
                 outputs=[action_out], show_progress="minimal") \
         .then(_after_act, inputs=after_inputs, outputs=after_outputs, show_progress="hidden",
               **one_at_a_time) \
@@ -2681,8 +3030,8 @@ def create_test_page(ctx: Any) -> None:
     ctx.timer_slow.tick(_poll, inputs=poll_inputs, outputs=[*poll_outputs, ctx.chips],
                         queue=False, show_progress="hidden")
 
-    def _after_job_change(page, models, binding, ws, key, current_report, reports, change,
-                          request: gr.Request):
+    def _after_job_change(page, models, binding, ws, key, protocol, current_report, reports,
+                          change, request: gr.Request):
         """The poll's hand-off, in the selection's group: Start and its reason
         from the selection as it is now, and the reports read again. The one
         place an end is decided, from what the poll saw on its last tick
@@ -2702,12 +3051,12 @@ def create_test_page(ctx: Any) -> None:
         job, label, reports, run_id = _job_read_again(page, models, current_report, reports,
                                                       request, ended=ended)
         return [reports, run_id,
-                *_start_outputs(page, models, binding, ws, label, key, _gpu(page)),
+                *_start_outputs(page, models, binding, ws, label, key, protocol, _gpu(page)),
                 *_result_outputs(page, reports, models, run_id, job)]
 
     job_changed.change(_after_job_change,
                        inputs=[page_state, models_state, binding_state_, workspace, model,
-                               selected_report, reports_state, job_changed],
+                               measurement_state, selected_report, reports_state, job_changed],
                        outputs=[reports_state, selected_report, *start_outputs, *result_outputs],
                        show_progress="hidden", **one_at_a_time, **every_one)
 
@@ -2797,11 +3146,12 @@ def create_test_page(ctx: Any) -> None:
         return ("", None, gr.update(interactive=False, value="🔒 Commit"), committed,
                 gr.update(visible=False), box)
 
-    def _after_commit(committed, ws, label, key, current_models, current_report,
+    def _after_commit(committed, ws, label, key, protocol, current_models, current_report,
                       request: gr.Request):
         """The page read again, as a page open reads it, with the version just
         committed chosen."""
-        return _refresh(ws, committed or label, key, current_models, current_report, request)
+        return _refresh(ws, committed or label, key, protocol, current_models, current_report,
+                        request)
 
     committed_label = gr.State(None)
     commit_btn.click(_on_commit, inputs=[page_state, preview_state, workspace, intake, new_label,
@@ -2810,8 +3160,8 @@ def create_test_page(ctx: Any) -> None:
                               import_msg],
                      show_progress="minimal", concurrency_id="shep-test-import",
                      concurrency_limit=1) \
-        .then(_after_commit, inputs=[committed_label, workspace, version, model, models_state,
-                                     selected_report],
+        .then(_after_commit, inputs=[committed_label, workspace, version, model,
+                                     measurement_state, models_state, selected_report],
               outputs=[*state_outputs, *cohort_outputs, *run_outputs, *result_outputs],
               show_progress="hidden", **one_at_a_time) \
         .then(**ctx.chip_refresh)
@@ -2820,7 +3170,9 @@ def create_test_page(ctx: Any) -> None:
 _PAGE = "#" + page_elem_id(PAGE)
 
 #: This page's style sheet (the page contract: listed in `src/webui/app.py`'s
-#: ``PAGE_CSS``), scoped to its own ids.
+#: ``PAGE_CSS``), scoped to its own ids. ``.shep-test-recm``: a described
+#: measurement's metrics as recorded (R2), one click away under its figures, its
+#: summary a 24 px target that shows the keyboard focus (skill §10).
 PAGE_CSS = f"""
 {_PAGE} #shep-test-row {{ position: relative; gap: 12px; }}
 {_PAGE} .shep-test-bd {{ padding: 12px 16px !important; gap: 10px !important; }}
@@ -2863,6 +3215,9 @@ PAGE_CSS = f"""
 {_PAGE} .shep-test-fail {{ color: var(--shep-red-700); font-size: 15px; }}
 {_PAGE} .shep-test-fold summary {{ cursor: pointer; }}
 {_PAGE} .shep-test-fold[open] summary {{ margin-bottom: 6px; }}
+{_PAGE} .shep-test-recm {{ margin-top: 12px; font-size: 15px; overflow-wrap: anywhere; }}
+{_PAGE} .shep-test-recm > summary {{ min-height: 24px; line-height: 24px; width: max-content; max-width: 100%; color: var(--shep-text-2); }}
+{_PAGE} .shep-test-recm > summary:focus-visible {{ outline: 2px solid var(--shep-accent); outline-offset: 2px; }}
 {_PAGE} .shep-test-outcome {{ display: flex; flex-direction: column; gap: 6px; font-size: 15px; }}
 {_PAGE} .shep-test-chips {{ display: flex; flex-wrap: wrap; gap: 6px 8px; }}
 {_PAGE} .shep-test-label {{ font-weight: 600; font-size: 15px; display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }}

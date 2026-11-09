@@ -7,6 +7,8 @@ before it writes anything, builds a model or reads a checkpoint. A synthetic
 workspace is fully bound, passes, and is shown as synthetic: in the training log,
 on serving's published configuration and status, in the measurement manifest, and
 in the inventory, where the binding state and the origin are separate fields.
+Measurement is the disease task's (`--mode disease`) on the session's trained
+disease child (`trained_disease_child`) over its demo workspace.
 
 The writers' half: the manifest is not written without the record's binding, the
 digests every writer binds are of the bytes it wrote, and the builder stops
@@ -97,22 +99,26 @@ FAILURES = {
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize("case", sorted(FAILURES))
 def test_training_refuses_before_anything_is_written(tmp_path, monkeypatch, case):
-    """At the top of the run: no run directory, no model, nothing restored."""
+    """At the top of the run (a base): no run directory, no graph view, no
+    model, nothing restored."""
     import scripts.train_model as train_model
+    import src.kg.graph_view as graph_view
+    import src.models.bundle as bundle
     from src.kg.artifacts import DatasetRecordRefused
 
     tamper, binding, fragment = FAILURES[case]
     workspace = write_generated_workspace(tmp_path / "ws", training_fields=True, **IDS)[0]
     tamper(workspace)
-    for name in ("create_dataloaders", "create_model_from_config", "Trainer",
-                 "read_resume_parent"):
-        monkeypatch.setattr(train_model, name, lambda *a, _n=name, **k: (_ for _ in ()).throw(
+    for module, name in ((train_model, "Trainer"), (train_model, "read_resume_checkpoint"),
+                         (graph_view, "build_graph_view"), (bundle, "build_bundle")):
+        monkeypatch.setattr(module, name, lambda *a, _n=name, **k: (_ for _ in ()).throw(
             AssertionError(f"{_n} ran after a refusal")))
     run = tmp_path / "run"
 
     with pytest.raises(DatasetRecordRefused, match=fragment) as refused:
         train_model.train(train_model.TrainConfig(
-            data_dir=str(workspace), run_dir=str(run), device="cpu", num_workers=0))
+            data_dir=str(workspace), run_dir=str(run), learning_stage="base", device="cpu"),
+            {"learning_stage", "device"})
 
     assert refused.value.binding == binding
     assert not run.exists(), "a run artifact was written before the refusal"
@@ -151,11 +157,13 @@ def test_the_training_record_names_the_manifest_that_binds_the_dataset_record(tm
 # Measurement
 # ---------------------------------------------------------------------------
 def _measure(data_dir, checkpoint, output, *, cohort=None):
-    """`--split val` with `--output`, or, with `cohort` (a `RegisteredCohort`),
-    `--cohort` in its registry, whose report store decides where it goes."""
+    """The disease task, `--split val` with `--output`, or, with `cohort` (a
+    `RegisteredCohort`), `--cohort` in its registry, whose report store decides
+    where it goes."""
     import scripts.measure_scorer as cli
 
-    argv = ["--checkpoint", str(checkpoint), "--data-dir", str(data_dir), "--device", "cpu"]
+    argv = ["--mode", "disease", "--checkpoint", str(checkpoint), "--data-dir", str(data_dir),
+            "--device", "cpu"]
     if cohort is None:
         argv += ["--split", "val", "--output", str(output)]
     else:
@@ -164,29 +172,41 @@ def _measure(data_dir, checkpoint, output, *, cohort=None):
 
 
 @pytest.fixture(scope="module")
-def registered_base(tmp_path_factory):
-    from tests.fixtures.registered_cohort import build_registered_cohort
+def registered_base(trained_disease_child, tmp_path_factory):
+    """The session's trained disease child as a registered-cohort tree: its
+    workspace and its checkpoint copied (the session's files stay read-only),
+    the graph source written and a version of it committed. Each test tampers
+    with its own copy (`copy_registered_cohort`)."""
+    from tests.fixtures.registered_cohort import registered_cohort_from_child
 
-    return build_registered_cohort(tmp_path_factory.mktemp("registered_base"))
+    return registered_cohort_from_child(trained_disease_child,
+                                        tmp_path_factory.mktemp("registered_base"))
+
+
+def _child_copy(trained, root):
+    """The session child's workspace copied under `root` (a test that tampers
+    with it changes only its copy), with the child's checkpoint, read in place."""
+    import shutil
+
+    return Path(shutil.copytree(trained["data_dir"], root)), trained["disease"]
 
 
 @pytest.mark.parametrize("kind", ["generated", "registered"])
 @pytest.mark.parametrize("case", sorted(FAILURES))
 def test_measurement_refuses_before_a_checkpoint_or_model(
-    tmp_path, monkeypatch, registered_base, case, kind
+    tmp_path, monkeypatch, trained_disease_child, registered_base, case, kind
 ):
     """For a registered cohort version too: it is scored against a workspace's
     graph, and that graph's record is required as for a generated split."""
-    import src.models.gnn.shepherd_gnn as shepherd_gnn
+    import src.models.bundle.record as bundle_record
     import src.utils.checkpoint_io as checkpoint_io
     from src.kg.artifacts import DatasetRecordRefused
     from tests.fixtures.registered_cohort import copy_registered_cohort
-    from tests.fixtures.synthetic_workspace import build_workspace
 
     tamper, binding, fragment = FAILURES[case]
     cohort = None
     if kind == "generated":
-        data_dir, checkpoint = build_workspace(tmp_path / "ws")
+        data_dir, checkpoint = _child_copy(trained_disease_child, tmp_path / "ws")
     else:
         cohort = copy_registered_cohort(registered_base, tmp_path / "root")
         data_dir, checkpoint = cohort.data_dir, cohort.checkpoint
@@ -197,7 +217,7 @@ def test_measurement_refuses_before_a_checkpoint_or_model(
     def forbidden(*args, **kwargs):
         raise AssertionError("reached after the workspace was refused")
 
-    monkeypatch.setattr(shepherd_gnn, "build_shepherd_model", forbidden)
+    monkeypatch.setattr(bundle_record, "load_bundle", forbidden)
     monkeypatch.setattr(checkpoint_io, "read_checkpoint", forbidden)
     output = tmp_path / "out" / "measurement.json"
 
@@ -210,12 +230,11 @@ def test_measurement_refuses_before_a_checkpoint_or_model(
         assert not (cohort.version.directory / "reports").exists()
 
 
-def test_a_measurement_records_its_dataset_record_with_the_origin_apart(tmp_path):
+def test_a_measurement_records_its_dataset_record_with_the_origin_apart(
+        tmp_path, trained_disease_child):
     """A number over a synthetic workspace says so in its manifest; the binding
     state and the origin are separate fields."""
-    from tests.fixtures.synthetic_workspace import build_workspace
-
-    data_dir, checkpoint = build_workspace(tmp_path / "ws")
+    data_dir, checkpoint = trained_disease_child["data_dir"], trained_disease_child["disease"]
     output = tmp_path / "out" / "measurement.json"
 
     assert _measure(data_dir, checkpoint, output) == 0
@@ -226,11 +245,10 @@ def test_a_measurement_records_its_dataset_record_with_the_origin_apart(tmp_path
     assert recorded["incomplete_by_design"], "what the record does not establish is shown"
 
 
-def test_the_measurement_console_says_what_its_graph_was_built_from(tmp_path, capsys):
+def test_the_measurement_console_says_what_its_graph_was_built_from(
+        tmp_path, capsys, trained_disease_child):
     """Where an operator reads the number, as in the manifest."""
-    from tests.fixtures.synthetic_workspace import build_workspace
-
-    data_dir, checkpoint = build_workspace(tmp_path / "ws")
+    data_dir, checkpoint = trained_disease_child["data_dir"], trained_disease_child["disease"]
     assert _measure(data_dir, checkpoint, tmp_path / "out" / "measurement.json") == 0
 
     out = capsys.readouterr().out
@@ -271,15 +289,19 @@ def _demo_workspace(root):
 STUB_CHECKPOINT_SHA256 = "c" * 64
 
 
-def _built(self, checkpoint_path, device, *, expected_sha256=None):
-    """Stands for a model built from one checkpoint read: it keeps the read's
-    identity, as `_load_model_from_checkpoint` does, so the served identity names
-    a verified checkpoint rather than an in-memory model."""
+def _built(self, checkpoint_path, device, *, expected_sha256=None, within=None):
+    """Stands for a disease task model built from one checkpoint read: it keeps
+    the read's identity, as `_load_model_from_checkpoint` does, so the served
+    identity names the verified checkpoint. A module with parameters, so the
+    device in effect is read from it as from any served model, and the task
+    every served model names (the scoring mode is read from it)."""
     from src.utils.fingerprint import ReadIdentity
 
     self._checkpoint_identity = ReadIdentity(
         path=Path(checkpoint_path), sha256=STUB_CHECKPOINT_SHA256)
-    return object()
+    model = torch.nn.Linear(1, 1)
+    model.task = "disease"
+    return model
 
 
 def _pipeline(monkeypatch, workspace, checkpoint_path, load=None):
@@ -297,9 +319,7 @@ def _pipeline(monkeypatch, workspace, checkpoint_path, load=None):
     )
     monkeypatch.setattr(
         pipeline.DiagnosisPipeline, "_precompute_node_embeddings",
-        lambda self, device=None: setattr(
-            self, "_node_embeddings", {"phenotype": object(), "disease": object()}
-        ),
+        lambda self, device=None: setattr(self, "_bundle_z", object()),
     )
     return pipeline.DiagnosisPipeline(
         graph=KnowledgeGraph.read_json(workspace / "kg.json"),
@@ -317,7 +337,7 @@ def test_serving_refuses_before_the_checkpoint_is_read(tmp_path, monkeypatch, ca
     workspace = _demo_workspace(tmp_path / "ws")
     tamper(workspace)
 
-    def forbidden(self, checkpoint_path, device, *, expected_sha256=None):
+    def forbidden(self, checkpoint_path, device, *, expected_sha256=None, within=None):
         raise AssertionError("the checkpoint was read over a refused workspace")
 
     with pytest.raises(DatasetRecordRefused, match=fragment) as refused:
@@ -343,20 +363,28 @@ def test_serving_publishes_the_record_with_its_origin_apart(tmp_path, monkeypatc
         "verified", "synthetic", record["sha256"])
 
 
-def test_a_pipeline_over_no_workspace_publishes_no_record():
-    """Nothing was verified, so nothing is claimed: an in-memory graph."""
+def test_a_pipeline_over_no_workspace_is_refused(tmp_path):
+    """K7 (G3): a served pipeline always reads its workspace's record, so a
+    graph with no workspace is refused before the checkpoint is read; no
+    pipeline is left to claim, or omit, a record."""
     from scripts.setup_demo import build_demo_kg
-    from src.inference.pipeline import DiagnosisPipeline
+    from src.inference.pipeline import DiagnosisPipeline, PipelineBuildError
 
-    assert DiagnosisPipeline(kg=build_demo_kg()).get_pipeline_config()["dataset_record"] is None
+    with pytest.raises(PipelineBuildError, match="data_dir"):
+        DiagnosisPipeline(graph=build_demo_kg(), checkpoint_path=str(tmp_path / "ck.pt"),
+                          data_dir=None)
 
 
 # ---------------------------------------------------------------------------
-# The inventory and the one-time move
+# The inventory
 # ---------------------------------------------------------------------------
 def test_the_inventory_shows_the_record_and_judges_no_checkpoint_over_a_refused_one(tmp_path):
+    """Over the accepted record the checkpoint is judged (a file without a model
+    spec, refused in the model record's own words); over the refused record it
+    is not judged at all."""
     import scripts.audit_checkpoint_family as audit
     from scripts.train_model import read_training_inputs, training_input_digests
+    from src.config.model_types import WRITTEN_BEFORE_SPEC
 
     root = tmp_path / "workspaces"
     sound = write_generated_workspace(root / "a", training_fields=True, **IDS)[0]
@@ -376,8 +404,8 @@ def test_the_inventory_shows_the_record_and_judges_no_checkpoint_over_a_refused_
     assert a["dataset_record"]["verdict"] == "accepted"
     assert (a["dataset_record"]["binding"], a["dataset_record"]["origin"]) == (
         "verified", "synthetic")
-    assert a["checkpoints"]["a/checkpoints/hgt/good.pt"]["m2_contract"][
-        "serve_and_measure"]["verdict"] == "accepted"
+    judged = a["checkpoints"]["a/checkpoints/hgt/good.pt"]["m2_contract"]["serve_and_measure"]
+    assert judged["verdict"] == "refused" and WRITTEN_BEFORE_SPEC in judged["reason"]
 
     assert b["graph"]["verdict"] == "accepted"
     assert (b["dataset_record"]["verdict"], b["dataset_record"]["binding"]) == (
@@ -413,25 +441,6 @@ def test_one_unreadable_record_does_not_stop_the_inventory(tmp_path, monkeypatch
     b = report["workspaces"]["b"]["dataset_record"]
     assert (b["verdict"], b["binding"]) == ("refused", None)
     assert "the disk said no" in b["reason"]
-
-
-def test_the_move_leaves_a_refused_workspaces_files_in_place(tmp_path):
-    """Serving would refuse every file in it, so none is judged importable."""
-    import scripts.migrate_checkpoints as tool
-    from scripts.train_model import read_training_inputs, training_input_digests
-
-    workspace = write_generated_workspace(tmp_path / "ws", training_fields=True, **IDS)[0]
-    record = training_input_digests(read_training_inputs(workspace))
-    path = workspace / "checkpoints" / "hgt" / "good.pt"
-    path.parent.mkdir(parents=True)
-    torch.save({"state_dict": {"w": torch.zeros(2)}, "training_input_digests": record,
-                "config": {"model_config": {"conv_type": "hgt"}}}, path)
-    _missing(workspace)
-
-    [entry] = tool.classify(workspace)
-    assert entry["kind"] == "unverifiable"
-    assert "the workspace is refused" in entry["reason"]
-    assert "DatasetRecordRefused" in entry["reason"]
 
 
 # ---------------------------------------------------------------------------

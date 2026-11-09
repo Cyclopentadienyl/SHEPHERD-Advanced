@@ -54,8 +54,13 @@ binding a view to an immutable result ID — **unenforceable**, not merely untid
 **Status:** reviewed design (Batch 2, passed with `a5652c1..e61253e`). **Batch 4's part is
 implemented and accepted (2026-10-27; its GB10 check at `7fc417c`, BACKLOG §0):** `served_mixture/v1`, `path_reasoning/v1` and `demo/v1` with
 everything below that applies to them: the removed fields, unavailable never zero, the invariants,
-the labels and the consumers. The as-built choices are in the note after the consumer table. **Batch 5 builds** `gnn_ranking/v1` with B-1 (BACKLOG §0). **Authority:** policy §7: one versioned discriminated union with required and
+the labels and the consumers. The as-built choices are in the note after the consumer table. **Batch 5 builds** `gnn_ranking/v1` with B-1 (BACKLOG §0). *(2026-10-27: superseded. `gnn_ranking/v1` as raw cosine is not built. The kind for the paper-aligned disease model is defined with work package A's model spec ([`../scorer-retraining/README.md`](../scorer-retraining/README.md) §8; policy rev 11). The union's rules below apply to it unchanged.)* **Authority:** policy §7: one versioned discriminated union with required and
 forbidden fields per variant, never a flat envelope; statement 7; C9.
+*(2026-10-29, K7: `path_reasoning/v1` and `demo/v1` are removed, with no alias: a graph is never
+served without a model, and with no pipeline the API answers 503 (the owner's decisions; policy
+rev 13). The union now holds `served_mixture/v1` (a history file only, until K8) and the task
+kinds `disease_task/v1`, `gene_task/v1` and `patients_like_me/v1` (K3, K4), each under the rules
+below. The rows below for the two removed kinds are the design record.)*
 
 **The discriminator is `result_kind`, on the result, never on a candidate.** Every candidate of a
 result has the same score semantics. The kind is derived from what produced the result, never
@@ -73,7 +78,9 @@ what the numbers in the candidates mean. Under B-1, a deployment with a table se
 with SP beside it, not in it.
 
 **Every kind carries:**
-- **On the result:** `result_kind`, `result_schema_version = 2`, `served_identity`,
+- **On the result:** `result_kind`, `result_schema_version = 3` *(2026-11-04, K8-4r: was 2; 3
+  marks K8-4's change of shape, in which the served identity's `shortest_paths` kept only its
+  `state`)*, `served_identity`,
   `phenotype_input` (the account), `warnings`, and `candidates` in rank order.
 - **On each candidate:** `rank` (exactly 1..N), `disease_id`, `disease_name` and `matching_phenotypes`.
 
@@ -197,10 +204,40 @@ not reopened.
   `tests/integration/test_pipeline.py`'s, against the union, and the workspace-producer smoke test
   that ran it is removed with it.
 
+**As built in K3 (2026-10-27): `disease_task/v1`**, the kind of a served disease finetune (the
+retraining README §1, §3; policy rev 11). It replaces the `gnn_ranking/v1` row above.
+- Produced when the served checkpoint is a disease finetune with a model spec; `scoring_mode` is
+  `disease_task`; η is null and the SP table `absent` (SP does not rank diseases).
+- Every disease of the model's graph view is ranked by the disease head's score (0 or below,
+  uncalibrated); the tie policy is `score-desc-then-view-id-asc/v1`. Each candidate carries
+  `score`, the evidence and the explanation, and no model term or SP record.
+- Path discovery only explains the rows returned (PathReasoner as post-ranking evidence); it
+  never gates or orders candidates.
+- The page shows the head's score as the Score; the CSV writes it as `score`, with the evidence
+  columns and the `served_` columns.
+
+**As built in K4 (2026-10-27): `gene_task/v1` and `patients_like_me/v1`.**
+- `gene_task/v1`, scoring mode `gene_task`: the request's `candidate_genes` ranked by
+  `η·EMBSIM + (1 − η)·SPLSIM`, each candidate with its two parts and the mean exact hop distance;
+  ties by view id; identifiers that map to no gene, repeat an earlier entry or fall outside the
+  view are counted ("N of M submitted are scored: ..."). Without `candidate_genes` nothing is
+  ranked, and the response says so. The served identity names the model's η
+  (`settings.eta`) and shortest paths in state `computed` (exact hops from the view, no table);
+  the result names the SP bounds (`sp_bounds`), so `sp_similarity` can be recomputed.
+- `patients_like_me/v1`, scoring mode `patients_like_me`: the patients of the registered reference
+  cohort version the request names (`reference_cohort`), ranked by the patient tower's similarity;
+  ties by case id; the query's own case id is left out, with a warning. Each candidate carries the research id,
+  the similarity, and the recorded HPO terms, diagnosis and causal genes, and no name or contact
+  field. The result names the version (`label`, digests, patient count).
+- Both kinds have their own candidate types: no disease field and no path evidence.
+- The Diagnosis page draws disease kinds only until K6 adds these two views with their inputs.
+
 **Not decided here:**
 - the B-1 switch's default (the owner's call, policy §7);
 - whether serving with no model needs an opt-in (the owner's call, B-2). Until that is decided,
-  `path_reasoning/v1` is served when no model source is configured, as today.
+  `path_reasoning/v1` is served when no model source is configured, as today. *(2026-10-29, K7:
+  settled by the owner's decision: nothing is served without a model, and with no model
+  `/api/v1/diagnose` and `/ready` answer 503; policy rev 13.)*
 
 **Assumed:** no client outside this repository reads `/api/v1/diagnose`. If one does, the owner names it
 before batch 4.
@@ -211,13 +248,25 @@ before batch 4.
 (2026-10-27):** the one phenotype mapping step, and the one SP caller with its two clean-ups.
 **Batch 5 builds** the rest with B-1: `score_patients`, `masked_mean_pool` in place of
 `pool_patient_embeddings`, the ranking's move into `scoring.py`, and the callers' migration.
+*(2026-10-27: partly superseded.)*
+- **Replaced:** `score_patients` and `masked_mean_pool` as the served scorer, by the model bundle's
+  patient encoder and disease head, whose math is shared from `src.models`
+  ([`../scorer-retraining/README.md`](../scorer-retraining/README.md) §3).
+- **Still apply:** `selection_limit`, the one mapping step and the one SP caller. *(2026-11-07:
+  `canonical_ranking`'s move does not apply: it retired with Mode C in K8-6b, `f35bb93`, and the
+  measurement's order is the task evaluators' `average-rank/v1`.)*
 It settles `PLAN_TEST_RESULTS.md` D3's two open served behaviours, the disease clamp and the
 unknown-phenotype handling, and policy §2.1's "one scorer, not two".
 
-**The home is `src/inference/scoring.py`.**
-- Serving and Mode C can both import it.
+**The home is `src/inference/scoring.py`.** *(2026-11-08, superseded: `src/inference/scoring.py`
+was removed in K8-11 (`9d76bbe`) and the `scorer-independence` contract in K8-7 (`e35b2a3`); the one
+scorer a task model uses in validation, measurement and serving is `src/models/tasks/scoring.py`,
+below `src.training` and `src.reasoning` in the layers contract (policy rev 17).)*
+- Serving and Mode C could both import it. *(2026-11-07: Mode C retired in K8-6b, so only serving
+  could.)*
 - The trainer cannot, under the `layers` contract. That keeps the trainer's validation values written
-  independently, as the `scorer-independence` contract in `.import-linter.ini` intends.
+  independently, as the `scorer-independence` contract in `.import-linter.ini` intends. *(2026-11-08:
+  that contract and the trainer's own validation values retired in K8-7; see the note above.)*
 - `src.reasoning` is not a home: statements 4a and 6 keep ranking and evidence apart.
 - A layer lower down is not a home either: the trainer could adopt it there and undo that independence.
 
@@ -227,7 +276,7 @@ unknown-phenotype handling, and policy §2.1's "one scorer, not two".
 | Patient representation | The unweighted masked mean of the phenotype rows. Out-of-range or non-integer rows are refused, and so is an empty row | `masked_mean_pool`. `pool_patient_embeddings`, which clamps, is deleted, and its clamp test is inverted into a refusal test |
 | Disease set | Every disease row of the bound tensors: global ids `0..D−1` in the node mapping's disease order. NodeIDs appear only at the edge, through `kg.get_reverse_node_mapping` | `score_patients` (below). There is no lookup to miss and no clamp |
 | Score | Raw cosine in the embedding dtype: float32 at serving, with no autocast. Confidence is never a weight (§4.5) | `cosine_score_matrix` |
-| Order and ties | Score descending, ties to the lower global id; non-finite refused | `canonical_ranking` and `_require_integer_ids`, moved unchanged from `src/evaluation/measurement.py` |
+| Order and ties | Score descending, ties to the lower global id; non-finite refused | `canonical_ranking` and `_require_integer_ids`, moved unchanged from `src/evaluation/measurement.py`. *Not done (2026-11-07): both retired with Mode C in K8-6b (`f35bb93`); the task evaluators order by average rank, `average-rank/v1`* |
 | Selection | `selection_limit` cuts the ordered list after scoring, never before (§6.1) | the caller, B-1's pipeline method |
 
 **One composed function.** `score_patients(phenotype_table, disease_table, rows, mask, disease_ids)`
@@ -242,6 +291,8 @@ lives in `scoring.py` and returns the scores and the order.
 - `run_mode_c` calls it in place of its own three calls to the same primitives.
 - Mode C keeps its cohort checks (`_assert_ids_in_range`, `_assert_cohort_is_intact`): they run first
   and name the case.
+
+*(2026-11-07, K8-6e.2: Mode C's executor, `canonical_ranking`, `ranks_of_truth`, `_require_integer_ids` and Mode C's cohort checks retired in K8-6b (`f35bb93`) instead of moving; the measurement's order is now the task evaluators' `average-rank/v1`. The two bullets above on `run_mode_c` and Mode C's cohort checks, and the rows below that name them, are the Batch 2 plan, not done.)*
 
 **Missing data and invalid values, in one place:**
 
@@ -271,9 +322,9 @@ per-candidate count of unreachable pairs, which it already computes internally.
 
 | Caller | Moves to |
 |---|---|
-| `run_mode_c` | `score_patients`, importing the ranking from `scoring`. Its metrics, ranks, digests and the manifest's semantic fields stay equal before and after (timestamps, revision and run metadata excluded, as `../scorer-measurement/PLAN_B05.md` §8 defines). The README's "not edited" list binds Mode D's package; B-1 moves the code and changes no rule |
-| `ranks_of_truth` | imports `_require_integer_ids` from `scoring` |
-| `tests/unit/test_measurement_ranking.py` | imports from `scoring` |
+| `run_mode_c` (*not done, 2026-11-07: retired in K8-6b*) | `score_patients`, importing the ranking from `scoring`. Its metrics, ranks, digests and the manifest's semantic fields stay equal before and after (timestamps, revision and run metadata excluded, as `../scorer-measurement/PLAN_B05.md` §8 defines). The README's "not edited" list binds Mode D's package; B-1 moves the code and changes no rule |
+| `ranks_of_truth` | imports `_require_integer_ids` from `scoring`. *Not done (2026-11-07): `ranks_of_truth` and `_require_integer_ids` both retired with Mode C's executor in K8-6b* |
+| `tests/unit/test_measurement_ranking.py` | imports from `scoring`. *Not done (2026-11-07): the file was deleted in K8-6b, its still-valid checks moved to the task tests* |
 | `tests/unit/test_scoring_primitives.py` | the clamp test (`test_pooling_clamps_out_of_range_indices`) is inverted into a refusal; its other uses of `pool_patient_embeddings` move to `masked_mean_pool`. `test_exact_ties_break_by_candidate_order` stays while `served_mixture/v1` is served, and goes when it retires |
 | B-1's serving path | `score_patients`, then the selection |
 | `_calculate_gnn_score`, `cosine_scores`, `normalise_cosine_to_unit_interval`, `mix_embedding_and_sp_scores` | used by `served_mixture/v1` only; deleted when it retires. The owner's switch default decides when |
@@ -288,6 +339,8 @@ task (Eq 12–14). For disease ranking, SP here is the optional, default-off ana
 whose sorting and filtering change the view only and never the canonical rank. The one table of the
 paper's three tasks, their inputs, formulas, status, this project's differences and where each
 would land is `docs/ARCHITECTURE.md` §3, kept in one place so two copies cannot drift.
+*(2026-10-27: the paper-aligned disease model is scheduled as work package A; the recipe, its
+sources and deviations are [`../scorer-retraining/README.md`](../scorer-retraining/README.md) §2.)*
 
 ---
 
@@ -328,9 +381,12 @@ Values are stable **within** a result. Comparing them **across** results is mean
 KG and SP fingerprints, `max_hops`, traversal semantics and mapping coverage all match; any surface
 placing two results side by side checks compatibility and says so when it fails.
 
-Candidate-relative normalisation — the form the reference paper uses — is deferred by institutional
-decision. If adopted, C7 requires its reference set fixed to the canonical selected set at result
-production, never to a page or a filtered subset.
+Candidate-relative normalisation is deferred by institutional decision. If adopted, C7 requires its
+reference set fixed to the canonical selected set at result production, never to a page or a
+filtered subset. *(Corrected 2026-10-27: this text called candidate-relative normalisation "the form
+the reference paper uses". It is not. The paper's released code normalises the gene task's SP with
+fixed bounds fitted on simulated patients, not over a candidate list
+([`../scorer-retraining/README.md`](../scorer-retraining/README.md) §6; `SP_SCORE_GUIDE.md` §3).)*
 
 ### 3.3 Status
 

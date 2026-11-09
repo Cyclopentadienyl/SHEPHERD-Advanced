@@ -6,8 +6,11 @@ Diagnosis: the "Model in use" card and its Details (M5-2, UI-B).
 - **one status read with a 5 s limit**, through the dashboard's one reader; a
   read that does not answer in time is "timed out (5 s)", one that fails says
   why; nothing raises;
-- **what is served**, as the card names it: no model loaded, a graph without
-  a trained model, a model supplied in memory, a checkpoint;
+- **what is served**, as the card names it: no model loaded, or a model read
+  from its checkpoint (K7: nothing else is served). The served status is the
+  one a disease child gives (`_status`: scoring mode ``disease_task``, its run
+  under ``runs/gatv2``, no SP table, eta None); every served model is a
+  finetuned task's (K8-4);
 - **the served checkpoint's place** in the serving workspace's runs, from the
   status's served paths, found again in the server's list, **no file opened**;
 - **trained on: the checkpoint's own record**, never the served workspace's
@@ -71,9 +74,10 @@ def demo_workspace(tmp_path_factory):
 
 @pytest.fixture
 def root(demo_workspace, tmp_path, monkeypatch):
-    """A workspaces root: ``demo`` with two gat runs; the older run's
-    checkpoint records a dataset fingerprint that is NOT the workspace's
-    (an in-place rebuild since), so the two can be told apart."""
+    """A workspaces root: ``demo`` with two disease child runs, filed under
+    ``gatv2`` as training files them; the older run's checkpoint records a
+    dataset fingerprint that is NOT the workspace's (an in-place rebuild
+    since), so the two can be told apart."""
     from src.utils.checkpoint_io import write_checkpoint
 
     root = tmp_path / "root"
@@ -84,10 +88,10 @@ def root(demo_workspace, tmp_path, monkeypatch):
     now = time.time()
     for index, (run, name, epoch, fp) in enumerate([(NEWER, "model-12.pt", 12, fingerprint),
                                                      (RUN, "model-05.pt", 5, recorded)]):
-        directory = workspace / "runs" / "gat" / run / "checkpoints"
+        directory = workspace / "runs" / "gatv2" / run / "checkpoints"
         directory.mkdir(parents=True)
         shas[name] = write_checkpoint({"checkpoint_kind": "weights", "epoch": epoch,
-                                       "logs": {"val_mrr": 0.24},
+                                       "logs": {"val_pooled_mrr": 0.24},
                                        "training_input_digests": {"split_manifest": fp}},
                                       directory / name)
         os.utime(directory / name, (now - index * 3600, now - index * 3600))
@@ -98,25 +102,27 @@ def root(demo_workspace, tmp_path, monkeypatch):
 
 
 def _status(root, served="model-05.pt", run=RUN, **extra):
+    """The status a disease child's pipeline gives (`get_pipeline_config`), in
+    the parts the card reads: scoring mode ``disease_task``, no SP table, eta
+    None."""
     sha = root["shas"].get(served)
     kg = json.loads((root["workspace"] / "split_manifest.json").read_text())["artifacts"]["kg"]
     status = {
         "initialized": True, "gnn_ready": True,
         "current_data_dir": str(root["workspace"]),
-        "current_checkpoint_path": str(root["workspace"] / "runs" / "gat" / run / "checkpoints"
+        "current_checkpoint_path": str(root["workspace"] / "runs" / "gatv2" / run / "checkpoints"
                                        / served),
-        "checkpoint_meta": {"epoch": 5, "params": 6569, "val_mrr": 0.241},
-        "fingerprint_warnings": [],
+        "checkpoint_meta": {"epoch": 5, "params": 6569, "val_pooled_mrr": 0.241},
         "served_identity": {
-            "scoring_mode": "gnn_only",
+            "scoring_mode": "disease_task",
             "checkpoint": {"state": "verified", "sha256": sha},
             "graph": {"state": "verified", "kg_sha256": kg,
                       "split_manifest_sha256": root["fingerprint"]},
-            "shortest_paths": {"state": "absent", "build_id": None, "max_hops": None},
+            "shortest_paths": {"state": "absent"},
             "dataset_record": {"state": "verified", "origin": "synthetic", "sha256": "e" * 64},
-            "settings": {"device": "cpu", "device_requested": "cpu", "eta": 1.0,
+            "settings": {"device": "cpu", "device_requested": "cpu", "eta": None,
                          "max_path_length": 4, "path_length_penalty": 0.5,
-                         "aggregation_method": "max", "max_paths_per_candidate": 10,
+                         "max_paths_per_candidate": 10,
                          "use_direct_path_optimization": True,
                          "phenotype_normalisation_version": 1},
         },
@@ -176,20 +182,20 @@ def test_what_is_served_is_named_by_its_kind(root):
     assert card.served_kind({"initialized": False}) == "no_model"
     assert card.served_kind(None) == "unknown"
     assert card.served_kind(_status(root)) == "model"
-    absent = _status(root)
-    absent["served_identity"]["checkpoint"] = {"state": "absent", "sha256": None}
-    assert card.served_kind(absent) == "no_trained"
-    memory = _status(root)
-    memory["served_identity"]["checkpoint"] = {"state": "supplied_in_memory", "sha256": None}
-    assert card.served_kind(memory) == "in_memory"
+    # K7: a served pipeline is always a model read from its checkpoint; a
+    # status naming a retired state is not read as any kind of model.
+    for retired in ("absent", "supplied_in_memory"):
+        status = _status(root)
+        status["served_identity"]["checkpoint"] = {"state": retired, "sha256": None}
+        assert card.served_kind(status) == "unknown"
 
 
 def test_the_served_checkpoint_is_found_in_the_runs_without_opening_it(root, no_checkpoint_opened):
     item, why = card.served_item(_status(root), "demo")
     assert why is None
-    assert (item["architecture"], item["run"], item["filename"]) == ("gat", RUN, "model-05.pt")
+    assert (item["architecture"], item["run"], item["filename"]) == ("gatv2", RUN, "model-05.pt")
     assert item["sha256"] == root["shas"]["model-05.pt"] and item["epoch"] == 5
-    assert item["validation"] == {"metric": "val_mrr", "value": 0.241}
+    assert item["validation"] == {"metric": "val_pooled_mrr", "value": 0.241}
 
 
 def test_a_checkpoint_outside_the_runs_or_unlisted_is_said_to_be(root, tmp_path):
@@ -197,7 +203,7 @@ def test_a_checkpoint_outside_the_runs_or_unlisted_is_said_to_be(root, tmp_path)
     assert card.served_item(outside, "demo") == (
         None, "the checkpoint in use is not in the serving workspace's runs")
     missing = _status(root, current_checkpoint_path=str(
-        root["workspace"] / "runs" / "gat" / RUN / "checkpoints" / "gone.pt"))
+        root["workspace"] / "runs" / "gatv2" / RUN / "checkpoints" / "gone.pt"))
     assert card.served_item(missing, "demo")[1] == (
         "the checkpoint in use is not in the serving workspace's list")
     assert card.served_item(_status(root), None)[1] == (
@@ -267,7 +273,7 @@ def test_the_timer_never_opens_a_checkpoint(root, no_checkpoint_opened):
 def test_a_file_rewritten_since_it_was_loaded_is_not_read_as_the_models(root):
     from src.utils.checkpoint_io import write_checkpoint
 
-    path = root["workspace"] / "runs" / "gat" / RUN / "checkpoints" / "model-05.pt"
+    path = root["workspace"] / "runs" / "gatv2" / RUN / "checkpoints" / "model-05.pt"
     status = _status(root)
     write_checkpoint({"checkpoint_kind": "weights", "epoch": 6,
                       "training_input_digests": {"split_manifest": root["fingerprint"]}}, path)
@@ -298,7 +304,7 @@ def test_other_bytes_at_the_served_file_are_said_not_the_model_loaded_before_tor
     control = _state(root, status=status)["facts"]["trained"]
     assert control == {"state": "read", "fingerprint": root["recorded"], "problem": None}
 
-    path = root["workspace"] / "runs" / "gat" / RUN / "checkpoints" / "model-05.pt"
+    path = root["workspace"] / "runs" / "gatv2" / RUN / "checkpoints" / "model-05.pt"
     data = path.read_bytes()
     if bytes_now == "another checkpoint":
         buffer = io.BytesIO()
@@ -405,11 +411,10 @@ def test_another_served_identity_sets_the_change_notice(root):
     assert later["change"] == {"at": "10:31 UTC", "was": old, "now": new, "same_model": False}
     assert f"Model changed at 10:31 UTC</b> — was {old}, now {new}" in card.body_html(later)
     assert card.dismiss_change(later)["change"] is None
-    # Another part of what is served (the SP table), same model: said so.
-    sp = _status(root)
-    sp["served_identity"]["shortest_paths"] = {"state": "verified", "build_id": "b1",
-                                               "max_hops": 3}
-    other = card.advance(first, sp, None, now=NOW, operator=True, d8_short=None,
+    # Another part of what is served (the device it runs on), same model: said so.
+    moved = _status(root)
+    moved["served_identity"]["settings"].update(device="cuda", device_requested="cuda")
+    other = card.advance(first, moved, None, now=NOW, operator=True, d8_short=None,
                          open_checkpoints=False)
     assert other["change"]["same_model"] is True
     assert "same model" in card.body_html(other)
@@ -460,7 +465,7 @@ def test_a_queued_refresh_reads_the_recorded_tests_again_without_opening_the_che
 
     first = _state(root)
     assert "Recorded tests: no ledger" in card.body_html(first)
-    ledger = root["workspace"] / "runs" / "gat" / RUN / "checkpoints" / "evaluations.json"
+    ledger = root["workspace"] / "runs" / "gatv2" / RUN / "checkpoints" / "evaluations.json"
     ledger.write_text("{not json")
 
     def refuse(*args, **kwargs):
@@ -487,22 +492,20 @@ def test_a_queued_refresh_reads_the_recorded_tests_again_without_opening_the_che
 # --------------------------------------------------------------------------- the card's states
 def test_the_normal_card_names_the_model_its_fingerprint_and_its_states(root):
     body = card.body_html(_state(root))
-    assert "GAT · run 2026-10-17 09:15 · epoch 5" in body
+    assert ('<p class="shep-dx-name">Disease task model</p><p class="shep-dx-line shep-dx-sub">'
+            "GATv2 · run 2026-10-17 09:15 · epoch 5</p>") in body
     assert f'>{root["shas"]["model-05.pt"][:12]}</code>' in body and "verified</span>" in body
-    assert "synthetic data" in body and "no SP table" in body
+    # A disease model uses no SP table, so it is not missing one.
+    assert "synthetic data" in body and "no SP table" not in body
     assert "no trained model" not in body and "unverified" not in body
     assert "Recorded tests: no ledger" in body
 
 
 def test_mode_chips_appear_only_when_true(root):
-    files = _status(root)
-    files["served_identity"]["dataset_record"]["origin"] = "files"
-    files["served_identity"]["shortest_paths"] = {"state": "verified", "build_id": "b",
-                                                  "max_hops": 3}
-    body = card.body_html(_state(root, status=files))
-    assert "synthetic data" not in body and "no SP table" not in body
-    no_gnn = _status(root, gnn_ready=False)
-    assert "GNN not loaded" in card.body_html(_state(root, status=no_gnn))
+    # A dataset of origin "files" gets no chip.
+    task = _status(root)
+    task["served_identity"]["dataset_record"]["origin"] = "files"
+    assert "synthetic data" not in card.body_html(_state(root, status=task))
 
 
 def test_no_model_loaded_turns_run_off_and_offers_a_load(root):
@@ -514,16 +517,20 @@ def test_no_model_loaded_turns_run_off_and_offers_a_load(root):
     assert not card.details_visible(state)
 
 
-def test_a_graph_without_a_trained_model_keeps_run_on(root):
+def test_a_status_naming_no_trained_model_is_not_shown_as_one(root):
+    """K7 (PATH1): no graph is served without a model, so the card has no
+    "no trained model" state. A status from a server that still names one says
+    only that it did not say what is served; Run stays on, and the service
+    answers or refuses with its reason."""
     status = _status(root)
     status["served_identity"]["checkpoint"] = {"state": "absent", "sha256": None}
     status["gnn_ready"] = False
     state = _state(root, status=status)
     assert not card.run_blocked(state)
     body = card.body_html(state)
-    assert "No trained model" in body and "path reasoning only" in body
-    assert "graph from workspace <b>demo</b>" in body and "no trained model</span>" in body
-    assert "GNN not loaded" not in body and "no SP table" not in body
+    assert "The status did not say what is served." in body
+    assert "No trained model" not in body and "path reasoning" not in body
+    assert "no trained model" not in body
 
 
 def test_names_are_escaped(root, tmp_path, monkeypatch):
@@ -541,11 +548,18 @@ def test_details_add_what_a_served_model_has_to_model_facts(root):
     for text in ("Knowledge graph served (kg.json)", "Dataset record served (kg.provenance.json)",
                  "origin synthetic", "6,569 params", root["recorded"]):
         assert text in identity
-    assert "Validation MRR (Trainer, top-20) 0.2410" in html
+    assert "Validation pooled MRR (Trainer) 0.2410" in html
+    # The card reads no model record: no Task or Configuration row claims one
+    # is unreadable (K6 decision 4 names the task in the name line instead).
+    assert "Record not" not in html and 'class="shep-k">Task<' not in identity
+    assert 'class="shep-k">Configuration<' not in identity
     assert 'data-key="models">Full records: Research › Models ›' in html
-    assert "Graph structural fingerprint: no warnings · GNN loaded" in html
+    # The structural fingerprint is compared by nothing at load (K8-4): no line.
+    assert "structural fingerprint" not in html
     warnings = html[html.index('data-sec="warnings"'):]
-    assert "SYNTHETIC WORKSPACE" in warnings and "NO SHORTEST-PATH TABLE" in warnings
+    # A disease model uses no SP table: no warning that it lacks one.
+    assert "SYNTHETIC WORKSPACE" in warnings and "NO SHORTEST-PATH TABLE" not in warnings
+    assert "SP not used by this task" in html
     assert "TRAINED ON A DATASET NO LISTED WORKSPACE HOLDS" in warnings
 
 
@@ -584,7 +598,7 @@ def test_details_say_not_recorded_when_the_checkpoint_records_no_dataset(root):
     from src.utils.checkpoint_io import write_checkpoint
 
     run = "20261019-080000_run_0d0d0d"
-    directory = root["workspace"] / "runs" / "gat" / run / "checkpoints"
+    directory = root["workspace"] / "runs" / "gatv2" / run / "checkpoints"
     directory.mkdir(parents=True)
     root["shas"]["model-01.pt"] = write_checkpoint({"checkpoint_kind": "weights", "epoch": 1},
                                                    directory / "model-01.pt")
@@ -593,41 +607,6 @@ def test_details_say_not_recorded_when_the_checkpoint_records_no_dataset(root):
     html = card.served_facts_html(state)
     assert "not recorded" in _section(html, "identity") and "not recorded" in _section(html, "data")
     assert "DATASET NOT RECORDED" in html
-
-
-def test_structural_warnings_are_named_for_what_they_compare(root):
-    status = _status(root, fingerprint_warnings=["Node count mismatch for 'gene': 3 vs 4"])
-    html = card.served_facts_html(_state(root, status=status))
-    assert "structural fingerprint</b> (1; node types and counts" in html
-    assert "not the graph's identity" in html and "Node count mismatch" in html
-    assert "KG version mismatch" not in html
-    # The list takes the page's list class (its markers inside the amber box).
-    assert '<ul class="shep-dx-list"><li>Node count mismatch' in html
-
-
-def test_the_structural_line_counts_differences_and_says_when_nothing_was_compared(root):
-    """With the comparator's own answers (`verify_fingerprint`): its headline
-    is not counted or listed as a difference, and a checkpoint with no
-    structural fingerprint (seen in the demo workspace) is "not compared",
-    never "differs"."""
-    from src.utils.fingerprint import verify_fingerprint
-
-    differs = verify_fingerprint(
-        {"data_fingerprint": {"node_types": [], "node_counts": {"gene": 3}, "num_edge_types": 0,
-                              "feature_dims": {}}},
-        {"num_nodes_dict": {"gene": 4}})
-    assert len(differs) == 2                      # the headline and one difference
-    line = card._structure_line(_status(root, fingerprint_warnings=differs))
-    assert "structural fingerprint</b> (1; node types" in line
-    assert line.count("<li>") == 1 and "Node count mismatch for &#x27;gene&#x27;" in line
-    legacy = verify_fingerprint({}, {})
-    line = card._structure_line(_status(root, fingerprint_warnings=legacy))
-    assert "Graph structure not compared</b> (the checkpoint records no structural fingerprint" in line
-    assert "differs" not in line and "compared, not" not in line
-    many = [differs[0]] + [f"Node count mismatch for 't{i}': checkpoint expects 1, current data has 2"
-                           for i in range(5)]
-    line = card._structure_line(_status(root, fingerprint_warnings=many))
-    assert "(5; " in line and line.count("<li>") == 3 and "and 2 more" in line
 
 
 def test_details_open_at_the_section_asked_for(root):
@@ -658,3 +637,131 @@ def test_the_cards_times_are_utc_and_say_so_on_a_server_in_another_zone(root):
                              d8_short=None, open_checkpoints=True)
         assert later["change"]["at"] == "15:52 UTC"
         assert "Model changed at 15:52 UTC</b>" in card.body_html(later)
+
+
+# --------------------------------------------------------------------------- the task (K6)
+#: A model bundle's run, filed under its encoder kind as training files it.
+BUNDLE_RUN = "20261021-090000_run_bundle"
+
+
+def _bundle_status(root, mode, *, served=True):
+    """A finetuned bundle served from ``runs/gatv2`` (K6 decision 4: the card
+    names its task), in the scoring mode of its task; no table, the gene
+    model's distances computed from its view."""
+    from src.utils.checkpoint_io import write_checkpoint
+
+    directory = root["workspace"] / "runs" / "gatv2" / BUNDLE_RUN / "checkpoints"
+    directory.mkdir(parents=True, exist_ok=True)
+    sha = write_checkpoint({"checkpoint_kind": "weights", "epoch": 3}, directory / "last.pt")
+    status = _status(root)
+    status["current_checkpoint_path"] = str(directory / "last.pt") if served else "/x/last.pt"
+    identity = status["served_identity"]
+    identity["scoring_mode"] = mode
+    identity["checkpoint"]["sha256"] = sha
+    identity["shortest_paths"] = {"state": "computed" if mode == "gene_task" else "absent"}
+    identity["settings"]["eta"] = 0.5 if mode == "gene_task" else None
+    return status
+
+
+@pytest.mark.parametrize("mode, name", [("disease_task", "Disease task model"),
+                                        ("gene_task", "Gene task model"),
+                                        ("patients_like_me", "Patients-like-me task model")])
+def test_a_task_model_is_named_by_its_task_once(root, mode, name):
+    """Decision 4: the name line says the task (from the served scoring mode,
+    the one table), the run under it reads "GATv2", and no "Task:" line."""
+    from src.core.types import SCORING_MODE_TASKS
+
+    status = _bundle_status(root, mode)
+    assert card.served_task(status) == SCORING_MODE_TASKS[mode]
+    assert card.served_task({"initialized": False}) is None
+    body = card.body_html(_state(root, status=status))
+    assert (f'<p class="shep-dx-name">{name}</p><p class="shep-dx-line shep-dx-sub">GATv2 · '
+            f"run 2026-10-21 09:00 · epoch 5</p>") in body
+    assert body.count("task model") == 1 and "Task:" not in body and "GATV2" not in body
+    # Not in the served runs: the task still names it, the reason under it.
+    lost = card.body_html(_state(root, status=_bundle_status(root, mode, served=False)))
+    assert (f"<p class=\"shep-dx-name\">{name}</p><p class=\"shep-dx-line shep-dx-sub\">"
+            "Checkpoint · epoch 5 · the checkpoint in use is not in the serving workspace&#x27;s "
+            "runs</p>") in lost
+
+
+@pytest.mark.parametrize("mode", ["disease_task", "gene_task", "patients_like_me"])
+def test_a_task_model_misses_no_sp_table(root, mode):
+    """A task model is not missing a table it never uses: no "no SP table" chip
+    or warning; the serving note says what it uses."""
+    state = _state(root, status=_bundle_status(root, mode))
+    body = card.body_html(state)
+    details = card.served_facts_html(state)
+    assert "no SP table" not in body and "NO SHORTEST-PATH TABLE" not in details
+    note = "SP from the graph view" if mode == "gene_task" else "SP not used by this task"
+    assert note in details and "no SP table" not in details
+    assert "its task" in card.CARD_HELP[1]
+
+
+@pytest.fixture(scope="module")
+def registry_root(demo_workspace, tmp_path_factory):
+    """A registry with three versions: one imported against the demo
+    workspace (the card's served one: bound), one against the same graph
+    exported with other node features (another graph: `verify_cohort_binding`
+    compares all four graph digests), and an interrupted import (cannot be
+    read)."""
+    from tests.fixtures.registered_cohort import (
+        graph_source_cases,
+        import_version,
+        write_demo_workspace,
+        write_source,
+    )
+
+    root = tmp_path_factory.mktemp("cardregistry")
+    registry = root / "registry"
+    registry.mkdir()
+    source = write_source(root / "cases.json", graph_source_cases(demo_workspace))
+    import_version(registry, demo_workspace, source, label="bound-1")
+    other = write_demo_workspace(root / "other", feature_seed=7)
+    import_version(registry, other, source, label="other-1")
+    (registry / "versions" / "torn-1").mkdir()
+    return registry
+
+
+def test_a_patients_like_me_model_lists_the_reference_cohorts_on_a_queued_refresh(
+        root, registry_root, monkeypatch):
+    """The versions the Reference cohort select offers: every registry version,
+    each with whether it was mapped against the serving workspace's graph (the
+    registry's one comparison), a problem without a server path; listed on a
+    queued refresh and kept on the timer; none for another model."""
+    from src.api.services import server_lists
+
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(registry_root))
+    status = _bundle_status(root, "patients_like_me")
+    first = _state(root, status=status)
+    cohorts = first["facts"]["cohorts"]
+    assert cohorts["problem"] is None
+    by_label = {v["label"]: v for v in cohorts["versions"]}
+    assert list(by_label) == ["bound-1", "other-1", "torn-1"]
+    assert by_label["bound-1"]["binding"] == "bound"
+    assert by_label["bound-1"]["manifest_sha256"] and not by_label["bound-1"]["problem"]
+    assert by_label["other-1"]["binding"] == "another"
+    assert "node_features" in by_label["other-1"]["binding_words"]
+    assert by_label["torn-1"]["problem"].startswith("<registry>/versions/torn-1 has no")
+    assert str(registry_root) not in str(cohorts)
+    # The timer keeps them: the registry is not listed again.
+    monkeypatch.setattr(server_lists, "list_cohort_versions",
+                        lambda **kw: pytest.fail("the timer listed the registry"))
+    kept = card.advance(first, status, None, now=NOW, operator=True, d8_short=None,
+                        open_checkpoints=False)
+    assert kept["facts"]["cohorts"] == cohorts
+    # Another model lists none.
+    assert _state(root, status=_bundle_status(root, "disease_task"))["facts"]["cohorts"] is None
+
+
+def test_no_registry_is_said_without_a_path(root, tmp_path, monkeypatch):
+    monkeypatch.delenv("SHEPHERD_REGISTRY", raising=False)
+    cohorts = card.reference_cohorts("demo", [], {})
+    assert cohorts["versions"] == [] and "SHEPHERD_REGISTRY is not set" in cohorts["problem"]
+    registry = tmp_path / "reg"
+    registry.mkdir()
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(registry))
+    said = card.redacted(f"the registry {registry} holds no cohort version 'x' (no "
+                         f"{registry}/versions/x); see /etc/shepherd/notes.txt")
+    assert said == ("the registry <registry> holds no cohort version 'x' (no "
+                    "<registry>/versions/x); see a server path")

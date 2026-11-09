@@ -20,13 +20,10 @@
 # Usage:
 #   from src.reasoning import PathReasoner, ExplanationGenerator
 #
-#   # Path reasoning
+#   # Path reasoning: the evidence paths that explain a disease row
 #   reasoner = create_path_reasoner()
-#   candidates = reasoner.get_top_candidates(
-#       source_ids=patient_phenotypes,
-#       kg=knowledge_graph,
-#       top_k=10,
-#   )
+#   paths = reasoner.find_paths(patient_phenotypes, NodeType.DISEASE, knowledge_graph)
+#   scored_paths = reasoner.score_paths(paths, knowledge_graph)
 #
 #   # Generate explanations
 #   generator = ExplanationGenerator()
@@ -59,7 +56,6 @@ from src.reasoning.evidence_panel import (
     EvidencePackage,
     EvidenceMode,
     ConfidenceLabel,
-    AnalogyMatch,
     create_evidence_panel,
 )
 
@@ -81,6 +77,5 @@ __all__ = [
     "EvidencePackage",
     "EvidenceMode",
     "ConfidenceLabel",
-    "AnalogyMatch",
     "create_evidence_panel",
 ]

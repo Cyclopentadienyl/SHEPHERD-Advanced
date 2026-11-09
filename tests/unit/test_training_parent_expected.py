@@ -26,7 +26,10 @@ refusal from them, with the action for where the fingerprint was shown):
   its decisions came from, whether or not the caller sent a digest.
 
 Through the real runner, the real training process, the real route and the
-console's handlers.
+console's handlers, every one continuing paused model bundle bases: the API is
+a strict base start (K7), the dashboard offers model records only (K6 decision
+1), and the runner's and the process's tests moved from ShepherdGNN runs in
+K8-2c (TM1 retires that path in K8-7).
 
 Module: tests/unit/test_training_parent_expected.py
 """
@@ -62,30 +65,46 @@ PROCESS_CHANGED = f"train_model: refused: {CHANGED}; choose it again."
 #: last Check's (verification of the root-cause round, P3-3).
 REFRESH = "Refresh the list, then choose it again."
 CHECK_AGAIN = "Click Check checkpoint to read the file there now."
-TINY = {"device": "cpu", "hidden_dim": 16, "num_heads": 2, "num_layers": 1, "num_workers": 0,
-        "use_amp": False, "batch_size": 4, "num_epochs": 2, "warmup_steps": 1,
-        "pause_after_epoch": 1}
-#: Three paused runs on one workspace: two of the same architecture, one not.
-RUNS = {"a": ("gat", 1), "same": ("gat", 2), "other": ("sage", 3)}
+#: Three paused bases on one workspace, by seed: ``same`` of the first one's
+#: model spec, ``other`` of another (a wider encoder; a bundle's one buildable
+#: encoder kind is gatv2, so another spec stands where a ShepherdGNN run of
+#: another conv type stood).
+RUNS = {"a": 1, "same": 2, "other": 3}
 
 
 def _sha(path: Path) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+def _other_spec():
+    """The ``other`` base's model spec: the demo's small base spec
+    (`small_base_spec`) with a wider encoder."""
+    import dataclasses
+
+    from tests.fixtures.trained_children import small_base_spec
+
+    spec = small_base_spec()
+    return dataclasses.replace(
+        spec, encoder=dataclasses.replace(spec.encoder, hidden=8, output=8)).validate().to_dict()
+
+
 @pytest.fixture(scope="module")
 def trained(tmp_path_factory):
-    """A workspace a workspaces root lists (``data``), with three paused runs
-    trained for real on the CPU in its run layout."""
-    import scripts.train_model as train_model
-    from tests.fixtures.trainable_workspace import write_trainable_workspace
+    """A workspace a workspaces root lists (``data``), with three paused model
+    bundle bases trained for real on the CPU in its run layout (the Continue
+    drawer offers model records only)."""
+    sys.path.insert(0, str(REPO / "scripts"))
+    import train_model
+    from tests.fixtures.base_workspace import write_base_workspace
+    from tests.unit.test_train_base_stage import _config
 
     root = tmp_path_factory.mktemp("parents")
-    ws = write_trainable_workspace(root)
-    for name, (arch, seed) in RUNS.items():
-        run = ws / "runs" / arch / f"20261001-00000{seed}_{name}_aaaaa{seed}"
-        train_model.train(train_model.TrainConfig(data_dir=str(ws), run_dir=str(run),
-                                                  conv_type=arch, seed=seed, **TINY))
+    ws = write_base_workspace(root)
+    for name, seed in RUNS.items():
+        run = ws / "runs" / "gatv2" / f"20261001-00000{seed}_{name}_aaaaa{seed}"
+        spec = {"model_spec": _other_spec()} if name == "other" else {}
+        # `_config` states every field it sets as the explicit set.
+        train_model.train(*_config(ws, run, seed=seed, pause_after_epoch=1, **spec))
     return root
 
 
@@ -97,15 +116,17 @@ def case(trained, tmp_path, monkeypatch):
     shutil.copytree(trained, root)
     ws = root / "data"
     monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(root))
-    parents = {name: next((ws / "runs" / arch).glob(f"*_{name}_*")) / "checkpoints" / "last.pt"
-               for name, (arch, _seed) in RUNS.items()}
+    parents = {name: next((ws / "runs" / "gatv2").glob(f"*_{name}_*")) / "checkpoints" / "last.pt"
+               for name in RUNS}
     return {"root": root, "ws": ws, "parents": parents,
             "dataset": _sha(ws / "split_manifest.json")}
 
 
 def _start(manager, case, monkeypatch, swap=None, **kwargs):
     """A continued run through the real runner, `swap` applied when the
-    runner starts the process (after its own preview passed)."""
+    runner starts the process (after its own preview passed). The request
+    names no stage, as the console's does: the runner reads it from the
+    parent's record."""
     real = subprocess.Popen
     seen = {}
 
@@ -117,7 +138,7 @@ def _start(manager, case, monkeypatch, swap=None, **kwargs):
 
     monkeypatch.setattr(tm.subprocess, "Popen", spawn)
     return manager.start_training(
-        {"data_dir": str(case["ws"]), "device": "cpu", "num_workers": 0,
+        {"data_dir": str(case["ws"]), "device": "cpu",
          "resume_from": str(case["parents"]["a"])},
         expected_dataset_fingerprint=case["dataset"], **kwargs), seen
 
@@ -149,7 +170,8 @@ def test_positive_control_the_parent_shown_is_continued_and_recorded(case, monke
     job, log = _wait(manager)
     assert job.status == "completed", log[-3000:]
     run = Path(started["run_dir"])
-    assert run.parent.name == "gat"
+    # Filed under the parent's architecture: a bundle base's encoder kind.
+    assert run.parent.name == "gatv2"
     record = torch.load(run / "checkpoints" / "last.pt", weights_only=True, map_location="cpu")
     assert record["training_input_digests"]["resume_checkpoint"] == shown
     # A precondition, not a setting: never in what the run records.
@@ -161,11 +183,10 @@ def test_positive_control_the_parent_shown_is_continued_and_recorded(case, monke
 def test_a_parent_replaced_after_the_runners_preview_is_refused_by_the_process(
         case, monkeypatch, swapped):
     """The finder's and the skeptic's cases: another paused run's last.pt
-    (``same``: the same architecture; ``other``: SAGE where the runner placed
-    the run under GAT) put at the parent's path when the process starts. It
-    used to complete and record the other parent; it is refused before it is
-    loaded, exit 1, no traceback, and no run directory under either
-    architecture."""
+    (``same``: the same model spec; ``other``: another spec, where the runner
+    decided from the first parent's) put at the parent's path when the process
+    starts. It used to complete and record the other parent; it is refused
+    before it is loaded, exit 1, no traceback, and no run directory left."""
     shown = _sha(case["parents"]["a"])
     before = set((case["ws"] / "runs").rglob("*"))
     manager = tm.TrainingManager()
@@ -177,7 +198,7 @@ def test_a_parent_replaced_after_the_runners_preview_is_refused_by_the_process(
     assert PROCESS_CHANGED in log, log[-3000:]
     other = _sha(case["parents"][swapped])
     assert f"holds {other[:12]}..., not the {shown[:12]}... expected. Nothing was written." in log
-    assert "Traceback" not in log and "Resume parent accepted" not in log
+    assert "Traceback" not in log and "parent accepted:" not in log
     assert not Path(started["run_dir"]).exists(), "a refused run left its directory"
     assert set((case["ws"] / "runs").rglob("*")) == before
 
@@ -211,10 +232,14 @@ def test_the_runners_preview_refuses_a_parent_that_is_not_the_one_shown(case, mo
 
 
 def test_a_parent_digest_without_a_parent_is_refused(case):
+    """A new run (a base start: a stage-less one is not a run TM12 starts)
+    sent with a parent's digest."""
     with patch.object(tm.subprocess, "Popen") as popen:
-        result = tm.TrainingManager().start_training({"data_dir": str(case["ws"])},
-                                                     expected_parent_sha256="a" * 64)
+        result = tm.TrainingManager().start_training(
+            {"data_dir": str(case["ws"]), "learning_stage": "base", "device": "cpu"},
+            expected_parent_sha256="a" * 64)
     assert result["success"] is False and "continues no checkpoint" in result["error"]
+    assert "invalid_settings" not in result
     popen.assert_not_called()
 
 
@@ -270,7 +295,7 @@ def _cli(*args: str) -> subprocess.CompletedProcess:
 def test_the_cli_refuses_another_parent_before_anything_is_written(case, tmp_path):
     shown = _sha(case["parents"]["a"])
     _swap(case, "other")()
-    done = _cli("--data-dir", str(case["ws"]), "--device", "cpu", "--resume",
+    done = _cli("--data-dir", str(case["ws"]), "--stage", "base", "--device", "cpu", "--resume",
                 str(case["parents"]["a"]), "--run-dir", str(tmp_path / "run"),
                 "--expect-resume-sha256", shown)
     assert done.returncode == 1, done.stderr[-2000:]
@@ -280,7 +305,7 @@ def test_the_cli_refuses_another_parent_before_anything_is_written(case, tmp_pat
 
 @pytest.mark.parametrize("bad", ["abc", "A" * 64, ""])
 def test_the_cli_rejects_a_malformed_parent_digest_at_parsing(case, bad):
-    done = _cli("--data-dir", str(case["ws"]), "--expect-resume-sha256", bad)
+    done = _cli("--data-dir", str(case["ws"]), "--stage", "base", "--expect-resume-sha256", bad)
     assert done.returncode == 2 and "is not a SHA-256" in done.stderr
 
 
@@ -288,9 +313,9 @@ def test_a_parent_digest_for_a_run_that_continues_none_is_refused(case, tmp_path
     import scripts.train_model as train_model
 
     config = train_model.TrainConfig(data_dir=str(case["ws"]), device="cpu",
-                                     run_dir=str(tmp_path / "run"))
+                                     run_dir=str(tmp_path / "run"), learning_stage="base")
     with pytest.raises(ValueError, match="continues none"):
-        train_model.train(config, set(), expected_resume_sha256="a" * 64)
+        train_model.train(config, {"learning_stage", "device"}, expected_resume_sha256="a" * 64)
     assert not (tmp_path / "run").exists()
 
 
@@ -310,12 +335,13 @@ def _client(monkeypatch):
 def test_an_api_start_is_bound_to_the_parent_with_or_without_the_parameter(case, monkeypatch):
     """The route's optional ``expected_parent_sha256``: a different parent is
     refused (409) by the runner's preview; without it, a parent replaced after
-    the preview is refused by the process."""
+    the preview is refused by the process. The route continues a base (K7,
+    TM11: a strict base start), so the parents are paused model bundle bases."""
     client, routes = _client(monkeypatch)
     fresh = tm.TrainingManager()
     monkeypatch.setattr(routes, "training_manager", fresh)
     shown = _sha(case["parents"]["a"])
-    body = {"data_dir": str(case["ws"]), "device": "cpu", "num_workers": 0,
+    body = {"data_dir": str(case["ws"]), "learning_stage": "base", "device": "cpu",
             "resume_from": str(case["parents"]["a"])}
 
     with patch.object(tm.subprocess, "Popen") as popen:
@@ -350,9 +376,10 @@ def test_the_route_passes_the_parent_digest_to_the_service(monkeypatch):
         return {"success": True}
 
     monkeypatch.setattr(routes.training_manager, "start_training", start)
-    assert client.post("/api/v1/training/start", json={}).status_code == 200
+    body = {"data_dir": "data/workspaces/x", "learning_stage": "base"}
+    assert client.post("/api/v1/training/start", json=body).status_code == 200
     assert seen["expected_parent_sha256"] is None
-    client.post(f"/api/v1/training/start?expected_parent_sha256={'b' * 64}", json={})
+    client.post(f"/api/v1/training/start?expected_parent_sha256={'b' * 64}", json=body)
     assert seen["expected_parent_sha256"] == "b" * 64
 
 
@@ -367,7 +394,7 @@ def console(case, monkeypatch):
     from src.webui.components import training_console as tc
 
     operator_mode(monkeypatch)
-    ws = tc._workspace_state("data")
+    ws = tc.workspace_state("data")
     parents, _problem = tc._list_parents(ws)
     started = []
 
@@ -377,7 +404,8 @@ def console(case, monkeypatch):
 
     monkeypatch.setattr(tc.training_manager, "start_training", start)
     key = next(k for k in parents if "_a_" in k and k.endswith("/last.pt"))
-    return {**case, "tc": tc, "state": ws, "listed": parents, "key": key, "started": started}
+    return {**case, "tc": tc, "state": ws, "listed": parents, "key": key,
+            "started": started}
 
 
 def _check(c, source, typed="", mode=None):
@@ -442,7 +470,7 @@ def test_a_listed_parent_whose_bytes_changed_since_it_was_listed_is_refused(cons
     _swap(console, "other")()
     text, _e, mode, _c = _check(console, tc.CONTINUE_FROM_LIST)
     assert CHANGED in text and f"(chosen: {shown[:12]}...)" in text and REFRESH in text
-    assert "data/runs/gat/" in text, "the refused check names the file"
+    assert console["key"] in text, "the refused check names the file by its list key"
     assert mode["parent"]["refused"] is True
 
 
@@ -455,9 +483,9 @@ def test_a_listed_parent_refused_as_changed_is_shown_again_by_refresh(console):
     _swap(console, "same")()
     text, _e, mode, _c = _check(console, tc.CONTINUE_FROM_LIST)
     assert CHANGED in text and REFRESH in text
-    mode, _compare = tc._on_parent_chosen(tc.CONTINUE_FROM_LIST, console["key"], "",
-                                          console["listed"], console["state"],
-                                          {**mode, "drawer": True})
+    mode, _compare, _details = tc._on_parent_chosen(tc.CONTINUE_FROM_LIST, console["key"], "",
+                                                    console["listed"], console["state"],
+                                                    {**mode, "drawer": True})
     again, _e, mode, _c = _check(console, tc.CONTINUE_FROM_LIST, mode=mode)
     assert CHANGED in again and REFRESH in again
     refreshed, _problem = tc._list_parents(console["state"])
@@ -477,7 +505,7 @@ def test_a_typed_parent_changed_after_the_consoles_check_is_refused_by_the_start
     from src.webui.components import training_console as tc
 
     operator_mode(monkeypatch)
-    ws = tc._workspace_state("data")
+    ws = tc.workspace_state("data")
     parents, _problem = tc._list_parents(ws)
     key = next(k for k in parents if "_a_" in k and k.endswith("/last.pt"))
     manager = tm.TrainingManager()

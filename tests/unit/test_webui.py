@@ -149,8 +149,8 @@ class TestTrainingConsoleHelpers:
             {"epoch": 1, "total": 2.0},
         ]
         val_data = [
-            {"epoch": 0, "val_loss": 3.0},
-            {"epoch": 1, "val_loss": 2.5},
+            {"epoch": 0, "val_lp_loss": 3.0},
+            {"epoch": 1, "val_lp_loss": 2.5},
         ]
         loss = training_charts({"train": train_data, "validation": val_data})[0]
         assert [s["label"] for s in loss["series"]] == ["train", "validation"]
@@ -158,111 +158,38 @@ class TestTrainingConsoleHelpers:
         assert loss["x"] == [1, 2]
         assert loss["series"][0]["values"] == [2.5, 2.0]
 
-    def test_the_hits_chart(self):
+    def test_the_companions_chart(self):
+        """A task model's companions by cut-off, from the keys its log holds
+        (the chart that a file without a model spec's Hits@K used to fill)."""
         from src.webui.components.training_console import training_charts
 
         val_data = [
-            {"epoch": 0, "val_hits@1": 0.05, "val_hits@10": 0.2},
-            {"epoch": 1, "val_hits@1": 0.1, "val_hits@10": 0.3},
+            {"epoch": 0, "val_pooled_mrr": 0.1, "val_pooled_top1": 0.05,
+             "val_pooled_top10": 0.2},
+            {"epoch": 1, "val_pooled_mrr": 0.2, "val_pooled_top1": 0.1,
+             "val_pooled_top10": 0.3},
         ]
-        hits = training_charts({"train": [], "validation": val_data})[2]
-        assert [s["label"] for s in hits["series"]] == ["Hits@1", "Hits@10"]
+        companions = training_charts({"train": [], "validation": val_data})[2]
+        assert [s["label"] for s in companions["series"]] == ["top-1", "top-10"]
         # Epochs should be 1-indexed for display
-        assert hits["x"] == [1, 2]
+        assert companions["x"] == [1, 2]
 
-    def test_collect_config(self, monkeypatch):
-        from src.webui.components import training_console as tc
-        from src.webui.components.training_console import _collect_config
-
-        # Isolate from any local .shepherd_runtime_settings.json so config["compile"]
-        # is deterministic.
-        monkeypatch.setattr(tc, "load_runtime_settings", lambda *a, **k: {})
-
-        config = _collect_config(
-            # Paths
-            data_dir="data/processed", run_name="  Pilot Run  ",
-            # Tier 1
-            num_epochs=50, learning_rate=0.001, batch_size="32",
-            conv_type="gat", device="auto", seed=42,
-            # Tier 2
-            hidden_dim="256", num_layers=4, dropout=0.1, weight_decay=0.01,
-            scheduler_type="cosine", warmup_steps=500, min_lr_ratio=0.1,
-            early_stopping_patience=10,
-            diagnosis_weight=1.0, link_prediction_weight=0.5,
-            contrastive_weight=0.3, ortholog_weight=0.2,
-            # Tier 3
-            gradient_accumulation_steps=1, max_grad_norm=1.0,
-            num_heads="8", use_ortholog_gate=True,
-            amp_mode="float16",
-            temperature=0.07, label_smoothing=0.1, margin=1.0,
-            num_neighbors_str="15, 10, 5", max_subgraph_nodes=5000,
-        )
-        assert config["num_epochs"] == 50
-        assert config["min_lr_ratio"] == 0.1
-        assert config["compile"] is False
-        assert config["learning_rate"] == 0.001
-        assert config["batch_size"] == 32
-        assert config["hidden_dim"] == 256
-        assert config["num_neighbors"] == [15, 10, 5]
-        assert config["data_dir"] == "data/processed"
-        assert config["run_name"] == "Pilot Run"
-        assert not {"output_dir", "checkpoint_dir", "log_dir"} & set(config)
-
-    def test_collect_config_strips_prefix(self, monkeypatch):
-        """Verify that SHEPHERD-Advanced/ display prefix is stripped from paths."""
-        from src.webui.components import training_console as tc
-        from src.webui.components.training_console import _collect_config
-
-        monkeypatch.setattr(tc, "load_runtime_settings", lambda *a, **k: {})
-
-        config = _collect_config(
-            # Paths with display prefix
-            data_dir="SHEPHERD-Advanced/data/processed",
-            run_name="",
-            # Tier 1
-            num_epochs=10, learning_rate=0.001, batch_size="32",
-            conv_type="gat", device="auto", seed=42,
-            # Tier 2
-            hidden_dim="256", num_layers=4, dropout=0.1, weight_decay=0.01,
-            scheduler_type="cosine", warmup_steps=500, min_lr_ratio=0.01,
-            early_stopping_patience=10,
-            diagnosis_weight=1.0, link_prediction_weight=0.5,
-            contrastive_weight=0.3, ortholog_weight=0.2,
-            # Tier 3
-            gradient_accumulation_steps=1, max_grad_norm=1.0,
-            num_heads="8", use_ortholog_gate=True,
-            amp_mode="float16",
-            temperature=0.07, label_smoothing=0.1, margin=1.0,
-            num_neighbors_str="15, 10, 5", max_subgraph_nodes=5000,
-        )
-        # Prefix should be stripped — backend uses project-root-relative paths
-        assert config["data_dir"] == "data/processed"
-        assert config["run_name"] == ""
-
-    def test_collect_config_compile_from_runtime_settings(self, monkeypatch):
-        """torch.compile is now sourced from Runtime Settings, not a Training widget."""
+    def test_the_base_start_takes_compile_from_the_runtime_settings(self, monkeypatch, tmp_path):
+        """torch.compile is sourced from Runtime Settings, not a Training widget:
+        the base form's Start reads it once (the form's own tests:
+        tests/unit/test_training_console_config.py)."""
         from src.webui.components import training_console as tc
 
-        common = dict(
-            data_dir="data/processed", run_name="",
-            num_epochs=10, learning_rate=0.001, batch_size="32",
-            conv_type="gat", device="auto", seed=42,
-            hidden_dim="256", num_layers=4, dropout=0.1, weight_decay=0.01,
-            scheduler_type="cosine", warmup_steps=500, min_lr_ratio=0.1,
-            early_stopping_patience=10,
-            diagnosis_weight=1.0, link_prediction_weight=0.5,
-            contrastive_weight=0.3, ortholog_weight=0.2,
-            gradient_accumulation_steps=1, max_grad_norm=1.0,
-            num_heads="8", use_ortholog_gate=True, amp_mode="float16",
-            temperature=0.07, label_smoothing=0.1, margin=1.0,
-            num_neighbors_str="15, 10, 5", max_subgraph_nodes=5000,
-        )
-
-        monkeypatch.setattr(tc, "load_runtime_settings", lambda *a, **k: {"torch_compile": True})
-        assert tc._collect_config(**common)["compile"] is True
-
-        monkeypatch.setattr(tc, "load_runtime_settings", lambda *a, **k: {})
-        assert tc._collect_config(**common)["compile"] is False
+        sent = []
+        monkeypatch.setattr(tc, "_workspace_path", lambda name: tmp_path / name)
+        monkeypatch.setattr(tc.training_manager, "start_training",
+                            lambda config, **k: sent.append(config) or {"success": True})
+        ws = {"name": "w", "row": {"name": "w", "dataset_fingerprint": "a" * 64,
+                                   "trainable": True}}
+        for runtime, expected in (({"torch_compile": True}, True), ({}, False)):
+            monkeypatch.setattr(tc, "load_runtime_settings", lambda *a, _r=runtime, **k: _r)
+            assert tc._start(ws, "", "cpu", tc.base_form_defaults()) == ""
+            assert sent[-1]["compile"] is expected
 
 
 # ==============================================================================
@@ -355,9 +282,9 @@ class TestErrorBanner:
         tail = "\n".join(f"line {i}" for i in range(30))
         html, _key = _build_error_banner_payload(
             {"error_message": f"Process exited with code 1\n\n--- Last output ---\n{tail}",
-             "current_epoch": 7, "total_epochs": 60}, None, run="gat/20261019-081500_run_7b10e4")
+             "current_epoch": 7, "total_epochs": 60}, None, run="gatv2/20261019-081500_run_7b10e4")
         assert "Training failed at epoch 7 of 60: Process exited with code 1" in html
-        assert "run <code>gat/20261019-081500_run_7b10e4</code>" in html
+        assert "run <code>gatv2/20261019-081500_run_7b10e4</code>" in html
         assert "line 29" in html and f"line {29 - BANNER_TAIL_LINES}" not in html
         assert 'data-act="dismiss"' in html
 

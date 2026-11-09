@@ -146,9 +146,9 @@ class _Backend:
         self._log = None
 
     def start(self, *, with_job: bool = True) -> "_Backend":
-        from tests.fixtures.trainable_workspace import write_trainable_workspace
+        from tests.fixtures.base_workspace import write_base_workspace
 
-        self.data = write_trainable_workspace(self.tmp_path / "case")
+        self.data = write_base_workspace(self.tmp_path / "case")
         self.root.mkdir(exist_ok=True)
         env = {k: v for k, v in os.environ.items()
                if k not in ("SHEPHERD_KG_PATH", "SHEPHERD_CHECKPOINT_PATH", "SHEPHERD_BIND_HOST")}
@@ -191,10 +191,12 @@ class _Backend:
         return self
 
     def training_request(self) -> dict:
-        """A training job held by its epochs, on the test's workspace."""
-        return dict(data_dir=str(self.data), run_name="held", device="cpu", num_epochs=10000,
-                    early_stopping_patience=10000, hidden_dim=32, num_heads=2, num_layers=1,
-                    conv_type="gat", batch_size=2, num_workers=0, use_amp=False)
+        """A base training job held by its epochs (the API's start is a base
+        start, K7; the recipe has no early stopping), on the test's
+        workspace."""
+        return dict(data_dir=str(self.data), learning_stage="base", run_name="held",
+                    device="cpu", num_epochs=10000, batch_size=4, num_neighbors=[2, 2, 2],
+                    use_amp=False)
 
     def send(self, number: int) -> None:
         """The terminal's signal: its foreground group only, which the job is

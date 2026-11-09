@@ -2,7 +2,7 @@
 Server settings: what an operator configures for M5's controls and lists.
 =========================================================================
 `docs/working/PLAN_TEST_RESULTS.md` §6 ("M5's boundaries"), D7, D8 and §4.9
-questions 1 and 3; SPEC_4 §3 (deployment mode M1). Every setting here is an
+question 3; SPEC_4 §3 (deployment mode M1). Every setting here is an
 environment variable of the service, **read at each use and never from a
 request**: no route, form or saved UI file can set one, and a change takes effect
 the next time a setting is read (a restart is the reliable way to apply one to
@@ -15,8 +15,7 @@ feature that needs it is off.
 | `SHEPHERD_WORKSPACES_ROOT` | the one workspace root: its subdirectories are the workspaces the server lists (SPEC_4 M1's "one explicit workspace namespace"), and the GPU lock is `.shepherd-gpu.lock` directly under it | no workspace listed; no GPU lock, so every managed GPU job is refused |
 | `SHEPHERD_REGISTRY` | the cohort registry (the `--registry` of the CLI), the only one reports are registered from and cohort versions measured in (`deployment_registry_refusal`) | no cohort feature; every registration and `--cohort` measurement refused |
 | `SHEPHERD_INTAKE_DIR` | where an operator places import sources | no import source |
-| `SHEPHERD_TRAINING_EVIDENCE_DIRS` | R10 evidence directories, `os.pathsep`-separated (optional) | none |
-| `SHEPHERD_ORDERING_ROLES` | cohort roles that offer ordering by test score, comma-separated | none |
+| `SHEPHERD_TRAINING_EVIDENCE_DIRS` | R10 evidence directories, `os.pathsep`-separated (optional); one that cannot be checked is kept and noted | none |
 
 **The GPU lock's location is read here too** (`gpu_lock_location`, the one
 rule `src.utils.gpu_lock` applies). **The workspaces root is its one name**:
@@ -38,6 +37,16 @@ validate_registry` applies the same function, so `--registry` on the command lin
 and `SHEPHERD_REGISTRY` in the service are one rule. It lives here, below
 `src.evaluation`, because the D8 check and the GPU lock in `src.utils` read these
 settings too.
+
+**Whether a named path is a directory is one explicit stat** (`is_directory`):
+it is one; it is not and cannot be one (absent, not a directory, a link loop, a
+name too long to exist, a path that cannot be encoded); or its state cannot be
+learned (a parent the account may not enter, an I/O error), which is neither.
+`check_operator_directory` refuses the last as `DirectoryUncheckable`, a
+`DirectoryRefused`, so a required directory is refused for it as before. Only
+the optional evidence setting keeps such an entry (`training_evidence_dirs`),
+and R10 applies the same `is_directory` to `--training-evidence`, so the Test
+page and the command line read a directory alike.
 
 **What the deployment mode does not do.** `M1` is one of D8's conditions, not an
 authorisation: the check on each operator control (loopback arrival, no
@@ -69,8 +78,10 @@ Module: src/config/server_settings.py
 """
 from __future__ import annotations
 
+import errno
 import ipaddress
 import os
+import stat
 from functools import partial
 from pathlib import Path
 from typing import Any, Callable, Mapping, NamedTuple, Optional, Tuple
@@ -84,7 +95,6 @@ ENV_WORKSPACES_ROOT = "SHEPHERD_WORKSPACES_ROOT"
 ENV_REGISTRY = "SHEPHERD_REGISTRY"
 ENV_INTAKE_DIR = "SHEPHERD_INTAKE_DIR"
 ENV_TRAINING_EVIDENCE_DIRS = "SHEPHERD_TRAINING_EVIDENCE_DIRS"
-ENV_ORDERING_ROLES = "SHEPHERD_ORDERING_ROLES"
 #: The GPU lock's file name directly under the workspaces root, its one place
 #: (`gpu_lock_location`).
 GPU_LOCK_FILE_NAME = ".shepherd-gpu.lock"
@@ -105,10 +115,6 @@ ACCEPTS_NETWORK_BIND = "1"
 #: Compared exactly: `m1`, ` M1` and `M1 ` are other values, never inferred.
 OPERATOR_DEPLOYMENT_MODE = "M1"
 
-#: Roles that never offer ordering by test score, even when listed (§4.9
-#: question 1): until the institution's formal evaluation rules exist.
-NEVER_ORDERED_ROLES: Tuple[str, ...] = ("institutional_acceptance",)
-
 #: What the two patient-level directories hold, in their refusals.
 PATIENT_LEVEL_DATA = "patient-level data"
 
@@ -117,17 +123,16 @@ __all__ = [
     "BindDecision",
     "DEFAULT_BIND_HOST",
     "DirectoryRefused",
+    "DirectoryUncheckable",
     "ENV_ACCEPT_UNAUTHENTICATED_NETWORK_BIND",
     "ENV_BIND_HOST",
     "ENV_DEPLOYMENT_MODE",
     "ENV_INTAKE_DIR",
-    "ENV_ORDERING_ROLES",
     "ENV_REGISTRY",
     "ENV_TRAINING_EVIDENCE_DIRS",
     "ENV_WORKSPACES_ROOT",
     "GPU_LOCK_FILE_NAME",
     "GPU_LOCK_NOT_CONFIGURED",
-    "NEVER_ORDERED_ROLES",
     "OPERATOR_DEPLOYMENT_MODE",
     "Setting",
     "all_settings",
@@ -140,11 +145,9 @@ __all__ = [
     "gpu_lock_location",
     "inherited_socket_bind",
     "intake_directory",
+    "is_directory",
     "is_loopback_ip",
     "network_bind",
-    "offers_ordering",
-    "ordering_roles",
-    "role_offers_ordering",
     "startup_bind",
     "training_evidence_dirs",
     "workspaces_root",
@@ -155,13 +158,82 @@ class DirectoryRefused(ValueError):
     """A directory an operator named is not one this rule accepts."""
 
 
+class DirectoryUncheckable(DirectoryRefused):
+    """A directory an operator named whose state cannot be learned: its stat or
+    its resolve failed for a reason that does not say it is absent or cannot
+    exist (a parent the account may not enter, an I/O error). It is neither
+    shown to exist nor shown absent.
+
+    A `DirectoryRefused`, so every required directory is refused for it as
+    before. `training_evidence_dirs` alone keeps such an entry, as a place R10
+    could not look in. `path` is the path checked: resolved when its resolve
+    worked, else as given. `reason` is "<ErrorType>: <strerror>"."""
+
+    def __init__(self, message: str, *, path: Path, reason: str) -> None:
+        super().__init__(message)
+        self.path = path
+        self.reason = reason
+
+
+#: The stat errors that say a path is not a directory and cannot be one: it is
+#: not there, or not reachable as one (ENOENT, ENOTDIR, EBADF, ELOOP, as Python
+#: 3.12's `Path.is_dir` reads them), or its name is too long to exist. Any
+#: other error leaves its state unknown.
+_NOT_A_DIRECTORY_ERRNOS = frozenset({
+    errno.ENOENT, errno.ENOTDIR, errno.EBADF, errno.ELOOP, errno.ENAMETOOLONG,
+})
+#: The Windows errors Python 3.12's `Path.is_dir` reads the same way: not
+#: ready, an invalid name, a link that cannot be resolved.
+_NOT_A_DIRECTORY_WINERRORS = frozenset({21, 123, 1921})
+
+
+def is_directory(path: Any) -> bool:
+    """Whether `path` is a directory, links followed, from one explicit stat.
+
+    True: it is one. False: it is not and cannot be one -- absent, not a
+    directory, a link loop, a name too long to exist, or a path the platform
+    cannot encode.
+
+    Explicit, because `Path.is_dir` does not keep one rule: from Python 3.14
+    it answers False for every `OSError`, so a directory whose state is unknown
+    would read as one that is not there.
+
+    Raises:
+        OSError: the state cannot be learned (any other stat error: a parent
+            the account may not enter, an I/O error). The caller decides what
+            that means for its directory; it is neither True nor False.
+    """
+    try:
+        mode = Path(path).stat().st_mode
+    except OSError as exc:
+        if _cannot_be_a_directory(exc):
+            return False
+        raise
+    except ValueError:  # an embedded null byte, or a path the platform cannot encode
+        return False
+    return stat.S_ISDIR(mode)
+
+
+def _cannot_be_a_directory(exc: OSError) -> bool:
+    """Whether a stat or resolve error says the path is not a directory and
+    cannot be one, rather than leaving its state unknown."""
+    return (exc.errno in _NOT_A_DIRECTORY_ERRNOS
+            or getattr(exc, "winerror", None) in _NOT_A_DIRECTORY_WINERRORS)
+
+
+def _error_reason(exc: OSError) -> str:
+    """"<ErrorType>: <strerror>", as a refusal names the error."""
+    return f"{type(exc).__name__}: {exc.strerror or exc}"
+
+
 class Setting(NamedTuple):
     """One setting as read now.
 
     `value` is what is in effect: a string, a resolved `Path`, or a tuple; `None`
     when the setting is unusable. `problem` is why the feature that needs it is
     off, in words an operator can act on; `None` when it is usable. `note` is a
-    remark that turns nothing off (an entry that was ignored, say). `unset`
+    remark that turns nothing off (an evidence directory kept although it
+    cannot be checked, say). `unset`
     says the problem is that nothing is set at all, not a value that is set
     and refused; a caller tells the two apart by it, never by the words.
     """
@@ -192,9 +264,15 @@ def check_operator_directory(
     the directory in the refusal ("the registry"); `holds` says what it holds
     ("patient-level data"), which is why it must be absolute.
 
+    Whether it is a directory is `is_directory`'s one explicit stat. A path
+    whose state cannot be learned, there or in its resolve, is
+    `DirectoryUncheckable`, never read as absent.
+
     Raises:
-        DirectoryRefused: naming the directory and which rule it fails, or that
-            it cannot be checked (a parent the account cannot enter).
+        DirectoryUncheckable: its state cannot be learned (a parent the account
+            cannot enter, an I/O error): "cannot be checked", or "cannot be
+            resolved" when its resolve failed so. A `DirectoryRefused`.
+        DirectoryRefused: naming the directory and which rule it fails.
     """
     if not isinstance(path, (str, os.PathLike)):
         raise DirectoryRefused(f"{what} must be a path, got {path!r}")
@@ -207,9 +285,10 @@ def check_operator_directory(
     try:
         resolved = given.resolve()
     except (OSError, RuntimeError, ValueError) as exc:  # a link loop: RuntimeError before 3.13
-        raise DirectoryRefused(
-            f"{what} {given} cannot be resolved ({type(exc).__name__}: {exc})."
-        ) from None
+        message = f"{what} {given} cannot be resolved ({type(exc).__name__}: {exc})."
+        if isinstance(exc, OSError) and not _cannot_be_a_directory(exc):
+            raise DirectoryUncheckable(message, path=given, reason=_error_reason(exc)) from None
+        raise DirectoryRefused(message) from None
     if outside_repository:
         repo = REPO_ROOT.resolve()
         if resolved == repo or repo in resolved.parents:
@@ -219,14 +298,14 @@ def check_operator_directory(
                 "give a directory outside it."
             )
     try:
-        is_directory = resolved.is_dir()
-    except OSError as exc:  # `is_dir` answers False for a missing path, raises EACCES
-        raise DirectoryRefused(
-            f"{what} {given} cannot be checked ({type(exc).__name__}: "
-            f"{exc.strerror or exc}). The account that runs this must be able to reach it "
-            "and every directory above it."
+        directory = is_directory(resolved)
+    except OSError as exc:
+        raise DirectoryUncheckable(
+            f"{what} {given} cannot be checked ({_error_reason(exc)}). The account that runs "
+            "this must be able to reach it and every directory above it.",
+            path=resolved, reason=_error_reason(exc),
         ) from None
-    if not is_directory:
+    if not directory:
         raise DirectoryRefused(
             f"{what} {given} does not exist or is not a directory. The operator creates it; "
             "nothing creates one, so a mistyped path cannot become a directory nobody chose."
@@ -379,8 +458,8 @@ def deployment_registry_refusal(registry: Path,
     version is measured in** (D5, D7, BACKLOG 37): `locate_store_report` asks it
     for every registration, the UI's included, and `measure_scorer.py` for every
     ``--cohort`` run, before either reads anything in the registry. Another
-    directory keeps its own report store, disagreement block and usage history,
-    which the service never reads.
+    directory keeps its own report store and usage history, which the service
+    never reads.
 
     **Compared as resolved paths** (`Path.resolve()` on both sides): a link to
     the configured directory is that directory. Never by device and inode
@@ -439,21 +518,36 @@ def training_evidence_dirs(environ: Optional[Mapping[str, str]] = None) -> Setti
 
     Optional: unset or empty is an empty tuple, usable. Empty entries (a
     doubled or trailing separator) are skipped, never read as the working
-    directory. Each entry must be an absolute, existing directory; one that is
-    not refuses the whole setting (value `None`), so a run never goes ahead on
-    part of what the operator listed. Repeats are kept once, by resolved path,
-    in the order given.
+    directory. Each entry must be an absolute, existing directory; one known
+    not to be (relative, absent, not a directory, a link loop, a name too long
+    to exist, a path that cannot be encoded) refuses the whole setting (value
+    `None`), so a run never goes ahead on part of what the operator listed.
+
+    **An entry whose state cannot be learned** (`DirectoryUncheckable`: a
+    parent this account may not enter, an I/O error) is neither refused nor
+    dropped (K8-6 completion review, 2026-11-08): it is optional evidence, so it
+    stays in the value, in its place (resolved when its resolve worked), and
+    `note` names it with its reason; the setting stays available. A run is
+    given it as `--training-evidence`, where R10 cannot look in it: a scope
+    found elsewhere stays found, and only one found nowhere else names it, as
+    `search_incomplete`. Repeats are kept once, by resolved path, in the order
+    given.
     """
     raw = _raw(environ, ENV_TRAINING_EVIDENCE_DIRS)
     if raw is None:
         return Setting(ENV_TRAINING_EVIDENCE_DIRS, ())
-    resolved = []
+    resolved: list[Path] = []
+    unchecked: list[str] = []
     for index, entry in enumerate((e for e in raw.split(os.pathsep) if e), start=1):
         try:
             directory = check_operator_directory(
                 entry, what=f"evidence directory {index}", holds="training evidence",
                 outside_repository=False,
             )
+        except DirectoryUncheckable as exc:
+            directory = exc.path
+            if directory not in resolved:
+                unchecked.append(f"{directory} ({exc.reason})")
         except DirectoryRefused as exc:
             return Setting(
                 ENV_TRAINING_EVIDENCE_DIRS, None,
@@ -462,54 +556,14 @@ def training_evidence_dirs(environ: Optional[Mapping[str, str]] = None) -> Setti
             )
         if directory not in resolved:
             resolved.append(directory)
-    return Setting(ENV_TRAINING_EVIDENCE_DIRS, tuple(resolved))
-
-
-def ordering_roles(environ: Optional[Mapping[str, str]] = None) -> Setting:
-    """`SHEPHERD_ORDERING_ROLES`: the cohort roles that offer ordering by test
-    score (D4; §4.9 question 1), comma-separated, surrounding spaces ignored.
-
-    Default empty: no role offers it. `institutional_acceptance` is refused even
-    when listed, and the note says so. Roles are compared exactly, and a role is
-    a lowercase identifier (`validate_role`), so an entry that is not one simply
-    matches no version.
-    """
-    raw = _raw(environ, ENV_ORDERING_ROLES) or ""
-    listed = [entry.strip() for entry in raw.split(",") if entry.strip()]
-    refused = sorted({role for role in listed if role in NEVER_ORDERED_ROLES})
-    kept: list = []
-    for role in listed:
-        if role not in NEVER_ORDERED_ROLES and role not in kept:
-            kept.append(role)
     note = None
-    if refused:
-        note = (
-            f"{ENV_ORDERING_ROLES} lists {', '.join(refused)}, which never offers ordering by "
-            "test score until the institution's formal evaluation rules exist (§4.9 "
-            "question 1); it is ignored."
-        )
-    return Setting(ENV_ORDERING_ROLES, tuple(kept), None, note)
-
-
-def offers_ordering(role: Any, listed: Any) -> bool:
-    """**The one rule** for whether a cohort version of this role offers
-    ordering by test score, given the roles the deployment lists: a role that
-    is listed and is never one of `NEVER_ORDERED_ROLES` (§4.9 question 1).
-    Pure; D4's ordering (`src.evaluation.ordering.ordering_offered`) and every
-    page ask it, so a role added to the constant is refused everywhere at once
-    (M5-3 review ARCH-2)."""
-    if not isinstance(role, str) or role in NEVER_ORDERED_ROLES:
-        return False
-    try:
-        return role in set(listed or ())
-    except TypeError:  # an unhashable entry is no role
-        return False
-
-
-def role_offers_ordering(role: Any, environ: Optional[Mapping[str, str]] = None) -> bool:
-    """Whether a cohort version with this role offers ordering by test score
-    under this deployment's `SHEPHERD_ORDERING_ROLES` (`offers_ordering`)."""
-    return offers_ordering(role, ordering_roles(environ).value)
+    if unchecked:
+        # What a run does with it, no more: R10 names it only for inputs it
+        # finds nowhere else (`r10.compute_r10`).
+        them = "it" if len(unchecked) == 1 else "them"
+        note = (f"Cannot be checked: {'; '.join(unchecked)}. R10 cannot look in {them}: "
+                f"inputs found nowhere else read unverifiable, naming {them}.")
+    return Setting(ENV_TRAINING_EVIDENCE_DIRS, tuple(resolved), note=note)
 
 
 def all_settings(environ: Optional[Mapping[str, str]] = None) -> Tuple[Setting, ...]:
@@ -520,7 +574,6 @@ def all_settings(environ: Optional[Mapping[str, str]] = None) -> Tuple[Setting, 
         cohort_registry(environ),
         intake_directory(environ),
         training_evidence_dirs(environ),
-        ordering_roles(environ),
     )
 
 

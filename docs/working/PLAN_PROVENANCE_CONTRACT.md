@@ -18,6 +18,12 @@ What each capability is today, and where it is entered, is `docs/ARCHITECTURE.md
 any milestone's acceptance: the WebUI's usability (BACKLOG 52), model quality and institutional
 testing.
 
+**2026-10-27: the paper-aligned two-stage extension is designed in §9, not implemented.** It adds
+the learning stage, the task, the operation, the exact parent, the weight transfer and the effective
+loss and scoring identity to the records M3a writes. Work package A builds it
+([`scorer-retraining/README.md`](scorer-retraining/README.md) §8). It extends decision 7 and
+question 3 (§8): fine-tuning on other data becomes its own operation. Resume keeps decision 7.
+
 **Status history (dated). Revision 2, amended twice after review. M1 is implemented, code-reviewed with no P1 or P2
 at `ed4872a`, and accepted on the homelab GB10 at `7714459` (evidence recorded by SHA-256 below; the
 files are archived on the homelab, not in the repository); the reviewer re-checked that evidence
@@ -172,7 +178,7 @@ platforms and claims no conformance to them.
 | 4 | **B-2's fail-closed core lands first, as its own change, and takes effect together with the first enforced check.** Otherwise a check that finds a mismatch makes the model fail to load, the pipeline falls back to another scorer, and the user still gets a result that looks successful | Reviewer, 2026-10-06 |
 | 5 | **Backlog item 14 is split into two phases.** Phase 1 is a complete CLI flow: run a test, verify the inputs, keep the report, record it automatically or by hand, and show the result on the existing model status. Phase 2 is the Test tab, job management and advanced ordering | Owner and reviewer, 2026-10-06 |
 | 6 | **Milestones follow real dependencies.** A full environment refactor, a full provenance platform and every historical defect are not prerequisites of item 14. Each milestone delivers a complete flow that can be run and accepted | Reviewer, 2026-10-06 |
-| 7 | **In the first version, resume continues the same data.** A resumed run's graph and data roles must equal its parent's (M2.3). Fine-tuning on other data is not supported yet. This is a product restriction, not a validity verdict, and it gates data, not settings | Owner, 2026-10-06 |
+| 7 | **In the first version, resume continues the same data.** A resumed run's graph and data roles must equal its parent's (M2.3). Fine-tuning on other data is not supported yet. This is a product restriction, not a validity verdict, and it gates data, not settings. **Extended 2026-10-27 (§9):** the owner's paper-aligned direction schedules fine-tuning as its own operation, `finetune`, with its own parent check; resume keeps this rule | Owner, 2026-10-06 |
 | 8 | **Resume continues an unfinished schedule, with every learning setting inherited** (M3a-3). The schedule is rebuilt from the parent's record and only the remaining epochs run; a finished schedule is continued only by `extend`, at a fixed rate (M3a-4). A mode that starts from a parent and changes learning settings is not built in M3; it is a prerequisite of the GNN experiment phase (BACKLOG item 23). This adds to decision 7, which gated data and said nothing about settings | Reviewer's recommendation (2026-10-15), confirmed by the owner (2026-10-15) |
 | 9 | **One directory per training run** (M3a-2). No run overwrites another's files. Outputs in the old layout are moved once, explicitly, by the owner, with no runtime fallback. An explicitly entered model path stays available as a locator; whether a file is accepted is decided by its bytes | Owner, 2026-10-15 |
 | 10 | **Serving loads checkpoints with `weights_only=True`** once M3a's shared checkpoint payload is in place | Owner, 2026-10-15 |
@@ -2328,7 +2334,10 @@ implemented" below). Line numbers are at `0142436`, whose code is `main`'s `9fe5
 
 **M3a-2 — one run directory per training run** (decision 9).
 - **Every run, new or resumed, writes into a directory no run has used:**
-  `{workspace}/runs/{conv_type}/{date}_{optional name}_{run_id}/`.
+  `{workspace}/runs/{conv_type}/{date}_{optional name}_{run_id}/`. *(2026-11-08, superseded in
+  part: a run is filed under its model spec's encoder kind, `runs/{encoder kind}/…`, with no
+  conv-type default since K8-7 `e35b2a3`, and since K8-7b `ecc367f` the lists read every directory
+  under `runs/`, whatever its name.)*
   - Its checkpoint, output and log directories are all inside it.
   - Directories are flat, never nested by lineage.
   - A colliding run id is drawn again, never reused.
@@ -2632,6 +2641,11 @@ building, is stated here.
     API passes on only the fields a caller set (`exclude_unset`); a library caller that builds
     `TrainConfig` itself counts a field that differs from its default. Mixed precision that would
     take effect differently on the requested device is refused as a settings change.
+    *(2026-11-08, superseded by K8-7 `e35b2a3`: `num_workers` is no longer a `TrainConfig` field;
+    only the settings this version has are inherited, and a recorded one it no longer has is
+    neither inherited nor refused. Explicit means what the operator states, also when it equals
+    its default: a library caller passes its set to `train(config, explicit)`, and nothing is
+    inferred from defaults.)*
   - `Trainer.continue_from` replaces `restore_checkpoint`; the rebuilt schedule must equal the
     recorded one before the scheduler's progress is loaded. Early stopping's best-weights file is
     read once and accepted only with its recorded SHA-256. A parent's best-k files are ranked but
@@ -3366,7 +3380,8 @@ its §4.9 the owner questions, and its "Phase 1 as implemented" the step-by-step
   split; `--output` required) and `--cohort LABEL --registry DIR` (a registered version;
   `--training-evidence DIR` repeatable, `--record` optional, `--output` refused). The registered
   order (`read_measurement_inputs`): the evidence directories listed (nothing read; one that
-  cannot be listed is refused); `resolve_version`, one read of `cohort.json`, refused unless its
+  cannot be listed is refused; *Superseded by K8-6r.3 (2026-11-07):* it is recorded and the run
+  goes on, see R10 below); `resolve_version`, one read of `cohort.json`, refused unless its
   counts are present and consistent (`_counts_problems`: `ranked_eligible` = `samples.n`;
   `source_cases` = `ranked_eligible` + `n_excluded` = `source.n_cases`; `n_excluded` = the sum
   of `excluded` = the exclusions listed); the workspace manifest and graph reads; the version's
@@ -3402,7 +3417,18 @@ its §4.9 the owner questions, and its "Phase 1 as implemented" the step-by-step
   found. A matching file that does not parse makes that scope *unverifiable* (`UnparseableFile`,
   a `ValueError` carrying the read's identity, so the recorded problem names no row). A
   candidate that cannot be read at all (permission, an I/O error) refuses the run, with nothing
-  written, since it may be the evidence. A role with no digest to look for has evidence
+  written, since it may be the evidence. *Superseded by K8-6r.3 (2026-11-07):* such a candidate,
+  a listed path whose stat fails, and an evidence directory that exists and cannot be listed are
+  each recorded (`UnreadCandidate`), and the remaining candidates are still read; a scope that no
+  candidate read holds is `search_incomplete`, *unverifiable* with each place and its error, never
+  `not_found`, and the run goes on (R10 definition version 2; a version-1 block keeps its meaning).
+  A directory that does not exist, is not one or cannot be checked is still refused; running out of
+  memory reading a candidate ends the run naming it. *Superseded in part by the K8-6 completion
+  review (2026-11-08):* a named directory whose state cannot be learned (its stat fails for a
+  reason that does not say it is absent) is no longer refused but recorded as such a place, in its
+  place, and so is a listed candidate whose resolve fails; only a directory known not to be one
+  (absent, a file, a link loop, a name too long to exist) is still refused, and the deployment
+  setting keeps such an entry with a note. A role with no digest to look for has evidence
   `not_recorded`; a role that is there with a value that is not a non-empty string also carries
   a problem naming the role and the value's kind, never the value. Only an absent `val_samples`
   beside a recorded `train_samples` gives *no validation inputs recorded*; a malformed one leaves
@@ -3413,7 +3439,8 @@ its §4.9 the owner questions, and its "Phase 1 as implemented" the step-by-step
   ids)`; patient ids are ignored and nothing is normalised. **An *unverifiable* label is shown with its
   scope's reason** (`R10_UNVERIFIABLE_REASON` in `src/evaluation/caveats.py`, by evidence state:
   not found, found and unreadable, not recorded), on the console and in the model status, since
-  the three call for different actions; the report keeps the states and no prose.
+  the three call for different actions; the report keeps the states and no prose. *(K8-6r.3 adds
+  a fourth, a search left incomplete: make the place readable and measure again.)*
 - **Ledger schema 3** (`src/evaluation/sidecar.py`). The key: `checkpoint_digest`, `cohort_role`,
   `cohort_digest`, now the version manifest's SHA-256 (it binds the samples, the source, the
   graph, the mapping policy and the counts, so two versions with identical samples are two
@@ -3550,7 +3577,12 @@ its §4.9 the owner questions, and its "Phase 1 as implemented" the step-by-step
     `--cohort` and `--registry` without `--cohort` (or the reverse) are refused as argument
     errors (exit 2), and its report schema is 6;
   - the generated report and its ranks are staged and renamed into place, ranks first; an
-    existing `--output` is still replaced.
+    existing `--output` is still replaced. *Superseded by K8-6r.4 (2026-11-07):* neither file
+    replaces one. A run whose `--output` or ranks file exists is refused before anything is
+    read, and each file is placed with `publish_bytes(..., replace=False)` (a hard link, or
+    where there are none a claimed empty file then replaced), so a file that appears after the
+    check is not overwritten either; an empty claimed file or ranks with no report beside them
+    are shown as a failed publication and refuse the next run on that path, never deleted.
 - **Not claimed, and not done.**
   - No GB10 acceptance yet. The tests run on the CPU over synthetic fixtures
     (`tests/fixtures/registered_cohort.py`; the end-to-end acceptance in
@@ -3758,7 +3790,7 @@ own.
 |---|---|
 | R1–R5, R7 | **Required**: anything but *verified* refuses |
 | R6, R11 | **Recorded**, and displayed beside results. An environment difference never refuses |
-| R10 | **Recorded as four labels** (§5.4). No label refuses, because the true label is written, *unverifiable* included. The run is refused only when evidence cannot be looked at: an evidence directory that cannot be listed, or a candidate that cannot be read, which may be the evidence (M4) |
+| R10 | **Recorded as four labels** (§5.4). No label refuses, because the true label is written, *unverifiable* included. The run is refused only when evidence cannot be looked at: an evidence directory that cannot be listed, or a candidate that cannot be read, which may be the evidence (M4). *Superseded by K8-6r.3 (2026-11-07):* neither refuses; each is recorded, the search goes on, and the scope is *unverifiable* with that reason (§5.4). A named directory that does not exist, is not a directory or cannot itself be checked is still refused. *Superseded in part by the K8-6 completion review (2026-11-08):* one that cannot itself be checked is recorded the same way; only one known not to be a directory is still refused |
 
 **Capability checks are a separate matter, and they stay.**
 - That an environment difference never refuses is a provenance policy. It does not waive a
@@ -3902,7 +3934,10 @@ evidence.
   - the candidate that holds them does not parse. *As implemented in M4:* a candidate that
     cannot be read at all (permission, an I/O error) refuses the run instead, with nothing
     written, because it may be the evidence and its bytes were never compared; so does an
-    evidence directory that cannot be listed;
+    evidence directory that cannot be listed. *Superseded by K8-6r.3 (2026-11-07):* each is
+    recorded and the search goes on; a scope that no candidate read holds, while such a place
+    exists, is *unverifiable* (evidence `search_incomplete`, with each place and its error), never
+    "not found";
   - for the training scope, the checkpoint names no `train_samples` at all. Every training run
     records it, so its absence means the record is not one the pipeline wrote.
 
@@ -3939,7 +3974,8 @@ role and the value's kind, never the value. For validation that gives *unverifia
 validation inputs recorded*, which only an absent `val_samples` beside a recorded `train_samples`
 gives: a malformed entry names validation inputs, which may be the ones early stopping used. The
 definition is unchanged (`R10_DEFINITION_VERSION` 1); only records the pipeline never writes are
-labelled differently.
+labelled differently. *(K8-6r.3, 2026-11-07, made it 2 when it added the evidence state
+`search_incomplete`; a version-1 block keeps its meaning.)*
 
 ## 6. The claim boundary
 
@@ -4012,3 +4048,172 @@ labelled differently.
      and R10 takes the union of every set it can verify. If any one of them cannot be
      verified, R10 says the scope is incomplete. This is neither a separate project nor a
      second training pipeline, and nothing is built for it now.
+   - **Scheduled 2026-10-27:** §9 designs it as the `finetune` operation, built in work package A,
+     on the same entry point and checkpoint record, with the parent's roles carried for R10.
+
+## 9. The paper-aligned two-stage extension (design, 2026-10-27)
+
+**Status: designed, being built on this branch (revision 2, 2026-10-27).** The A + B integration
+builds it. Revision 2 applies the reviewer's review of `5d0327a` (R2: one switch, no second
+execution path) and the decision record of the same day. The recipe, the model bundle and
+the work packages are [`scorer-retraining/README.md`](scorer-retraining/README.md); this section is
+the record contract. It extends the record M3a writes (`build_checkpoint_payload`,
+`CHECKPOINT_RECORD_VERSION`). It adds no second provenance system, ledger or model database. The
+fields it names are design names; package A fixes the code names.
+
+### 9.1 What every new checkpoint records
+
+These come in addition to `record_version`, `producer`, `environment`, `training_input_digests`,
+`data_fingerprint` and the requested and effective config.
+
+| Field | Meaning | Written by |
+|---|---|---|
+| `model_spec` | Versioned. The one builder rebuilds the whole bundle from it: graph view identity, input module, encoder, LP head and, for a finetune, the patient encoder and task head. Every provisional default carries its source. Required. Nothing is inferred from weight names | every operation |
+| `learning_stage` | `base` or `finetune` | `new` (base) and `finetune`; inherited by `resume`, `extend` and `branch` |
+| `task` | None for a base; `disease`, `gene` or `patients_like_me` | `finetune`; inherited |
+| `operation` | `new`, `resume`, `extend`, `branch` or `finetune` | the operation that produced the run |
+| `parent` | The SHA-256 of the exact parent checkpoint file, and the parent run. It generalises today's `training_input_digests.resume_checkpoint`. A branch adds `changes`: each changed setting, `{parent, new}` | every operation but `new` |
+| `family_id` | The id of the root run (the one whose operation is `new`), inherited unchanged. Not the seed, and not a dataset digest plus seed | every operation |
+| `weight_transfer` | Per parameter group: loaded from the parent or initialised new, trainable or frozen. A branch loads every part, strictly | `finetune` and `branch`, and any operation that loads weights |
+| Data roles | The digests of the KG, the graph view (its rule and result, and the stable node mapping) and the edge split artifact; the base's train, validation and test edge roles; a finetune's task data artifacts (train and validation roles) and, for patients-like-me, the reference cohort version; derived tables (SP distances, the augmentation neighbour table) by digest. R10 takes the union of the roles it can verify (§8, question 3) | every operation |
+| `graph_exposure` | For each stage: the message-passing graph, the supervision edges and the SP graph it saw. Base: training edges for message passing in training and LP validation. Finetune: training edges in training; the full view in validation, task tests and serving | every operation |
+| Loss identity | Term names, `task_loss_weight` and `lp_loss_weight`, versions | every operation |
+| Scoring identity | The task scorer's name and version: distance, normalisation, candidate universe | `finetune` |
+| `selection` | The digest of the validation report that selected the parent, and the selection rule | `finetune` |
+
+**`progress.stage` keeps its meaning,** the M3a schedule stage (`original` / `extension`). The new
+learning stage never reuses that name.
+
+**A record that names one input twice names it the same way** (K8-4 review P2-2). The data roles
+and `training_input_digests` both name the KG, a finetune's task cases (the task fixture's cases
+when the run read one, the workspace's samples otherwise) and its task fixture; `parent` and
+`training_input_digests.resume_checkpoint` both name a resumed or extended run's parent; the
+graph view's digest stands at the top level, in the data roles and in the split record, and its
+rule in the data roles and in `model_spec.graph_view`. Entries trust different copies (serving
+the training record and the top-level view, training the data roles), so `read_model_record`
+compares each pair where both are present, the rule in the view's form (`exclude_relations`
+sorted, as `build_graph_view` stores it), and refuses a record whose two claims disagree,
+whichever claim is wrong: "the record contradicts itself: …". Every entry reads through it, so
+the reload publishes nothing and a training run writes no run directory. Each value is compared
+as plain data, by kind as well as content, and one that is not (a tensor, which the safe loader
+accepts) refuses that file naming its field; the run listing hands the reader the training
+record with the record, from its one read, so a list judges a file as a load does (K8-4r
+recheck). The check concerns one
+file's own claims, never whether two models were trained on the same data: two children of one
+graph trained on different cases each agree with themselves and keep training, measuring and
+comparing.
+
+### 9.2 The operations and their parent checks
+
+| Operation | Parent | Learning settings | Data | Architecture | Optimizer state |
+|---|---|---|---|---|---|
+| `new` | none | given | given | given | new |
+| `resume` | An unfinished run of the same stage, with a full `training_state` | inherited (decision 8) | equal (decision 7, M2.3) | equal | restored |
+| `extend` | A finished stage | fixed rate (M3a-4) | equal | equal | restored |
+| `branch` | A qualified checkpoint of the same learning stage and task | changed, and the change recorded | equal (BACKLOG 23) | equal | new |
+| `finetune` | A **base** checkpoint with a `model_spec`: a `training_state`, early stopping's best weights or a weights-only file | the finetune recipe | the task's roles; other patient data is allowed. The KG equals the parent's (decision 1: the learned node table is transductive) | the parent's encoder spec plus a new task head | new |
+
+- **Accepted as a finetune parent:** an early-stopped or weights-only base. It is still refused as a
+  resume parent, and `run_plan`'s refusals for resume are unchanged.
+- **A qualified branch parent** (as built at K5, `run_plan.plan_branch`) is a training-state
+  checkpoint with a model record, of the branch's stage and task, trained on the same data, view
+  and split. Any end state qualifies, since nothing of its progress continues. A weights-only file
+  is refused: it records no settings.
+- **Refused as a finetune parent:**
+  - a weights-only file **without** a `model_spec`, since nothing is guessed from weight names;
+  - a finetune checkpoint, since children never chain.
+- **The checks run where the job starts,** before anything is written, as §2 requires.
+
+### 9.3 One switch, and the six hazards
+
+**One switch (the reviewer's R2, adopted by the owner).** When the integration is delivered, active
+training, inference and evaluation accept only this contract.
+- A checkpoint without a `model_spec` is listed as history. The new system never runs it, never
+  guesses its spec from weight names and never re-registers its reports. *(2026-11-08, superseded
+  in part by K8-7b `ecc367f`: it is listed as a record this build cannot read, "written before
+  the model spec: not readable by this build; start a new run", never as history.)*
+- Historical checkpoints, reports, ledgers, registries, workspaces and fixed Git revisions stay as
+  they are: not overwritten, not migrated in bulk.
+- Old code and environments are preserved by fixed revisions and existing evidence, never by a
+  `legacy/` tree run as a second pipeline.
+- Intermediate commits may still hold a path not yet retired; the delivered batch has none.
+
+The six hazards found in the verification, each with its rule:
+
+1. **A new record version means old checkpoints do not resume.** The extension raises the record
+   version for checkpoints written by the new path.
+   - Checkpoints written before it stay readable as history and keep their records. *(2026-11-08,
+     superseded in part: they stay on disk and listed with their SHA-256, records and usage
+     history, as records this build cannot read (K8-7b `ecc367f`); record version 1 retired in
+     K8-7 `e35b2a3`.)*
+   - Resume across the boundary is refused with the reason ("written before the model spec; start a
+     new run"). No missing field is filled in by guessing.
+   - While old and new paths coexist inside the build, the new version and the `model_spec`
+     requirement apply to checkpoints the new path writes; the old path's removal ends the overlap.
+2. **New manifests must not orphan old records.** A new measurement manifest names its task, metric
+   schema and scoring identity in its semantic fields, with a per-record manifest schema version.
+   - The ledger's file-level schema stays 3 and its key fields are unchanged, so existing ledgers
+     stay readable and appendable.
+   - Old Mode C/D records are listed read-only as historical, with their own scoring semantics,
+     never ordered with new records and never re-registered. `build_record` does not keep accepting
+     old manifests for new registration (it already refuses a foreign field set today).
+   - No existing ledger, registry or workspace is refused as a whole. If that proves unavoidable for
+     some part, that part stops and is recorded for the owner.
+3. **Checkpoint selection filters by task first.** Automatic selection reads `learning_stage` and
+   `task` from the record before it chooses.
+   - A base or gene checkpoint is never selected for disease serving, and a base serves no
+     diagnosis.
+   - A checkpoint without a `model_spec` is not selectable for serving after the switch.
+   - As built at K5: a reload that names a task (`POST /pipeline/reload`, `task`) takes the latest
+     run holding a child finetuned for it, judged by each file's record and never by its directory.
+     An explicit checkpoint of another task is refused, and nothing is published. A reload without
+     a task never chooses a file with a `model_spec`, until K8 retires that path (*corrected at K7:* the
+     task-less reload stayed through K7 because probe E4–E6 still reload by architecture). The API's model
+     lists (`GET /workspaces/{name}/checkpoints`, `/family`, `GET /training/checkpoints`) show each
+     file's record (stage, task, operation, family, parent), read by the one reader; the pages
+     show it from K6.
+4. **Task parameters are submodules of the bundle,** so the optimizer updates them and the
+   checkpoint saves them. The one builder guarantees it, and regressions 2 and 6 pin it.
+5. **Finetune gets its own check; resume keeps its blocks.** Decision 7, `check_resume_parent`'s data
+   comparison and `run_plan`'s weights-only and early-stopping refusals stay for resume. A finetune
+   passes §9.2's check instead.
+6. **Several children run in sequence, through the existing manager.** Their ordered list sits in
+   the existing `TrainingManager`, with no second queue, GPU lock or workflow engine.
+   - Each child has its own record, status, failure and cancellation, and the parent is unchanged.
+   - Between children the existing GPU-lock lifecycle decides. If another legitimate holder takes
+     the lock, the next child waits or is refused explicitly.
+   - The manager never releases a lock it does not hold.
+   - As built at K5: `TrainingManager.start_finetune` checks every task, setting and the parent
+     (a base with weights, the digest shown) before the first child starts. The next child is
+     started under the lock that freed the slot. When the slot refuses it (the GPU lock held
+     elsewhere, the backend stopping), the remaining children are refused and say why; nothing
+     waits.
+   - A stop ends the running child and cancels the queued ones; a failed child does not stop its
+     siblings. Every child is bound to the parent's digest (`--expect-parent-sha256`).
+     `POST /training/finetune` (D8) takes the same request, strictly.
+
+**Parents in another workspace.** The parent digest is always recorded. The one inventory reader
+resolves the parent when a configured, allowed root contains it, and otherwise the tree shows
+"parent unavailable". No second model database is built, and no patient-data access boundary is
+widened.
+- As built at K5: the allowed root is the workspaces root (`SHEPHERD_WORKSPACES_ROOT`). A parent
+  not listed in the child's workspace is looked up in the other listed workspaces. Only the run
+  the child records is read, and its files are matched by SHA-256.
+- "Parent unavailable" says why: the run no longer holds those bytes (rewritten or removed), or
+  no listed workspace has the run.
+
+**Reference cohorts and derived artifacts.** A patients-like-me model is bound to its reference
+cohort version as well as its checkpoint: results, exports, caches and reuse checks name both. Task
+data artifacts are bound by digest to the workspace they come from and are produced by explicit CLIs
+(the gene fixture: a record naming the split manifest and each file's digest, written last).
+Derived tables (SP distances, the augmentation neighbours) are computed in process from the
+digest-bound view and recorded by digest in the model record (as built at K4).
+
+**Mode D is archived.** Its runner, observer, CLI branch and probes retire once task measurement is
+wired; its reports stay readable as history.
+
+### 9.4 What these records claim
+
+§6 applies unchanged. The records show which bytes were loaded, from which parent, with which
+transfer and which settings. They do not show that a model is good, nor that two runs differ by one
+variable.

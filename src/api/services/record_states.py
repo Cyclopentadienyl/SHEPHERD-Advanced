@@ -1,9 +1,15 @@
 """
-D5's contested state, for every surface that shows it: of ledger records and of report runs.
-============================================================================================
-`docs/working/PLAN_TEST_RESULTS.md` D5 and D4: a record registered before its
-key's runs came to disagree stays, **marked contested wherever it is shown**;
-one whose state cannot be read is "cannot be checked", never uncontested.
+How a condition group's runs compare, for every surface that shows it: of ledger records and of report runs.
+=============================================================================================================
+`docs/working/PLAN_TEST_RESULTS.md` D5 and D4, policy rev 16 (K8-6r.2): every
+run is kept as its own record, and how the runs of one condition group compare
+in the store is **a description that decides nothing**. The state names stay as
+machine values with a new meaning (Decision 3): ``contested`` says runs under
+these conditions differ and only describes it (a surface flags it for
+investigation when the group records deterministic algorithms on, so its runs
+were expected to agree), ``cannot_be_checked`` that the comparison is
+incomplete, never read as agreeing, and ``uncontested`` neither.
+No surface disables, hides, orders out or refuses a record or a run by them.
 
 **One implementation** (BACKLOG 36, the M5 review's P2-6), moved here from the
 dashboard's `src/webui/components/model_list.py` so that the API never imports
@@ -13,8 +19,8 @@ and Diagnosis card all take a record's state from `contest_states`, so an API
 client and the dashboard cannot disagree about a record. The read-only Models
 view shows the route's answer and computes nothing itself.
 
-**A run's state** (`run_contest`) is the same judgement for one run directory
-of a store: the one run listing that ``GET /api/v1/cohorts`` and the Test page
+**A run's description** (`run_contest`) is the same comparison for one run
+directory of a store: the one run listing that ``GET /api/v1/cohorts`` and the Test page
 share (`server_lists._report_items`) attaches it. **One layer turns a scan into
 a shown state**, for records and runs alike: a scan that fails is caught and
 worded once (`read_report_store`), and the problems' words, which may name a
@@ -68,7 +74,7 @@ def read_report_store(version: Any) -> StoreRead:
     report read once and built into the record the ledger would hold. **The one
     place a scan's failure is caught and worded**, for records and runs alike:
     its reason, never an exception, so every record and run is still shown, its
-    key's state "cannot be checked"."""
+    group's comparison incomplete."""
     from src.evaluation.report_store import scan_report_store
 
     try:
@@ -78,31 +84,32 @@ def read_report_store(version: Any) -> StoreRead:
         return StoreRead(None, f"its report store could not be read ({type(exc).__name__})")
 
 
-#: Why a kept report has no key state of its own: the store's scan read no
-#: report in its run directory (it was written after the scan, before its state
-#: was read).
-_NOT_COMPARED = "the report store's comparison did not read it"
+#: Why a kept report has no group description of its own: the store's scan
+#: read no report in its run directory (it was written after the scan, before
+#: its state was read). The Test page's words for the same fact.
+_NOT_LISTED = "the report store's listing did not read it"
 
 
 def run_contest(store: StoreRead, run_id: str, state: Mapping[str, Any], *,
                 operator: bool) -> Optional[Dict[str, Any]]:
-    """D5's state of the key run `run_id`'s report is under, from the store's
-    one scan (`StoreScan.run_status`, which finds the run by its id), **for the
-    bytes `state` read** (its ``report_sha256``, the registration's one helper's
-    read): a report replaced between the scan's read and that one is
-    ``cannot_be_checked``, so a run's kept/registered state and its key's state
-    are always of one byte string. A report the scan read but could not place is
-    ``cannot_be_checked``, and so is one it did not read, or every run of a
-    store that could not be scanned: never no state while a report may be kept.
-    None for a run that kept none. `operator` False leaves out the problems'
-    words."""
+    """How the condition group run `run_id`'s report is under compares, from
+    the store's one scan (`StoreScan.run_status`, which finds the run by its
+    id), **for the bytes `state` read** (its ``report_sha256``, the
+    registration's one helper's read): a report replaced between the scan's read
+    and that one is ``cannot_be_checked``, so a run's kept/registered state and
+    its group's description are always of one byte string. A report the scan
+    read but could not place is ``cannot_be_checked`` with its own reason only,
+    and so is one it did not read, or every run of a store that could not be
+    scanned: never no description while a report may be kept. None for a run
+    that kept none. It decides nothing. `operator` False leaves out the
+    problems' words."""
     status = (store.scan.run_status(run_id, state.get("report_sha256"))
               if store.scan is not None else None)
     if status is None:
         if state.get("kept") == "not_kept":
             return None
         return {"state": "cannot_be_checked", "differing": [], "disagreeing_runs": [],
-                "problems": _shown([store.problem or _NOT_COMPARED], operator)}
+                "problems": _shown([store.problem or _NOT_LISTED], operator)}
     return {"state": status.state, "differing": list(status.differing),
             "disagreeing_runs": list(status.disagreeing_runs),
             "problems": _shown(status.problems, operator)}
@@ -192,13 +199,15 @@ class CohortVersions:
 
 def contest_states(records: Iterable[Mapping[str, Any]], versions: CohortVersions, *,
                    operator: bool = True) -> Dict[str, Dict[str, Any]]:
-    """Each record key's state in its cohort version's report store (D5), by
-    the key's text: one scan of each store (`read_report_store`), then
-    `StoreScan.status`. A key whose state cannot be read is ``cannot_be_checked``,
-    never uncontested. For a contested key, the disagreeing runs' values of the
-    metrics that differ, as their reports hold them (a hand-edited report may
-    hold null, NaN or text there; the state stays contested). `operator` False
-    leaves out the problems' own words, which may name a server path."""
+    """Each record group's description in its cohort version's report store,
+    by the group's text: one scan of each store (`read_report_store`), then
+    `StoreScan.status`. A group whose description cannot be read is
+    ``cannot_be_checked``, never uncontested. For a ``contested`` group (runs
+    under these conditions differ), every run carrying a differing report,
+    byte-identical runs each named, with its values of the metrics that differ,
+    as its report holds them (a hand-edited report may hold null, NaN or text
+    there; the description stays contested). It decides nothing. `operator`
+    False leaves out the problems' own words, which may name a server path."""
     from src.evaluation.sidecar import record_key
 
     keys: Dict[str, Tuple[Any, ...]] = {}

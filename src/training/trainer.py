@@ -1,19 +1,20 @@
 """
 SHEPHERD-Advanced Model Trainer
 ===============================
-Complete training loop for ShepherdGNN with multi-task learning.
+The training loop of a model bundle, driven by its stage's task module.
 
 Module: src/training/trainer.py
 Absolute Path: /home/user/SHEPHERD-Advanced/src/training/trainer.py
 
 Purpose:
-    Provide a complete training loop for the ShepherdGNN model, including:
-    - Multi-task loss optimization (diagnosis, link prediction, contrastive)
+    Run the training loop a stage's task module drives (README §3.1 lifecycle
+    hooks: `training_step` and `validate`), owning what every stage shares:
     - Mixed precision training (FP16/BF16) for memory efficiency
-    - Gradient accumulation for effective larger batch sizes
+    - Gradient accumulation, the epoch's tail applied as one more update
     - Learning rate scheduling with warmup
-    - Evaluation and validation loops
+    - Validation through the task, with the best value and its history
     - Callback system integration (checkpoints, early stopping, logging)
+    - Continuing a parent's training as the run plan decided
 
 Components:
     - TrainerConfig: Training hyperparameters and settings
@@ -24,22 +25,18 @@ Dependencies:
     - torch: Core training operations, autocast, GradScaler
     - torch.nn: Module, Optimizer base classes
     - torch.optim: AdamW, lr_scheduler
-    - src.training.loss_functions: MultiTaskLoss, LossConfig
     - src.training.callbacks: CallbackList, EarlyStopping, ModelCheckpoint
-    - src.kg.data_loader: DiagnosisDataLoader
-    - src.utils.metrics: DiagnosisMetrics
-    - src.models.gnn.shepherd_gnn: ShepherdGNN, PhenotypeDiseaseMatcher
 
 Input:
-    - model: ShepherdGNN instance
-    - train_dataloader: DiagnosisDataLoader for training
-    - val_dataloader: DiagnosisDataLoader for validation (optional)
+    - model: a model bundle (src.models.bundle)
+    - train_dataloader: the stage's sampler, yielding the task's batches
+    - task: the stage's task module (src.training.lp_task, finetune_task)
     - config: TrainerConfig with hyperparameters
 
 Output:
     - Trained model saved to checkpoints directory
     - Training metrics logged to file
-    - Final evaluation metrics dict
+    - Final validation metrics dict
 
 Called by:
     - scripts/train_model.py (main entry point)
@@ -50,13 +47,12 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Mapping, Optional, Tuple, Union
+from typing import Any, Dict, Iterator, List, Mapping, Optional, Union
 
 import torch
 import torch.nn as nn
-from torch import Tensor
 from torch.optim import AdamW, Optimizer
 from torch.optim.lr_scheduler import (
     CosineAnnealingLR,
@@ -67,7 +63,6 @@ from torch.optim.lr_scheduler import (
 )
 from torch.amp import GradScaler, autocast
 
-from src.training.loss_functions import LossConfig, MultiTaskLoss
 from src.training.callbacks import (
     Callback,
     CallbackList,
@@ -78,9 +73,7 @@ from src.training.callbacks import (
     MetricsLogger,
     MetricsLoggerConfig,
     LearningRateMonitor,
-    GradientClipping,
 )
-from src.utils.metrics import DiagnosisMetrics, RankingMetrics
 
 logger = logging.getLogger(__name__)
 
@@ -112,16 +105,20 @@ class TrainerConfig:
 
     # Validation
     eval_every_n_epochs: int = 1
-    eval_every_n_steps: Optional[int] = None
 
     # Checkpointing
     checkpoint_dir: str = ""  # empty = auto-derive from data_dir + /checkpoints
     save_top_k: int = 3
     save_last: bool = True
 
-    # Early stopping
+    # Early stopping. Off for the bundle path's reference recipe (README C6):
+    # the full schedule runs and ModelCheckpoint keeps the best file.
+    early_stopping: bool = True
     early_stopping_patience: int = 10
-    early_stopping_monitor: str = "val_mrr"
+    # The metric early stopping and ModelCheckpoint select by. None: the
+    # task's own selection metric (`task.selection_metric`), which the
+    # Trainer puts in its config when it is built.
+    early_stopping_monitor: Optional[str] = None
     early_stopping_mode: str = "max"
 
     # Logging
@@ -133,9 +130,6 @@ class TrainerConfig:
 
     # Reproducibility
     seed: Optional[int] = 42
-
-    # Loss configuration
-    loss_config: Optional[LossConfig] = None
 
     # Stop at a safe boundary once this many epochs of the run's total progress
     # are complete, recorded as paused (contract M3a-3). Not inherited.
@@ -198,39 +192,47 @@ def _validate_min_lr_ratio(min_lr_ratio: float, scheduler_type: str) -> None:
 # =============================================================================
 class Trainer:
     """
-    ShepherdGNN 訓練器
-
-    完整的訓練循環，包含：
-    - 多任務損失優化
-    - 混合精度訓練
-    - 梯度累積
-    - 學習率調度
-    - 回調系統
+    The training loop of a model bundle (README §3.1): the stage's task module
+    computes each step's loss and the validation metrics; the Trainer keeps
+    the optimizer, mixed precision, accumulation, the schedule, callbacks and
+    saving.
     """
 
     def __init__(
         self,
         model: nn.Module,
         train_dataloader: Iterator[Dict[str, Any]],
-        val_dataloader: Optional[Iterator[Dict[str, Any]]] = None,
         config: Optional[TrainerConfig] = None,
-        loss_fn: Optional[nn.Module] = None,
         optimizer: Optional[Optimizer] = None,
         scheduler: Optional[LRScheduler] = None,
         callbacks: Optional[List[Callback]] = None,
+        *,
+        task: Any,
     ):
         """
         Args:
-            model: ShepherdGNN 模型
-            train_dataloader: 訓練資料載入器
-            val_dataloader: 驗證資料載入器 (可選)
+            model: the model bundle to train
+            train_dataloader: the stage's sampler, yielding the task's batches
             config: 訓練配置
-            loss_fn: 損失函數 (預設使用 MultiTaskLoss)
             optimizer: 優化器 (預設使用 AdamW)
             scheduler: 學習率調度器 (預設根據 config 創建)
             callbacks: 回調列表
+            task: the stage's task module (README §3.1 lifecycle hooks),
+                required: `training_step(model, batch, device)` returns a
+                `StepResult` (a loss, or None for a step with nothing to learn
+                from), and `validate(model, device)` returns the validation
+                metrics. It is the Trainer's one training path; `None` is
+                refused (a TypeError). When the config states no
+                `early_stopping_monitor`, the Trainer selects by the task's
+                `selection_metric`.
         """
+        if task is None:
+            raise TypeError("Trainer needs the stage's task module (task): it computes each "
+                            "step's loss and the validation metrics")
         self.config = config or TrainerConfig()
+        if self.config.early_stopping_monitor is None:
+            # A copy: the caller's config is left as given.
+            self.config = replace(self.config, early_stopping_monitor=task.selection_metric)
         self.device = torch.device(self.config.device)
 
         # Model
@@ -238,12 +240,9 @@ class Trainer:
 
         # Data
         self.train_dataloader = train_dataloader
-        self.val_dataloader = val_dataloader
 
-        # Loss
-        self.loss_fn = loss_fn or MultiTaskLoss(
-            config=self.config.loss_config or LossConfig()
-        )
+        # The stage's task module.
+        self.task = task
 
         # Optimizer
         self.optimizer = optimizer or self._create_optimizer()
@@ -260,9 +259,6 @@ class Trainer:
 
         # Callbacks
         self.callbacks = CallbackList(callbacks or self._create_default_callbacks())
-
-        # Metrics
-        self.metrics = DiagnosisMetrics()
 
         # State
         self.state = TrainingState()
@@ -484,20 +480,21 @@ class Trainer:
         callbacks = []
 
         # Early stopping
-        callbacks.append(EarlyStopping(
-            config=EarlyStoppingConfig(
-                monitor=self.config.early_stopping_monitor,
-                mode=self.config.early_stopping_mode,
-                patience=self.config.early_stopping_patience,
-                restore_best_weights=True,
-            )
-        ))
+        if self.config.early_stopping:
+            callbacks.append(EarlyStopping(
+                config=EarlyStoppingConfig(
+                    monitor=self.config.early_stopping_monitor,
+                    mode=self.config.early_stopping_mode,
+                    patience=self.config.early_stopping_patience,
+                    restore_best_weights=True,
+                )
+            ))
 
-        # Model checkpoint
+        # Model checkpoint, named by the monitored metric
         callbacks.append(ModelCheckpoint(
             config=ModelCheckpointConfig(
                 dirpath=self.config.checkpoint_dir,
-                filename="model-{epoch:02d}-{val_mrr:.4f}",
+                filename="model-{epoch:02d}-{" + self.config.early_stopping_monitor + ":.4f}",
                 monitor=self.config.early_stopping_monitor,
                 mode=self.config.early_stopping_mode,
                 save_top_k=self.config.save_top_k,
@@ -517,9 +514,6 @@ class Trainer:
 
         # Learning rate monitor
         callbacks.append(LearningRateMonitor())
-
-        # Gradient clipping monitor
-        callbacks.append(GradientClipping(max_norm=self.config.max_grad_norm))
 
         return callbacks
 
@@ -572,10 +566,7 @@ class Trainer:
 
                 # Validation
                 val_metrics = {}
-                if (
-                    self.val_dataloader is not None
-                    and (epoch + 1) % self.config.eval_every_n_epochs == 0
-                ):
+                if (epoch + 1) % self.config.eval_every_n_epochs == 0:
                     val_metrics = self._validate(epoch)
 
                 # Combine metrics
@@ -611,7 +602,7 @@ class Trainer:
 
         # Final evaluation, of a run that ended, not of one stopped: a stop
         # should end promptly, and its run has no final metrics.
-        if self.val_dataloader is not None and not self.interrupted:
+        if not self.interrupted:
             final_metrics = self._validate(self.state.epoch)
         else:
             final_metrics = {}
@@ -651,61 +642,38 @@ class Trainer:
 
         epoch_start_time = time.time()
 
+        set_epoch = getattr(self.train_dataloader, "set_epoch", None)
+        if callable(set_epoch):
+            set_epoch(epoch)
+        skipped_steps = 0
+
         for batch_idx, batch_data in enumerate(self.train_dataloader):
             self.callbacks.on_batch_begin(self, batch_idx)
 
-            # Move data to device
-            batch = self._move_to_device(batch_data["batch"])
-            subgraph_x = self._move_to_device(batch_data["subgraph_x_dict"])
-            subgraph_edges = self._move_to_device(batch_data["subgraph_edge_index_dict"])
-
-            # Forward pass with mixed precision
             with autocast(self.device.type, dtype=self.amp_dtype, enabled=self.use_amp):
-                # Forward through GNN
-                node_embeddings = self.model(subgraph_x, subgraph_edges)
-
-                # Compute diagnosis scores
-                model_outputs = self._compute_model_outputs(
-                    node_embeddings, batch, subgraph_x, subgraph_edges
-                )
-
-                # Compute loss
-                loss, loss_dict = self.loss_fn(batch, model_outputs)
-
-                # Scale for gradient accumulation
-                loss = loss / accumulation
-
-            # Backward pass
+                step = self.task.training_step(self.model, batch_data, self.device)
+            if step.loss is None:
+                # Nothing to learn from: no backward, no update, counted
+                # (README §3.1, no empty mean and no invented loss).
+                skipped_steps += 1
+                self.callbacks.on_batch_end(self, batch_idx, {
+                    "batch_skipped": 1, **{f"count_{k}": v for k, v in step.counts.items()}})
+                continue
+            loss = step.loss / accumulation
             if self.scaler is not None:
                 self.scaler.scale(loss).backward()
             else:
                 loss.backward()
-
             loss_sum += loss.item() * accumulation
             batch_count += 1
             pending += 1
-
-            # Optimizer step (with gradient accumulation)
-            if (batch_idx + 1) % accumulation == 0:
+            if pending == accumulation:
                 self._optimizer_update()
                 pending = 0
-
-            # Batch metrics
-            batch_metrics = {
+            self.callbacks.on_batch_end(self, batch_idx, {
                 "batch_loss": loss.item() * accumulation,
-                **{f"loss_{k}": v for k, v in loss_dict.items()},
-            }
-
-            self.callbacks.on_batch_end(self, batch_idx, batch_metrics)
-
-            # Step-based validation
-            if (
-                self.config.eval_every_n_steps is not None
-                and self.state.global_step % self.config.eval_every_n_steps == 0
-                and self.val_dataloader is not None
-            ):
-                self._validate(epoch)
-                self.model.train()
+                **{f"loss_{k}": v for k, v in step.terms.items()},
+                **{f"count_{k}": v for k, v in step.counts.items()}})
 
         # The accumulation tail: one more update, as the mean of its batches.
         if pending:
@@ -725,6 +693,7 @@ class Trainer:
             "train_loss": avg_loss,
             "epoch_time": epoch_time,
             "learning_rate": self.optimizer.param_groups[0]["lr"],
+            "train_steps_skipped": skipped_steps,
         }
 
     def _optimizer_update(self) -> None:
@@ -770,116 +739,24 @@ class Trainer:
         # Update state
         self.state.global_step += 1
 
-    @dataclass(frozen=True)
-    class _EvaluationPass:
-        """What one traversal of an evaluation dataloader produced.
-
-        A plain frozen container, deliberately: the callers need four values out
-        of the loop and a tuple would make the call sites unreadable. **Not** a
-        public result type, not a protocol, and nothing subclasses it.
-
-        `predictions` and `ground_truths` are carried out of the pass for the
-        Trainer value test (`tests/unit/test_trainer_validation_values.py`), which
-        compares them with rows computed independently; returning them costs
-        nothing and changes nothing observable.
-        """
-
-        ranking_metrics: Dict[str, float]
-        mean_loss: float
-        predictions: List[List[str]]
-        ground_truths: List[str]
-        num_batches: int
-
-    def _run_evaluation_pass(
-        self, dataloader: Iterator[Dict[str, Any]]
-    ) -> "Trainer._EvaluationPass":
-        """The pass `_validate` and `evaluate` both perform.
-
-        **Extracted, not rewritten.** Every operation below was already present
-        in both callers, in this order, and the 32 characterization tests in
-        `tests/unit/test_trainer_validation_characterization.py` exist to prove
-        that moving them changed nothing: the autocast boundary still closes
-        before metric aggregation, the loss is still a mean over batches, the
-        prediction rows are still local column indices truncated at 20, and a
-        malformed truth still refuses before any metric is computed.
-
-        **What stays with the callers**, because it is not shared:
-        `model.eval()` ordering relative to the validation callbacks, the `val_`
-        prefix, best-metric and history bookkeeping, `evaluate`'s dataloader
-        selection and early return, and its logging.
-        """
-        all_predictions: List[List[str]] = []
-        all_ground_truths: List[str] = []
-        total_loss = 0.0
-        num_batches = 0
-
-        with torch.no_grad():
-            for batch_data in dataloader:
-                # Move data to device
-                batch = self._move_to_device(batch_data["batch"])
-                subgraph_x = self._move_to_device(batch_data["subgraph_x_dict"])
-                subgraph_edges = self._move_to_device(batch_data["subgraph_edge_index_dict"])
-
-                # Forward pass
-                with autocast(self.device.type, dtype=self.amp_dtype, enabled=self.use_amp):
-                    node_embeddings = self.model(subgraph_x, subgraph_edges)
-                    model_outputs = self._compute_model_outputs(
-                        node_embeddings, batch, subgraph_x, subgraph_edges
-                    )
-
-                    # Compute loss
-                    loss, _ = self.loss_fn(batch, model_outputs)
-
-                total_loss += loss.item()
-                num_batches += 1
-
-                # Collect predictions for metrics
-                if "diagnosis_scores" in model_outputs:
-                    scores = model_outputs["diagnosis_scores"]
-                    targets = model_outputs.get("diagnosis_targets", batch.get("disease_ids"))
-
-                    # Get ranked predictions
-                    _, indices = scores.sort(dim=-1, descending=True)
-
-                    for i in range(scores.size(0)):
-                        pred_indices = indices[i].tolist()
-                        # Convert indices to IDs (simplified)
-                        all_predictions.append([str(idx) for idx in pred_indices[:20]])
-                        all_ground_truths.append(str(targets[i].item()))
-
-        ranking_metrics: Dict[str, float] = {}
-        if all_predictions:
-            ranking_metrics = RankingMetrics().compute_all(
-                all_predictions, all_ground_truths
-            )
-
-        return Trainer._EvaluationPass(
-            ranking_metrics=ranking_metrics,
-            mean_loss=total_loss / max(num_batches, 1),
-            predictions=all_predictions,
-            ground_truths=all_ground_truths,
-            num_batches=num_batches,
-        )
-
     def _validate(self, epoch: int) -> Dict[str, float]:
         """驗證模型
 
-        The traversal lives in `_run_evaluation_pass`; what stays here is the
-        validation lifecycle `evaluate` does not share — the callbacks, the
-        `val_` prefix, and the best-metric and history bookkeeping.
+        The task validates (`task.validate`); what stays here is the
+        validation lifecycle every stage shares: the callbacks, the `val_`
+        prefix, and the best-metric and history bookkeeping.
 
-        `model.eval()` stays **before** `on_validation_begin` rather than moving
-        into the pass: a callback receives the trainer and may read
-        `model.training`, so the order is observable.
+        `model.eval()` comes **before** `on_validation_begin`: a callback
+        receives the trainer and may read `model.training`, so the order is
+        observable.
         """
         self.model.eval()
         self.callbacks.on_validation_begin(self)
 
-        result = self._run_evaluation_pass(self.val_dataloader)
-
-        # Compute metrics
-        val_metrics = {f"val_{k}": v for k, v in result.ranking_metrics.items()}
-        val_metrics["val_loss"] = result.mean_loss
+        # Numbers, and None for a metric the task found undefined (an AUC
+        # without one class, README F4): stated in the logs, not dropped.
+        val_metrics = {f"val_{k}": v for k, v in self.task.validate(self.model, self.device).items()
+                       if v is None or (isinstance(v, (int, float)) and not isinstance(v, bool))}
 
         # Track best metric
         monitor_value = val_metrics.get(self.config.early_stopping_monitor)
@@ -904,239 +781,14 @@ class Trainer:
         else:
             return current < self.state.best_metric
 
-    def _move_to_device(self, data: Union[Dict, Tensor, Any]) -> Union[Dict, Tensor, Any]:
-        """移動資料到設備"""
-        if isinstance(data, dict):
-            return {k: self._move_to_device(v) for k, v in data.items()}
-        elif isinstance(data, Tensor):
-            return data.to(self.device)
-        else:
-            return data
-
-    def _compute_model_outputs(
-        self,
-        node_embeddings: Dict[str, Tensor],
-        batch: Dict[str, Any],
-        subgraph_x: Dict[str, Tensor],
-        subgraph_edges: Dict[Tuple[str, str, str], Tensor],
-    ) -> Dict[str, Tensor]:
-        """
-        計算模型輸出
-
-        整合節點嵌入並計算診斷分數
-        """
-        outputs = {"node_embeddings": node_embeddings}
-
-        # Get disease embeddings
-        disease_emb = node_embeddings.get("disease")
-        if disease_emb is None:
-            return outputs
-
-        # Get phenotype embeddings
-        phenotype_emb = node_embeddings.get("phenotype")
-        if phenotype_emb is None:
-            return outputs
-
-        # Get batch phenotype indices
-        phenotype_ids = batch.get("phenotype_ids")
-        phenotype_mask = batch.get("phenotype_mask")
-        disease_ids = batch.get("disease_ids")
-
-        if phenotype_ids is None or disease_ids is None:
-            return outputs
-
-        # Gather patient phenotype embeddings
-        batch_size = phenotype_ids.size(0)
-        max_phenotypes = phenotype_ids.size(1)
-
-        # Handle invalid indices
-        valid_ids = phenotype_ids.clamp(min=0, max=phenotype_emb.size(0) - 1)
-        patient_phenotype_emb = phenotype_emb[valid_ids.view(-1)].view(
-            batch_size, max_phenotypes, -1
-        )
-
-        # Aggregate patient phenotypes (masked mean)
-        if phenotype_mask is not None:
-            mask = phenotype_mask.unsqueeze(-1).float()
-            summed = (patient_phenotype_emb * mask).sum(dim=1)
-            counts = mask.sum(dim=1).clamp(min=1)
-            patient_embeddings = summed / counts
-        else:
-            patient_embeddings = patient_phenotype_emb.mean(dim=1)
-
-        outputs["patient_embeddings"] = patient_embeddings
-
-        # Get disease embeddings for targets.
-        #
-        # **No clamp, and no range check here either.** The clamp that used to
-        # stand in this position silently scored a *different* disease for a
-        # malformed truth, turning a data-pipeline failure into apparent model
-        # error; it is gone. The range check that briefly replaced it is gone
-        # too, for a different reason: `disease_ids` has been through
-        # `_move_to_device` by the time this runs, so `bool(out_of_range.any())`
-        # would force a host-device synchronisation on **every valid batch** of
-        # training and validation. That is a throughput cost paid forever to
-        # catch a condition that cannot occur.
-        #
-        # The invariant is enforced where it is created and while it is still on
-        # the host: `DiagnosisDataLoader._assert_disease_truth_in_range`, run
-        # immediately after the remap that can produce a `-1` hole. `DiagnosisLoss`
-        # is the independent second refusal for any caller that bypasses that
-        # loader.
-        #
-        # The phenotype clamp above is **not** the same thing and stays:
-        # `diagnosis_collate_fn` pads phenotype ids with -1 by design and the
-        # mask discards those positions. Disease truths are never padded.
-        target_disease_emb = disease_emb[disease_ids]
-        outputs["disease_embeddings"] = target_disease_emb
-
-        # Compute diagnosis scores (similarity to all diseases)
-        patient_norm = torch.nn.functional.normalize(patient_embeddings, dim=-1)
-        disease_norm = torch.nn.functional.normalize(disease_emb, dim=-1)
-        diagnosis_scores = torch.mm(patient_norm, disease_norm.t())
-
-        outputs["diagnosis_scores"] = diagnosis_scores
-        outputs["diagnosis_targets"] = disease_ids
-
-        return outputs
-
-    # =========================================================================
-    # Evaluation (TrainerProtocol compliant)
-    # =========================================================================
-    def evaluate(
-        self,
-        test_dataloader: Optional[Iterator[Dict[str, Any]]] = None,
-    ) -> Dict[str, float]:
-        """
-        獨立評估方法，符合 TrainerProtocol
-
-        此方法可用於：
-        - 訓練後的最終評估
-        - 外部腳本調用進行模型評估
-        - API 層查詢模型性能
-
-        Args:
-            test_dataloader: 測試資料載入器。若為 None，使用 val_dataloader
-
-        Returns:
-            Dict[str, float]: 評估指標
-                - mrr: Mean Reciprocal Rank
-                - hits@1, hits@5, hits@10: Hits at K
-                - loss: 平均損失
-        """
-        # **`is None`, not falsy.** An explicitly supplied `[]` used to be
-        # silently replaced by the validation set, so a caller asking to
-        # evaluate a specific empty cohort received a full validation pass and
-        # numbers about a different set of patients entirely.
-        dataloader = self.val_dataloader if test_dataloader is None else test_dataloader
-
-        if dataloader is None:
-            # Nothing asked for and nothing configured: the method declines to
-            # act, which is different from being handed a cohort with no rows.
-            logger.warning("No dataloader provided for evaluation")
-            return {}
-
-        self.model.eval()
-
-        result = self._run_evaluation_pass(dataloader)
-
-        # **A cohort with no rows is refused rather than scored.** `mean_loss`
-        # divides by `max(num_batches, 1)`, so an empty traversal returns
-        # `{"loss": 0.0}` — a number about a model, produced without reading a
-        # single patient. `RankingMetrics` and `measurement.py` both refuse to
-        # invent a value for an empty cohort;
-        # this is the same refusal at the entry point that could still fabricate
-        # one. Checked after the traversal rather than before, so a generator
-        # that yields nothing is caught as surely as an empty list.
-        if result.num_batches == 0:
-            raise ValueError(
-                "the cohort handed to evaluate() has no batches, so there is "
-                "nothing to measure. An empty traversal would report a loss of "
-                "0.0 and no ranking metrics, which reads as a result and is not "
-                "one. Pass None to evaluate the validation set."
-            )
-
-        # Compute metrics
-        metrics = {"loss": result.mean_loss}
-        metrics.update(result.ranking_metrics)
-
-        logger.info(f"Evaluation metrics: {metrics}")
-        return metrics
-
-    def get_model_info(self) -> Dict[str, Any]:
-        """
-        獲取模型資訊，供 API 層使用
-
-        Returns:
-            Dict with model version, training state, and metrics
-        """
-        return {
-            "model_class": self.model.__class__.__name__,
-            "num_parameters": sum(p.numel() for p in self.model.parameters()),
-            "trainable_parameters": sum(
-                p.numel() for p in self.model.parameters() if p.requires_grad
-            ),
-            "training_state": {
-                "epoch": self.state.epoch,
-                "global_step": self.state.global_step,
-                "best_metric": self.state.best_metric,
-                "best_epoch": self.state.best_epoch,
-            },
-            "config": {
-                "learning_rate": self.config.learning_rate,
-                "num_epochs": self.config.num_epochs,
-                "device": self.config.device,
-            },
-        }
-
     # =========================================================================
     # Checkpoint Operations
     # =========================================================================
     def _serialize_config(self) -> Dict[str, Any]:
-        """Serialize config to primitive types for safe pickling.
-
-        Converts dataclass fields (e.g. LossConfig) to plain dicts so that
-        checkpoints can be loaded without requiring the original class
-        definitions (avoids WeightsUnpickler errors in PyTorch 2.6+).
-        """
-        import dataclasses
-
-        config_dict: Dict[str, Any] = {}
-        for k, v in self.config.__dict__.items():
-            if dataclasses.is_dataclass(v) and not isinstance(v, type):
-                config_dict[k] = dataclasses.asdict(v)
-            else:
-                config_dict[k] = v
-
-        # Embed the FULL model architecture as a named sub-dict so checkpoints
-        # are self-describing for inference. TrainerConfig carries only training
-        # hyperparameters; without this the model-arch fields (conv_type, dims,
-        # ...) never reach the checkpoint and inference has to guess them. A
-        # named key (not flattened) avoids colliding with training
-        # hyperparameters at the top level, and capturing the whole dataclass
-        # means new architecture fields are persisted automatically — no
-        # per-field whitelist to maintain.
-        model_cfg = getattr(getattr(self, "model", None), "config", None)
-        if dataclasses.is_dataclass(model_cfg) and not isinstance(model_cfg, type):
-            config_dict["model_config"] = dataclasses.asdict(model_cfg)
-
-            # Forward-compat: also mirror the core arch fields at the top level so
-            # an interim inference build that reads flat fields (but not
-            # model_config yet) can still reconstruct the model. model_config
-            # remains the authoritative source; the loader prefers it.
-            for field in (
-                "conv_type",
-                "hidden_dim",
-                "num_layers",
-                "num_heads",
-                "use_positional_encoding",
-                "use_ortholog_gate",
-            ):
-                value = getattr(model_cfg, field, None)
-                if value is not None:
-                    config_dict.setdefault(field, value)
-
-        return config_dict
+        """The trainer's configuration as plain data, for the checkpoint's
+        `config` (every `TrainerConfig` field is a plain value). The model's
+        architecture is not here: it is the model record's spec."""
+        return dict(self.config.__dict__)
 
     def save_checkpoint(
         self,

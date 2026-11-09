@@ -22,11 +22,11 @@ _SIDE_EFFECT_FLAGS = (
 def _app_state_flags_are_per_test():
     """The flags in `_SIDE_EFFECT_FLAGS` are put back after every test.
 
-    In a test process they leak. A leaked `real_pipeline_requested` sends every
-    later test that reaches `/diagnose` with no pipeline published to the 503
-    meant for a failed deployment instead of the mock path it was written
-    against, so a file's result depended on which files ran before it. A leaked
-    `is_ready` would do the same to `/ready`.
+    In a test process they leak. A leaked `real_pipeline_requested` gives every
+    later test that reaches `/diagnose` with no pipeline published the refusal
+    meant for a failed deployment instead of the one for nothing loaded, so a
+    file's result depended on which files ran before it. A leaked `is_ready`
+    would do the same to `/ready`.
 
     Lazy: a test that never imports the API does not import it here.
     """

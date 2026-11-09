@@ -100,7 +100,7 @@ def test_the_split_caveat_names_two_distinct_limits(script):
     """
     _, help_text = _split_help(script)
 
-    assert "early_stopping_monitor=val_mrr" in help_text, "checkpoint selection"
+    assert "task's selection metric, `val_pooled_mrr`" in help_text, "checkpoint selection"
     assert "disease-disjoint from `train`, by construction" in help_text, "the contract"
     assert "identical" in help_text and "phenotype content" in help_text, (
         "the channel the disease-level cut does not close"
@@ -109,7 +109,26 @@ def test_the_split_caveat_names_two_distinct_limits(script):
     assert "--cohort" in help_text and "import_cohort.py" in help_text, (
         "where a supplied cohort goes instead"
     )
-    assert "not registered" in help_text, "a generated split's report is not registrable"
+    assert "not registered" in help_text, "a generated split's report is not registered"
+    assert "does not yet support a generated split's data identity" in help_text, (
+        "the ledger's limit is the reason (policy rev 16, K8-6r.4), not a lesser result"
+    )
+    assert "report and ranks stay at --output" in help_text, "where the result is kept"
+
+
+@pytest.mark.parametrize("script", ENTRY_POINTS)
+def test_the_record_and_output_help_give_the_ledgers_limit_and_the_new_file_rule(script):
+    """K8-6r.4: `--record` gives the ledger's limit as the reason a generated
+    split's report is not registered, and `--output` says it names a new file
+    that, with its ranks file, is never replaced (Decisions 9 and 12)."""
+    _, record_help = _option_help(script, "--record")
+    _, output_help = _option_help(script, "--output")
+
+    assert "does not yet support a generated split's data identity" in record_help
+    assert "stay at --output" in record_help
+    assert "a new file" in output_help
+    assert "neither it nor its ranks file may exist" in output_help
+    assert "neither is ever replaced" in output_help
 
 
 @pytest.mark.parametrize("script", ENTRY_POINTS)
@@ -151,16 +170,21 @@ def test_the_caveat_no_longer_hedges_about_which_regime_it_describes(script):
 
 
 @pytest.mark.parametrize("script", ENTRY_POINTS)
-def test_the_cohort_kind_is_decided_by_the_argument_not_stated(script):
+def test_the_cohort_kind_is_decided_by_the_argument_not_stated(script, capsys):
     """`--cohort-kind` stated what the argument now decides: `--split` is always
     generated and `--cohort` always a registered (supplied) version, so the kind
-    cannot be stated wrongly. The flag is refused, and its help text is gone."""
+    cannot be stated wrongly. The flag is refused, and its help text is gone.
+    The command line is otherwise complete (`--mode` included), so the refusal
+    is the flag's."""
     import src.evaluation.caveats as caveats
 
     module = importlib.import_module(f"scripts.{script}")
-    with pytest.raises(SystemExit):
-        module.parse_args(["--checkpoint", "c.pt", "--data-dir", "d", "--split", "val",
-                           "--output", "o.json", "--cohort-kind", "generated"])
+    with pytest.raises(SystemExit) as refused:
+        module.parse_args(["--mode", "disease", "--checkpoint", "c.pt", "--data-dir", "d",
+                           "--split", "val", "--output", "o.json",
+                           "--cohort-kind", "generated"])
+    assert refused.value.code == 2
+    assert "unrecognized arguments: --cohort-kind generated" in capsys.readouterr().err
     assert not hasattr(caveats, "COHORT_KIND_HELP")
 
 

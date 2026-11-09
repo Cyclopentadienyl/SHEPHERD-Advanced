@@ -5,27 +5,29 @@ Single source of truth for the on-disk run layout, shared by the training entry
 point (write path), the training service and console (listing, resume source),
 and the inference reload route (read path), so all of them agree:
 
-    {data_dir}/runs/{conv_type}/{date}_{name}_{run_id}/
+    {data_dir}/runs/{layout directory}/{date}_{name}_{run_id}/
         config.yaml  runtime.json  final_metrics.json
         checkpoints/   last.pt, model-*.pt
         logs/          train_*.json, progress.json
 
 **One directory per training run** (contract decision 9, M3a-2). A run, new or
 resumed, writes only into a directory no run has used, so no run overwrites or
-prunes another's files. Runs sit side by side under their architecture, never
-nested by lineage: a resumed run records its parent by SHA-256, not by where it
-sits.
+prunes another's files. A new run is filed under its model spec's encoder kind
+(`RUN_LAYOUT_KEYS`), never nested by lineage: a resumed run records its parent
+by SHA-256, not by where it sits. **The listing reads every directory under
+``runs/``**, whatever its name (`list_runs`): what a file is comes from its own
+record, never from the directory it sits in. One it cannot list, a name that is
+not valid text among them, is one entry saying why, and hides nothing else.
 
 No torch / PyG imports — safe to import from training scripts and API services.
 
 Old layouts:
     Checkpoints written before this layout (``{data_dir}/checkpoints/{conv}/``
     and the older flat ``{data_dir}/checkpoints/*.pt``) are intentionally NOT
-    found by a runtime fallback here. Nothing writes there any more; such a file
-    is reached by an explicit checkpoint path, which every reader accepts and
-    checks by its bytes, or moved once, by the owner, with
-    ``scripts/migrate_checkpoints.py`` (decision 9). Not being listed does not
-    make a file invalid.
+    found by a runtime fallback here (decision 9). Nothing writes there any more;
+    such a file is reached by an explicit checkpoint path, which every reader
+    accepts and checks by its bytes. Not being listed does not make a file
+    invalid.
 
 Module: src/utils/checkpoint_paths.py
 """
@@ -33,6 +35,7 @@ from __future__ import annotations
 
 import copy
 import math
+import os
 import re
 import secrets
 import threading
@@ -43,8 +46,14 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple, Union
 
 ScoreFn = Callable[[Path], Optional[float]]
+#: Whether a candidate file may be selected (automatic selection's record rule).
+AcceptFn = Callable[[Path], bool]
 
-from src.config.model_types import DEFAULT_CONV_TYPE, SUPPORTED_CONV_TYPES
+from src.config.model_types import (
+    ENCODER_KINDS,
+    MODEL_RECORD_READ_KEYS,
+)
+from src.utils.fingerprint import ReadOutside, lies_within, stat_identity
 
 PathLike = Union[str, Path]
 
@@ -52,55 +61,56 @@ PathLike = Union[str, Path]
 # "higher is better". The best checkpoint is decided from a checkpoint's own
 # ``logs`` metadata — NOT from the filename. The number in ``model-<epoch>-
 # <value>.pt`` has no stable meaning (it is whatever ModelCheckpoint's
-# monitor/filename is configured to, e.g. val_mrr here, val_loss by default), so
-# it must never be used to choose a model. val_loss is deliberately excluded — it
-# is a poor quality signal for this task; ranking metrics are what matter.
-RANKING_SCORE_KEYS = ("val_mrr", "val_hits@10", "val_hits@1")
+# monitor/filename is configured to), so it must never be used to choose a
+# model. A loss is not a selection figure here; ranking metrics are what matter.
+# A model bundle run monitors its stage's metric: a base val_lp_accuracy, a
+# finetune val_pooled_mrr (src.training.lp_task.BASE_SELECTION_METRIC and
+# finetune_task.FINETUNE_SELECTION_METRIC, which this layer cannot import; a
+# test pins them equal). One run has one stage and task, so the first one
+# available is that run's own.
+RANKING_SCORE_KEYS = ("val_pooled_mrr", "val_lp_accuracy")
 
 
 def ranking_score_detail(logs) -> Optional[Tuple[str, float]]:
     """Return ``(metric_name, value)`` from a checkpoint's logs, or None.
 
     Picks the first available ranking metric (higher is better); ignores
-    missing, non-numeric, and non-finite values.
+    missing, non-numeric, and non-finite values (an integer past a float's
+    range among them, which `math.isfinite` would raise on).
     """
     if not isinstance(logs, dict):
         return None
     for key in RANKING_SCORE_KEYS:
         value = logs.get(key)
-        if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
-            return key, float(value)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        try:
+            score = float(value)
+        except OverflowError:  # an integer too large for a float: no finite figure
+            continue
+        if math.isfinite(score):
+            return key, score
     return None
 
 
-def ranking_score_from_logs(logs) -> Optional[float]:
-    """Ranking score (higher is better) from a checkpoint's logs, or None."""
-    detail = ranking_score_detail(logs)
-    return detail[1] if detail else None
-
-
-def normalize_conv_type(conv_type: Optional[str]) -> str:
-    """Lower-case a conv type.
-
-    Empty/missing falls back to the default, but an explicit unsupported value
-    (e.g. ``"gatv2"``, ``"bad"``) raises rather than silently degrading to GAT —
-    a mislabelled checkpoint dir or a wrong-architecture load is worse than a
-    loud error.
-    """
-    ct = str(conv_type or "").strip().lower()
-    if not ct:
-        return DEFAULT_CONV_TYPE
-    if ct not in SUPPORTED_CONV_TYPES:
-        raise ValueError(
-            f"Unsupported conv_type {conv_type!r}; supported: {SUPPORTED_CONV_TYPES}"
-        )
-    return ct
+def _accepted(accept: Optional[AcceptFn], path: Path) -> bool:
+    if accept is None:
+        return True
+    try:
+        return bool(accept(path))
+    except Exception:  # noqa: BLE001 - a file that cannot be judged is not chosen
+        return False
 
 
 def select_checkpoint_in_dir(
-    ckpt_dir: PathLike, score_fn: Optional[ScoreFn] = None
+    ckpt_dir: PathLike, score_fn: Optional[ScoreFn] = None,
+    accept: Optional[AcceptFn] = None,
 ) -> Optional[Path]:
     """Pick the checkpoint to serve from one directory.
+
+    With ``accept``, only the files it takes are candidates, the fallback
+    included (automatic selection's record rule: a checkpoint's learning stage
+    and task, provenance §9.3 hazard 3).
 
     When ``score_fn`` is given, every candidate is scored by it (``score_fn(path)
     -> Optional[float]``, **higher is better**) and the best-scoring one wins;
@@ -114,7 +124,12 @@ def select_checkpoint_in_dir(
     d = Path(ckpt_dir)
     if not d.is_dir():
         return None
-    pts = list(d.glob("*.pt"))
+    return _select_among([p for p in d.glob("*.pt") if _accepted(accept, p)], d, score_fn)
+
+
+def _select_among(pts: List[Path], d: Path, score_fn: Optional[ScoreFn]) -> Optional[Path]:
+    """The in-run ordering `select_checkpoint_in_dir` states, over `pts`, the
+    candidates of the checkpoint directory `d`."""
     if not pts:
         return None
 
@@ -127,22 +142,25 @@ def select_checkpoint_in_dir(
                 score = None
             if isinstance(score, (int, float)) and not isinstance(score, bool) \
                     and math.isfinite(score):
-                scored.append((float(score), p.stat().st_mtime, p.name, p))
+                # `_mtime`: a file removed since its read (training prunes
+                # its top-k files) sorts last, never raising out of here.
+                scored.append((float(score), _mtime(p), p.name, p))
         if scored:
             best = max(scored, key=lambda t: (t[0], t[1], t[2]))
             return best[3]
 
     last = d / "last.pt"
-    if last.exists():
+    if last in pts:
         return last
-    return max(pts, key=lambda p: p.stat().st_mtime)
+    return max(pts, key=lambda p: (_mtime(p), p.name))
 
 
 # =============================================================================
 # Run directories (contract M3a-2)
 # =============================================================================
 #: Every training run, new or resumed, writes into a directory of its own:
-#: ``{data_dir}/runs/{conv_type}/{date}_{name}_{run_id}/``, holding the run's
+#: ``{data_dir}/runs/{layout key}/{date}_{name}_{run_id}/``, the layout key a
+#: new run's model spec's encoder kind (``gatv2``), holding the run's
 #: ``config.yaml``, ``runtime.json`` and ``final_metrics.json``, its
 #: ``checkpoints/`` and its ``logs/``. Directories are flat, never nested by
 #: lineage: a resumed run records its parent by digest, not by where it sits.
@@ -162,9 +180,30 @@ def slugify_run_name(name: Optional[str]) -> str:
     return slug[:_RUN_NAME_LIMIT].strip("-")
 
 
+#: The keys new runs are filed under: the model bundle's encoder kinds (README
+#: §3.3), each its own directory. The writer's closed set only: a reader lists
+#: every directory under ``runs/`` (`list_runs`), whatever its name.
+RUN_LAYOUT_KEYS = ENCODER_KINDS
+
+
+def normalize_run_layout_key(key: Optional[str]) -> str:
+    """A new run's layout key, lower case: an encoder kind (``gatv2`` among
+    them); anything else raises, an empty key too: a run is filed under its
+    model spec's encoder kind, never under a default. The writer's check only
+    (`runs_root`, `propose_run_dir`); no reader asks it."""
+    k = str(key or "").strip().lower()
+    if not k:
+        raise ValueError("A run layout key is required: a run is filed under its model "
+                         "spec's encoder kind, and none was given.")
+    if k not in RUN_LAYOUT_KEYS:
+        raise ValueError(f"Unsupported run layout key {key!r}; supported: {RUN_LAYOUT_KEYS}")
+    return k
+
+
 def runs_root(data_dir: PathLike, conv_type: Optional[str]) -> Path:
-    """``{data_dir}/runs/{conv_type}``: where an architecture's runs live."""
-    return Path(data_dir) / RUNS_DIRNAME / normalize_conv_type(conv_type)
+    """``{data_dir}/runs/{layout key}``: where a new run of a model spec's
+    encoder kind is filed."""
+    return Path(data_dir) / RUNS_DIRNAME / normalize_run_layout_key(conv_type)
 
 
 #: Output locations retired by the run layout. A configuration that still sets
@@ -185,7 +224,7 @@ def refuse_retired_locations(values, *, source: str) -> None:
     if named:
         raise ValueError(
             f"{source} sets {', '.join(named)}, which no longer exist: every run writes "
-            "into a directory of its own, {data_dir}/runs/{conv_type}/..., with its "
+            "into a directory of its own, {data_dir}/runs/{encoder kind}/..., with its "
             "checkpoints/ and logs/ inside. Remove them; give run_name to name the run, "
             "or run_dir for an explicit directory that is absent or empty."
         )
@@ -204,11 +243,18 @@ def propose_run_dir(
     now: Optional[datetime] = None,
 ) -> Path:
     """A new run directory's path, not yet created:
-    ``{data_dir}/runs/{conv_type}/{YYYYMMDD-HHMMSS}_{name or 'run'}_{6 hex}``.
+    ``{data_dir}/runs/{conv_type}/{YYYYMMDD-HHMMSS}_{name or 'run'}_{6 hex}``,
+    `conv_type` the run's layout key (its model spec's encoder kind), required:
+    an empty one raises (`normalize_run_layout_key`).
 
     A name already on disk is drawn again. Proposing claims nothing:
     `claim_run_dir` does, so a launcher (the training service) can name the
-    directory before the run that writes it has passed its refusals.
+    directory before the run that writes it has passed its refusals. A layout
+    whose directory resolves outside the workspace is refused here already
+    (`run_dir_outside`), so a launcher refuses before it starts anything.
+
+    Raises:
+        ValueError: the proposed directory resolves outside the workspace.
     """
     root = runs_root(data_dir, conv_type)
     stamp = (now or datetime.now()).strftime("%Y%m%d-%H%M%S")
@@ -216,15 +262,69 @@ def propose_run_dir(
     for _ in range(100):
         candidate = root / f"{stamp}_{label}_{secrets.token_hex(_RUN_ID_BYTES)}"
         if not candidate.exists():
+            _refuse_outside(candidate, data_dir)
             return candidate
     raise RunDirectoryTaken(f"no unused run directory under {root} after 100 tries")
 
 
-def check_run_dir_free(run_dir: PathLike) -> Path:
+def run_dir_outside(run_dir: PathLike, data_dir: PathLike) -> Optional[str]:
+    """Why the run directory `run_dir` may not be written for the workspace
+    `data_dir`, or `None`.
+
+    **Writing keeps the boundary reading keeps** (`checkpoint_not_read`): a
+    run directory placed in the workspace (every one the layout names,
+    ``{data_dir}/runs/...``, and an explicit `run_dir` given under the
+    workspace) must resolve inside it. Behind a link out of the workspace
+    (``runs/``, a layout directory, or the run directory itself) the run
+    would land where the listing and automatic selection never read, so a
+    finetune would write a run the reload never chooses (the reviewer's K8-1
+    recheck). A run directory given outside the workspace is an explicit
+    location the layout does not hold, as before: nothing selects from it
+    automatically, and its checkpoints are served by an explicit
+    checkpoint_path."""
+    path, base = Path(os.path.abspath(run_dir)), Path(os.path.abspath(data_dir))
+    try:
+        within = base.resolve()
+    except (OSError, RuntimeError) as exc:  # a link loop: RuntimeError before 3.13
+        return (None if base not in path.parents else
+                f"the workspace {base} cannot be resolved ({type(exc).__name__}), so no run "
+                "is written in it")
+    if base not in path.parents and within not in path.parents:
+        return None
+    outside = _outside(path, within)
+    if outside is None:
+        return None
+    if not outside.startswith("resolves outside"):
+        return (f"the run directory {path} {outside}, so it is not written: a link on its "
+                "path loops or is broken; fix that link, or give another run_dir.")
+    return (f"the run directory {path} {outside}, so it is not written: the listing and "
+            "automatic selection read only runs inside the workspace and would never choose "
+            "it. Keep the workspace's runs/ and its layout directories inside the workspace "
+            "(not links out of it); to keep a run elsewhere, give an explicit run_dir outside "
+            "the workspace and serve its checkpoint by an explicit checkpoint_path.")
+
+
+def _refuse_outside(run_dir: PathLike, data_dir: PathLike) -> None:
+    problem = run_dir_outside(run_dir, data_dir)
+    if problem is not None:
+        raise ValueError(problem)
+
+
+def check_run_dir_free(run_dir: PathLike, *, data_dir: PathLike) -> Path:
     """Refuse a run directory that is not free: an existing file, or a
     directory holding anything. Absent or empty is free. Creates nothing, so an
     explicitly given location is refused before any run artifact exists;
-    `claim_run_dir` decides again when it creates."""
+    `claim_run_dir` decides again when it creates.
+
+    A run directory placed in the workspace `data_dir` that resolves outside
+    it is refused first (`run_dir_outside`): the one boundary of the run
+    layout holds for writing as for reading.
+
+    Raises:
+        ValueError: the directory resolves outside the workspace.
+        RunDirectoryTaken: the directory is not free.
+    """
+    _refuse_outside(run_dir, data_dir)
     path = Path(run_dir)
     if path.exists():
         if not path.is_dir():
@@ -237,15 +337,17 @@ def check_run_dir_free(run_dir: PathLike) -> Path:
     return path
 
 
-def claim_run_dir(run_dir: PathLike) -> Path:
+def claim_run_dir(run_dir: PathLike, *, data_dir: PathLike) -> Path:
     """Create the run directory and its ``checkpoints/`` and ``logs/``, or refuse.
 
     **Claimed by creating ``checkpoints/``** (`mkdir` without `exist_ok`): of two
     runs handed the same free directory, one creates it and the other is refused,
     so neither writes into the other's files. The caller claims only after every
-    refusal, since this is the run's first artifact.
+    refusal, since this is the run's first artifact. A directory placed in the
+    workspace `data_dir` that resolves outside it is refused before anything is
+    created (`check_run_dir_free`, `run_dir_outside`).
     """
-    path = check_run_dir_free(run_dir)
+    path = check_run_dir_free(run_dir, data_dir=data_dir)
     path.mkdir(parents=True, exist_ok=True)
     try:
         run_checkpoint_dir(path).mkdir()
@@ -253,24 +355,6 @@ def claim_run_dir(run_dir: PathLike) -> Path:
         raise RunDirectoryTaken(f"the run directory {path} was claimed by another run") from None
     run_log_dir(path).mkdir(exist_ok=True)
     return path
-
-
-def allocate_run_dir(
-    data_dir: PathLike,
-    conv_type: Optional[str],
-    name: Optional[str] = None,
-    *,
-    now: Optional[datetime] = None,
-) -> Path:
-    """Propose and claim a new run directory; a directory claimed in between
-    by another run is drawn again, never shared."""
-    for _ in range(100):
-        try:
-            return claim_run_dir(propose_run_dir(data_dir, conv_type, name, now=now))
-        except RunDirectoryTaken:
-            continue
-    raise RunDirectoryTaken(
-        f"no unused run directory under {runs_root(data_dir, conv_type)} after 100 tries")
 
 
 def run_checkpoint_dir(run_dir: PathLike) -> Path:
@@ -305,41 +389,108 @@ def _run_recency(run_dir: Path) -> float:
     return max((_mtime(p) for p in run_checkpoints(run_dir)), default=0.0)
 
 
-def list_runs(data_dir: PathLike, conv_type: Optional[str] = None) -> List[Path]:
+#: Why `list_runs` cannot list a directory under ``runs/`` whose name is not
+#: valid text (`unlisted_problem` puts it in its sentence).
+_NAME_NOT_TEXT = ("its name is not valid text, shown here with backslash escapes; "
+                  "it cannot be opened by name")
+
+
+def _shown_name(name: str) -> str:
+    """A name the file system listed, as text every answer can carry: the
+    name itself when it is text (`text_problem`), otherwise its bytes with
+    each one that is not UTF-8 written as a backslash escape (``bad\\xff``)."""
+    if text_problem(name) is None:
+        return name
+    try:
+        raw = os.fsencode(name)
+    except UnicodeEncodeError:  # a surrogate the system's decoding never gives
+        raw = name.encode("utf-8", "backslashreplace")
+    return raw.decode("utf-8", "backslashreplace")
+
+
+def list_runs(data_dir: PathLike, conv_type: Optional[str] = None, *,
+              unlisted: Optional[List[Tuple[Path, str]]] = None) -> List[Path]:
     """A workspace's run directories, most recently trained first.
 
-    Every architecture's, or one's. Ordered by the newest checkpoint each holds,
-    then by name, latest first (the name starts with the run's start time), so
-    the order never depends on the filesystem's listing order.
+    **Every directory under ``runs/``, found by listing it**, whatever its name
+    (an encoder kind this build files new runs under, a name an earlier build
+    used, one an operator gave): what a file is comes from its own record,
+    never from where it sits. `conv_type` keeps the runs of the one directory
+    whose name equals it; a name is compared with the listed names, never
+    joined to a path, so ``.``, ``..``, ``a/b`` or ``""`` names none.
+
+    Ordered by the newest checkpoint each holds, then by the run's name, then
+    by its directory's, latest first (the name starts with the run's start
+    time), so the order never depends on the filesystem's listing order.
+
+    **Only ``runs/`` itself failing to list fails the list** (its `OSError`
+    propagates). A directory under it that cannot be listed hides nothing
+    else: its runs are not read, and it is appended to `unlisted` with why
+    (the error's kind and the system's words, never a path) when the caller
+    gives one, by name, so their order never depends on the filesystem's
+    either. **A directory whose name is not valid text** (a byte that is not
+    UTF-8, which Python reads as a lone surrogate) is one this listing cannot
+    list: no answer can carry its name and no request can give it, so it is
+    appended to `unlisted` by its name as shown with backslash escapes
+    (`_shown_name`, ``bad\\xff``; no path has that name) and nothing in it
+    is read.
     """
     base = Path(data_dir) / RUNS_DIRNAME
-    architectures = ([normalize_conv_type(conv_type)] if conv_type
-                     else list(SUPPORTED_CONV_TYPES))
     runs: List[Path] = []
-    for architecture in architectures:
-        directory = base / architecture
-        if directory.is_dir():
-            runs.extend(p for p in directory.iterdir() if p.is_dir())
-    return sorted(runs, key=lambda r: (_run_recency(r), r.name), reverse=True)
+    if not base.is_dir():
+        return runs
+    refused: List[Tuple[Path, str]] = []
+    for directory in base.iterdir():
+        if conv_type is not None and directory.name != conv_type:
+            continue
+        try:
+            if not directory.is_dir():
+                continue
+            if text_problem(directory.name) is not None:
+                refused.append((base / _shown_name(directory.name), _NAME_NOT_TEXT))
+                continue
+            found = [p for p in directory.iterdir() if p.is_dir()]
+        except OSError as exc:  # a directory this account may not enter
+            # Its kind and the system's words, never the path it names.
+            refused.append((directory, f"{type(exc).__name__}: {exc.strerror}"
+                            if exc.strerror else refusal_line(exc)))
+            continue
+        runs.extend(found)
+    if unlisted is not None:
+        unlisted.extend(sorted(refused, key=lambda entry: entry[0].name))
+    return sorted(runs, key=lambda r: (_run_recency(r), r.name, r.parent.name), reverse=True)
+
+
+def unlisted_problem(directory: Path, why: str) -> str:
+    """What every reader of the runs says of a directory under ``runs/`` it
+    cannot list (`list_runs`' `unlisted`): the listing's entry and automatic
+    selection's reason, in one sentence."""
+    return f"{RUNS_DIRNAME}/{directory.name} cannot be listed ({why}), so no run in it is read"
 
 
 def run_architecture(run_dir: PathLike) -> str:
-    """The architecture a run directory belongs to (its parent's name)."""
+    """The layout directory a run directory sits in (its parent's name): a
+    location, never the model's architecture, which its record names."""
     return Path(run_dir).parent.name
 
 
 def list_run_checkpoints(
-    data_dir: PathLike, conv_type: Optional[str] = None
+    data_dir: PathLike, conv_type: Optional[str] = None, *, run: Optional[str] = None,
+    unlisted: Optional[List[Tuple[Path, str]]] = None,
 ) -> List[Tuple[Path, Path]]:
     """Every checkpoint in a workspace's runs, as ``(run_dir, checkpoint)``:
-    runs most recently trained first (`list_runs`), and within a run the newest
-    file first, then by name. The one listing the console, the training service
-    and the API show; what a file is comes from its own record, read by the
-    caller, never from where it sits."""
+    runs most recently trained first (`list_runs`, `conv_type` and `unlisted`
+    as there), and within a run the newest file first, then by name. The one
+    listing the console, the training service and the API show; what a file
+    is comes from its own record, read by the caller, never from where it
+    sits. `run`, a run directory's name, lists that run alone (a parent looked
+    up by the run its child records)."""
     entries: List[Tuple[Path, Path]] = []
-    for run in list_runs(data_dir, conv_type):
-        files = sorted(run_checkpoints(run), key=lambda p: (_mtime(p), p.name), reverse=True)
-        entries.extend((run, path) for path in files)
+    for run_dir in list_runs(data_dir, conv_type, unlisted=unlisted):
+        if run is not None and run_dir.name != run:
+            continue
+        files = sorted(run_checkpoints(run_dir), key=lambda p: (_mtime(p), p.name), reverse=True)
+        entries.extend((run_dir, path) for path in files)
     return entries
 
 
@@ -350,18 +501,24 @@ class ListedCheckpoint(NamedTuple):
     fingerprint, which a ledger record and a served identity name. The rest is
     the file's own record, parsed from those same bytes: its kind, its epoch,
     its `logs` (`{}` when it records none), the Trainer's validation figure
-    (`ranking_score_detail` of those logs: the trainer's top-20 selection
-    metric, never a test result) and the dataset fingerprint it was trained on
+    (`ranking_score_detail` of those logs: the selection metric of the run's
+    stage, never a test result) and the dataset fingerprint it was trained on
     (`training_input_digests["split_manifest"]`, the SHA-256 of that
     workspace's `split_manifest.json`).
 
     **A file the read refuses is listed, never dropped:** `problem` says why
     (a format `weights_only=True` refuses, a file gone since it was listed),
     and the digest and record are `None`. A file that loads as something other
-    than a checkpoint record keeps its digest and says so in `problem`. A file
-    that resolves outside the directory the caller bounds the listing by is
-    listed with `problem` and is not read at all (`read_run_checkpoints`'
-    `within`).
+    than a checkpoint record keeps its digest and says so in `problem`, as
+    does one whose metadata a list shows is not of the kind its field says
+    (`_unshown`: the kind a text, the epochs whole numbers, the logs text
+    names of figures, each string text, `text_problem`), with no metadata. A file
+    that resolves outside the directory the caller bounds the listing by, or
+    whose open lands outside it, is listed with `problem` and is not read at
+    all (`read_run_checkpoints`' `within`). A directory under ``runs/`` that
+    cannot be listed is one entry, its `run_dir` and `path` that directory
+    as `list_runs` names it (by its name as shown, for a name that is not
+    text), with `problem` only.
 
     `size_bytes` is the file's size as listed (a `stat` beside the read,
     descriptive only); `None` for a file not read because it is outside, or one
@@ -373,44 +530,161 @@ class ListedCheckpoint(NamedTuple):
     "paused", "finished", "stopped_early"). A file that records no progress (a
     weights-only file, an older format) has `None` for both; nothing is derived
     from `epoch` in their place.
+
+    `model_record` is a model bundle checkpoint's record as the same read found
+    it, `None` for a file without a model spec: `record_version` and every
+    other key the one reader of records reads (`MODEL_RECORD_READ_KEYS`: the
+    §9.1 keys and the `training_input_digests` it compares them with), without
+    the weights. It is not checked here: a caller reads it through
+    `src.models.bundle.record`, the one reader of records, which this layer
+    cannot import, and judges the file as a load of it does.
     """
 
     run_dir: Path
     path: Path
     sha256: Optional[str] = None
     checkpoint_kind: Optional[str] = None
-    epoch: Any = None
+    epoch: Optional[int] = None
     logs: Optional[Dict[str, Any]] = None
     validation: Optional[Tuple[str, float]] = None
     dataset_fingerprint: Optional[str] = None
     problem: Optional[str] = None
     size_bytes: Optional[int] = None
-    completed_epochs: Any = None
+    completed_epochs: Optional[int] = None
     end: Optional[str] = None
+    model_record: Optional[Dict[str, Any]] = None
 
 
-#: How much of a refusal's text a listing keeps: its first line, bounded, so a
-#: multi-paragraph loader message stays one readable reason.
+#: How much of a problem's text a reason keeps (`problem_line`): its first line,
+#: bounded, so a multi-paragraph loader message stays one readable reason.
 _PROBLEM_LIMIT = 300
 
 
-def _first_line(exc: BaseException) -> str:
-    text = next((line.strip() for line in str(exc).splitlines() if line.strip()), "")
-    if len(text) > _PROBLEM_LIMIT:
-        text = text[:_PROBLEM_LIMIT - 3] + "..."
+def problem_line(text: Any) -> str:
+    """A problem's text as one reason line: its first non-empty line, each
+    character that is not printable written as its escape (``\\udc80``,
+    ``\\x00``), then bounded to `_PROBLEM_LIMIT` characters. The text can
+    carry what a file itself holds (torch's legacy loader names the protocol
+    version the file holds; a ledger record's field names), and a lone
+    surrogate there made every list that showed the reason answer HTTP 500;
+    escaped, it is text any answer carries. "" for a text with no line."""
+    line = next((part.strip() for part in str(text).splitlines() if part.strip()), "")
+    if not line.isprintable():
+        line = "".join(c if c.isprintable() else repr(c)[1:-1] for c in line)
+    if len(line) > _PROBLEM_LIMIT:
+        line = line[:_PROBLEM_LIMIT - 3] + "..."
+    return line
+
+
+def refusal_line(exc: BaseException) -> str:
+    """A refused read of a checkpoint as a reason shows it, the listing's
+    (`_read_one`) and the training status's (`TrainingManager.latest_snapshot`):
+    the exception's kind and the first line of its message (`problem_line`:
+    escaped and bounded)."""
+    text = problem_line(str(exc))
     return f"{type(exc).__name__}: {text}" if text else type(exc).__name__
 
 
+def text_problem(value: Any) -> Optional[str]:
+    """**The one check of a string read from a checkpoint before an answer
+    shows it**, the record reader's (`src.models.bundle.record`), the
+    listing's (`_read_one`) and the training status's: why `value` is not
+    text, as the words a reason goes on from, or None for a string every
+    character of which encodes as UTF-8. The safe loader reads any string a
+    pickle holds, a lone surrogate ("\\udc80") among them, which no answer
+    can encode: one file holding one in a field a list shows made that whole
+    list answer HTTP 500. The caller names the field; the value itself is
+    never echoed."""
+    if not isinstance(value, str):
+        return f"is a {type(value).__name__}, not text"
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        return f"is not text: character {exc.start} is a lone surrogate"
+    return None
+
+
+def whole_number_problem(value: Any) -> Optional[str]:
+    """Why `value`, an epoch count read from a checkpoint, is not a whole
+    number (a boolean is not one), as the words a reason goes on from, or
+    None; the listing's check (`_unshown`) and the training status's."""
+    if isinstance(value, int) and not isinstance(value, bool):
+        return None
+    return f"is a {type(value).__name__}, not a whole number"
+
+
+def _figure_problem(value: Any) -> Optional[str]:
+    """A logged figure, as the trainer writes `logs` (`{name: figure}`): a
+    number (a non-finite one included), a boolean, null or text."""
+    if value is None or isinstance(value, (bool, int, float)):
+        return None
+    if isinstance(value, str):
+        return text_problem(value)
+    return f"is a {type(value).__name__}, not a number"
+
+
+def _unshown(meta: Dict[str, Any], logs: Dict[str, Any], progress: Dict[str, Any],
+             fingerprint: Any) -> Optional[str]:
+    """Why the metadata a listing shows of a read file cannot be shown as its
+    fields' kinds say (`ListedCheckpoint`), naming the first field that is not
+    (`text_problem`, a whole number, a logged figure), or None. A list puts
+    these values in its answer as they are, so one that is not of its kind,
+    or not text, made the whole list fail (a lone surrogate, an epoch of 1.5,
+    a tensor among the logs); now that file alone is listed with the reason."""
+    for name, value, problem in (
+            ("checkpoint_kind", meta.get("checkpoint_kind"), text_problem),
+            ("epoch", meta.get("epoch"), whole_number_problem),
+            ("progress.completed_epochs", progress.get("completed_epochs"),
+             whole_number_problem),
+            ("progress.end", progress.get("end"), text_problem),
+            ("training_input_digests.split_manifest", fingerprint, text_problem)):
+        why = problem(value) if value is not None else None
+        if why is not None:
+            return f"its {name} {why}"
+    for key, value in logs.items():
+        why = text_problem(key)
+        if why is not None:
+            return f"its logs hold a name that {why}"
+        why = _figure_problem(value)
+        if why is not None:
+            shown = repr(key) if len(key) <= 60 else repr(key[:57]) + "..."
+            return f"its logs entry {shown} {why}"
+    return None
+
+
 def _outside(path: Path, within: Path) -> Optional[str]:
-    """Why `path` is not read under `within` (resolved), or `None` when it
-    resolves inside it."""
+    """What keeps `path` from being inside `within` (resolved), or `None` when
+    it resolves inside it; the words a reason goes on from."""
     try:
         resolved = path.resolve()
     except (OSError, RuntimeError) as exc:  # a link loop: RuntimeError before 3.13
-        return f"cannot be resolved ({type(exc).__name__}), so it is not read"
-    if resolved == within or within not in resolved.parents:
-        return "resolves outside the workspace, so it is not read"
+        return f"cannot be resolved ({type(exc).__name__})"
+    if not lies_within(resolved, within):
+        return "resolves outside the workspace"
     return None
+
+
+def checkpoint_not_read(run_dir: Path, path: Path, within: Path) -> Optional[str]:
+    """The reason a run's checkpoint `path` is not read under `within` (the
+    workspace, resolved), as a listing shows it, or `None` for a file that
+    resolves inside it.
+
+    **The one workspace boundary of the run layout**: the listing
+    (`read_run_checkpoints`' `within`), every filter over it, automatic
+    selection (`select_auto_run_checkpoint`) and the server's resolution of a listed checkpoint (`server_lists.resolve_checkpoint`,
+    `locate_checkpoint`) ask it of each file before anything reads the file's
+    content; the writer keeps it too (`run_dir_outside`). The file's resolved
+    path decides, so a run directory or a layout directory that is a link out
+    of the workspace leaves every file under it outside.
+
+    **A name is judged here, not the file a later open finds.** A name can
+    point elsewhere at every lookup, so the reads that follow (the listing's,
+    and automatic selection's scan and build) bind the same boundary
+    (`lies_within`) to the file each one opens, by its descriptor
+    (`read_once(within=)`): a file swapped out of the workspace after this
+    check is refused before a byte of it is read."""
+    outside = _outside(path, within)
+    return None if outside is None else f"{run_dir.name}/{path.name} {outside}, so it is not read"
 
 
 def _size(path: Path) -> Optional[int]:
@@ -420,10 +694,16 @@ def _size(path: Path) -> Optional[int]:
         return None
 
 
-#: Each listed file's last read in this process, by its path: the file's
-#: identity as `os.stat` gave it around that read, and what the read found
-#: (`ListedCheckpoint` without its two paths). Least recently listed first.
-_READS: "OrderedDict[str, Tuple[Tuple[int, ...], Dict[str, Any]]]" = OrderedDict()
+#: Each listed file's last read in this process, by its path and the boundary
+#: the read was bound to (`read_run_checkpoints`' `within`, resolved, or None
+#: for an unbounded read): the file's identity (the one the read's open
+#: descriptor gave, which the name gave before and after the read too), and
+#: what the read found (`ListedCheckpoint` without its two paths). A
+#: listing recalls only a read made under its own boundary, so what an
+#: unbounded read (or one bound to another workspace) found of a file outside
+#: is never shown by a listing bound to this one. Least recently listed first.
+_READS: "OrderedDict[Tuple[str, Optional[str]], Tuple[Tuple[int, ...], Dict[str, Any]]]" = (
+    OrderedDict())
 _READS_LOCK = threading.Lock()
 #: How many files' reads are kept (a few kilobytes each).
 READS_KEPT = 4096
@@ -431,89 +711,171 @@ READS_KEPT = 4096
 #: read is read again at every listing: a rewrite within one tick of the file
 #: system's clock could leave its `stat` unchanged.
 SETTLED_NS = 2_000_000_000
+#: How deep the values a read found may nest for the read to be kept: a kept
+#: read is copied in and out (`copy.deepcopy`, which recurses at least once per
+#: level), while the safe loader reads any depth (its unpickler keeps its own
+#: stack). A file holding a value nested deeper is read again at every listing
+#: instead; a record nests a few levels.
+KEPT_DEPTH = 32
 
 
 def _identity(path: Path) -> Optional[Tuple[int, ...]]:
-    """What tells one state of a file from another without reading it: its
-    device, inode, size, and modification and change times (the change time
-    moves with any write or metadata change and cannot be set back)."""
+    """The file `path` names now, as `stat_identity` tells one state of a file
+    from another without reading it, or None where it cannot be had."""
     try:
-        st = path.stat()
+        return stat_identity(path.stat())
     except OSError:
         return None
-    return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
 
 
-def _recalled(path: Path, identity: Optional[Tuple[int, ...]]) -> Optional[Dict[str, Any]]:
+def _nests_within(value: Any, limit: int) -> bool:
+    """Whether `value` nests at most `limit` levels as `copy.deepcopy` walks
+    it: into lists, tuples, sets, mappings (their keys too) and an object's
+    attributes (a tensor's), each looked into once and in the copy's order, so
+    a value held twice or holding itself costs one look. Walked without
+    recursion, so any depth is measured."""
+    seen = set()
+    stack = [(value, 0)]
+    while stack:
+        item, depth = stack.pop()
+        if item is None or isinstance(item, (str, bytes, bytearray, int, float, complex)):
+            continue
+        if id(item) in seen:
+            continue
+        seen.add(id(item))
+        if isinstance(item, dict):
+            held = [part for pair in item.items() for part in pair]
+        elif isinstance(item, (list, tuple, set, frozenset)):
+            held = list(item)
+        else:
+            attributes = getattr(item, "__dict__", None)
+            held = list(attributes.values()) if isinstance(attributes, dict) else []
+        if held and depth >= limit:
+            return False
+        stack.extend((part, depth + 1) for part in reversed(held))
+    return True
+
+
+def _kept_as(path: Path, within: Optional[Path]) -> Tuple[str, Optional[str]]:
+    """The key of `path`'s read bound to `within` (`_READS`)."""
+    return str(path), (str(within) if within is not None else None)
+
+
+def _recalled(path: Path, identity: Optional[Tuple[int, ...]],
+              within: Optional[Path]) -> Optional[Dict[str, Any]]:
     if identity is None:
         return None
+    key = _kept_as(path, within)
     with _READS_LOCK:
-        kept = _READS.get(str(path))
+        kept = _READS.get(key)
         if kept is None or kept[0] != identity:
             return None
-        _READS.move_to_end(str(path))
+        _READS.move_to_end(key)
         fields = kept[1]
-    return {**fields, "logs": copy.deepcopy(fields["logs"])}
+    return {**fields, "logs": copy.deepcopy(fields["logs"]),
+            "model_record": copy.deepcopy(fields["model_record"])}
 
 
-def _remember(path: Path, before: Optional[Tuple[int, ...]], started_ns: int,
+def _remember(path: Path, within: Optional[Path], before: Optional[Tuple[int, ...]],
+              opened: Optional[Tuple[int, ...]], started_ns: int,
               entry: ListedCheckpoint) -> None:
-    """Keep `entry` for `path` when the file did not change during the read
-    and had settled before it (`SETTLED_NS`)."""
-    if before is None or _identity(path) != before:
+    """Keep `entry` for `path`, read bound to `within`, only when the file the
+    read opened (`opened`, its open descriptor's identity) is the file the name
+    gave before the read (`before`) and still gives after it, and it had
+    settled before the read (`SETTLED_NS`).
+
+    So nothing is kept under a file's identity that a read of another file
+    found (the reviewer's K8-4r2 recheck, P3: a name switched to another file
+    for the open and back gave the same identity before and after, and that
+    file's digest was then shown for the first). A refusal no read made (a
+    file opened outside the workspace or not placed, a read that failed:
+    `opened` is None) is never kept, so the next listing reads the file again
+    rather than repeat a reason the name may no longer earn. Nor is a read
+    whose values nest past `KEPT_DEPTH`, which could not be copied."""
+    if before is None or opened != before or _identity(path) != before:
         return
     if max(before[3], before[4]) > started_ns - SETTLED_NS:
         return
     fields = entry._asdict()
     del fields["run_dir"], fields["path"]
+    if not _nests_within((fields["logs"], fields["model_record"]), KEPT_DEPTH):
+        return
     fields["logs"] = copy.deepcopy(fields["logs"])
+    fields["model_record"] = copy.deepcopy(fields["model_record"])
+    key = _kept_as(path, within)
     with _READS_LOCK:
-        _READS[str(path)] = (before, fields)
-        _READS.move_to_end(str(path))
+        _READS[key] = (before, fields)
+        _READS.move_to_end(key)
         while len(_READS) > READS_KEPT:
             _READS.popitem(last=False)
 
 
-def _read_one(run: Path, path: Path) -> ListedCheckpoint:
-    """One file's entry, from one read of its bytes."""
+def _opened_outside(exc: ReadOutside) -> str:
+    """A bounded read's refusal, as the words a reason goes on from: the file
+    its open found lies outside the workspace, or cannot be placed."""
+    if exc.opened is not None:
+        return "was opened outside the workspace"
+    return f"cannot be placed inside the workspace ({exc.why})"
+
+
+def _read_one(run: Path, path: Path, within: Optional[Path]
+              ) -> Tuple[ListedCheckpoint, Optional[Tuple[int, ...]]]:
+    """One file's entry, from one read of its bytes, and the identity of the
+    file that read opened (`ReadIdentity.opened`; None where nothing was
+    read); a read bounded to `within` (resolved) when the listing is, so a
+    file its open finds outside is listed as not read, with the reason, before
+    a byte of it is read. The entry holds the values this read loaded, which
+    nothing else holds (`_remember` keeps copies)."""
     from src.utils.checkpoint_io import read_checkpoint
 
     size = _size(path)
     try:
-        read = read_checkpoint(path, map_location="cpu", weights_only=True)
+        read = read_checkpoint(path, map_location="cpu", weights_only=True, within=within)
+    except ReadOutside as exc:
+        return ListedCheckpoint(
+            run, path, problem=f"{run.name}/{path.name} {_opened_outside(exc)}, so it is not read"
+        ), None
     except Exception as exc:  # noqa: BLE001 — listed with its reason, never dropped
-        return ListedCheckpoint(run, path, problem=_first_line(exc), size_bytes=size)
-    meta = read.checkpoint
+        return ListedCheckpoint(run, path, problem=refusal_line(exc), size_bytes=size), None
+    meta, opened = read.checkpoint, read.identity.opened
     if not isinstance(meta, dict):
         return ListedCheckpoint(
             run, path, sha256=read.identity.sha256,
             problem=(f"it loads as {type(meta).__name__}, not a checkpoint record, so it "
                      "carries no metadata"),
-            size_bytes=size)
+            size_bytes=size), opened
     logs = meta.get("logs") if isinstance(meta.get("logs"), dict) else {}
     digests = meta.get("training_input_digests")
     fingerprint = digests.get("split_manifest") if isinstance(digests, dict) else None
     progress = meta.get("progress") if isinstance(meta.get("progress"), dict) else {}
-    end = progress.get("end")
+    unshown = _unshown(meta, logs, progress, fingerprint)
+    if unshown is not None:
+        return ListedCheckpoint(
+            run, path, sha256=read.identity.sha256,
+            problem=f"{unshown}, so none of its metadata is shown", size_bytes=size), opened
+    record = ({"record_version": meta.get("record_version"),
+               **{k: meta[k] for k in MODEL_RECORD_READ_KEYS if k in meta}}
+              if meta.get("model_spec") is not None else None)
     return ListedCheckpoint(
         run, path, sha256=read.identity.sha256,
         checkpoint_kind=meta.get("checkpoint_kind"),
         epoch=meta.get("epoch"),
         logs=logs,
         validation=ranking_score_detail(logs),
-        dataset_fingerprint=fingerprint if isinstance(fingerprint, str) else None,
+        dataset_fingerprint=fingerprint,
         size_bytes=size,
         completed_epochs=progress.get("completed_epochs"),
-        end=end if isinstance(end, str) else None,
-    )
+        end=progress.get("end"),
+        model_record=record,
+    ), opened
 
 
 def read_run_checkpoints(
     data_dir: PathLike, conv_type: Optional[str] = None, *,
-    within: Optional[PathLike] = None,
+    within: Optional[PathLike] = None, run: Optional[str] = None,
 ) -> List[ListedCheckpoint]:
-    """The listing (`list_run_checkpoints`, same order), each file read once,
-    and again only when it changes.
+    """The listing (`list_run_checkpoints`, same order, `run` as there), each
+    file read once, and again only when it changes.
 
     Each file is loaded through `read_checkpoint` with `weights_only=True`
     (tensors and plain data only, contract decision 10) on the CPU, and what
@@ -527,10 +889,13 @@ def read_run_checkpoints(
     **A file is not read again while it is unchanged** (M5-3 review, UI-2:
     every opening of a model list read every checkpoint of the workspace, so
     the lists slowed with every run). What a read found is kept in this
-    process by the file's path and its identity (`_identity`: device, inode,
-    size, modification and change times, taken before and after the read), and
-    a later listing that finds the same identity shows it without opening the
-    file; any write, replacement or metadata change reads it again, as does a
+    process by the file's path, the boundary the read was bound to (`within`)
+    and the file's identity (`stat_identity`: device, inode, size, modification
+    and change times), kept only when the read's open descriptor gave the
+    identity the name gave before and after the read (`_remember`: a read of
+    another file, or a refusal, is never kept), and a later listing under
+    the same boundary that finds the same identity shows it without opening
+    the file; any write, replacement or metadata change reads it again, as does a
     file that changed in the `SETTLED_NS` before its read. The bytes are still
     checked where they are used: a load, a start or a measurement re-reads them
     against the digest shown. The kept reads are shown only through the
@@ -540,89 +905,161 @@ def read_run_checkpoints(
     resolves outside it (a run or a checkpoint that is a link out of the
     workspace) is listed with that reason and **never opened**, so nothing of
     a file elsewhere is read or shown. The check runs before the read (and
-    before a kept read is used); the server's list passes its workspace
-    (`server_lists.list_checkpoints`).
+    before a kept read is used), and **the read itself is bound to it** by the
+    file it opens (`read_checkpoint(within=)`), as automatic selection's reads
+    are: a name swapped for a link out of the workspace after the check is
+    listed as not read, with the reason, and not a byte of the file it now
+    names is read or shown. A kept read is recalled only by a listing bound as
+    that read was, so what an unbounded listing read of an outside file is
+    never shown by a bounded one. The server's list passes its workspace
+    (`server_lists.list_checkpoints`); a caller that passes none reads every
+    listed file unbounded, as before. It is the boundary automatic selection
+    applies too (`checkpoint_not_read`), so a file the list refuses is never chosen.
+
+    **A directory under ``runs/`` that cannot be listed is listed, after the
+    files, as one entry** whose `run_dir` and `path` are that directory and
+    whose `problem` says why (`list_runs`' `unlisted`, which names one whose
+    name is not text by its name as shown): what it holds is not read, and
+    nothing else is hidden. Only ``runs/`` itself failing to list raises.
 
     torch is imported only here, when a file is read, so this module stays
     importable without it.
     """
     bound = Path(within).resolve() if within is not None else None
     entries: List[ListedCheckpoint] = []
-    for run, path in list_run_checkpoints(data_dir, conv_type):
-        outside = _outside(path, bound) if bound is not None else None
-        if outside is not None:
-            entries.append(ListedCheckpoint(
-                run, path, problem=f"{run.name}/{path.name} {outside}"))
+    unlisted: List[Tuple[Path, str]] = []
+    for run_dir, path in list_run_checkpoints(data_dir, conv_type, run=run, unlisted=unlisted):
+        problem = checkpoint_not_read(run_dir, path, bound) if bound is not None else None
+        if problem is not None:
+            entries.append(ListedCheckpoint(run_dir, path, problem=problem))
             continue
         identity = _identity(path)
-        kept = _recalled(path, identity)
+        kept = _recalled(path, identity, bound)
         if kept is not None:
-            entries.append(ListedCheckpoint(run, path, **kept))
+            entries.append(ListedCheckpoint(run_dir, path, **kept))
             continue
         started_ns = time.time_ns()
-        entry = _read_one(run, path)
-        _remember(path, identity, started_ns, entry)
+        entry, opened = _read_one(run_dir, path, bound)
+        _remember(path, bound, identity, opened, started_ns, entry)
         entries.append(entry)
+    entries.extend(ListedCheckpoint(directory, directory, problem=unlisted_problem(directory, why))
+                   for directory, why in unlisted)
     return entries
 
 
-def select_run_checkpoint(
-    data_dir: PathLike, conv_type: Optional[str], score_fn: Optional[ScoreFn] = None
-) -> Tuple[Optional[Path], str]:
-    """One architecture's selection: its latest run, then the existing in-run
-    ordering (`select_checkpoint_in_dir`). Runs are not ranked against each
-    other by their metrics: they may differ in every setting."""
-    architecture = normalize_conv_type(conv_type)
-    runs = [r for r in list_runs(data_dir, architecture) if run_checkpoints(r)]
-    if not runs:
-        return None, f"no run of '{architecture}' has a checkpoint"
-    run = runs[0]
-    return (select_checkpoint_in_dir(run_checkpoint_dir(run), score_fn=score_fn),
-            f"latest run '{run.name}' of '{architecture}'")
+def _first_run_holding(runs: List[Path], accept: Optional[AcceptFn], within: Path
+                       ) -> Tuple[Optional[Path], List[Path], List[str]]:
+    """The first of `runs` holding a candidate: a checkpoint inside the
+    workspace `within` (`checkpoint_not_read`) that `accept` takes (any, without one).
+    Returns that run, its candidates, and the listing's reason for each file
+    of the runs judged that resolves outside. **The boundary comes before
+    `accept`**, which may read every file it is asked about, so a file outside
+    the workspace is never opened; the runs after the one found are never
+    judged."""
+    outside: List[str] = []
+    for run in runs:
+        inside = []
+        for path in run_checkpoints(run):
+            problem = checkpoint_not_read(run, path, within)
+            if problem is None:
+                inside.append(path)
+            else:
+                outside.append(problem)
+        candidates = [path for path in inside if _accepted(accept, path)]
+        if candidates:
+            return run, candidates, outside
+    return None, [], outside
+
+
+#: How many of the files a selection did not read for the boundary its reason
+#: names; the rest are counted.
+NOT_READ_NAMED = 3
+
+
+def with_not_read(reason: str, outside: List[str]) -> str:
+    """A selection's reason, with the files it did not read for the boundary,
+    in the listing's words: the first `NOT_READ_NAMED`, then how many more, so
+    a runs directory linked out of the workspace gives a reason of bounded
+    length. The reload adds the files its scan's bounded reads refused the
+    same way."""
+    if not outside:
+        return reason
+    more = len(outside) - NOT_READ_NAMED
+    return (f"{reason}; not read: {'; '.join(outside[:NOT_READ_NAMED])}"
+            + (f"; and {more} more file(s) not read" if more > 0 else ""))
 
 
 def select_auto_run_checkpoint(
-    data_dir: PathLike, score_fn: Optional[ScoreFn] = None
+    data_dir: PathLike, score_fn: Optional[ScoreFn] = None,
+    accept: Optional[AcceptFn] = None, not_read: Optional[List[str]] = None,
 ) -> Tuple[Optional[Path], Optional[str], str]:
-    """Auto selection over runs: the most recently trained run of any
-    architecture, then the existing in-run ordering. Returns
-    ``(checkpoint_path, conv_type, reason)``. Only the run layout is searched;
-    checkpoints elsewhere are reached by an explicit path."""
-    runs = [r for r in list_runs(data_dir) if run_checkpoints(r)]
-    if not runs:
-        return None, None, "no run has a checkpoint"
-    run = runs[0]
-    architecture = run_architecture(run)
-    return (select_checkpoint_in_dir(run_checkpoint_dir(run), score_fn=score_fn),
-            architecture, f"auto: latest run '{run.name}' ({architecture})")
+    """Auto selection over runs: the most recently trained run, in any
+    directory under ``runs/`` (`list_runs`), holding a candidate, then the
+    existing in-run ordering. Returns
+    ``(checkpoint_path, run layout directory, reason)``. Only the run layout is
+    searched; checkpoints elsewhere are reached by an explicit path.
+
+    **Inside the workspace only** (the reviewer's K8-1 recheck): a file that
+    resolves outside `data_dir`, a run or layout directory linked out of it
+    included, is no candidate and is never read, as the listing refuses it
+    (`checkpoint_not_read`); the reason names it in the listing's words
+    (the first `NOT_READ_NAMED`, then a count), and a list given as
+    `not_read` is extended with every one. **A directory under ``runs/`` it
+    cannot list is named the same way, first** (`unlisted_problem`, the
+    listing's entry): the run chosen is then the latest of the runs read,
+    never silently the latest of all.
+
+    **With ``accept``, the record decides, never the directory** (provenance
+    §9.3, hazard 3): a run counts only when it holds a file ``accept`` takes
+    (the reload's rule: a model bundle finetuned for the task asked for)."""
+    unlisted: List[Tuple[Path, str]] = []
+    runs = list_runs(data_dir, unlisted=unlisted)
+    run, candidates, outside = _first_run_holding(runs, accept, Path(data_dir).resolve())
+    outside = [unlisted_problem(directory, why) for directory, why in unlisted] + outside
+    if not_read is not None:
+        not_read.extend(outside)
+    if run is None:
+        return None, None, with_not_read("no run has a checkpoint", outside)
+    key = run_architecture(run)
+    # The reason names the run by its location (`<layout key>/<run>`, the
+    # lists' label), never as an architecture: what runs is the loaded spec's.
+    return (_select_among(candidates, run_checkpoint_dir(run), score_fn), key,
+            with_not_read(f"auto: latest run '{key}/{run.name}'", outside))
 
 
 __all__ = [
     "RANKING_SCORE_KEYS",
     "RETIRED_LOCATION_FIELDS",
+    "RUN_LAYOUT_KEYS",
     "RUNS_DIRNAME",
     "RUN_CHECKPOINTS_DIRNAME",
     "RUN_LOGS_DIRNAME",
     "ListedCheckpoint",
+    "NOT_READ_NAMED",
     "RunDirectoryTaken",
-    "allocate_run_dir",
     "check_run_dir_free",
+    "checkpoint_not_read",
     "claim_run_dir",
     "list_run_checkpoints",
     "list_runs",
     "propose_run_dir",
     "read_run_checkpoints",
+    "problem_line",
+    "refusal_line",
     "refuse_retired_locations",
     "run_architecture",
     "run_checkpoint_dir",
     "run_checkpoints",
+    "run_dir_outside",
     "run_log_dir",
     "runs_root",
     "select_auto_run_checkpoint",
-    "select_run_checkpoint",
     "slugify_run_name",
     "ranking_score_detail",
-    "ranking_score_from_logs",
-    "normalize_conv_type",
+    "text_problem",
+    "unlisted_problem",
+    "whole_number_problem",
+    "with_not_read",
+    "normalize_run_layout_key",
     "select_checkpoint_in_dir",
 ]

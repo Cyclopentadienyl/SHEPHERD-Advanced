@@ -48,7 +48,8 @@ def test_is_training_active_follows_a_real_test_job(monkeypatch, tmp_path):
     process = FakeProcess()
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr("subprocess.Popen", lambda *a, **k: process)
-        assert manager.start_training({"data_dir": str(tmp_path)})["success"]
+        assert manager.start_training({"data_dir": str(tmp_path),
+                                       "learning_stage": "base"})["success"]
     assert bc.is_training_active() is True
     process.finish(0)
     manager._last["training"].done.wait(5)
@@ -204,7 +205,8 @@ def runner(monkeypatch):
 
 
 def _start(manager, tmp_path):
-    return manager.start_training({"data_dir": str(tmp_path / "ws")})
+    """A new run's start, a base (K8, TM12), as the runner takes one."""
+    return manager.start_training({"data_dir": str(tmp_path / "ws"), "learning_stage": "base"})
 
 
 def test_restart_backend_aborts_if_a_job_starts_during_delay(runner, tmp_path):

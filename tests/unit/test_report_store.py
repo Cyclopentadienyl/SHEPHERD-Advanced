@@ -1,26 +1,33 @@
-"""The report store (M5-1): disagreement by key, notes and the usage history.
+"""The report store (M5-1): each run listed, each group described, notes and the usage history.
 
 `src/evaluation/report_store.py` (`PLAN_TEST_RESULTS.md` D4, D5 as amended
-2026-10-19). What is pinned here, on reports built by `MeasurementManifest` and
-kept in a store by `tests/fixtures/report_store.py`:
+2026-10-19; policy rev 16 from K8-6r.2). What is pinned here, on reports built
+by `MeasurementManifest` and kept in a store by `tests/fixtures/report_store.py`:
 
-- **a key's state** comes from the ledger's own comparison (`differing_fields`):
-  agreeing reports (and byte-identical copies) are uncontested, any compared
-  field that differs is contested and named, R10 and the environment are not
-  compared; a key no report is under is uncontested;
-- **"cannot be checked", never uncontested**: a report that cannot be read, a
-  report whose key cannot be told, a run directory or ``report.json`` that is a
-  link out of the store leave every key unable to be checked; a report that
-  parses but cannot be compared leaves only its own key so; an interrupted run
-  directory (no ``report.json``) and entries that are not run directories are
-  passed over;
-- a report the caller already read is not read again (`known`);
+- **every run is listed by its id** (``reports[group][run id]``), byte-identical
+  runs included; **a group's description** (machine values that decide
+  nothing) comes from the one comparison (`differing_fields`): agreeing
+  reports are uncontested, any compared field that differs is contested and
+  named with every run carrying a differing report, R10 and the environment
+  are not compared; a group no report is under is uncontested;
+- **the scan lists, it never gates**: a report that cannot be read, a report
+  whose group cannot be told, a run directory or ``report.json`` that is a
+  link out of the store is listed by its run with its own reason only and
+  marks no group; a report that parses but cannot be compared is a note on its
+  own group's description; a store that cannot be listed is said for every
+  group and run; an interrupted run directory (no ``report.json``) and
+  entries that are not run directories are passed over;
 - **investigation notes** are appended with their key, only for a key the store
   holds, and change no state;
 - **the usage history** is append-only, one JSON line per entry, aggregates
   only, refuses a link in place of the file, and names a damaged line; an
   entry after an interrupted append starts its own line, and a failed write is
   taken back (or says it could not be);
+- **one append at a time per store file** (K8-6r.1): one writer's failed append
+  never cuts another's line, across threads and processes and across two
+  ledgers sharing one version's usage history; the lock file is kept, a busy
+  lock refuses after the grace, notes and usage history lock apart, and a lock
+  file that is a link is refused (by name, and not followed when swapped in);
 - a report too deeply nested to build leaves its key "cannot be checked";
 - the registry's helpers it rests on: run ids, the store directory's checks.
 
@@ -32,6 +39,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -41,19 +49,30 @@ from src.evaluation.report_store import (
     CONTEST_STATES,
     USAGE_KINDS,
     add_investigation_note,
+    entry_mode,
     read_investigation_notes,
     read_usage_history,
-    record_model_load,
     record_registration,
     record_test_run,
     scan_report_store,
 )
 from src.evaluation.sidecar import build_record, record_key
-from tests.fixtures.report_store import new_run_id, store_bytes, store_report, version_of
-from tests.unit.test_evaluation_sidecar import environment_block, r10_block, registered_report
+from tests.fixtures.report_store import (
+    kept_model_load,
+    new_run_id,
+    store_bytes,
+    store_report,
+    version_of,
+)
+from tests.unit.test_evaluation_sidecar import (
+    DISEASE_METRICS,
+    environment_block,
+    r10_block,
+    registered_report,
+)
 
 WHEN = datetime(2026, 10, 20, 9, 0, 0, tzinfo=timezone.utc)
-OTHER_METRICS = {"untruncated_mrr": 0.9, "mean_rank": 1.5, "hits@1": 0.25, "hits@10": 0.75}
+OTHER_METRICS = {**DISEASE_METRICS, "pooled_mrr": 0.9, "pooled_top1": 0.5}
 
 
 def _stored(tmp_path, **overrides) -> Path:
@@ -69,13 +88,13 @@ def _key(path: Path):
 # A key's state
 # ---------------------------------------------------------------------------
 def test_the_states_are_the_three_d5_names():
+    """G9 (Decision 3): the names stay as machine values; they describe."""
     assert CONTEST_STATES == ("uncontested", "contested", "cannot_be_checked")
 
 
 def test_agreeing_reports_are_uncontested_whatever_their_r10_and_environment(tmp_path):
-    """Corroboration in the ledger is agreement in the store: R10 and the
-    environment are not compared; paths differ; a byte-identical copy is one
-    report."""
+    """R10 and the environment are not compared; paths differ; a byte-identical
+    copy is compared once and still listed as its own run (K8-6r.2)."""
     first = _stored(tmp_path)
     second = _stored(tmp_path, data_dir="/elsewhere", r10=r10_block(training_state="overlap"),
                      environment=environment_block(driver="999.0"))
@@ -83,25 +102,36 @@ def test_agreeing_reports_are_uncontested_whatever_their_r10_and_environment(tmp
     copy.parent.mkdir()
     copy.write_bytes(first.read_bytes())
 
-    status = scan_report_store(version_of(first)).status(_key(first))
+    scan = scan_report_store(version_of(first))
+    status = scan.status(_key(first))
 
     assert status.state == "uncontested"
     assert status.run_ids == tuple(sorted([first.parent.name, second.parent.name,
                                            copy.parent.name])), "every run, copies included"
     assert status.differing == () and status.problems == ()
+    runs = scan.reports[_key(first)]
+    assert sorted(runs) == sorted([first.parent.name, second.parent.name, copy.parent.name])
+    assert all(runs[run][0] == run for run in runs), "each run named by its own id"
+    assert runs[copy.parent.name][1] == runs[first.parent.name][1], "the copy's record"
 
 
 def test_reports_that_differ_on_a_compared_field_are_contested_and_named(tmp_path):
+    """Every run carrying a differing report is named, a byte-identical copy
+    included (K8-6r.2 (e)); the description refuses nothing."""
     first = _stored(tmp_path)
     second = _stored(tmp_path, metrics=OTHER_METRICS)
+    copy = first.parents[1] / new_run_id("c" * 64) / "report.json"
+    copy.parent.mkdir()
+    copy.write_bytes(second.read_bytes())
     other_key = _stored(tmp_path, batch_size=8, metrics=OTHER_METRICS)
 
     scan = scan_report_store(version_of(first))
     status = scan.status(_key(first))
 
     assert status.state == scan.state(_key(first)) == "contested"
-    assert status.differing == ("mean_rank", "untruncated_mrr")
-    assert status.disagreeing_runs == tuple(sorted([first.parent.name, second.parent.name]))
+    assert status.differing == ("pooled_mrr", "pooled_top1")
+    assert status.disagreeing_runs == tuple(sorted([first.parent.name, second.parent.name,
+                                                    copy.parent.name]))
     assert scan.state(_key(other_key)) == "uncontested", "another batch size is another key"
 
 
@@ -123,9 +153,12 @@ def test_a_key_no_report_is_under_is_uncontested(tmp_path):
 
 
 @pytest.mark.parametrize("damage", ["not_json", "not_a_report", "unreadable_run_dir_link"])
-def test_a_report_whose_key_cannot_be_told_leaves_every_key_unable_to_be_checked(
+def test_a_report_whose_key_cannot_be_told_is_listed_by_its_run_and_marks_no_group(
     tmp_path, damage
 ):
+    """K8-6r.2 (F2's root): such a report is listed by its run with its own
+    reason only; every group's description stays as it was. HEAD: it left every
+    key of the version ``cannot_be_checked``."""
     first = _stored(tmp_path)
     version = version_of(first)
     if damage == "unreadable_run_dir_link":
@@ -134,16 +167,21 @@ def test_a_report_whose_key_cannot_be_told_leaves_every_key_unable_to_be_checked
         (outside / "report.json").write_bytes(first.read_bytes())
         link = first.parents[1] / new_run_id("c" * 64)
         link.symlink_to(outside, target_is_directory=True)
-        named = str(link)
+        named, run = str(link), link.name
     else:
-        named = str(store_bytes(tmp_path / "registry",
-                                b"{broken" if damage == "not_json" else b'{"hello": 1}',
-                                version=version))
+        path = store_bytes(tmp_path / "registry",
+                           b"{broken" if damage == "not_json" else b'{"hello": 1}',
+                           version=version)
+        named, run = str(path), path.parent.name
 
-    status = scan_report_store(version).status(_key(first))
+    scan = scan_report_store(version)
 
-    assert status.state == "cannot_be_checked"
-    assert any(named in problem for problem in status.problems), status.problems
+    assert scan.status(_key(first)).state == "uncontested"
+    assert scan.status(("a" * 64, "r", "b" * 64, "c" * 64)).state == "uncontested"
+    status = scan.run_status(run, scan.digests.get(run))
+    assert (status.state, status.run_ids) == ("cannot_be_checked", (run,))
+    (problem,) = status.problems
+    assert named in problem
 
 
 def test_a_report_json_that_is_a_link_cannot_be_checked(tmp_path):
@@ -156,10 +194,11 @@ def test_a_report_json_that_is_a_link_cannot_be_checked(tmp_path):
 
     scan = scan_report_store(version_of(first))
 
-    assert scan.state(_key(first)) == "contested", "the second stored report still disagrees"
-    assert any(str(linked) in p and "is a link" in p for _run, p in scan.unplaced)
+    assert scan.state(_key(first)) == "contested", "the second stored report still differs"
+    assert any(run == linked.parent.name and str(linked) in p and "is a link" in p
+               for run, p in scan.unplaced)
     other_key = scan.status(("a" * 64, "r", "b" * 64, "c" * 64))
-    assert other_key.state == "cannot_be_checked", "the link could be under any key"
+    assert other_key.state == "uncontested", "the link is its own run's problem only"
 
 
 def test_a_report_that_parses_but_cannot_be_compared_affects_only_its_own_key(tmp_path):
@@ -198,6 +237,8 @@ def test_every_report_the_scan_read_is_named_by_its_run_id(tmp_path):
     scan = scan_report_store(version)
 
     key = _key(first)
+    assert scan.reports[key] == {first.parent.name: (
+        first.parent.name, build_record(json.loads(first.read_bytes()), _sha(first)))}
     (unbuilt,) = scan.unbuilt[key]
     assert unbuilt[0] == stale.parent.name and "python_seed" in unbuilt[1]
     (unplaced,) = scan.unplaced
@@ -296,22 +337,6 @@ def test_a_version_with_no_report_store_has_no_reports(tmp_path):
     assert scan.reports == {} and scan.unplaced == ()
 
 
-def test_a_report_the_caller_read_is_not_read_again(tmp_path):
-    from tests.fixtures.opens import count_opens
-
-    first = _stored(tmp_path)
-    second = _stored(tmp_path, metrics=OTHER_METRICS)
-    data = first.read_bytes()
-    record = build_record(json.loads(data), hashlib.sha256(data).hexdigest())
-
-    with count_opens() as opens:
-        status = scan_report_store(version_of(first),
-                                   known=(first.parent.name, record)).status(record_key(record))
-
-    assert opens.opens(first) == 0 and opens.opens(second) == 1
-    assert status.state == "contested"
-
-
 # ---------------------------------------------------------------------------
 # Investigation notes
 # ---------------------------------------------------------------------------
@@ -358,19 +383,22 @@ def test_a_note_is_refused_without_its_parts_or_a_report_under_its_key(tmp_path,
 # The usage history
 # ---------------------------------------------------------------------------
 def test_the_usage_history_appends_each_kind_in_order(tmp_path):
+    """A test run and a registration, then a ``model_load`` line kept from
+    before By test score retired (K8-6d; nothing writes one now): all three
+    kinds are read back in order."""
     first = _stored(tmp_path)
     version = version_of(first)
 
     run = record_test_run(version, run_id=first.parent.name, report_sha256="e" * 64,
                           checkpoint_sha256="c" * 64, metrics={"untruncated_mrr": 0.5},
                           n_ranked=80, deterministic=True, device="cuda",
-                          record_requested=False, at=WHEN)
+                          record_requested=False, mode="C", at=WHEN)
     registered = record_registration(version, run_id=first.parent.name,
                                      report_sha256="e" * 64, checkpoint_sha256="c" * 64,
                                      outcome="registered", sequence=1, at=WHEN)
-    load = record_model_load(version, checkpoint_sha256="c" * 64, metric="untruncated_mrr",
-                             scoring_semantics_digest="s" * 64, loaded=False,
-                             why="the reload was refused", at=WHEN)
+    load = kept_model_load(version, checkpoint_sha256="c" * 64, metric="untruncated_mrr",
+                           scoring_semantics_digest="s" * 64, loaded=False,
+                           why="the reload was refused", at=run["at"])
 
     entries, problems = read_usage_history(version)
     assert entries == [run, registered, load] and problems == []
@@ -379,11 +407,39 @@ def test_the_usage_history_appends_each_kind_in_order(tmp_path):
     assert len(lines) == 3 and all(json.loads(line) for line in lines)
 
 
+def test_a_test_run_names_its_mode_and_an_entry_without_the_key_has_none(tmp_path):
+    """`record_test_run` requires the run's mode (K7: no writer default records
+    a mode it was not told; a call without one is a TypeError and writes
+    nothing), and `entry_mode` reads it back as recorded. An entry written
+    before the key existed (Batch 3's M4/M5 registries) has no mode, and none
+    is inferred for it (K8-6e.2), as for a key that is present but empty or
+    not a string."""
+    first = _stored(tmp_path)
+    version = version_of(first)
+    run = dict(run_id=first.parent.name, report_sha256="e" * 64, checkpoint_sha256="c" * 64,
+               metrics={"pooled_mrr": 0.25}, n_ranked=8, deterministic=True, device="cpu",
+               record_requested=False, at=WHEN)
+
+    with pytest.raises(TypeError, match="mode"):
+        record_test_run(version, **run)
+    assert read_usage_history(version) == ([], [])
+    for mode in ("disease", "C", "D"):
+        record_test_run(version, mode=mode, **run)
+
+    entries, problems = read_usage_history(version)
+    assert [entry_mode(entry) for entry in entries] == ["disease", "C", "D"] and not problems
+    before_the_key = {name: value for name, value in entries[0].items() if name != "mode"}
+    assert entry_mode(before_the_key) is None
+    for damaged in (None, "", " ", 7):
+        assert entry_mode({**entries[2], "mode": damaged}) is None
+
+
 def test_the_usage_history_holds_aggregates_only(tmp_path):
     first = _stored(tmp_path)
     record_test_run(version_of(first), run_id=first.parent.name, report_sha256="e" * 64,
                     checkpoint_sha256="c" * 64, metrics={"hits@1": 0.25}, n_ranked=80,
-                    deterministic=False, device="cpu", record_requested=True, at=WHEN)
+                    deterministic=False, device="cpu", record_requested=True, mode="C",
+                    at=WHEN)
 
     text = (first.parents[1] / "usage.jsonl").read_text()
 
@@ -418,20 +474,23 @@ def test_an_entry_after_an_interrupted_append_starts_its_own_line(tmp_path):
     version = version_of(first)
     record_test_run(version, run_id=first.parent.name, report_sha256="e" * 64,
                     checkpoint_sha256="c" * 64, metrics={"hits@1": 0.25}, n_ranked=80,
-                    deterministic=False, device="cpu", record_requested=False, at=WHEN)
+                    deterministic=False, device="cpu", record_requested=False, mode="C",
+                    at=WHEN)
     path = first.parents[1] / "usage.jsonl"
     with open(path, "ab") as handle:
         handle.write(b'{"kind":"test_run","at":"2026')
 
-    load = record_model_load(version, checkpoint_sha256="a" * 64, metric="hits@1",
-                             scoring_semantics_digest="b" * 64, loaded=True, at=WHEN)
+    later = record_test_run(version, run_id=first.parent.name, report_sha256="a" * 64,
+                            checkpoint_sha256="a" * 64, metrics={"hits@1": 0.5}, n_ranked=80,
+                            deterministic=True, device="cpu", record_requested=False, mode="C",
+                            at=WHEN)
     entries, problems = read_usage_history(version)
 
-    assert [e["kind"] for e in entries] == ["test_run", "model_load"]
-    assert entries[1] == load
+    assert [e["kind"] for e in entries] == ["test_run", "test_run"]
+    assert entries[1] == later
     assert len(problems) == 1 and "line 2 is not a JSON object" in problems[0]
     assert path.read_bytes().endswith(b'"at":"2026\n' + json.dumps(
-        load, sort_keys=True, separators=(",", ":")).encode() + b"\n")
+        later, sort_keys=True, separators=(",", ":")).encode() + b"\n")
 
 
 def _failing_write_to(path, monkeypatch, *, after: int):
@@ -462,8 +521,10 @@ def test_a_failed_append_is_taken_back_leaving_no_part_of_its_entry(tmp_path, mo
     _failing_write_to(path, monkeypatch, after=10)
 
     with pytest.raises(OSError, match="No space left on device") as failed:
-        record_model_load(version, checkpoint_sha256="a" * 64, metric="hits@1",
-                          scoring_semantics_digest="b" * 64, loaded=True, at=WHEN)
+        record_test_run(version, run_id=first.parent.name, report_sha256="a" * 64,
+                        checkpoint_sha256="a" * 64, metrics={"hits@1": 0.5}, n_ranked=80,
+                        deterministic=True, device="cpu", record_requested=False, mode="C",
+                        at=WHEN)
     monkeypatch.undo()
 
     assert path.read_bytes() == before
@@ -485,8 +546,10 @@ def test_a_failed_append_that_cannot_be_taken_back_says_so(tmp_path, monkeypatch
                         lambda fd, length: (_ for _ in ()).throw(OSError(5, "I/O error")))
 
     with pytest.raises(OSError) as failed:
-        record_model_load(version, checkpoint_sha256="a" * 64, metric="hits@1",
-                          scoring_semantics_digest="b" * 64, loaded=True, at=WHEN)
+        record_test_run(version, run_id=first.parent.name, report_sha256="a" * 64,
+                        checkpoint_sha256="a" * 64, metrics={"hits@1": 0.5}, n_ranked=80,
+                        deterministic=True, device="cpu", record_requested=False, mode="C",
+                        at=WHEN)
 
     message = str(failed.value)
     assert "No space left on device" in message
@@ -507,6 +570,302 @@ def test_an_appended_file_that_is_a_link_is_refused(tmp_path):
                             report_sha256="e" * 64, checkpoint_sha256="c" * 64,
                             outcome="registered", sequence=1, at=WHEN)
     assert target.read_text() == ""
+
+
+# ---------------------------------------------------------------------------
+# One append at a time per store file (K8-6r.1, Decision 4)
+# ---------------------------------------------------------------------------
+POSIX = pytest.mark.skipif(sys.platform == "win32", reason="flock and spawn are tested on POSIX")
+
+
+def _seeded_usage(tmp_path):
+    """A version whose usage history holds one entry (run "seed")."""
+    first = _stored(tmp_path)
+    version = version_of(first)
+    record_registration(version, run_id="seed", report_sha256="0" * 64,
+                        checkpoint_sha256="0" * 64, outcome="registered", sequence=1, at=WHEN)
+    return version, first.parents[1] / "usage.jsonl"
+
+
+def test_one_writers_failed_append_never_cuts_another_writers_line_threads(
+    tmp_path, monkeypatch
+):
+    """F-g, two threads: writer A has read the file's size when writer B
+    appends to the same ``usage.jsonl``; A's write then fails (ENOSPC, after
+    part of its entry) and A undoes it. With the lock B waits until A has cut
+    back its own part and let go, then appends: the file ends with B's line
+    whole and nothing of A's, and A's error names the failed write. (Before
+    K8-6r.1, B returned success and A's undo cut B's line.)"""
+    import os
+    import threading
+
+    version, usage = _seeded_usage(tmp_path)
+    seeded = usage.read_bytes()
+    inode = usage.stat().st_ino
+    sized, b_done = threading.Event(), threading.Event()
+    real_write, real_truncate = os.write, os.ftruncate
+    a_thread: list = []
+
+    def ours(fd):
+        return threading.current_thread() in a_thread and os.fstat(fd).st_ino == inode
+
+    def write(fd, data):
+        if not ours(fd):
+            return real_write(fd, data)
+        sized.set()
+        b_done.wait(1.0)
+        real_write(fd, bytes(data[:10]))
+        raise OSError(28, "No space left on device")
+
+    def ftruncate(fd, length):
+        if ours(fd):
+            b_done.wait(1.0)
+        return real_truncate(fd, length)
+
+    failures: dict = {}
+
+    def writer_a():
+        try:
+            record_test_run(version, run_id="A", report_sha256="a" * 64,
+                            checkpoint_sha256="a" * 64, metrics={"hits@1": 0.5}, n_ranked=8,
+                            deterministic=True, device="cpu", record_requested=False,
+                            mode="disease", at=WHEN)
+        except OSError as exc:
+            failures["A"] = exc
+
+    def writer_b():
+        try:
+            assert sized.wait(30)
+            record_registration(version, run_id="B", report_sha256="b" * 64,
+                                checkpoint_sha256="b" * 64, outcome="registered",
+                                sequence=2, at=WHEN)
+        except Exception as exc:  # noqa: BLE001 - reported by the assertion below
+            failures["B"] = exc
+        finally:
+            b_done.set()
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(os, "write", write)
+        patch.setattr(os, "ftruncate", ftruncate)
+        a, b = threading.Thread(target=writer_a), threading.Thread(target=writer_b)
+        a_thread.append(a)
+        a.start()
+        b.start()
+        a.join(30)
+        b.join(30)
+    assert not a.is_alive() and not b.is_alive(), "a writer hung"
+
+    assert set(failures) == {"A"} and "No space left on device" in str(failures["A"])
+    assert usage.read_bytes().startswith(seeded)
+    entries, problems = read_usage_history(version)
+    assert [e["run_id"] for e in entries] == ["seed", "B"] and problems == []
+
+
+@POSIX
+def test_one_writers_failed_append_never_cuts_another_writers_line_processes(tmp_path):
+    """F-g, two separate processes (`tests/fixtures/concurrent_writers.py`):
+    the same interleaving, A's write and undo each waiting for B. B's line
+    stays whole, nothing of A's is left, and A says its write failed."""
+    from tests.fixtures.concurrent_writers import (
+        CONTEXT,
+        answers_from,
+        append_registration,
+        failing_append,
+        processes,
+    )
+
+    version, usage = _seeded_usage(tmp_path)
+    seeded = usage.read_bytes()
+    registry, label = str(tmp_path / "registry"), version.manifest["label"]
+    sized, b_done, queue = CONTEXT.Event(), CONTEXT.Event(), CONTEXT.Queue()
+    with processes((failing_append, ("A", registry, label, sized, [b_done], queue)),
+                   (append_registration, ("B", registry, label, "B", sized, b_done, queue))):
+        answers = {a["name"]: a for a in answers_from(queue, 2)}
+
+    assert answers["A"]["outcome"] == "failed"
+    assert "No space left on device" in answers["A"]["message"]
+    assert answers["B"]["outcome"] == "appended"
+    assert usage.read_bytes().startswith(seeded)
+    entries, problems = read_usage_history(version)
+    assert [e["run_id"] for e in entries] == ["seed", "B"] and problems == []
+
+
+def _checkpoint_dir(tmp_path, name: str, weights: bytes):
+    directory = tmp_path / "runs" / "shepherd" / name / "checkpoints"
+    directory.mkdir(parents=True)
+    (directory / "best.pt").write_bytes(weights)
+    return directory
+
+
+def _report_of(tmp_path, weights: bytes, **overrides) -> Path:
+    report = registered_report(**overrides)
+    report["manifest"]["artifact_digests"]["checkpoint"] = hashlib.sha256(weights).hexdigest()
+    return store_report(tmp_path / "registry", report)
+
+
+@POSIX
+def test_two_ledgers_sharing_one_versions_usage_history(tmp_path):
+    """F-h: two checkpoints in two directories, each with its own ledger,
+    register reports of one cohort version at once (two processes) while a
+    third process appends a ``test_run`` entry: each ledger holds its own
+    record with its own sequence, and ``usage.jsonl`` holds both
+    ``registered`` entries and the ``test_run`` entry, each a whole line. Then
+    the same with the third writer's append failing after the registrations'
+    entries were written (F-g's mechanism across ledgers): their entries stay.
+    (Before K8-6r.1 that failure cut both registrations' entries.)"""
+    from src.evaluation.sidecar import read_ledger
+    from tests.fixtures.concurrent_writers import (
+        CONTEXT,
+        answers_from,
+        append_test_run,
+        failing_append,
+        processes,
+        register,
+    )
+
+    one, two = b"weights one", b"weights two"
+    first_dir, second_dir = _checkpoint_dir(tmp_path, "r1", one), _checkpoint_dir(tmp_path, "r2", two)
+    reports = [_report_of(tmp_path, one), _report_of(tmp_path, two),
+               _report_of(tmp_path, one, batch_size=8), _report_of(tmp_path, two, batch_size=8)]
+    version = version_of(reports[0])
+    registry, label = str(tmp_path / "registry"), version.manifest["label"]
+    usage = reports[0].parents[1] / "usage.jsonl"
+
+    # At once: two registrations into two ledgers and a test run.
+    start, queue = CONTEXT.Barrier(3), CONTEXT.Queue()
+    with processes((register, ("R1", registry, str(reports[0]), str(first_dir), start, None,
+                               queue)),
+                   (register, ("R2", registry, str(reports[1]), str(second_dir), start, None,
+                               queue)),
+                   (append_test_run, ("T", registry, label, "T-run", start, queue))):
+        answers = {a["name"]: a for a in answers_from(queue, 3)}
+    assert [(answers[n]["outcome"], answers[n]["sequence"], answers[n]["problem"])
+            for n in ("R1", "R2")] == [("registered", 1, None)] * 2
+    assert answers["T"]["outcome"] == "appended"
+
+    # The test-run writer's append fails after both registrations wrote theirs.
+    sized, done_1, done_2 = CONTEXT.Event(), CONTEXT.Event(), CONTEXT.Event()
+    queue = CONTEXT.Queue()
+    with processes((register, ("R3", registry, str(reports[2]), str(first_dir), None, None,
+                               queue, sized, done_1)),
+                   (register, ("R4", registry, str(reports[3]), str(second_dir), None, None,
+                               queue, sized, done_2)),
+                   (failing_append, ("A", registry, label, sized, [done_1, done_2], queue))):
+        answers = {a["name"]: a for a in answers_from(queue, 3)}
+    assert [(answers[n]["outcome"], answers[n]["sequence"], answers[n]["problem"])
+            for n in ("R3", "R4")] == [("registered", 2, None)] * 2
+    assert answers["A"]["outcome"] == "failed"
+
+    for directory, mine in ((first_dir, reports[0::2]), (second_dir, reports[1::2])):
+        records = read_ledger(directory / "evaluations.json")[0]["records"]
+        assert [(r["source_artifact_digest"], r["registration"]["sequence"]) for r in records] \
+            == [(hashlib.sha256(r.read_bytes()).hexdigest(), n) for n, r in enumerate(mine, 1)]
+    entries, problems = read_usage_history(version)
+    assert problems == [] and usage.read_bytes().endswith(b"\n")
+    assert sorted((e["kind"], e["run_id"]) for e in entries) == sorted(
+        [("test_run", "T-run")] + [("registered", r.parent.name) for r in reports])
+
+
+def _usage_lock(path: Path) -> Path:
+    return path.parents[1] / "usage.jsonl.lock"
+
+
+def _test_run(version, run_id="r"):
+    return record_test_run(version, run_id=run_id, report_sha256="a" * 64,
+                           checkpoint_sha256="a" * 64, metrics={"hits@1": 0.5}, n_ranked=8,
+                           deterministic=True, device="cpu", record_requested=False,
+                           mode="disease", at=WHEN)
+
+
+def test_an_append_holds_its_files_lock_which_is_kept(tmp_path, monkeypatch):
+    """`_append_entry`'s lock: two opens of one lock file exclude each other
+    (another holder here is a second open in this process), so an append past
+    the (patched) grace raises `FileLockBusy` naming the lock file, nothing
+    appended; the lock file is kept after use and after a failed append; and a
+    notes append and a usage append of one version do not exclude each other
+    (two files, two locks)."""
+    import src.evaluation.report_store as report_store
+    from src.evaluation.report_store import STORE_LOCK_FILES
+    from src.utils.file_lock import FileLockBusy, exclusive_lock
+
+    assert STORE_LOCK_FILES == ("usage.jsonl.lock", "notes.jsonl.lock")
+    monkeypatch.setattr(report_store, "APPEND_LOCK_GRACE_SECONDS", 0.2)
+    first = _stored(tmp_path)
+    version = version_of(first)
+    lock = _usage_lock(first)
+    _test_run(version, "kept-after-use")
+    assert lock.is_file(), "the lock file is kept after use"
+    usage = first.parents[1] / "usage.jsonl"
+    before = usage.read_bytes()
+
+    with exclusive_lock(lock, grace=0):
+        with pytest.raises(FileLockBusy) as busy:
+            _test_run(version, "while-held")
+        assert str(busy.value) == (f"{lock} is busy: another writer held this lock for the "
+                                   "0.2 s this one waited")
+        assert usage.read_bytes() == before
+        add_investigation_note(version, _key(first), who="ops", what="a note", at=WHEN)
+
+    _failing_write_to(usage, monkeypatch, after=10)
+    with pytest.raises(OSError, match="No space left on device"):
+        _test_run(version, "failed")
+    monkeypatch.undo()
+    assert lock.is_file() and usage.read_bytes() == before, "kept after an exception"
+    _test_run(version, "after")
+    assert [e["run_id"] for e in read_usage_history(version)[0]] == ["kept-after-use", "after"]
+    assert len(read_investigation_notes(version)[0]) == 1
+
+
+@pytest.mark.parametrize("target", ["outside", "dangling"])
+def test_a_store_lock_file_that_is_a_link_is_refused(tmp_path, target):
+    """A ``usage.jsonl.lock`` that is a link, to a file outside the registry or
+    to nothing, is refused by name, naming it: nothing is appended, and the
+    link and its target are as they were (no file created through it)."""
+    import os
+
+    from src.evaluation.cohort_registry import RegistryRefused
+
+    first = _stored(tmp_path)
+    outside = tmp_path / "outside.lock"
+    if target == "outside":
+        outside.write_text("kept")
+    lock = _usage_lock(first)
+    lock.symlink_to(outside)
+
+    with pytest.raises(RegistryRefused, match="not a plain file") as refused:
+        _test_run(version_of(first))
+
+    assert str(lock) in str(refused.value) and "Nothing was written." in str(refused.value)
+    assert not (first.parents[1] / "usage.jsonl").exists()
+    assert lock.is_symlink() and os.readlink(lock) == str(outside)
+    assert (outside.read_text() == "kept") if target == "outside" else not outside.exists()
+
+
+@POSIX
+def test_a_store_lock_link_swapped_in_after_the_check_is_not_followed(tmp_path, monkeypatch):
+    """The by-name check and the open are two steps: a link swapped in between
+    fails to open (``O_NOFOLLOW``), an `OSError` naming the lock file, rather
+    than creating or locking a file outside the registry. Nothing is
+    appended."""
+    import src.evaluation.report_store as report_store
+
+    first = _stored(tmp_path)
+    outside = tmp_path / "outside" / "usage.jsonl.lock"
+    outside.parent.mkdir()
+    lock = _usage_lock(first)
+    real = report_store.exclusive_lock
+
+    def swapped(path, **kwargs):
+        lock.symlink_to(outside)
+        return real(path, **kwargs)
+
+    monkeypatch.setattr(report_store, "exclusive_lock", swapped)
+    with pytest.raises(OSError) as failed:
+        _test_run(version_of(first))
+
+    assert str(lock) in str(failed.value)
+    assert not outside.exists(), "a file was created through the link"
+    assert not (first.parents[1] / "usage.jsonl").exists()
 
 
 def test_a_time_without_a_zone_is_refused(tmp_path):

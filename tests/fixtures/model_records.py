@@ -7,7 +7,8 @@ each record's key. This puts both where the production code writes them, with
 the production functions:
 
 - a report is built as the measurement writes one
-  (`tests/unit/test_evaluation_sidecar.registered_report`) for a cohort version
+  (`tests/unit/test_evaluation_sidecar.registered_report`, a disease task
+  measurement's) for a cohort version
   block of a given label and role, naming the checkpoint's digest, and kept in
   the registry's report store (`tests/fixtures/report_store.store_report`,
   which writes the version too);
@@ -30,7 +31,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-#: The roles the page tells apart (§4.9 question 1).
+#: Two cohort roles the fixtures name.
 RESEARCH_ROLE = "research_selection"
 ACCEPTANCE_ROLE = "institutional_acceptance"
 
@@ -46,7 +47,8 @@ def version_block(label: str, role: str, **overrides: Any) -> Dict[str, Any]:
 def report_for(checkpoint_sha256: str, block: Dict[str, Any], *,
                metrics: Optional[Dict[str, float]] = None, deterministic: bool = True,
                device: str = "cuda", **overrides: Any) -> Dict[str, Any]:
-    """A measurement report of this checkpoint on the version ``block`` names."""
+    """A measurement report of this checkpoint on the version ``block`` names:
+    a disease task measurement's (`registered_report`)."""
     from tests.unit.test_evaluation_sidecar import registered_report
 
     report = registered_report(
@@ -84,7 +86,7 @@ def register(registry: Path, checkpoint: Path, report: Dict[str, Any], *,
     ledger_path = Path(checkpoint).resolve().parent / LEDGER_FILENAME
     ledger, digest = read_ledger(ledger_path)
     outcome, updated = append_record(ledger if digest else empty_ledger(), record,
-                                     registered_at=registered_at)
+                                     run_id=path.parent.name, registered_at=registered_at)
     assert outcome == "registered", outcome
     write_ledger(ledger_path, updated, digest)
     held = [r for r in updated["records"]

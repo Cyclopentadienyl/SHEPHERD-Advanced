@@ -394,7 +394,6 @@ def build_knowledge_graph(
         # attach the same sentence to failures that happen after the graph is
         # already on disk.
         raise SystemExit(f"{exc} Nothing was written.") from exc
-    kg_path = workspace / "kg.json"
     train_samples, val_samples = written.train_samples, written.val_samples
 
     elapsed = time.time() - t0
@@ -416,7 +415,7 @@ def build_knowledge_graph(
 
     # **Name what was produced, and print only the steps that work on it.**
     # Without cohorts this is a graph export, not a trainable workspace: nothing
-    # records which export the tensors are, so `train_model.py` and GNN serving
+    # records which export the tensors are, so `train_model.py` and serving
     # both refuse it. Printing the training command anyway is how an operator
     # learns that at the end of a 30-minute build instead of at the start.
     if generate_samples:
@@ -424,20 +423,25 @@ def build_knowledge_graph(
         print(f"  Validation samples: {len(val_samples)}")
     else:
         print("\n  Cohorts: none (graph export only, --generate-samples not given)")
-        print("  This workspace CANNOT be trained on or served with GNN scoring:")
+        print("  This workspace CANNOT be trained on or served:")
         print("  no split manifest binds these tensors to this export.")
 
+    # **Two training stages, and no shortest-path step** (K7, D8): a task
+    # model is a base trained on this workspace, then its task models
+    # fine-tuned from it; nothing it trains or serves reads a shortest-path
+    # table, so precomputing one is not a step of building a model.
     print("\nNext steps:")
-    print("  # Precompute shortest paths (may take 30-60 min for large KGs)")
-    print("  python scripts/compute_shortest_paths.py \\")
-    print(f"      --kg-path {kg_path} --output-dir {workspace}")
     if generate_samples:
-        print("\n  # Train model")
+        print("  # Train a base (KG link prediction), then fine-tune its task models")
         for line in _gpu_lock_step(workspace):
             print(line)
-        print(f"  python scripts/train_model.py --data-dir {workspace} --epochs 50")
+        print(f"  python scripts/train_model.py --data-dir {workspace} --stage base")
+        print("  # then, from the base run's checkpoint, on the dashboard's Research >")
+        print("  # Prepare > Fine-tune, or one task here (disease, gene or patients_like_me):")
+        print(f"  python scripts/train_model.py --data-dir {workspace} --stage finetune \\")
+        print("      --task disease --finetune-from <base run>/checkpoints/last.pt")
     else:
-        print("\n  # Complete the workspace before training. Cohorts cannot be")
+        print("  # Complete the workspace before training. Cohorts cannot be")
         print("  # added to an export afterwards -- only the writer that exported")
         print("  # the tensors can vouch for their digests -- so this rebuilds:")
         print(f"  python scripts/build_knowledge_graph.py --workspace {workspace} \\")

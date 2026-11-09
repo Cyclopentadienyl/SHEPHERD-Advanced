@@ -3,7 +3,7 @@ Recorded results for the loaded model: a read-only view of the ledger.
 =======================================================================
 `PLAN_TEST_RESULTS.md` D8 and §6 phase 1, step 4: the Diagnosis model status
 shows what the ledger beside the loaded checkpoint holds for those weights,
-each record with its D5 state.
+each record with its run and how its condition group compares in the store.
 
 Endpoint:
     GET /evaluations/loaded-model — the loaded model's recorded results
@@ -40,34 +40,59 @@ request through `read_ledger`, the one ledger reader, so a registration made
 after a page loaded appears on the next load. Nothing comes from the client: no
 query parameter, no path, no digest.
 
-**Each record's D5 state** (``contest``; BACKLOG 36, the M5 review's P2-6):
-whether the reports its cohort version's store keeps under the record's key
-agree, from the one implementation the dashboard shows too
+**Each record names its run** (policy rev 16, K8-6r.2; ``run_id``): the run
+directory of the version's report store its report was registered from. A
+record written before each run had its own record (every record of a schema-3
+ledger, and those before a schema-4 ledger's run-identity boundary) has
+``run_id`` null, shown as "not recorded": which run it came from was never
+recorded, and nothing is invented for it. ``historical_overlap`` lists the
+records it may overlap (`sidecar.possible_overlaps`): for a record naming its
+run, the earlier merged records holding its report; for a merged record, the
+named records whose report it holds. **The two kinds stay apart**: an overlap
+is never confirmed, and a merged record and a named run are never counted as
+two runs confirmed to be independent. A record whose run identity cannot be
+read (at or after the boundary without a readable ``run_id``, or the boundary
+itself unreadable) is not shown as a result; it is listed in
+``unreadable_records`` with its reason, never shown as historical.
+
+**Each record's group description** (``contest``; BACKLOG 36, the M5 review's
+P2-6): how the reports its cohort version's store keeps under the record's
+condition group compare, from the one implementation the dashboard shows too
 (`src.api.services.record_states.contest_states`, computed for the records shown
 only: the registry's version manifests read once each, then one scan of each
-shown record's version store, no other store listed). A record
-registered before its key's runs came to disagree stays, marked ``contested``;
-one whose state cannot be read (no registry configured, a version the registry
-does not list, an unreadable report) is ``cannot_be_checked``, never
-uncontested; and **a contested state is never downgraded** because a run's value
-cannot be shown: a value that is not a finite number is null, and a contested
-state whose details fail validation is shown contested without them. D5's
-investigation notes are not shown here, nor by the Models page; only the Test
-page lists them (BACKLOG 40).
+shown record's version store, no other store listed). **The state names stay
+as machine values with a new meaning** (policy rev 16, Decision 3):
+``contested`` says runs under these conditions differ, ``cannot_be_checked``
+that the comparison is incomplete (no registry configured, a version the
+registry does not list, a report of the group that cannot be compared), and
+``uncontested`` neither. They describe and decide nothing: every record is
+returned, none is hidden, ordered out or refused by them. A value that is not a
+finite number is null, and a ``contested`` description whose details fail
+validation is shown contested without them. Investigation notes are not shown
+here, nor by the Models page; only the Test page lists them (BACKLOG 40).
 
 **Aggregates only** (D7). A record is shown as its counts, metrics, relation
 states, R10 states and counts, environment class and GPU, dataset origin,
-registration, digests and D5 state (field names, run ids and values; never a
-problem's words, which may name a server path). No path (a record's R10
+registration, its run, digests and group description (field names, run ids and
+values; never a problem's words, which may name a server path: an unreadable
+record's reason is built from field names and fixed words only). No path (a record's R10
 evidence paths among them), no case id, no rank; a ledger problem names the
 file, never its directory.
 
 **Expected failures are states; nothing else is swallowed.** A ledger that cannot
-be read is ``ledger_not_read`` with its reason, and none of its records are
-shown. A record for these weights that does not have the shape registration
-writes, after a hand edit (the sanctioned correction path), is counted in
-``records_not_shown`` rather than raised: a 500 here would take the model status
-with it. Any other exception is a defect and reaches the client as one.
+be read as a whole is ``ledger_not_read`` with its reason, and none of its
+records are shown; a schema-4 ledger whose run-identity boundary cannot be read
+is still read, its records naming a run shown and the others listed. A record
+for these weights that does not have the shape registration writes, after a
+hand edit (the sanctioned correction path), is not raised (a 500 here would
+take the model status with it) and never shown as a result: **it is listed in
+``unreadable_records``** (K8-6e.1; `read_records`, the one listing every reader
+uses) by its index in the ledger, its registration sequence, report digest and
+run where it still carries them readably, and the reason in one line of at most
+300 characters that names the refused fields by their path in the ledger
+record, never their values (`unreadable_reason`). ``records_not_shown`` keeps its meaning and equals the
+list's length. The server log says the same line with the index. Any other
+exception is a defect and reaches the client as one.
 
 No write, no `find_checkpoint`, no `torch.load`.
 
@@ -77,6 +102,7 @@ from __future__ import annotations
 
 import logging
 import math
+from collections.abc import Sequence
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
@@ -99,10 +125,17 @@ from src.api.routes.diagnose import _SHA256, _Strict
 from src.evaluation.sidecar import (
     LEDGER_FILENAME,
     REGISTERED_RELATIONS,
+    RUN_ID_PATTERN,
+    RecordIdentity,
     environment_class,
+    indexed_records_for,
+    possible_overlaps,
     read_ledger,
-    records_for,
+    record_identities,
 )
+# How long an unreadable record's reason may be: `problem_line`'s own bound,
+# so the line it gives always fits the field.
+from src.utils.checkpoint_paths import _PROBLEM_LIMIT as _REASON_LIMIT
 
 if TYPE_CHECKING:
     from src.utils.fingerprint import ReadIdentity
@@ -116,7 +149,7 @@ router = APIRouter()
 LEDGER_WHERE = "beside the loaded checkpoint"
 
 #: States with no checkpoint digest, and so no ledger to look in.
-_NOTHING_TO_LOOK_UP = ("no_model", "not_identified")
+_NOTHING_TO_LOOK_UP = ("no_model",)
 #: R10 states that carry a count (spec §3.2); every other state carries none.
 _COUNTED_R10_STATES = ("overlap", "none")
 
@@ -124,6 +157,8 @@ _Count = Annotated[int, Field(strict=True, ge=0)]
 _Metric = Annotated[float, Field(strict=True, allow_inf_nan=False)]
 _Digest = Annotated[str, Field(pattern=_SHA256)]
 _Text = Annotated[str, Field(min_length=1)]
+_RunId = Annotated[str, Field(pattern=f"^{RUN_ID_PATTERN.pattern}$")]
+_Sequence = Annotated[int, Field(strict=True, ge=1)]
 _R10State = Literal["overlap", "none", "unverifiable", "no_validation_inputs_recorded"]
 
 
@@ -199,9 +234,11 @@ def _check_r10_counts(state: str, k: Optional[int], n: int, *more: Optional[int]
 
 class R10Evidence(_Strict):
     """Whether the inputs the checkpoint records were found; the file's path and
-    any read error stay in the ledger."""
+    any read error stay in the ledger. "search_incomplete" (R10 definition
+    version 2): no file that was read holds them, and a place that may could
+    not be read. A version-1 record's states mean what they meant then."""
 
-    state: Literal["found", "not_found", "unreadable", "not_recorded"]
+    state: Literal["found", "not_found", "unreadable", "not_recorded", "search_incomplete"]
 
 
 class R10DiseaseOverlap(_Strict):
@@ -271,20 +308,25 @@ class RecordView(_Strict):
     cohort: RecordCohort
     counts: RecordCounts
     mode: _Text = Field(
-        ..., description="the record's measurement mode (`scoring.mode`): C, the model's own "
-        "ranking over every disease; D, what the Diagnosis page serves today. A surface labels "
-        "each record by its own mode")
+        ..., description="the record's measurement mode (`scoring.mode`), as recorded: the "
+        "protocol its report names. This build runs disease, gene and patients_like_me, each "
+        "for a finetuned model's learning stage and task head (what the Test page runs); a "
+        "record of any other mode is read and returned the same way. A surface labels each "
+        "record by its own mode")
     score_semantics: _Text = Field(
-        ..., description="the record's `scoring.score_semantics`; for Mode D, "
-        "`served:<scoring mode>:eta=<eta>:sp=<build id or none>`")
+        ..., description="the record's `scoring.score_semantics`, as recorded: what its score "
+        "is, in its measurement's own words (a task record: the task head's score). Returned "
+        "whole, never split or interpreted")
     metrics: Dict[str, _Metric] = Field(
-        ..., description="the metrics of the record's mode. Mode C: over n_ranked ranked "
-        "cases; `untruncated_mrr` is not the trainer's top-20 `val_mrr`. Mode D: `post_import_*` "
-        "and `coverage` over the version's import-eligible cases (`counts.ranked_eligible`, 0 "
-        "for a case not reached), `reached_*` over the n_ranked reached cases")
+        ..., description="the record's metrics, as recorded: each name as its measurement "
+        "wrote it, with its value. A task mode's: `pooled_mrr`, `pooled_top<k>`, "
+        "`macro_recall@<k>`, `macro_precision@<k>`, `macro_mrr`, `best_positive_mrr` and "
+        "`conservative_pooled_mrr` (each left out when it has no case to average), and "
+        "`coverage`, the share of the cases measured that were ranked. None of them is the "
+        "Trainer's validation figure")
     n_ranked: _Count = Field(
-        ..., description="Mode C: the cases ranked; Mode D: the import-eligible cases the "
-        "served pipeline reached")
+        ..., description="the record's `n_ranked`, as recorded: for a task mode, the cases "
+        "ranked")
     relations: Dict[str, Literal["verified", "not_applicable"]]
     r10: R10View
     environment_class: str
@@ -297,7 +339,21 @@ class RecordView(_Strict):
     scoring_semantics_digest: _Digest
     measurement_semantics_digest: _Digest
     registration: RecordRegistration
-    n_corroborating: _Count
+    run_id: Optional[_RunId] = Field(
+        ..., description="The run the record was registered from: its run directory in the "
+        "version's report store (time, checkpoint and a random suffix; never a path). null for "
+        "a record written before each run had its own record (shown as \"not recorded\"): "
+        "which run it came from was never recorded")
+    historical_overlap: List[_Sequence] = Field(
+        ..., description="Registration sequences of the records this one may overlap, derived "
+        "from the ledger: for a record naming its run, the records merged before each run had "
+        "its own record that hold its report; for such a merged record, the records naming a "
+        "run whose report it holds. Not confirmed: whether they are one execution was never "
+        "recorded, and they are never counted as two independent runs. Empty when none")
+    n_corroborating: _Count = Field(
+        ..., description="Reports merged into this record before each run had its own record "
+        "(K8-6r.2); 0 for every record that names its run. A merged report is not a confirmed "
+        "independent run")
     source_artifact_digest: _Digest = Field(
         ..., description="SHA-256 of the report the record was built from")
 
@@ -312,30 +368,39 @@ class RecordView(_Strict):
 
 
 class ContestRun(_Strict):
-    """One of a contested key's disagreeing runs: its run id (time, checkpoint
-    and a random suffix; never a path) and its values of the fields that
-    differ."""
+    """One run carrying a report that differs from another of its condition
+    group: its run id (time, checkpoint and a random suffix; never a path) and
+    its values of the fields that differ. Byte-identical runs are each named."""
 
     run: _Text
     values: Dict[str, Optional[_Metric]] = Field(
         ..., description="null where the run's report holds no finite number for the field "
         "(null, NaN, infinity, text, or an integer too large for a float, after a hand edit); "
-        "the run still disagrees")
+        "the run's report still differs")
 
 
 class RecordContest(_Strict):
-    """A record's D5 state in its cohort version's report store, from the one
-    implementation the dashboard shows too (`record_states.contest_states`)."""
+    """How a record's condition group compares in its cohort version's report
+    store, from the one implementation the dashboard shows too
+    (`record_states.contest_states`). **A description that decides nothing**
+    (policy rev 16, Decision 3): the state names stay as machine values, and
+    their meaning changed at K8-6r.2."""
 
     state: Literal["uncontested", "contested", "cannot_be_checked"] = Field(
-        ..., description="uncontested: the reports the store keeps under the record's key "
-        "agree; contested: two of them disagree (runs disagree -- investigate), and the "
-        "record stays, marked; cannot_be_checked: the registry, the version or a report could "
-        "not be read or compared (no cohort registry configured, a version the registry does "
-        "not list, an unreadable report), never to be read as uncontested")
+        ..., description="Machine values kept for compatibility; since K8-6r.2 they only "
+        "describe and decide nothing (no record is hidden, ordered out or refused by them). "
+        "uncontested: the reports the store keeps under the record's condition group agree; "
+        "contested: runs under these conditions differ, every run kept as recorded; the value "
+        "only describes the difference, and only when the group records deterministic "
+        "algorithms on (the record's deterministic_algorithms is true) were its runs expected "
+        "to agree, so the difference is flagged for investigation; cannot_be_checked: the "
+        "comparison is incomplete (no cohort registry configured, a version the registry does "
+        "not list, a report of the group that cannot be compared), never to be read as "
+        "uncontested")
     differing: List[_Text] = Field(..., description="contested: the fields the reports "
-                                   "disagree on, when they can be shown; otherwise empty")
-    runs: List[ContestRun] = Field(..., description="contested: the disagreeing runs, when "
+                                   "differ on, when they can be shown; otherwise empty")
+    runs: List[ContestRun] = Field(..., description="contested: every run carrying a "
+                                   "differing report, byte-identical runs each named, when "
                                    "they can be shown; otherwise empty")
 
     @model_validator(mode="after")
@@ -346,21 +411,48 @@ class RecordContest(_Strict):
 
 
 class LoadedRecordView(RecordView):
-    """A record as this route shows it: `RecordView` and its D5 state."""
+    """A record as this route shows it: `RecordView` and its group's
+    description."""
 
     contest: RecordContest
 
 
+class UnreadableRecord(_Strict):
+    """A ledger record for these weights that the shared check (`_record_view`)
+    cannot read as a result (K8-6e.1, policy rev 15 and rev 16): named by its
+    place in the ledger and, where it still carries them readably, its
+    registration sequence, report digest and run, with the reason in one
+    bounded line that names the refused fields and never their values. It is
+    never a result: it carries no metric, count or state. The ledger keeps it
+    as written."""
+
+    index: _Count = Field(
+        ..., description="Its place in the ledger's records list, counted from 0: the number "
+        "the writer's refusals name a record by")
+    sequence: Optional[_Sequence] = Field(
+        ..., description="Its registration sequence, or null when it carries none that reads "
+        "(not an integer of at least 1)")
+    source_artifact_digest: Optional[_Digest] = Field(
+        ..., description="SHA-256 of the report it names, or null when it carries none that "
+        "reads")
+    run_id: Optional[_RunId] = Field(
+        ..., description="The run it names, or null when it names none (a record written before "
+        "each run had its own record) or its run cannot be read")
+    reason: Annotated[str, Field(min_length=1, max_length=_REASON_LIMIT)] = Field(
+        ..., description="Why it cannot be read as a result: the refused fields (at most three, "
+        "then how many more), each by its path in the ledger record, and what is wrong with "
+        "each, never their values (a key the record itself carries inside an object, such as a "
+        "metric's name, is named as written); one line")
+
+
 class LoadedModelEvaluations(_Strict):
     """What the ledger beside the loaded checkpoint holds for its weights, each
-    record with its D5 state (`RecordContest`)."""
+    record with its run and its group's description (`RecordContest`)."""
 
     state: Literal[
-        "no_model", "not_identified", "no_ledger", "ledger_not_read", "no_records",
-        "records",
+        "no_model", "no_ledger", "ledger_not_read", "no_records", "records",
     ] = Field(
-        ..., description="no_model: no pipeline, or one serving no model; "
-        "not_identified: a model supplied in memory, no checkpoint read to look up; "
+        ..., description="no_model: no pipeline is served; "
         "no_ledger: no ledger beside the checkpoint; ledger_not_read: a ledger that "
         "cannot be read under this revision, so none of it is shown; no_records: the "
         "ledger holds no result for these weights; records: it holds at least one")
@@ -369,10 +461,17 @@ class LoadedModelEvaluations(_Strict):
         "model's checkpoint read; null when there is none")
     ledger: Optional[LedgerView]
     records: List[LoadedRecordView] = Field(
-        ..., description="Sorted by registration sequence, each with its D5 state")
+        ..., description="Every readable record, sorted by registration sequence, each with "
+        "its run (null: not recorded) and its group's description")
     records_not_shown: _Count = Field(
-        ..., description="Records for these weights that do not have the shape "
-        "registration writes")
+        ..., description="How many records for these weights cannot be read as a result "
+        "(they do not have the shape registration writes, or their run identity cannot be "
+        "read): always the length of unreadable_records, which lists each with its reason")
+    unreadable_records: List[UnreadableRecord] = Field(
+        ..., description="Each record for these weights that cannot be read as a result, in "
+        "ledger order, with its index, what identifies it and the reason. Never a result; the "
+        "ledger keeps it as written. A record that is not an object, or names no checkpoint "
+        "digest, belongs to no model and is not listed here")
 
     @model_validator(mode="after")
     def _the_state_says_what_the_fields_hold(self) -> "LoadedModelEvaluations":
@@ -387,9 +486,12 @@ class LoadedModelEvaluations(_Strict):
                 raise ValueError(f"state {self.state!r} with ledger sha256 {self.ledger.sha256!r}")
             if (self.state == "ledger_not_read") != (self.ledger.problem is not None):
                 raise ValueError(f"state {self.state!r} with ledger problem {self.ledger.problem!r}")
-        if (self.state == "records") != bool(self.records or self.records_not_shown):
+        if self.records_not_shown != len(self.unreadable_records):
+            raise ValueError(f"records_not_shown {self.records_not_shown} with "
+                             f"{len(self.unreadable_records)} unreadable record(s) listed")
+        if (self.state == "records") != bool(self.records or self.unreadable_records):
             raise ValueError(f"state {self.state!r} with {len(self.records)} record(s) shown "
-                             f"and {self.records_not_shown} not shown")
+                             f"and {len(self.unreadable_records)} not readable")
         return self
 
 
@@ -420,13 +522,28 @@ def _pick(value: Any, fields: Iterable[str]) -> Any:
     return {name: value[name] for name in fields if name in value}
 
 
-def _record_view(record: Dict[str, Any]) -> RecordView:
+def _record_view(record: Dict[str, Any], identity: Optional[RecordIdentity] = None,
+                 overlaps: Tuple[int, ...] = ()) -> RecordView:
     """A ledger record as `RecordView`, or a ``ValueError`` saying why not.
 
     The view picks its fields out of the record by name, so what a record carries
     beyond them never reaches the response, and validates every one of them, so a
     record of the wrong shape is refused here and never shown half-read.
+
+    ``identity`` is how its ledger's boundary reads it (`record_identities`):
+    a record whose identity cannot be read is refused with that reason, a
+    historical one has ``run_id`` null. ``overlaps`` are its possible overlaps
+    (`possible_overlaps`). Every reader of a ledger passes both; without
+    ``identity`` (a record read alone, outside its ledger) its own ``run_id``
+    is shown as written.
+
+    A field taken from another place in the record is listed in
+    `_RECORD_PATHS`, so a refusal names the record's own path.
     """
+    if identity is not None and identity.problem is not None:
+        raise ValueError(identity.problem)
+    run_id = (identity.run_id if identity is not None
+              else record.get("run_id") if "run_id" in record else None)
     corroborating = record.get("corroborating_reports")
     if not isinstance(corroborating, list):
         raise ValueError("its corroborating_reports is not a list")
@@ -463,6 +580,8 @@ def _record_view(record: Dict[str, Any]) -> RecordView:
         scoring_semantics_digest=_at(record, "scoring_semantics_digest"),
         measurement_semantics_digest=_at(record, "measurement_semantics_digest"),
         registration=_pick(_at(record, "registration"), RecordRegistration.model_fields),
+        run_id=run_id,
+        historical_overlap=list(overlaps),
         n_corroborating=len(corroborating),
         source_artifact_digest=_at(record, "source_artifact_digest"),
     )
@@ -521,45 +640,157 @@ def _recorded_results(read: "ReadIdentity") -> LoadedModelEvaluations:
         return LoadedModelEvaluations(
             state="ledger_not_read", checkpoint_sha256=digest,
             ledger=_ledger_view(problem=_ledger_problem(exc, ledger_path)),
-            records=[], records_not_shown=0,
+            records=[], records_not_shown=0, unreadable_records=[],
         )
     if ledger_sha is None:
         return LoadedModelEvaluations(
             state="no_ledger", checkpoint_sha256=digest, ledger=_ledger_view(),
-            records=[], records_not_shown=0,
+            records=[], records_not_shown=0, unreadable_records=[],
         )
 
-    viewed: List[Tuple[Dict[str, Any], RecordView]] = []
-    not_shown = 0
-    for record in records_for(ledger, digest):
-        try:
-            viewed.append((record, _record_view(record)))
-        except ValueError as exc:
-            not_shown += 1
-            logger.warning(
-                "A ledger record for checkpoint %s... is not shown: %s", digest[:12], exc
-            )
+    viewed, unreadable = read_records(ledger, digest)
+    for item in unreadable:
+        logger.warning("A ledger record for checkpoint %s... is not shown: the ledger's record "
+                       "%d: %s", digest[:12], item.index, item.reason)
     contest = _contest_states([record for record, _ in viewed])
     shown = [LoadedRecordView(**dict(view), contest=contest(record)) for record, view in viewed]
     shown.sort(key=lambda view: view.registration.sequence)
     return LoadedModelEvaluations(
-        state="records" if shown or not_shown else "no_records",
+        state="records" if shown or unreadable else "no_records",
         checkpoint_sha256=digest, ledger=_ledger_view(sha256=ledger_sha),
-        records=shown, records_not_shown=not_shown,
+        records=shown, records_not_shown=len(unreadable), unreadable_records=unreadable,
     )
 
 
-def _contest_states(records: List[Dict[str, Any]]) -> Callable[[Dict[str, Any]], RecordContest]:
-    """Each shown record's D5 state, by the one implementation the dashboard
-    uses (`record_states.contest_states`, with the versions the server's
-    registry lists), without the problems' words, which may name a server path.
+def unreadable_reason(exc: ValueError) -> str:
+    """Why the shared check refused a record, as one bounded line that names
+    the refused fields and never their values (K8-6e.1).
 
-    A record with no state read is ``cannot_be_checked``, never uncontested and
-    never a 500 that would take the model status with it. **A contested state
-    is never downgraded** by how its details can be shown: a run's value that
-    is not a finite number is null (`_finite_or_null`), and a contested state
-    whose fields or runs still cannot be carried is shown contested without
-    them."""
+    For pydantic's refusal, at most three of its errors, each "<field path>:
+    missing" (a field the record lacks, `_NOT_THERE`) or "<field path>: <what
+    is wrong>" (pydantic's words, its "Value error, " prefix left out), then
+    how many more; the input it was given is never written (pydantic's own
+    text carries it, with a documentation link, over several lines). **The
+    field path is the ledger record's** (`_record_path`), not the API view's
+    name for it: the key a hand edit of the ledger corrects. A key the record
+    itself carries inside an object (a metric's name, an exclusion reason) is
+    a step of that path and is named as written, as a readable record's
+    metric names are shown. For any other `ValueError`, its own words:
+    `_record_view`'s and the shared checks' refusals name a field, never its
+    value. Either way through `problem_line`: one line, each character that
+    is not printable escaped (a field name is a key a hand edit may have
+    written), at most 300 characters."""
+    from pydantic import ValidationError
+
+    from src.utils.checkpoint_paths import problem_line
+
+    if isinstance(exc, ValidationError):
+        errors = exc.errors(include_url=False)
+        parts = []
+        for error in errors[:3]:
+            where = ".".join(_printable(step) for step in _record_path(error.get("loc") or ())
+                             ) or "the record"
+            if error.get("type") == "missing" or error.get("input") is _NOT_THERE:
+                parts.append(f"{where}: missing")
+                continue
+            words = str(error.get("msg") or "is not valid")
+            if words.startswith("Value error, "):
+                words = words[len("Value error, "):]
+            parts.append(f"{where}: {words}")
+        if len(errors) > 3:
+            parts.append(f"{len(errors) - 3} more")
+        text = "; ".join(parts)
+    else:
+        text = str(exc)
+    return problem_line(text) or "it does not have the shape registration writes"
+
+
+#: Where each field `_record_view` takes from another place sits in the ledger
+#: record, by the view's path: a reason names the record's own path, the key a
+#: hand edit of the ledger corrects. Every other field has one path in both.
+_RECORD_PATHS: Dict[Tuple[str, ...], Tuple[str, ...]] = {
+    ("cohort", "version_manifest_sha256"): ("cohort_digest",),
+    ("counts",): ("cohort", "counts"),
+    ("mode",): ("scoring", "mode"),
+    ("score_semantics",): ("scoring", "score_semantics"),
+    ("gpu",): ("environment", "facts", "gpu"),
+    ("dataset_origin",): ("dataset_record", "origin"),
+}
+
+
+def _record_path(loc: Sequence[Any]) -> Tuple[Any, ...]:
+    """Pydantic's location in `RecordView` as the path in the ledger record
+    (`_RECORD_PATHS`): the longest view path it starts with is replaced."""
+    loc = tuple(loc)
+    for size in (2, 1):
+        moved = _RECORD_PATHS.get(loc[:size]) if len(loc) >= size else None
+        if moved is not None:
+            return moved + loc[size:]
+    return loc
+
+
+def _printable(step: Any) -> str:
+    """One step of a field path as text, each character that is not
+    printable escaped, so a newline in a hand-written key cannot end the line."""
+    text = str(step)
+    return text if text.isprintable() else "".join(
+        c if c.isprintable() else repr(c)[1:-1] for c in text)
+
+
+def read_records(ledger: Dict[str, Any], checkpoint_digest: str
+                 ) -> Tuple[List[Tuple[Dict[str, Any], RecordView]], List[UnreadableRecord]]:
+    """**The one listing of a ledger's records for one set of weights**
+    (K8-6e.1), for every reader (this route, Models' operator view through
+    the shared model list, `record_evaluation.py --show`): the records the
+    shared check (`_record_view`) reads as results, each with its view, and
+    every other record as an `UnreadableRecord` with its index and reason, in
+    ledger order. Each record's run is read by the file's boundary, and its
+    possible overlaps, from the whole ledger once (`record_reading`).
+
+    Reading one record never waits on or hides another; nothing is repaired,
+    edited or dropped (a record that is not an object, or names no checkpoint
+    digest, belongs to no model: `indexed_records_for` does not give it)."""
+    from src.evaluation.sidecar import _is_digest, _readable_sequence
+
+    read_as = record_reading(ledger)
+    viewed: List[Tuple[Dict[str, Any], RecordView]] = []
+    unreadable: List[UnreadableRecord] = []
+    for index, record in indexed_records_for(ledger, checkpoint_digest):
+        identity, overlaps = read_as[id(record)]
+        try:
+            viewed.append((record, _record_view(record, identity, overlaps)))
+        except ValueError as exc:
+            source = record.get("source_artifact_digest")
+            unreadable.append(UnreadableRecord(
+                index=index, sequence=_readable_sequence(record),
+                source_artifact_digest=source if _is_digest(source) else None,
+                run_id=identity.run_id, reason=unreadable_reason(exc)))
+    return viewed, unreadable
+
+
+def record_reading(ledger: Dict[str, Any]) -> Dict[int, Tuple[RecordIdentity, Tuple[int, ...]]]:
+    """Each record of `ledger`, by ``id()``, with how the file's boundary reads
+    its run (`record_identities`) and its possible overlaps
+    (`possible_overlaps`): the one reading the route and the Models page give
+    `_record_view`. Reads nothing more than the ledger already parsed."""
+    records = ledger.get("records") if isinstance(ledger.get("records"), list) else []
+    return {id(record): (identity, overlaps)
+            for record, identity, overlaps in zip(records, record_identities(ledger),
+                                                  possible_overlaps(ledger))}
+
+
+def _contest_states(records: List[Dict[str, Any]]) -> Callable[[Dict[str, Any]], RecordContest]:
+    """Each shown record's group description, by the one implementation the
+    dashboard uses (`record_states.contest_states`, with the versions the
+    server's registry lists), without the problems' words, which may name a
+    server path. It decides nothing.
+
+    A record with no description read is ``cannot_be_checked``, never
+    uncontested and never a 500 that would take the model status with it. **A
+    contested description is never downgraded** by how its details can be
+    shown: a run's value that is not a finite number is null
+    (`_finite_or_null`), and a contested description whose fields or runs still
+    cannot be carried is shown contested without them."""
     from src.api.services.record_states import CohortVersions, contest_states, key_text
     from src.evaluation.report_store import CONTEST_STATES
     from src.evaluation.sidecar import record_key
@@ -581,7 +812,7 @@ def _contest_states(records: List[Dict[str, Any]]) -> Callable[[Dict[str, Any]],
             return RecordContest(state=got["state"], differing=got.get("differing") or [],
                                  runs=runs)
         except Exception as exc:  # noqa: BLE001 -- pydantic's ValidationError included
-            logger.warning("A record's D5 details are not shown: %s: %s",
+            logger.warning("A record's group details are not shown: %s: %s",
                            type(exc).__name__, exc)
             if got["state"] == "contested":
                 return RecordContest(state="contested", differing=[], runs=[])
@@ -591,7 +822,7 @@ def _contest_states(records: List[Dict[str, Any]]) -> Callable[[Dict[str, Any]],
 
 
 def _finite_or_null(value: Any) -> Optional[float]:
-    """A disagreeing run's value as the view carries it: a finite number as a
+    """A differing run's value as the view carries it: a finite number as a
     float; null for anything else a hand-edited report may hold there (null,
     NaN, infinity, text, an object, a boolean, or an integer too large for a
     float, which `math.isfinite` cannot take)."""
@@ -607,6 +838,7 @@ def _finite_or_null(value: Any) -> Optional[float]:
 def _nothing_to_look_up(state: str) -> LoadedModelEvaluations:
     return LoadedModelEvaluations(
         state=state, checkpoint_sha256=None, ledger=None, records=[], records_not_shown=0,
+        unreadable_records=[],
     )
 
 
@@ -624,9 +856,6 @@ async def get_loaded_model_evaluations() -> LoadedModelEvaluations:
     if pipeline is None:
         return _nothing_to_look_up("no_model")
     read = pipeline.served_checkpoint_read()
-    if read is None:
-        absent = pipeline.served_identity().checkpoint.state == "absent"
-        return _nothing_to_look_up("no_model" if absent else "not_identified")
     # The identity is taken; what follows reads files only (the ledger and the
     # report store of each shown record's version), so it runs off the loop.
     return await run_in_threadpool(_recorded_results, read)
@@ -640,6 +869,9 @@ __all__ = [
     "LoadedRecordView",
     "RecordContest",
     "RecordView",
+    "UnreadableRecord",
     "get_loaded_model_evaluations",
+    "read_records",
     "router",
+    "unreadable_reason",
 ]

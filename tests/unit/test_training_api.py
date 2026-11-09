@@ -29,6 +29,7 @@ pytest.importorskip("fastapi")
 pytest.importorskip("pydantic")
 
 from src.api.services.training_manager import TrainingManager
+from src.config.model_types import WRITTEN_BEFORE_SPEC
 from tests.fixtures.job_processes import FakeProcess
 from tests.fixtures.operator_access import OPERATOR_BASE_URL, operator_mode
 
@@ -41,7 +42,7 @@ def tmp_dirs(tmp_path):
     """A workspace with one run directory (contract M3a-2): its logs and
     checkpoints are inside it."""
     data_dir = tmp_path / "ws"
-    run_dir = data_dir / "runs" / "gat" / "20260223-100000_run_aaaaaa"
+    run_dir = data_dir / "runs" / "gatv2" / "20260223-100000_run_aaaaaa"
     log_dir = run_dir / "logs"
     checkpoint_dir = run_dir / "checkpoints"
     log_dir.mkdir(parents=True)
@@ -64,15 +65,24 @@ def manager(tmp_dirs):
 
 @pytest.fixture
 def sample_config():
-    """Minimal training config for testing."""
+    """Minimal training config for testing: a base start (TM12: a new run is
+    a base), on the reference spec, with a few of the recipe's settings."""
     return {
+        "learning_stage": "base",
         "num_epochs": 10,
         "learning_rate": 1e-4,
         "batch_size": 16,
-        "conv_type": "gat",
         "device": "cpu",
         "seed": 42,
     }
+
+
+@pytest.fixture
+def base_body(tmp_dirs):
+    """A base start as POST /training/start takes it (K7, TM11): the WebUI
+    base form's call, over HTTP."""
+    return {"data_dir": tmp_dirs["data_dir"], "learning_stage": "base", "device": "cpu",
+            "num_epochs": 10}
 
 
 @pytest.fixture
@@ -87,9 +97,12 @@ def sample_metrics_log(tmp_dirs):
             {"epoch": 2, "total": 1.5, "lr_group_0": 9e-5, "timestamp": "2026-02-23T10:02:00"},
         ],
         "validation": [
-            {"epoch": 0, "val_loss": 3.0, "val_mrr": 0.1, "val_hits@1": 0.05, "val_hits@10": 0.2},
-            {"epoch": 1, "val_loss": 2.5, "val_mrr": 0.15, "val_hits@1": 0.08, "val_hits@10": 0.25},
-            {"epoch": 2, "val_loss": 2.0, "val_mrr": 0.2, "val_hits@1": 0.1, "val_hits@10": 0.3},
+            {"epoch": 0, "val_loss": 3.0, "val_pooled_mrr": 0.1, "val_pooled_top1": 0.05,
+             "val_pooled_top10": 0.2},
+            {"epoch": 1, "val_loss": 2.5, "val_pooled_mrr": 0.15, "val_pooled_top1": 0.08,
+             "val_pooled_top10": 0.25},
+            {"epoch": 2, "val_loss": 2.0, "val_pooled_mrr": 0.2, "val_pooled_top1": 0.1,
+             "val_pooled_top10": 0.3},
         ],
     }
     with open(log_file, "w") as f:
@@ -132,16 +145,19 @@ class TestTrainingManagerStartStop:
 
     def test_start_names_a_new_run_directory_and_creates_nothing(self, tmp_path):
         """The directory is named here and claimed by the training process
-        after its refusals (contract M3a-2), so a refused run leaves nothing."""
+        after its refusals (contract M3a-2), so a refused run leaves nothing.
+        A base is filed under its model spec's encoder kind (the reference
+        spec's gatv2 here)."""
         manager = TrainingManager()
         mock_proc = FakeProcess(pid=1)
-        config = {"data_dir": str(tmp_path / "ws"), "conv_type": "hgt", "run_name": "Pilot A"}
+        config = {"data_dir": str(tmp_path / "ws"), "learning_stage": "base",
+                  "run_name": "Pilot A"}
 
         with patch("subprocess.Popen", return_value=mock_proc) as popen:
             result = manager.start_training(config)
 
         run_dir = Path(result["run_dir"])
-        assert run_dir.parent == tmp_path / "ws" / "runs" / "hgt"
+        assert run_dir.parent == tmp_path / "ws" / "runs" / "gatv2"
         assert "_pilot-a_" in run_dir.name
         assert not run_dir.exists()
         assert manager.run_dir == run_dir and manager.get_status()["run_dir"] == str(run_dir)
@@ -151,12 +167,46 @@ class TestTrainingManagerStartStop:
         assert popen.call_args[0][0][-1] == result["config_path"]
         assert "run_dir" not in config, "the caller's dict was changed"
 
+    @pytest.mark.parametrize("start", ["base", "continuation"])
     @pytest.mark.parametrize("retired", ["output_dir", "checkpoint_dir", "log_dir"])
-    def test_a_retired_location_is_refused_not_ignored(self, retired, tmp_path):
+    def test_a_retired_location_is_refused_not_ignored(self, retired, start, tmp_path,
+                                                       request):
+        """A new run (a base) is refused by its whole-configuration check, a
+        retired location being no setting a base takes; a continuation of a
+        real paused base, whose settings are the parent's, by the preview of
+        that parent, which records no such setting to inherit. Nothing is
+        spawned either way."""
         manager = TrainingManager()
+        if start == "base":
+            config = {"data_dir": str(tmp_path), "learning_stage": "base", retired: "x"}
+            said = f"{retired} is not a setting a base run takes"
+        else:
+            ws, parent = request.getfixturevalue("paused_base")
+            config = {"data_dir": str(ws), "resume_from": str(parent), "device": "cpu",
+                      retired: "x"}
+            said = f"does not record {retired}, so the run cannot inherit them"
         with patch("subprocess.Popen") as popen:
-            result = manager.start_training({"data_dir": str(tmp_path), retired: "x"})
-        assert result["success"] is False and retired in result["error"]
+            result = manager.start_training(config)
+        assert result["success"] is False and said in result["error"], result
+        popen.assert_not_called()
+
+    @pytest.mark.parametrize("retired", ["output_dir", "checkpoint_dir", "log_dir"])
+    def test_the_retired_location_guard_refuses_a_continuation_the_preview_passed(
+            self, retired, tmp_path):
+        """The run layout's retired-location guard alone
+        (`refuse_retired_locations`, which `start_training` calls once a
+        continuation's preview passes), with the preview stubbed to pass: no
+        real continuation reaches the guard today, since the preview of a real
+        parent refuses a retired location first (the case above)."""
+        manager = TrainingManager()
+        config = {"data_dir": str(tmp_path), "resume_from": "p.pt", retired: "x"}
+        preview = {"ok": True, "architecture": "gatv2", "sha256": "c" * 64,
+                   "learning_stage": "base"}
+        with patch.object(manager, "preview_continuation", return_value=preview), \
+                patch("subprocess.Popen") as popen:
+            result = manager.start_training(config)
+        assert result["success"] is False, result
+        assert f"sets {retired}, which no longer exist" in result["error"], result
         popen.assert_not_called()
 
     def test_an_explicit_run_directory_that_holds_files_is_refused(self, tmp_path):
@@ -165,9 +215,32 @@ class TestTrainingManagerStartStop:
         (used / "config.yaml").write_text("x")
         manager = TrainingManager()
         with patch("subprocess.Popen") as popen:
-            result = manager.start_training({"run_dir": str(used)})
+            result = manager.start_training({"learning_stage": "base", "run_dir": str(used)})
         assert result["success"] is False and "already holds files" in result["error"]
         popen.assert_not_called()
+
+    @pytest.mark.parametrize("explicit", [False, True], ids=["allocated", "explicit"])
+    def test_a_run_directory_behind_a_link_out_of_the_workspace_is_refused(self, tmp_path,
+                                                                          explicit):
+        """The workspace's runs/ is a link to another disk: a run named there
+        would land where the reload's automatic selection never reads (the
+        reviewer's K8-1 recheck), so the start is refused before a process is
+        started or anything is written, saying why and what to do."""
+        workspace, elsewhere = tmp_path / "ws", tmp_path / "elsewhere"
+        workspace.mkdir()
+        elsewhere.mkdir()
+        (workspace / "runs").symlink_to(elsewhere, target_is_directory=True)
+        config = {"data_dir": str(workspace), "learning_stage": "base"}
+        if explicit:
+            config["run_dir"] = str(workspace / "runs" / "gatv2" / "mine")
+        manager = TrainingManager()
+        with patch("subprocess.Popen") as popen:
+            result = manager.start_training(config)
+        assert result["success"] is False
+        assert "resolves outside the workspace, so it is not written" in result["error"]
+        assert "explicit checkpoint_path" in result["error"]
+        popen.assert_not_called()
+        assert list(elsewhere.iterdir()) == []
 
     def test_start_training_already_running(self, manager, sample_config):
         """Cannot start training when already running."""
@@ -192,7 +265,7 @@ class TestTrainingManagerStartStop:
         manager = TrainingManager()
         process = FakeProcess(pid=7, on_sigint=0)
         with patch("subprocess.Popen", return_value=process):
-            manager.start_training({"data_dir": str(tmp_path / "ws")})
+            manager.start_training({"data_dir": str(tmp_path / "ws"), "learning_stage": "base"})
 
         result = manager.stop_training()
 
@@ -204,10 +277,11 @@ class TestTrainingManagerStartStop:
         manager = TrainingManager()
         parent = tmp_path / "old.pt"
         import torch
-        torch.save({"state_dict": {}}, parent)   # no M3a record
+        torch.save({"state_dict": {}}, parent)   # no record at all
         with patch("subprocess.Popen") as popen:
             result = manager.start_training({"resume_from": str(parent)})
-        assert result["success"] is False and "before contract M3a" in result["error"]
+        assert result["success"] is False
+        assert f"The parent old.pt: {WRITTEN_BEFORE_SPEC}" in result["error"]
         popen.assert_not_called()
 
     def test_a_continued_run_is_placed_under_its_parents_architecture(self, tmp_path):
@@ -232,7 +306,7 @@ class TestTrainingManagerMetrics:
         assert len(metrics["train"]) == 3
         assert len(metrics["validation"]) == 3
         assert metrics["train"][0]["total"] == 2.5
-        assert metrics["validation"][2]["val_mrr"] == 0.2
+        assert metrics["validation"][2]["val_pooled_mrr"] == 0.2
 
     def test_get_metrics_no_logs(self, manager):
         metrics = manager.get_metrics_history()
@@ -273,7 +347,7 @@ class TestTrainingManagerCheckpoints:
         checkpoints = manager.get_checkpoints(tmp_dirs["data_dir"])
         assert len(checkpoints) == 2
         assert {c["run"] for c in checkpoints} == {"20260223-100000_run_aaaaaa"}
-        assert {c["architecture"] for c in checkpoints} == {"gat"}
+        assert {c["architecture"] for c in checkpoints} == {"gatv2"}
         filenames = [c["filename"] for c in checkpoints]
         assert "last.pt" in filenames
         assert "model-01-0.5000.pt" in filenames
@@ -293,17 +367,17 @@ class TestTrainingManagerCheckpoints:
         ckpt_dir = Path(tmp_dirs["checkpoint_dir"])
         digest = write_checkpoint(
             {"checkpoint_kind": "training_state", "epoch": 3,
-             "logs": {"val_mrr": 0.4, "val_loss": 0.2},
+             "logs": {"val_pooled_mrr": 0.4, "val_loss": 0.2},
              "training_input_digests": {"split_manifest": "5" * 64}},
             ckpt_dir / "last.pt")
 
         (entry,) = manager.get_checkpoints(tmp_dirs["data_dir"])
         assert entry["sha256"] == digest
-        assert entry["validation"] == {"metric": "val_mrr", "value": 0.4}
+        assert entry["validation"] == {"metric": "val_pooled_mrr", "value": 0.4}
         assert entry["dataset_fingerprint"] == "5" * 64
         assert entry["metadata_problem"] is None
         assert (entry["epoch"], entry["checkpoint_kind"]) == (3, "training_state")
-        assert entry["metrics"] == {"val_mrr": 0.4, "val_loss": 0.2}
+        assert entry["metrics"] == {"val_pooled_mrr": 0.4, "val_loss": 0.2}
 
     def test_the_manager_no_longer_loads_a_file_itself(self):
         """The one read is `read_checkpoint`'s, inside the listing."""
@@ -396,7 +470,7 @@ class TestTrainingAPIEndpoints:
         from src.utils.checkpoint_io import write_checkpoint
 
         digest = write_checkpoint(
-            {"epoch": 2, "logs": {"val_hits@1": 0.1},
+            {"epoch": 2, "logs": {"val_pooled_mrr": 0.1},
              "training_input_digests": {"split_manifest": "6" * 64}},
             Path(tmp_dirs["checkpoint_dir"]) / "last.pt")
         (Path(tmp_dirs["checkpoint_dir"]) / "broken.pt").write_bytes(b"x")
@@ -405,7 +479,7 @@ class TestTrainingAPIEndpoints:
         listed = {c["filename"]: c for c in self.client.get(
             "/api/v1/training/checkpoints").json()}
         assert listed["last.pt"]["sha256"] == digest
-        assert listed["last.pt"]["validation"] == {"metric": "val_hits@1", "value": 0.1}
+        assert listed["last.pt"]["validation"] == {"metric": "val_pooled_mrr", "value": 0.1}
         assert listed["last.pt"]["dataset_fingerprint"] == "6" * 64
         assert listed["last.pt"]["metadata_problem"] is None
         assert listed["broken.pt"]["sha256"] is None and listed["broken.pt"]["metadata_problem"]
@@ -427,46 +501,102 @@ class TestTrainingAPIEndpoints:
         assert response.status_code == 200
         assert [c["filename"] for c in response.json()] == ["last.pt"]
 
-    def test_start_training(self, sample_config):
+    def test_start_training(self, base_body):
         mock_proc = FakeProcess(pid=99999)
 
         with patch("subprocess.Popen", return_value=mock_proc):
-            resp = self.client.post("/api/v1/training/start", json=sample_config)
+            resp = self.client.post("/api/v1/training/start", json=base_body)
 
         assert resp.status_code == 200
         data = resp.json()
         assert data["success"] is True
         assert data["status"] == "running"
+        assert "/runs/gatv2/" in data["run_dir"], "filed under the reference spec's encoder"
 
     def test_stop_training_not_running(self):
         resp = self.client.post("/api/v1/training/stop")
         assert resp.status_code == 409
 
-    def test_a_retired_location_is_refused_by_the_api(self, sample_config):
+    @pytest.mark.parametrize("payload, named", [
+        ({"checkpoint_kind": "training_state", "progress": {"end": "\udc80"}},
+         "its progress.end is not text: character 0 is a lone surrogate"),
+        ({"progress": {"end": "stopped_early", "stop_reason": "patience\ud800"}},
+         "its progress.stop_reason is not text: character 8 is a lone surrogate"),
+        ({"progress": {"completed_epochs": "tensor", "end": None}},
+         "its progress.completed_epochs is a Tensor, not a whole number"),
+        ({"progress": {"stage": {"start_epoch": "x", "target_epochs": 2}}},
+         "its progress.stage.start_epoch is a str, not a whole number"),
+        (b"legacy", "RuntimeError: Invalid protocol version: \\udc80proto"),
+    ], ids=["end-surrogate", "stop-reason-surrogate", "completed-tensor", "start-epoch-text",
+            "legacy-protocol-surrogate"])
+    def test_a_stopped_runs_snapshot_that_cannot_be_shown_as_read_is_not_readable(
+            self, base_body, payload, named):
+        """The K8-4r4 verifier, defect 2: the status put the end, the stop
+        reason, the epoch counts and the loader's message of the job's own
+        ``last.pt`` in its answer as read, so a lone surrogate in one (the
+        legacy loader's message names the file's protocol version) failed the
+        answer's encoding, a tensor its serialisation and a start epoch of
+        "x" the snapshot itself: the stop and every later status failed. Now
+        both answer 200, the snapshot not readable, the reason naming the
+        field (as the listing checks it) or escaping the message."""
+        import pickle
+
+        import torch
+
+        process = FakeProcess(pid=8, on_sigint=0)
+        with patch("subprocess.Popen", return_value=process):
+            run = Path(self.client.post("/api/v1/training/start", json=base_body).json()[
+                "run_dir"])
+        last = run / "checkpoints" / "last.pt"
+        last.parent.mkdir(parents=True, exist_ok=True)
+        if payload == b"legacy":
+            last.write_bytes(pickle.dumps(0x1950A86A20F9469CFC6C, protocol=2)
+                             + pickle.dumps("\udc80proto", protocol=2))
+        else:
+            progress = payload["progress"]
+            if progress.get("completed_epochs") == "tensor":
+                progress["completed_epochs"] = torch.tensor([1, 2])
+            torch.save(payload, last)
+
+        for response in (self.client.post("/api/v1/training/stop"),
+                         self.client.get("/api/v1/training/status")):
+            assert response.status_code == 200, response.text[:300]
+            outcome = response.json()["outcome"]
+            assert outcome["readable"] is False and outcome["checkpoint"] == str(last)
+            assert outcome["reason"].startswith(named), outcome
+            assert "resumable" not in outcome and "end" not in outcome
+
+    def test_a_retired_location_is_refused_by_the_api(self, base_body):
         with patch("subprocess.Popen") as popen:
             resp = self.client.post("/api/v1/training/start",
-                                    json={**sample_config, "checkpoint_dir": "elsewhere"})
+                                    json={**base_body, "checkpoint_dir": "elsewhere"})
         assert resp.status_code == 422
         assert "checkpoint_dir" in resp.text
         popen.assert_not_called()
 
-    def test_only_the_fields_the_caller_set_reach_the_training_process(self):
-        """Defaults are the training script's own; a continued run inherits
-        what the caller did not set (contract M3a-3)."""
+    def test_only_the_fields_the_caller_set_reach_the_training_process(self, tmp_dirs):
+        """The reference recipe fills every base setting not set, and the
+        training process records which (contract M3a-3): the configuration
+        written is the caller's fields, the stage and the run directory, as
+        the WebUI base form's start writes it."""
         import yaml
         mock_proc = FakeProcess(pid=4)
         with patch("subprocess.Popen", return_value=mock_proc):
-            resp = self.client.post("/api/v1/training/start",
-                                    json={"num_epochs": 3, "device": "cpu"})
+            resp = self.client.post("/api/v1/training/start", json={
+                "data_dir": tmp_dirs["data_dir"], "learning_stage": "base", "num_epochs": 3,
+                "device": "cpu"})
         written = yaml.safe_load(Path(resp.json()["config_path"]).read_text())
-        assert set(written) == {"num_epochs", "device", "run_dir"}
+        assert written == {"data_dir": tmp_dirs["data_dir"], "learning_stage": "base",
+                           "num_epochs": 3, "device": "cpu", "run_dir": resp.json()["run_dir"]}
 
-    def test_an_empty_retired_location_is_the_old_default(self, sample_config):
-        mock_proc = FakeProcess(pid=2)
-        with patch("subprocess.Popen", return_value=mock_proc):
+    def test_a_retired_location_is_refused_even_empty(self, base_body):
+        """The request is strict (BACKLOG 54): a field it does not define, a
+        retired location among them, is refused, empty or not, never dropped."""
+        with patch("subprocess.Popen") as popen:
             resp = self.client.post("/api/v1/training/start",
-                                    json={**sample_config, "checkpoint_dir": ""})
-        assert resp.status_code == 200 and resp.json()["run_dir"]
+                                    json={**base_body, "checkpoint_dir": ""})
+        assert resp.status_code == 422 and "checkpoint_dir" in resp.text
+        popen.assert_not_called()
 
 
 class TestTrainingRoutesAreGated:
@@ -475,7 +605,7 @@ class TestTrainingRoutesAreGated:
     opened, unless the deployment is in mode M1 and the request arrived on
     loopback. Status and metrics stay open."""
 
-    GATED = [("post", "/api/v1/training/start", {"num_epochs": 1, "device": "cpu"}),
+    GATED = [("post", "/api/v1/training/start", {"data_dir": "x", "learning_stage": "base"}),
              ("post", "/api/v1/training/stop", None),
              ("get", "/api/v1/training/checkpoints", None)]
 
@@ -558,32 +688,54 @@ class TestSystemAPIEndpoint:
         assert "ram" in data
 
 
-class TestTrainingRequestValidation:
-    """TrainingStartRequest field + cross-field validation."""
+class TestTheBaseStartRequest:
+    """TrainingStartRequest (K7, TM11): a strict base start, its fields'
+    bounds the field spec's."""
 
     def _req(self, **overrides):
         from src.api.routes.training import TrainingStartRequest
 
-        return TrainingStartRequest(**overrides)
+        return TrainingStartRequest(**{"data_dir": "data/workspaces/x", "learning_stage": "base",
+                                       **overrides})
 
-    # -- WS1b: onecycle requires min_lr_ratio > 0; cosine/linear allow 0 --------
-    def test_onecycle_zero_min_lr_ratio_rejected(self):
+    def test_a_base_start_needs_its_workspace_and_its_stage(self):
+        from pydantic import ValidationError
+
+        from src.api.routes.training import TrainingStartRequest
+
+        for missing in ({"data_dir": "x"}, {"learning_stage": "base"}, {}):
+            with pytest.raises(ValidationError):
+                TrainingStartRequest(**missing)
+        assert self._req().learning_stage == "base"
+
+    @pytest.mark.parametrize("stage", ["finetune", "pretrain", None, ""])
+    def test_another_stage_is_refused(self, stage):
         from pydantic import ValidationError
 
         with pytest.raises(ValidationError):
-            self._req(scheduler_type="onecycle", min_lr_ratio=0.0)
+            self._req(learning_stage=stage)
 
-    def test_cosine_zero_min_lr_ratio_allowed(self):
-        req = self._req(scheduler_type="cosine", min_lr_ratio=0.0)
-        assert req.min_lr_ratio == 0.0
+    @pytest.mark.parametrize("field, value", [
+        ("conv_type", "gat"), ("hidden_dim", 256), ("num_heads", 8), ("num_workers", 0),
+        ("min_lr_ratio", 0.01), ("diagnosis_weight", 1.0), ("use_ortholog_gate", True),
+        ("task", "disease"), ("finetune_from", "base.pt"), ("model_spec", {}),
+        ("run_dir", "/r"), ("unknown", 1),
+    ])
+    def test_a_shepherdgnn_or_unknown_field_is_refused(self, field, value):
+        from pydantic import ValidationError
 
-    def test_linear_zero_min_lr_ratio_allowed(self):
-        req = self._req(scheduler_type="linear", min_lr_ratio=0.0)
-        assert req.min_lr_ratio == 0.0
+        with pytest.raises(ValidationError):
+            self._req(**{field: value})
 
-    def test_onecycle_positive_min_lr_ratio_ok(self):
-        req = self._req(scheduler_type="onecycle", min_lr_ratio=0.01)
-        assert req.scheduler_type == "onecycle"
+    def test_a_setting_left_unset_is_the_recipes_not_the_requests(self):
+        """Nothing the caller did not set is sent: every base setting
+        defaults to unset, and the recipe fills it."""
+        from src.config.recipe import BASE
+
+        sent = self._req(num_epochs=5).model_dump(exclude_unset=True, exclude_none=True)
+        assert sent == {"data_dir": "data/workspaces/x", "learning_stage": "base",
+                        "num_epochs": 5}
+        assert {name: getattr(self._req(), name) for name in BASE} == dict.fromkeys(BASE)
 
     # -- WS3: batch_size upper bound raised to 2048 ----------------------------
     def test_batch_size_2048_accepted(self):
@@ -606,25 +758,56 @@ class TestTrainingRequestValidation:
         with pytest.raises(ValidationError):
             self._req(seed=2**32)
 
+    def test_extend_needs_a_parent(self):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError, match="extend_epochs continues a parent"):
+            self._req(extend_epochs=2)
+
 
 # ==============================================================================
-# A continued run's rules are checked on the settings it will use
-# (contract M3a review of 094b90d, P2-3)
+# The base start through the real route and job runner (K7, TM11)
 # ==============================================================================
 @pytest.fixture(scope="module")
-def heads3_parent(tmp_path_factory):
-    """A real paused parent with hidden_dim=18 and num_heads=3: valid for gat,
-    and invalid against the new-training default hidden_dim of 256."""
-    import scripts.train_model as train_model
-    from tests.fixtures.trainable_workspace import write_trainable_workspace
+def paused_base(tmp_path_factory):
+    """A real paused base (a small spec, one of its two epochs) on a base
+    workspace: a parent POST /training/start continues."""
+    import sys
 
-    root = tmp_path_factory.mktemp("heads3")
-    ws = write_trainable_workspace(root / "ws")
-    train_model.train(train_model.TrainConfig(
-        data_dir=str(ws), run_dir=str(root / "parent"), device="cpu", hidden_dim=18,
-        num_layers=1, num_heads=3, num_workers=0, use_amp=False, num_epochs=2,
-        batch_size=5, warmup_steps=1, pause_after_epoch=1))
-    return ws, root / "parent" / "checkpoints" / "last.pt"
+    scripts = str(Path(__file__).resolve().parents[2] / "scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    import train_model
+    from tests.fixtures.base_workspace import write_base_workspace
+    from tests.unit.test_train_base_stage import _config
+
+    ws = write_base_workspace(tmp_path_factory.mktemp("paused-base"))
+    run = ws / "runs" / "gatv2" / "20261001-000000_base_aaaaaa"
+    train_model.train(*_config(ws, run, pause_after_epoch=1))
+    return ws, run / "checkpoints" / "last.pt"
+
+
+@pytest.fixture(scope="module")
+def specless_parent(paused_base, tmp_path_factory):
+    """A paused training-state checkpoint with no model spec, its record as a
+    ShepherdGNN run wrote one (record version 1, no stage requested): the
+    paused base's file with its model record taken out, as
+    test_train_base_stage.py builds a parent written before the model spec.
+    Not a base, so the base start does not continue it."""
+    import torch
+
+    from src.config.model_types import MODEL_RECORD_KEYS
+
+    ws, parent = paused_base
+    payload = torch.load(parent, map_location="cpu", weights_only=True)
+    for key in MODEL_RECORD_KEYS:
+        payload.pop(key, None)
+    payload["record_version"] = 1
+    payload["config"] = {**payload["config"],
+                         "requested": {**payload["config"]["requested"], "learning_stage": None}}
+    path = tmp_path_factory.mktemp("specless-parent") / "last.pt"
+    torch.save(payload, path)
+    return ws, path
 
 
 @pytest.fixture
@@ -641,66 +824,106 @@ def real_client(monkeypatch):
     app.include_router(router, prefix="/api/v1")
     process = FakeProcess(pid=11)
     with patch("subprocess.Popen", return_value=process) as popen:
-        yield TestClient(app, base_url=OPERATOR_BASE_URL), popen
+        yield TestClient(app, base_url=OPERATOR_BASE_URL), popen, manager
     process.finish(0)
 
 
-class TestContinuationRulesOnResolvedSettings:
-    def test_a_partial_request_inherits_before_its_rules_are_checked(self, heads3_parent,
-                                                                     real_client):
+def _nothing_started(manager, popen, *workspaces):
+    """A refused start started no process, claimed no GPU slot and named no
+    run directory (none exists under the workspaces)."""
+    popen.assert_not_called()
+    assert manager.active_job() is None and manager.run_dir is None
+    assert manager.get_status()["status"] == "idle"
+    for workspace in workspaces:
+        assert not (Path(workspace) / "runs" / "gat").exists()
+        assert not list(Path(workspace).glob("runs/*/*_run_*"))
+
+
+class TestTheBaseStartThroughTheRunner:
+    def test_a_refused_request_reaches_no_service(self, monkeypatch, tmp_path):
+        """Refused by the request itself (422): the service is never called."""
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from src.api.routes.training import router
+
+        class Untouchable:
+            def __getattr__(self, name):
+                pytest.fail(f"a refused request reached the service ({name})")
+
+        monkeypatch.setattr("src.api.routes.training.training_manager", Untouchable())
+        operator_mode(monkeypatch)
+        app = FastAPI()
+        app.include_router(router, prefix="/api/v1")
+        client = TestClient(app, base_url=OPERATOR_BASE_URL)
+        base = {"data_dir": str(tmp_path), "learning_stage": "base"}
+        for body in ({"data_dir": str(tmp_path)}, {**base, "learning_stage": "finetune"},
+                     {**base, "conv_type": "gat"}, {**base, "hidden_dim": 64},
+                     {**base, "task": "disease"}, {**base, "unknown": 1}, {},
+                     {**base, "num_epochs": 0}, {**base, "extend_epochs": 2}):
+            assert client.post("/api/v1/training/start", json=body).status_code == 422, body
+
+    @pytest.mark.parametrize("settings, fragment", [
+        ({"num_neighbors": [15, 10]}, "num_neighbors needs 3 numbers, one hop per encoder "
+                                      "layer, not 2"),
+        ({"num_neighbors": [15, 10, 5, 5]}, "not 4"),
+    ])
+    def test_a_setting_the_runner_refuses_starts_nothing(self, real_client, tmp_path, settings,
+                                                         fragment):
+        """The runner's one check (`_new_bundle_run`) refuses what the recipe or
+        the reference spec does not take (422), before the slot or a run
+        directory is claimed."""
+        client, popen, manager = real_client
+        resp = client.post("/api/v1/training/start", json={
+            "data_dir": str(tmp_path / "ws"), "learning_stage": "base", "device": "cpu",
+            **settings})
+        assert resp.status_code == 422, resp.text
+        assert fragment in resp.text and "Nothing was started." in resp.text
+        _nothing_started(manager, popen, tmp_path / "ws")
+
+    def test_a_base_continues_with_its_settings(self, paused_base, real_client):
+        """resume_from a paused base: started, every learning setting
+        inherited (none is written), the stage the parent's."""
         import yaml
 
-        ws, parent = heads3_parent
-        client, popen = real_client
+        ws, parent = paused_base
+        client, popen, manager = real_client
         resp = client.post("/api/v1/training/start", json={
-            "data_dir": str(ws), "resume_from": str(parent), "device": "cpu", "num_heads": 3})
-
+            "data_dir": str(ws), "learning_stage": "base", "resume_from": str(parent),
+            "device": "cpu"})
         assert resp.status_code == 200, resp.text
         popen.assert_called_once()
         written = yaml.safe_load(Path(resp.json()["config_path"]).read_text())
-        assert "hidden_dim" not in written, "hidden_dim is the parent's (18), inherited"
+        assert written["learning_stage"] == "base" and written["resume_from"] == str(parent)
+        assert not {"num_epochs", "batch_size", "model_spec"} & set(written), written
+        assert "/runs/gatv2/" in resp.json()["run_dir"]
 
-    def test_an_explicit_value_other_than_the_parents_is_still_refused(self, heads3_parent,
-                                                                       real_client):
-        ws, parent = heads3_parent
-        client, popen = real_client
-        for heads in (6, 4):     # 18 % 6 == 0; 18 % 4 != 0: refused as a conflict either way
-            resp = client.post("/api/v1/training/start", json={
-                "data_dir": str(ws), "resume_from": str(parent), "device": "cpu",
-                "num_heads": heads})
-            assert resp.status_code == 409 and "num_heads: the parent's 3" in resp.text
-        popen.assert_not_called()
-
-    def test_resolved_settings_that_break_a_rule_are_refused_with_422(self, heads3_parent,
-                                                                      real_client, tmp_path):
-        """A parent whose recorded settings break the rule (here edited; one
-        trained through the CLI, which does not apply the API's rules, could
-        record such a pair) is refused on the settings the run would use."""
-        ws, parent = heads3_parent
-        client, popen = real_client
-        record = torch_load(parent)
-        record["config"]["requested"]["num_heads"] = 4
-        edited = tmp_path / "edited.pt"
-        import torch
-        torch.save(record, edited)
-
+    def test_a_setting_other_than_the_parents_is_refused(self, paused_base, real_client):
+        ws, parent = paused_base
+        client, popen, manager = real_client
         resp = client.post("/api/v1/training/start", json={
-            "data_dir": str(ws), "resume_from": str(edited), "device": "cpu"})
-        assert resp.status_code == 422
-        assert "hidden_dim (18) must be divisible by num_heads (4)" in resp.text
-        popen.assert_not_called()
+            "data_dir": str(ws), "learning_stage": "base", "resume_from": str(parent),
+            "device": "cpu", "batch_size": 64})
+        assert resp.status_code == 409 and "batch_size: the parent's 16" in resp.text
+        _nothing_started(manager, popen, ws)
 
-    def test_a_new_run_still_validates_its_defaults(self, real_client):
-        client, popen = real_client
-        for body, fragment in (
-            ({"num_heads": 3}, "hidden_dim (256) must be divisible by num_heads (3)"),
-            ({"hidden_dim": 100, "num_heads": 8}, "hidden_dim (100) must be divisible"),
-            ({"scheduler_type": "onecycle", "min_lr_ratio": 0.0}, "onecycle"),
-            ({"extend_epochs": 2}, "extend_epochs continues a parent; give resume_from"),
-        ):
-            resp = client.post("/api/v1/training/start", json=body)
-            assert resp.status_code == 422 and fragment in resp.text, (body, resp.text)
-        popen.assert_not_called()
+    def test_a_parent_that_is_not_a_base_is_refused(self, specless_parent,
+                                                     trained_disease_child, real_client):
+        """A finetune child (here continued by extending it) is not a base: the
+        runner's preview of the parent refuses the stage asked for, on its one
+        read, before anything starts. A checkpoint with no model spec (record
+        version 1) is refused before that, by its record version."""
+        client, popen, manager = real_client
+        for ws, parent, extra, said in (
+                (trained_disease_child["data_dir"], trained_disease_child["disease"],
+                 {"extend_epochs": 1}, "learning_stage: the parent's 'finetune', requested "
+                                       "'base'"),
+                (*specless_parent, {}, WRITTEN_BEFORE_SPEC)):
+            resp = client.post("/api/v1/training/start", json={
+                "data_dir": str(ws), "learning_stage": "base", "resume_from": str(parent),
+                "device": "cpu", **extra})
+            assert resp.status_code == 409 and said in resp.text, resp.text
+            _nothing_started(manager, popen, ws)
 
 
 def test_the_services_422_does_not_use_the_name_starlette_deprecated(monkeypatch):
@@ -723,12 +946,7 @@ def test_the_services_422_does_not_use_the_name_starlette_deprecated(monkeypatch
     client = TestClient(app, base_url=OPERATOR_BASE_URL)
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        resp = client.post("/api/v1/training/start", json={})
+        resp = client.post("/api/v1/training/start",
+                           json={"data_dir": "x", "learning_stage": "base"})
     assert resp.status_code == 422 and "refused by the service" in resp.text
     assert not [w for w in caught if "HTTP_422" in str(w.message)], [str(w.message) for w in caught]
-
-
-def torch_load(path):
-    import torch
-
-    return torch.load(path, map_location="cpu", weights_only=True)

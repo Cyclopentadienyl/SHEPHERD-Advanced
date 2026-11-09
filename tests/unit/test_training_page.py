@@ -67,10 +67,13 @@ def built(tmp_path_factory):
 
 
 def _metrics(n):
-    return {"train": [{"epoch": e, "total": 1.0 / (e + 1), "learning_rate": 1e-4 if e % 3 else 0.0}
-                      for e in range(n)],
-            "validation": [{"epoch": e, "val_loss": 1.2 / (e + 1), "val_mrr": 0.1 * e,
-                            "val_hits@1": 0.05, "val_hits@10": 0.2} for e in range(n)]}
+    """A task model's log as a finetune writes it: a training loss, and pooled
+    MRR and top-k on validation (no validation loss)."""
+    return {"train": [{"epoch": e, "train_loss": 1.0 / (e + 1),
+                       "learning_rate": 1e-4 if e % 3 else 0.0} for e in range(n)],
+            "validation": [{"epoch": e, "val_pooled_mrr": 0.1 * e, "val_pooled_top1": 0.05,
+                            "val_pooled_top3": 0.1, "val_pooled_top10": 0.2}
+                           for e in range(n)]}
 
 
 @pytest.fixture
@@ -82,7 +85,7 @@ def root(built, tmp_path, monkeypatch):
     shutil.copytree(resampled, root / "resampled")
     shutil.copytree(demo, root / ODD)
     (root / "scratch_ws").mkdir()
-    run = root / "demo" / "runs" / "gat" / "20261018-142000_run_d41f8b"
+    run = root / "demo" / "runs" / "gatv2" / "20261018-142000_run_d41f8b"
     (run / "logs").mkdir(parents=True)
     (run / "checkpoints").mkdir()
     (run / "logs" / "train_20261018_142000.json").write_text(json.dumps(_metrics(6)))
@@ -132,14 +135,46 @@ def test_the_page_is_the_run_bar_the_parameters_the_drawer_and_the_run_view():
         assert not hasattr(tc, name), name
 
 
-def test_the_parameters_keep_their_groups_defaults_and_order():
+def test_the_form_is_exactly_the_recipes_base_settings_at_the_recipes_values():
+    """K6 decision 12: the Parameters are the reference recipe's base settings
+    and nothing else, each starting at the recipe's value; the first four
+    shown, the rest under one closed "More reference settings"; integer
+    settings take whole numbers only. The ShepherdGNN form is gone: no
+    architecture, width, loss-weight, ortholog, randomize or AMP control."""
+    from src.config.recipe import BASE
+
     demo, _ctx, by_id = _page()
-    accordions = [b for b in demo.blocks.values() if isinstance(b, gr.Accordion)]
-    opened = {b.label: b.open for b in accordions}
-    assert opened == {"Basic Training Parameters": True, "Advanced Parameters": False,
-                      "Expert Parameters": False}
-    assert by_id["num_epochs"].value == 100 and by_id["learning_rate"].value == 1e-4
-    assert by_id["batch_size"].value == "32" and by_id["seed"].value == 42
+    assert set(tc.BASE_FIELDS) == set(BASE) and len(tc.BASE_FIELDS) == len(BASE)
+    for name in tc.BASE_FIELDS:
+        field = by_id[name]
+        assert field.label == tc.SETTING_LABELS[name]
+        assert field.value == tc.form_value(name, BASE[name]), name
+        if isinstance(field, gr.Number):
+            assert field.precision == (0 if isinstance(BASE[name], int) or BASE[name] is None
+                                       else None), name
+    assert by_id["num_neighbors"].value == "15, 10, 5" and by_id["use_amp"].value is False
+    # Early stopping off: a text box reading "off", which the browser keeps (a
+    # number box showed None as 0 once mounted, K6 closing smoke).
+    assert isinstance(by_id["early_stopping_patience"], gr.Textbox)
+    assert by_id["early_stopping_patience"].value == "off"
+    assert by_id["scheduler_type"].choices == [(c, c) for c in ("cosine", "onecycle", "linear",
+                                                                "none")]
+    accordions = {b.label: b.open for b in demo.blocks.values() if isinstance(b, gr.Accordion)}
+    assert accordions == {"More reference settings": False}
+    for gone in ("conv_type", "hidden_dim", "num_layers", "dropout", "num_heads",
+                 "diagnosis_weight", "link_prediction_weight", "contrastive_weight",
+                 "ortholog_weight", "use_ortholog_gate", "amp_mode", "randomize_seed",
+                 "temperature", "label_smoothing", "margin", "num_neighbors_str",
+                 "max_subgraph_nodes", "min_lr_ratio", "gradient_accumulation_steps"):
+        assert gone not in by_id, gone
+    for name in ("_collect_config", "ConfigValidationError", "SEED_PARAM_INDEX", "_random_seed",
+                 "_seed_field_lock", "AMP_HGT_REFUSAL", "_on_conv_type_change", "_MAX_SEED"):
+        assert not hasattr(tc, name), name
+    # One visible line on the reference settings (decision 5), kept by one listener.
+    assert "Uses the reference settings." in by_id["shep-train-differs"].value
+    listeners = [fn for fn in demo.fns.values() if fn.fn is tc._on_base_changed]
+    assert len(listeners) == 1 and len(listeners[0].targets) == len(BASE)
+    assert listeners[0].queue is False
 
 
 def test_the_page_uses_the_shells_timers_without_the_queue_and_none_of_its_own():
@@ -219,7 +254,7 @@ def test_the_select_names_the_servers_workspaces_and_leaves_their_identity_to_th
     from src.webui.components import renderers as r
     from src.webui.components.workspaces import read_workspaces
 
-    state = tc._workspace_state("demo")
+    state = tc.workspace_state("demo")
     rows = read_workspaces()["rows"]
     trainable = {x["name"] for x in rows if r.is_digest(x.get("dataset_fingerprint"))}
     assert [tuple(c) for c in state["choices"]] == [
@@ -228,12 +263,12 @@ def test_the_select_names_the_servers_workspaces_and_leaves_their_identity_to_th
     assert any(label != name for label, name in state["choices"])      # a reason kept
     assert "dataset fingerprint" in tc.chip_html(state)
     assert state["name"] == "demo" and r.is_digest(state["row"]["dataset_fingerprint"])
-    assert state["latest_run"] == "gat/20261018-142000_run_d41f8b"
-    assert tc._workspace_state("not-listed")["row"] is None
+    assert state["latest_run"] == "gatv2/20261018-142000_run_d41f8b"
+    assert tc.workspace_state("not-listed")["row"] is None
 
 
 def test_the_chip_shows_the_dataset_and_its_details_escaped_without_a_path(root):
-    state = tc._workspace_state(ODD)
+    state = tc.workspace_state(ODD)
     html = tc.chip_html(state)
     fingerprint = state["row"]["dataset_fingerprint"]
     assert "<b>odd" not in html and "&lt;b&gt;odd&amp;name" in html
@@ -394,10 +429,10 @@ def test_the_gpu_line_comes_from_the_runner_and_the_lock_holder():
 
 # --------------------------------------------------------------------------- the run view
 def test_the_run_shown_is_the_runners_else_the_workspaces_latest(root, monkeypatch):
-    ws = tc._workspace_state("demo")
+    ws = tc.workspace_state("demo")
     cache = {}
     run = tc._current_run({"status": "idle"}, ws, cache)
-    assert run["id"] == "demo/gat/20261018-142000_run_d41f8b" and run["latest"] is True
+    assert run["id"] == "demo/gatv2/20261018-142000_run_d41f8b" and run["latest"] is True
     job_run = root / "resampled" / "runs" / "sage" / "20261020-090000_run_aaaaaa"
     job_run.mkdir(parents=True)
     monkeypatch.setattr(tc.training_manager, "run_dir", job_run)
@@ -405,15 +440,15 @@ def test_the_run_shown_is_the_runners_else_the_workspaces_latest(root, monkeypat
     assert run["id"] == "resampled/sage/20261020-090000_run_aaaaaa" and run["latest"] is False
     assert run["workspace"] == "resampled"
     # A workspace the server does not list: the job names the run.
-    outside = Path(str(root) + "-elsewhere") / "runs" / "gat" / "r"
+    outside = Path(str(root) + "-elsewhere") / "runs" / "gatv2" / "r"
     monkeypatch.setattr(tc.training_manager, "run_dir", outside)
     assert tc._current_run({"status": "running", "job_id": "j2"}, ws, {})["id"] == "job:j2"
 
 
 @pytest.mark.parametrize("run_id", [
-    "demo/gat/../../../etc", "demo/gat/20261018-142000_run_d41f8b/../x", "../demo/gat/x",
-    "demo/gat", "demo/xyz/20261018-142000_run_d41f8b", "nope/gat/20261018-142000_run_d41f8b",
-    "/abs/path", "job:none", None, 3, "demo/gat/" + "x" * 500,
+    "demo/gatv2/../../../etc", "demo/gatv2/20261018-142000_run_d41f8b/../x", "../demo/gatv2/x",
+    "demo/gatv2", "demo/xyz/20261018-142000_run_d41f8b", "nope/gatv2/20261018-142000_run_d41f8b",
+    "/abs/path", "job:none", None, 3, "demo/gatv2/" + "x" * 500,
 ])
 def test_the_server_functions_answer_only_for_a_run_the_server_lists(root, run_id):
     assert tc.resolve_run(run_id) is None
@@ -430,37 +465,154 @@ def test_a_run_entry_leaving_its_workspace_or_not_a_directory_is_not_read(root, 
     outside = tmp_path / "elsewhere" / "run"
     (outside / "logs").mkdir(parents=True)
     (outside / "logs" / "train_1.json").write_text(json.dumps(_metrics(3)))
-    arch = root / "demo" / "runs" / "gat"
+    arch = root / "demo" / "runs" / "gatv2"
     (arch / "20261019-000000_run_link").symlink_to(outside, target_is_directory=True)
     (arch / "20261019-000000_run_file").write_text("not a run")
-    for run_id in ("demo/gat/20261019-000000_run_link", "demo/gat/20261019-000000_run_file"):
+    for run_id in ("demo/gatv2/20261019-000000_run_link", "demo/gatv2/20261019-000000_run_file"):
         assert tc.resolve_run(run_id) is None
         assert tc.training_chart_series({"run": run_id, "rev": 1})["charts"] == []
         assert tc.training_chart_csv({"run": run_id})["csv"] == ""
     # The listed run beside them still answers.
-    assert tc.resolve_run("demo/gat/20261018-142000_run_d41f8b") is not None
+    assert tc.resolve_run("demo/gatv2/20261018-142000_run_d41f8b") is not None
 
 
 def test_an_architecture_that_is_not_one_never_lists_another_directory(root):
-    """M5-3 review ARCH-10 (d): the run id's architecture must be a supported
-    one. ``demo/../runs`` would otherwise list the workspace's own directory
+    """M5-3 review ARCH-10 (d), C1: the run id's directory is matched against
+    the names the workspace's runs/ lists, never joined onto a path.
+    ``demo/../runs`` would otherwise list the workspace's own directory
     (``runs/..``) and find ``runs`` there, inside the workspace, as a "run"."""
     assert (root / "demo" / "runs").is_dir()
-    for run_id in ("demo/../runs", "demo/./gat", "demo/GAT/20261018-142000_run_d41f8b"):
+    for run_id in ("demo/../runs", "demo/./gatv2", "demo/GAT/20261018-142000_run_d41f8b",
+                   "demo/GATV2/20261018-142000_run_d41f8b"):
         assert tc.resolve_run(run_id) is None, run_id
         assert tc.training_chart_series({"run": run_id, "rev": 1})["charts"] == []
 
 
+#: A base run's log (`lp_task.validate`, the Trainer's ``val_`` prefix) and a
+#: Fine-tune child's (`finetune_task`'s pooled report).
+BASE_LOG = {"train": [{"epoch": e, "train_loss": 1.0 / (e + 1), "learning_rate": 1e-4}
+                      for e in range(3)],
+            "validation": [{"epoch": e, "val_lp_accuracy": 0.5 + 0.1 * e, "val_lp_roc_auc": 0.6,
+                            "val_lp_average_precision": 0.55, "val_lp_loss": 1.0 - 0.1 * e,
+                            "val_lp_positives": 34} for e in range(3)]}
+CHILD_LOG = {"train": [{"epoch": e, "train_loss": 2.0 / (e + 1), "learning_rate": 1e-5}
+                       for e in range(2)],
+             "validation": [{"epoch": e, "val_pooled_mrr": 0.2 + 0.05 * e, "val_pooled_top1": 0.1,
+                             "val_pooled_top10": 0.4, "val_pooled_top3": 0.2,
+                             "val_macro_recall@10": 0.3, "val_coverage": 1.0}
+                            for e in range(2)]}
+
+
+def test_a_bundle_run_is_listed_and_charted(root):
+    """G2: a model bundle's run (``runs/gatv2/``) is a run the server lists,
+    so its charts and CSV answer; before, only a ShepherdGNN conv type was."""
+    run = root / "demo" / "runs" / "gatv2" / "20261028-100000_base_abcdef"
+    (run / "logs").mkdir(parents=True)
+    (run / "logs" / "train_20261028_100000.json").write_text(json.dumps(BASE_LOG))
+    run_id = "demo/gatv2/20261028-100000_base_abcdef"
+    assert tc.resolve_run(run_id) == run
+    payload = tc.training_chart_series({"run": run_id, "rev": 6})
+    assert payload["run"] == run_id and [c["id"] for c in payload["charts"]] == [
+        "loss", "mrr", "hits", "lr"]
+    assert tc.training_chart_csv({"run": run_id})["csv"].startswith("epoch,split,")
+
+
+def test_the_charts_draw_what_a_base_and_a_task_model_log_and_no_empty_chart():
+    """G3: the middle two charts follow the run's kind, by the keys its log
+    holds: a base's LP accuracy, then its ROC-AUC and AP (and its LP loss as
+    the validation loss); a task model's pooled MRR, then its pooled top-k by
+    cut-off (no validation loss: train only). Every chart has a series."""
+    base = {c["id"]: c for c in tc.training_charts(BASE_LOG)}
+    assert base["mrr"]["title"] == "LP accuracy (validation, Trainer)"
+    assert [s["label"] for s in base["mrr"]["series"]] == ["LP accuracy"]
+    assert base["mrr"]["series"][0]["values"] == [0.5, 0.6, 0.7]
+    assert base["hits"]["title"] == "ROC-AUC and AP (validation, Trainer)"
+    assert [s["label"] for s in base["hits"]["series"]] == ["ROC-AUC", "AP"]
+    assert [s["label"] for s in base["loss"]["series"]] == ["train", "validation"]
+    child = {c["id"]: c for c in tc.training_charts(CHILD_LOG)}
+    assert child["mrr"]["title"] == "Pooled MRR (validation, Trainer)"
+    assert [s["label"] for s in child["mrr"]["series"]] == ["pooled MRR"]
+    assert child["hits"]["title"] == "Pooled top-k (validation, Trainer)"
+    assert [s["label"] for s in child["hits"]["series"]] == ["top-1", "top-3", "top-10"]
+    assert [s["label"] for s in child["loss"]["series"]] == ["train"]
+    for charts in (base, child):
+        assert all(chart["series"] for chart in charts.values()), charts
+    assert tc.validation_kind(BASE_LOG["validation"]) == "base"
+    assert tc.validation_kind(CHILD_LOG["validation"]) == "finetune"
+    assert tc.validation_kind([{"epoch": 0, "val_mrr": 0.1, "val_hits@1": 0.05,
+                                "val_hits@10": 0.2}]) == "other"
+    # Before the first validation the two charts wait, titled for any run.
+    waiting = {c["id"]: c for c in tc.training_charts({"train": BASE_LOG["train"],
+                                                       "validation": []})}
+    assert waiting["mrr"]["title"] == "Validation figure (Trainer)"
+    assert waiting["mrr"]["series"] == [] and waiting["loss"]["series"]
+
+
+def test_a_plain_val_loss_log_draws_both_loss_series_and_its_values_unchanged(root):
+    """R1 (the reviewer's K8 closeout review, adopted by the owner): a plain log
+    with epoch, train_loss, learning_rate and val_loss (no model spec, no
+    stage's selection figure, no MRR or Hits@K) still draws the Loss chart with
+    its train and validation series, its values and its CSV as logged. Its
+    middle two charts say no figure is charted for it; nothing reads it as a
+    run without validation."""
+    log = {"train": [{"epoch": 0, "train_loss": 1.0, "learning_rate": 0.001}],
+           "validation": [{"epoch": 0, "val_loss": 0.8}]}
+    charts = {c["id"]: c for c in tc.training_charts(log)}
+    assert [s["label"] for s in charts["loss"]["series"]] == ["train", "validation"]
+    assert charts["loss"]["x"] == [1]
+    assert [s["values"] for s in charts["loss"]["series"]] == [[1.0], [0.8]]
+    assert charts["lr"]["series"][0]["values"] == [0.001]
+    assert tc.validation_kind(log["validation"]) == "other"
+    assert charts["mrr"]["series"] == [] and charts["hits"]["series"] == []
+    assert charts["mrr"]["title"] == tc.VALIDATION_CHARTS["other"][0]
+    assert tc._metrics_csv_text(log).splitlines() == [
+        "epoch,split,learning_rate,train_loss,val_loss",
+        "1,train,0.001,1.0,", "1,validation,,,0.8"]
+
+    run = root / "demo" / "runs" / "gat" / "20261001-000000_plain_aaaaaa"
+    (run / "logs").mkdir(parents=True)
+    (run / "logs" / "train_20261001_000000.json").write_text(json.dumps(log))
+    run_id = "demo/gat/20261001-000000_plain_aaaaaa"
+    assert tc.resolve_run(run_id) == run, "a run under any directory of runs/ is listed"
+    served = {c["id"]: c for c in tc.training_chart_series({"run": run_id, "rev": 2})["charts"]}
+    assert [s["values"] for s in served["loss"]["series"]] == [[1.0], [0.8]]
+    assert tc.training_chart_csv({"run": run_id})["csv"] == tc._metrics_csv_text(log)
+
+
+def test_a_log_with_figures_this_build_does_not_chart_gets_the_generic_state():
+    """N8 (TM28): the history-only MRR and Hits@K charts retired. A log whose
+    validation entries hold only such figures gets one generic state: the
+    middle two charts say no figure is charted and draw no series; its Loss
+    chart and learning rate are as for any run, and the CSV still holds every
+    key it logged."""
+    log = {"train": [{"epoch": e, "train_loss": 1.0 - 0.1 * e, "learning_rate": 1e-3}
+                     for e in range(2)],
+           "validation": [{"epoch": e, "val_mrr": 0.1 * e, "val_hits@1": 0.05,
+                           "val_hits@10": 0.2, "val_loss": 0.9 - 0.1 * e}
+                          for e in range(2)]}
+    assert tc.validation_kind(log["validation"]) == "other"
+    charts = {c["id"]: c for c in tc.training_charts(log)}
+    for chart_id in ("mrr", "hits"):
+        assert charts[chart_id]["series"] == [] and charts[chart_id]["x"] == []
+        assert "No" in charts[chart_id]["title"] and "charted" in charts[chart_id]["title"]
+    assert [s["label"] for s in charts["loss"]["series"]] == ["train", "validation"]
+    assert charts["lr"]["series"]
+    header = tc._metrics_csv_text(log).splitlines()[0].split(",")
+    assert {"val_mrr", "val_hits@1", "val_hits@10", "val_loss", "train_loss",
+            "learning_rate"} <= set(header)
+
+
 def test_the_series_function_returns_the_four_charts_of_a_listed_run(root):
-    run_id = "demo/gat/20261018-142000_run_d41f8b"
-    assert tc.resolve_run(run_id) == root / "demo" / "runs" / "gat" / "20261018-142000_run_d41f8b"
+    run_id = "demo/gatv2/20261018-142000_run_d41f8b"
+    assert tc.resolve_run(run_id) == root / "demo" / "runs" / "gatv2" / "20261018-142000_run_d41f8b"
     payload = tc.training_chart_series([{"run": run_id, "rev": 12}])
     assert payload["run"] == run_id and payload["rev"] == 12
     by_id = {c["id"]: c for c in payload["charts"]}
     assert list(by_id) == ["loss", "mrr", "hits", "lr"]
-    assert [s["label"] for s in by_id["loss"]["series"]] == ["train", "validation"]
-    assert by_id["mrr"]["title"] == "MRR (validation, Trainer top-20)"
-    assert [s["label"] for s in by_id["hits"]["series"]] == ["Hits@1", "Hits@10"]
+    # A finetune logs no validation loss, so its Loss chart draws training only.
+    assert [s["label"] for s in by_id["loss"]["series"]] == ["train"]
+    assert by_id["mrr"]["title"] == "Pooled MRR (validation, Trainer)"
+    assert [s["label"] for s in by_id["hits"]["series"]] == ["top-1", "top-3", "top-10"]
     assert by_id["lr"]["yScale"] == "log" and by_id["loss"]["yScale"] == "linear"
     assert by_id["loss"]["x"] == [1, 2, 3, 4, 5, 6]
     assert by_id["lr"]["series"][0]["values"][0] == 0.0     # the browser draws it as a gap
@@ -468,25 +620,28 @@ def test_the_series_function_returns_the_four_charts_of_a_listed_run(root):
     json.dumps(payload)
 
 
-def test_a_hits_at_k_that_appears_later_joins_its_chart():
-    history = {"train": [], "validation": [{"epoch": 0, "val_hits@1": 0.1, "val_hits@10": 0.2},
-                                           {"epoch": 1, "val_hits@1": 0.1, "val_hits@3": 0.15,
-                                            "val_hits@10": 0.2}]}
+def test_a_top_k_that_appears_later_joins_its_chart():
+    history = {"train": [], "validation": [{"epoch": 0, "val_pooled_mrr": 0.2,
+                                            "val_pooled_top1": 0.1, "val_pooled_top10": 0.2},
+                                           {"epoch": 1, "val_pooled_mrr": 0.2,
+                                            "val_pooled_top1": 0.1, "val_pooled_top3": 0.15,
+                                            "val_pooled_top10": 0.2}]}
     hits = tc.training_charts(history)[2]
-    assert [s["label"] for s in hits["series"]] == ["Hits@1", "Hits@3", "Hits@10"]
+    assert [s["label"] for s in hits["series"]] == ["top-1", "top-3", "top-10"]
     assert hits["series"][1]["values"] == [None, 0.15]
 
 
 def test_export_csv_is_the_whole_log_as_text(root):
-    out = tc.training_chart_csv({"run": "demo/gat/20261018-142000_run_d41f8b"})
+    out = tc.training_chart_csv({"run": "demo/gatv2/20261018-142000_run_d41f8b"})
     lines = out["csv"].splitlines()
-    assert lines[0] == ("epoch,split,learning_rate,total,val_hits@1,val_hits@10,val_loss,val_mrr")
+    assert lines[0] == ("epoch,split,learning_rate,train_loss,val_pooled_mrr,"
+                        "val_pooled_top1,val_pooled_top10,val_pooled_top3")
     assert len(lines) == 1 + 12 and lines[1].startswith("1,train,0.0,")
-    assert out["filename"] == "training_metrics_gat_20261018-142000_run_d41f8b.csv"
+    assert out["filename"] == "training_metrics_gatv2_20261018-142000_run_d41f8b.csv"
 
 
 def test_the_chart_token_counts_rows_again_only_when_the_log_changed(root, monkeypatch):
-    ws = tc._workspace_state("demo")
+    ws = tc.workspace_state("demo")
     cache = {}
     run = tc._current_run({"status": "idle"}, ws, cache)
     reads = []
@@ -508,7 +663,7 @@ def test_the_chart_token_counts_rows_again_only_when_the_log_changed(root, monke
 
 def test_the_used_dataset_fingerprint_is_an_operators_and_compared_in_full():
     ws = {"row": {"dataset_fingerprint": "a" * 64}, "digits": 12}
-    run = tc.RunRef(id="demo/gat/r", label="gat/r", path=Path("/x"), workspace="demo",
+    run = tc.RunRef(id="demo/gatv2/r", label="gatv2/r", path=Path("/x"), workspace="demo",
                     latest=True)
     same = tc.run_head_html(run, ws, operator=True,
                             snapshot={"readable": True, "dataset_fingerprint": "a" * 64})
@@ -526,7 +681,7 @@ def test_the_used_dataset_fingerprint_is_an_operators_and_compared_in_full():
 
 
 def test_the_snapshot_sentence_names_no_path_to_a_read_only_request(root):
-    run = tc.RunRef(id="demo/gat/r", label="gat/r", path=root / "demo" / "runs" / "gat" / "r",
+    run = tc.RunRef(id="demo/gatv2/r", label="gatv2/r", path=root / "demo" / "runs" / "gatv2" / "r",
                     workspace="demo", latest=False)
     (run["path"] / "checkpoints").mkdir(parents=True)       # a run that saved its last.pt
     snapshot = {"checkpoint": str(run["path"] / "checkpoints" / "last.pt"), "readable": True,
@@ -537,7 +692,7 @@ def test_the_snapshot_sentence_names_no_path_to_a_read_only_request(root):
     assert str(root) not in operator and "last.pt" not in operator     # the path: Details
     ws = {"row": {"dataset_fingerprint": "a" * 64}, "digits": 12}
     head = tc.run_head_html(run, ws, operator=True, snapshot=snapshot)
-    assert "demo/runs/gat/r/checkpoints/last.pt" in head and str(root) not in head
+    assert "demo/runs/gatv2/r/checkpoints/last.pt" in head and str(root) not in head
     read_only = tc.run_snapshot_html(run, status, operator=False, snapshot=None)
     assert "Completed · epoch 60 of 60 · checkpoint details are an operator control" in read_only
     early = {**snapshot, "end": "stopped_early", "completed_epochs": 40, "target_epochs": 60}
@@ -550,7 +705,7 @@ def test_the_snapshot_sentence_names_no_path_to_a_read_only_request(root):
 
 
 def test_the_runs_checkpoint_is_read_again_only_when_it_changed(root, monkeypatch):
-    run = tc.RunRef(id="demo/gat/r", label="gat/r", path=root / "demo" / "runs" / "gat" / "r",
+    run = tc.RunRef(id="demo/gatv2/r", label="gatv2/r", path=root / "demo" / "runs" / "gatv2" / "r",
                     workspace="demo", latest=True)
     (run["path"] / "checkpoints").mkdir(parents=True)
     last = run["path"] / "checkpoints" / "last.pt"
@@ -616,13 +771,13 @@ def test_a_tick_writes_only_the_pill_and_hands_every_other_change_over(
     assert isinstance(cache_state, gr.State) and cache_state not in poll.outputs
     assert not {by_id[k] for k in ("shep-train-dataset", "shep-train-chip", "shep-train-start",
                                    "shep-train-charts", "shep-train-run-head")} & set(poll.outputs)
-    ws = tc._workspace_state("demo")
+    ws = tc.workspace_state("demo")
     cache = tc._render_view(ws, {}, {}, [], operator)[-1]
     pill, handoff, _chips, polled = tc._poll(shell.TRAINING, ws, {}, cache, [], {}, operator)
     assert pill.startswith('<div class="shep-pill') and handoff == gr.update()
     again = tc._poll(shell.TRAINING, ws, {}, cache, [], polled, operator)
     assert again[0] == pill and again[1] == gr.update()       # the pill on every tick
-    log = root / "demo" / "runs" / "gat" / "20261018-142000_run_d41f8b" / "logs" / "train_20261018_142000.json"
+    log = root / "demo" / "runs" / "gatv2" / "20261018-142000_run_d41f8b" / "logs" / "train_20261018_142000.json"
     log.write_text(json.dumps(_metrics(7)))                    # a new epoch, nobody acted
     _pill, handoff, _chips, _polled = tc._poll(shell.TRAINING, ws, {}, cache, [], polled, operator)
     assert handoff["changed"] == ["charts"]
@@ -634,7 +789,7 @@ def test_the_handed_over_render_sends_what_changed_and_everything_every_few(
     everything every `FULL_SEND_TICKS` hand-offs; the render after an action
     sends everything and starts the count again."""
     monkeypatch.setattr(tc, "_get_pyg_warning", lambda: None)
-    ws = tc._workspace_state("demo")
+    ws = tc.workspace_state("demo")
     cache = tc._render_view(ws, {}, {}, [], operator)[-1]
     sent_whole = []
     for _ in range(tc.FULL_SEND_TICKS * 2):
@@ -666,7 +821,7 @@ def test_the_header_chips_follow_the_gpu_slot_on_the_tick_that_sees_it_change(
     demo, ctx, _by_id = _page()
     poll_fn = next(fn for fn in demo.fns.values() if fn.fn.__name__ == "_poll")
     assert poll_fn.outputs[2] is ctx.chips
-    ws = tc._workspace_state("demo")
+    ws = tc.workspace_state("demo")
     first = tc._poll(shell.TRAINING, ws, {}, {}, [], {}, operator)
     assert first[2] == "<chips>" and len(read) == 1         # nothing seen before: read
     same = tc._poll(shell.TRAINING, ws, {}, {}, [], first[-1], operator)
@@ -681,13 +836,13 @@ def test_the_header_chips_follow_the_gpu_slot_on_the_tick_that_sees_it_change(
 
 def test_a_running_jobs_dataset_is_shown_and_the_select_disabled(root, monkeypatch, operator):
     monkeypatch.setattr(tc, "_get_pyg_warning", lambda: None)
-    job_run = root / "resampled" / "runs" / "gat" / "20261020-090000_run_bbbbbb"
+    job_run = root / "resampled" / "runs" / "gatv2" / "20261020-090000_run_bbbbbb"
     job_run.mkdir(parents=True)
     monkeypatch.setattr(tc.training_manager, "run_dir", job_run)
     monkeypatch.setattr(tc.training_manager, "get_status",
                         lambda: {"status": "running", "job_id": "j", "current_epoch": 1,
                                  "total_epochs": 4, "gpu": {"job": {"job_type": "training"}}})
-    rendered = tc.render(tc._workspace_state("demo"), {}, {}, [], operator)
+    rendered = tc.render(tc.workspace_state("demo"), {}, {}, [], operator)
     assert rendered["ws_changed"] is True and rendered["pieces"]["ws"]["name"] == "resampled"
     assert rendered["pieces"]["dataset"][1:] == ("resampled", False)
     assert "in use by the running job" in rendered["pieces"]["chip"]
@@ -712,7 +867,7 @@ def _job_in_resampled(root, monkeypatch):
     monkeypatch.setattr(datasets_page, "read_status", lambda: (None, "not read"))
     monkeypatch.setattr(tc, "_get_pyg_warning", lambda: None)
     monkeypatch.setattr(tc, "lock_state", lambda: {"configured": True, "held_by": None})
-    job_run = root / "resampled" / "runs" / "gat" / "20261020-090000_run_bbbbbb"
+    job_run = root / "resampled" / "runs" / "gatv2" / "20261020-090000_run_bbbbbb"
     job_run.mkdir(parents=True)
     monkeypatch.setattr(tc.training_manager, "run_dir", job_run)
     job = SimpleNamespace(status={"status": "idle"}, hold=threading.Event(),
@@ -841,7 +996,7 @@ def test_the_poll_hands_a_running_jobs_workspace_over_and_writes_no_selection(
     the page as the session was sent it, a tick hands nothing over and a
     render writes no selection."""
     job = _job_in_resampled(root, monkeypatch)
-    ws = tc._workspace_state("demo")
+    ws = tc.workspace_state("demo")
     cache = tc._render_view(ws, {}, {}, [], operator)[-1]
     job.status = dict(RUNNING)
     out = tc._poll(shell.TRAINING, ws, {}, cache, [], {}, operator)
@@ -1059,7 +1214,7 @@ def test_a_choice_while_idle_is_drawn_whole_and_a_tick_hands_nothing_over(traini
     assert page.shown("shep-train-dataset") == "resampled"
     assert page.shown("shep-train-dataset", "interactive") is True
     assert resampled["row"]["dataset_fingerprint"][:12] in page.shown("shep-train-chip")
-    assert page.shown("shep-train-charts")["run"] == "resampled/gat/20261020-090000_run_bbbbbb"
+    assert page.shown("shep-train-charts")["run"] == "resampled/gatv2/20261020-090000_run_bbbbbb"
     assert page.shown("shep-train-start", "interactive") is True
     assert "Idle" in page.shown("shep-train-pill")
 
@@ -1104,11 +1259,11 @@ def test_new_epochs_reach_the_charts_and_the_run_head_while_nobody_acts(
     state puts the used dataset fingerprint in the run head. A tick that
     finds nothing new hands nothing over."""
     job, page = training_page
-    job_run = root / "resampled" / "runs" / "gat" / "20261020-090000_run_bbbbbb"
+    job_run = root / "resampled" / "runs" / "gatv2" / "20261020-090000_run_bbbbbb"
     (job_run / "logs").mkdir()
     log = job_run / "logs" / "train_20261020_090000.json"
     log.write_text(json.dumps(_metrics(1)))
-    fingerprint = tc._workspace_state("resampled")["row"]["dataset_fingerprint"]
+    fingerprint = tc.workspace_state("resampled")["row"]["dataset_fingerprint"]
     monkeypatch.setattr(tc.training_manager, "latest_snapshot", lambda run_dir=None: {
         "readable": True, "dataset_fingerprint": fingerprint, "completed_epochs": 1,
         "checkpoint": str(job_run / "checkpoints" / "last.pt")})
@@ -1204,47 +1359,47 @@ def test_a_tick_never_draws_an_older_run_list_than_the_render_after_a_choice(
     _job, page = training_page
     clock = _clock(monkeypatch)
     page.pick("demo")                                    # the selection's latest run
-    assert page.shown("shep-train-charts")["run"] == "demo/gat/20261018-142000_run_d41f8b"
+    assert page.shown("shep-train-charts")["run"] == "demo/gatv2/20261018-142000_run_d41f8b"
     clock.ahead += tc.LATEST_READ_SECONDS + 0.5
     assert page.tick() == []                             # the tick lists the runs again
     clock.ahead += 1
-    new = root / "demo" / "runs" / "gat" / "20261023-120000_run_cccccc"
+    new = root / "demo" / "runs" / "gatv2" / "20261023-120000_run_cccccc"
     (new / "checkpoints").mkdir(parents=True)
     (new / "checkpoints" / "model-1-0.0100.pt").write_bytes(b"x")
     (new / "logs").mkdir()
     (new / "logs" / "train_20261023_120000.json").write_text(json.dumps(_metrics(1)))
     page.pick("demo")                                    # its render lists them again
-    assert page.shown("shep-train-charts")["run"] == "demo/gat/20261023-120000_run_cccccc"
+    assert page.shown("shep-train-charts")["run"] == "demo/gatv2/20261023-120000_run_cccccc"
     handed = page.tick()
-    assert page.shown("shep-train-charts")["run"] == "demo/gat/20261023-120000_run_cccccc", \
+    assert page.shown("shep-train-charts")["run"] == "demo/gatv2/20261023-120000_run_cccccc", \
         "the tick's hand-off drew the previous run from an older listing"
     assert handed == []
     # Positive control: another run written while nobody acts; the tick's own
     # listing, newer than the render's once it lists again, is handed over.
-    newest = root / "demo" / "runs" / "gat" / "20261023-130000_run_eeeeee"
+    newest = root / "demo" / "runs" / "gatv2" / "20261023-130000_run_eeeeee"
     (newest / "checkpoints").mkdir(parents=True)
     (newest / "checkpoints" / "model-1-0.0100.pt").write_bytes(b"x")
     clock.ahead += tc.LATEST_READ_SECONDS + 0.5
     assert "charts" in page.tick()
-    assert page.shown("shep-train-charts")["run"] == "demo/gat/20261023-130000_run_eeeeee"
+    assert page.shown("shep-train-charts")["run"] == "demo/gatv2/20261023-130000_run_eeeeee"
     assert page.tick() == []
 
 
 def test_a_read_only_request_sees_every_action_disabled_and_no_checkpoint(root, monkeypatch):
     # The run shown has a saved state, which an operator's render reads.
-    run = root / "demo" / "runs" / "gat" / "20261018-142000_run_d41f8b"
+    run = root / "demo" / "runs" / "gatv2" / "20261018-142000_run_d41f8b"
     (run / "checkpoints" / "last.pt").write_bytes(b"saved state")
     monkeypatch.setattr(tc, "_get_pyg_warning", lambda: None)
     reads = []
     monkeypatch.setattr(tc.training_manager, "latest_snapshot",
                         lambda *a, **k: reads.append(a) or {"readable": True})
     operator_mode(monkeypatch)
-    tc.render(tc._workspace_state("demo"), {}, {}, [], gradio_request())
+    tc.render(tc.workspace_state("demo"), {}, {}, [], gradio_request())
     assert len(reads) == 1
     monkeypatch.delenv("SHEPHERD_DEPLOYMENT_MODE", raising=False)
     monkeypatch.setattr(tc.training_manager, "latest_snapshot",
                         lambda *a, **k: pytest.fail("a read-only request read the checkpoint"))
-    pieces = tc.render(tc._workspace_state("demo"), {}, {}, [], READ_ONLY)["pieces"]
+    pieces = tc.render(tc.workspace_state("demo"), {}, {}, [], READ_ONLY)["pieces"]
     assert not any(pieces[k] for k in ("start", "cont", "stop", "resume", "run_name"))
     assert "Operator controls only: deployment mode not set to M1" in pieces["reason"]
     assert "dataset not shown · operator control" in pieces["head"]
@@ -1259,7 +1414,7 @@ def test_the_banner_is_dismissed_for_this_session_until_its_content_changes(root
     monkeypatch.setattr(tc.training_manager, "get_status",
                         lambda: {"status": "failed", "error_message": "Process exited with code 1",
                                  "gpu": {"job": None}})
-    rendered = tc.render(tc._workspace_state("demo"), {}, {}, [], operator)
+    rendered = tc.render(tc.workspace_state("demo"), {}, {}, [], operator)
     assert "Process exited with code 1" in rendered["pieces"]["banner"]
     key = rendered["cache"]["banner_key"]
 
@@ -1268,9 +1423,9 @@ def test_the_banner_is_dismissed_for_this_session_until_its_content_changes(root
 
     dismissed, banner = tc._on_banner_click([], rendered["cache"], Evt())
     assert dismissed == [key] and banner == ""
-    again = tc.render(tc._workspace_state("demo"), {}, {}, dismissed, operator)
+    again = tc.render(tc.workspace_state("demo"), {}, {}, dismissed, operator)
     assert again["pieces"]["banner"] == ""
-    other_session = tc.render(tc._workspace_state("demo"), {}, {}, [], operator)
+    other_session = tc.render(tc.workspace_state("demo"), {}, {}, [], operator)
     assert other_session["pieces"]["banner"]               # another session still sees it
 
 
@@ -1282,7 +1437,7 @@ def test_the_banner_names_no_absolute_path_to_a_read_only_request(root, monkeypa
     monkeypatch.setattr(tc.training_manager, "get_status",
                         lambda: {"status": "failed", "error_message": message,
                                  "gpu": {"job": None}})
-    banner = tc.render(tc._workspace_state("demo"), {}, {}, [], READ_ONLY)["pieces"]["banner"]
+    banner = tc.render(tc.workspace_state("demo"), {}, {}, [], READ_ONLY)["pieces"]["banner"]
     assert "/srv/secret" not in banner and "a path outside the workspaces root" in banner
 
 
@@ -1320,20 +1475,20 @@ def test_a_failed_runs_banner_says_its_cause_and_where_its_log_is_only_when_it_e
     """M5-3: the headline said only "Process exited with code 1", the cause
     was in the tail under a scroll, and "full log in its logs/" was said of a
     run directory that was never created."""
-    missing = tmp_path / "runs" / "gat" / "never_made"
-    html = tc._render_error_block(_REFUSED_TAIL, run="gat/never_made", run_dir=missing)
+    missing = tmp_path / "runs" / "gatv2" / "never_made"
+    html = tc._render_error_block(_REFUSED_TAIL, run="gatv2/never_made", run_dir=missing)
     cause = html.index('<div class="shep-banner-cause">')
     assert cause < html.index("<details")                    # right under the headline
     assert ('Last error printed:</span> <span class="shep-banner-v">TrainingDeviceUnavailable: '
             '--device auto requires CUDA') in html
     assert "no run directory, so no log" in html and "full log" not in html
-    run = tmp_path / "runs" / "gat" / "made"
+    run = tmp_path / "runs" / "gatv2" / "made"
     (run / "logs").mkdir(parents=True)
     assert "no log in its <code>logs/</code>" in tc._render_error_block(
-        _REFUSED_TAIL, run="gat/made", run_dir=run)
+        _REFUSED_TAIL, run="gatv2/made", run_dir=run)
     (run / "logs" / "train_20261021_220122.json").write_text("{}")
     assert "its log: <code>logs/train_20261021_220122.json</code>" in tc._render_error_block(
-        _REFUSED_TAIL, run="gat/made", run_dir=run)
+        _REFUSED_TAIL, run="gatv2/made", run_dir=run)
     # Without a cause line there is no cause block.
     assert "shep-banner-cause" not in tc._render_error_block("Process exited with code 1")
 
@@ -1348,7 +1503,7 @@ def test_the_cause_is_redacted_for_a_read_only_request_as_the_tail_is(root, monk
     monkeypatch.setattr(tc.training_manager, "get_status",
                         lambda: {"status": "failed", "error_message": message,
                                  "gpu": {"job": None}})
-    banner = tc.render(tc._workspace_state("demo"), {}, {}, [], READ_ONLY)["pieces"]["banner"]
+    banner = tc.render(tc.workspace_state("demo"), {}, {}, [], READ_ONLY)["pieces"]["banner"]
     cause = banner[banner.index("shep-banner-cause"):banner.index("<details")]
     assert "FileNotFoundError:" in cause and "/srv/secret" not in banner
     assert "a path outside the workspaces root" in cause
@@ -1361,8 +1516,8 @@ def test_the_cause_is_redacted_for_a_read_only_request_as_the_tail_is(root, monk
 def test_a_run_with_no_run_directory_is_not_called_no_longer_listed(root):
     """M5-3: the run view said "This run is no longer listed" of a run that
     never made its directory (refused before it made its run directory)."""
-    run = tc.RunRef(id="demo/gat/never", label="gat/never",
-                    path=root / "demo" / "runs" / "gat" / "never", workspace="demo", latest=False)
+    run = tc.RunRef(id="demo/gatv2/never", label="gatv2/never",
+                    path=root / "demo" / "runs" / "gatv2" / "never", workspace="demo", latest=False)
     ended = tc._chart_token(run, {}, live=False)
     assert ended == {"run": None, "rev": 0, "empty": tc.NO_RUN_DIR_ENDED}
     assert "no longer listed" not in tc.NO_RUN_DIR_ENDED and "no run directory" in tc.NO_RUN_DIR_ENDED
@@ -1388,7 +1543,7 @@ def test_an_ended_run_with_no_checkpoint_is_headed_as_its_snapshot_says(root, mo
     first checkpoint" over "… so it has no checkpoint and no log." (no run
     directory) or "No checkpoint was saved…" (a directory, no last.pt)."""
     ws = {"row": {"dataset_fingerprint": "a" * 64}, "digits": 12}
-    run = tc.RunRef(id="demo/gat/r", label="gat/r", path=root / "demo" / "runs" / "gat" / "r",
+    run = tc.RunRef(id="demo/gatv2/r", label="gatv2/r", path=root / "demo" / "runs" / "gatv2" / "r",
                     workspace="demo", latest=False)
     ended = tc.run_head_html(run, ws, operator=True, snapshot=None)
     assert "dataset not recorded (no checkpoint)" in ended
@@ -1397,7 +1552,7 @@ def test_an_ended_run_with_no_checkpoint_is_headed_as_its_snapshot_says(root, mo
                                                                   snapshot=None, live=True)
     monkeypatch.setattr(tc, "_get_pyg_warning", lambda: None)
     for made in (False, True):
-        job_run = root / "demo" / "runs" / "gat" / f"20261022-011234_auto_{int(made)}"
+        job_run = root / "demo" / "runs" / "gatv2" / f"20261022-011234_auto_{int(made)}"
         if made:
             (job_run / "logs").mkdir(parents=True)
         monkeypatch.setattr(tc.training_manager, "run_dir", job_run)
@@ -1405,7 +1560,7 @@ def test_an_ended_run_with_no_checkpoint_is_headed_as_its_snapshot_says(root, mo
             monkeypatch.setattr(tc.training_manager, "get_status", lambda status=status: {
                 "status": status, "job_id": "j", "error_message": _REFUSED_TAIL,
                 "gpu": {"job": None}})
-            pieces = tc.render(tc._workspace_state("demo"), {}, {}, [], operator)["pieces"]
+            pieces = tc.render(tc.workspace_state("demo"), {}, {}, [], operator)["pieces"]
             if live:
                 assert "recorded at the first checkpoint" in pieces["head"]
                 assert "none written yet" in pieces["head"]          # its Details
@@ -1431,7 +1586,7 @@ def test_a_read_only_banner_keeps_the_tails_indentation(root, monkeypatch):
     monkeypatch.setattr(tc.training_manager, "get_status",
                         lambda: {"status": "failed", "error_message": message,
                                  "gpu": {"job": None}})
-    banner = tc.render(tc._workspace_state("demo"), {}, {}, [], READ_ONLY)["pieces"]["banner"]
+    banner = tc.render(tc.workspace_state("demo"), {}, {}, [], READ_ONLY)["pieces"]["banner"]
     tail = banner[banner.index('<pre class="shep-banner-tail">'):banner.index("</pre>")]
     assert "/srv/secret" not in banner
     assert '\n  File &quot;a path outside the workspaces root&quot;, line 949' in tail
@@ -1453,9 +1608,8 @@ def test_the_banner_escapes_the_output():
 # --------------------------------------------------------------------------- M5-2 review fixes
 #: Markup a workspace or run name can hold; never sent to the browser as a tag.
 TAG = "<img src=x onerror=window.__xss=1>"
-_FORM = [""] + [100, 1e-4, "32", "gat", "cpu", 42, "256", 4, 0.1, 0.01, "cosine", 500, 0.01,
-                10, 1.0, 0.5, 0.3, 0.2, 1, 1.0, "8", True, "float16", 0.07, 0.1, 1.0,
-                "15, 10, 5", 5000]
+#: Start's inputs after the workspace: the run name, the device, the base form.
+_FORM = ["", "cpu", *tc.base_form_defaults()]
 
 
 def _no_tag(html):
@@ -1471,26 +1625,26 @@ def test_the_notice_escapes_the_server_text_it_carries(root, monkeypatch, operat
     # Start: the runner's refusal, and a workspace that is not trainable.
     monkeypatch.setattr(tc.training_manager, "start_training",
                         lambda config, **k: {"success": False, "error": f"{TAG} refused"})
-    notice, _seed = tc._on_start(operator, tc._workspace_state("demo"), *_FORM, False)
+    notice = tc._on_start(operator, tc.workspace_state("demo"), *_FORM)
     assert _no_tag(notice) and "&lt;img src=x" in notice and "refused" in notice
-    odd = tc._workspace_state(ODD)
+    odd = tc.workspace_state(ODD)
     odd["row"] = {**odd["row"], "trainable": False, "not_trainable": "x", "manifest": "read"}
-    notice, _seed = tc._on_start(operator, odd, *_FORM, False)
+    notice = tc._on_start(operator, odd, *_FORM)
     assert _no_tag(notice) and "&lt;b&gt;odd&amp;name is not trainable" in notice
     # Stop: the snapshot sentence names the checkpoint inside the workspace.
-    last = root / ODD / "runs" / "gat" / "r" / "checkpoints" / "last.pt"
+    last = root / ODD / "runs" / "gatv2" / "r" / "checkpoints" / "last.pt"
     monkeypatch.setattr(tc.training_manager, "stop_training", lambda: {
         "success": True, "outcome": {"checkpoint": str(last), "readable": True,
                                      "completed_epochs": 3, "target_epochs": 10, "end": None}})
     notice, _mode = tc._on_stop(operator, {})
-    assert _no_tag(notice) and "&lt;b&gt;odd&amp;name/runs/gat/r/checkpoints/last.pt" in notice
+    assert _no_tag(notice) and "&lt;b&gt;odd&amp;name/runs/gatv2/r/checkpoints/last.pt" in notice
     # Continue Training: a listed parent the server no longer lists, in that workspace.
     fp = odd["row"]["dataset_fingerprint"]
-    parents = {"gat/r/last.pt": {"workspace": ODD, "architecture": "gat", "run": "r",
+    parents = {"gatv2/r/last.pt": {"workspace": ODD, "architecture": "gatv2", "run": "r",
                                  "filename": "last.pt", "sha256": "c" * 64,
                                  "dataset_fingerprint": fp}}
     notice, _text, _extend, _mode = tc._on_resume(
-        tc._workspace_state(ODD), "cpu", tc.CONTINUE_FROM_LIST, "gat/r/last.pt", "", None,
+        tc.workspace_state(ODD), "cpu", tc.CONTINUE_FROM_LIST, "gatv2/r/last.pt", "", None,
         parents, {}, operator)
     assert "no longer listed" in notice and "&lt;b&gt;odd&amp;name" in notice and _no_tag(notice)
 
@@ -1498,7 +1652,7 @@ def test_the_notice_escapes_the_server_text_it_carries(root, monkeypatch, operat
 def test_the_run_view_and_drawer_builders_escape_names_and_paths(root):
     """The run header (workspace, run label), the drawer's note, the dataset
     comparison and the check's checkpoint path, each with markup in a name."""
-    run = tc.RunRef(id=f"{ODD}/gat/{TAG}", label=f"gat/{TAG}", path=Path("/x"), workspace=ODD,
+    run = tc.RunRef(id=f"{ODD}/gatv2/{TAG}", label=f"gatv2/{TAG}", path=Path("/x"), workspace=ODD,
                     latest=True)
     ws = {"name": ODD, "row": {"name": ODD, "dataset_fingerprint": "a" * 64}, "digits": 12,
           "listed": [{"name": ODD, "dataset_fingerprint": "a" * 64}]}
@@ -1510,7 +1664,7 @@ def test_the_run_view_and_drawer_builders_escape_names_and_paths(root):
                                  snapshot={"readable": True, "dataset_fingerprint": "a" * 64})
     assert _no_tag(elsewhere) and "Workspace" in elsewhere and "&lt;b&gt;odd&amp;name" in elsewhere
     assert "Workspace" not in head
-    note = tc._parents_note(ws, {"k": {"architecture": "gat", "run": TAG}}, None)
+    note = tc._parents_note(ws, {"k": {"architecture": "gatv2", "run": TAG}}, None)
     assert _no_tag(note) and "1 run, 1 checkpoint" in note
     for fingerprint in ("a" * 64, "e" * 64):          # the same dataset, and another
         compare = tc.compare_html({"chosen": True, "fingerprint": fingerprint,
@@ -1518,12 +1672,12 @@ def test_the_run_view_and_drawer_builders_escape_names_and_paths(root):
         assert _no_tag(compare), fingerprint
     assert "&lt;b&gt;odd&amp;name" in tc.compare_html(
         {"chosen": True, "fingerprint": "e" * 64, "source": tc.CONTINUE_FROM_LIST}, ws)
-    preview = {"parent": str(root / ODD / "runs" / "gat" / TAG / "last.pt"), "ok": False,
+    preview = {"parent": str(root / ODD / "runs" / "gatv2" / TAG / "last.pt"), "ok": False,
                "reason": f"refused: {TAG}", "sha256": "c" * 64}
     check = tc._check_html(preview, tc.CONTINUE_FROM_LIST)
-    assert _no_tag(check) and "&lt;b&gt;odd&amp;name/runs/gat/&lt;img" in check
-    listed = tc._check_html(preview, tc.CONTINUE_FROM_LIST, listed=f"gat/{TAG}/last.pt")
-    assert _no_tag(listed) and "<code>gat/&lt;img" in listed
+    assert _no_tag(check) and "&lt;b&gt;odd&amp;name/runs/gatv2/&lt;img" in check
+    listed = tc._check_html(preview, tc.CONTINUE_FROM_LIST, listed=f"gatv2/{TAG}/last.pt")
+    assert _no_tag(listed) and "<code>gatv2/&lt;img" in listed
 
 
 def _rendered_for(status, mode, operator, monkeypatch, ws):
@@ -1537,7 +1691,7 @@ def test_a_stop_confirmation_belongs_to_the_job_it_was_asked_for(root, monkeypat
     sent for a1 stops nothing while b2 runs."""
     monkeypatch.setattr(tc, "_get_pyg_warning", lambda: None)
     monkeypatch.setattr(tc.training_manager, "run_dir", None)
-    ws = tc._workspace_state("demo")
+    ws = tc.workspace_state("demo")
     monkeypatch.setattr(tc.training_manager, "get_status",
                         lambda: {"status": "running", "job_id": "a1"})
     monkeypatch.setattr(tc.training_manager, "latest_snapshot", lambda *a: None)
@@ -1560,12 +1714,12 @@ def test_a_stop_confirmation_belongs_to_the_job_it_was_asked_for(root, monkeypat
 
 
 def test_keep_training_only_closes_the_question():
-    """Keep training runs `_on_stop_cancel` and then redraws the view; no
+    """Keep training runs `close_stop_question` and then redraws the view; no
     step of its chain is the Stop."""
     demo, _ctx, by_id = _page()
     keep = next(fn for fn in demo.fns.values()
                 if (by_id["shep-train-stop-keep"]._id, "click") in fn.targets)
-    assert keep.fn is tc._on_stop_cancel
+    assert keep.fn is tc.close_stop_question
     chain, step = [], keep
     while (step := next((fn for fn in demo.fns.values() if fn.trigger_after == step._id),
                         None)) is not None:
@@ -1578,8 +1732,8 @@ def test_start_and_continue_close_a_confirmation_left_from_an_earlier_job():
     start = next(fn for fn in demo.fns.values()
                  if (by_id["shep-train-start"]._id, "click") in fn.targets)
     after = next(fn for fn in demo.fns.values() if fn.trigger_after == start._id)
-    assert after.fn is tc._on_stop_cancel
-    assert tc._on_stop_cancel({"confirm": "a1", "drawer": True}) == {"confirm": None,
+    assert after.fn is tc.close_stop_question
+    assert tc.close_stop_question({"confirm": "a1", "drawer": True}) == {"confirm": None,
                                                                       "drawer": True}
 
 
@@ -1589,13 +1743,19 @@ def _listing(items, problem=None):
     return server_lists.Listing(tuple(items), problem)
 
 
-def _item(workspace, run="r", filename="last.pt", kind="training_state", epoch=3):
+def _item(workspace, run="r", filename="last.pt", kind="training_state", epoch=3, *,
+          record="model", stage="base", task=None):
+    """A listed checkpoint: by default a base's model record, as the Continue
+    drawer offers (K6 decision 1: model records only)."""
     from src.api.services.server_lists import CheckpointItem
 
-    return CheckpointItem(workspace=workspace, architecture="gat", run=run, filename=filename,
+    return CheckpointItem(workspace=workspace, architecture="gatv2", run=run, filename=filename,
                           sha256="c" * 64, size_bytes=1, checkpoint_kind=kind, epoch=epoch,
                           validation=None, dataset_fingerprint=None,
-                          trained_on_this_dataset=None, problem=None)
+                          trained_on_this_dataset=None, problem=None, record=record,
+                          learning_stage=stage if record == "model" else None,
+                          task=task if record == "model" else None,
+                          encoder="gatv2" if record == "model" else None)
 
 
 def test_the_parent_list_follows_the_run_bars_workspace_while_the_drawer_is_open(
@@ -1607,15 +1767,20 @@ def test_the_parent_list_follows_the_run_bars_workspace_while_the_drawer_is_open
 
     listed = []
     monkeypatch.setattr(server_lists, "list_checkpoints",
-                        lambda name: listed.append(name) or _listing([_item(name)]))
-    ws = tc._workspace_state("resampled")
+                        lambda name: listed.append(name) or _listing(
+                            [_item(name), _item(name, run="h", record="refused"),
+                             _item(name, run="x", record=None)]))
+    ws = tc.workspace_state("resampled")
     assert tc._relist_parents(operator, ws, {"drawer": False}) == (gr.update(),) * 7
     assert listed == []
     parents, runs, select, note, compare, preview, extend = tc._relist_parents(
         operator, ws, {"drawer": True})
-    assert listed == ["resampled"] and list(parents) == ["gat/r/last.pt"]
-    assert parents["gat/r/last.pt"]["workspace"] == "resampled"
-    assert runs["value"] == "gat/r" and select["value"] == "gat/r/last.pt"
+    # Only the model record is offered (K6 decision 1): a refused record (a
+    # file without a model spec among them) and one not read are never
+    # continued from here.
+    assert listed == ["resampled"] and list(parents) == ["gatv2/r/last.pt"]
+    assert parents["gatv2/r/last.pt"]["workspace"] == "resampled"
+    assert runs["value"] == "gatv2/r" and select["value"] == "gatv2/r/last.pt"
     assert "1 run, 1 checkpoint" in note
     assert compare == "" and tc._CONTINUE_PROMPT in preview
     assert extend == gr.update(visible=False, value=None)
@@ -1630,15 +1795,16 @@ def test_a_parent_listed_for_another_workspace_is_never_continued_on_this_one(ro
     dataset, or a change the list did not follow): the reason says so, and
     nothing is resolved in resampled under demo's names."""
     item = {**_item("demo").__dict__}
-    parents = {"gat/r/last.pt": item}
-    ws = tc._workspace_state("resampled")
-    chosen = tc._chosen(tc.CONTINUE_FROM_LIST, "gat/r/last.pt", "", parents, ws)
+    parents = {"gatv2/r/last.pt": item}
+    ws = tc.workspace_state("resampled")
+    chosen = tc._chosen(tc.CONTINUE_FROM_LIST, "gatv2/r/last.pt", "", parents, ws)
     assert chosen["workspace"] == "demo"
     why = tc.continue_refusal(chosen, ws)
     assert why.startswith("the run list shows demo’s runs, not resampled’s; refresh the list")
-    path, why, _item_ = tc._parent_path(tc.CONTINUE_FROM_LIST, "gat/r/last.pt", "", ws, parents)
+    path, why, _item_ = tc._parent_path(tc.CONTINUE_FROM_LIST, "gatv2/r/last.pt", "", ws,
+                                        parents)
     assert path is None and "the run list shows demo’s runs" in why
-    assert tc.continue_refusal(chosen, tc._workspace_state("demo")) is None
+    assert tc.continue_refusal(chosen, tc.workspace_state("demo")) is None
 
 
 def test_a_workspace_change_relists_through_the_gated_path_then_reads_the_chips():
@@ -1665,11 +1831,11 @@ def test_the_run_view_lists_the_workspaces_runs_again_while_the_page_stays_open(
     import os
     import time
 
-    ws = tc._workspace_state("demo")
+    ws = tc.workspace_state("demo")
     cache = {}
     old = tc._current_run({"status": "idle"}, ws, cache)
-    assert old["id"] == "demo/gat/20261018-142000_run_d41f8b"
-    new = root / "demo" / "runs" / "gat" / "20261021-150000_run_dddddd"
+    assert old["id"] == "demo/gatv2/20261018-142000_run_d41f8b"
+    new = root / "demo" / "runs" / "gatv2" / "20261021-150000_run_dddddd"
     (new / "checkpoints").mkdir(parents=True)
     (new / "checkpoints" / "model-1-0.0100.pt").write_bytes(b"x")
     later = time.time() + 5
@@ -1681,7 +1847,7 @@ def test_the_run_view_lists_the_workspaces_runs_again_while_the_page_stays_open(
     assert listings == []
     cache["latest"][1] -= tc.LATEST_READ_SECONDS                                 # the interval passed
     run = tc._current_run({"status": "idle"}, ws, cache)
-    assert run["id"] == "demo/gat/20261021-150000_run_dddddd" and run["latest"] is True
+    assert run["id"] == "demo/gatv2/20261021-150000_run_dddddd" and run["latest"] is True
     assert len(listings) == 1
 
 
@@ -1690,12 +1856,12 @@ def test_a_live_run_reads_its_checkpoint_once_for_the_fingerprint(root, monkeypa
     read whole) is read once per run and session for the recorded dataset
     fingerprint, which stays shown; after the run ends the snapshot is read."""
     monkeypatch.setattr(tc, "_get_pyg_warning", lambda: None)
-    job_run = root / "demo" / "runs" / "gat" / "20261020-090000_run_live01"
+    job_run = root / "demo" / "runs" / "gatv2" / "20261020-090000_run_live01"
     (job_run / "checkpoints").mkdir(parents=True)
     last = job_run / "checkpoints" / "last.pt"
     last.write_bytes(b"epoch 1")
     monkeypatch.setattr(tc.training_manager, "run_dir", job_run)
-    ws = tc._workspace_state("demo")
+    ws = tc.workspace_state("demo")
     fp = ws["row"]["dataset_fingerprint"]
     reads = []
     monkeypatch.setattr(tc.training_manager, "latest_snapshot", lambda run_dir=None: reads.append(
@@ -1725,27 +1891,39 @@ def test_the_reason_lines_sentence_ends_once():
     assert re.sub(r"<[^>]+>", "", cli["reason"]).endswith("since 09:58 UTC).")
 
 
-def test_a_checkpoints_option_says_what_it_is_how_far_it_trained_and_its_limit():
-    """In a few words, from the file's own record (the GB10 WebUI recheck: one
-    long line per file read as a wall of text): the latest save or a top-k
-    save, the epochs its progress record says it completed (never epoch + 1
-    for a file without one), what limits continuing, and the Trainer's
-    validation figure, named as the Trainer's."""
+def _option_rules(labels):
+    """The WebUI skill §8: options unique, at most 40 characters, one separator."""
+    assert len(set(labels)) == len(labels), labels
+    for label in labels:
+        assert len(label) <= tc.OPTION_CHARS and label.count(" · ") <= 1, label
+
+
+def test_a_checkpoints_option_says_what_it_is_and_how_far_it_trained():
+    """In a few words, from the file's own record (the WebUI skill §8: at most
+    40 characters, one separator): the latest save or a top-k save and the
+    epochs its progress record says it completed (never epoch + 1 for a file
+    without one). How its stage ended and its Trainer validation figure are
+    the chosen file's details, not its option (the option read "Top-k save ·
+    21 epochs completed · stopped early, cannot continue · Validation LP
+    accuracy (Trainer) 0.8123", 107 characters and three separators)."""
     item = {**_item("demo").__dict__, "completed_epochs": 195, "end": "paused",
-            "validation": {"metric": "val_mrr", "value": 0.28}}
-    assert tc.checkpoint_words(item) == "Latest save · 195 epochs completed · Trainer val MRR 0.2800"
-    top = {**item, "filename": "model-20-0.2867.pt", "completed_epochs": 21, "end": None}
-    assert tc.checkpoint_words(top).startswith("Top-k save · 21 epochs completed")
-    assert tc.checkpoint_words({**item, "end": "finished"}).startswith(
-        "Latest save · 195 epochs completed · finished")
-    assert "stopped early, cannot continue" in tc.checkpoint_words({**item, "end": "stopped_early"})
+            "validation": {"metric": "val_lp_accuracy", "value": 0.8123}}
+    assert tc.checkpoint_words(item) == "Latest save · 195 epochs completed"
+    top = {**item, "filename": "model-20-0.8123.pt", "completed_epochs": 21,
+           "end": "stopped_early"}
+    assert tc.checkpoint_words(top) == "Top-k save · 21 epochs completed"
+    assert tc.checkpoint_words({**item, "end": "finished"}) == "Latest save · 195 epochs completed"
     weights = _item("demo", filename="model-03-0.2.pt", kind="weights").__dict__
-    assert tc.checkpoint_words(weights) == "Top-k save · weights only, cannot continue"
+    assert tc.checkpoint_words(weights) == "Top-k save · weights only"
     older = {**_item("demo", epoch=194).__dict__}                     # no progress record
     assert tc.checkpoint_words(older) == "Latest save · recorded epoch 194"
     assert tc.checkpoint_words({**older, "problem": "ValueError: x"}) == "last.pt · cannot be read"
     other = {**item, "filename": "best.pt", "completed_epochs": 1}
-    assert tc.checkpoint_words(other).startswith("best.pt · 1 epoch completed")
+    assert tc.checkpoint_words(other) == "best.pt · 1 epoch completed"
+    # A long file name is shortened to fit, its progress kept.
+    long = tc.checkpoint_words({**item, "filename": "a-very-long-checkpoint-name-x.pt"})
+    assert long.endswith(" · 195 epochs completed") and "…" in long
+    _option_rules([tc.checkpoint_words(i) for i in (item, top, weights, older, other)] + [long])
 
 
 def test_a_run_reads_as_its_name_architecture_and_start_time():
@@ -1753,6 +1931,8 @@ def test_a_run_reads_as_its_name_architecture_and_start_time():
         "ui-live-stop-02 · GAT · 2026-10-24 17:39"
     assert tc.run_words("gat", "20261024-163856_run_559817") == "GAT · 2026-10-24 16:38"
     assert tc.run_words("hgt", "my-old-run") == "HGT · my-old-run"
+    # A model bundle's run reads as Models reads it (`renderers.architecture_label`).
+    assert tc.run_words("gatv2", "20261028-100000_run_abcdef") == "GATv2 · 2026-10-28 10:00"
 
 
 def test_the_drawer_lists_runs_then_the_chosen_runs_checkpoints():
@@ -1760,50 +1940,88 @@ def test_the_drawer_lists_runs_then_the_chosen_runs_checkpoints():
     the runs, latest first; the chosen run's files, newest first. Choosing
     another run offers its files with its latest save chosen; a checkpoint
     kept by key stays chosen; two runs that would read alike are told apart
-    by their directory's name."""
-    def item(run, filename, completed, mrr=None):
-        return {**_item("demo", run=run, filename=filename).__dict__, "completed_epochs": completed,
-                "validation": {"metric": "val_mrr", "value": mrr} if mrr else None}
+    by their directory's name, and two files by their names."""
+    def item(run, filename, completed, figure=None):
+        return {**_item("demo", run=run, filename=filename).__dict__,
+                "completed_epochs": completed,
+                "validation": {"metric": "val_lp_accuracy", "value": figure} if figure else None}
     new, old = "20261024-173909_a_c1d9cf", "20261024-163856_run_559817"
-    parents = {f"gat/{new}/last.pt": item(new, "last.pt", 195),
-               f"gat/{new}/model-20-0.2867.pt": item(new, "model-20-0.2867.pt", 21, 0.2867),
-               f"gat/{old}/last.pt": item(old, "last.pt", 11),
-               f"gat/{old}/model-02-0.2160.pt": item(old, "model-02-0.2160.pt", 3, 0.216),
-               f"gat/{old}/model-01-0.2160.pt": item(old, "model-01-0.2160.pt", 2, 0.216)}
-    runs, files = tc._parents_update(parents)
-    assert runs["choices"] == [("a · GAT · 2026-10-24 17:39", f"gat/{new}"),
-                               ("GAT · 2026-10-24 16:38", f"gat/{old}")]
-    assert runs["value"] == f"gat/{new}" and files["value"] == f"gat/{new}/last.pt"
+    parents = {f"gatv2/{new}/last.pt": item(new, "last.pt", 195),
+               f"gatv2/{new}/model-20-0.2867.pt": item(new, "model-20-0.2867.pt", 21, 0.2867),
+               f"gatv2/{old}/last.pt": item(old, "last.pt", 3),
+               f"gatv2/{old}/model-02-0.2160.pt": item(old, "model-02-0.2160.pt", 3, 0.216),
+               f"gatv2/{old}/model-01-0.2160.pt": item(old, "model-01-0.2160.pt", 2, 0.216)}
+    runs, files = tc.parents_update(parents)
+    assert runs["choices"] == [("a · GATv2 · 2026-10-24 17:39", f"gatv2/{new}"),
+                               ("GATv2 · 2026-10-24 16:38", f"gatv2/{old}")]
+    assert runs["value"] == f"gatv2/{new}" and files["value"] == f"gatv2/{new}/last.pt"
     assert [label for label, _key in files["choices"]] == [
-        "Latest save · 195 epochs completed", "Top-k save · 21 epochs completed · Trainer val MRR 0.2867"]
-    others = tc._on_run_chosen(f"gat/{old}", parents, f"gat/{new}/last.pt")
-    assert others["value"] == f"gat/{old}/last.pt"                       # its latest save
+        "Latest save · 195 epochs completed", "Top-k save · 21 epochs completed"]
+    others = tc.on_run_chosen(f"gatv2/{old}", parents, f"gatv2/{new}/last.pt")
+    assert others["value"] == f"gatv2/{old}/last.pt"                     # its latest save
     assert [key for _label, key in others["choices"]] == [k for k in parents if old in k]
     labels = [label for label, _key in others["choices"]]
-    assert len(set(labels)) == len(labels)                                # same MRR, told apart
-    kept = tc._on_run_chosen(f"gat/{old}", parents, f"gat/{old}/model-01-0.2160.pt")
-    assert kept["value"] == f"gat/{old}/model-01-0.2160.pt"
-    assert tc._parents_update(parents, f"gat/{old}/model-02-0.2160.pt")[0]["value"] == f"gat/{old}"
-    twins = {"gat/20261024-163856_run_111111/last.pt": item("20261024-163856_run_111111", "last.pt", 1),
-             "gat/20261024-163801_run_222222/last.pt": item("20261024-163801_run_222222", "last.pt", 1)}
-    assert [label for label, _key in tc._run_choices(twins)] == [
-        "GAT · 2026-10-24 16:38 · 20261024-163856_run_111111",
-        "GAT · 2026-10-24 16:38 · 20261024-163801_run_222222"]
-    assert tc._on_run_chosen(None, {}, None) == gr.update(choices=[], value=None)
+    # The latest save and a top-k save at the same epochs are told apart by
+    # what they are; still unique, short and with one separator.
+    assert labels == ["Latest save · 3 epochs completed", "Top-k save · 3 epochs completed",
+                      "Top-k save · 2 epochs completed"]
+    twins = {f"gatv2/{old}/model-03-0.1.pt": item(old, "model-03-0.1.pt", 3),
+             f"gatv2/{old}/model-03-0.2.pt": item(old, "model-03-0.2.pt", 3)}
+    told = [label for label, _key in tc.checkpoint_choices(twins, list(twins))]
+    assert told == ["model-03-0.1.pt · 3 epochs completed", "model-03-0.2.pt · 3 epochs completed"]
+    _option_rules(labels)
+    _option_rules(told)
+    # Long names alike at their start keep the end that tells them apart (a
+    # copy, a versioned top-k file); names alike at both ends are numbered in
+    # the list's order. Never two options alike.
+    for names, epochs in ((("base_model_before_change_epoch10_copy_a.pt",
+                            "base_model_before_change_epoch10_copy_b.pt"), 10),
+                          (("model-195-0.2867.pt", "model-195-0.2867-v1.pt"), 195),
+                          (("checkpoint_run1_of_the_final.pt", "checkpoint_run2_of_the_final.pt",
+                            "checkpoint_run3_of_the_final.pt"), 3)):
+        files = {f"gatv2/{old}/{name}": item(old, name, epochs) for name in names}
+        told = [label for label, _key in tc.checkpoint_choices(files, list(files))]
+        _option_rules(told)
+        assert all(label.endswith(f" · {epochs} epochs completed") for label in told), told
+    assert told == ["checkpo…inal.pt (1) · 3 epochs completed",
+                    "checkpo…inal.pt (2) · 3 epochs completed",
+                    "checkpo…inal.pt (3) · 3 epochs completed"]
+    copies = {f"gatv2/{old}/base_model_before_change_epoch10_copy_{x}.pt":
+              item(old, f"base_model_before_change_epoch10_copy_{x}.pt", 10) for x in "ab"}
+    assert [label for label, _key in tc.checkpoint_choices(copies, list(copies))] == [
+        "base_mod…copy_a.pt · 10 epochs completed", "base_mod…copy_b.pt · 10 epochs completed"]
+    kept = tc.on_run_chosen(f"gatv2/{old}", parents, f"gatv2/{old}/model-01-0.2160.pt")
+    assert kept["value"] == f"gatv2/{old}/model-01-0.2160.pt"
+    assert tc.parents_update(parents, f"gatv2/{old}/model-02-0.2160.pt")[0]["value"] == \
+        f"gatv2/{old}"
+    twin_runs = {
+        "gatv2/20261024-163856_run_111111/last.pt": item("20261024-163856_run_111111", "last.pt", 1),
+        "gatv2/20261024-163801_run_222222/last.pt": item("20261024-163801_run_222222", "last.pt", 1)}
+    assert [label for label, _key in tc.run_choices(twin_runs)] == [
+        "GATv2 · 2026-10-24 16:38 · 20261024-163856_run_111111",
+        "GATv2 · 2026-10-24 16:38 · 20261024-163801_run_222222"]
+    assert tc.on_run_chosen(None, {}, None) == gr.update(choices=[], value=None)
 
 
 def test_the_chosen_checkpoints_details_say_what_its_option_does_not():
-    """A table: the file, what it holds, what continuing does when its stage
-    ended, its model fingerprint (copyable) and its run's directory; its
-    progress and validation figure are its option's, not repeated."""
+    """A table: the file, its stage, what it holds, what continuing does when
+    its stage ended, its Trainer validation figure (named as the Trainer's),
+    its model fingerprint (copyable) and its run's directory; its progress is
+    its option's, not repeated."""
     item = {**_item("demo", run="20261024-163856_run_559817").__dict__, "completed_epochs": 11,
-            "end": "finished", "validation": {"metric": "val_mrr", "value": 0.214}}
+            "end": "finished", "validation": {"metric": "val_lp_accuracy", "value": 0.8123}}
     html = tc.parent_details_html(item)
-    for words in ("File", "last.pt", "Holds", "training state", "Continuing",
-                  "extends it by the Extra epochs you enter", "Model fingerprint", "cccccccccccc",
-                  'data-copy="' + "c" * 64, "gat/20261024-163856_run_559817"):
+    for words in ("File", "last.pt", "Stage", "Base", "Holds", "training state", "Continuing",
+                  "extends it by the Extra epochs you enter", "Validation",
+                  "LP accuracy (Trainer) 0.8123", "Model fingerprint", "cccccccccccc",
+                  'data-copy="' + "c" * 64, "gatv2/20261024-163856_run_559817"):
         assert words in html, words
-    assert "epochs completed" not in html and "MRR" not in html
+    assert "epochs completed" not in html and "test" not in html.lower()
+    stopped = tc.parent_details_html({**item, "end": "stopped_early"})
+    assert "not possible: it stopped early" in stopped
+    child = tc.parent_details_html({**item, "learning_stage": "finetune", "task": "gene",
+                                    "validation": None})
+    assert "Fine-tune · Gene" in child and "not recorded in this file" in child
     weights = tc.parent_details_html(_item("demo", kind="weights").__dict__)
     assert "weights only (cannot be continued)" in weights and "Continuing" not in weights
     unread = tc.parent_details_html({**_item("demo").__dict__, "problem": "ValueError: <b>x"})
@@ -1847,7 +2065,7 @@ def test_continue_has_its_own_device_which_its_check_and_start_use():
 
 def test_a_failed_runs_output_tail_is_a_disclosure_fitted_to_the_window():
     html = tc._render_error_block("exit 1\n\n--- Last output ---\n" + "\n".join(
-        f"line {i}" for i in range(20)), run="gat/r")
+        f"line {i}" for i in range(20)), run="gatv2/r")
     assert '<details class="shep-banner-more" open><summary>Last output' in html
     assert f"({tc.BANNER_TAIL_LINES} lines)" in html and "line 19" in html and "line 7" not in html
     one = tc._render_error_block("exit 1\n\n--- Last output ---\nonly")
@@ -1899,7 +2117,7 @@ def test_the_continue_drawer_fits_and_says_the_plan_once():
     assert "#shep-train-drawer-why:not(:has(.shep-drawer-why)) { display: none !important; }" \
         in tc.PAGE_CSS
     assert "#shep-train-drawer-bd .block.padded { padding-top: 4px !important;" in tc.PAGE_CSS
-    preview = {"parent": "/w/demo/runs/gat/r/checkpoints/last.pt", "ok": True,
+    preview = {"parent": "/w/demo/runs/gatv2/r/checkpoints/last.pt", "ok": True,
                "action": "Extend training by 30 epochs at a fixed rate of 1e-05 (epochs 151-180, "
                          "new target 180)", "sha256": "c" * 64, "inherited": {}}
     check = tc._check_html(preview, tc.CONTINUE_FROM_LIST)
@@ -1932,7 +2150,7 @@ def test_extra_epochs_sits_above_every_check_result():
     assert "#shep-train-drawer-why { padding: 8px 16px !important; }" in wide
     # When the datasets differ, the comparison says the start refuses; the
     # check does not add its general line, and a rate is never split.
-    preview = {"parent": "/w/demo/runs/gat/r/checkpoints/last.pt", "ok": True,
+    preview = {"parent": "/w/demo/runs/gatv2/r/checkpoints/last.pt", "ok": True,
                "action": "Extend training by 10 epochs at a fixed rate of 3e-05 (epochs 9-18, "
                          "new target 18)", "sha256": "c" * 64, "inherited": {}}
     differs = tc._check_html(preview, tc.CONTINUE_FROM_LIST, differs=True)

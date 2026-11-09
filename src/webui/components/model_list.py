@@ -12,60 +12,78 @@ one gated Load, no second implementation).
 workspace (SPEC_4 C3), so it is an operator control: D8's helper is asked on the
 triggering request first, and a read-only request gets the reason and no list.
 Each row's recorded tests are a state read from the ledger beside the
-checkpoint (`read_ledger`, `records_for`) and, for contested, from the cohort
+checkpoint (`read_ledger`, then the readers' one listing, `evaluations.read_records`:
+the records that read as results, and apart from them those that cannot, never
+counted as results) and, for how each record's condition
+group compares (runs that differ, a comparison incomplete), from the cohort
 version's report store (`record_states.contest_states`, the one implementation
-the API's route shares): never a number of a result. An
+the API's route shares): never a number of a result, and a description that
+hides, orders or refuses nothing. An
 unreadable entry is greyed "metadata not readable · cannot be loaded". "In use"
 is matched by the **full** model fingerprint the status serves and marks the
 checkpoint only.
 
-**The two presets** (`PRESETS`):
+**The two presets** (`PRESETS`), each row of either leading with what its
+file is (`renderers.record_kind_text`: "Disease", "Base", "Record not
+readable" …), under every view and order:
 
 - ``clinical`` (the drawer): rows (`renderers.model_row_html`), "In use now"
-  pinned on top, the latest 4 runs, then "Show older runs";
+  pinned on top, the latest 4 runs, then "Show older runs"; **models
+  finetuned for a task only** (``Preset.rows``; README §5, "a base offers no
+  diagnosis"), whatever view the page, or a direct call, gives;
 - ``research`` (Models): a table (`renderers.model_table_row_html`: model,
   fingerprints, the Trainer's validation figure, recorded tests), every run,
-  "In use (Diagnosis)" on its own row, not pinned.
+  "In use (Diagnosis)" on its own row, not pinned; its listing carries the
+  family view too (``listing["family"]``, `family_views`).
 
 **A page shapes its view** through ``ModelList.view`` (a `gr.State` the page
 sets; the list redraws on its ``.change``), never by drawing rows itself:
-``{"architecture": "gat"}`` lists one architecture; ``"groups": [{"title",
-"keys"}]`` draws the rows in those groups, in that order (checkpoints in no
-group follow under ``"rest_title"``); ``"column"`` and ``"cells": {key: html}``
-add one column the page fills (HTML it built with the shared renderers, which
-escape); ``"note"`` is plain text beside the Load button. Models orders the
-list this way (its groups "Ordered by …", "Contested on this version · not
-ordered", "Not tested on this cohort version · newest first", its regime
-column) and sets ``ModelList.ordering`` too, so that a Load from it writes a
-usage history entry. ``create_model_list(head=…, foot=…)`` places a page's own
+``{"task": "disease"}`` lists the rows of one filter (`TASK_FILTERS`: all,
+base, disease, gene, patients_like_me, task_models; `matches`, on the
+server's one predicate `server_lists.record_matches`); ``"keys"`` lists exactly
+those rows instead (a family view's, its context rows included); ``"groups":
+[{"title", "keys"}]`` draws the rows in those groups, in that order
+(checkpoints in no group follow under ``"rest_title"``); ``"column"`` and
+``"cells": {key: html}`` add one column the page fills (HTML it built with the
+shared renderers, which escape); ``"note"`` is plain text beside the Load
+button. What a view names by key (``keys``, ``groups``, ``cells``) belongs to
+the workspace it was read from: another workspace's listing is drawn with the
+view's filter, column and note only (`view_for_listing`) until the page
+shapes its view again. Models groups the list this way (its families and their
+lineage column). ``create_model_list(head=…, foot=…)`` places a page's own
 components (a filter, links) in the list's header and footer rows.
 
 **The Load**, in three steps, each a handler of its own:
 
-1. "🔒 Load this model" (`request_load`): D8 on that request; the item is found
-   in the server's list again (`resolve_checkpoint`, never a client path) and
-   its bytes hashed again, so a list read earlier is caught (a file rewritten
-   since is read again from the server's list and shown as it is now); one
-   inline confirmation, "Reload the pipeline with <12 hex> for every session?",
-   from → to: model, model fingerprint, trained on, serving workspace and graph
-   digest, SP table, scoring mode with eta, synthetic flag, the changed rows
-   marked;
+1. "🔒 Load this model" (`request_load`): D8 on that request; **a row that is
+   never loaded is refused before anything of its file is read**
+   (`load_refusal`: a base offers no diagnosis, a record this build refused,
+   a file without a model spec among them, is said with why; the
+   research Load button is off for such a row, its reason beside it); the item
+   is found in the server's list again (`resolve_checkpoint`, never a client
+   path) and its bytes hashed again, so a list read earlier is caught (a file
+   rewritten since is read again from the server's list and shown as it is
+   now); one inline confirmation, "Reload the pipeline with <12 hex> for every
+   session?", from → to: model, model fingerprint, trained on, serving
+   workspace and graph digest, task and scoring mode (the one table,
+   `core.types.TASK_SCORING_MODES`), SP table (a state: "not used by this
+   task", "computed from the model's graph view"), synthetic flag, the changed
+   rows marked;
 2. "🔒 Reload with <new>" (`finish_load`): D8 again, on that request; **both
    columns read again**: what is served (the whole served identity,
    `served_key`) and what would be loaded (the file hashed again, the
-   workspace's graph and SP table read again). A change in either since the
-   confirmation was shown is said with the new values, and nothing is
-   reloaded until the operator confirms what is shown. Then WP2's one reload
-   (`run_reload`, in process, on the event loop as the API route runs it) with
-   the workspace and the checkpoint the server resolves from the item, **bound
-   to the model fingerprint shown** (`expected_checkpoint_sha256`): the file
+   workspace's graph read again, the refusal checked again on what the file
+   holds now). A change in either since the confirmation was shown is said
+   with the new values, and nothing is reloaded until the operator confirms
+   what is shown. Then WP2's one reload (`run_reload`, in process, on the event
+   loop as the API route runs it) with the workspace, the checkpoint the
+   server resolves from the item and the task its record names, **bound to the
+   model fingerprint shown** (`expected_checkpoint_sha256`): the file
    can still change between this hash and the reload's own read, seconds later
    (the build reads the workspace's graph first), and the reload compares its
    read with the fingerprint before the bytes are parsed, so other bytes, or
-   none, are refused as not the model shown, never served; a usage history
-   entry (WP4
-   `record_model_load`) only when the list was ordered by a cohort version's
-   score; then the chips and the "served model changed" trigger
+   none, are refused as not the model shown, never served; then the chips and
+   the "served model changed" trigger
    (`PageContext.served_model_changed`), set whenever any part of what is
    served changed;
 3. "Keep <old>" closes the confirmation; nothing is done.
@@ -116,9 +134,12 @@ from typing import (
 
 import gradio as gr
 
-# D5's state of a record key: one implementation, shared with the API's route
-# (BACKLOG 36).
+# How a record's condition group compares (a description): one implementation,
+# shared with the API's route (BACKLOG 36).
 from src.api.services.record_states import CohortVersions, contest_states, key_text
+from src.api.services.server_lists import record_matches
+from src.core.types import SCORING_MODE_SP_STATES, SCORING_MODE_TASKS, TASK_SCORING_MODES
+from src.evaluation.caveats import TASK_NAMES
 from src.webui.components import renderers as r
 from src.webui.components.served_status import (
     read_status,
@@ -154,6 +175,23 @@ NOTHING_RELOADED = "Nothing was reloaded; check the rows again, then reload or k
 #: The title of the checkpoints a page's groups leave out.
 REST_TITLE = "Other checkpoints · newest first"
 
+#: **The list's one filter vocabulary** (``view["task"]``, `matches`): every
+#: row; the bases; one task's finetuned models; every model finetuned for a
+#: task.
+TASK_FILTERS = ("all", "base", "disease", "gene", "patients_like_me", "task_models")
+#: Each filter as the count line ("· Disease only, of 9 listed") and the empty
+#: state ("No disease model is listed in this workspace.") name it.
+FILTER_WORDS: Dict[str, Tuple[str, str]] = {
+    "all": ("All", "checkpoint"),
+    "base": ("Base", "base"),
+    **{task: (name, f"{name.lower()} model") for task, name in TASK_NAMES.items()},
+    "task_models": ("Task models", "model finetuned for a task"),
+}
+
+#: Why a base row is never loaded (`load_refusal`), said before anything of
+#: its file is read: README §5 ("a base offers no diagnosis").
+BASE_REFUSAL = "A base offers no diagnosis: load a model finetuned for a task."
+
 
 @dataclass(frozen=True)
 class Preset:
@@ -168,11 +206,19 @@ class Preset:
     pin_in_use: bool = True
     #: ``rows`` (the drawer's list) or ``table`` (Models' columns).
     layout: str = "rows"
+    #: The rows this preset ever shows (a `TASK_FILTERS` name), whatever the
+    #: view asks: the drawer lists models finetuned for a task only, so a view
+    #: of None (a direct call) never lists a base or a refused file there.
+    rows: str = "all"
+    #: Whether its listing carries the family view (`family_views`).
+    family: bool = False
 
 
 PRESETS: Dict[str, Preset] = {
-    "clinical": Preset("clinical", 4, "In use", pin_in_use=True, layout="rows"),
-    "research": Preset("research", None, "In use (Diagnosis)", pin_in_use=False, layout="table"),
+    "clinical": Preset("clinical", 4, "In use", pin_in_use=True, layout="rows",
+                       rows="task_models"),
+    "research": Preset("research", None, "In use (Diagnosis)", pin_in_use=False, layout="table",
+                       family=True),
 }
 
 
@@ -188,16 +234,23 @@ def ledger_records(workspace_dir: Path, items: Sequence[Mapping[str, Any]]
                    ) -> Dict[str, Dict[str, Any]]:
     """For each listed checkpoint with a digest, what the ledger beside it holds
     for its weights, read through the one ledger reader (`read_ledger`, once per
-    directory) and `records_for`: ``state`` (``records``, ``none``,
-    ``no_ledger`` or ``not_read``), the records as the ledger holds them (kept
-    on the server, in the session's state; never sent to the browser as they
-    are), ``problem`` (naming the file, never its directory) and ``ledger``
-    (the ledger's resolved path, which only tells two ledgers apart).
+    directory) and **classified once, by the readers' one listing**
+    (`evaluations.read_records`, K8-6e.1): ``state`` (``records`` when it holds
+    a result or a record that cannot be read as one, ``none``, ``no_ledger`` or
+    ``not_read``), ``records``: those that read as results, as the ledger holds
+    them (kept on the server, in the session's state; never sent to the browser
+    as they are), ``readings`` beside them (each record's run as the file's
+    boundary reads it and its possible overlaps, `evaluations.record_reading`,
+    as ``[run_id, historical, problem, overlaps]``), ``unreadable``: every other
+    record for these weights as the API lists it (`UnreadableRecord`: index,
+    sequence, report digest, run and reason; never a result), ``problem``
+    (naming the file, never its directory) and ``ledger`` (the ledger's resolved
+    path, which only tells two ledgers apart).
 
     The checkpoint file is never opened: its path is the run layout's, resolved
     to find the directory its ledger is in, as registration writes it."""
     from src.api.routes.evaluations import _ledger_problem
-    from src.evaluation.sidecar import LEDGER_FILENAME, read_ledger, records_for
+    from src.evaluation.sidecar import LEDGER_FILENAME, read_ledger
     from src.utils.checkpoint_paths import RUN_CHECKPOINTS_DIRNAME, RUNS_DIRNAME
 
     workspace_dir = Path(workspace_dir).resolve()
@@ -212,11 +265,11 @@ def ledger_records(workspace_dir: Path, items: Sequence[Mapping[str, Any]]
         try:
             directory = file.resolve().parent
         except (OSError, RuntimeError):
-            out[key] = {"state": "not_read", "records": [], "ledger": None,
+            out[key] = {"state": "not_read", "records": [], "unreadable": [], "ledger": None,
                         "problem": "the checkpoint's directory cannot be resolved"}
             continue
         if directory != workspace_dir and workspace_dir not in directory.parents:
-            out[key] = {"state": "not_read", "records": [], "ledger": None,
+            out[key] = {"state": "not_read", "records": [], "unreadable": [], "ledger": None,
                         "problem": "the checkpoint resolves outside the workspace"}
             continue
         ledger_path = directory / LEDGER_FILENAME
@@ -228,24 +281,45 @@ def ledger_records(workspace_dir: Path, items: Sequence[Mapping[str, Any]]
                 read[directory] = (None, _ledger_problem(exc, ledger_path), True)
         ledger, problem, present = read[directory]
         if problem is not None:
-            out[key] = {"state": "not_read", "records": [], "ledger": str(ledger_path),
-                        "problem": problem}
+            out[key] = {"state": "not_read", "records": [], "unreadable": [],
+                        "ledger": str(ledger_path), "problem": problem}
         elif not present:
-            out[key] = {"state": "no_ledger", "records": [], "ledger": str(ledger_path),
-                        "problem": None}
-        else:
-            records = records_for(ledger, item["sha256"])
-            out[key] = {"state": "records" if records else "none", "records": records,
+            out[key] = {"state": "no_ledger", "records": [], "unreadable": [],
                         "ledger": str(ledger_path), "problem": None}
+        else:
+            out[key] = ledger_entry(ledger, item["sha256"], str(ledger_path))
     return out
+
+
+def ledger_entry(ledger: Mapping[str, Any], checkpoint_digest: str,
+                 ledger_path: Optional[str] = None) -> Dict[str, Any]:
+    """One checkpoint's entry of `ledger_records` from a ledger already read:
+    the readers' one listing (`evaluations.read_records`) splits its records
+    for these weights into results (``records``, with their ``readings``) and
+    the rest (``unreadable``, each item as the API lists it), once."""
+    from src.api.routes.evaluations import read_records, record_reading
+
+    ledger = dict(ledger)
+    viewed, unreadable = read_records(ledger, checkpoint_digest)
+    records = [record for record, _view in viewed]
+    reading = record_reading(ledger)
+    readings = [[found.run_id, found.historical, found.problem, list(overlaps)]
+                for found, overlaps in (reading[id(record)] for record in records)]
+    return {"state": "records" if records or unreadable else "none",
+            "records": records, "readings": readings,
+            "unreadable": [item.model_dump(mode="json") for item in unreadable],
+            "ledger": ledger_path, "problem": None}
 
 
 def recorded_tests(ledgers: Mapping[str, Mapping[str, Any]],
                    contest: Mapping[str, Mapping[str, Any]]) -> Dict[str, r.RecordedTests]:
     """Each checkpoint's recorded tests as a state, from what `ledger_records`
-    and `contest_states` read: how many records, how many contested and how
-    many whose contested state cannot be checked, counted apart (M5-3 review
-    EVAL-3: one uncheckable record hid a known contested one)."""
+    and `contest_states` read: how many records read as results, how many of
+    them in a group whose runs differ and how many whose comparison is
+    incomplete, counted apart (M5-3 review EVAL-3: one uncheckable record hid a
+    known difference), and how many records cannot be read as results, counted
+    apart from the results and never as one (K8-6e.1). Counts that describe;
+    nothing is hidden or refused by them."""
     from src.evaluation.sidecar import record_key
 
     out: Dict[str, r.RecordedTests] = {}
@@ -266,7 +340,8 @@ def recorded_tests(ledgers: Mapping[str, Mapping[str, Any]],
             elif state != "uncontested":
                 unchecked += 1
         out[key] = r.RecordedTests("records", len(entry.get("records") or []), contested,
-                                   unchecked=unchecked)
+                                   unchecked=unchecked,
+                                   unreadable=len(entry.get("unreadable") or []))
     return out
 
 
@@ -296,11 +371,45 @@ def empty_listing(problem: Optional[str] = None) -> Dict[str, Any]:
             "status_read": False}
 
 
-def list_models(workspace: Any, request: Any, *,
+#: The filters a family view is drawn for (`family_views`): the refused group
+#: is the whole view's (``all``), and a family holds no refused file.
+FAMILY_FILTERS = ("all", "base", *TASK_NAMES)
+
+
+def family_views(workspace: str, checkpoints: Any, root: Any, *,
+                 environ: Optional[Mapping[str, str]] = None) -> Dict[str, List[Dict[str, Any]]]:
+    """The workspace's family view (`server_lists.list_family`) for each of
+    `FAMILY_FILTERS`, **from the one listing** the list was drawn from
+    (`checkpoints`, given as ``listing=``: nothing is listed again), as plain
+    data: per row its key, group, family, depth, parent key and where the exact
+    parent file is (``parent_state``, ``parent_workspace``, ``parent_problem``,
+    redacted: a file's problem may name a server path) and whether it is a
+    context row. A filter that kept nothing has no rows."""
+    from src.api.services.server_lists import list_family
+    from src.webui.components.workspaces import redact
+
+    views: Dict[str, List[Dict[str, Any]]] = {}
+    for name in FAMILY_FILTERS:
+        record_filter = ({} if name == "all" else {"learning_stage": "base"} if name == "base"
+                         else {"task": name})
+        listed = list_family(workspace, listing=checkpoints, environ=environ, **record_filter)
+        views[name] = [{
+            "key": item_key(asdict(row.item)), "group": row.group, "family_id": row.family_id,
+            "depth": row.depth, "parent": row.parent, "parent_state": row.parent_state,
+            "parent_workspace": row.parent_workspace,
+            "parent_problem": redact(row.parent_problem, root) if row.parent_problem else None,
+            "context": row.context,
+        } for row in listed.items]
+    return views
+
+
+def list_models(workspace: Any, request: Any, *, family: bool = False,
                 environ: Optional[Mapping[str, str]] = None) -> Dict[str, Any]:
     """The listing for one session: D8 on the triggering request first (listing
     opens checkpoints), then the server's lists and the status, as plain data
-    for a `gr.State`. A refused request lists nothing and says why."""
+    for a `gr.State`. A refused request lists nothing and says why. With
+    `family` (the research preset), the family view of the same listing too
+    (``listing["family"]``, `family_views`)."""
     from src.api.services.server_lists import list_checkpoints
     from src.webui.components.workspaces import read_workspaces, redact
 
@@ -326,11 +435,14 @@ def list_models(workspace: Any, request: Any, *,
     root = listed["root"]
     items = [asdict(i) for i in checkpoints.items]
     for item in items:
-        if item.get("problem"):
-            item["problem"] = redact(item["problem"], root)
+        for field in ("problem", "record_problem"):
+            if item.get(field):
+                item[field] = redact(item[field], root)
     listing.update(items=items, problem=(redact(checkpoints.problem, root)
                                          if checkpoints.problem else None))
-    # The ledgers beside the checkpoints and their records' contested states,
+    if family and checkpoints.available:
+        listing["family"] = family_views(chosen, checkpoints, root, environ=environ)
+    # The ledgers beside the checkpoints and their records' group descriptions,
     # read once for the rows and kept in the listing (server side, in the
     # session's state) for a page that shows them (Models).
     ledgers: Dict[str, Dict[str, Any]] = {}
@@ -362,13 +474,67 @@ def _view(view: Any) -> Mapping[str, Any]:
     return view if isinstance(view, Mapping) else {}
 
 
-def shown_items(listing: Mapping[str, Any], view: Any = None) -> List[Mapping[str, Any]]:
-    """The listed checkpoints the view shows (one architecture, when it names one)."""
+def matches(item: Mapping[str, Any], name: str) -> bool:
+    """Whether a listed checkpoint is a row of the filter `name`
+    (`TASK_FILTERS`), judged by its model record through the server's one
+    predicate (`server_lists.record_matches`): a base, a model finetuned for
+    that task, or any model finetuned for a task. A file whose record was
+    refused or not read is a row of ``all`` only."""
+    if name == "all":
+        return True
+    if name == "base":
+        return record_matches(item, learning_stage="base")
+    if name == "task_models":
+        return record_matches(item, learning_stage="finetune")
+    return record_matches(item, task=name, learning_stage="finetune")
+
+
+def task_filter(view: Any) -> str:
+    """The filter a view names (``view["task"]``), ``all`` when it names none
+    this list knows."""
+    chosen = _view(view).get("task")
+    return chosen if chosen in TASK_FILTERS else "all"
+
+
+def _rows_filter(view: Any, preset: Optional[Preset]) -> str:
+    """The filter the rows are said by: the view's, or the preset's own rule
+    when the view asks for every row (the drawer: task models)."""
+    chosen = task_filter(view)
+    return preset.rows if chosen == "all" and preset is not None else chosen
+
+
+def shown_items(listing: Mapping[str, Any], view: Any = None,
+                preset: Optional[Preset] = None) -> List[Mapping[str, Any]]:
+    """The listed checkpoints the view shows: its ``keys`` when it gives them
+    (a family view's rows), else its filter's (``task``, `matches`); never a
+    row the preset does not show (``Preset.rows``)."""
     items = list(listing.get("items") or [])
-    architecture = _view(view).get("architecture")
-    if architecture:
-        items = [i for i in items if i.get("architecture") == architecture]
-    return items
+    if preset is not None and preset.rows != "all":
+        items = [i for i in items if matches(i, preset.rows)]
+    keys = _view(view).get("keys")
+    if isinstance(keys, (list, tuple)):
+        wanted = set(keys)
+        return [i for i in items if item_key(i) in wanted]
+    chosen = task_filter(view)
+    return [i for i in items if matches(i, chosen)]
+
+
+#: The parts of a view that name rows by key, read from one workspace's listing.
+_KEYED_VIEW_PARTS = ("keys", "groups", "cells")
+
+
+def view_for_listing(view: Any, previous: Any, listing: Mapping[str, Any]) -> Any:
+    """The page's view as it applies to a listing just read (the shared
+    refresh draws it before the page shapes a new view): what the view names
+    by key (a family's rows, an order's groups, the page's cells) was read from
+    the `previous` listing's workspace, so for another workspace's listing it
+    is left out and the view's filter, column and note apply. Another
+    workspace's keys would hide every row of this one."""
+    current = _view(view)
+    if (isinstance(previous, Mapping) and previous.get("workspace") == listing.get("workspace")) \
+            or not any(part in current for part in _KEYED_VIEW_PARTS):
+        return view
+    return {k: v for k, v in current.items() if k not in _KEYED_VIEW_PARTS}
 
 
 def refused_line(listing: Mapping[str, Any]) -> str:
@@ -381,14 +547,14 @@ def refused_line(listing: Mapping[str, Any]) -> str:
 
 
 def kept_selection(previous: Any, listing: Mapping[str, Any], key: Any,
-                   view: Any = None) -> Optional[str]:
+                   view: Any = None, preset: Optional[Preset] = None) -> Optional[str]:
     """The selection a new listing keeps: `key` when the listing is of the same
     workspace as `previous` and still shows that checkpoint; else None."""
     if not key or not isinstance(previous, Mapping) or listing.get("refused") \
             or previous.get("workspace") != listing.get("workspace"):
         return None
     item = find_item(listing, key)
-    return key if item is not None and item in shown_items(listing, view) else None
+    return key if item is not None and item in shown_items(listing, view, preset) else None
 
 
 def _groups(items: Sequence[Mapping[str, Any]], view: Any
@@ -416,10 +582,18 @@ def _groups(items: Sequence[Mapping[str, Any]], view: Any
     return sections
 
 
-def _no_items_html(listing: Mapping[str, Any], view: Any) -> str:
-    if listing.get("items") and _view(view).get("architecture"):
-        why = (f"No {str(_view(view)['architecture']).upper()} checkpoint is listed in this "
-               "workspace.")
+def _kind_line(item: Mapping[str, Any], tag: str) -> str:
+    """A row's first line: what its file is, in the one word every page leads
+    with (`renderers.record_kind_text`: "Disease", "Base", "Record not
+    readable", "Record not read" …), escaped."""
+    css = "shep-row-sub" if tag == "span" else "shep-sub"
+    return f'<{tag} class="{css} shep-row-kind">{r.e(r.record_kind_text(item))}</{tag}>'
+
+
+def _no_items_html(listing: Mapping[str, Any], view: Any, preset: Optional[Preset]) -> str:
+    chosen = _rows_filter(view, preset)
+    if listing.get("items") and chosen != "all":
+        why = f"No {FILTER_WORDS[chosen][1]} is listed in this workspace."
     else:
         why = listing.get("problem") or "No checkpoint is listed in this workspace."
     return f'<div class="shep-reason">{r.e(why)}</div>'
@@ -430,14 +604,14 @@ def list_html(listing: Mapping[str, Any], selected: Optional[str], preset: Prese
     """The list as the preset draws it: rows (the drawer: "In use now" pinned,
     runs newest first, the latest runs then "Show older runs") or a table
     (Models: every checkpoint, the model in use marked on its own row); the
-    view's architecture, groups and extra column when it gives them."""
+    view's filter or rows, groups and extra column when it gives them."""
     if listing.get("refused"):
         # A listing is no act: the short line every page uses for an operator
         # control off for this request, not "Refused … Nothing was done."
         return f'<div class="shep-reason shep-reason-grey">{r.e(refused_line(listing))}</div>'
-    items = shown_items(listing, view)
+    items = shown_items(listing, view, preset)
     if not items:
-        return _no_items_html(listing, view)
+        return _no_items_html(listing, view, preset)
     workspaces = listing.get("workspaces") or []
     digits = r.distinguishing_digits(i.get("sha256") for i in items)
     served = listing.get("served_sha")
@@ -474,6 +648,10 @@ def list_html(listing: Mapping[str, Any], selected: Optional[str], preset: Prese
         html_ = r.model_row_html(item, workspaces, recorded=_recorded(listing, key),
                                  in_use=in_use, selected=key == selected, digits=digits,
                                  key=key, in_use_label=preset.in_use_label)
+        # The row leads with what its file is (the drawer lists every task's
+        # models together, and its name line does not say the task).
+        html_ = html_.replace('<span class="shep-row-main">', f'{_kind_line(item, "span")}'
+                              '<span class="shep-row-main">', 1)
         extra = cells.get(key)
         if extra:
             html_ = html_.replace("</button>", f'<span class="shep-row-sub">{extra}</span></button>', 1)
@@ -512,11 +690,14 @@ def _table_html(sections: Sequence[Tuple[str, Sequence[Mapping[str, Any]]]],
 
     def row(item: Mapping[str, Any]) -> str:
         key = item_key(item)
-        return r.model_table_row_html(
+        html_ = r.model_table_row_html(
             item, workspaces, recorded=_recorded(listing, key),
             in_use=bool(served) and item.get("sha256") == served, selected=key == selected,
             digits=digits, key=key, in_use_label=preset.in_use_label,
             extra=(str(cells.get(key) or '<span class="shep-muted">—</span>') if column else None))
+        # The Model cell (the row's first) leads with what the file is, under
+        # every order and filter.
+        return html_.replace("<td>", f"<td>{_kind_line(item, 'div')}", 1)
 
     body = []
     if pinned:
@@ -534,25 +715,42 @@ def _table_html(sections: Sequence[Tuple[str, Sequence[Mapping[str, Any]]]],
             f'</tbody></table></div>{more}')
 
 
+def _counted(count: int, word: str) -> str:
+    """"1 checkpoint", "3 checkpoints": a count with its word in its number."""
+    return f"{count} {word}{'s' if count != 1 else ''}"
+
+
 def count_line(listing: Mapping[str, Any], preset: Preset, show_older: bool,
                view: Any = None) -> str:
+    """How many checkpoints the list shows and in which order, then the
+    view's filter ("· Disease only, of 9 listed"), counted against what the
+    preset ever lists (the drawer: its task models): nothing for a view that
+    asks for every row the preset shows, its own rule being its scope. A
+    view's context rows (a family view's parents of shown files) are counted
+    apart, never as rows of its filter."""
     if listing.get("refused") or not listing.get("items"):
         return ""
-    items = shown_items(listing, view)
+    shown = shown_items(listing, view, preset)
+    chosen = task_filter(view)
+    items = [i for i in shown if matches(i, chosen)]
+    context = len(shown) - len(items)
     runs = _runs_in_order(items)
     of = ""
-    if _view(view).get("architecture"):
-        of = (f" · {str(_view(view)['architecture']).upper()} only, of "
-              f"{len(listing.get('items') or [])} listed")
+    if chosen not in ("all", preset.rows):
+        rows = f", with {_counted(context, 'context row')}" if context else " only"
+        of = (f" · {FILTER_WORDS[chosen][0]}{rows}, of {len(shown_items(listing, None, preset))} "
+              "listed")
     if not items:
         return f"no checkpoint shown{of}"
     order = "newest first" if _view(view).get("groups") is None else "in the groups below"
     if (preset.latest_runs is not None and not show_older and len(runs) > preset.latest_runs
             and _view(view).get("groups") is None):
         shown = sum(len(v) for _, v in runs[:preset.latest_runs])
-        return (f"{order} · latest {preset.latest_runs} runs · {shown} checkpoints "
-                f"(of {len(items)} in {len(runs)} runs){of}")
-    return f"{order} · {len(items)} checkpoints in {len(runs)} runs{of}"
+        return (f"{order} · latest {_counted(preset.latest_runs, 'run')} · "
+                f"{_counted(shown, 'checkpoint')} (of {len(items)} in "
+                f"{_counted(len(runs), 'run')}){of}")
+    return (f"{order} · {_counted(len(items), 'checkpoint')} in "
+            f"{_counted(len(runs), 'run')}{of}")
 
 
 def find_item(listing: Mapping[str, Any], key: Any) -> Optional[Mapping[str, Any]]:
@@ -566,6 +764,40 @@ def find_item(listing: Mapping[str, Any], key: Any) -> Optional[Mapping[str, Any
 
 def loadable(item: Optional[Mapping[str, Any]]) -> bool:
     return bool(item) and item.get("problem") is None and r.is_digest(item.get("sha256"))
+
+
+def load_refusal(item: Mapping[str, Any]) -> Optional[str]:
+    """Why a listed checkpoint is never loaded, from its listed model record
+    alone (nothing of its file is read again): a base offers no diagnosis; a
+    record this build refused (a file without a model spec among them, with
+    the record reader's reason), or never read, says so. None for a model finetuned for
+    a task, which the reload serves under that task's scoring mode."""
+    record = item.get("record")
+    if record == "model":
+        if item.get("learning_stage") == "base":
+            return BASE_REFUSAL
+        if item.get("task") in TASK_SCORING_MODES:
+            return None
+        return f"{r.record_kind_text(item)}: its record names no task this build serves."
+    if record == "refused":
+        return f"{r.record_kind_text(item)}: {item.get('record_problem') or 'refused'}."
+    return f"{r.record_kind_text(item)}."
+
+
+def can_load(item: Optional[Mapping[str, Any]]) -> bool:
+    """Whether Load is offered for a listed checkpoint: its file was read and
+    its record is a model finetuned for a task (`loadable`, `load_refusal`)."""
+    return loadable(item) and load_refusal(item) is None
+
+
+def load_reason_html(item: Optional[Mapping[str, Any]]) -> str:
+    """Beside the Load button, why it is off for the selected row when its
+    record is never loaded (`load_refusal`); nothing otherwise (an unreadable
+    file says so in its row)."""
+    if not loadable(item):
+        return ""
+    why = load_refusal(item)
+    return f'<div class="shep-reason shep-reason-grey">{r.e(why)}</div>' if why else ""
 
 
 def facts_html(listing: Mapping[str, Any], key: Any) -> str:
@@ -601,27 +833,13 @@ def _graph_digest(workspace_dir: Path) -> Optional[str]:
     return kg if r.is_digest(kg) else None
 
 
-def _sp_in_workspace(workspace_dir: Path) -> Tuple[bool, Optional[str]]:
-    """Whether the workspace holds a shortest-path table, and its build id."""
-    from src.inference.sp_artifact import read_sidecar
-
-    table = workspace_dir / "shortest_paths.pt"
-    try:
-        if not table.is_file():
-            return False, None
-        sidecar = read_sidecar(table)
-    except Exception:  # noqa: BLE001 - present but unreadable: the reload decides
-        return True, None
-    build = sidecar.meta.get("build_id") if sidecar is not None else None
-    return True, build if isinstance(build, str) else None
-
-
 def _from_side(status: Optional[Mapping[str, Any]], listing: Mapping[str, Any]) -> Dict[str, Any]:
     """What is served now, as the confirmation's "From" column needs it.
 
     `listing` gives the checkpoints to name the served one by (``items``), the
     listed workspaces (``workspaces``) and the serving workspace's name
-    (``serving``)."""
+    (``serving``). ``served`` is False when no model is loaded: then nothing is
+    served, and the rows that describe what is served do not apply (`_cell`)."""
     identity = (status or {}).get("served_identity") or {}
     sha = served_checkpoint_sha(status)
     item = next((i for i in listing.get("items") or [] if sha and i.get("sha256") == sha), None)
@@ -631,30 +849,34 @@ def _from_side(status: Optional[Mapping[str, Any]], listing: Mapping[str, Any]) 
     elif sha:
         model = f"epoch {meta.get('epoch', '—')} (not in this workspace's list)"
     else:
-        model = "no trained model" if (status or {}).get("initialized") else "no model loaded"
+        model = "not known" if (status or {}).get("initialized") else "no model loaded"
     sp = identity.get("shortest_paths") or {}
-    settings = identity.get("settings") or {}
     record = identity.get("dataset_record") or {}
     return {
+        "served": bool((status or {}).get("initialized")),
         "model": model,
         "sha256": sha,
         "trained_on": item.get("dataset_fingerprint") if item else None,
         "trained_on_known": item is not None,
         "workspace": listing.get("serving"),
         "graph": (identity.get("graph") or {}).get("kg_sha256"),
-        "sp": sp.get("state") == "verified",
-        "sp_build": sp.get("build_id"),
+        "sp": sp.get("state"),
         "mode": identity.get("scoring_mode"),
-        "eta": settings.get("eta"),
         "synthetic": record.get("origin") == "synthetic",
     }
 
 
 def _to_side(item: Mapping[str, Any], workspace: str, workspace_dir: Path,
-             status: Optional[Mapping[str, Any]], workspaces: Sequence[Any]) -> Dict[str, Any]:
-    sp, build = _sp_in_workspace(workspace_dir)
+             workspaces: Sequence[Any]) -> Dict[str, Any]:
+    """What would be served, as the confirmation's "To" column needs it: the
+    scoring mode is the one the task the model's record names is served under
+    (`core.types.TASK_SCORING_MODES`, the pipeline's own table), and its
+    shortest-path term the state that mode is served with
+    (`core.types.SCORING_MODE_SP_STATES`, the rule the served identity is
+    checked against); neither is guessed from the workspace, which a task
+    model's serving never reads for them, and no mixing weight is predicted."""
     origin = next((r.origin_of(w) for w in workspaces if r._get(w, "name") == workspace), None)
-    eta = (status or {}).get("eta_configured")
+    mode = TASK_SCORING_MODES.get(item.get("task"))
     return {
         "model": r.model_name_line(item),
         "sha256": item.get("sha256"),
@@ -662,10 +884,8 @@ def _to_side(item: Mapping[str, Any], workspace: str, workspace_dir: Path,
         "trained_on_known": True,
         "workspace": workspace,
         "graph": _graph_digest(workspace_dir),
-        "sp": sp,
-        "sp_build": build,
-        "mode": "gnn_plus_shortest_path" if sp else "gnn_only",
-        "eta": eta if sp else 1.0,
+        "sp": SCORING_MODE_SP_STATES.get(mode, "absent"),
+        "mode": mode,
         "synthetic": origin == "synthetic",
     }
 
@@ -714,8 +934,18 @@ def _target_now(item: Mapping[str, Any], workspace: Any, *,
         + (f" ({listed.problem})" if listed.problem else ""))
 
 
+#: The From rows that describe what is served: with no model loaded nothing is
+#: served, so they say "not applicable" (their own word, never "absent" or
+#: "files", which would describe something served). Otherwise every side names
+#: a task: a served model's scoring mode is a task's, and only a model
+#: finetuned for a task is loaded (`load_refusal`).
+_SERVED_ROWS = ("trained", "workspace", "mode", "sp", "data")
+
+
 def _cell(side: Mapping[str, Any], row: str, workspaces: Sequence[Any], *, to: bool,
           other: Optional[Mapping[str, Any]] = None) -> str:
+    if side.get("served") is False and row in _SERVED_ROWS:
+        return '<span class="shep-muted">not applicable</span>'
     if row == "model":
         return r.e(side["model"])
     if row == "sha":
@@ -729,35 +959,30 @@ def _cell(side: Mapping[str, Any], row: str, workspaces: Sequence[Any], *, to: b
             html_ += ' <span class="shep-muted">same dataset</span>'
         return html_
     if row == "workspace":
-        if to and other is not None and other.get("workspace") == side["workspace"] and \
+        if to and other is not None and other.get("served") is not False and \
+                other.get("workspace") == side["workspace"] and \
                 other.get("graph") == side["graph"]:
             return "same"
         name = f"<b>{r.e(side['workspace'])}</b>" if side["workspace"] else \
             '<span class="shep-muted">not a listed workspace</span>'
         return f'{name} · graph <code>{r.e(r.short_hex(side["graph"]))}</code>'
     if row == "sp":
-        if not side["sp"]:
-            return "absent"
-        build = f": build <code>{r.e(side['sp_build'])}</code>" if side.get("sp_build") else ""
-        return f"present{build}" + (' <span class="shep-muted">(as found in the workspace)</span>'
-                                    if to else "")
+        return ("computed from the model's graph view" if side.get("sp") == "computed"
+                else "not used by this task")
     if row == "mode":
-        eta = side.get("eta")
-        eta_text = f" · eta {eta:g}" if isinstance(eta, (int, float)) else ""
-        note = (' <span class="shep-muted">(server setting)</span>'
-                if to and side["mode"] == "gnn_plus_shortest_path" else "")
-        return f'<code>{r.e(side["mode"] or "—")}</code>{r.e(eta_text)}{note}'
+        mode = side["mode"]
+        return f"{r.e(TASK_NAMES[SCORING_MODE_TASKS[mode]])} (<code>{r.e(mode)}</code>)"
     if row == "data":
         return r.chip("synthetic", "amber") if side["synthetic"] else "files"
     return ""
 
 
 _ROWS = (("model", "Model"), ("sha", "Model fingerprint"), ("trained", "Trained on"),
-         ("workspace", "Serving workspace"), ("sp", "SP table"), ("mode", "Scoring mode"),
+         ("workspace", "Serving workspace"), ("mode", "Task and scoring"), ("sp", "SP table"),
          ("data", "Data"))
 _COMPARED = {"model": ("sha256",), "sha": ("sha256",), "trained": ("trained_on",),
-             "workspace": ("workspace", "graph"), "sp": ("sp", "sp_build"),
-             "mode": ("mode", "eta"), "data": ("synthetic",)}
+             "workspace": ("workspace", "graph"), "sp": ("sp",),
+             "mode": ("mode",), "data": ("synthetic",)}
 
 
 def confirmation_html(plan: Mapping[str, Any], *, notice: Optional[str] = None) -> str:
@@ -795,21 +1020,32 @@ def confirmation_html(plan: Mapping[str, Any], *, notice: Optional[str] = None) 
     )
 
 
+#: **What a plan keeps of a listed checkpoint**, the one tuple for the plan's
+#: listing and its "To" item: its place, bytes and dataset, and the record
+#: fields `load_refusal` checks again and the reload's task comes from.
+_ITEM_KEYS = ("workspace", "architecture", "run", "filename", "sha256", "epoch",
+              "dataset_fingerprint", "problem", "record", "record_problem", "learning_stage",
+              "task", "encoder", "reference", "differences")
+
+
+def _kept(item: Mapping[str, Any]) -> Dict[str, Any]:
+    return {k: item.get(k) for k in _ITEM_KEYS}
+
+
 def _listed_context(listing: Mapping[str, Any]) -> Dict[str, Any]:
     """What a plan keeps of the listing to read the From column again: the
     checkpoints to name the served one by, and the listed workspaces."""
-    keep = ("workspace", "architecture", "run", "filename", "sha256", "epoch",
-            "dataset_fingerprint", "problem")
-    return {"items": [{k: i.get(k) for k in keep} for i in listing.get("items") or []],
+    return {"items": [_kept(i) for i in listing.get("items") or []],
             "workspaces": list(listing.get("workspaces") or [])}
 
 
-def request_load(listing: Mapping[str, Any], key: Any, ordering: Any, request: Any, *,
+def request_load(listing: Mapping[str, Any], key: Any, request: Any, *,
                  environ: Optional[Mapping[str, str]] = None
                  ) -> Tuple[Optional[Dict[str, Any]], str]:
-    """Step 1: D8 on this request, the item found in the server's list again
-    and its bytes read again, and the confirmation. Returns ``(plan, html)``; a
-    refusal returns no plan and says why."""
+    """Step 1: D8 on this request; a row that is never loaded refused before
+    anything of its file is read (`load_refusal`); the item found in the
+    server's list again and its bytes read again, and the confirmation.
+    Returns ``(plan, html)``; a refusal returns no plan and says why."""
     from src.api.services.server_lists import ServerListRefused
 
     access = operator_access(request)
@@ -819,6 +1055,9 @@ def request_load(listing: Mapping[str, Any], key: Any, ordering: Any, request: A
     if not loadable(item):
         return None, ('<div class="shep-reason">Select a model that can be loaded first. '
                       'Nothing was done.</div>')
+    refusal = load_refusal(item)
+    if refusal is not None:
+        return None, f'<div class="shep-reason">{r.e(refusal)} Nothing was done.</div>'
     workspace = listing.get("workspace")
     try:
         target, directory, _checkpoint = _target_now(item, workspace, environ=environ)
@@ -828,6 +1067,10 @@ def request_load(listing: Mapping[str, Any], key: Any, ordering: Any, request: A
         return None, (f'<div class="shep-reason">It cannot be loaded now: '
                       f'{r.e(target.get("problem") or "its digest was not read")}. Nothing was '
                       'done.</div>')
+    refusal = load_refusal(target)
+    if refusal is not None:
+        return None, (f'<div class="shep-reason">The file changed since the list was read: '
+                      f'{r.e(refusal)} Nothing was done.</div>')
     status, problem = read_status()
     if status is None:
         return None, (f'<div class="shep-reason">Cannot load now: {r.e(problem)}. Nothing was '
@@ -838,11 +1081,9 @@ def request_load(listing: Mapping[str, Any], key: Any, ordering: Any, request: A
             "filename": item["filename"],
             "from": _from_side(status, {**context, "serving": listing.get("serving")}),
             "from_key": served_key(status),
-            "to": _to_side(target, workspace, directory, status, workspaces),
-            "to_item": {k: target.get(k) for k in ("architecture", "run", "filename", "sha256",
-                                                   "epoch", "dataset_fingerprint", "problem")},
-            **context,
-            "ordering": dict(ordering) if isinstance(ordering, Mapping) else None}
+            "to": _to_side(target, workspace, directory, workspaces),
+            "to_item": _kept(target),
+            **context}
     notice = None
     if target.get("sha256") != item.get("sha256"):
         notice = (f"The file changed since the list was read: it holds model "
@@ -850,40 +1091,6 @@ def request_load(listing: Mapping[str, Any], key: Any, ordering: Any, request: A
                   " as listed. The To column is what it holds now; read the list again to see "
                   "the rest.")
     return plan, confirmation_html(plan, notice=notice)
-
-
-def _record_usage(plan: Mapping[str, Any], loaded: bool, why: Optional[str],
-                  environ: Optional[Mapping[str, str]] = None) -> Optional[str]:
-    """The usage history entry for a Load from an ordered list (D4), or why it
-    could not be written; None when the list was not ordered or it was written.
-    The version is read bound to the digest the list was ordered by
-    (`resolve_version(expected_sha256=)`, compared before decoding), so an entry
-    is never written against other bytes."""
-    ordering = plan.get("ordering")
-    if not ordering:
-        return None
-    try:
-        from src.config import server_settings
-        from src.evaluation.cohort_registry import CohortVersionChanged, resolve_version
-        from src.evaluation.report_store import record_model_load
-
-        setting = server_settings.cohort_registry(environ)
-        if not setting.available:
-            return f"the usage history was not written: {setting.problem}"
-        try:
-            version = resolve_version(setting.value, ordering["version"],
-                                      expected_sha256=ordering.get("version_sha256") or None)
-        except CohortVersionChanged:
-            return ("the usage history was not written: the cohort version changed since the "
-                    "list was ordered")
-        record_model_load(version, checkpoint_sha256=plan["to"]["sha256"],
-                          metric=ordering["metric"],
-                          scoring_semantics_digest=ordering["scoring_semantics_digest"],
-                          loaded=loaded, why=why)
-    except Exception as exc:  # noqa: BLE001 - the load stands; the page says what failed
-        logger.exception("The usage history entry could not be written")
-        return f"the usage history was not written ({type(exc).__name__})"
-    return None
 
 
 def _outcome(kind: str, headline: str, text: str = "") -> str:
@@ -922,7 +1129,7 @@ def finish_load(plan: Optional[Mapping[str, Any]], request: Any, *,
     loaded both read again, and the confirmation shown again with a notice when
     either changed; WP2's reload with what the server resolves from the item,
     bound to the model fingerprint shown (other bytes are refused by the
-    reload's own read, and nothing is published); the usage history."""
+    reload's own read, and nothing is published)."""
     from src.api.services.server_lists import ServerListRefused
 
     access = operator_access(request)
@@ -958,24 +1165,25 @@ def finish_load(plan: Optional[Mapping[str, Any]], request: Any, *,
         target, directory, checkpoint = _target_now({**shown, "sha256": plan["to"].get("sha256")},
                                                     plan["workspace"], environ=environ)
     except ServerListRefused as exc:
-        why = str(exc)
-        note = _record_usage(plan, False, why, environ)
-        return LoadStep(None, _outcome("grey", "Not reloaded.", f"Refused: {why} Nothing was done."
-                                       + (f" Also, {note}." if note else "")), "", now_sha, False)
-    to_now = _to_side(target, plan["workspace"], directory, status, workspaces)
+        return LoadStep(None, _outcome("grey", "Not reloaded.",
+                                       f"Refused: {exc} Nothing was done."), "", now_sha, False)
+    # The refusal again on what the file holds now (rewritten into a base
+    # since the confirmation, say): never reloaded, never shown to confirm.
+    refusal = load_refusal(target) if loadable(target) else None
+    if refusal is not None:
+        return LoadStep(None, _outcome("grey", "Not reloaded.", f"{refusal} Nothing was done."),
+                        "", now_sha, False)
+    to_now = _to_side(target, plan["workspace"], directory, workspaces)
     if _sides_differ(to_now, plan["to"]):
         new_plan["to"] = to_now
-        new_plan["to_item"] = {k: target.get(k) for k in ("architecture", "run", "filename",
-                                                          "sha256", "epoch",
-                                                          "dataset_fingerprint", "problem")}
+        new_plan["to_item"] = _kept(target)
         notices.append(TO_CHANGED)
     if notices:
         if not loadable(target):
-            note = _record_usage(plan, False, "it cannot be loaded now", environ)
             return LoadStep(None, _outcome(
                 "grey", "Not reloaded.",
                 f"It cannot be loaded now: {target.get('problem') or 'its digest was not read'}. "
-                "Nothing was done." + (f" Also, {note}." if note else "")), "", now_sha, False)
+                "Nothing was done."), "", now_sha, False)
         return LoadStep(new_plan, confirmation_html(new_plan, notice=" ".join(
             [*notices, NOTHING_RELOADED])), "", now_sha, False)
 
@@ -985,9 +1193,12 @@ def finish_load(plan: Optional[Mapping[str, Any]], request: Any, *,
 
     run = reload if reload is not None else pipeline_routes.run_reload
     try:
+        # The task the confirmed model's record names: the reload refuses a
+        # build that serves another (README §1, switching task is loading
+        # another model).
         answer = jsonable_encoder(run(pipeline_routes.PipelineReloadRequest(
             data_dir=str(directory), checkpoint_path=str(checkpoint),
-            expected_checkpoint_sha256=plan["to"]["sha256"])))
+            expected_checkpoint_sha256=plan["to"]["sha256"], task=plan["to_item"]["task"])))
     except Exception as exc:  # noqa: BLE001 - a reload that raises is a refused reload
         logger.exception("Pipeline reload failed")
         answer = {"success": False, "message": f"Reload failed ({type(exc).__name__})."}
@@ -996,16 +1207,10 @@ def finish_load(plan: Optional[Mapping[str, Any]], request: Any, *,
     changed = isinstance(after, Mapping) and served_key(after) != now_key
     if not answer.get("success"):
         why = str(answer.get("message") or "the reload was refused")
-        note = _record_usage(plan, False, why, environ)
         return LoadStep(None, _outcome("grey", "Not reloaded; the model in use is unchanged.",
-                                       why + (f" Also, {note}." if note else "")),
+                                       why),
                         "", served if isinstance(after, Mapping) else now_sha, changed)
-    note = _record_usage(plan, True, None, environ)
     text = f"The model in use for every session is now {r.short_hex(served)}."
-    if plan.get("ordering") and note is None:
-        text += " The usage history records this load as made from the ordered list."
-    elif note:
-        text += f" But {note}."
     return LoadStep(None, _outcome("ok", "Reloaded.", text), "", served, changed)
 
 
@@ -1203,11 +1408,8 @@ class ModelList:
     - ``listing``, ``selected``, ``plan``: this session's listing, selection and
       open confirmation (`gr.State`);
     - ``view``: `gr.State`, None or the page's view of the list
-      (``architecture``, ``groups``, ``rest_title``, ``column``, ``cells``,
+      (``task``, ``keys``, ``groups``, ``rest_title``, ``column``, ``cells``,
       ``note``: the module docstring); the list redraws on its ``.change``;
-    - ``ordering``: `gr.State`, None, or ``{"version", "version_sha256",
-      "metric", "scoring_semantics_digest"}`` when the page orders the list by a
-      cohort version's score (Models): a Load then writes a usage history entry;
     - ``phase``: `gr.State`, ``"idle"``, ``"confirming"`` or ``"loading"``
       (Diagnosis disables Run Diagnosis while it is not idle);
     - ``refresh``: keyword arguments for an event that (re)reads the list:
@@ -1230,7 +1432,6 @@ class ModelList:
     selected: Any
     plan: Any
     view: Any
-    ordering: Any
     phase: Any
     show_older: Any
     count: Any
@@ -1290,7 +1491,6 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
     selected = gr.State(None)
     plan = gr.State(None)
     view = gr.State(None)
-    ordering = gr.State(None)
     phase = gr.State("idle")
     show_older = gr.State(False)
     # The table preset (Models) keeps its header and its rows in one column
@@ -1332,16 +1532,19 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
     def _refresh(name, older, current_view, previous, key, request: gr.Request):
         # A selection still listed in the same workspace stays selected (M5-3
         # review UI-3: the re-read after a Load dropped a row picked meanwhile).
-        data = list_models(name, request)
-        key = kept_selection(previous, data, key, current_view)
+        data = list_models(name, request, family=chosen.family)
+        current_view = view_for_listing(current_view, previous, data)
+        key = kept_selection(previous, data, key, current_view, chosen)
+        item = find_item(data, key)
         choices = r.workspace_choices(data.get("workspaces") or [])
         # Reading the list is no act: a refused read says why in the list
-        # (`refused_line`); Load's reason is said when Load is clicked.
+        # (`refused_line`); Load's reason is said when Load is clicked, or
+        # beside it at once for a row whose record is never loaded.
         return (data, key, gr.update(choices=choices, value=data.get("workspace")),
                 count_line(data, chosen, older, current_view),
                 list_html(data, key, chosen, show_older=older, view=current_view),
-                facts_html(data, key), gr.update(interactive=loadable(find_item(data, key))),
-                "", note_html(current_view))
+                facts_html(data, key), gr.update(interactive=can_load(item)),
+                load_reason_html(item), note_html(current_view))
 
     refresh_outputs = [listing, selected, workspace, count, rows, facts, load_button, reason, note]
     refresh = {"fn": _refresh, "inputs": [workspace, show_older, view, listing, selected],
@@ -1354,33 +1557,36 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
         if key == "__older__":
             return (gr.update(), True,
                     list_html(data, None, chosen, show_older=True, view=current_view),
-                    count_line(data, chosen, True, current_view), gr.update(), gr.update())
+                    count_line(data, chosen, True, current_view), gr.update(), gr.update(),
+                    gr.update())
         item = find_item(data, key)
-        if item is None or item not in shown_items(data, current_view):
-            return (gr.update(),) * 6
+        if item is None or item not in shown_items(data, current_view, chosen):
+            return (gr.update(),) * 7
         return (key, older, list_html(data, key, chosen, show_older=older, view=current_view),
                 count_line(data, chosen, older, current_view), facts_html(data, key),
-                gr.update(interactive=loadable(item)))
+                gr.update(interactive=can_load(item)), load_reason_html(item))
 
     rows.click(_select, inputs=[listing, show_older, view],
-               outputs=[selected, show_older, rows, count, facts, load_button],
+               outputs=[selected, show_older, rows, count, facts, load_button, reason],
                show_progress="hidden")
 
     def _redraw(data, key, older, current_view):
-        # The page changed its view (an architecture, an order): the selection
-        # stays only while the view still shows it.
+        # The page changed its view (a filter, an order): the selection stays
+        # only while the view still shows it.
         item = find_item(data, key)
-        if item is None or item not in shown_items(data, current_view):
+        if item is None or item not in shown_items(data, current_view, chosen):
             key, item = None, None
         return (key, list_html(data, key, chosen, show_older=older, view=current_view),
                 count_line(data, chosen, older, current_view), facts_html(data, key),
-                gr.update(interactive=loadable(item)), note_html(current_view))
+                gr.update(interactive=can_load(item)), load_reason_html(item),
+                note_html(current_view))
 
     view.change(_redraw, inputs=[listing, selected, show_older, view],
-                outputs=[selected, rows, count, facts, load_button, note], show_progress="hidden")
+                outputs=[selected, rows, count, facts, load_button, reason, note],
+                show_progress="hidden")
 
-    def _request(data, key, order, request: gr.Request):
-        new_plan, html_ = request_load(data, key, order, request)
+    def _request(data, key, request: gr.Request):
+        new_plan, html_ = request_load(data, key, request)
         if new_plan is None:
             return None, gr.update(visible=False), "", html_, gr.update(), gr.update(), "idle"
         new, old = r.short_hex(new_plan["to"]["sha256"]), r.short_hex(new_plan["from"].get("sha256"))
@@ -1389,7 +1595,7 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
                 gr.update(value=f"Keep {old}" if new_plan["from"].get("sha256") else "Cancel"),
                 "confirming")
 
-    load_button.click(_request, inputs=[listing, selected, ordering],
+    load_button.click(_request, inputs=[listing, selected],
                       outputs=[plan, confirm, confirm_html, reason, reload_button, keep_button,
                                phase]).then(**ctx.chip_refresh)
 
@@ -1471,13 +1677,16 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
 
     confirm_html.click(_read_again, inputs=None, outputs=[reason], show_progress="hidden")
 
-    return ModelList(chosen, elem_id, workspace, listing, selected, plan, view, ordering, phase,
+    return ModelList(chosen, elem_id, workspace, listing, selected, plan, view, phase,
                      show_older, count, rows, facts, reason, note, load_button, confirm,
                      confirm_html, reload_button, keep_button, refresh, head_extra, foot_extra,
                      reload_done, after_close_js)
 
 
 __all__ = [
+    "BASE_REFUSAL",
+    "FAMILY_FILTERS",
+    "FILTER_WORDS",
     "FROM_CHANGED",
     "IN_USE_NOTE",
     "LoadStep",
@@ -1489,11 +1698,14 @@ __all__ = [
     "Preset",
     "REPLACES_NOTE",
     "REST_TITLE",
+    "TASK_FILTERS",
     "TO_CHANGED",
+    "can_load",
     "confirmation_html",
     "count_line",
     "create_model_list",
     "facts_html",
+    "family_views",
     "find_item",
     "finish_load",
     "item_key",
@@ -1504,8 +1716,11 @@ __all__ = [
     "load_answered_js",
     "load_closed_js",
     "load_guard",
+    "load_reason_html",
+    "load_refusal",
     "loadable",
     "loading_buttons",
+    "matches",
     "note_html",
     "read_again",
     "read_recorded",
@@ -1515,4 +1730,6 @@ __all__ = [
     "request_load",
     "shown_items",
     "start_wait_js",
+    "task_filter",
+    "view_for_listing",
 ]

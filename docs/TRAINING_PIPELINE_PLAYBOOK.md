@@ -6,7 +6,7 @@
 > `docs/ARCHITECTURE.md`; this doc is operational only.
 >
 > **Golden rule**: one **workspace** = one dataset version. Everything for a given
-> dataset (KG, shortest paths, checkpoints, index) lives under a single
+> dataset (KG, checkpoints, index) lives under a single
 > `data/workspaces/<name>/` folder. Never mix a checkpoint from one workspace with
 > the data of another — serving refuses such a checkpoint (see "The safety net"
 > near the end), but the discipline is the real fix.
@@ -16,22 +16,23 @@
 ## The pipeline at a glance
 
 ```
- (manual)            Step 1                 Step 2                Step 3
-HPO download  →  build_knowledge_graph  →  compute_shortest_  →  train_model
-                                            paths                 (WebUI)
-   │                    │                      │                    │
-phenotype.hpoa     kg.json                shortest_paths.pt    runs/<arch>/<run>/
-genes_to_           node_features.pt                           (fingerprint
- phenotype.txt      edge_indices.pt                             embedded)
+ (manual)            Step 1                 Step 2
+HPO download  →  build_knowledge_graph  →  train: a base, then its task models
+                                            (WebUI)
+   │                    │                      │
+phenotype.hpoa     kg.json                runs/<arch>/<run>/
+genes_to_           node_features.pt      (fingerprint embedded)
+ phenotype.txt      edge_indices.pt
                     num_nodes.json
                     train/val_samples.json
                               ↓
-                         Step 4: launch_shepherd.sh → /ui diagnosis
+                         Step 3: launch_shepherd.sh → /ui diagnosis
 ```
 
-Steps 1 and 2 are **CLI prerequisites** run once per dataset version. Step 3
-(training) is driven from the dashboard's **Research › Prepare › Training** page.
-Step 4 serves inference.
+Step 1 is the **CLI prerequisite**, run once per dataset version. Step 2
+(training) is driven from the dashboard: a base on **Research › Prepare ›
+Training**, then its task models on **Research › Prepare › Fine-tune**. Step 3
+serves inference.
 
 ---
 
@@ -98,7 +99,7 @@ Ontology files (HPO, MONDO `.obo`) are **auto-downloaded** by `OntologyLoader`
 
 | Flag | Notes |
 |------|-------|
-| `--feature-dim 128` | **Input** node-feature dimension. Keep it identical across rebuilds of the same dataset — it is part of the fingerprint, and is *separate* from the model's `hidden_dim` (set in the UI, e.g. 256). |
+| `--feature-dim 128` | **Input** node-feature dimension. Keep it identical across rebuilds of the same dataset — it is part of the fingerprint, and is *separate* from the model's encoder width (the model spec's, not a form field). |
 | `--num-train / --num-val` | Simulated patient samples. Recommended 50K–100K train, val ≈ 10–20% of train. More = less overfitting, slower build. |
 
 **Produces in `$WS/`**: `kg.json`, `node_features.pt`, `edge_indices.pt`,
@@ -107,91 +108,108 @@ Ontology files (HPO, MONDO `.obo`) are **auto-downloaded** by `OntologyLoader`
 **Reference scale** (real HPO data, Milestone 4): ~52,308 nodes
 (27,990 diseases / 19,389 phenotypes / 4,929 genes) and ~494,223 edges.
 
----
+### No shortest-path step
 
-## Step 2 — Pre-compute shortest paths
-
-This is the heaviest prerequisite (it powers the SP-similarity term in scoring).
-
-```bash
-.venv/bin/python scripts/compute_shortest_paths.py \
-    --kg-path "$WS/kg.json" \
-    --output-dir "$WS" \
-    --max-hops 5
-```
-
-**Produces**: `$WS/shortest_paths.pt` (must live in the same dir as
-`node_features.pt`).
-
-**Cost reference** (Milestone 4 dataset): ~374 million (phenotype → target)
-pairs, file ≈ **8.9 GB**; loading it peaks ~12 GB RAM, steady ~8–9 GB. This grows
-with KG size — budget disk + RAM accordingly if you expand the ontology later.
-On Spark's 128 GB unified memory this is comfortable.
+No task model reads a shortest-path table: a disease model ranks every disease of its graph view,
+and a gene model computes the exact hop distances it uses from that view in process. So nothing
+here builds `shortest_paths.pt`, and the GB10 acceptance probe accepts a workspace without one.
 
 ---
 
-## Step 3 — Train (Research › Prepare › Training)
+## Step 2 — Train (Research › Prepare › Training, then Fine-tune)
 
-1. Launch the app with the service's settings (see Step 4) and open `/ui` →
+1. Launch the app with the service's settings (see Step 3) and open `/ui` →
    **Research (pre-clinical)** › Prepare › **Training**.
 2. Choose your workspace, `$WS`'s last part (`hpo_2026_v1`), in the run bar's
    **Dataset** list.
-3. Recommended first run — validate the whole pipeline cheaply:
-   - **GNN Conv Type = `gat`** (AMP works, fastest, lowest memory). Get a clean
-     baseline end-to-end before touching HGT.
-   - A handful of epochs first to confirm loss curves move and checkpoints save.
-4. Then switch **GNN Conv Type = `hgt`** for the real run. HGT forces float32
-   (pyg_lib limitation) and uses more memory — this is exactly the case that OOMs
-   a 16 GB 5070 Ti but fits easily on Spark's unified memory. On Spark you can
-   raise **Batch Size** and **Max Subgraph Nodes** (defaults are tuned for 16 GB).
-5. Watch for `hits@10` to climb. Milestone reference: 3 epochs → 0.581; the ≥ 80%
-   target needs 30+ epochs.
+3. The form trains a **base** (link prediction on the knowledge graph) with the
+   reference recipe's base settings, each starting at the recipe's value:
+   **Epochs**, **Learning rate**, **Batch size** and **Seed**, the rest under
+   "More reference settings". The line under the form says which you changed
+   ("Differs from the reference settings: Epochs 5 (200)"); Start sends only
+   those, and the run records the rest as the recipe's.
+4. Recommended first run — validate the whole pipeline cheaply: a handful of
+   **Epochs** first, to confirm the loss curves move and checkpoints save. On
+   Spark you can raise **Batch size** (the reference is the source's 512).
+5. Watch the Trainer's validation LP accuracy (with ROC-AUC and AP beside it)
+   climb in the run view. It selects the top-k saves on the val pairs; it is not
+   a test result.
+6. Then open Research › Prepare › **Fine-tune**: choose the dataset, a base
+   checkpoint of it, and one to three **Tasks** (Disease, Gene,
+   Patients-like-me; each option says whether it is ready on the dataset).
+   Start trains one child run per task, in order. The job card shows each
+   child's status and, once it has ended, its best save by the Trainer's pooled
+   MRR; **Stop** there names the queued children it cancels.
 
 **Every run writes into a new folder of its own** (contract M3a-2):
-`$WS/runs/<arch>/<date-time>_<run name>_<id>/`, holding `config.yaml`,
-`runtime.json`, `final_metrics.json`, `checkpoints/` (`last.pt`, written every
-epoch, and the top-K `model-<epoch>-<metric>.pt`) and `logs/`. The optional
+`$WS/runs/<encoder kind>/<date-time>_<run name>_<id>/` (`gatv2` for the
+reference recipe), holding `config.yaml`, `runtime.json`, `final_metrics.json`,
+`checkpoints/` (`last.pt`, written every epoch, and the top-K
+`model-<epoch>-<metric>.pt`) and `logs/`. The optional
 **Run name** field names it; the run view's header names the run once training
-starts. No run writes into or prunes another run's folder.
+starts. No run writes into or prunes another run's folder. The lists read
+every folder under `$WS/runs/`, whatever its name (since K8-7b, 2026-11-08): a
+model moved into a folder of another name is still listed, chosen and served,
+judged by its own record.
 
 **Continue Training** (contract M3a-3, M3a-4): open **Continue…**, pick a
-checkpoint of the run bar's dataset from the run list or type its path, click
-**Check checkpoint**, then **Continue Training**.
-What happens is decided by the checkpoint's own record:
+model checkpoint (a base or a task model) of the run bar's dataset from the run
+list or type its path, click **Check checkpoint**, then **Continue Training**.
+A file without a model spec is listed on Research › Models ("Record not readable")
+but never continued. What happens is decided by the checkpoint's own record:
 
 - an unfinished run (stopped between epochs, or paused) is resumed with its own
   settings, shown read-only; only its remaining epochs run;
 - a finished run can be extended by a number of extra epochs at its final
   learning rate, held fixed;
 - a run that stopped early, a weights-only file or one trained before the M3a
-  record is refused, with the reason.
+  record is refused, with the reason, and so is a file without a model spec
+  ("written before the model spec: not readable by this build; start a new
+  run").
+
+Only the current settings are inherited (since K8-7, 2026-11-08): a setting the
+parent recorded that this version no longer has (`num_workers`, the old model
+settings such as `conv_type`) is neither inherited nor a reason to refuse, and a
+parent missing a current setting is refused. Check checkpoint and the run decide
+alike.
 
 The child is a new run in its own folder and records its parent by SHA-256. To
 train from a checkpoint with other settings, start a new run: changing settings
-from a parent (a branch) is not available yet.
+from a parent (a branch) is not available from the dashboard yet.
 
 **Stop** asks first and says how much progress is lost; a stopped run shows
 **Stopped** and the latest checkpoint it can be continued from.
 
 > CLI (no UI), in a shell given the service's `SHEPHERD_WORKSPACES_ROOT` (the
 > GPU lock's one name; [deployment guide](../deployment-guide.en.md) §4.11):
-> `scripts/train_model.py --data-dir "$WS" [--run-name NAME]`, or
-> `--config <yaml>`. `--resume <checkpoint>` continues a parent as above,
+> `scripts/train_model.py --data-dir "$WS" --stage base [--run-name NAME]`, or
+> `--config <yaml>`; then each task model with
+> `--stage finetune --task <task> --finetune-from <the base's checkpoint>`.
+> Every run names its `--stage`, a continued one included (a run without it is
+> refused, naming `--stage`): `--resume <checkpoint>`, with that run's
+> `--stage`, continues a parent as above,
 > `--extend-epochs N` extends a finished one, `--extend-lr LR` replaces a rate
 > that ended at 0 (and only such a rate), and `--pause-after-epoch N` stops with
 > a resumable checkpoint after N epochs of total progress. `--run-dir` writes into
 > an explicit folder, which must be absent or empty. The old `--output-dir` and
 > `--checkpoint-dir` are gone, and a configuration that still sets `output_dir`,
-> `checkpoint_dir` or `log_dir` is refused.
+> `checkpoint_dir` or `log_dir` is refused. So is one naming a setting this
+> version does not have ("names settings this version does not have: …"); since
+> K8-7 `num_workers` and the old model settings (`conv_type`, `hidden_dim`, …) are
+> among them, and `--conv-type`, `--hidden-dim` and `--num-layers` are gone.
+> A refusal is one line, `train_model: refused: <why> Nothing was written.`,
+> exit 1 (since K8-7b); an error after the run's folder is made is a failed run,
+> logged as "Training failed:" with its traceback, as is an unexpected error (one
+> that is no refusal) before it.
 >
 > Checkpoints from before this layout (`$WS/checkpoints/`) are not listed or
-> selected automatically; they are still served or measured by explicit path.
-> Move them once with `scripts/migrate_checkpoints.py "$WS"` (a plan) and
-> `--apply`; see the script's description.
+> selected automatically; they stay on disk, reached by explicit path only. A
+> checkpoint without a model spec (every file written before the model bundles)
+> is refused at load, before any model is built.
 
 ---
 
-## There is no step 4 — building a vector index is not part of this pipeline
+## There is no vector-index step — building a vector index is not part of this pipeline
 
 This step used to build an ANN index and point the inference pipeline at it. The
 vector-index subsystem has been **detached from diagnosis**: nothing on the
@@ -206,11 +224,11 @@ first: the similarity contract must be defined before the interface is reused.
 
 ---
 
-## Step 4 — Launch & run inference
+## Step 3 — Launch & run inference
 
 The launcher reads no environment file: set the service's settings first, in
 this shell or in the systemd unit ([deployment guide](../deployment-guide.en.md)
-§4.12; for Step 3, at least `SHEPHERD_DEPLOYMENT_MODE` and
+§4.12; for Step 2, at least `SHEPHERD_DEPLOYMENT_MODE` and
 `SHEPHERD_WORKSPACES_ROOT`).
 
 ```bash
@@ -247,12 +265,14 @@ model (its log's "Startup failed" line says why), and **🔒 Change model…** �
 **🔒 Load this model** on the Diagnosis page answers "Not reloaded; the model
 in use is unchanged." with that reason.
 
-The structural fingerprint (`verify_fingerprint`) is then a **diagnostic, not
-the graph's identity**, and never stops a load. Its warnings surface through the
-pipeline API (`fingerprint_warnings`) in the Warnings section of the Diagnosis
-page's **Details ›** drawer: "Graph structure differs from the checkpoint's
-structural fingerprint", or "Graph structure not compared" when the checkpoint
-records no fingerprint.
+A checkpoint whose record matches but which carries no model spec (a
+ShepherdGNN history file) is refused next, still before any model is built:
+"written before the model spec: not readable by this build; start a new run".
+
+The structural fingerprint is **recorded, and compared by nothing at load**
+(since K8-4): the record's digests above are the graph's identity. The pipeline
+API reports no fingerprint warnings, and the Diagnosis page's **Details ›**
+drawer shows no structural line.
 
 **What it means for you:**
 - Keep each dataset version in its own workspace; load a checkpoint against the
@@ -261,9 +281,7 @@ records no fingerprint.
   different `--feature-dim`), **the old checkpoints are refused** on the rebuilt
   workspace. That refusal is correct: retrain for the new data.
 - A checkpoint refused because it "records no training_input_digests" predates
-  the provenance contract: retrain it. `scripts/migrate_checkpoints.py` writes
-  nothing into a checkpoint; it moves one with no record to the workspace's
-  `archive/`.
+  the provenance contract: retrain it.
 
 ---
 
@@ -274,8 +292,8 @@ records no fingerprint.
   (one shared unified-memory figure; GPU util + temperature still read normally).
   Not a bug.
 - **`sm_121` capability warning** from torch on GB10 is harmless/expected.
-- **Memory headroom**: the 16 GB-oriented defaults (`max_subgraph_nodes=5000`,
-  conservative `batch_size`, HGT batch ≤ 16) can be raised on Spark.
+- **Memory headroom**: on Spark the base's **Batch size** can be raised above
+  the reference 512; the line under the form records it as changed.
 - **PyG**: ARM wheels were self-compiled during deploy; the startup PyG status
   line and `scripts/validate_pyg_ext.py` (5/5) confirm they are active.
 
@@ -289,5 +307,5 @@ records no fingerprint.
 | "Running slow" / HGT sluggish | PyG status line at training start; if any extension `MISSING`, re-run deploy PyG step |
 | A model will not load after a rebuild ("does not match this workspace's graph") | Expected: the checkpoint was trained on the old build (see the safety net above); retrain on the rebuilt workspace |
 | Inference rankings look wrong | The Diagnosis page's **Details ›** drawer: which workspace is served and whether the model was trained on it ("the same dataset ✓" or "another dataset"), and the structural fingerprint's warnings |
-| `No paths found` / empty results at inference | Check, in order: the pipeline is pointed at the intended `$WS`; `kg.json` and `shortest_paths.pt` are present there; the submitted HPO ids exist in the KG (unknown ids are dropped before scoring); at least one phenotype has a KG path to a disease — candidate discovery is BFS-gated, so a phenotype with no qualifying path yields nothing |
-| Build/SP killed (OOM) | Expected only on small-RAM machines; Spark's 128 GB is fine. See `docs/MILESTONE_REPORT.md` SP memory section |
+| `No paths found` beside a disease, or no result at inference | Check, in order: a model is loaded (with none, nothing is served and a diagnosis is refused with the reason); the pipeline is pointed at the intended `$WS`; the submitted HPO ids exist in the KG (unknown ids are dropped before scoring and listed in `phenotype_input.unknown`; with none known the request is refused). Ranking is not path-gated: a disease task model ranks every disease of its graph view, and paths are looked for only to explain the rows shown, so a disease with no path is still ranked |
+| Build killed (OOM) | Expected only on small-RAM machines; Spark's 128 GB is fine. See `docs/MILESTONE_REPORT.md` SP memory section |

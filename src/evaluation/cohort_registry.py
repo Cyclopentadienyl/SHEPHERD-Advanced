@@ -62,6 +62,15 @@ file verified against the dataset record, which is later work.
   describe the **ranked** cases, the samples written: how many are scored on
   fewer terms than the source listed, and what normalisation removed.
 
+**Genes, optional per case** (README §8: reference cohorts carry causal genes;
+PLAN_TEST_RESULTS §8.3–8.4). A case may list ``causal_genes`` and
+``candidate_genes``, each a non-empty list of distinct gene identifiers: a gene
+node's id (``disgenet:SCN1A``) or a symbol only one gene node carries
+(`KnowledgeGraph.gene_lookup`). Mapped, they are the sample's
+``causal_gene_ids`` and ``gene_ids``; an identifier that maps to no gene is
+left out and counted, and the case is not excluded for it (a task binds what
+it needs). The ``genes`` counts appear only when the source lists genes.
+
 Module: src/evaluation/cohort_registry.py
 """
 from __future__ import annotations
@@ -117,7 +126,8 @@ REPORT_FILE = "report.json"
 #: The name `create_report_dir` gives a run directory: ``<UTC time>-<checkpoint
 #: digest, 12 hex>-<8 random hex>``. Every reader of the report store takes a
 #: run directory by this name and nothing else, so a file kept beside the run
-#: directories (the usage history, the investigation notes) is never read as one.
+#: directories (the usage history, the investigation notes and their lock files)
+#: is never read as one.
 RUN_ID_PATTERN = re.compile(r"[0-9]{8}T[0-9]{6}Z-([0-9a-f]{12})-[0-9a-f]{8}")
 
 #: What a case that lost some, but not all, of its terms in mapping becomes:
@@ -137,6 +147,7 @@ UNSUPPORTED_DISEASE_NAMESPACES: Tuple[str, ...] = ("OMIM", "ORPHA", "Orphanet")
 
 _SOURCE_KEYS = frozenset({"format", "cases"})
 _CASE_KEYS = frozenset({"case_id", "phenotypes", "disease"})
+_GENE_KEYS = ("causal_genes", "candidate_genes")
 # ASCII digits, not `\d`, which also matches digits of other scripts.
 _HPO_TERM = re.compile(r"HP:[0-9]{7}")
 _MONDO_TERM = re.compile(r"MONDO:[0-9]{7}")
@@ -205,8 +216,8 @@ class CohortVersionChanged(ValueError):
     It carries the facts (``path``, the ``cohort.json`` read or looked for;
     ``expected``; ``found``) and its message states only them. What the
     difference means depends on where the expectation came from (a run started
-    for a version, a list ordered by one, a version listed earlier), so each
-    caller words its own refusal from these fields."""
+    for a version, a version listed earlier), so each caller words its own
+    refusal from these fields."""
 
     def __init__(self, path: str | Path, expected: str, found: Optional[str]) -> None:
         self.path = Path(path)
@@ -239,6 +250,9 @@ class SourceCase(NamedTuple):
     case_id: str
     phenotypes: Tuple[str, ...]
     disease: str
+    #: Gene identifiers, None when the source does not list them.
+    causal_genes: Optional[Tuple[str, ...]] = None
+    candidate_genes: Optional[Tuple[str, ...]] = None
 
 
 class WorkspaceGraph(NamedTuple):
@@ -251,6 +265,8 @@ class WorkspaceGraph(NamedTuple):
     bound: Dict[str, str]
     dataset_record: "DatasetRecord"
     node_mapping: Dict[str, Dict[str, int]]
+    #: Gene identifiers -> gene index (`KnowledgeGraph.gene_lookup`).
+    gene_lookup: Optional[Dict[str, int]] = None
 
 
 class MappedCohort(NamedTuple):
@@ -560,7 +576,7 @@ def parse_source(data: bytes, *, source: Any = "the source") -> List[SourceCase]
             problems.append(f"{where}: case_id must be a non-empty string, got "
                             f"{_json_kind(case_id)}")
         missing = sorted(_CASE_KEYS - set(case))
-        extra = sorted(set(case) - _CASE_KEYS)
+        extra = sorted(set(case) - _CASE_KEYS - set(_GENE_KEYS))
         if missing:
             problems.append(f"{where}: missing {missing}")
         if extra:
@@ -591,8 +607,28 @@ def parse_source(data: bytes, *, source: Any = "the source") -> List[SourceCase]
                 f"{where}: disease {_not_an_id(disease, 'a MONDO id (MONDO: and seven digits)')}"
             )
 
-        if phenotypes_ok and disease_ok and case_id_ok:
-            result.append(SourceCase(case_id, tuple(phenotypes), disease))
+        genes: Dict[str, Optional[Tuple[str, ...]]] = {}
+        genes_ok = True
+        for key in _GENE_KEYS:
+            if key not in case:
+                genes[key] = None
+                continue
+            value = case[key]
+            if not (isinstance(value, list) and value
+                    and all(isinstance(g, str) and g.strip() and _printable_text(g)
+                            for g in value)):
+                problems.append(f"{where}: {key} must be a non-empty list of gene identifiers "
+                                f"(non-empty printable strings), got {_json_kind(value)}")
+                genes_ok = False
+            elif len(set(value)) != len(value):
+                problems.append(f"{where}: {key} lists a gene identifier twice")
+                genes_ok = False
+            else:
+                genes[key] = tuple(value)
+
+        if phenotypes_ok and disease_ok and case_id_ok and genes_ok:
+            result.append(SourceCase(case_id, tuple(phenotypes), disease,
+                                     genes["causal_genes"], genes["candidate_genes"]))
 
     if problems:
         also = (f"\nAlso, the ground truth of {sum(foreign.values())} case(s) is outside "
@@ -637,13 +673,15 @@ def read_workspace_graph(data_dir: Path) -> WorkspaceGraph:
     reads = read_graph_artifacts(data_dir, map_location="cpu").reads
     bound = verify_graph_source_read(manifest, graph.identity, reads)
     record = verify_dataset_record(manifest, bound["kg"])
-    return WorkspaceGraph(dict(bound), record, graph.kg.get_node_id_mapping())
+    return WorkspaceGraph(dict(bound), record, graph.kg.get_node_id_mapping(),
+                          graph.kg.gene_lookup())
 
 
 def map_cases(
     cases: Sequence[SourceCase],
     node_mapping: Mapping[str, Mapping[str, int]],
     partial_policy: str,
+    gene_lookup: Optional[Mapping[str, int]] = None,
 ) -> MappedCohort:
     """Map each case to per-type node indices, then normalise its phenotypes (§0.5).
 
@@ -656,7 +694,7 @@ def map_cases(
     A case is excluded when its disease is not a disease node
     (`ground_truth_absent`), when no term maps, or -- under ``exclude`` -- when
     any term does not map (`phenotype_unmappable`). A case with no mapped term
-    is always excluded: Mode C refuses an empty phenotype list.
+    is always excluded: a case with no phenotype cannot be scored.
     """
     from src.core.types import DataSource, NodeID
 
@@ -671,6 +709,31 @@ def map_cases(
     excluded = dict.fromkeys(EXCLUSION_CATEGORIES, 0)
     unmappable_terms: Counter = Counter()
     lost = repeats_removed = cases_with_repeats = 0
+    genes_listed = any(case.causal_genes or case.candidate_genes for case in cases)
+    if genes_listed and gene_lookup is None:
+        raise ValueError("the source lists genes and no gene lookup was given to map them")
+    gene_counts = {"cases_with_causal_genes": 0, "cases_with_candidate_genes": 0,
+                   "identifiers_listed": 0, "identifiers_unmappable": 0,
+                   "identifiers_repeated": 0, "cases_with_unmapped_causal_genes": 0}
+
+    def map_genes(identifiers: Sequence[str]) -> Tuple[List[int], List[str]]:
+        """The genes the identifiers name, each once, and the identifiers that
+        name no single gene, normalised by the lookup's case rule (stripped,
+        upper-case), each once, in source order."""
+        mapped_genes: List[int] = []
+        unmapped: List[str] = []
+        for identifier in identifiers:
+            index = gene_lookup.get(identifier, gene_lookup.get(identifier.strip().upper()))
+            gene_counts["identifiers_listed"] += 1
+            if index is None:
+                gene_counts["identifiers_unmappable"] += 1
+                if identifier.strip().upper() not in unmapped:
+                    unmapped.append(identifier.strip().upper())
+            elif index in mapped_genes:
+                gene_counts["identifiers_repeated"] += 1
+            else:
+                mapped_genes.append(index)
+        return mapped_genes, unmapped
 
     for case in cases:
         disease_id = disease_index.get(str(NodeID(DataSource.MONDO, case.disease)))
@@ -708,11 +771,26 @@ def map_cases(
         if normalised.repeats_removed:
             cases_with_repeats += 1
             repeats_removed += normalised.repeats_removed
-        samples.append({
+        sample = {
             "patient_id": case.case_id,
             "phenotype_ids": list(normalised.kept),
             "disease_id": disease_id,
-        })
+        }
+        if case.causal_genes:
+            causal, unmapped_causal = map_genes(case.causal_genes)
+            sample["causal_gene_ids"] = causal
+            gene_counts["cases_with_causal_genes"] += 1
+            if unmapped_causal:
+                # The declared truth is the graph's genes and these: a gene the
+                # graph lacks stays a positive the case could not rank (E5,
+                # F9), and its identifier says which patients share it; never
+                # "no causal gene".
+                sample["causal_genes_unmapped"] = unmapped_causal
+                gene_counts["cases_with_unmapped_causal_genes"] += 1
+        if case.candidate_genes:
+            sample["gene_ids"] = map_genes(case.candidate_genes)[0]
+            gene_counts["cases_with_candidate_genes"] += 1
+        samples.append(sample)
 
     counts = {
         "source_cases": len(cases),
@@ -724,6 +802,8 @@ def map_cases(
         "repeats_removed": repeats_removed,
         "cases_with_repeats": cases_with_repeats,
     }
+    if genes_listed:
+        counts["genes"] = gene_counts
     return MappedCohort(samples, exclusions, counts, dict(sorted(unmappable_terms.items())))
 
 
@@ -853,7 +933,7 @@ def prepare_import(
     read = read_once(source_path)
     cases = parse_source(read.data, source=source_path)
     workspace = read_workspace_graph(Path(data_dir))
-    mapped = map_cases(cases, workspace.node_mapping, partial_policy)
+    mapped = map_cases(cases, workspace.node_mapping, partial_policy, workspace.gene_lookup)
 
     samples_bytes = encode_json(mapped.samples)
     manifest = build_version_manifest(
@@ -1278,8 +1358,10 @@ def list_report_runs(version: CohortVersionRead) -> List[ListedRun]:
     writes: one a link takes elsewhere, or an entry that is not a directory
     named as a run id, is listed with its reason. **The store's own files**
     beside the runs, the usage history and the investigation notes
-    (`report_store.STORE_FILES`), are not runs and are not listed, so no
-    caller has to know the store's layout to skip them. Reads no file.
+    (`report_store.STORE_FILES`) and their lock files
+    (`report_store.STORE_LOCK_FILES`, K8-6r.1), are not runs and are not
+    listed, so no caller has to know the store's layout to skip them. Reads no
+    file.
 
     Raises:
         RegistryRefused: ``reports/`` resolves outside the version directory, or
@@ -1289,12 +1371,12 @@ def list_report_runs(version: CohortVersionRead) -> List[ListedRun]:
     directory = _registry_directory(version.directory, within=None, done="Nothing was read.")
     reports = _registry_directory(directory / REPORTS_DIR, within=directory,
                                   done="Nothing was read.")
-    from src.evaluation.report_store import STORE_FILES
+    from src.evaluation.report_store import STORE_FILES, STORE_LOCK_FILES
 
     runs: List[ListedRun] = []
     for entry in sorted(_directory_entries(reports, done="Nothing was read."),
                         key=lambda p: p.name, reverse=True):
-        if entry.name in STORE_FILES:
+        if entry.name in STORE_FILES + STORE_LOCK_FILES:
             continue
         if not _RUN_ID.fullmatch(entry.name):
             runs.append(ListedRun(entry.name, None, (

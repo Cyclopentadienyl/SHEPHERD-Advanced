@@ -2,50 +2,41 @@
 SHEPHERD-Advanced Vector Index Builder
 ======================================
 Functionality:
-  - Build vector index from GNN node embeddings
-  - Supports two modes:
-    1. From checkpoint: load model + graph data, run forward pass, extract embeddings
-    2. From pre-exported embeddings: load .npz file directly
+  - Build a vector index from pre-exported node embeddings (an .npz file)
   - Auto-select optimal backend based on platform
   - Support configuration from deployment.yaml
+
+**It builds no model** (K7, TM10): it used to rebuild a ShepherdGNN from a
+checkpoint (`--checkpoint`), guessing its structure from key names, a second
+builder beside the one model builder. That input is gone and nothing replaces
+it here: which vectors a task model would index is not decided, so the vectors
+come from a file whoever decides that writes.
 
 Path:
   - Relative: scripts/build_index.py
   - Absolute: SHEPHERD-Advanced/scripts/build_index.py
 
 Input:
-  - --checkpoint: Path to GNN model checkpoint (.pt)
-  - --data-dir: Path to processed graph data directory
-  - --embeddings: Path to pre-exported embeddings (.npz) (alternative to checkpoint)
+  - --embeddings: Path to the embeddings (.npz): one 2-D array per node type,
+    all of one width, and optionally ``id_mappings`` (a JSON string of
+    ``{node_type: {node_id: row}}``). A file that cannot be read this way, an
+    array that is not 2-D, and arrays of different widths are refused.
   - --config: Path to deployment config (YAML)
   - --output: Path to save index
   - --node-types: Which node types to index (default: disease)
 
 Output:
   - Vector index saved to specified path (.voyager / .cuvs + .ids.json)
-  - Optionally export raw embeddings to .npz for reuse
+  - Optionally the embeddings read, for the node types chosen, to another .npz
 
 Backend Selection:
   - Linux (x86/ARM): cuVS (GPU) -> Voyager (CPU fallback)
   - Windows: Voyager (CPU only)
 
 Usage:
-  # From checkpoint (most common):
-  python scripts/build_index.py \\
-      --checkpoint data/demo/model_checkpoint.pt \\
-      --data-dir data/demo \\
-      --output data/demo/vector_index
-
-  # From pre-exported embeddings:
   python scripts/build_index.py \\
       --embeddings data/demo/embeddings.npz \\
       --output data/demo/vector_index
-
-  # Export embeddings only (no index build):
-  python scripts/build_index.py \\
-      --checkpoint data/demo/model_checkpoint.pt \\
-      --data-dir data/demo \\
-      --export-embeddings data/demo/embeddings.npz
 """
 from __future__ import annotations
 
@@ -53,8 +44,9 @@ import argparse
 import json
 import logging
 import sys
+import zipfile
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 
@@ -71,152 +63,8 @@ logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
 
-def extract_embeddings_from_checkpoint(
-    checkpoint_path: str,
-    data_dir: str,
-    device: Optional[str] = None,
-    node_types: Optional[list] = None,
-) -> Tuple[Dict[str, np.ndarray], Dict[str, Dict[str, int]], int]:
-    """
-    Load GNN model, run forward pass, and extract node embeddings.
-
-    Args:
-        checkpoint_path: Path to .pt checkpoint file
-        data_dir: Path to directory containing graph data files
-        device: Compute device ("cpu", "cuda", or None for auto)
-        node_types: Which node types to extract (None = all)
-
-    Returns:
-        Tuple of:
-        - embeddings: {node_type: ndarray of shape (N, hidden_dim)}
-        - id_mappings: {node_type: {node_id_str: int_idx}}
-        - hidden_dim: embedding dimension
-    """
-    import torch
-
-    if device is None:
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-
-    logger.info(f"Loading checkpoint: {checkpoint_path}")
-    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
-
-    # Extract config and state dict
-    if "model_state_dict" in checkpoint:
-        state_dict = checkpoint["model_state_dict"]
-        ckpt_config = checkpoint.get("config", {})
-    elif "state_dict" in checkpoint:
-        state_dict = checkpoint["state_dict"]
-        ckpt_config = checkpoint.get("config", {})
-    else:
-        state_dict = checkpoint
-        ckpt_config = {}
-
-    hidden_dim = ckpt_config.get("hidden_dim", 256)
-
-    # Load graph data
-    data_path = Path(data_dir)
-    graph_data: Dict[str, Any] = {"x_dict": {}, "edge_index_dict": {}, "num_nodes_dict": {}}
-
-    node_features_path = data_path / "node_features.pt"
-    if node_features_path.exists():
-        graph_data["x_dict"] = torch.load(node_features_path, map_location="cpu", weights_only=True)
-        logger.info(f"Loaded node features: {list(graph_data['x_dict'].keys())}")
-
-    edge_indices_path = data_path / "edge_indices.pt"
-    if edge_indices_path.exists():
-        graph_data["edge_index_dict"] = torch.load(edge_indices_path, map_location="cpu", weights_only=True)
-        logger.info(f"Loaded edge indices: {len(graph_data['edge_index_dict'])} edge types")
-
-    num_nodes_path = data_path / "num_nodes.json"
-    if num_nodes_path.exists():
-        with open(num_nodes_path, "r") as f:
-            graph_data["num_nodes_dict"] = json.load(f)
-
-    if not graph_data["x_dict"]:
-        raise FileNotFoundError(f"No node features found in {data_dir}")
-
-    # Load node ID mapping
-    node_mapping_path = data_path / "node_id_mapping.json"
-    if node_mapping_path.exists():
-        with open(node_mapping_path, "r") as f:
-            id_mappings = json.load(f)
-        logger.info(f"Loaded node ID mapping: {list(id_mappings.keys())}")
-    else:
-        # Try loading from KG
-        id_mappings = _load_id_mapping_from_kg(data_path)
-
-    # Build model
-    metadata = _infer_metadata(graph_data)
-    in_channels_dict = {k: v.shape[1] for k, v in graph_data["x_dict"].items()}
-
-    # Detect model features from state dict
-    state_keys = set(state_dict.keys())
-    has_pos_encoder = any(k.startswith("pos_encoder.") for k in state_keys)
-    has_ortholog_gate = any(k.startswith("ortholog_gate.") for k in state_keys)
-
-    from src.models.gnn.shepherd_gnn import ShepherdGNN, ShepherdGNNConfig
-
-    model_config = ShepherdGNNConfig(
-        hidden_dim=hidden_dim,
-        num_layers=ckpt_config.get("num_layers", 4),
-        num_heads=ckpt_config.get("num_heads", 8),
-        conv_type=ckpt_config.get("conv_type", "gat"),
-        dropout=0.0,  # No dropout at inference
-        use_positional_encoding=ckpt_config.get("use_positional_encoding", has_pos_encoder),
-        use_ortholog_gate=ckpt_config.get("use_ortholog_gate", has_ortholog_gate),
-    )
-
-    model = ShepherdGNN(
-        metadata=metadata,
-        in_channels_dict=in_channels_dict,
-        config=model_config,
-    )
-    model.load_state_dict(state_dict)
-    model.eval()
-    model = model.to(device)
-
-    # Forward pass
-    logger.info(f"Running GNN forward pass on device={device}...")
-    x_dict = {k: v.to(device) for k, v in graph_data["x_dict"].items()}
-    edge_index_dict = {k: v.to(device) for k, v in graph_data["edge_index_dict"].items()}
-
-    with torch.no_grad():
-        embeddings_torch = model(x_dict, edge_index_dict)
-
-    # Convert to numpy
-    embeddings = {}
-    for ntype, emb_tensor in embeddings_torch.items():
-        if node_types is None or ntype in node_types:
-            embeddings[ntype] = emb_tensor.cpu().numpy().astype(np.float32)
-            logger.info(f"  {ntype}: {embeddings[ntype].shape}")
-
-    return embeddings, id_mappings, hidden_dim
-
-
-def _infer_metadata(graph_data: Dict[str, Any]):
-    """Infer PyG metadata (node_types, edge_types) from graph data."""
-    node_types = sorted(graph_data["x_dict"].keys())
-    edge_types = []
-    for key in graph_data["edge_index_dict"].keys():
-        if isinstance(key, tuple) and len(key) == 3:
-            edge_types.append(key)
-    return node_types, edge_types
-
-
-def _load_id_mapping_from_kg(data_path: Path) -> Dict[str, Dict[str, int]]:
-    """Try to load node ID mappings from the KG JSON file."""
-    kg_path = data_path / "kg.json"
-    if not kg_path.exists():
-        # Look for it one level up
-        kg_path = data_path.parent / "kg.json"
-    if not kg_path.exists():
-        logger.warning("No node_id_mapping.json or kg.json found; ID mapping will be index-based")
-        return {}
-
-    logger.info(f"Building ID mapping from KG: {kg_path}")
-    from src.kg import KnowledgeGraph
-    kg = KnowledgeGraph.load_json(str(kg_path))
-    return kg.get_node_id_mapping()
+class EmbeddingsRefused(ValueError):
+    """The embeddings file cannot be indexed; the message says why."""
 
 
 def load_embeddings_from_file(
@@ -227,34 +75,64 @@ def load_embeddings_from_file(
     Load pre-exported embeddings from .npz file.
 
     The .npz file should contain:
-    - Arrays named by node type (e.g., "disease", "phenotype")
+    - Arrays named by node type (e.g., "disease", "phenotype"), each 2-D
+      (one row per node) and all of one width: the index's dimension
     - A JSON string under key "id_mappings" with the node ID mappings
 
+    It is read without pickle (an object array is refused, never unpickled).
+
     Returns:
-        Same format as extract_embeddings_from_checkpoint.
+        ``(embeddings by node type, id mappings, dimension)`` for the node
+        types chosen.
+
+    Raises:
+        EmbeddingsRefused: the file cannot be read as such an .npz, an array
+            chosen is not 2-D or is empty, or the arrays chosen differ in width.
     """
     logger.info(f"Loading embeddings from: {embeddings_path}")
-    data = np.load(embeddings_path, allow_pickle=True)
+    unreadable = f"{embeddings_path} cannot be read as an embeddings file (.npz of node-type arrays)"
+    try:
+        loaded = np.load(embeddings_path, allow_pickle=False)
+        if not isinstance(loaded, np.lib.npyio.NpzFile):
+            raise EmbeddingsRefused(f"{unreadable}: it holds one array, not one per node type")
+        with loaded as data:
+            arrays = {key: data[key] for key in data.files}
+    except (OSError, ValueError, EOFError, zipfile.BadZipFile) as exc:
+        if isinstance(exc, EmbeddingsRefused):
+            raise
+        raise EmbeddingsRefused(f"{unreadable}: {type(exc).__name__}: {exc}") from exc
 
     # Load ID mappings
-    if "id_mappings" in data:
-        id_mappings = json.loads(str(data["id_mappings"]))
-    else:
-        id_mappings = {}
+    id_mappings: Dict[str, Dict[str, int]] = {}
+    if "id_mappings" in arrays:
+        try:
+            id_mappings = json.loads(str(arrays.pop("id_mappings")))
+        except ValueError as exc:
+            raise EmbeddingsRefused(
+                f"{embeddings_path}: id_mappings is not a JSON string ({exc})") from exc
 
     # Load embeddings
     embeddings = {}
-    hidden_dim = 0
-    for key in data.files:
-        if key == "id_mappings":
+    for key, arr in arrays.items():
+        if node_types is not None and key not in node_types:
             continue
-        if node_types is None or key in node_types:
-            arr = data[key].astype(np.float32)
-            embeddings[key] = arr
-            hidden_dim = arr.shape[1]
-            logger.info(f"  {key}: {arr.shape}")
+        if arr.ndim != 2 or 0 in arr.shape:
+            raise EmbeddingsRefused(
+                f"{embeddings_path}: '{key}' has shape {arr.shape}; an embeddings array is "
+                "2-D, one non-empty row per node")
+        try:
+            embeddings[key] = arr.astype(np.float32)
+        except (TypeError, ValueError) as exc:
+            raise EmbeddingsRefused(
+                f"{embeddings_path}: '{key}' is not numeric ({arr.dtype})") from exc
+        logger.info(f"  {key}: {arr.shape}")
 
-    return embeddings, id_mappings, hidden_dim
+    widths = {key: arr.shape[1] for key, arr in embeddings.items()}
+    if len(set(widths.values())) > 1:
+        raise EmbeddingsRefused(
+            f"{embeddings_path}: the arrays differ in width ({widths}); one index "
+            "dimension needs one width")
+    return embeddings, id_mappings, next(iter(widths.values()), 0)
 
 
 def export_embeddings(
@@ -348,38 +226,21 @@ def build_and_save_index(
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Build vector index for SHEPHERD knowledge graph",
+        description="Build a vector index from pre-exported node embeddings",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Examples:
-  # From checkpoint:
-  python scripts/build_index.py --checkpoint data/demo/model_checkpoint.pt --data-dir data/demo --output data/demo/vector_index
-
-  # From pre-exported embeddings:
+Example:
   python scripts/build_index.py --embeddings data/demo/embeddings.npz --output data/demo/vector_index
 
-  # Export embeddings only:
-  python scripts/build_index.py --checkpoint data/demo/model_checkpoint.pt --data-dir data/demo --export-embeddings data/demo/embeddings.npz
+No model is read: a checkpoint is not an input (--checkpoint was removed in K7).
         """,
     )
 
-    # Input sources (mutually exclusive)
-    source = parser.add_mutually_exclusive_group()
-    source.add_argument(
-        "--checkpoint",
-        type=Path,
-        help="Path to GNN model checkpoint (.pt)",
-    )
-    source.add_argument(
+    parser.add_argument(
         "--embeddings",
         type=Path,
-        help="Path to pre-exported embeddings file (.npz)",
-    )
-
-    parser.add_argument(
-        "--data-dir",
-        type=Path,
-        help="Path to processed graph data directory (required with --checkpoint)",
+        required=True,
+        help="Path to the embeddings file (.npz): one 2-D array per node type, one width",
     )
     parser.add_argument(
         "--config",
@@ -395,7 +256,8 @@ Examples:
     parser.add_argument(
         "--export-embeddings",
         type=Path,
-        help="Export embeddings to .npz file (can be used with --output for both)",
+        help="Also write the embeddings read, for the node types chosen, to this .npz "
+             "(can be used with --output for both)",
     )
     parser.add_argument(
         "--node-types",
@@ -411,12 +273,6 @@ Examples:
         help="Force specific backend (default: auto)",
     )
     parser.add_argument(
-        "--device",
-        type=str,
-        default=None,
-        help="Compute device for GNN forward pass (default: auto)",
-    )
-    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Print configuration and exit without building",
@@ -424,12 +280,6 @@ Examples:
     args = parser.parse_args()
 
     # Validation
-    if args.checkpoint and not args.data_dir:
-        parser.error("--data-dir is required when using --checkpoint")
-
-    if not args.checkpoint and not args.embeddings:
-        parser.error("Either --checkpoint or --embeddings is required")
-
     if not args.output and not args.export_embeddings:
         parser.error("At least one of --output or --export-embeddings is required")
 
@@ -446,18 +296,14 @@ Examples:
         return 0
 
     # Step 1: Get embeddings
-    if args.checkpoint:
-        embeddings, id_mappings, hidden_dim = extract_embeddings_from_checkpoint(
-            checkpoint_path=str(args.checkpoint),
-            data_dir=str(args.data_dir),
-            device=args.device,
-            node_types=args.node_types,
-        )
-    else:
+    try:
         embeddings, id_mappings, hidden_dim = load_embeddings_from_file(
             embeddings_path=str(args.embeddings),
             node_types=args.node_types,
         )
+    except EmbeddingsRefused as exc:
+        logger.error(f"Refused: {exc}. Nothing was written.")
+        return 1
 
     if not embeddings:
         logger.error("No embeddings extracted")

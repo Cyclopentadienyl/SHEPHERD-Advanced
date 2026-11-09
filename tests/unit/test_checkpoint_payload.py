@@ -19,15 +19,14 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
+from src.config.model_types import MODEL_RECORD_KEYS  # noqa: E402
+from src.models.bundle.record import MODEL_RECORD_VERSION  # noqa: E402
 from src.training.callbacks import ModelCheckpoint, ModelCheckpointConfig  # noqa: E402
-from src.training.checkpoint_payload import (  # noqa: E402
-    CHECKPOINT_RECORD_VERSION,
-    TENSOR_KEYS,
-    build_checkpoint_payload,
-)
-from src.utils.checkpoint_io import write_checkpoint  # noqa: E402
+from src.training.checkpoint_payload import TENSOR_KEYS, build_checkpoint_payload  # noqa: E402
+from src.utils.checkpoint_io import TRAINING_RULES_VERSION, write_checkpoint  # noqa: E402
 from src.utils.run_environment import assert_primitive  # noqa: E402
-from tests.fixtures.trainable_workspace import write_trainable_workspace  # noqa: E402
+from tests.fixtures.base_workspace import write_base_workspace  # noqa: E402
+from tests.unit.test_model_record import _record, _stored_task  # noqa: E402
 
 
 def _tiny_trainer(tmp_path, **config):
@@ -35,10 +34,12 @@ def _tiny_trainer(tmp_path, **config):
 
     defaults = dict(device="cpu", scheduler_type="cosine", warmup_steps=0, use_amp=False,
                     num_epochs=3, checkpoint_dir=str(tmp_path / "ckpt"),
-                    log_dir=str(tmp_path / "logs"))
+                    log_dir=str(tmp_path / "logs"), early_stopping_monitor="val_pooled_mrr")
     defaults.update(config)
-    return Trainer(model=torch.nn.Linear(2, 1), train_dataloader=[{}] * 4,
-                   config=TrainerConfig(**defaults))
+    trainer = Trainer(model=torch.nn.Linear(2, 1), train_dataloader=[{}] * 4,
+                      config=TrainerConfig(**defaults), task=_stored_task())
+    trainer.model_record = _record()[1]
+    return trainer
 
 
 def _sha(path):
@@ -61,7 +62,10 @@ def test_both_writers_write_the_same_keys_and_load_safely(tmp_path):
     a = torch.load(by_trainer, map_location="cpu", weights_only=True)
     b = torch.load(by_callback, map_location="cpu", weights_only=True)
     assert set(a) == set(b)
-    assert a["record_version"] == b["record_version"] == CHECKPOINT_RECORD_VERSION
+    assert a["record_version"] == b["record_version"] == MODEL_RECORD_VERSION
+    # The rules the run trained under, written beside the record, which a
+    # continued run must keep (`run_plan._check_record_version`).
+    assert a["training_rules"] == b["training_rules"] == TRAINING_RULES_VERSION
     for key in ("state_dict", "optimizer_state_dict", "scheduler_state_dict"):
         assert key in a
     assert isinstance(a["state_dict"]["weight"], torch.Tensor)
@@ -194,8 +198,10 @@ def test_a_weights_only_checkpoint_keeps_the_provenance_and_nothing_to_resume(tm
 
     payload = build_checkpoint_payload(trainer, epoch=0, logs={}, weights_only=True)
 
-    assert set(payload) == {"record_version", "checkpoint_kind", "weights_from", "state_dict",
-                            "training_input_digests", "producer", "environment"}
+    assert set(payload) - set(MODEL_RECORD_KEYS) == {
+        "record_version", "training_rules", "checkpoint_kind", "weights_from", "state_dict",
+        "training_input_digests", "producer", "environment"}
+    assert payload["training_rules"] == TRAINING_RULES_VERSION
     assert payload["checkpoint_kind"] == "weights"
     assert payload["weights_from"] == {"kind": "latest", "epoch": 0}
 
@@ -203,18 +209,36 @@ def test_a_weights_only_checkpoint_keeps_the_provenance_and_nothing_to_resume(tm
 # ---------------------------------------------------------------------------
 # A real run, end to end
 # ---------------------------------------------------------------------------
-def test_a_run_records_its_progress_best_k_and_where_the_best_weights_are(tmp_path):
+def test_a_run_records_its_progress_best_k_and_where_the_best_weights_are(tmp_path,
+                                                                          monkeypatch):
+    """A base run (KG link prediction) at the demo's base sizes
+    (`demo_task_training`, the one statement of them). The test sets a cosine
+    schedule because the stage's recipe trains at a constant rate, which steps
+    no scheduler, and the scheduler's steps are counted here; a patience,
+    because the recipe leaves early stopping off. Validation is fixed to a
+    best epoch 0 that epoch 1 does not beat (the stage's monitor,
+    `val_lp_accuracy`, as `never_improving` in test_continue_training.py fixes
+    it), so `last.pt` must name epoch 0's best-k file whatever the run's own
+    numerics: the real scores of this small base sit near chance, and which
+    epoch they tie or rank first moved with the seed."""
     import scripts.train_model as train_model
+    from scripts.setup_demo import demo_task_training
+    from src.training.trainer import Trainer
 
-    workspace = write_trainable_workspace(tmp_path / "ws")
+    values = [0.6, 0.5]
+    monkeypatch.setattr(Trainer, "_validate",
+                        lambda self, epoch: {"val_lp_accuracy": values[epoch]})
+    workspace = write_base_workspace(tmp_path / "ws")
     run = tmp_path / "run"
-    config = train_model.TrainConfig(
-        data_dir=str(workspace), run_dir=str(run), device="cpu", hidden_dim=16,
-        num_layers=1, num_heads=2, num_workers=0, use_amp=False, num_epochs=2,
-        batch_size=2, save_top_k=2, early_stopping_patience=5,
-    )
+    fields = {
+        "data_dir": str(workspace), "run_dir": str(run), "learning_stage": "base",
+        "device": "cpu", "use_amp": False, **demo_task_training()["base"],
+        "num_epochs": 2, "scheduler_type": "cosine", "save_top_k": 2,
+        "early_stopping_patience": 5,
+    }
 
-    train_model.train(config)
+    # Every field set is stated as set (plan TM1 rev2).
+    train_model.train(train_model.TrainConfig(**fields), set(fields))
 
     last = torch.load(run / "checkpoints" / "last.pt", map_location="cpu", weights_only=True)
     progress = last["progress"]
@@ -225,19 +249,24 @@ def test_a_run_records_its_progress_best_k_and_where_the_best_weights_are(tmp_pa
     assert last["environment"]["torch"] == str(torch.__version__)
     assert last["config"]["requested"]["device"] == "cpu"
     assert not {"data_dir", "output_dir", "resume_from"} & set(last["config"]["requested"])
+    # The loaders in effect, as a base records them: the source-visit sampler
+    # with the hops given (48 nodes in batches of 32: two batches), and the
+    # validation pairs the split fixes (its seed, the fixed batch size), where
+    # the ShepherdGNN path recorded its neighbour loader and negatives.
     loaders = last["config"]["effective"]["loaders"]
-    assert loaders["train"]["num_neighbors_effective"] == [15, 10]
-    assert loaders["val"]["num_negative_samples"] == 5
+    assert loaders["train"]["kind"] == "BaseLPSampler"
+    assert loaders["train"]["sizes"] == [4, 4] and loaders["train"]["batches"] == 2
+    assert loaders["val"]["seed"] == last["config"]["requested"]["split_seed"]
+    assert loaders["val"]["batch_size"] == 512 and loaders["val"]["val_edges"] > 0
 
     best_k = last["callbacks"]["model_checkpoint"]["best_k"]
-    assert best_k, "the run saved no best-k file"
+    assert [entry["epoch"] for entry in best_k] == [0, 1], "best-k ranks epoch 0 first"
     for entry in best_k:
         assert entry["sha256"] == _sha(run / "checkpoints" / entry["file"])
+    assert last["callbacks"]["early_stopping"]["best_epoch"] == 0
     source = last["callbacks"]["best_weights_source"]
-    early = last["callbacks"]["early_stopping"]
-    assert source is not None
-    assert any(e["file"] == source["file"] and e["epoch"] == early["best_epoch"]
-               for e in best_k)
+    epoch_0 = best_k[0]
+    assert source == {"kind": "file", "file": epoch_0["file"], "sha256": epoch_0["sha256"]}
 
 
 # ---------------------------------------------------------------------------
@@ -254,7 +283,7 @@ def _end_epoch(trainer, epoch, value):
         trainer.model.weight.fill_(float(epoch))
     trainer.state.epoch = epoch
     trainer.state.completed_epochs = epoch + 1
-    trainer.callbacks.on_epoch_end(trainer, epoch, {"val_mrr": value})
+    trainer.callbacks.on_epoch_end(trainer, epoch, {"val_pooled_mrr": value})
 
 
 def test_early_stoppings_best_file_survives_a_top_k_it_no_longer_ranks_in(tmp_path):
@@ -306,8 +335,11 @@ def test_a_model_holding_restored_best_weights_is_written_as_weights_only(tmp_pa
         optimizer=torch.optim.SGD(model.parameters(), lr=1.0, momentum=0.9),
         config=TrainerConfig(device="cpu", scheduler_type="none", use_amp=False,
                              num_epochs=2, checkpoint_dir=str(tmp_path / "ckpt"),
-                             log_dir=str(tmp_path / "logs")),
+                             log_dir=str(tmp_path / "logs"),
+                             early_stopping_monitor="val_pooled_mrr"),
+        task=_stored_task(),
     )
+    trainer.model_record = _record()[1]
     trainer.callbacks.on_train_begin(trainer)
     for epoch, value in enumerate([0.9, 0.1]):
         # One SGD step per epoch, so the momentum buffer moves with the weights.
@@ -315,7 +347,7 @@ def test_a_model_holding_restored_best_weights_is_written_as_weights_only(tmp_pa
         trainer.optimizer.step()
         trainer.optimizer.zero_grad()
         trainer.state.epoch, trainer.state.completed_epochs = epoch, epoch + 1
-        trainer.callbacks.on_epoch_end(trainer, epoch, {"val_mrr": value})
+        trainer.callbacks.on_epoch_end(trainer, epoch, {"val_pooled_mrr": value})
     latest_weight = model.weight.detach().clone()
     latest_momentum = trainer.optimizer.state_dict()["state"][0]["momentum_buffer"].clone()
 

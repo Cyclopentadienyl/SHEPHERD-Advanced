@@ -8,14 +8,19 @@ Absolute Path: /home/user/SHEPHERD-Advanced/src/api/routes/training.py
 
 Purpose:
     Provide training management API endpoints:
-    - POST /training/start: Start a training run
-    - POST /training/stop: Stop the current training run
+    - POST /training/start: Start a base (KG link prediction) training run,
+      or continue a base run from its checkpoint (K7: a strict base start,
+      the WebUI base form's)
+    - POST /training/finetune: Start one to three finetune children of a base,
+      in order (README §1; contract §9.3 hazard 6)
+    - POST /training/stop: Stop the current training run (and cancel the
+      queued finetune children)
     - GET  /training/status: Get current training status
     - GET  /training/metrics: Get full metrics history
     - GET  /training/checkpoints: List model checkpoints
 
-    Start, stop and the checkpoint list (which opens checkpoint files, SPEC_4
-    C3) are operator controls: each takes D8's one dependency
+    Start, Fine-tune, stop and the checkpoint list (which opens checkpoint
+    files, SPEC_4 C3) are operator controls: each takes D8's one dependency
     (`src/api/operator_access.py`) and is refused before it runs unless D8
     allows the request. Status and metrics stay open.
 
@@ -30,13 +35,13 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Annotated, Any, Dict, List, Literal, Mapping, Optional
+from typing import Annotated, Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, HTTPException, Query, status
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from src.api.operator_access import OPERATOR_ONLY
-from src.api.services.training_manager import training_manager
+from src.api.services.training_manager import FinetuneInputs, training_manager
 
 logger = logging.getLogger(__name__)
 
@@ -50,115 +55,71 @@ _DEVICE_RE = re.compile(r"^(auto|cpu|mps|cuda(:\d+)?)$")
 
 
 # =============================================================================
-# Rules that span fields
-# =============================================================================
-def cross_field_errors(settings: Mapping[str, Any]) -> List[str]:
-    """The training request's rules that span fields, on complete settings.
-
-    One definition for both places they apply (contract M3a review of
-    `094b90d`, P2-3): a new run's request, its unset fields at their defaults
-    (`TrainingStartRequest`'s validators), and a continued run's settings as
-    the shared run plan resolves them from its parent
-    (`TrainingManager.start_training`), never the defaults it will not use.
-
-    - Only the attention convolutions split `hidden_dim` across heads: HGTConv
-      divides out_channels by heads, and GATConv is built as
-      `(hidden_dim // num_heads) * heads` with concat=True, so a non-divisible
-      pair silently truncates and breaks the residual add /
-      LayerNorm(hidden_dim). SAGEConv takes no heads, so it is exempt.
-    - `min_lr_ratio == 0` is valid for cosine/linear (decay to zero); only
-      onecycle divides by it (`final_div_factor = 1 / min_lr_ratio`).
-    """
-    errors: List[str] = []
-    conv_type = settings.get("conv_type")
-    hidden_dim, num_heads = settings.get("hidden_dim"), settings.get("num_heads")
-    if (conv_type in ("hgt", "gat") and isinstance(hidden_dim, int)
-            and isinstance(num_heads, int) and num_heads > 0 and hidden_dim % num_heads != 0):
-        errors.append(
-            f"hidden_dim ({hidden_dim}) must be divisible by num_heads ({num_heads}) "
-            f"when conv_type is '{conv_type}'.")
-    min_lr_ratio = settings.get("min_lr_ratio")
-    if (settings.get("scheduler_type") == "onecycle" and isinstance(min_lr_ratio, (int, float))
-            and min_lr_ratio <= 0):
-        errors.append("min_lr_ratio must be > 0 when scheduler_type is 'onecycle'.")
-    return errors
-
-
-# =============================================================================
 # Request/Response Models
 # =============================================================================
 class TrainingStartRequest(BaseModel):
-    """Training start request with configuration parameters."""
+    """A base start (K7, TM11): a new base (KG link prediction) run, or a
+    base run continued from its checkpoint (`resume_from`), through the job
+    runner's one start (`TrainingManager.start_training`), as the WebUI's
+    base form starts one.
 
-    # Paths. Every run writes into a directory of its own, allocated under the
-    # workspace (contract M3a-2); the name is optional and for people.
-    data_dir: str = Field(default="data/workspaces/default", description="Workspace directory")
+    **Strict** (BACKLOG 54), as the Fine-tune start is: `learning_stage` must
+    be ``"base"`` (a finetune is POST /training/finetune's start), and a field
+    this request does not define, a ShepherdGNN setting among them, is refused
+    (422), never dropped. Its settings are the reference recipe's base settings
+    (`src.config.recipe.BASE`); one left unset is the recipe's value, filled
+    and recorded by the training process, never a default of this request.
+    The runner checks them again (`_new_bundle_run`) before anything starts. A
+    continued run inherits its parent's settings, and one set here to another
+    value is refused, as is a parent that is not a base."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    # The run. Every run writes into a directory of its own, allocated under
+    # the workspace (contract M3a-2); the name is optional and for people.
+    data_dir: str = Field(..., description="Workspace directory")
+    learning_stage: Literal["base"] = Field(
+        ..., description="'base': this start trains a base; a finetune is started with "
+                         "POST /training/finetune")
     run_name: str = Field(default="", max_length=200,
                           description="Optional run name, part of the allocated directory's name")
-
-    # Tier 1 — Basic
-    num_epochs: int = Field(default=100, ge=1, le=10000, description="Number of epochs")
-    learning_rate: float = Field(default=1e-4, gt=0, le=1.0, description="Learning rate")
-    batch_size: int = Field(default=32, ge=1, le=2048, description="Batch size")
-    conv_type: Literal["gat", "hgt", "sage"] = Field(default="gat", description="GNN convolution type")
     device: str = Field(default="auto", description="Device: auto, cpu, mps, cuda, or cuda:N")
     resume_from: Optional[str] = Field(
         default=None,
-        description="Parent checkpoint to continue from: an unfinished stage is resumed with "
-                    "the parent's settings, a finished one extended with extend_epochs")
+        description="A base checkpoint to continue from: an unfinished run is resumed with "
+                    "its settings, a finished one extended with extend_epochs")
     extend_epochs: Optional[int] = Field(
         default=None, ge=1, description="Extend a finished parent by this many epochs at a "
                                         "fixed rate")
-    seed: int = Field(default=42, ge=0, le=2**32 - 1, description="Random seed")
 
-    # Tier 2 — Advanced
-    hidden_dim: int = Field(default=256, ge=32, description="Hidden dimension size")
-    num_layers: int = Field(default=4, ge=1, le=16, description="Number of GNN layers")
-    dropout: float = Field(default=0.1, ge=0.0, le=0.9, description="Dropout rate")
-    weight_decay: float = Field(default=0.01, ge=0.0, description="Weight decay")
-    scheduler_type: Literal["cosine", "onecycle", "linear", "none"] = Field(
-        default="cosine", description="LR scheduler type"
-    )
-    warmup_steps: int = Field(default=500, ge=0, description="Warmup steps")
-    early_stopping_patience: int = Field(default=10, ge=1, description="Early stopping patience")
-    diagnosis_weight: float = Field(default=1.0, ge=0.0, description="Diagnosis loss weight")
-    link_prediction_weight: float = Field(default=0.5, ge=0.0, description="Link prediction weight")
-    contrastive_weight: float = Field(default=0.3, ge=0.0, description="Contrastive loss weight")
-    ortholog_weight: float = Field(default=0.2, ge=0.0, description="Ortholog loss weight")
-
-    # Tier 3 — Expert
-    gradient_accumulation_steps: int = Field(default=1, ge=1, description="Gradient accumulation")
-    max_grad_norm: float = Field(default=1.0, gt=0.0, description="Max gradient norm")
-    num_heads: int = Field(default=8, ge=1, description="Number of attention heads")
-    use_ortholog_gate: bool = Field(default=True, description="Use ortholog gate")
-    use_amp: bool = Field(default=True, description="Use automatic mixed precision")
-    amp_dtype: Literal["float16", "bfloat16"] = Field(
-        default="float16", description="AMP dtype: float16 or bfloat16"
-    )
-    temperature: float = Field(default=0.07, gt=0.0, description="Contrastive temperature")
-    label_smoothing: float = Field(default=0.1, ge=0.0, le=1.0, description="Label smoothing")
-    margin: float = Field(default=1.0, gt=0.0, description="Margin for ranking loss")
-    num_neighbors: List[Annotated[int, Field(ge=1)]] = Field(
-        default=[15, 10, 5], min_length=1,
-        description="Neighbor fan-out per sampling hop (non-empty; each entry >= 1)",
-    )
-    max_subgraph_nodes: int = Field(default=5000, ge=100, description="Max subgraph nodes")
-    min_lr_ratio: float = Field(
-        default=0.01, ge=0.0, le=1.0,
-        description="Final LR as a fraction of peak (a ratio above 1.0 would raise the final LR "
-                    "above the peak, which no scheduler here supports)",
-    )
-    num_workers: int = Field(default=4, ge=0, description="Data loader workers")
-    num_negative_samples: int = Field(default=5, ge=1, description="Negative samples")
-    eval_every_n_epochs: int = Field(default=1, ge=1, description="Evaluate every N epochs")
-    save_top_k: int = Field(default=3, ge=1, description="Save top K checkpoints")
+    # The reference recipe's base settings (src.config.recipe.BASE). Unset is
+    # the recipe's value; the bounds are the field spec's (training_fields).
+    num_epochs: Optional[int] = Field(default=None, ge=1, le=10000,
+                                      description="Number of epochs")
+    learning_rate: Optional[float] = Field(default=None, gt=0, le=1.0,
+                                           description="Learning rate")
+    weight_decay: Optional[float] = Field(default=None, ge=0.0, description="Weight decay")
+    batch_size: Optional[int] = Field(default=None, ge=1, le=2048,
+                                      description="Source edges per batch")
+    num_neighbors: Optional[List[Annotated[int, Field(ge=1)]]] = Field(
+        default=None, min_length=1,
+        description="Neighbor fan-out per sampling hop, one per encoder layer (each >= 1)")
+    max_grad_norm: Optional[float] = Field(default=None, gt=0.0, description="Max gradient norm")
+    seed: Optional[int] = Field(default=None, ge=0, le=2**32 - 1, description="Random seed")
+    scheduler_type: Optional[Literal["cosine", "onecycle", "linear", "none"]] = Field(
+        default=None, description="LR scheduler type")
+    warmup_steps: Optional[int] = Field(default=None, ge=0, description="Warmup steps")
+    use_amp: Optional[bool] = Field(default=None, description="Use automatic mixed precision")
+    early_stopping_patience: Optional[int] = Field(
+        default=None, ge=1, description="Early stopping patience (unset: no early stopping, "
+                                        "the recipe's)")
 
     @model_validator(mode="before")
     @classmethod
     def _refuse_retired_locations(cls, data: Any) -> Any:
-        # output_dir / checkpoint_dir / log_dir were retired by the run layout.
-        # Ignoring them, as an unknown key would be, would start a run that
-        # writes somewhere other than where its caller looks.
+        # output_dir / checkpoint_dir / log_dir were retired by the run layout:
+        # a value names that reason here; any key the request does not define,
+        # these ones empty included, is refused by extra="forbid".
         from src.utils.checkpoint_paths import refuse_retired_locations
 
         refuse_retired_locations(data, source="This request")
@@ -177,19 +138,6 @@ class TrainingStartRequest(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def _validate_head_divisibility(self) -> "TrainingStartRequest":
-        # A continued run (resume_from) uses its parent's settings, not these
-        # defaults: its cross-field rules are checked on the settings the run
-        # plan resolves (start_training below). Each field's own type and range
-        # are checked here for every request.
-        if self.resume_from:
-            return self
-        errors = [e for e in cross_field_errors(self.model_dump()) if "num_heads" in e]
-        if errors:
-            raise ValueError(errors[0])
-        return self
-
-    @model_validator(mode="after")
     def _validate_extend_needs_a_parent(self) -> "TrainingStartRequest":
         # Extending continues a parent; without one the training process
         # refuses (scripts/train_model.py), so the request is refused here,
@@ -198,14 +146,30 @@ class TrainingStartRequest(BaseModel):
             raise ValueError("extend_epochs continues a parent; give resume_from.")
         return self
 
-    @model_validator(mode="after")
-    def _validate_onecycle_min_lr(self) -> "TrainingStartRequest":
-        if self.resume_from:
-            return self
-        errors = [e for e in cross_field_errors(self.model_dump()) if "onecycle" in e]
-        if errors:
-            raise ValueError(errors[0])
-        return self
+
+class FinetuneStartRequest(BaseModel):
+    """A Fine-tune start: one to three tasks from one base checkpoint, each an
+    independent child run, in order (README §1, §8). `settings` apply to every
+    child and must be read by every chosen task; the task's recipe fills the
+    rest. Strict: any other field is refused (422)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    data_dir: str = Field(..., description="Workspace directory")
+    finetune_from: str = Field(..., description="The base checkpoint the children start from")
+    tasks: List[Literal["disease", "gene", "patients_like_me"]] = Field(
+        ..., min_length=1, max_length=3, description="The tasks, one child each, in order")
+    device: str = Field(default="auto", description="auto, cpu, cuda or cuda:N")
+    run_name: str = Field(default="", max_length=200, description="Optional run name prefix")
+    settings: Dict[str, Any] = Field(default_factory=dict,
+                                     description="Training settings for every child")
+
+    @field_validator("device")
+    @classmethod
+    def _validate_device(cls, value: str) -> str:
+        if not _DEVICE_RE.fullmatch(value):
+            raise ValueError(f"device {value!r} is not auto, cpu, mps, cuda or cuda:N")
+        return value
 
 
 class TrainingStatusResponse(BaseModel):
@@ -230,6 +194,9 @@ class TrainingStatusResponse(BaseModel):
     exit_code: Optional[int] = None
     # The one GPU slot: the job holding it, of either type, and the GPU lock.
     gpu: Optional[Dict[str, Any]] = None
+    # The latest Fine-tune start's children, each with its own status (README
+    # §1); None until one is started, and after another training start.
+    finetune: Optional[Dict[str, Any]] = None
 
 
 class CheckpointInfo(BaseModel):
@@ -252,6 +219,21 @@ class CheckpointInfo(BaseModel):
     validation: Optional[Dict[str, Any]] = None
     dataset_fingerprint: Optional[str] = None
     metadata_problem: Optional[str] = None
+    # The model record's summary (`src.models.bundle.record.listed_record`):
+    # model or refused (with why); a model's stage, task, operation, family and
+    # parent, encoder kind, the spec fields that differ from the reference
+    # recipe and whether there are none.
+    record: Optional[str] = None
+    record_problem: Optional[str] = None
+    learning_stage: Optional[str] = None
+    task: Optional[str] = None
+    operation: Optional[str] = None
+    family_id: Optional[str] = None
+    parent_sha256: Optional[str] = None
+    parent_run: Optional[str] = None
+    encoder: Optional[str] = None
+    reference: Optional[bool] = None
+    differences: Optional[List[str]] = None
 
 
 # =============================================================================
@@ -270,14 +252,18 @@ async def start_training(
                     "still has this SHA-256 (the model fingerprint shown)")] = None,
 ) -> Dict[str, Any]:
     """
-    Start a new training run.
+    Start a base training run, or continue one (K7, TM11).
 
-    Launches scripts/train_model.py as a subprocess with the provided config.
-
-    **Only the fields the caller set** are passed on (contract M3a-3): the
-    defaults are the training script's own, and a run continued from a parent
-    inherits every learning setting the caller did not set, and refuses one it
-    set to another value.
+    Launches scripts/train_model.py as a subprocess, through the job runner's
+    one start (`TrainingManager.start_training`), with the configuration the
+    WebUI's base form sends: ``learning_stage="base"``, the run keys, and
+    **only the fields the caller set** (contract M3a-3). The reference recipe
+    fills every base setting not set; a run continued from a parent inherits
+    every learning setting the caller did not set, and refuses one it set to
+    another value. The runner refuses, before anything is started, written
+    or claimed (the GPU slot, a run directory), a setting the recipe does not
+    take or a value its field spec does not (422), and a parent that is not a
+    base (409: its record's stage differs from the ``base`` asked for).
 
     ``expected_dataset_fingerprint`` (an optional query parameter, M5-2: a
     precondition on the request, not a training setting, so it is not in the
@@ -292,15 +278,9 @@ async def start_training(
     round, P22-S1): a file replaced after that is refused before it is loaded.
     """
     config = request.model_dump(exclude_unset=True, exclude_none=True)
-
-    # A continued run's cross-field rules apply to the settings it will use,
-    # resolved from its parent by the shared run plan, inside the service.
     result = training_manager.start_training(
-        config, effective_rules=cross_field_errors,
-        expected_dataset_fingerprint=expected_dataset_fingerprint,
+        config, expected_dataset_fingerprint=expected_dataset_fingerprint,
         expected_parent_sha256=expected_parent_sha256)
-    # Each field's own type and range apply to every request, a value repeating
-    # the parent's included; omitting a field inherits it.
 
     if not result.get("success"):
         raise HTTPException(
@@ -311,6 +291,37 @@ async def start_training(
             detail=result.get("error", "Failed to start training"),
         )
 
+    return result
+
+
+@router.post("/training/finetune", response_model=Dict[str, Any], dependencies=OPERATOR_ONLY)
+def start_finetune(
+    request: FinetuneStartRequest,
+    expected_dataset_fingerprint: Annotated[Optional[str], Query(
+        pattern=r"^[0-9a-f]{64}$",
+        description="Refuse the start (409) unless the workspace's dataset fingerprint is "
+                    "still this one")] = None,
+    expected_parent_sha256: Annotated[Optional[str], Query(
+        pattern=r"^[0-9a-f]{64}$",
+        description="Refuse the start (409) unless the base checkpoint still has this "
+                    "SHA-256 (the model fingerprint shown)")] = None,
+) -> Dict[str, Any]:
+    """Start one to three finetune children of a base, in order, through the
+    one job runner (`TrainingManager.start_finetune`): each its own run,
+    status and record; a failed child does not stop its siblings, and
+    /training/stop ends the running child and cancels the queued ones.
+    **A plain `def`**: the start reads the whole base checkpoint, so FastAPI
+    runs it in its threadpool, never on the event loop the API and the
+    dashboard share."""
+    result = training_manager.start_finetune(
+        FinetuneInputs(data_dir=request.data_dir, finetune_from=request.finetune_from,
+                       tasks=tuple(request.tasks), device=request.device,
+                       run_name=request.run_name, settings=dict(request.settings),
+                       expected_parent_sha256=expected_parent_sha256),
+        expected_dataset_fingerprint=expected_dataset_fingerprint)
+    if not result.get("success"):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail=result.get("error", "Failed to start the finetune"))
     return result
 
 

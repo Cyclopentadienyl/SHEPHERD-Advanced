@@ -48,11 +48,13 @@ registered is read by the registration's one helper, passed in as
 `report_state` (`stored_report_state` is that helper for a run directory);
 nothing here infers either from which files exist.
 
-**D5's state of each run's key** (`ReportItem.contest`) comes with the run's
-state, from one scan of the version's store (`record_states.run_contest`, the
-one layer that turns a scan into a shown D5 state, for records too): the one
-run listing that `GET /api/v1/cohorts` and the Test page share, so the two
-cannot disagree about a run, and neither judges D5 itself. It is bound to the
+**How each run's condition group compares** (`ReportItem.contest`; policy rev
+16, a description that decides nothing) comes with the run's state, from one
+scan of the version's store (`record_states.run_contest`, the one layer that
+turns a scan into a shown description, for records too): the one run listing
+that `GET /api/v1/cohorts` and the Test page share, so the two cannot disagree
+about a run, and neither compares runs itself. A run whose report cannot be
+read is listed with its own reason only; it never marks another run. It is bound to the
 bytes the run's state read, so one item never describes two versions of a
 report. The open route's listing leaves out the problems' words, which may name
 a server path; the Test page's keeps them for the operator. A version whose
@@ -75,26 +77,32 @@ Module: src/api/services/server_lists.py
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 from src.config import server_settings
 
 __all__ = [
+    "FAMILY_GROUPS",
     "CheckpointItem",
     "CohortVersionItem",
+    "FamilyRow",
     "IntakeFileItem",
     "Listing",
+    "ParentLookup",
     "ReportItem",
     "ServerListRefused",
     "WorkspaceItem",
     "cohort_version_item",
+    "family_rows",
     "list_checkpoints",
     "list_cohort_versions",
+    "list_family",
     "list_intake_files",
     "list_workspaces",
     "locate_checkpoint",
+    "record_matches",
     "resolve_checkpoint",
     "resolve_cohort_version",
     "resolve_intake_file",
@@ -102,6 +110,7 @@ __all__ = [
     "resolve_workspace",
     "resolve_workspaces",
     "stored_report_state",
+    "task_readiness",
     "version_item",
 ]
 
@@ -171,7 +180,8 @@ class CheckpointItem:
     """One checkpoint of a workspace, from one read of its file.
 
     `validation` is the Trainer's validation figure (metric and value, the
-    trainer's top-20 selection metric), never a test result.
+    selection metric of the run's stage: a base's LP accuracy, a task model's
+    pooled MRR), never a test result.
     `dataset_fingerprint` is the dataset the checkpoint records it was trained
     on; `trained_on_this_dataset` compares it in full with the workspace's
     fingerprint now (`None` when either is unknown). A file that cannot be read
@@ -183,6 +193,16 @@ class CheckpointItem:
     completed; how its stage ended), `None` where the file records none (a
     weights-only file, an older format): `epoch` is the record's epoch index,
     never adjusted into a count.
+
+    The model record's summary comes from the same read, through the one
+    reader of records (`src.models.bundle.record.listed_record`): `record` is
+    "model" or "refused" (with `record_problem`; a file without a model spec
+    among them, with the record reader's one phrase); a model adds its learning stage, task, operation,
+    family, parent (`parent_sha256`, the exact parent file, and `parent_run`),
+    encoder kind, the names of its spec's fields that differ from the
+    reference recipe (`differences`, sorted; empty for the reference) and
+    whether there are none (`reference`). All `None` for a file that was not
+    read.
     """
 
     workspace: str
@@ -199,17 +219,31 @@ class CheckpointItem:
     problem: Optional[str]
     completed_epochs: Optional[int] = None
     end: Optional[str] = None
+    record: Optional[str] = None
+    record_problem: Optional[str] = None
+    learning_stage: Optional[str] = None
+    task: Optional[str] = None
+    operation: Optional[str] = None
+    family_id: Optional[str] = None
+    parent_sha256: Optional[str] = None
+    parent_run: Optional[str] = None
+    encoder: Optional[str] = None
+    reference: Optional[bool] = None
+    differences: Optional[Tuple[str, ...]] = None
 
 
 @dataclass(frozen=True)
 class ReportItem:
     """One run directory of a version's report store. `state` is what the
     report-state reader says of it (kept, registered); `None`, with `problem`,
-    when it was not read. `contest` is D5's state of the key its report is
-    under, for the bytes `state` read (`record_states.run_contest`): ``state``
-    (uncontested, contested, cannot_be_checked), ``differing``,
-    ``disagreeing_runs`` and ``problems`` (empty but on an operator's listing);
-    `None` when the run's state was not read or it kept no report."""
+    when it was not read. `contest` describes how the condition group its
+    report is under compares, for the bytes `state` read
+    (`record_states.run_contest`): ``state`` (uncontested; contested, runs
+    under these conditions differ; cannot_be_checked, the comparison is
+    incomplete: machine values that decide nothing), ``differing``,
+    ``disagreeing_runs`` (every run carrying a differing report) and
+    ``problems`` (empty but on an operator's listing); `None` when the run's
+    state was not read or it kept no report."""
 
     run_id: str
     state: Optional[Dict[str, Any]]
@@ -220,16 +254,14 @@ class ReportItem:
 @dataclass(frozen=True)
 class CohortVersionItem:
     """One cohort version in the registry: its label and the digest of its
-    `cohort.json` (the version's identity), its role and whether that role
-    offers ordering by test score (`SHEPHERD_ORDERING_ROLES`), and the
-    aggregates its manifest records. Never its exclusions by case: D7 keeps
+    `cohort.json` (the version's identity), its role, and the aggregates its
+    manifest records. Never its exclusions by case: D7 keeps
     case identifiers on the machine. A version that cannot be read is listed
     with `problem`."""
 
     label: str
     manifest_sha256: Optional[str]
     role: Optional[str]
-    offers_ordering: bool
     source_format: Optional[str]
     source_sha256: Optional[str]
     counts: Optional[Dict[str, Any]]
@@ -262,6 +294,11 @@ def _echo(value: Any) -> str:
 
 
 def _inside(path: Path, root: Path) -> bool:
+    """Whether the resolved `path` lies under `root`: the bound of the server's
+    namespaces, a workspace under the workspaces root and an intake file under
+    the intake directory. A checkpoint's bound is the run layout's own
+    (`checkpoint_paths.checkpoint_not_read`), which listing, selection and
+    resolution share."""
     return path != root and root in path.parents
 
 
@@ -469,40 +506,100 @@ def resolve_workspaces(*, environ: Optional[Mapping[str, str]] = None) -> Dict[s
     return resolved
 
 
+#: Why a task cannot be started on a workspace (`task_readiness`), in words
+#: that name no server path: the list is open, where a refusal is not.
+READINESS_WORDS = {
+    "not_listed": "not a listed workspace",
+    "not_trainable": "dataset not trainable",
+    "absent": "no functional fixture",
+    "another_build": "fixture from another build",
+    "unreadable": "fixture not readable",
+}
+
+
+def task_readiness(workspace: Any, *, environ: Optional[Mapping[str, str]] = None
+                   ) -> Dict[str, Optional[str]]:
+    """Whether each task can be finetuned on the listed workspace `workspace`
+    now, as ``{task: None | why}`` (`READINESS_WORDS`), from small JSON files
+    only (the workspace's manifest and dataset record, then the fixture
+    record), so a page offers it without D8.
+
+    Every task needs a trainable workspace (`WorkspaceItem.trainable`); the
+    disease task needs nothing more. A task that trains on the gene task's
+    functional fixture (`FIXTURE_TASKS`) also needs its record derived from this
+    build of the workspace (`read_fixture_record` against the fingerprint the
+    item read): "ready" says no more than that. The sample files are hashed
+    by the training process, which may still refuse them, and a Fine-tune start
+    checks the record again (`TrainingManager.start_finetune`).
+    """
+    from src.kg.task_fixture import FIXTURE_TASKS, TaskFixtureError, read_fixture_record
+    from src.models.bundle.spec import TASKS
+
+    try:
+        root = _workspace_root(environ)
+        entry = next((e for e in _workspace_entries(root) if e.name == workspace), None)
+    except ServerListRefused:
+        entry = None
+    if entry is None:
+        return dict.fromkeys(TASKS, READINESS_WORDS["not_listed"])
+    item = _workspace_item(root, entry)
+    if not item.trainable:
+        return dict.fromkeys(TASKS, READINESS_WORDS["not_trainable"])
+    try:
+        read_fixture_record(entry.resolve(), manifest_sha256=item.dataset_fingerprint)
+    except TaskFixtureError as exc:
+        fixture: Optional[str] = READINESS_WORDS[exc.state]
+    except (OSError, RuntimeError):  # resolved by the item a moment ago
+        fixture = READINESS_WORDS["unreadable"]
+    else:
+        fixture = None
+    return {task: fixture if task in FIXTURE_TASKS else None for task in TASKS}
+
+
 # ---------------------------------------------------------------------------
 # Checkpoints
 # ---------------------------------------------------------------------------
 def list_checkpoints(
     workspace: Any, architecture: Optional[str] = None, *,
-    environ: Optional[Mapping[str, str]] = None,
+    task: Optional[str] = None, learning_stage: Optional[str] = None,
+    run: Optional[str] = None, environ: Optional[Mapping[str, str]] = None,
 ) -> Listing:
-    """The checkpoints of a listed workspace's runs, every architecture's or
-    one's, in the listing's order (latest run first, newest file first), each
-    from one read of its file (`read_run_checkpoints`).
+    """The checkpoints of a listed workspace's runs, in the listing's order
+    (latest run first, newest file first), each from one read of its file
+    (`read_run_checkpoints`): every directory under ``runs/``, whatever its
+    name, or, with `architecture`, the one directory of that name (compared
+    with the listed names, never joined to a path: a name that names no
+    directory lists nothing).
 
     Opens every checkpoint inside the workspace (SPEC_4 C3). One that
     resolves outside it is listed with that reason and never opened
-    (`read_run_checkpoints`' `within`). Each item names the workspace as the
-    list does, so `resolve_checkpoint` finds it again by that name.
+    (`read_run_checkpoints`' `within`); a directory under ``runs/`` that
+    cannot be listed is one item with why, and only ``runs/`` itself failing
+    makes the list unavailable. Each item names the workspace as the list
+    does, so `resolve_checkpoint` finds it again by that name.
+
+    `task` and `learning_stage` keep the files whose model record names them
+    (`listed_record`, `record_matches`); a file without a readable record
+    names neither, so either filter leaves it out. `run` lists that run
+    directory's files alone (`read_run_checkpoints`' `run`): only they are
+    opened.
     """
     from src.kg.artifacts import read_split_manifest
-    from src.utils.checkpoint_paths import (
-        normalize_conv_type,
-        read_run_checkpoints,
-        run_architecture,
-    )
+    from src.models.bundle.record import listed_record
+    from src.utils.checkpoint_paths import read_run_checkpoints, run_architecture
 
     try:
         name, path = _find_workspace(workspace, environ)
-        conv_type = normalize_conv_type(architecture) if architecture else None
-    except ValueError as exc:  # ServerListRefused, or an unsupported architecture
+        _check_record_filter(task, learning_stage)
+    except ValueError as exc:  # ServerListRefused
         return Listing((), str(exc))
+    conv_type = architecture if architecture else None
     try:
         fingerprint: Optional[str] = read_split_manifest(path).identity.sha256
     except (ValueError, OSError):
         fingerprint = None
     try:
-        entries = read_run_checkpoints(path, conv_type, within=path)
+        entries = read_run_checkpoints(path, conv_type, within=path, run=run)
     except OSError as exc:  # a runs directory this account may not enter
         return Listing((), (f"the runs of the workspace {name!r} cannot be listed "
                             f"({type(exc).__name__}: {exc.strerror or exc})"))
@@ -510,6 +607,8 @@ def list_checkpoints(
     items = []
     for entry in entries:
         recorded = entry.dataset_fingerprint
+        read = entry.sha256 is not None and entry.problem is None
+        summary = listed_record(entry.model_record) if read else {}
         items.append(CheckpointItem(
             workspace=name,
             architecture=run_architecture(entry.run_dir),
@@ -517,8 +616,7 @@ def list_checkpoints(
             filename=entry.path.name,
             sha256=entry.sha256,
             size_bytes=entry.size_bytes,
-            checkpoint_kind=(entry.checkpoint_kind
-                             if isinstance(entry.checkpoint_kind, str) else None),
+            checkpoint_kind=entry.checkpoint_kind,
             epoch=_count(entry.epoch),
             validation=({"metric": entry.validation[0], "value": entry.validation[1]}
                         if entry.validation else None),
@@ -529,8 +627,278 @@ def list_checkpoints(
             problem=entry.problem,
             completed_epochs=_count(entry.completed_epochs),
             end=entry.end,
+            **summary,
         ))
-    return Listing(tuple(items))
+    return Listing(tuple(item for item in items if record_matches(item, task, learning_stage)))
+
+
+def _check_record_filter(task: Optional[str], learning_stage: Optional[str]) -> None:
+    from src.models.bundle.spec import LEARNING_STAGES, TASKS
+
+    if task is not None and task not in TASKS:
+        raise ServerListRefused(f"{_echo(task)} is not a task; one of {list(TASKS)}")
+    if learning_stage is not None and learning_stage not in LEARNING_STAGES:
+        raise ServerListRefused(
+            f"{_echo(learning_stage)} is not a learning stage; one of {list(LEARNING_STAGES)}")
+
+
+def record_matches(item: Any, task: Optional[str] = None,
+                   learning_stage: Optional[str] = None) -> bool:
+    """Whether a listed checkpoint's model record names `task` and
+    `learning_stage` (each None: any): **the one predicate** the server's lists
+    filter by and the WebUI's lists show by, so the two never keep different
+    files. `item` is a `CheckpointItem` or its JSON form (`asdict`)."""
+    def field(name: str) -> Any:
+        return item.get(name) if isinstance(item, Mapping) else getattr(item, name, None)
+
+    return ((task is None or field("task") == task)
+            and (learning_stage is None or field("learning_stage") == learning_stage))
+
+
+#: A parent looked up outside the listed workspace (`family_rows`): given the
+#: run a child records and the SHA-256 of the exact parent file, ``("found",
+#: workspace)`` for another listed workspace whose run of that name holds those
+#: bytes, ``("unread", workspace)`` for one whose run holds files that could not
+#: be read (so whether they are the parent cannot be said), ``("changed",
+#: workspace)`` for one whose run was read and does not hold them, or
+#: ``("absent", None)``.
+ParentLookup = Callable[[str, str], Tuple[str, Optional[str]]]
+
+#: The groups of a family view, in order: the model families and the files
+#: whose record or read was refused (with why; a file without a model spec
+#: among them).
+FAMILY_GROUPS = ("family", "refused")
+
+
+@dataclass(frozen=True)
+class FamilyRow:
+    """One file of a workspace's family view (`family_rows`).
+
+    `group` is one of `FAMILY_GROUPS`. In a family, `depth` counts the listed
+    ancestors above the file. `parent_state` says where the exact parent file
+    its record names is: "listed" (`parent` is that file's key,
+    ``architecture/run/file``), "elsewhere" (`parent_workspace`, another listed
+    workspace, holds those bytes) or "unavailable" (`parent_problem` says why);
+    `None` for a file with no parent. `context` marks a row a filter kept only
+    because a kept file descends from it (a task's base)."""
+
+    item: CheckpointItem
+    group: str
+    family_id: Optional[str] = None
+    depth: int = 0
+    parent: Optional[str] = None
+    parent_state: Optional[str] = None
+    parent_workspace: Optional[str] = None
+    parent_problem: Optional[str] = None
+    context: bool = False
+
+
+def _row_key(item: CheckpointItem) -> str:
+    return f"{item.architecture}/{item.run}/{item.filename}"
+
+
+def _not_held(run: str, sha256: str, workspace: Optional[str] = None) -> str:
+    where = f" in the workspace {workspace!r}" if workspace is not None else ""
+    return (f"the run {run}{where} no longer holds the parent's bytes ({sha256[:12]}): "
+            "rewritten or removed")
+
+
+def _parent_not_read(run: str, sha256: str, workspace: Optional[str] = None,
+                     problem: Optional[str] = None) -> str:
+    where = f" in the workspace {workspace!r}" if workspace is not None else ""
+    why = f" ({problem})" if problem else ""
+    return (f"the run {run}{where} holds files that could not be read{why}, so whether "
+            f"one is the parent ({sha256[:12]}) cannot be said")
+
+
+def family_rows(
+    items: Tuple[CheckpointItem, ...], *, lookup: Optional[ParentLookup] = None,
+    task: Optional[str] = None, learning_stage: Optional[str] = None,
+) -> Tuple[FamilyRow, ...]:
+    """A workspace's checkpoints as families (README §1, "Parents and the
+    family tree"), from the items of one listing (`list_checkpoints`), so the
+    tree applies no reading or record rule of its own.
+
+    **Each child sits under the exact file its record names**, matched by
+    SHA-256, never by run or name: a run's other files are other bytes. A
+    child whose parent is not listed here is looked up by `lookup` (another
+    listed workspace, `list_family`), and otherwise reads "parent
+    unavailable" with why. Families are grouped by the family id of their
+    topmost listed file, the family with the newest file first; within one,
+    each file is followed by its children, in listing order. Files whose
+    record was refused or not read (a file without a model spec among them)
+    are the last group.
+
+    `task` and `learning_stage` keep the matching model files and, as context
+    rows, the listed files they descend from (a task's base); the refused
+    group names neither, so a filter leaves it out.
+    """
+    lookup = lookup or (lambda run, sha256: ("absent", None))
+    models = [item for item in items if item.record == "model"]
+    by_digest: Dict[str, List[CheckpointItem]] = {}
+    for item in models:
+        by_digest.setdefault(item.sha256, []).append(item)
+    runs_listed = {item.run for item in items}
+    #: Per run, the first problem of a file its listing did not read.
+    unread_in: Dict[str, str] = {}
+    for item in items:
+        if item.sha256 is None or item.problem is not None:
+            unread_in.setdefault(item.run, item.problem or "not read")
+
+    parent_of: Dict[str, CheckpointItem] = {}
+    placed: Dict[str, Tuple[Optional[str], Optional[str], Optional[str]]] = {}
+    for item in models:
+        key, sha256, run = _row_key(item), item.parent_sha256, item.parent_run
+        if sha256 is None:
+            placed[key] = (None, None, None)
+            continue
+        listed = by_digest.get(sha256, [])
+        listed = [p for p in listed if p.run == run] or listed
+        if listed:
+            parent_of[key] = listed[0]
+            placed[key] = ("listed", None, None)
+        elif not isinstance(run, str) or not run:
+            # The record reader requires the run; nothing is looked up without it.
+            placed[key] = ("unavailable", None,
+                           f"the parent ({sha256[:12]}) is recorded without its run")
+        elif run in unread_in:
+            placed[key] = ("unavailable", None,
+                           _parent_not_read(run, sha256, problem=unread_in[run]))
+        elif run in runs_listed:
+            placed[key] = ("unavailable", None, _not_held(run, sha256))
+        else:
+            state, where = lookup(run, sha256)
+            placed[key] = (
+                ("elsewhere", where, None) if state == "found" else
+                ("unavailable", where, _parent_not_read(run, sha256, where))
+                if state == "unread" else
+                ("unavailable", where, _not_held(run, sha256, where)) if state == "changed" else
+                ("unavailable", None,
+                 f"the parent run {run} ({sha256[:12]}) is not in a listed workspace"))
+
+    children: Dict[str, List[CheckpointItem]] = {}
+    for item in models:
+        if _row_key(item) in parent_of:
+            children.setdefault(_row_key(parent_of[_row_key(item)]), []).append(item)
+
+    def top(item: CheckpointItem) -> CheckpointItem:
+        seen = {_row_key(item)}
+        while _row_key(item) in parent_of and _row_key(parent_of[_row_key(item)]) not in seen:
+            item = parent_of[_row_key(item)]
+            seen.add(_row_key(item))
+        return item
+
+    families: Dict[str, List[FamilyRow]] = {}
+    shown: set = set()
+
+    def emit(start: CheckpointItem, family: str) -> None:
+        stack = [(start, 0)]
+        while stack:
+            item, depth = stack.pop()
+            key = _row_key(item)
+            if key in shown:
+                continue
+            shown.add(key)
+            state, where, problem = placed[key]
+            if depth:  # under the listed parent
+                parent, state = _row_key(parent_of[key]), "listed"
+            else:  # topmost: no parent listed (a record naming its descendant shows none)
+                parent, state = None, (state if state != "listed" else None)
+            families[family].append(FamilyRow(item, "family", family, depth, parent, state,
+                                              where, problem))
+            stack.extend((child, depth + 1) for child in reversed(children.get(key, [])))
+
+    def family_of(item: CheckpointItem) -> str:
+        root = top(item)
+        return root.family_id or root.run
+
+    for item in models:  # the family with the newest file first
+        families.setdefault(family_of(item), [])
+    for item in models:  # within one, the topmost files in listing order
+        if _row_key(item) not in parent_of:
+            emit(item, family_of(item))
+    for item in models:  # a record naming its own descendant: from its topmost file
+        if _row_key(item) not in shown:
+            emit(top(item), family_of(item))
+
+    rows = [row for family in families.values() for row in family]
+    if task is not None or learning_stage is not None:
+        by_key = {_row_key(row.item): row for row in rows}
+        keep = {key for key, row in by_key.items()
+                if record_matches(row.item, task, learning_stage)}
+        needed = set(keep)
+        for key in keep:
+            parent = by_key[key].parent
+            while parent is not None and parent not in needed:
+                needed.add(parent)
+                parent = by_key[parent].parent
+        return tuple(replace(row, context=_row_key(row.item) not in keep)
+                     for row in rows if _row_key(row.item) in needed)
+    return tuple(rows) + tuple(
+        FamilyRow(item, "refused") for item in items if item.record != "model")
+
+
+def list_family(
+    workspace: Any, *, task: Optional[str] = None, learning_stage: Optional[str] = None,
+    listing: Optional[Listing] = None, environ: Optional[Mapping[str, str]] = None,
+) -> Listing:
+    """A listed workspace's checkpoints as families (`family_rows`), from one
+    listing (`list_checkpoints`). A parent outside the workspace is looked for
+    in the other listed workspaces only, by the run its child records, and
+    matched by its SHA-256 (provenance §9.3, "Parents in another workspace"):
+    only that run of each is read, and no other root is searched.
+
+    `listing` is that workspace's unfiltered `list_checkpoints` listing when
+    the caller already holds it: the tree is drawn from it and nothing is
+    listed again, so a page's list and its tree come from one read (README
+    §1)."""
+    try:
+        _check_record_filter(task, learning_stage)
+    except ValueError as exc:
+        return Listing((), str(exc))
+    if listing is None:
+        listing = list_checkpoints(workspace, environ=environ)
+    if not listing.available or not listing.items:
+        return listing
+    return Listing(family_rows(listing.items,
+                               lookup=_parent_lookup(listing.items[0].workspace, environ),
+                               task=task, learning_stage=learning_stage))
+
+
+def _parent_lookup(home: str, environ: Optional[Mapping[str, str]]) -> ParentLookup:
+    """`ParentLookup` over the listed workspaces other than `home`, by name:
+    each one's run of the recorded name, read through the one reader within
+    that workspace; nothing else is opened."""
+    from src.utils.checkpoint_paths import read_run_checkpoints
+
+    listed: Dict[str, Path] = {}
+
+    def lookup(run: str, sha256: str) -> Tuple[str, Optional[str]]:
+        if not listed:  # one listing of the root per view
+            try:
+                listed.update(resolve_workspaces(environ=environ))
+            except ServerListRefused:
+                return "absent", None
+        unread: Optional[str] = None
+        changed: Optional[str] = None
+        for name, path in sorted(listed.items()):
+            if name == home:
+                continue
+            try:
+                entries = read_run_checkpoints(path, within=path, run=run)
+            except OSError:
+                continue
+            if any(e.sha256 == sha256 and e.problem is None for e in entries):
+                return "found", name
+            if any(e.sha256 is None or e.problem is not None for e in entries):
+                unread = unread or name
+            elif entries:
+                changed = changed or name
+        if unread is not None:
+            return "unread", unread
+        return ("changed", changed) if changed is not None else ("absent", None)
+
+    return lookup
 
 
 def resolve_checkpoint(
@@ -538,7 +906,8 @@ def resolve_checkpoint(
     environ: Optional[Mapping[str, str]] = None,
 ) -> Path:
     """The path of the checkpoint the server lists as `run`/`filename` of
-    `architecture` in `workspace`, found in the listing again; reads no file.
+    the directory `architecture` under the workspace's ``runs/`` (any name
+    the listing shows), found in the listing again; reads no file.
 
     The caller's reader compares the bytes it reads with the digest it was
     shown (a measurement's `--expect-checkpoint-sha256`, a load's
@@ -550,16 +919,15 @@ def resolve_checkpoint(
         ServerListRefused: the workspace or the checkpoint is not listed, or the
             file resolves outside the workspace.
     """
-    from src.utils.checkpoint_paths import list_run_checkpoints, normalize_conv_type
+    from src.utils.checkpoint_paths import checkpoint_not_read, list_run_checkpoints
 
     name, path = _find_workspace(workspace, environ)
-    # An empty name would be read as the default architecture; a request names one.
+    # An empty name would list every directory; a request names one.
     if not (isinstance(architecture, str) and architecture.strip()):
         raise ServerListRefused(f"{_echo(architecture)} is not an architecture")
-    try:
-        conv_type = normalize_conv_type(architecture)
-    except ValueError as exc:
-        raise ServerListRefused(str(exc)) from None
+    # The directory under runs/ the listing names, matched by name (never
+    # joined): a name no directory has lists nothing, and is refused below.
+    conv_type = architecture
     try:
         listed = list_run_checkpoints(path, conv_type)
     except OSError as exc:  # a runs directory this account may not enter
@@ -568,19 +936,13 @@ def resolve_checkpoint(
             f"({type(exc).__name__}: {exc.strerror or exc})") from None
     for run_dir, checkpoint in listed:
         if run_dir.name == run and checkpoint.name == filename:
-            try:
-                resolved = checkpoint.resolve()
-            except (OSError, RuntimeError) as exc:  # a link loop: RuntimeError before 3.13
-                raise ServerListRefused(
-                    f"{run_dir.name}/{checkpoint.name} cannot be resolved "
-                    f"({type(exc).__name__}), so it is not offered") from None
-            if not _inside(resolved, path):
-                raise ServerListRefused(
-                    f"{run_dir.name}/{checkpoint.name} resolves outside the workspace "
-                    f"{name!r}, so it is not offered")
+            # The run layout's one boundary, as the listing refused it.
+            problem = checkpoint_not_read(run_dir, checkpoint, path)
+            if problem is not None:
+                raise ServerListRefused(f"in the workspace {name!r}, {problem}")
             return checkpoint
     raise ServerListRefused(
-        f"no checkpoint {_echo(filename)} in run {_echo(run)} of {conv_type} is listed in "
+        f"no checkpoint {_echo(filename)} in run {_echo(run)} of {_echo(conv_type)} is listed in "
         f"the workspace {name!r}")
 
 
@@ -599,7 +961,11 @@ def locate_checkpoint(
             lists is that file (an unlisted file is never opened). The reason
             does not repeat the typed path.
     """
-    from src.utils.checkpoint_paths import list_run_checkpoints, run_architecture
+    from src.utils.checkpoint_paths import (
+        checkpoint_not_read,
+        list_run_checkpoints,
+        run_architecture,
+    )
 
     name, path = _find_workspace(workspace, environ)
     text = typed.strip() if isinstance(typed, str) else ""
@@ -613,11 +979,15 @@ def locate_checkpoint(
             f"the typed path or the runs of the workspace {name!r} cannot be resolved "
             f"({type(exc).__name__})") from None
     for run_dir, checkpoint in listed:
+        # Outside the run layout's one boundary, or not resolvable: not a
+        # file the list offers.
+        if checkpoint_not_read(run_dir, checkpoint, path) is not None:
+            continue
         try:
             found = checkpoint.resolve()
-        except (OSError, RuntimeError):
+        except (OSError, RuntimeError):  # changed since: a link loop before 3.13
             continue
-        if found == wanted and _inside(found, path):
+        if found == wanted:
             return run_architecture(run_dir), run_dir.name, checkpoint.name
     raise ServerListRefused(
         f"the typed path is not a checkpoint the server lists in the workspace {name!r}: a "
@@ -632,7 +1002,7 @@ def _report_items(
     store: Optional[Any] = None, operator: bool = False,
 ) -> Tuple[Tuple[ReportItem, ...], Optional[str]]:
     """The version's runs, newest first. Given `report_state`, each with what
-    it kept, whether its report is registered, and D5's state of its key for
+    it kept, whether its report is registered, and its group's description for
     those bytes (`run_contest`) from one scan of the store (`store`, a
     `record_states.read_report_store`, made here when not given)."""
     from src.api.services.record_states import read_report_store, run_contest
@@ -663,13 +1033,12 @@ def _report_items(
     return tuple(items), None
 
 
-def _version_item(listed: Any, report_state: Optional[ReportStateReader],
-                  environ: Optional[Mapping[str, str]], *,
+def _version_item(listed: Any, report_state: Optional[ReportStateReader], *,
                   store: Optional[Any] = None,
                   operator: bool = False) -> CohortVersionItem:
     if listed.version is None:
-        return CohortVersionItem(listed.label, None, None, False, None, None, None, None,
-                                 None, None, listed.problem)
+        return CohortVersionItem(listed.label, None, None, None, None, None, None, None,
+                                 None, listed.problem)
     manifest = listed.version.manifest
     source = _as_dict(manifest.get("source")) or {}
     imported = _as_dict(manifest.get("imported")) or {}
@@ -680,7 +1049,6 @@ def _version_item(listed: Any, report_state: Optional[ReportStateReader],
         label=listed.label,
         manifest_sha256=listed.version.identity.sha256,
         role=role,
-        offers_ordering=server_settings.role_offers_ordering(role, environ),
         source_format=source.get("format"),
         source_sha256=source.get("sha256"),
         counts=_as_dict(manifest.get("counts")),
@@ -699,12 +1067,16 @@ def stored_report_state(run_directory: Path) -> Dict[str, Any]:
     (`src.evaluation.registration.report_state`): kept from the store,
     registered from the ledger beside the checkpoint the report records it
     measured, since a list knows no checkpoint file. So ``registered`` is
-    ``registered`` when that ledger names the report, and otherwise
-    ``cannot_be_checked``, never ``not_registered``: a registration filed
-    beside another copy of the same weights is not looked for, and the reason
-    says which ledger was. JSON-ready: ``kept`` and
+    ``registered`` when that ledger names this run with this report,
+    ``not_registered`` only when it names this run with other bytes (the
+    report was replaced after it was registered:
+    ``replaced_after_registration``), and otherwise ``cannot_be_checked``: a
+    registration filed beside another copy of the same weights is not looked
+    for, and the reason says which ledger was. JSON-ready: ``kept`` and
     ``registered`` (one of the registration's states each), their reasons,
-    the report's digest and the ledger record's sequence. No field is a server
+    the report's digest, the ledger record's sequence and, when no record names
+    this run, the records merged before each run had its own record that hold
+    its bytes (``historical_overlap``, a possible overlap). No field is a server
     path (a reason may name one, for the operator)."""
     from src.evaluation.cohort_registry import REPORT_FILE
     from src.evaluation.registration import report_state
@@ -712,7 +1084,9 @@ def stored_report_state(run_directory: Path) -> Dict[str, Any]:
     state = report_state(Path(run_directory) / REPORT_FILE)
     return {"kept": state.kept, "why_kept": state.why_kept,
             "registered": state.registered, "why_registered": state.why_registered,
-            "report_sha256": state.report_sha256, "sequence": state.sequence}
+            "report_sha256": state.report_sha256, "sequence": state.sequence,
+            "historical_overlap": list(state.historical_overlap),
+            "replaced_after_registration": state.replaced_after_registration}
 
 
 def list_cohort_versions(
@@ -725,7 +1099,7 @@ def list_cohort_versions(
     `report_state`, given a run directory, says what that run kept and whether
     its report is registered: the registration's one helper
     (`stored_report_state`, which the API route passes). With it, each run
-    also carries D5's state of its key, without the problems' words (one scan
+    also carries its group's description, without the problems' words (one scan
     of each version's store). Without it, each run is listed with no state and
     says so, and no store is scanned.
 
@@ -740,7 +1114,7 @@ def list_cohort_versions(
         listed = list_versions(setting.value)
     except RegistryRefused as exc:
         return Listing((), str(exc))
-    return Listing(tuple(_version_item(entry, report_state, environ) for entry in listed))
+    return Listing(tuple(_version_item(entry, report_state) for entry in listed))
 
 
 def _registry_root(environ: Optional[Mapping[str, str]]) -> Path:
@@ -785,29 +1159,28 @@ def cohort_version_item(
 ) -> CohortVersionItem:
     """One cohort version as `list_cohort_versions` lists it, with its report
     store's runs and, given `report_state`, what each kept, whether its report
-    is registered and D5's state of its key: for a page that shows one
+    is registered and its group's description: for a page that shows one
     version's reports without reading every other version's.
 
     Raises:
         ServerListRefused: as `resolve_cohort_version`.
     """
     return version_item(resolve_cohort_version(label, environ=environ),
-                        report_state=report_state, environ=environ)
+                        report_state=report_state)
 
 
 def version_item(version: Any, *, report_state: Optional[ReportStateReader] = None,
-                 store: Optional[Any] = None, operator: bool = False,
-                 environ: Optional[Mapping[str, str]] = None) -> CohortVersionItem:
+                 store: Optional[Any] = None, operator: bool = False) -> CohortVersionItem:
     """A cohort version already read (`resolve_cohort_version`), listed as
     `list_cohort_versions` lists it. `store` is that version's one scan
     (`record_states.read_report_store`), for a caller that shows the scan's
     records too, so the store is scanned once; made here when not given. `operator` keeps the
-    problems' words in each run's D5 state, for an operator's page (the Test
+    problems' words in each run's group description, for an operator's page (the Test
     page); the open route's listing leaves them out."""
     from src.evaluation.cohort_registry import ListedVersion
 
     return _version_item(ListedVersion(version.manifest.get("label"), version, None),
-                         report_state, environ, store=store, operator=operator)
+                         report_state, store=store, operator=operator)
 
 
 def resolve_report(label: Any, run_id: Any, *,

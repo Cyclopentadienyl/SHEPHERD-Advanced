@@ -5,10 +5,8 @@ did not build over the graph, and `_init_gnn_inference` returned without the GNN
 when that happened or when there was no graph to compute its embeddings from.
 The pipeline was then published as a success, and every diagnosis was answered
 with path-reasoning scores in the model's place, over HTTP 200, with nothing in
-the response saying so. `sp_optional=False` did the same in its own way: it
-switched the GNN off, so a configuration requiring both signals was served with
-neither. (An unreadable checkpoint already raised, as torch's own error; its
-cases here hold it there.)
+the response saying so. (An unreadable checkpoint already raised, as torch's own
+error; its cases here hold it there.)
 
 Each of those now raises `PipelineBuildError`
 (docs/working/PLAN_PROVENANCE_CONTRACT.md, M1). The API's build-then-publish
@@ -23,16 +21,23 @@ no knowledge graph is refused rather than treated as nothing configured; a blank
 environment value is unset; and `/diagnose` no longer rebuilds a failed pipeline
 on every request.
 
-**Unchanged here, deliberately:** a pipeline built with no model source at all
-still serves path reasoning. Whether that needs an explicit opt-in is B-2's open
-policy question, not this change.
+**No model source at all is the same refusal since K7** (PATH1, G3): a graph
+is never served by path reasoning, and no model is handed over in memory.
+
+**What is served is a trained task model** (K8-2a): every test here whose build
+reaches the model serves the session's disease child (`child`), and "another
+graph" is that child with its graph view record naming another view. The
+synthetic workspace stays only where the build is refused before a model is
+built. **A checkpoint without a model spec is refused at load, before any model
+is built** (K8-4, SG1), by the build, the reload with or without a task, and
+startup alike; a pre-contract file is refused for its missing record first.
 
 Module: tests/unit/test_pipeline_fails_closed.py
 """
 from __future__ import annotations
 
 import asyncio
-import json
+import hashlib
 
 import pytest
 
@@ -42,54 +47,32 @@ from src.inference import pipeline as pipeline_module  # noqa: E402
 from src.inference.pipeline import (  # noqa: E402
     DiagnosisPipeline,
     PipelineBuildError,
-    PipelineConfig,
 )
 from src.kg.graph import KnowledgeGraph  # noqa: E402
-from tests.fixtures.generated_workspace import graph_record  # noqa: E402
-from tests.fixtures.synthetic_workspace import (  # noqa: E402
-    FEATURE_DIM,
-    HIDDEN_DIM,
-    build_workspace,
-)
+from tests.fixtures.synthetic_workspace import build_workspace  # noqa: E402
+from tests.unit import test_serving_reads_once as reads_once  # noqa: E402
 
 
-def _graph_data(data_dir):
-    return {
-        "x_dict": torch.load(data_dir / "node_features.pt", weights_only=False),
-        "edge_index_dict": torch.load(data_dir / "edge_indices.pt", weights_only=False),
-        "num_nodes_dict": json.loads((data_dir / "num_nodes.json").read_text()),
-    }
+def _checkpoint_for_another_graph(checkpoint, path):
+    """A sound task model, built on another graph's view.
 
-
-def _checkpoint_for_another_graph(data_dir, path):
-    """A sound checkpoint, trained over a graph whose features are twice as wide.
-
-    Everything about it is well formed: it loads, its configuration matches its
-    weights, and it would serve its own graph. It does not build over this one.
-    It records this workspace's graph roles, so the build is what refuses it, not
-    the training record (M2.4, whose refusals `test_training_record.py` shows).
+    `checkpoint` (the disease child) with its graph view record naming a view of
+    the same shape over another graph. Everything about it is well formed: it
+    loads, its model spec matches its weights, and it would serve the graph whose
+    view it records. It does not build over this one. It records this
+    workspace's graph roles, so the build is what refuses it, not the training
+    record (M2.4, whose refusals `test_training_record.py` shows). Its record
+    names that view the same way wherever it names it (the top level, the data
+    roles and the split), as a model trained on it would, so it does not
+    contradict itself (K8-4 review P2-2).
     """
-    from src.models.gnn.shepherd_gnn import ShepherdGNN, ShepherdGNNConfig
-
-    graph = _graph_data(data_dir)
-    metadata = (list(graph["num_nodes_dict"]), list(graph["edge_index_dict"]))
-    in_channels = dict.fromkeys(graph["num_nodes_dict"], FEATURE_DIM * 2)
-    model = ShepherdGNN(
-        metadata=metadata,
-        in_channels_dict=in_channels,
-        config=ShepherdGNNConfig(hidden_dim=HIDDEN_DIM, num_layers=2, num_heads=2),
-    )
-    torch.save(
-        {
-            "state_dict": model.state_dict(),
-            "config": {"hidden_dim": HIDDEN_DIM, "num_layers": 2, "num_heads": 2},
-            "metadata": metadata,
-            "in_channels_dict": in_channels,
-            "epoch": 1,
-            "training_input_digests": graph_record(data_dir),
-        },
-        path,
-    )
+    contents = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    other = hashlib.sha256(b"another graph").hexdigest()
+    roles = contents["data_roles"]
+    contents["graph_view"] = {**contents["graph_view"], "digest": other}
+    roles["graph_view"] = {**roles["graph_view"], "digest": other}
+    roles["split"] = {**roles["split"], "view_digest": other}
+    torch.save(contents, path)
     return path
 
 
@@ -98,14 +81,20 @@ def workspace(tmp_path):
     return build_workspace(tmp_path)
 
 
+#: The session's trained disease child, ``(data_dir, checkpoint)``: the model
+#: every build here that reaches one serves. Read-only; what a test writes goes
+#: to `tmp_path`. Shared with `test_serving_reads_once.py` rather than copied.
+child = reads_once.child
+
+
 # ==============================================================================
 # The pipeline: a requested model is built, or the build raises
 # ==============================================================================
 class TestARequestedModelIsBuiltOrRefused:
-    def test_a_sound_checkpoint_builds_its_model(self, workspace):
+    def test_a_sound_checkpoint_builds_its_model(self, child):
         """The control. Without it, every refusal below could be a harness that
-        never builds anything."""
-        data_dir, checkpoint = workspace
+        never builds anything. A disease child scores as its task does."""
+        data_dir, checkpoint = child
 
         pipeline = DiagnosisPipeline(
             graph=KnowledgeGraph.read_json(data_dir / "kg.json"), data_dir=str(data_dir),
@@ -114,7 +103,7 @@ class TestARequestedModelIsBuiltOrRefused:
 
         config = pipeline.get_pipeline_config()
         assert config["gnn_ready"] is True
-        assert config["scoring_mode"] == "gnn_only"
+        assert config["scoring_mode"] == "disease_task"
 
     def test_a_missing_checkpoint_is_refused(self, workspace, tmp_path):
         data_dir, _ = workspace
@@ -140,11 +129,11 @@ class TestARequestedModelIsBuiltOrRefused:
         assert str(corrupt) in str(refused.value)
         assert refused.value.__cause__ is not None, "the reader's own error is kept"
 
-    def test_a_checkpoint_for_another_graph_is_refused(self, workspace, tmp_path):
-        data_dir, _ = workspace
-        other = _checkpoint_for_another_graph(data_dir, tmp_path / "other.pt")
+    def test_a_checkpoint_for_another_graph_is_refused(self, child, tmp_path):
+        data_dir, checkpoint = child
+        other = _checkpoint_for_another_graph(checkpoint, tmp_path / "other.pt")
 
-        with pytest.raises(PipelineBuildError, match="does not build a model"):
+        with pytest.raises(PipelineBuildError, match="built on graph view"):
             DiagnosisPipeline(
                 graph=KnowledgeGraph.read_json(data_dir / "kg.json"), data_dir=str(data_dir),
                 checkpoint_path=str(other), device="cpu",
@@ -159,7 +148,7 @@ class TestARequestedModelIsBuiltOrRefused:
         data_dir, checkpoint = workspace
         monkeypatch.setattr(
             DiagnosisPipeline, "_load_model_from_checkpoint",
-            lambda self, checkpoint_path, device, *, expected_sha256=None: None,
+            lambda self, checkpoint_path, device, *, expected_sha256=None, within=None: None,
         )
 
         with pytest.raises(PipelineBuildError, match="no node embeddings"):
@@ -169,22 +158,22 @@ class TestARequestedModelIsBuiltOrRefused:
             )
 
     def test_embeddings_without_a_node_type_scoring_reads_cannot_mark_it_ready(
-        self, monkeypatch, workspace
+        self, monkeypatch, child
     ):
-        """An embedding table with no disease rows scores every GNN term as zero,
-        as surely as no table at all."""
-        data_dir, checkpoint = workspace
+        """Vectors computed without what scoring reads (a task model's view
+        vectors) leave no candidate scoreable, as surely as no vectors at all."""
+        data_dir, checkpoint = child
         real = DiagnosisPipeline._precompute_node_embeddings
 
-        def _without_diseases(self, device=None):
+        def _without_the_view(self, device=None):
             real(self, device)
-            self._node_embeddings.pop("disease")
+            self._bundle_z = None
 
         monkeypatch.setattr(
-            DiagnosisPipeline, "_precompute_node_embeddings", _without_diseases
+            DiagnosisPipeline, "_precompute_node_embeddings", _without_the_view
         )
 
-        with pytest.raises(PipelineBuildError, match="disease"):
+        with pytest.raises(PipelineBuildError, match="no node embeddings for \\['the view'\\]"):
             DiagnosisPipeline(
                 graph=KnowledgeGraph.read_json(data_dir / "kg.json"), data_dir=str(data_dir),
                 checkpoint_path=str(checkpoint), device="cpu",
@@ -203,128 +192,44 @@ class TestARequestedModelIsBuiltOrRefused:
                 checkpoint_path=str(not_a_checkpoint), device="cpu",
             )
 
-    def test_a_checkpoint_without_weights_is_named_as_such(self, workspace, tmp_path):
+    def test_a_checkpoint_without_weights_is_named_as_such(self, child, tmp_path):
         """A format problem, not a graph mismatch, and the message says which."""
-        data_dir, checkpoint = workspace
+        data_dir, checkpoint = child
         stripped = torch.load(checkpoint, map_location="cpu", weights_only=False)
         del stripped["state_dict"]
         torch.save(stripped, tmp_path / "stripped.pt")
 
-        with pytest.raises(PipelineBuildError, match="carries no model weights"):
+        with pytest.raises(PipelineBuildError, match="holds no model weights"):
             DiagnosisPipeline(
                 graph=KnowledgeGraph.read_json(data_dir / "kg.json"), data_dir=str(data_dir),
                 checkpoint_path=str(tmp_path / "stripped.pt"), device="cpu",
             )
 
-    def test_a_checkpoint_with_no_graph_is_refused(self, workspace):
-        _, checkpoint = workspace
-
-        with pytest.raises(PipelineBuildError, match="no graph"):
-            DiagnosisPipeline(
-                kg=KnowledgeGraph(), checkpoint_path=str(checkpoint), device="cpu",
-            )
-
-    def test_a_preloaded_model_with_no_graph_is_refused(self):
-        """The other model source. A model handed in directly is as much a
-        request for a GNN as a checkpoint path is."""
-        with pytest.raises(PipelineBuildError, match="no graph"):
-            DiagnosisPipeline(kg=KnowledgeGraph(), model=object(), device="cpu")
-
-    def test_without_torch_a_requested_model_is_refused(self, monkeypatch, workspace):
-        _, checkpoint = workspace
-        monkeypatch.setattr(pipeline_module, "HAS_TORCH", False)
-
-        with pytest.raises(PipelineBuildError, match="PyTorch is not available"):
-            DiagnosisPipeline(kg=KnowledgeGraph(), checkpoint_path=str(checkpoint))
-
-    def test_required_shortest_paths_that_are_absent_refuse_the_build(self, workspace):
-        """`sp_optional=False` used to switch the GNN off and carry on, so a
-        configuration that required both signals was served with neither."""
+    def test_a_checkpoint_with_no_workspace_is_refused(self, workspace):
         data_dir, checkpoint = workspace
-        assert not (data_dir / "shortest_paths.pt").exists()
 
-        with pytest.raises(PipelineBuildError, match="sp_optional=False"):
+        with pytest.raises(PipelineBuildError, match="no workspace"):
             DiagnosisPipeline(
-                graph=KnowledgeGraph.read_json(data_dir / "kg.json"),
-                config=PipelineConfig(sp_optional=False),
-                checkpoint_path=str(checkpoint),
-                data_dir=str(data_dir),
-                device="cpu",
-            )
-
-    def test_required_shortest_paths_with_no_directory_say_so(self, workspace):
-        """With the graph passed in memory there is no table to load and no load
-        message to point at; the refusal names that instead. The model is handed
-        in built: no checkpoint is loaded over an in-memory graph (M2.4)."""
-        from src.models.gnn.shepherd_gnn import build_shepherd_model
-
-        data_dir, checkpoint = workspace
-        graph = _graph_data(data_dir)
-        model = build_shepherd_model(
-            torch.load(checkpoint, map_location="cpu", weights_only=False), graph
-        )
-
-        with pytest.raises(PipelineBuildError, match="no data_dir was given"):
-            DiagnosisPipeline(
-                kg=KnowledgeGraph(),
-                config=PipelineConfig(sp_optional=False),
-                graph_data=graph,
-                model=model,
-                device="cpu",
-            )
-
-    @pytest.mark.parametrize("recorded", [True, False], ids=["recorded", "unrecorded"])
-    def test_a_checkpoint_over_an_in_memory_graph_is_refused(
-        self, workspace, monkeypatch, recorded
-    ):
-        """Contract M2.4, the review's P2-1. A graph supplied in memory has no
-        verified workspace, so nothing shows the checkpoint was trained on it.
-        Every feature shifted, the shapes unchanged: whatever the checkpoint
-        records, it is refused before it is opened and nothing is built."""
-        import src.models.gnn.shepherd_gnn as builder
-        import src.utils.checkpoint_io as checkpoint_io
-
-        data_dir, checkpoint = workspace
-        if not recorded:
-            contents = torch.load(checkpoint, map_location="cpu", weights_only=False)
-            del contents["training_input_digests"]
-            torch.save(contents, checkpoint)
-        graph = _graph_data(data_dir)
-        graph["x_dict"] = {k: v + 11.0 for k, v in graph["x_dict"].items()}
-        monkeypatch.setattr(builder, "build_shepherd_model",
-                            lambda *a, **k: pytest.fail("a model was built"))
-        monkeypatch.setattr(checkpoint_io, "read_checkpoint",
-                            lambda *a, **k: pytest.fail("the checkpoint was read"))
-        monkeypatch.setattr(pipeline_module, "read_checkpoint",
-                            lambda *a, **k: pytest.fail("the checkpoint was read"))
-
-        with pytest.raises(PipelineBuildError, match="supplied in memory"):
-            DiagnosisPipeline(
-                kg=KnowledgeGraph(), graph_data=graph,
+                graph=KnowledgeGraph.read_json(data_dir / "kg.json"), data_dir=None,
                 checkpoint_path=str(checkpoint), device="cpu",
             )
 
-    def test_optional_shortest_paths_that_are_absent_still_build(self, workspace):
-        """The default. Absent by configuration is the state
-        `DISEASE_SCORER_POLICY.md` §2 blesses, and it stays a GNN pipeline."""
+    def test_without_torch_a_requested_model_is_refused(self, monkeypatch, workspace):
         data_dir, checkpoint = workspace
+        monkeypatch.setattr(pipeline_module, "HAS_TORCH", False)
 
-        pipeline = DiagnosisPipeline(
-            graph=KnowledgeGraph.read_json(data_dir / "kg.json"),
-            checkpoint_path=str(checkpoint),
-            data_dir=str(data_dir),
-            device="cpu",
-        )
+        with pytest.raises(PipelineBuildError, match="PyTorch is not available"):
+            DiagnosisPipeline(graph=KnowledgeGraph.read_json(data_dir / "kg.json"),
+                              data_dir=str(data_dir), checkpoint_path=str(checkpoint))
 
-        assert pipeline.get_pipeline_config()["scoring_mode"] == "gnn_only"
+    def test_no_model_source_is_refused(self, workspace):
+        """K7 (PATH1): B-2's question is settled. A graph with no checkpoint is
+        refused, never served by path reasoning."""
+        data_dir, _ = workspace
 
-    def test_no_model_source_still_serves_path_reasoning(self):
-        """B-2's open policy question, left exactly where it was."""
-        pipeline = DiagnosisPipeline(kg=KnowledgeGraph())
-
-        config = pipeline.get_pipeline_config()
-        assert config["gnn_ready"] is False
-        assert config["scoring_mode"] == "path_reasoning_fallback"
+        with pytest.raises(PipelineBuildError, match="No model is configured"):
+            DiagnosisPipeline(graph=KnowledgeGraph.read_json(data_dir / "kg.json"),
+                              data_dir=str(data_dir), checkpoint_path=None, device="cpu")
 
 
 # ==============================================================================
@@ -350,11 +255,11 @@ def api(monkeypatch):
     return api_main
 
 
-def _bad_checkpoint(kind, data_dir, tmp_path):
+def _bad_checkpoint(kind, checkpoint, tmp_path):
     if kind == "missing":
         return tmp_path / "absent.pt"
     if kind == "built for another graph":
-        return _checkpoint_for_another_graph(data_dir, tmp_path / "other.pt")
+        return _checkpoint_for_another_graph(checkpoint, tmp_path / "other.pt")
     corrupt = tmp_path / "corrupt.pt"
     corrupt.write_bytes(b"not a checkpoint")
     return corrupt
@@ -382,10 +287,10 @@ class TestStartupPublishesNothing:
         return TestClient(api.app)
 
     def test_a_sound_checkpoint_is_published_at_startup(
-        self, api, monkeypatch, workspace
+        self, api, monkeypatch, child
     ):
         """The control for the case below: the same startup, a good checkpoint."""
-        data_dir, checkpoint = workspace
+        data_dir, checkpoint = child
 
         with self._start(api, monkeypatch, data_dir, checkpoint):
             assert api.app_state.pipeline is not None
@@ -393,13 +298,13 @@ class TestStartupPublishesNothing:
 
     @pytest.mark.parametrize("kind", ["missing", "built for another graph", "unreadable"])
     def test_a_checkpoint_that_cannot_load_leaves_diagnose_at_503(
-        self, api, monkeypatch, workspace, tmp_path, kind
+        self, api, monkeypatch, child, tmp_path, kind
     ):
         """The first two were the old fallback: startup published a pipeline
         scoring by path reasoning, and `/diagnose` answered 200. An unreadable
         checkpoint already failed startup; it is here so it stays that way."""
-        data_dir, _ = workspace
-        checkpoint = _bad_checkpoint(kind, data_dir, tmp_path)
+        data_dir, sound = child
+        checkpoint = _bad_checkpoint(kind, sound, tmp_path)
 
         with self._start(api, monkeypatch, data_dir, checkpoint) as client:
             assert api.app_state.pipeline is None, "startup published a pipeline"
@@ -432,12 +337,12 @@ class TestStartupPublishesNothing:
         assert statuses == [503, 503, 503]
         assert len(builds) == 1, f"{len(builds)} builds for one startup and 3 requests"
 
-    def test_a_checkpoint_with_no_knowledge_graph_is_refused_not_mocked(
+    def test_a_checkpoint_with_no_knowledge_graph_is_refused(
         self, api, monkeypatch, workspace
     ):
         """`build_pipeline` returned None with no KG path before recording the
-        request, so a deployment that named a checkpoint got the demo answer:
-        invented candidates over HTTP 200."""
+        request, so a deployment that named a checkpoint was treated as one
+        that configured nothing (then answered by the retired demo)."""
         from fastapi.testclient import TestClient
 
         data_dir, checkpoint = workspace
@@ -450,20 +355,19 @@ class TestStartupPublishesNothing:
             response = _diagnose(client)
 
         assert response.status_code == 503, response.text
-        assert "mock" not in response.text
+        assert response.json()["error"].startswith("A pipeline is configured")
 
     def test_a_blank_checkpoint_setting_is_no_checkpoint(self, api, monkeypatch, workspace):
-        """An exported-but-empty variable is how a shell says nothing. Read as a
-        path, it would refuse a deployment that asked for no model."""
+        """An exported-but-empty variable is how a shell says nothing: read as
+        no checkpoint, never as a path to look for. With no model the build is
+        refused for that (K7), not for a file named ""."""
         data_dir, _ = workspace
         monkeypatch.setenv("SHEPHERD_CHECKPOINT_PATH", "")
 
-        bundle = api.build_pipeline(
-            kg_path=str(data_dir / "kg.json"), data_dir=str(data_dir)
-        )
+        with pytest.raises(PipelineBuildError, match="No model is configured") as refused:
+            api.build_pipeline(kg_path=str(data_dir / "kg.json"), data_dir=str(data_dir))
 
-        assert bundle.checkpoint_path is None
-        assert bundle.config["scoring_mode"] == "path_reasoning_fallback"
+        assert "does not exist" not in str(refused.value)
 
 
 class TestAReloadKeepsWhatIsServing:
@@ -499,8 +403,8 @@ class TestAReloadKeepsWhatIsServing:
             == before["served_identity"]
         ), "a refused reload changed what is served"
 
-    def test_a_checkpoint_that_cannot_be_read_is_refused(self, api, workspace, tmp_path):
-        data_dir, checkpoint = workspace
+    def test_a_checkpoint_that_cannot_be_read_is_refused(self, api, child, tmp_path):
+        data_dir, checkpoint = child
         before = self._served(api, data_dir, checkpoint)
         corrupt = tmp_path / "corrupt.pt"
         corrupt.write_bytes(b"not a checkpoint")
@@ -513,22 +417,128 @@ class TestAReloadKeepsWhatIsServing:
         assert ".." not in result.message
         self._assert_still_serving(api, before)
 
-    def test_a_checkpoint_for_another_graph_is_refused(self, api, workspace, tmp_path):
-        data_dir, checkpoint = workspace
+    def test_a_checkpoint_for_another_graph_is_refused(self, api, child, tmp_path):
+        data_dir, checkpoint = child
         before = self._served(api, data_dir, checkpoint)
-        other = _checkpoint_for_another_graph(data_dir, tmp_path / "other.pt")
+        other = _checkpoint_for_another_graph(checkpoint, tmp_path / "other.pt")
 
         result = _reload(data_dir=str(data_dir), checkpoint_path=str(other))
 
         assert result.success is False
-        assert "does not build a model" in result.message
+        assert "built on graph view" in result.message
         self._assert_still_serving(api, before)
 
 
+def _without_model_spec(checkpoint, path):
+    """`checkpoint` (the disease child) with its model spec deleted and its
+    training record kept: a file this build cannot run, which names this
+    workspace's graph, so its missing spec is the only reason to refuse it."""
+    contents = torch.load(checkpoint, map_location="cpu", weights_only=True)
+    del contents["model_spec"]
+    torch.save(contents, path)
+    return path
+
+
+class TestAFileWithoutAModelSpecIsRefusedAtLoad:
+    """README §8, regression 7 (K8-4, SG1): a checkpoint without a model spec is
+    refused at load, with `read_model_record`'s own reason (`WRITTEN_BEFORE_SPEC`),
+    before any graph view, model or vector is built, by every serving entrance:
+    the service's build, a reload with an explicit path with and without a
+    task, and startup. The training record is still checked first, so a
+    pre-contract file keeps its own reason. Before K8-4 the stripped child
+    reached the ShepherdGNN build, and with a task the bundle path ran its
+    forward pass before the task check refused it."""
+
+    @staticmethod
+    def _observe_builds(monkeypatch):
+        """Each build step a load can take, noted, then made as asked: the
+        bundle (`load_bundle` imports `build_bundle` when it is called), the
+        graph view and the view vectors."""
+        import src.kg.graph_view as graph_view
+        import src.models.bundle.builder as builder
+
+        built = []
+        for owner, name in ((builder, "build_bundle"), (graph_view, "build_graph_view"),
+                            (DiagnosisPipeline, "_precompute_node_embeddings")):
+            def noted(*args, _name=name, _real=getattr(owner, name), **kwargs):
+                built.append(_name)
+                return _real(*args, **kwargs)
+
+            monkeypatch.setattr(owner, name, noted)
+        return built
+
+    def test_the_build_refuses_it_before_any_model_is_built(self, monkeypatch, child, tmp_path):
+        from src.inference.pipeline import build_served_pipeline
+        from src.config.model_types import WRITTEN_BEFORE_SPEC
+
+        data_dir, checkpoint = child
+        stripped = _without_model_spec(checkpoint, tmp_path / "stripped.pt")
+        built = self._observe_builds(monkeypatch)
+
+        with pytest.raises(PipelineBuildError) as refused:
+            build_served_pipeline(data_dir / "kg.json", checkpoint_path=str(stripped),
+                                  data_dir=str(data_dir), device="cpu")
+
+        assert WRITTEN_BEFORE_SPEC in str(refused.value)
+        assert built == [], f"built before the refusal: {built}"
+
+    def test_a_pre_contract_file_is_refused_for_its_record_first(self, monkeypatch, child,
+                                                                  tmp_path):
+        """No model spec and no training record: the record is checked first,
+        so the reason is the record's (the order the playbook quotes)."""
+        from src.inference.pipeline import build_served_pipeline
+        from src.config.model_types import WRITTEN_BEFORE_SPEC
+        from tests.fixtures.registered_cohort import write_checkpoint_without_model_spec
+
+        data_dir, _ = child
+        old = tmp_path / "old.pt"
+        write_checkpoint_without_model_spec(old)
+        built = self._observe_builds(monkeypatch)
+
+        with pytest.raises(PipelineBuildError,
+                           match="records no training_input_digests") as refused:
+            build_served_pipeline(data_dir / "kg.json", checkpoint_path=str(old),
+                                  data_dir=str(data_dir), device="cpu")
+
+        assert WRITTEN_BEFORE_SPEC not in str(refused.value)
+        assert built == []
+
+    @pytest.mark.parametrize("task", [None, "disease"])
+    def test_a_reload_with_an_explicit_path_refuses_it_and_keeps_what_is_serving(
+            self, api, monkeypatch, child, tmp_path, task):
+        from src.config.model_types import WRITTEN_BEFORE_SPEC
+
+        data_dir, checkpoint = child
+        before = TestAReloadKeepsWhatIsServing._served(api, data_dir, checkpoint)
+        stripped = _without_model_spec(checkpoint, tmp_path / "stripped.pt")
+        built = self._observe_builds(monkeypatch)
+
+        result = _reload(data_dir=str(data_dir), checkpoint_path=str(stripped),
+                         **({} if task is None else {"task": task}))
+
+        assert result.success is False
+        assert WRITTEN_BEFORE_SPEC in result.message and "still being served" in result.message
+        assert built == [], f"built before the refusal: {built}"
+        TestAReloadKeepsWhatIsServing._assert_still_serving(api, before)
+
+    def test_startup_refuses_it_and_publishes_nothing(self, api, monkeypatch, child, tmp_path):
+        data_dir, checkpoint = child
+        stripped = _without_model_spec(checkpoint, tmp_path / "stripped.pt")
+        built = self._observe_builds(monkeypatch)
+
+        with TestStartupPublishesNothing()._start(api, monkeypatch, data_dir,
+                                                  stripped) as client:
+            assert api.app_state.pipeline is None, "startup published a pipeline"
+            response = _diagnose(client)
+
+        assert response.status_code == 503, response.text
+        assert built == [], f"built before the refusal: {built}"
+
+
 class TestReadinessFollowsWhatIsServed:
-    """`/ready`, `/pipeline/status` and `/diagnose` agree on whether a configured
-    pipeline is being served. (With nothing configured, the demo answers and is
-    ready while the status reports no pipeline; that case is shown last.)
+    """`/ready`, `/pipeline/status` and `/diagnose` agree on whether a pipeline
+    is being served, configured or not (K7: with nothing configured, nothing
+    answers either; that case is shown last).
 
     A startup whose build fails clears readiness, and M1 makes that the outcome
     of the commonest misconfigurations. The 503 tells the operator to reload,
@@ -592,23 +602,24 @@ class TestReadinessFollowsWhatIsServed:
             )
 
     def test_a_refused_reload_after_it_stays_not_ready(
-        self, api, monkeypatch, workspace, tmp_path
+        self, api, monkeypatch, child, tmp_path
     ):
-        data_dir, _ = workspace
-        other = _checkpoint_for_another_graph(data_dir, tmp_path / "other.pt")
+        data_dir, checkpoint = child
+        other = _checkpoint_for_another_graph(checkpoint, tmp_path / "other.pt")
 
         with self._start(api, monkeypatch, data_dir, tmp_path / "absent.pt") as client:
             result = self._reload(client, data_dir, other)
 
             assert result["success"] is False
+            assert "built on graph view" in result["message"]
             assert self._answers(client) == self.NOT_SERVING
 
     def test_a_successful_reload_after_it_restores_all_of_them(
-        self, api, monkeypatch, workspace, tmp_path
+        self, api, monkeypatch, child, tmp_path
     ):
         """And only once the candidate is published: readiness is not set when
         the reload starts building."""
-        data_dir, checkpoint = workspace
+        data_dir, checkpoint = child
         ready_while_building = []
         real_build = api.build_pipeline
 
@@ -626,9 +637,9 @@ class TestReadinessFollowsWhatIsServed:
             assert client.get("/ready").json()["pipeline_loaded"] is True
 
     def test_a_refused_reload_on_a_healthy_service_keeps_all_of_it(
-        self, api, monkeypatch, workspace, tmp_path
+        self, api, monkeypatch, child, tmp_path
     ):
-        data_dir, checkpoint = workspace
+        data_dir, checkpoint = child
         corrupt = tmp_path / "corrupt.pt"
         corrupt.write_bytes(b"not a checkpoint")
         fields = ("pipeline", "kg",
@@ -653,12 +664,12 @@ class TestReadinessFollowsWhatIsServed:
             )
             assert self._answers(client) == self.SERVING
 
-    def test_the_whole_way_back_in_one_lifetime(self, api, monkeypatch, workspace, tmp_path):
+    def test_the_whole_way_back_in_one_lifetime(self, api, monkeypatch, child, tmp_path):
         """The acceptance as one chain, in one service: a refusal must leave
         nothing behind that stops a later reload from restoring the service,
         and the restored service must survive a later refusal."""
-        data_dir, checkpoint = workspace
-        other = _checkpoint_for_another_graph(data_dir, tmp_path / "other.pt")
+        data_dir, checkpoint = child
+        other = _checkpoint_for_another_graph(checkpoint, tmp_path / "other.pt")
         fields = ("pipeline", "kg",
                   "_current_data_dir", "_current_checkpoint_path", "is_ready")
 
@@ -666,7 +677,8 @@ class TestReadinessFollowsWhatIsServed:
             assert self._answers(client) == self.NOT_SERVING
             assert self._served_identity(client) is None
 
-            assert self._reload(client, data_dir, other)["success"] is False
+            refused = self._reload(client, data_dir, other)
+            assert refused["success"] is False and "built on graph view" in refused["message"]
             assert self._answers(client) == self.NOT_SERVING
             assert self._served_identity(client) is None
 
@@ -676,7 +688,8 @@ class TestReadinessFollowsWhatIsServed:
             identity = self._served_identity(client)
             assert identity["checkpoint"]["state"] == "verified"
 
-            assert self._reload(client, data_dir, other)["success"] is False
+            refused = self._reload(client, data_dir, other)
+            assert refused["success"] is False and "built on graph view" in refused["message"]
             assert self._answers(client) == self.SERVING
             for field, value in restored.items():
                 assert getattr(api.app_state, field) is value, (
@@ -700,13 +713,14 @@ class TestReadinessFollowsWhatIsServed:
             assert self._answers(client) == self.NOT_SERVING
             assert "reload" in client.get("/ready").json()["error"]
 
-    def test_a_service_with_nothing_configured_is_ready_until_a_workspace_is_refused(
+    def test_a_service_with_nothing_configured_is_not_ready_and_says_why(
         self, api, tmp_path, monkeypatch
     ):
-        """Nothing configured is the demo, and it answers. A reload that names a
-        workspace is a request for a real pipeline; refused, every diagnosis is
-        refused, and the probe says so. (The reload is an operator's, which D8
-        allows: mode M1, loopback requests.)"""
+        """K7 (DEMO1): nothing configured is not ready, and no diagnosis is
+        answered; the reason says nothing is loaded. A reload that names a
+        workspace is a request for a real pipeline; refused, the reason says a
+        configured pipeline could not be initialized. (The reload is an
+        operator's, which D8 allows: mode M1, loopback requests.)"""
         from fastapi.testclient import TestClient
 
         from tests.fixtures.operator_access import OPERATOR_BASE_URL, operator_mode
@@ -716,10 +730,11 @@ class TestReadinessFollowsWhatIsServed:
         operator_mode(monkeypatch)
 
         with TestClient(api.app, base_url=OPERATOR_BASE_URL) as client:
-            demo = {"ready": 200, "diagnose": 200, "initialized": False, "gnn_ready": False}
-            assert self._answers(client) == demo
+            assert self._answers(client) == self.NOT_SERVING
+            assert client.get("/ready").json()["error"].startswith("No model is loaded")
 
             refused = client.post("/api/v1/pipeline/reload", json={"data_dir": str(empty)})
 
             assert refused.json()["success"] is False
             assert self._answers(client) == self.NOT_SERVING
+            assert client.get("/ready").json()["error"].startswith("A pipeline is configured")

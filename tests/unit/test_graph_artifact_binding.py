@@ -88,7 +88,9 @@ class TestTrainingRefusesBeforeItActs:
 
     Since contract M2.1's S8 the files are read once (`read_training_inputs`):
     those reads parse the graph tensors and the samples, and the check compares
-    them before the dataloaders, the model, the Trainer and any run artifact.
+    them before the parents are read, the task data is bound, the Trainer is
+    built and any run artifact exists. Shown on a disease finetune, the run that
+    reads the samples as well as the graph (a base reads the graph alone).
     """
 
     @staticmethod
@@ -103,15 +105,17 @@ class TestTrainingRefusesBeforeItActs:
             monkeypatch.setattr(train_model, name, _sentinel)
         return train_model
 
-    def _config(self, train_model, root, tmp_path, **overrides):
-        # An explicit device: `auto` refuses on a host without CUDA (M3a)
-        # before any of the checks these tests are about.
-        overrides.setdefault("device", "cpu")
-        return train_model.TrainConfig(
-            data_dir=str(root),
-            run_dir=str(tmp_path / "run"),
-            **overrides,
-        )
+    @staticmethod
+    def _train(train_model, root, tmp_path):
+        """A disease finetune over `root`, given exactly the fields it sets as
+        the operator's. Its base is named and never read: every case here
+        stops before the parent read. An explicit device: `auto` refuses on a
+        host without CUDA (M3a) before any of the checks these tests are
+        about."""
+        fields = {"data_dir": str(root), "run_dir": str(tmp_path / "run"),
+                  "learning_stage": "finetune", "task": "disease",
+                  "finetune_from": str(tmp_path / "base.pt"), "device": "cpu"}
+        return train_model.train(train_model.TrainConfig(**fields), set(fields))
 
     @pytest.mark.parametrize(
         "break_it,expected",
@@ -142,8 +146,7 @@ class TestTrainingRefusesBeforeItActs:
     ):
         train_model = self._forbid(
             monkeypatch,
-            ["create_dataloaders", "create_model_from_config", "Trainer",
-             "read_resume_parent"],
+            ["read_resume_checkpoint", "read_finetune_parent", "bind_task_data", "Trainer"],
         )
         root = _workspace(tmp_path / "ws")
         other = _workspace(tmp_path / "other")
@@ -151,20 +154,20 @@ class TestTrainingRefusesBeforeItActs:
 
         # A missing file is the readers' `FileNotFoundError`, an `OSError`.
         with pytest.raises((ValueError, OSError), match=expected):
-            train_model.train(self._config(train_model, root, tmp_path))
+            self._train(train_model, root, tmp_path)
 
         assert not (tmp_path / "run").exists(), "run directory was created"
         assert not (root / "runs").exists(), "a run directory was allocated"
 
     def test_a_sound_workspace_reaches_the_next_stage(self, monkeypatch, tmp_path):
         """The refusal must be about the workspace, not about the ordering itself:
-        an unbroken workspace passes the preflight and goes on to build its
-        dataloaders."""
-        train_model = self._forbid(monkeypatch, ["create_dataloaders"])
+        an unbroken workspace passes the preflight and goes on to read its
+        base."""
+        train_model = self._forbid(monkeypatch, ["read_finetune_parent"])
         root = _workspace(tmp_path / "ws")
 
-        with pytest.raises(AssertionError, match="create_dataloaders ran"):
-            train_model.train(self._config(train_model, root, tmp_path))
+        with pytest.raises(AssertionError, match="read_finetune_parent ran"):
+            self._train(train_model, root, tmp_path)
 
 
 class TestTheClinicalPathIsAGraphConsumer:
@@ -190,29 +193,35 @@ class TestTheClinicalPathIsAGraphConsumer:
         binding check would end in that refusal instead of in what it is about.
 
         The stand-in keeps a checkpoint read's identity, as the real build does
-        (contract M3c), so a pipeline built over it states a verified checkpoint
-        rather than a model supplied in memory. Callers construct with
-        `device="cpu"` (or set `SHEPHERD_DEVICE=cpu` for the API): with no device
-        named a checkpoint asks for CUDA, and on a host without it that refusal
-        comes before the workspace these tests are about.
+        (contract M3c), so a pipeline built over it states a verified checkpoint,
+        and returns a module with parameters, from which the pipeline reads the
+        device in effect, carrying a disease child's spec, as the bundle it
+        stands for does (a reload reports the spec's encoder kind). Callers
+        construct with `device="cpu"` (or set `SHEPHERD_DEVICE=cpu` for the
+        API): with no device named a checkpoint asks for CUDA, and on a host
+        without it that refusal comes before the workspace these tests are
+        about.
         """
+        import torch
+
         import src.inference.pipeline as pipeline
+        from src.models.bundle import reference_spec
         from src.utils.fingerprint import ReadIdentity
 
-        def _model_built(self, checkpoint_path, device, *, expected_sha256=None):
+        def _model_built(self, checkpoint_path, device, *, expected_sha256=None, within=None):
             reached.append("model")
             self._checkpoint_identity = ReadIdentity(
                 path=Path(checkpoint_path), sha256="c" * 64)
-            return object()
+            model = torch.nn.Linear(1, 1)
+            model.spec = reference_spec("finetune", "disease")
+            return model
 
         monkeypatch.setattr(
             pipeline.DiagnosisPipeline, "_load_model_from_checkpoint", _model_built,
         )
         monkeypatch.setattr(
             pipeline.DiagnosisPipeline, "_precompute_node_embeddings",
-            lambda self, device=None: setattr(
-                self, "_node_embeddings", {"phenotype": object(), "disease": object()}
-            ),
+            lambda self, device=None: setattr(self, "_bundle_z", object()),
         )
         return pipeline
 
@@ -247,65 +256,28 @@ class TestTheClinicalPathIsAGraphConsumer:
 
         assert reached == ["model"]
 
-    def test_a_file_backed_pipeline_without_a_graph_read_is_refused(
-        self, monkeypatch, tmp_path
-    ):
+    def test_a_pipeline_without_a_graph_read_is_refused(self, monkeypatch, tmp_path):
         """An optional check is no check for the caller who omits it, and that
         caller is the one it exists for.
 
         `verify_graph_reads` alone proves only that `data_dir` is consistent
-        with itself; the `kg` object stays bound to nothing, so workspace B's
-        graph can still be paired with workspace A's tensors. Nothing legitimate
-        is lost by requiring it: a graph built in memory belongs on the
-        `graph_data` seam, and a graph loaded from disk passes the `GraphRead`
-        `KnowledgeGraph.read_json` returned.
+        with itself; a graph object bound to nothing could still pair workspace
+        B's graph with workspace A's tensors. So the pipeline takes only the
+        `GraphRead` `KnowledgeGraph.read_json` returned: a graph built in memory
+        has no place (K7 removed the in-memory seams, `kg=` and `graph_data=`).
         """
         reached: list = []
         pipeline = self._pipeline_module(monkeypatch, reached)
         root = _workspace(tmp_path / "ws")
         (root / "ckpt.pt").write_bytes(b"weights")
 
-        with pytest.raises(ValueError, match="requires graph="):
+        with pytest.raises(TypeError, match="graph= takes the GraphRead"):
             pipeline.DiagnosisPipeline(
-                kg=KnowledgeGraph(), data_dir=str(root),
+                graph=KnowledgeGraph(), data_dir=str(root),
                 checkpoint_path=str(root / "ckpt.pt"), device="cpu",
             )
 
         assert reached == [], "the model was built without a source binding"
-
-    def test_in_memory_graph_data_makes_no_workspace_claim(self, monkeypatch, tmp_path):
-        """A caller supplying the graph directly is not pointing at a persisted
-        workspace, so there is no manifest for it to match and its files are not
-        read -- and, for the same reason, no checkpoint is loaded over that graph
-        (contract M2.4): nothing shows the checkpoint was trained on it.
-
-        **Both are passed on purpose.** Supplying a `data_dir` that *would* fail
-        the workspace check isolates the seam: the files are never read, and the
-        refusal is the checkpoint's, not the workspace's. The real loader runs
-        here, so the refusal is shown where the checkpoint would be read.
-        """
-        import src.inference.pipeline as pipeline
-        from src.inference.pipeline import PipelineBuildError
-        from tests.fixtures.opens import count_opens
-
-        root = _workspace(tmp_path / "ws")
-        other = _workspace(tmp_path / "other")
-        (root / "node_features.pt").write_bytes((other / "node_features.pt").read_bytes())
-        (root / "ckpt.pt").write_bytes(b"weights")
-
-        with count_opens() as opens:
-            with pytest.raises(PipelineBuildError, match="supplied in memory"):
-                pipeline.DiagnosisPipeline(
-                    kg=KnowledgeGraph(),
-                    graph_data={"x_dict": {}, "edge_index_dict": {}, "num_nodes_dict": {}},
-                    data_dir=str(root),
-                    checkpoint_path=str(root / "ckpt.pt"),
-                    device="cpu",
-                )
-
-        assert not [path for path in root.iterdir() if opens.opens(path)], (
-            "a workspace file, or the checkpoint, was opened for in-memory graph data"
-        )
 
 
 def test_a_pre_migration_manifest_is_refused_with_a_rebuild_instruction(tmp_path):
@@ -453,8 +425,8 @@ class TestTheCompositionMustNotCrossWorkspaces:
         monkeypatch.setattr(api.app_state, "pipeline", None, raising=False)
         monkeypatch.setenv("SHEPHERD_KG_PATH", str(b / "kg.json"))
         monkeypatch.setenv("SHEPHERD_DATA_DIR", str(a))
-        # Without a checkpoint the pipeline consumes no graph at all and verifies
-        # nothing, which is correct and would make this test vacuous.
+        # Without a checkpoint the build is refused before any graph is read
+        # (K7), which would make this test vacuous.
         monkeypatch.setenv("SHEPHERD_CHECKPOINT_PATH", str(a / "ckpt.pt"))
         # Without a device named the checkpoint asks for CUDA and, on a host
         # without it, is refused before the graph is read (contract M3c).

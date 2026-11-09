@@ -2,19 +2,31 @@
 Measuring a registered cohort version: order, refusals, report store, --record.
 ==============================================================================
 Contract M4 §6 (decisions 8, 15, 16) at `scripts/measure_scorer.py`'s entry
-point, on the registered-cohort fixture (`tests/fixtures/registered_cohort.py`:
-the demo graph, a checkpoint over it, a version committed through the production
-importer), built once per module and copied per test:
+point, measured with `--mode disease`: the session's trained disease child
+(`trained_disease_child`, tests/conftest.py) and a copy of its demo workspace,
+with a version of the graph source committed through the production importer
+(`tests/fixtures/registered_cohort.py`), assembled once per module and copied
+per test:
 
 - the reads and checks run in the specified order, and **nothing is written --
   no run directory, no ledger -- until every one of them has passed**, R10's
   evidence-directory check included;
 - each refusal the registered path adds is one `ValueError` naming the file and
   saying nothing was written: a version whose manifest lacks its source format,
-  missing samples, an R10 candidate that cannot be read;
+  missing samples; an R10 candidate that cannot be read is not one of them since
+  K8-6r.3: it is recorded and the run goes on (rows D7-D9 and D12 of plan B rev 6
+  §3.9), while a cohort samples file that cannot be read still refuses, and
+  running out of memory on a candidate ends the run naming it, changing nothing;
+- an optional `--training-evidence` directory whose own state cannot be learned,
+  and a listed candidate whose resolve fails, are places R10 could not look in:
+  the run completes and registers, a scope found elsewhere stays found and one
+  found nowhere is `search_incomplete`; a path known not to be a directory, and
+  every required input, still refuse (K8-6 completion review, 2026-11-08);
 - the manifest records the version as an aggregate block (no case id), the
   relation states a registered run earns, and the R10 block `compute_r10` gives
-  for the same inputs; R10's states for each kind of training record;
+  for the same inputs; R10's states for the record a disease child writes (the
+  record kinds no measured checkpoint can carry are at unit level,
+  tests/unit/test_r10.py);
 - the report store's commit order; `--record` registers through
   `register_report` into the ledger beside the checkpoint read, without hashing
   the directory again; a refused registration exits 3 and keeps the report
@@ -27,8 +39,10 @@ Module: tests/unit/test_measure_scorer_registered.py
 """
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
+import os
 import sys
 import shutil
 from pathlib import Path
@@ -39,8 +53,9 @@ torch = pytest.importorskip("torch")
 
 from tests.fixtures.opens import count_opens  # noqa: E402
 from tests.fixtures.registered_cohort import (  # noqa: E402
-    build_registered_cohort,
     copy_registered_cohort,
+    registered_cohort_from_child,
+    write_demo_workspace,
 )
 
 LEDGER = "evaluations.json"
@@ -51,8 +66,12 @@ def _sha(path) -> str:
 
 
 @pytest.fixture(scope="module")
-def base(tmp_path_factory):
-    return build_registered_cohort(tmp_path_factory.mktemp("registered_base"))
+def base(trained_disease_child, tmp_path_factory):
+    """The session's trained disease child as a registered-cohort tree: its
+    workspace and its checkpoint copied (the session's files stay read-only),
+    the graph source written and a version of it committed. No training here."""
+    return registered_cohort_from_child(trained_disease_child,
+                                        tmp_path_factory.mktemp("registered_base"))
 
 
 @pytest.fixture
@@ -73,7 +92,8 @@ def cli():
 
 
 def _argv(cohort, *extra, label=None):
-    return ["--checkpoint", str(cohort.checkpoint), "--data-dir", str(cohort.data_dir),
+    return ["--mode", "disease", "--checkpoint", str(cohort.checkpoint),
+            "--data-dir", str(cohort.data_dir),
             "--cohort", label or cohort.version.manifest["label"],
             "--registry", str(cohort.registry), "--device", "cpu", *extra]
 
@@ -85,6 +105,14 @@ def _reports(cohort):
 def _report(cohort):
     (path,) = _reports(cohort)
     return path, json.loads(path.read_text())
+
+
+def _new_report(cohort, *earlier):
+    """The one report a run wrote beside the `earlier` ones. Never taken by
+    name order: two runs within one second are ordered by their run ids'
+    random part, not by when they ran."""
+    (path,) = set(_reports(cohort)) - set(earlier)
+    return path
 
 
 def _nothing_written(cohort):
@@ -185,38 +213,37 @@ def _pre_contract_checkpoint(cohort):
     return "records no training_input_digests"
 
 
-def _unreadable_candidate(cohort, monkeypatch):
+def _refuse_r10_reads(monkeypatch, error, names=("train_samples.json",)):
+    """R10's candidate reads raise `error` for the workspace files named; every
+    other read, the cohort's own samples among them, is the real one. The
+    sandbox runs as root, so a permission bit would not stop the read."""
     import src.evaluation.r10 as r10
 
     real = r10.read_samples_file
 
     def refuse(path, **kwargs):
-        if Path(path).name == "train_samples.json":
-            raise PermissionError(13, "Permission denied", str(path))
+        if Path(path).name in names:
+            raise error
         return real(path, **kwargs)
 
     monkeypatch.setattr(r10, "read_samples_file", refuse)
-    return "R10 evidence candidate could not be read"
 
 
 @pytest.mark.parametrize("case", ["no_source_format", "samples_removed",
-                                  "samples_not_the_count", "pre_contract",
-                                  "unreadable_candidate"])
+                                  "samples_not_the_count", "pre_contract"])
 def test_each_refusal_writes_nothing(cli, cohort, monkeypatch, case):
     """Refusals of the registered path's own and the shared checks it runs late:
     one `ValueError` each, naming what is wrong, and no run directory and no
-    ledger, because nothing is written before every check passes -- R10, the last
-    check, included."""
-    import src.models.gnn.shepherd_gnn as shepherd_gnn
+    ledger, because nothing is written before every check passes. An R10
+    candidate that cannot be read left this list in K8-6r.3: it is recorded, and
+    the run goes on (`test_an_r10_candidate_that_cannot_be_read_is_recorded_...`)."""
+    import src.models.bundle.record as bundle_record
 
-    if case == "unreadable_candidate":
-        message = _unreadable_candidate(cohort, monkeypatch)
-    else:
-        message = {"no_source_format": _without_source_format,
-                   "samples_removed": _samples_removed,
-                   "samples_not_the_count": _samples_not_the_count,
-                   "pre_contract": _pre_contract_checkpoint}[case](cohort)
-    monkeypatch.setattr(shepherd_gnn, "build_shepherd_model",
+    message = {"no_source_format": _without_source_format,
+               "samples_removed": _samples_removed,
+               "samples_not_the_count": _samples_not_the_count,
+               "pre_contract": _pre_contract_checkpoint}[case](cohort)
+    monkeypatch.setattr(bundle_record, "load_bundle",
                         lambda *a, **k: pytest.fail("a model was built after a refusal"))
 
     with pytest.raises(ValueError, match=message) as refused:
@@ -228,23 +255,376 @@ def test_each_refusal_writes_nothing(cli, cohort, monkeypatch, case):
 
 
 def test_the_internal_entry_refuses_a_request_that_is_neither_or_both_kinds(cli, cohort):
-    """`read_measurement_inputs` is called by `main` and the Mode C tests; a call
-    naming no cohort, both, or registry arguments for a split is a caller's
-    error, refused before anything is read."""
+    """`read_measurement_inputs` is called by `main`; a call naming no cohort,
+    both, or registry arguments for a split is a caller's error, refused before
+    anything is read, whatever protocol it asks for."""
     device = torch.device("cpu")
     with count_opens() as opens:
         with pytest.raises(ValueError, match="exactly one"):
-            cli.read_measurement_inputs(cohort.checkpoint, cohort.data_dir, device)
+            cli.read_measurement_inputs(cohort.checkpoint, cohort.data_dir, device,
+                                        protocol="disease")
         with pytest.raises(ValueError, match="exactly one"):
             cli.read_measurement_inputs(cohort.checkpoint, cohort.data_dir, device,
-                                        split="val", cohort="demo-test-1")
+                                        split="val", cohort="demo-test-1", protocol="disease")
         with pytest.raises(ValueError, match="registered cohort only"):
             cli.read_measurement_inputs(cohort.checkpoint, cohort.data_dir, device,
-                                        split="val", registry=cohort.registry)
+                                        split="val", registry=cohort.registry,
+                                        protocol="disease")
         with pytest.raises(ValueError, match="none was given"):
             cli.read_measurement_inputs(cohort.checkpoint, cohort.data_dir, device,
-                                        cohort="demo-test-1")
+                                        cohort="demo-test-1", protocol="disease")
     assert not [path for path, n in opens.counts.items() if n], "something was opened"
+
+
+# ---------------------------------------------------------------------------
+# R10 evidence that cannot be read (K8-6r.3, plan B rev 6 §3.9 rows D7-D9, D12)
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("error, state", [
+    (FileNotFoundError(2, "No such file or directory"), "not_found"),
+    (PermissionError(13, "Permission denied"), "search_incomplete"),
+], ids=["vanished", "permission"])
+def test_an_r10_candidate_that_cannot_be_read_leaves_verified_inputs_measurable(
+    cli, cohort, monkeypatch, error, state
+):
+    """D7, the reviewer's case. The graph, checkpoint and cohort samples are
+    verified; the workspace's `train_samples.json`, which holds the training
+    bytes the checkpoint records, cannot be read. Vanished since it was
+    listed: skipped, the training scope `not_found`, as before. Refused by
+    permission: recorded, `search_incomplete` naming the file and the error,
+    its labels *unverifiable* with no count, instead of a `ValueError`. The
+    validation scope is found either way. HEAD: `ValueError` for permission."""
+    _refuse_r10_reads(monkeypatch, error)
+
+    inputs = cli.read_measurement_inputs(
+        cohort.checkpoint, cohort.data_dir, torch.device("cpu"),
+        cohort=cohort.version.manifest["label"], registry=cohort.registry,
+        protocol="disease")
+
+    training = inputs.r10["training"]
+    assert training["evidence"]["state"] == state
+    if state == "search_incomplete":
+        assert training["evidence"]["problem"].endswith(
+            f"{(cohort.data_dir / 'train_samples.json').resolve()} "
+            "(PermissionError: Permission denied)")
+    for label in ("disease_overlap", "phenotype_set_overlap"):
+        assert training[label]["state"] == "unverifiable"
+        assert training[label]["k"] is None
+    assert inputs.r10["validation"]["evidence"]["state"] == "found"
+    assert inputs.r10["candidates_examined"] == 1
+
+
+def test_an_r10_candidate_that_cannot_be_read_is_recorded_and_the_run_registers(
+    cli, cohort, monkeypatch, capsys
+):
+    """D8. `main --cohort --record` with an EACCES on an R10 candidate exits 0:
+    the report is kept, the ledger record carries `search_incomplete` with the
+    R10 definition version 2, and the console gives the place and the reason.
+    HEAD: a `ValueError` (exit 1 as a program), no report, no ledger."""
+    _refuse_r10_reads(monkeypatch, PermissionError(13, "Permission denied"))
+
+    assert cli.main(_argv(cohort, "--record")) == 0
+
+    _, report = _report(cohort)
+    (record,) = json.loads((cohort.checkpoint.parent / LEDGER).read_text())["records"]
+    for r10 in (report["manifest"]["r10"], record["r10"]):
+        assert r10["definition_version"] == 2
+        assert r10["training"]["evidence"]["state"] == "search_incomplete"
+        assert r10["validation"]["evidence"]["state"] == "found"
+    out = capsys.readouterr().out
+    assert ("training evidence: search_incomplete (no candidate that was read holds the "
+            "recorded bytes, and these places could not be looked in: "
+            f"{(cohort.data_dir / 'train_samples.json').resolve()} "
+            "(PermissionError: Permission denied))") in out
+
+
+def test_a_cohort_samples_file_that_cannot_be_read_still_refuses(cli, cohort, monkeypatch):
+    """D9 (guard). The cohort version's own `samples.json` is a required input,
+    not R10 evidence: a `PermissionError` on it still ends the run before
+    anything is written."""
+    import src.kg.storage.file_storage as file_storage
+
+    real = file_storage.read_samples_file
+
+    def refuse(path, **kwargs):
+        if Path(path) == cohort.version.samples_path:
+            raise PermissionError(13, "Permission denied", str(path))
+        return real(path, **kwargs)
+
+    monkeypatch.setattr(file_storage, "read_samples_file", refuse)
+
+    with pytest.raises(PermissionError):
+        cli.main(_argv(cohort, "--record"))
+
+    assert _nothing_written(cohort)
+
+
+# ---------------------------------------------------------------------------
+# Optional evidence whose state cannot be learned (K8-6 completion review,
+# 2026-11-08, P2-A and P2-B): a place R10 could not look in, named only for
+# a scope found nowhere else, never a refusal; what is known not to be a
+# directory, and every required input, still refuses
+# ---------------------------------------------------------------------------
+def _resolve_fails(monkeypatch, target, message="Permission denied"):
+    """`Path.resolve` of `target` alone raises EACCES, after its stat passed:
+    a permission change, a readlink or an I/O failure between the two. The
+    sandbox runs as root, so the error is injected (the reviewer's probe)."""
+    real = Path.resolve
+
+    def resolve(self, strict=False):
+        if os.fspath(self) == os.fspath(target):
+            raise PermissionError(errno.EACCES, message, os.fspath(self))
+        return real(self, strict)
+
+    monkeypatch.setattr(Path, "resolve", resolve)
+
+
+def _ledger_records(cohort):
+    return json.loads((cohort.checkpoint.parent / LEDGER).read_text())["records"]
+
+
+@pytest.mark.parametrize("fail_resolve", [False, True], ids=["control", "resolve-denied"])
+def test_an_r10_candidate_whose_resolve_fails_is_recorded_and_the_run_registers(
+    cli, cohort, monkeypatch, fail_resolve
+):
+    """A1, P2-A (the reviewer's probe, through the real CLI). The workspace's
+    `train_samples.json`, which holds the training bytes the checkpoint
+    records, is listed and its stat passes; then its `resolve()` fails. It is
+    a place R10 could not look in: the run completes with `--record`, the
+    report is kept and registered, the training evidence is
+    `search_incomplete` naming the file and the reason, and validation is
+    found. The control finds both. HEAD: the `PermissionError` ended the run,
+    no report."""
+    target = cohort.data_dir / "train_samples.json"
+    if fail_resolve:
+        _resolve_fails(monkeypatch, target, "optional candidate unavailable")
+
+    assert cli.main(_argv(cohort, "--record")) == 0
+
+    _, report = _report(cohort)
+    (record,) = _ledger_records(cohort)
+    for r10 in (report["manifest"]["r10"], record["r10"]):
+        assert r10["validation"]["evidence"]["state"] == "found"
+        training = r10["training"]["evidence"]
+        if fail_resolve:
+            assert training["state"] == "search_incomplete"
+            assert training["problem"].endswith(
+                f"could not be looked in: {target} (PermissionError: optional candidate "
+                "unavailable)")
+        else:
+            assert training == {"state": "found", "path": str(target.resolve()),
+                                "problem": None}
+
+
+@pytest.mark.parametrize("fail_stat", [False, True], ids=["control", "stat-denied"])
+def test_an_evidence_directory_that_cannot_be_checked_never_stops_a_measurement(
+    cli, cohort, monkeypatch, fail_stat
+):
+    """A2, P2-B (the reviewer's probe, through the real CLI). An extra
+    `--training-evidence` directory exists, and its own stat fails (EACCES:
+    behind a parent this account may not search). The workspace holds both
+    recorded files, so both scopes are found and stay found; the run completes
+    and registers. The control names the same directory with nothing
+    injected. HEAD: `ValueError` "cannot be checked" before anything was read,
+    no report."""
+    from tests.unit.test_r10 import _stat_fails
+
+    archive = cohort.data_dir.parent / "optional-archive"
+    archive.mkdir()
+    if fail_stat:
+        _stat_fails(monkeypatch, archive,
+                    PermissionError(errno.EACCES, "optional archive unavailable"))
+
+    assert cli.main(_argv(cohort, "--training-evidence", str(archive), "--record")) == 0
+
+    _, report = _report(cohort)
+    (record,) = _ledger_records(cohort)
+    for r10 in (report["manifest"]["r10"], record["r10"]):
+        for scope in ("training", "validation"):
+            assert r10[scope]["evidence"]["state"] == "found"
+            assert r10[scope]["evidence"]["problem"] is None
+
+
+@pytest.mark.parametrize("as_in_3_14", [False, True], ids=["python-3.12", "python-3.14"])
+def test_an_uncheckable_evidence_directory_that_alone_may_hold_the_bytes_is_search_incomplete(
+    cli, cohort, monkeypatch, as_in_3_14
+):
+    """A3 and A9, P2-B. The training bytes the checkpoint records have moved
+    out of the workspace into a directory whose own stat fails; nothing else
+    holds them. Training evidence is `search_incomplete` naming the directory
+    and its reason, its labels *unverifiable* with no count; validation is
+    found; the report registers; and the Test page's Result and Models read
+    the record with "evidence search incomplete" (their existing renderers).
+    With Python 3.14's `Path.is_dir`, which would read the directory as
+    absent, the same. HEAD: `ValueError` "cannot be checked", no report."""
+    pytest.importorskip("gradio")
+    from src.evaluation.r10 import R10_LABELS
+    from src.webui.components import models_page as mp
+    from src.webui.components import test_page as tp
+    from tests.unit.test_r10 import _pathlib_as_in_python_3_14, _stat_fails
+
+    archive = cohort.data_dir.parent / "locked-archive"
+    archive.mkdir()
+    shutil.move(str(cohort.data_dir / "train_samples.json"),
+                str(archive / "run7_train_samples.json"))
+    _stat_fails(monkeypatch, archive, PermissionError(errno.EACCES, "Permission denied"))
+    if as_in_3_14:
+        _pathlib_as_in_python_3_14(monkeypatch)
+
+    assert cli.main(_argv(cohort, "--training-evidence", str(archive), "--record")) == 0
+
+    path, report = _report(cohort)
+    (record,) = _ledger_records(cohort)
+    for r10 in (report["manifest"]["r10"], record["r10"]):
+        training = r10["training"]
+        assert training["evidence"] == {
+            "state": "search_incomplete", "path": None,
+            "problem": ("no candidate that was read holds the recorded bytes, and these "
+                        f"places could not be looked in: {archive} (PermissionError: "
+                        "Permission denied)")}
+        for label in R10_LABELS:
+            assert training[label]["state"] == "unverifiable"
+            assert training[label]["k"] is None
+        assert r10["validation"]["evidence"]["state"] == "found"
+    reports = tp.read_reports(cohort.version.manifest["label"])
+    run = tp.find(reports["runs"], "run_id", path.parent.name)
+    assert run["state"]["registered"] == "registered"
+    result = tp.result_html(reports, path.parent.name, tp.path_roots(), notes=[])
+    assert "inputs (evidence search incomplete):" in result
+    assert "R10, training inputs (evidence search incomplete):" in mp.r10_html(record["r10"])
+
+
+def test_evidence_in_a_later_directory_is_found_past_one_that_cannot_be_checked(
+    cli, cohort, monkeypatch
+):
+    """A4. The first named directory's state cannot be learned; a later one
+    holds the training bytes. The search goes on past the first: training is
+    found in the later directory, and nothing is left incomplete."""
+    from tests.unit.test_r10 import _stat_fails
+
+    locked, kept = cohort.data_dir.parent / "locked", cohort.data_dir.parent / "kept"
+    locked.mkdir()
+    kept.mkdir()
+    moved = kept / "run7_train_samples.json"
+    shutil.move(str(cohort.data_dir / "train_samples.json"), str(moved))
+    _stat_fails(monkeypatch, locked, PermissionError(errno.EACCES, "Permission denied"))
+
+    assert cli.main(_argv(cohort, "--training-evidence", str(locked),
+                          "--training-evidence", str(kept), "--record")) == 0
+
+    r10 = _report(cohort)[1]["manifest"]["r10"]
+    assert r10["training"]["evidence"] == {"state": "found", "path": str(moved.resolve()),
+                                           "problem": None}
+    assert r10["validation"]["evidence"]["state"] == "found"
+
+
+@pytest.mark.parametrize("kind", ["missing", "file", "name-too-long"])
+def test_an_evidence_path_known_not_to_be_a_directory_is_refused_before_anything_is_read(
+    cli, cohort, monkeypatch, kind
+):
+    """A5 (guard). A missing path, a file, and a name too long to exist (a
+    real ENAMETOOLONG) stay the argument error they were: refused before the
+    version or any input is read, nothing written."""
+    import src.evaluation.cohort_registry as cohort_registry
+
+    named = cohort.data_dir.parent / ("n" * 300 if kind == "name-too-long" else "named")
+    if kind == "file":
+        named.write_text("x")
+    monkeypatch.setattr(cohort_registry, "resolve_version",
+                        lambda *a, **k: pytest.fail("the version was read"))
+
+    with pytest.raises(ValueError) as refused:
+        cli.main(_argv(cohort, "--training-evidence", str(named), "--record"))
+
+    assert str(refused.value) == (
+        f"Training evidence directory {named} does not exist or is not a directory; nothing "
+        "was read or written. Name a directory that holds the *_samples.json files the "
+        "checkpoint was trained on.")
+    assert _nothing_written(cohort)
+
+
+def _other_checkpoint_bytes(cohort, monkeypatch):
+    import scripts.measure_scorer as module
+
+    return (("--expect-checkpoint-sha256", "0" * 64), module.ExpectedDigestMismatch,
+            "this run was started for")
+
+
+def _samples_missing(cohort, monkeypatch):
+    cohort.version.samples_path.unlink()
+    return (), ValueError, "is missing, though"
+
+
+def _samples_unreadable(cohort, monkeypatch):
+    import src.kg.storage.file_storage as file_storage
+
+    real = file_storage.read_samples_file
+
+    def refuse(path, **kwargs):
+        if Path(path) == cohort.version.samples_path:
+            raise PermissionError(errno.EACCES, "Permission denied", str(path))
+        return real(path, **kwargs)
+
+    monkeypatch.setattr(file_storage, "read_samples_file", refuse)
+    return (), PermissionError, "Permission denied"
+
+
+@pytest.mark.parametrize("case", [_other_checkpoint_bytes, _samples_missing,
+                                  _samples_unreadable],
+                         ids=["checkpoint-other-bytes", "samples-missing", "samples-unreadable"])
+def test_required_inputs_still_refuse_beside_an_evidence_directory_that_cannot_be_checked(
+    cli, cohort, monkeypatch, case
+):
+    """A6 (guard). An evidence directory whose state cannot be learned changes
+    nothing about the required inputs: a checkpoint that is not the bytes the
+    run was started for, and the version's samples missing or unreadable, are
+    refused by their own checks, with no report and no ledger. HEAD refused
+    each of these for the evidence directory first ("cannot be checked")."""
+    from tests.unit.test_r10 import _stat_fails
+
+    locked = cohort.data_dir.parent / "locked"
+    locked.mkdir()
+    _stat_fails(monkeypatch, locked, PermissionError(errno.EACCES, "Permission denied"))
+    extra, refusal, says = case(cohort, monkeypatch)
+
+    with pytest.raises(refusal, match=says):
+        cli.main(_argv(cohort, "--training-evidence", str(locked), "--record", *extra))
+
+    assert _nothing_written(cohort)
+
+
+def _store_and_ledger(cohort):
+    """Every file under the version's report store and beside the checkpoint,
+    by path, with its bytes."""
+    files = {}
+    for root in (cohort.version.directory / "reports", cohort.checkpoint.parent):
+        for path in sorted(root.rglob("*")):
+            if path.is_file():
+                files[str(path)] = path.read_bytes()
+    return files
+
+
+def test_memory_running_out_on_an_r10_candidate_ends_the_run_and_changes_nothing(
+    cli, cohort, monkeypatch
+):
+    """D12. Out of memory reading an R10 candidate (patched): the run ends as a
+    resource failure naming the candidate -- a `MemoryError`, which
+    `_run_as_program` does not turn into a refusal -- before anything is
+    published; an earlier run's report, ledger record and usage history are
+    byte-equal after. Never `search_incomplete`, never "no overlap". HEAD: the
+    bare `MemoryError` propagates, naming nothing."""
+    assert cli.main(_argv(cohort, "--record")) == 0
+    before = _store_and_ledger(cohort)
+    _refuse_r10_reads(monkeypatch, MemoryError())
+
+    with pytest.raises(MemoryError) as ran_out:
+        cli.main(_argv(cohort, "--record"))
+
+    candidate = (cohort.data_dir / "train_samples.json").resolve()
+    assert str(ran_out.value) == (
+        f"memory ran out reading the R10 evidence candidate {candidate}: a resource "
+        "failure, not a finding about the file or about overlap")
+    assert _store_and_ledger(cohort) == before
+    assert len(_reports(cohort)) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -291,55 +671,53 @@ def test_the_r10_block_is_compute_r10_over_the_checkpoints_record(cli, cohort):
     assert _report(cohort)[1]["manifest"]["r10"] == expected
 
 
-@pytest.mark.parametrize("record, training, validation, val_opens", [
-    ("pipeline", "found", "found", 1),
-    ("no_validation", "found", "not_recorded", 0),
-    ("graph_only", "not_recorded", "not_recorded", 0),
-])
-def test_r10_states_follow_what_the_checkpoint_records(
-    cli, tmp_path, monkeypatch, record, training, validation, val_opens
-):
-    """A pipeline record finds both scopes in the workspace; with no validation
-    recorded, validation is `no_validation_inputs_recorded` and `val` is never
-    read; a graph-only record is not the pipeline's, so both scopes are
-    unverifiable and no candidate is read. Never a count without evidence."""
-    cohort = build_registered_cohort(tmp_path / "root", training_record=record)
-    monkeypatch.setenv("SHEPHERD_REGISTRY", str(cohort.registry))
-
+# R10's other record kinds have no end-to-end case here, since a task
+# measurement reads a finetune child only, and no child carries them; each is
+# pinned at unit level, over `compute_r10`, in tests/unit/test_r10.py:
+# - a graph-only record (no training file recorded) can no longer come from a
+#   measurement: the files that carry one, a base (its record names the graph
+#   and the manifest only) and a file without a model spec, are refused right
+#   after the checkpoint read (`read_measurement_inputs(protocol=)`), before any
+#   model is built or anything written; so
+#   `test_neither_file_recorded_leaves_both_scopes_unverifiable_and_reads_nothing`;
+# - no validation recorded: a disease child cannot be trained without a
+#   validation case (`DiseaseTask` refuses "no bound validation case; the
+#   disease task cannot be validated and selected"), so no child records none;
+#   so `test_no_recorded_validation_file_is_no_validation_inputs_recorded`.
+def test_r10_states_follow_what_the_checkpoint_records(cli, cohort):
+    """The record a disease child writes (both sample files) finds both scopes
+    in the workspace, and `val` is read once, as R10's candidate. Never a count
+    without evidence."""
     with count_opens() as opens:
         assert cli.main(_argv(cohort)) == 0
 
     r10 = _report(cohort)[1]["manifest"]["r10"]
-    assert r10["training"]["evidence"]["state"] == training
-    assert r10["validation"]["evidence"]["state"] == validation
-    assert opens.opens(cohort.data_dir / "val_samples.json") == val_opens
-    if record == "no_validation":
-        assert r10["validation"]["disease_overlap"]["state"] == "no_validation_inputs_recorded"
-        assert r10["validation"]["disease_overlap"]["k"] is None
-    if record == "graph_only":
-        assert opens.opens(cohort.data_dir / "train_samples.json") == 0
-        for scope in ("training", "validation"):
-            assert r10[scope]["phenotype_set_overlap"] == {
-                "state": "unverifiable", "k": None, "n": r10[scope]["phenotype_set_overlap"]["n"]}
+    assert r10["training"]["evidence"]["state"] == "found"
+    assert r10["validation"]["evidence"]["state"] == "found"
+    assert opens.opens(cohort.data_dir / "val_samples.json") == 1
 
 
 def test_build_manifest_takes_the_kind_from_the_version_and_requires_r10(cli, cohort):
-    """With a version block the manifest is a registered cohort's whatever
-    `args.split` says; without R10 beside a version it is refused, so no report
-    of a registered version can lack its overlap."""
+    """With a version block the manifest of a disease run (`--mode disease`,
+    measured by the disease evaluator's semantics) is a registered cohort's
+    whatever `args.split` says; without R10 beside a version it is refused, so
+    no report of a registered version can lack its overlap."""
     import argparse
 
-    from src.evaluation.measurement import AutocastRegime
+    from src.evaluation.task_measurement import disease_semantics
+    from src.utils.run_environment import AutocastRegime
 
-    args = argparse.Namespace(split=None, batch_size=4, checkpoint=cohort.checkpoint,
-                              data_dir=cohort.data_dir)
+    args = argparse.Namespace(mode="disease", split=None, batch_size=4,
+                              checkpoint=cohort.checkpoint, data_dir=cohort.data_dir)
     block = cli.cohort_version_block(cohort.version)
     common = {"digests": {"checkpoint": "a" * 64}, "dataset_record": {"origin": "synthetic"},
-              "regime": AutocastRegime(enabled=False, dtype=None)}
+              "regime": AutocastRegime(enabled=False, dtype=None),
+              "semantics": disease_semantics(4)}
     graph = {"num_nodes_dict": {"disease": 1}}
 
     manifest = cli.build_manifest(args, graph, 1, torch.device("cpu"), cohort_version=block,
                                   r10={"definition_version": 1}, **common)
+    assert manifest.mode == "disease"
     assert (manifest.split, manifest.cohort_kind) == (block["role"], "supplied")
     assert manifest.relations["cohort_graph"] == "verified"
     assert manifest.relations["R2"] == "not_applicable"
@@ -428,28 +806,37 @@ def test_record_files_beside_the_bytes_read_though_the_link_is_retargeted_during
         "the report keeps the path the operator gave")
 
 
-def test_the_same_inputs_measured_again_are_already_registered(cli, cohort, capsys):
-    """Two runs over the same inputs write byte-identical reports in two run
-    directories; the second registration is a no-op and leaves the ledger's
-    bytes as they were."""
+def test_the_same_inputs_measured_again_are_a_second_record_of_their_own_run(cli, cohort,
+                                                                             capsys):
+    """A3 (K8-6r.2): two runs over the same inputs write byte-identical reports
+    in two run directories; each run is its own execution, so the second is
+    registered as record 2 naming its run, the first record unchanged. HEAD:
+    "Already held as record 1; nothing written"."""
     assert cli.main(_argv(cohort, "--record")) == 0
     ledger = cohort.checkpoint.parent / LEDGER
-    before = ledger.read_bytes()
+    (first_record,) = json.loads(ledger.read_text())["records"]
+    (first,) = _reports(cohort)
 
     assert cli.main(_argv(cohort, "--record")) == 0
 
-    first, second = _reports(cohort)
+    second = _new_report(cohort, first)
     assert first.read_bytes() == second.read_bytes()
-    assert ledger.read_bytes() == before
-    assert "Already held as record 1; nothing written" in capsys.readouterr().out
+    records = json.loads(ledger.read_text())["records"]
+    assert records[0] == first_record
+    assert [r["run_id"] for r in records] == [first.parent.name, second.parent.name]
+    assert records[1]["source_artifact_digest"] == records[0]["source_artifact_digest"]
+    printed = capsys.readouterr().out
+    assert "Registered as record 2" in printed and "Already held" not in printed
 
 
-@pytest.mark.parametrize("case", ["read_only", "schema_2_ledger"])
+@pytest.mark.parametrize("case", ["read_only", "unwritable_directory", "schema_2_ledger"])
 def test_a_refused_registration_keeps_the_report_and_exits_3(
     cli, cohort, monkeypatch, capsys, case
 ):
     """The measurement succeeded, so the report stays; the message names it and
-    the command that registers it later; the ledger is as it was."""
+    the command that registers it later; the ledger is as it was. A checkpoint
+    directory this account cannot write fails at the ledger's lock file, and
+    the message says "Permission denied" (K8-6r.1 review)."""
     import src.evaluation.sidecar as sidecar
 
     ledger = cohort.checkpoint.parent / LEDGER
@@ -457,6 +844,19 @@ def test_a_refused_registration_keeps_the_report_and_exits_3(
         monkeypatch.setattr(sidecar, "create_staging_file", lambda *a, **k: (_ for _ in ()).throw(
             PermissionError(13, "Permission denied", str(cohort.checkpoint.parent))))
         fragment = "Permission denied"
+    elif case == "unwritable_directory":
+        # Every create in the directory refused, as the kernel refuses it (tests
+        # may run as root, which a directory's mode does not stop).
+        directory, real_open = cohort.checkpoint.resolve().parent, os.open
+
+        def guarded(path, flags, *args, **kwargs):
+            if flags & os.O_CREAT and Path(os.fsdecode(path)).parent == directory:
+                raise PermissionError(13, "Permission denied", os.fsdecode(path))
+            return real_open(path, flags, *args, **kwargs)
+
+        monkeypatch.setattr(os, "open", guarded)
+        fragment = (f"could not be opened or taken (PermissionError: [Errno 13] Permission "
+                    f"denied: '{directory / 'evaluations.json.lock'}')")
     else:
         ledger.write_text(json.dumps({"schema_version": 2, "records": []}))
         fragment = "evaluations.v2.json"
@@ -505,30 +905,43 @@ def test_the_register_later_command_quotes_each_path_for_every_shell():
     assert shlex.split(line)[2:] == ["--report", str(report), "--checkpoint", str(checkpoint)]
 
 
-@pytest.mark.parametrize("record", ["pipeline", "graph_only"])
+@pytest.mark.parametrize("evidence_state", ["found", "not_found", "search_incomplete"])
 def test_the_console_gives_each_r10_label_in_the_caveats_words_and_the_definitions_once(
-    cli, tmp_path, monkeypatch, capsys, record
+    cli, cohort, tmp_path, capsys, monkeypatch, evidence_state
 ):
     """Finding 9: each label's state is rendered through `R10_STATE_TEXT`, an
     unverifiable one through its scope's `R10_UNVERIFIABLE_REASON`, with no
     number where there is no count; the four definitions are printed once, so
     the console says that phenotype-set overlap ignores order and repetition and
     that "none" is not evidence about data outside the recorded inputs. The
-    report keeps the raw states and no prose."""
+    report keeps the raw states and no prose.
+
+    Unverifiable labels come from the child measured on its workspace
+    re-sampled after it was trained (the same graph and dataset record, other
+    train and val cohorts), so neither file it records is found. They used to
+    come from a graph-only record, which no measured checkpoint carries now
+    (see `test_r10_states_follow_what_the_checkpoint_records`). A search left
+    incomplete comes from both workspace files refused by permission (K8-6r.3)."""
     from src.evaluation.caveats import (
         R10_LABEL_TEXT,
         R10_STATE_TEXT,
         R10_UNVERIFIABLE_REASON,
     )
 
-    cohort = build_registered_cohort(tmp_path / "root", training_record=record)
-    monkeypatch.setenv("SHEPHERD_REGISTRY", str(cohort.registry))
+    argv = _argv(cohort)
+    if evidence_state == "not_found":
+        resampled = write_demo_workspace(tmp_path / "resampled", sample_seed=7)
+        argv[argv.index(str(cohort.data_dir))] = str(resampled)
+    elif evidence_state == "search_incomplete":
+        _refuse_r10_reads(monkeypatch, PermissionError(13, "Permission denied"),
+                          names=("train_samples.json", "val_samples.json"))
 
-    assert cli.main(_argv(cohort)) == 0
+    assert cli.main(argv) == 0
 
     out = capsys.readouterr().out
     path, report = _report(cohort)
     r10 = report["manifest"]["r10"]
+    assert [r10[scope]["evidence"]["state"] for scope in R10_LABEL_TEXT] == [evidence_state] * 2
     lines = out.splitlines()
     for scope, labels in R10_LABEL_TEXT.items():
         evidence = r10[scope]["evidence"]["state"]
@@ -590,11 +1003,11 @@ def test_a_read_that_is_not_the_chosen_one_is_refused_before_anything_is_measure
     the workspace is; the checkpoint right after its read, before R3. Nothing
     is built or written, and the message names both digests."""
     import src.kg.artifacts as artifacts
-    import src.models.gnn.shepherd_gnn as shepherd_gnn
+    import src.models.bundle.record as bundle_record
     import src.utils.fingerprint as fingerprint
 
     other = "f" * 64
-    monkeypatch.setattr(shepherd_gnn, "build_shepherd_model",
+    monkeypatch.setattr(bundle_record, "load_bundle",
                         lambda *a, **k: pytest.fail("a model was built after a refusal"))
     if which == "version":
         monkeypatch.setattr(artifacts, "read_split_manifest",
@@ -850,9 +1263,10 @@ def test_each_run_and_each_registration_is_in_the_versions_usage_history(cli, co
     after its report is published, and the registration function the
     registration, so command-line runs count."""
     assert cli.main(_argv(cohort)) == 0
+    (first,) = _reports(cohort)
     assert cli.main(_argv(cohort, "--record")) == 0
 
-    first, second = _reports(cohort)
+    second = _new_report(cohort, first)
     entries = _usage(cohort)
     assert [e["kind"] for e in entries] == ["test_run", "test_run", "registered"]
     runs = {e["run_id"]: e for e in entries if e["kind"] == "test_run"}
@@ -864,7 +1278,9 @@ def test_each_run_and_each_registration_is_in_the_versions_usage_history(cli, co
         assert entry["n_ranked"] == report["n_ranked"]
         assert (entry["deterministic"], entry["device"]) == (False, "cpu")
     assert sorted(e["record_requested"] for e in runs.values()) == [False, True]
-    assert entries[2]["outcome"] in ("registered", "already_registered", "corroborated")
+    # The run registered is its own execution (K8-6r.2): its own record.
+    assert (entries[2]["outcome"], entries[2]["run_id"], entries[2]["sequence"]) == (
+        "registered", second.parent.name, 1)
     text = (cohort.version.directory / "reports" / "usage.jsonl").read_text()
     assert "case-" not in text and "phenotype_ids" not in text
 
@@ -892,6 +1308,207 @@ def test_a_usage_history_that_cannot_be_appended_stops_the_run_after_its_report(
     # The outcome file is written all the same: the run published, then stopped.
     outcome = _outcome(out)
     assert outcome["complete"] is False and outcome["registration"]["registered"] is None
+
+
+POSIX = pytest.mark.skipif(sys.platform == "win32", reason="flock and spawn are tested on POSIX")
+
+
+def _test_job_outcome(cohort, out, returncode):
+    """The job runner's reading of a test run that wrote ``out``
+    (`TrainingManager._test_outcome`, with the registration's own report
+    state), as its job summary says it."""
+    from datetime import UTC, datetime
+
+    from src.api.services.training_manager import TrainingManager, _Job
+
+    job = _Job(kind="test", job_id="k86r1", started=datetime.now(UTC),
+               inputs={"checkpoint": str(cohort.checkpoint),
+                       "checkpoint_sha256": cohort.checkpoint_sha256, "record": True},
+               outcome_path=out)
+    return TrainingManager()._test_outcome(job, returncode)
+
+
+def _busy_words(text):
+    """Decision 5's four facts, in the busy refusal's words."""
+    assert "is not registered: the ledger is busy (another registration was writing" in text
+    assert "The report stays where it is kept; register it again." in text
+    assert "this time." in text and "Nothing was written to" in text
+
+
+def test_a_busy_ledger_keeps_the_report_unregistered_at_every_entry_point(
+    cli, cohort, tmp_path, monkeypatch, capsys
+):
+    """F-e and G10 (K8-6r.1): while another registration holds the ledger's
+    lock past the (patched) grace, `measure_scorer --record` exits 3 with
+    ``registered`` False and the busy words in its outcome, the report kept and
+    the register-later command printed; the job runner's summary of that run
+    reads not registered and repeats the run's own why; `record_evaluation`
+    run with the printed command exits non-zero with the busy words. No ledger
+    is written, and once the lock is free the same command registers."""
+    import scripts.record_evaluation as record_evaluation
+    import src.evaluation.sidecar as sidecar
+    from src.evaluation.sidecar import ledger_lock_path
+    from src.utils.file_lock import exclusive_lock
+
+    monkeypatch.setattr(sidecar, "LEDGER_LOCK_GRACE_SECONDS", 0.2)
+    ledger = cohort.checkpoint.resolve().parent / LEDGER
+    out = tmp_path / "jobs" / "outcome.json"
+    out.parent.mkdir()
+    with exclusive_lock(ledger_lock_path(ledger), grace=0):
+        assert cli.main(_argv(cohort, "--record", "--outcome", str(out))) == 3
+        err = capsys.readouterr().err
+        path, _ = _report(cohort)
+        command = ["--report", str(path), "--checkpoint", str(cohort.checkpoint.resolve())]
+        _busy_words(err)
+        assert f"report is kept at {path}" in err
+        assert (f'python scripts/record_evaluation.py --report "{path}" '
+                f'--checkpoint "{cohort.checkpoint.resolve()}"') in err
+        registration = _outcome(out)["registration"]
+        assert (registration["registered"], registration["outcome"]) == (False, "refused")
+        _busy_words(registration["why"])
+
+        summary = _test_job_outcome(cohort, out, 3)
+        assert (summary["kept"], summary["registered"]) == (True, False)
+        assert f"The run said of its registration: {registration['why']}" in summary["summary"]
+
+        with pytest.raises(SystemExit) as refused:
+            record_evaluation.main(command)
+        assert isinstance(refused.value.code, str), "a refusal exits non-zero"
+        _busy_words(refused.value.code)
+    assert not ledger.exists()
+
+    assert record_evaluation.main(command) == 0
+    records = json.loads(ledger.read_text())["records"]
+    assert [r["source_artifact_digest"] for r in records] == [_sha(path)]
+
+
+def test_a_registration_whose_usage_history_was_not_written_says_so_and_stands(
+    cli, cohort, tmp_path, monkeypatch, capsys
+):
+    """F-i at `measure_scorer --record` and the job runner's summary (K8-6r.1
+    review): the ledger is written and the registration's usage-history entry
+    is not. The run exits 0 with a ``NOTE:`` line; its outcome reads
+    registered, with a why that says the usage history was not written and
+    why; the record stands. The job summary reads registered and repeats the
+    run's own words."""
+    import src.evaluation.registration as registration
+
+    def fail(*args, **kwargs):
+        raise PermissionError(13, "Permission denied", "usage.jsonl")
+
+    monkeypatch.setattr(registration, "record_registration", fail)
+    ledger = cohort.checkpoint.resolve().parent / LEDGER
+    out = tmp_path / "jobs" / "outcome.json"
+    out.parent.mkdir()
+
+    assert cli.main(_argv(cohort, "--record", "--outcome", str(out))) == 0
+
+    problem = ("the usage history was not written: PermissionError: [Errno 13] Permission "
+               f"denied: 'usage.jsonl'. The record in {ledger} stands")
+    assert f"NOTE: {problem}." in capsys.readouterr().err
+    said = _outcome(out)["registration"]
+    assert (said["registered"], said["outcome"], said["sequence"]) == (True, "registered", 1)
+    assert said["why"] == f"Registered as record 1; {problem}"
+    assert [r["registration"]["sequence"]
+            for r in json.loads(ledger.read_text())["records"]] == [1]
+
+    summary = _test_job_outcome(cohort, out, 0)
+    assert (summary["kept"], summary["registered"]) == (True, True)
+    assert summary["summary"].endswith(f"The run said of its registration: {said['why']}.")
+
+
+def test_a_measured_registration_takes_gpu_then_ledger_then_usage(cli, cohort, monkeypatch):
+    """F-j (K8-6r.1): `measure_scorer --record` holds the GPU lock for its
+    run; its ``test_run`` entry takes the usage history's lock under the GPU
+    lock only; its registration takes the ledger's lock and, inside it, the
+    usage history's again. Never a ledger or GPU lock while a usage lock is
+    held, nor a GPU lock while the ledger's is."""
+    from contextlib import contextmanager
+
+    import src.evaluation.report_store as report_store
+    import src.evaluation.sidecar as sidecar
+
+    events = []
+    real_take = cli.take_gpu_lock
+
+    @contextmanager
+    def take(*args, **kwargs):
+        with real_take(*args, **kwargs):
+            events.append(("held", "gpu"))
+            try:
+                yield
+            finally:
+                events.append(("left", "gpu"))
+
+    def recording(module, name):
+        real = module.exclusive_lock
+
+        @contextmanager
+        def lock(path, **kwargs):
+            with real(path, **kwargs):
+                events.append(("held", name))
+                try:
+                    yield path
+                finally:
+                    events.append(("left", name))
+
+        monkeypatch.setattr(module, "exclusive_lock", lock)
+
+    monkeypatch.setattr(cli, "take_gpu_lock", take)
+    recording(sidecar, "ledger")
+    recording(report_store, "usage")
+
+    assert cli.main(_argv(cohort, "--record")) == 0
+
+    assert events == [("held", "gpu"), ("held", "usage"), ("left", "usage"),
+                      ("held", "ledger"), ("held", "usage"), ("left", "usage"),
+                      ("left", "ledger"), ("left", "gpu")]
+
+
+@POSIX
+def test_a_busy_usage_history_ends_the_run_after_its_report_and_it_registers_later(
+    cli, cohort, monkeypatch
+):
+    """F-j, final pass (K8-6r.1): another process holds the version's usage
+    history past its (patched) grace when the run appends its ``test_run``
+    entry. The run ends after publishing and before registering
+    (`FailedAfterPublishing`, exit 1 as a program): the message names the busy
+    usage file and carries "The report was written" and the register-later
+    command; the report is kept, no ledger is written, the run reads not
+    registered, and the printed command then registers it. (The
+    ``PermissionError`` case above is the guard this extends.)"""
+    import scripts.record_evaluation as record_evaluation
+    import src.evaluation.report_store as report_store
+    from src.evaluation.registration import report_state
+    from tests.fixtures.concurrent_writers import CONTEXT, WAIT, hold_lock, processes
+
+    monkeypatch.setattr(report_store, "APPEND_LOCK_GRACE_SECONDS", 0.3)
+    reports = cohort.version.directory / "reports"
+    reports.mkdir(exist_ok=True)
+    lock = reports / "usage.jsonl.lock"
+    held, release = CONTEXT.Event(), CONTEXT.Event()
+    with processes((hold_lock, (str(lock), held, release))) as (holder,):
+        assert held.wait(WAIT)
+        with pytest.raises(cli.FailedAfterPublishing) as failed:
+            cli.main(_argv(cohort, "--record"))
+        release.set()
+        holder.join(WAIT)
+
+    said = str(failed.value)
+    path, _ = _report(cohort)
+    assert ("the cohort version's usage history could not be appended, so this run is not in "
+            f"it (FileLockBusy: {lock} is busy") in said
+    assert f"The report was written: {path}." in said
+    command = ["--report", str(path), "--checkpoint", str(cohort.checkpoint.resolve())]
+    assert (f'python scripts/record_evaluation.py --report "{path}" '
+            f'--checkpoint "{cohort.checkpoint.resolve()}"') in said
+    assert not (cohort.checkpoint.parent / LEDGER).exists()
+    state = report_state(path, checkpoint=cohort.checkpoint)
+    assert (state.kept, state.registered) == ("kept", "not_registered")
+
+    assert record_evaluation.main(command) == 0
+    state = report_state(path, checkpoint=cohort.checkpoint)
+    assert (state.registered, state.sequence) == ("registered", 1)
 
 
 def test_a_failed_outcome_write_does_not_keep_a_published_run_out_of_the_history(
@@ -938,41 +1555,44 @@ def test_when_both_the_history_and_the_outcome_fail_the_message_says_both(
     assert "this run is in its version's usage history" not in message
 
 
-def test_a_disagreeing_run_is_kept_and_not_registered_without_a_later_command(
-    cli, cohort, capsys
-):
-    """D5 through --record: a second run under a key whose stored reports
-    disagree exits 3, keeps its report, and offers no register-later command,
-    since none would be accepted while they disagree."""
-    import secrets
+def test_a_run_whose_values_differ_is_registered_with_the_group_note(cli, cohort, capsys,
+                                                                     tmp_path):
+    """G4, A1 (K8-6r.2) through --record: a run whose value differs from the
+    registered run of its group (here a kept report with another pooled_top1,
+    registered as record 1) exits 0 with "Registered as record 2" and the
+    group note, which names record 1, its run and what differs and decides
+    nothing; record 1 is unchanged. HEAD: exit 3, "runs disagree —
+    investigate", no register-later command."""
+    from src.evaluation.registration import register_report
 
-    assert cli.main(_argv(cohort, "--record")) == 0
-    (first,) = _reports(cohort)
-    edited = json.loads(first.read_text())
-    edited["authoritative_metrics"]["hits@1"] = 0.5 + edited["authoritative_metrics"]["hits@1"] / 2
-    stamp, checkpoint, _ = first.parent.name.split("-")
-    other = first.parents[1] / f"{stamp}-{checkpoint}-{secrets.token_hex(4)}"
-    other.mkdir()
-    (other / "report.json").write_text(json.dumps(edited))
+    assert cli.main(_argv(cohort)) == 0
+    other = _disagreeing_report(cohort)
+    first = register_report(other, checkpoint_dir=cohort.checkpoint.parent)
+    assert (first.outcome, first.record["registration"]["sequence"]) == ("registered", 1)
     capsys.readouterr()
+    out = tmp_path / "outcome.json"
 
-    assert cli.main(_argv(cohort, "--record")) == 3
+    assert cli.main(_argv(cohort, "--record", "--outcome", str(out))) == 0
 
-    err = capsys.readouterr().err
-    assert "runs disagree — investigate" in err and "hits@1" in err
-    assert "where the investigation can read it" in err
-    assert "Register it later with" not in err
-    assert len(_reports(cohort)) == 3
+    printed = capsys.readouterr().out
+    assert "Registered as record 2" in printed
+    assert ("Runs under these conditions differ: record 2 (this run) differs from record 1 "
+            f"(run {other.parent.name}) on pooled_top1") in printed
+    assert "Each run is kept as recorded." in printed
+    records = json.loads((cohort.checkpoint.parent / LEDGER).read_text())["records"]
+    assert records[0] == first.record and len(records) == 2
+    assert _outcome(out)["registration"]["outcome"] == "registered"
 
 
 def _disagreeing_report(cohort):
-    """A second report under the key of the store's one report, its hits@1
-    another number: the store now holds runs that disagree."""
+    """A second report under the key of the store's one report, its
+    pooled_top1 another number: the store now holds runs that disagree."""
     import secrets
 
     (first,) = _reports(cohort)
     edited = json.loads(first.read_text())
-    edited["authoritative_metrics"]["hits@1"] = 0.5 + edited["authoritative_metrics"]["hits@1"] / 2
+    edited["authoritative_metrics"]["pooled_top1"] = (
+        0.5 + edited["authoritative_metrics"]["pooled_top1"] / 2)
     stamp, checkpoint, _ = first.parent.name.split("-")
     other = first.parents[1] / f"{stamp}-{checkpoint}-{secrets.token_hex(4)}"
     other.mkdir()
@@ -980,44 +1600,36 @@ def _disagreeing_report(cohort):
     return other / "report.json"
 
 
-def test_without_record_a_disagreeing_run_offers_no_register_later_command(
-    cli, cohort, capsys, tmp_path
+@pytest.mark.parametrize("store", ["runs that differ", "another run's broken report"])
+def test_without_record_the_register_later_command_is_always_printed(
+    cli, cohort, capsys, tmp_path, store
 ):
-    """The reviewer's P3 (2026-10-20): without --record the run checks the
-    store as a registration would, so it never prints a command D5 would
-    refuse: it says the runs disagree, and its outcome says so too."""
+    """G4, C1 (K8-6r.2): without --record the run checks nothing in the store,
+    since no other run's report or result can refuse its registration: the
+    register-later command is always printed, and the outcome file says only
+    that --record was not given. HEAD: no command while the runs disagree,
+    and "refused until that can be checked" for another run's broken report."""
+    from tests.fixtures.report_store import store_bytes
+
     assert cli.main(_argv(cohort)) == 0
-    _disagreeing_report(cohort)
+    if store == "runs that differ":
+        _disagreeing_report(cohort)
+    else:
+        store_bytes(cohort.registry, b"{broken", version=cohort.version)
     capsys.readouterr()
     out = tmp_path / "outcome.json"
 
     assert cli.main(_argv(cohort, "--outcome", str(out))) == 0
 
     printed = capsys.readouterr().out
-    assert "Not registered (no --record), and runs disagree — investigate" in printed
-    assert "hits@1" in printed and "No register-later command is offered" in printed
-    assert "Register it with" not in printed and "record_evaluation.py" not in printed
+    assert "Not registered (no --record). Register it with:" in printed
+    assert "record_evaluation.py --report" in printed
+    assert "disagree" not in printed and "cannot be checked" not in printed
     registration = _outcome(out)["registration"]
     assert (registration["registered"], registration["outcome"]) == (False, "not_requested")
-    assert "runs disagree — investigate" in registration["why"]
+    assert registration["why"] == ("--record was not given; the report is kept for a later "
+                                   "registration")
     assert not (cohort.checkpoint.parent / LEDGER).exists()
-
-
-def test_without_record_a_key_that_cannot_be_checked_says_registering_waits_for_it(
-    cli, cohort, capsys, tmp_path
-):
-    from tests.fixtures.report_store import store_bytes
-
-    damaged = store_bytes(cohort.registry, b"{broken", version=cohort.version)
-    out = tmp_path / "outcome.json"
-
-    assert cli.main(_argv(cohort, "--outcome", str(out))) == 0
-
-    printed = capsys.readouterr().out
-    assert "cannot be checked" in printed and str(damaged) in printed
-    assert "A later registration is refused until that can be checked" in printed
-    assert "record_evaluation.py --report" in printed
-    assert "cannot be checked" in _outcome(out)["registration"]["why"]
 
 
 def test_a_runs_report_replaced_by_a_link_out_of_the_store_is_not_offered_later(
@@ -1054,12 +1666,13 @@ def test_a_runs_report_replaced_by_a_link_out_of_the_store_is_not_offered_later(
     assert not (cohort.checkpoint.parent / LEDGER).exists()
 
 
-def test_a_report_in_the_store_too_deep_to_compare_is_a_refusal_not_a_traceback(
+def test_another_report_in_the_store_too_deep_to_compare_never_blocks_this_run(
     cli, cohort, capsys, tmp_path
 ):
-    """The reviewer's P3 (2026-10-20): a hand-edited report in the store that
-    nests too deeply to be built leaves its key "cannot be checked"; --record
-    exits 3 saying so, and the outcome file is complete."""
+    """C3 (K8-6r.2): a hand-edited report of another run that nests too deeply
+    to be built is that run's own problem: --record registers this run, reads
+    no other report, and the outcome file is complete. HEAD: exit 3, "cannot
+    be checked ... nests too deeply"."""
     assert cli.main(_argv(cohort)) == 0
     deep_path = _disagreeing_report(cohort)
     deep = json.loads(deep_path.read_text())
@@ -1071,12 +1684,15 @@ def test_a_report_in_the_store_too_deep_to_compare_is_a_refusal_not_a_traceback(
     capsys.readouterr()
     out = tmp_path / "outcome.json"
 
-    assert cli.main(_argv(cohort, "--record", "--outcome", str(out))) == 3
+    assert cli.main(_argv(cohort, "--record", "--outcome", str(out))) == 0
 
-    err = capsys.readouterr().err
-    assert "cannot be checked" in err and "nests too deeply" in err and str(deep_path) in err
+    captured = capsys.readouterr()
+    assert "Registered as record 1" in captured.out
+    assert "nests too deeply" not in captured.out + captured.err
     outcome = _outcome(out)
-    assert outcome["complete"] is True and outcome["registration"]["registered"] is False
+    assert outcome["complete"] is True and outcome["registration"]["registered"] is True
+    (record,) = json.loads((cohort.checkpoint.parent / LEDGER).read_text())["records"]
+    assert record["run_id"] == Path(outcome["report"]).parent.name
 
 
 def test_deterministic_runs_are_recorded_so_and_the_settings_are_put_back(
@@ -1088,9 +1704,9 @@ def test_deterministic_runs_are_recorded_so_and_the_settings_are_put_back(
     process's settings are as they were."""
     import os
 
-    import src.evaluation.measurement as measurement
-    from src.evaluation.measurement import run_mode_c as real_run_mode_c
+    from src.evaluation.task_measurement import TASK_RUNS
 
+    real_run = TASK_RUNS["disease"]
     monkeypatch.delenv("CUBLAS_WORKSPACE_CONFIG", raising=False)
     seen = []
 
@@ -1099,9 +1715,9 @@ def test_deterministic_runs_are_recorded_so_and_the_settings_are_put_back(
                      torch.is_deterministic_algorithms_warn_only_enabled(),
                      torch.backends.cudnn.deterministic, torch.backends.cudnn.benchmark,
                      os.environ.get("CUBLAS_WORKSPACE_CONFIG")))
-        return real_run_mode_c(**kwargs)
+        return real_run(**kwargs)
 
-    monkeypatch.setattr(measurement, "run_mode_c", observing)
+    monkeypatch.setitem(TASK_RUNS, "disease", observing)
     before = (torch.are_deterministic_algorithms_enabled(), torch.backends.cudnn.deterministic,
               torch.backends.cudnn.benchmark)
 
@@ -1125,7 +1741,7 @@ def test_an_operation_without_a_deterministic_implementation_refuses_the_run(
     """No fallback: torch's refusal becomes one refusal saying the run did not
     complete as requested, nothing written, and the settings are put back.
     Without --deterministic the same error is not reworded."""
-    import src.evaluation.measurement as measurement
+    from src.evaluation.task_measurement import TASK_RUNS
 
     error = RuntimeError("scatter_reduce_cuda does not have a deterministic implementation, "
                          "but you set 'torch.use_deterministic_algorithms(True)'.")
@@ -1133,7 +1749,7 @@ def test_an_operation_without_a_deterministic_implementation_refuses_the_run(
     def refuse(**kwargs):
         raise error
 
-    monkeypatch.setattr(measurement, "run_mode_c", refuse)
+    monkeypatch.setitem(TASK_RUNS, "disease", refuse)
 
     with pytest.raises(cli.DeterministicExecutionUnsupported) as refused:
         cli.main(_argv(cohort, "--deterministic", "--record"))
@@ -1261,7 +1877,8 @@ def test_a_cohort_run_in_a_copy_of_the_registry_is_refused_before_the_lock_and_a
     shutil.copytree(cohort.registry, copy, symlinks=True)
     before = _tree(copy)
     _nothing_before_the_lock(cli, monkeypatch)
-    argv = ["--checkpoint", str(cohort.checkpoint), "--data-dir", str(cohort.data_dir),
+    argv = ["--mode", "disease", "--checkpoint", str(cohort.checkpoint),
+            "--data-dir", str(cohort.data_dir),
             "--cohort", cohort.version.manifest["label"], "--registry", str(copy),
             "--device", "cpu", *(["--record"] if record else [])]
 
@@ -1306,7 +1923,8 @@ def test_a_registry_named_through_a_link_to_the_deployments_is_measured(
     deployment's registry is that registry, and its report registers."""
     alias = tmp_path / "registry-link"
     alias.symlink_to(cohort.registry, target_is_directory=True)
-    argv = ["--checkpoint", str(cohort.checkpoint), "--data-dir", str(cohort.data_dir),
+    argv = ["--mode", "disease", "--checkpoint", str(cohort.checkpoint),
+            "--data-dir", str(cohort.data_dir),
             "--cohort", cohort.version.manifest["label"], "--registry", str(alias),
             "--device", "cpu", "--record"]
 
@@ -1363,7 +1981,8 @@ def test_a_registry_link_retargeted_after_the_check_does_not_move_the_run(
             return resolve(*args, **kwargs)
 
         monkeypatch.setattr(cli, "_resolve_device", retarget_then_resolve)
-    argv = ["--checkpoint", str(cohort.checkpoint), "--data-dir", str(cohort.data_dir),
+    argv = ["--mode", "disease", "--checkpoint", str(cohort.checkpoint),
+            "--data-dir", str(cohort.data_dir),
             "--cohort", cohort.version.manifest["label"], "--registry", str(alias),
             "--device", "cpu", *(["--record"] if record else [])]
 

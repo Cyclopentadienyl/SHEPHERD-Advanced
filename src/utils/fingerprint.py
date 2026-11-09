@@ -1,9 +1,9 @@
 """
 Data Fingerprint Utilities
 ===========================
-Compute and verify compatibility fingerprints for graph data,
-ensuring that model checkpoints are loaded with the same KG
-structure they were trained on.
+Compute the structural fingerprint a training run records for its graph
+data, and compare a checkpoint's training record with the digests a consumer
+holds (`verify_training_record`).
 
 Module: src/utils/fingerprint.py
 
@@ -15,9 +15,9 @@ A *fingerprint* captures the structural identity of a graph dataset:
   - Feature dimensions per node type
   - Total KG node/edge counts
 
-It answers "is this checkpoint structurally compatible with the graph in front of
-me?". It cannot answer "which exact inputs produced this checkpoint" — two runs
-over different sample files share it, and sample files do not enter it at all.
+It is a recorded structural summary of the graph a run read, compared by nothing.
+It cannot answer "which exact inputs produced this checkpoint" — two runs over
+different sample files share it, and sample files do not enter it at all.
 
 *Content digests* (`read_once`, `file_sha256`) answer the second question. They are
 kept separate rather than folded into the fingerprint, because
@@ -37,38 +37,31 @@ compares the file by path just before replacing it, and the ledger stays
 single-writer. BACKLOG item 19's other scripts outside that scope still hash by
 path, each with its home there.
 
-When a checkpoint is saved during training, the fingerprint of the
-graph data used is embedded in the checkpoint. At inference load time,
-the current graph data's fingerprint is compared against the saved one.
-Mismatches produce a WARNING (not a hard error) so operators can decide: the
-fingerprint is a diagnostic, never identity.
+`compute_fingerprint` is the structural summary a run records
+(`data_fingerprint` in its checkpoint), compared by nothing at load.
 
 **Identity is `verify_training_record`'s** (contract M2.4): the one comparator
 between a checkpoint's `training_input_digests` and the digests a consumer holds
 for the same roles. It raises; it does not warn.
-
-Usage:
-    from src.utils.fingerprint import compute_fingerprint, verify_fingerprint
-
-    # During training:
-    fp = compute_fingerprint(graph_data)
-    checkpoint["data_fingerprint"] = fp
-
-    # During inference:
-    warnings = verify_fingerprint(checkpoint, current_graph_data)
-    if warnings:
-        for w in warnings:
-            logger.warning(w)
 """
 from __future__ import annotations
 
 import hashlib
 import logging
-from dataclasses import dataclass
+import os
+import sys
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, BinaryIO, Callable, Dict, Iterable, List, Mapping, Optional, Union
+from typing import Any, BinaryIO, Callable, Dict, Iterable, List, Mapping, Optional, Tuple, Union
 
 logger = logging.getLogger(__name__)
+
+
+def stat_identity(st: os.stat_result) -> Tuple[int, ...]:
+    """What tells one state of a file from another without reading it: its
+    device, inode, size, and modification and change times (the change time
+    moves with any write or metadata change and cannot be set back)."""
+    return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
 
 
 @dataclass(frozen=True)
@@ -76,11 +69,15 @@ class ReadIdentity:
     """Which file was read, and the SHA-256 of the bytes that read returned.
 
     It carries no bytes, so a reader can keep it beside what it parsed and let the
-    raw buffer go.
+    raw buffer go. `opened` is the `stat_identity` of the file the read's one
+    open opened, taken from that open descriptor once the bytes were read (never
+    by looking the name up again), or None where no read made it; it names a
+    state of the file, not the bytes, so two reads compare by path and digest.
     """
 
     path: Path
     sha256: str
+    opened: Optional[Tuple[int, ...]] = field(default=None, compare=False)
 
 
 @dataclass(frozen=True)
@@ -94,13 +91,108 @@ class FileRead:
     path: Path
     data: bytes
     sha256: str
+    #: The file this read opened (`ReadIdentity.opened`).
+    opened: Optional[Tuple[int, ...]] = None
 
     @property
     def identity(self) -> ReadIdentity:
-        return ReadIdentity(path=self.path, sha256=self.sha256)
+        return ReadIdentity(path=self.path, sha256=self.sha256, opened=self.opened)
 
 
-def read_once(path: Union[str, Path]) -> FileRead:
+def lies_within(path: Path, within: Path) -> bool:
+    """Whether `path` lies inside the directory `within`, both already resolved:
+    the one workspace boundary rule, for a name (`checkpoint_paths`) and for an
+    opened file (`read_once(within=)`) alike. `within` itself is not inside."""
+    return path != within and within in path.parents
+
+
+class ReadOutside(ValueError):
+    """A bounded read (`read_once(within=)`) opened a file that does not lie
+    inside `within`, or one it cannot place; raised before a byte is read.
+
+    It carries the facts: ``path`` (the name opened), ``within``, ``opened``
+    (where the open descriptor says the file lies, or None) and ``why`` (set
+    when ``opened`` is None). Its message states only them; each caller words
+    its own refusal."""
+
+    def __init__(self, path: Union[str, Path], within: Path, opened: Optional[Path],
+                 why: Optional[str] = None) -> None:
+        self.path = Path(path)
+        self.within = Path(within)
+        self.opened = opened
+        self.why = why
+        if opened is not None:
+            message = f"{self.path} was opened at {opened}, outside {self.within}."
+        else:
+            message = f"{self.path} cannot be placed inside {self.within}: {why}."
+        super().__init__(message)
+
+
+def _opened_path(fd: int) -> Tuple[Optional[Path], Optional[str]]:
+    """Where the file open on `fd` lies, asked of the descriptor itself: no
+    name is looked up, so a name swapped before or after the open cannot
+    answer for the file. ``(path, None)``, or ``(None, why)`` when there is
+    no location.
+
+    The location is taken first and the link count after it, so a file whose
+    last name went away before or during the query is refused, never placed
+    by the name it used to have. An `OSError` from the query (no `/proc`, say)
+    reaches the caller, which refuses."""
+    if sys.platform.startswith("linux"):
+        opened: Optional[Path] = Path(os.readlink(f"/proc/self/fd/{fd}"))
+    elif sys.platform == "win32":  # pragma: no cover - not exercised on Linux
+        import ctypes
+        import msvcrt
+        from ctypes import wintypes
+
+        final_path = ctypes.WinDLL("kernel32", use_last_error=True).GetFinalPathNameByHandleW
+        final_path.argtypes = (wintypes.HANDLE, wintypes.LPWSTR, wintypes.DWORD,
+                               wintypes.DWORD)
+        final_path.restype = wintypes.DWORD
+        handle, size = msvcrt.get_osfhandle(fd), 1024
+        while True:
+            buffer = ctypes.create_unicode_buffer(size)
+            # FILE_NAME_NORMALIZED | VOLUME_NAME_DOS
+            needed = final_path(handle, buffer, size, 0)
+            if needed == 0:
+                return None, "the descriptor query failed"
+            if needed < size:
+                break
+            size = needed + 1
+        text = buffer.value
+        # As `ntpath.realpath` does, so the result compares with a resolved path.
+        if text.startswith("\\\\?\\UNC\\"):
+            text = "\\\\" + text[len("\\\\?\\UNC\\"):]
+        elif text.startswith("\\\\?\\"):
+            text = text[len("\\\\?\\"):]
+        opened = Path(text)
+    elif sys.platform == "darwin":  # pragma: no cover - not exercised on Linux
+        import fcntl
+
+        raw = fcntl.fcntl(fd, fcntl.F_GETPATH, bytes(1024))
+        opened = Path(os.fsdecode(raw.split(b"\0", 1)[0]))
+    else:  # pragma: no cover - not exercised on Linux
+        return None, "this platform gives no location for an open file"
+    if os.fstat(fd).st_nlink == 0:
+        return None, "the file opened has no name left"
+    return opened, None
+
+
+def _refuse_outside(handle: Any, path: Path, within: Path) -> None:
+    """Raise `ReadOutside` unless the file open on `handle` lies inside
+    `within` (`lies_within`), by its descriptor's location (`_opened_path`).
+    No location, the query failing included, is a refusal."""
+    try:
+        opened, why = _opened_path(handle.fileno())
+    except OSError as exc:
+        opened, why = None, f"the descriptor query failed ({type(exc).__name__})"
+    if opened is None:
+        raise ReadOutside(path, within, None, why)
+    if not lies_within(opened, within):
+        raise ReadOutside(path, within, opened)
+
+
+def read_once(path: Union[str, Path], *, within: Optional[Path] = None) -> FileRead:
     """Read a file once and return its bytes with their SHA-256.
 
     **One open, one full read, and the digest is taken over that same bytes
@@ -113,15 +205,36 @@ def read_once(path: Union[str, Path]) -> FileRead:
     **A missing file raises** (`FileNotFoundError`), unlike `file_sha256`. A file
     deleted between two reads is then refused instead of recorded as absent.
 
+    **`within` bounds the read to a directory** (already resolved): the file
+    this one open opened must lie inside it, or `ReadOutside` is raised before a
+    byte is read. Where it lies is asked of the open descriptor, never of the
+    name (`_opened_path`: `/proc/self/fd` on Linux, `GetFinalPathNameByHandleW`
+    on Windows, `F_GETPATH` on macOS), because a name can point elsewhere at
+    every lookup; a check of the name before or after the open leaves the open
+    itself to land outside. So a file opened outside is refused whatever its
+    name says afterwards, and a file opened inside is read even if its name
+    moves out afterwards: its bytes are inside. Where no location can be had
+    (another platform, no `/proc`, a file with no name left), the bounded read
+    refuses. Without `within` nothing is checked, as before; automatic
+    selection and the run listing pass it (`read_checkpoint(within=)`).
+
+    **The file read is named by its open descriptor** (`FileRead.opened`, its
+    `stat_identity` from `os.fstat` once the bytes are read), so a caller that
+    keeps what a read found by the file's identity compares the file this read
+    actually opened, never what its name pointed at before or after the open.
+
     No retry, no fallback. The read is alone on its line: the readers' release
     check (contract M2.1, S2) finds the raw buffer by the allocation that line
     makes, so nothing a reader keeps may be made on it.
     """
     path = Path(path)
     with path.open("rb") as handle:
+        if within is not None:
+            _refuse_outside(handle, path, within)
         data = handle.read()
+        opened = stat_identity(os.fstat(handle.fileno()))
     sha256 = hashlib.sha256(data).hexdigest()
-    return FileRead(path=path, data=data, sha256=sha256)
+    return FileRead(path=path, data=data, sha256=sha256, opened=opened)
 
 
 def file_sha256(path: Union[str, Path]) -> Optional[str]:
@@ -134,12 +247,10 @@ def file_sha256(path: Union[str, Path]) -> Optional[str]:
     claim being made.
 
     **Lives here rather than in a script.** It was defined in
-    `scripts/measure_scorer.py` and imported from there by
-    `scripts/calibrate_mode_a.py`, `scripts/benchmark_sp_lookup.py` and a test —
-    scripts importing a script, which makes an entry point into a library. The SP
-    benchmark in particular has nothing to do with scorer measurement and had no
-    business depending on it. `src.utils` is the bottom layer, so every caller can
-    reach this without reaching through anything else.
+    `scripts/measure_scorer.py` and imported from there by other scripts and a
+    test — scripts importing a script, which makes an entry point into a library.
+    `src.utils` is the bottom layer, so every caller can reach this without
+    reaching through anything else.
 
     **Absent is `None`, not an error.** A role a run did not consume, and a file
     that is genuinely missing, are both recorded rather than raised on; the caller
@@ -321,104 +432,3 @@ def compute_fingerprint(
         fp["kg_total_edges"] = kg_total_edges
 
     return fp
-
-
-def verify_fingerprint(
-    checkpoint: Dict[str, Any],
-    current_graph_data: Dict[str, Any],
-    kg_total_nodes: Optional[int] = None,
-    kg_total_edges: Optional[int] = None,
-) -> List[str]:
-    """
-    Verify that a checkpoint's data fingerprint matches current graph data.
-
-    Returns a list of warning strings. Empty list = compatible.
-    Non-empty = mismatches detected (but not necessarily fatal).
-
-    **This checks structure only, and does not look at
-    `training_input_digests`.** An empty warning list therefore means "the graph is
-    structurally compatible", never "this checkpoint was trained on these files".
-    That question is `verify_training_record`'s, which compares the digests by
-    role and refuses; this stays a diagnostic beside it.
-
-    Args:
-        checkpoint: loaded checkpoint dict (may or may not have "data_fingerprint")
-        current_graph_data: current graph data dict
-        kg_total_nodes: current KG total nodes (optional)
-        kg_total_edges: current KG total edges (optional)
-
-    Returns:
-        List of human-readable warning strings (English).
-    """
-    saved_fp = checkpoint.get("data_fingerprint")
-    if saved_fp is None:
-        return [
-            "Checkpoint does not contain a data fingerprint "
-            "(legacy format). Cannot verify KG compatibility. "
-            "Proceed with caution."
-        ]
-
-    current_fp = compute_fingerprint(
-        current_graph_data,
-        kg_total_nodes=kg_total_nodes,
-        kg_total_edges=kg_total_edges,
-    )
-
-    warnings: List[str] = []
-
-    # Check node types
-    saved_nt = set(saved_fp.get("node_types", []))
-    current_nt = set(current_fp.get("node_types", []))
-    if saved_nt != current_nt:
-        added = current_nt - saved_nt
-        removed = saved_nt - current_nt
-        parts = ["Node type mismatch:"]
-        if added:
-            parts.append(f"added {added}")
-        if removed:
-            parts.append(f"removed {removed}")
-        warnings.append(" ".join(parts))
-
-    # Check node counts
-    saved_nc = saved_fp.get("node_counts", {})
-    current_nc = current_fp.get("node_counts", {})
-    for nt in set(saved_nc) | set(current_nc):
-        s = saved_nc.get(nt, 0)
-        c = current_nc.get(nt, 0)
-        if s != c:
-            warnings.append(
-                f"Node count mismatch for '{nt}': "
-                f"checkpoint expects {s}, current data has {c}"
-            )
-
-    # Check edge types count
-    saved_net = saved_fp.get("num_edge_types", 0)
-    current_net = current_fp.get("num_edge_types", 0)
-    if saved_net != current_net:
-        warnings.append(
-            f"Edge type count mismatch: "
-            f"checkpoint expects {saved_net}, current data has {current_net}"
-        )
-
-    # Check feature dimensions
-    saved_fd = saved_fp.get("feature_dims", {})
-    current_fd = current_fp.get("feature_dims", {})
-    for nt in set(saved_fd) | set(current_fd):
-        s = saved_fd.get(nt)
-        c = current_fd.get(nt)
-        if s is not None and c is not None and s != c:
-            warnings.append(
-                f"Feature dimension mismatch for '{nt}': "
-                f"checkpoint expects {s}, current data has {c}. "
-                f"Model weights will not load correctly."
-            )
-
-    if warnings:
-        warnings.insert(
-            0,
-            "Graph structure differs from the checkpoint's structural "
-            "fingerprint (a diagnostic, not the graph's identity). Inference "
-            "results may be incorrect."
-        )
-
-    return warnings

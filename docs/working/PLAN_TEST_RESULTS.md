@@ -12,6 +12,12 @@ EVALUATION_COHORTS §5). The WebUI's usability is not accepted (BACKLOG 52). Whe
 entered: `docs/ARCHITECTURE.md` §11. The status record below is dated history: "on this branch",
 "not merged" and "not yet reviewed" there describe the date written.
 
+**2026-10-27: task-aware evaluation for the paper-aligned stages is designed in §8, not
+implemented.** It covers the base's link-prediction validation and the disease, gene and
+patients-like-me tasks, with their candidates, denominators and reference cohort. It also defines
+the clinical evaluation status as three kinds of evidence. Work packages A and B build it on this
+plan's infrastructure ([`scorer-retraining/README.md`](scorer-retraining/README.md) §8).
+
 **Status history: revision 4, corrected 2026-10-16.** **Phase 1 (the contract's M4) is implemented on
 this branch (2026-10-16)** (§6, "Phase 1 as implemented"; the contract's §4, "M4 as implemented").
 Its internal review's 29 findings (none P1, two P2) are fixed in `f3108c4`; the reviewer's code
@@ -213,8 +219,10 @@ last one says what M4 changed.
   the harness's random streams, not CUDA's arithmetic, so a refusal is "an instruction to look,
   not a proof of a defect" (the module docstring at `1cab39f`). Since R2 a measurement records no
   seed, and the ledger's documentation rests the point on the regime fields alone.
-- **Writing.** It is single-writer: an atomic replace with best-effort stale-write detection,
-  and no locking.
+- **Writing.** An atomic replace with stale-write detection. It was single-writer, with no
+  locking, until K8-6r.1; since then a registration holds the ledger's lock
+  (`evaluations.json.lock` beside it) across processes from its read to its write, and the
+  stale-write check stays as a second guard.
 - **Schema.** A file whose `schema_version` is not 1 is refused, with the instruction to read it
   with the revision that wrote it "rather than reinterpreting its fields under new rules"
   (`read_ledger`). Since R2 the version is 2, so a file written before R2 is refused the same way.
@@ -231,7 +239,8 @@ last one says what M4 changed.
   registered cohort version's report is recorded. `register_report`
   (`src/evaluation/registration.py`) is the one registration function, used by
   `measure_scorer.py --record` and `record_evaluation.py --report`, and parses and identifies the
-  report and the ledger each from one read (BACKLOG item 18). The ledger stays single-writer, and
+  report and the ledger each from one read (BACKLOG item 18). The ledger stayed single-writer
+  until K8-6r.1, which made registrations into one ledger take turns through its lock; it
   sits beside the checkpoint's resolved path on every write path (`--record`, and
   `record_evaluation.py` with `--checkpoint FILE` or `--checkpoint-dir DIR`) and on the read
   side, so a symlinked checkpoint's ledger is beside the link's target. The read-only route
@@ -489,7 +498,9 @@ pool, the cosine, the candidate universe and the tie rule. Today only the cosine
 This is recorded as a **constraint on B-1**. It is not built here. **Designed (Batch 2,
 2026-10-26):** `results-review/SPEC_1_RESULTS_REVIEW.md` §2.2 puts the shared boundary in
 `src/inference/scoring.py` (one composed `score_patients`, `canonical_ranking` moved there, the
-clamp replaced by a refusal) and settles the second behaviour: an unknown phenotype is dropped and
+clamp replaced by a refusal; *2026-11-08: that module was removed in K8-11, and the one task scorer
+is `src/models/tasks/scoring.py`, policy rev 17*) and settles the second behaviour: an unknown
+phenotype is dropped and
 always stated, never scored around silently, and a graph node with no tensor row is refused. The
 statement above that the drop is "silent" was already only half true at `60feb6d`: a phenotype the
 graph lacks is dropped with a warning and listed in the result's phenotype account; a graph node
@@ -599,6 +610,17 @@ imports of the reload route and `checkpoint_paths`) and a behavioural test. Mode
 the Load control are M5-2's (done: §6, "M5's boundaries", Model Management as implemented).
 
 ### D5 — The checkbox, reports and records
+
+> **Note (2026-11-07, K8-6r.2, policy rev 16).** The blocking rules below are history. A key whose
+> runs disagree no longer blocks anything, and "cannot be checked" refuses nothing: every valid run
+> is registered as its own record, naming its run (`run_id`), and runs under one key that differ
+> are kept and described ("runs under these conditions differ"), in neutral words; the pages mark
+> the difference in amber with "— investigate" only when the group records deterministic
+> algorithms on, so its runs were expected to agree. The state names `uncontested`, `contested`
+> and `cannot_be_checked` stay as values that only describe. A registration reads only the run it
+> registers. The ledger is schema 4 since then (schema 3 is still read; §5's schema-3 passages
+> are history too). The current rules: `docs/DISEASE_SCORER_POLICY.md` rev 16 and
+> `deployment-guide.en.md` §4.9.
 
 The owner's semantics, followed as stated:
 
@@ -1225,7 +1247,10 @@ default M4 runs on and a concrete example. An answer changes a default; it adds 
    `record_evaluation.py` refuses that report ("a generated split's report is not registered"):
    `val` is the selection split, and D3 labels a result by cohort role and version. Confirm.
    *Recommendation:* confirm; a `val` number stays in its own report as checkpoint-selection
-   data.
+   data. *Reworded in K8-6r.4 (2026-11-07), behaviour unchanged:* the reason is that the ledger
+   does not yet support a generated split's data identity (it has no registered cohort version),
+   not that such a result counts for less; its report and ranks stay at `--output`, and extending
+   the ledger to them is later work (policy rev 16).
 
 **Checked against the literature (the reviewer, 2026-10-17).** The reviewer checked the six
 questions against the SHEPHERD paper and its code [S1–S3], PhEval [S4], STARD 2015 [S5], Mondo
@@ -1676,7 +1701,9 @@ contract and BACKLOG stay the record, and no new planning document is added.
   its forked DataLoader workers holding the lock until they notice (torch's 5 s watchdog plus
   the sample in progress, longer if one hangs); `kill -INT <pid>` releases it at once, even sent
   to the main process alone, and `kill -TERM -- -<pid>` ends the whole group when the CLI leads
-  one; `measure_scorer.py` forks no workers (a worker's PR_SET_PDEATHSIG, the critic's optional
+  one *(2026-11-08, superseded by K8-7: a training CLI forks no DataLoader workers any more, so
+  ending its main process releases the lock; deployment guide §4.11)*; `measure_scorer.py` forks
+  no workers (a worker's PR_SET_PDEATHSIG, the critic's optional
   measure, is not added). **Stopping the backend stops its jobs** (the owner's decision,
   2026-10-22): the backend stops the runner's active job (`TrainingManager.end_active_job`,
   bounded by the stop's escalation) from the shutdown signal on: `src/api/main.py` wraps the
@@ -2282,3 +2309,152 @@ contract and BACKLOG stay the record, and no new planning document is added.
 - Patient-level display.
 - Evaluating Patients-like-me and causal gene discovery.
 - Mode D, B-1, and the Training Console's exposure.
+
+*2026-10-27:* evaluating patients-like-me and the gene task is no longer out of scope: §8 designs
+it for work package B. B-1 as a raw-cosine ranking is not built (`DISEASE_SCORER_POLICY.md` rev 11).
+
+## 8. Task-aware evaluation for the paper-aligned stages (design revision 2, 2026-10-27)
+
+**Status: designed, being built on this branch.** Revision 2 applies the reviewer's decision record
+of 2026-10-27 (multi-positive metrics, patients-like-me on Diagnosis, the archived Mode C/D). The
+recipe it measures is [`scorer-retraining/README.md`](scorer-retraining/README.md) §2, whose §2.6
+(E1–E7) holds the metric rules this section applies; the records are `PLAN_PROVENANCE_CONTRACT.md`
+§9. It reuses this plan's infrastructure:
+- the cohort registry, `measure_scorer.py` and the measurement engine;
+- the report store, the one registration function and the sidecar;
+- D4's ordering and R10.
+
+It adds a task, a metric schema and a scoring identity to the same entry. There is no second
+evaluation, report, ledger or registration system, and no evaluator per task.
+
+### 8.1 The base: link-prediction validation
+
+- **The split.** The edge split artifact, by digest, cut on the reference graph view (README G1),
+  with reverse edges in the same part. Validation and test message passing use training edges only.
+- **What is evaluated.** Every validation edge once, in a seeded fixed order and fixed batches,
+  against negatives drawn by the source's same-relation rule within each batch under a recorded
+  seed. A negative never equals its positive; other true edges are not filtered, so a negative is
+  not claimed to be a proven non-relation. The edge-uniform weighting differs from the source's
+  node-uniform draw, and that is recorded.
+- **Metrics.**
+  - **LP accuracy at raw score > 0.** For binary single-label predictions this is the micro-F1 the
+    paper selects on, so it is reported once, not twice.
+  - **ROC-AUC and AP** beside it, whole-set statistics; with one class missing they are undefined
+    and said so.
+  - **Aggregation over the whole set** (correct over total). The source averages per batch; that
+    difference is recorded.
+- **Embeddings** come from the forward rule of the model spec (README §2.8).
+- **Selection.** The full schedule runs and the best validation epoch by LP accuracy is restored
+  (early stopping disabled, as the source). A finetune child records the selection rule and the
+  validation report's digest. Test edges never take part in selection.
+- **Not a patient-task claim.** A base has no task head, so no patient-task MRR is a property of a
+  base.
+- **The held-out boundary.** A finetune's validation, tests and serving pass messages over the full
+  view, and the gene task's SP uses it too (README G4, §6). After that exposure, LP figures on the
+  held-out edges are never called held-out.
+
+### 8.2 The disease task
+
+- **Candidates:** every disease of the view, computed exactly in chunks. Truths stay among the
+  candidates, and no ANN is used.
+- **Ranks:** exact ties by average rank (README E3); the screen orders ties by stable id. A case
+  whose truth is not in the view is refused at import, or listed as not rankable for this
+  configuration with its reason, and counted.
+- **Readings:** pooled positive-pair MRR and top-k (E1, the selection metric), macro per-case figures
+  beside them (E2), coverage and the conservative reading (E5).
+- **The denominator** is every case of the cohort version; import exclusions are reported apart and
+  post-import figures are never called end to end.
+- **Two splits, two contracts.** The KG edge split and the patient split differ. The paper's patient
+  split is disease-disjoint, which does not remove validation diseases from the KG. Held-out links
+  are never put back into the base's training input. What each stage saw is recorded
+  (`graph_exposure`).
+
+### 8.3 The gene task
+
+- **Input and truths.** The patient's candidate gene list is an input at each request
+  (`candidate_genes`), and the truths are the causal genes, all of them positives (README F9). A new
+  list never needs a retrained model.
+- **Candidates and denominators.**
+  - The candidates are the patient's own list, with no upsampling. Its length is reported, since a
+    rank depends on it.
+  - An unmapped candidate gene or phenotype is excluded and reported per case ("N mapped of M
+    submitted"). A case is not rankable when no causal gene maps.
+  - A case whose needed distances are unreachable or incomplete (README §6) is non-scorable, with its
+    reason, and stays in the denominator.
+- **Readings:** E1 (selection), E2, E5, with the SP bounds and η in the scoring identity.
+- **Data roles.** The paper put part of MyGene2 and DDD into the gene task's training ("disease-split
+  training"), so a source's name never proves independence. Roles, versions and overlaps are
+  recorded through the registry and R10.
+
+### 8.4 Patients-like-me
+
+- **The reference cohort.** A registered cohort version, embedded with the same checkpoint and
+  representation version as the query. Results, exports, caches and reports name it.
+- **Positives and exclusions.**
+  - A pair is positive when the two patients' causal-gene sets intersect; the query itself is
+    excluded by stable case identity, also when query and reference lists are ordered differently.
+  - States kept apart (E4): no other positive in the reference set; no reliable truth; input
+    excluded; model run failed. None of them is a recall of 0.
+  - Vectors from different finetuned models never share an index.
+- **Readings:** pooled positive-pair MRR and top-k (E1; validation selection queries each validation
+  patient against all other validation patients), macro recall@k = relevant patients found within
+  the top-k threshold ÷ all relevant patients in the reference set, averaged over eligible queries
+  (E2), and coverage (E5). A count over k is precision@k.
+- **Search.** Exact search, chunked, keeps the scoring contract. ANN would need its own declared
+  approximation policy.
+- **On Diagnosis (this round):** a reference cohort version chosen from the server list; candidates
+  show research id, rank, similarity and the recorded HPO terms and diagnosis or gene; no name or
+  contact field. A known causal gene is truth or reference context, never an input for an unknown
+  query.
+
+### 8.3–8.4 as built (K4, 2026-10-27)
+
+- **Measurement:** `measure_scorer.py --mode gene` ranks each case's own list;
+  `--mode patients_like_me` ranks each patient of the measured cohort against all the others. A
+  generated split is measured through the workspace's functional fixture of that split (recorded as
+  `task_fixture`). A registered version's cases carry genes when its source listed
+  `causal_genes`/`candidate_genes` (the optional import fields). The manifests name η, the SP
+  bounds and the augmentation (gene task), and the self-exclusion rule (patients-like-me).
+- **Serving:** the reference cohort version is resolved by the API in `SHEPHERD_REGISTRY` and
+  read against its bound digest. Its graph binding must be the served graph's. The pipeline
+  embeds the version once per samples digest.
+
+### 8.5 Manifests, ordering and registration
+
+- **New manifests** name the task, the metric schema, the scoring identity, the candidate universe,
+  the reference cohort (patients-like-me), the graph view and the forward rule, with a per-record
+  manifest schema version. The ledger's file-level schema stays 3 and its key fields are unchanged.
+- **Ordering (D4)** groups records by one task, one cohort version, one protocol and one scoring
+  semantics. Historical Mode C/D records are listed read-only, apart, never ordered with new ones.
+- **The archived comparison.** Mode C/D is archived by the owner: not run again, not a prerequisite,
+  not marked as passed. A new-spec model is never measured as Mode C and called comparable with
+  historical numbers.
+- **Registration** stays one function, with the task in the record. Old manifests are not accepted
+  for new registration; their reports stay readable. *(Withdrawn by policy rev 15: a kept report
+  that the shared checks read registers by the general rules; see the K7 bullet below.)*
+- **Where the refusal lives (K7, 2026-10-29).** The refusal of an old mode is made in
+  `register_report`, the one writer, right after it reads the stored report and before anything is
+  written; never in `build_record`, which the report store also uses to read every kept report,
+  so a gate there would make every kept C/D report unreadable. **Mode D:** since K7 a kept D report
+  is refused there ("… is a Mode D report (the served ranking), and Mode D was removed in K7 …"),
+  through `--record`, `scripts/record_evaluation.py` and the Test page's Register alike; the
+  registry and the checkpoint directory are left byte for byte as they were, the report still reads
+  as before (mode D, its D5 key state), and a ledger's existing D record stays and does not stop the
+  next registration. **Mode C:** the same refusal, for a C report, lands at K8 in the commit that
+  moves probe T2, T3 and RT2 to task reports; until then a kept C report can still be registered.
+  **Withdrawn (policy rev 15):** no registration refusal keyed on a mode stands. K8-6c removed the
+  Mode D one, and the Mode C one never landed: a kept C or D report registers by the general rules
+  under its own mode, and a repeat answers `already_registered`.
+
+### 8.6 Clinical evaluation status: three kinds of evidence
+
+These are axis 3 of README §5. They are not one promotion line.
+
+1. **Validation selection:** a selection step, not clinical validity.
+2. **Registered test reports:** each names its cohort version and protocol. Registration is not a
+   pass, and one model may hold several reports with different conclusions.
+3. **Institutional approval:** carries its scope, and is never generated from a score or a
+   registration state.
+
+Each is derived from its own record. The doctors' model selector also shows the task, the required
+inputs, the applicable data and the model's identity.

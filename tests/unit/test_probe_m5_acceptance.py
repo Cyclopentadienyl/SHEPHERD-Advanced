@@ -11,8 +11,6 @@ job, that what they rest on holds and that their checks fire:
   package installed twice, the deploy scripts' packages told from leftovers,
   whether the lock is the committed one, all said again at the end of a run;
   without a lock it is skipped, so an acceptance is incomplete;
-- a temporary directory in which a DataLoader worker's socket cannot be made
-  is said, as the Python that runs the jobs answers it, and RW3 stops early;
 - the M5 settings are the probe's own while it runs and are put back, so an
   operator's shell holding the deployment's settings changes nothing; the
   deployment's own lock is read and stated, once in each phase and as it is
@@ -452,7 +450,6 @@ def test_a5_states_a_differing_set_on_the_console_and_in_the_environment(
     assert "1 from the deploy scripts" in said and "pyg-lib" not in said
     assert environment["installed_against_lock"]["version_differs"] == _differing()[
         "version_differs"]
-    assert "socket_fits" in environment["installed_against_lock"]["temporary_directory"]
 
 
 def test_a5_is_said_again_beside_the_acceptance_verdict(probe, monkeypatch):
@@ -502,54 +499,6 @@ def test_the_committed_lock_is_read_as_it_is(probe):
     assert all(set(entry) == {"name", "version", "why"} and entry["why"] in (
         probe.OUTSIDE_LOCK_DEPLOY, probe.OUTSIDE_LOCK_REQUIRED, probe.OUTSIDE_LOCK_LEFTOVER)
         for entry in recorded["installed_not_in_lock"])
-
-
-def _long_directory(base: Path, length: int) -> Path:
-    """A real directory whose path is `length` bytes long, under `base`."""
-    pad = length - len(str(base)) - 1
-    if pad < 1:
-        pytest.skip("the test's temporary directory is already too long")
-    path = base / ("d" * pad)
-    path.mkdir()
-    assert len(str(path)) == length
-    return path
-
-
-@pytest.mark.skipif(sys.platform != "linux", reason="Linux's AF_UNIX path limit")
-def test_a_temporary_directory_a_worker_socket_cannot_be_made_in_is_said(
-        probe, tmp_path, monkeypatch):
-    """Asked of Python, not computed: a listener opened and closed under the
-    temporary directory, as multiprocessing opens one for DataLoader workers."""
-    import tempfile
-
-    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
-    short = probe._socket_room()
-    assert short["socket_fits"] is True and short["path_bytes"] == len(str(tmp_path))
-    if sys.version_info[:2] != (3, 12):
-        pytest.skip("the failing case is Python 3.12's")
-    monkeypatch.setattr(tempfile, "tempdir", str(_long_directory(tmp_path, 100)))
-    long = probe._socket_room()
-    assert long == {"path_bytes": 100, "socket_fits": False, "refusal": "AF_UNIX path too long",
-                    "checked": long["checked"]}
-    assert str(tmp_path) not in json.dumps(long)
-
-
-@pytest.mark.skipif(sys.platform != "linux" or not Path("/usr/bin/python3.13").exists(),
-                    reason="needs Linux and a Python 3.13 beside this one")
-def test_python_3_13_makes_its_sockets_under_tmp_whatever_the_temporary_directory(
-        probe, tmp_path, monkeypatch):
-    """`requires-python` is >=3.12: on 3.13 a long TMPDIR does not fail
-    training with workers (its sockets fall back to /tmp), so A5 and RW3 must
-    not say it does. A computed path length said it did."""
-    import tempfile
-
-    monkeypatch.setattr(tempfile, "tempdir", str(_long_directory(tmp_path, 100)))
-    assert probe._socket_room("/usr/bin/python3.13")["socket_fits"] is True
-
-
-def test_a_socket_check_that_cannot_run_says_so(probe, tmp_path):
-    room = probe._socket_room(str(tmp_path / "no-such-python"))
-    assert room["socket_fits"] is None and room["checked"] == "the check could not run"
 
 
 # --------------------------------------------------------------------------- settings
@@ -878,38 +827,6 @@ def test_the_deployment_s_lock_is_read_once_per_phase_as_the_docstring_says(prob
     assert "held it meanwhile" not in said and "was held meanwhile" not in said
 
 
-def test_rw3_stops_before_training_when_no_worker_socket_can_be_made(
-        probe, tmp_path, monkeypatch):
-    """Phase R's RW3 with workers in its settings and a temporary directory in
-    which their sockets cannot be made: failed early, saying to use a short
-    TMPDIR, no training job started."""
-    import src.api.services.training_manager as training_manager
-
-    started = []
-
-    class _NoJobs:
-        def __init__(self, *args, **kwargs):
-            started.append(1)
-            raise AssertionError("a job runner was used")
-
-    monkeypatch.setattr(training_manager, "TrainingManager", _NoJobs)
-    monkeypatch.setattr(probe, "_socket_room", lambda python=None: {
-        "path_bytes": 120, "socket_fits": False, "refusal": "AF_UNIX path too long",
-        "checked": "an AF_UNIX listener opened and closed under it"})
-    monkeypatch.setattr(probe, "_deployment_gpu_lock", lambda: {
-        "configured": False, "held": False, "unreadable": False})
-    real = tmp_path / "workspaces" / "real"
-    real.mkdir(parents=True)
-    report = probe.Report()
-
-    probe._m5_real(report, tmp_path / "work", real, tmp_path / "workspaces", "cpu",
-                   {"read": {}, "settings": {"num_workers": 2}, "m4": {}})
-
-    rw3 = {p.probe_id: p for p in report.probes}["RW3"]
-    assert rw3.status == "failed" and "short TMPDIR" in rw3.detail and "120 bytes" in rw3.detail
-    assert started == []
-
-
 def test_a_service_that_exits_before_it_answers_is_a_failure_in_the_probe_s_words(
         probe, tmp_path):
     server = probe._ProbeServer("M1", tmp_path, {})
@@ -1162,22 +1079,35 @@ _HOLDER_JOB = (
     "time.sleep(120)\n"
 )
 #: A test run's stand-in, for a start that is not refused: a stop's SIGINT
-#: ends it as a stop ends a test run, so the runner says "cancelled".
+#: ends it as a stop ends a test run, so the runner says "cancelled". Like
+#: measure_scorer it takes SIGINT, which the runner starts a test run with
+#: blocked, only once its own handling is in place (here the default action),
+#: so a stop that arrives while its interpreter still starts ends it the same way.
 _TEST_RUN = [sys.executable, "-c",
-             "import signal, time; signal.signal(signal.SIGINT, signal.SIG_DFL); time.sleep(120)"]
+             "import signal, time; signal.signal(signal.SIGINT, signal.SIG_DFL); "
+             "signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGINT}); time.sleep(120)"]
 
 
 class _RunInputs:
-    """A test run's inputs, as far as `start_test` reads them."""
+    """A test run's inputs, as far as `start_test` reads them: its report
+    store, and the status summary of real inputs (`TestRunInputs.summary()`),
+    so the runner finds every key it reads once the run ends, the checkpoint
+    digest among them."""
 
     def __init__(self, reports: Path):
+        from src.api.services.training_manager import TestRunInputs
+
         self.reports = reports
+        self.inputs = TestRunInputs(
+            registry=reports, version_label="v1", version_sha256="a" * 64, workspace=reports,
+            checkpoint=reports / "model.pt", checkpoint_sha256="c" * 64, protocol="disease",
+            learning_stage="finetune", task="disease", version_counts={"source_cases": 1})
 
     def reports_dir(self):
         return self.reports
 
     def summary(self):
-        return {}
+        return self.inputs.summary()
 
 
 @pytest.fixture
@@ -1394,11 +1324,15 @@ def test_an_action_that_stops_training_fails_as_reaching_it(probe, held, action,
 
 @WAITID
 def test_a_start_not_refused_while_the_job_holds_fails_and_its_run_is_stopped(
-        probe, held, monkeypatch):
+        probe, held, monkeypatch, tmp_path, caplog):
     """The counter-example the start's check exists for: the job runs and holds
     the lock, and a test start is not refused (the runner's slot check gone).
     It fails as not refused, and the test run it began is stopped before the
-    cancel is tried."""
+    cancel is tried. The stopped run wrote no outcome file, and the runner
+    reads what it left to the end: no report was published, and its monitor
+    logged no failure."""
+    from src.api.services.training_manager import _report_names
+
     manager = held["manager"]
     real = manager._slot_refusal_locked
     monkeypatch.setattr(manager, "_slot_refusal_locked",
@@ -1407,6 +1341,11 @@ def test_a_start_not_refused_while_the_job_holds_fails_and_its_run_is_stopped(
         _exclusion(probe, held)
     assert manager.get_job_status_word("test") == "cancelled"
     assert manager.get_job_status_word("training") == "running"
+    outcome = manager.get_test_status()["outcome"]
+    assert outcome["kept"] is False and outcome["registered"] is False, outcome
+    assert outcome["summary"].startswith("No report was published"), outcome
+    assert not [name for name in _report_names(tmp_path) if f"-{'c' * 12}-" in name]
+    assert not [r for r in caplog.records if "Monitoring test job" in r.getMessage()]
 
 
 @WAITID
@@ -1448,22 +1387,28 @@ class _StartsRecorded:
         return {"success": False, "error": "refused by the stand-in"}
 
 
-def _rw3(probe, tmp_path, monkeypatch, settings):
-    """Phase R's M5 part with a recording runner (`_StartsRecorded`); its RW3."""
+def _rw3(probe, tmp_path, monkeypatch, sizes):
+    """Phase R's M5 part with a recording runner (`_StartsRecorded`); its RW3,
+    its base settings `sizes` over the reference recipe (as `task_sizes`
+    gives them). The disease child RW3's refused test start names is a
+    stand-in already in the phase's state, as RW2 leaves it once it trained
+    one."""
     import src.api.services.training_manager as training_manager
 
     _StartsRecorded.made = []
     monkeypatch.setattr(training_manager, "TrainingManager", _StartsRecorded)
-    monkeypatch.setattr(probe, "_read_run_checkpoint", lambda path: {"sha256": "c" * 64})
     monkeypatch.setattr(probe, "_deployment_gpu_lock", lambda: {
         "configured": False, "held": False, "unreadable": False})
     real = tmp_path / "workspaces" / "real"
     real.mkdir(parents=True)
-    version = SimpleNamespace(identity=SimpleNamespace(sha256="e" * 64))
+    version = SimpleNamespace(identity=SimpleNamespace(sha256="e" * 64), manifest={"counts": {}})
+    child = {"path": tmp_path / "c.pt", "sha256": "c" * 64, "training_seconds": {},
+             "learning_stage": "finetune", "task": "disease"}
     report = probe.Report()
     probe._m5_real(report, tmp_path / "work", real, tmp_path / "workspaces", "cpu",
-                   {"read": {"split_manifest.json": "f" * 64}, "parent": tmp_path / "p.pt",
-                    "settings": settings, "m4": {"version": version}})
+                   {"read": {"split_manifest.json": "f" * 64}, "task_child": child,
+                    "base": tmp_path / "base.pt", "m4": {"version": version}},
+                   {"base": sizes})
     return {p.probe_id: p for p in report.probes}["RW3"]
 
 
@@ -1476,30 +1421,54 @@ def test_the_held_job_is_held_by_configuration_whatever_its_settings_say(probe, 
                                                                          monkeypatch):
     """Root-cause round, W11-2: the hold is `_start_training_job`'s, the one
     function W11 and RW3 start their job through, so neither caller can
-    start it otherwise. Whatever settings it is given, the runner gets
-    `_HOLD_EPOCHS` epochs and patience, no pause, no parent, no extension, and
-    every other setting as given."""
+    start it otherwise. Whatever settings it is given, the runner gets a base
+    run of the most epochs the field spec allows (`num_epochs`'s bound, read
+    from the spec, never a copied number), no patience, which disables early
+    stopping (the recipe's rule), no pause, no parent, no extension, and every
+    other setting as given."""
+    from scripts.setup_demo import demo_task_training
+    from src.config.training_fields import by_name
+
     if not hasattr(os, "waitid"):                     # pinned on every platform
         monkeypatch.setattr(os, "waitid", lambda *args: None, raising=False)
     runner = _StartsRecorded()
-    others = {**probe._DEMO_TRAINING, "data_dir": "/w", "run_dir": "/r", "device": "cpu"}
+    others = {**demo_task_training()["base"], "data_dir": "/w", "run_dir": "/r",
+              "device": "cpu"}
     with pytest.raises(AssertionError, match="the runner refused the training start"):
         probe._start_training_job(runner, {**others, **_SELF_ENDING}, "f" * 64,
                                   tmp_path / "gpu.lock")
-    assert runner.starts == [{**others, "num_epochs": probe._HOLD_EPOCHS,
-                              "early_stopping_patience": probe._HOLD_EPOCHS}]
-    assert probe._HOLD_EPOCHS >= 1_000_000
+    bound = by_name("num_epochs").valid["le"]
+    assert runner.starts == [{**others, "learning_stage": "base", "num_epochs": bound,
+                              "early_stopping_patience": None}]
+    assert probe._hold_epochs() == bound
+
+
+def test_the_held_base_start_passes_the_start_s_own_check_of_its_settings(probe):
+    """A held job's settings are ones the runner's base start accepts
+    (`_new_bundle_run`), so W11's and RW3's job reaches the lock rather than
+    being answered `invalid_settings` before it: the demo's sizes, the
+    reference recipe's (RW3 on the GB10), and the hold's bound and patience."""
+    from scripts.setup_demo import demo_task_training
+    from src.api.services.training_manager import _new_bundle_run
+
+    for sizes in (demo_task_training()["base"], {}):
+        held = probe._held_config({**sizes, "data_dir": "/w", "run_dir": "/r",
+                                   "device": "cpu"})
+        assert _new_bundle_run(held) == ("gatv2", None), held
 
 
 @WAITID
 def test_rw3_starts_its_job_held_whatever_the_real_settings_say(probe, tmp_path, monkeypatch):
-    """RW3's job, from real settings that would let it end by itself during the
-    check (the reviewer's run) or continue a parent, reaches the runner held."""
-    rw3 = _rw3(probe, tmp_path, monkeypatch, {"num_workers": 0, **_SELF_ENDING})
+    """RW3's job, a base run from sizes that would let it end by itself during
+    the check (the reviewer's run) or continue a parent, reaches the runner
+    held, as a base."""
+    rw3 = _rw3(probe, tmp_path, monkeypatch, dict(_SELF_ENDING))
     assert rw3.status == "failed" and "the runner refused the training start" in rw3.detail
     (config,) = [start for runner in _StartsRecorded.made for start in runner.starts]
-    assert config["num_epochs"] == config["early_stopping_patience"] == probe._HOLD_EPOCHS
-    assert not set(config) & {"pause_after_epoch", "resume_from", "extend_epochs", "extend_lr"}
+    assert config["num_epochs"] == probe._hold_epochs()
+    assert config["early_stopping_patience"] is None and config["learning_stage"] == "base"
+    assert not set(config) & {"pause_after_epoch", "resume_from", "extend_epochs", "extend_lr",
+                              "num_workers"}
 
 
 def test_without_os_waitid_no_held_job_is_started(probe, tmp_path, monkeypatch):
@@ -1512,7 +1481,7 @@ def test_without_os_waitid_no_held_job_is_started(probe, tmp_path, monkeypatch):
     with pytest.raises(AssertionError, match=r"no os\.waitid"):
         probe._start_training_job(runner, {}, "f" * 64, tmp_path / "gpu.lock")
     assert runner.starts == []
-    rw3 = _rw3(probe, tmp_path, monkeypatch, {"num_workers": 0})
+    rw3 = _rw3(probe, tmp_path, monkeypatch, {})
     assert rw3.status == "failed" and "no os.waitid" in rw3.detail
     assert [start for made in _StartsRecorded.made for start in made.starts] == []
 

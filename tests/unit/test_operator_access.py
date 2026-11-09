@@ -340,7 +340,7 @@ def _app_client(base_url=OPERATOR_BASE_URL, **kwargs):
 
 
 def test_every_state_changing_route_takes_the_one_dependency():
-    """Every POST on the API except diagnosis (C1, open by SPEC_4), and the two
+    """Every POST on the API except diagnosis (C1, open by SPEC_4), and the
     checkpoint lists (C3), are gated by `require_operator_access`, and nothing
     else is: read-only routes stay open."""
     from fastapi.routing import APIRoute
@@ -358,8 +358,10 @@ def test_every_state_changing_route_takes_the_one_dependency():
             (gated if deps else open_routes).add((method, route.path))
     assert gated == {
         ("POST", "/api/v1/pipeline/reload"), ("POST", "/api/v1/pipeline/config"),
-        ("POST", "/api/v1/training/start"), ("POST", "/api/v1/training/stop"),
+        ("POST", "/api/v1/training/start"), ("POST", "/api/v1/training/finetune"),
+        ("POST", "/api/v1/training/stop"),
         ("GET", "/api/v1/training/checkpoints"), ("GET", "/api/v1/workspaces/{name}/checkpoints"),
+        ("GET", "/api/v1/workspaces/{name}/family"),
     }
     assert {method for method, _ in open_routes} == {"GET", "POST"}
     assert [path for method, path in open_routes if method == "POST"] == ["/api/v1/diagnose"]
@@ -420,8 +422,9 @@ def test_the_reload_route_runs_the_reload_on_the_event_loop(monkeypatch):
 @pytest.mark.parametrize("url, service", [
     ("/api/v1/training/checkpoints", "get_checkpoints"),
     ("/api/v1/workspaces/demo/checkpoints", "list_checkpoints"),
+    ("/api/v1/workspaces/demo/family", "list_family"),
 ])
-def test_another_sites_image_cannot_make_either_checkpoint_list_open_a_file(
+def test_another_sites_image_cannot_make_a_checkpoint_list_open_a_file(
         monkeypatch, url, service):
     """An ``<img>`` on another site's page sends a GET with no Origin; its
     Sec-Fetch-Site refuses it before a checkpoint is opened (C3), while the
@@ -434,6 +437,9 @@ def test_another_sites_image_cannot_make_either_checkpoint_list_open_a_file(
                         lambda *a, **k: reached.append("get_checkpoints") or [])
     monkeypatch.setattr(server_lists, "list_checkpoints",
                         lambda *a, **k: reached.append("list_checkpoints")
+                        or server_lists.Listing(()))
+    monkeypatch.setattr(server_lists, "list_family",
+                        lambda *a, **k: reached.append("list_family")
                         or server_lists.Listing(()))
     operator_mode(monkeypatch)
     image = dict(CROSS_SITE_IMAGE)
@@ -467,6 +473,10 @@ GATED_HANDLERS = {
     "src.webui.components.training_console": (
         "_on_start", "_on_stop", "_on_resume", "_on_check_continue", "_refresh_checkpoints",
         "_save_training_config", "_on_stop_request", "_on_continue_open"),
+    # The Fine-tune page: its base list opens every checkpoint; its Stop is
+    # the Training page's stop logic, behind handlers of its own.
+    "src.webui.components.finetune_page": ("_on_finetune_bases", "_on_finetune_start",
+                                            "_on_finetune_stop_request", "_on_finetune_stop"),
 }
 
 
@@ -594,6 +604,8 @@ def spies(monkeypatch, tmp_path):
     monkeypatch.setattr(rs, "save_runtime_settings", recorder("save_runtime_settings", None))
     monkeypatch.setattr(training_manager, "start_training",
                         recorder("start_training", {"success": False, "error": "spy"}))
+    monkeypatch.setattr(training_manager, "start_finetune",
+                        recorder("start_finetune", {"success": False, "error": "spy"}))
     monkeypatch.setattr(training_manager, "stop_training",
                         recorder("stop_training", {"success": False, "error": "spy"}))
     monkeypatch.setattr(training_manager, "get_checkpoints", recorder("get_checkpoints", []))
@@ -603,9 +615,13 @@ def spies(monkeypatch, tmp_path):
                         recorder("list_checkpoints", server_lists.Listing(())))
     monkeypatch.setattr(training_manager, "latest_snapshot", recorder("latest_snapshot", None))
     # A training job runs (a read, not a service: Stop's confirmation is
-    # asked for the job running now).
+    # asked for the job running now), a Fine-tune child: the Fine-tune card's
+    # Stop reaches a running child only (`finetune_page.running_child`).
     monkeypatch.setattr(training_manager, "get_status",
-                        lambda: {"status": "running", "job_id": "spy-job"})
+                        lambda: {"status": "running", "job_id": "spy-job",
+                                 "finetune": {"children": [{"task": "disease",
+                                                            "status": "running",
+                                                            "job_id": "spy-job"}]}})
     monkeypatch.setattr(training_manager, "preview_continuation",
                         recorder("preview_continuation", {"ok": False, "reason": "spy"}))
     monkeypatch.setattr(tc, "TRAINING_CONFIG_FILE", tmp_path / "training.json")
@@ -616,6 +632,7 @@ def spies(monkeypatch, tmp_path):
 
 def _dashboard_calls():
     from src.webui.components import diagnosis_panel as dp
+    from src.webui.components import finetune_page as fp
     from src.webui.components import runtime_settings as rs
     from src.webui.components import training_console as tc
 
@@ -641,6 +658,12 @@ def _dashboard_calls():
         (tc._on_check_continue, [path, None, "/srv/x.pt", "cpu", None, {"name": "ws"}, {},
                                  {}], None),
         (tc._on_resume, [{}, "cpu", path, None, "/srv/x.pt", None, {}, {}], None),
+        # Fine-tune: a fresh session has no dataset, so the base list and
+        # Start stop before their service when allowed.
+        (fp._on_finetune_bases, [{}, None], None),
+        (fp._on_finetune_start, [{}, {}, None, [], 100, 33, "cpu", ""], None),
+        (fp._on_finetune_stop_request, [{}], None),         # asks, reading nothing
+        (fp._on_finetune_stop, [{}], "stop_training"),
     ]
 
 
@@ -686,6 +709,36 @@ def test_a_direct_call_from_an_operator_on_loopback_reaches_each_service(
                 assert reached == [service], fn.__name__
             else:
                 assert spies[len(before):] == [], fn.__name__
+
+
+def test_a_read_only_fine_tune_poll_never_lists_checkpoints(spies, monkeypatch):
+    """The Fine-tune job card reads a child's products (its run's saved files)
+    for an operator only: a read-only request's poll draws the card from the
+    job runner's status alone, never opening a checkpoint, and says the
+    products are an operator control. An operator's poll reads them once
+    the child has ended."""
+    from src.api.services.training_manager import training_manager
+    from src.webui.components import finetune_page as fp
+    from src.webui.components import training_console as tc
+    from tests.fixtures.operator_access import gradio_request
+
+    ended = {"status": "completed", "job_id": "j", "gpu": {},
+             "finetune": {"parent": "/w/runs/gatv2/r/checkpoints/last.pt",
+                          "parent_sha256": "b" * 64, "tasks": ["disease"], "cancelled": False,
+                          "children": [{"task": "disease", "status": "completed", "job_id": "j",
+                                        "run_dir": "/w/runs/gatv2/c", "error": None}]}}
+    monkeypatch.setattr(training_manager, "get_status", lambda: ended)
+    monkeypatch.setattr(tc, "workspace_of_run", lambda run_dir: "w")
+    monkeypatch.setattr(tc, "gpu_view", lambda *a, **k: None)
+    card, *_rest, cache = fp._poll(fp.PAGE, {}, {}, gradio_request())
+    assert spies == [] and "not shown: reading the checkpoints is an operator control" in card
+    assert cache.get("products") is None
+    operator_mode(monkeypatch)
+    card, *_rest, cache = fp._poll(fp.PAGE, {}, {}, gradio_request())
+    assert spies == ["list_checkpoints"] and "no saved file records a validation figure" in card
+    # Read once per child ending: the next tick takes the session's record.
+    fp._poll(fp.PAGE, {}, cache, gradio_request())
+    assert spies == ["list_checkpoints"]
 
 
 # --------------------------------------------------------------------------- CORS and uploads

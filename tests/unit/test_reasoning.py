@@ -24,7 +24,7 @@ from src.reasoning import (
     ExplanationGenerator,
     create_explanation_generator,
 )
-from src.core.types import PathReasoningCandidate, PatientPhenotypes
+from src.core.types import DiseaseTaskCandidate, PatientPhenotypes
 
 
 # =============================================================================
@@ -185,19 +185,16 @@ class TestPathReasoningConfig:
 
         assert config.max_path_length == 4
         assert config.length_penalty == 0.9
-        assert config.aggregation_method == "weighted_sum"
 
     def test_custom_config(self):
         """Test custom configuration"""
         config = PathReasoningConfig(
             max_path_length=3,
             length_penalty=0.8,
-            aggregation_method="max",
         )
 
         assert config.max_path_length == 3
         assert config.length_penalty == 0.8
-        assert config.aggregation_method == "max"
 
 
 # =============================================================================
@@ -268,58 +265,11 @@ class TestPathReasoner:
         scores = [p.score for p in scored_paths]
         assert scores == sorted(scores, reverse=True)
 
-    def test_aggregate_path_scores(self, simple_kg, patient_phenotypes):
-        """Test aggregating path scores"""
-        reasoner = PathReasoner()
-        paths = reasoner.find_paths(
-            source_ids=patient_phenotypes,
-            target_type=NodeType.DISEASE,
-            kg=simple_kg,
-        )
-        scored_paths = reasoner.score_paths(paths, simple_kg)
-        target_scores = reasoner.aggregate_path_scores(scored_paths)
-
-        # Should have scores for diseases
-        assert len(target_scores) > 0
-
-        # All scores should be positive
-        assert all(score > 0 for score in target_scores.values())
-
-    def test_get_top_candidates(self, simple_kg, patient_phenotypes):
-        """Test getting top disease candidates"""
-        reasoner = PathReasoner()
-        candidates = reasoner.get_top_candidates(
-            source_ids=patient_phenotypes,
-            kg=simple_kg,
-            top_k=5,
-        )
-
-        # Should return candidates
-        assert len(candidates) > 0
-
-        # Each candidate should have (disease_id, score, paths)
-        for disease_id, score, paths in candidates:
-            assert isinstance(score, float)
-            assert score > 0
-            assert isinstance(paths, list)
-
-        # Should be sorted by score (descending)
-        scores = [score for _, score, _ in candidates]
-        assert scores == sorted(scores, reverse=True)
-
-    def test_aggregation_methods(self, simple_kg, patient_phenotypes):
-        """Test different aggregation methods"""
-        for method in ["max", "mean", "sum", "weighted_sum"]:
-            config = PathReasoningConfig(aggregation_method=method)
-            reasoner = PathReasoner(config=config)
-
-            candidates = reasoner.get_top_candidates(
-                source_ids=patient_phenotypes,
-                kg=simple_kg,
-                top_k=5,
-            )
-
-            assert len(candidates) > 0
+    def test_paths_rank_no_disease(self):
+        """K7 (PATH2): a path score orders a disease's evidence paths; nothing
+        aggregates path scores into a ranking of diseases."""
+        for retired in ("aggregate_path_scores", "get_top_candidates", "_get_path_type_weight"):
+            assert not hasattr(PathReasoner, retired)
 
 
 # =============================================================================
@@ -375,12 +325,12 @@ class TestExplanationGenerator:
 
     @pytest.fixture
     def diagnosis_candidate(self):
-        """Create a candidate (path_reasoning/v1) for testing"""
-        return PathReasoningCandidate(
+        """Create a candidate (disease_task/v1) for testing"""
+        return DiseaseTaskCandidate(
             rank=1,
             disease_id=make_node_id(DataSource.MONDO, "MONDO:001"),
             disease_name="Disease A",
-            path_score=0.85,
+            score=-0.85,
         )
 
     def test_create_generator(self):
@@ -434,14 +384,14 @@ class TestExplanationGenerator:
         assert "Disease A" in explanation or "MONDO:001" in explanation
         # The score line prints the candidate's own score, and the kind's label
         # when the pipeline passes it.
-        assert "Score: 0.850 (" in explanation
+        assert "Score: -0.850 (" in explanation
         labelled = generator.generate_explanation(
             candidate=diagnosis_candidate, phenotypes=patient_phenos, kg=simple_kg,
-            paths=disease_paths, score_label="No model loaded: ranked by path reasoning",
+            paths=disease_paths, score_label="Disease task model: every disease ranked",
         )
-        assert "Ranking: No model loaded: ranked by path reasoning" in labelled
+        assert "Ranking: Disease task model: every disease ranked" in labelled
         # A paragraph of its own: Markdown joins lines one newline apart.
-        assert ")\n\nRanking: No model loaded" in labelled
+        assert ")\n\nRanking: Disease task model" in labelled
 
 # =============================================================================
 # Test Explanation Factory Function

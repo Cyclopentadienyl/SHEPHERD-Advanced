@@ -59,6 +59,12 @@ def _real_job(manager: tm.TrainingManager, job_type: str = "training"):
     return job
 
 
+def _base(workspace: Path) -> dict:
+    """A training start as the runner takes a new run: a base (K8, TM12), the
+    recipe filling its settings, so the start reaches the slot it checks."""
+    return {"data_dir": str(workspace), "learning_stage": "base"}
+
+
 def _cleanup(job) -> None:
     if job is not None and job.process.poll() is None:
         job.process.kill()
@@ -94,7 +100,7 @@ def test_a_job_an_operator_is_already_stopping_is_waited_for(monkeypatch, tmp_pa
     stubborn = FakeProcess(pid=4321, ignore_sigint=True, ignore_terminate=True)
     manager = tm.TrainingManager()
     with patch("subprocess.Popen", return_value=stubborn):
-        assert manager.start_training({"data_dir": str(tmp_path)})["success"]
+        assert manager.start_training(_base(tmp_path))["success"]
     stopper = threading.Thread(target=manager.stop_training, daemon=True)
     stopper.start()
     deadline = time.monotonic() + 5
@@ -127,8 +133,9 @@ def test_inputs(tmp_path):
     workspace = tmp_path / "workspaces" / "ws"
     return tm.TestRunInputs(
         registry=registry, version_label="mygene2-2026-10", version_sha256="e" * 64,
-        workspace=workspace, checkpoint=workspace / "runs" / "gat" / "r" / "checkpoints" / "b.pt",
-        checkpoint_sha256="c" * 64)
+        workspace=workspace, checkpoint=workspace / "runs" / "gatv2" / "r" / "checkpoints" / "b.pt",
+        checkpoint_sha256="c" * 64, protocol="disease", learning_stage="finetune", task="disease",
+        version_counts={"source_cases": 3, "ranked_eligible": 3})
 
 
 def test_once_the_backend_stops_no_job_starts_by_any_route(monkeypatch, tmp_path, test_inputs):
@@ -146,13 +153,13 @@ def test_once_the_backend_stops_no_job_starts_by_any_route(monkeypatch, tmp_path
     spawned = _Popens()
     monkeypatch.setattr("subprocess.Popen", spawned)
     api._stop_the_active_job()                       # what the signal's thread runs first
-    for started in (manager.start_training({"data_dir": str(tmp_path / "ws")}),
+    for started in (manager.start_training(_base(tmp_path / "ws")),
                     manager.start_test(test_inputs)):
         assert started["success"] is False
         assert started["error"] == "The backend is stopping; nothing was started."
     assert spawned.calls == [] and manager.active_job() is None
     manager.open()                                   # the next startup's
-    assert manager.start_training({"data_dir": str(tmp_path / "ws")})["success"]
+    assert manager.start_training(_base(tmp_path / "ws"))["success"]
     assert len(spawned.calls) == 1
     manager.end_active_job()
 
@@ -163,7 +170,7 @@ def test_closing_reads_the_job_holding_the_slot_in_the_same_step(monkeypatch, tm
     job could start unseen."""
     manager = tm.TrainingManager()
     monkeypatch.setattr("subprocess.Popen", _Popens())
-    started = manager.start_training({"data_dir": str(tmp_path / "ws")})
+    started = manager.start_training(_base(tmp_path / "ws"))
     closed = manager.close()
     assert closed["job_id"] == started["job_id"] and closed["status"] == "running"
     assert manager.close_if_idle() is False
@@ -188,10 +195,10 @@ def test_the_application_s_shutdown_leaves_the_slot_closed_and_its_startup_opens
     monkeypatch.setattr("subprocess.Popen", _Popens())
     with TestClient(api.app):
         pass
-    refused = manager.start_training({"data_dir": str(tmp_path / "ws")})
+    refused = manager.start_training(_base(tmp_path / "ws"))
     assert refused["error"] == "The backend is stopping; nothing was started."
     with TestClient(api.app):
-        assert manager.start_training({"data_dir": str(tmp_path / "ws")})["success"]
+        assert manager.start_training(_base(tmp_path / "ws"))["success"]
 
 
 # --------------------------------------------------------------------------- the lifespan
@@ -483,7 +490,7 @@ def test_one_stop_per_shutdown_a_job_sigkill_cannot_end_is_not_waited_for_twice(
     monkeypatch.setattr(tm, "training_manager", manager)
     stuck = _Unkillable(pid=4321, ignore_sigint=True, ignore_terminate=True)
     with patch("subprocess.Popen", return_value=stuck):
-        assert manager.start_training({"data_dir": str(tmp_path)})["success"]
+        assert manager.start_training(_base(tmp_path))["success"]
     calls = []
     end_active_job = manager.end_active_job
 

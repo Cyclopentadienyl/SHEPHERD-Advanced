@@ -8,8 +8,16 @@ the served behaviour beside it.
 
 | Mode | Encoder | Candidates | Scorer | Status |
 |---|---|---|---|---|
-| **C** | full graph | every disease in the KG | raw cosine | implemented: `scripts/measure_scorer.py`, `run_mode_c`. The formal Test's measurement (`../PLAN_TEST_RESULTS.md` D3) |
-| **D** | full graph | production's path-reachable construction | the served score: η mixture with the SP term, or the model term alone | B-0.5, **implemented** (Batch 3, 2026-10-26; reviewed, its short GB10 run passed 2026-10-27): `scripts/measure_scorer.py --mode D`, `src/evaluation/mode_d.py` ([`PLAN_B05.md`](PLAN_B05.md), §11 as built); it resolves `PLAN_B03.md` §4's problem. Not the approved policy: it measures what the Diagnosis page serves today |
+| **C** | full graph | every disease in the KG | raw cosine | retired: was `scripts/measure_scorer.py`, `run_mode_c`. The formal Test's measurement (`../PLAN_TEST_RESULTS.md` D3) until K6; then a command-line run on a checkpoint without a model spec until K8-6a, which made `--mode` required and left no command for Mode C (`../scorer-retraining/README.md` §7); its executor retired in K8-6b, and kept Mode C reports and records are read by the shared readers (policy rev 15) |
+| **D** | full graph | production's path-reachable construction | the served score: η mixture with the SP term, or the model term alone | B-0.5, **removed in K7 (2026-10-29)**: `src/evaluation/mode_d.py` is deleted and `--mode D` refused; kept reports and records stay readable, and since K8-6c a kept report registers by the general rules under its own mode. Was implemented (Batch 3, 2026-10-26; reviewed, its short GB10 run passed 2026-10-27): `scripts/measure_scorer.py --mode D`, `src/evaluation/mode_d.py` ([`PLAN_B05.md`](PLAN_B05.md), §11 as built); it resolves `PLAN_B03.md` §4's problem. Not the approved policy: it measured what the Diagnosis page served in October 2026 |
+
+**Deleted at K7 (2026-10-29):** `scripts/benchmark_sp_lookup.py` and its integration test (it only
+timed the retiring shortest-path index); its B-0.4 evidence (`EVIDENCE_B04_*.json`, `time_*.txt`)
+is kept as written.
+
+**Deleted at K8-5:** the shortest-path index `src/inference/sp_index.py`, its oracle
+`scripts/sp_scan_reference.py`, the pair protocol `src/inference/sp_artifact.py` and the producer
+`scripts/compute_shortest_paths.py`; the B-0.4 evidence is kept as written.
 
 **Modes A and B are retired** (the retirement's R2, 2026-10-12;
 [`ASSESSMENT_MODE_AB_RETIREMENT.md`](ASSESSMENT_MODE_AB_RETIREMENT.md) §9). Mode A
@@ -50,7 +58,7 @@ readings in Mode D's report, not a mode or a ledger record
 | Stage | Scope | Status |
 |---|---|---|
 | B-0.1 | scoring primitives extracted from the pipeline | shipped |
-| B-0.2 | harness, Mode A, both metric families, manifest, calibration launcher | shipped. **What remains is Mode C's:** the manifest, the authoritative metric family, the canonical ranking and the CUDA gate. The acceptance was redefined from bit-parity with the frozen evaluator, which was unexecutable, to a same-batch differential test against the trainer's own validation pass (`../BACKLOG.md` §3.1). The launcher `scripts/calibrate_mode_a.py` was removed with the frozen evaluator in contract M2.1's S0 ([`../PLAN_PROVENANCE_CONTRACT.md`](../PLAN_PROVENANCE_CONTRACT.md) M2.1, decisions 3 and 6). Mode A, the legacy metric family, the predictions artifact and the differential calibration were retired in R2 (2026-10-12); its institutional CUDA run, item 7a, was cancelled |
+| B-0.2 | harness, Mode A, both metric families, manifest, calibration launcher | shipped. Of it, the manifest and the CUDA gate remain; the authoritative metric family and the canonical ranking were retired with Mode C's executor in K8-6b (2026-11-06). The acceptance was redefined from bit-parity with the frozen evaluator, which was unexecutable, to a same-batch differential test against the trainer's own validation pass (`../BACKLOG.md` §3.1). The launcher `scripts/calibrate_mode_a.py` was removed with the frozen evaluator in contract M2.1's S0 ([`../PLAN_PROVENANCE_CONTRACT.md`](../PLAN_PROVENANCE_CONTRACT.md) M2.1, decisions 3 and 6). Mode A, the legacy metric family, the predictions artifact and the differential calibration were retired in R2 (2026-10-12); its institutional CUDA run, item 7a, was cancelled |
 | B-0.3 | Modes B and C | shipped. Mode C is the formal Test's measurement; Mode B was retired with Mode A in R2. Its institutional run is 7b's Mode C side, under Policy Gate 1. Plan: [`PLAN_B03.md`](PLAN_B03.md), kept as the design record |
 | B-0.4 | vectorised SP lookup | **measurement complete and reviewed.** Approach A selected for the primary GB10 platform (`PLAN_B04.md` §12.5): 8-33x faster on the caller production ships, 0 of 60 measurements over the provisional budget, at a cost of 3.44 GB permanent residence. A is now wired into production code as the one served primitive (`src/inference/sp_index.py`; `../BACKLOG.md` 5a, implemented); **production adoption is not accepted** — §13's integrated memory and reload gate still waits on a designated loadable checkpoint (5a acceptance). **Independent of the calibration decision** — it consumes `shortest_paths.pt` and no checkpoint, split or model. Plan: [`PLAN_B04.md`](PLAN_B04.md) |
 | B-0.5 | Mode D, the intermediate candidate-construction step above, statistical protocol, institutional run | Mode D and the derived intermediate readings **implemented** in `../BACKLOG.md` §0 batch 3 ([`PLAN_B05.md`](PLAN_B05.md) §11; reviewed, and its short GB10 run passed at `be0ee1a`, 2026-10-27, §12.3); the statistical protocol (8a) and the institutional run (8b) not started. Split: protocol and output-contract design come **before** any institutional run, so required evidence is not discovered after it |
@@ -61,17 +69,22 @@ was built from, kept as the reasoning behind it. History, not authority.
 ## Running a measurement
 
 ```
-python scripts/measure_scorer.py --checkpoint <ckpt> --data-dir <data> \
+python scripts/measure_scorer.py --mode disease --checkpoint <ckpt> --data-dir <data> \
     --split val --output reports/measurement.json
 ```
 
-The CLI measures Mode C by default. `--mode D` measures the served ranking on a
-registered cohort version only (`--cohort LABEL --registry DIR`; refused with
-`--split`), sharing the checks, the GPU lock, publication and registration
-([`PLAN_B05.md`](PLAN_B05.md) §6). In either mode it reads each input once,
-verifies the workspace from those reads and records them (contract M2.1, S7),
+`--mode` is required and names a protocol this build implements for the model's
+learning stage and task head (`src/evaluation/protocols.py`; today `disease`, `gene`
+and `patients_like_me`); the Test page passes the one the operator picks. Since
+K8-6a no command runs Mode C: a run without `--mode`, or with `--mode C` or
+`--mode D`, is refused by the argument parser (exit 2). Kept Mode C and Mode D
+reports and records are read by the shared readers (policy rev 15). Every run reads
+each input once, verifies the workspace from those reads and records them (contract M2.1, S7),
 then writes two files: the report at `--output` (manifest, authoritative metrics,
 counts) and the per-sample ground-truth ranks beside it, `<output stem>_ranks.json`.
+Since K8-6r.4 both are new files that never replace one: a run whose `--output` or
+ranks file already exists is refused before anything is read, so measure each run to
+its own `--output`.
 
 **`--split` has no default, and `val` is not held-out data.** It is the
 split the current training configuration uses for early stopping and
@@ -79,9 +92,9 @@ checkpoint selection, and ordinary generated workspaces contain no test
 split at all — `src/kg/sample_generator.py` writes train and val only.
 
 **A run on a synthetic workspace is not a result.** The shared fixture is
-degenerate on purpose (`tests/fixtures/synthetic_workspace.py`), so the tests take
-Mode C's expected ranks from hand-built geometry
-(`tests/unit/test_measurement_mode_c.py`), and the subprocess test
+degenerate on purpose (`tests/fixtures/synthetic_workspace.py`), so the tests check
+what a run records and writes, not its numbers (Mode C's tests on hand-built geometry
+left with its command in K8-6a), and the subprocess test
 (`tests/integration/test_measure_scorer_run.py`) shows only that the command runs
 and writes complete artifacts.
 
@@ -127,8 +140,10 @@ measurement's copies went.
 Mode C refuses where the Trainer clamps: a real id out of range is fatal and names
 the patient (`_assert_ids_in_range`), because in Mode C every id is a real value
 under a `True` mask. The malformed-truth contract (`../BACKLOG.md` D3, §2.3) keeps
-three boundaries: the loader, the loss, and measurement's, which is now Mode C's
-`_assert_ids_in_range` instead of Mode A's `to_global_ids`.
+three boundaries: the loader, the loss, and measurement's, which was then Mode C's
+`_assert_ids_in_range` instead of Mode A's `to_global_ids`. Since K8-6b it is the
+graph view's own range check (`GraphView.view_ids`, `src/kg/graph_view.py`): an id
+outside the graph is refused with its node type, id and count.
 
 `MeasurementManifest.legacy_truncation_k` and `legacy_tie_policy` were **deleted,
 not renamed**, as were the loader and sampler fields and the three seeds: Mode C uses
@@ -140,7 +155,9 @@ converts none and adds no branch for them: the ledger refuses a report whose
 manifest carries a field the current one does not, and a ledger file written
 before R2 (`LEDGER_SCHEMA_VERSION` is 2 since R2).
 
-**What a later change must not need to touch:** `ModeResult`, `canonical_ranking`,
+**K8-6b (2026-11-06) retired `canonical_ranking`, `ranks_of_truth`, `encode_full_graph`
+and `run_mode_c` with Mode C's executor; B-1's move below did not happen. The rest of
+this paragraph is the record as it stood before.** What a later change must not need to touch: `ModeResult`, `canonical_ranking`,
 `ranks_of_truth`, `encode_full_graph`, `run_mode_c`, `build_shepherd_model`, the
 manifest's authoritative fields, the digests, the CUDA gate, and
 `src.kg.storage.file_storage`. If a change finds itself editing those, the boundary
@@ -164,6 +181,9 @@ against the served primitives `masked_mean_pool` and `cosine_score_matrix`
 only while the two are separately written, so `.import-linter.ini` keeps
 `src.training` below `src.inference` (layers) and forbids
 `src.inference.scoring` from importing `src.training` (`scorer-independence`).
+*(2026-11-08, superseded: the Trainer value test, the Trainer's own validation ranking and the
+`scorer-independence` contract retired in K8-7 (`e35b2a3`), and `src/inference/scoring.py` in
+K8-11 (`9d76bbe`); policy rev 17.)*
 
 **Do not pre-empt any of this with machinery** — no manifest subclass hierarchy,
 no schema framework, no discriminated union over mode, no artifact registry or

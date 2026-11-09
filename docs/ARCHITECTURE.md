@@ -6,6 +6,29 @@
 > [`DISEASE_SCORER_POLICY.md`](DISEASE_SCORER_POLICY.md). §11 maps each backend capability to its formal
 > entry point and WebUI page; §12 holds the rules that keep one implementation per function.
 > **Anchor**: SHEPHERD (npj Digital Medicine 2025) by Harvard MIMS Lab.
+> **2026-10-27: the target formulation changed.** The paper-aligned two-stage design
+> ([`working/scorer-retraining/README.md`](working/scorer-retraining/README.md)) replaces the cosine
+> flow of §2.2 and the methods of §3.1–§3.3. What runs (§8, §11) is unchanged. B-1 as a raw-cosine
+> ranking is not built first (policy rev 11).
+> **Revision 2 of that design (2026-10-27):** one switch when the integration is delivered (the
+> served disease mixture, the path-reasoning fallback ranking, Mode C's raw-cosine recipe and Mode D
+> retire); the Mode C/D comparison is archived; the system has never been deployed at the hospital,
+> so merging into `main` is an engineering version, not a clinical switch (policy rev 12).
+> **K7 (2026-10-29, on `claude/paper-aligned-two-stage`):** the path-reasoning fallback, the demo
+> answer, the in-memory model and graph seams and Mode D are removed; with no model loaded nothing
+> is served (503). The served mixture, Mode C and the ShepherdGNN path stay only for checkpoints
+> without a model spec (history files), until K8; the GB10 acceptance probe left them in K8-1.
+> **K8-4 (2026-11-03):** the served mixture is removed and serving refuses a checkpoint without a
+> model spec at load, before any model is built; Mode C, which still ran such a file, left the
+> command line in K8-6a and its executor went in K8-6b. §8 describes what is served now.
+> **K8 closeout (2026-11-08):** the ShepherdGNN training path is removed (K8-7: its loader, its
+> `MultiTaskLoss`, its settings, `num_workers` and checkpoint record version 1), with the
+> ShepherdGNN wrapper, its encoders and `OrthologGate` (K8-10), `RankingMetrics` (K8-8) and
+> `src/inference/scoring.py` (K8-11). Every run names its learning stage; a checkpoint without a
+> model spec is listed as a record this build cannot read, with the reason "written before the
+> model spec: not readable by this build; start a new run", never as history (K8-7b).
+> The §1 "Running" block and the rows marked K7, K8-4 or K8 below say what runs on the branch; the rest
+> of this file still describes `416a242` where it says so.
 
 ---
 
@@ -13,19 +36,37 @@
 
 SHEPHERD-Advanced is a rare disease diagnosis system that:
 - Uses a heterogeneous knowledge graph (PrimeKG-based) and GNN to generate node embeddings
-- Ranks candidate diseases/genes by embedding distance in a unified vector space
+- A KG link-prediction base model, then one model finetuned from it per task, each ranking with
+  its own task head (designed 2026-10-27, built on the integration branch in K1–K6;
+  [`working/scorer-retraining/README.md`](working/scorer-retraining/README.md))
 - Provides explainable evidence paths via PathReasoner (auxiliary)
-- Supports three diagnostic tasks in a single unified framework
+- Supports three diagnostic tasks in one framework: they share the base, the infrastructure and the
+  records, not a final vector space
 
-**Running at `416a242`:** disease ranking from a patient's HPO terms (the Diagnosis page and
-`POST /api/v1/diagnose`), by the interim served score of §8, with evidence paths, the served
-identity on every result, and the research tools around it (workspaces, training, test cohorts,
-Mode C measurement, registration). Gene ranking and patients-like-me are not implemented (§3).
+**Running on the integration branch at K7 (2026-10-29):** a base trained by KG link prediction,
+then task models finetuned from it (disease, gene, patients-like-me), one served at a time on the
+Diagnosis page and `POST /api/v1/diagnose`: a disease model ranks every disease of its graph view
+by its head, a gene model the request's candidate genes, a patients-like-me model a registered
+reference cohort's patients. Evidence paths explain disease rows after ranking; the served identity
+is on every result; with no model loaded nothing is served (503). The research tools around it:
+workspaces, base training and Fine-tune, test cohorts, measurement by a protocol this build
+implements for the model's learning stage and task head, registration. A checkpoint without a
+model spec (a ShepherdGNN history file) is listed as a record this build cannot read (since K8-7b;
+"history" before), refused at load by serving (since K8-4), refused by measurement (since K8-6a,
+when Mode C left the command line), and never trained from (K8-7 removed the path that wrote
+such files).
+**Running at `416a242`** (the last `main` this file was synced to): disease ranking by the interim
+served mixture (§8, retired on the branch in K8-4), with the research tools above except the task
+models.
 
 **Hardware**: CUDA GPUs (the GB10 is the accepted target; BACKLOG 24 for others). Library versions:
 PyTorch, `torch_geometric` (PyG's core) and the rest of the locked set in `pyproject.toml` and
 `uv.lock`; PyG's native extensions per platform (§9, BACKLOG 50).
-**Graph layers**: GAT, HGT and SAGE, chosen per run (`--conv-type`).
+**Graph layers**: a model bundle's encoder is its model spec's (the reference is the paper's
+homogeneous GATv2 over a learned node table, `working/scorer-retraining/README.md` §2–§3). The
+ShepherdGNN path's GAT, HGT and SAGE (`--conv-type`) left with its training path in K8-7 and its
+wrapper in K8-10 (2026-11-08); `HeteroGNNLayer` (`src/models/gnn/layers.py`) is kept for the
+multi-architecture port and is not yet behind the `GraphEncoder` contract.
 **Extension (not implemented)**: fuzzy input, free text to HPO/MONDO (`src/nlp/`).
 
 ---
@@ -39,6 +80,10 @@ PyTorch, `torch_geometric` (PyG's core) and the rest of the locked set in `pypro
 > gated by path search and the ranking score currently includes a shortest-path term; §2.1 below
 > describes the approved target, not present behaviour; §8 describes what runs. This section will be
 > reconciled with the implementation when work item B-1 lands.
+> **2026-10-27:** the approved target's ranking model becomes the paper-aligned disease head (work
+> package A, [`working/scorer-retraining/README.md`](working/scorer-retraining/README.md)). §2.1's rule
+> stands: the GNN ranks, paths explain. §2.2 is redrawn for it. Serving switches only through the
+> policy's gates.
 
 ### 2.1 The Non-Negotiable Rule
 
@@ -54,58 +99,65 @@ This is the fundamental design principle derived from the original SHEPHERD pape
 
 If PathReasoner becomes the gatekeeper for candidate discovery, GNN's generalization ability is blocked.
 
-### 2.2 Correct Flow
+### 2.2 Correct Flow (target: the paper-aligned disease task)
 
 ```
 Patient Phenotypes (HPO terms)
     │
     ▼
-┌─────────────────────────────────────────────┐
-│  GNN Forward Pass (precomputed at init)      │
-│  All node embeddings cached                  │
-└──────────────────┬──────────────────────────┘
+┌──────────────────────────────────────────────────┐
+│  Disease model (finetuned from a selected base)   │
+│  GraphEncoder forward: full graph, layer-wise,    │
+│  once at load; node vectors cached                │
+└──────────────────┬───────────────────────────────┘
                    │
-    ┌──────────────▼──────────────────┐
-    │  Patient Embedding Generation    │
-    │  Aggregate phenotype embeddings  │
-    │  via attention/mean pooling      │
-    └──────────────┬──────────────────┘
+    ┌──────────────▼───────────────────────┐
+    │  Patient encoder                      │
+    │  Transformer over phenotype vectors   │
+    │  → attention pooling → projection     │
+    └──────────────┬───────────────────────┘
                    │
-    ┌──────────────▼──────────────────┐
-    │  Distance Computation            │
-    │  Patient embedding vs ALL        │
-    │  disease/gene embeddings         │
-    │  → Cosine similarity ranking     │
-    └──────────────┬──────────────────┘
+    ┌──────────────▼───────────────────────┐
+    │  Disease head                         │
+    │  −‖z_d − z_P‖² (normalised vectors)   │
+    │  over EVERY KG disease, exact         │
+    └──────────────┬───────────────────────┘
                    │
-    ┌──────────────▼──────────────────┐
-    │  Top-K Results                   │
-    │  + PathReasoner evidence paths   │
-    │  + Attention weight explanation  │
-    │  + Patients-Like-Me retrieval    │
-    └─────────────────────────────────┘
+    ┌──────────────▼───────────────────────┐
+    │  Top-K results                        │
+    │  + PathReasoner evidence paths        │
+    │  + attention weights                  │
+    └──────────────────────────────────────┘
 ```
+
+The gene task and patients-like-me are separate finetuned models with their own heads (§3). They do
+not share this model's final vectors. The recipe, its sources and its deviations are
+`working/scorer-retraining/README.md` §2.
 
 ### 2.3 What PathReasoner Does and Does NOT Do (approved target)
 
-**What runs instead, until B-1:** path search decides which diseases are scored at all (a disease
-with no path from the patient's phenotypes is never a candidate; the search is capped in traversal
-order), and with no model configured the path-reasoning score becomes the ranking score
-(`path_reasoning_fallback`, §8). The table is the target.
+**What runs instead, at `416a242`:** path search decides which diseases are scored at all (a
+disease with no path from the patient's phenotypes is never a candidate; the search is capped in
+traversal order); on the integration branch it went with the mixture a history file was served
+with (§8, K8-4). The path-reasoning fallback ranking (`path_reasoning_fallback`) is removed since
+K7: with no model, nothing is served. A task model follows the table: paths are found after
+ranking, for the rows shown.
 
 | PathReasoner DOES | PathReasoner Does NOT |
 |---|---|
 | Find BFS paths between phenotypes and top-K diseases for explanation | Gate which diseases can be scored |
 | Provide human-readable evidence chains for clinicians | Contribute to the ranked score when GNN is active |
 | Supply shortest path length as optional supplementary feature | Act as first-pass candidate filter |
-| Serve as scoring fallback when no trained GNN model exists | Override GNN ranking |
+| Explain a ranked disease row after ranking (no scoring fallback since K7) | Override GNN ranking |
 
 ---
 
 ## 3. Three Diagnostic Tasks (one implemented)
 
-All three tasks share the same GNN-generated embedding space. **Only 3.3's disease ranking runs**,
-as the Diagnosis page, by the interim score of §8, not the target formulation below.
+**The three tasks share a base and a framework, not a final embedding space** (2026-10-27). Each
+task is finetuned from a selected base into its own checkpoint, so vectors from two task models are
+not comparable (`working/scorer-retraining/README.md` §1). **Only 3.3's disease ranking runs**, as the
+Diagnosis page, by the interim score of §8, not the target formulation below.
 
 **The reference paper's three tasks and this project** (checked against the paper's Methods,
 npj Digital Medicine 8:380, 2025, and `docs/working/FINDINGS_PAPER_PROTOCOL_AND_AMP.md` §3.4 and
@@ -114,9 +166,9 @@ scores to add to any ranking.
 
 | Task | Inputs it needs | The paper's formula and model head | Here today | This project's difference | Where it would land |
 |---|---|---|---|---|---|
-| Causal gene discovery | patient phenotypes and a candidate gene list from variant filtering or curation (13.3 genes on average in one setting, 244.3 in the other; policy §3.1) | Eq 12–14: `η·EMBSIM + (1−η)·SPLSIM`, its own task head, and SP also in the training loss | not implemented: `candidate_genes` is a reserved field, ignored with a warning | — | its own work item (`docs/working/task-scope/README.md`); the only task in which the paper mixes SP into a ranking |
-| Patients-like-me | patient phenotypes and a reference cohort of patients with embeddings | Eq 16: `−‖z_Pi − z_Pj‖²` | not implemented | — | its own work item; it needs a reference cohort |
-| Novel disease characterisation (disease ranking) | patient phenotypes | Eq 18: `−‖z_d − z_P‖²` over every KG disease, on the patient encoder's output (a transformer encoder and an attention-weighted average) | served as Diagnosis by the legacy mixture of §8 until B-1; Mode C measures the approved interim policy | the approved interim policy (statement 2) is raw cosine of an **unweighted** masked mean: not the paper's encoder, projection or objective. Cosine and negative squared L2 order alike only on the same unit vectors; that does not make the encoders equal, and Mode C is not a reproduction of the paper | B-1 serves the interim policy; paper parity is the scorer-retraining track (`docs/working/scorer-retraining/README.md`) |
+| Causal gene discovery | patient phenotypes and a candidate gene list from variant filtering or curation (13.3 genes on average in one setting, 244.3 in the other; policy §3.1) | Eq 12–14: `η·EMBSIM + (1−η)·SPLSIM`, its own task head, and SP also in the training loss | on the integration branch: the gene task model ranks the `candidate_genes` list (K4), which Diagnosis sends for a gene model (K6); any other model ignores it with a warning | — | work package B (`docs/working/scorer-retraining/README.md` §8; its SP specification §6 comes first); the only task in which the paper mixes SP into a ranking |
+| Patients-like-me | patient phenotypes and a reference cohort of patients with embeddings | Eq 16: `−‖z_Pi − z_Pj‖²` | not implemented | — | work package B; it needs a registered reference cohort |
+| Novel disease characterisation (disease ranking) | patient phenotypes | Eq 18: `−‖z_d − z_P‖²` over every KG disease, on the patient encoder's output (a transformer encoder and an attention-weighted average) | on the integration branch the disease task model serves Diagnosis (K3; the legacy mixture of §8 is retired since K8-4); the disease protocol measures it (task measurement, §11); Mode C, which measured the approved interim policy, retired in K8-6a (command) and K8-6b (executor) | the approved interim policy (statement 2) is raw cosine of an **unweighted** masked mean: not the paper's encoder, projection or objective. Cosine and negative squared L2 order alike only on the same unit vectors; that does not make the encoders equal, and Mode C is not a reproduction of the paper | work package A builds the paper-aligned disease model (`docs/working/scorer-retraining/README.md`); serving switches only through the policy's gates (package C). The raw-cosine B-1 is not built first (policy rev 11) |
 
 **SP for disease ranking** is this project's policy, not the paper's formula. It is an optional
 analysis view, off by default, whose sorting and filtering change the view only and never the
@@ -129,8 +181,8 @@ likewise this project's evidence policy, not a method the paper specifies
   exists here (`docs/working/task-scope/README.md`). Its SP mixture (Eq 14) is that task's formula.
 - **Patients-like-me** needs a labelled reference cohort, against which the patients it returns can
   be checked.
-- **Disease ranking** is measured by Mode C on registered cohorts, then by the institutional run
-  (BACKLOG 8a, 8b).
+- **Disease ranking** is measured by the disease protocol on registered cohorts (task measurement,
+  §11; Mode C until K8-6a), then by the institutional run (BACKLOG 8a, 8b).
 
 They may share loading, identity, records and presentation. None of them is the disease ranking's
 GNN/SP mixture. An adjustable-η analysis view (policy §1.4, a registered direction, not decided) is a
@@ -138,22 +190,23 @@ view over the disease result, not a model head for these tasks.
 
 ### 3.1 Causal Gene Discovery (not implemented)
 
-`candidate_genes` is a reserved request field: accepted, ignored, and answered with a warning
-(`src/api/routes/diagnose.py`).
+On the integration branch a gene task model (K4) ranks the `candidate_genes` request field, which
+Diagnosis sends for a gene model (K6); with any other model it is ignored and answered with a
+warning (`src/api/routes/diagnose.py`).
 - **Input**: Patient phenotypes (Channel 1) + Candidate gene list (Channel 2)
-- **Method**: Cosine similarity between patient embedding and each candidate gene embedding
+- **Method (target, work package B)**: `η·EMBSIM + (1−η)·SPLSIM` over the candidate list, from the gene task's finetuned model (`working/scorer-retraining/README.md` §2, §6)
 - **Output**: Ranked gene list with scores
 - **Channel 2 source**: Upstream variant filtering pipeline (e.g., Exomiser) — SHEPHERD is the consumer, not producer
 
 ### 3.2 Similar Patient Retrieval (Patients-Like-Me) (not implemented)
 - **Input**: Patient phenotypes only (Channel 1)
-- **Method**: Cosine similarity between patient embedding and all known patient embeddings
+- **Method (target, work package B)**: `−‖z_Pi − z_Pj‖²` on normalised vectors against a registered reference cohort embedded by the same model; the query itself excluded
 - **Output**: K most similar confirmed patients with shared phenotypes
 - **Clinical value**: Diagnosis validation, especially before ordering genetic testing
 
 ### 3.3 Novel Disease Characterization (running as Diagnosis' disease ranking)
 - **Input**: Patient phenotypes only (Channel 1)
-- **Method**: Cosine similarity between patient embedding and all disease embeddings
+- **Method (target, work package A)**: `−‖z_d − z_P‖²` on normalised vectors between the patient encoder's output and every KG disease, from the disease task's finetuned model. What runs today is §8's interim score
 - **Output**: "Most similar known diseases" ranking
 - **Clinical value**: When the patient may have an undescribed condition
 
@@ -166,7 +219,7 @@ view over the disease result, not a model head for these tasks.
 | **Channel 1** (Phenotypes) | Observed symptoms/features | HPO term IDs | ALL tasks (always required) |
 | **Channel 2** (Candidate Genes) | Sequencing-derived suspects | Ensembl Gene IDs | Causal gene discovery only |
 
-Channel 2 is reserved, not used (§3.1). As designed, the two channels are processed independently
+Channel 2 is read by the gene task model only (§3.1). As designed, the two channels are processed independently
 inside the model and merged only at scoring time:
 - Channel 1 determines the patient embedding direction
 - Channel 2 determines comparison targets
@@ -176,13 +229,21 @@ inside the model and merged only at scoring time:
 
 ## 5. Training
 
-**What runs: one joint multi-task run.** `scripts/train_model.py` (also started by the job runner)
+**On the integration branch since K8-7 (2026-11-08)** the joint run this section describes is
+removed: `MultiTaskLoss` and `src/training/loss_functions.py` went with the ShepherdGNN training
+path and its loader. Every run names its learning stage: a base trained by KG link prediction
+(`src/training/lp_task.py`) or a task model finetuned from a base (`src/training/finetune_task.py`),
+each with its task's own sampler, loss and validation. The Trainer selects by the task's selection
+metric (a base's `val_lp_accuracy`, a task model's `val_pooled_mrr`) unless a monitor is stated;
+there is no top-20 measure. Validation stays the Trainer's own on the val split, never a test.
+
+**What runs at `416a242`: one joint multi-task run.** `scripts/train_model.py` (also started by the job runner)
 trains on a generated workspace's simulated patients with one loss, `MultiTaskLoss`
 (`src/training/loss_functions.py`, wired by `src/training/trainer.py`). Its default weights are
 diagnosis 1.0, contrastive 0.3, link prediction 0.5 and ortholog consistency 0.2, but only the
 diagnosis and contrastive terms are computed: the other two run only when a batch carries
 `positive_triples`/`negative_triples` or `ortholog_pairs`, and no loader produces them, so their
-weights (sliders on the Training page among them) change nothing (BACKLOG 57). Each run writes its own run
+weights change nothing (BACKLOG 57). Each run writes its own run
 directory; a run can be paused, resumed with every learning setting inherited, or extended at a
 fixed rate (M3a). The checkpoint payload records the producer, the environment, the settings
 requested and in effect, the progress, and the digests of the graph, the sample files and the split
@@ -193,9 +254,14 @@ record itself (M2, M3a, M3b).
   train or val before it generates samples. It is the Trainer's own measure (val split, top-20),
   used for early stopping and checkpoint selection; it is not a test.
 - **No held-out test split** is generated, and no institutional holdout protocol is defined
-  (BACKLOG item 11). External cohorts are measured as registered versions (Mode C, §11).
-- **Not implemented**: a separate KG pretraining stage, and *branch* training that starts from a
-  parent with changed learning settings (BACKLOG 23).
+  (BACKLOG item 11). External cohorts are measured as registered versions (task measurement, §11).
+- **Built on the integration branch, awaiting acceptance** (`working/scorer-retraining/README.md`;
+  `working/PLAN_PROVENANCE_CONTRACT.md` §9):
+  - the KG pretraining stage and the `finetune` operation for three tasks;
+  - *branch* training, which starts from a parent with changed settings on its stage's closed list
+    (BACKLOG 23; from the CLI);
+  - for new specs, the loss terms above are replaced, with their retirement listed in that README's
+    §7.
 
 ### Training → Inference Bridge
 1. Training writes checkpoints into its run directory.
@@ -204,11 +270,11 @@ record itself (M2, M3a, M3b).
    workspace's latest run). It refuses the checkpoint unless its recorded graph digests (`kg` and the
    three tensors) match the workspace it is served over, and that workspace's dataset record is the
    one its manifest binds; then it runs the GNN forward pass once and caches every node embedding.
-3. With a graph configured (`SHEPHERD_KG_PATH`) and no model source, the pipeline serves
-   `path_reasoning_fallback` (§8). With no graph configured, no pipeline is built and `/diagnose`
-   returns its demo answer (`demo/v1`: listed diseases with no score, a "mock data" warning,
-   `served_identity` null), which the Diagnosis page labels as such (BACKLOG 55). A requested model that cannot be built is refused,
-   never replaced by that fallback.
+3. **No model, no pipeline** (K7): with a graph configured (`SHEPHERD_KG_PATH`) and no model
+   source, with nothing configured, or with a requested model that cannot be built, no pipeline
+   is published; `/diagnose` and `/ready` answer 503 with the reason and `/health` stays 200, so a
+   model can be loaded. The path-reasoning fallback and the demo answer (`demo/v1`) are removed
+   (BACKLOG 55).
 
 ---
 
@@ -220,14 +286,15 @@ Layer 1 (Config):      src/config/        server settings, allocator presets, se
                                           training field spec, model-type constants
 Layer 2 (Data):        src/ontology/      HPO/MONDO/GO via pronto
                        src/data_sources/  ortholog, pubmed (Phase 2)
-Layer 3 (Knowledge):   src/kg/            graph, builder, data_loader
+Layer 3 (Knowledge):   src/kg/            graph, builder, data_loader (`DiagnosisSample` only since K8-7)
                        src/nlp/           fuzzy input (NOT YET IMPLEMENTED)
-Layer 4 (Models):      src/models/        GNN, encoders, decoders, attention
+Layer 4 (Models):      src/models/        bundle (spec, builder, encoders), task heads and scorer,
+                                          GNN layers (kept for the port), attention
                        src/retrieval/     vector index (cuVS/Voyager)
 Layer 5 (Reasoning):   src/reasoning/     path_reasoning (auxiliary), explanation
-Layer 6 (Training):    src/training/      trainer, loss_functions
+Layer 6 (Training):    src/training/      trainer, the stages' task modules (lp_task, finetune_task)
 Layer 7 (Inference):   src/inference/      pipeline (GNN-primary scoring)
-Layer 7b (Evaluation): src/evaluation/    Mode C measurement, test cohort registry, R10, evaluation ledger
+Layer 7b (Evaluation): src/evaluation/    measurement by protocol, test cohort registry, R10, evaluation ledger
 Layer 8 (Interface):   src/api/           FastAPI REST endpoints; src/api/services: job runner,
                                           server lists, record states, backend control
                        src/webui/         Gradio dashboard, mounted at /ui in the same process
@@ -246,120 +313,103 @@ Layer 8 (Interface):   src/api/           FastAPI REST endpoints; src/api/servic
 
 | Component | File | Key Responsibility |
 |-----------|------|-------------------|
-| GNN Model | `src/models/gnn/shepherd_gnn.py` | Heterogeneous message passing, node embedding generation |
-| GNN Layers | `src/models/gnn/layers.py` | HeteroGNNLayer + OrthologGate |
-| Diagnosis Head | `src/models/decoders/heads.py` | Not on any serving or measurement path: `ShepherdGNN` builds no task head (policy §3.2); constructed by tests only |
-| Loss Functions | `src/training/loss_functions.py` | Multi-task loss (diagnosis, link pred, contrastive, ortholog) |
-| Trainer | `src/training/trainer.py` | Training loop with mixed precision |
-| Inference Pipeline | `src/inference/pipeline.py` | The served Diagnosis: path-gated candidates, the score of §8, evidence and explanations |
-| PathReasoner | `src/reasoning/path_reasoning.py` | BFS path enumeration: today's candidate discovery and evidence (§2.3) |
+| Model bundle | `src/models/bundle/` (`spec.py`, `builder.py`, `encoders.py`) | The model spec, the one builder, the input module and the `GraphEncoder` contract with its reference `GATv2Encoder` (the ShepherdGNN wrapper, `src/models/gnn/shepherd_gnn.py`, was removed in K8-10) |
+| GNN Layers | `src/models/gnn/layers.py` | `HeteroGNNLayer`, kept for the multi-architecture port and not yet behind the `GraphEncoder` contract (`OrthologGate` was removed in K8-10) |
+| Task heads | `src/models/tasks/heads.py` | The patient encoder and the disease, gene and patients-like-me heads of a model bundle (the unwired `src/models/decoders/` heads were deleted in K7) |
+| Stage tasks | `src/training/lp_task.py`, `src/training/finetune_task.py` | Each stage's sampler, loss and validation (the multi-task loss, `src/training/loss_functions.py`, was removed in K8-7) |
+| Trainer | `src/training/trainer.py` | Training loop with mixed precision, driven by its stage's task |
+| Inference Pipeline | `src/inference/pipeline.py` | The served Diagnosis: the task model's ranking (§8), evidence and explanations |
+| PathReasoner | `src/reasoning/path_reasoning.py` | BFS path enumeration (`find_paths`, `score_paths`): the evidence for a disease row (the mixture's candidate discovery went with it in K8-4, §2.3). Its path-score ranking (`aggregate_path_scores`, `get_top_candidates`) was removed in K7 |
 | Knowledge Graph | `src/kg/graph.py` | KG data structure with PyG export |
 | Vector Index | `src/retrieval/vector_index.py` | Standalone ANN index. **Detached from diagnosis** — retained for planned vector-mapping work, not on any inference path |
-| Measurement (Mode C) | `src/evaluation/measurement.py`; CLI `scripts/measure_scorer.py` | The formal Test's measurement: every disease ranked by the model's raw cosine, on a registered test cohort version or a generated split |
-| Measurement (Mode D) | `src/evaluation/mode_d.py`; CLI `scripts/measure_scorer.py --mode D` | What the Diagnosis page serves today, measured through `DiagnosisPipeline.rank()` on a registered cohort version, with Mode C beside it on the same embeddings (policy gate 1's comparison; kept apart for a clean retirement, PLAN_B05 §10) |
+| Measurement (Mode C) | retired: no command since K8-6a, no executor since K8-6b | Every disease ranked by the model's raw cosine, on a registered test cohort version or a generated split: the formal Test's measurement until K6, then a command-line run (`scripts/measure_scorer.py` without `--mode`) on a checkpoint without a model spec until K8-6a, which made `--mode` required (row below). Its executor retired in K8-6b; `src/evaluation/measurement.py` keeps the report types and the ranks rule every measurement writes by. Kept Mode C reports and records are read by the shared readers (policy rev 15) |
+| Task measurement | `src/evaluation/protocols.py` (the protocols) and `src/evaluation/task_measurement.py` (their evaluators); CLI `scripts/measure_scorer.py --mode <protocol>` | A model measured by a protocol this build implements for its learning stage and task head (today disease, gene and patients_like_me, one for each task head of a finetuned model) on a registered cohort version or a generated split; what the Test page runs, with the protocol chosen among those the model's record admits (K8-6a). The protocol definition judges only whether a new measurement can run; no reader uses it. Mode D, the served ranking's measurement, was removed in K7 (`src/evaluation/mode_d.py` deleted); its kept reports and records stay readable |
 | Test cohort registry | `src/evaluation/cohort_registry.py`; CLI `scripts/import_cohort.py` | Immutable cohort versions mapped to one graph and bound to its digests, kept outside the repository (provenance contract M4) |
-| R10 | `src/evaluation/r10.py` | A test cohort's disease and phenotype-set overlap with the training and validation inputs a checkpoint records, found by digest |
-| Evaluation ledger | `src/evaluation/sidecar.py`, `src/evaluation/registration.py`; CLI `scripts/record_evaluation.py` | Test results beside the checkpoint, keyed by its digest (ledger schema 3); one registration function for `--record` and `record_evaluation` |
-| Recorded results view | `src/api/routes/evaluations.py` | Read-only `GET /api/v1/evaluations/loaded-model`: the loaded checkpoint's records; shown by Models' read-only view (the Diagnosis card shows only a recorded-tests state, since M5-2) |
-| Report store | `src/evaluation/report_store.py` | Every test run's kept report per cohort version, D5's disagreement scan, investigation notes, the usage history |
+| R10 | `src/evaluation/r10.py` | A test cohort's disease and phenotype-set overlap with the training and validation inputs a checkpoint records, found by digest. A candidate or evidence directory that cannot be read or checked refuses nothing and the search goes on: a scope found nowhere else reads *unverifiable*, naming each such place and its reason, never a count (definition version 2, K8-6r.3). Whether a named evidence directory is one is the explicit stat `server_settings.is_directory`, shared with `SHEPHERD_TRAINING_EVIDENCE_DIRS` |
+| Evaluation ledger | `src/evaluation/sidecar.py`, `src/evaluation/registration.py`; CLI `scripts/record_evaluation.py` | Test results beside the checkpoint, keyed by its digest (ledger schema 4 since K8-6r.2, which reads schema 3 too: each record names its run, and a repeat is the same run's same report); one registration function for `--record` and `record_evaluation`; one registration at a time per ledger, across processes, through its lock file (K8-6r.1) |
+| Recorded results view | `src/api/routes/evaluations.py` | Read-only `GET /api/v1/evaluations/loaded-model`: the loaded checkpoint's records; shown by Models' read-only view (the Diagnosis card shows only a recorded-tests state, since M5-2). Its `read_records` is every reader's one listing of a ledger's records for one set of weights (the route, Models through the shared model list, `record_evaluation.py --show`): the records that read as results, and apart from them each one that does not, by its index with a one-line reason naming fields, never values (`unreadable_records`, K8-6e.1) |
+| Report store | `src/evaluation/report_store.py` | Every test run's kept report per cohort version, the scan that lists every run and describes how each condition group's runs compare (it never gates a registration, K8-6r.2), investigation notes, the usage history; one append at a time per file, through its lock file (K8-6r.1) |
 | Workspace producer and readers | `src/kg/workspace.py`; `src/kg/artifacts.py` | One writer for every workspace (build, demo, probe); the manifest, dataset record and build record readers |
 | Server lists | `src/api/services/server_lists.py`; `src/api/routes/lists.py` | Workspaces, checkpoints, cohort versions and intake files by name and digest, resolving only what they list |
 | Job runner and GPU lock | `src/api/services/training_manager.py`; `src/utils/gpu_lock.py` | One managed GPU job at a time (training, test), its process group, cancel and stop; one lock file per deployment, also taken by the GPU CLIs (`train_model.py`, `measure_scorer.py`, `setup_demo.py --train-model`) |
+| File lock | `src/utils/file_lock.py` | The one cooperative file lock (flock; Windows untested) under the GPU, ledger and report store locks; one lock per file, taken GPU, then ledger, then usage history where several are held (K8-6r.1) |
 | Run layout and checkpoint reads | `src/utils/checkpoint_paths.py`; `src/utils/checkpoint_io.py`; `src/training/checkpoint_payload.py` | Run directories, one read per checkpoint with its digest, one payload builder for both writers |
 | Operator access (D8) | `src/utils/operator_access.py`; `src/api/operator_access.py`; `src/webui/operator_access.py` | One check behind every operator control, in the API and the dashboard |
-| Server settings | `src/config/server_settings.py`; `src/config/serving_device.py` | `SHEPHERD_DEPLOYMENT_MODE`, `_WORKSPACES_ROOT`, `_REGISTRY`, `_INTAKE_DIR`, `_TRAINING_EVIDENCE_DIRS`, `_ORDERING_ROLES` (server settings) and `_DEVICE` (serving device), read where used |
-| Record states, ordering | `src/api/services/record_states.py`; `src/evaluation/ordering.py` | Kept, registered and contested states for display; D4's ordering by test score |
+| Server settings | `src/config/server_settings.py`; `src/config/serving_device.py` | `SHEPHERD_DEPLOYMENT_MODE`, `_WORKSPACES_ROOT`, `_REGISTRY`, `_INTAKE_DIR`, `_TRAINING_EVIDENCE_DIRS` (server settings) and `_DEVICE` (serving device), read where used |
+| Record states | `src/api/services/record_states.py` | Kept and registered states, and how a group's runs compare (descriptions only since K8-6r.2), for display (D4's ordering by test score retired in K8-6d, with `src/evaluation/ordering.py`) |
 | Backend control | `src/api/services/backend_control.py`; `src/api/main.py` | Restart Backend (re-exec in place); shutdown that stops the active job |
-| WebUI pages | `src/webui/components/` (`diagnosis_panel.py`, `diagnosis_card.py`, `model_list.py`, `datasets_page.py`, `training_console.py`, `test_page.py`, `models_page.py`, `runtime_settings.py`) | The pages; the shared help, renderers and model list |
+| WebUI pages | `src/webui/components/` (`diagnosis_panel.py`, `diagnosis_card.py`, `model_list.py`, `datasets_page.py`, `training_console.py`, `finetune_page.py`, `test_page.py`, `models_page.py`, `runtime_settings.py`) | The pages; the shared help, renderers and model list |
 
 ---
 
-## 8. The served Diagnosis score (running, until B-1)
+## 8. The served Diagnosis score (running, since K8-4)
 
-**What runs.** The Diagnosis page and `/api/v1/diagnose` rank the diseases that path search reaches
-(§2.3) by this mixture whenever a checkpoint and a bound `shortest_paths.pt` are both served:
+**What runs.** The Diagnosis page and `/api/v1/diagnose` serve one finetuned task model at a time,
+and it ranks by its own task head (§2.2; `working/scorer-retraining/README.md` §3), each answer
+naming its kind (`result_kind`):
 
-```
-final_score = η × embedding_similarity + (1 - η) × shortest_path_similarity      (η = 0.7)
-```
+| Task model | Ranks | Score | Kind |
+|---|---|---|---|
+| disease | every disease of the model's graph view | `−‖z_d − z_P‖²`, the disease head (uncalibrated) | `disease_task/v1` |
+| gene | the request's candidate genes | `η × EMBSIM + (1 − η) × SPLSIM`, η from the model spec; SPLSIM from the exact hop distances the pipeline computes in process from the model's graph view (no table) | `gene_task/v1` |
+| patients-like-me | a registered reference cohort's patients | the head's similarity (uncalibrated) | `patients_like_me/v1` |
 
-It is **not** the approved target and **not** what a test measures. The target is raw cosine over
-every disease with SP taken out of the ranking (policy §1, work item B-1), and Mode C measures that
-target (the table at the end of this section). The paper fuses SP only in its candidate-gene task;
-its disease task uses embedding distance alone (policy §3.1).
+The gene task is the one place a shortest-path term enters a score, as in the paper's candidate-gene
+task; the disease task uses embedding distance alone (policy §3.1). The Test page measures a model by
+a protocol this build implements for its learning stage and task head (task measurement, §11).
 
-### Signal 1: GNN Embedding Similarity (implemented)
-```
-patient_embedding = mean_pool(GNN_embeddings[phenotype_nodes])
-patient_norm = L2_normalize(patient_embedding)
-disease_norm  = L2_normalize(GNN_embedding[disease_node])
+**Retired in K8-4: the interim served mixture.** Until K8-4 a checkpoint without a model spec (a
+ShepherdGNN history file) was served outside the WebUI by
+`η × (cos + 1) / 2 + (1 − η) × 1 / (1 + mean hop distance)` (η = 0.7) over the diseases path search
+reached, reading the shortest-path table (`served_mixture/v1`, scoring modes
+`gnn_plus_shortest_path` and `gnn_only`). That serving is removed with its loader, scorer, result
+kind and status fields; such a file is now refused at load (below). Mode C, a command-line
+measurement of such files until K8-6a, is not the Diagnosis ranking. The table's code files (its
+producer, pairing protocol and lookup) were retired in K8-5 (policy rev 14); a table left in a
+workspace stays in place and nothing reads it.
 
-embedding_similarity = (dot(patient_norm, disease_norm) + 1.0) / 2.0
-```
-Serving maps the cosine to `(cos + 1) / 2` (`src/inference/scoring.py`); training and Mode C score raw
-cosine (`src/training/trainer.py`, `src/evaluation/measurement.py`). The two rank alike; they are not the
-same number.
-
-### Signal 2: Shortest Path Similarity (implemented; leaves the ranking under B-1)
-```
-sp_lengths = [SP_lookup[(phenotype_idx, target_idx)] for phenotype in patient]
-# Phenotypes with no path within max_hops contribute (max_hops + 1)
-avg_sp = mean(sp_lengths)
-shortest_path_similarity = 1.0 / (1.0 + avg_sp)
-```
-- Pre-computed offline by `scripts/compute_shortest_paths.py`
-- Stored as parallel int64/int8 tensors (`shortest_paths.pt`) alongside `node_features.pt`
-- Loaded automatically by `pipeline._load_shortest_paths()` if present
-- Default `max_hops = 5`; pairs beyond this are treated as unreachable
-- Mixed into every candidate's score whenever the table is served; it is not a conditional fallback.
-  A pair with no path contributes `max_hops + 1`; a candidate whose SP cannot be computed at all (no
-  node mapping, an unmapped candidate, no mappable phenotype, the primitive's unavailable state)
-  collapses to `0.0`, below the value of a real "no path" (policy §1.1, C9). The result union
-  replaces that `0.0` with a status (`docs/working/results-review/SPEC_1_RESULTS_REVIEW.md` §2.1,
-  BACKLOG §0 batch 4)
-
-### Mixing parameter η (`PipelineConfig.eta`)
-- `eta = 0.7` (nominally 70% GNN, 30% shortest path; by span about 87/13, policy §3.5), a project
-  choice, not a paper value
-- Serving builds `PipelineConfig()` with its defaults: nothing sets or tunes η in a deployment
-- With no table served, scoring is the GNN term alone (`gnn_only`, effective η = 1.0)
-
-### Graceful degradation
-Every result states which of these applies in its **served identity** (provenance contract M3c): the checkpoint, graph, workspace manifest, SP table and dataset record that produced it, by digest or identifier, the scoring mode and the settings in effect, each part with its state (`verified`, `absent`, …). `get_pipeline_config()` and `GET /api/v1/pipeline/status` report the same value for the loaded pipeline.
-- **`shortest_paths.pt` missing + `sp_optional=True`** (default): pipeline reports `scoring_mode="gnn_only"`, effective η = 1.0; the served identity states the SP table `absent`, `gnn_only`, eta 1.0
-- **`shortest_paths.pt` missing + `sp_optional=False`**: the build is refused (`PipelineBuildError`); no pipeline is published
-- **A model requested (checkpoint or pre-loaded model) and not built** — missing or unreadable checkpoint, one that does not build over the graph, no graph data, no PyTorch, or a device the host cannot provide (provenance contract M3c: for a checkpoint, `auto` or unset without CUDA; for a pre-loaded model, `auto` or `cuda` named without CUDA, while a pre-loaded model with no device named stays on its own): the build is refused (`PipelineBuildError`). Startup publishes nothing and `/diagnose` answers 503; a reload is refused and the served pipeline stays. Never replaced by path reasoning (provenance contract M1), and never moved to the CPU unless `cpu` was asked for
-- **No model source configured at all**: the result is `path_reasoning/v1`, each candidate's `path_score` the PathReasoner aggregate (its own field since Batch 4); the served identity states the checkpoint `absent`, the graph `unverified` (read from `kg.json`, checked against no workspace manifest), the SP table and dataset record `absent`, `path_reasoning_fallback`, no device. Whether this needs an explicit opt-in is B-2's open policy question
+### Refusals before anything is served
+Every result states what produced it in its **served identity** (provenance contract M3c): the
+checkpoint, graph, workspace manifest and dataset record by digest, the shortest-path term
+(`computed` for a gene model, `absent` otherwise), the task's scoring mode and the settings in
+effect, each part with its state. `get_pipeline_config()` and `GET /api/v1/pipeline/status` report
+the same value for the loaded pipeline.
+- **A model requested and not built** — a missing or unreadable checkpoint; one whose record names
+  another graph or none (contract M2.4, checked first); **one without a model spec** (since K8-4,
+  refused by `read_model_record` before any model is built, at startup and on every reload);
+  **one whose record contradicts itself**, naming one input two ways, such as two KG digests
+  (K8-4 review P2-2, refused by the same reader, provenance contract §9.1); a base; no graph data, no PyTorch, or a device the host cannot provide (contract M3c: `auto` or
+  unset without CUDA): the build is refused (`PipelineBuildError`). Startup publishes nothing and
+  `/diagnose` answers 503; a reload is refused and the served pipeline stays, as it does when a
+  reload that names a task is given another task's model. Never replaced by path reasoning (provenance contract M1),
+  and never moved to the CPU unless `cpu` was asked for. Since K7 no model is handed over in memory
+- **No model source configured at all** (K7): no pipeline is built; `/diagnose` and `/ready` answer
+  503 with the reason (B-2 is settled: a graph is never served without a model). The
+  `path_reasoning/v1` result, its `path_score` and the identity states it used (checkpoint
+  `absent`, graph `unverified`, `path_reasoning_fallback`) are removed
 
 ### Evidence after ranking (running)
 After ranking, the **EvidencePanel** module (`src/reasoning/evidence_panel.py`) builds clinician-facing
-evidence for each candidate, using PathReasoner as a building block. Today PathReasoner also decides
-which diseases are candidates (§2.3), so every served candidate already has discovery paths and the
-evidence is always Mode A. **Mode B and INSUFFICIENT are implemented but unreachable on the served
-path**; they become reachable when B-1 removes the discovery gate, and Mode B's per-neighbour search
-then needs a budget. Gate 3's design (policy §6) is written: a target-restricted traversal over four
-declared path kinds, with one fixed budget per target and a request ceiling at admission
-(`docs/working/results-review/SPEC_3_EVIDENCE_AND_AUDIT.md` §7, awaiting approval).
+evidence for each disease row shown, using PathReasoner as a building block. Paths never decide which
+diseases are scored: a disease task model ranks every disease, so a row with no path within the limit
+is reached and reads INSUFFICIENT. Gate 3's design (policy §6) is written: a target-restricted
+traversal over four declared path kinds, with one fixed budget per target and a request ceiling at
+admission (`docs/working/results-review/SPEC_3_EVIDENCE_AND_AUDIT.md` §7, awaiting approval).
 
 #### Mode A — Direct Path Evidence
 When the KG contains explicit paths from patient phenotypes to the candidate (≤ `weak_path_max_hops`, default 4), surface those paths verbatim:
 - **STRONG_PATH** label if shortest path ≤ 2 hops
 - **WEAK_PATH** label if shortest path is 3-4 hops
 
-#### Mode B — Analogy-Based Evidence (implemented; unreachable until B-1)
-When no direct path exists in the KG but the GNN ranks the candidate highly:
-1. In the GNN embedding space, find the K nearest known nodes (default K=3)
-2. For each similar known node, run PathReasoner — they have full KG connections
-3. Present those known paths as **analogy evidence** with shared-feature summary
-4. Label as **ANALOGY_BASED**
+#### Mode INSUFFICIENT
+When no direct path exists, the candidate is labeled **INSUFFICIENT** so clinicians know to validate
+via independent clinical judgment; no evidence is assembled from anything else.
 
-This handles the zero-shot case the original SHEPHERD paper highlights — GNN can rank a candidate via neighborhood structure similarity even with missing KG edges, and Mode B gives the clinician a trustworthy "why" without inventing fake direct paths.
-
-#### Mode INSUFFICIENT (implemented; unreachable until B-1)
-When neither mode produces usable evidence, the candidate is labeled **INSUFFICIENT** so clinicians know to validate via independent clinical judgment.
+Mode B (analogy evidence by cosine over the ShepherdGNN embedding cache) was retired in K8-4 with
+that cache, its only input (Q6); it was never reachable on the served path.
 
 #### Critical invariant
-EvidencePanel is run **after** scoring/ranking is complete. Toggling `include_explanations` does not change the candidate's score (`served_score` or `path_score`) or candidate ordering — verified by `TestEvidencePanel.test_evidence_panel_does_not_affect_ranking`.
+EvidencePanel is run **after** scoring/ranking is complete. Toggling `include_explanations` does not change the candidate's score or candidate ordering — verified by `TestEvidencePanel.test_evidence_panel_does_not_affect_ranking` (on a trained disease child since K7).
 
 ### Two families called "Mode": they share letters, nothing else
 
@@ -367,16 +417,16 @@ The evidence modes above and the scorer-measurement modes are unrelated. Evidenc
 
 | Family | Mode | What it is | Status |
 |---|---|---|---|
-| **Evidence**: the "why" in Diagnosis' candidate details, built after ranking (`src/reasoning/evidence_panel.py`) | A | Direct paths in the KG from the patient's phenotypes to the candidate | in use (the only mode reached today) |
-| | B | Analogy: the nearest known nodes in the GNN's embedding space, and their paths | implemented; unreachable on the served path until B-1 (every candidate has discovery paths) |
-| | INSUFFICIENT | Neither found usable evidence | implemented; unreachable until B-1, as B |
+| **Evidence**: the "why" in Diagnosis' candidate details, built after ranking (`src/reasoning/evidence_panel.py`) | A | Direct paths in the KG from the patient's phenotypes to the candidate | in use |
+| | B | Analogy: the nearest known nodes in the GNN's embedding space, and their paths | retired in K8-4 with the ShepherdGNN embedding cache, its only input; never reachable on the served path |
+| | INSUFFICIENT | No direct path found | in use: a disease row with no path within the limit |
 | **Scorer measurement**: how a disease ranker is measured, work item B-0 (`src/evaluation/measurement.py`, `scripts/measure_scorer.py`) | A | Subgraph encoder; each batch's 2-hop subgraph seeded from the answers (the trainer's validation shape); the ladder's control | retired (R2, 2026-10-12) |
 | | B | Full-graph encoder; the same candidates as A, so A→B isolates the encoder's scope | retired (R2, 2026-10-12) |
-| | C | Full-graph encoder; every disease in the KG; raw cosine; ties go to the lower disease id. B→C isolates the candidate universe. The approved scorer, measured | implemented: the formal Test's measurement, labelled "approved scorer policy (Mode C)" on the Test page |
-| | D | Full-graph encoder; production's path-reachable candidates; the served score (the η/SP mixture, or the model term alone without a table). The ranking the Diagnosis tab serves today (the formula above), measured | implemented (B-0.5, Batch 3, 2026-10-26; `docs/working/scorer-measurement/PLAN_B05.md`), labelled "Served ranking today (Mode D) … not the approved scorer policy" |
+| | C | Full-graph encoder; every disease in the KG; raw cosine; ties go to the lower disease id. B→C isolates the candidate universe. The approved scorer, measured | the formal Test's measurement until K6, then a command-line run on a history file until K8-6a; since then no command runs it, and the Test page and the command line measure by a protocol (task measurement, §11). Its kept records read "approved scorer policy (Mode C)" until K8-6e.2 (2026-11-07); since then they are shown as recorded by the one display for every mode this build does not describe ("Mode C (a measurement mode this version does not describe)", every metric by its recorded name and value, the score semantics as recorded) |
+| | D | Full-graph encoder; production's path-reachable candidates; the served score (the η/SP mixture, or the model term alone without a table). The ranking the Diagnosis tab served in October 2026 (the mixture retired in K8-4, above), measured | removed in K7 (implemented in B-0.5, Batch 3, 2026-10-26; `docs/working/scorer-measurement/PLAN_B05.md`; its GB10 run `docs/working/batch3-acceptance-2026-10-27/`). Kept records read "Served ranking of October 2026 (Mode D) … not the approved scorer policy" until K8-6e.2 (2026-11-07); since then they are shown as recorded by the one display for every mode this build does not describe (their metrics by recorded name and value, the score semantics such as `served:gnn_only:eta=1.0:sp=none` as recorded, never split) |
 
 **How the measurement modes were decided.**
-- The deploying institution decided (2026-08), before any measurement, that disease ranking is GNN-primary (every disease scored, raw cosine as the interim score) and that SP leaves the ranking for an optional, separate analysis (`docs/DISEASE_SCORER_POLICY.md` §1, §3.4). In the reference paper the disease task uses embedding distance alone; the SP fusion belongs to the candidate-gene task, which has a short candidate list. Mode C measures that scorer. Work item B-1 makes the Diagnosis tab rank by it; until then a Mode C result says the tab's ranking differs (`src/evaluation/caveats.py`).
+- The deploying institution decided (2026-08), before any measurement, that disease ranking is GNN-primary (every disease scored, raw cosine as the interim score) and that SP leaves the ranking for an optional, separate analysis (`docs/DISEASE_SCORER_POLICY.md` §1, §3.4). In the reference paper the disease task uses embedding distance alone; the SP fusion belongs to the candidate-gene task, which has a short candidate list. Mode C measures that scorer. Work item B-1 makes the Diagnosis tab rank by it; until then a Mode C result says the tab's ranking differs (`src/evaluation/caveats.py`). *(2026-11-07: B-1 was superseded by the task models, so the tab never ranked by Mode C; the note retired with the C and D labels in K8-6e.2, and a kept Mode C record is now shown as recorded under "Mode C (a measurement mode this version does not describe)", with no note.)*
 - Modes A and B were retired on 2026-10-12: the formal Test's mode was settled as C (`docs/working/PLAN_TEST_RESULTS.md` D3), Mode A could not build a model from any checkpoint the current writer produces, and the institution had authorised retiring the old pipeline (`docs/working/scorer-measurement/ASSESSMENT_MODE_AB_RETIREMENT.md` §9).
 - B-1 may not start before Policy Gate 1, a B-0 report comparing the served ranking (Mode D) with the planned GNN ranking (Mode C) (`docs/DISEASE_SCORER_POLICY.md` §6). C→D changes the candidates, the score and the tie rule at once, so Mode D also reports derived readings on the formal Mode C scores that change one of them at a time (`docs/working/scorer-measurement/PLAN_B05.md` §5).
 
@@ -399,7 +449,10 @@ versions. The launcher's optional accelerators stay out of the lock, and every i
 constrained to it (deployment guide §4.15). M5's GB10 acceptances (`b14c4de`, and the WebUI rounds of 2026-10-25) ran torch 2.10.0+cu130 with
 `torch_geometric` 2.8.1, the current baseline, which `deploy.sh` installs from the lock since Batch 1
 (its GB10 deploy and environment check at `0bc5178` passed, 2026-10-26; Windows not run); M4's ran
-2.8.0.post1. Upgrades (PyTorch, CUDA, PyG)
+2.8.0.post1. K8's GB10 acceptance at `f2c2012` (2026-11-09) ran the same torch and `torch_geometric` with
+`pyg-lib` 0.8.0 built locally, and the other three extensions byte-identical to the prebuilt release's, after the
+prebuilt download failed
+(`working/k8-acceptance-2026-11-09/`; `working/BACKLOG.md` 70, 71). Upgrades (PyTorch, CUDA, PyG)
 are allowed: they go through the same deployment, loading and training flow, are verified, and become
 the new baseline; an older environment's evidence stays with that environment (BACKLOG 50).
 
@@ -435,10 +488,12 @@ the GB10 acceptance and its tested commit where one exists (`docs/working/m*-acc
 and integration tests sit beside each module.
 
 **Boundaries that are easy to confuse:**
-- **A Mode C test score is not the Diagnosis page's ranking.** Mode C ranks every disease by raw
-  cosine; Diagnosis serves the path-gated GNN/SP mixture of §8 until B-1.
-- **Resume and extend are done; branch training is not.** A continued run inherits every learning
-  setting (BACKLOG 23).
+- **A Mode C test score is not the Diagnosis page's ranking.** Mode C ranked every disease by raw
+  cosine; Diagnosis serves a task model's own head (§8; the path-gated GNN/SP mixture is retired
+  since K8-4).
+- **Resume and extend are done; branch training is built for model bundles, from the CLI** (K5,
+  awaiting acceptance). A continued run inherits every learning setting. A branch changes only
+  settings on its stage's list, and records each change (BACKLOG 23).
 - **The GPU lock covers managed training and test jobs and the GPU CLIs (`train_model.py`,
   `measure_scorer.py`, `setup_demo.py --train-model`), not the resident inference service.** Training and serving do not exclude each other (BACKLOG 48).
 - **Trustworthy provenance and test records are not model quality or institutional acceptance.**
@@ -449,20 +504,21 @@ and integration tests sit beside each module.
 | Capability and boundary | Formal entry | Shared implementation | WebUI | Status | Evidence | Remaining |
 |---|---|---|---|---|---|---|
 | **Build a workspace** from MONDO, HPO and the annotation files: graph, tensors, train/val samples (disease-disjoint), manifest, dataset record, build record. No test split | `scripts/build_knowledge_graph.py` | `src/kg/workspace.py` (the one writer), `src/kg/sample_generator.py`, `src/ontology/resolver.py` | Datasets shows the command only | Awaiting UI | demo build in the probe at `b14c4de`; the real build last ran 2026-09-29: its dataset record verifies (origin `files`, RW1 at `b14c4de`), but it has no build record, which M5 added | BACKLOG 29: a build job type in the job runner that runs this CLI behind D8 (the CLI stays the entry; budgets, ontology precedence and refusals stay in it); re-run a real build at current code |
-| **Shortest-path table** (`shortest_paths.pt` and sidecar, bound to the graph); not part of the dataset fingerprint | `scripts/compute_shortest_paths.py` | `src/inference/sp_artifact.py`, `sp_index.py` | none; lists do not show its state | Awaiting UI (optional) | probe M4, R6, R7 at `b14c4de` | optional job type and an SP state on Datasets, read through `sp_artifact`, not a new check |
-| **Demo workspace**, optionally with a small trained model | `scripts/setup_demo.py` | the same writer; the GPU lock | none | CLI only | probe B1 at `b14c4de` writes the demo graph (`build_demo_kg`) through the shared writer; `setup_demo.py` itself and its `--train-model` lock have no GB10 record | none |
+| **Shortest-path table** (`shortest_paths.pt` and sidecar, bound to the graph); not part of the dataset fingerprint | none: `scripts/compute_shortest_paths.py` was removed in K8-5 | none: `src/inference/sp_artifact.py` and `sp_index.py` were removed in K8-5 | none; lists do not show its state | Retired in K8-5 | probe M4, R6, R7 at `b14c4de` | none: a table left in a workspace stays in place and nothing reads it |
+| **Demo workspace**, optionally with a small trained model: since K7 `--train-model` trains a base and one disease child through the production trainer | `scripts/setup_demo.py` | the same writer; `train_model.train`; the GPU lock | none | CLI only | probe B1 at `b14c4de` writes the demo graph (`build_demo_kg`) through the shared writer; `setup_demo.py` itself and its `--train-model` lock have no GB10 record | none |
 | **Workspace list, dataset and build records, Datasets page** (read-only, compare, "Use for training") | `GET /api/v1/workspaces`; `server_lists` | `src/api/services/server_lists.py`, `src/kg/artifacts.py`, `src/webui/components/workspaces.py` | Datasets; the Training run bar; Test's workspace | Connected | W1, RW1 at `b14c4de` | the open route returns problem texts with absolute paths (BACKLOG 53) |
 | **Inventory before deployment** (M2.6) and dataset audits | `scripts/audit_checkpoint_family.py --inventory`, `scripts/audit_*.py` | the readers they audit | none | CLI only | M2's acceptance | two audits record a digest from a second read of what they parsed (BACKLOG 19.9; 19.12, optional) |
-| **Start a training run** | `scripts/train_model.py`; `POST /api/v1/training/start` (D8); the job runner | `src/training/trainer.py`, `src/utils/checkpoint_paths.py` (the run directory), `src/api/services/training_manager.py` | Training run bar, Start | Connected | W11, RW3 at `b14c4de`; manual Start at `b14c4de` | the API takes raw paths and drops unknown keys silently (BACKLOG 54); two of the four loss terms never run, so their weight sliders change nothing (BACKLOG 57) |
-| **Resume and extend** (inherited settings; extend at a fixed rate). Not branch | CLI flags; the API's `resume_from`; the job runner | `src/utils/run_plan.py`, the trainer, `checkpoint_paths.py` | Continue… drawer: Run → Checkpoint, Check, preview | Connected | M2, M9, M10, R3, R4 at `b14c4de` (the CLI path); Continue preview by hand at `f9202b6`; no GB10 record of a resume started from the drawer (unit tests cover it) | the API takes `resume_from` as a raw path and drops `extend_lr` silently (BACKLOG 54); the drawer sends no `extend_lr` either, so a parent whose rate ended at 0 is extended from the CLI only |
-| **Pause after epoch N** | `train_model.py --pause-after-epoch` | the trainer | none, by decision | CLI only | probe M2 | the API drops the field silently (BACKLOG 54) |
+| **Start a training run** | `scripts/train_model.py`; `POST /api/v1/training/start` (D8; a strict base start since K7); the job runner | `src/training/trainer.py`, `src/utils/checkpoint_paths.py` (the run directory), `src/api/services/training_manager.py` | Training run bar, Start | Connected | W11, RW3 at `b14c4de`; manual Start at `b14c4de` | the API takes raw paths (BACKLOG 54; unknown keys are refused since K5); the two loss terms that never ran (BACKLOG 57) went with `MultiTaskLoss` in K8-7 (2026-11-08) |
+| **Resume and extend** (inherited settings; extend at a fixed rate). Not branch | CLI flags; the API's `resume_from`; the job runner | `src/utils/run_plan.py`, the trainer, `checkpoint_paths.py` | Continue… drawer: Run → Checkpoint, Check, preview | Connected | M2, M9, M10, R3, R4 at `b14c4de` (the CLI path); Continue preview by hand at `f9202b6`; no GB10 record of a resume started from the drawer (unit tests cover it) | the API takes `resume_from` as a raw path (BACKLOG 54) and, since K5, refuses `extend_lr` (422) instead of dropping it; the drawer sends no `extend_lr` either, so a parent whose rate ended at 0 is extended from the CLI only. A model bundle run is resumed through the runner with its stage and task from its own record (K5) |
+| **Pause after epoch N** | `train_model.py --pause-after-epoch` | the trainer | none, by decision | CLI only | probe M2 | the API refuses the field (422) since K5, instead of dropping it (BACKLOG 54) |
 | **Stop training** | `POST /api/v1/training/stop` (D8); the runner | `training_manager.py` | Stop, with its question | Connected | W11, RW3; by hand at `b14c4de` | none |
 | **Status, charts, CSV** of the run shown | `GET /api/v1/training/status`, `/training/metrics` | `training_manager.get_status`, `get_metrics_history` | run view: four charts, Export CSV | Partial | by hand at `b14c4de`, `f9202b6` | no page charts or exports an earlier run, though the backend reads any listed run (BACKLOG 52 H); BACKLOG 41 |
 | **Run directories and checkpoint lists** (one read per file, with its digest) | `server_lists.list_checkpoints`; `GET /api/v1/workspaces/{name}/checkpoints` | `checkpoint_paths.read_run_checkpoints` | Continue drawer; Models; Change model; Test's model select | Connected | probes at `b14c4de` | three pickers over one list: move Test onto the shared model list (BACKLOG 52); `GET /training/checkpoints` is a legacy duplicate no page uses |
-| **Move old checkpoints into the run layout** | `scripts/migrate_checkpoints.py` | the safe reader; M2's record check | none | CLI only | its tests | none |
-| **Training settings validation** | the API's cross-field check; per-surface limits; `src/config/training_fields.py` (read by tests only) | `routes/training.py` `cross_field_errors` | the parameters form | Partial | `test_training_fields.py` | `cross_field_errors` is called by the API route only: the page's Start relies on the form's choices, and its Continue starts from the parent's recorded settings without the check; the CLI checks neither rule and the trainer repeats the onecycle rule; two rules exist only in the page (HGT turns AMP off; compile from Settings): each is checked against its dependency and the evidence before any becomes shared, and the HGT one is contradicted by M5's acceptance, which trained HGT with AMP (R2, R4 at `b14c4de`) (BACKLOG 54) |
-| **Run housekeeping** (delete, archive, rename, tags, compare, lineage) | — | — | — | Not implemented | — | BACKLOG 31 (compare, archive), 52 (D) (lineage); tags are named in BACKLOG 23 as a prerequisite of the experiment phase; delete and rename have no item yet |
-| **Branch training** (a parent with changed learning settings) | — | — | — | Not implemented | — | BACKLOG 23 |
+| **Training settings validation** | the job runner's start check for a new model bundle run and a Fine-tune start; the API's strict base and Fine-tune requests (`extra="forbid"`) | `training_manager._recipe_settings_problem` over the field spec's `value_problem` (`src/config/training_fields.py`), `spec.hops_problem` | the Training base form and the Fine-tune page, each asking the same check first (K6) | Partial | `test_training_fields.py`, `test_finetune_children.py`, `test_training_api.py` | since K7 `POST /api/v1/training/start` is a strict base start (`learning_stage` must be `base`; ShepherdGNN and unknown fields refused) and `cross_field_errors` is gone; compile still comes from Settings; the page's HGT/AMP rule went with the ShepherdGNN form (K6) (BACKLOG 54) |
+| **Run housekeeping** (delete, archive, rename, tags, compare) | — | — | — | Not implemented | — | BACKLOG 31 (compare, archive); tags are named in BACKLOG 23 as a prerequisite of the experiment phase and deferred (K5); delete and rename have no item yet |
+| **Model families** (each checkpoint under the exact parent file it records; task and stage filters) | `GET /api/v1/workspaces/{name}/family` (D8); the lists' record fields | `src/api/services/server_lists.py` (`family_rows`, `list_family`) | Models: the Task select and the By family order (K6) | Connected on the integration branch (K6), awaiting acceptance | unit tests; the K6 browser smoke on CPU (`working/scorer-retraining/README.md` §8, "K6 delivery"); no GB10 record | a fuller lineage view stays BACKLOG 52 (D) |
+| **Fine-tune children** (one to three tasks from one base, in order, through the one job runner) | `POST /api/v1/training/finetune` (D8); `train_model.py --stage finetune` per task | `src/api/services/training_manager.py` (`start_finetune`) | Research › Prepare › Fine-tune: the form, the job card and its Stop (K6) | Connected on the integration branch (K6), awaiting acceptance | unit tests; the K6 browser smoke on CPU (`working/scorer-retraining/README.md` §8, "K6 delivery"): three children in order, a Stop cancelling the queued one; no GB10 record | a stop cancels the queued children; a failed child does not stop the others |
+| **Branch training** (a model bundle parent with changed settings on its stage's list) | `scripts/train_model.py --branch-from` | `src/utils/run_plan.py` (`plan_branch`), `src/config/recipe.py` (`branch_settings`) | none | CLI only (K5) | unit tests only; no GB10 record | no API, job runner or page yet (BACKLOG 23) |
 | **One managed GPU job at a time**: the lock, its holder, refusals naming it | the job runner; `train_model.py`, `measure_scorer.py`, `setup_demo.py --train-model` | `src/utils/gpu_lock.py`, `training_manager.py` | header chip; Training and Test GPU lines | Connected | W7, W11, RW3 at `b14c4de` | a job this backend did not start is shown and refused, and stopped by pid only (by design) |
 | **Test run start and cancel**, process-group reaping | the runner's test job | `training_manager.start_test`, `cancel_test` | Test: Start test, Cancel | Connected | W8, W10 at `b14c4de` (a start run to the end, a training stop refused meanwhile; a start refused before measuring); Start test by hand at `773dc4a`; no GB10 record of a running test cancelled or of leftover group processes ended (unit and integration tests cover them) | none |
 | **Backend stop stops its job; Restart Backend** | process signals, the systemd unit; Settings | `src/api/main.py` shutdown, `backend_control.py` | Settings: Restart Backend; stopping stays an operator action | Connected (Restart); CLI only (stop) | normal stops at `b14c4de`, `f9202b6`, `773dc4a` (no job running); no GB10 record of a Restart Backend (`tests/unit/test_backend_control.py` covers it) | no GB10 record of a stop while a job runs; a SIGKILLed backend leaves its job holding the lock |
@@ -471,17 +527,19 @@ and integration tests sit beside each module.
 | **Served identity and status**; Diagnosis card, badge and drawer | `GET /api/v1/pipeline/status` | `served_identity`, `src/webui/components/served_status.py` | Diagnosis card, badge, identity drawer | Connected | M3c's acceptance at `52152e4`; probes at `b14c4de` | none |
 | **Which model serves after a start or a restart** | environment variables at startup; `/api/v1/pipeline/config` writes and reads back a file nothing else consumes | `src/api/main.py` lifespan | none | Partial | — | a Load is lost on Restart Backend; decide (BACKLOG 55, with 30 and 48) |
 | **Import a test cohort** (preview, then commit a version) | `scripts/import_cohort.py`; Test's import drawer | `src/evaluation/cohort_registry.py` | Test: Import a new version… | Connected | T1 and T4 at `2c94a4e` (T2, T3, T5, T6 measure, register, view and audit the imported version); the import drawer by hand at `773dc4a` | MyGene2 and institutional adapters, OMIM/ORPHA (BACKLOG 25) |
-| **Mode C measurement** of a registered version; every report kept | `scripts/measure_scorer.py --cohort`; the runner's test job | `measurement.run_mode_c`, `report_store.py` | Test: Start test, Result | Connected | W8 at `b14c4de`; by hand at `773dc4a` | none. Not the Diagnosis ranking |
-| **Measure a generated split** (`--split {train,val}`) | `measure_scorer.py --split` | the same | none | CLI only | M3, R5 at `b14c4de` (`--split val`); its tests | none |
-| **Register a kept report** (with `--record`, or later by hand); report store and deployment registry only; D5's block | `registration.register_report`; `scripts/record_evaluation.py`; Test | `src/evaluation/registration.py`, the ledger (schema 3) | Test: Register this report | Connected | W9, RW2 at `b14c4de`; by hand at `773dc4a` | none |
+| **Task measurement** of a registered version, by a protocol this build implements for the model's learning stage and task head (today disease, gene, patients-like-me); every report kept | `scripts/measure_scorer.py --mode <protocol> --cohort`; the runner's test job, which passes the protocol chosen as `--mode` and refuses, before it starts, one the listed record or version does not admit (K8-6a) | `src/evaluation/protocols.py`, `src/evaluation/task_measurement.py`, `report_store.py` | Test: Measurement (K8-6a), Start test, Result (K6) | Connected on the integration branch (K6); the GB10 functional acceptance of K8's agreed scope passed at `f2c2012` (2026-11-09): the disease protocol measured on CUDA; gene and patients-like-me measured on CPU only | unit and integration tests; the K6 browser smoke on CPU (`working/scorer-retraining/README.md` §8, "K6 delivery"): a disease and a gene child measured and registered; the probe's W8, W9 and RW2 measure a disease child (`792861b`), and did on the GB10 at `f2c2012` (K8's acceptance, 2026-11-09, `working/k8-acceptance-2026-11-09/`; a locally built `pyg-lib`) | a patients-like-me measurement was not run in the smoke |
+| **Mode C measurement** of a registered version; every report kept | none since K8-6a (until then `scripts/measure_scorer.py --cohort` without `--mode`, on a history file, command line only) | none since K8-6b (the executor `measurement.run_mode_c` retired); `report_store.py` keeps its reports | none since K6: Test shows a kept Mode C report and can register it | Retired (the command in K8-6a, the executor in K8-6b); kept Mode C reports and records are read by the shared readers (policy rev 15) | W8 at `b14c4de`; by hand at `773dc4a` | none: retired (`working/scorer-retraining/README.md` §7). Not the Diagnosis ranking |
+| **Measure a generated split** (`--split {train,val}`); its report and ranks are new files at `--output` that never replace one, and a used `--output` is refused (K8-6r.4) | `measure_scorer.py --split` | the same; `src/utils/file_modes.py` (`publish_bytes(..., replace=False)`) | none | CLI only | M3, R5 at `b14c4de` (`--split val`); its tests | not registered: the ledger does not yet support a generated split's data identity (it has no registered cohort version); extending it is later work |
+| **Register a kept report** (with `--record`, or later by hand); report store and deployment registry only; by the verified run, reading no other report (K8-6r.2) | `registration.register_report`; `scripts/record_evaluation.py`; Test | `src/evaluation/registration.py`, the ledger (schema 4) | Test: Register this report | Connected | W9, RW2 at `b14c4de`; by hand at `773dc4a` | none |
 | **D5 investigation notes** | Test page only (in process) | `report_store.add_investigation_note` | Test | Partial | — | not shown on Models or the loaded-model route (BACKLOG 40) |
-| **Records read back, contested state, D4 ordering, usage history** | `GET /api/v1/evaluations/loaded-model` (records, contested state); D4 ordering and the usage history: the Models page only (in process) | `record_states.py`, `src/evaluation/ordering.py`, `report_store.py` | Models (records, ordering, usage, read-only view); Diagnosis card state | Connected (records, contested state); Partial (ordering, usage: no formal entry) | T5, RT3 at `b14c4de`; by hand at `773dc4a` (one tested model) | before a non-Gradio client: move the page-resident glue (ledger placement, ranking, usage entries) into `src/api/services` |
-| **Compare the served ranking with Mode C** (Mode D, B-0.5) | `scripts/measure_scorer.py --mode D --cohort` | `src/evaluation/mode_d.py` over `DiagnosisPipeline.rank()` and `run_mode_c` | Test: Result and Models: records show a Mode D record by its own label; no page starts one (PLAN_B05 §7) | CLI only (results shown) | implemented in BACKLOG §0 batch 3; its tests and probe T7; the batch's short GB10 run passed at `be0ee1a` (2026-10-27, `working/batch3-acceptance-2026-10-27/`) | the institutional run and its protocol (8a, 8b); its report is policy Gate 1's evidence |
+| **Records read back, group description, usage history** | `GET /api/v1/evaluations/loaded-model` (records with their run, group description); the usage history: the Models page only (in process) | `record_states.py`, `report_store.py` | Models (records, usage, read-only view); Diagnosis card state | Connected (records, group description); Partial (usage: no formal entry); D4 ordering by test score retired in K8-6d | T5, RT3 at `b14c4de`; by hand at `773dc4a` (one tested model) | before a non-Gradio client: move the page-resident glue (ledger placement, usage entries) into `src/api/services` |
+| **Compare the served ranking with Mode C** (Mode D, B-0.5) | removed in K7 (`--mode D` is refused) | — (`src/evaluation/mode_d.py` deleted with probe T7) | Test: Result and Models: kept Mode D records shown as recorded by the one display for every mode (since K8-6e.2; by their own label until then); a kept Mode D report registers by the general rules under its own mode (the same run's report again answers `already_registered`) | Removed (history readable) | implemented in BACKLOG §0 batch 3; the batch's short GB10 run passed at `be0ee1a` (2026-10-27, `working/batch3-acceptance-2026-10-27/`) | none: archived (owner decision, `working/scorer-retraining/README.md` §7) |
 | **Model quality, institutional acceptance** | — | — | — | Not implemented (external) | — | data, terms and a declared protocol |
-| **Diagnose** (served score of §8, `gnn_only`, path fallback), result identity, CSV and report | `POST /api/v1/diagnose` | `src/inference/pipeline.py`, `scoring.py`, `served_identity` | Diagnosis page and exports | Connected | HTTP and the tab at `52152e4` (M3c); by hand at `f9202b6`; probes E7, R6 at `b14c4de` call the pipeline without explanations | whether serving with no model configured needs an opt-in (B-2). Batch 4 (implemented and accepted, 2026-10-27) answers each kind with its own fields: path reasoning is `path_reasoning/v1`, an SP value with no number is a status, never 0.0 (policy C9; §11.1 step 7) |
-| **Evidence and explanations** | the pipeline's explanations step | `evidence_panel.py`, `explanation_generator.py` | Evidence, Explanation, Paths | Connected (Mode A only) | by hand at `f9202b6` | evidence Mode B and INSUFFICIENT unreachable until B-1, whose target-restricted traversal is gate 3's design (§11.1 step 6); a computed summary the route drops; inert flags (BACKLOG 56) |
-| **B-1**: GNN-primary ranking over every disease; SP as an optional analysis surface; evidence for the visible page only | — | to reuse: `scoring.cosine_score_matrix` and `masked_mean_pool`, Mode C's canonical ranking (moved into `scoring.py`), `sp_index.sp_mean_distances` | — | Not implemented | — | designed (§11.1); built in BACKLOG §0 batch 5, gated by policy gates 1 and 3 (§6) |
-| **HPO search, disease details, keeping a diagnosis, `candidate_genes`** | mock routes (HPO search, disease details); `GET /api/v1/diagnose/{session_id}` answers 501; a reserved field | — | — | Not implemented | — | BACKLOG 56 |
+| **Diagnose** (the loaded task model's result kind, §8), result identity, CSV and report | `POST /api/v1/diagnose` | `src/inference/pipeline.py`, `src/models/tasks/scoring.py`, `served_identity` | Diagnosis page and exports | Connected | HTTP and the tab at `52152e4` (M3c); by hand at `f9202b6`; probes E7, R6 at `b14c4de` call the pipeline without explanations | none for the path fallback: since K7 nothing is served without a model (B-2 settled; `path_reasoning/v1` and the demo answer removed). Batch 4 (implemented and accepted, 2026-10-27) answers each kind with its own fields; an SP value with no number is a status, never 0.0 (policy C9; §11.1 step 7) |
+| **Evidence and explanations** | the pipeline's explanations step | `evidence_panel.py`, `explanation_generator.py` | Evidence, Explanation, Paths | Connected (Mode A only) | by hand at `f9202b6` | evidence Mode B retired in K8-4 (it was never reachable); a disease row with no path reads INSUFFICIENT; the target-restricted traversal is gate 3's design (§11.1 step 6); a computed summary the route drops; inert flags (BACKLOG 56) |
+| **B-1**: GNN-primary ranking over every disease; SP as an optional analysis surface; evidence for the visible page only | — | to reuse: Mode C's canonical ranking, `sp_index` for the SP surface (`sp_index` was retired in K8-5; an SP surface would compute its distances as the gene task does, `src/kg/graph_view.py` `exact_distances`, as policy rev 14 says, `docs/DISEASE_SCORER_POLICY.md` §1.2). The disease scorer becomes the model bundle's head (`working/scorer-retraining/README.md` §3) | — | Not implemented | — | **Superseded 2026-10-27:** the raw-cosine B-1 is not built. The paper-aligned disease model is served on the research platform when the A + B integration is delivered (one switch, policy rev 12); clinical adoption keeps its own conditions. The GNN-primary rule, SP as an optional surface and lazy evidence stay the target |
+| **Paper-aligned two-stage training**: KG base, `finetune`, the disease, gene and patients-like-me tasks, one model builder | `train_model.py --stage`; `POST /api/v1/training/finetune` | `src/models/bundle/`, `scripts/train_model.py` `train_bundle` | Training's base form, Fine-tune, Test by task, Models by task and family, Diagnosis by task (K6) | Built on the integration branch (K1–K8); the GB10 functional acceptance of K8's agreed scope passed at `f2c2012` (2026-11-09) for the GATv2 base and its disease child; the gene and patients-like-me heads on GPU, other architectures and the browser not accepted | unit tests; the K6 browser smoke on CPU (`working/scorer-retraining/README.md` §8, "K6 delivery"); K8's GB10 acceptance at `f2c2012` (2026-11-09, `working/k8-acceptance-2026-11-09/`): on the real data a GATv2 base trained (fp32), resumed and finetuned to a disease child, measured and served; on the demo, float16 with its scaler restored across a continuation (M2, M9); with a locally built `pyg-lib`; gene and patients-like-me on CPU only | designed 2026-10-27 (`working/scorer-retraining/README.md`, `working/PLAN_PROVENANCE_CONTRACT.md` §9, `working/PLAN_TEST_RESULTS.md` §8): work packages A–C |
+| **HPO search, disease details, keeping a diagnosis** | mock routes (HPO search, disease details); `GET /api/v1/diagnose/{session_id}` answers 501 | — | — | Not implemented | — | BACKLOG 56. `candidate_genes` is no longer reserved on the integration branch: a gene task model ranks it (K4), and Diagnosis sends it for a gene model (K6); any other model ignores it with a warning |
 | **Operator access (D8) and the read-only view** | `OPERATOR_ONLY` (`src/api/operator_access.py`) on every gated route; the dashboard's helper `src/webui/operator_access.py` in each operator handler | `src/utils/operator_access.py` (`check_operator_access`, the one check) | chips; greyed controls with the reason | Connected | W2–W6 at `b14c4de`; a read-only tab by hand at `773dc4a` | open read routes name server paths (BACKLOG 53) |
 | **Server settings** | `SHEPHERD_*` environment, read where used | `src/config/server_settings.py` | shown, never edited | Connected | probes at `b14c4de` | none |
 | **Launcher, bind guard, service unit** | `launch_shepherd.sh`, `scripts/launch/shep_launch.py`, the systemd unit | the bind rule in `src/config/server_settings.py` (`network_bind`, `startup_bind`), applied by the launcher, `src.api.main` and startup | none | CLI only | W2 at `b14c4de` starts the service with the launcher's uvicorn entry and arguments (not the bind guard's refusal or the unit, which their unit tests cover); `launch_shepherd.sh` by hand at `773dc4a` | the launcher's optional accelerators stay out of the lock; every pip install of one is constrained to `uv.lock` (exported by `uv`) and refused when that cannot be had, so none replaces a locked package (BACKLOG 50; deployment guide §4.15) |
@@ -507,23 +565,38 @@ The designs are:
 
 **What each piece does:**
 - **Mode C** measures the approved policy: raw cosine over every disease.
-- **Mode D** measures what the Diagnosis page serves today, through serving's own method, and sets it
-  beside Mode C in the same run.
+- **Mode D** measured what the Diagnosis page served in October 2026, through serving's own method,
+  and set it beside Mode C in the same run (removed in K7, below).
 - **B-1** makes the Diagnosis page serve the approved policy, behind a switch.
 
-Mode C and Mode D change no served value. B-1 does.
+Mode C changes no served value, and Mode D changed none. B-1 does.
+
+**Superseded in part, 2026-10-27.** Batch 5's changes below (B-1 with raw cosine) are not built.
+**Mode D (steps 2, 3 and 8) was removed in K7** with its executor; its rows stay as the design
+record, and its kept reports stay readable.
+- **Steps 2–5 and 7** become the paper-aligned disease model's steps in work package A:
+  - one model builder;
+  - the disease head over every disease;
+  - `selection_limit` still applies (`canonical_ranking` retired with Mode C in K8-6b; the task
+    models rank ties by average rank, E3);
+  - a new result kind for that model, not `gnn_ranking/v1` as raw cosine.
+- **The served switch** happens on the research platform when the A + B integration is delivered
+  (policy rev 12); clinical adoption keeps its own conditions.
+- **Step 6** (gate 3's evidence) keeps its design.
+- **The rows** stay as the record of the Batch 2 design
+  ([`working/scorer-retraining/README.md`](working/scorer-retraining/README.md) §8).
 
 | Step | Today: formal entry and shared function | Gap | Change (batch) | Old entry removed |
 |---|---|---|---|---|
 | 1. **Input** (phenotype terms) | `DiagnosisPipeline.validate_input` with `normalise_phenotypes` (`src/kg/phenotype_normalisation.py`); the API's `DiagnoseRequest`; for cohorts, the importer's `map_cases` | Serving maps a term three times, each handling a miss differently. A graph node with no tensor row is skipped silently. `validate_phenotypes=False` is a second behaviour | One mapping step that returns tensor rows. An unknown term is dropped and stated; a node without a row is refused (SPEC_1 §2.2). **Batch 4, implemented and accepted (2026-10-27)** | `_phenotypes_to_node_ids`; the per-score lookups; `PipelineConfig.validate_phenotypes` |
-| 2. **Model forward** | Serving: `_precompute_node_embeddings` (float32, cached). Mode C: `encode_full_graph`. Both build through `build_shepherd_model` | Serving does not expose its numerical regime | `embedding_regime` exposed and checked against Mode D's manifest (PLAN_B05 §3). **Batch 3, implemented** | none |
+| 2. **Model forward** | Serving: `_precompute_node_embeddings` (float32, cached). Mode C: `encode_full_graph` (retired in K8-6b). Both build through `build_shepherd_model` | Serving does not expose its numerical regime | `embedding_regime` exposed and checked against Mode D's manifest (PLAN_B05 §3). **Batch 3, implemented** | none |
 | 3. **Candidate set** | Serving: `_find_all_paths` (BFS and the direct finder, both with caps that depend on order). Mode C: every disease row | Statement 3 (every disease is scored) is not served; a truth discovery does not reach has no served rank | Batch 3 (implemented): Mode D measures today's gate and counts what it does not reach (`not_reached`). Batch 5: B-1 scores every disease row | Batch 5: discovery stops being the candidate gate; it stays only for the path-reasoning fallback |
 | 4. **Scoring** | Serving: `_calculate_combined_score`, `_calculate_gnn_score` and `_calculate_sp_score`, each called once per candidate, over the primitives in `src/inference/scoring.py`. Mode C: `masked_mean_pool`, `cosine_score_matrix` | The pool clamps indices. An unavailable model term or SP value becomes `0.0`. `(cos+1)/2` is rounded in float32 | Batch 4 (implemented and accepted, 2026-10-27): the model term fails closed (`MODEL_TERM_UNAVAILABLE`); SP gets statuses from one caller, `sp_index.sp_analysis_records`; the per-candidate `_calculate_combined_score` and `_calculate_sp_score` are gone. Batch 5: `score_patients` (raw cosine) | Batch 5: `pool_patient_embeddings`. The mixture helpers go when `served_mixture/v1` retires |
-| 5. **Ranking** (order, ties, cut) | Serving: a stable sort, then the `top_k` slice, inside `_score_and_rank_candidates`. Mode C: `canonical_ranking` (`src/evaluation/measurement.py`) | No untruncated served rank exists. There are two tie rules, and serving cannot import Mode C's | Batch 3 (implemented): `DiagnosisPipeline.rank()`, which `run()` calls before its cut. Batch 5: `canonical_ranking` moves into `scoring.py`; `selection_limit` cuts after scoring | Batch 5: serving's own sort, for the GNN kind |
+| 5. **Ranking** (order, ties, cut) | Serving: a stable sort, then the `top_k` slice, inside `_score_and_rank_candidates`. Mode C: `canonical_ranking` (`src/evaluation/measurement.py`, retired in K8-6b) | No untruncated served rank exists. There are two tie rules, and serving cannot import Mode C's | Batch 3 (implemented): `DiagnosisPipeline.rank()`, which `run()` calls before its cut. Batch 5: `canonical_ranking` moves into `scoring.py`; `selection_limit` cuts after scoring (not done, 2026-11-07: `canonical_ranking` retired with Mode C in K8-6b instead of moving; the task evaluators rank by average rank, `average-rank/v1`, E3) | Batch 5: serving's own sort, for the GNN kind |
 | 6. **Evidence** | `_add_explanations` calls `EvidencePanel.build_evidence`, always Mode A from discovery paths, eagerly, for the top K only | Not restricted to the target; no budget; Mode B and INSUFFICIENT unreachable; no record identity | `src/reasoning/target_evidence.py`: four declared path kinds, one fixed budget per target, computed lazily per page (SPEC_3 §7). **Batch 5, gate 3** | `EvidencePanel` and the eager step, together with the legacy result kinds |
 | 7. **Result and report** | `InferenceResult` and `DiagnosisCandidate` (`src/core/types.py`); `POST /api/v1/diagnose`; the Diagnosis page, its CSV and its report | One flat record. `confidence_score` holds two quantities. An unavailable value is written as `0.0`. The demo answer carries invented scores | The result union, discriminated by `result_kind` (SPEC_1 §2.1). Batch 4 (implemented and accepted, 2026-10-27): `served_mixture/v1`, `path_reasoning/v1`, `demo/v1`, with no alias for the removed fields. Batch 5: `gnn_ranking/v1` | `confidence_score`, `gnn_score` and the bare `sp_score`; `scripts/test_gnn_inference.py`; `generate_evidence_summary` |
-| 8. **Measurement** | Mode C: `scripts/measure_scorer.py --cohort` calls `run_mode_c`. Mode D: none | Gate 1's comparison does not exist | `run_mode_d` and `--mode D`: post-import and among-reached metrics over named case sets; the C side is `run_mode_c` itself on the same embeddings; derived readings one change at a time (PLAN_B05). **Batch 3, implemented** | none |
-| 9. **Registration and comparison** | `registration.register_report`; the ledger (D4 groups and the D5 key, both including `mode`); `report_store`'s usage history; the Test and Models pages | Labels assume Mode C; the usage history has no mode | Mode D's values go in the existing manifest fields, with no new field; labels come from each record; the usage history records a mode (PLAN_B05 §6). **Batch 3, implemented**; the ordering refuses a non-Mode-C scoring group itself (PLAN_B05 §11) | none: no ledger rule changes |
+| 8. **Measurement** | Mode C: `scripts/measure_scorer.py --cohort` calls `run_mode_c` (the command retired in K8-6a, the executor in K8-6b). Mode D: none | Gate 1's comparison does not exist | `run_mode_d` and `--mode D`: post-import and among-reached metrics over named case sets; the C side is `run_mode_c` itself on the same embeddings; derived readings one change at a time (PLAN_B05). **Batch 3, implemented** | none |
+| 9. **Registration and comparison** | `registration.register_report`; the ledger (D4 groups and the D5 key, both including `mode`); `report_store`'s usage history; the Test and Models pages | Labels assume Mode C; the usage history has no mode | Mode D's values go in the existing manifest fields, with no new field; labels come from each record; the usage history records a mode (PLAN_B05 §6). **Batch 3, implemented**; since K8-6e.2 (2026-11-07) the C and D labels are gone and every mode without words of its own is shown as recorded; the ordering refused a non-Mode-C scoring group itself (PLAN_B05 §11; the ordering retired in K8-6d) | none: no ledger rule changes |
 
 **Proving correctness without rerunning old acceptances:**
 - **Golden tests** pin what must not move: serving's output across batches 3 and 4, and Mode C's
@@ -547,8 +620,8 @@ it replaces an old entry**.
 - **The front end never decides** model compatibility, continuation rules, registration
   eligibility, operator access or GPU use. It asks the shared implementation (`server_lists`,
   `run_plan`, `register_report` and `report_state`, `operator_access`, the job runner) and shows the
-  answer. A kept, registered or contested state comes from the report store's readers, never from a
-  job's exit status.
+  answer. A kept or registered state, and how a group's runs compare, come from the report store's
+  readers, never from a job's exit status.
 - **New pages use the same lists, readers, checks and job runner** as the existing ones: one
   checkpoint reader, one model list, one reload, one served-status reader, one device resolver per
   role, allocator settings through `runtime_presets` only. No editor for `SHEPHERD_*` settings.
@@ -561,16 +634,21 @@ it replaces an old entry**.
   archived (contract decision 2); an old plan's compatibility passage is checked against it first.
 - **No framework ahead of a user**: no plugin system, general job framework or free drag-and-drop
   dashboard as a prerequisite.
-- **One disease scorer** (Batch 2 design, §11.1). Every ranking that claims the approved policy, B-1's
-  serving and Mode C alike, goes through `score_patients` and `canonical_ranking` in
-  `src/inference/scoring.py`. There is no copy and no test-only scorer. The trainer's validation
-  scorer stays separately written, on purpose (the `scorer-independence` contract).
-- **The served ranking is measured through serving's own method.** Mode D calls
-  `DiagnosisPipeline.rank()`, which `run()` itself calls. There is no second candidate construction,
-  and Modes A and B are not revived.
+- **One disease scorer** (Batch 2 design, §11.1). The paper-aligned disease model scores a patient
+  through one function in validation, measurement and serving (`patient_vectors` and the task
+  head's scores, `src/models/tasks/scoring.py`); Mode C's raw-cosine ranking (`canonical_ranking`)
+  retired in K8-6b. There is no copy and no test-only scorer. *(2026-11-08, superseded: "The
+  trainer's validation scorer stays separately written, on purpose (the `scorer-independence`
+  contract)" no longer holds. That scorer retired with the ShepherdGNN training path in K8-7, with
+  the contract and the test it protected; a finetuned task's validation scores through the same
+  `src/models/tasks/scoring.py`, and the oracle tests are hand-computed.)*
+- **The served ranking was measured through serving's own method.** Mode D called
+  `DiagnosisPipeline.rank()`, which `run()` itself calls (removed in K7 with Mode D). There was no
+  second candidate construction, and Modes A and B are not revived.
 - **Evidence never touches the ranking.** It takes an immutable result and returns records.
-  `src.inference.scoring` never imports `src.reasoning` (the `ranking-without-evidence` contract,
-  batch 5).
+  The task scorers (`src.models.tasks`) never import `src.reasoning`: the layers contract keeps
+  `src.models` below it. *(2026-11-08: `src.inference.scoring`, which this rule named, was removed
+  in K8-11.)*
 - **A value that could not be computed is a status, never a number**, in every result kind, export
   and measurement.
 - **Dependency versions**: the formal deployment installs the currently verified set, its versions kept

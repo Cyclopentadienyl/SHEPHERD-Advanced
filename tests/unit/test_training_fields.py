@@ -5,21 +5,20 @@ Groups:
   * self-consistency — torch-free, always run: the spec (incl. target policy and cross-field
     rules) is well-formed and self-validating.
   * API parity — pin CURRENT Pydantic behavior mechanically (defaults + ge/gt/le/lt + coverage).
-  * WebUI collect parity — drive _collect_config and pin exposure, defaults, and EVERY _num guard.
   * projection parity — every projects_to target attribute exists on the real config class.
 Parity groups are importorskip-guarded so they skip where fastapi/pydantic/gradio/torch are
 absent and pin reality where those are installed.
+The WebUI collect parity group went with the retired ShepherdGNN form (K6): the base form
+reads `recipe.BASE` and checks values with `value_problem` (tests/unit/test_training_page.py).
 """
 import ast
 import dataclasses
-import inspect
 from pathlib import Path
 
 import pytest
 
 from src.config import training_fields as tf
 
-WIRED_IN_PR4B = ("temperature", "label_smoothing", "margin")  # were no-ops until PR-4b
 DEVICE_ACCEPTS = ("auto", "cpu", "mps", "cuda", "cuda:0", "cuda:1", "cuda:7")
 # Trailing-newline cases matter: Python's ``$`` matches just before a final newline, so a
 # ``re.match`` guard would let "cuda\n" through and it would only fail deep in the subprocess.
@@ -27,8 +26,6 @@ DEVICE_REJECTS = (
     "gpu0", "cuda:", "cuda:x", "CUDA", "", "cuda:1:2",
     "cuda\n", "cuda:1\n", "cpu\n", " mps", "cuda ",
 )
-STR_PARAMS = {"batch_size", "hidden_dim", "num_heads"}  # passed to _collect_config as strings
-NUM_GUARDED = tuple(f for f in tf.FIELDS if f.webui_num_guarded)
 
 
 # --------------------------------------------------------------------------- self-consistency
@@ -46,7 +43,7 @@ def test_kinds_and_scopes_valid():
 def test_constraint_dicts_are_well_formed():
     """Bound dicts use only ge/gt/le/lt and never mix inclusive with exclusive on a side."""
     for f in tf.FIELDS:
-        for label in ("valid", "ui", "current_api", "item_valid"):
+        for label in ("valid", "current_api", "item_valid"):
             d = getattr(f, label)
             if d is None:
                 continue
@@ -58,49 +55,9 @@ def test_constraint_dicts_are_well_formed():
             assert lo <= hi, f"{f.name}: valid lo {lo} > hi {hi}"
 
 
-def test_ui_within_valid():
-    """ui ⊆ valid, honouring exclusive bounds — except bound keys declared ui_wider_than_valid."""
-    for f in tf.FIELDS:
-        vlo, vlo_x, vhi, vhi_x = tf.bounds(f.valid)
-        ulo, ulo_x, uhi, uhi_x = tf.bounds(f.ui)
-        if vlo is not None and ulo is not None and "ge" not in f.ui_wider_than_valid \
-                and "gt" not in f.ui_wider_than_valid:
-            assert ulo >= vlo, f"{f.name}: ui lo {ulo} < valid lo {vlo}"
-            if ulo == vlo and vlo_x:
-                assert ulo_x, f"{f.name}: valid excludes {vlo} but ui includes it"
-        if vhi is not None and "le" not in f.ui_wider_than_valid and "lt" not in f.ui_wider_than_valid:
-            if f.ui is not None:
-                assert uhi is not None, f"{f.name}: valid caps at {vhi} but ui has no upper bound"
-                assert uhi <= vhi, f"{f.name}: ui hi {uhi} > valid hi {vhi}"
-                if uhi == vhi and vhi_x:
-                    assert uhi_x, f"{f.name}: valid excludes {vhi} but ui includes it"
-        for c in (f.ui_choices or ()):
-            if isinstance(c, (int, float)) and not isinstance(c, bool):
-                if vlo is not None:
-                    assert c > vlo if vlo_x else c >= vlo, f"{f.name}: ui choice {c} below valid"
-                if vhi is not None:
-                    assert c < vhi if vhi_x else c <= vhi, f"{f.name}: ui choice {c} above valid"
-
-
-def test_declared_ui_wider_than_valid_entries_are_real():
-    """The escape hatch cannot be stale: each declared key must actually be looser than valid."""
-    for f in tf.FIELDS:
-        for key in f.ui_wider_than_valid:
-            assert key in tf.BOUND_KEYS, f"{f.name}: bad ui_wider_than_valid key {key}"
-            vlo, _, vhi, _ = tf.bounds(f.valid)
-            ulo, _, uhi, _ = tf.bounds(f.ui)
-            if key in ("le", "lt"):
-                assert vhi is not None and uhi is None or (uhi is not None and vhi is not None and uhi > vhi), (
-                    f"{f.name}: declared ui wider on {key} but it is not"
-                )
-            else:
-                assert vlo is not None and ulo is None or (ulo is not None and vlo is not None and ulo < vlo), (
-                    f"{f.name}: declared ui wider on {key} but it is not"
-                )
-
-
 def test_no_field_is_marked_ineffective():
-    """PR-4b wired the last three no-op knobs; nothing should be accepted-but-ineffective now."""
+    """Nothing is accepted-but-ineffective (PR-4b wired the last no-op knobs, which
+    retired with the ShepherdGNN path in K8-7)."""
     assert {f.name for f in tf.FIELDS if not f.effective} == set()
 
 
@@ -111,30 +68,18 @@ def test_ineffective_fields_would_not_be_projected():
             assert f.projects_to is None, f"{f.name}: no-op field must not declare a projection"
 
 
-def test_pr4b_loss_knobs_are_effective_and_projected():
-    for name in WIRED_IN_PR4B:
-        f = tf.by_name(name)
-        assert f.effective, f"{name} must be effective after PR-4b"
-        assert f.projects_to == f"LossConfig.{name}", f"{name} must project into LossConfig"
-
-
 # ------------------------------------------------- wiring parity (source-level, torch-free)
 def _train_model_source() -> ast.Module:
     path = Path(__file__).resolve().parents[2] / "scripts" / "train_model.py"
     return ast.parse(path.read_text(encoding="utf-8"))
 
 
-def _call_kwargs(tree: ast.Module, func_name: str) -> dict:
-    """Return {kwarg: source-expression} for the first call to func_name in the module."""
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Call) and getattr(node.func, "id", None) == func_name:
-            return {kw.arg: ast.unparse(kw.value) for kw in node.keywords if kw.arg}
-    return {}
-
-
-def test_trainconfig_declares_every_projected_field():
+def test_trainconfig_declares_every_spec_field():
     """Source-level: a field only has runtime effect if TrainConfig has the attribute
-    (load_config copies YAML keys behind a hasattr gate)."""
+    (load_config copies YAML keys behind a hasattr gate). Every spec field, not only a
+    projecting one: the training service previews a continuation over the spec's names
+    (`training_fields.names()`) and the process plans it over TrainConfig's fields, so
+    the two must be one set (with `test_trainconfig_defaults_match_spec`, the reverse)."""
     tree = _train_model_source()
     declared = {
         t.target.id
@@ -145,25 +90,10 @@ def test_trainconfig_declares_every_projected_field():
     }
     assert declared, "could not locate TrainConfig field declarations"
     for f in tf.FIELDS:
-        if f.projects_to:
-            assert f.name in declared, (
-                f"{f.name} projects to {f.projects_to} but TrainConfig does not declare it — "
-                f"load_config's hasattr gate would silently drop it"
-            )
-
-
-def test_projected_loss_fields_reach_the_lossconfig_call():
-    """Declaring the field on TrainConfig is not enough: it must also be passed into
-    LossConfig(...), otherwise the value is carried and then ignored (the PR-4b bug)."""
-    kwargs = _call_kwargs(_train_model_source(), "LossConfig")
-    assert kwargs, "could not locate the LossConfig(...) construction in train_model.py"
-    for f in tf.FIELDS:
-        if f.projects_to and f.projects_to.startswith("LossConfig."):
-            attr = f.projects_to.split(".", 1)[1]
-            assert attr in kwargs, f"{f.name}: LossConfig(...) never receives {attr}"
-            assert kwargs[attr] == f"config.{f.name}", (
-                f"{f.name}: LossConfig({attr}=...) is wired to {kwargs[attr]!r}, expected config.{f.name}"
-            )
+        assert f.name in declared, (
+            f"{f.name} is a spec field but TrainConfig does not declare it — load_config's "
+            f"hasattr gate would refuse it and a continuation's preview would differ"
+        )
 
 
 def test_projection_rule_is_exception_based():
@@ -175,7 +105,7 @@ def test_projection_rule_is_exception_based():
 
 
 def test_closed_enums_have_choices_and_device_has_a_pattern():
-    for name in ("conv_type", "scheduler_type", "amp_dtype"):
+    for name in ("scheduler_type", "amp_dtype"):
         f = tf.by_name(name)
         assert f.choices and f.valid_pattern is None
     dev = tf.by_name("device")
@@ -205,13 +135,6 @@ def test_cross_field_rules_are_structured_and_reference_real_fields():
                     f"{rule.name}: guard values {allowed} not in {guard_field} choices {spec_choices}"
                 )
         assert rule.enforced_in, f"{rule.name}: must record where it is enforced"
-
-
-def test_divisibility_rule_is_conditional_on_conv_type():
-    """Regression guard for the approved refinement: sage must NOT be subject to divisibility."""
-    rule = next(r for r in tf.CROSS_FIELD_RULES if r.name == "hidden_dim_divisible_by_num_heads")
-    assert rule.kind == "divisible_by"
-    assert set(rule.when["conv_type"]) == {"hgt", "gat"}, "sage takes no heads — must be excluded"
 
 
 def test_accessors_and_bounds_helper():
@@ -251,20 +174,58 @@ def _api_model():
     return TrainingStartRequest
 
 
+#: The base start's required fields (K7, TM11): the workspace and the stage.
+API_REQUIRED = {"data_dir", "learning_stage"}
+#: The base start's run and continuation keys, beside the recipe's base settings.
+API_RUN_KEYS = {"data_dir", "learning_stage", "run_name", "device", "resume_from",
+                "extend_epochs"}
+
+
+def _base(**fields):
+    """A valid base start with `fields` over it."""
+    return _api_model()(**{"data_dir": "data/workspaces/x", "learning_stage": "base", **fields})
+
+
+def test_api_fields_are_the_base_start_s():
+    """K7 (TM11): POST /training/start is a strict base start: the run and
+    continuation keys and exactly the reference recipe's base settings
+    (`recipe.BASE`, the WebUI base form's), no ShepherdGNN field; the
+    workspace and the stage are required."""
+    from src.config.recipe import BASE
+
+    mf = _api_model().model_fields
+    assert set(mf) == API_RUN_KEYS | set(BASE)
+    assert {name for name, field in mf.items() if field.is_required()} == API_REQUIRED
+
+
 def test_api_defaults_match_spec():
+    """A recipe setting is unset by default: the training process fills the
+    recipe's value and records it as the recipe's, never a default of the
+    request. The other fields' defaults are the spec's; the required ones have
+    none."""
+    from src.config.recipe import BASE
+
     mf = _api_model().model_fields
     for f in tf.FIELDS:
         if f.current_api is None:
             assert f.name not in mf, f"{f.name} should not be an API field"
             continue
         assert f.name in mf, f"{f.name} missing from TrainingStartRequest"
-        assert _api_default(mf[f.name]) == _spec_default(f), (
-            f"{f.name} default drift: API {_api_default(mf[f.name])} != spec {_spec_default(f)}"
+        if f.name in API_REQUIRED:
+            assert mf[f.name].is_required(), f"{f.name} should be required"
+            continue
+        expected = None if f.name in BASE else _spec_default(f)
+        assert _api_default(mf[f.name]) == expected, (
+            f"{f.name} default drift: API {_api_default(mf[f.name])} != {expected}"
         )
 
 
 def test_api_constraints_match_spec():
-    """Mechanical: the spec's current_api dict must equal the live Pydantic ge/gt/le/lt."""
+    """Mechanical: the spec's current_api dict must equal the live Pydantic
+    ge/gt/le/lt, and for a recipe setting it is the field's target policy
+    (`valid`), which the job runner's one check applies again (`value_problem`)."""
+    from src.config.recipe import BASE
+
     mf = _api_model().model_fields
     for f in tf.FIELDS:
         if f.current_api is None:
@@ -273,6 +234,8 @@ def test_api_constraints_match_spec():
         assert actual == f.current_api, (
             f"{f.name} API constraint drift: model {actual} != spec current_api {f.current_api}"
         )
+        if f.name in BASE and f.valid is not None:
+            assert f.current_api == f.valid, f"{f.name}: the API's bounds are not the policy's"
 
 
 def test_spec_covers_every_api_field():
@@ -287,86 +250,96 @@ def _validation_error():
     return ValidationError
 
 
+def _literal_values(annotation) -> set:
+    """The values of the Literal in `annotation`, an Optional one included."""
+    from typing import Literal, get_args, get_origin
+
+    if get_origin(annotation) is Literal:
+        return set(get_args(annotation))
+    return set().union(*(_literal_values(a) for a in get_args(annotation)
+                         if a is not type(None)))
+
+
 def test_api_enforces_declared_choices():
     """Every field declaring current_api_choices must reject a value outside the enum."""
-    Model, VE = _api_model(), _validation_error()
+    VE = _validation_error()
     enforced = [f for f in tf.FIELDS if f.current_api_choices]
-    assert {f.name for f in enforced} == {"conv_type", "scheduler_type", "amp_dtype"}
+    assert {f.name for f in enforced} == {"learning_stage", "scheduler_type"}
     for f in enforced:
         for good in f.current_api_choices:
-            Model(**{f.name: good})                       # every declared choice is accepted
+            _base(**{f.name: good})                       # every declared choice is accepted
         with pytest.raises(VE):
-            Model(**{f.name: "definitely-not-a-valid-choice"})
+            _base(**{f.name: "definitely-not-a-valid-choice"})
 
 
 def test_api_enum_sets_exactly_equal_the_spec():
     """guard-not-derive: the live Literal must be exactly current_api_choices — not merely a
     superset that happens to accept the declared values."""
-    from typing import get_args
-
     mf = _api_model().model_fields
     for f in tf.FIELDS:
         if not f.current_api_choices:
             continue
-        live = get_args(mf[f.name].annotation)
+        live = _literal_values(mf[f.name].annotation)
         assert live, f"{f.name}: API annotation is not a Literal enum"
-        assert set(live) == set(f.current_api_choices), (
+        assert live == set(f.current_api_choices), (
             f"{f.name} enum drift: API {sorted(live)} != spec {sorted(f.current_api_choices)}"
         )
 
 
 def test_api_enforces_device_grammar_and_keeps_multi_gpu():
     """device is a PyTorch grammar, not a 3-value enum: cuda:N must stay available."""
-    Model, VE = _api_model(), _validation_error()
+    VE = _validation_error()
     spec = tf.by_name("device")
     assert spec.current_api_pattern == spec.valid_pattern
     for good in DEVICE_ACCEPTS:
-        assert Model(device=good).device == good
+        assert _base(device=good).device == good
     for bad in DEVICE_REJECTS:
         with pytest.raises(VE):
-            Model(device=bad)
+            _base(device=bad)
 
 
-def test_api_head_divisibility_is_conditional_on_conv_type():
-    """hgt/gat require hidden_dim % num_heads == 0; sage must remain exempt."""
-    Model, VE = _api_model(), _validation_error()
-    for conv in ("hgt", "gat"):
-        with pytest.raises(VE):
-            Model(conv_type=conv, hidden_dim=100, num_heads=8)
-        Model(conv_type=conv, hidden_dim=256, num_heads=8)      # divisible -> fine
-    # SAGEConv takes no heads, so a non-divisible pair is legitimate:
-    assert Model(conv_type="sage", hidden_dim=100, num_heads=8).hidden_dim == 100
+@pytest.mark.parametrize("field, value", [
+    ("learning_stage", "finetune"), ("learning_stage", None),
+    ("conv_type", "gat"), ("hidden_dim", 64), ("num_heads", 4), ("num_layers", 2),
+    ("num_workers", 0), ("min_lr_ratio", 0.1), ("amp_dtype", "bfloat16"),
+    ("diagnosis_weight", 1.0), ("task", "disease"), ("finetune_from", "base.pt"),
+    ("model_spec", {}), ("run_dir", "/elsewhere"), ("compile", True), ("split_seed", 1),
+    ("candidate_sample_size", 8), ("unknown_setting", 1),
+])
+def test_the_api_takes_a_base_start_only(field, value):
+    """K7 (TM11): a stage other than base, a ShepherdGNN field, a finetune's
+    or a run key the API does not offer, and an unknown field are refused by
+    the request itself, never dropped."""
+    VE = _validation_error()
+    with pytest.raises(VE):
+        _base(**{field: value})
+    with pytest.raises(VE):
+        _api_model()(data_dir="data/workspaces/x")      # the stage is required
 
 
 def test_api_enforces_num_neighbors_policy():
-    Model, VE = _api_model(), _validation_error()
+    VE = _validation_error()
     spec = tf.by_name("num_neighbors")
     assert spec.current_api_item == spec.item_valid
     assert spec.current_api_min_length == spec.min_length
-    assert Model(num_neighbors=[15, 10, 5]).num_neighbors == [15, 10, 5]
+    assert _base(num_neighbors=[15, 10, 5]).num_neighbors == [15, 10, 5]
     with pytest.raises(VE):
-        Model(num_neighbors=[])          # min_length
+        _base(num_neighbors=[])          # min_length
     with pytest.raises(VE):
-        Model(num_neighbors=[15, 0])     # element >= 1
+        _base(num_neighbors=[15, 0])     # element >= 1
     with pytest.raises(VE):
-        Model(num_neighbors=[-1])
-
-
-def test_api_onecycle_rule_still_enforced():
-    """The pre-existing cross-field rule must survive the PR-4c changes."""
-    Model, VE = _api_model(), _validation_error()
-    with pytest.raises(VE):
-        Model(scheduler_type="onecycle", min_lr_ratio=0.0)
-    Model(scheduler_type="cosine", min_lr_ratio=0.0)             # decay-to-zero stays legal
-    Model(scheduler_type="onecycle", min_lr_ratio=0.01)
+        _base(num_neighbors=[-1])
 
 
 def test_cross_field_rules_report_where_they_are_enforced():
-    """After PR-4c no rule may still be marked as merely planned."""
+    """After PR-4c no rule may still be marked as merely planned: each is
+    enforced now (the head-divisibility rule, which nothing enforced since K7,
+    retired with the ShepherdGNN fields in K8-7)."""
     for rule in tf.CROSS_FIELD_RULES:
         assert rule.enforced_in.startswith("current"), (
             f"{rule.name}: still marked '{rule.enforced_in}' — PR-4c should have enforced it"
         )
+    assert [r.name for r in tf.CROSS_FIELD_RULES if not r.enforced_in.startswith("current")] == []
 
 
 def test_cli_device_accepts_pytorch_grammar():
@@ -388,93 +361,6 @@ def test_cli_device_arg_matches_the_api_grammar():
     for bad in DEVICE_REJECTS:
         with pytest.raises(argparse.ArgumentTypeError):
             mod._device_arg(bad)
-
-
-# --------------------------------------------------------------------- WebUI collect parity (pin)
-def _training_console():
-    pytest.importorskip("gradio")
-    pytest.importorskip("pandas")
-    from src.webui.components import training_console as tc
-    return tc
-
-
-def _default_collect_kwargs(tc):
-    """Build _collect_config kwargs from the spec (composites use their widget defaults)."""
-    kw = {}
-    for p in inspect.signature(tc._collect_config).parameters:
-        if p == "amp_mode":
-            kw[p] = "float16"
-        elif p == "num_neighbors_str":
-            kw[p] = "15, 10, 5"
-        else:
-            assert p in tf.names(), f"_collect_config param {p} is not a spec field"
-            d = tf.by_name(p).default
-            kw[p] = str(d) if p in STR_PARAMS else d
-    return kw
-
-
-def test_webui_collect_exposure_and_defaults(monkeypatch):
-    tc = _training_console()
-    monkeypatch.setattr(tc, "load_runtime_settings", lambda *a, **k: {})
-    cfg = tc._collect_config(**_default_collect_kwargs(tc))
-
-    assert set(cfg) == {f.name for f in tf.FIELDS if f.webui_exposed}
-    for key, val in cfg.items():
-        expected = _spec_default(tf.by_name(key))
-        got = list(val) if isinstance(val, (list, tuple)) else val
-        assert got == expected, f"{key}: collect default {got} != spec default {expected}"
-
-
-def test_every_num_guarded_field_is_actually_guarded(monkeypatch):
-    """The spec claims _collect_config routes these through _num — verify all of them, both sides."""
-    tc = _training_console()
-    monkeypatch.setattr(tc, "load_runtime_settings", lambda *a, **k: {})
-    base = _default_collect_kwargs(tc)
-    assert len(NUM_GUARDED) == 9, "expected 9 _num-guarded fields"
-
-    checked = 0
-    for f in NUM_GUARDED:
-        lo, lo_x, hi, hi_x = tf.bounds(f.ui)
-        assert lo is not None or hi is not None, f"{f.name}: num-guarded but no ui bound declared"
-        cast = int if f.kind == "int" else float
-        cases = []
-        if lo is not None:
-            cases.append(cast(lo) if lo_x else cast(lo - 1))       # exclusive -> the bound itself
-        if hi is not None:
-            cases.append(cast(hi) if hi_x else cast(hi + 1))
-        for bad in cases:
-            with pytest.raises(tc.ConfigValidationError):
-                tc._collect_config(**{**base, f.name: bad})
-            checked += 1
-    assert checked >= len(NUM_GUARDED), "every guarded field must be exercised at least once"
-
-
-def test_webui_num_neighbors_fails_loud_instead_of_silent_fallback(monkeypatch):
-    """PR-4c: an unparseable/empty/illegal fan-out must raise (toast), not silently become
-    the default — starting a run with a fan-out the user never asked for is worse than a toast."""
-    tc = _training_console()
-    monkeypatch.setattr(tc, "load_runtime_settings", lambda *a, **k: {})
-    base = _default_collect_kwargs(tc)
-    for bad in ("not-numbers", "", "   ", "15, x, 5", "0, 10", "-1"):
-        with pytest.raises(tc.ConfigValidationError):
-            tc._collect_config(**{**base, "num_neighbors_str": bad})
-    # a valid list still parses
-    cfg = tc._collect_config(**{**base, "num_neighbors_str": "20, 10"})
-    assert cfg["num_neighbors"] == [20, 10]
-
-
-def test_num_guarded_fields_accept_their_boundary_values(monkeypatch):
-    """Guards must not be over-strict: the declared ui bounds themselves are accepted."""
-    tc = _training_console()
-    monkeypatch.setattr(tc, "load_runtime_settings", lambda *a, **k: {})
-    base = _default_collect_kwargs(tc)
-    for f in NUM_GUARDED:
-        lo, lo_x, hi, _ = tf.bounds(f.ui)
-        if lo is None or lo_x:      # exclusive lower bound has no inclusive edge to test
-            continue
-        cast = int if f.kind == "int" else float
-        cfg = tc._collect_config(**{**base, f.name: cast(lo)})
-        assert cfg[f.name] == cast(lo), f"{f.name}: boundary value {lo} should be accepted"
 
 
 # ------------------------------------------------------------------- projection parity (pin)
@@ -508,15 +394,9 @@ def _field_names(cls) -> set:
 def _projection_classes():
     pytest.importorskip("torch")
     pytest.importorskip("torch_geometric")
-    from src.models.gnn.shepherd_gnn import ShepherdGNNConfig
-    from src.kg.data_loader import DataLoaderConfig
     from src.training.trainer import TrainerConfig
-    from src.training.loss_functions import LossConfig
     return {
-        "ShepherdGNNConfig": ShepherdGNNConfig,
-        "DataLoaderConfig": DataLoaderConfig,
         "TrainerConfig": TrainerConfig,
-        "LossConfig": LossConfig,
         "TrainConfig": _load_trainconfig(),
     }
 
@@ -549,6 +429,108 @@ def test_trainconfig_defaults_match_spec():
         got = list(tc_default) if isinstance(tc_default, (list, tuple)) else tc_default
         assert got == spec_default, f"{name}: TrainConfig default {got} != spec default {spec_default}"
 
-    # PR-4b: the formerly-dropped loss knobs must now exist here, with LossConfig's defaults.
-    for n in WIRED_IN_PR4B:
-        assert n in fields, f"{n} missing from TrainConfig — PR-4b wiring regressed"
+
+# --------------------------------------------------------- the released rules (pin per version)
+#: Released `TRAINING_RULES_VERSION` -> the sorted names of the learning settings a
+#: model bundle run of those rules reads, as a literal table. A released entry is
+#: never edited: a change of what a setting means or which settings a run reads
+#: raises the version and brings its own entry (src/utils/checkpoint_io.py).
+RULES_LEARNING_SETTINGS = {
+    1: ("amp_dtype", "batch_size", "candidate_sample_size", "candidate_upsample_size",
+        "early_stopping_patience", "eval_every_n_epochs", "gradient_accumulation_steps",
+        "learning_rate", "learning_stage", "lp_loss_weight", "max_grad_norm", "min_lr_ratio",
+        "model_spec", "num_epochs", "num_neighbors", "save_top_k", "scheduler_type", "seed",
+        "sparse_sample_size", "split_seed", "task", "task_loss_weight", "use_amp",
+        "warmup_steps", "weight_decay"),
+}
+
+
+def _released_entry():
+    from src.utils.checkpoint_io import TRAINING_RULES_VERSION
+
+    assert TRAINING_RULES_VERSION in RULES_LEARNING_SETTINGS, (
+        f"rules {TRAINING_RULES_VERSION} has no entry: a new rules version brings its own")
+    entry = RULES_LEARNING_SETTINGS[TRAINING_RULES_VERSION]
+    assert list(entry) == sorted(set(entry))
+    return set(entry)
+
+
+def test_the_learning_settings_are_the_released_rules_entry():
+    """TrainConfig's fields, less the operational and location ones, are
+    exactly the current rules' entry: a learning setting added, removed or
+    renamed without a new rules version fails here."""
+    from src.utils.run_plan import OPERATIONAL_FIELDS
+
+    train_model = _load_train_model()
+    fields = {f.name for f in dataclasses.fields(train_model.TrainConfig)}
+    assert fields - OPERATIONAL_FIELDS - train_model.LOCATION_FIELDS == _released_entry()
+
+
+def test_the_recipe_and_the_run_definition_provide_the_released_rules_entry():
+    """Every setting of the entry has a source a new run takes it from: the
+    stage recipes, the branch companions, or the run's own definition (its
+    stage, task, model spec, split seed, evaluation cadence and kept files)."""
+    from src.config import recipe
+
+    provided = set(recipe.BASE) | set(recipe.FINETUNE) | set(recipe.BRANCH_COMPANIONS)
+    for task in recipe.FINETUNE_TASKS.values():
+        provided |= set(task)
+    provided |= {"eval_every_n_epochs", "save_top_k", "split_seed", "model_spec",
+                 "learning_stage", "task"}
+    assert provided == _released_entry()
+
+
+def test_every_released_learning_setting_has_a_field_spec():
+    assert _released_entry() <= set(tf.names())
+
+
+def test_a_value_is_checked_by_its_field_spec_without_coercion():
+    """`value_problem` (the Fine-tune start's value check): kinds strictly (a
+    bool is not a number, a string never coerced), bounds, choices and list
+    items, the gene task's "every neighbour" hop (-1) included."""
+    from src.config.training_fields import value_problem
+
+    assert value_problem("num_epochs", 3) is None
+    assert value_problem("learning_rate", 1) is None, "an int is a float's value"
+    assert value_problem("num_neighbors", [-1, 3]) is None
+    assert value_problem("early_stopping_patience", None, allow_none=True) is None
+    for name, value, fragment in (
+            ("num_epochs", True, "must be an integer, not True"),
+            ("num_epochs", "3", "must be an integer, not '3'"),
+            ("use_amp", 1, "must be true or false, not 1"),
+            ("num_epochs", 0, "num_epochs must be between 1 and 10000, not 0."),
+            ("num_neighbors", [3, -2], "num_neighbors items must be 1 or more (or -1, every "
+                                       "neighbour), not [3, -2]."),
+            ("num_neighbors", [], "needs at least"),
+            ("num_epochs", None, "must be set, not null")):
+        problem = value_problem(name, value)
+        assert problem is not None and fragment in problem, (name, value, problem)
+
+
+def test_a_value_outside_its_bounds_is_refused_with_the_bounds_in_words():
+    """K6 closing smoke: the base form and its Start said "Early stopping
+    patience 0 is outside {'ge': 1}", a raw dict. The bound is said in words,
+    from the same bounds the check reads (`bounds`), for every kind of bound."""
+    from src.config.training_fields import FIELDS, bound_words, bounds, value_problem
+
+    assert value_problem("early_stopping_patience", 0) == (
+        "early_stopping_patience must be 1 or more, not 0.")
+    assert value_problem("min_lr_ratio", 1.5) == "min_lr_ratio must be between 0 and 1, not 1.5."
+    assert value_problem("learning_rate", 0.0) == (
+        "learning_rate must be more than 0 and at most 1, not 0.0.")
+    assert value_problem("seed", -1) == "seed must be between 0 and 4294967295, not -1."
+    assert [bound_words(c) for c in ({"ge": 1}, {"gt": 0}, {"le": 5}, {"lt": 5},
+                                     {"ge": 0.0, "le": 1.0}, {"gt": 0, "le": 1.0},
+                                     {"ge": 1, "lt": 5}, {"gt": 0, "lt": 1},
+                                     {"ge": 0.0, "le": 0.9})] == [
+        "1 or more", "more than 0", "5 or less", "less than 5", "between 0 and 1",
+        "more than 0 and at most 1", "at least 1 and less than 5", "more than 0 and less than 1",
+        "between 0 and 0.9"]
+    for spec in FIELDS:
+        for constraint in (spec.valid, spec.item_valid):
+            if constraint:
+                words = bound_words(constraint)
+                assert "{" not in words and "'" not in words, (spec.name, words)
+                lo, _lo_open, hi, _hi_open = bounds(constraint)
+                assert all(str(v if not float(v).is_integer() else int(v)) in words
+                           for v in (lo, hi) if v is not None), (spec.name, words)

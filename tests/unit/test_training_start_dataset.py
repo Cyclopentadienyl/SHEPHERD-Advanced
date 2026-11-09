@@ -46,6 +46,16 @@ def workspace(built, tmp_path):
     return ws
 
 
+#: The smallest base start the route takes (K7, TM11: its workspace and stage).
+BASE_START = {"data_dir": "data/workspaces/x", "learning_stage": "base"}
+
+
+def _base(ws: Path) -> dict:
+    """The smallest base start on `ws` (TM12: a new run the runner starts is a
+    base)."""
+    return {"data_dir": str(ws), "learning_stage": "base"}
+
+
 def _fingerprint(ws: Path) -> str:
     from src.kg.artifacts import read_split_manifest
 
@@ -70,7 +80,7 @@ def _nothing_happened(manager: TrainingManager, popen, ws: Path, before: set) ->
 def test_the_dataset_shown_is_still_the_workspaces_one_so_the_run_starts(workspace):
     manager = TrainingManager()
     with patch("subprocess.Popen", return_value=FakeProcess(pid=7)) as popen:
-        result = manager.start_training({"data_dir": str(workspace)},
+        result = manager.start_training(_base(workspace),
                                         expected_dataset_fingerprint=_fingerprint(workspace))
     assert result["success"] is True and popen.call_count == 1
     assert Path(result["run_dir"]).parent.parent.parent == workspace
@@ -84,7 +94,7 @@ def test_a_dataset_that_changed_since_it_was_shown_is_refused_before_anything_ha
     manager = TrainingManager()
     with patch("subprocess.Popen") as popen, \
             patch("tempfile.mkstemp", side_effect=AssertionError("a config was written")):
-        result = manager.start_training({"data_dir": str(workspace)},
+        result = manager.start_training(_base(workspace),
                                         expected_dataset_fingerprint=shown)
     assert result["success"] is False and result["dataset_changed"] is True
     now = _fingerprint(workspace)
@@ -113,7 +123,7 @@ def test_a_continued_run_on_a_changed_dataset_is_refused_before_its_parent_is_re
 def test_a_value_that_is_not_a_full_digest_is_refused(workspace, expected):
     manager = TrainingManager()
     with patch("subprocess.Popen") as popen:
-        result = manager.start_training({"data_dir": str(workspace)},
+        result = manager.start_training(_base(workspace),
                                         expected_dataset_fingerprint=expected)
     assert result["success"] is False and "not a full SHA-256" in result["error"]
     popen.assert_not_called()
@@ -126,7 +136,7 @@ def test_a_manifest_that_is_gone_is_a_changed_dataset(workspace):
     (workspace / "split_manifest.json").unlink()
     manager = TrainingManager()
     with patch("subprocess.Popen") as popen:
-        result = manager.start_training({"data_dir": str(workspace)},
+        result = manager.start_training(_base(workspace),
                                         expected_dataset_fingerprint=shown)
     assert result["success"] is False
     assert result["error"] == ("The dataset changed since it was shown; select it again. "
@@ -147,7 +157,7 @@ def test_the_manifest_shown_that_cannot_be_read_is_refused_as_unreadable(workspa
 
     shown = hashlib.sha256(path.read_bytes()).hexdigest()
     with patch("subprocess.Popen") as popen:
-        result = TrainingManager().start_training({"data_dir": str(workspace)},
+        result = TrainingManager().start_training(_base(workspace),
                                                   expected_dataset_fingerprint=shown)
     assert result["success"] is False
     assert result["error"] == ("The dataset's split_manifest.json cannot be read now "
@@ -161,7 +171,7 @@ def test_without_an_expected_fingerprint_nothing_is_checked(workspace):
     fingerprint) starts as before."""
     _rewrite_manifest(workspace)
     with patch("subprocess.Popen", return_value=FakeProcess(pid=8)):
-        result = TrainingManager().start_training({"data_dir": str(workspace)})
+        result = TrainingManager().start_training(_base(workspace))
     assert result["success"] is True
 
 
@@ -185,7 +195,7 @@ def test_the_route_takes_the_same_check_through_the_one_start_path(workspace, mo
     shown = _fingerprint(workspace)
     with patch("subprocess.Popen", return_value=FakeProcess(pid=9)) as popen:
         ok = client.post(f"/api/v1/training/start?expected_dataset_fingerprint={shown}",
-                         json={"data_dir": str(workspace)})
+                         json={"data_dir": str(workspace), "learning_stage": "base"})
         assert ok.status_code == 200, ok.text
         written = Path(ok.json()["config_path"]).read_text()
         # The process gets it as an argument it checks on its own manifest read
@@ -196,7 +206,7 @@ def test_the_route_takes_the_same_check_through_the_one_start_path(workspace, mo
         fresh._last["training"].done.wait(5)
         _rewrite_manifest(workspace)
         refused = client.post(f"/api/v1/training/start?expected_dataset_fingerprint={shown}",
-                              json={"data_dir": str(workspace)})
+                              json={"data_dir": str(workspace), "learning_stage": "base"})
     assert refused.status_code == 409
     assert "The dataset changed since it was shown; select it again." in refused.text
     assert popen.call_count == 1
@@ -206,7 +216,8 @@ def test_the_route_refuses_a_malformed_fingerprint_before_the_service(monkeypatc
     client, routes = _client(monkeypatch)
     monkeypatch.setattr(routes.training_manager, "start_training",
                         lambda *a, **k: pytest.fail("the service was reached"))
-    response = client.post("/api/v1/training/start?expected_dataset_fingerprint=abc", json={})
+    response = client.post("/api/v1/training/start?expected_dataset_fingerprint=abc",
+                           json=BASE_START)
     assert response.status_code == 422
 
 
@@ -219,9 +230,10 @@ def test_the_route_passes_the_fingerprint_to_the_service(monkeypatch):
         return {"success": True}
 
     monkeypatch.setattr(routes.training_manager, "start_training", start)
-    assert client.post("/api/v1/training/start", json={}).status_code == 200
+    assert client.post("/api/v1/training/start", json=BASE_START).status_code == 200
     assert seen["expected_dataset_fingerprint"] is None
-    client.post(f"/api/v1/training/start?expected_dataset_fingerprint={'b' * 64}", json={})
+    client.post(f"/api/v1/training/start?expected_dataset_fingerprint={'b' * 64}",
+                json=BASE_START)
     assert seen["expected_dataset_fingerprint"] == "b" * 64
 
 
@@ -238,19 +250,18 @@ def test_the_run_bars_start_sends_what_it_showed_and_the_runner_refuses_a_rebuil
     monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(workspace.parent))
     fresh = TrainingManager()
     monkeypatch.setattr(tc, "training_manager", fresh)
-    state = tc._workspace_state("demo")
+    state = tc.workspace_state("demo")
     shown = _fingerprint(workspace)
     assert state["row"]["dataset_fingerprint"] == shown
     assert state["row"]["dataset_fingerprint"][:12] in tc.chip_html(state)
     _rewrite_manifest(workspace)
 
-    form = [""] + [100, 1e-4, "32", "gat", "cpu", 42, "256", 4, 0.1, 0.01, "cosine", 500, 0.01,
-                   10, 1.0, 0.5, 0.3, 0.2, 1, 1.0, "8", True, "float16", 0.07, 0.1, 1.0,
-                   "15, 10, 5", 5000]
     with patch("subprocess.Popen") as popen:
-        notice, _seed = tc._on_start(gradio_request(), state, *form, False)
+        notice = tc._on_start(gradio_request(), state, "", "cpu", *tc.base_form_defaults())
+    # The runner's sentence says nothing was started; the page does not say it
+    # twice (K6 closing review).
     assert notice == tc.notice_html(
-        "Not started: The dataset changed since it was shown; select it again. Its "
+        "The dataset changed since it was shown; select it again. Its "
         f"split_manifest.json holds {_fingerprint(workspace)[:12]}... now "
         f"(shown: {shown[:12]}...). Nothing was started.")
     popen.assert_not_called()
@@ -259,7 +270,7 @@ def test_the_run_bars_start_sends_what_it_showed_and_the_runner_refuses_a_rebuil
 
 # --------------------------------------------------------------------------- the run view's reads
 def test_the_metrics_of_a_given_run_are_read_from_its_own_log(tmp_path):
-    run = tmp_path / "runs" / "gat" / "20261018-142000_run_d41f8b"
+    run = tmp_path / "runs" / "gatv2" / "20261018-142000_run_d41f8b"
     (run / "logs").mkdir(parents=True)
     (run / "logs" / "train_20261018_142000.json").write_text(
         json.dumps({"train": [{"epoch": 0, "total": 1.5}], "validation": []}))
@@ -274,7 +285,7 @@ def test_the_metrics_of_a_given_run_are_read_from_its_own_log(tmp_path):
 def test_a_snapshot_and_a_preview_name_the_dataset_the_checkpoint_records(tmp_path):
     from src.utils.checkpoint_io import write_checkpoint
 
-    run = tmp_path / "runs" / "gat" / "r"
+    run = tmp_path / "runs" / "gatv2" / "r"
     (run / "checkpoints").mkdir(parents=True)
     last = run / "checkpoints" / "last.pt"
     write_checkpoint({"checkpoint_kind": "training_state", "epoch": 0,

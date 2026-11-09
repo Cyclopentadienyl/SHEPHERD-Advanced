@@ -16,37 +16,50 @@ exists so that anyone who sees an SP number knows precisely what it does and doe
 
 > ## Status — read this before anything else
 >
-> **Today, the SP score is part of the ranking.** How a candidate is scored depends on which
-> artifacts are loaded, and each answer names its kind (`result_kind`, Batch 4):
+> **Until K8-4, the SP score was part of the disease ranking.** How a candidate was scored
+> depended on which artifacts were loaded, and each answer names its kind (`result_kind`, Batch 4):
 >
 > | Loaded | Kind | Score used for ranking |
 > |---|---|---|
 > | Trained model **and** shortest-path table | `served_mixture/v1` | `served_score` = η × `model_term` + (1 − η) × SP, with the result's own η (0.7 by default) |
 > | Trained model only | `served_mixture/v1` | `served_score` = `model_term` alone; `sp_term.status` is `NO_TABLE` |
-> | No trained model | `path_reasoning/v1` | `path_score`, a different quantity in its own field |
 >
-> **Which row applies is stated with each result.** Every result says which artifacts produced it
-> (its *served identity*) and its kind: the Diagnosis tab's kind label and "Produced by" line, the
+> **Since K7 (2026-10-29, on the integration branch), no answer is given without a trained model**:
+> the path-reasoning ranking (`path_reasoning/v1`) is removed, and a service with no model refuses.
+> There, a model finetuned for a task is served under its own kind: a disease task model
+> (`disease_task/v1`) ranks every disease with no SP term at all; a gene task model
+> (`gene_task/v1`) mixes its own SP similarity, from exact hop distances computed from the model's
+> graph view, into the score of your candidate genes. The two rows above describe a checkpoint
+> without a model spec (a history file), served only outside the dashboard until K8-4.
+>
+> **K8-4 (2026-11-03) removed the two rows above:** a checkpoint without a model spec is refused at
+> load, and every answer comes from a task model, as described above. The shortest-path table's
+> code files (its producer, pairing protocol and lookup) were retired in K8-5 (policy rev 14); a
+> `shortest_paths.pt` left in a workspace stays in place and nothing reads it. The table above
+> stays here as the record of the retired kind.
+>
+> **What produced a result is stated with it.** Every result says which artifacts produced it (its
+> *served identity*) and its kind: the Diagnosis tab's kind label and "Produced by" line, the
 > downloadable report's "What produced this result" section and the CSV's `result_kind` and
-> `served_` columns name the trained model's checkpoint, the shortest-path table and the scoring
-> mode — `gnn_plus_shortest_path` (first row), `gnn_only` (second) or `path_reasoning_fallback`
-> (third, with a "NO TRAINED MODEL" banner).
+> `served_` columns name the trained model's checkpoint and the task's own scoring mode. A result
+> written before K8-4 named `gnn_plus_shortest_path` (first row) or `gnn_only` (second).
 >
-> **An SP value that cannot be computed is never written as a number.** Each candidate's `sp_term`
-> has a status: `COMPUTED`, `COMPUTED_PARTIAL` (some submitted phenotypes were not in the graph),
-> `NO_TABLE`, `TARGET_UNMAPPED` or `NO_PHENOTYPE_MAPPED`; only the first two carry a mean distance
-> and a score. On a served result only `NO_TABLE` (no table, nothing mixed) has no number: a
-> disease or phenotype missing from the graph's node mapping is refused first (§3). Were a status
-> with no number mixed, it would count as 0 and the record would say so (`mixed_as: 0.0`).
+> **An SP value that cannot be computed is never written as a number.** In the retired kind each
+> candidate's `sp_term` had a status: `COMPUTED`, `COMPUTED_PARTIAL` (some submitted phenotypes
+> were not in the graph), `NO_TABLE`, `TARGET_UNMAPPED` or `NO_PHENOTYPE_MAPPED`; only the first two
+> carried a mean distance and a score. On a served result only `NO_TABLE` (no table, nothing mixed)
+> had no number: a disease or phenotype missing from the graph's node mapping was refused first
+> (§3). Were a status with no number mixed, it would have counted as 0 and the record said so
+> (`mixed_as: 0.0`).
 >
-> **Also today: candidates are discovered by path search before any scoring happens.** A disease
-> with no qualifying path from the patient's phenotypes is never scored at all, whatever the model
-> would have said about it.
+> **Also until K8-4: that kind discovered candidates by path search before any scoring.** A disease
+> with no qualifying path from the patient's phenotypes was never scored at all, whatever the model
+> would have said about it. A disease task model ranks every disease.
 >
-> **Both of these are being changed.** The approved target is that every disease is scored by the
-> model, that SP is removed from the ranking entirely, and that SP is re-exposed as a separate,
-> opt-in analysis over candidates that have already been ranked. Until that work lands, §2's
-> guidance describes how to *interpret* an SP value, not a switch that exists.
+> **Two parts of the approved target are reached (K8-4):** every disease is scored by the model, and
+> SP is not in the disease ranking. SP re-exposed as a separate, opt-in analysis over candidates
+> that have already been ranked is not built; until it is, §2's guidance describes how to
+> *interpret* an SP value, not a switch that exists.
 >
 > The decision, its evidence and its current implementation status are in
 > [`DISEASE_SCORER_POLICY.md`](DISEASE_SCORER_POLICY.md). Sections §1 and §3 describe the score
@@ -349,6 +362,20 @@ where `d(p, g)` is "the minimum number of hops between p and g in the KG", `AGG`
 aggregation function (e.g., mean)", `NORM` rescales to `[−1, 1]`, and `η ∈ [0, 1]` weights the two
 terms. `EMBSIM(P, g) = tanh(z_Pᵀ W z_g)`, also in `[−1, 1]`.
 
+**What the released code does** (corrected 2026-10-27; the authors' code at `e95433a`, read for the
+paper-aligned design, [`working/scorer-retraining/README.md`](working/scorer-retraining/README.md)
+§6):
+- **The printed formula is a typo.** `NORM(x) = 2(x−max)/(max−min) − 1` has the range `[−3, −1]`.
+  The intended `2(x−min)/(max−min) − 1` is meant, and the paper does not say where max and min come
+  from.
+- **The code uses fixed bounds,** constants fitted on its simulated patients, not a min–max over each
+  candidate list. For the mean, `SPLSIM = 1 − 2(d̄ − 1)/(6.84 − 1)`: closer is higher, with no
+  clipping, so a mean beyond the bounds leaves `[−1, 1]`.
+- **Unreachable pairs are stored as 0,** which pulls a gene closer. The released code's comment ties
+  the constant to its data ("6 for mygene2, 6.5 for DDD, 6.833.. for corrupted phen simulated
+  patients"), so it does not carry over to another graph.
+- **`EMBSIM`** is computed on L2-normalised vectors, with a bias.
+
 The paper's stated rationale, quoted:
 
 > "This approach is grounded in the observation that, while methods that learn global network
@@ -375,9 +402,10 @@ gene task sets 0.5, from released code that does not run as committed
 **Of the paper's three tasks, only one uses the SP term — the only one with a candidate short
 list.** Disease ranking, which is what this system performs, uses embedding similarity alone.
 
-## What this implementation actually computes
+## What the retired implementation computed (until K8-5)
 
-Offline (`scripts/compute_shortest_paths.py`), for every phenotype node:
+Offline (`scripts/compute_shortest_paths.py`, removed in K8-5; the last revision with it is
+`e02c0f7`), for every phenotype node:
 
 ```python
 # 1. Flatten the whole KG into an undirected adjacency list.
@@ -405,8 +433,8 @@ while queue:
 
 Pairs absent from the table mean "no path found within `max_hops`".
 
-Online (`src/inference/sp_index.py:sp_analysis_records`, which calls `sp_mean_distances` once for
-all candidates), per candidate:
+Online, until K8-4 (`src/inference/sp_index.py:sp_analysis_records`, removed in K8-4; it called
+`sp_mean_distances` once for all candidates), per candidate:
 
 ```python
 UNREACHABLE = max_hops + 1                      # 6 with the default max_hops = 5
@@ -432,12 +460,12 @@ refused first, as a model term that cannot be computed (`MODEL_TERM_UNAVAILABLE`
 with no phenotype in the graph. Were a status with no number mixed, the mixture would take it as 0
 and the record would say so (`mixed_as: 0.0`); no surface displays that 0 as a distance.
 
-## Three ways this differs from the paper — all of them material
+## Three ways the retired implementation differed from the paper — all of them material
 
-| | Paper | This implementation | Consequence |
+| | Paper | The retired implementation (served until K8-4; table code until K8-5) | Consequence |
 |---|---|---|---|
 | **Task** | candidate **gene** ranking, with a short list | **disease** ranking, over whatever the path search admits | The condition the paper's rationale depends on — a short candidate list — does not hold |
-| **Transform** | `NORM(mean(−d))`, min–max rescaled **across the candidate set**, giving `[−1, 1]` | `1/(1 + mean(d))`, an **absolute** transform giving `[1/7, 1/2]` | See below |
+| **Transform** | `NORM(mean(−d))`. In the released code an **affine map with fixed bounds** fitted on simulated patients (`1 − 2(d̄ − 1)/5.84` for the mean), not a min–max over the candidate set; unclipped, nominally `[−1, 1]` *(corrected 2026-10-27)* | `1/(1 + mean(d))`, a **non-linear** absolute transform giving `[1/7, 1/2]` | See below |
 | **η value** | hyperparameter-searched over `[0.1, 0.9]`, per task (the article's method); the chosen value is not in the article, and the authors' run script for the gene task sets 0.5 | fixed at `0.7` (`PipelineConfig.eta`) | The project default is a reasonable choice, not a value inherited from the paper. The in-code comment states this correctly. |
 
 The transform difference has two consequences:
@@ -446,22 +474,49 @@ The transform difference has two consequences:
   term spans 0.7 while the SP term spans 0.107 — nominally 70/30, but 87/13 by span. This is a
   statement about the ranges the two terms can occupy, **not** a measurement of their actual
   contribution, which depends on how widely each varies in practice and has not been measured here.
-- **Candidate-relative normalisation removes a patient-level additive offset only when that offset
-  is constant across all candidates.** A phenotype contributes little or no discrimination when it
-  is *equally* distant from every candidate — for example when it is unreachable from all of them,
-  so every candidate receives the same `UNREACHABLE` value. It is **not** generally cancelled merely
-  because all its distances are large: distances of 5 to one candidate and 6 to another still
-  contribute to the spread. **The transform used here performs no explicit candidate-relative
-  cancellation at all**, so §1's "least-connected symptom" effect is not attenuated as it can be in
-  the paper's formulation.
+- **Adding a phenotype that is equally distant from every candidate shrinks the gaps between
+  candidates; it does not add one constant to every mean.** An example is a phenotype unreachable
+  from all of them, which gives every candidate the same `UNREACHABLE` value. With `n` phenotypes
+  before and the new one at distance `c` from every candidate, each new mean is
+  `(n × old mean + c)/(n + 1)`, so every gap between two candidates' means is multiplied by
+  `n/(n + 1)`.
+  - **Both transforms shrink the SP spread.** The released code's affine map shrinks the SPLSIM
+    gaps in the same proportion; `1/(1 + d)` shrinks them and also bends them. In either form the
+    SP-only order stays the same.
+  - **Mixed with EMBSIM, the order can change in either form.** Worked example, isolating the SP
+    effect (EMBSIM fixed at [0, 0.5], η = 0.5, `S(d) = 1 − 2(d − 1)/5.84`): means [1, 3] give mixed
+    scores [0.500000, 0.407534], first candidate ahead; adding a phenotype at distance 5 from both
+    gives means [3, 4] and mixed scores [0.157534, 0.236301], second candidate ahead. Adding a real
+    phenotype may also change EMBSIM; the example does not claim it stays fixed.
+  - **Only a change to a shared distance with the phenotype count fixed** adds the same constant to
+    every mean, and only that leaves the affine form's mixed order unchanged.
+  - So §1's "least-connected symptom" effect moves the mixture's balance under both forms.
+  - **Large distances alone cancel nothing.** Distances of 5 to one candidate and 6 to another still
+    contribute to the spread in both forms.
+  - *(Corrected twice on 2026-10-27: an earlier text described the paper's form as a
+    candidate-relative min–max that "can attenuate" this effect; the next one claimed a constant
+    shift that leaves the affine form's order unchanged. The reviewer's review of `5d0327a`, R3,
+    gave the counterexample above.)*
 
-**Unverified equivalence.** This implementation traverses an undirected, type-erased graph
-(`build_undirected_adjacency`, above). The paper states only that `d(p, g)` is "the minimum number
-of hops between p and g in the KG" and does not specify directionality or type handling. Whether the
-paper's traversal is equivalent is **not established here**; §1's caveat about hop types is
-demonstrated for this implementation and assumed, not verified, for the paper.
+**The traversal: same direction and type handling, different reach** (corrected 2026-10-27). The
+paper's text says only "the minimum number of hops between p and g in the KG". Its released code
+settles the rest (`data_prep/shortest_paths/shortest_paths.py`, which reads only an edge's two
+endpoints).
+- **The same as the retired implementation:**
+  - the graph is undirected and relation-blind, as it was in `build_undirected_adjacency` above;
+  - so §1's caveat about hop types holds for both.
+- **Different from the retired implementation:**
+  - the search has no hop limit, where the retired implementation stopped at 5;
+  - it runs on the KG's largest connected component;
+  - it includes the edges the link-prediction split holds out.
 
 ## Cost, and why it does not constrain the design
+
+*(Superseded, 2026-10-27: this described the lookup before B-0.4. Until K8-5, `sp_mean_distances`
+folded the table into one sorted composite key and looked every candidate up at once with
+`torch.searchsorted`; K8-5 removed it with `src/inference/sp_index.py`. B-0.4's GB10 benchmark
+covered up to 500 candidates; Spec 1 §6.2 records what was unmeasured beyond. The paragraphs below
+are kept as the record of the reasoning.)*
 
 The lookup is a linear scan of one phenotype's slice per candidate per phenotype. With a few hundred
 candidates this is unnoticeable. Over all ~27,990 diseases and ~10 phenotypes it becomes roughly
@@ -480,4 +535,3 @@ reason to prefer one scoring design over another.
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — the layered design
 - [`RETRIEVAL_AND_CANDIDATE_DISCOVERY_FINDINGS.md`](RETRIEVAL_AND_CANDIDATE_DISCOVERY_FINDINGS.md) —
   open findings on candidate discovery, including the path-gating described in §2
-- [`TRAINING_PIPELINE_PLAYBOOK.md`](TRAINING_PIPELINE_PLAYBOOK.md) — how `shortest_paths.pt` is built

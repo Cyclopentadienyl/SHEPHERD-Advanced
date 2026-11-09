@@ -1,0 +1,47 @@
+SHEPHERD K8／GB10 驗收交付
+日期：2026-11-09
+驗收版本：f2c201213fd2da59588af7bef2cb030951bdb5c3
+環境：torch 2.10.0+cu130；torch_geometric 2.8.1；自編譯 pyg-lib 0.8.0。
+
+本次結論：通過
+Probe 統計：{"error": 0, "failed": 0, "passed": 101, "skipped": 0}
+最終判讀：110 passed, 0 failed
+Probe 執行時間：2781 秒（46.4 分鐘），不含事前準備與打包。
+工作目錄抽樣峰值：14853412907 bytes；此為磁碟抽樣，不是 GPU 記憶體。
+
+驗收範圍
+採用原產品 probe 與原最終判讀程式：涵蓋 demo 與真實知識圖譜副本、Base 訓練與續訓、
+疾病 Fine-tune、AMP／GradScaler 延續、指紋和拒絕條件、量測、帳本登錄及本機服務。
+各必跑項目的狀態以 work/k8_report.json、acceptance-check.txt 為準。
+這是既定 K8 範圍的工程驗收，不是臨床效能驗證。未擴展成 gene／patients_like_me 的 GPU
+全面驗收、HGT 架構移植、cuVS 功能驗收，亦沒有在本輪另做人工瀏覽器操作。
+
+與原驗收方式的差異
+原 attempt 01 的預編譯 Release 下載遇到 HTTP 504，deploy.sh 轉原始碼建置；原基準因
+版本和產物不同而失敗。該次紀錄保持 FAIL，原檔副本位於 00-init/review-support/original-attempt-01。
+使用者確認要驗證升級彈性後，attempt 02 明確採用既有自編譯環境，新增 adopt 階段，沒有
+重新安裝、偽造 install PASS、刪除失敗紀錄，或修改 Repo 程式。
+套件清單、指定版本和 51 個原生程式庫的 SHA-256 在採用時及 probe 前後核對。
+原資料／模型驗證、產品 probe 及最終 Python 判讀內容保持原樣。
+選用的 cuVS 缺 cupy，未納入本次功能通過的宣稱；必要的 Voyager 照常驗證。
+Torch 對 GB10 capability 12.1 的提示保留於日誌，實際 CUDA 測試結果以本次證據為準。
+
+使用者要求一併轉交的版本核對文件
+根目錄「版本核對說明.txt」是先前交付的原文，已直接納入本包；其中「完整驗收尚未執行」
+描述的是該文件撰寫當時的階段，後續結果以本文件及原始報告為準，不回寫歷史文件。
+00-init/review-support/source-build-0.8.0-check/ 包含環境資料、來源 commit、原建置日誌、
+四個 wheel、原生檔案指紋，以及最初 5 項 GPU 擴充測試。
+驗收腳本、原腳本、變更差異及產生方式均保存於 00-init/ 與其 review-support/。
+source-profile-checks.txt 證明錯誤版本及錯誤二進位指紋會被拒絕。
+
+Repo 狀態
+原 Repo HEAD：773dc4afb5629bad9ec463980ea49b878121492c；status：clean。
+測試 clone status：clean。
+測試 clone 只新增被 Git 忽略的執行設定，所有訓練及測試產物放在專用 evidence/work 目錄。
+原備份資料不寫入；資料副本及五項輸入指紋另有前後核對紀錄。
+
+如何檢查
+1. 先核對交付 ZIP 的 .sha256。
+2. 解壓後在證據根目錄執行 sha256sum -c HANDOFF-SHA256SUMS，驗證結論、腳本及關鍵紀錄。
+3. 讀 acceptance-check.txt、work/k8_report.json、07-after/ 與驗收摘要.json。
+4. 版本核對說明中的部署及溯源改善建議仍是後續議題，本次未修改產品實作。

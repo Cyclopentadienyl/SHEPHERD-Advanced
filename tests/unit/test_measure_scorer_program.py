@@ -29,6 +29,11 @@ the tests and the deployment probe that call it in process; the script's entry
 
 Subprocess runs pin the `__main__` wiring, the closed console and the cancel.
 
+Every run measures with `--mode disease` the session's trained disease child
+(`trained_disease_child`, tests/conftest.py): on its workspace's generated `val`
+split, read in place, or on a version of the graph source registered beside a
+copy of the child and its workspace, built once per module and copied per test.
+
 Module: tests/unit/test_measure_scorer_program.py
 """
 from __future__ import annotations
@@ -50,10 +55,9 @@ import pytest
 torch = pytest.importorskip("torch")
 
 from tests.fixtures.registered_cohort import (  # noqa: E402
-    build_registered_cohort,
     copy_registered_cohort,
+    registered_cohort_from_child,
 )
-from tests.fixtures.synthetic_workspace import build_workspace  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 REFUSED = "measure_scorer: refused: "
@@ -70,13 +74,19 @@ def cli():
 
 
 @pytest.fixture
-def workspace(tmp_path):
-    return build_workspace(tmp_path / "ws")
+def workspace(trained_disease_child):
+    """The session's trained disease child, ``(data_dir, checkpoint)``, read in
+    place: a test here writes only under its own directory."""
+    return trained_disease_child["data_dir"], trained_disease_child["disease"]
 
 
 @pytest.fixture(scope="module")
-def base(tmp_path_factory):
-    return build_registered_cohort(tmp_path_factory.mktemp("program_base"))
+def base(trained_disease_child, tmp_path_factory):
+    """The session's trained disease child as a registered-cohort tree: its
+    workspace and its checkpoint copied (the session's files stay read-only),
+    the graph source written and a version of it committed. No training here."""
+    return registered_cohort_from_child(trained_disease_child,
+                                        tmp_path_factory.mktemp("program_base"))
 
 
 @pytest.fixture
@@ -90,12 +100,13 @@ def cohort(base, tmp_path, monkeypatch):
 
 
 def _generated(data_dir, checkpoint, output, device="cpu"):
-    return ["--checkpoint", str(checkpoint), "--data-dir", str(data_dir),
+    return ["--mode", "disease", "--checkpoint", str(checkpoint), "--data-dir", str(data_dir),
             "--split", "val", "--output", str(output), "--device", device]
 
 
 def _registered(cohort, *extra, label=None):
-    return ["--checkpoint", str(cohort.checkpoint), "--data-dir", str(cohort.data_dir),
+    return ["--mode", "disease", "--checkpoint", str(cohort.checkpoint),
+            "--data-dir", str(cohort.data_dir),
             "--cohort", label or cohort.version.manifest["label"],
             "--registry", str(cohort.registry), "--device", "cpu", *extra]
 
@@ -114,9 +125,9 @@ def _one_line(err, prefix):
 
 
 def _no_model(monkeypatch):
-    import src.models.gnn.shepherd_gnn as shepherd_gnn
+    import src.models.bundle.record as bundle_record
 
-    monkeypatch.setattr(shepherd_gnn, "build_shepherd_model",
+    monkeypatch.setattr(bundle_record, "load_bundle",
                         lambda *a, **k: pytest.fail("a model was built after a refusal"))
 
 
@@ -205,7 +216,8 @@ def test_a_file_that_cannot_be_read_is_one_message(cli, workspace, tmp_path, cap
 # ---------------------------------------------------------------------------
 def test_a_rejected_command_line_still_exits_2(cli, capsys):
     with pytest.raises(SystemExit) as rejected:
-        cli._run_as_program(["--checkpoint", "c.pt", "--data-dir", "d", "--split", "val"])
+        cli._run_as_program(["--mode", "disease", "--checkpoint", "c.pt", "--data-dir", "d",
+                             "--split", "val"])
 
     assert rejected.value.code == 2
     assert "--split needs --output" in capsys.readouterr().err
@@ -256,10 +268,10 @@ def _fail_publishing(monkeypatch, is_report):
 
     real = file_modes.publish_bytes
 
-    def publish(target, data):
+    def publish(target, data, **kwargs):
         if is_report(Path(target)):
             raise OSError(errno.ENOSPC, "No space left on device", str(target))
-        return real(target, data)
+        return real(target, data, **kwargs)
 
     monkeypatch.setattr(file_modes, "publish_bytes", publish)
 
@@ -267,31 +279,58 @@ def _fail_publishing(monkeypatch, is_report):
 def test_a_generated_report_that_could_not_be_written_says_what_may_be_there(
     cli, workspace, tmp_path, monkeypatch, capsys
 ):
-    """The ranks are published first: when the report then fails, the new ranks
-    sit beside the earlier report. The message says so, and never that nothing
-    was written; `main` raises it as `ReportNotWritten`, the cause chained."""
+    """The ranks are published first, on a new `--output` (K8-6r.4: a used one
+    is refused before anything is read, below): when the report then fails,
+    this run's ranks stay with no report beside them. The message says what may
+    be there, that no file was replaced, and never that nothing was written;
+    `main` raises it as `ReportNotWritten`, the cause chained."""
     data_dir, checkpoint = workspace
     output = tmp_path / "run" / "measurement.json"
     ranks = output.parent / "measurement_ranks.json"
-    output.parent.mkdir()
-    output.write_text("an earlier report")
-    _fail_publishing(monkeypatch, lambda target: target == output)
+    _fail_publishing(monkeypatch, lambda target: target.name == "measurement.json")
 
     assert cli._run_as_program(_generated(data_dir, checkpoint, output)) == 1
 
     err = capsys.readouterr().err
     line = _one_line(err, NOT_WRITTEN)
     assert "No space left on device" in line
-    assert f"{output} was left as it was" in line
-    assert f"{ranks} may already hold this run's ranks" in line
+    assert line.endswith(
+        f"No file was replaced. No report was written at {output}; {ranks} may hold this "
+        "run's ranks, or an empty file this run claimed, with no report beside it, an "
+        f"interrupted write, and {output} may be an empty file this run claimed. Measure "
+        "again to a new --output.")
     assert "nothing was written" not in err.lower() and REFUSED not in err
-    assert output.read_text() == "an earlier report"
-    assert ranks.is_file()
+    assert not output.exists() and ranks.is_file()
 
+    another = tmp_path / "another" / "measurement.json"
     with pytest.raises(cli.ReportNotWritten) as failed:
-        cli.main(_generated(data_dir, checkpoint, output))
+        cli.main(_generated(data_dir, checkpoint, another))
     assert isinstance(failed.value.__cause__, OSError)
     assert not isinstance(failed.value, (ValueError, OSError))
+
+
+def test_a_used_generated_output_is_one_refusal_line(cli, workspace, tmp_path, monkeypatch,
+                                                     capsys):
+    """An `--output` an earlier run used (here, its report) is refused before
+    anything is read (K8-6r.4): one line, exit 1, saying nothing was read or
+    written exactly once, no traceback, and the earlier file kept."""
+    data_dir, checkpoint = workspace
+    output = tmp_path / "run" / "measurement.json"
+    output.parent.mkdir()
+    output.write_text("an earlier report")
+    _no_model(monkeypatch)
+
+    assert cli._run_as_program(_generated(data_dir, checkpoint, output)) == 1
+
+    err = capsys.readouterr().err
+    line = _one_line(err, REFUSED)
+    assert line == (
+        f"{REFUSED}--output {output} cannot be used: {output} exists. A generated split's run "
+        "writes its report and its ranks as new files: it never replaces a file, nor deletes "
+        "or renames one to make room, so what is there stays as it is. Measure again to a new "
+        "--output. Nothing was read or written.")
+    assert output.read_text() == "an earlier report"
+    assert sorted(p.name for p in output.parent.iterdir()) == ["measurement.json"]
 
 
 def test_a_registered_report_that_could_not_be_written_says_what_may_be_there(
@@ -522,7 +561,8 @@ def test_a_cuda_load_on_a_host_without_cuda_is_not_called_unparseable(cli, works
     data_dir, checkpoint = workspace
 
     with pytest.raises(RuntimeError, match="CUDA") as raised:
-        cli.read_measurement_inputs(checkpoint, data_dir, torch.device("cuda"), split="val")
+        cli.read_measurement_inputs(checkpoint, data_dir, torch.device("cuda"), split="val",
+                                    protocol="disease")
     assert not isinstance(raised.value, ValueError)
 
 
@@ -538,6 +578,53 @@ def test_the_checkpoint_read_names_no_other_read(cli):
 
 
 # ---------------------------------------------------------------------------
+# The manifest's mode is the protocol asked, never an evaluator's or a default
+# ---------------------------------------------------------------------------
+def test_build_manifest_takes_the_mode_from_the_protocol(cli):
+    """K8-6a (R1): `manifest.mode` is the `--mode` the run was started with,
+    set once by `build_manifest`; the evaluator gives every other semantic field
+    (`SEMANTIC_FIELDS`), with no default for any of them. Without `semantics`
+    the call is refused, and so is a semantics that sets `mode`, lacks one of
+    those fields or names another one. `build_manifest` records the name asked;
+    judging it is the CLI's choices' and `read_measurement_inputs`' work."""
+    from src.evaluation.task_measurement import disease_semantics
+    from src.utils.run_environment import AutocastRegime
+
+    device = torch.device("cpu")
+    graph = {"num_nodes_dict": {"disease": 1}}
+    common = {"digests": {"checkpoint": "a" * 64}, "dataset_record": {"origin": "synthetic"},
+              "regime": AutocastRegime(enabled=False, dtype=None)}
+    semantics = disease_semantics(4)
+    assert "mode" not in semantics and set(semantics) == set(cli.SEMANTIC_FIELDS)
+
+    def args(mode):
+        return argparse.Namespace(mode=mode, split="val", batch_size=4,
+                                  checkpoint=Path("c.pt"), data_dir=Path("d"))
+
+    with pytest.raises(TypeError, match="semantics"):
+        cli.build_manifest(args("disease"), graph, 1, device, **common)
+    with pytest.raises(ValueError, match="do not set the manifest's mode"):
+        cli.build_manifest(args("disease"), graph, 1, device,
+                           semantics={**semantics, "mode": "disease"}, **common)
+    for field in cli.SEMANTIC_FIELDS:
+        lacking = {name: value for name, value in semantics.items() if name != field}
+        with pytest.raises(ValueError, match=re.escape(f"lack {[field]}")):
+            cli.build_manifest(args("disease"), graph, 1, device, semantics=lacking, **common)
+    with pytest.raises(ValueError, match="fields an evaluator does not set"):
+        cli.build_manifest(args("disease"), graph, 1, device,
+                           semantics={**semantics, "split": "train"}, **common)
+
+    # The same evaluator's semantics under two names: the mode is the name asked
+    # (a test-only name here, recorded as asked), every other field the evaluator's.
+    for mode in ("disease", "p1"):
+        manifest = cli.build_manifest(args(mode), graph, 1, device, semantics=semantics,
+                                      **common)
+        assert manifest.mode == mode
+        assert manifest.candidate_construction == semantics["candidate_construction"]
+        assert manifest.model_construction == semantics["model_construction"]
+
+
+# ---------------------------------------------------------------------------
 # The script's entry, as the operator runs it
 # ---------------------------------------------------------------------------
 def test_run_as_a_program_a_refusal_prints_no_traceback(tmp_path):
@@ -546,7 +633,8 @@ def test_run_as_a_program_a_refusal_prints_no_traceback(tmp_path):
     output = tmp_path / "out" / "measurement.json"
     completed = subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts" / "measure_scorer.py"),
-         "--checkpoint", str(tmp_path / "c.pt"), "--data-dir", str(tmp_path / "ws"),
+         "--mode", "disease", "--checkpoint", str(tmp_path / "c.pt"),
+         "--data-dir", str(tmp_path / "ws"),
          "--split", "test", "--output", str(output), "--device", "cpu"],
         cwd=str(REPO_ROOT), capture_output=True, text=True, timeout=300,
     )

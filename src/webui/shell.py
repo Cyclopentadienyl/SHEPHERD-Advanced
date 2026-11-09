@@ -15,7 +15,8 @@ them from Python, and Gradio's tablist semantics and keyboard stay):
   segmented control: the selected stage is filled in the accent colour and bold.
   Settings, selected, has a light fill, a 3 px underline and bold.
 - **Level 2** (``#shep-research-nav``, inside Research): Datasets · Training ·
-  Test · Models under the group labels PREPARE and EVALUATE with a divider. The
+  Fine-tune · Test · Models under the group labels PREPARE and EVALUATE with a
+  divider. The
   labels are CSS generated content with empty alternative text and
   ``pointer-events: none``: not clickable and not part of a tab's name; the
   tablist's ``aria-label`` gives the grouping to a screen reader. The selected
@@ -48,6 +49,7 @@ Page                       Builder                                       Owner
 Diagnosis (clinical)       ``diagnosis_panel.create_diagnosis_tab``      UI-B
 Research › Datasets        ``datasets_page.create_datasets_page``        UI-A
 Research › Training        ``training_console.create_training_tab``      UI-C
+Research › Fine-tune       ``finetune_page.create_finetune_page``        K6
 Research › Test            ``test_page.create_test_page``                UI-D
 Research › Models          ``models_page.create_models_page``            UI-D
 ⚙ Settings                 ``runtime_settings.create_runtime_settings_tab``  UI-A
@@ -58,19 +60,21 @@ built, never a placeholder). **Registering a page**
 is one line each in `src/webui/app.py`: its builder in ``PAGES`` (by the page
 ids here) and, when it has one, its style sheet in ``PAGE_CSS``. The context
 gives a page everything it shares, and a page reaches nothing else of another
-page:
+page (one exception, recorded after this list):
 
 - ``ctx.blocks``: the ``gr.Blocks`` (``ctx.blocks.load(...)`` for a page-load
   read);
 - ``ctx.help``: the shared ⓘ registry (`HelpRegistry`): ``ctx.help.field(elem_id,
   title, text)`` for a component's help, ``ctx.help.topic(key, title, text)`` for
   a ⓘ inside rendered HTML (`help_button`). No ordinary help stays in ``info=``;
-  only a state-bearing text does (a refusal, the HGT/AMP one);
+  only a state-bearing text does (Diagnosis' Reference cohort select: the
+  chosen version's fingerprint and whether it was mapped against the served
+  graph, or why it cannot be read);
 - ``ctx.on_page_open(page, kwargs)``: run an event (``fn``, ``inputs``,
   ``outputs``, …) **each time the page is shown**: Diagnosis and Settings on
   their tab's ``select``; a research page when its own tab is selected and when
   Research is selected while it is the research page shown (only that page:
-  returning to Research never refreshes the other three). The research pages
+  returning to Research never refreshes the other four). The research pages
   are refreshed through ``ctx.page_tokens[page]`` (a `gr.State` the shell
   bumps from queued events, since Gradio 6.30 dispatches a State's ``.change``
   only from a queued event's answer; ``on_page_open`` listens to its
@@ -112,9 +116,8 @@ page:
   and its Load (`src/webui/components/model_list.py`; ``"clinical"`` for
   Diagnosis' drawer: rows, "In use now" pinned, the latest 4 runs;
   ``"research"`` for Models: a table, every run). A page shapes it through the
-  returned handle's ``view`` (`gr.State`: an architecture, groups such as
-  "Ordered by …", one extra column such as the regime, a note beside Load) and
-  ``ordering`` (a Load from an ordered list writes a usage history entry);
+  returned handle's ``view`` (`gr.State`: a task filter, groups such as a
+  family, one extra column such as the lineage, a note beside Load);
   ``head``/``foot`` place the page's own components in the list's header and
   footer rows. Each preset has its own element ids (``shep-models-<preset>``),
   so both can sit in one page;
@@ -129,6 +132,13 @@ page:
   bar's workspace) takes ``**ctx.training_workspace_writes``: one queued group
   of one (`TRAINING_SELECTION_CONCURRENCY`), first asked first run, so none
   writes back a workspace it started from over one chosen meanwhile.
+
+**The one exception to "nothing else of another page"**: Fine-tune is
+Training's second form (README §1: a base, then its task children; §8: "base
+training and Fine-tune separately"). `finetune_page` uses `training_console`'s
+public training-form pieces (the workspace state, the recipe settings' fields,
+the parent selects, the stop question, the job status marks) and no other
+page's; `tests/unit/test_webui_datasets.py` pins both.
 
 **Recognise a component by its ``elem_id``, never by identity.** Once an
 answer updates a component's properties, Gradio 6.30 keeps a rebuilt copy in
@@ -183,8 +193,8 @@ BRAND = "SHEPHERD-Advanced"
 #: Level 1 (outer) tab ids and labels, in order.
 CLINICAL, RESEARCH, SETTINGS = "clinical", "research", "settings"
 #: Level 2 (Research) page ids.
-DATASETS, TRAINING, TEST, MODELS = "datasets", "training", "test", "models"
-RESEARCH_PAGES = (DATASETS, TRAINING, TEST, MODELS)
+DATASETS, TRAINING, FINETUNE, TEST, MODELS = "datasets", "training", "finetune", "test", "models"
+RESEARCH_PAGES = (DATASETS, TRAINING, FINETUNE, TEST, MODELS)
 DEFAULT_RESEARCH_PAGE = TRAINING
 
 LABELS = {
@@ -193,6 +203,7 @@ LABELS = {
     SETTINGS: "⚙ Settings",
     DATASETS: "Datasets",
     TRAINING: "Training",
+    FINETUNE: "Fine-tune",
     TEST: "Test",
     MODELS: "Models",
 }
@@ -206,7 +217,7 @@ TITLES = {
 
 #: The research tablist's name for a screen reader (the visual group labels are
 #: generated content with empty alternative text).
-RESEARCH_TABLIST_LABEL = ("Research pages: Prepare (Datasets, Training), "
+RESEARCH_TABLIST_LABEL = ("Research pages: Prepare (Datasets, Training, Fine-tune), "
                           "Evaluate (Test, Models)")
 
 #: The shared timers' periods, in seconds.
@@ -388,8 +399,8 @@ def build_shell(blocks: Any, pages: Dict[str, Callable[[PageContext], None]],
                 *, help_registry: Optional[HelpRegistry] = None) -> PageContext:
     """Lay out the header, the two navigation levels and every page.
 
-    `pages` maps every page id (clinical, datasets, training, test, models,
-    settings) to its builder; a missing one is a ``KeyError``. Returns the
+    `pages` maps every page id (clinical, datasets, training, finetune, test,
+    models, settings) to its builder; a missing one is a ``KeyError``. Returns the
     context the pages were given."""
     registry = help_registry or HelpRegistry()
     registry.topics(RENDERER_HELP)
@@ -588,6 +599,7 @@ __all__ = [
     "CLINICAL",
     "DATASETS",
     "DEFAULT_RESEARCH_PAGE",
+    "FINETUNE",
     "LABELS",
     "MODELS",
     "OPEN_PAGE_CONCURRENCY",

@@ -138,5 +138,22 @@ def version_of(report_path: Path) -> Any:
     return resolve_version(report_path.parents[4], report_path.parents[2].name)
 
 
-__all__ = ["IMPORTED_AT", "new_run_id", "store_bytes", "store_report", "store_version",
-           "version_manifest_for", "version_of"]
+def kept_model_load(version: Any, *, checkpoint_sha256: str, metric: str,
+                    scoring_semantics_digest: str, loaded: bool, why: Optional[str] = None,
+                    at: str = "2026-10-18T08:00:00Z") -> Dict[str, Any]:
+    """A ``model_load`` entry already in the version's usage history: the line a
+    Load from a list ordered by test score appended (its writer retired with
+    that ordering in K8-6d). Nothing writes one now; a kept line is read and
+    shown as recorded. Appended by the store's own writer, with the fields that
+    Load gave it."""
+    from src.evaluation.report_store import USAGE_FILE, _append_entry
+
+    entry = {"kind": "model_load", "at": at, "checkpoint_sha256": checkpoint_sha256,
+             "metric": metric, "scoring_semantics_digest": scoring_semantics_digest,
+             "loaded": bool(loaded), "why": why}
+    _append_entry(version, USAGE_FILE, entry)
+    return entry
+
+
+__all__ = ["IMPORTED_AT", "kept_model_load", "new_run_id", "store_bytes", "store_report",
+           "store_version", "version_manifest_for", "version_of"]

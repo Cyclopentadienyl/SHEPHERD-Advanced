@@ -1,16 +1,24 @@
 """The deployment probe's serving phase (E1-E8), on CPU, and contract M3c's checks.
 
 On the GB10 phase E runs on CUDA; here it runs on CPU over the demo workspace
-and a model the production trainer trained on it (phase D), so the serving
-build, the status encoder, the reload route and a diagnosis are driven end to
-end and every probe in the phase must pass. Contract M3c rides on these probes:
-E1 requires the served identity to name what the probe itself verified, E2 that
-the status reports it unchanged, E5 that a refused reload leaves it as it was,
-and E7 that a diagnosis carries it. M4 and R6 ride on `_serve_and_diagnose`,
-which requires a diagnosis to name what the caller's workspace check read and
-to carry the identity serving reports; it runs here over a copy of the
-workspace given a shortest-path table, as M4 serves it. Each of those checks is
-also shown to fire: a probe that cannot fail proves nothing.
+and the disease child the production trainer finetuned on it from a base it
+trained there (phase D), so the serving build, the status encoder, the reload
+route by task and a disease-task diagnosis are driven end to end and every
+probe in the phase must pass. Contract M3c rides on these probes: E1 requires
+the served identity to name what the probe itself verified, and the disease
+task's scoring mode and shortest-path term from the core tables, E2 that the
+status reports it unchanged, E5 that a refused reload leaves it as it was, and
+E7 that a diagnosis carries it. M4 and R6 ride on `_serve_and_diagnose`, the
+disease-task serving check, which requires a diagnosis to name what the
+caller's workspace check read and to carry the identity serving reports; it
+runs here over the demo workspace itself, as M4 serves it: no table is read.
+Each of those checks is also shown to fire: a probe that cannot fail proves
+nothing. Its diagnosis asks a query from the served workspace's own
+validation cases (`_workspace_query`): a workspace without the demo graph's
+two phenotypes serves and diagnoses (the reviewer's P2-1 of the K8-1
+recheck), one none of whose validation cases binds in the child's graph
+view fails, naming that data condition, and so does one whose bound case
+names a phenotype id its graph does not hold.
 
 Module: tests/unit/test_probe_serving_phase.py
 """
@@ -20,7 +28,6 @@ import dataclasses
 import hashlib
 import importlib.util
 import json
-import subprocess
 import sys
 from pathlib import Path
 
@@ -50,8 +57,9 @@ def _probe():
 
 @pytest.fixture(scope="module")
 def trained(tmp_path_factory):
-    """The demo workspace and one epoch of the production trainer on it (D1),
-    shared by this file's tests: serving reads both and writes neither."""
+    """The demo workspace and D1's disease child on it (a base and its child,
+    one epoch each, by the production trainer), shared by this file's tests:
+    serving reads both and writes neither."""
     from src.kg.workspace import write_workspace
 
     probe = _probe()
@@ -60,9 +68,9 @@ def trained(tmp_path_factory):
     write_workspace(probe._demo_kg(), sound, feature_dim=probe.FEATURE_DIM,
                     samples=probe._budget())
     report = probe.Report()
-    checkpoint = probe.phase_training(report, work, sound, device="cpu", epochs=1)
-    assert checkpoint is not None, [p.detail for p in report.probes if p.status != "passed"]
-    return work, sound, checkpoint
+    models = probe.phase_training(report, work, sound, device="cpu", epochs=1)
+    assert models is not None, [p.detail for p in report.probes if p.status != "passed"]
+    return work, sound, models.child
 
 
 @pytest.fixture
@@ -109,9 +117,14 @@ def test_the_serving_phase_passes_and_identifies_what_it_serves(trained, served_
     assert identity["dataset_record"] == {
         "state": "verified", "origin": "synthetic",
         "sha256": digest(sound / "kg.provenance.json")}
-    # The demo workspace holds no shortest-path table: stated, not left blank.
-    assert identity["shortest_paths"] == {"state": "absent", "build_id": None, "max_hops": None}
-    assert identity["scoring_mode"] == "gnn_only"
+    # A disease child is served with no shortest-path term: stated, not left
+    # blank.
+    assert identity["shortest_paths"] == {"state": "absent"}
+    assert identity["scoring_mode"] == "disease_task"
+    assert probes["E1"].facts["scoring_mode"] == "disease_task"
+    assert "sp_ready" not in probes["E1"].facts
+    # E4 reloaded by task and served the disease child, not the base beside it.
+    assert probes["E4"].facts["scoring_mode"] == "disease_task"
     assert (identity["settings"]["device"], identity["settings"]["device_requested"]) == (
         "cpu", "cpu")
     assert str(trained[0]) not in json.dumps(identity), "the identity carries a path"
@@ -232,7 +245,7 @@ def verified(trained):
         api.app_state.real_pipeline_requested = requested
     _, _, read, record = probe.verify_workspace(sound)
     expected = {"checkpoint_sha256": probe._read_run_checkpoint(checkpoint)["sha256"],
-                "workspace_digests": read, "record": record, "sp_build_id": None,
+                "workspace_digests": read, "record": record, "task": "disease",
                 "device": "cpu"}
     return probe, bundle.config["served_identity"], expected
 
@@ -256,9 +269,11 @@ def _changed(identity, part, **values):
      "not the workspace this probe verified"),
     ("dataset_record", {"origin": "files"}, "not the record the workspace check verified"),
     ("dataset_record", {"sha256": "4" * 64}, "not the record the workspace check verified"),
-    ("shortest_paths", {"state": "verified", "build_id": "a" * 32, "max_hops": 5},
-     "for a workspace that holds none"),
-    (None, {"scoring_mode": "gnn_plus_shortest_path"}, "scoring mode"),
+    # The disease task is served with no shortest-path term (the task table):
+    # the gene task's computed distances are another.
+    ("shortest_paths", {"state": "computed"},
+     "not the absent term the disease task is served with"),
+    (None, {"scoring_mode": "gene_task"}, "scoring mode"),
     ("settings", {"device": "cuda:0"}, "not the requested cpu"),
     ("settings", {"device_requested": "auto"}, "not the requested cpu"),
 ])
@@ -271,71 +286,55 @@ def test_each_part_of_the_identity_is_compared_with_the_probes_reads(verified, p
         probe._assert_served_identity(_changed(identity, part, **values), **expected)
 
 
-def test_no_identity_and_a_table_not_served_are_refused(verified):
+def test_no_identity_and_another_task_s_identity_are_refused(verified):
     probe, identity, expected = verified
     with pytest.raises(AssertionError, match="reports no served identity"):
         probe._assert_served_identity(None, **expected)
-    # The sidecar declares a table, and the identity says none was served.
-    with pytest.raises(AssertionError, match="not the table whose sidecar declares"):
-        probe._assert_served_identity(identity, **{**expected, "sp_build_id": "b" * 32})
-
-
-def test_the_sidecar_build_id_is_read_through_the_sidecars_reader(tmp_path):
-    probe = _probe()
-    assert probe._sidecar_build_id(tmp_path) is None, "no table is not a table"
-    (tmp_path / "shortest_paths.pt").write_bytes(b"not read here")
-    with pytest.raises(AssertionError, match="has no sidecar"):
-        probe._sidecar_build_id(tmp_path)
-    (tmp_path / "shortest_paths.meta.json").write_text(json.dumps(
-        {"schema_version": 1, "build_id": "c" * 32, "kg_digest": "d" * 64, "max_hops": 5}))
-    assert probe._sidecar_build_id(tmp_path) == "c" * 32
+    # The identity of a disease child, judged as a gene model's: the gene task
+    # is served with computed distances (the task table), so the term differs.
+    with pytest.raises(AssertionError, match="not the computed term the gene task"):
+        probe._assert_served_identity(identity, **{**expected, "task": "gene"})
 
 
 # ------------------------------------- M4 and R6: the diagnosis, checked
 @pytest.fixture(scope="module")
-def with_table(trained, tmp_path_factory):
-    """The trained model's workspace copied and given a shortest-path table by
-    the production producer, as M4 serves it, with what the workspace check
-    reads of the copy: the record and the per-file digests the caller hands
-    `_serve_and_diagnose`."""
+def reads(trained):
+    """The disease child over the workspace it was trained on, as M4 serves
+    it, with what the workspace check reads there: the record and the per-file
+    digests the caller hands `_serve_and_diagnose`."""
     probe = _probe()
     _, sound, checkpoint = trained
-    served = probe._workspace_copy(sound, tmp_path_factory.mktemp("with_table") / "ws")
-    produced = subprocess.run(
-        [sys.executable, str(REPO / "scripts" / "compute_shortest_paths.py"),
-         "--kg-path", str(served / "kg.json"), "--output-dir", str(served),
-         "--max-hops", "5", "--workers", "1"],
-        cwd=REPO, capture_output=True, text=True, timeout=600,
-    )
-    assert produced.returncode == 0, produced.stderr[-2000:]
-    _, _, read, record = probe.verify_workspace(served)
-    return served, checkpoint, read, record
+    _, _, read, record = probe.verify_workspace(sound)
+    return sound, checkpoint, read, record
 
 
-def _serve(probe, with_table, **changes):
-    served, checkpoint, read, record = with_table
+def _serve(probe, reads, **changes):
+    sound, checkpoint, read, record = reads
     arguments = {"record": record, "workspace_digests": read, **changes}
-    return probe._serve_and_diagnose(served / "kg.json", checkpoint, served, "cpu", **arguments)
+    return probe._serve_and_diagnose(sound / "kg.json", checkpoint, sound, "cpu", **arguments)
 
 
-def test_serve_and_diagnose_passes_over_the_workspace_its_caller_verified(with_table):
+def test_serve_and_diagnose_passes_over_the_workspace_its_caller_verified(reads, served_state):
     """The control for the failures below: the same build and diagnosis, handed
-    the caller's own reads, pass and name the table and the checkpoint."""
+    the caller's own reads, pass and name the disease task and the child."""
     from src.kg.artifacts import GRAPH_ARTIFACTS
 
     probe = _probe()
-    _, checkpoint, read, _ = with_table
+    _, checkpoint, read, _ = reads
 
-    identity = _serve(probe, with_table)["served_identity"]
+    facts = _serve(probe, reads)
+    identity = facts["served_identity"]
 
-    assert identity["scoring_mode"] == "gnn_plus_shortest_path"
-    assert identity["shortest_paths"]["state"] == "verified"
+    assert (facts["scoring_mode"], facts["result_kind"]) == ("disease_task", "disease_task/v1")
+    assert identity["scoring_mode"] == "disease_task"
+    assert identity["shortest_paths"]["state"] == "absent"
     assert identity["checkpoint"] == {
         "state": "verified", "sha256": hashlib.sha256(checkpoint.read_bytes()).hexdigest()}
     assert identity["graph"]["kg_sha256"] == read[GRAPH_ARTIFACTS["kg"]]
 
 
-def test_serve_and_diagnose_fails_when_the_diagnosis_names_another_workspace(with_table):
+def test_serve_and_diagnose_fails_when_the_diagnosis_names_another_workspace(reads,
+                                                                             served_state):
     """The regression this catches: `_serve_and_diagnose` stops comparing the
     diagnosis's identity with the caller's workspace reads. Serving and the
     diagnosis still agree with each other, so only that comparison can see a
@@ -343,14 +342,15 @@ def test_serve_and_diagnose_fails_when_the_diagnosis_names_another_workspace(wit
     from src.kg.artifacts import GRAPH_ARTIFACTS
 
     probe = _probe()
-    _, _, read, _ = with_table
+    _, _, read, _ = reads
     elsewhere = {**read, GRAPH_ARTIFACTS["kg"]: "5" * 64}
 
     with pytest.raises(AssertionError, match="not the workspace this probe verified"):
-        _serve(probe, with_table, workspace_digests=elsewhere)
+        _serve(probe, reads, workspace_digests=elsewhere)
 
 
-def test_serve_and_diagnose_fails_when_the_diagnosis_names_another_checkpoint(with_table,
+def test_serve_and_diagnose_fails_when_the_diagnosis_names_another_checkpoint(reads,
+                                                                              served_state,
                                                                               monkeypatch):
     """The same regression, seen from the checkpoint: the digest the probe's own
     read took is not the one the diagnosis names."""
@@ -360,7 +360,7 @@ def test_serve_and_diagnose_fails_when_the_diagnosis_names_another_checkpoint(wi
                         lambda path: {**real(path), "sha256": "6" * 64})
 
     with pytest.raises(AssertionError, match="not the checkpoint this probe read"):
-        _serve(probe, with_table)
+        _serve(probe, reads)
 
 
 @pytest.mark.parametrize("part, values, fragment", [
@@ -371,7 +371,7 @@ def test_serve_and_diagnose_fails_when_the_diagnosis_names_another_checkpoint(wi
      "another served identity than serving reports"),
 ])
 def test_serve_and_diagnose_fails_when_the_diagnosis_carries_another_identity(
-    with_table, monkeypatch, part, values, fragment
+    reads, served_state, monkeypatch, part, values, fragment
 ):
     """The regressions this catches: the comparison is applied to what serving
     reports instead of to the diagnosis's own identity, or the diagnosis is no
@@ -393,4 +393,123 @@ def test_serve_and_diagnose_fails_when_the_diagnosis_carries_another_identity(
     monkeypatch.setattr(DiagnosisPipeline, "run", run_elsewhere)
 
     with pytest.raises(AssertionError, match=fragment):
-        _serve(probe, with_table)
+        _serve(probe, reads)
+
+
+# ------------------------- R6's query: from the workspace it judges
+@pytest.fixture(scope="module")
+def renamed(tmp_path_factory):
+    """The reviewer's P2-1 workspace: the demo graph with its two phenotypes
+    the demo query names (HP:0001250, HP:0001263) renamed to terms it lacks,
+    topology, counts and diseases unchanged, its record from four files (as a
+    real build's), and a disease child the production trainer finetuned on it."""
+    from src.kg.graph import KnowledgeGraph
+    from src.kg.workspace import write_workspace
+    from tests.unit.test_probe_m2_phase import _four_sources
+
+    probe = _probe()
+    work = tmp_path_factory.mktemp("renamed")
+    source = work / "renamed_kg.json"
+    probe._demo_kg().save_json(str(source))
+    source.write_text(source.read_text().replace("HP:0001250", "HP:0001251")
+                                        .replace("HP:0001263", "HP:0001264"))
+    workspace = work / "workspace"
+    write_workspace(KnowledgeGraph.load_json(str(source)), workspace,
+                    feature_dim=probe.FEATURE_DIM, samples=probe._budget(),
+                    sources=_four_sources(work / "inputs"))
+    report = probe.Report()
+    models = probe.phase_training(report, work, workspace, device="cpu", epochs=1)
+    assert models is not None, [p.detail for p in report.probes if p.status != "passed"]
+    return workspace, models.child
+
+
+def test_r6_serves_a_workspace_without_the_demo_phenotypes(renamed, served_state):
+    """The regression: before the fix R6 asked about HP:0001250 and HP:0001263
+    whatever the workspace, so this healthy deployment (verified, from files,
+    the model ready) failed with "the pipeline ranked nothing". Its query now
+    comes from the workspace's own validation cases, bound in the child's
+    graph view."""
+    import json as _json
+
+    probe = _probe()
+    workspace, child = renamed
+    graph = (workspace / "kg.json").read_text()
+    assert "HP:0001250" not in graph and "HP:0001263" not in graph
+    _, _, read, record = probe.verify_workspace(workspace)
+    assert (record.binding, record.origin) == ("verified", "files")
+
+    facts = probe._serve_and_diagnose(workspace / "kg.json", child, workspace, "cpu",
+                                      record, read)
+
+    assert facts["candidates"] > 0 and facts["result_kind"] == "disease_task/v1"
+    query = facts["query"]
+    assert query["split"] == "val" and query["phenotypes"] > 0
+    assert 0 < query["cases_bound"] <= query["cases"]
+    assert str(workspace) not in _json.dumps(facts)
+
+
+def test_r6_fails_naming_the_data_when_no_validation_case_gives_a_query(
+        reads, served_state, tmp_path):
+    """A workspace none of whose validation cases binds in the child's graph
+    view has nothing of its own to ask: R6 fails, saying so, before serving
+    builds anything. Before the fix it asked the demo query and passed. The
+    copy's `val_samples.json` holds only phenotypes the view leaves out, and
+    the caller's reads name its digest."""
+    import torch
+
+    from src.kg.graph_view import build_graph_view
+    from src.kg.storage.file_storage import read_graph_artifacts
+    from src.models.bundle.record import read_model_record
+    from src.utils.checkpoint_io import read_checkpoint
+
+    probe = _probe()
+    sound, checkpoint, read, record = reads
+    copy = probe._workspace_copy(sound, tmp_path / "copy")
+    graph = read_graph_artifacts(copy, map_location="cpu").graph_data
+    child = read_model_record(read_checkpoint(checkpoint, map_location="cpu",
+                                              weights_only=True).checkpoint)
+    view = build_graph_view(graph, rule=child.data_roles["graph_view"]["rule"])
+    phenotypes = int(graph["x_dict"]["phenotype"].size(0))
+    rows = view.view_ids("phenotype", torch.arange(phenotypes))
+    outside = [i for i in range(phenotypes) if int(rows[i]) < 0]
+    assert outside, "the demo child's graph view leaves no phenotype out"
+    val = copy / "val_samples.json"
+    cases = json.loads(val.read_text())
+    val.write_text(json.dumps([dict(case, phenotype_ids=outside[:1]) for case in cases]))
+    digests = {**read, "val_samples.json": hashlib.sha256(val.read_bytes()).hexdigest()}
+
+    with pytest.raises(AssertionError, match="the workspace gives no diagnosis query: none of "
+                                             f"its {len(cases)} validation cases"):
+        probe._serve_and_diagnose(copy / "kg.json", checkpoint, copy, "cpu", record, digests)
+
+
+def test_r6_fails_naming_the_data_when_a_case_names_a_phenotype_the_graph_lacks(
+        reads, monkeypatch):
+    """A validation case that binds in the child's view but names a phenotype
+    id the workspace's graph (kg.json) does not hold is the split and the
+    graph disagreeing: R6 fails saying that, naming the case's position and
+    the id. Before the fix the graph's phenotype mapping was indexed directly
+    and R6 failed with a bare KeyError."""
+    from src.evaluation.cohort import resolve_cohort
+    from src.kg.graph import KnowledgeGraph
+    from src.kg.storage.file_storage import read_samples_file
+
+    probe = _probe()
+    sound, checkpoint, read, _ = reads
+    _, asked = probe._workspace_query(checkpoint, sound, read)
+    position = asked["case_position"]
+    samples = read_samples_file(resolve_cohort(sound, "val").samples).samples
+    dropped = samples[position].phenotype_ids[0]
+    names = KnowledgeGraph.get_reverse_node_mapping
+
+    def without_one_phenotype(graph):
+        mapping = names(graph)
+        return {**mapping, "phenotype": {index: node for index, node in mapping["phenotype"].items()
+                                         if index != dropped}}
+
+    monkeypatch.setattr(KnowledgeGraph, "get_reverse_node_mapping", without_one_phenotype)
+    with pytest.raises(AssertionError, match=(
+            rf"validation case {position} of the workspace names phenotype id {dropped}, which "
+            r"the workspace's graph \(kg\.json\) does not hold among its \d+ phenotypes: the "
+            "split and the graph disagree")):
+        probe._workspace_query(checkpoint, sound, read)

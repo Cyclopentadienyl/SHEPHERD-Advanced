@@ -1,10 +1,10 @@
 # SHEPHERD-Advanced
 
-Phenotype-driven diagnostic reasoning for rare disease. A heterogeneous graph neural network is
-trained over a medical knowledge graph (HPO phenotypes, MONDO diseases, genes, pathways,
-cross-species orthologs) and ranks candidate diseases from a patient's HPO terms. A path reasoner
-supplies the evidence chains a clinician can inspect, so a ranking is never presented without an
-explanation.
+Phenotype-driven diagnostic reasoning for rare disease. A graph neural network is pretrained on a
+medical knowledge graph (HPO phenotypes, MONDO diseases, genes, pathways, cross-species orthologs)
+by link prediction, then finetuned into task models that rank, from a patient's HPO terms,
+candidate diseases, the patient's candidate genes, or similar patients of a reference cohort. A
+path reasoner supplies the evidence chains a clinician can inspect beside a ranked disease.
 
 > **Status:** research/engineering build. Not a certified medical device and not for autonomous
 > clinical decision-making. Output is decision *support* for a qualified clinician.
@@ -12,18 +12,23 @@ explanation.
 ## How it works
 
 ```
-patient HPO terms
+knowledge graph ──► base (link-prediction pretraining) ──► finetuned task models
+                                                              │
+patient HPO terms ──► the loaded task model ──────────────────┤
+   │                    disease:          every disease of its graph view, ranked by the disease head
+   │                    gene:             your candidate genes, model similarity mixed with exact hop distance
+   │                    patients-like-me: a reference cohort's patients, ranked by similarity
    │
-   ├─► GNN embeddings ──────► similarity score  ┐
-   │                                            ├─► η·embedding + (1−η)·shortest-path → ranking
-   ├─► shortest-path table ─► proximity score   ┘
-   │
-   └─► PathReasoner ───────► evidence paths (phenotype → gene → disease) + confidence label
+   └─► PathReasoner ──► evidence paths (phenotype → gene → disease) for the disease rows shown
 ```
 
-Scoring is GNN-primary (η defaults to 0.7); the shortest-path signal and the path evidence are
-complementary. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the layered design and the
-design principles it must satisfy.
+One model is served at a time, and it serves its own task: switching task means loading another
+model. A disease model ranks every disease of its graph view; nothing is gated by path discovery
+and no shortest-path table is read. The gene task's shortest-path term is an exact hop distance
+computed in process from the model's graph view. The path evidence explains a row without
+changing its score or order. Nothing is served without a trained model. See
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the layered design and the design principles it
+must satisfy.
 
 ## Requirements
 
@@ -68,26 +73,29 @@ a test run) need `SHEPHERD_DEPLOYMENT_MODE=M1`, every training and test run need
 
 | | |
 |---|---|
-| Dashboard (Diagnosis; Research › Datasets, Training, Test, Models; Settings) | http://127.0.0.1:8000/ui |
+| Dashboard (Diagnosis; Research › Datasets, Training, Fine-tune, Test, Models; Settings) | http://127.0.0.1:8000/ui |
 | API docs (Swagger) | http://127.0.0.1:8000/docs |
 | Health check | http://127.0.0.1:8000/health |
 
 ## Build a model
 
-Three steps, in order. Full walkthrough with data sources and expected artifacts:
+Two steps, in order. Full walkthrough with data sources and expected artifacts:
 [`docs/TRAINING_PIPELINE_PLAYBOOK.md`](docs/TRAINING_PIPELINE_PLAYBOOK.md).
 
 | Step | Command | Produces |
 |---|---|---|
 | 1. Knowledge graph | `scripts/build_knowledge_graph.py` | `kg.json`, `node_features.pt`, `edge_indices.pt` |
-| 2. Shortest paths | `scripts/compute_shortest_paths.py` | `shortest_paths.pt` |
-| 3. Train | the dashboard's Research › Prepare › Training, or `scripts/train_model.py --data-dir <workspace>` in a shell given the service's `SHEPHERD_WORKSPACES_ROOT` (deployment guide §4.11) | `runs/<arch>/<run>/checkpoints/*.pt` |
+| 2. Train | a base on the dashboard's Research › Prepare › Training, then its task models on Research › Prepare › Fine-tune; or `scripts/train_model.py --data-dir <workspace> --stage base` in a shell given the service's `SHEPHERD_WORKSPACES_ROOT` (deployment guide §4.11), then `--stage finetune` with `--task` and `--finetune-from` the base's checkpoint | `runs/<arch>/<run>/checkpoints/*.pt` |
+
+There is no shortest-path step: no task model reads `shortest_paths.pt`, and neither does the
+GB10 acceptance probe (`scripts/probe_deployment.py`, its `--m2-acceptance` run), which trains,
+serves and measures task models on a workspace as it is built.
 
 Artifacts live under `data/workspaces/<kg>/`, keeping each knowledge graph's outputs separate from
 the KG-independent models in `models/pretrained/`. See
 [`docs/DIRECTORY_STRUCTURE.md`](docs/DIRECTORY_STRUCTURE.md).
 
-> **There is no step 4.** Building a vector index used to be listed here. The vector-index
+> **There is no vector-index step.** Building a vector index used to be listed here. The vector-index
 > subsystem has been detached from diagnosis — it is kept, implemented and tested, for planned
 > natural-language and vector-mapping work, and is built with `make vector-index` when that work
 > needs it. It is not part of building a model. See
@@ -105,14 +113,24 @@ guide §4.11): `SHEPHERD_REGISTRY` naming the deployment's registry, the `<regis
 | Step | Command | Produces |
 |---|---|---|
 | 1. Import a cohort | `scripts/import_cohort.py --registry <registry> --data-dir <workspace> --source <cases.json> --label <label> --role <role>`: a preview, then the same with `--commit <preview id>` | an immutable cohort version, mapped to one workspace's graph, in a registry outside the repository |
-| 2. Measure | `scripts/measure_scorer.py --checkpoint <file> --data-dir <workspace> --cohort <label> --registry <registry>` | a Mode C report, kept in the registry's report store |
+| 2. Measure | `scripts/measure_scorer.py --checkpoint <file> --data-dir <workspace> --mode disease --cohort <label> --registry <registry>`, with `--mode` (required) a protocol this build implements for the model's learning stage and task head (today `disease`, `gene` or `patients_like_me`, one for each task head) | a task report, kept in the registry's report store |
 | 3. Record | `--record` on step 2, or later `scripts/record_evaluation.py --report <report> --checkpoint <file>`, the command step 2 prints | a record in `evaluations.json` beside the checkpoint's resolved path, where the service reads it |
 
 The Diagnosis page's "Model in use" card shows the loaded checkpoint's recorded results as a
-state (how many, how many contested); Research › Evaluate › Models lists them, and API clients
-read them through `GET /api/v1/evaluations/loaded-model`. They are the model's own Mode C disease
-ranking: until work item B-1 ships, the Diagnosis page itself ranks by the GNN + shortest-path
-mixture above, so a recorded number does not describe its ranking.
+state (how many, and for how many the runs under the same conditions differ); Research › Evaluate › Models lists them, each with its run, and API clients
+read them through `GET /api/v1/evaluations/loaded-model`. The Test page measures a model as step 2
+does, by a protocol this build implements for its learning stage and task head, chosen among those
+its model record admits: today one for each task head of a finetuned model, and none yet for a
+base, whose formal test is not implemented. A record it registers names the mode of its report: the
+protocol of a new run (Disease, Gene or Patients-like-me), or a kept report's own mode. A Mode C record, the model's own disease
+ranking from before the tasks, is historical: kept Mode C reports and records are read by the
+shared readers (policy rev 15), and since K8-6a no command writes one (`--mode` is required and
+names a protocol; a checkpoint without a model spec, a ShepherdGNN history file, is refused).
+Mode D, the served ranking Batch 3 measured, was removed in K7: its kept reports and records stay
+readable, and a kept report registers by the general rules under its own mode (the same run's
+report again answers `already_registered`). Since K8-6e.2 the Test and Models pages show a kept
+Mode C or Mode D record, like any mode this build has no words for, as recorded: its own mode,
+every metric by its recorded name and value, and its score semantics exactly as recorded.
 
 ## Development
 

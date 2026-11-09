@@ -6,19 +6,21 @@ Config-related constants and (reserved) deployment-config helpers.
 Config authority (decision record: docs/CONFIG_AUTHORITY.md):
     Runtime configuration is owned by the dataclasses closest to each concern —
     TrainerConfig (src/training/trainer.py), PipelineConfig (src/inference/pipeline.py),
-    and ShepherdGNNConfig (src/models/gnn/shepherd_gnn.py). There is intentionally NO
+    and, for model architecture, the model spec (ModelSpec, src/models/bundle/spec.py),
+    with the reference recipe (recipe.py) for lifecycle defaults. There is intentionally NO
     central HyperparameterManager: a single global config object would couple the
     training, inference, model, API and UI layers together. The one genuinely shared
     config concern — training-parameter metadata shared by the API request model and
     the WebUI — will live in a small field-spec module (docs/CONFIG_AUTHORITY.md, B-lite).
 
 Contents:
-    - model_types.py       : torch-free conv-type constants
-                             (SUPPORTED_CONV_TYPES, DEFAULT_CONV_TYPE).
+    - model_types.py       : torch-free model-type constants
+                             (SUPPORTED_CONV_TYPES, ENCODER_KINDS, the model
+                             record's keys).
     - server_settings.py   : the service's M5 settings, read from the environment
                              at each use (deployment mode, workspaces root,
                              cohort registry, intake directory, R10 evidence
-                             directories, ordering roles), the one rule for a
+                             directories), the one rule for a
                              directory an operator names, and the network-bind
                              rule (SPEC_4 §3.1) the launcher and
                              `src.api.main:main()` apply.
@@ -33,5 +35,5 @@ Module: src/config/__init__.py
 """
 
 # No package-level re-exports: import config submodules directly, e.g.
-#   from src.config.model_types import SUPPORTED_CONV_TYPES, DEFAULT_CONV_TYPE
+#   from src.config.model_types import SUPPORTED_CONV_TYPES, ENCODER_KINDS
 __all__: list[str] = []

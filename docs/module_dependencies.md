@@ -278,6 +278,9 @@ core/
 **注意**: 子圖採樣**不在**這裡。`SubgraphSamplerProtocol` 指向的
 `src/retrieval/subgraph_sampler.py` 從未建立（`protocols.py` 標為 PLANNED）；
 實際實作是 `src/kg/data_loader.py` 的 `SubgraphSampler`。
+*(Superseded by K8-7, 2026-11-08: `SubgraphSampler` was removed with the ShepherdGNN loader, and
+`src/kg/data_loader.py` holds only `DiagnosisSample`. Each training stage samples through its own
+sampler, such as `BaseLPSampler` in `src/training/lp_task.py`; none implements this protocol.)*
 
 ---
 

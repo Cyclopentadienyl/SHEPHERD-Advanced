@@ -3,6 +3,361 @@
 **Status:** Accepted (2026-08) by the deploying institution. **Not yet implemented** — see the
 status table in §2. Implementation is work item B-1, which remains gated (§6).
 
+**Revision: rev 17 (dated by the commit that lands it). A statement of fact, as rev 16's
+corrections were; no normative change.** The seven normative statements (§1), the institution's
+disease SP-context decision (§1.2), the gates (§6) and rev 16's rules are unchanged: natural
+retirement, the keeping of every valid result, the freedom to run, keep and compare experiments,
+and the provenance and fingerprint checks stand as rev 16 states them. The K8 closeout on
+`claude/paper-aligned-two-stage` (K8-7 and K8-11, 2026-11-08) made part of §2.1's "What exists and
+is to be reused" false; it is corrected there, in notes marked rev 17:
+- **The trainer computes no validation cosine of its own any more.** Its ShepherdGNN validation
+  pass retired in K8-7 with the ShepherdGNN training path, together with
+  `tests/unit/test_trainer_validation_values.py`, which checked it, and the `scorer-independence`
+  contract in `.import-linter.ini`, which kept the two apart (four contracts remain). A stage's
+  validation is its task module's (`task.validate`), and the Trainer selects by that task's
+  selection metric (a base's `val_lp_accuracy`, a task model's `val_pooled_mrr`).
+- **`src/inference/scoring.py` is removed** (K8-11), with `cosine_score_matrix` and `cosine_scores`,
+  which nothing in src or scripts called. The home of the scoring a task model uses in validation,
+  measurement and serving is `src/models/tasks/scoring.py` (with the task heads,
+  `src/models/tasks/`), which the layers contract keeps below `src.training`, `src.reasoning`,
+  `src.inference` and `src.evaluation`. §3.2 and §3.3 stay as dated evidence.
+
+**Revision: rev 16 (dated by the commit that lands it). No normative change to the institution's
+serving-scoring decision: the seven normative statements (§1), the institution's disease SP-context
+decision (§1.2) and the gates (§6) are unchanged. This revision changes engineering rules of the
+research platform that rev 15 recorded: it withdraws rev 15's protections against "a conflict
+under one key" and its refusals keyed on a record's condition group, keeps only the refusals a safe
+append needs, and states how every result is kept. Those protections were the owner's engineering
+decisions of 2026-11-06, not the institution's.** K8 on `claude/paper-aligned-two-stage`, by the
+owner's decisions of 2026-11-06: every valid result of every real execution is kept, and the
+necessary provenance and fingerprint checks stay. Each change names the group that makes it true
+("from K8-6r.2"). Until that group lands, the code behaves as it does at the commit that lands this
+revision; a valid report that registration refuses meanwhile stays in its run directory, kept and
+readable, and is registrable under the rules below once K8-6r.2 has landed. No result is made to
+agree with another by a tolerance, a deleted report, a changed seed or mode, or a forced
+deterministic re-run: none is needed.
+- **What is withdrawn, from K8-6r.2.** Rev 15's second case, "a conflict under one key": the report
+  store's refusal of every registration under a key whose runs differ in a compared field ("runs
+  disagree"), with the refusal the code gives while that cannot be checked, and the writer's refusal
+  of a report that differs from the first record under its key (the contradiction), with the
+  sentence "Either way it is a conflict to be cleared up [...]". Results that differ are not a
+  conflict the ledger settles. Also withdrawn, from rev 15's first case: a record that has lost a
+  key field no longer refuses every append to its ledger, and a record that has lost its list of
+  corroborating reports no longer refuses the appends under its key. What a record written before
+  K8-6r.2 lacks (its group or compared fields, a report digest, its corroborating reports), and how
+  its results differ from another run's, are never a reason to refuse a verified new run. Only an
+  uncertainty that keeps this ledger write from completing safely pauses the append: the ledger does
+  not parse, the next registration sequence cannot be allocated safely, or whether this run is
+  already registered cannot be told ("What stands from rev 15", below). None of these is judged by
+  mode, historical identity, equal conditions or equal results, and the original results are kept.
+- **A run and its condition group are two things.** A run is one real execution: the run
+  directory of the cohort version's report store that keeps its report and ranks, verified
+  together with its cohort version, its report's digest and its checkpoint. Its condition group is
+  what a record is keyed by today (the checkpoint, the cohort role and version, the measurement
+  semantics): it groups runs to show and compare them, and it is never a reason to refuse one.
+  Neither the group nor a report's digest stands in for a run's identity. From K8-6r.2:
+  - each record registered from K8-6r.2 on names its run. The writer first looks for this run
+    among those records, before it looks at any record written earlier: the same run with the
+    same report answers `already_registered` and writes nothing; the same run offered with other
+    bytes is refused, since a run's report is sealed when it is published;
+  - a verified run that no record names is registered as a record of its own, whether its values
+    equal another run's or differ, whatever its report's bytes and whatever the times involved,
+    also when those bytes equal a report that an earlier record holds;
+  - a difference between runs is described (which runs, which fields), never a reason to refuse
+    registering, showing, querying, exporting or comparing a run. A run whose regime records
+    deterministic algorithms and whose values differ from another run of its group is kept and
+    registered like any run, and flagged for investigation;
+  - a report in the store that the shared checks cannot read (a broken file, a key that cannot be
+    told, a field the current format does not know, a link) is listed by its run with its reason,
+    kept as written, never repaired and never assigned to a model by guessing. It never blocks or
+    marks another run's registration. Registration is still refused when the selected run's own
+    report, its place in the store, its model or its data cannot be verified;
+  - no run is made its group's representative for being first, deterministic or best (K8-6d
+    retires the one ordering that did, and none of its preferences moves into the shared data);
+  - the command line, the API, a job's status, the Test page's Register, the Models page and the
+    usage history say the same: none disables or refuses a run because of another run. The state
+    names `uncontested`, `contested` and `cannot_be_checked` stay as machine values with a new
+    meaning: they describe differences or missing information within a group and decide nothing.
+- **Records written before K8-6r.2 are read as written.** Such a record names no run: it is shown
+  with its run "not recorded". It may stand for several runs (its corroborating reports) and keeps
+  its first run's environment, R10 and registration. Nothing is invented for it (no run, no
+  environment), and no record that reads today is refused because it names no run. It is never taken
+  as proof that a later run was already registered: a run whose report has bytes such a record holds
+  is registered as a record of its own, and the possible overlap is described as not confirmed ("its
+  relation to record N, merged before each run had its own record, is not recorded"). Both are kept
+  and shown apart in every view and export; they are never counted as two runs confirmed to be
+  independent. Such a record whose digests or group fields cannot be read is listed with its reason
+  and kept, and those losses refuse no verified run. What this costs: the old files never recorded
+  which run each report came from, so whether an old merged record and a named run are one execution
+  can stay unknown, and a run registered before K8-6r.2 that is sent again gets a named record
+  beside the old one, marked as a possible overlap. Whether a run registered before K8-6r.2 had its
+  report replaced cannot be checked either; from a run's first named record on, a replacement is
+  refused. No date rule and no second reader recover the missing history. The usage history may be
+  cited as a clue in such a note; it never decides an outcome.
+- **The ledger format, from K8-6r.2: schema 4.** A record now names its run, and a repeated
+  registration is recognised by its run, not by its condition group or its bytes. That changes
+  what a record means and the rules a writer follows, so the format version changes. The shared
+  reader reads schema 3 and schema 4 files; reading never rewrites a file. An append writes the
+  file as schema 4 and leaves every earlier record as written, with no run invented for it. The
+  file records the registration sequence from which every record names its run: a record before
+  it is historical ("not recorded"); a record from it on without a readable run is damaged, listed
+  with its reason, and never taken for a historical one. A file that holds no record and names no
+  such sequence yet is not damaged: its first append records it. If that sequence cannot be read, a
+  record that names its run still reads, every other record is listed with the reason that whether
+  it names its run cannot be told, and nothing is appended until the sequence is restored from a
+  trusted backup. A build that does not know schema 4 refuses such a file instead of applying the
+  old merge and duplicate rules to it, so the file is read and written by builds that know schema 4.
+  The bump keeps readable files readable and stops writers that do not know the new rules; it
+  refuses no kept report.
+- **No result is lost on the way in.** From K8-6r.1 a registration holds the ledger, across
+  processes, from reading it to writing the new file and its usage-history entry: two
+  registrations at once both end in the ledger, each with its own sequence, or the one that cannot
+  hold it says that the ledger is busy, that nothing was written this time, that its report is
+  kept and that it may be retried; none answers `registered` and is then lost. The check that the
+  ledger is still the one read stays as a second guard. Each append to a cohort version's usage
+  history or investigation notes holds that file across processes, so one writer's failed append
+  never removes another writer's line. Each lock covers one file; where more than one is held, they
+  are taken in the order GPU, ledger, usage history, never the other way, and a registration on its
+  own takes no GPU lock. The ledger and the usage history are two files: when the ledger record is
+  written and its usage-history entry is not, registration says "registered; the usage history was
+  not written" with the reason, and the ledger record stands. From K8-6r.4 a generated split's
+  measurement never replaces an earlier run's report or ranks and never leaves one run's report
+  beside another run's ranks: a place already taken is never overwritten, and no earlier file is
+  deleted to make room; an empty claimed report file, or ranks with no report beside them, is a
+  failed publication, never a result. A generated split's report is not registered because the
+  ledger does not yet support that kind of data identity (it has no registered cohort version), not
+  because such a result is lesser; extending the ledger to it is later work. From K8-6r.3 an R10
+  evidence candidate, or an existing named evidence directory, that cannot be read leaves its scope
+  *unverifiable* with that reason, never "no overlap"; the search goes on through the remaining
+  candidates, and a measurement whose required inputs are verified still runs. Running out of memory
+  may still end a measurement, as a resource failure that claims nothing about overlap and changes
+  no kept result.
+- **The necessary checks stay.** Refused, as before: a report whose digest is not the bytes
+  selected; a checkpoint whose bytes are not the weights a report names; a spec, weights, graph
+  view, data role or repeated record of one artifact that contradict each other; weights read
+  against a graph or mapping they were not trained on (a cross-graph run needs an explicit mapping
+  and a protocol that supports it); a new measurement whose protocol lacks a component, a label or a
+  scorer (never a reason to hide a kept result); a missing or changed checkpoint, graph or cohort
+  sample; an out-of-range or negative raw id, an unknown field that may change a meaning, a wrong
+  type or an unrepresentable value (an undefined metric is never filled in); a resume whose restored
+  optimizer, precision, schedule, data or rules are not the parent's; and the path, operator,
+  deployment-registry, resource-lock and single-read boundaries. None refuses a result because
+  another result differs.
+- **What stands from rev 15.** The withdrawal of every rule keyed on the mode names C or D and of
+  rev 13's and rev 14's limits on kept C and D reports; its first bullet, where "a repeat" is the
+  same run's same report; the generic display (from K8-6e); the listing of reports and ledger
+  records the shared checks cannot read, with their reasons; the meaning of "archived"; and its
+  "What stands" bullet, whose "exceptions above" are now the structural case alone. Appends
+  continue whenever the writer can safely determine the new record's sequence and whether this run
+  is already registered. When it cannot, it keeps the originals and refuses that one uncertain
+  write, and it never guesses, skips, deletes or renumbers a record. It refuses a write to a ledger
+  that does not parse or whose schema 4 sequence boundary cannot be read, and a write where a record
+  is not an object or has lost its registration sequence (every append, naming its index), where a
+  record names this run without a readable cohort version, checkpoint or report digest, or where a
+  record from the boundary on has a run that cannot be read and could be this run. No recorded value
+  is edited to make a registration pass. A manual repair only restores a certain omission from the
+  original report or a trusted backup, and keeps the file as it was before the repair together with
+  a record of the repair. This protection is about the ledger's integrity; it never limits which
+  experiments are run, kept or compared.
+
+**Revision: rev 15 (dated by the commit that lands it). No normative change to the institution's
+serving-scoring decision: the seven normative statements (§1), the institution's disease SP-context
+decision (§1.2) and the gates (§6) are unchanged. This revision does change engineering rules of
+the research platform that rev 13 and rev 14 recorded: it withdraws their limits on reading and
+registering kept Mode C and Mode D reports and ledger records. Those limits were the owner's
+engineering decisions (rev 13: the authorisation of 2026-10-29; rev 14: the decisions of
+2026-11-02), not the institution's.** K8 on `claude/paper-aligned-two-stage`, by the owner's
+decision of 2026-11-04 on historical measurements and the owner's decisions of 2026-11-05. Natural
+retirement: what the new pipeline cannot handle retires; what it can handle as it is, is not made
+incompatible on purpose; the old pipeline is not kept on purpose. This replaces rev 14's third
+bullet:
+- **Kept Mode C and Mode D reports and ledger records are read by the shared readers, as far as
+  those readers can interpret them.** K8-6 retires what exists only for C and D: Mode C's
+  measurement (K8-6a, K8-6b), K7's registration refusal of Mode D reports (K8-6c), and the
+  C/D-specific labels, notes, metric-name mappings, tiles, columns, help and the parser of Mode D's
+  served scoring (K8-6e). After that, a kept report that fits the common report format and
+  measurement semantics (its manifest carries every field the current measurement records, the
+  semantic fields that key it included) and passes the provenance and data-identity checks is
+  shown through the same entry as any other report, under its original mode value. It is
+  registered when it meets the general registration conditions, and a repeat answers
+  `already_registered`. No rule refuses a result because its mode is C or D, none supports those
+  names as a special case, and no C or D report is converted into a current task result.
+- **One generic display (from K8-6e).** This build adds no description of what a C or D figure
+  means and parses no field or value that only C or D writes. Every record is shown by one display
+  that serves any measurement mode: its mode as recorded (a mode the build does not describe is
+  named as such), its denominators and exclusions as recorded, its score semantics exactly as
+  recorded, and every recorded metric. A metric is shown under its recorded name with its recorded
+  value; for the modes the build measures, the pages lead with their readable metric names and
+  keep the recorded names and values one click away. A usage-history row shows its recorded mode,
+  its case count and, one click away, every metric the entry records; an entry that records no
+  mode says so and is never taken for Mode C.
+- **What the shared checks cannot read.** A report or ledger record that the shared checks cannot
+  read is not shown as a result and is never counted as one. It is listed where results are
+  listed, with what identifies it and the reason the shared check gives: a kept report by its run,
+  in the Test page's report list, as before; from K8-6e, a ledger record that names a model's
+  checkpoint digest by its index in the ledger and, where it still carries them, its registration
+  sequence and report digest, in the loaded-model API and the Models details for that model, with
+  one bounded line that names the refused fields and never their values. A ledger record that is
+  not an object, or names no checkpoint digest, belongs to no model: no model's view lists it, and
+  only the writer's refusal names it, by its index. A ledger file that does not parse as UTF-8
+  JSON, or is not a ledger as a whole, is a separate state: none of its records is shown, the
+  reason names the file, and nothing is recovered from it. The raw file and every ledger record
+  are kept as written. Reading the other records never waits on an unreadable one. Appending
+  continues whenever the writer can safely determine the new record's sequence, identity, duplicates
+  and conflicts from the data the ledger holds. When it cannot, it keeps the originals and refuses
+  that one uncertain write, writing nothing; it never guesses, skips, deletes or renumbers a record.
+  Two cases are kept apart. First, data the writer needs to number records or find duplicates is
+  missing. A record that is not an object, or has lost a key field or its registration sequence,
+  refuses every append to that ledger; the first record under a new report's key, if it has lost its
+  list of corroborating reports, refuses every append under that key. Each refusal names the
+  record's index, and the results that read stay readable. Second, a conflict under one key. While
+  the cohort version's report store keeps reports under one key that differ in a compared field,
+  registering any report under that key, even one already registered, is refused as "runs disagree"
+  before the ledger is read; the refusal names the runs and the differing fields, and measurements
+  under that key still run and keep their reports. Behind that check, the ledger compares a new
+  report with the first record under its key: a report that record already holds answers
+  `already_registered`; otherwise, if they differ in a compared field (a field one of them lacks is
+  never taken as equal), the writer refuses the new report as a contradiction, naming the held
+  record's report digest and the differing fields. Either way it is a conflict to be cleared up, not
+  proof that either experiment is invalid: it may come from a defect or from numerical
+  non-determinism. The original reports stay as written and readable, and no recorded value is
+  edited to make a registration pass. A manual repair only restores a certain omission from the
+  original report or a trusted backup, and keeps the file as it was before the repair together with
+  a record of the repair. This protection is about the ledger's integrity; it never limits which
+  experiments are run or compared.
+- **What is withdrawn.** From rev 14: "no longer read from K8-6e"; the refusal of kept C and D
+  reports by their reader; "not shown and counted as not readable" for C and D ledger records; and
+  "Rev 13's 'stay readable' for Mode D ends there, and its 'never registered again' then holds for
+  Mode C as well". From rev 13: "never registered again" for Mode D, from K8-6c. Rev 13's "stay
+  readable" holds, in the sense above.
+- **What "archived" means.** Rev 12's "the Mode C/D comparison is archived: it is not run again"
+  means that this build no longer runs the old implementations. Mode D's executor went in K7 and
+  Mode C's goes in K8-6a and K8-6b; gate 1 as written stays reproducible only from a revision
+  before K7 (`a7d0171` or earlier); no old implementation is restored. It does not restrict
+  research: a researcher may study the same question again, put kept results that the shared
+  readers read beside new ones, and later add an evaluation protocol for it through the shared
+  measurement, report and ledger flow, where its results are recorded and checked like any other
+  protocol's. Whether a comparison is valid is the researcher's judgement; the platform records
+  each result's conditions.
+- **What stands.** Rev 14's first, second and fourth bullets. From its third bullet: "the files are
+  neither deleted nor rewritten"; "a ledger that holds such records keeps serving, comparing and
+  appending" its other records, with the exceptions above; and "A Mode C or D experiment, if wanted
+  again, is redone on the new pipeline", read with the bullet above: it says how a new measurement
+  of that question is made, not that a kept result must be measured again before it is read,
+  registered or compared.
+
+**Revision: rev 14 (2026-11-02). A factual update, no normative change; the gate text and the
+institution's disease SP-context decision (§1, §1.2) are unchanged.** K8 on
+`claude/paper-aligned-two-stage`, by the owner's decisions of 2026-11-02:
+- **Two different things have been called "SP".** The served disease mixture
+  (`served_mixture/v1`: η × the model term + (1 − η) × SP, its SP term read from the precomputed
+  table `shortest_paths.pt` that `scripts/compute_shortest_paths.py` makes) serves only a
+  checkpoint without a model spec. It retires in K8: the mixture and its SP term with the serving
+  deletion (K8-4), then the table's producer and its remaining readers (K8-5). The **exact graph
+  distances** a gene task model computes in process from its own graph view (`src/kg/graph_view.py`
+  `exact_distances`, `src/models/tasks/gene.py` `distance_table`) are a different thing: they are
+  part of the gene task's score, where the paper places KG-distance fusion, and they stay, with η
+  as the gene task's mixing weight. A disease task model (`disease_task/v1`) has no SP term. §1.2,
+  §4 and §5 carry notes.
+- **The B-0 comparison modes are archived in code as well:** Mode D's executor went in K7, Mode C's
+  goes in K8. Gate 1 as written stays reproducible only from a revision before K7 (`a7d0171` or
+  earlier).
+- **Kept Mode C and Mode D reports and records are no longer read from K8-6e** (the owner's
+  decision: the system has never been deployed, and those files are local tests and experiments).
+  From the commit that retires their readers (K8-6e), a kept C or D report is refused by its
+  reader, with the reason, and is not registered; a kept C or D ledger record is not shown and is
+  counted as not readable by this build, with the reason. The files are neither deleted nor
+  rewritten, and a ledger that holds such records keeps serving, comparing and appending its task
+  records. Rev 13's "stay readable" for Mode D ends there, and its "never registered again" then
+  holds for Mode C as well. A Mode C or D experiment, if wanted again, is redone on the new
+  pipeline.
+- **Rev 13's "Still until K8" ends** with the serving deletion (K8-4) and Mode C's removal (K8-6a,
+  K8-6b): after them nothing serves or measures a checkpoint without a model spec. (The GB10
+  acceptance probe's use already ended in K8-1: it now measures by task.)
+
+**Revision: rev 13 (2026-10-29). A factual update, no normative change; the gate text is
+unchanged.** The retirement check K7 on `claude/paper-aligned-two-stage`, by the owner's
+authorisation of 2026-10-29:
+- **The path-reasoning fallback ranking is removed.** A graph named without a model is refused
+  before it is read, and with no pipeline `/diagnose` and `/ready` answer 503 with the reason.
+  Statement 7 now has no subject; it is kept as written. B-2 (an opt-in for serving with no model)
+  is settled: nothing is served without a model. Path reasoning stays as post-ranking evidence.
+- **The demo answer is removed** (the owner's decision): with nothing configured nothing
+  answers either; `/health` stays up so a model can be loaded.
+- **Mode D's executor is removed**; its kept reports and records stay readable and are never
+  registered again. Gate 1 as written (B-0's Mode C and Mode D report) can now be reproduced only
+  from a revision before K7 (`a7d0171` or earlier).
+- **Still until K8:** the served mixture and Mode C, only for a checkpoint without a model spec
+  (a history file) outside the WebUI and for the GB10 acceptance probe. On the integration branch
+  the Diagnosis page serves task models; §2's "current behaviour" column describes `main`
+  `416a242`.
+
+**Revision: rev 12 (2026-10-27). A factual update recording the owner's engineering decisions; no
+normative statement changes, and the gate text is unchanged.**
+- **No deployment exists.** The system has never been deployed at the hospital; it is a research
+  platform. Merging into `main` accepts an engineering version. It is not a hospital deployment, a
+  clinical switch or a clinical performance approval.
+- **The owner's decisions for the research platform** (2026-10-27):
+  - **one switch:** when the paper-aligned integration is delivered, active training, inference and
+    evaluation use only the new contract; the served disease mixture and the execution of old
+    checkpoints retire, with no configuration switch kept between them;
+  - **the Mode C/D comparison is archived:** it is not run again and is no longer a prerequisite of
+    any implementation or retirement. It is not marked as passed, and nothing here says it lacked
+    meaning; gate 1 as written is not cleared;
+  - **the path-reasoning fallback ranking retires:** with a graph and no model, diagnosis is
+    refused. Path reasoning stays as post-ranking evidence.
+- **What this means for the gates.** Gates 1 and 3 gate B-1, the raw-cosine implementation, which is
+  not built. They do not block the research implementation. After the archived code is removed,
+  gate 1 as written (B-0's Mode C and Mode D report, BACKLOG 8a and 8b) can only be reproduced from a
+  fixed revision.
+- **What still holds, unchanged.** Clinical adoption of any model needs its own effect evidence and
+  the institution's procedure; this revision completes neither. Statements 1 and 3–6 bind the new
+  disease ranking as they bound B-1: GNN-primary, every disease of the configured universe scored,
+  no SP in the ranking, SP only as an optional post-ranking view, numeric SP and path evidence kept
+  apart. Statement 7 has nothing to bind once the fallback retires. Statement 2's raw cosine has no
+  served implementation on the research platform after the switch; its proposed replacement (rev 11)
+  still needs the owner's and then the institution's approval for clinical use.
+- **Proposed, not approved** (the owner, then the institution), added to rev 11's list: gate 1's
+  engineering prerequisite (the B-0 comparison) is replaced by the new task models' own effect
+  evaluation, kept separate from clinical adoption conditions.
+- **Notice:** the institution should be informed of this record's status.
+
+**Revision: rev 11 (2026-10-27). A factual update and a factual correction, with proposed
+revisions that are not approved.** No normative statement changes in this revision.
+- **Factual update: the track is scheduled.** The paper-parity retraining track, which statement 2
+  and §8 condition 2 anticipate, is scheduled as work packages A–C of the paper-aligned two-stage
+  design ([`working/scorer-retraining/README.md`](working/scorer-retraining/README.md)).
+  - **Package A** builds its disease model as a research implementation. Nothing served changes
+    until package C passes this record's gates. *(Superseded by rev 12: one switch on the research
+    platform, which has no hospital deployment.)*
+  - **The raw-cosine B-1 is not built first.** The owner's direction is not to build a scorer that is
+    about to be replaced.
+  - **What still applies, unchanged, to whatever model a switch would serve:**
+    - statements 1 and 3–7;
+    - the conditions C1–C10, the schedule and the limits;
+    - gate 3's scope;
+    - the rollout's switch and union rules.
+- **Factual correction: SP's normalisation.** §5's last two bullets measured the absence of
+  candidate-relative normalisation against the paper.
+  - **The paper's released code normalises with fixed bounds,** not over a candidate list
+    (`upstream:data_prep/shortest_paths/add_spl_to_patients.py:18-19,104-109` at `e95433a`;
+    [`SP_SCORE_GUIDE.md`](SP_SCORE_GUIDE.md) §3, corrected the same day). It does so for the gene
+    task only.
+  - **What stays:** the range mismatch is still a defect of this project's mixture. C7 still binds
+    any normalisation used here; it makes no claim about the paper.
+  - **Notice:** as with rev 4, the institution should be informed that its authority document was
+    corrected; a factual amendment needs no reapproval.
+- **Proposed, not approved** (the owner, then the institution). Until approved, statement 2 and
+  gate 1 stand as written; they bind the clinical switch, not research implementation.
+  - **Statement 2:** at the switch, the interim raw cosine is replaced by the paper-aligned disease
+    head. That is `−‖z_d − z_P‖²` on normalised vectors of the disease task's finetuned model, once
+    package C's evidence exists.
+  - **Gate 1:** its report compares the served ranking with the scorer to be switched to, measured
+    as its own mode, not with raw cosine. Mode D's comparison of today's served ranking with Mode C
+    stays valid evidence about today's behaviour.
+  - **B-1's scope:** B-1a's scorer becomes the model bundle's disease head, and `gnn_ranking/v1` is
+    redefined with package A's spec. B-1b and B-1c are unchanged.
+
 **Revision: rev 10 (2026-10-27). Factual update, no normative change.** Batch 4's reviews passed
 and its minimal GB10 check passed at `7fc417c` (`working/batch4-acceptance-2026-10-27/`): the
 result union's three kinds for today's behaviour, which rev 9 marked for review, are accepted.
@@ -92,7 +447,8 @@ Seven normative statements. Each is binding on the target design; none describes
 
 Statement 2 is explicitly **interim**. It reflects what the deployed checkpoint's training objective
 optimised, not the reference paper's disease scorer (§3.1). It is expected to change if and when the
-paper-parity retraining track is undertaken, which is outside work item B.
+paper-parity retraining track is undertaken, which is outside work item B. *(Rev 11: that track is
+scheduled as work packages A–C; the proposed revision of this statement is in rev 11, not approved.)*
 
 ### 1.1 Conditions on clinician-controlled view operations
 
@@ -141,6 +497,12 @@ careful implementation, and it removes any need for request identity, stale-resp
 cache invalidation on the SP path. The clinician waits once, at inference, and then browses, sorts
 and filters with no further computation.
 
+*(Rev 14: the decision is unchanged, and SP context for a disease list stays permitted and unbuilt.
+The precomputed table it was first written against (`shortest_paths.pt`) is no longer produced or
+read after K8 (K8-5), so an implementation would compute the distances it needs, as the gene task
+already computes exact hop distances from its model's graph view (`src/kg/graph_view.py`
+`exact_distances`).)*
+
 ### 1.3 Three limits, previously conflated as `top_k`
 
 `top_k` (`DiagnosisPipeline.run`, default 10; the API's `/diagnose` accepts 1–100, the Diagnosis
@@ -188,7 +550,7 @@ column is implemented.
 | **Disease score** | `0.7 × ((cos+1)/2) + 0.3 × SP` when a checkpoint and `shortest_paths.pt` are both loaded (`_served_score` in `src/inference/pipeline.py`, mixing through `mix_embedding_and_sp_scores` in `src/inference/scoring.py`); since Batch 4 the result is `served_mixture/v1` and the value `served_score`, with η read from the result's identity | Raw cosine (interim, statement 2) | **Not implemented** — B-1 |
 | **SP role** | A ranking term with nominal coefficient 0.3, and therefore able to reorder candidates. The coefficient is not the term's effective contribution — see §3.5 | Optional post-ranking contextual analysis only; separate field or panel; no effect on identity, order, rank or ranking score | **Not implemented** — B-1 |
 | **Evidence-path role** | Path reasoning performs candidate discovery, supplies evidence, **and** becomes the ranking score when no GNN is loaded | Evidence only, via a target-restricted traversal that cannot alter the candidate set | **Not implemented** — design not yet approved (gate 3, §6) |
-| **GNN-unavailable fallback** | The path-reasoning aggregate ranks the candidates (`_score_and_rank_candidates` in `src/inference/pipeline.py`). Until Batch 4 it was written into `confidence_score`, the model's field; since Batch 4 the result is `path_reasoning/v1` and the value its own `path_score`, with no model term. Since provenance contract M3c each result also states its scoring mode (`path_reasoning_fallback`) in its served identity, with the checkpoint `absent` | Discriminated score semantics; fail-closed by default; fallback only by explicit request or approved deployment policy | **Fail-closed core implemented** (provenance contract M1, 2026-10-07): a requested model that cannot be built is refused, never replaced by this fallback. **Described per result** (provenance contract M3c, implemented 2026-10-16, merged as #124): the served identity names the scoring mode and what produced the result; it is a description, not discriminated score semantics. **Discriminated semantics implemented** (Batch 4, accepted 2026-10-27): the `path_reasoning/v1` kind. **Not implemented** — the rest of B-2: whether serving with no model configured needs an opt-in |
+| **GNN-unavailable fallback** | The path-reasoning aggregate ranks the candidates (`_score_and_rank_candidates` in `src/inference/pipeline.py`). Until Batch 4 it was written into `confidence_score`, the model's field; since Batch 4 the result is `path_reasoning/v1` and the value its own `path_score`, with no model term. Since provenance contract M3c each result also states its scoring mode (`path_reasoning_fallback`) in its served identity, with the checkpoint `absent` | Discriminated score semantics; fail-closed by default; fallback only by explicit request or approved deployment policy | **Fail-closed core implemented** (provenance contract M1, 2026-10-07): a requested model that cannot be built is refused, never replaced by this fallback. **Described per result** (provenance contract M3c, implemented 2026-10-16, merged as #124): the served identity names the scoring mode and what produced the result; it is a description, not discriminated score semantics. **Discriminated semantics implemented** (Batch 4, accepted 2026-10-27): the `path_reasoning/v1` kind. **Not implemented** — the rest of B-2: whether serving with no model configured needs an opt-in. *(Rev 13: settled at K7 on the integration branch: the fallback is removed, and with no model nothing is served.)* |
 
 Two further current behaviours, for completeness:
 
@@ -203,19 +565,35 @@ Two further current behaviours, for completeness:
 
 ### 2.1 What B-1 and B-2 still lack (2026-10-25, at `main` `416a242`)
 
+*(Rev 11: B-1a's raw-cosine scorer is not built first. This list stays the record of batch 2's
+starting point. "One scorer, not two" applies to the paper-aligned disease head too: its math is
+shared from `src.models`, and its oracle tests are hand-computed rather than a second product copy
+(`working/scorer-retraining/README.md` §3.2).)*
+
 A gap list, not a design: the designs are batch 2's work under gate 1 as written, and only B-1's
 implementation waits for the gates (§6). Each line names
 what exists to build on, so B-1 extends it rather than writing a second copy.
 
 **What exists and is to be reused.**
-- The cosine: `cosine_score_matrix` and `cosine_scores` (`src/inference/scoring.py`), already
-  shared by serving and Mode C. The trainer computes its validation cosine itself, by design:
+- The cosine: `cosine_score_matrix` and `cosine_scores` (`src/inference/scoring.py`). No module
+  in src or scripts calls them now. The trainer computes its validation cosine itself, by design:
   `tests/unit/test_trainer_validation_values.py` checks it against `cosine_score_matrix`, and the
   `layers` and `scorer-independence` contracts in `.import-linter.ini` keep the two separate.
-- The canonical order: Mode C's `canonical_ranking` (`src/evaluation/measurement.py`), score
-  descending, ties to the lower global disease id, non-finite scores refused. Serving cannot import
-  it where it is (the layers contract in `.import-linter.ini` puts `src.evaluation` above
-  `src.inference`), so B-1 moves it down into `src/inference` and Mode C imports it from there.
+  *(Corrected in rev 16, a statement of fact: "already shared by serving and Mode C" no longer
+  holds; serving stopped calling them in K8-4, and Mode C retired in K8-6b.)* *(Corrected in rev
+  17, a statement of fact: this bullet no longer holds. The trainer's own validation cosine,
+  `tests/unit/test_trainer_validation_values.py` and the `scorer-independence` contract retired in
+  K8-7, and `src/inference/scoring.py`, with both functions, in K8-11. What is reused is the task
+  scorer, `src/models/tasks/scoring.py`, which a finetuned task's validation, task measurement and
+  serving share.)*
+- The canonical order: each task evaluator ranks by score, highest first, and exact ties share
+  their average rank (`average_ranks` in `src/models/bundle/metrics.py`, called by the disease,
+  gene and patients-like-me rankers in `src/models/tasks/`); every task manifest records it as
+  `average-rank/v1`. A served result orders equal scores by a stable id and names that order in
+  its `tie_policy` (`src/core/types.py`). Both modules sit below `src.evaluation` and
+  `src.inference` in the layers contract, so nothing has to move. *(Corrected in rev 16, a
+  statement of fact: Mode C's `canonical_ranking`, named here before, retired with its executor
+  in K8-6b; B-1a's "shared canonical order", below, meant it.)*
 - The SP primitive with its availability mask: `sp_mean_distances` (`src/inference/sp_index.py`).
 - The per-result description: the served identity's `scoring_mode` (provenance contract M3c).
 - The evidence panel and the result's evidence fields, which B-1c fills from a different source.
@@ -229,6 +607,10 @@ dropped silently. Mode C refuses an out-of-range index; an unmappable term is ke
 import under a recorded policy, not refused. **Designed:** the boundary in
 `working/results-review/SPEC_1_RESULTS_REVIEW.md` §2.2: one composed scorer in
 `src/inference/scoring.py`, an unknown term dropped and stated, a node with no row refused.)*
+*(Corrected in rev 17, a statement of fact: `src/inference/scoring.py` is removed (K8-11); the
+home of the one scorer is `src/models/tasks/scoring.py`, where a case's phenotypes are bound to the
+view, a phenotype outside it dropped and counted, and a case whose truth is outside it, or with
+no phenotype left, excluded and counted.)*
 
 **B-1a — the canonical ranking.** Score every disease in the graph by raw cosine and order it by the
 shared canonical order; remove the BFS gate and its two caps from candidate selection (§2, first
@@ -258,20 +640,24 @@ separate open decision (§7).
 scoring mode (M3c); the path-reasoning fallback is its own kind, `path_reasoning/v1`, whose
 candidates carry `path_score` and no model term (Batch 4, accepted 2026-10-27; before it the result carried
 `gnn_score = 0.0`, shown as a number). Missing: whether serving with no model needs an explicit
-opt-in (provenance contract §8, question 2), which stays the owner's decision.
+opt-in (provenance contract §8, question 2), which stays the owner's decision. *(Rev 13: settled
+at K7 (2026-10-29) by the owner's decision: nothing is served without a model, and with no model
+`/diagnose` and `/ready` answer 503.)*
 
 **Gate 1's evidence.** Mode C is built and has run on synthetic and demo cohorts (M4 acceptance,
-`2c94a4e`; M5 close-out, `773dc4a`). Mode D (the served ranking measured on the same cohort,
-B-0.5) is built (Batch 3, 2026-10-26; reviewed, and run once on a synthetic cohort on the GB10,
-2026-10-27: `scripts/measure_scorer.py --mode D`; design
-and as-built record in `working/scorer-measurement/PLAN_B05.md`). The design problem it resolves
-is recorded in `working/scorer-measurement/PLAN_B03.md` §4:
-the public entry point truncates to `top_k` and builds paths and explanations, so getting an
-untruncated served rank without duplicating candidate construction is an open design problem. A
-second problem, not in that plan, follows from the BFS gate (§2, first row): a disease the gate does
-not discover has no served rank at all, so the two measurements do not rank the same set. Mode D,
-or any comparison, reuses the formal implementations (Mode C's `run_mode_c` and the served
-`DiagnosisPipeline`): Modes A and B are not revived and no second evaluation engine is built. No
+`2c94a4e`; M5 close-out, `773dc4a`). Mode D (the served ranking measured on the same cohort, B-0.5)
+is built (Batch 3, 2026-10-26; reviewed, and run once on a synthetic cohort on the GB10, 2026-10-27:
+`scripts/measure_scorer.py --mode D`; design and as-built record in
+`working/scorer-measurement/PLAN_B05.md`). The design problem it resolves is recorded in
+`working/scorer-measurement/PLAN_B03.md` §4: the public entry point truncates to `top_k` and builds
+paths and explanations, so getting an untruncated served rank without duplicating candidate
+construction is an open design problem. A second problem, not in that plan, follows from the BFS
+gate (§2, first row): a disease the gate does not discover has no served rank at all, so the two
+measurements do not rank the same set. Any comparison reuses the formal implementations, today the
+protocols' task evaluators (`src/evaluation/task_measurement.py`) and the served `DiagnosisPipeline`
+(`src/inference/pipeline.py`): Modes A and B are not revived and no second evaluation engine is
+built. *(Corrected in rev 16, a statement of fact: Mode D retired in K7 and Mode C's executor,
+`run_mode_c`, in K8-6b; their kept reports are read by the shared readers, rev 15.)* No
 institutional run and no report exist (BACKLOG 7b, 8a, 8b).
 
 **Who decides what.**
@@ -287,7 +673,7 @@ institutional run and no report exist (BACKLOG 7b, 8a, 8b).
   consumes; and, with the author, the B-0.5 institutional run (BACKLOG 8b).
 - The owner: whether a proposed revision of gate 1 is put to the institution (without one, the gate
   stands and needs no new approval); the configuration switch's default (§7); whether B-2's
-  no-model serving needs an opt-in.
+  no-model serving needs an opt-in. *(Rev 13: the last one is settled, as B-2 above says.)*
 
 ---
 
@@ -415,7 +801,7 @@ unexamined default.
 | **Keep η in ranking, applied to the full universe** | Requires SP over the whole disease universe — ~27,990 when this table was written, 29,866 on the audited deployment workspace. The degeneracy this row relied on is **no longer an established reason**: §3.5's premise was measured and refuted, and what remains of the concern is unsettled rather than supported. Min–max normalisation over that set is *mathematically* well defined; the objections are that its clinical and task meaning is unvalidated, and that min–max is set by the two extreme candidates, so extreme candidates may compress much of the remaining distribution into a narrow band. No paper support for the disease task. |
 | **Keep η in ranking, applied to a GNN top-N cut** | Reintroduces a candidate gate — softer than BFS, but still able to hide a candidate the GNN ranked highly. Adds an N-selection problem (recall, top-k set and rank preservation, latency) that pure cosine does not have. |
 | **Cascade: use SP only to break ties among candidates the GNN cannot separate** | The most defensible of the alternatives, because it applies SP to a bounded set of already-plausible candidates. Deferred rather than rejected: it needs an operational definition of "cannot separate", which is an uncalibrated threshold; and it is a deviation from the paper requiring its own evidence — the resemblance to the paper's short-list setting is limited to list size and does not carry the paper's validation across (see §5). It does not require a new scoring mode. It can be evaluated without a second institutional inference run only if B-0.5 records an approved bounded per-candidate component artifact, or computes the predeclared analysis during the B-0.5 run. **The currently implemented B-0 artifacts do not contain those components.** |
-| **Remove the SP subsystem entirely** | Rejected. B-0's comparison modes need it; the paper places KG-distance fusion in candidate-gene scoring, which is unbuilt future work; and clinicians may legitimately want SP context on a short list. Demoted, not deleted. |
+| **Remove the SP subsystem entirely** | Rejected. B-0's comparison modes need it; the paper places KG-distance fusion in candidate-gene scoring, which is unbuilt future work; and clinicians may legitimately want SP context on a short list. Demoted, not deleted. *(Rev 14: two of the three reasons have changed. B-0's comparison modes are archived (Mode D's executor removed in K7, Mode C's in K8), and the served mixture and its precomputed table retire in K8. The paper's KG-distance fusion in candidate-gene scoring is built: the gene task model computes exact graph distances in process, and K8 keeps them. Disease SP context on a short list stays permitted and unbuilt (§1.2). What K8 removes is the disease mixture's SP machinery, not SP as a concept.)* |
 
 ---
 
@@ -425,7 +811,11 @@ unexamined default.
   `scripts/compute_shortest_paths.py` are demoted, not removed.** They remain required for B-0's
   comparison modes and for the optional contextual analysis. *(Rev 9: since Batch 4 the mixture
   is `_served_score` and SP's one caller is `sp_analysis_records`; the two per-candidate helpers
-  named here are gone, the capability is not.)*
+  named here are gone, the capability is not.)* *(Rev 14: K8 removes what is left of them: the
+  mixture, its SP term and η's disease use with the serving deletion (K8-4); the producer of
+  `shortest_paths.pt` and its remaining readers with the SP files (K8-5). η stays as the gene
+  task's mixing weight, and the gene task's SP similarity comes from exact hop distances, not from
+  the table. The contextual analysis stays permitted and unbuilt.)*
 - **This is a behaviour change on a live clinical system.** η = 0.7 is what runs today. The change
   must be visible to the institution, not silent, and is gated accordingly (§6).
 - **The candidate list a clinician sees will change**: composition, ordering, and which candidates
@@ -437,10 +827,12 @@ unexamined default.
   curation; this list contains model-ranked diseases. What the bounded set does provide is a
   well-defined reference set for candidate-relative normalisation, which the current absolute
   transform does not perform. How to implement that normalisation is deferred to the implementation
-  stage.
+  stage. *(Rev 11: whether any normalisation is used here is this project's choice under C7; it is
+  not the paper's form, which uses fixed bounds.)*
 - **Two implementation defects are recorded and deferred**, not fixed by this decision: the range
   mismatch between the two score terms, and the absence of candidate-relative normalisation
-  (§3.5, and `SP_SCORE_GUIDE.md` §3).
+  (§3.5, and `SP_SCORE_GUIDE.md` §3). *(Rev 11, corrected: the second is not a defect measured
+  against the paper, whose released code uses fixed bounds; the first stands.)*
 
 ---
 
@@ -476,7 +868,8 @@ B-1 implementation may not begin until all three clear:
     the union's discriminator builds on it is B-1's or B-2's decision, not M3c's.
   - **Batch 4 built the union's first kinds** (accepted 2026-10-27): `served_mixture/v1`,
     `path_reasoning/v1` and `demo/v1`, each with its own required and forbidden fields, the kind
-    derived from the served identity's `scoring_mode` (Spec 1 §2.1). B-1 adds `gnn_ranking/v1`.
+    derived from the served identity's `scoring_mode` (Spec 1 §2.1). B-1 adds `gnn_ranking/v1`
+    *(rev 11: for the paper-aligned disease model, its definition fixed with package A's spec)*.
 - The clinician-facing guide's status box and the SP presentation change together with the code, not
   before it.
 
@@ -493,7 +886,8 @@ This record should be reopened if any of the following occurs:
    Eq 13 — so a result in either direction is a statement about this implementation, not about the
    paper's formula.
 2. **The paper-parity retraining track is undertaken**, changing the trained scorer. Statement 2 is
-   interim precisely because of this.
+   interim precisely because of this. *(Rev 11: undertaken, scheduled as work packages A–C. Rev 11's
+   proposed revisions are the reopening; package C brings the evidence for them.)*
 3. **The knowledge graph changes materially** in coverage or connectivity, altering what SP measures.
 4. **A cascade or tie-break design is evaluated and shown to help** (§4). Evaluating it without a
    further measurement run is conditional on B-0.5 either recording an approved bounded

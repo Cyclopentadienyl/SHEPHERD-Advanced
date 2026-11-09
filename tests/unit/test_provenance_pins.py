@@ -5,14 +5,13 @@ M2.1 makes every recorded input's digest the digest of the bytes a reader parsed
 The dynamic pins run each entry point with every path hash poisoned and check
 that no poison reaches its record (`test_training_reads.py`,
 `test_measurement_reads_once.py`, `test_serving_reads_once.py`,
-`test_sp_artifact_binding.py` for the SP producer, `test_evidence_scripts.py` and
-`test_audit_generator_fidelity.py` for the audits S9 moved). This is the static
-half: it reads the code instead of running it, so it also sees a path hashed in
-a way the poison cannot reach.
+`test_evidence_scripts.py` and `test_audit_generator_fidelity.py` for the
+audits S9 moved). This is the static half: it reads the code instead of running
+it, so it also sees a path hashed in a way the poison cannot reach.
 
 **What it scans.** `src/**`, the entry points (`train_model.py`,
-`measure_scorer.py`, `compute_shortest_paths.py`) and the scripts S9 moved onto
-the readers (`probe_deployment.py`, `audit_split_overlap.py`,
+`measure_scorer.py`) and the scripts S9 moved onto the readers
+(`probe_deployment.py`, `audit_split_overlap.py`,
 `audit_generator_fidelity.py`). Item 19's other scripts and `build_index.py`
 are outside it, by the plan (S9; BACKLOG item 19).
 
@@ -28,8 +27,8 @@ are outside it, by the plan (S9; BACKLOG item 19).
   poison could not reach.
 
 **Not "no path hash anywhere".** Each entry in `ALLOWED` is a named exception
-with its use and its owner: the readers themselves, the three stated exceptions
-and the `kg.json` identification check, item 18's and item 19's deferred sites
+with its use and its owner: the readers themselves, the `kg.json`
+identification check (M2.1 decision 1), item 18's and item 19's deferred sites
 with their homes, and loads of files that are not provenance inputs at all
 (configuration, UI state). Adding a site means adding it here with a reason, in
 review; it is never a line added to make the test pass.
@@ -44,8 +43,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 
-ENTRY_POINTS = ("scripts/train_model.py", "scripts/measure_scorer.py",
-                "scripts/compute_shortest_paths.py")
+ENTRY_POINTS = ("scripts/train_model.py", "scripts/measure_scorer.py")
 MOVED_IN_S9 = ("scripts/probe_deployment.py", "scripts/audit_split_overlap.py",
                "scripts/audit_generator_fidelity.py")
 #: M4's CLIs. They read and hash nothing themselves: the registry, the samples reader
@@ -89,6 +87,8 @@ ALLOWED = {
     ("src/utils/fingerprint.py", "DigestingFile.__init__", "hashlib.sha256"):
         (1, _IN_MEMORY.format(what="every byte a writer writes, as it is written (contract "
                                    "M3b)")),
+    ("src/kg/task_fixture.py", "read_fixture_record", "json.loads"): (1, _READER),
+    ("src/kg/task_fixture.py", "read_fixture_record", "read_once"): (1, _READER),
     ("src/kg/graph.py", "KnowledgeGraph.read_json", "json.loads"): (1, _READER),
     ("src/kg/graph.py", "KnowledgeGraph.read_json", "read_once"): (1, _READER),
     ("src/utils/checkpoint_io.py", "read_checkpoint", "torch.load"): (1, _READER),
@@ -102,14 +102,6 @@ ALLOWED = {
     ("src/kg/artifacts.py", "check_unparsed_kg_json", "file_sha256"):
         (1, "M2.1 decision 1: identifies kg.json before a run that does not parse it, "
             "against the run's one manifest reading; records nothing"),
-    ("src/inference/pipeline.py", "DiagnosisPipeline._load_shortest_paths", "torch.load"):
-        (1, "M2.1 stated exception: the SP table at serving; its identity is the build_id "
-            "inside the loaded tensor, checked against the sidecar"),
-    ("src/inference/sp_artifact.py", "read_sidecar", "json.loads"):
-        (1, "M2.1 stated exception: the SP sidecar's single read, parsed from the bytes it keeps"),
-    ("scripts/compute_shortest_paths.py", "main", "file_sha256"):
-        (1, "S9 allowlist: the SP producer's end-of-run comparison, a warning that records "
-            "nothing; the sidecar records the digest of the bytes traversed"),
     # --- The evaluation ledger and registration (BACKLOG 18 done in M4) ------
     ("src/evaluation/sidecar.py", "checkpoint_matches", "file_sha256"):
         (1, "BACKLOG 19.7: identifies a checkpoint nobody is about to parse (M2.1's own "
@@ -119,8 +111,8 @@ ALLOWED = {
     ("src/evaluation/sidecar.py", "ledger_digest", "file_sha256"):
         (1, "the ledger's stale-write guard: compares the file by path at write time with "
             "the digest read_ledger returned for the bytes it parsed (BACKLOG item 18 done); "
-            "identifies nothing parsed; its window to the rename stays open — single-writer, "
-            "not compare-and-swap"),
+            "identifies nothing parsed; the second line behind the ledger's lock (K8-6r.1), "
+            "for a writer that takes no lock; not compare-and-swap"),
     ("src/evaluation/sidecar.py", "read_ledger", "read_once"): (1, _READER),
     ("src/evaluation/sidecar.py", "read_ledger", "json.loads"): (1, _READER),
     # The one reader of a kept report (moved from registration.py in M5-1): the
@@ -166,6 +158,16 @@ ALLOWED = {
         (1, _IN_MEMORY.format(what="a disease set")),
     ("src/kg/disease_allocation.py", "universe_digest", "hashlib.sha256"):
         (1, _IN_MEMORY.format(what="a disease universe")),
+    # The model bundle path (README G1, F2): the graph view and its split are
+    # identified by the digest of their in-memory content, never of a path.
+    ("src/kg/graph_view.py", "view_digest", "hashlib.sha256"):
+        (1, _IN_MEMORY.format(what="the graph view's rule, mapping and edges (README G1)")),
+    ("src/kg/graph_view.py", "split_facts", "hashlib.sha256"):
+        (1, _IN_MEMORY.format(what="the edge split's rule, seed, view and parts (README F2)")),
+    ("src/models/tasks/gene.py", "neighbour_table", "hashlib.sha256"):
+        (1, _IN_MEMORY.format(what="the gene augmentation neighbour table (README F10)")),
+    ("src/models/tasks/gene.py", "distance_table", "hashlib.sha256"):
+        (1, _IN_MEMORY.format(what="the gene task's exact distance table (README §6)")),
     ("src/kg/sample_generator.py", "_sha256_text", "hashlib.sha256"):
         (1, "the generator's digest of the text it writes, equal to the file's by "
             "construction (the writer's digest of what it wrote, as contract M3b "
@@ -222,9 +224,6 @@ ALLOWED = {
         (2, _PROBE + "Reads back the two inventory reports this probe had the audit write"),
     ("scripts/probe_deployment.py", "phase_m2_real._inventory", "file_sha256"):
         (2, _PROBE + "The digests of those two reports, as evidence"),
-    ("scripts/probe_deployment.py", "_training_settings", "read_once"):
-        (1, _PROBE + "Phase R's training settings, parsed from the bytes of one read whose "
-            "digest the report gives"),
     # --- The deployment probe's M5 acceptance (M5-3): the lock and HTTP answers ---
     ("scripts/probe_deployment.py", "installed_against_lock", "read_once"):
         (1, _PROBE + "A5: the committed uv.lock, parsed from the bytes of one read whose "
@@ -235,17 +234,10 @@ ALLOWED = {
         (1, _PROBE + "M5: Gradio's HTTP answer naming a called event's id; not a file"),
     ("scripts/probe_deployment.py", "_check_allowed", "json.loads"):
         (1, _PROBE + "M5: the gated checkpoint list's HTTP answer; not a file"),
-    ("scripts/probe_deployment.py", "_socket_room", "json.loads"):
-        (1, _PROBE + "A5: the socket check's one-line answer on a child Python's standard "
-            "output; not a file"),
     ("scripts/probe_deployment.py", "_editable_install_of", "json.loads"):
         (1, _PROBE + "A5 (BACKLOG 59): an installed distribution's direct_url.json, read to "
             "tell this checkout's editable install; the environment's description, not an "
             "input"),
-    # --- Mode D (Batch 3, docs/working/scorer-measurement/PLAN_B05.md) ---
-    ("src/evaluation/mode_d.py", "served_semantics", "hashlib.sha256"):
-        (1, _IN_MEMORY.format(what="the served settings (device left out), named in Mode D's "
-                                   "candidate_construction (PLAN_B05 §6)")),
 }
 
 _MODULES = ("hashlib", "json", "torch")

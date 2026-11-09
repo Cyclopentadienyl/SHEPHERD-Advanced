@@ -16,11 +16,22 @@ Research › Evaluate › Test (M5-2, UI-D): import, run, keep and register.
   ledger beside the **listed** checkpoint holding the weights (found by full
   digest, never the report's recorded path), a report that changed since it
   was shown refused;
-- **D5**: a key whose runs disagree is shown "runs disagree — investigate",
-  its reports cannot be registered, a note is kept with who, when and what and
-  lifts nothing;
+- **the measurement** (K2, R1): the Measurement radio offers the protocols the
+  chosen model's listed record admits (`protocols.available`), Start's reason
+  and the start take the chosen protocol and say the protocol definition's
+  reasons (the base message for a base), and the runner is given the protocol
+  apart from the model's stage and task; under test-only protocols p1 and p2 a
+  disease child offers both and starts p2 with its task still disease;
+- **D5** (policy rev 16): a group whose runs differ is described in neutral
+  words ("runs under these conditions differ"), flagged in amber with ▲ and
+  "— investigate" only when it records deterministic algorithms on; each run
+  can be registered; a note is kept with who, when and what and lifts nothing;
 - **D7**: the preview shows exclusion reasons and their counts, never a case
   id; there is no upload control;
+- **R10 evidence**: an evidence directory the server cannot check never
+  disables Start; the row says which and why in amber with ▲, redacted, and
+  the run is given it; one known not to be a directory still disables Start
+  (K8-6 completion review, 2026-11-08);
 - **every message true**: the job's pill is never green for a failed or
   cancelled run; the outcome is the runner's (kept, registered, "no report was
   published"); *unverifiable* is a word, never a 0; no absolute server path is
@@ -54,6 +65,7 @@ import pytest
 gr = pytest.importorskip("gradio")
 pytest.importorskip("torch")
 
+from src.config.model_types import WRITTEN_BEFORE_SPEC  # noqa: E402
 from src.webui.components import test_page as tp  # noqa: E402
 from tests.fixtures.operator_access import (  # noqa: E402
     OPERATOR_BASE_URL,
@@ -62,6 +74,7 @@ from tests.fixtures.operator_access import (  # noqa: E402
     operator_request,
 )
 from tests.fixtures.served_page import ServedSession, served  # noqa: E402
+from tests.fixtures.trained_children import CHILD_RUNS  # noqa: E402
 
 RUN = "20261017-091500_run_3fa9c1"
 LABEL = "demo-test-1"
@@ -69,35 +82,49 @@ LABEL = "demo-test-1"
 
 # --------------------------------------------------------------------------- fixtures
 @pytest.fixture(scope="module")
-def built(tmp_path_factory):
-    """A workspaces root with the demo workspace and its checkpoint in a run, a
+def built(trained_disease_child, tmp_path_factory):
+    """A workspaces root with the demo workspace holding two runs: the
+    session's trained disease child (`trained_disease_child`, copied) and a
+    checkpoint without a model spec, which the listing lists as refused; a
     registry with one version holding one kept, unregistered report (the real
-    measurement, on CPU: an untrained model, so no number here is a result),
-    and an intake directory with one source."""
+    disease task measurement of the child, on CPU: a 1-epoch model, so no
+    number here is a result); and an intake directory with one source."""
     import scripts.measure_scorer as measure_scorer
-    from tests.fixtures.registered_cohort import build_registered_cohort
+    from src.utils.fingerprint import file_sha256
+    from tests.fixtures.registered_cohort import (
+        graph_source_cases,
+        import_version,
+        write_checkpoint_without_model_spec,
+        write_source,
+    )
 
     base = tmp_path_factory.mktemp("testpage")
-    cohort = build_registered_cohort(base / "c")
     workspaces = base / "ws"
     workspaces.mkdir()
     demo = workspaces / "demo"
-    shutil.move(str(cohort.data_dir), demo)
-    checkpoints = demo / "runs" / "gat" / RUN / "checkpoints"
-    checkpoints.mkdir(parents=True)
-    shutil.copy2(cohort.checkpoint, checkpoints / "best.pt")
+    shutil.copytree(trained_disease_child["data_dir"], demo)
+    child = demo / "runs" / "gatv2" / CHILD_RUNS["disease"] / "checkpoints" / "last.pt"
+    child.parent.mkdir(parents=True)
+    shutil.copy2(trained_disease_child["disease"], child)
+    history = demo / "runs" / "hgt" / RUN / "checkpoints" / "best.pt"
+    history.parent.mkdir(parents=True)
+    write_checkpoint_without_model_spec(history, data_dir=demo)
+    registry = base / "c" / "registry"
+    registry.mkdir(parents=True)
+    source = write_source(base / "c" / "cases.json", graph_source_cases(demo))
+    version = import_version(registry, demo, source)
     intake = base / "intake"
     intake.mkdir()
-    shutil.copy2(cohort.source, intake / "cases.json")
+    shutil.copy2(source, intake / "cases.json")
     # The registry is the deployment's while the run measures (BACKLOG 37).
     with pytest.MonkeyPatch.context() as patch:
-        patch.setenv("SHEPHERD_REGISTRY", str(cohort.registry))
-        code = measure_scorer.main(["--checkpoint", str(checkpoints / "best.pt"),
+        patch.setenv("SHEPHERD_REGISTRY", str(registry))
+        code = measure_scorer.main(["--mode", "disease", "--checkpoint", str(child),
                                     "--data-dir", str(demo), "--cohort", LABEL, "--registry",
-                                    str(cohort.registry), "--device", "cpu"])
+                                    str(registry), "--device", "cpu"])
     assert code == 0
-    return SimpleNamespace(base=base, sha=cohort.checkpoint_sha256,
-                           version_sha=cohort.version.identity.sha256)
+    return SimpleNamespace(base=base, sha=file_sha256(child), history_sha=file_sha256(history),
+                           version_sha=version.identity.sha256)
 
 
 @pytest.fixture
@@ -113,7 +140,6 @@ def site(built, tmp_path, monkeypatch):
     monkeypatch.setenv("SHEPHERD_INTAKE_DIR", str(root / "intake"))
     monkeypatch.setenv("SHEPHERD_DEVICE", "cpu")
     monkeypatch.delenv("SHEPHERD_TRAINING_EVIDENCE_DIRS", raising=False)
-    monkeypatch.delenv("SHEPHERD_ORDERING_ROLES", raising=False)
     monkeypatch.delenv("SHEPHERD_DEPLOYMENT_MODE", raising=False)
     monkeypatch.setattr(served_status, "read_status", lambda: (None, "not read"))
     reports = registry / "versions" / LABEL / "reports"
@@ -122,8 +148,10 @@ def site(built, tmp_path, monkeypatch):
         root=root, ws=root / "ws", demo=root / "ws" / "demo", registry=registry,
         intake=root / "intake", reports=reports, run_id=run_dir.name, sha=built.sha,
         version_sha=built.version_sha,
-        checkpoint=root / "ws" / "demo" / "runs" / "gat" / RUN / "checkpoints" / "best.pt",
-        key=f"gat/{RUN}/best.pt")
+        checkpoint=(root / "ws" / "demo" / "runs" / "gatv2" / CHILD_RUNS["disease"]
+                    / "checkpoints" / "last.pt"),
+        key=f"gatv2/{CHILD_RUNS['disease']}/last.pt",
+        history_key=f"hgt/{RUN}/best.pt", history_sha=built.history_sha)
 
 
 def _readonly():
@@ -137,6 +165,27 @@ def _page(monkeypatch, *, operator=True):
 
 def _models(page, request):
     return tp.read_models("demo", request)
+
+
+#: Synthetic bundle runs filed beside the fixture's trained child and its file
+#: without a model spec (listed, its record refused with why; K6 decision 1).
+CHILD_RUN = "20261020-000000_disease_bbbbbb"
+BUNDLE_BASE_RUN = "20261019-000000_base_aaaaaa"
+
+
+def _put_bundle(site, run=CHILD_RUN, task="disease", **change):
+    """A model bundle's checkpoint under ``runs/gatv2/<run>`` (a finetune child
+    of `task`, or a base for `task` None), its record as the training payload
+    writes it (`test_task_first_selection._record_payload`, K6 decision 10's
+    precedent for listing tests, `test_finetune_children`), `change` overriding
+    payload keys; for the tests that start a run through `FakeManager`, so its
+    weights are never measured. Returns its path and listing key."""
+    import time
+
+    from tests.unit.test_task_first_selection import _put, _record_payload
+
+    path = _put(site.demo, "gatv2", run, {**_record_payload(task), **change}, time.time())
+    return path, f"gatv2/{run}/last.pt"
 
 
 class FakeManager:
@@ -172,7 +221,7 @@ def _disagreeing_copy(site, delta=0.0004):
     copy = site.reports / f"20261020T180000Z-{site.sha[:12]}-0badc0de"
     shutil.copytree(source, copy)
     report = json.loads((copy / "report.json").read_text())
-    report["authoritative_metrics"]["untruncated_mrr"] += delta
+    report["authoritative_metrics"]["pooled_mrr"] += delta
     (copy / "report.json").write_text(json.dumps(report, indent=2, sort_keys=True))
     return copy.name
 
@@ -181,11 +230,11 @@ def _disagreeing_copy(site, delta=0.0004):
 def test_no_absolute_path_is_shown():
     roots = [("/srv/registry", "<registry>"), ("/srv/ws", "<workspaces>")]
     text = ("A report was kept at /srv/registry/versions/x/reports/r1; ledger /srv/ws/demo/"
-            "runs/gat/r/checkpoints/evaluations.json; other /etc/passwd and C:\\Users\\x; "
+            "runs/gatv2/r/checkpoints/evaluations.json; other /etc/passwd and C:\\Users\\x; "
             "/srv/ws2/elsewhere stays out; 'at /srv/registry'.")
     out = tp.redact(text, sorted(roots, key=lambda p: -len(p[0])))
     assert "<registry>/versions/x/reports/r1" in out
-    assert "<workspaces>/demo/runs/gat/r/checkpoints/evaluations.json" in out
+    assert "<workspaces>/demo/runs/gatv2/r/checkpoints/evaluations.json" in out
     assert "/etc" not in out and "C:\\" not in out and "/srv/ws2" not in out
     assert out.count(tp.SERVER_PATH) == 3 and "'at <registry>'" in out
 
@@ -207,8 +256,8 @@ def test_a_run_id_names_its_time_and_model():
 def test_the_batch_size_shown_is_the_measurements_default():
     import scripts.measure_scorer as measure_scorer
 
-    args = measure_scorer.parse_args(["--checkpoint", "c", "--data-dir", "d", "--cohort", "x",
-                                      "--registry", "/r"])
+    args = measure_scorer.parse_args(["--mode", "disease", "--checkpoint", "c", "--data-dir",
+                                      "d", "--cohort", "x", "--registry", "/r"])
     assert args.batch_size == tp.BATCH_SIZE_SHOWN
 
 
@@ -255,13 +304,40 @@ def test_the_job_card_shows_the_tail_redacted_and_the_failure():
     assert "No report kept" in html and "workspace demo" in html
 
 
-def test_a_role_says_whether_it_offers_ordering(monkeypatch):
-    monkeypatch.setenv("SHEPHERD_ORDERING_ROLES", "research_selection,institutional_acceptance")
-    assert tp.role_line("research_selection").startswith(
-        "Role research_selection offers ordering by test score in Models")
-    assert "never offers ordering" in tp.role_line("institutional_acceptance")
-    assert "does not offer ordering" in tp.role_line("mygene2")
-    assert tp.role_line("").startswith("Choose the version's role")
+def test_the_import_form_offers_the_versions_own_roles_and_asks_for_one():
+    """Guard (K8-6d): the cohort-import form's Role select and its note belong
+    to the form, not to the retired ordering. The select offers the listed
+    versions' own roles, then mygene2 and institutional_acceptance, each once;
+    with no role chosen the note asks for one."""
+    page = {"versions": [{"role": "research_selection"}, {"role": "mygene2"}, {"role": None},
+                         {"role": "exploration"}, {}]}
+    assert tp.role_choices(page) == ["research_selection", "mygene2", "exploration",
+                                     "institutional_acceptance"]
+    assert tp.role_choices({}) == ["mygene2", "institutional_acceptance"]
+    prompt = ("Choose the version's role: its declared purpose (for example mygene2, "
+              "research_selection or institutional_acceptance).")
+    for unchosen in (None, "", "  "):
+        assert tp.role_line(unchosen) == prompt
+
+
+def test_the_retired_ordering_roles_setting_changes_nothing_on_the_test_page(site, monkeypatch):
+    """A deployment that still sets SHEPHERD_ORDERING_ROLES is simply not read
+    (K8-6d): the version list and the chosen version's line, the import form's
+    role choices and its note are the same with and without it; a chosen role
+    gets no note, and nothing says a role offers ordering."""
+    def shown():
+        page, _request = _page(monkeypatch)
+        version = page["versions"][0]
+        return (page["versions"], tp.version_html(page, version["label"], None),
+                tp.role_choices(page),
+                [tp.role_line(role) for role in (None, version["role"], "institutional_acceptance")])
+
+    without = shown()
+    role = without[0][0]["role"]
+    monkeypatch.setenv("SHEPHERD_ORDERING_ROLES", f"{role},institutional_acceptance")
+    assert shown() == without
+    assert "offers_ordering" not in without[0][0]
+    assert "ordering" not in without[1] and without[3][1:] == ["", ""]
 
 
 def test_unverifiable_is_a_word_never_a_count():
@@ -278,6 +354,57 @@ def test_unverifiable_is_a_word_never_a_count():
     assert "3 of 5 distinct test diseases; 7 test cases" in lines["R10, training"]
     assert "0 of 10 test cases" in lines["R10, training"]
     assert "/srv/secret" not in "".join(lines.values())
+
+
+#: An unverifiable label's words by its scope's evidence state, as the Test
+#: page and Models show them (`caveats.R10_UNVERIFIABLE_REASON`).
+NOT_FOUND_WORDS = ("no file looked at holds the bytes this checkpoint records, so there "
+                   "is no count")
+SEARCH_INCOMPLETE_WORDS = ("a place that may hold the bytes this checkpoint records could "
+                           "not be read, so there is no count. Make it readable to the "
+                           "account that measures, and measure again; the report names "
+                           "the place")
+
+
+@pytest.mark.parametrize("version, state, evidence_words, reason", [
+    (1, "not_found", "evidence not found", NOT_FOUND_WORDS),
+    (2, "search_incomplete", "evidence search incomplete", SEARCH_INCOMPLETE_WORDS),
+], ids=["version-1-not-found", "search-incomplete"])
+def test_a_kept_reports_r10_reads_in_its_states_words_never_a_count(
+    tmp_path, version, state, evidence_words, reason
+):
+    """D11 (guard; Decision 7) and the K8-6r.3 words. A kept report whose R10
+    block is definition version 1 with a `not_found` scope reads with its
+    version-1 meaning, "no file looked at holds the bytes"; a version-2 block
+    whose search was left incomplete says a place could not be read and what
+    to do. Either way the labels are *unverifiable*, with no count, no 0, no
+    dash and no "none", and the place's path is not shown."""
+    from tests.fixtures.model_records import keep
+    from tests.unit.test_evaluation_sidecar import r10_block, registered_report
+
+    block = r10_block()
+    block["definition_version"] = version
+    block["training"]["evidence"] = {
+        "state": state, "path": None,
+        "problem": None if state == "not_found" else (
+            "no candidate that was read holds the recorded bytes, and these places could "
+            "not be looked in: /srv/secret/train_samples.json (PermissionError: "
+            "Permission denied)")}
+    path, record = keep(tmp_path / "registry", registered_report(r10=block))
+    run_id = path.parent.name
+    reports = {"runs": [{"run_id": run_id, "record": record,
+                         "state": {"kept": "kept", "registered": "not_registered"}}]}
+
+    html = tp.result_html(reports, run_id, [], notes=[])
+
+    line = dict(tp._r10_lines(record["r10"]))["R10, training"]
+    assert line.startswith(f'<span class="shep-muted">inputs ({evidence_words}):</span> ')
+    for name in ("Training disease overlap", "Training phenotype-set overlap"):
+        assert f"{name}: <b>unverifiable</b>: {reason}" in line
+    assert line in html
+    text = re.sub(r"<[^>]+>", "", line)
+    assert not re.search(r"\d", text) and "—" not in text and " none" not in text
+    assert "/srv/secret" not in html
 
 
 def test_binding_compares_the_versions_graph_with_the_workspaces(site):
@@ -318,10 +445,18 @@ def test_a_read_only_request_sees_the_versions_and_reports_and_no_checkpoint(sit
 def test_an_operator_lists_the_workspaces_checkpoints(site, monkeypatch):
     page, request = _page(monkeypatch)
     models = tp.read_models("demo", request)
-    assert [tp.item_key(i) for i in models["items"]] == [site.key]
-    assert models["items"][0]["sha256"] == site.sha
-    (label, key), = tp.model_choices(models)
-    assert key == site.key and f"model fingerprint {site.sha[:12]}" in label
+    # Latest run first (by its newest file): the history file is written after
+    # the child is copied with its training time kept.
+    assert [tp.item_key(i) for i in models["items"]] == [site.history_key, site.key]
+    assert [i["sha256"] for i in models["items"]] == [site.history_sha, site.sha]
+    (history, history_key), (child, child_key) = tp.model_choices(models)
+    assert (history_key, child_key) == (site.history_key, site.key)
+    assert f"model fingerprint {site.history_sha[:12]}" in history
+    assert f"model fingerprint {site.sha[:12]}" in child
+    # Each is listed led by what it is: the fixture's file without a model
+    # spec as a record not readable, its trained child by its task.
+    assert history.startswith("Record not readable · epoch ")
+    assert child.startswith("Disease · epoch ")
 
 
 def test_the_reports_of_a_version_with_their_state_and_record(site):
@@ -342,7 +477,7 @@ def test_the_selected_reports_registration_is_asked_beside_the_listed_checkpoint
     refined = tp.refine_registration(page, reports, site.run_id, models)
     (run,) = refined["runs"]
     assert run["state"]["registered"] == "not_registered"
-    assert run["state"]["checked_beside"] == f"gat/{RUN}/best.pt"
+    assert run["state"]["checked_beside"] == site.key
     readonly = tp.read_page(_readonly())
     assert tp.refine_registration(readonly, reports, site.run_id, models) is reports
     # A ledger that cannot be read again leaves the list's answer, never a page error.
@@ -355,20 +490,197 @@ def test_the_selected_reports_registration_is_asked_beside_the_listed_checkpoint
     assert tp.refine_registration(page, reports, site.run_id, models) is reports
 
 
-def test_a_disagreeing_key_is_shown_runs_disagree_and_cannot_be_registered(site, monkeypatch):
+def test_runs_that_differ_are_described_and_each_can_be_registered(site, monkeypatch):
+    """G3, G9 (K8-6r.2; policy rev 16, Decision 3): a group whose runs differ
+    (``contested``, kept as a machine value) is described in plain words on the
+    row and in the result, and Register stays enabled for every run of it: the
+    description decides nothing. Each run's record is its own (looked up by its
+    run id), and the row keeps one " · " (the skill's §5). HEAD: Register
+    disabled with "runs disagree — investigate"."""
     other = _disagreeing_copy(site)
     page, _request = _page(monkeypatch)
     reports = tp.read_reports(LABEL)
     runs = {r["run_id"]: r for r in reports["runs"]}
     assert runs[other]["contest"]["state"] == "contested"
-    assert "untruncated_mrr" in runs[other]["contest"]["differing"]
+    assert "pooled_mrr" in runs[other]["contest"]["differing"]
+    assert runs[other]["record"]["source_artifact_digest"] != (
+        runs[site.run_id]["record"]["source_artifact_digest"])
     html = tp.reports_html(reports, other)
-    assert "runs disagree — investigate" in html
-    allowed, why = tp.register_state(page, reports, site.run_id)
-    assert allowed is False and why.startswith("Disabled: runs disagree — investigate.")
+    assert "runs under these conditions differ on pooled_mrr" in html
+    # The site's runs record deterministic algorithms off: the difference is
+    # described in neutral words, never amber and never "investigate".
+    assert runs[other]["record"]["regime"]["deterministic_algorithms"] is False
+    assert "investigate" not in html and "shep-tag-amber" not in html and "▲" not in html
+    assert "shep-amber-t" not in tp._row_state(runs[other], [])
+    assert "disagree" not in html
+    for run_id in (site.run_id, other):
+        assert tp.register_state(page, reports, run_id) == (True, None)
+        assert tp._row_state(runs[run_id], []).count(" · ") <= 1
     result = tp.result_html(reports, site.run_id, [], notes=[])
-    assert "Runs disagree — investigate." in result and "does not lift the block" in result
+    assert "<b>Runs under these conditions differ</b> on: pooled_mrr" in result
+    assert "investigate" not in result and "▲" not in result
+    assert "shep-tag-amber" not in result and "shep-notice-amber" not in result
+    assert "each can be registered" in result and "block" not in result.replace(
+        "shep-test-block", "")
     assert tp.notes_visible(reports, site.run_id)
+
+
+def _twin_copy(site):
+    """The kept report's bytes in a new run directory: a second run whose
+    report is byte-identical (two CPU runs of one test)."""
+    source = site.reports / site.run_id
+    copy = site.reports / f"20261020T190000Z-{site.sha[:12]}-0be11e5d"
+    shutil.copytree(source, copy)
+    return copy.name
+
+
+def test_the_route_and_the_page_read_a_byte_identical_run_by_its_own_record(site, monkeypatch):
+    """G2, G3, A3 (K8-6r.2): after run 1 is registered from the page, a second
+    run with byte-identical report bytes is not registered on
+    ``GET /api/v1/cohorts`` nor on the Test page, whose Register stays enabled
+    for it; "Already registered." applies to run 1's own record only, and
+    registering run 2 adds record 2 naming it. HEAD: run 2 read registered by
+    its bytes, and Register said "Already registered." for it."""
+    page, request = _page(monkeypatch)
+    models = tp.read_models("demo", request)
+    done, said = tp.register_selected(page, tp.read_reports(LABEL), models, "demo", site.run_id,
+                                      request)
+    assert done is True and said.startswith("Registered as record 1."), said
+    twin = _twin_copy(site)
+
+    # The route and the page's listing say the same of each run (the list
+    # knows no checkpoint file, so neither reads "registered" for the twin).
+    route = _cohorts_route_runs(LABEL)
+    listed = {run["run_id"]: run for run in tp.read_reports(LABEL)["runs"]}
+    for run_id in (site.run_id, twin):
+        assert route[run_id]["state"] == listed[run_id]["state"]
+        assert listed[run_id]["contest"]["state"] == "uncontested"
+    assert listed[twin]["state"]["registered"] != "registered"
+    # Asked beside the listed checkpoint Register would use, by run.
+    reports = tp.refine_rows(page, tp.read_reports(LABEL), models)
+    reports = tp.refine_registration(page, reports, twin, models)
+    states = {run["run_id"]: run["state"] for run in reports["runs"]}
+    assert states[site.run_id]["registered"] == "registered"
+    assert states[twin]["registered"] == "not_registered"
+    assert "holds no record naming this run" in states[twin]["why_registered"]
+    assert tp.register_state(page, reports, site.run_id) == (False, "Already registered.")
+    assert tp.register_state(page, reports, twin) == (True, None)
+
+    done, said = tp.register_selected(page, reports, models, "demo", twin, request)
+    assert done is True and said.startswith("Registered as record 2."), said
+    ledger = json.loads((site.checkpoint.parent / "evaluations.json").read_text())
+    assert [r["run_id"] for r in ledger["records"]] == [site.run_id, twin]
+    assert len({r["source_artifact_digest"] for r in ledger["records"]}) == 1
+
+
+def test_a_store_whose_runs_cannot_be_listed_says_why_register_is_off():
+    """C5 (Decision 10): a version whose report store's runs cannot be listed
+    has no report the page can confirm, so Register is off for an operator,
+    saying why and that the command line registers a named report; a
+    read-only request is told only that operator controls are off. A version
+    that could not be read at all is not this case."""
+    reports = {"runs": [], "version_sha256": "a" * 64,
+               "problem": "the report store of 'v' could not be listed (PermissionError)"}
+    allowed, why = tp.register_state({"access": {"allowed": True}}, reports, None)
+    assert allowed is False and why.startswith(
+        "Disabled: the report store could not be listed, so a run's report cannot be "
+        "confirmed here: the report store of 'v' could not be listed (PermissionError).")
+    assert "scripts/record_evaluation.py --report" in why
+    assert tp.register_state({"access": {"allowed": True}},
+                             {**reports, "version_sha256": None}, None) == (False, None)
+
+
+def test_a_run_whose_bytes_a_merged_record_holds_shows_the_possible_overlap(site):
+    """A7 on the page (K8-6r.2): a run not registered whose bytes a record
+    merged before each run had its own record holds says so beside its
+    registration, as a possible overlap, never as registered; a registered
+    run never shows it."""
+    run = {r["run_id"]: r for r in tp.read_reports(LABEL)["runs"]}[site.run_id]
+    state = {"kept": "kept", "registered": "not_registered", "checked_beside": "x/y/last.pt",
+             "historical_overlap": [1]}
+    import html as html_lib
+
+    text = html_lib.unescape(re.sub(r"<[^>]+>", "", tp._record_html(run["record"], run, state)))
+    assert ("not registered (the ledger beside x/y/last.pt was read); possible overlap with "
+            "record 1, merged before each run had its own record (not recorded whether this "
+            "run is one of them); registering adds this run's own record") in text
+    registered = {**state, "registered": "registered", "sequence": 2}
+    assert "possible overlap" not in tp._record_html(run["record"], run, registered)
+
+
+def _with_determinism(reports, flag):
+    """The listing with every run's record saying deterministic algorithms
+    `flag` (the setting is in the group's semantics, so all its runs share it)."""
+    runs = []
+    for run in reports["runs"]:
+        record = run.get("record")
+        if isinstance(record, dict):
+            run = {**run, "record": {**record, "regime": {**record["regime"],
+                                                          "deterministic_algorithms": flag}}}
+        runs.append(run)
+    return {**reports, "runs": runs}
+
+
+def test_deterministic_runs_that_differ_are_flagged_for_investigation(site):
+    """A6 (K8-6r.2; policy rev 16): when the runs of a group differ and the
+    group records deterministic algorithms on, they were expected to agree, so
+    the row, its chip, the Result's chip and its block flag it in amber with ▲
+    and "— investigate". A group without them describes the same difference in
+    neutral words: no amber, no ▲, no "investigate"; the row's chip is then the
+    run's own state ("Registered ✓ #N" once registered), the row's words still
+    describing the difference. A determinism the record does not say (None) is
+    neutral too, and the block does not claim it was off. Neither disables
+    anything, and the notes stay shown either way."""
+    from html import unescape
+
+    other = _disagreeing_copy(site)
+    for flag in (True, False, None):
+        reports = _with_determinism(tp.read_reports(LABEL), flag)
+        run = {r["run_id"]: r for r in reports["runs"]}[other]
+        row = tp._row_state(run, [])
+        chip = tp._row_chip(run)
+        result = tp.result_html(reports, other, [], notes=[])
+        block = tp.block_html(run, [], [])
+        assert row.count(" · ") <= 1
+        assert "runs under these conditions differ on pooled_mrr" in row
+        assert tp.notes_visible(reports, other)
+        if flag:
+            assert row.endswith(" — investigate: deterministic runs were expected to agree</span>")
+            assert '<span class="shep-amber-t"><span aria-hidden="true">▲</span> runs under' in row
+            assert chip == ('<span class="shep-tag shep-tag-amber"><span aria-hidden="true">▲'
+                            '</span> runs differ</span>')
+            assert ('<span class="shep-tag shep-tag-amber"><span aria-hidden="true">▲</span> '
+                    'Runs differ — investigate</span>') in result
+            assert block.startswith('<div class="shep-notice shep-notice-amber shep-test-block">')
+            assert "Runs under these conditions differ — investigate." in unescape(block)
+            assert ("Deterministic algorithms were on, so these runs were expected to agree."
+                    in block)
+        else:
+            assert "investigate" not in row + chip + result and "▲" not in row + chip + result
+            assert "amber" not in row + chip + block
+            assert "shep-tag-amber" not in result and "shep-notice-amber" not in result
+            assert chip == '<span class="shep-tag shep-tag-grey">runs differ</span>'
+            assert '<span class="shep-tag shep-tag-grey">Runs differ</span>' in result
+            assert block.startswith('<div class="shep-reason shep-reason-grey shep-test-block">')
+            assert "<b>Runs under these conditions differ</b> on: pooled_mrr" in block
+            if flag is False:
+                assert ("Without deterministic algorithms, runs can differ; every run is kept "
+                        "as recorded and each can be registered." in block)
+            else:   # not recorded: nothing is said about it either way
+                assert "deterministic" not in block.lower()
+                assert "Every run is kept as recorded and each can be registered." in block
+            assert "An investigation note records what was looked at." in block
+            assert "expected to agree" not in block
+        # Once registered, the row's chip: amber "runs differ" stays first in a
+        # deterministic group; otherwise the run's own "Registered ✓ #3", and
+        # the row's words still describe the difference.
+        registered = {**run, "state": {**run["state"], "registered": "registered",
+                                       "sequence": 3}}
+        assert ("registered #3" in tp._row_state(registered, [])
+                and "runs under these conditions differ on pooled_mrr"
+                in tp._row_state(registered, []))
+        assert tp._row_chip(registered) == (chip if flag else (
+            f'<span class="shep-tag shep-tag-ok">Registered {tp.OK_MARK} #3</span>'))
 
 
 def _uncomparable_copy(site):
@@ -443,23 +755,52 @@ def test_the_cohort_route_and_the_test_page_give_each_run_the_same_d5_state(
     assert sorted(route) == sorted(page) == sorted(with_report)
     for run_id in with_report:
         shown, listed = page[run_id]["contest"], route[run_id]["contest"]
-        assert shown["state"] == listed["state"] == expected, (run_id, shown, listed)
+        # An unreadable other report is its own run's problem only (C1,
+        # K8-6r.2): it never marks another run.
+        wanted = ("uncontested" if case == "a report whose key cannot be told"
+                  and run_id == site.run_id else expected)
+        assert shown["state"] == listed["state"] == wanted, (run_id, shown, listed)
         assert shown["differing"] == listed["differing"]
         assert shown["disagreeing_runs"] == listed["disagreeing_runs"]
         assert listed["problems"] == []
-        assert bool(shown["problems"]) == (expected == "cannot_be_checked")
+        assert bool(shown["problems"]) == (wanted == "cannot_be_checked")
     assert str(site.root) not in json.dumps([run["contest"] for run in route.values()])
     if case == "contested":
-        assert "untruncated_mrr" in route[added]["contest"]["differing"]
+        assert "pooled_mrr" in route[added]["contest"]["differing"]
         assert sorted(route[added]["contest"]["disagreeing_runs"]) == sorted(with_report)
+    operator = {"access": {"allowed": True}}
     if case == "a report whose key cannot be told":
+        # C1 (K8-6r.2): the broken run is listed with its own reason only; the
+        # valid run reads uncontested and its Register stays enabled.
         assert page[added]["key"] is None and "could not be read" in page[added]["unbuilt"]
-        assert tp.register_state({"access": {"allowed": True}}, tp.read_reports(LABEL),
-                                 site.run_id)[0] is False
+        assert page[added]["contest"]["problems"] == [page[added]["unbuilt"]]
+        reports = tp.read_reports(LABEL)
+        assert tp.register_state(operator, reports, site.run_id) == (True, None)
+        # Not JSON, so the helper reads it as no report kept: its own reason.
+        assert tp.register_state(operator, reports, added) == (
+            False, "Disabled: no report was kept in this run.")
+        block = tp.block_html(page[added], [], [])
+        assert "This run&#x27;s report cannot be compared" in block and "marks no other run" in block
+        assert "Comparison incomplete" not in block
     if case == "a report that cannot be compared":
+        # C2 (K8-6r.2): the group's description names that file as
+        # cannot_be_checked; the complete run's Register stays enabled.
         assert page[added]["key"] == page[site.run_id]["key"]
         assert "cannot be compared" in page[added]["unbuilt"]
         assert page[added]["record"] is None and page[site.run_id]["record"] is not None
+        reports = tp.read_reports(LABEL)
+        assert tp.register_state(operator, reports, site.run_id) == (True, None)
+        assert tp.register_state(operator, reports, added)[1].startswith(
+            "Disabled: this report cannot be registered:")
+    if case == "a store that cannot be scanned":
+        # C5 (Decision 10): no report of the store can be confirmed here, so
+        # Register is off saying why and where a run is registered instead.
+        reports = tp.read_reports(LABEL)
+        allowed, why = tp.register_state(operator, reports, site.run_id)
+        assert allowed is False and why.startswith(
+            "Disabled: the report store could not be listed, so this run's report cannot be "
+            "confirmed here: its report store could not be read (RuntimeError).")
+        assert "Register it from the command line by naming its report" in why
 
 
 @pytest.mark.parametrize("replacement", ["damaged", "another report"])
@@ -486,7 +827,7 @@ def test_a_report_replaced_between_the_scan_and_its_state_is_never_shown_unconte
         replaced = b"not a report"
     else:
         changed = json.loads(original)
-        changed["authoritative_metrics"]["untruncated_mrr"] += 0.0004
+        changed["authoritative_metrics"]["pooled_mrr"] += 0.0004
         replaced = json.dumps(changed, indent=2, sort_keys=True).encode()
     real = report_store.scan_report_store
 
@@ -548,33 +889,46 @@ def test_a_store_that_cannot_be_scanned_reads_the_same_for_its_records_and_its_r
 def test_the_result_shows_aggregates_and_states_never_a_case_or_a_path(site):
     reports = tp.read_reports(LABEL)
     html = tp.result_html(reports, site.run_id, tp.path_roots())
-    assert "Mode C MRR (untruncated)" in html and "over 10 ranked" in html
-    assert "10 of 13</b> source cases ranked" in html
-    assert "ground truth absent 2 · phenotype unmappable 1" in html
-    assert "Validation MRR" not in html, "Trainer validation and Mode C never share a place"
+    # A disease task report: its tiles, and its coverage over the version's
+    # import-eligible cases, of which it ranks those whose truth is in the
+    # model's graph view (the report's `n_ranked`).
+    ranked = json.loads((site.reports / site.run_id / "report.json").read_text())["n_ranked"]
+    assert 0 < ranked <= 10
+    assert "Disease pooled MRR" in html and "Disease coverage" in html
+    assert (f"<b>{ranked} of 10</b> import-eligible cases ranked by the model · 13 source "
+            "cases; 3 excluded at import: ground truth absent 2 · phenotype unmappable 1") in html
+    assert "Validation MRR" not in html, "Trainer validation and a test result never share a place"
     assert "case-" not in html and str(site.root) not in html
     assert "synthetic</b> — a generated stand-in" in html
     assert "R1 graph files match the workspace manifest" in html
 
 
-def test_a_result_of_another_or_no_mode_is_never_shown_as_mode_c(site):
+def test_a_result_of_another_or_no_mode_is_shown_as_recorded(site):
     """A record whose mode this version does not describe, or whose mode cannot
-    be read, is named for what it is: never Mode C's label, tiles or coverage
-    words (the internal review of Batch 3, ui_api-4). Each report row names its
-    mode first, and the Run panel says Start runs Mode C (ui_api-5)."""
+    be read, is named for what it is by the one display for every mode (R2):
+    its own label, no tiles and no claim of what its cases are, its metrics as
+    recorded in one "Recorded metrics" row; never another mode's words. Each
+    report row names its mode first (ui_api-5), a kept Mode C report's as "mode
+    C, not described by this version", and what the Run panel fixes names no
+    measurement: the Measurement radio offers the protocols."""
     import html as html_lib
 
+    c_run = _keep_mode_c_report(site)
     reports = tp.read_reports(LABEL)
-    run = {r["run_id"]: r for r in reports["runs"]}[site.run_id]
+    run = {r["run_id"]: r for r in reports["runs"]}[c_run]
     record = run["record"]
     for mode, label in (("E", "Mode E (a measurement mode this version does not describe)"),
                         (None, "Measurement mode not recorded")):
         changed = {**record, "scoring": {**record["scoring"], "mode": mode}}
-        text = html_lib.unescape(re.sub(r"<[^>]+>", "", tp._record_html(changed, run, {})))
-        assert label in text and "Mode C" not in text
+        raw = tp._record_html(changed, run, {})
+        text = html_lib.unescape(re.sub(r"<[^>]+>", "", raw))
+        assert label in text and "Mode C" not in text and "shep-test-tile-l" not in raw
         assert "source cases ranked" not in text and "not described for this mode" in text
-    assert "model ranking (Mode C): report kept" in tp.reports_html(reports, None)
-    assert "model ranking (Mode C) · fixed by the server" in tp.fixed_html({})
+        assert '<span class="shep-k">Recorded metrics</span>' in raw
+        assert "<div><code>untruncated_mrr</code> 0.5</div>" in raw
+    assert "mode C, not described by this version: report kept" in tp.reports_html(reports, None)
+    fixed = tp.fixed_html({})
+    assert "Mode C" not in fixed and "Mode D" not in fixed and "Measurement" not in fixed
 
 
 def test_a_run_without_a_report_says_none_was_kept(site):
@@ -587,24 +941,87 @@ def test_a_run_without_a_report_says_none_was_kept(site):
     assert "No report was kept in this run directory" in tp.result_html(reports, interrupted.name, [])
     assert tp.register_state({"access": {"allowed": True}}, reports, interrupted.name) == (
         False, "Disabled: no report was kept in this run.")
+    roots = tp.path_roots()
+    row = _plain(tp._row_state(run, roots))
+    assert row.startswith("no report kept: there is no <registry>/") and "report.json" in row
+    assert str(site.registry) not in row
+
+
+def _plain(html):
+    import html as html_lib
+
+    return " ".join(html_lib.unescape(re.sub(r"<[^>]+>", " ", html)).split())
+
+
+@pytest.mark.parametrize("damage", ["does not parse", "other bytes"])
+def test_a_report_json_that_is_there_is_never_said_to_be_absent(site, damage):
+    """K8-6e.1 (policy rev 16; the webui-design skill keeps "cannot be read"
+    apart from absent): a run directory whose report.json is there but is not
+    a report, or holds bytes other than the run published, keeps no report
+    under the publication contract (``not_kept``), and the Test page's row and
+    Result say why in the registration helper's own words, redacted, never
+    "report.json ... is not there". HEAD: both said the fixed sentence "is not
+    there (an interrupted or refused run)", and the Result then contradicted
+    itself with the comparison's "could not be read"."""
+    from src.evaluation.registration import report_state
+
+    roots = tp.path_roots()
+    if damage == "does not parse":
+        added = _unreadable_copy(site)
+        reports = tp.read_reports(LABEL)
+        run = tp.find(reports["runs"], "run_id", added)
+        wanted = "report.json is not a report: it does not parse as UTF-8 JSON"
+    else:
+        # The refined state (`_refined_state`): the bytes the list read, then
+        # replaced before the registration's helper read them again.
+        reports = tp.read_reports(LABEL)
+        run = tp.find(reports["runs"], "run_id", site.run_id)
+        report = site.reports / site.run_id / "report.json"
+        report.write_bytes(report.read_bytes() + b"\n")
+        fresh = report_state(report, expected_sha256=run["state"]["report_sha256"])
+        run = {**run, "record": None,
+               "state": {**run["state"], "kept": fresh.kept, "why_kept": fresh.why_kept}}
+        reports = {**reports, "runs": [run]}
+        added = site.run_id
+        wanted = "the run's report was replaced or changed"
+    assert run["state"]["kept"] == "not_kept"
+    row = _plain(tp._row_state(run, roots))
+    result = _plain(tp.result_html(reports, added, roots))
+    for text in (row, result):
+        assert wanted in text, text
+        assert "is not there" not in text
+        assert "<registry>/" in text and str(site.registry) not in text
+    assert row.startswith("no report kept: ")
+    assert "No report was kept in this run directory: " in result
+    assert tp.register_state({"access": {"allowed": True}}, reports, added) == (
+        False, "Disabled: no report was kept in this run.")
 
 
 def test_start_waits_for_every_choice_and_says_why(site, monkeypatch):
+    _child, child = _put_bundle(site)
     page, request = _page(monkeypatch)
     models = tp.read_models("demo", request)
     binding = tp.workspace_binding(site.demo, tp.find(page["workspaces"], "name", "demo"))
-    state = lambda ws, label, key, gpu=("none", ""): tp.start_state(  # noqa: E731
-        page, models, ws, label, key, binding, gpu)
-    assert state(None, LABEL, site.key) == (False, "Disabled: choose a workspace.")
-    assert state("demo", None, site.key) == (False, "Disabled: choose a cohort version.")
+    state = lambda ws, label, key, gpu=("none", ""), protocol="disease": (  # noqa: E731
+        tp.start_state(page, models, ws, label, key, binding, gpu, protocol=protocol))
+    assert state(None, LABEL, child) == (False, "Disabled: choose a workspace.")
+    assert state("demo", None, child) == (False, "Disabled: choose a cohort version.")
     assert state("demo", LABEL, None) == (False, "Disabled: choose a model.")
-    assert state("demo", LABEL, site.key) == (True, None)
-    busy = state("demo", LABEL, site.key, ("busy", "GPU job: training (job runner)"))
+    # No measurement chosen (the radio's value None) is said, never filled in.
+    assert state("demo", LABEL, child, protocol=None) == (
+        False, "Disabled: choose a measurement.")
+    assert state("demo", LABEL, child) == (True, None)
+    busy = state("demo", LABEL, child, ("busy", "GPU job: training (job runner)"))
     assert busy == (False, "Disabled: GPU job: training (job runner). One managed GPU job at a "
                            "time (training or evaluation).")
     another = dict(binding, graph={**binding["graph"], "kg": "0" * 64})
-    allowed, why = tp.start_state(page, models, "demo", LABEL, site.key, another, ("none", ""))
+    allowed, why = tp.start_state(page, models, "demo", LABEL, child, another, ("none", ""))
     assert allowed is False and "mapped against another graph" in why
+    # The fixture's file without a model spec: listed, never measured, with
+    # the record reader's one phrase (N2).
+    assert state("demo", LABEL, site.history_key) == (
+        False, f"Disabled: Record not readable ({WRITTEN_BEFORE_SPEC}): not measured here. "
+               "Choose a model finetuned for a task.")
 
 
 # --------------------------------------------------------------------------- the operator controls
@@ -622,31 +1039,115 @@ def test_start_passes_the_digests_shown_and_the_servers_paths(site, monkeypatch)
     evidence = site.root / "evidence"
     evidence.mkdir()
     monkeypatch.setenv("SHEPHERD_TRAINING_EVIDENCE_DIRS", str(evidence))
+    from src.utils.fingerprint import file_sha256
+
+    path, child = _put_bundle(site)
     page, request = _page(monkeypatch)
     models = tp.read_models("demo", request)
     manager = FakeManager()
-    result = tp.start_test_run(page, models, "demo", LABEL, site.key, True, True, request,
-                               manager=manager)
+    result = tp.start_test_run(page, models, "demo", LABEL, child, True, True, request,
+                               protocol="disease", manager=manager)
     assert result["success"] is True
     (inputs,) = manager.started
-    assert inputs.checkpoint_sha256 == site.sha and inputs.version_sha256 == site.version_sha
+    assert inputs.checkpoint_sha256 == file_sha256(path)
+    assert inputs.version_sha256 == site.version_sha
     assert inputs.registry == site.registry.resolve() and inputs.version_label == LABEL
     assert inputs.workspace == site.demo.resolve()
-    assert inputs.checkpoint.resolve() == site.checkpoint.resolve()
+    assert inputs.checkpoint.resolve() == path.resolve()
+    # The measurement asked, apart from the model's stage and task and the
+    # version's counts, which are the listing's: never the client's.
+    assert inputs.protocol == "disease"
+    assert (inputs.learning_stage, inputs.task) == ("finetune", "disease")
+    assert inputs.version_counts == tp.find(page["versions"], "label", LABEL)["counts"]
     assert inputs.evidence_dirs == (evidence.resolve(),)
     assert inputs.record is True and inputs.deterministic is True
 
 
+def _start_inputs(site, monkeypatch):
+    """A listed disease child, the page and the session's models and binding,
+    as Start reads them."""
+    _path, child = _put_bundle(site)
+    page, request = _page(monkeypatch)
+    models = tp.read_models("demo", request)
+    binding = tp.workspace_binding(site.demo, tp.find(page["workspaces"], "name", "demo"))
+    return page, request, models, binding, child
+
+
+def test_an_evidence_directory_that_cannot_be_checked_never_disables_start(site, monkeypatch):
+    """A8, P2-B of the K8-6 completion review (2026-11-08). The setting names
+    an evidence directory whose own stat fails (behind a parent the service
+    account may not search) and one that is fine. Start stays enabled; the
+    R10 evidence row lists both and, on a line of its own, in amber with ▲ and
+    words (readable without colour), which one cannot be checked and why, its
+    path redacted and the reason escaped; the start passes both, in order, as
+    `--training-evidence` in the job's command line. HEAD: Start disabled
+    ("the evidence directories setting is refused") and the start refused."""
+    import errno
+    import os
+
+    from src.api.services.training_manager import build_test_argv
+    from src.webui.components.renderers import WARN_MARK
+    from tests.unit.test_r10 import _stat_fails
+
+    locked, good = (site.root / "locked-evidence").resolve(), (site.root / "evidence").resolve()
+    locked.mkdir()
+    good.mkdir()
+    monkeypatch.setenv("SHEPHERD_TRAINING_EVIDENCE_DIRS", os.pathsep.join([str(locked),
+                                                                          str(good)]))
+    _stat_fails(monkeypatch, locked, PermissionError(errno.EACCES, "Permission <denied>"))
+    page, request, models, binding, child = _start_inputs(site, monkeypatch)
+
+    assert tp.start_state(page, models, "demo", LABEL, child, binding, ("none", ""),
+                          protocol="disease") == (True, None)
+    row = tp.evidence_html(page, "demo")
+    assert ("<code>locked-evidence</code>, <code>evidence</code> (the server's setting)</span>"
+            f'<span></span><span class="shep-amber-t">{WARN_MARK} Cannot be checked: '
+            "&lt;evidence 1&gt; (PermissionError: Permission &lt;denied&gt;). R10 cannot look "
+            "in it: inputs found nowhere else read unverifiable, naming it.</span></div>") in row
+    assert str(site.root) not in row and "<denied>" not in row
+    manager = FakeManager()
+    result = tp.start_test_run(page, models, "demo", LABEL, child, False, False, request,
+                               protocol="disease", manager=manager)
+    assert result["success"] is True
+    (inputs,) = manager.started
+    assert inputs.evidence_dirs == (locked, good)
+    argv = build_test_argv(inputs, None, site.root / "outcome.json")
+    assert [argv[i + 1] for i, arg in enumerate(argv) if arg == "--training-evidence"] == [
+        str(locked), str(good)]
+
+
+def test_an_evidence_entry_that_is_not_a_directory_still_disables_start(site, monkeypatch):
+    """A8 (guard). An entry known not to be a directory (here missing) still
+    refuses the whole setting: Start is disabled saying so, the start is
+    refused, and nothing is started."""
+    monkeypatch.setenv("SHEPHERD_TRAINING_EVIDENCE_DIRS", str(site.root / "missing"))
+    page, request, models, binding, child = _start_inputs(site, monkeypatch)
+
+    allowed, why = tp.start_state(page, models, "demo", LABEL, child, binding, ("none", ""),
+                                  protocol="disease")
+    assert allowed is False
+    assert why.startswith("Disabled: the evidence directories setting is refused: "
+                          "SHEPHERD_TRAINING_EVIDENCE_DIRS is refused: evidence directory 1 ")
+    assert "does not exist or is not a directory" in why
+    manager = FakeManager()
+    result = tp.start_test_run(page, models, "demo", LABEL, child, False, False, request,
+                               protocol="disease", manager=manager)
+    assert result["success"] is False and "does not exist or is not a directory" in result["error"]
+    assert manager.started == []
+
+
 def test_start_runs_only_what_the_session_was_shown(site, monkeypatch):
+    path, child = _put_bundle(site)
     page, request = _page(monkeypatch)
     models = tp.read_models("demo", request)
     manager = FakeManager()
     # a key that is not in the session's list, a path, and another workspace
-    for ws, key in (("demo", "gat/x/y.pt"), ("demo", str(site.checkpoint)), ("other", site.key)):
+    for ws, key in (("demo", "gatv2/x/y.pt"), ("demo", str(path)), ("other", child)):
         result = tp.start_test_run(page, models, ws, LABEL, key, False, False, request,
                                    manager=manager)
         assert result["success"] is False and "Nothing was started." in result["error"]
-    result = tp.start_test_run(page, models, "demo", "not-a-version", site.key, False, False,
+        assert "Choose a model the server lists in this workspace" in result["error"]
+    result = tp.start_test_run(page, models, "demo", "not-a-version", child, False, False,
                                request, manager=manager)
     assert result["success"] is False and manager.started == []
     # A listed workspace holding the same run and file: the model was listed
@@ -654,21 +1155,23 @@ def test_start_runs_only_what_the_session_was_shown(site, monkeypatch):
     shutil.copytree(site.demo, site.ws / "copy", symlinks=True)
     page = tp.read_page(request)
     assert "copy" in page["directories"]
-    result = tp.start_test_run(page, models, "copy", LABEL, site.key, False, False, request,
+    result = tp.start_test_run(page, models, "copy", LABEL, child, False, False, request,
                                manager=manager)
     assert result["success"] is False and "in this workspace" in result["error"]
     assert manager.started == []
 
 
 def test_a_checkpoint_the_server_no_longer_lists_is_refused_at_start(site, monkeypatch):
+    path, child = _put_bundle(site)
     page, request = _page(monkeypatch)
     models = tp.read_models("demo", request)
-    site.checkpoint.unlink()
+    path.unlink()
     manager = FakeManager()
-    result = tp.start_test_run(page, models, "demo", LABEL, site.key, False, False, request,
-                               manager=manager)
+    result = tp.start_test_run(page, models, "demo", LABEL, child, False, False, request,
+                               protocol="disease", manager=manager)
     assert result["success"] is False and manager.started == []
     assert result["error"].endswith("Nothing was started.")
+    assert "this checkpoint" not in result["error"].lower(), "refused by the list, not the record"
 
 
 def test_cancel_is_refused_for_a_read_only_request(monkeypatch):
@@ -697,6 +1200,66 @@ def test_register_files_the_record_beside_the_listed_checkpoint(site, monkeypatc
     assert again is True and "Already registered as record 1" in said
 
 
+def test_a_registered_run_whose_report_was_replaced_says_so_before_register(site, monkeypatch):
+    """A5 on the Test page (review of K8-6r.2): a run registered from the page
+    whose report.json is then replaced by other valid bytes reads "not
+    registered", and the page says why before Register is pressed: the row and
+    the Result name the replacement, the Result with the registration's own
+    words (the record and both digests), redacted. Pressing Register is refused
+    with the same words; the ledger is unchanged. Before the fix the page said
+    only "not registered"."""
+    page, request = _page(monkeypatch)
+    models = tp.read_models("demo", request)
+    done, said = tp.register_selected(page, tp.read_reports(LABEL), models, "demo",
+                                      site.run_id, request)
+    assert done is True and said.startswith("Registered as record 1."), said
+    ledger = site.checkpoint.parent / "evaluations.json"
+    before = ledger.read_bytes()
+    path = site.reports / site.run_id / "report.json"
+    data = json.loads(path.read_text())
+    data["manifest"]["data_dir"] = str(data["manifest"].get("data_dir")) + "-moved"
+    path.write_text(json.dumps(data, indent=2, sort_keys=True))
+
+    reports = tp.refine_rows(page, tp.read_reports(LABEL), models)
+    reports = tp.refine_registration(page, reports, site.run_id, models)
+    run = tp.find(reports["runs"], "run_id", site.run_id)
+
+    assert run["state"]["registered"] == "not_registered"
+    assert run["state"]["replaced_after_registration"] is True
+    assert "not registered (its report was replaced after it was registered)" in \
+        tp._row_state(run, page["roots"])
+    text = " ".join(re.sub(r"<[^>]+>", " ", tp.result_html(reports, site.run_id, page["roots"],
+                                                            notes=[])).split())
+    assert "Not registered: " in text and "is already registered as record 1 from report" in text
+    assert "so this file was replaced after it was registered" in text
+    assert str(site.checkpoint.parent) not in text
+    done, said = tp.register_selected(page, reports, models, "demo", site.run_id, request)
+    assert done is False and "is already registered as record 1 from report" in said
+    assert ledger.read_bytes() == before
+
+
+def test_a_registration_the_listed_checkpoints_ledger_cannot_tell_gives_its_reason():
+    """Review of K8-6r.2: when the ledger beside the listed checkpoint was read
+    and cannot tell (here a record that lost its sequence), the Result gives
+    the registration's own reason, redacted and escaped; the list's own
+    "cannot be checked" (no checkpoint looked in) keeps its one sentence and
+    adds nothing."""
+    roots = [("/srv/ws", "<workspaces>")]
+    state = {"kept": "kept", "registered": "cannot_be_checked",
+             "checked_beside": "gatv2/r1/last.pt",
+             "why_registered": ("/srv/ws/demo/runs/gatv2/r1/checkpoints/evaluations.json: the "
+                                "ledger's record 0 has no registration sequence, so the next "
+                                "sequence cannot be allocated safely")}
+
+    html = tp._registration_reason_html(state, roots)
+
+    assert ("Registration cannot be checked: &lt;workspaces&gt;/demo/runs/gatv2/r1/checkpoints/"
+            "evaluations.json: the ledger&#x27;s record 0 has no registration sequence") in html
+    assert "/srv/ws" not in html
+    assert tp._registration_reason_html({**state, "checked_beside": None}, roots) == ""
+    assert tp._registration_reason_html({**state, "registered": "not_registered"}, roots) == ""
+
+
 def test_register_is_refused_for_a_read_only_request(site, monkeypatch):
     from src.evaluation import registration
 
@@ -709,9 +1272,209 @@ def test_register_is_refused_for_a_read_only_request(site, monkeypatch):
     assert not (site.checkpoint.parent / "evaluations.json").exists()
 
 
+def test_a_busy_ledger_refuses_register_inline_and_register_stays_available(
+        site, monkeypatch):
+    """F-e and G10 (K8-6r.1), the Test page's Register: while another
+    registration holds the ledger's lock past the (patched) grace, the handler
+    returns ``(False, message)`` with the four facts -- the ledger is busy,
+    nothing was written this time, the report is kept, register it again --
+    no ledger is written, and Register stays available (the report reads not
+    registered and is never marked invalid). Registering again then works."""
+    import src.evaluation.sidecar as sidecar
+    from src.evaluation.sidecar import ledger_lock_path
+    from src.utils.file_lock import exclusive_lock
+
+    monkeypatch.setattr(sidecar, "LEDGER_LOCK_GRACE_SECONDS", 0.2)
+    page, request = _page(monkeypatch)
+    models = tp.read_models("demo", request)
+    ledger = site.checkpoint.parent / "evaluations.json"
+    with exclusive_lock(ledger_lock_path(ledger), grace=0):
+        done, said = tp.register_selected(page, tp.read_reports(LABEL), models, "demo",
+                                          site.run_id, request)
+    assert done is False
+    assert "is not registered: the ledger is busy (another registration was writing" in said
+    assert "The report stays where it is kept; register it again." in said
+    assert said.endswith("this time.") and "Nothing was written to" in said
+    assert not ledger.exists()
+    assert tp.register_state(page, tp.read_reports(LABEL), site.run_id) == (True, None)
+
+    done, said = tp.register_selected(page, tp.read_reports(LABEL), models, "demo",
+                                      site.run_id, request)
+    assert done is True and said == "Registered as record 1."
+
+
+def test_register_says_when_the_usage_history_was_not_written(site, monkeypatch):
+    """F-i (K8-6r.1): the ledger written and the usage history busy past its
+    (patched) grace: Register succeeds and its message says the usage history
+    was not written, with the reason; the record stands."""
+    import src.evaluation.report_store as report_store
+    from src.utils.file_lock import exclusive_lock
+
+    monkeypatch.setattr(report_store, "APPEND_LOCK_GRACE_SECONDS", 0.2)
+    page, request = _page(monkeypatch)
+    models = tp.read_models("demo", request)
+    with exclusive_lock(site.reports / "usage.jsonl.lock", grace=0):
+        usage_before = _usage_lines(site)
+        done, said = tp.register_selected(page, tp.read_reports(LABEL), models, "demo",
+                                          site.run_id, request)
+        assert _usage_lines(site) == usage_before
+    assert done is True
+    lock = site.reports / "usage.jsonl.lock"
+    assert said.startswith("Registered as record 1. The usage history was not written: it was "
+                           f"busy (another writer held {lock} for the 0.2 s this one waited). ")
+    assert "FileLockBusy" not in said and said.endswith(" stands.")
+    ledger = json.loads((site.checkpoint.parent / "evaluations.json").read_text())
+    assert [r["registration"]["sequence"] for r in ledger["records"]] == [1]
+
+
+def test_a_busy_notes_file_keeps_nothing_and_says_add_it_again(site, monkeypatch):
+    """K8-6r.1, the Test page's note: while another writer holds the notes
+    file's lock past the (patched) grace, the note is refused in words that say
+    the notes file is busy, nothing was written this time, and it may be added
+    again; nothing is appended. Added again, it is kept, and the version's
+    report list still holds the run alone (F-k: the lock files are not runs)."""
+    import src.evaluation.report_store as report_store
+    from src.utils.file_lock import exclusive_lock
+
+    monkeypatch.setattr(report_store, "APPEND_LOCK_GRACE_SECONDS", 0.2)
+    request = operator_request(monkeypatch)
+    reports = tp.read_reports(LABEL)
+    lock = site.reports / "notes.jsonl.lock"
+    with exclusive_lock(lock, grace=0):
+        done, said = tp.add_note(reports, site.run_id, "ops", "found", request)
+    assert done is False
+    assert said == ("The note was not kept: another writer held the notes file for the 0.2 s "
+                    "this one waited. Nothing was written this time; add it again.")
+    assert not (site.reports / "notes.jsonl").exists()
+
+    done, _said = tp.add_note(reports, site.run_id, "ops", "found", request)
+    assert done is True
+    again = tp.read_reports(LABEL)
+    assert [r["run_id"] for r in again["runs"]] == [site.run_id]
+    assert len(again["notes"]) == 1
+
+
 def _usage_lines(site):
     usage = site.reports / "usage.jsonl"
     return usage.read_bytes() if usage.exists() else b""
+
+
+def _shown(markup: str) -> str:
+    """Rendered HTML as a person reads it: tags dropped, entities decoded."""
+    import html as html_lib
+
+    return html_lib.unescape(re.sub(r"<[^>]+>", "", markup))
+
+
+def _site_manifest(site):
+    """The site report's manifest less the fields a Mode C report sets
+    (`MODE_C_SEMANTICS`): its paths, digests, cohort block and environment."""
+    from tests.unit.test_evaluation_sidecar import MODE_C_SEMANTICS
+
+    report = json.loads((site.reports / site.run_id / "report.json").read_text())
+    return {k: v for k, v in report["manifest"].items() if k not in MODE_C_SEMANTICS}
+
+
+def _keep_mode_c_report(site) -> str:
+    """A kept Mode C report of the site's checkpoint on its version, built
+    (`mode_c_report`) on the site report's other manifest fields, whatever mode
+    that report was measured in: a subject of the one display for every mode
+    (R2, K8-6e.2). Its mode is part of its key, so it never contests the site's
+    disease report. Its run id."""
+    from src.evaluation.cohort_registry import resolve_version
+    from tests.fixtures.report_store import store_bytes
+    from tests.unit.test_evaluation_sidecar import mode_c_report
+
+    manifest = _site_manifest(site)
+    eligible = manifest["cohort_version"]["counts"]["ranked_eligible"]
+    report = mode_c_report(n_ranked=eligible, **manifest)
+    path = store_bytes(site.registry, json.dumps(report, indent=2).encode("utf-8"),
+                       version=resolve_version(site.registry, LABEL), checkpoint_sha256=site.sha)
+    return path.parent.name
+
+
+def _keep_mode_d_report(site) -> str:
+    """A kept Mode D report of the site's checkpoint on its version, as Batch 3
+    kept them in a version's store: Mode D no longer runs (K7), so it is written
+    from the site report's manifest with Mode D's values on Mode C's
+    (`mode_d_report`). Its run id."""
+    from src.evaluation.cohort_registry import resolve_version
+    from tests.fixtures.report_store import store_bytes
+    from tests.unit.test_evaluation_sidecar import mode_d_report
+
+    manifest = _site_manifest(site)
+    eligible = manifest["cohort_version"]["counts"]["ranked_eligible"]
+    report = mode_d_report(n_ranked=eligible - 1, n_eligible=eligible, **manifest)
+    path = store_bytes(site.registry, json.dumps(report, indent=2).encode("utf-8"),
+                       version=resolve_version(site.registry, LABEL), checkpoint_sha256=site.sha)
+    return path.parent.name
+
+
+def test_a_kept_mode_d_report_is_shown_as_recorded_and_its_register_is_enabled(
+        site, monkeypatch):
+    """A kept Mode D report beside a Mode C one (K7 removed Mode D, not its
+    reports), shown by the one display for every mode (R2): its generic label,
+    no tiles, every metric by its recorded name and value, its score semantics
+    verbatim (no η derived, no case-set words), the generic coverage; each
+    report row says its mode as one this version does not describe; no Mode C
+    or D help topic, and no ⓘ on either label. Register is on, as the Mode C
+    report's is: no rule refuses a report by its mode (K8-6c, policy rev 15). A
+    click registers it by the general rules, under its own mode: record 1 in
+    the ledger beside the listed checkpoint, mode D, a `registered` line in the
+    version's usage history, and the report reads as kept, its record and its
+    key state as before; a second click answers that it is already registered,
+    writing nothing."""
+    from src.evaluation.caveats import mode_label
+    from src.evaluation.cohort_registry import resolve_version
+    from src.evaluation.report_store import read_usage_history
+
+    c_run = _keep_mode_c_report(site)
+    d_run = _keep_mode_d_report(site)
+    reports = tp.read_reports(LABEL)
+    runs = {run["run_id"]: run for run in reports["runs"]}
+    record = runs[d_run]["record"]
+    assert record["scoring"]["mode"] == "D"
+    d_html = tp.result_html(reports, d_run, [])
+    result = _shown(d_html)
+    assert mode_label("D") in result and "Mode D (" in result
+    assert "shep-test-tile-l" not in d_html and "Mean rank" not in result
+    assert "<div><code>post_import_mrr</code> 0.35</div>" in d_html
+    assert "<div><code>reached_mean_rank</code> 2.43</div>" in d_html
+    assert ('<span class="shep-k">Score semantics</span><span class="shep-v"><code>'
+            'served:gnn_only:eta=1.0:sp=none</code></span>') in d_html
+    for gone in ("η =", "import-eligible)", "reached only", "reached by the served pipeline",
+                 "Served ranking", "approved scorer policy", "Mode C"):
+        assert gone not in result, gone
+    assert "test-mode-d" not in tp.TOPIC_HELP and "test-mode-c" not in tp.TOPIC_HELP
+    rows = _shown(tp.reports_html(reports, None))
+    assert "mode D, not described by this version: report kept" in rows
+    assert "mode C, not described by this version: report kept" in rows
+    c_html = tp.result_html(reports, c_run, [])
+    c_result = _shown(c_html)
+    assert mode_label("C") in c_result and "Mode D" not in c_result
+    for label_html in (c_html, d_html):
+        label = label_html[label_html.index('class="shep-test-label"'):]
+        label = label[:label.index("</div>")]
+        assert "data-help" not in label, label
+
+    page, request = _page(monkeypatch)
+    assert tp.register_state(page, reports, d_run) == (True, None)
+    assert tp.register_state(page, reports, c_run) == (True, None)
+    models = tp.read_models("demo", request)
+    done, said = tp.register_selected(page, reports, models, "demo", d_run, request)
+    assert done is True and said.startswith("Registered as record 1.")
+    ledger = json.loads((site.checkpoint.parent / "evaluations.json").read_text())
+    assert [(r["scoring"]["mode"], r["source_artifact_digest"]) for r in ledger["records"]] == [
+        ("D", runs[d_run]["state"]["report_sha256"])]
+    entries, _ = read_usage_history(resolve_version(site.registry, LABEL))
+    last = entries[-1]
+    assert (last["kind"], last["run_id"], last["outcome"]) == ("registered", d_run, "registered")
+    shown_again = tp.read_reports(LABEL)
+    again = {run["run_id"]: run for run in shown_again["runs"]}[d_run]
+    assert again["state"]["kept"] == "kept" and again["record"] == record
+    assert again["contest"]["state"] == runs[d_run]["contest"]["state"] == "uncontested"
+    repeat, said = tp.register_selected(page, shown_again, models, "demo", d_run, request)
+    assert repeat is True and "Already registered as record 1; nothing was written" in said
 
 
 def _swap(path, replacement: bytes, how: str):
@@ -730,7 +1493,7 @@ def _another_valid_report(path) -> bytes:
     """The reviewer's counter-example (P2-1): another valid report of the same
     checkpoint and version, its MRR moved by 0.0004."""
     replacement = json.loads(path.read_bytes())
-    replacement["authoritative_metrics"]["untruncated_mrr"] += 0.0004
+    replacement["authoritative_metrics"]["pooled_mrr"] += 0.0004
     return json.dumps(replacement, indent=2, sort_keys=True).encode()
 
 
@@ -902,17 +1665,27 @@ def test_no_listed_checkpoint_with_the_weights_no_registration(site, monkeypatch
     assert _usage_lines(site) == usage_before
 
 
-def test_a_disagreeing_keys_report_is_refused_by_the_one_registration(site, monkeypatch):
-    _disagreeing_copy(site)
+def test_each_run_of_a_group_whose_runs_differ_registers_with_the_note(site, monkeypatch):
+    """G3 (K8-6r.2): the Test page's Register, through the one registration,
+    registers each run of a group whose runs differ as a record of its own,
+    and its message carries the group note, which decides nothing. HEAD:
+    refused, "runs disagree — investigate", nothing written."""
+    other = _disagreeing_copy(site)
     page, request = _page(monkeypatch)
     models = tp.read_models("demo", request)
     done, said = tp.register_selected(page, tp.read_reports(LABEL), models, "demo", site.run_id,
                                       request)
-    assert done is False and "runs disagree — investigate" in said
-    assert not (site.checkpoint.parent / "evaluations.json").exists()
+    assert done is True and said.startswith("Registered as record 1."), said
+    done, said = tp.register_selected(page, tp.read_reports(LABEL), models, "demo", other,
+                                      request)
+    assert done is True and said.startswith("Registered as record 2."), said
+    assert "Runs under these conditions differ: record 2 (this run) differs from record 1" in said
+    assert "pooled_mrr" in said
+    ledger = json.loads((site.checkpoint.parent / "evaluations.json").read_text())
+    assert [r["run_id"] for r in ledger["records"]] == [site.run_id, other]
 
 
-def test_a_note_is_kept_with_the_key_and_lifts_nothing(site, monkeypatch):
+def test_a_note_is_kept_with_the_group_and_changes_nothing(site, monkeypatch):
     _disagreeing_copy(site)
     reports = tp.read_reports(LABEL)
     done, said = tp.add_note(reports, site.run_id, "", "found", operator_request(monkeypatch))
@@ -926,7 +1699,11 @@ def test_a_note_is_kept_with_the_key_and_lifts_nothing(site, monkeypatch):
     page = tp.read_page(operator_request(monkeypatch))
     html = tp.result_html(reports, site.run_id, [], notes=reports["notes"])
     assert "ops &lt;b&gt;" in html and "cuDNN differs" in html and "Investigation notes (1)" in html
-    assert tp.register_state(page, reports, site.run_id)[0] is False, "a note lifts nothing"
+    # A note records what was found and changes nothing: Register was enabled
+    # before it and stays so (K8-6r.2), whatever the group's description.
+    assert tp.register_state(page, reports, site.run_id) == (True, None)
+    assert _said == ("The note was kept with this group's reports. It records what was found "
+                     "and changes nothing.")
 
 
 # --------------------------------------------------------------------------- the import
@@ -1078,7 +1855,7 @@ def test_the_page_is_read_when_shown_and_polled_only_while_shown(monkeypatch):
     poll = _named(demo, "_poll")
     assert (ctx.timer_slow._id, "tick") in poll.targets and poll.queue is False
     assert poll.inputs[0] is ctx.location
-    selects = [b for b in poll.outputs if isinstance(b, (gr.Dropdown, gr.Checkbox))]
+    selects = [b for b in poll.outputs if isinstance(b, (gr.Dropdown, gr.Checkbox, gr.Radio))]
     assert selects == [], "a poll never touches a select"
     selection = _named(demo, "_on_report").outputs[:2]
     assert not [b for b in poll.outputs if b in selection], "a poll never writes the selection"
@@ -1098,14 +1875,16 @@ def test_the_poll_reads_and_writes_nothing_drawn_from_the_selection():
     by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
     start, reason = by_id["shep-test-start"], by_id["shep-test-start-reason"]
     assert start not in poll.outputs and reason not in poll.outputs
-    selection = [by_id[i] for i in ("shep-test-workspace", "shep-test-version", "shep-test-model")]
+    selection = [by_id[i] for i in ("shep-test-workspace", "shep-test-version", "shep-test-model",
+                                    "shep-test-measurement")]
     selection += _named(demo, "_on_report").outputs[:2] + [_named(demo, "_on_model_reload")
                                                            .outputs[0]]
     assert not [b for b in poll.inputs if b in selection]
     assert [by_id[i] for i in ("shep-test-job-head", "shep-test-job", "shep-test-cancel",
                                "shep-test-cancel-reason")] == poll.outputs[1:5]
     writers = [fn for fn in demo.fns.values() if {start, reason} & set(fn.outputs)]
-    assert {"_on_model", "_after_act", "_after_job_change"} <= {fn.name for fn in writers}
+    assert {"_on_model", "_on_measurement", "_after_act",
+            "_after_job_change"} <= {fn.name for fn in writers}
     for fn in writers:
         assert fn.queue is not False, fn.name
         assert (fn.concurrency_id, fn.concurrency_limit) == (tp.SELECTION_CONCURRENCY, 1), fn.name
@@ -1152,7 +1931,8 @@ def test_a_poll_hands_the_store_read_over_only_when_the_job_changed(site, monkey
     again = poll.fn("test", page, {"job_id": "test-1", "status": "running", "gpu": GPU_NONE},
                     _readonly())
     assert again[-2]["at"] != ended[-2]["at"], "each hand-off is a new value"
-    out = after.fn(page, {}, None, "demo", None, None, {"label": LABEL}, ended[-2], _readonly())
+    out = after.fn(page, {}, None, "demo", None, None, None, {"label": LABEL}, ended[-2],
+                   _readonly())
     assert reads == [LABEL] and out[0]["label"] == LABEL
 
 
@@ -1171,6 +1951,7 @@ def test_the_gpu_line_changing_hands_start_over_to_the_selections_group(site, mo
     monkeypatch.setattr(tp, "read_job", lambda **k: dict(job))
     line = ("busy", "GPU job: training (job runner)")
     monkeypatch.setattr(tp, "gpu_line", lambda **k: line)
+    _path, child = _put_bundle(site)
     page, request = _page(monkeypatch)
     models = tp.read_models("demo", request)
     binding = tp.workspace_binding(site.demo, tp.find(page["workspaces"], "name", "demo"))
@@ -1180,13 +1961,13 @@ def test_the_gpu_line_changing_hands_start_over_to_the_selections_group(site, mo
     line = ("none", "GPU jobs: none")
     handoff = poll.fn("test", page, seen, request)[-2]
     assert handoff["seen"] == handoff["now"] == {"job_id": None, "status": "idle"}
-    out = after.fn(page, models, binding, "demo", site.key, site.run_id, reports, handoff,
-                   request)
+    out = after.fn(page, models, binding, "demo", child, "disease", site.run_id, reports,
+                   handoff, request)
     assert out[1] == site.run_id
     assert out[start_at] == gr.update(interactive=True) and out[reason_at] == ""
     line = ("busy", "GPU job: training (job runner)")
-    out = after.fn(page, models, binding, "demo", site.key, site.run_id, reports, handoff,
-                   request)
+    out = after.fn(page, models, binding, "demo", child, "disease", site.run_id, reports,
+                   handoff, request)
     assert out[start_at] == gr.update(interactive=False)
     assert "Disabled: GPU job: training (job runner)." in out[reason_at]
 
@@ -1240,29 +2021,31 @@ def test_the_report_of_a_run_that_has_just_ended_is_selected(site, monkeypatch):
     reports = tp.read_reports(LABEL)
     handoff = poll.fn("test", page, {"job_id": "test-2", "status": "running", "gpu": GPU_NONE},
                       _readonly())[-2]
-    ended = after.fn(page, {}, None, "demo", None, other, reports, handoff, _readonly())
+    ended = after.fn(page, {}, None, "demo", None, None, other, reports, handoff, _readonly())
     assert ended[1] == site.run_id
     quiet = poll.fn("test", page, {"job_id": "test-2", "status": "completed", "gpu": GPU_NONE},
                     _readonly())
     assert quiet[-2] == gr.update(), "nothing is handed over once the end was seen"
-    acted = after_act.fn(page, {}, None, "demo", None, other, reports, _readonly())
+    acted = after_act.fn(page, {}, None, "demo", None, None, other, reports, _readonly())
     assert acted[1] == other, "an act's read decides no end"
     completed = {"job_id": "test-2", "status": "completed"}
-    no_end = after.fn(page, {}, None, "demo", None, other, reports,
+    no_end = after.fn(page, {}, None, "demo", None, None, other, reports,
                       {"seen": completed, "now": completed, "at": 1}, _readonly())
     assert no_end[1] == other, "a hand-off that names no end keeps the operator's choice"
     for before in ({"job_id": "test-1", "status": "completed"}, {"job_id": None, "status": "idle"}):
-        between = after.fn(page, {}, None, "demo", None, other, reports,
+        between = after.fn(page, {}, None, "demo", None, None, other, reports,
                            {"seen": before, "now": completed, "at": 2}, _readonly())
         assert between[1] == site.run_id, f"a run that started and ended after {before}"
     first = poll.fn("test", page, {}, _readonly())[-2]
     assert first["seen"] == {"job_id": None, "status": None} and first["now"] == completed
-    first_tick = after.fn(page, {}, None, "demo", None, other, reports, first, _readonly())
+    first_tick = after.fn(page, {}, None, "demo", None, None, other, reports, first,
+                          _readonly())
     assert first_tick[1] == other, "the session's first tick saw nothing before: no end"
     job.update(job_id="test-3", status="completed",
                outcome={"report_dir": str(site.reports / site.run_id), "kept": True,
                         "registered": False, "summary": "kept"})
-    moved_on = after.fn(page, {}, None, "demo", None, other, reports, handoff, _readonly())
+    moved_on = after.fn(page, {}, None, "demo", None, None, other, reports, handoff,
+                        _readonly())
     assert moved_on[1] == other, "the ended run is no longer the job read now"
 
 
@@ -1279,7 +2062,8 @@ def test_a_poll_that_sees_the_job_change_chooses_again_when_the_shown_report_is_
     gone = "20261001T000000Z-" + "a" * 12 + "-" + "b" * 8
     handoff = poll.fn("test", page, {"job_id": "test-2", "status": "completed",
                                      "gpu": ["none", "GPU jobs: none"]}, _readonly())[-2]
-    out = after.fn(page, {}, None, "demo", None, gone, {"label": LABEL}, handoff, _readonly())
+    out = after.fn(page, {}, None, "demo", None, None, gone, {"label": LABEL}, handoff,
+                   _readonly())
     assert out[1] == site.run_id
 
 
@@ -1316,7 +2100,8 @@ def test_every_write_of_the_selection_is_in_one_queued_group_of_one():
     for fn in writers:
         assert fn.queue is not False, fn.name
         assert (fn.concurrency_id, fn.concurrency_limit) == (tp.SELECTION_CONCURRENCY, 1), fn.name
-    for name in ("_on_workspace", "_on_version", "_on_model", "_on_report", "_after_job_change"):
+    for name in ("_on_workspace", "_on_version", "_on_model", "_on_measurement", "_on_report",
+                 "_after_job_change"):
         assert _named(demo, name).trigger_mode == "multiple", name
     version = _named(demo, "_on_version")
     assert version.inputs[4] in version.outputs
@@ -1395,7 +2180,7 @@ def test_a_late_read_never_writes_back_the_selection_it_started_from(site, monke
     def pick(label):
         with browser.cond:
             browser.order.append(("picked", label))
-        return join(on_version, [None, None, None, "demo", label, None, None])
+        return join(on_version, [None, None, None, "demo", label, None, None, None])
 
     asked = {}
 
@@ -1406,7 +2191,7 @@ def test_a_late_read_never_writes_back_the_selection_it_started_from(site, monke
 
     with served(demo) as base:
         browser = ServedSession(base, demo)
-        assert browser.wait(join(refresh, [None, None, None, None, None]))
+        assert browser.wait(join(refresh, [None] * 6))
         assert browser.wait(pick(LABEL))
         runs = [r["run_id"] for r in browser.state(reports_state)["runs"]]
         assert sorted(runs) == sorted([site.run_id, other]) and runs[0] == site.run_id
@@ -1414,7 +2199,7 @@ def test_a_late_read_never_writes_back_the_selection_it_started_from(site, monke
         handoff = {"seen": {"job_id": "test-9", "status": "running"},
                    "now": {"job_id": "test-9", "status": "completed"}, "at": 1}
         read_again = lambda: join(after, [None, None, None, "demo", None, None, None,  # noqa: E731
-                                          handoff])
+                                          None, handoff])
 
         # a report's row clicked while the hand-off's read is held
         held(read_again, lambda: join(on_report, [None] * 3, {"key": other}))
@@ -1430,7 +2215,7 @@ def test_a_late_read_never_writes_back_the_selection_it_started_from(site, monke
 
         # a version chosen while a workspace's event (asked with the version
         # shown then) is held: the select ends on the version chosen
-        held(lambda: join(on_workspace, [None, "demo", other_label, None, None, None]),
+        held(lambda: join(on_workspace, [None, "demo", other_label, None, None, None, None]),
              lambda: pick(LABEL))
         assert browser.state(reports_state)["label"] == LABEL
         assert shown() == LABEL, "the select shows one version and the session holds another's"
@@ -1478,10 +2263,11 @@ def test_an_ended_run_is_handed_over_once_and_a_click_after_it_stays(site, monke
 
         def hand_over(change):
             """The hand-off's listener, joined as the browser joins it."""
-            return browser.join(after, [None, None, None, "demo", None, None, None, change])
+            return browser.join(after, [None, None, None, "demo", None, None, None, None,
+                                        change])
 
         running = {"job_id": "test-9", "status": "running"}
-        assert browser.wait(browser.join(refresh, [None] * 5))
+        assert browser.wait(browser.join(refresh, [None] * 6))
         browser.set_state(ctx.location, tp.PAGE)
         newest = browser.state(selected_report)
         assert newest == site.run_id != other
@@ -1493,7 +2279,7 @@ def test_an_ended_run_is_handed_over_once_and_a_click_after_it_stays(site, monke
         assert tick().get("__type__") == "update", "nothing changed since the last tick"
 
         hold.set()
-        act = browser.join(after_act, [None, None, None, "demo", None, None, None])
+        act = browser.join(after_act, [None, None, None, "demo", None, None, None, None])
         assert entered.wait(30), "the act's read did not start"
         job.update(status="completed", outcome={"report_dir": str(site.reports / other),
                                                 "kept": True, "registered": False,
@@ -1540,9 +2326,10 @@ def test_a_run_started_here_that_ends_before_the_next_tick_is_chosen(site, monke
             return browser.predict(poll, [None, None, None])[poll.outputs.index(after.inputs[-1])]
 
         def hand_over(change):
-            return browser.join(after, [None, None, None, "demo", None, None, None, change])
+            return browser.join(after, [None, None, None, "demo", None, None, None, None,
+                                        change])
 
-        assert browser.wait(browser.join(refresh, [None] * 5))
+        assert browser.wait(browser.join(refresh, [None] * 6))
         browser.set_state(ctx.location, tp.PAGE)
         assert browser.wait(hand_over(tick()))
         assert tick().get("__type__") == "update"
@@ -1550,7 +2337,8 @@ def test_a_run_started_here_that_ends_before_the_next_tick_is_chosen(site, monke
         assert browser.state(selected_report) == other != site.run_id
 
         job.update(job_id="test-2", status="running")
-        assert browser.wait(browser.join(after_act, [None, None, None, "demo", None, None, None]))
+        assert browser.wait(browser.join(after_act, [None, None, None, "demo", None, None, None,
+                                                     None]))
         assert browser.state(selected_report) == other, "an act's read decides no end"
         job.update(status="completed", outcome={"report_dir": str(site.reports / site.run_id),
                                                 "kept": True, "registered": False,
@@ -1595,13 +2383,13 @@ def test_a_late_reload_never_writes_back_another_workspaces_checkpoints(site, mo
 
     with served(demo) as base:
         browser = ServedSession(base, demo)
-        assert browser.wait(browser.join(refresh, [None] * 5))
+        assert browser.wait(browser.join(refresh, [None] * 6))
         listing = browser.state(models_state)
         assert listing["workspace"] == "demo" and listing["items"], listing
         hold.set()
-        reloaded = browser.join(reload_, [None, None, "demo", LABEL, None, None])
+        reloaded = browser.join(reload_, [None, None, "demo", LABEL, None, None, None])
         assert entered.wait(30), "the reload did not start"
-        chosen = browser.join(on_workspace, [None, "other", LABEL, None, None, None])
+        chosen = browser.join(on_workspace, [None, "other", LABEL, None, None, None, None])
         browser.wait(chosen, timeout=1.5)
         release.set()
         assert browser.wait(reloaded, chosen)
@@ -1671,13 +2459,13 @@ def test_a_direct_call_through_gradios_api_meets_the_same_check(site, monkeypatc
         event = next(x for x in lines if x.startswith("event: ") and x != "event: heartbeat")
         return event, lines[lines.index(event) + 1][len("data:"):]
 
-    event, refused = call("http://192.0.2.10", [None, None, None])
+    event, refused = call("http://192.0.2.10", [None, None, None, None])
     assert event == "event: complete" and "Refused: " in refused
-    event, loopback = call(OPERATOR_BASE_URL, [None, None, None])
+    event, loopback = call(OPERATOR_BASE_URL, [None, None, None, None])
     assert event == "event: complete" and "Choose a cohort version the server lists" in loopback
     assert given and all(page == {} and models.get("items") == [] for page, models in given), \
         "the handler was given what the client posted"
-    event, forged = call(OPERATOR_BASE_URL, ["demo", LABEL, site.key])
+    event, forged = call(OPERATOR_BASE_URL, ["demo", LABEL, site.key, None])
     assert event == "event: error" and "not in the list of choices" in forged
     assert manager.started == []
 
@@ -1743,18 +2531,14 @@ def test_commit_meeting_a_malformed_source_names_no_case(site, monkeypatch):
 
 
 def test_the_job_output_names_no_case():
-    """The measurement refuses a sample by its patient id; the job card shows
-    the refusal without it (D7)."""
-    from src.evaluation.measurement import _assert_ids_in_range
-
-    with pytest.raises(ValueError) as refused:
-        _assert_ids_in_range([SimpleNamespace(patient_id="MRN-9", phenotype_ids=[],
-                                              disease_id=0)], 10, 10)
-    text = f"ValueError: {refused.value}"
-    assert "MRN-9" in text and "MRN-9" not in tp.case_free(text)
+    """A refusal in a run's output that names a case by its id (the importer's
+    wording, `cohort_registry.parse_source`) is shown on the job card without
+    it, in the failure line and in the output (D7)."""
+    text = "MalformedSource: cases[3] (case_id 'MRN-9'): no phenotypes"
+    assert "MRN-9" not in tp.case_free(text)
     job = {"status": "failed", "inputs": {}, "error_message": text, "log": ["Traceback", text]}
     html = tp.job_html(job, [], ("none", ""))
-    assert "MRN-9" not in html and "a sample has no phenotypes" in html
+    assert "MRN-9" not in html and "cases[3]: no phenotypes" in html
 
 
 def test_notes_that_cannot_be_read_are_said_never_no_note(site, monkeypatch):
@@ -1803,7 +2587,7 @@ def test_register_from_a_copy_files_beside_the_checkpoint_the_run_read(site, mon
                                      request=request)
     state = tp.find(refined["runs"], "run_id", site.run_id)["state"]
     assert state["registered"] == "not_registered"
-    assert state["checked_beside"] == f"gat/{RUN}/best.pt in workspace demo"
+    assert state["checked_beside"] == f"{site.key} in workspace demo"
     done, said = tp.register_selected(page, refined, models_copy, "copy", site.run_id, request)
     assert done is True and said.startswith("Registered as record 1.")
     assert demo_ledger.exists() and not copy_ledger.exists()
@@ -1827,8 +2611,7 @@ def test_a_report_changed_since_the_list_is_never_placed_from_its_new_bytes(site
         "cannot_be_checked"
     control = tp.refine_registration(page, reports, site.run_id, models, request=request)
     state = tp.find(control["runs"], "run_id", site.run_id)["state"]
-    assert state["registered"] == "not_registered" and state["checked_beside"] == \
-        f"gat/{RUN}/best.pt"
+    assert state["registered"] == "not_registered" and state["checked_beside"] == site.key
 
     path = site.reports / site.run_id / "report.json"
     _swap(path, _another_valid_report(path), "rename")
@@ -1859,7 +2642,7 @@ def test_the_registered_answer_reads_the_report_once_the_registrations_read(site
 
     state = tp.find(refined["runs"], "run_id", site.run_id)["state"]
     assert state["registered"] == "not_registered"
-    assert state["checked_beside"] == f"gat/{RUN}/best.pt"
+    assert state["checked_beside"] == site.key
     assert len(reads) == 1, reads
 
 
@@ -1881,7 +2664,7 @@ def test_every_row_says_not_registered_for_an_operator_and_keeps_it(site, monkey
     reports = tp.read_reports(LABEL)
     rows = tp.refine_rows(page, reports, models)
     state = tp.find(rows["runs"], "run_id", site.run_id)["state"]
-    assert state["registered"] == "not_registered" and state["checked_beside"] == f"gat/{RUN}/best.pt"
+    assert state["registered"] == "not_registered" and state["checked_beside"] == site.key
     html = tp.reports_html(rows, None, models=models)
     assert "report kept · not registered" in html and "cannot be checked from the list" not in html
     from_copy = tp.refine_rows(page, reports, models_copy)
@@ -2003,7 +2786,7 @@ def test_the_r10_help_sits_beside_the_r10_lines(site):
     html = tp.result_html(reports, site.run_id, [])
     label = html[html.index('class="shep-test-label"'):]
     label = label[:label.index("</div>")]
-    assert "Help: R10 labels" not in label and "Help: Mode C result" in label
+    assert "Help: R10 labels" not in label and "Help: Disease task result" in label
     r10 = html[html.index(">R10, training"):]
     assert r10.index("Help: R10 labels") < r10.index('class="shep-v"')
 
@@ -2100,8 +2883,10 @@ def test_a_long_choice_ends_in_an_ellipsis_with_its_whole_text_as_title():
     assert 'input[role="combobox"]' in shell.SHELL_HEAD
     assert not by_id["shep-test-cohort-hd"].js_on_load
     (label, _key), = tp.model_choices({"items": [{
-        "architecture": "gat", "run": RUN, "filename": "best.pt", "epoch": 12, "sha256": "c" * 64}]})
-    assert label.startswith("epoch 12 · GAT · run 2026-10-17 09:15") and label.endswith("· best.pt")
+        "architecture": "gatv2", "run": RUN, "filename": "best.pt", "epoch": 12, "sha256": "c" * 64}]})
+    # The kind word leads (K6 decision 13); a record never read says so.
+    assert label.startswith("Record not read · epoch 12 · GATv2 · run 2026-10-17 09:15")
+    assert label.endswith("· best.pt")
 
 
 def test_a_read_only_request_cannot_type_a_note(site, monkeypatch):
@@ -2182,9 +2967,12 @@ def test_the_ledger_order_is_the_file_then_the_workspace_the_run_read(site, monk
     the workspace the run measured, before (3) the workspace the page shows."""
     _point_report_at_site(site)
     manifest = json.loads((site.reports / site.run_id / "report.json").read_text())["manifest"]
-    newer = site.demo / "runs" / "gat" / "20261019-080000_run_aaaaaa" / "checkpoints"
+    newer = site.demo / "runs" / "hgt" / "20261019-080000_run_aaaaaa" / "checkpoints"
     newer.mkdir(parents=True)
-    shutil.copy2(site.checkpoint, newer / "best.pt")
+    # Written now, so its run is the most recently trained (`list_runs` orders
+    # runs by their newest file): it lists before the fixture's file without a
+    # model spec too.
+    shutil.copy(site.checkpoint, newer / "best.pt")
     page, request = _page(monkeypatch)
     models = tp.read_models("demo", request)
     assert models["items"][0]["run"] == "20261019-080000_run_aaaaaa", "the newer copy lists first"
@@ -2278,3 +3066,629 @@ def test_a_refusal_worded_outside_the_known_forms_still_names_no_case_id():
     assert "cases[2]: a problem that names its case id" in said and "cases[0]: no terms" in said
     unplaced = tp.import_refusal(MalformedSource("intake.json", ["duplicate case_id \"Q-1\""]))
     assert "Q-1" not in unplaced and "a case: a problem that names its case id" in unplaced
+
+
+def test_the_preview_shows_the_gene_counts_when_the_source_lists_genes():
+    """README §8: the operator sees, before commit, how many gene identifiers
+    map; a source without genes shows no gene row."""
+    from src.webui.components.test_page import preview_html
+
+    genes = {"identifiers_listed": 5, "identifiers_unmappable": 2, "identifiers_repeated": 1,
+             "cases_with_causal_genes": 3, "cases_with_unmapped_causal_genes": 1,
+             "cases_with_candidate_genes": 2}
+    html = preview_html({"counts": {"source_cases": 3, "genes": genes}, "samples_n": 3})
+    assert "Gene identifiers" in html and "2 name no gene of the graph" in html
+    assert "1 with some unmapped" in html
+    assert "Gene identifiers" not in preview_html({"counts": {"source_cases": 3},
+                                                   "samples_n": 3})
+
+
+# --------------------------------------------------------------------------- K6: by task
+HOSTILE = "<img src=x onerror=alert(1)>"
+#: A version's gene counts (`cohort_registry`, written only for a source that
+#: lists genes), by what the gate reads.
+NO_GENES = {"source_cases": 3, "ranked_eligible": 3}
+GENES = {**NO_GENES, "genes": {"cases_with_causal_genes": 3, "cases_with_candidate_genes": 3}}
+NO_CANDIDATES = {**NO_GENES, "genes": {"cases_with_causal_genes": 3,
+                                       "cases_with_candidate_genes": 0}}
+NO_CAUSAL = {**NO_GENES, "genes": {"cases_with_causal_genes": 0,
+                                   "cases_with_candidate_genes": 3}}
+
+
+def _model(task="disease", stage="finetune", record="model", **extra):
+    return {"record": record, "learning_stage": stage, "task": task, **extra}
+
+
+def test_measure_refusal_says_why_each_kind_is_not_measured():
+    """A record's state is said in the word the Model option leads with
+    (`renderers.record_kind_text`, K6 decision 6; the closing review found the
+    page's own copies), then the page's own reason. Past it every reason is
+    the protocol definition's (`protocols`, K2): with no measurement chosen,
+    why none takes the record (a base's is the base message) or "choose a
+    measurement"; with one chosen, its refusal. The page words none itself."""
+    from src.evaluation import protocols
+    from src.webui.components import renderers as r
+
+    refusal = tp.measure_refusal
+    assert refusal(_model("disease"), {"counts": NO_GENES}, "disease") is None
+    # No measurement chosen while the record admits one is said, never filled in.
+    assert refusal(_model("disease"), {"counts": NO_GENES}, None) == tp.CHOOSE_A_MEASUREMENT
+    # A base: the base message, whatever is asked of it (§5.4).
+    for protocol in (None, "disease", "gene"):
+        assert refusal(_model(None, "base"), {"counts": NO_GENES}, protocol) == (
+            protocols.BASE_MESSAGE)
+    specless, refused, unread = ({"record": "refused", "record_problem": WRITTEN_BEFORE_SPEC},
+                                 {"record": "refused", "record_problem": "record version 9"},
+                                 {"record": None})
+    for item in (specless, refused, unread):
+        for protocol in (None, "disease"):
+            said = refusal(item, None, protocol)
+            assert said.startswith(r.record_kind_text(item)) and said.endswith(
+                tp.NOT_MEASURED_HERE), said
+    assert refusal(specless, None, None) == (
+        f"Record not readable ({WRITTEN_BEFORE_SPEC}): " + tp.NOT_MEASURED_HERE)
+    assert refusal(refused, None, None) == (
+        "Record not readable (record version 9): " + tp.NOT_MEASURED_HERE)
+    assert refusal(unread, None, None) == "Record not read: " + tp.NOT_MEASURED_HERE
+    # A record no protocol takes, a protocol the record does not meet, and a
+    # name that is no protocol: the definition's sentences, by its ordinary rules.
+    assert refusal(_model("C"), None, None) == protocols.available("finetune", "C")[1]
+    assert refusal(_model("gene"), None, "disease") == (
+        protocols.model_refusal("disease", "finetune", "gene"))
+    assert "It can be measured by gene." in refusal(_model("gene"), None, "disease")
+    for name in ("C", "D", "Disease"):
+        assert refusal(_model("disease"), None, name) == (
+            protocols.model_refusal(name, "finetune", "disease"))
+        assert "is not a measurement this build implements" in refusal(_model("disease"), None,
+                                                                        name)
+
+
+def test_the_base_message_names_the_formal_test_as_not_implemented(site, monkeypatch):
+    """§5.4, the page's half: Start's reason for a listed base, and the start's
+    refusal, are the base message, which names the formal test as not
+    implemented and says neither "no task to measure" nor "nothing to test";
+    the Measurement radio offers nothing for it."""
+    from src.evaluation import protocols
+
+    _path, base = _put_bundle(site, BUNDLE_BASE_RUN, None)
+    page, request = _page(monkeypatch)
+    models = tp.read_models("demo", request)
+    binding = tp.workspace_binding(site.demo, tp.find(page["workspaces"], "name", "demo"))
+    assert tp.measurement_choices(tp.find_model(models, base)) == []
+    message = protocols.BASE_MESSAGE
+    assert "formal test" in message and "not implemented" in message
+    assert "no task to measure" not in message and "nothing to test" not in message
+    allowed, why = tp.start_state(page, models, "demo", LABEL, base, binding, ("none", ""))
+    assert (allowed, why) == (False, f"Disabled: {message}")
+    manager = FakeManager()
+    result = tp.start_test_run(page, models, "demo", LABEL, base, False, False, request,
+                               manager=manager)
+    assert result == {"success": False, "error": f"{message} Nothing was started."}
+    assert manager.started == []
+
+
+@pytest.mark.parametrize("protocol, counts, missing", [
+    ("gene", NO_GENES, "causal"), ("gene", NO_CAUSAL, "causal"),
+    ("gene", NO_CANDIDATES, "candidate"), ("gene", GENES, None),
+    ("patients_like_me", NO_GENES, "causal"), ("patients_like_me", NO_CAUSAL, "causal"),
+    # Candidate genes are the gene measurement's list; patients-like-me needs none.
+    ("patients_like_me", NO_CANDIDATES, None),
+    ("disease", NO_GENES, None), ("disease", NO_CAUSAL, None), ("disease", GENES, None),
+])
+def test_a_measurement_needs_a_version_that_lists_its_genes(protocol, counts, missing):
+    """The version's inputs, for a model the protocol takes: the definition's
+    sentence (`protocols.inputs_refusal`), naming the genes missing and the
+    source field that lists them."""
+    from src.evaluation import protocols
+
+    model = _model(protocols.PROTOCOLS[protocol].task)
+    got = tp.measure_refusal(model, {"counts": counts}, protocol)
+    assert got == protocols.inputs_refusal(protocol, counts)
+    if missing is None:
+        assert got is None
+    else:
+        assert got == (f"this cohort version lists no {missing} genes, which the {protocol} "
+                       f"measurement needs. Import a source that lists {missing}_genes.")
+
+
+def test_start_and_its_reason_refuse_what_is_not_measured_with_one_rule(site, monkeypatch):
+    """The listing's real records: a base, a record this build refuses and the
+    fixture's file without a model spec are listed; Start says why (`start_state`,
+    "Disabled: …") and the start refuses them before the runner is asked
+    ("… Nothing was started."), from the one rule (`measure_refusal`). A gene
+    child on the fixture version, which lists no genes, is refused for that
+    by the gene measurement, in the definition's words."""
+    from src.evaluation import protocols
+
+    _put_bundle(site, BUNDLE_BASE_RUN, None)
+    _put_bundle(site, "20261021-000000_refused_cccccc", "disease", record_version=999)
+    _put_bundle(site, "20261022-000000_gene_dddddd", "gene")
+    page, request = _page(monkeypatch)
+    models = tp.read_models("demo", request)
+    binding = tp.workspace_binding(site.demo, tp.find(page["workspaces"], "name", "demo"))
+    manager = FakeManager()
+    gene = "gatv2/20261022-000000_gene_dddddd/last.pt"
+    counts = tp.find(page["versions"], "label", LABEL)["counts"]
+    cases = {
+        f"gatv2/{BUNDLE_BASE_RUN}/last.pt": (None, protocols.BASE_MESSAGE),
+        "gatv2/20261021-000000_refused_cccccc/last.pt":
+            (None, "Record not readable (checkpoint record version 999"),
+        site.history_key: (None, f"Record not readable ({WRITTEN_BEFORE_SPEC})"),
+        gene: ("gene", protocols.inputs_refusal("gene", counts)),
+    }
+    assert cases[gene][1].startswith("this cohort version lists no causal genes")
+    for key, (protocol, says) in cases.items():
+        allowed, why = tp.start_state(page, models, "demo", LABEL, key, binding, ("none", ""),
+                                      protocol=protocol)
+        assert allowed is False and why.startswith(f"Disabled: {says}") and why.endswith("."), why
+        result = tp.start_test_run(page, models, "demo", LABEL, key, False, False, request,
+                                   protocol=protocol, manager=manager)
+        assert result["success"] is False, key
+        assert result["error"].startswith(says[:1].upper() + says[1:]), result["error"]
+        assert result["error"].endswith(". Nothing was started.")
+    assert manager.started == []
+    # The version listing causal and candidate genes lifts the gene child's refusal.
+    page["versions"][0]["counts"] = {**page["versions"][0]["counts"], **GENES}
+    assert tp.start_state(page, models, "demo", LABEL, gene, binding, ("none", ""),
+                          protocol="gene") == (True, None)
+    assert tp.start_test_run(page, models, "demo", LABEL, gene, False, False, request,
+                             protocol="gene", manager=manager)["success"] is True
+    assert [(i.protocol, i.task) for i in manager.started] == [("gene", "gene")]
+
+
+def test_a_refusal_naming_a_record_problem_is_shown_escaped():
+    page = {"access": {"allowed": True}, "roots": [],
+            "workspaces": [{"name": "demo"}],
+            "versions": [{"label": LABEL, "counts": NO_GENES, "manifest_sha256": "e" * 64}]}
+    models = {"workspace": "demo", "items": [{
+        "architecture": "gatv2", "run": "r", "filename": "last.pt", "sha256": "c" * 64,
+        "record": "refused", "record_problem": HOSTILE}]}
+    allowed, why = tp.start_state(page, models, "demo", LABEL, "gatv2/r/last.pt", None,
+                                  ("none", ""))
+    assert allowed is False and HOSTILE in why            # plain text, as the select's
+    shown = tp._reason_html(why)
+    assert HOSTILE not in shown and "&lt;img src=x onerror=alert(1)&gt;" in shown
+
+
+def test_every_checkpoint_is_listed_led_by_what_it_is(site, monkeypatch):
+    """K6 decision 13: the select lists every checkpoint, each option led by
+    `renderers.record_kind_text`; the values stay the listing's keys, and the
+    options stay unique."""
+    from src.webui.components import renderers as r
+
+    _put_bundle(site, BUNDLE_BASE_RUN, None)
+    for task, run in (("disease", CHILD_RUN), ("gene", "20261022-000000_gene_dddddd"),
+                      ("patients_like_me", "20261023-000000_plm_eeeeee")):
+        _put_bundle(site, run, task)
+    _put_bundle(site, "20261021-000000_refused_cccccc", "disease", record_version=999)
+    page, request = _page(monkeypatch)
+    models = tp.read_models("demo", request)
+    choices = tp.model_choices(models)
+    assert [key for _label, key in choices] == [tp.item_key(i) for i in models["items"]]
+    labels = [label for label, _key in choices]
+    assert len(set(labels)) == len(labels) and len({k for _l, k in choices}) == len(choices)
+    for (label, _key), item in zip(choices, models["items"], strict=True):
+        assert label.startswith(r.record_kind_text(item) + " · epoch "), label
+    leads = sorted(label.split(" · epoch ")[0] for label in labels)
+    # Two disease children: the fixture's trained one and the one put here.
+    assert leads == sorted(["Base", "Disease", "Disease", "Gene", "Patients-like-me",
+                            "Record not readable", "Record not readable"])
+
+
+def _task_record(mode, **metrics):
+    base = {"pooled_mrr": 0.3125, "pooled_top1": 0.25, "pooled_top3": 0.5, "pooled_top10": 0.75,
+            "macro_recall@1": 0.2, "macro_recall@5": 0.4, "macro_recall@10": 0.6,
+            "macro_precision@1": 0.25, "macro_mrr": 0.33, "best_positive_mrr": 0.4,
+            "conservative_pooled_mrr": 0.21, "coverage": 0.8}
+    return {"scoring": {"mode": mode}, "metrics": {**base, **metrics}, "n_ranked": 8,
+            "cohort": {"label": "v", "counts": {"source_cases": 13, "ranked_eligible": 10,
+                                                "n_excluded": 3,
+                                                "excluded": {"ground_truth_absent": 3}}}}
+
+
+@pytest.mark.parametrize("mode", ["disease", "gene", "patients_like_me"])
+def test_a_task_record_shows_its_own_tiles_coverage_and_figures(mode):
+    """A task record (`task_measurement`): its three tiles and coverage, each
+    named by `caveats.metric_text`; coverage "n of M import-eligible cases";
+    the conservative pooled MRR with what it counts; no mean rank and no Mode
+    C; its own help topic; a metric of another name shown escaped."""
+    import html as html_lib
+
+    from src.evaluation.caveats import TASK_NAMES, metric_text, mode_label, mode_note
+
+    raw = tp._record_html(_task_record(mode, **{HOSTILE: 0.5}), {}, {})
+    text = " ".join(html_lib.unescape(re.sub(r"<[^>]+>", " ", raw)).split())
+    tiles = tp._TILES[mode]
+    assert len(tiles) == 4 and tiles[0] == "pooled_mrr" and tiles[-1] == "coverage"
+    for name in tiles:
+        assert f'shep-test-tile-l">{html_lib.escape(metric_text(mode, name))}<' in raw
+    assert mode_label(mode) in text
+    assert "8 of 10 import-eligible cases ranked by the model · 13 source cases; 3 excluded " \
+        "at import: ground truth absent 3" in text
+    # The counts are the Coverage row's alone (rule 1.2): a tile's footer says
+    # what its figure is over, never "n of M" or the n ranked again.
+    notes = re.findall(r'shep-test-tile-n">([^<]*)<', raw)
+    assert len(notes) == 4 and "pooled over positive pairs" in notes
+    assert notes[-1] == "share of import-eligible cases ranked"
+    assert not any(ch.isdigit() for note in notes for ch in note), notes
+    assert text.count("8 of 10") == 1
+    assert "Conservative pooled MRR" in text and "0.2100 · an unranked case whose truth can be " \
+        "assessed counts 0" in text
+    assert "Mean rank" not in text and "Mode C" not in text and "Mode D" not in text
+    assert "Macro MRR" in text and "Best-positive MRR" in text and "Pooled top-k" in text
+    # A tile's figure is not repeated in its family's row (rule 1.2).
+    pooled = raw.split('>Pooled top-k</span><span class="shep-v">')[1].split("</span>")[0]
+    shown = {f"k={name[len('pooled_top'):]} " for name in tiles if name.startswith("pooled_top")}
+    assert shown and not any(k in pooled for k in shown)
+    assert all(f"k={k} " in pooled for k in (1, 3, 10) if f"k={k} " not in shown)
+    assert f'data-help="test-mode-{mode}"' in raw
+    assert tp.TOPIC_HELP[f"test-mode-{mode}"] == (f"{TASK_NAMES[mode]} task result",
+                                                  mode_note(mode))
+    assert HOSTILE not in raw and html_lib.escape(HOSTILE, quote=False) in raw
+
+
+def _kept_record(report):
+    """The record the ledger would hold for `report`, as the Test page's
+    Result reads it (`build_record`, through the store's scan)."""
+    from src.evaluation.sidecar import build_record
+
+    return build_record(report, "f" * 64)
+
+
+def _result_text(raw):
+    import html as html_lib
+
+    return " ".join(html_lib.unescape(re.sub(r"<[^>]+>", " ", raw)).split())
+
+
+def test_a_kept_mode_c_record_is_shown_as_recorded_by_the_one_display():
+    """A kept Mode C record (R2, K8-6e.2): its generic label, no tiles and no
+    "Mean rank" row; one "Recorded metrics" row listing every metric by its
+    recorded name and its value unrounded; its score semantics exactly as
+    recorded; the generic coverage (source cases, exclusions by reason, the
+    cases its record counts, with no claim of what they are); no ⓘ beside its
+    label, since no help topic describes it."""
+    from src.evaluation.caveats import mode_label
+    from tests.unit.test_evaluation_sidecar import mode_c_report
+
+    record = _kept_record(mode_c_report())
+    raw = tp._record_html(record, {}, {})
+    text = _result_text(raw)
+    assert mode_label("C") in text and "approved scorer policy" not in text
+    assert "shep-test-tile-l" not in raw and "Mean rank" not in text
+    recorded = raw.split('<span class="shep-k">Recorded metrics</span><span class="shep-v">')[1]
+    recorded = recorded.split("</span>")[0]
+    assert re.findall(r"<div><code>([^<]*)</code> ([^<]*)</div>", recorded) == [
+        (name, json.dumps(value)) for name, value in record["metrics"].items()]
+    assert {"untruncated_mrr": "0.5", "hits@1": "0.25", "hits@10": "0.75",
+            "mean_rank": "3.0"} == dict(re.findall(r"<code>([^<]*)</code> ([^<]*)<", recorded))
+    assert (f"Score semantics {record['scoring']['score_semantics']}" in text
+            and record["scoring"]["score_semantics"] == MODE_C_SEMANTICS_TEXT)
+    assert ("100 source cases · 20 excluded: ground truth absent 12 · phenotype unmappable 8; "
+            "80 cases counted by the record; what they are is not described for this mode"
+            ) in text
+    label = raw[raw.index('class="shep-test-label"'):]
+    assert "data-help" not in label[:label.index("</div>")]
+
+
+#: The score semantics a kept Mode C report records (`MODE_C_SEMANTICS`).
+MODE_C_SEMANTICS_TEXT = "raw cosine, no eta mixture and no shortest-path term"
+
+
+def test_a_record_of_a_mode_no_build_has_words_for_is_shown_as_recorded():
+    """A "kg_link_prediction" record (no such test is implemented, N1) and a
+    record whose mode no build has ever named: the recorded metrics are the
+    main result, with no tiles, no "Mean rank" row and no list of modes that
+    decides what is shown (the three tasks are not a read whitelist)."""
+    from src.evaluation.caveats import mode_label
+    from tests.unit.test_evaluation_sidecar import registered_report
+
+    for mode in ("kg_link_prediction", "zz_protocol_never_seen"):
+        record = _kept_record(registered_report(mode=mode))
+        raw = tp._record_html(record, {}, {})
+        text = _result_text(raw)
+        assert mode_label(mode) in text and f"Mode {mode} (" in text
+        assert "shep-test-tile-l" not in raw and "Mean rank" not in text
+        assert "macro_precision@3 0.16666666666666666" in text
+        assert len(re.findall(r"<div><code>", raw)) == len(record["metrics"])
+        assert "Other metrics" not in text and "Pooled top-k" not in text
+
+
+def test_a_task_record_keeps_its_tiles_and_shows_every_metric_one_click_away():
+    """A task record (R2): its tiles and rows unchanged; every metric as
+    recorded behind a closed native disclosure, "Recorded metrics (N)", under
+    its figures; its score semantics as recorded in its own row."""
+    from src.webui.components.renderers import e
+    from tests.unit.test_evaluation_sidecar import DISEASE_METRICS, registered_report
+
+    record = _kept_record(registered_report())
+    raw = tp._record_html(record, {}, {})
+    assert len(re.findall(r'shep-test-tile-l">', raw)) == 4
+    assert "Conservative pooled MRR" in raw and "Pooled top-k" in raw
+    fold = re.search(r'<details class="shep-test-fold shep-test-recm"><summary>Recorded metrics '
+                     r'\((\d+)\)</summary>(.*?)</details>', raw)
+    assert fold and int(fold.group(1)) == len(DISEASE_METRICS)
+    assert "<div><code>macro_precision@3</code> 0.16666666666666666</div>" in fold.group(2)
+    assert raw.index("shep-test-lines") < raw.index("shep-test-recm")
+    assert ('<span class="shep-k">Score semantics</span><span class="shep-v"><code>'
+            + e(record["scoring"]["score_semantics"]) + "</code></span>") in raw
+
+
+def test_only_the_described_measurements_have_help_topics():
+    """No help topic exists only for a mode this build does not describe: the
+    Mode C and Mode D topics retired (R2); each task's topic stays."""
+    from src.evaluation.caveats import TASK_NAMES
+
+    assert "test-mode-c" not in tp.TOPIC_HELP and "test-mode-d" not in tp.TOPIC_HELP
+    assert sorted(k for k in tp.TOPIC_HELP if k.startswith("test-mode-")) == sorted(
+        f"test-mode-{task}" for task in TASK_NAMES)
+
+
+def test_a_hostile_metric_name_and_score_semantics_are_literal_text_on_test():
+    """A metric name and a score semantics holding markup are shown as literal
+    text on the Result, for a described measurement (in its disclosure) and
+    any other mode (its recorded metrics row)."""
+    from tests.unit.test_evaluation_sidecar import registered_report
+
+    for mode in ("disease", "zz_new"):
+        record = _kept_record(registered_report({HOSTILE: 0.5, "pooled_mrr": 0.25}, mode=mode,
+                                                score_semantics=HOSTILE))
+        raw = tp._record_html(record, {}, {})
+        assert HOSTILE not in raw, mode
+        assert f"{HOSTILE} 0.5" in _result_text(raw)
+        assert f"Score semantics {HOSTILE}" in _result_text(raw)
+
+
+def test_a_task_report_row_names_its_task_first():
+    record = _task_record("gene")
+    run = {"run_id": "r", "record": record, "state": {"kept": "kept",
+                                                      "registered": "not_registered"}}
+    assert tp._row_state(run, []).startswith("gene task: report kept · not registered")
+    plm = dict(run, record=_task_record("patients_like_me"))
+    assert tp._row_state(plm, []).startswith("patients-like-me task: report kept")
+
+
+def test_the_measurement_options_are_the_protocols_the_record_admits():
+    """§5.3: the Measurement radio's options are `protocols.available` of the
+    chosen model's listed record, each labelled with the words the pages use
+    for that mode value (`caveats.TASK_NAMES`) and valued by the protocol's
+    name, short and unique (skill §8). The only option is chosen; of several,
+    none is until the operator picks one, and a pick no longer offered goes.
+    What the server fixes names no measurement."""
+    for task, words in (("disease", "Disease"), ("gene", "Gene"),
+                        ("patients_like_me", "Patients-like-me")):
+        choices = tp.measurement_choices(_model(task))
+        assert choices == [(words, task)]
+        assert tp.chosen_measurement(choices, None) == task
+        assert tp.chosen_measurement(choices, "another") == task
+    for item in (None, _model(None, "base"), _model("C"),
+                 {"record": "refused", "record_problem": WRITTEN_BEFORE_SPEC},
+                 {"record": None}, {"record": "refused", "record_problem": "x"}):
+        assert tp.measurement_choices(item) == []
+    assert tp.chosen_measurement([], "disease") is None
+    several = [("p1", "p1"), ("p2", "p2")]
+    assert tp.chosen_measurement(several, None) is None
+    assert tp.chosen_measurement(several, "p2") == "p2"
+    assert tp.chosen_measurement(several, "disease") is None
+    labels = [label for label, _value in tp.measurement_choices(_model("patients_like_me"))]
+    assert all(len(label) <= 40 and label.count(" · ") <= 1 for label in labels)
+    fixed = tp.fixed_html({})
+    assert "Batch size" in fixed and "Device" in fixed and "Measurement" not in fixed
+
+
+def test_the_measurement_radio_sits_in_the_run_panel_for_an_operator():
+    """A radio (skill §8: under five options) labelled "Measurement", in the
+    Run panel, beside the Model select; written with the selection, so Start's
+    reason is drawn from the value it shows. The value it shows is written
+    with it into a State, which the selection's listeners read in place of
+    the radio (a value an event was asked with may no longer be among the
+    choices, and Gradio refuses it before the handler runs); only the
+    radio's own pick and Start take the radio."""
+    demo, _ctx, _registry = _page_component()
+    by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
+    radio = by_id["shep-test-measurement"]
+    assert isinstance(radio, gr.Radio) and radio.label == "Measurement"
+    parent, panels = radio.parent, []
+    while parent is not None:
+        panels.append(getattr(parent, "elem_id", None))
+        parent = parent.parent
+    assert "shep-test-run" in panels
+    pick = _named(demo, "_on_measurement")
+    mirror = pick.outputs[-1]
+    assert isinstance(mirror, gr.State) and radio in pick.outputs and radio in pick.inputs
+    for name in ("_refresh", "_on_workspace", "_on_version", "_on_model", "_on_model_reload",
+                 "_after_commit"):
+        fn = _named(demo, name)
+        assert {radio, mirror} <= set(fn.outputs) and mirror in fn.inputs, name
+    start = by_id["shep-test-start"]
+    for fn in demo.fns.values():
+        if start in fn.outputs and fn is not pick:
+            assert mirror in fn.inputs and radio not in fn.inputs, fn.name
+    assert radio in _named(demo, "_on_start").inputs
+
+
+def test_the_job_card_names_the_runs_protocol_escaped():
+    """The card names the measurement the run was asked for (`inputs["protocol"]`),
+    not the model's task: the two can differ."""
+    import html as html_lib
+
+    job = {"status": "running", "inputs": {"version_label": LABEL, "protocol": "gene",
+                                           "learning_stage": "finetune", "task": "gene",
+                                           "checkpoint_sha256": "c" * 64, "workspace": "/w/ws"},
+           "log": []}
+    body = tp.job_body_html(job, [], ("busy", "GPU job: test run"))
+    assert "Gene measurement" in body
+    other = dict(job, inputs={**job["inputs"], "protocol": "p2", "task": "disease"})
+    body = tp.job_body_html(other, [], ("busy", ""))
+    assert "p2 measurement" in body and "Disease" not in body
+    hostile = dict(job, inputs={**job["inputs"], "protocol": HOSTILE})
+    body = tp.job_body_html(hostile, [], ("busy", ""))
+    assert HOSTILE not in body and f"{html_lib.escape(HOSTILE)} measurement" in body
+    for missing in (None, "", 7):
+        body = tp.job_body_html(dict(job, inputs={**job["inputs"], "protocol": missing}), [],
+                                ("busy", ""))
+        assert "measurement not recorded" in body
+
+
+def test_the_help_says_what_the_measurement_options_are():
+    """Skill §12: the titles equal the labels (pinned by the registration
+    test), the leads answer the question within the budget, and the
+    measurement is said where the choice is made: never Mode C, never "the
+    model's own task"."""
+    title, text = tp.TOPIC_HELP["test-fixed"]
+    assert title == "Fixed by the server" and "Mode C" not in text
+    lead = text.split("\n")[0]
+    assert len(lead) <= 100 and "fixes them" in lead
+    assert "Measurement:" not in text and "never chosen here" not in text
+    title, text = tp.FIELD_HELP["shep-test-measurement"]
+    lead = text.split("\n")[0]
+    assert title == "Measurement" and len(lead) <= 100 and len(text.split()) <= 80
+    assert "measurements this build implements" in lead
+    assert "formal test is not implemented" in text and "Mode C" not in text
+    title, text = tp.FIELD_HELP["shep-test-model"]
+    assert title == "Model" and len(text.split("\n")[0]) <= 100
+    assert "a base, or a file without a model spec, is listed but not measured here" in text
+    assert "measured by that task" not in text
+
+
+@pytest.fixture
+def test_only_protocols(monkeypatch):
+    """§5.5's test-only protocols, the product table untouched: p1 and p2 both
+    take a finetuned model with the disease head and run the disease
+    evaluator, so neither name is a task."""
+    from src.evaluation import protocols
+
+    table = {name: protocols.Protocol(name, "finetune", "disease", "disease")
+             for name in ("p1", "p2")}
+    monkeypatch.setattr(protocols, "PROTOCOLS", table)
+    return table
+
+
+def test_a_listed_disease_child_offers_the_test_only_protocols_and_starts_one(
+        site, monkeypatch, test_only_protocols):
+    """§5.5 wiring, the Test page's part (3): under p1 and p2, nothing on the
+    page treats a protocol's name as the model's task. A listed disease child
+    offers exactly p1 and p2 (named as they are, none chosen, Start waiting
+    for a pick); `start_state(..., protocol="p2")` is (True, None); the start
+    hands the runner protocol p2 apart from the model's task disease, and the
+    job card names p2. "disease" is no protocol here: the definition's
+    ordinary sentence. The base asked as p1 gets the definition's one reason
+    (the base message) from Start and from the start, which asks no runner."""
+    from src.evaluation import protocols
+
+    _path, child = _put_bundle(site)
+    _put_bundle(site, BUNDLE_BASE_RUN, None)
+    base = f"gatv2/{BUNDLE_BASE_RUN}/last.pt"
+    page, request = _page(monkeypatch)
+    models = tp.read_models("demo", request)
+    binding = tp.workspace_binding(site.demo, tp.find(page["workspaces"], "name", "demo"))
+    offered = [("p1", "p1"), ("p2", "p2")]
+    assert tp.measurement_choices(tp.find_model(models, child)) == offered
+    state = lambda key, protocol: tp.start_state(  # noqa: E731
+        page, models, "demo", LABEL, key, binding, ("none", ""), protocol=protocol)
+    assert state(child, None) == (False, "Disabled: choose a measurement.")
+    assert state(child, "p2") == (True, None)
+    assert state(child, "disease") == (
+        False, "Disabled: 'disease' is not a measurement this build implements (p1, p2).")
+
+    # The radio as the model's listener writes it, and a pick.
+    demo, _ctx, _registry = _page_component()
+    by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
+    on_model, on_pick = _named(demo, "_on_model"), _named(demo, "_on_measurement")
+    radio_at = on_model.outputs.index(by_id["shep-test-measurement"])
+    start_at = on_model.outputs.index(by_id["shep-test-start"])
+    reason_at = on_model.outputs.index(by_id["shep-test-start-reason"])
+    out = on_model.fn(page, models, binding, "demo", LABEL, child, None)
+    assert out[radio_at] == gr.update(choices=offered, value=None, interactive=True)
+    assert out[start_at] == gr.update(interactive=False)
+    assert "Disabled: choose a measurement." in out[reason_at]
+    picked = on_pick.fn(page, models, binding, "demo", LABEL, child, "p2")
+    assert picked == [gr.update(choices=offered, value="p2", interactive=True),
+                      gr.update(interactive=True), "", "p2"]
+    # Like the Model select, the radio is an operator's control only.
+    readonly = dict(page, access={"allowed": False, "condition": "not_local"})
+    assert on_model.fn(readonly, models, binding, "demo", LABEL, child, "p2")[radio_at] == (
+        gr.update(choices=offered, value="p2", interactive=False))
+
+    manager = FakeManager()
+    result = tp.start_test_run(page, models, "demo", LABEL, child, False, False, request,
+                               protocol="p2", manager=manager)
+    assert result["success"] is True
+    (inputs,) = manager.started
+    assert (inputs.protocol, inputs.learning_stage, inputs.task) == ("p2", "finetune", "disease")
+    card = tp.job_body_html({"status": "running", "inputs": inputs.summary(), "log": []}, [],
+                            ("busy", ""))
+    assert "p2 measurement" in card
+
+    counts = tp.find(page["versions"], "label", LABEL)["counts"]
+    reason = protocols.refusal("p1", "base", None, counts)
+    assert reason == protocols.BASE_MESSAGE and tp.measurement_choices(
+        tp.find_model(models, base)) == []
+    assert state(base, "p1") == (False, f"Disabled: {reason}")
+    assert tp.start_test_run(page, models, "demo", LABEL, base, False, False, request,
+                             protocol="p1", manager=manager) == {
+        "success": False, "error": f"{reason} Nothing was started."}
+    assert len(manager.started) == 1
+
+
+def test_a_model_picked_after_another_answers_its_second_event_without_an_error(
+        site, monkeypatch):
+    """Through the page served by Gradio, for an operator: one pick of a Model
+    option sends its input event twice, each with the values the browser held
+    when it was asked. The disease child chosen (the radio offers and shows
+    "disease"), then the base: the first of the base's events empties the
+    radio, and the second still carries "disease". Both answer, the radio
+    ends empty and Start's reason is the base message. When the selection's
+    listeners took the radio itself, Gradio checked the second event's value
+    against the choices the first had written and answered with an error
+    before the page's own handling ran (`chosen_measurement`)."""
+    import html as html_lib
+
+    from src.evaluation import protocols
+
+    _put_bundle(site, BUNDLE_BASE_RUN, None)
+    base = f"gatv2/{BUNDLE_BASE_RUN}/last.pt"
+    operator_mode(monkeypatch)
+    job = {"status": "idle", "job_id": None, "inputs": {}, "log": [], "outcome": None}
+    monkeypatch.setattr(tp, "read_job", lambda **k: dict(job))
+    monkeypatch.setattr(tp, "gpu_line", lambda **k: ("none", "GPU jobs: none"))
+    demo, _ctx, _registry = _page_component()
+    refresh, on_model = _named(demo, "_refresh"), _named(demo, "_on_model")
+    by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
+    radio_at = on_model.outputs.index(by_id["shep-test-measurement"])
+    reason_at = on_model.outputs.index(by_id["shep-test-start-reason"])
+
+    with served(demo) as url:
+        browser = ServedSession(url, demo)
+        assert browser.wait(browser.join(refresh, [None] * 6))
+        picked = browser.join(on_model, [None, None, None, "demo", LABEL, site.key, None])
+        assert browser.wait(picked)
+        radio = browser.done[picked]["output"]["data"][radio_at]
+        assert radio["value"] == "disease", radio
+        # The base picked once: two events, each asked with the radio's "disease".
+        events = [browser.join(on_model, [None, None, None, "demo", LABEL, base, "disease"])
+                  for _ in range(2)]
+        assert browser.wait(*events)
+        browser.close()
+    for event in events:
+        out = browser.done[event]["output"]["data"]
+        assert (out[radio_at]["choices"], out[radio_at]["value"]) == ([], None)
+        assert html_lib.escape(protocols.BASE_MESSAGE) in out[reason_at], out[reason_at]
+
+
+def test_a_gatv2_childs_report_is_registered_beside_its_own_file(site, monkeypatch):
+    """K5a fixed the gatv2 layout key the ledger placement resolves through;
+    the page's placement for a bundle run had no test: a manifest naming the
+    child's digest and path is placed beside that listed file."""
+    from src.utils.fingerprint import file_sha256
+
+    path, child = _put_bundle(site)
+    page, request = _page(monkeypatch)
+    models = tp.read_models("demo", request)
+    manifest = {"artifact_digests": {"checkpoint": file_sha256(path)},
+                "checkpoint_path": str(path), "data_dir": str(site.demo)}
+    place = tp.ledger_checkpoint(manifest, page, models, "demo")
+    assert place.path is not None and place.path.resolve() == path.resolve()
+    assert tp.item_key(place.item) == child and place.item["architecture"] == "gatv2"
+    assert place.path.parent / "evaluations.json" == \
+        site.demo / "runs" / "gatv2" / CHILD_RUN / "checkpoints" / "evaluations.json"

@@ -11,6 +11,8 @@ Module: tests/unit/test_training_device.py
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 import torch
 
@@ -43,7 +45,8 @@ def test_auto_means_cuda_where_cuda_exists(monkeypatch):
 
 
 def test_train_refuses_before_reading_or_writing_anything(no_cuda, tmp_path, monkeypatch):
-    """The refusal comes first: no workspace read, no directory created."""
+    """The refusal comes first: no workspace read, no directory created. A base
+    run, given exactly the fields it sets as the operator's."""
     from scripts import train_model
 
     def _must_not_run(*args, **kwargs):
@@ -52,30 +55,48 @@ def test_train_refuses_before_reading_or_writing_anything(no_cuda, tmp_path, mon
     monkeypatch.setattr(train_model, "read_training_inputs", _must_not_run)
     workspace = tmp_path / "ws"
     workspace.mkdir()
-    config = train_model.TrainConfig(
-        data_dir=str(workspace),
-        run_dir=str(tmp_path / "run"),
-        device="auto",
-    )
+    fields = {"data_dir": str(workspace), "run_dir": str(tmp_path / "run"),
+              "learning_stage": "base", "device": "auto"}
 
-    with pytest.raises(train_model.TrainingDeviceUnavailable):
-        train_model.train(config)
+    with pytest.raises(train_model.TrainingDeviceUnavailable, match="requires CUDA"):
+        train_model.train(train_model.TrainConfig(**fields), set(fields))
 
     assert sorted(p.name for p in tmp_path.iterdir()) == ["ws"]
 
 
 def test_the_demo_passes_its_device_through(monkeypatch, tmp_path):
-    """`setup_demo.py --train-model` takes a device; `auto` is its default."""
+    """`setup_demo.py --train-model` takes a device; `auto` is its default.
+    Both of its runs, the base and its disease child (K7, TM3), are given it,
+    and the child starts from the base's `last.pt`."""
     from scripts import setup_demo
     import scripts.train_model as train_model
 
-    seen = {}
+    seen = []
 
-    def _train(config):
-        seen["device"] = config.device
+    def _train(config, explicit):
+        seen.append(config)
+        last = Path(config.run_dir) / "checkpoints" / "last.pt"
+        last.parent.mkdir(parents=True)
+        last.write_bytes(b"")
         return {}
 
     monkeypatch.setattr(train_model, "train", _train)
-    with pytest.raises(SystemExit):
+    child = setup_demo.train_demo_model(tmp_path, num_epochs=1, device="cpu")
+    assert [(c.learning_stage, c.task, c.device) for c in seen] == [
+        ("base", None, "cpu"), ("finetune", "disease", "cpu")]
+    assert seen[1].finetune_from == str(Path(seen[0].run_dir) / "checkpoints" / "last.pt")
+    assert child == Path(seen[1].run_dir) / "checkpoints" / "last.pt"
+
+
+def test_the_demo_refuses_when_a_run_writes_no_checkpoint(monkeypatch, tmp_path):
+    """A run that wrote no `last.pt` ends the demo with the reason and the
+    two-stage training to run instead, before its child is trained."""
+    from scripts import setup_demo
+    import scripts.train_model as train_model
+
+    seen = []
+    monkeypatch.setattr(train_model, "train", lambda config, explicit: seen.append(config) or {})
+    with pytest.raises(SystemExit, match="Demo training wrote no checkpoint") as refused:
         setup_demo.train_demo_model(tmp_path, num_epochs=1, device="cpu")
-    assert seen["device"] == "cpu"
+    assert f"--data-dir {tmp_path} --stage base" in str(refused.value)
+    assert [c.learning_stage for c in seen] == ["base"]

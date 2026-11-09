@@ -20,8 +20,8 @@ it requires. What these pin, through the code itself:
   guide's sections cited hold them;
 - **the playbook's safety net is the load's refusal** (contract M2.4): the
   refusals it quotes are what serving raises for a checkpoint of another graph
-  and for one with no record, and the structural fingerprint is the drawer's
-  diagnostic beside them, not the safety net it used to be called.
+  and for one with no record; the structural fingerprint, which it used to call
+  the safety net, is compared by nothing at load (K8-4).
 
 Module: tests/unit/test_entry_documents.py
 """
@@ -171,9 +171,12 @@ def test_every_command_parses_with_its_script_s_own_parser(document, script, arg
 # ---------------------------------------------------------------------------
 # The pages and fields they name
 # ---------------------------------------------------------------------------
-#: The Training page's fields and actions the playbook names, as `**name**`.
-TRAINING_NAMES = ("Dataset", "Run name", "GNN Conv Type", "Batch Size", "Max Subgraph Nodes",
-                  "Continue…", "Check checkpoint", "Continue Training", "Stop")
+#: The Training and Fine-tune pages' fields and actions the playbook names, as
+#: `**name**` (K6: the base form's labels; the ShepherdGNN form's are gone).
+TRAINING_NAMES = ("Dataset", "Run name", "Epochs", "Learning rate", "Batch size", "Seed",
+                  "Continue…", "Check checkpoint", "Continue Training", "Stop", "Tasks")
+#: Names of the retired ShepherdGNN form the documents no longer teach (K6).
+RETIRED_FORM = ("GNN Conv Type", "Max Subgraph Nodes", "Batch Size")
 #: Names of what the dashboard no longer has (M5-2).
 RETIRED = ("training console", "data dir", "diagnosis panel")
 
@@ -211,7 +214,8 @@ def test_no_retired_page_or_field_is_named(document):
 def test_every_research_page_named_is_the_dashboard_s(document, shown):
     groups = _research_groups()
     plain = _text(document).replace("**", "")
-    named = re.findall(r"Research(?: \(pre-clinical\))? › (\w+) › (\w+)", plain)
+    # A page name may hold a hyphen ("Fine-tune").
+    named = re.findall(r"Research(?: \(pre-clinical\))? › (\w+) › ([\w-]+)", plain)
     assert named, f"{document} names no research page"
     for group, page in named:
         assert page in groups.get(group, []), (document, group, page, groups)
@@ -225,6 +229,24 @@ def test_the_training_page_s_names_in_the_playbook_are_its_labels_and_buttons(sh
     for name in TRAINING_NAMES:
         assert re.search(rf"\*\*{re.escape(name)}(?: = [^*]*)?\*\*", playbook), name
         assert any(text == name or text.endswith(f" {name}") for text in shown), name
+    for name in RETIRED_FORM:
+        assert f"**{name}" not in playbook, name
+        assert name not in shown, name
+
+
+def test_the_architecture_names_the_dashboard_s_pages_and_no_retired_control():
+    """`docs/ARCHITECTURE.md` describes the dashboard as built: its "WebUI
+    pages" row names every page module the app mounts (K6 added Fine-tune),
+    and it names no slider, a control the dashboard no longer has (the
+    Training page's loss-weight sliders went with the ShepherdGNN form, K6)."""
+    pytest.importorskip("gradio")
+    from src.webui.app import PAGES
+
+    text = _text("docs/ARCHITECTURE.md")
+    (row,) = [line for line in text.splitlines() if line.startswith("| WebUI pages |")]
+    for builder in PAGES.values():
+        assert f"`{builder.__module__.rsplit('.', 1)[-1]}.py`" in row, builder.__module__
+    assert "slider" not in text.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -289,27 +311,31 @@ def _safety_net() -> str:
     return " ".join(body.split())
 
 
-def test_the_playbook_s_safety_net_is_the_load_s_refusal_in_the_code_s_words(tmp_path):
+def test_the_playbook_s_safety_net_is_the_load_s_refusal_in_the_code_s_words(
+        tmp_path, trained_disease_child):
     """Since contract M2.4 a load refuses, before any model is built, a
-    checkpoint whose record names another graph or none; the structural
-    fingerprint is a diagnostic beside that refusal. The playbook said the
-    fingerprint's warnings were the safety net and that old checkpoints "will
-    warn" after a rebuild. What it quotes now is what the real load raises for
-    both cases, and what the Diagnosis page's drawer shows for the fingerprint."""
+    checkpoint whose record names another graph or none. The playbook said the
+    structural fingerprint's warnings were the safety net and that old
+    checkpoints "will warn" after a rebuild; the fingerprint is compared by
+    nothing at load since K8-4. What it quotes now is what the real load raises
+    for both cases. "Another graph" serves the session's disease child over a
+    same-shaped other demo workspace (K8-2a). "No record" keeps a pre-contract
+    file written before the model spec: `verify_training_record` refuses it
+    first, before the model spec is read."""
     pytest.importorskip("torch")
     from src.api import main as service
     from src.inference.pipeline import PipelineBuildError
     from src.kg.artifacts import GRAPH_ARTIFACTS
-    from src.utils.fingerprint import verify_fingerprint
-    from src.webui.components import diagnosis_card, model_list
+    from src.webui.components import model_list
     from tests.unit import test_training_record as record
 
     text = _safety_net()
-    data_dir, checkpoint = record.build_workspace(tmp_path / "a")
+    child = trained_disease_child["disease"]
+    old_dir, old_checkpoint = record.build_workspace(tmp_path / "a")
     refused = {}
     for case, workspace, served in (
-            ("another graph", record._same_shaped_other(tmp_path / "b"), checkpoint),
-            ("no record", data_dir, record._pre_contract(checkpoint, tmp_path / "old.pt"))):
+            ("another graph", record._same_shaped_demo(tmp_path / "b"), child),
+            ("no record", old_dir, record._pre_contract(old_checkpoint, tmp_path / "old.pt"))):
         with pytest.raises(PipelineBuildError) as refusal:
             record._serve(workspace, served)
         refused[case] = str(refusal.value)
@@ -324,18 +350,72 @@ def test_the_playbook_s_safety_net_is_the_load_s_refusal_in_the_code_s_words(tmp
     assert "Not reloaded; the model in use is unchanged." in text
     assert "Not reloaded; the model in use is unchanged." in inspect.getsource(model_list)
 
-    # The fingerprint: never a refusal; its two lines as the drawer writes them.
-    differs = verify_fingerprint({"data_fingerprint": {"node_types": ["gone"]}}, {})
-    legacy = verify_fingerprint({}, {})
-    for warnings, line in ((differs, "Graph structure differs from the checkpoint's structural "
-                                     "fingerprint"),
-                           (legacy, "Graph structure not compared")):
-        assert line in diagnosis_card._structure_line({"fingerprint_warnings": warnings}), line
-        assert f'"{line}"' in text, line
-    assert "never stops a load" in text
-
     # Troubleshooting sends a rebuild's old checkpoint to that refusal, not to
     # the fingerprint's warnings.
     rows = [row for row in _text("docs/TRAINING_PIPELINE_PLAYBOOK.md").splitlines()
             if row.startswith("|") and "rebuild" in row.split("|")[1]]
     assert rows and all("does not match this workspace's graph" in row for row in rows), rows
+
+
+@pytest.mark.parametrize("guide, says", [
+    ("deployment-guide.en.md", ("Since K8-6r.2 these values only describe",
+                                "Runs that differ are kept and described, never refused",
+                                "Another run's report never blocks a registration",
+                                "Schema 3 and 4 are both read")),
+    ("deployment-guide.md", ("自 K8-6r.2 起這些值只做描述",
+                             "結果不同的執行都會保留並加以描述，從不拒絕",
+                             "其他執行的報告從不擋下一次登錄",
+                             "schema 3 與 4 都照原樣讀取")),
+])
+def test_the_guides_say_the_state_names_changed_meaning_and_no_run_blocks_another(guide, says):
+    """G9 (K8-6r.2, Decision 3): both guides say the state names stayed as
+    values with a new meaning that decides nothing, that runs that differ are
+    kept, that another run's report never blocks a registration, and that the
+    ledger reads schema 3 and 4; neither still states the withdrawn rules as
+    current. HEAD: "Runs that disagree block their key"."""
+    text = _text(guide)
+    for said in says:
+        assert said in text, said
+    assert "Runs that disagree block their key" not in text
+    assert "結果不一致的執行會封鎖其鍵" not in text
+
+
+@pytest.mark.parametrize("guide, says, withdrawn", [
+    ("deployment-guide.en.md",
+     ("because the ledger does not yet support a generated split's data identity",
+      "not because such a result counts for less",
+      "*Superseded by K8-6r.4 (2026-11-07):* neither file ever\n  replaces one",
+      "a claimed place whose publication failed, not a report",
+      "an interrupted publication, not a result",
+      "a report at `--output` is refused before that, because no registry's report store holds",
+      "That\n  rename is itself an overwriting call: it overwrites no other run's file only while "
+      "the target is\n  still the empty file this run has just claimed"),
+     ("A generated split's report is not registrable",
+      "That rename replaces\n  only the empty file this run has just claimed")),
+    ("deployment-guide.md",
+     ("原因是 ledger 尚未支援產生的\n  split 這種資料身分",
+      "而不是這樣的結果比較不重要",
+      "*已由 K8-6r.4（2026-11-07）取代：* 兩個檔案都絕不取代既有檔案",
+      "發佈失敗的已佔用位置，不是報告",
+      "一次中斷的發佈，不是\n  結果",
+      "`--output` 上的報告會更早被拒絕，\n  因為沒有任何 registry 的報告存放處持有它",
+      "這次改名本身就是會覆寫的呼叫：只有在目標仍是這次執行剛佔用的那個空檔案\n  時，它才不會覆寫"
+      "其他執行的檔案"),
+     ("產生的 split 的報告不可登錄", "這次改名只取代這次執行剛佔用的那個空檔案")),
+])
+def test_the_guides_say_why_a_generated_report_is_not_registered_and_that_it_is_kept(
+        guide, says, withdrawn):
+    """K8-6r.4 (Decisions 9 and 12): both guides give the ledger's limit as the
+    reason a generated split's report is not registered, not a lesser result,
+    and say that a report at `--output` meets the report store's refusal first;
+    mark "an existing `--output` is still replaced" as superseded; name an
+    empty claimed file and ranks with no report as failed publications; and
+    state the fallback's rename as an overwriting call that is safe only while
+    the target is still this run's claim (Decision 9: the limit stated without
+    overclaiming). HEAD: "A generated split's report is not registrable", and
+    the output replaced."""
+    text = _text(guide)
+    for said in says:
+        assert said in text, said
+    for gone in withdrawn:
+        assert gone not in text, gone

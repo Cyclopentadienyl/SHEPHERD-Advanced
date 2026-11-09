@@ -28,6 +28,7 @@ pytest.importorskip("fastapi")
 
 import src.api.services.training_manager as tm
 from src.api.services.training_manager import TestRunInputs, TrainingManager, build_test_argv
+from src.evaluation import protocols
 from src.utils.gpu_lock import (
     LOCK_FILE_NAME,
     WORKSPACES_ROOT_ENV,
@@ -38,6 +39,10 @@ from tests.fixtures.job_processes import FakeProcess
 
 SHA_CKPT = "c" * 64
 SHA_VERSION = "e" * 64
+#: The listed version's counts (its `cohort.json`'s): a source that lists
+#: causal and candidate genes, so no protocol lacks what it needs.
+COUNTS = {"source_cases": 3, "ranked_eligible": 3,
+          "genes": {"cases_with_causal_genes": 3, "cases_with_candidate_genes": 3}}
 
 
 @pytest.fixture(autouse=True)
@@ -64,6 +69,15 @@ def _end_real_job(manager: TrainingManager, job_type: str = "training") -> None:
         job.process.kill()
         job.process.wait(timeout=10)
     job.done.wait(30)
+
+
+def base_start(workspace: Path, **settings) -> dict:
+    """A training start as the runner takes a new run: a base (K8, TM12: a new
+    run is a base; a finetune is a Fine-tune start's). The workspace and the
+    stage, the recipe filling the rest, pass the start's own check of its
+    settings (`_new_bundle_run`), so each test reaches the slot, the lock or
+    the stop it checks."""
+    return {"data_dir": str(workspace), "learning_stage": "base", **settings}
 
 
 class Popens:
@@ -99,8 +113,10 @@ def inputs(tmp_path):
     workspace = tmp_path / "workspaces" / "ws"
     return TestRunInputs(
         registry=registry, version_label="mygene2-2026-10", version_sha256=SHA_VERSION,
-        workspace=workspace, checkpoint=workspace / "runs" / "hgt" / "r1" / "checkpoints" / "best.pt",
-        checkpoint_sha256=SHA_CKPT)
+        workspace=workspace,
+        checkpoint=workspace / "runs" / "gatv2" / "r1" / "checkpoints" / "best.pt",
+        checkpoint_sha256=SHA_CKPT, protocol="disease", learning_stage="finetune",
+        task="disease", version_counts=COUNTS)
 
 
 def reports(inputs: TestRunInputs) -> Path:
@@ -175,13 +191,13 @@ def test_a_start_while_a_stop_is_still_waiting_is_refused(tmp_path, popen, monke
     first = FakeProcess(pid=1, ignore_sigint=True)
     calls = popen(first, FakeProcess(pid=2))
     manager = TrainingManager()
-    assert manager.start_training({"data_dir": str(tmp_path / "ws")})["success"]
+    assert manager.start_training(base_start(tmp_path / "ws"))["success"]
 
     stopper = threading.Thread(target=manager.stop_training)
     stopper.start()
     wait_for(lambda: manager.get_status()["status"] == "stopping")
 
-    again = manager.start_training({"data_dir": str(tmp_path / "ws")})
+    again = manager.start_training(base_start(tmp_path / "ws"))
     assert again["success"] is False and "Training is still stopping" in again["error"]
     test = manager.start_test(inputs)
     assert test["success"] is False and "Training is still stopping" in test["error"]
@@ -197,7 +213,7 @@ def test_one_gpu_job_at_a_time_across_types(tmp_path, popen, inputs):
     training, test = FakeProcess(pid=1), FakeProcess(pid=2)
     calls = popen(training, test)
     manager = TrainingManager()
-    assert manager.start_training({"data_dir": str(tmp_path / "ws")})["success"]
+    assert manager.start_training(base_start(tmp_path / "ws"))["success"]
 
     refused = manager.start_test(inputs)
     assert refused["success"] is False
@@ -207,7 +223,7 @@ def test_one_gpu_job_at_a_time_across_types(tmp_path, popen, inputs):
     training.finish(0)
     ended(manager, "training")
     assert manager.start_test(inputs)["success"]
-    refused = manager.start_training({"data_dir": str(tmp_path / "ws")})
+    refused = manager.start_training(base_start(tmp_path / "ws"))
     assert refused["success"] is False
     assert refused["error"].startswith("A test run is already running")
     assert len(calls.calls) == 2
@@ -218,7 +234,7 @@ def test_a_stop_never_crosses_job_types(tmp_path, popen, inputs):
     training, test = FakeProcess(pid=1), FakeProcess(pid=2)
     popen(training, test)
     manager = TrainingManager()
-    manager.start_training({"data_dir": str(tmp_path / "ws")})
+    manager.start_training(base_start(tmp_path / "ws"))
 
     refused = manager.cancel_test()
     assert refused["success"] is False
@@ -258,7 +274,7 @@ def test_a_start_is_refused_while_another_process_holds_the_gpu_lock(tmp_path, p
     calls = popen()
     manager = TrainingManager()
     with GpuLock(root / LOCK_FILE_NAME, job_type="training", command="train_model.py").acquire():
-        for result in (manager.start_training({"data_dir": str(root / "ws")}),
+        for result in (manager.start_training(base_start(root / "ws")),
                        manager.start_test(inputs)):
             assert result["success"] is False
             assert "is held by a training job (train_model.py" in result["error"]
@@ -270,7 +286,7 @@ def test_a_start_is_refused_while_another_process_holds_the_gpu_lock(tmp_path, p
 def test_an_unusable_lock_setting_refuses_every_start(tmp_path, popen, monkeypatch):
     monkeypatch.setenv(WORKSPACES_ROOT_ENV, "relative")
     calls = popen()
-    result = TrainingManager().start_training({"data_dir": str(tmp_path / "ws")})
+    result = TrainingManager().start_training(base_start(tmp_path / "ws"))
     assert result["success"] is False and "The GPU lock cannot be used" in result["error"]
     assert calls.calls == []
 
@@ -284,8 +300,8 @@ def test_a_lock_not_configured_refuses_every_start_before_anything(tmp_path, pop
     monkeypatch.delenv(WORKSPACES_ROOT_ENV, raising=False)
     calls = popen()
     manager = TrainingManager()
-    for result in (manager.start_training({"data_dir": str(tmp_path / "ws"),
-                                           "run_dir": str(tmp_path / "run")}),
+    for result in (manager.start_training(base_start(tmp_path / "ws",
+                                                     run_dir=str(tmp_path / "run"))),
                    manager.start_test(inputs)):
         assert result["success"] is False
         assert result["error"].startswith("The GPU lock cannot be used: "
@@ -304,7 +320,7 @@ def test_a_stop_escalates_sigint_sigterm_sigkill(tmp_path, popen, monkeypatch):
     stubborn = FakeProcess(pid=3, ignore_sigint=True, ignore_terminate=True)
     popen(stubborn)
     manager = TrainingManager()
-    manager.start_training({"data_dir": str(tmp_path / "ws")})
+    manager.start_training(base_start(tmp_path / "ws"))
     result = manager.stop_training()
     assert stubborn.signals == ["SIGINT", "SIGTERM", "SIGKILL"]
     assert result["success"] is True and result["status"] == "stopped"
@@ -387,7 +403,7 @@ def test_a_training_stop_after_the_process_ended_on_its_own_is_refused(tmp_path,
     process.stdout = HeldOutput()
     popen(process)
     manager = TrainingManager()
-    manager.start_training({"data_dir": str(tmp_path / "ws")})
+    manager.start_training(base_start(tmp_path / "ws"))
     process.finish(1)
     threading.Timer(0.2, process.stdout.released.set).start()
 
@@ -456,11 +472,11 @@ def test_a_training_stop_reads_the_snapshot_of_the_run_it_stopped(tmp_path, pope
     class Interleaved(TrainingManager):
         def _stop(self, job_type):
             result = super()._stop(job_type)
-            assert self.start_training({"data_dir": str(workspace)})["success"]
+            assert self.start_training(base_start(workspace))["success"]
             return result
 
     manager = Interleaved()
-    run_dir = Path(manager.start_training({"data_dir": str(workspace)})["run_dir"])
+    run_dir = Path(manager.start_training(base_start(workspace))["run_dir"])
     snapshot = run_checkpoint_dir(run_dir) / "last.pt"
     snapshot.parent.mkdir(parents=True)
     snapshot.write_bytes(b"not a checkpoint")
@@ -490,15 +506,46 @@ def test_the_stop_route_does_not_run_on_the_event_loop():
 
 # --------------------------------------------------------------------------- the test job's inputs
 def test_the_test_command_line_comes_from_the_inputs_only(inputs):
+    """`--mode` is the protocol asked (`inputs.protocol`), which the CLI
+    requires; the listed record's stage and task are judged, never passed."""
     outcome = Path("/tmp/job/outcome.json")
     argv = build_test_argv(inputs, None, outcome)
     assert argv[:2] == [sys.executable, str(tm.PROJECT_ROOT / "scripts" / "measure_scorer.py")]
     assert argv[2:] == [
+        "--mode", "disease",
         "--checkpoint", str(inputs.checkpoint), "--data-dir", str(inputs.workspace),
         "--cohort", "mygene2-2026-10", "--registry", str(inputs.registry),
         "--expect-checkpoint-sha256", SHA_CKPT, "--expect-version-sha256", SHA_VERSION,
         "--outcome", str(outcome)]
     assert "--batch-size" not in argv, "the CLI's default stays its one definition"
+    from dataclasses import replace
+
+    for name in ("gene", "patients_like_me"):
+        # Each protocol asked of a listed record it takes (its own stage and head).
+        taken = protocols.PROTOCOLS[name]
+        asked = replace(inputs, protocol=name, learning_stage=taken.learning_stage,
+                        task=taken.task)
+        assert asked.reports_dir() == reports(inputs)
+        argv = build_test_argv(asked, None, outcome)
+        assert argv[argv.index("--mode") + 1] == name and argv.count("--mode") == 1
+        assert "--task" not in argv and "--learning-stage" not in argv
+
+
+def test_the_status_shows_the_protocol_asked_and_the_listed_record(popen, inputs):
+    """The protocol asked, and beside it the listed record's stage and task
+    (the model's), each under its own key."""
+    process = FakeProcess(pid=3)
+    popen(process)
+    manager = TrainingManager(report_state=Reader(True, False))
+    assert manager.start_test(inputs)["success"]
+    shown = manager.get_test_status()["inputs"]
+    assert (shown["protocol"], shown["learning_stage"], shown["task"]) == (
+        "disease", "finetune", "disease")
+    summary = inputs.summary()
+    assert (summary["protocol"], summary["learning_stage"], summary["task"]) == (
+        "disease", "finetune", "disease")
+    process.finish(1)
+    ended(manager, "test")
 
 
 def test_every_test_run_writes_its_outcome_to_a_new_file_in_its_own_directory(popen, inputs):
@@ -554,14 +601,44 @@ def test_a_deployment_device_the_cli_cannot_take_refuses_the_start(monkeypatch, 
     ({"evidence_dirs": (Path("evidence"),)}, "not an absolute path"),
     ({"version_label": "../x"}, "cohort label is refused"),
     ({"registry": Path("registry")}, "not an absolute path"),
+    # The measurement asked, judged by the one protocol definition on the
+    # listed record and version, whoever calls. A name that is not a protocol,
+    # whatever it may once have meant, gets the ordinary sentence naming the
+    # protocols this build implements.
+    ({"protocol": "C"},
+     "'C' is not a measurement this build implements (disease, gene, patients_like_me)."),
+    ({"protocol": "D"},
+     "'D' is not a measurement this build implements (disease, gene, patients_like_me)."),
+    ({"protocol": None},
+     "None is not a measurement this build implements (disease, gene, patients_like_me)."),
+    ({"protocol": "Disease"},
+     "'Disease' is not a measurement this build implements (disease, gene, patients_like_me)."),
+    # A listed record the protocol does not take: a base, a head that differs,
+    # no record read.
+    ({"learning_stage": "base", "task": None}, protocols.BASE_MESSAGE),
+    ({"protocol": "gene"},
+     "the gene measurement takes a finetune model with the gene head; this checkpoint is a "
+     "finetune model with the disease head. It can be measured by disease."),
+    ({"learning_stage": None, "task": None}, protocols.NO_RECORD),
+    # A listed version without what the protocol needs.
+    ({"protocol": "gene", "task": "gene", "version_counts": {"source_cases": 3}},
+     "this cohort version lists no causal genes, which the gene measurement needs. Import a "
+     "source that lists causal_genes."),
 ])
-def test_inputs_of_the_wrong_shape_are_refused_before_launch(popen, inputs, change, says):
+def test_inputs_of_the_wrong_shape_are_refused_before_launch(monkeypatch, popen, inputs,
+                                                             change, says):
+    """Refused before a job directory is made or anything is spawned, and no
+    job is recorded: the reason, then "Nothing was started."."""
     from dataclasses import replace
 
     calls = popen()
-    result = TrainingManager().start_test(replace(inputs, **change))
+    made = []
+    monkeypatch.setattr(tm.tempfile, "mkdtemp", lambda *a, **k: made.append(k) or "/nowhere")
+    manager = TrainingManager()
+    result = manager.start_test(replace(inputs, **change))
     assert result["success"] is False and says in result["error"]
-    assert calls.calls == []
+    assert result["error"].endswith("Nothing was started.")
+    assert calls.calls == [] and made == [] and manager._last.get("test") is None
 
 
 # --------------------------------------------------------------------------- what a test run left
@@ -608,26 +685,29 @@ def test_what_the_run_published_is_read_from_its_outcome_and_the_disk(popen, inp
         "investigate.")
 
 
-def test_a_refused_registration_is_said_even_when_an_earlier_record_names_the_same_bytes(
+def test_a_refused_registration_is_said_even_when_the_runs_record_is_found(
         popen, inputs):
-    """M5-3 review EVAL-2: repeated runs of one measurement on one machine can
-    publish byte-identical reports, so the ledger may hold an earlier run's
-    record naming this report's bytes while this run's own --record was
-    refused (runs disagree). The card showed "Registered ✓" with no word of
-    the refusal; the summary now says both."""
-    reader = Reader(True, True, why_registered="record 2 in evaluations.json names this report")
+    """M5-3 review EVAL-2, by run since K8-6r.2: the record found names this
+    run and these bytes, so it was registered meanwhile by another
+    registration of this run's report while this run's own --record was
+    refused (here, the ledger busy). The card showed "Registered ✓" with no
+    word of the refusal; the summary says both, and never that an earlier
+    run's record holding the same bytes is this run's."""
+    reader = Reader(True, True, why_registered="record 2 in evaluations.json names this run "
+                                               "and report")
     status = _run(TrainingManager(report_state=reader), popen, inputs, code=3, outcome={
         "registration": {"requested": True, "registered": False, "outcome": "refused",
-                         "why": "runs disagree — investigate"}})
+                         "why": "the ledger is busy"}})
     outcome = status["outcome"]
     assert outcome["registered"] is True
     run_dir = reports(inputs) / RUN_ID
     assert outcome["summary"] == (
         f"When the run ended, a report was kept at {run_dir}; it was registered (at that time: "
-        "record 2 in evaluations.json names this report). This run's own registration was "
-        "refused: runs disagree — investigate. "
-        "The record found names the same report bytes, which an earlier run of this "
-        "measurement registered; it says nothing of this run's refusal.")
+        "record 2 in evaluations.json names this run and report). This run's own registration "
+        "was refused: the ledger is busy. "
+        "The record found names this run and these report bytes, so this run's report was "
+        "registered meanwhile by another registration of it; that says nothing of this run's "
+        "refusal.")
     # Not asked to register: the record found is the whole answer.
     status = _run(TrainingManager(report_state=reader), popen, inputs, code=0, outcome={
         "registration": {"requested": False, "registered": False, "outcome": "not_requested",
@@ -773,7 +853,7 @@ def test_each_job_keeps_its_own_output_tail(tmp_path, popen, inputs):
     test = FakeProcess(pid=2, output="INFO Device: cpu\nReport: x\n")
     popen(training, test)
     manager = TrainingManager()
-    manager.start_training({"data_dir": str(tmp_path / "ws")})
+    manager.start_training(base_start(tmp_path / "ws"))
     training.finish(0)
     ended(manager, "training")
     manager.start_test(inputs)
@@ -787,7 +867,7 @@ def test_a_failure_names_the_signal_that_ended_it(tmp_path, popen):
     process = FakeProcess(pid=1, output="CUDA out of memory\n")
     popen(process)
     manager = TrainingManager()
-    manager.start_training({"data_dir": str(tmp_path / "ws")})
+    manager.start_training(base_start(tmp_path / "ws"))
     process.finish(-9)
     ended(manager, "training")
     status = manager.get_status()
@@ -834,7 +914,7 @@ def test_a_real_child_holds_the_lock_and_releases_it_when_stopped(
     manager = TrainingManager()
     try:
         with patch("subprocess.Popen", launch):
-            assert manager.start_training({"data_dir": str(root / "ws")})["success"]
+            assert manager.start_training(base_start(root / "ws"))["success"]
         wait_for(lambda: "HELD" in manager.get_log("training")["lines"], 30)
         pid = manager.get_status()["pid"]
         assert f"pid {pid}" in probe(root / LOCK_FILE_NAME)
@@ -864,7 +944,7 @@ def test_a_child_killed_outside_the_runner_frees_the_slot_and_the_lock(tmp_path,
     manager = TrainingManager()
     try:
         with patch("subprocess.Popen", launch):
-            manager.start_training({"data_dir": str(root / "ws")})
+            manager.start_training(base_start(root / "ws"))
         wait_for(lambda: "HELD" in manager.get_log("training")["lines"], 30)
         os.kill(manager.get_status()["pid"], signal.SIGKILL)  # the OOM killer, say
         ended(manager, "training")
@@ -874,3 +954,53 @@ def test_a_child_killed_outside_the_runner_frees_the_slot_and_the_lock(tmp_path,
         assert manager.active_job() is None and probe(root / LOCK_FILE_NAME) is None
     finally:
         _end_real_job(manager)
+
+
+# --------------------------------------------------------------------------- a cancel as the run starts
+#: Imported by `site` while the test run's interpreter starts, before
+#: measure_scorer's first line, with Python's own SIGINT handler already in
+#: place: it says so, then holds the start until the stop's SIGINT is either
+#: delivered here (a KeyboardInterrupt ends the start) or pending (blocked).
+_STARTING = '''
+import os, pathlib, signal, time
+marker = os.environ.get("SHEPHERD_TEST_STARTING")
+if marker:
+    pathlib.Path(marker).write_text("starting")
+    while signal.SIGINT not in signal.sigpending():
+        time.sleep(0.01)
+'''
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
+def test_a_cancel_that_lands_while_the_run_s_interpreter_starts_is_a_cancel(
+        tmp_path, monkeypatch, inputs):
+    """The M5 stop race (K8-13): a cancel's SIGINT that landed while a test
+    run's interpreter still started (importing `site`, before measure_scorer
+    installs its cancel handler) ended the start with exit status 1 ("Fatal
+    Python error: init_import_site ... KeyboardInterrupt"), which the runner
+    must read as the run's own failure. The run starts with SIGINT blocked
+    and measure_scorer takes it once its handler is in place, so the cancel
+    is a cancel: ended by SIGINT, with the program's own line, never
+    escalated. The cancel is sent once the run is provably inside its start."""
+    hold = tmp_path / "hold"
+    hold.mkdir()
+    (hold / "sitecustomize.py").write_text(_STARTING)
+    marker = tmp_path / "starting.txt"
+    monkeypatch.setenv("PYTHONPATH", os.pathsep.join(
+        part for part in (str(hold), os.environ.get("PYTHONPATH")) if part))
+    monkeypatch.setenv("SHEPHERD_TEST_STARTING", str(marker))
+    monkeypatch.setattr(tm, "STOP_GRACE_SECONDS", 60.0)
+    manager = TrainingManager()
+    try:
+        assert manager.start_test(inputs)["success"]
+        wait_for(marker.exists, 60)
+        answer = manager.cancel_test()
+        job = manager._last["test"]
+        said = job.tail()
+        assert answer["status"] == "cancelled", (job.exit_code, said[-6:])
+        assert job.exit_code == -signal.SIGINT and job.stop_signal == "SIGINT", (
+            job.exit_code, job.stop_signal)
+        assert any(line.startswith("measure_scorer: cancelled") for line in said), said[-6:]
+        assert not any("Fatal Python error" in line for line in said)
+    finally:
+        _end_real_job(manager, "test")

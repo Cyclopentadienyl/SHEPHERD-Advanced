@@ -331,10 +331,14 @@ by hand.
 
 **After setup**:
 1. Build the knowledge graph: `python scripts/build_knowledge_graph.py`
-2. Precompute shortest paths: `python scripts/compute_shortest_paths.py`
-3. Train: `python scripts/train_model.py` (optionally `--config <hyperparameters.yaml>`), in a
-   shell where the GPU lock is configured: it refuses without one (§4.11)
-4. Launch: `./launch_shepherd.sh`
+2. Train a base: `python scripts/train_model.py --data-dir <workspace> --stage base` (optionally
+   `--config <settings.yaml>`), in a shell where the GPU lock is configured: it refuses without
+   one (§4.11). Then its task models on the dashboard's Research › Prepare › Fine-tune, or
+   `--stage finetune --task <task> --finetune-from <base run>/checkpoints/last.pt`
+3. Launch: `./launch_shepherd.sh`
+
+There is no shortest-path step: a task model never reads `shortest_paths.pt`, and neither does
+the GB10 acceptance probe.
 
 **Things to know**:
 - FlashAttention-2 is unavailable on ARM; the downgrade is automatic
@@ -453,124 +457,40 @@ SDPA was found and that is the problem to fix.
 
 ## 4.3 The shortest-path table and its hop bound
 
-A workspace's `shortest_paths.pt` is a precomputed distance table, and
-`shortest_paths.meta.json` is its **sidecar**, recording the parameters the table
-was generated with — `max_hops` above all. **The two belong to one build and must
-be copied or moved together.**
+A workspace built by an earlier version may still hold `shortest_paths.pt`, a precomputed
+distance table, and `shortest_paths.meta.json`, its sidecar. **This build neither writes,
+reads, refuses nor deletes them.** Serving, training, task measurement and the inventory
+(`scripts/audit_checkpoint_family.py --inventory`) are the same with or without them; the
+inventory does not list the table as a checkpoint. The GB10 acceptance
+(`scripts/probe_deployment.py --m2-acceptance`) reads neither file either: a pair in the
+workspace is covered by its check that the workspace is left unchanged (R8). Keep the two
+files or archive them, as you like.
 
-### Why the sidecar cannot be skipped
+No task model needs the table. A disease model ranks every disease of its graph view, and a
+gene model computes the exact hop distances it uses from the view in process
+(`src/kg/graph_view.py`, `exact_distances`), so building a workspace has no shortest-path
+step.
 
-`max_hops` sets the cost assigned to "unreachable" (`max_hops + 1`). Every
-shortest-path score is measured against that value, and it **cannot be recovered
-from the table itself**: the BFS stops expanding at `max_hops`, so the largest
-distance recorded is only a **lower bound** — a genuine 3-hop table and a table
-built to 5 in which no pair happens to reach 5 are identical at the tensor level.
-
-Scoring against the wrong ceiling does not merely shift numbers. **It changes the
-ranking.** One 3-hop table, two candidates:
-
-| max_hops used | A | B | Order |
-|---|---:|---:|---|
-| the correct 3 | 0.4357142857 | 0.4250000000 | A > B |
-| 5 by mistake | 0.4166666667 | 0.4250000000 | **B > A** |
-
-So the system **does not guess for you**.
-
-### Order of recovery
-
-**A table is served only with the sidecar it was published with.** Since contract
-M2.5 (2026-10-13) the sidecar must carry the table's source binding
-(`schema_version`, `build_id`, `kg_digest`), and its `max_hops` is the only source
-of the hop bound. A table without a sidecar, or with one written before the
-pairing protocol, is refused at load.
-
-1. **Recover the sidecar published with the table**, then keep and move the two
-   files together.
-2. **Otherwise rebuild the pair for this workspace** with
-   `scripts/compute_shortest_paths.py`, which publishes the table and its sidecar
-   together, bound to this workspace's graph. **Do not write a sidecar by hand,
-   and do not infer `max_hops` from the largest distance in the table** — that
-   number cannot establish the ceiling.
-3. Until then, either keep the deployment that is serving, or serve without
-   shortest paths: move `shortest_paths.pt` **and** `shortest_paths.meta.json` out
-   of the workspace together, keep them, then reload. A sidecar left behind alone
-   is refused as one side of a pair. The scoring mode changes.
-
-`SHEPHERD_SP_HOP_BOUND`, which used to supply the bound for a table without a
-sidecar, is **retired** with M2.5: such a table is refused before any bound is
-read, so the variable is no longer read. Remove it from the service environment.
-
-### A missing, unbound or invalid sidecar
-
-When a table is present and its sidecar is **missing, unbound, or invalid** (not a
-JSON object, `max_hops` not an integer or outside 1..127, or below the distances
-in the table), the candidate pipeline is **refused** rather than falling back to a
-guess:
-
-- The service has **no** usable pipeline yet (cold start) → `/api/v1/diagnose`
-  returns **503** and no candidate diseases.
-- The service **has** a pipeline running → that reload is refused and the **old
-  pipeline keeps serving**.
-
-### No table at all
-
-With no `shortest_paths.pt` (and no sidecar) under the default configuration (GNN
-loaded, `sp_optional=True`) the **service does not stop**. It serves pure GNN
-scoring: `sp_ready=False`, `scoring_mode=gnn_only`, effective eta 1.0. **Scores and
-rankings differ from a run with shortest paths enabled.** Every result says so in its
-served identity (§4.7): shortest paths `absent`, scoring mode `gnn_only`, eta `1.0`, and
-the Diagnosis tab and its report show a `NO SHORTEST-PATH TABLE: GNN score alone.` banner.
-
-> **Exception**: a deployment that has deliberately set `sp_optional=False` gets
-> **no pipeline** when SP is unavailable: the build is refused
-> (`PipelineBuildError`), a startup publishes nothing and `/diagnose` answers 503,
-> and a reload is refused with the previous pipeline still serving. This is not
-> "always falls back to pure GNN". The API build path uses the default
-> `sp_optional=True`.
+The table's producer, `scripts/compute_shortest_paths.py`, and the reachability audit behind
+evidence M5 (BACKLOG item 10), `scripts/audit_sp_reachability.py`, were removed in K8-5. The
+last commit that has them is `e02c0f7` (`e02c0f7562b166bf6e69677e51b8bc8ee2f0cb1a`), where
+their tests passed before the removal; to rebuild or audit an old table, run them from a
+checkout of that commit. `SHEPHERD_SP_HOP_BOUND` is not read; if the service environment
+still sets it, it has no effect.
 
 ### Checking the result
 
-```bash
-curl -s http://localhost:8000/api/v1/pipeline/status
-```
+`GET /api/v1/pipeline/status` reports nothing about the table since K8-4: its
+`sp_ready`, `sp_max_hops`, `sp_hop_bound_source`, `sp_kg_binding` and
+`eta_configured` fields are removed with the mixture. What it reports is the served
+model's own:
 
 | Field | Expected |
 |---|---|
-| `sp_ready` | `true` when enabled; `false` when no table is present |
-| `sp_max_hops` | the ceiling in effect, read from the sidecar |
-| `sp_hop_bound_source` | `sidecar` (the only source since the configured bound was retired) |
-| `sp_kg_binding` | `verified` |
-| `scoring_mode` | `gnn_plus_shortest_path` when enabled; `gnn_only` when SP is off and the GNN is fine |
-| `served_identity` | What the loaded pipeline serves (§4.7). When enabled: `shortest_paths.state` `verified` with the sidecar's `build_id` and `max_hops`, and `scoring_mode` `gnn_plus_shortest_path`. With no table: `shortest_paths.state` `absent`, `gnn_only`, `settings.eta` `1.0` |
+| `scoring_mode` | the served model's task: `disease_task`, `gene_task` or `patients_like_me`; a table never changes it |
+| `served_identity` | What the loaded pipeline serves (§4.7): `shortest_paths.state` `computed` for a gene model (exact hop distances from its graph view, no table), `absent` for the other two; `settings.eta` the gene model's η, null for the other two |
 
 ---
-
-
-### When the table and its graph do not match
-
-A shortest-path table is published as **a pair** — `shortest_paths.pt` and
-`shortest_paths.meta.json` — and both files record the same `build_id`, plus the
-SHA-256 of the graph the distances were computed from. Three refusals follow
-from that, and all three are deployment problems rather than data problems:
-
-| What the log says | What happened | What to do |
-|---|---|---|
-| *"published by different runs"* | The two files are from different builds. A publication was interrupted between them, or one was copied over the other | Re-run `scripts/compute_shortest_paths.py` for this workspace. Do **not** copy one file from elsewhere to make them match |
-| *"computed from a different graph"* | The table belongs to another workspace's `kg.json`. Its node indices point at different nodes | Use the table built from *this* workspace, or rebuild it here |
-| *"One side of a pair is not a pair"* | One file declares the protocol and the other does not — a table published without its sidecar, or the reverse | Re-run the generator; the pair is published together or not at all |
-
-**A table built before this existed is refused** (since contract M2.5,
-2026-10-13; it used to load with a warning and be reported `unrecorded`). It
-carries no binding, so nothing says which graph its node indices belong to.
-Rebuild it with `scripts/compute_shortest_paths.py`, or remove it to serve without
-shortest paths.
-
-`GET /api/v1/pipeline/status` reports `sp_kg_binding`: `verified` when the table
-names the graph being served. **It is never absent while shortest paths are on.**
-
-**Building from a graph held in memory rather than from a workspace** cannot
-check a binding at all, and a table that declares one is refused rather than
-assumed; a table without one is refused as above. Build from a workspace.
 
 ## 4.4 The build provenance record (`kg.provenance.json`)
 
@@ -662,11 +582,10 @@ wherever its record is shown:
   name, `diagnosis_SYNTHETIC_<patient>_<session>.csv`.
 
 What the record says it does not establish (`incomplete_by_design`) is
-displayed, never refused. Serving without a model — path reasoning over
-`kg.json` alone — verifies no workspace and is unaffected; its served identity
-says so (checkpoint `absent`, graph `unverified`, dataset record `absent`;
-§4.7, "Serving without a model"). The pipeline reload lists
-`kg.provenance.json` among the required files.
+displayed, never refused. Nothing is served without a model (since K7): every
+served pipeline reads its workspace, and with it this record (§4.7, "No model,
+no answer"). The pipeline reload lists `kg.provenance.json` among the required
+files.
 
 ### Older workspaces
 
@@ -840,9 +759,9 @@ or roots it reports which location and how many files, not their names.
 
 ## 4.6 File permissions of the files a build and the service write
 
-The shortest-path table and its sidecar, the split manifest, `kg.provenance.json`,
-the evaluation ledger, the UI config and the ontology cache are all written to a
-temporary file and renamed into place, so a reader never sees a half-written one.
+The split manifest, `kg.provenance.json`, the evaluation ledger, the UI config and
+the ontology cache are all written to a temporary file and renamed into place, so
+a reader never sees a half-written one.
 They are published with the mode a plain `open()` would give them:
 
 - **a new file** gets the directory's policy — the umask (commonly `022`, which
@@ -872,7 +791,7 @@ between its write and its rename, as it could before this change.
 ## 4.7 What produced a diagnosis: the served identity (since contract M3c)
 
 Since contract M3c (2026-10-16) every diagnosis carries a **served identity**:
-the checkpoint, the graph, the workspace manifest, the shortest-path table and
+the checkpoint, the graph, the workspace manifest, the shortest-path term and
 the dataset record that produced it, by digest or identifier, the scoring mode
 and the serving settings in effect — **each part stating its state in words**.
 The pipeline builds it from the reads it took when it was built; nothing is
@@ -888,45 +807,47 @@ hashed again when a result is produced, and nothing is filled in with
 - **`served_identity` is added** and is always present. It is copied from the
   result the response answers with, never from the service's shared state, so
   a reload that lands while a request runs cannot relabel its answer.
-- **It is `null` only for the demo answer.** With no pipeline configured at all,
-  the service still answers with illustrative candidates and the warning
-  `Pipeline not fully initialized - using mock data`; nothing was served, so
-  nothing is identified. A deployment that configured a pipeline and could not
-  build it answers 503, never the demo answer.
+- **It is never `null`** (since K7): every answer comes from a model. With no
+  pipeline served — nothing configured, a graph named without a model, or a
+  build that failed — `/api/v1/diagnose` answers 503 with the reason, and so
+  does `/ready`; `/health` stays 200 so the service starts and a model can be
+  loaded. The illustrative "demo answer" the service used to give when nothing
+  was configured (`demo/v1`, `Pipeline not fully initialized - using mock
+  data`) is removed.
 
 The service's own version (`1.0.0` in `/health`, `/` and the Swagger title) is
 the API's version, not the identity of what is served.
 
-### The diagnose response is one of three kinds (Batch 4)
+### The diagnose response is one kind of the result union (Batch 4; tasks since K3–K4)
 
 `POST /api/v1/diagnose` answers one kind of result, named by `result_kind`, with
-`result_schema_version` 2 (`docs/working/results-review/SPEC_1_RESULTS_REVIEW.md`
-§2.1). Each kind carries its own values and refuses another kind's:
+`result_schema_version` 3 (`docs/working/results-review/SPEC_1_RESULTS_REVIEW.md`
+§2.1). The kind follows the model served; each kind carries its own values and
+refuses another kind's. The format version changes with the response's shape: 3
+since K8-4r marks K8-4's change, in which the served identity's `shortest_paths`
+kept only its `state` (`build_id` and `max_hops` are gone). A strict client of
+version 2 refuses a version-3 body at that field, beside the keys that differ;
+the Diagnosis page's Markdown report names the version of the response it keeps.
 
 | `result_kind` | Answered when | Each candidate's values | On the result |
 |---|---|---|---|
-| `served_mixture/v1` | a model is served | `served_score`, the value ranked by: η × `model_term` + (1 − η) × SP with a shortest-path table, `model_term` alone without one; `model_term`, (cos + 1) / 2; `sp_term`, the SP record | `eta`, `candidates_reached` (how many diseases discovery reached before the cut), `tie_policy` |
-| `path_reasoning/v1` | no model source is configured | `path_score`, the path aggregate | `path_score_aggregation`, `tie_policy` |
-| `demo/v1` | no pipeline was ever configured | none: no score, explanation, path or gene | — |
+| `disease_task/v1` | a model finetuned for the disease task is served | `score`, the disease head's score (in [−4, 0], uncalibrated) over every disease of the model's graph view; the evidence fields explain a row and change neither the score nor the order | `tie_policy` |
+| `gene_task/v1` | a gene task model is served; it ranks the request's `candidate_genes` | `score` = η × `embsim` + (1 − η) × `sp_similarity`; `embsim`; `sp_similarity`; `mean_distance`, the exact mean hop distance computed from the model's graph view | `sp_bounds`, `tie_policy` (η is the served identity's `settings.eta`) |
+| `patients_like_me/v1` | a patients-like-me model is served, with a reference cohort version | `similarity` (in [−4, 0], uncalibrated); `case_id`, the recorded `phenotypes`, diagnosis and `causal_genes` | `reference_cohort`, `tie_policy` |
+
+The path-reasoning answer (`path_reasoning/v1`, a graph served with no model) and the demo
+answer (`demo/v1`) are removed since K7: with no model there is no answer (503, above). The
+mixture's answer (`served_mixture/v1`: `served_score`, `model_term`, `sp_term`, `eta`,
+`candidates_reached`), which a checkpoint without a model spec was served with, is removed since
+K8-4: such a file is refused at load (below, "No model, no answer").
 
 - **Removed, with no alias:** `confidence_score`, `gnn_score`, `sp_score`,
-  `reasoning_score` (now `path_score`, path reasoning only) and
-  `confidence_label` (now `evidence_label`, inside `evidence_package` too). A
-  client that read them reads the kind's own fields instead.
-- **`sp_term` never writes 0 for a missing value.** Its `status` is `COMPUTED`,
-  `COMPUTED_PARTIAL` (some submitted phenotypes were not mapped;
-  `phenotypes_mapped` / `phenotypes_submitted` say how many), `NO_TABLE`,
-  `TARGET_UNMAPPED` or `NO_PHENOTYPE_MAPPED`. `mean_hop_distance` and `score`
-  (1 / (1 + d)) are there on the first two only. On a served result only
-  `NO_TABLE` (in `gnn_only`, where nothing is mixed) has no number: a disease or
-  phenotype the graph's node mapping lacks is refused first, as a model term
-  that cannot be computed (below). Were a status with no number mixed, the
-  mixture takes it as 0 and the record says so (`mixed_as: 0.0`).
-- **The ranking is unchanged for valid input**: the same values, order and ties
-  (`served_score` is the former `confidence_score`).
-- **New refusals.** A model term the service cannot compute (no embeddings, no
-  table, a node with no row, or a row outside its table, which used to be clamped
-  onto the last one) or a score that is not finite refuses the result: HTTP 500,
+  `reasoning_score` and `confidence_label` (now `evidence_label`, inside
+  `evidence_package` too). A client that read them reads the kind's own fields
+  instead.
+- **Refusals.** A model term the service cannot compute (a phenotype the graph
+  knows with no row in its node mapping) or a score that is not finite refuses
+  the result: HTTP 500,
   its `error` starting with the code (`MODEL_TERM_UNAVAILABLE: …`,
   `NON_FINITE_SCORE: …`). On a verified workspace these states are not
   expected. An input with no phenotype in the graph is refused as before
@@ -935,86 +856,89 @@ the API's version, not the identity of what is served.
   when the request is answered; when no id is known, the warning is the
   refusal.
 - **`phenotype_input`** (received, unknown, repeats removed, used) is in the
-  response; null in the demo answer, and when a request was refused before its
-  phenotypes were mapped.
+  response; null when a request was refused before its phenotypes were mapped.
 
 ### Its parts and states
 
 ```json
 "served_identity": {
-  "scoring_mode": "gnn_plus_shortest_path",
+  "scoring_mode": "disease_task",
   "checkpoint": {"state": "verified", "sha256": "<SHA-256 of the checkpoint read>"},
   "graph": {"state": "verified", "kg_sha256": "<SHA-256 of kg.json>",
             "split_manifest_sha256": "<SHA-256 of split_manifest.json>"},
-  "shortest_paths": {"state": "verified", "build_id": "<the sidecar's build_id>", "max_hops": 5},
+  "shortest_paths": {"state": "absent"},
   "dataset_record": {"state": "verified", "origin": "files",
                      "sha256": "<SHA-256 of kg.provenance.json>"},
-  "settings": {"device": "cuda:0", "device_requested": "auto", "eta": 0.7,
+  "settings": {"device": "cuda:0", "device_requested": "auto", "eta": null,
                "max_path_length": 4, "path_length_penalty": 0.9,
-               "aggregation_method": "weighted_sum", "max_paths_per_candidate": 10,
+               "max_paths_per_candidate": 10,
                "use_direct_path_optimization": true,
                "phenotype_normalisation_version": 1}
 }
 ```
 
+**A served model is always read from a checkpoint over a workspace verified with its dataset
+record** (since K7), so those three parts have one state each; only the shortest-path part
+varies, and it follows the scoring mode.
+
 | Part | State | Meaning | Values |
 |---|---|---|---|
 | `checkpoint` | `verified` | The model was built from one read of a checkpoint whose record matched the served graph (contract M2.4) | `sha256`: that read's digest |
-| | `supplied_in_memory` | A program handed the pipeline a model object; no checkpoint bytes were read | `sha256` null |
-| | `absent` | No model: path reasoning ranks the candidates | `sha256` null |
 | `graph` | `verified` | `kg.json` and `split_manifest.json` were each read once, and the graph's digest matched the manifest | `kg_sha256`, `split_manifest_sha256` |
-| | `unverified` | The graph was read from a file and checked against no workspace manifest (serving without a model, below) | `kg_sha256`; `split_manifest_sha256` null |
-| | `in_memory` | A program supplied the graph in memory; no file was read | both null |
-| `shortest_paths` | `verified` | The table and its sidecar share one `build_id` and name the served graph (§4.3) | `build_id`; `max_hops`, the sidecar's |
-| | `absent` | No table contributes to the score | both null |
-| `dataset_record` | `verified` | The record the manifest binds, naming the served graph (§4.4); verified exactly when the graph is | `origin` (`files` or `synthetic`); `sha256` of `kg.provenance.json` |
-| | `absent` | No workspace was verified, so no record was read | all null |
-| `scoring_mode` | — | `gnn_plus_shortest_path`, `gnn_only` or `path_reasoning_fallback` | |
+| `shortest_paths` | `computed` | The gene task's exact hop distances, computed in process from the model's graph view (no table) | none |
+| | `absent` | No shortest-path term contributes to the score (the disease and patients-like-me tasks) | none |
+| `dataset_record` | `verified` | The record the manifest binds, naming the served graph (§4.4) | `origin` (`files` or `synthetic`); `sha256` of `kg.provenance.json` |
+| `scoring_mode` | — | `disease_task`, `gene_task` or `patients_like_me`: the served model's task | |
 | `settings` | — | The serving settings that change scores, as in effect | below |
+
+The checkpoint states `supplied_in_memory` and `absent`, the graph states `unverified` and
+`in_memory`, and an `absent` dataset record are removed since K7, with the in-memory seams and
+the path-reasoning answer that produced them. The shortest-path state `verified` with its
+`build_id` and `max_hops`, and the scoring modes `gnn_plus_shortest_path` and `gnn_only`, are
+removed since K8-4 with the mixture that produced them.
 
 `settings`:
 
 - `device`: where the model ran — torch's name for the device its parameters
-  are on (`cuda:0`, `cpu`). Null with no model.
+  are on (`cuda:0`, `cpu`).
 - `device_requested`: what was asked for — `auto` when nothing was named,
-  `cuda`, `cuda:N` or `cpu` (§4.8). Null with no model.
-- `eta`: the mixing weight in effect — the configured value with a table,
-  `1.0` without one. Null with no model.
-- `max_path_length`, `path_length_penalty`, `aggregation_method`,
-  `max_paths_per_candidate`, `use_direct_path_optimization`: path discovery
-  and scoring, in effect in every mode, because the candidates are the
-  diseases these paths reach.
+  `cuda`, `cuda:N` or `cpu` (§4.8).
+- `eta`: the mixing weight in effect — the gene task's η (from its model spec);
+  null for the disease and patients-like-me tasks, which mix nothing.
+- `max_path_length`, `path_length_penalty`, `max_paths_per_candidate`,
+  `use_direct_path_optimization`: path discovery and path scoring — the
+  evidence paths shown for a disease row. The path aggregation setting (`aggregation_method`) is gone since
+  K7: nothing ranks by an aggregate of path scores.
 - `phenotype_normalisation_version`: the rule applied to the phenotype list
   before scoring (currently `1`).
 
-The parts cannot contradict each other: a model is served exactly when the
-mode is not `path_reasoning_fallback`; the table is `verified` exactly in
-`gnn_plus_shortest_path`; a verified checkpoint or table is served only over a
-verified graph. A value is null only where its part's state says there is
-nothing to identify.
+The parts cannot contradict each other: each scoring mode has exactly one
+shortest-path state (`computed` for `gene_task`, `absent` otherwise), and an
+identity that says otherwise is refused when it is built.
 
 ### The same field in the pipeline status
 
 `GET /api/v1/pipeline/status` carries `served_identity` for the pipeline loaded
-now, beside its existing fields, which are unchanged (`scoring_mode`,
-`sp_kg_binding`, `dataset_record`, `checkpoint_meta` with its `device`, …). It
-is null when nothing is loaded. **The status describes what is loaded now, and
-a reload replaces it.** To know what produced a given result, read that
-result's own `served_identity`, or its report or CSV, not the status.
+now, beside its other fields (`scoring_mode` and `eta_effective`, equal to the
+identity's scoring mode and `settings.eta`; `dataset_record`; `checkpoint_meta`
+with its `device`, …). It is null when nothing is loaded. The table and mixture
+fields (`sp_ready`, `eta_configured`, `sp_max_hops`, `sp_hop_bound_source`,
+`sp_kg_binding`) and `fingerprint_warnings` are removed since K8-4. **The status
+describes what is loaded now, and a reload replaces it.** To know what produced a
+given result, read that result's own `served_identity`, or its report or CSV, not
+the status.
 
 ### How to read it
 
 - **A normal deployment** reads: checkpoint `verified`, graph `verified`,
-  shortest paths `verified`, dataset record `verified` with origin `files`,
-  `gnn_plus_shortest_path`, device `cuda:0`, requested `auto` or `cuda`.
+  dataset record `verified` with origin `files`, the task's scoring mode
+  (`disease_task`, `gene_task` or `patients_like_me`) with its shortest-path
+  state, device `cuda:0`, requested `auto` or `cuda`.
 - **Compare the digests with the files you deployed**: the SHA-256 of the
   checkpoint, `kg.json`, `split_manifest.json` and `kg.provenance.json` equal
-  the identity's digests, and the table's `build_id` is the one in
-  `shortest_paths.meta.json`.
+  the identity's digests.
 - **Anything else is stated, not hidden**: origin `synthetic` is a generated
-  workspace, not clinical data (§4.4); shortest paths `absent` with `gnn_only`
-  and eta `1.0` means no table was served (§4.3); checkpoint `absent` is path
-  reasoning without a model (below); device `cpu` was asked for explicitly
+  workspace, not clinical data (§4.4); device `cpu` was asked for explicitly
   (§4.8).
 - **What it does not establish** is displayed under the identity, as the
   contract's claim boundary: "Checked: these files are the ones their records
@@ -1022,25 +946,44 @@ result's own `served_identity`, or its report or CSV, not the status.
   changed them, or anything a person able to edit both files and records could
   alter."
 
-### Serving without a model
+### No model, no answer
 
-Path reasoning over `kg.json` alone, with no checkpoint configured, verifies no
-workspace (§4.4), and its identity says so: checkpoint `absent`; graph
-`unverified`, with the digest of the `kg.json` it read and no manifest digest;
-shortest paths and dataset record `absent`; `path_reasoning_fallback`; device,
-requested device and eta null. Nothing in it is claimed verified. Whether this
-mode stays available by default is an open policy question (B-2), not decided
-by M3c.
+Since K7 a graph is never served without a model (the path-reasoning fallback
+is removed, closing the open policy question B-2), and nothing is served from
+a model or graph handed over in memory. A service started with
+`SHEPHERD_KG_PATH` and no `SHEPHERD_CHECKPOINT_PATH`, or with nothing
+configured, publishes no pipeline: `/api/v1/diagnose` and `/ready` answer 503
+with the reason, `/health` answers 200, and the Diagnosis page offers "Load a
+model…". A reload that fails keeps the model in use and its ready state.
+
+**A checkpoint without a model spec (a ShepherdGNN history file) is refused at
+load** (since K8-4), at startup and on a reload with or without a task, before
+any model is built: "written before the model spec: not readable by this build;
+start a new run" (since K8-7b, 2026-11-08, the one phrase every refusal of such a file gives). A
+file from before the provenance contract, which records no training inputs either, is refused
+first for that ("records no training_input_digests"). A refused startup publishes nothing (503,
+above); a refused reload leaves the model in use serving. Such files stay on disk and listed,
+with their SHA-256, records and usage history, as a record this build cannot read ("Record not
+readable", with that phrase; no longer "History · never run" since K8-7b); the mixture that used
+to serve them is removed.
+
+**A checkpoint whose record names one input two ways is refused the same way**
+(since K8-4r), for example a `data_roles.kg` that differs from its
+`training_input_digests.kg`: "the record contradicts itself: data_roles.kg …
+differs from training_input_digests.kg …". Serving, measurement and training
+(finetune, resume, extend, branch) read the record through one reader, so none
+of them uses such a file, whichever of its two claims is wrong. Two models of
+one graph trained on different cases are not affected: each agrees with itself.
 
 ### In the Diagnosis tab and its exports
 
 The WebUI shows **the result's own identity**, never the status's:
 
 - **Banners above the results**, one per state that must not be missed:
-  `SYNTHETIC WORKSPACE: not a clinical result.`, `NO TRAINED MODEL:
-  path-reasoning fallback.`, `NO SHORTEST-PATH TABLE: GNN score alone.`,
-  `DEMO ANSWER: not computed.`, and `WHAT PRODUCED THIS RESULT WAS NOT
-  REPORTED.` for a response without the field (a server from before M3c).
+  `SYNTHETIC WORKSPACE: not a clinical result.` and `WHAT PRODUCED THIS RESULT
+  WAS NOT REPORTED.` for a response without the field (a server from before
+  M3c). The no-trained-model and demo banners are gone since K7, and the
+  no-shortest-path-table banner since K8-4, with the answers they described.
 - **A badge above the results** (since M5-2) compares the result's whole
   identity, part by part, with the model in use as the "Model in use" card last
   read it: "Produced by the model in use", "Produced by an earlier model or
@@ -1060,20 +1003,22 @@ The WebUI shows **the result's own identity**, never the status's:
   candidates: the same banners, a Part | State | Value table with digests in
   full (`sha256:<64 hex>`), the claim boundary and the fixed statement. An
   absent part is written as its state and the reason, never left blank.
-- **The kind's label above the table** says what the Score column holds, with
-  the result's own η: "Served ranking today: diseases reached by path discovery,
-  scored as η × model term + (1 − η) × SP, η = 0.7" (or "…scored by the model
-  term alone" without a table), "No model loaded: ranked by path reasoning, not
-  by a model", or "Demo answer: no pipeline is configured; not a diagnosis".
-  The columns follow the kind: Score and Model term for the mixture, with SP
-  beside them when a table is served (a status with no number in words, never
-  0.000); Score for path reasoning; no score at all for the demo answer.
+- **The kind's label above the table** says what the Score column holds: "Disease
+  task model: every disease of the model's graph ranked by its Score
+  (uncalibrated); paths only explain the rows shown", "Gene task model: your
+  candidate genes ranked by their Score (uncalibrated), the model's similarity
+  mixed with shortest-path proximity", "Patients-like-me model: the reference
+  cohort's patients ranked by Similarity (uncalibrated); a shared causal gene is
+  not implied". The columns follow the kind: Score for the disease task; Score,
+  model similarity and SP similarity for the gene task; Similarity for
+  patients-like-me.
 - **A refused result** (`MODEL_TERM_UNAVAILABLE`, `NON_FINITE_SCORE`) is shown as
   one sentence naming the code and the node; nothing is ranked.
 - **The CSV** carries the identity in columns (below).
-- **File names** carry the two states a copied file must not lose:
+- **File names** carry the state a copied file must not lose:
   `diagnosis_SYNTHETIC_<patient>_<session>.csv` / `_report.md` for a synthetic
-  workspace, `diagnosis_DEMO_…` for the demo answer; otherwise unchanged.
+  workspace; otherwise unchanged (the `diagnosis_DEMO_…` name went with the demo
+  answer, K7).
 
 ### The CSV's candidate columns (Batch 4)
 
@@ -1081,44 +1026,44 @@ The candidate columns are the result kind's, and every row names the kind:
 
 | Kind | Candidate columns, in order |
 |---|---|
-| `served_mixture/v1` | `result_kind`, `rank`, `disease_id`, `disease_name`, `served_score`, `model_term`, `sp_term_status`, `sp_term_score`, `sp_term_mean_hop_distance`, `sp_term_phenotypes_mapped`, `sp_term_phenotypes_submitted`, `sp_term_mixed_as`, then the evidence columns |
-| `path_reasoning/v1` | `result_kind`, `rank`, `disease_id`, `disease_name`, `path_score`, then the evidence columns |
-| `demo/v1` | `result_kind`, `rank`, `disease_id`, `disease_name`, `matching_phenotypes` |
+| `disease_task/v1` | `result_kind`, `rank`, `disease_id`, `disease_name`, `score`, then the evidence columns |
+| `gene_task/v1` | `result_kind`, `rank`, `gene_id`, `gene_name`, `score`, `embsim`, `sp_similarity`, `mean_distance`, `sp_bounds_lower`, `sp_bounds_upper` |
+| `patients_like_me/v1` | `result_kind`, `rank`, `case_id`, `similarity`, `disease_id`, `disease_name`, `causal_genes`, `phenotypes`, `reference_cohort_label`, `reference_cohort_version_sha256`, `reference_cohort_samples_sha256`, `reference_cohort_patients` |
+
+The `path_reasoning/v1` (`path_score`) and `demo/v1` rows are gone since K7, and the
+`served_mixture/v1` rows (`served_score`, `model_term`, the `sp_term_` columns) since K8-4.
 
 The evidence columns are `evidence_label`, `evidence_mode`, `evidence_summary`,
-`min_path_length`, `num_direct_paths`, `num_analogies`, `supporting_genes` and
-`matching_phenotypes`. `sp_term_status` sits beside the SP values: where the
-status has no number, the value cells are empty, never 0, and `sp_term_mixed_as`
-is `0.0000` where the mixture still took it as 0. A path count is empty when no
-evidence package was built (explanations off). `served_score` is a candidate
-column, not part of the identity block below.
+`min_path_length`, `num_direct_paths`, `supporting_genes` and `matching_phenotypes`
+(`num_analogies` is gone since K8-4, with the analogy evidence). A path count is
+empty when no evidence package was built (explanations off). `score` and
+`similarity` are candidate columns, not part of the identity block below. A gene result's SP
+bounds and a patients-like-me result's reference cohort version are the same on
+every row.
 
 ### The CSV's identity columns
 
 The CSV keeps **one header row** and no preamble. The result kind's candidate
-columns come first (above); 21 columns follow, each holding one part of the
+columns come first (above); 18 columns follow, each holding one part of the
 identity, **the same on every row**:
 
 | Column | Holds | When the identity holds null |
 |---|---|---|
-| `served_scoring_mode` | `gnn_plus_shortest_path`, `gnn_only` or `path_reasoning_fallback` | — |
-| `served_checkpoint_state` | `verified`, `supplied_in_memory` or `absent` | — |
-| `served_checkpoint_sha256` | `sha256:<hex>` of the checkpoint read | `absent` (no model); `none` (a model supplied in memory) |
-| `served_kg_state` | `verified`, `unverified` or `in_memory` | — |
-| `served_kg_sha256` | `sha256:<hex>` of the `kg.json` read | `none` (a graph supplied in memory) |
-| `served_split_manifest_sha256` | `sha256:<hex>` of the `split_manifest.json` read | `absent` (graph `unverified` or `in_memory`) |
-| `served_sp_state` | `verified` or `absent` | — |
-| `served_sp_build_id` | the `build_id` the table and its sidecar share | `absent` |
-| `served_sp_max_hops` | the sidecar's `max_hops` | `absent` |
-| `served_dataset_record_state` | `verified` or `absent` | — |
-| `served_dataset_origin` | `files` or `synthetic` | `absent` |
-| `served_dataset_record_sha256` | `sha256:<hex>` of the `kg.provenance.json` read | `absent` |
-| `served_device` | the device in effect (`cuda:0`, `cpu`) | `none` (no model); `not_stated` (a model supplied in memory that does not say) |
-| `served_device_requested` | `auto`, `cuda`, `cuda:N` or `cpu`, as asked | `none` (no model, or a model supplied in memory with no device named) |
-| `served_eta` | the mixing weight in effect | `none` (no model) |
+| `served_scoring_mode` | `disease_task`, `gene_task` or `patients_like_me` | — |
+| `served_checkpoint_state` | `verified` | — |
+| `served_checkpoint_sha256` | `sha256:<hex>` of the checkpoint read | — |
+| `served_kg_state` | `verified` | — |
+| `served_kg_sha256` | `sha256:<hex>` of the `kg.json` read | — |
+| `served_split_manifest_sha256` | `sha256:<hex>` of the `split_manifest.json` read | — |
+| `served_sp_state` | `computed` or `absent` | — |
+| `served_dataset_record_state` | `verified` | — |
+| `served_dataset_origin` | `files` or `synthetic` | — |
+| `served_dataset_record_sha256` | `sha256:<hex>` of the `kg.provenance.json` read | — |
+| `served_device` | the device in effect (`cuda:0`, `cpu`) | — |
+| `served_device_requested` | `auto`, `cuda`, `cuda:N` or `cpu`, as asked | — |
+| `served_eta` | the mixing weight in effect | `none` (a disease or patients-like-me model, which mixes nothing) |
 | `served_max_path_length` | integer | — |
 | `served_path_length_penalty` | number | — |
-| `served_aggregation_method` | text | — |
 | `served_max_paths_per_candidate` | integer | — |
 | `served_direct_path_optimization` | `true` or `false` (`use_direct_path_optimization`) | — |
 | `served_phenotype_normalisation_version` | integer (currently `1`) | — |
@@ -1134,11 +1079,14 @@ identity, **the same on every row**:
 
 | Word | Written when |
 |---|---|
-| `absent` | the part is absent: no checkpoint, table, manifest or dataset record |
-| `none` | nothing applies: no device, requested device or eta without a model; no digest for a model or graph supplied in memory; no requested device for a model supplied in memory |
-| `not_stated` | a model supplied in memory does not say its device (`served_device` only) |
-| `demo` | every `served_` column of the demo answer |
+| `none` | nothing applies: no η for a model that mixes nothing |
 | `not_reported` | every `served_` column of a response that carried no `served_identity`, or a value one left out |
+
+The words for a model or graph supplied in memory (`none` digests, `not_stated`), for no model
+and for the demo answer (`demo`), and the `served_aggregation_method` column, are gone since K7.
+The `served_sp_build_id` and `served_sp_max_hops` columns, and the word `absent` they were
+written with, are gone since K8-4 (the table's build id and hop bound left the identity), so the
+columns after `served_sp_state` sit two places earlier than in a file written before.
 
 - A text cell that a spreadsheet would run as a formula — one starting with
   `=`, `+`, `-`, `@`, a tab or a carriage return — is written with a leading
@@ -1163,7 +1111,8 @@ Where it is set:
 - **At startup**: `SHEPHERD_DEVICE` in the service's environment.
 - **On a reload**: the request's `device` (`POST /api/v1/pipeline/reload`). Null
   or blank falls back to `SHEPHERD_DEVICE`, and then to `auto`; a blank variable
-  counts as unset too.
+  counts as unset too. The request's five fields, and the 422 for any other, are in
+  §4.14 ("The reload request").
 
 **When it is checked**: whenever a checkpoint is to be served, before anything
 is read — the service settles the device before it parses `kg.json` (a reload,
@@ -1179,8 +1128,6 @@ leaves the served pipeline serving. The refusal reads:
 > SHEPHERD_DEVICE=cpu (or send device 'cpu' with a reload) explicitly for
 > development; the served identity records the device asked for and the one in
 > effect.
-
-Serving with no checkpoint — path reasoning alone — resolves no device.
 
 **Hardware acceleration is required for deployment, and CUDA (NVIDIA) is currently the only
 supported backend.** That is the present scope, not a permanent limit. torch's ROCm builds also
@@ -1200,8 +1147,9 @@ device the model's parameters are on (`cuda:0`, not just `cuda`). The status's
 > `"device": "cpu"` with a reload, or leave it null so that variable applies).
 > A literal `auto`, which used to reach torch and fail there, is the same
 > request as unset. The WebUI has no device selector.
-> `scripts/setup_demo.py` prints its serving command with the device its demo
-> was trained on.
+> `scripts/setup_demo.py --train-model` prints its serving command, naming the
+> disease child it trained (a base, then one disease child, since K7), with the
+> device they were trained on.
 
 ---
 
@@ -1213,8 +1161,9 @@ acceptance — and its result is recorded beside the checkpoint. The flow is:
 
 1. `scripts/import_cohort.py` previews, then commits, a cohort version mapped to one workspace's
    graph;
-2. `scripts/measure_scorer.py --cohort LABEL --registry DIR` measures the checkpoint on it (Mode
-   C) and keeps the full report;
+2. `scripts/measure_scorer.py --mode PROTOCOL --cohort LABEL --registry DIR` measures the
+   checkpoint on it by a protocol this build implements for the model's learning stage and task
+   head, and keeps the full report;
 3. `--record`, or later `scripts/record_evaluation.py --report`, registers the report in
    `evaluations.json` beside the checkpoint;
 4. the Diagnosis page's "Model in use" card shows the loaded checkpoint's recorded tests as a
@@ -1345,12 +1294,30 @@ to measure.
 ### Measure
 
 ```bash
-python scripts/measure_scorer.py \
+python scripts/measure_scorer.py --mode disease \
     --checkpoint data/workspaces/<ws>/runs/<arch>/<run>/checkpoints/<file>.pt \
     --data-dir data/workspaces/<ws> \
     --cohort mygene2-2026-10 --registry /srv/shepherd/cohorts \
     [--training-evidence DIR ...] [--record] [--device auto|cuda|cpu] [--batch-size 32]
 ```
+
+`--mode` is required and names the **protocol**: a measurement this build implements for a
+model's learning stage and task head (`src/evaluation/protocols.py`), today `disease`, `gene` and
+`patients_like_me`, one for each task head of a finetuned model. The report's mode is the
+protocol's name. The run judges the protocol on the bytes it reads, and a refusal says why and
+ends "Nothing was written.": a registered version must list the genes the protocol needs (`gene`
+causal and candidate genes, `patients_like_me` causal genes), checked right after its
+`cohort.json` is read, before the workspace or the checkpoint; the checkpoint's model record must
+be of the stage and task head the protocol takes, checked right after the checkpoint is read. A
+base is refused with "This model is a base: its formal test (link prediction on held-out
+knowledge-graph edges) is not implemented yet. A model finetuned from it can be measured.", and a
+checkpoint without a model spec (a ShepherdGNN history file) with the record reader's phrase,
+"written before the model spec: not readable by this build; start a new run" (since K8-7b,
+2026-11-08; it used to be refused "as history"). The Test page passes the
+protocol the operator chose (§4.14). Since K8-6a no command runs Mode C, the model's own disease
+ranking from before the tasks: a run without `--mode` is refused by the argument parser (exit 2),
+and so is `--mode C`, which is not a protocol. Kept Mode C reports and records are read by the
+shared readers (policy rev 15).
 
 Run it in a shell where the GPU lock is configured, the same lock as the service's (§4.11);
 without one it refuses, exit 1, with nothing written.
@@ -1386,17 +1353,30 @@ training inputs and has no validation entry at all: training ran no validation p
 - **not recorded by the checkpoint**: it names no file to look for in this scope, and its
   record is not one the pipeline wrote: every training run records its training inputs as a
   digest, so a record without one, or with an entry that is there and is not a digest, cannot
-  come from it. `--training-evidence` cannot help.
+  come from it. `--training-evidence` cannot help;
+- **search incomplete**: no file that was read holds the recorded bytes, and a place that may
+  hold them could not be read: a candidate (permission, an I/O error), or a `--training-evidence`
+  directory that cannot be listed or cannot be checked. The console names each place and its
+  error. Make it readable to the process that measures, and measure again.
 
 `none` is not proof of no leakage: it speaks only about the inputs the checkpoint records.
 
-**What refuses the run instead of giving a label.** A `--training-evidence` directory that does
-not exist, is not a directory, or cannot be listed (permission, an I/O error on a network mount)
-is refused before any candidate is read: a directory that is not looked in would report the
-inputs as not found. A candidate that exists but cannot be read (permission, an I/O error)
-refuses the run, and nothing is written, because it may be the evidence; make it readable, or
-leave its directory out of `--training-evidence`. Candidates are read only until every recorded
-digest has been found, so an unreadable file after the match is never reached.
+**A place that cannot be read is recorded, not refused** (since K8-6r.3, R10 definition version
+2). A candidate that cannot be read, or a `--training-evidence` directory that cannot be listed
+or cannot itself be checked (under a directory this account cannot enter, for one; since the
+K8-6 completion review, same version), leaves its scope `unverifiable` with that reason, never
+"not found" and never a count. The search goes on
+through the remaining candidates, so bytes held by another file are still found, and the
+measurement still runs and its report can be registered. **What still refuses the run:** a
+`--training-evidence` path known not to be a directory (it does not exist, is a file, is a link
+loop, or has a name too long to exist), an argument error before anything is read; and the
+required inputs: a checkpoint, graph file or cohort samples file that is missing, cannot be read,
+or is not the bytes recorded for it. Running out of memory while reading a candidate ends the run
+as a resource failure that names the file: it says nothing about overlap, and no kept report or
+ledger record is changed. Candidates are read only until every recorded
+digest has been found, so an unreadable file after the match is never reached. A report written
+before K8-6r.3 (R10 definition version 1) is read as written: there, "not found" means every
+candidate was read and compared.
 
 **Where the report is kept.** In the registry, under the version:
 `<registry>/versions/<label>/reports/<UTC time>-<first 12 hex of the checkpoint digest>-<8 random
@@ -1404,56 +1384,38 @@ hex>/`, a new directory for every run: `ranks.json` (per case, patient-level) an
 `report.json`, which names the ranks file by its digest. Reports are never overwritten, and every
 report is kept whether or not it is registered. `--output` is refused with `--cohort`.
 
-The console prints Mode C's metrics, the coverage (`N ranked of M source cases; K excluded`, with
+The console prints the run's metrics (its protocol's), the coverage (`N ranked of M source cases; K excluded`, with
 each category), the four R10 labels in the shared words of `src/evaluation/caveats.py` (an
 `unverifiable` label with its reason), the label definitions once, the report's path and the run
 id. The report itself keeps the states and holds no prose.
 
-### Mode D: the served ranking (since Batch 3)
+### Mode D (removed in K7)
 
-`--mode D` measures **what the Diagnosis page serves today** on the same registered version: the
-checkpoint is served by the service's own builder over `--data-dir` (with its shortest-path table
-when the workspace holds one, as the service would), each import-eligible case is ranked through
-the served pipeline's own `rank()`, and Mode C is run beside it on the same embeddings. It is the
-input to the scorer policy's gate 1 comparison, not the approved policy
-(`docs/working/scorer-measurement/PLAN_B05.md`).
+Mode D (`--mode D`, Batch 3's measurement of what the Diagnosis page served in October 2026, the
+input to the scorer policy's gate 1 comparison) was removed in K7 with its executor and its probe:
+`--mode D` is refused at the command line (exit 2), and no page or job starts it. Its GB10 run of
+2026-10-27 is kept as evidence in `docs/working/batch3-acceptance-2026-10-27/`, and its design
+in `docs/working/scorer-measurement/PLAN_B05.md`.
 
-```bash
-python scripts/measure_scorer.py --mode D \
-    --checkpoint data/workspaces/<ws>/runs/<arch>/<run>/checkpoints/<file>.pt \
-    --data-dir data/workspaces/<ws> \
-    --cohort mygene2-2026-10 --registry /srv/shepherd/cohorts \
-    [--training-evidence DIR ...] [--record] [--device auto|cuda|cpu] [--batch-size 32]
-```
+**Kept Mode D reports and records stay readable**, shown as recorded by the one display every
+mode this version does not describe gets (since K8-6e.2, 2026-11-07; before it, under a Mode D
+label of their own): on the Test page's Result and the Models page they read "Mode D (a
+measurement mode this version does not describe)", every metric by its recorded name and value,
+unrounded (`post_import_mrr 0.35`), and the score semantics exactly as recorded
+(`served:gnn_only:eta=1.0:sp=none`), never split into a scoring mode and η. The Models page lists
+each mode's records in a table of its own, in the order first shown, and ranks no record by its
+test score. What Batch 3's names meant: `post_import_*` and `coverage` were over the version's
+import-eligible cases, a case not reached counting 0; `reached_*` over the reached cases only; the
+cases excluded at import were counted beside them, never in them. Each report also set Mode C
+beside it on the same embeddings. A Mode D number is not the model's approved ranking and does not
+describe the current diagnosis model.
 
-- **The same run, the same rules.** Every check above, the GPU lock, the report store and
-  registration apply unchanged. `--split` with `--mode D` is refused (exit 2): its comparison is
-  reported on a version's import-eligible cases. A pipeline that would serve path reasoning alone,
-  a version bound to another workspace, and a version mapped under another phenotype normalisation
-  version than the one served (the two sides would score different terms) are refused before any
-  case is ranked; a `--batch-size` below 1 is refused at the command line (exit 2). During the
-  pass, a case whose served input is not the terms the version mapped refuses the run, with
-  nothing written. About 20 progress lines on the console say how many cases have gone through
-  the served path, how long it took and the outcomes so far.
-- **One case per call.** Mode D ranks each case through the served path (`batch_size` 1 in its
-  manifest; `--batch-size` is the Mode C side's), so it is slower than Mode C: on a large cohort,
-  time a pilot first.
-- **What the report adds.** The fields every report has, plus `outcomes` (`ranked`,
-  `not_reached` — of which `no_candidates` — and `refused`, adding up to the import-eligible
-  cases), `import_counts`, `served` (the served identity) and `comparison`: Mode C on the same
-  embeddings, the derived steps C → G1 → G2 → D (candidates, then ties, then the score), and for
-  each kept Mode C report of the same checkpoint and version, how many ranks agree (stated, never
-  an error). `ranks.json` has one row per import-eligible case.
-- **Named for their case set.** `post_import_*` and `coverage` are over the import-eligible cases,
-  a case not reached counting 0; `reached_*` over the reached cases only. No figure is end to end:
-  the cases excluded at import are counted beside them.
-- **Registered apart.** With `--record` it becomes its own record beside the checkpoint. Its
-  scoring semantics differ from Mode C's, so the two are never compared for disagreement, and a
-  Mode D record is shown on the Models page, never ordered. The console, the Test page's Result
-  and the Models page label it "Served ranking today (Mode D) … not the approved scorer policy",
-  with the served scoring mode and η (on the Models page in the label when every Mode D record
-  shown shares them, otherwise on each record's detail line); the Models page lists each mode's
-  records in a table of its own. No page starts a Mode D run: the Test page's Start runs Mode C.
+**A kept Mode D report registers by the general rules, under its own mode** (since K8-6c, policy
+rev 15): `scripts/record_evaluation.py` and the Test page's Register check it as they check every
+report (the report store, its version block, its run directory, the checkpoint's bytes and the
+ledger), and its record keeps mode D. The same run's report again answers `already_registered`,
+with nothing written. The records a ledger already holds stay, and do not stop the next
+registration of another report.
 
 ### Record
 
@@ -1486,33 +1448,65 @@ python scripts/measure_scorer.py --mode D \
   is read. A link retargeted during a run, or after a load without a reload, does not move where
   that run's record is filed or where the loaded model's records are looked up. No directory is
   created for a ledger.
-- **Outcomes:** registered (with its sequence number); already held (the same report again:
-  nothing written); agrees with an existing record (the report's digest is added to that record's
-  corroborating reports). R10 and the environment are not compared, because each is true of its
-  own report. When a corroborating report's R10 or environment differ from the record's (say, a
-  re-run with `--training-evidence` found evidence the first run did not), **the record keeps
-  its own values and is not updated**. The registration says so in one line, naming the report,
-  which keeps the later run's R10. A report that contradicts a record with the same key — same
-  checkpoint, cohort version and measurement settings, different results — is refused, naming
-  the fields that differ. There is no override flag; a wrong record is corrected by editing the
-  readable JSON file, which leaves a diff.
+- **Registered by the run** (policy rev 16, since K8-6r.2). A run is its run directory in the
+  version's report store. Each record names it (`run_id`), and the ledger looks for this run
+  first. The outcomes:
+  - **registered** (with its sequence number): every verified run gets a record of its own,
+    with its own values, environment and R10, whatever its bytes or times. Two runs with
+    byte-identical reports are two records, and so are two runs whose values differ.
+  - **already held** (`already_registered`): the same run with the same report bytes again;
+    nothing is written.
+  - **refused** when the same run comes back with other bytes: a run's report is sealed when it
+    is published, so the file was replaced after it was registered. The message names the
+    record and both digests.
+  - **refused, nothing written,** when the write itself cannot be made safely, naming the
+    record: a record that is not an object or has lost its registration sequence (the next
+    sequence cannot be allocated), or this run's own identity record damaged (a record from the
+    run-identity boundary on that should name its run and does not, a record naming this run
+    whose cohort, checkpoint or report digest cannot be read, or two records naming this run).
+    Restore the record from a trusted backup, then register again. Nothing is guessed, skipped
+    or renumbered. A run whose intact record is found still answers as above.
+
+  After the outcome, two notes may follow. They are information only and never refuse
+  anything. **The group note** names each other record of the same conditions (same checkpoint,
+  cohort version and measurement settings) whose results differ, with its run and what differs:
+  "Runs under these conditions differ: … Each run is kept as recorded." When both runs had
+  deterministic algorithms on, it adds that they were expected to agree: investigate. **The
+  historical note** names a record written before each run had its own record that holds this
+  report's bytes: "possible overlap with record N, … not recorded whether this run is one of
+  them". Such an older record never answers `already_registered` for another run.
+  There is no override flag; a wrong record is corrected by editing the readable JSON file,
+  which leaves a diff.
 - **What is shown later:** `python scripts/record_evaluation.py --checkpoint <file> --show
   <checkpoint sha256>` reads the ledger the service reads for that file, beside its resolved
-  path. With `--checkpoint-dir <dir>` instead, `--show` reads the `evaluations.json` inside that
+  path. It prints the records as written (JSON), then one line each with its run ("not
+  recorded" for a record written before each run had its own record) and any possible
+  overlap between such a record and a named run. A record the shared check cannot read as a
+  result is said instead as "record N (the ledger's record I) cannot be read as a result:
+  <reason>" (since K8-6e.1), with the reason the API and Models give; the JSON still prints it as
+  written. With `--checkpoint-dir <dir>` instead, `--show` reads the `evaluations.json` inside that
   directory, which for a directory of links is not the one the service reads. An empty answer
   means this ledger holds no result for those weights, not that they were never evaluated.
-- **One writer at a time.** A registration that finds the ledger changed since it read it is
-  refused rather than overwriting; this is not a lock, so do not register into one directory from
-  two places at once.
-- Only a **registered cohort version's** report is recorded; a report from `--split` is not.
+- **Registrations into one ledger take turns.** A registration holds the ledger's lock
+  (`evaluations.json.lock` beside it, kept after use) from reading the ledger to writing it and
+  its usage-history entry, across processes. One that waits more than 10 s is refused as busy:
+  nothing was written this time, the report stays kept, and you register it again (exit 3 for
+  `--record`, 1 for `record_evaluation.py`). If the ledger was written but the usage history
+  was not, it says "the usage history was not written" with the reason, and the record stands.
+  A ledger changed by something that takes no lock, such as a hand edit, is still refused
+  rather than overwritten.
+- Only a **registered cohort version's** report is recorded; a report from `--split` is not,
+  because the ledger does not yet support a generated split's data identity (it has no
+  registered cohort version), not because such a result counts for less (policy rev 16). Its
+  report and ranks stay at `--output`; extending the ledger to them is later work.
 
 ### Exit codes
 
 | Command | 0 | 1 | 2 | 3 |
 |---|---|---|---|---|
 | `import_cohort.py` | preview printed, or version committed | refused, with one message ending "Nothing was written." (also a preview in which no case can be ranked) | the command line was rejected | — |
-| `measure_scorer.py` | measured (with `--record`: registered, already held or agreeing) | a check refused the run: one message, nothing written (so does `--device auto` or `cuda` on a host without CUDA, before anything is read); or **measured, but the report was not written** (a full or read-only disk, for example): one message saying what may be left, which is never a report that can be registered -- this run's ranks beside `--output`, or a run directory without `report.json` in the report store (a run that fails after writing its report, its console closed for example, says where the report is) | the command line was rejected, including an argument of the other kind of cohort | **measured, but the registration refused**: the message names the report and the `record_evaluation.py` command to register it later; or, when the report file no longer holds the bytes the run published, says so and asks for a re-measurement instead (that report may be gone); or, when runs under the report's key disagree, says "runs disagree — investigate" and keeps the report, with no register-later command (none would be accepted while they disagree) |
-| `record_evaluation.py` | registered, already held, agreeing, or shown | refused, with one message; nothing written | the command line was rejected, including neither or both of `--checkpoint` and `--checkpoint-dir` | — |
+| `measure_scorer.py` | measured (with `--record`: registered or already held) | a check refused the run: one message, nothing written (so does `--device auto` or `cuda` on a host without CUDA, before anything is read); or **measured, but the report was not written** (a full or read-only disk, for example): one message saying what may be left, which is never a report that can be registered -- this run's ranks beside `--output` with no report, or an empty file it claimed at `--output` or at the ranks (since K8-6r.4 each refuses the next run on that path), or a run directory without `report.json` in the report store (a run that fails after writing its report, its console closed for example, says where the report is) | the command line was rejected, including an argument of the other kind of cohort | **measured, but the registration refused**: the message names the report and the `record_evaluation.py` command to register it later; or, when the report file no longer holds the bytes the run published, says so and asks for a re-measurement instead (that report may be gone) |
+| `record_evaluation.py` | registered, already held, or shown | refused, with one message; nothing written | the command line was rejected, including neither or both of `--checkpoint` and `--checkpoint-dir` | — |
 | `audit_split_overlap.py` | report written | refused, with one message; nothing written | the command line was rejected (for example the removed `--evaluation-cohort-kind`, `--registry` without `--cohort` or the reverse, or `--splits` beside `--cohort`), with the usage line | — |
 
 A measurement whose checkpoint directory is read-only to you ends with exit 3: the report is kept,
@@ -1528,32 +1522,56 @@ of another cohort version, or is now a link to a file outside the report store -
 registered, the run exits 3, and it says the report at that path is not the one it published (or
 is gone), so the run's own report may not exist any more: measure again to register this
 measurement. The command for a later registration is printed only when the report read back is
-the one published and something else refused it, such as the ledger, and never while runs under
-its key disagree. A later registration with `record_evaluation.py` checks the checkpoint file it
-is given against the report, as before.
+the one published and something else refused it, such as the ledger. Without `--record` the
+command is always printed: no other run's report or result can refuse a registration. A later
+registration with `record_evaluation.py` checks the checkpoint file it is given against the
+report, as before.
 
 ### What the Diagnosis page shows
 
 **Since M5-2 (2026-10-21) the Diagnosis page shows the loaded checkpoint's recorded tests as a
-state only**, on its "Model in use" card: "Recorded tests: 3 · 1 contested", "3 · contested state
-not checked" (no registry is set, or no record's cohort version or report store can be read;
-never shown as uncontested), "3 · 1 contested · contested state of 1 not checked" (some
-records' state cannot be checked; counted apart), "none in ledger", "no ledger", "ledger not
+state only**, on its "Model in use" card: "Recorded tests: 3 · runs differ for 1", "3 ·
+comparison incomplete" (no registry is set, or no record's cohort version or report store can be
+read; never shown as agreeing), "3 · runs differ for 1; comparison incomplete for 1" (counted
+apart), "3 · 1 not readable" (since K8-6e.1: 3 results and 1 record the shared check cannot read
+as a result, counted apart and never as a result; "0 · 1 not readable" when it is the only one),
+"none in ledger" (neither), "no ledger", "ledger not
 readable" or "not read", the same words as the checkpoint's row in
 "Change model…", found by the checkpoint's digest, not its file name (after another model is
 loaded the previous model's state is never shown). Its › opens Details at Evidence, where the same
-state stands beside the Trainer's validation figure ("Validation MRR (Trainer, top-20) … —
-selection metric on val, not an independent test"); no Mode C number is shown on the page. The
+state stands beside the Trainer's validation figure ("Validation pooled MRR (Trainer) … —
+selection metric on val, not an independent test" for a task model); no test number is shown on
+the page. The
 records themselves are listed under Research › Evaluate › Models.
 
 Until M5-2 the model status (Model Configuration) listed them in full under its "Serving" line,
 as **"Recorded test results (Mode C)"** for the loaded checkpoint (`sha256:<first 12>…`), read
 through `GET /api/v1/evaluations/loaded-model`, in the words below. The route still answers API
-clients with those records, and since the M5 review (BACKLOG 36) each record carries its D5
-state (`contest`: `uncontested`; `contested`, with the fields and the runs that differ;
-`cannot_be_checked`, never to be read as uncontested), from the dashboard's own implementation
-over the service's `SHEPHERD_REGISTRY`, without the reasons' own words, which may name a server
-path. D5's investigation notes are not shown (BACKLOG 40):
+clients with those records, and since the M5 review (BACKLOG 36) each record carries how its
+condition group compares in the store (`contest`), from the dashboard's own implementation over
+the service's `SHEPHERD_REGISTRY`, without the reasons' own words, which may name a server path.
+**Since K8-6r.2 these values only describe** (policy rev 16): `uncontested` (the runs agree),
+`contested` (runs under these conditions differ, with the fields and every run that carries a
+differing report) and `cannot_be_checked` (the comparison is incomplete, never to be read as
+agreeing) stay as the same strings for API clients, but none of them hides, orders out or
+refuses a record any more. Each record also carries `run_id` (the run it was registered from, or
+`null` for a record written before each run had its own record, shown as "not recorded") and
+`historical_overlap` (the sequences of the records it may be one execution with, never
+confirmed). **Since K8-6e.1 a record for these weights that the shared check cannot read as a
+result** (its run identity cannot be read, or it does not have the shape registration writes) is
+listed in `unreadable_records`, in ledger order: its `index` in the ledger's records list
+(counted from 0, as the writer's refusals name it), its registration `sequence`, its
+`source_artifact_digest` and its `run_id` where it still carries them readably (`null`
+otherwise), and its `reason`, one line of at most 300 characters that names each refused field
+by its path in the ledger record, the key a hand edit corrects, and never its value (for example
+"n_ranked: missing", "environment.facts.gpu: missing" or "the regime's device is neither CUDA nor
+CPU"); a key the record itself carries inside an object, such as a metric's name or an exclusion
+reason, is named as written, as a readable record's metric names are shown. It is never a
+result, and the ledger keeps it as written. `records_not_shown` keeps
+its meaning and always equals the list's length. A record that is not an object, or names no
+checkpoint digest, belongs to no model and is not listed; a ledger unreadable as a whole is
+still `ledger_not_read`, with none of its records listed.
+Investigation notes are not shown (BACKLOG 40):
 
 - The records are introduced once, above the first, by **"Disease ranking by the model,
   approved scorer policy (Mode C)."** and the note **"This is the model's own Mode C disease
@@ -1568,12 +1586,18 @@ path. D5's investigation notes are not shown (BACKLOG 40):
   as the console gives it) and `no validation inputs recorded` are shown as words, **never as
   zero or a number**; the environment class (CUDA with deterministic algorithms on or off, or
   CPU) and the GPU; the dataset origin (a synthetic workspace is called out); the registration's
-  sequence and time and the number of corroborating reports.
+  sequence and time, its run, and the number of reports merged into it before each run had its
+  own record.
 - Instead of records, a sentence: no ledger beside the loaded checkpoint; the ledger was not read,
   with the reason, which names the file and never its directory (for example a schema 2 file,
-  below); this ledger holds no result for these weights; some records not shown because they do
-  not have the shape registration writes; or "The loaded model changed while its recorded results
-  were read; refresh the page."
+  below); this ledger holds no result for these weights; or "The loaded model changed while its
+  recorded results were read; refresh the page."
+- **Records the shared check cannot read as results** (they do not have the shape registration
+  writes, or their run identity cannot be read; since K8-6e.1) are listed under the results, or
+  alone when there are none: one amber sentence with ▲ ("1 record for these weights cannot be
+  read as a result. The ledger keeps it as written.") and a table, Index · Registration · Report
+  · Reason, each with the route's `unreadable_records` values (a sequence or report digest the
+  record does not carry readably reads "not readable"). They are never counted as results.
 - **The route** takes no parameters, reads the ledger beside the loaded checkpoint on every
   request, writes nothing, and returns no path, case id or rank. "Beside" is the directory of the
   checkpoint's resolved path as the pipeline read it at load, so a link retargeted since, without
@@ -1588,19 +1612,50 @@ path. D5's investigation notes are not shown (BACKLOG 40):
   only and needs `--output`; `--registry`, `--training-evidence` and `--record` are refused with
   it. An institutional or external cohort is imported and measured with `--cohort LABEL
   --registry DIR`.
-- **A generated split's report is not registrable**: `record_evaluation.py` refuses it ("a
-  generated split's report is not registered"). `--split val` is the checkpoint-selection split,
-  not held-out data.
+- **A generated split's report is not registered**: `record_evaluation.py` refuses it ("a
+  generated split's report is not registered"). *Reworded in K8-6r.4 (2026-11-07), behaviour
+  unchanged:* the reason is that the ledger does not yet support a generated split's data
+  identity (it has no registered cohort version), not that such a result counts for less; its
+  report and ranks stay at `--output`, and extending the ledger to them is later work. Since M5
+  a report at `--output` is refused before that, because no registry's report store holds it
+  ("… is not a report the registry's report store holds", below); the message quoted here is
+  for one placed in a store. Behind both is the same reason: a generated split has no registered
+  cohort version, and so no report store. `--split val` is the checkpoint-selection split, not
+  held-out data.
 - **A generated split's report and ranks are staged and renamed into place** (ranks first); an
-  existing `--output` is still replaced.
-- **Ledger schema 3.** An existing `evaluations.json` of schema 1 or 2 is refused — by
-  `--record`, by `record_evaluation.py` (`--report` and `--show`) and by the recorded-results
-  readers, which report the ledger as not read (on the Diagnosis card: "Recorded tests: ledger
-  not readable"). Nothing migrates it and its results are not carried over:
-  **archive it by hand**, for example `mv evaluations.json evaluations.v2.json`, read it with the
-  revision that wrote it, and re-measure what you need with this revision, then register the new
-  reports (the refusal says the same). A report written before M4 is refused too, with an
-  instruction to re-measure.
+  existing `--output` is still replaced. *Superseded by K8-6r.4 (2026-11-07):* neither file ever
+  replaces one. A run whose `--output` or `<output stem>_ranks.json` already exists (a link
+  included) is refused before anything is read, saying what it found, and a file that appears
+  after that check is not overwritten either: the run then fails, saying what it left. An empty
+  file at `--output` is a claimed place whose publication failed, not a report, and ranks with no
+  report beside them are an interrupted publication, not a result: each refuses the next run on
+  that path and stays where it is, since no earlier file is deleted or renamed to make room.
+  The refusal looks at those two names only, so it also says what else such a file may be:
+  another run's publication not yet finished, or, at the ranks name, a file another `--output`
+  wrote. Measure to a new `--output`. Each file is placed by a hard link, which fails when
+  anything is already there; where the filesystem has no hard links (FAT or exFAT, say), the
+  target is first claimed as a new empty file and the written file then renamed onto it. That
+  rename is itself an overwriting call: it overwrites no other run's file only while the target is
+  still the empty file this run has just claimed, so it relies on nothing else replacing or
+  removing that claim in between, which this program never does and cannot stop another writer or
+  a person from doing. Neither Windows nor a real FAT or exFAT mount has been tested.
+- **Ledger schema 3 (M4), schema 4 since K8-6r.2.** An existing `evaluations.json` of schema
+  1 or 2 is refused — by `--record`, by `record_evaluation.py` (`--report` and `--show`) and by
+  the recorded-results readers, which report the ledger as not read (on the Diagnosis card:
+  "Recorded tests: ledger not readable"). Nothing migrates it and its results are not carried
+  over: **archive it by hand**, for example `mv evaluations.json evaluations.v2.json`, read it
+  with the revision that wrote it, and re-measure what you need with this revision, then
+  register the new reports (the refusal says the same). A report written before M4 is refused
+  too, with an instruction to re-measure. **Schema 3 and 4 are both read** as written, and
+  reading never rewrites a file. The first registration into a schema 3 file writes schema 4
+  and records from which sequence every record names its run (`run_identity_from_sequence`);
+  earlier records stay as written, their run "not recorded", and no run is invented for them. A
+  new ledger starts at schema 4. A build that knows only schema 3 refuses a schema 4 file
+  ("ledger not readable") until it is upgraded again; nothing in the file is lost. A schema 4
+  file whose `run_identity_from_sequence` was lost or made unreadable (missing while the file
+  holds records, not an integer, below 1, or above the next sequence) is still read, but no run
+  that a record does not name can be registered into it: restore that field from a trusted
+  backup. A hand edit that leaves it readable is taken as written, as any other hand edit is.
 - **`record_evaluation.py`** takes `--checkpoint FILE` or `--checkpoint-dir DIR`, exactly one.
   With either, the ledger is written beside the checkpoint's resolved path. For a directory whose
   checkpoint is a link, that is beside the link's target, no longer in the directory named.
@@ -1610,7 +1665,7 @@ path. D5's investigation notes are not shown (BACKLOG 40):
   version's graph and dataset record digests are compared with those this workspace's manifest
   records, without loading tensors; only `train` is read. The report's `schema_version` is 6.
 
-### Since M5-1: registration from the report store, disagreeing runs, history, determinism
+### Since M5-1: registration from the report store, runs that differ, history, determinism
 
 These apply to `measure_scorer.py --record` and `record_evaluation.py --report` alike, since
 both go through the one registration function. The exit codes above are unchanged.
@@ -1630,8 +1685,8 @@ store holds … Register the store's original instead". You can still read and s
 you cannot register it. A link to a stored report counts as the stored original. A `report.json`
 in the store that is a link to a file elsewhere does not count. **The registry must be the
 deployment's** (since the M5 review, BACKLOG 37): a copy of the whole registry holds the same
-bytes in the same structure, but it would keep its own usage history and its own disagreement
-block, which Research › Models and the job runner never read, so its reports are refused ("…
+bytes in the same structure, but it would keep its own report store and usage history, which
+Research › Models and the job runner never read, so its reports are refused ("…
 is not registered: the registry … is not the deployment's: SHEPHERD_REGISTRY (…) resolves to …").
 A registry moved as a whole works again once `SHEPHERD_REGISTRY` names its new place, for the
 service and in your shell; no absolute path is stored as an identity. If `--record` finds its
@@ -1641,51 +1696,52 @@ same way. The check catches a registry reached by mistake; a command run with th
 a copy on purpose uses that copy. A generated split's report,
 written to `--output`, is never in a store, so this is now why it is refused.
 
-**Runs that disagree block their key ("runs disagree — investigate").** The store's reports
-under one key (same checkpoint, cohort version and measurement settings) are compared with the
-same comparison the ledger uses. If two of them differ in results, no report under that key is
-registered. This applies to a run with `--record` or without it, to a later
-`record_evaluation.py`, and to registering again a report that was already registered. The
-message names what differs and which runs. A record registered before the disagreement appeared
-stays in the ledger. Under `--record` the run exits 3 and keeps its report, but prints no
-register-later command, since none would be accepted while the runs disagree. Without `--record`
-the run checks the store the same way after publishing: it exits 0, as a run that registers
-nothing does, prints "Not registered (no --record), and runs disagree — investigate" with what
-differs instead of the command, and its `--outcome` file's `registration.why` says the same.
-When whether the runs disagree cannot be checked (below), the run without `--record` prints the
-command and says a registration is refused until that can be checked. To move forward:
+**Runs that differ are kept and described, never refused** (policy rev 16, since K8-6r.2;
+until then they blocked their key). Every valid run is its own record, so runs under one set of
+conditions (same checkpoint, cohort version and measurement settings) whose results differ are
+all kept as recorded. The registration reads only the run it registers, and prints the group
+note after its outcome (above). The store, the Test page, Models and the API describe such a
+group as "runs under these conditions differ", naming what differs and every run that carries a
+differing report. Without deterministic algorithms, runs can differ: the description is
+neutral, and every result is valid as recorded. Only when the group records deterministic
+algorithms on were its runs expected to agree, so the pages mark the difference in amber with
+"— investigate". The API keeps the value `contested` for it, with this new meaning. Without
+`--record` the run always prints the register-later command. To investigate:
 
 - compare the reports' environment facts (each `report.json`'s `manifest.environment`);
-- re-run with `--deterministic`, which is a different key.
+- re-run with `--deterministic`, which is its own set of conditions. Deterministic runs are
+  expected to agree, so the note and the pages flag a difference between them for
+  investigation.
 
 An investigation note records who looked, when and what they found. Notes go to
-`<registry>/versions/<label>/reports/notes.jsonl`, kept with the key's reports and never in the
-ledger, and they do not lift the block. Research › Test adds one from the dashboard, as an
-operator control (§4.14). The block rests on plain files: deleting a disagreeing report lifts it. The tools
-never delete anything.
+`<registry>/versions/<label>/reports/notes.jsonl`, kept with the group's reports and never in
+the ledger. They change nothing. Research › Test adds one from the dashboard, as an operator
+control (§4.14). The tools never delete anything.
 
-**"Cannot be checked" is refused too, and never read as uncontested.** The whole version cannot
-be checked when the store holds:
-
-- a report that cannot be read or parsed;
-- a run directory or `report.json` that is a link out of the store;
-- a report whose key cannot be told.
-
-A report from an earlier revision, whose manifest this one does not read, blocks only the key
-it names. The refusal names each file. Move the file out of `reports/`, or repair it, and
-register again.
+**Another run's report never blocks a registration.** A report in the store that cannot be read
+or parsed, a run directory or `report.json` that is a link out of the store, and a report whose
+conditions cannot be told are each listed by their own run with their own reason. They mark no
+other run and no group. A report of the same conditions that this revision cannot compare makes
+that group's comparison incomplete (`cannot_be_checked`, "comparison incomplete"), which is a
+description only. The report you register is still checked in full: its place in the store, its
+bytes, its version block, its run directory, its checkpoint and the ledger. A store that cannot
+be listed at all leaves the Test page unable to confirm a report, so its Register stays off and
+says why; register the run with `record_evaluation.py --report …`, which reads only that
+report.
 
 **The usage history** is `<registry>/versions/<label>/reports/usage.jsonl`, one JSON object
 per line, appended and never rewritten. It records:
 
 - every measurement of the version (`test_run`: when, run id, checkpoint and report digests,
-  Mode C's metrics, `n_ranked`, whether it was deterministic, the device, whether `--record`
+  the run's mode and metrics, `n_ranked`, whether it was deterministic, the device, whether `--record`
   was asked);
-- every registration that wrote a ledger (`registered`: outcome and sequence);
-- every model loaded from a list ordered by the version's score (`model_load`: the metric and
-  scoring group that ordered the list, and whether the load took effect, with why; written by
-  the dashboard's one Load when it is used from Research › Models ordered by test score,
-  §4.14).
+- every registration that wrote a ledger (`registered`: its run id, outcome and the run's own
+  sequence). Entries written before K8-6r.2 with the retired outcome `corroborated` stay in the
+  file and are shown as recorded;
+- until K8-6d, every model loaded from a list ordered by the version's score (`model_load`: the
+  metric and scoring group that ordered the list, and whether the load took effect, with why).
+  Ordering by test score has retired and nothing writes these entries now; entries already
+  written stay in the file, and Research › Models shows them as recorded (§4.14).
 
 It holds aggregates only, no case id. The measurement appends its entry right after the report
 is published, before it writes its `--outcome` file. If that append fails, the run stops with
@@ -1697,14 +1753,19 @@ and says so on a `NOTE:` line. Every entry starts a line of its own: an append t
 (a crash, a power loss) leaves a broken last line, which the next entry closes rather than
 continues, and which a reader names as a line that is not an entry. An append whose write fails
 is taken back, so it leaves no part of its entry; if even that fails, the error says the end of
-the file may hold part of it.
+the file may hold part of it. Each append to `usage.jsonl` or `notes.jsonl` holds a lock file beside
+it (`usage.jsonl.lock`, `notes.jsonl.lock`), kept after use: do not remove it. Another writer waits
+up to 10 s for it. Past that, nothing is written to that file: a note asks you to add it again, a
+registration stands and says the usage history was not written, and a measurement stops as above
+(exit 1) with the command that registers it later.
 
 **New `measure_scorer.py` options.** They are there for M5's job runner, and you can use them
 by hand too, in a shell where the GPU lock is configured (§4.11). `--expect-version-sha256` and `--outcome` apply to `--cohort` runs only (exit 2
 with `--split`); the other two apply to both:
 
 ```bash
-python scripts/measure_scorer.py --checkpoint <file>.pt --data-dir data/workspaces/<ws> \
+python scripts/measure_scorer.py --mode <protocol> \
+    --checkpoint <file>.pt --data-dir data/workspaces/<ws> \
     --cohort <label> --registry /srv/shepherd/cohorts [--record] \
     [--deterministic] [--expect-checkpoint-sha256 HEX] [--expect-version-sha256 HEX] \
     [--outcome FILE]
@@ -1715,8 +1776,8 @@ python scripts/measure_scorer.py --checkpoint <file>.pt --data-dir data/workspac
   `CUBLAS_WORKSPACE_CONFIG=:4096:8` when that variable is unset. It never falls back to
   non-deterministic execution or to another device. An operation with no deterministic
   implementation refuses the run with nothing written, and so does a `CUBLAS_WORKSPACE_CONFIG`
-  that PyTorch does not document as deterministic. The manifest records the settings, so a
-  deterministic run is a different key. PyTorch promises reproducibility only on the same
+  that PyTorch does not document as deterministic. The manifest records the settings, so
+  deterministic runs are their own set of conditions. PyTorch promises reproducibility only on the same
   platform, device and versions; deterministic mode guards against known non-deterministic
   operations and does not certify a number.
 - `--expect-checkpoint-sha256` and `--expect-version-sha256` refuse the run before anything is
@@ -1872,6 +1933,18 @@ measure_scorer: refused: the GPU lock /srv/shepherd/workspaces/.shepherd-gpu.loc
 check the lock before starting a job and refuse the start with the same holder
 ("Nothing was started."); the job's own process then takes the lock itself.
 
+**Every refusal of `train_model.py` is one line** (since K8-7b, 2026-11-08): whatever it refuses
+before it claims its run directory is said as `train_model: refused: <why> Nothing was
+written.`, exit 1, with no traceback (it is logged at `--debug` only). Among them: a run without
+`--stage` (every run names its stage, a continued one included: `--resume <checkpoint>` with the
+`--stage` of the run it continues), a run directory that already holds files, and a
+`--config` file naming a setting this version does not have ("The configuration … names
+settings this version does not have: num_workers."; since K8-7, `num_workers` and the old model
+settings such as `conv_type` and `hidden_dim` are such settings, and `--conv-type`,
+`--hidden-dim` and `--num-layers` are gone). An error after the claim is a failed run, logged as
+"Training failed:" with its traceback, and so is an unexpected error before it, one that is no
+refusal.
+
 **Set the root for the service and in the shell where you run the CLIs** (for example, the
 `Environment=` lines you set in the systemd unit (§4.12; its template has a commented line for
 the root and one for the registry), which reads no environment file of its own, or one file that
@@ -1911,22 +1984,20 @@ What the lock does and does not guarantee:
   service does not take it and may hold GPU memory; a test run that cannot get memory fails as a
   run, is reported, and registers nothing.
 - **Inherited descriptors.** A program a job starts does not keep the lock (the descriptor is
-  close-on-exec). A process the job forks without starting a new program — DataLoader workers
-  under the `fork` start method, for example — shares it: a job that ends normally releases it
+  close-on-exec). A process the job forks without starting a new program — a worker pool under
+  the `fork` start method, for example — shares it: a job that ends normally releases it
   for that process too, but when the job is killed (or exits without releasing), that process
   keeps the lock until it exits; the refusal then says the recorded holder has exited. **A job
   the service starts leads its own process group** (since the review of 8242b47), and a stop and
   the runner end the whole group, those processes included (below). A training CLI
-  (`train_model.py`, `setup_demo.py --train-model`) whose main process alone is ended, by
-  `kill <pid>` or `kill -9 <pid>`, leaves its forked DataLoader workers holding the lock until
-  they notice (torch's 5 s watchdog plus the sample in progress, longer if one hangs);
-  `kill -INT <pid>` (Ctrl-C's signal, the runner's own graceful step) releases it at once, even
-  sent to the main process alone, and `kill -TERM -- -<pid>` ends the whole group when the CLI
-  leads one (a CLI started in an interactive shell does, through job control).
-  `measure_scorer.py` forks no workers.
+  (`train_model.py`, `setup_demo.py --train-model`) forks no workers (since K8-7, 2026-11-08: its
+  stage samplers draw batches in the main process, and the DataLoader workers it used to fork
+  went with the ShepherdGNN loader), so ending its main process, by any signal, releases the
+  lock; `kill -TERM -- -<pid>` ends the whole group when the CLI leads one (a CLI started in an
+  interactive shell does, through job control). `measure_scorer.py` forks no workers either.
 - **Keep the workspaces root, where the lock file is, on a local filesystem.**
 - **Windows** uses `msvcrt.locking` on the file's first byte; a Windows backend is untested.
-  There DataLoader workers are spawned, not forked, and do not inherit the lock's handle; the
+  There a child process is spawned, not forked, and does not inherit the lock's handle; the
   system's release of a dead process's file lock can be delayed; a stop sends CTRL_BREAK_EVENT
   to the job's console process group, and a backend with no console, which cannot send it, goes
   on to TerminateProcess, which ends the main process only. A Job Object, the true equivalent of
@@ -1944,8 +2015,8 @@ cohort version, the same CLI an operator runs). One job at a time:
 - **A stop reaches only its own job type**: a training stop never stops a test run, nor the
   reverse. It sends SIGINT to the job's main process (its graceful stop), then SIGTERM to the
   job's whole process group after 30 s, then SIGKILL to the group after 10 s more, and answers
-  once no process of the job is left: each job leads its own process group, so the DataLoader
-  workers it forked, which share the GPU lock, end with it, and once the main process has ended
+  once no process of the job is left: each job leads its own process group, so any process it
+  forked without exec, which shares the GPU lock, ends with it, and once the main process has ended
   the runner ends what is left of the group before it says how the job ended and frees the slot
   (since the review of 8242b47: a worker used to outlive a stop that said "stopped" and keep the
   lock). A worker left as a zombie (a container whose PID 1 never reaps) holds nothing and does
@@ -1956,7 +2027,12 @@ cohort version, the same CLI an operator runs). One job at a time:
 - **How a job ended:** training `completed`, `failed` or `stopped` (as before); a test run
   `completed`, `failed` or `cancelled`, `cancelled` only when the cancel is what ended it (a run
   that ended on its own as the cancel arrived keeps that ending). A failure caused by a signal
-  says which (`Process ended by SIGKILL`, for the out-of-memory killer).
+  says which (`Process ended by SIGKILL`, for the out-of-memory killer). **A cancel that lands
+  while a test run's interpreter is still starting is a cancel too** (since K8-13, 2026-11-08): on
+  POSIX the runner starts a test run with SIGINT held, and `measure_scorer.py` takes it as soon as
+  its own handler is in place, so the run says "measure_scorer: cancelled" and ends by SIGINT. It
+  used to end the start with exit 1 or 2 ("Fatal Python error" while Python imported `site`) and
+  be recorded `failed`. Training runs are not started this way.
 - **A test run's report is read from the disk once it ends.** Each test run writes its outcome
   file (`measure_scorer.py --outcome`, §4.9) into a directory made for that job alone, naming the
   report it published and the digest of those bytes; whether that report is kept and registered
@@ -2041,8 +2117,7 @@ repository's `data/workspaces/` included.
 | `SHEPHERD_WORKSPACES_ROOT` | absolute path of an existing directory; its subdirectories are the workspaces, and `.shepherd-gpu.lock` directly under it is the GPU lock (§4.11) | no workspace is listed, and no GPU lock: every training and test run is refused |
 | `SHEPHERD_REGISTRY` | the cohort registry (§4.9), the directory the commands take as `--registry`: absolute, existing, outside the repository; the only registry reports are registered from and `--cohort` runs measure in, for the service and the commands alike | no cohort version is listed; every registration and `--cohort` measurement is refused |
 | `SHEPHERD_INTAKE_DIR` | an existing directory outside the repository where you place `shepherd-cases/1` files to import; absolute | no import source is offered |
-| `SHEPHERD_TRAINING_EVIDENCE_DIRS` | optional: R10 evidence directories, as `--training-evidence` takes them, separated by `:` (`;` on Windows); each absolute and existing | none; one bad entry refuses the whole setting |
-| `SHEPHERD_ORDERING_ROLES` | optional: cohort roles that offer ordering by test score (D4), comma-separated | none; `institutional_acceptance` is ignored even when listed (`docs/working/PLAN_TEST_RESULTS.md` §4.9 question 1) |
+| `SHEPHERD_TRAINING_EVIDENCE_DIRS` | optional: R10 evidence directories, as `--training-evidence` takes them, separated by `:` (`;` on Windows); each absolute and existing | none; an entry known not to be a directory refuses the whole setting; one that cannot be checked is kept and noted |
 
 ```bash
 export SHEPHERD_DEPLOYMENT_MODE=M1
@@ -2069,11 +2144,16 @@ export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
   `SHEPHERD_REGISTRY` are checked by the same function. Create both where only the accounts that
   run the service and the commands can read them, for example `mkdir -m 700`.
 - **A directory the service account cannot reach** (a parent it may not enter) is refused as
-  "cannot be checked", with the error, and its feature is off. Inside the registry, a `versions/`
-  the service cannot read refuses the cohort list with that reason; a version, a `reports/` or a
-  run directory it cannot read is listed with the reason, and the rest of the list stands.
+  "cannot be checked", with the error, and its feature is off; an evidence directory is the
+  exception (next item). Inside the registry, a `versions/` the service cannot read refuses the
+  cohort list with that reason; a version, a `reports/` or a run directory it cannot read is
+  listed with the reason, and the rest of the list stands.
 - **Evidence directories**: an empty entry (a doubled or trailing separator) is skipped, never
-  read as the working directory. A repeated one is kept once.
+  read as the working directory. A repeated one is kept once. One the service account cannot
+  check (a parent it may not enter, an I/O error) is optional evidence, so it is kept: the Test
+  page names it in amber, and Start stays enabled. R10 cannot look in it: a scope found
+  elsewhere stays found, and one found nowhere else reads `unverifiable`, naming it. A relative
+  path, a missing directory and a file still refuse the setting.
 
 ### What the server lists
 
@@ -2094,56 +2174,84 @@ and a file, or a label, and the server finds that name in its own list again.
     that is not verified, or a file the manifest binds is missing or cannot be checked. The list
     hashes no graph file. A training run checks every file on the bytes it reads, and may still
     refuse.
-- **A workspace's checkpoints**: the run layout's checkpoints of one listed workspace, every
-  architecture's or one's, latest run first. Each file is read once, weights only, and shows:
+- **A workspace's checkpoints**: the run checkpoints of one listed workspace, latest run first,
+  from every directory under its `runs/` whatever the directory's name (since K8-7b, 2026-11-08;
+  before, only the layout's architecture directories were read, so a model under another name
+  was listed nowhere), or from one directory's. What a file is comes from its own record, never
+  from its directory. Each file is read once, weights only, and shows:
   - the SHA-256 of the bytes read;
-  - the Trainer's validation figure: the trainer's top-20 selection metric, never a test result,
-    and none when the file records none;
+  - the Trainer's validation figure: the stage's selection metric the Trainer logged (a base's
+    LP accuracy, a task model's pooled MRR), read from the file's logs whatever its record says,
+    never a test result; none when the file was not read or its logs hold neither (a file
+    without a model spec logs `val_mrr`, which is not read);
+  - its model record's summary: `record` is `model`, or `refused` with the reason (a file
+    without a model spec: "written before the model spec: not readable by this build; start a
+    new run"), or null when the file's record was not read (its `problem` says why); since
+    K8-7b there is no `history` record value, History group or `history` filter (`?task=` and
+    `?learning_stage=` still keep the files whose record names them);
   - the dataset fingerprint the checkpoint records, and whether it is this workspace's now;
   - for a file that cannot be read, why (a link whose target is gone included). No file is
     dropped;
   - for a file that resolves outside the workspace (a run or a checkpoint that is a symlink out of
     it), that reason only: it is never opened, so it shows no digest, size or record.
 
-  Each item names the workspace as the list does: for `current -> builds/2026-10-20`, it says
-  `current`. Listing opens every checkpoint, which SPEC_4 classes as checkpoint inspection (C3),
-  and D8 offers that only where the operator controls are: it is served as
-  `GET /api/v1/workspaces/{name}/checkpoints` (`?architecture=gat`, say, for one architecture)
-  behind D8's check (§4.13), and a refused request opens nothing.
+  A directory under `runs/` that cannot be listed is one item with its reason, and every other
+  run is still listed; only `runs/` itself failing fails the list. A directory whose name is not
+  valid text is such an item, its name written with backslash escapes (`runs/bad\xff`; since
+  the fix after K8-7b). A run or file whose own name is not valid text still makes this list and
+  the one below answer HTTP 500, as before K8 (BACKLOG 66); rename it.
+  Each item names the workspace as the list does: for
+  `current -> builds/2026-10-20`, it says `current`. Listing opens every checkpoint, which SPEC_4
+  classes as checkpoint inspection (C3), and D8 offers that only where the operator controls
+  are: it is served as `GET /api/v1/workspaces/{name}/checkpoints` (`?architecture=<directory>`
+  for the runs of one directory under `runs/`, matched by its exact name; a name no directory
+  has lists nothing) behind D8's check (§4.13), and a refused request opens nothing.
 - **The existing checkpoint list** (`GET /api/v1/training/checkpoints`; since M5-2 the
-  Training page's parent list is the per-workspace list above) reads each file the same way.
-  Each entry gains `sha256`, `validation`, `dataset_fingerprint` and `metadata_problem`, all
-  from the one read. Before, it loaded each
+  Training page's parent list is the per-workspace list above) reads each file the same way,
+  inside the workspace: since K8-7b a file reached through a link out of it is listed with "resolves
+  outside the workspace, so it is not read", as the server list has said since K8-1r (it used to
+  be read and hashed). Each entry gains `sha256`, `validation`, `dataset_fingerprint` and
+  `metadata_problem`, all from the one read. Before, it loaded each
   file without keeping its digest, and dropped a load error without a word. A file that is gone
   by the time it is read (a link whose target was removed) has no size or time to show and is
-  left out of this list; it no longer fails the whole list. Since M5-1 D8 checks it like the
-  controls (§4.13).
+  left out of this list; it no longer fails the whole list. A directory under `runs/` that
+  cannot be listed is kept, with its reason; its size and time are the directory's own, or 0.0
+  and no time when its name is not text (no path has the name shown). Since M5-1 D8 checks it
+  like the controls (§4.13).
 - **Cohort versions** (`GET /api/v1/cohorts`): each version in the registry, by label and the
-  SHA-256 of its `cohort.json`, with its role and whether that role offers ordering. It also shows
+  SHA-256 of its `cohort.json`, with its role. It also shows
   its counts, the graph and dataset record it is bound to, and when it was imported. The list
   never shows a case identifier or the exclusion list: D7 keeps those in the registry, on the
   machine. An interrupted import is listed with its reason. Each version's report store is
   listed by run id, and each run says whether its report is kept and whether it is registered
   (`kept`, `registered`, each with its reason, the report's digest and the record's sequence),
   from the registration's own reading of the store and of the ledger beside the checkpoint the
-  report records it measured. `registered` is `registered` when that ledger names the report,
-  and otherwise `cannot_be_checked`, never `not_registered`: a registration filed beside
+  report records it measured. `registered` is `registered` when that ledger names the report;
+  `not_registered` only when it names this run with other bytes (`replaced_after_registration`
+  true: the report was replaced after it was registered, and the reason names the record and
+  both digests); and otherwise `cannot_be_checked`: a registration filed beside
   another copy of the same weights (`record_evaluation --checkpoint` takes any file with the
   measured bytes) is not looked for, and the reason names the ledger that was. A report that
   names its checkpoint by a relative path, or that cannot be read, has no ledger to look in:
   `registered` is then `cannot_be_checked` too, saying why. A checkpoint moved since the run is
-  looked for where the run read it. Each run with a `report.json` also carries D5's state of
-  its report's key (`contest`: `uncontested`; `contested`, with the fields and the runs that
-  differ; `cannot_be_checked`, never to be read as uncontested), the same state Research › Test
-  shows for that run, without the reasons' own words, which may name a server path (since the
-  root-cause round of the review fixes). `contest` is `null` for a run directory with no
-  `report.json` (an interrupted, cancelled or refused run) and for a run whose state was not
-  read (its `problem` says why). A run whose report cannot be read, or whose key cannot be told,
-  is `cannot_be_checked`; one that can be read but not compared is `cannot_be_checked` unless
-  the reports under its key already disagree (then `contested`). So is every run of a store
-  that cannot be scanned, and a run whose report was replaced between the store's scan and the
-  read of its state: a run's state and its `contest` always describe the same bytes. Each
-  request scans every listed version's report store once.
+  looked for where the run read it. `registered` means a record names **this run** with these
+  bytes (since K8-6r.2): another run's byte-identical report is not this run's registration. A
+  run whose bytes only a record written before each run had its own record holds is not
+  registered, and its reason says so ("its bytes equal a report merged into record N …"). Each
+  run with a `report.json` also carries how its report's conditions compare in the store
+  (`contest`), the same description Research › Test shows for that run, without the reasons'
+  own words, which may name a server path. Since K8-6r.2 these values only describe, and the
+  strings stayed for API clients: `uncontested`; `contested` (runs under these conditions
+  differ, with the fields and every run that carries a differing report, byte-identical runs
+  each named); `cannot_be_checked` (the comparison is incomplete, never to be read as agreeing).
+  `contest` is `null` for a run directory with no `report.json` (an interrupted, cancelled or
+  refused run) and for a run whose state was not read (its `problem` says why). A run whose
+  report cannot be read, or whose conditions cannot be told, is `cannot_be_checked` with its own
+  reason only, and marks no other run. A report that can be read but not compared makes its
+  group's comparison incomplete unless the group's runs already differ (then `contested`). So
+  is every run of a store that cannot be scanned, and a run whose report was replaced between
+  the store's scan and the read of its state: a run's state and its `contest` always describe
+  the same bytes. Each request scans every listed version's report store once.
 
 ### The build time: `workspace_build.json`
 
@@ -2198,10 +2306,10 @@ the read-only lists keep working.
 
 | Where | Controls |
 |---|---|
-| API | `POST /api/v1/pipeline/reload`, `POST /api/v1/pipeline/config`, `POST /api/v1/training/start`, `POST /api/v1/training/stop`, `GET /api/v1/training/checkpoints`, `GET /api/v1/workspaces/{name}/checkpoints` |
+| API | `POST /api/v1/pipeline/reload`, `POST /api/v1/pipeline/config`, `POST /api/v1/training/start`, `POST /api/v1/training/finetune`, `POST /api/v1/training/stop`, `GET /api/v1/training/checkpoints`, `GET /api/v1/workspaces/{name}/checkpoints`, `GET /api/v1/workspaces/{name}/family` |
 | Dashboard | Diagnosis: Change model… (its list of checkpoints and its Load; since M5-2). ⚙ Settings (Runtime Settings): Restart Backend and Apply Settings. Research › Training: Start, Stop (its confirmation reads the run's last checkpoint), Continue… (it lists the parents), the parent list's Refresh, Check checkpoint and Continue Training |
 
-The two checkpoint lists, and Check checkpoint, open checkpoint files, which SPEC_4 classes as
+The three checkpoint lists (the family view among them), and Check checkpoint, open checkpoint files, which SPEC_4 classes as
 checkpoint inspection (C3), so they are checked like the controls. So are the reads that open a
 checkpoint for display: the Diagnosis card's "trained on" line (the served checkpoint) and the
 Training page's run header (the run's checkpoint). A read-only browser is told "not shown ·
@@ -2261,7 +2369,8 @@ that asks: `enabled`, the `condition` that decided it and its `reason`. It is re
 showing it is not the control.
 
 **A reload that D8 refuses changes nothing.** Before, any caller's reload request, refused or
-not, turned every later diagnosis from the demo answer into "configured but not served" (503).
+not, turned every later diagnosis from the demo answer (removed since K7) into "configured but
+not served" (503).
 
 **Not claimed.** Loopback is not authorisation: whoever reaches the machine's loopback, through
 an SSH forward of their own too, passes. M1 therefore means one verified workspace deployment
@@ -2329,8 +2438,8 @@ every interface. After this update:
   `journalctl --user -u shepherd` shows the reason). The
   operator controls then work only on the machine itself or through an SSH forward;
 - a script that reloads the pipeline over HTTP needs the service in mode M1 and must call
-  `http://127.0.0.1:<port>`. `scripts/measure_served_pipeline.py` starts its own service with
-  `SHEPHERD_DEPLOYMENT_MODE=M1` for that reason.
+  `http://127.0.0.1:<port>`; a script that starts its own service for that sets
+  `SHEPHERD_DEPLOYMENT_MODE=M1` in its environment.
 
 ### CORS: no cross-origin browser access
 
@@ -2360,8 +2469,9 @@ help control for every field. Nothing an operator sets changed; what moved is wh
 | **Diagnosis (clinical)** | Patient phenotypes, the results and the selected candidate's details, with the model in use on a card (below). It is the first screen |
 | **Research (pre-clinical)** › Prepare › **Datasets** | The server's workspaces, read-only (below) |
 | **Research (pre-clinical)** › Prepare › **Training** | The run bar, the parameters for the next run, Continue… and the run view with its charts (below). It is the research page shown first |
+| **Research (pre-clinical)** › Prepare › **Fine-tune** | A base's task models (since K6): one listed base, one to three tasks (Disease, Gene, Patients-like-me), each trained as its own run in order, and a job card with each task's status, Stop and products |
 | **Research (pre-clinical)** › Evaluate › **Test** | Import a cohort version from the server's intake directory, run a test, keep and register its report (below) |
-| **Research (pre-clinical)** › Evaluate › **Models** | The server's checkpoints of a workspace, their recorded test results, ordering by test score and Load (below) |
+| **Research (pre-clinical)** › Evaluate › **Models** | The server's checkpoints of a workspace, their recorded test results, newest first or by family, and Load (below) |
 | **⚙ Settings**, at the right of the header | Runtime Settings, as before. For a read-only browser, Apply Settings and Restart Backend are greyed out, with the reason written below them |
 
 - The selected stage (Diagnosis or Research) is filled and bold; the selected research page is
@@ -2453,8 +2563,9 @@ it: both follow Options, and stay pinned at the panel's bottom when the inputs n
   browser sees "not shown · reading the checkpoint is an operator control". When another browser
   has changed the model, this card says "not read yet · read it" until the page is opened again
   or "read it" is clicked (the 5-second read never opens a checkpoint);
-- chips, only when true: `synthetic data` (amber), `no SP table`, `no trained model` or `GNN not
-  loaded` (red), `unverified` (amber: a graph checked against no workspace manifest);
+- a chip, only when true: `synthetic data` (amber). The `no trained model` and `unverified`
+  chips went with the path-reasoning state (K7), and `no SP table` and `GNN not loaded` with the
+  mixture (K8-4);
 - "Recorded tests: <state>" (§4.9), whose › opens Details at Evidence; "Details ›"; "🔒 Change
   model…". The recorded tests, and the workspace names, are read again each time Diagnosis is
   shown, after each diagnosis, after a model change and with ↻ (the 5-second read reads only what
@@ -2465,8 +2576,7 @@ it: both follow Options, and stay pinned at the panel's bottom when the inputs n
 | "Model changed at HH:MM — was <old>, now <new>" with × | A read found another model, or another part of what is served, than this browser's previous read (another browser's Change model, for example). × dismisses it |
 | grey: "cannot check · <reason> · Retry", "last known HH:MM:SS · not current" | What is served could not be read: "status not read" (the full reason is in the badge's line and in Details) or "timed out (5 s)". The lines shown are the last known state, without ✓, with grey dashed chips |
 | grey: "read HH:MM:SS · older than this result" | The last good read is older than the result shown |
-| "No model loaded" and "🔒 Load a model…" | No pipeline is configured. Run Diagnosis is greyed out and cannot be clicked: pointing at it, or reaching it with Tab, shows why, and "Disabled: no model loaded. …" is written under it. An API client asking now still gets the demo answer |
-| "No trained model · path reasoning only" and a red chip | A graph is served without a trained model. Run Diagnosis stays on, and the result carries `NO TRAINED MODEL: path-reasoning fallback.` |
+| "No model loaded" and "🔒 Load a model…" | No model is served: none configured, a graph named without a model, or a build that failed (since K7 a graph is never served on its own). Run Diagnosis is greyed out and cannot be clicked: pointing at it, or reaching it with Tab, shows why, and "Disabled: no model loaded. …" is written under it. An API client asking now gets 503 with the reason (§4.7) |
 | "🔒 Change model…" greyed, "Operator controls only: <reason>" | A read-only browser (§4.13). It never sees the list of checkpoints |
 
 **The badge** above the results (§4.7) compares the result's whole served identity with the card's
@@ -2477,9 +2587,9 @@ qualified clinician." is at the foot of the results.
 
 **The identity drawer** opens over the details panel, with two views. "Model in use" is the
 served model's facts in five sections (Identity, with the full digests and Copy; Uses; Data;
-Evidence; Warnings, always open), the structural-fingerprint line (what differs, counted, or
-"not compared" when the checkpoint records no structural fingerprint) and a link to the full
-records in Research › Models. "This result" shows only what the result carries, each part beside
+Evidence; Warnings, always open) and a link to the full records in Research › Models (the
+structural-fingerprint line is gone since K8-4: the checkpoint's record binds its graph by
+digest, checked at load). "This result" shows only what the result carries, each part beside
 what is in use now. "Details ›" and "Recorded tests ›" open the first, the badge the second; while
 a model change is open (its confirmation, or a reload running) they leave the Change model drawer
 in place.
@@ -2512,12 +2622,39 @@ opens the drawer again on the reload's status. In Research › Models, Close clo
 confirmation the same way. A Load from Research › Models refreshes this card too. Only one
 drawer is open at a time.
 
+**The reload request** (`POST /api/v1/pipeline/reload`, the API under the dashboard's Load)
+declares five fields: `data_dir`, `checkpoint_path`, `task`, `device` and
+`expected_checkpoint_sha256`. It names a task or a `checkpoint_path`, or both: a task alone
+serves the latest run holding a model finetuned for it, a path serves that file (with a task,
+only if the model is that task's), and a request with neither is refused, naming the missing
+task or path, before any checkpoint is read (since K8-4). **Any other field is refused with
+422** (`extra_forbidden`, naming the field) before anything is read or selected, so a field the
+service does not declare is never dropped and the rest served. *Old scripts* (since K8-4):
+`conv_type` is gone, because the architecture is read from the checkpoint's model spec. Drop
+it, whatever its value, from a request that names a path, a task or both. A task with
+`conv_type` `"hgt"` asked for an architecture no field names now: once the multi-architecture
+port makes HGT servable, name a spec-confirmed HGT checkpoint by `checkpoint_path` (and
+`expected_checkpoint_sha256`); until then this build serves no HGT model. And spell
+`expected_checkpoint_sha256` exactly: a misspelt `expected_checkpoint_sha` used to be dropped,
+leaving the reload unbound, and is now refused. **Automatic selection reads only files inside
+the workspace**, judged on the file each of its reads actually opens (the server asks the open
+file where it lies, not its name), so a selected file replaced by one outside the workspace
+before it is read is refused, nothing is read from it or published and the model in use stays;
+where the server cannot tell where an opened file lies, automatic selection refuses it; an
+explicit `checkpoint_path` is read wherever it is (since K8-4r). Since K8-7b (2026-11-08) it
+reads the runs of every directory under `runs/`, whatever the directory's name, so a model filed
+under another name is found and served; a directory under `runs/` it cannot list is named first
+in its reason and among what it did not read, never passed over in silence. The response's
+`architecture` is the loaded model spec's encoder kind, for a task or a path alike; a run
+directory's name only locates the file, and the reason names the run as `<directory>/<run>`, the
+directory under `runs/` that holds it (since K8-4r; any directory's name since K8-7b).
+
 ### Research › Prepare › Datasets
 
 A read-only list of the workspaces the server lists under `SHEPHERD_WORKSPACES_ROOT` (§4.12):
-the same list Training, Test and Models choose from. Each row shows the name; when it was built
-(UTC, from `workspace_build.json`), or "build time not recorded" with its sources' declared
-releases; the **dataset fingerprint**, the first 12 hex digits of the SHA-256 of its
+the same list Training, Fine-tune, Test and Models choose from. Each row shows the name; when it
+was built (UTC, from `workspace_build.json`), or "build time not recorded" with its sources'
+declared releases; the **dataset fingerprint**, the first 12 hex digits of the SHA-256 of its
 `split_manifest.json` (Copy gives all 64, and more digits are shown when two workspaces share
 the first 12); the origin (`synthetic` in amber); whether the dataset record is verified; the
 train and validation sample counts. The markers:
@@ -2602,6 +2739,13 @@ a run.
   root-cause round), and the process checks nothing about the workspace before it, so a
   manifest that no longer parses, or is gone (its whole workspace included), is refused in the
   same words; a manifest that is the one shown but cannot be read now is refused as such.
+- **Over HTTP, `POST /api/v1/training/start` is this form's start** (since K7): a strict base
+  start. `learning_stage` must be `base`; it takes the run (`data_dir`, `run_name`, `device`,
+  `resume_from`, `extend_epochs`) and the reference recipe's base settings, each unset by default
+  so the recipe fills it. A finetune stage, a ShepherdGNN setting (`conv_type`, `hidden_dim`, …)
+  or any field it does not define is refused with 422, and continuing a checkpoint that is not a
+  base with 409, before a GPU slot or a run directory is taken. Task models are started with
+  `POST /api/v1/training/finetune`, as the Fine-tune page starts them.
 - A failed run's **error banner** spans the page. Under its headline ("Training failed: Process
   exited with code 1") is the last error line the run printed ("Last error printed:
   TrainingDeviceUnavailable: --device auto requires CUDA, …"), redacted for a read-only browser
@@ -2614,8 +2758,14 @@ a run.
   Dismiss hides the banner for this browser tab. Every notice in the run bar shows names and
   paths as text, whatever characters a workspace or run name holds.
 
-**Parameters, "for the next run"**: the same fields, groups, defaults and validation as before,
-Basic open, Advanced and Expert closed. **Data Paths and its Save Path are gone**: the workspace
+**Parameters, "for the next run"** (K6: a base's settings): exactly the base stage's reference
+settings (`src/config/recipe.py` BASE), each starting at its reference value. Epochs, Learning
+rate, Batch size and Seed show; the other seven sit under "More reference settings", closed.
+Early stopping patience reads "off" when it is off (the reference); a whole number turns it on.
+A line under the form says "Uses the reference settings." or "Differs from the reference
+settings: Epochs 5 (200)", and a value its field refuses is named there ("Not valid: …") and
+refused by Start, which sends only the settings that differ. Task models are trained from a base
+on Research › Prepare › Fine-tune. **Data Paths and its Save Path are gone**: the workspace
 is the run bar's choice, and the dashboard no longer reads or writes
 `.shepherd_training_config.json` in the server's working directory (a file left there is
 ignored; whether to offer "Save as the default dataset" is an owner question). When the three
@@ -2630,24 +2780,31 @@ plot's box is sized by the layout alone, never by the canvas drawn in it, so the
 gives the same plots whether the page was opened there, reloaded, or came back from a narrow
 window.
 
-**Continue…** opens a drawer in place of the parameters: the checkpoints of the run bar's
-workspace (the server's list: an operator control, since listing opens every checkpoint), chosen
+**Continue…** opens a drawer in place of the parameters: the model records of the run bar's
+workspace, bases and task models (since K6 a file without a model spec is never continued from the
+dashboard; the server's list: an operator control, since listing opens every checkpoint), chosen
 in two steps, or the path of one of those checkpoints typed by hand. **Run**: the runs, latest
-first, each as its name, architecture and start time ("ui-live-stop-02 · GAT · 2026-10-24
-17:39"; an unnamed run is its architecture and time). **Checkpoint**: that run's files, newest
-first, each in a few words from its own record: "Latest save · 195 epochs completed", or
-"Top-k save · 21 epochs completed · Trainer val MRR 0.2867" (a file the trainer kept for its
-validation MRR, the Trainer's, not a test result); the epochs are the file's progress record
-(a file without one says the epoch it records, never a count made from it), and what limits
-continuing is said in the option ("finished", "stopped early, cannot continue", "weights only,
-cannot continue", "cannot be read"). Choosing another run offers its files with its latest save
-chosen. Under the two, a table says what the option does not: the file, what it holds, what
-continuing does when its stage ended, its model fingerprint (Copy gives all 64) and its run's
-directory. Since M5-3 a typed path only
-finds a checkpoint that list holds, and any other file is refused without being opened
-(`PLAN_TEST_RESULTS.md` D8). **Check checkpoint** shows what continuing would do, and the
+first, from every directory under `runs/` (since K8-7b, 2026-11-08), each as its name, directory
+and start time ("base-a · GATv2 · 2026-10-28 13:57": the directory's name, upper-cased but
+`gatv2`, which reads "GATv2"; a location, not the model's architecture, which its record names;
+an unnamed run is its directory and time). **Checkpoint**: that run's files, newest first, each in
+at most 40 characters saying what it is and how far it trained: "Latest save · 195 epochs
+completed", or "Top-k save · 21 epochs completed" (a file the trainer kept for its validation
+figure); the epochs are the file's progress record (a file without one says the epoch it records,
+never a count made from it), and a file that holds weights only or cannot be read says so
+("weights only", "cannot be read"). Choosing another run offers its files with its latest save
+chosen. Under the two, a table says what the option does not: the file, its stage, what it holds,
+what continuing does when its stage ended ("not possible: it stopped early" for an early-stopped
+one), the Trainer's validation figure ("LP accuracy (Trainer) 0.5000" for a base; the Trainer's,
+not a test result), its model fingerprint (Copy gives all 64) and its run's directory. Since M5-3
+a typed path only finds a checkpoint that list holds, and any other file is refused without being
+opened (`PLAN_TEST_RESULTS.md` D8). **Check checkpoint** shows what continuing would do, and the
 dataset fingerprint the parent recorded against the workspace's current one: ✓ the same, or amber
-when it differs (with the listed workspace it matches, or "matches no listed workspace"). While
+when it differs (with the listed workspace it matches, or "matches no listed workspace"). Since
+K8-7 (2026-11-08) a continued run inherits only the settings this version has: a setting the
+parent recorded that this version no longer has (`num_workers`, the old model settings such as
+`conv_type`) is neither inherited nor a reason to refuse, a parent missing a current setting is
+refused, and Check checkpoint and the training process decide alike, in the same words. While
 the drawer is open the run bar shows Start (disabled: "close Continue… to start a new run"),
 **🔒 Continue Training** (disabled while the datasets differ, with the reason) and **Cancel**.
 A listed checkpoint is found again in the server's list. **The model fingerprint shown is the one
@@ -2668,7 +2825,7 @@ checkpoints again when it opens). The API takes the parent's digest as an
 optional query parameter too, `expected_parent_sha256=<64 hex digits>` beside `resume_from`
 (409 when it is not the file's, 422 when malformed); without it the process is still bound to
 the parent the runner read. The job runner and the training process still check everything
-else at start. Check checkpoint names the listed file it read ("Checked gat/<run>/<file> from
+else at start. Check checkpoint names the listed file it read ("Checked gatv2/<run>/<file> from
 the run list"; a typed path's check gives its path and fingerprint), and a matching dataset is said
 once, as "✓ Trained on the dataset selected in the run bar" (the fingerprint is the run bar's).
 While the drawer is open the run bar's line reads "Run: a new one, continued from the checkpoint
@@ -2697,9 +2854,15 @@ further, use Continue…", "Stopped early (…) · … · cannot be continued", 
 100", or "No checkpoint saved, so nothing can be continued"; a run that has no run directory
 (refused before it made its run directory) says so, with no checkpoint, no log and nothing to
 chart. Below them, one figure of four charts sharing the epoch
-axis: Loss (train, and validation dashed), MRR (validation, Trainer top-20), Hits@K (validation,
-Trainer) and the learning rate on a log axis (a 0 or a missing value is a gap). Under it, the
-resources line (GPU and memory).
+axis: Loss (train, and validation dashed: a logged `val_loss` or `val_lp_loss`, whatever the run),
+the run's validation figure and its companions, and the learning rate on a log axis (a 0 or a
+missing value is a gap). The middle two follow what the run logged: a base charts LP accuracy,
+then ROC-AUC and AP; a task model pooled MRR, then pooled top-k. A log whose validation entries
+hold neither figure (a file without a model spec, say) draws no series there, under the titles
+"No other figure charted: Export CSV has every logged figure" and "No further figure charted"
+(since K8-7b, 2026-11-08; its MRR and Hits@K charts are gone), and its Loss and learning-rate
+charts are drawn as for any run; before the first validation the two wait, as before.
+Under it, the resources line (GPU and memory).
 
 - **Zoom and pan**: the wheel over a chart zooms around the pointer; over the epoch axis it zooms
   only the epochs (the four charts follow), over a value axis only that chart's values. Drag pans;
@@ -2740,8 +2903,10 @@ and register it. Three panels:
   its version digest and whether it was mapped against this workspace's graph ("bound to this
   graph", or "mapped against another graph", which a run would refuse). Below them, every run
   directory of the version's report store, newest first: when it ran, on which model, whether a
-  report was kept, whether it is registered, and "runs disagree — investigate" when reports
-  under its key disagree (D5). A run that kept no report says so; a test running now is the top
+  report was kept, whether it is registered, and "runs under these conditions differ" when the
+  runs of its group differ (in amber with "— investigate" only when the group records
+  deterministic algorithms on), or "comparison incomplete". A run that kept no
+  report says so; a test running now is the top
   row, and the last test run on this server that ended with nothing in the store (cancelled
   before its run directory, or failed) stays a row until the next start or a restart. The
   newest 8 reports are listed, and the selected one; **Show all N reports** lists the rest
@@ -2753,10 +2918,20 @@ and register it. Three panels:
 - **Run.** The model: the workspace's checkpoints from the server's list, by run, epoch, file
   and model fingerprint. Listing them opens every checkpoint, so it is an operator control: a
   read-only browser is not shown it, and the page lists them once per workspace (↻ reads the
-  list again). Then the R10 evidence the run will look in (the measured workspace, and
-  `SHEPHERD_TRAINING_EVIDENCE_DIRS`), **Register the result**, **Deterministic execution**, and
-  the batch size, device and mode the server fixes (the measurement's default;
-  `SHEPHERD_DEVICE`; Mode C, the model's own ranking: Mode D is an operator's command-line run).
+  list again). Then **Measurement** (since K8-6a), the protocol the run passes as
+  `--mode <protocol>` (§4.9): the options are the protocols this build implements whose learning
+  stage and task head the chosen model's record meets, today one for each task head of a
+  finetuned model (Disease, Gene or Patients-like-me). A single option is chosen already; of
+  several, none is until you choose one; with none (a base, whose formal test is not implemented
+  yet), Start says why. A file whose record cannot be read offers none either, and Start is off
+  with the record's own reason ("Record not readable (written before the model spec: not
+  readable by this build; start a new run): not measured here. Choose a model finetuned for a
+  task" for a file without a model spec; since K8-7b, 2026-11-08). Like the model, it is an
+  operator control. Mode C and Mode D are not
+  protocols, so no page or command runs them. Then the R10 evidence the run will look in (the
+  measured workspace, and `SHEPHERD_TRAINING_EVIDENCE_DIRS`), **Register the result**,
+  **Deterministic execution**, and the batch size and device the server fixes (the measurement's
+  default; `SHEPHERD_DEVICE`).
   **🔒 Start test** starts the real `measure_scorer.py` through the job runner (§4.11), with the
   workspace, version and checkpoint the server finds again in its lists, and **the full model
   fingerprint and version digest the page showed as the expected ones**: the run refuses before
@@ -2779,20 +2954,34 @@ and register it. Three panels:
   just ended is selected, once for that run. A choice made while the page reads the version's
   store again (after the job changed, an act or an import) applies once that read has ended;
   the read never undoes it, and of several choices made meanwhile the last one stays.
-- **Result.** The selected report as the record the ledger would hold: the Mode C metrics over
-  the cases ranked, coverage with each exclusion, the relations, R10 in words (*unverifiable* is
-  never a 0), the environment, the dataset origin, and whether it is registered (for an
+- **Result.** The selected report as the record the ledger would hold, by one display for every
+  mode (since K8-6e.2): a task's tiles and figures in words, with every metric as recorded one
+  click away ("Recorded metrics (N)"); a report of a mode this version does not describe, a kept
+  Mode C or Mode D report included, under "Mode <mode> (a measurement mode this version does not
+  describe)", with one "Recorded metrics" row listing every metric by its recorded name and
+  value; the score semantics exactly as recorded; coverage with each exclusion, the relations,
+  R10 in words (*unverifiable* is never a 0), the environment, the dataset origin, and whether it is registered (for an
   operator, checked in the ledger beside the listed checkpoint holding the weights it
-  measured). **🔒 Register this report** registers a kept report through the one registration
+  measured). When a record names this run with other bytes (the report was replaced after it
+  was registered), or that ledger cannot tell, the Result gives the registration's reason.
+  **🔒 Register this report** registers a kept report through the one registration
   function (§4.9): the server finds the report in the version's store, checks that its bytes
   are the ones shown, finds where its ledger goes from its own checkpoint list (the listed file
   holding the weights, by full digest, never the path the report records: the file the run read
   when it is listed with those weights, which is where the list looks, else another listed copy
   in the workspace the run measured, else one in the workspace shown) and registers it. A
   checkpoint moved since the run is not found that way; the page says so, and
-  `scripts/record_evaluation.py` on the machine remains. While runs under the report's key
-  disagree, the page shows the block, Register is off, and **investigation notes** (who, when,
-  what; 🔒 Add note) are listed and kept with the key's reports. A note never lifts the block.
+  `scripts/record_evaluation.py` on the machine remains. A kept Mode D report registers the
+  same way, under its own mode; the same run again says it is already registered, with nothing
+  written (§4.9). **Register is on for any kept report of this run the page can confirm**
+  (policy rev 16, since K8-6r.2). It is off only for a read-only request, a run that kept no
+  report, this run already registered, or this run's own report not built (its own reason) or
+  not read by the listing. When the store cannot be listed, it says so and points to
+  `record_evaluation.py --report …`. Another run, a group whose runs differ and an unreadable
+  report elsewhere never turn it off. When the runs of the report's group differ, or their
+  comparison is incomplete, the page describes it and lists **investigation notes** (who, when,
+  what; 🔒 Add note), kept with the group's reports. A note records what was found and changes
+  nothing. The registration's message carries the group note and the historical note.
   On a wide screen the note form (Who, What was found, 🔒 Add note) stays at the panel's foot,
   above Register, so it is in view however long the report or the note (What was found grows
   to four lines, then scrolls inside itself).
@@ -2802,8 +2991,8 @@ and register it. Three panels:
 **🔒 Import a new version…** opens a drawer over Run and Result: the file in the intake directory
 (`SHEPHERD_INTAKE_DIR`, §4.12: its `*.json` files by name, size and modification time; one that
 is a link leaving the directory is listed and not offered; nothing is uploaded from the
-browser), the version label, the role (with whether it offers ordering by test score in Models:
-`SHEPHERD_ORDERING_ROLES`, and `institutional_acceptance` never does) and the lost-terms
+browser), the version label, the role (the version's declared purpose, for example mygene2,
+research_selection or institutional_acceptance) and the lost-terms
 policy. **🔒 Preview** runs the importer in the service, on the CPU (it reads the workspace's
 graph), and writes nothing. The preview shows the counts, the exclusion reasons and their
 counts, the unmappable terms with how many cases list each, and what the version binds; **case
@@ -2827,20 +3016,33 @@ root, the intake directory, an evidence directory or the repository is written u
 ### Research › Evaluate › Models
 
 The research view of the same model list the Diagnosis tab's "Change model…" uses, over the
-checkpoints the server lists for one workspace (choose the **Workspace**; **Architecture**
-narrows the list). Under the workspace select, the chosen workspace's dataset identity is said
-again (build time, dataset fingerprint, `synthetic`, the record's state), so a long workspace
-name that the select cuts never hides it. Every run is shown, newest first. Columns:
+checkpoints the server lists for one workspace (choose the **Workspace**; since K6 **Task**
+narrows the list: All, Base, Disease, Gene or Patients-like-me; History, and the "history" record
+it chose, went in K8-7b, 2026-11-08, so a file whose record cannot be read is listed under All
+only). Under the workspace
+select, the chosen workspace's dataset identity is said again (build time, dataset fingerprint,
+`synthetic`, the record's state), so a long workspace name that the select cuts never hides it.
+Every run is shown, newest first, from every directory under the workspace's `runs/` whatever
+its name (since K8-7b). Columns:
 
-- **Model**: architecture, the run's start time, the epoch; **In use (Diagnosis)** on the
-  checkpoint being served (matched by its full model fingerprint);
+- **Model**: what the file is first (Base, Disease, Gene, Patients-like-me, "Record not readable"
+  or "Record not read"; a file without a model spec is "Record not readable", with "written
+  before the model spec: not readable by this build; start a new run", and no longer "History ·
+  never run" since K8-7b), then the run's directory (upper-cased, "GATv2" for `gatv2`: a location,
+  not the architecture, which the record names), the run's start time, the epoch; **In use
+  (Diagnosis)** on the checkpoint being served (matched by its full model fingerprint);
 - **Fingerprints: model · dataset trained on**: the model fingerprint (12 hex digits of the
   checkpoint's SHA-256) over the listed workspace whose full dataset fingerprint the checkpoint
   records, or "matches no listed workspace"; `synthetic` in amber;
-- **Validation MRR (Trainer, top-20)**: the Trainer's own figure on the val samples, the metric
-  training selects by. It is never a test result and never shares a column with one;
+- **Validation (Trainer)**: the Trainer's own figure on the val samples, the metric training
+  selects by, named under its value (a base's LP accuracy, a task model's pooled MRR), read from
+  the file's logs whatever its record says; none when the logs hold neither, as for a file
+  without a model spec, whose `val_mrr` is not read (since K8-7b a history file's MRR over its
+  top 20 is no longer shown; its raw values stay in the file, and the detail says "Validation
+  (Trainer): not read (record not readable)"). It is never a test result and never shares a
+  column with one;
 - **Recorded tests**: what the ledger beside the checkpoint holds, as a state ("none in
-  ledger", "no ledger", "3 · 1 contested", …), never a number of a result.
+  ledger", "no ledger", "3 · runs differ for 1", …), never a number of a result.
 
 **Listing opens every checkpoint of the workspace**, so the list is an operator control (§4.13).
 Since M5-3 the server reads each checkpoint file once and again only when it changes (its
@@ -2856,54 +3058,57 @@ regime (device, deterministic on or off) is the one the record holds, as an oper
 this; a CPU record's environment class alone does not say it). There are no Trainer validation
 figures and no Load there.
 
-**Order: Newest first | By test score.** Ordering by test score is offered only for a cohort
-version whose role is in `SHEPHERD_ORDERING_ROLES` (§4.12); the other versions are listed with
-why they are off, and `institutional_acceptance` is always off ("awaits the institution's formal
-evaluation rules"), even when the setting names it. Choose the metric (Mode C MRR (untruncated),
-Hits@k, or mean rank, which is ordered lowest first) and the cohort version. Records under
-another scoring semantics are never ordered with these; when the version's records are under
-more than one, a **Scoring semantics** choice appears. Wherever ordering is offered the page
-says: "A cohort version whose scores were used to choose a model is no longer an independent
-final test for that model." No model is ever chosen automatically by its test score. The
-groups:
-
-| Group | What is in it |
-|---|---|
-| Ordered by … on … · highest first | One number per checkpoint, by a fixed rule: its first registered record from a deterministic regime, else its first registered record (`#3 · D4 rule` when it had several). Each row shows the record's regime (`CUDA · deterministic`), and **regime differs** with its ⓘ where it is not the one most ordered rows share |
-| Contested on this version · not ordered | The record the rule picks is contested: reports under its key in the version's report store disagree. It is not ordered, and the next record is never put in its place |
-| Contested status cannot be checked · not ordered | Whether the reports under that key disagree cannot be read (the version's report store, or a report in it, cannot be read; the version is not one the registry lists). It is not ordered either, and never shown as uncontested |
-| Not compared on this version · not ordered | Records under another scoring semantics, records in two ledgers, a record or a ledger that cannot be read, or a checkpoint that cannot be read; the row says which |
-| Not tested on this cohort version · newest first | No record on this version |
-
-Just after choosing another workspace, its rows may show for a moment under "Records not read
-yet", until the page has read their ledgers.
+**Order: Newest first | By family.** By family (since K6) draws one group per family, the parent
+first, with a Lineage column. No order ranks a model by a test score: ordering by test score
+retired in K8-6d, with its role setting, its Mode C rule and its one record per checkpoint. Every
+record stays readable in the detail below, and no model is ever chosen automatically by its test
+score.
 
 **Selecting a row** shows its full model fingerprint with Copy, what it was trained on (and
 whether that is this workspace's current dataset), the Trainer's validation figure in its own
 card, any warning, and two segments:
 
 - **Recorded test results**: every record the ledger holds for these weights, one table per
-  measurement mode, each under its mode's label and note (since Batch 3: Mode C's records first,
-  then Mode D's). Each row gives the cohort version and its role, the mode's MRR and Hits@10 named
-  in full in the header (Mode C MRR (untruncated) and Hits@10; Mode D's over the import-eligible
-  cases), coverage with every exclusion (Mode D's as the import-eligible cases reached), and
-  `registered #N` or amber `contested #N` with what the runs disagree on (or "contested status
-  cannot be checked", never shown as uncontested), deterministic on or off; when the list is
-  ordered, which record the fixed rule picks and how the others differ from it; then the
-  relations, the record's other metrics, R10 as states (*unverifiable* is a reason, never 0), the
-  environment, the dataset and the registration;
+  measurement mode, in the order first shown, each under its mode's label (and a task's note),
+  by one display for every mode (since K8-6e.2; before it, Mode C's records came first, then
+  Mode D's, under labels of their own). Each row gives the cohort version and its role; a task's
+  pooled MRR and its second figure named in full in the header, or, for a mode this version does
+  not describe (a kept Mode C or Mode D record included), one "Recorded metrics" column listing
+  every metric by its recorded name and value, unrounded; coverage with every exclusion; and
+  `registered #N`, or `runs differ #N` with "runs under these conditions differ" and what
+  differs (neutral; amber with ▲ and "— investigate" only when the group records deterministic
+  algorithms on, so its runs were expected to agree), or "comparison incomplete" (never shown
+  as agreeing),
+  deterministic on or off, the reports merged into it before each run had its own record when
+  there are any, and "possible overlap with record N (not recorded)" between such a record and a
+  named run; then the relations, a task record's other metrics in words, R10 as states
+  (*unverifiable* is a reason, never 0), "Score semantics: …" exactly as recorded, a task
+  record's every metric as recorded behind "Recorded metrics (N)", the environment, the dataset
+  and the registration with its run ("not recorded" for a record written before each run had its
+  own record). Every record is shown;
+  none is hidden or ordered out by these descriptions. A record for these weights that cannot be
+  read as a result (since K8-6e.1) is never shown or counted as one: under the tables, "▲ 1
+  record for these weights cannot be read as a result. The ledger keeps it as written." and a
+  small table, Index · Registration · Report · Reason (a sequence or report digest it does not
+  carry readably reads "not readable"); the segment then reads "Recorded test results · 3 (1 not
+  readable)". The read-only view lists the same items, from the route;
 - **Usage history**: the entries that name this checkpoint in every listed cohort version's
-  usage history: test runs, registrations and loads from an ordered list, newest first.
+  usage history, newest first: test runs and registrations, and any model load kept from before
+  K8-6d, shown as recorded ("ordered by" its metric's name, and its scoring semantics). A test
+  run reads a task's first figure over its ranked cases, or another mode's label and case count,
+  then how it ran, then every metric it records behind "Recorded metrics (N)" ("no metric
+  recorded" when it records none). An entry written before the usage history recorded a mode
+  reads "Measurement mode not recorded" (since K8-6e.2; before it, Mode C).
 
 **🔒 Load this model** is the shared Load (the same confirmation as Diagnosis' "Change model…";
 it covers the detail while it is open, its buttons stay in view under its table however short
-the window, and Close returns to the detail with the same checkpoint still selected). When the
-list is ordered by test score, the note beside the button says so, and the Load is written to
-that version's usage history as a model load ordered by that metric, whether or not it took
-effect, with why. A Load from the list newest first writes nothing there. The page is read when
-it is shown, when the workspace changes and after every Load, including one that changed nothing
-served (a refused reload, the model in use loaded again), so the usage history shows the entry
-that Load wrote; nothing on it runs on a timer.
+the window, and Close returns to the detail with the same checkpoint still selected). It is off,
+with the reason beside it, for a base and for a file whose record cannot be read, before anything
+is read ("Record not readable: written before the model spec: not readable by this build; start
+a new run." for a file without a model spec). A Load
+writes nothing to a usage history. The page is read when it is shown, when the workspace changes
+and after every Load, including one that changed nothing served (a refused reload, the model in
+use loaded again), so what changed meanwhile is shown; nothing on it runs on a timer.
 
 **Narrow** (below 1400 × 760, where the regions stack under one another), choosing a row scrolls
 to its detail and moves the keyboard focus there; **↑ Back to the list** in the detail's header
@@ -2936,7 +3141,11 @@ carry over.
 
 **What A5 says**: an installed `torch_geometric` at another version is named with both versions;
 one the project declares but that is not installed is named with the lock's version; in either
-case A5 no longer reads "the installed versions are the lock's".
+case A5 no longer reads "the installed versions are the lock's". Since K8-7 (2026-11-08) A5 no
+longer records whether a DataLoader worker's socket fits under the temporary directory, nor
+prints a TMPDIR hint: nothing in this build starts DataLoader workers. Its other facts (the
+comparison with the lock, the environment) are unchanged, and earlier reports keep the fact as
+they recorded it.
 
 **This pins today's formal deployment set, not a permanent limit** on PyG, torch or CUDA. The
 versions live in the dependency and deployment layer only: no training, inference or UI code

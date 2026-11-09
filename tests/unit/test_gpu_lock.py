@@ -177,19 +177,21 @@ def test_a_root_that_cannot_name_a_lock_is_refused_never_defaulted(monkeypatch, 
 
 
 def _unsearchable(monkeypatch, below: Path) -> None:
-    """`Path.is_dir` as Python 3.12 answers for a path under a directory this
-    account may not search: it raises (EACCES) instead of answering. Simulated,
-    since the tests may run as root, which the real check does not stop."""
+    """`Path.stat`, the stat the directory rule makes
+    (`server_settings.is_directory`), as it fails for a path under a directory
+    this account may not search: it raises (EACCES) instead of answering.
+    Simulated, since the tests may run as root, which the real check does not
+    stop."""
     import errno
 
-    real = Path.is_dir
+    real = Path.stat
 
-    def is_dir(self, *args, **kwargs):
+    def stat(self, *args, **kwargs):
         if str(self).startswith(str(below)):
             raise PermissionError(errno.EACCES, "Permission denied", str(self))
         return real(self, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "is_dir", is_dir)
+    monkeypatch.setattr(Path, "stat", stat)
 
 
 def test_a_location_that_cannot_be_checked_is_refused_with_its_reason(monkeypatch, tmp_path):
@@ -437,6 +439,23 @@ def test_every_program_entry_says_a_lock_not_configured_is_refused():
         assert "the run goes on" not in text, f"{name} describes a run without the lock"
 
 
+def _base_run_argv(workspace: Path, settings_dir: Path) -> list:
+    """`scripts/train_model.py` on a new base run of `workspace` (the run a new
+    start is, K8: TM1, TM12), its settings in a configuration file as the job
+    runner gives them (`TrainingManager.start_training`): the demo's base
+    sizes (`demo_task_training`), one epoch on the CPU, a run that trains in
+    seconds once the lock is free."""
+    import yaml
+
+    from scripts.setup_demo import demo_task_training
+
+    config = settings_dir / "base_run.yaml"
+    config.write_text(yaml.safe_dump({**demo_task_training()["base"], "learning_stage": "base",
+                                      "num_epochs": 1, "device": "cpu"}))
+    return [sys.executable, str(REPO / "scripts" / "train_model.py"), "--config", str(config),
+            "--data-dir", str(workspace)]
+
+
 @POSIX
 def test_a_shell_without_the_settings_is_refused_while_the_deployment_is_busy(root, tmp_path):
     """The reviewer's counter-example (review of 8242b47, P2-4): the deployment's
@@ -444,13 +463,11 @@ def test_a_shell_without_the_settings_is_refused_while_the_deployment_is_busy(ro
     used to train a CPU epoch and write a checkpoint beside the busy job; it is
     refused, exit 1, with nothing written. The same shell with the service's
     root takes the same lock and is refused naming the holder."""
-    from tests.fixtures.trainable_workspace import write_trainable_workspace
+    from tests.fixtures.base_workspace import write_base_workspace
 
-    workspace = write_trainable_workspace(root / "ws")
+    workspace = write_base_workspace(root / "ws")
     env = {k: v for k, v in os.environ.items() if k != WORKSPACES_ROOT_ENV}
-    argv = [sys.executable, str(REPO / "scripts" / "train_model.py"), "--data-dir",
-            str(workspace), "--device", "cpu", "--epochs", "1", "--hidden-dim", "16",
-            "--num-layers", "1", "--batch-size", "4"]
+    argv = _base_run_argv(workspace, tmp_path)
     with GpuLock(root / LOCK_FILE_NAME, job_type="training", command="existing-job").acquire():
         bare = subprocess.run([*argv, "--run-dir", str(tmp_path / "bare")], env=env, cwd=REPO,
                               capture_output=True, text=True, timeout=300)
@@ -484,13 +501,14 @@ def test_the_service_and_a_shell_never_lock_two_files(tmp_path, monkeypatch):
     is refused as not configured; nothing is written, and nothing is created
     at the lock file named."""
     from src.api.services.training_manager import JOB_TYPES, TrainingManager
-    from tests.fixtures.trainable_workspace import write_trainable_workspace
+    from tests.fixtures.base_workspace import write_base_workspace
 
     workspaces = tmp_path / "ws"
     workspaces.mkdir()
     locks = tmp_path / "locks"
     locks.mkdir()
-    workspace = write_trainable_workspace(workspaces / "case")
+    workspace = write_base_workspace(workspaces / "case")
+    base_run = _base_run_argv(workspace, tmp_path)
     file_only = {RETIRED_LOCK_FILE_ENV: str(locks / "gpu.lock")}
     root_only = {WORKSPACES_ROOT_ENV: str(workspaces)}
     file_and_root = {**file_only, **root_only}
@@ -508,9 +526,7 @@ def test_the_service_and_a_shell_never_lock_two_files(tmp_path, monkeypatch):
     def shell_trains(settings, name):
         env = {k: v for k, v in os.environ.items()
                if k not in (RETIRED_LOCK_FILE_ENV, WORKSPACES_ROOT_ENV)}
-        argv = [sys.executable, str(REPO / "scripts" / "train_model.py"), "--data-dir",
-                str(workspace), "--device", "cpu", "--epochs", "1", "--hidden-dim", "16",
-                "--num-layers", "1", "--batch-size", "4", "--run-dir", str(tmp_path / name)]
+        argv = [*base_run, "--run-dir", str(tmp_path / name)]
         return subprocess.run(argv, env={**env, **settings}, cwd=REPO, capture_output=True,
                               text=True, timeout=300)
 
@@ -720,8 +736,9 @@ def test_the_program_entries_take_the_lock_and_the_module_names_each_one():
 
 # --------------------------------------------------------------------------- the CLIs
 def _measure_argv(root: Path, workspace: str = "ws_b"):
-    return ["--checkpoint", str(root / workspace / "best.pt"), "--data-dir",
-            str(root / workspace), "--cohort", "c1", "--registry", str(root / "registry")]
+    return ["--mode", "disease", "--checkpoint", str(root / workspace / "best.pt"),
+            "--data-dir", str(root / workspace), "--cohort", "c1",
+            "--registry", str(root / "registry")]
 
 
 def _deployment_registry(root: Path, monkeypatch) -> None:

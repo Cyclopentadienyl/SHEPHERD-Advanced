@@ -1,15 +1,13 @@
 """
 `scripts/train_model.py` run end to end, on a workspace it can actually train.
 
-The synthetic fixtures elsewhere cannot complete a training: their generated
-profiles name phenotypes `d` and `d + 100`, outside the three-phenotype graph
-they are paired with, and data loading stops at an IndexError. This one builds
-the same complete tripartite graph with every sample's ids inside it, and runs
-the script as an operator does -- a subprocess, one short epoch on CPU -- to
-check what a run leaves behind: its exit status, `config.yaml`, the
-`runtime.json` recording the CUDA allocator it started under, and the
-checkpoint's record of its inputs, which since contract M2.1's S8 is built only
-from the reads training trained on.
+A base run (`--stage base`, KG link prediction) on `tests/fixtures/base_workspace`,
+at the demo's base settings (its small model spec, batch size and hops, given
+in a configuration file as an operator gives a model spec), run as an operator
+does -- a subprocess, one short epoch on CPU -- to check what a run leaves
+behind: its exit status, `config.yaml`, the `runtime.json` recording the CUDA
+allocator it started under, and the checkpoint's record of its inputs, which
+since contract M2.1's S8 is built only from the reads training trained on.
 
 **The expected allocator comes from the same settings file the script reads**,
 resolved by the same rule, so the test holds whatever preset the developer
@@ -25,27 +23,32 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from tests.fixtures.trainable_workspace import write_trainable_workspace  # noqa: E402
+from tests.fixtures.base_workspace import write_base_workspace  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "scripts" / "train_model.py"
 
 
 def test_a_short_run_completes_and_records_its_allocator(tmp_path):
+    import yaml
+
+    from scripts.setup_demo import demo_task_training
     from src.config.runtime_presets import (
         ALLOC_SOURCE_ENV,
         load_runtime_settings,
         resolve_allocator,
     )
 
-    data_dir = write_trainable_workspace(tmp_path)
+    data_dir = write_base_workspace(tmp_path)
     output_dir = tmp_path / "run"
+    settings = tmp_path / "base.yaml"
+    settings.write_text(yaml.safe_dump(demo_task_training()["base"]), encoding="utf-8")
     env = {k: v for k, v in os.environ.items()
            if k not in ("PYTORCH_ALLOC_CONF", "PYTORCH_CUDA_ALLOC_CONF", ALLOC_SOURCE_ENV)}
     result = subprocess.run(
-        [sys.executable, str(SCRIPT), "--data-dir", str(data_dir), "--device", "cpu",
-         "--epochs", "1", "--seed", "42", "--conv-type", "gat", "--hidden-dim", "16",
-         "--num-layers", "1", "--batch-size", "4", "--run-dir", str(output_dir)],
+        [sys.executable, str(SCRIPT), "--stage", "base", "--config", str(settings),
+         "--data-dir", str(data_dir), "--device", "cpu", "--epochs", "1", "--seed", "42",
+         "--run-dir", str(output_dir)],
         capture_output=True, encoding="utf-8", env={**env, "PYTHONIOENCODING": "utf-8"},
         cwd=REPO_ROOT, timeout=600,
     )
@@ -67,12 +70,14 @@ def test_a_short_run_completes_and_records_its_allocator(tmp_path):
     assert f"CUDA allocator: {expected} (saved preset)" in result.stdout + result.stderr
 
     # The record names the bytes the run read: every role, the file's digest.
+    # A base reads the graph alone (a graph-only read), so its record names no
+    # sample role, where the ShepherdGNN path's named the two sample files.
     import hashlib
 
     checkpoint = torch.load(output_dir / "checkpoints" / "last.pt",
                             map_location="cpu", weights_only=True)
-    files = {"train_samples": "train_samples.json", "val_samples": "val_samples.json",
-             "node_features": "node_features.pt", "edge_indices": "edge_indices.pt",
+    assert checkpoint["learning_stage"] == "base"
+    files = {"node_features": "node_features.pt", "edge_indices": "edge_indices.pt",
              "num_nodes": "num_nodes.json", "split_manifest": "split_manifest.json",
              "kg": "kg.json"}
     assert checkpoint["training_input_digests"] == {

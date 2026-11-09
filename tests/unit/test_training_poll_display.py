@@ -84,9 +84,8 @@ def test_delayed_full_poll_cannot_restore_the_old_dataset_label(root, operator, 
             chart = _written(poll, answer, by_id['shep-train-charts'])
             start = _written(poll, answer, by_id['shep-train-start'])
             calls = []
-            monkeypatch.setattr(tc, '_collect_config', lambda directory, *args: {'data_dir': directory, 'seed': 42})
             monkeypatch.setattr(tc.training_manager, 'start_training', lambda config, **kw: calls.append(config) or {'success': True})
-            tc._on_start(operator, browser.state(ws), False)
+            tc._on_start(operator, browser.state(ws), '', 'cpu', *tc.base_form_defaults())
             print(json.dumps({'old_poll_dropdown': dataset, 'old_poll_chart': chart,
                               'start_button': start, 'server_workspace': browser.state(ws)['name'],
                               'start_passed_to_manager': calls}, default=str))

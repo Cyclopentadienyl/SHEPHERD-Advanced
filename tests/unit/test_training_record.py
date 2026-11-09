@@ -13,11 +13,14 @@ and resume compares a parent with its run (M2.3). Shown here:
   workspace, and one from before the contract, before any model is built; the
   control, the checkpoint over its own workspace, is accepted by both.
 
+Serving (K8-2a) and measurement (`--mode disease`, K8-2b) are shown with a
+trained task model: the session's disease child (`trained_disease_child`) over
+its own workspace, a same-shaped other demo workspace, and the child with its
+record removed.
+
 Module: tests/unit/test_training_record.py
 """
 from __future__ import annotations
-
-import json
 
 import pytest
 
@@ -29,8 +32,10 @@ from src.utils.fingerprint import (  # noqa: E402
     TrainingRecordMismatch,
     verify_training_record,
 )
-from tests.fixtures.generated_workspace import write_generated_workspace  # noqa: E402
-from tests.fixtures.synthetic_workspace import N_DISEASES, build_workspace  # noqa: E402
+from tests.fixtures.synthetic_workspace import (  # noqa: E402,F401 (test_entry_documents reads it)
+    build_workspace,
+)
+from tests.unit import test_serving_reads_once as reads_once  # noqa: E402
 
 GRAPH_ROLES = ("kg", "node_features", "edge_indices", "num_nodes")
 CURRENT = {role: f"{role}-digest" for role in GRAPH_ROLES}
@@ -91,22 +96,26 @@ def test_a_checkpoint_that_is_not_a_mapping_is_refused():
 # ---------------------------------------------------------------------------
 # Serving and measurement
 # ---------------------------------------------------------------------------
-def _same_shaped_other(root):
-    """Workspace B: the shapes of A's graph, other bytes in `kg.json` and
-    `node_features.pt`, bound by its own manifest."""
-    data_dir, _ = build_workspace(root)
-    features = torch.load(data_dir / "node_features.pt", weights_only=True)
-    torch.save({k: v + 1.0 for k, v in features.items()}, data_dir / "node_features.pt")
-    (data_dir / "kg.json").write_text(json.dumps({"synthetic": True, "workspace": "b"}))
-    write_generated_workspace(data_dir, train_ids=[0, 1], val_ids=[N_DISEASES + 1])
-    return data_dir
-
-
 def _pre_contract(checkpoint, path):
     contents = torch.load(checkpoint, map_location="cpu", weights_only=False)
     del contents["training_input_digests"]
     torch.save(contents, path)
     return path
+
+
+def _same_shaped_demo(root):
+    """Workspace B for the disease child: the demo graph its workspace holds,
+    with other bytes in `kg.json` (one node described) and `node_features.pt`
+    (another feature seed), the same shapes, bound by its own manifest."""
+    from scripts.setup_demo import build_demo_kg
+    from src.kg.graph import DEFAULT_FEATURE_SEED
+    from src.kg.workspace import SampleBudget, write_workspace
+
+    kg = build_demo_kg()
+    next(kg.iter_nodes()).description = "workspace b"
+    write_workspace(kg, root, feature_dim=8, feature_seed=DEFAULT_FEATURE_SEED + 1,
+                    samples=SampleBudget(num_train=20, num_val=5, val_disease_fraction=0.2))
+    return root
 
 
 def _serve(data_dir, checkpoint):
@@ -118,22 +127,23 @@ def _serve(data_dir, checkpoint):
     )
 
 
-@pytest.fixture
-def a(tmp_path):
-    return build_workspace(tmp_path / "a")
+#: The disease child and its workspace, ``(data_dir, checkpoint)``. Read-only:
+#: what a test writes goes to `tmp_path`. Shared with `test_serving_reads_once.py`.
+child = reads_once.child
 
 
-def test_serving_accepts_a_checkpoint_over_its_own_workspace(a):
-    data_dir, checkpoint = a
+def test_serving_accepts_a_checkpoint_over_its_own_workspace(child):
+    data_dir, checkpoint = child
     assert _serve(data_dir, checkpoint).get_pipeline_config()["gnn_ready"] is True
 
 
-def test_serving_refuses_a_checkpoint_from_a_same_shaped_other_workspace(a, tmp_path, monkeypatch):
-    _, checkpoint = a
-    other = _same_shaped_other(tmp_path / "b")
-    import src.models.gnn.shepherd_gnn as builder
+def test_serving_refuses_a_checkpoint_from_a_same_shaped_other_workspace(child, tmp_path,
+                                                                        monkeypatch):
+    _, checkpoint = child
+    other = _same_shaped_demo(tmp_path / "b")
+    import src.models.bundle.record as builder
 
-    monkeypatch.setattr(builder, "build_shepherd_model",
+    monkeypatch.setattr(builder, "load_bundle",
                         lambda *a, **k: pytest.fail("a model was built"))
     with pytest.raises(PipelineBuildError, match="does not match this workspace's graph") as refused:
         _serve(other, checkpoint)
@@ -142,42 +152,45 @@ def test_serving_refuses_a_checkpoint_from_a_same_shaped_other_workspace(a, tmp_
     assert isinstance(refused.value.__cause__, TrainingRecordMismatch)
 
 
-def test_serving_refuses_a_checkpoint_from_before_the_contract(a, tmp_path):
-    data_dir, checkpoint = a
+def test_serving_refuses_a_checkpoint_from_before_the_contract(child, tmp_path):
+    data_dir, checkpoint = child
     old = _pre_contract(checkpoint, tmp_path / "old.pt")
     with pytest.raises(PipelineBuildError, match="records no training_input_digests"):
         _serve(data_dir, old)
 
 
 def _measure(data_dir, checkpoint, output):
-    """The generated `val` split: R3 is the same check for a registered version,
-    whose own refusals are in `test_measure_scorer_registered.py`."""
+    """The disease task on the generated `val` split: R3 is the same check for a
+    registered version, whose own refusals are in
+    `test_measure_scorer_registered.py`."""
     import scripts.measure_scorer as cli
 
     return cli.main([
-        "--checkpoint", str(checkpoint), "--data-dir", str(data_dir),
+        "--mode", "disease", "--checkpoint", str(checkpoint), "--data-dir", str(data_dir),
         "--split", "val", "--device", "cpu", "--output", str(output),
     ])
 
 
-def test_measurement_accepts_a_checkpoint_over_its_own_workspace(a, tmp_path):
-    data_dir, checkpoint = a
+def test_measurement_accepts_a_checkpoint_over_its_own_workspace(child, tmp_path):
+    data_dir, checkpoint = child
     output = tmp_path / "out" / "measurement.json"
     assert _measure(data_dir, checkpoint, output) == 0
     assert output.exists()
 
 
 @pytest.mark.parametrize("case", ["other_workspace", "pre_contract"])
-def test_measurement_refuses_before_building_or_writing(a, tmp_path, monkeypatch, case):
-    data_dir, checkpoint = a
+def test_measurement_refuses_before_building_or_writing(child, tmp_path, monkeypatch, case):
+    """The pre-contract file is the child with its record removed: it keeps its
+    model spec, and the record is compared before the spec is read."""
+    data_dir, checkpoint = child
     if case == "other_workspace":
-        data_dir, message = _same_shaped_other(tmp_path / "b"), "kg differs"
+        data_dir, message = _same_shaped_demo(tmp_path / "b"), "kg differs"
     else:
         checkpoint = _pre_contract(checkpoint, tmp_path / "old.pt")
         message = "records no training_input_digests"
-    import src.models.gnn.shepherd_gnn as builder
+    import src.models.bundle.record as builder
 
-    monkeypatch.setattr(builder, "build_shepherd_model",
+    monkeypatch.setattr(builder, "load_bundle",
                         lambda *a, **k: pytest.fail("a model was built"))
     output = tmp_path / "out" / "measurement.json"
     with pytest.raises(TrainingRecordMismatch, match=message):

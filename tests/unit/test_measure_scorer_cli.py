@@ -12,6 +12,10 @@ measurement itself:
 - the device gate: `auto` refuses to fall back to CPU, and an explicit `cpu`
   run is permitted but recorded as not CUDA;
 - that the `file_sha256` re-export is gone (contract M2.1, S9);
+- `--mode`, which has no default and offers the protocol names only: a run
+  without it, `--mode C` (Mode C retired in K8-6a) and `--mode D` (Mode D was
+  removed in K7) are refused by argparse's own rules, with no alias;
+- a `--batch-size` that is not a positive integer, refused at the command line;
 - `--split`, which has no default, and the missing-split error;
 - which arguments go with which kind of cohort (contract M4, decision 8):
   exactly one of `--split` and `--cohort`; `--output` with `--split` only;
@@ -211,26 +215,84 @@ def test_the_file_sha256_reexport_is_gone():
     ["--predictions-output", "p.json"],
 ], ids=lambda argv: argv[0])
 def test_the_cli_has_no_option_mode_c_would_ignore(retired):
-    """Mode C is the only mode, has no dataloader, draws nothing and writes no
-    predictions rows. An option kept for any of those would be accepted and
-    change nothing, which reads as a setting that took effect."""
+    """Options retired when Mode C was the only mode, which had no dataloader,
+    drew nothing and wrote no predictions rows, stay refused, asked with a task
+    mode so the refusal is the option's. An option kept for any of those would
+    be accepted and change nothing, which reads as a setting that took effect."""
     from scripts.measure_scorer import parse_args
 
     with pytest.raises(SystemExit):
-        parse_args(["--checkpoint", "c.pt", "--data-dir", "d", "--split", "val",
-                    "--output", "o.json", *retired])
+        parse_args(["--mode", "disease", "--checkpoint", "c.pt", "--data-dir", "d",
+                    "--split", "val", "--output", "o.json", *retired])
 
 
-@pytest.mark.parametrize("value", ["0", "-1", "1.5"])
-def test_a_batch_size_that_is_not_a_positive_integer_is_refused_at_the_command_line(value):
-    """Exit 2 before the GPU lock or any read (Batch 3's internal review, cli-5:
-    the same check Mode D needs before its served pass)."""
+@pytest.mark.parametrize("cohort", [
+    ["--split", "val", "--output", "o.json"],
+    ["--cohort", "label", "--registry", "/r"],
+], ids=["split", "cohort"])
+@pytest.mark.parametrize("value", ["0", "-1", "1.5", "two"])
+def test_a_batch_size_that_is_not_a_positive_integer_is_refused_at_the_command_line(
+        value, cohort):
+    """Exit 2 before the GPU lock or any read (Batch 3's internal review, cli-5),
+    for either kind of cohort."""
     from scripts.measure_scorer import parse_args
 
     with pytest.raises(SystemExit) as raised:
-        parse_args(["--checkpoint", "c.pt", "--data-dir", "d", "--split", "val",
-                    "--output", "o.json", "--batch-size", value])
+        parse_args(["--mode", "disease", "--checkpoint", "c.pt", "--data-dir", "d", *cohort,
+                    "--batch-size", value])
     assert raised.value.code == 2
+
+
+@pytest.mark.parametrize("cohort", [
+    ["--split", "val", "--output", "o.json"],
+    ["--cohort", "label", "--registry", "/r"],
+], ids=["split", "cohort"])
+def test_mode_d_is_not_a_mode_the_cli_runs(cohort, capsys):
+    """Mode D was removed in K7: `--mode D` is refused at the command line
+    (exit 2), with no alias, for either kind of cohort."""
+    from scripts.measure_scorer import parse_args
+
+    with pytest.raises(SystemExit) as raised:
+        parse_args(["--mode", "D", "--checkpoint", "c.pt", "--data-dir", "d", *cohort])
+    assert raised.value.code == 2
+    assert "invalid choice: 'D'" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("cohort", [
+    ["--split", "val", "--output", "o.json"],
+    ["--cohort", "label", "--registry", "/r"],
+], ids=["split", "cohort"])
+def test_mode_is_required(cohort, capsys):
+    """A run without `--mode` once meant Mode C. A default protocol would
+    silently measure something else, so the argument has none: argparse refuses
+    the run (exit 2), for either kind of cohort."""
+    from scripts.measure_scorer import parse_args
+
+    with pytest.raises(SystemExit) as raised:
+        parse_args(["--checkpoint", "c.pt", "--data-dir", "d", *cohort])
+    assert raised.value.code == 2
+    assert "the following arguments are required: --mode" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("cohort", [
+    ["--split", "val", "--output", "o.json"],
+    ["--cohort", "label", "--registry", "/r"],
+], ids=["split", "cohort"])
+def test_mode_c_is_no_choice(cohort, capsys):
+    """Mode C retired with the pipeline that built its model (K8-6a): `--mode C`
+    is refused by argparse's ordinary unknown-choice rule (exit 2), whose message
+    lists the protocol names this build implements, read from the one
+    definition. No alias and no refusal of its own names C."""
+    from scripts.measure_scorer import parse_args
+    from src.evaluation import protocols
+
+    with pytest.raises(SystemExit) as raised:
+        parse_args(["--mode", "C", "--checkpoint", "c.pt", "--data-dir", "d", *cohort])
+    assert raised.value.code == 2
+    err = capsys.readouterr().err
+    assert "argument --mode: invalid choice: 'C'" in err
+    listed = err.split("choose from", 1)[1]
+    assert protocols.names() and all(name in listed for name in protocols.names())
 
 
 # ==============================================================================
@@ -248,7 +310,8 @@ def test_split_has_no_default_on_the_measurement_entry_point():
     import scripts.measure_scorer as measure
 
     with pytest.raises(SystemExit):
-        measure.parse_args(["--checkpoint", "c.pt", "--data-dir", "d", "--output", "o.json"])
+        measure.parse_args(["--mode", "disease", "--checkpoint", "c.pt", "--data-dir", "d",
+                            "--output", "o.json"])
 
 
 def test_missing_split_error_lists_what_the_workspace_actually_has(tmp_path):
@@ -271,7 +334,7 @@ def test_missing_split_error_when_nothing_is_there(tmp_path):
 # ==============================================================================
 # Which arguments go with which kind of cohort (contract M4, decision 8)
 # ==============================================================================
-_BASE = ["--checkpoint", "c.pt", "--data-dir", "d", "--device", "cpu"]
+_BASE = ["--mode", "disease", "--checkpoint", "c.pt", "--data-dir", "d", "--device", "cpu"]
 
 
 @pytest.mark.parametrize("extra, fragment", [
@@ -318,6 +381,23 @@ def test_an_argument_of_the_other_kind_of_cohort_is_refused_before_anything_runs
     assert refused.value.code == 2
     assert fragment in capsys.readouterr().err
     assert list(tmp_path.iterdir()) == [], "something was written"
+
+
+def test_a_generated_splits_record_refusal_gives_the_ledgers_limit_as_the_reason(
+    capsys, monkeypatch, tmp_path
+):
+    """K8-6r.4 (Decision 12): `--record` with `--split` is refused because the
+    ledger does not yet support a generated split's data identity, not because
+    such a result counts for less."""
+    import scripts.measure_scorer as measure_scorer
+
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as refused:
+        measure_scorer.main([*_BASE, "--split", "val", "--output", "o.json", "--record"])
+
+    assert refused.value.code == 2
+    assert ("a generated split has no version, its report is not registered (the ledger does "
+            "not yet support a generated split's data identity)") in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("extra", [

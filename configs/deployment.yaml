@@ -190,8 +190,6 @@ ontology:
 # Feature Flags
 # =============================================================================
 features:
-  # Enable experimental cross-species inference
-  ortholog_inference: false
   # Enable PubMed literature integration
   pubmed_integration: false
   # Enable FHIR data import

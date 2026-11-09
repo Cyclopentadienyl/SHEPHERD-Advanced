@@ -14,7 +14,9 @@ loader would drop silently, nor a TrainConfig field, which would become a
 recorded setting) and is compared inside `read_training_inputs` right after
 its one manifest read, before the graph and the samples are read: a mismatch
 is `DatasetChanged`, exit 1, no traceback, no run directory. The runner's
-early check stays (the API's 409). Through the real runner and the real CLI.
+early check stays (the API's 409). Through the real runner and the real CLI,
+on model bundle base runs (moved from ShepherdGNN runs in K8-2c; TM1 and TM12
+retire the stage-less run and start in K8-7).
 
 **The comparison is the manifest reader's** (root-cause round, P22-S2):
 `read_split_manifest(expected_sha256=)` compares the digest of its one read
@@ -47,17 +49,25 @@ import pytest
 pytest.importorskip("torch")
 
 import src.api.services.training_manager as tm  # noqa: E402
-from tests.fixtures.trainable_workspace import write_trainable_workspace  # noqa: E402
+from tests.fixtures.base_workspace import write_base_workspace  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
-SMALL = dict(device="cpu", num_epochs=1, hidden_dim=16, num_heads=2, num_layers=1,
-             conv_type="gat", batch_size=4, num_workers=0, use_amp=False)
 CHANGED = "The dataset changed since it was shown; select it again."
+
+
+def _small() -> dict:
+    """A 1-epoch base start on the CPU at the demo's base sizes
+    (`demo_task_training`, the one statement of them: its small spec, batch
+    size and fan-out)."""
+    from scripts.setup_demo import demo_task_training
+
+    return dict(learning_stage="base", device="cpu", num_epochs=1,
+                **demo_task_training()["base"])
 
 
 @pytest.fixture
 def workspace(tmp_path):
-    return write_trainable_workspace(tmp_path / "case")
+    return write_base_workspace(tmp_path / "case")
 
 
 def _digest(path: Path) -> str:
@@ -78,7 +88,7 @@ def _run(data: Path, run: Path, shown: str, monkeypatch, swap=None):
 
     monkeypatch.setattr(tm.subprocess, "Popen", spawn)
     manager = tm.TrainingManager()
-    started = manager.start_training(dict(data_dir=str(data), run_dir=str(run), **SMALL),
+    started = manager.start_training(dict(data_dir=str(data), run_dir=str(run), **_small()),
                                      expected_dataset_fingerprint=shown)
     assert started["success"], started
     job = manager._last["training"]
@@ -252,10 +262,12 @@ def test_the_comparison_comes_before_the_parent_and_any_output(workspace, tmp_pa
     import scripts.train_model as train_model
 
     config = train_model.TrainConfig(data_dir=str(workspace), device="cpu",
+                                     learning_stage="base",
                                      resume_from=str(tmp_path / "missing.pt"),
                                      run_dir=str(tmp_path / "run"))
     with pytest.raises(train_model.DatasetChanged):
-        train_model.train(config, set(), expected_dataset_sha256="0" * 64)
+        train_model.train(config, {"learning_stage", "device", "resume_from"},
+                          expected_dataset_sha256="0" * 64)
     assert not (tmp_path / "run").exists()
 
 
@@ -265,8 +277,8 @@ def _cli(*args: str) -> subprocess.CompletedProcess:
 
 
 def test_the_cli_refuses_a_wrong_expectation_before_anything_is_written(workspace, tmp_path):
-    done = _cli("--data-dir", str(workspace), "--device", "cpu", "--epochs", "1",
-                "--hidden-dim", "16", "--num-layers", "1", "--batch-size", "4",
+    done = _cli("--data-dir", str(workspace), "--stage", "base", "--device", "cpu",
+                "--epochs", "1", "--batch-size", "32",
                 "--run-dir", str(tmp_path / "run"), "--expect-dataset-sha256", "0" * 64)
     assert done.returncode == 1, done.stderr[-2000:]
     assert f"train_model: refused: {CHANGED}" in done.stderr and "Traceback" not in done.stderr
@@ -279,8 +291,9 @@ def test_the_cli_refuses_a_torn_manifest_as_changed(workspace, tmp_path):
     path = workspace / "split_manifest.json"
     shown = _digest(path)
     _torn(path)
-    done = _cli("--data-dir", str(workspace), "--device", "cpu", "--epochs", "1",
-                "--run-dir", str(tmp_path / "run"), "--expect-dataset-sha256", shown)
+    done = _cli("--data-dir", str(workspace), "--stage", "base", "--device", "cpu",
+                "--epochs", "1", "--run-dir", str(tmp_path / "run"),
+                "--expect-dataset-sha256", shown)
     assert done.returncode == 1, done.stderr[-2000:]
     assert f"train_model: refused: {CHANGED}" in done.stderr
     assert "Traceback" not in done.stderr and "not UTF-8 JSON" not in done.stderr
@@ -291,7 +304,7 @@ def test_without_an_expectation_a_missing_workspace_is_the_manifest_readers_refu
     """The CLI by hand naming no workspace that exists: nothing stats the
     directory first (P3-1), so the manifest reader refuses it, with the
     command that builds one, and nothing is written."""
-    done = _cli("--data-dir", str(tmp_path / "nowhere"), "--device", "cpu",
+    done = _cli("--data-dir", str(tmp_path / "nowhere"), "--stage", "base", "--device", "cpu",
                 "--run-dir", str(tmp_path / "run"))
     assert done.returncode == 1, done.stderr[-2000:]
     assert f"{tmp_path / 'nowhere'} has no split_manifest.json" in done.stderr
@@ -301,16 +314,17 @@ def test_without_an_expectation_a_missing_workspace_is_the_manifest_readers_refu
 
 @pytest.mark.parametrize("bad", ["abc", "A" * 64, "g" * 64, ""])
 def test_the_cli_rejects_a_malformed_expectation_at_parsing(workspace, bad):
-    done = _cli("--data-dir", str(workspace), "--expect-dataset-sha256", bad)
+    done = _cli("--data-dir", str(workspace), "--stage", "base", "--expect-dataset-sha256", bad)
     assert done.returncode == 2 and "is not a SHA-256" in done.stderr
 
 
 def test_without_an_expectation_the_process_is_given_none(workspace):
     """A caller that shows no dataset (an API client that sends no
-    fingerprint) starts the run as before; the CLI then trains on the
+    fingerprint) starts the run (a base) as before; the CLI then trains on the
     manifest it reads and records that one."""
     from tests.fixtures.job_processes import FakeProcess
 
     with patch("subprocess.Popen", return_value=FakeProcess(pid=8)) as popen:
-        result = tm.TrainingManager().start_training({"data_dir": str(workspace)})
+        result = tm.TrainingManager().start_training({"data_dir": str(workspace),
+                                                      "learning_stage": "base"})
     assert result["success"] and "--expect-dataset-sha256" not in popen.call_args[0][0]

@@ -20,32 +20,44 @@ measured, and the checkpoint checks below still hold.
 **And only from the deployment's registry** (BACKLOG 37): the registry the
 report's path names must be the one ``SHEPHERD_REGISTRY`` names, compared by
 resolved path (`server_settings.deployment_registry_refusal`), so a copy of the
-whole registry -- the same bytes, its own disagreement block and usage history
+whole registry -- the same bytes, its own report store and usage history
 -- is refused before anything in it is read (`NotFromTheDeploymentRegistry`).
 Unset, every registration is refused saying to set it. A registry moved as a
 whole still works once ``SHEPHERD_REGISTRY`` names its new place.
 
-**While runs under the report's key disagree, nothing under the key is
-registered** (D5), checked or unchecked, the same report again included: the
-store's reports are compared with the ledger's own comparison
-(`StoreScan.status`), and a key whose state cannot be checked is refused too,
-never read as uncontested. The reports stay in the store for the investigation;
-a note kept there records what was found and does not lift the block.
+**Registered by the verified run** (policy rev 16, from K8-6r.2). A run is its
+run directory in the version's report store (`StoreReport.run_id`), verified
+with its cohort version, its report's digest and its checkpoint. The ledger
+looks for this run first (`sidecar.find_run`): the same run with the same report
+bytes is ``already_registered`` and nothing is written; the same run with other
+bytes is refused, since a run's report is sealed when it is published. Any
+other verified run gets a record of its own, whatever its bytes, its values or
+the times involved. **Only the selected run is read**: no other report in the
+store is opened, and none can block or mark this registration. How this run
+relates to its condition group (`RegistrationResult.group_differences`) and to
+records written before each run had its own record
+(`RegistrationResult.historical_overlap`) is described after the decision and
+decides nothing; the usage history may be cited in that description as a clue,
+never as the authority.
 
 **Each file is parsed and identified from one read** (BACKLOG item 18). The report
 is read once, and the record is built from those bytes and names them by their
-digest; the store's other reports are read once each for the comparison, never
-this one again; the ledger is read once, and the write's stale-write guard
+digest; the ledger is read once, and the write's stale-write guard
 compares the file with the digest of what was parsed. A report replaced while it
 was being registered therefore cannot be recorded as one file's numbers under
 the other's digest, and another writer's append between this read and this
 write is refused rather than erased.
 
-**Still single-writer.** The guard compares the file by path just before the
-replacement, and the window between that comparison and the replacement stays
-open (`write_ledger`). This is not compare-and-swap and makes no claim of safety
-for concurrent writers; nor is the store's comparison atomic with a run
-publishing a new report into the version at that moment.
+**One registration at a time per ledger, across processes** (K8-6r.1). The
+section from reading the ledger to writing the new file and its usage-history
+entry -- the read, whether the report is already held, the sequence, the write
+and the entry -- runs while the ledger's lock is held (`sidecar.ledger_lock`,
+``evaluations.json.lock`` beside the ledger). It is taken after every check
+that reads the report or hashes the checkpoint. A registration that cannot take
+it within the grace is refused as busy (`LedgerBusy`): nothing was written this
+time, the report stays kept, and it may be registered again. The stale-write
+guard stays as the second line, for a writer that takes no lock. The lock is
+cooperative.
 
 **One place for the ledger, whichever way a report arrives:** beside the
 checkpoint file's resolved path, the rule the read-only view reads by. The
@@ -76,22 +88,29 @@ nor judges a report itself, to register it or to say whether it is
 registered.
 
 **A registration is in the version's usage history** (D4): a ledger written is
-appended there by this function, so a registration from the command line counts
-as one from the Test tab. If that append fails after the ledger was written, the
-result says so (`usage_history_problem`) rather than claiming either.
+appended there by this function, inside the ledger's lock, so a registration
+from the command line counts as one from the Test tab. The ledger and the usage
+history are two files: if that append fails or finds the usage history busy
+after the ledger was written, the record stands and the result says "the usage
+history was not written" with the reason (`usage_history_problem`); the ledger
+is never rolled back.
 
 **Every expected failure is one refusal** (`RegistrationRefused`) whose message
 names the file and says nothing was written: a missing or damaged report, a file
 that is not a report or not in a report store, a report in a registry other
 than the deployment's (`NotFromTheDeploymentRegistry`), a report that is no
-longer the one shown, a generated split's report, a
-report that does not name the version it is kept under, runs that disagree
-(`RunsDisagree`) or a store that cannot be checked
-(`DisagreementNotChecked`), a ledger this revision does not read, a
-contradiction, a stale write, a checkpoint file or directory that does not hold
-the weights the report measured, and, for an automatic registration, a report
-file that is no longer the one the run published (`ReportNotAsPublished`). The
-entry points print it and exit; neither shows a traceback for these.
+longer the one shown, a ledger another registration is writing (`LedgerBusy`),
+a generated split's report, a
+report that does not name the version it is kept under, a ledger this revision
+does not read, a ledger the write cannot complete safely in (a record without a
+readable registration sequence, an unreadable run-identity boundary, this run's
+own identity record damaged), this run already registered from other bytes (a
+replaced report), a stale write, a checkpoint file or directory that does not
+hold the weights the report measured, and, for an automatic registration, a
+report file that is no longer the one the run published
+(`ReportNotAsPublished`). No refusal comes from another run's report or from
+how this run's results compare with another's. The entry points print it and
+exit; neither shows a traceback for these.
 
 **Kept? Registered?** `report_state` answers both for one report from disk, the
 way the publication contract defines them, for the job runner and the Test tab
@@ -103,6 +122,7 @@ from __future__ import annotations
 
 import os
 import re
+from contextlib import ExitStack
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Mapping, NamedTuple, Optional, Tuple
@@ -113,21 +133,30 @@ from src.evaluation.report_store import (
     _NotTheExpectedBytes,
     locate_store_report,
     read_report,
+    read_usage_history,
     record_registration,
-    scan_report_store,
     store_report_parts,
 )
 from src.evaluation.sidecar import (
-    CORROBORATION_KEEPS_FIRST,
     LEDGER_FILENAME,
+    GroupDifference,
+    HistoricalNote,
     append_record,
     build_record,
     checkpoint_matches,
     find_checkpoint,
+    find_run,
+    group_differences,
+    held_record,
+    historical_overlap,
+    ledger_lock,
+    ledger_lock_path,
     read_ledger,
-    record_key,
+    sealed_run_refusal,
+    sequence_problem,
     write_ledger,
 )
+from src.utils.file_lock import FileLockBusy
 from src.utils.fingerprint import ReadIdentity
 from src.utils.interrupts import interrupt_deferred
 
@@ -137,10 +166,17 @@ from src.utils.interrupts import interrupt_deferred
 KEPT_STATES: Tuple[str, ...] = ("kept", "not_kept", "cannot_be_checked")
 
 #: Whether a report is registered: a record in the ledger beside its checkpoint
-#: names it, as its source or a corroborating report (`report_state`).
+#: names this run with these report bytes (`report_state`, through
+#: `sidecar.find_run`). A record written before each run had its own record that
+#: holds the same bytes is a possible overlap, never "registered".
 REGISTERED_STATES: Tuple[str, ...] = ("registered", "not_registered", "cannot_be_checked")
 
 _SAYS_NOTHING_WRITTEN = re.compile(r"\s*Nothing was written\.?\s*$")
+
+#: How ``usage_history_problem`` starts: the ledger was written and the usage
+#: history was not (policy rev 16). The job runner's summary repeats a
+#: registered run's own words when they carry it.
+USAGE_HISTORY_NOT_WRITTEN = "the usage history was not written"
 
 #: A report digest as the lists show it: 64 lowercase hexadecimal digits.
 _SHA256 = re.compile(r"[0-9a-f]{64}")
@@ -148,6 +184,14 @@ _SHA256 = re.compile(r"[0-9a-f]{64}")
 
 class RegistrationRefused(ValueError):
     """A report was not registered, and nothing was written."""
+
+
+class LedgerBusy(RegistrationRefused):
+    """Another registration held the ledger's lock for the whole grace
+    (`sidecar.ledger_lock`), so this one read nothing from the ledger and wrote
+    nothing to it this time. The report stays where it is kept and is not
+    marked invalid: registering it again is expected to work once the other
+    registration has finished."""
 
 
 class NotFromTheDeploymentRegistry(RegistrationRefused):
@@ -169,25 +213,6 @@ class ReportNotAsPublished(RegistrationRefused):
     registration."""
 
 
-class RunsDisagree(RegistrationRefused):
-    """Reports in the store under this report's key disagree (D5), so nothing
-    under the key is registered while they do; `status` is the key's state.
-    Registering the report later is refused the same way until that changes."""
-
-    def __init__(self, message: str, status: Any) -> None:
-        super().__init__(message)
-        self.status = status
-
-
-class DisagreementNotChecked(RegistrationRefused):
-    """Whether reports in the store under this report's key disagree cannot be
-    checked (D5: never read as uncontested); `status` says why."""
-
-    def __init__(self, message: str, status: Any) -> None:
-        super().__init__(message)
-        self.status = status
-
-
 class MeasuredRun(NamedTuple):
     """What a measurement holds about itself when it registers its own report
     (`measure_scorer.py --record`): the identity of its checkpoint read (the path
@@ -200,26 +225,35 @@ class MeasuredRun(NamedTuple):
 
 
 class RegistrationResult(NamedTuple):
-    """What a registration did: one of ``REGISTRATION_OUTCOMES``, the record as the
-    ledger now holds it, the ledger's path, and -- for ``corroborated`` only --
-    which of ``CORROBORATION_KEEPS_FIRST`` this report measured differently.
+    """What a registration did: one of ``REGISTRATION_OUTCOMES`` (``registered``
+    or ``already_registered``), the record the ledger holds for this run (the
+    one appended or the one found, `sidecar.held_record`), the ledger's path,
+    and two descriptions that decide nothing (Decision 11):
 
-    ``excluded_differences`` is empty unless this report corroborated a record
-    and its own R10 or environment differ from the record's. The record keeps
-    its own values (each record's labels are true of its own report), so a
-    surface that reported plain agreement would hide that this report found,
-    for instance, training evidence the first run did not (`corroboration_note`).
+    ``group_differences``: each other record of this run's condition group
+    whose compared fields differ, with its sequence, its run (or none recorded)
+    and the difference names (`sidecar.group_differences`; `group_note` words
+    it). Both CLIs print it.
 
     ``usage_history_problem`` is `None` unless the ledger was written and the
-    entry in the version's usage history could not be appended; it then says
-    why, and the registration stands.
+    entry in the version's usage history could not be appended (a failed write,
+    or that file's lock busy); it then says "the usage history was not written"
+    with the reason, and the registration stands: the ledger is never rolled
+    back.
+
+    ``historical_overlap``: one sentence per record written before each run had
+    its own record that may hold this report or whose relation cannot be
+    checked (`sidecar.historical_overlap`), citing the version's usage history
+    where it names this run's registration into that record; `historical_note`
+    words them. Both CLIs print it.
     """
 
     outcome: str
     record: Dict[str, Any]
     ledger_path: Path
-    excluded_differences: Tuple[str, ...] = ()
+    group_differences: Tuple[GroupDifference, ...] = ()
     usage_history_problem: Optional[str] = None
+    historical_overlap: Tuple[str, ...] = ()
 
 
 class ReportState(NamedTuple):
@@ -230,6 +264,12 @@ class ReportState(NamedTuple):
     when the report could not be read); ``sequence`` the ledger record's when
     registered; ``ledger_path`` the ledger that was (or would be) read, `None`
     when no checkpoint was given and the report names none to find it by.
+    ``historical_overlap``: when no record names this run, the sequences of
+    the records merged before each run had its own record that hold these
+    bytes (a possible overlap, never "registered"; the reason says it too), so
+    a page can show it without reading words. ``replaced_after_registration``:
+    a record names this run with other bytes (``not_registered``; the reason
+    names the record and both digests, `sealed_run_refusal`), likewise.
     """
 
     kept: str
@@ -239,24 +279,76 @@ class ReportState(NamedTuple):
     report_sha256: Optional[str]
     sequence: Optional[int]
     ledger_path: Optional[Path]
+    historical_overlap: Tuple[int, ...] = ()
+    replaced_after_registration: bool = False
 
 
-def corroboration_note(result: RegistrationResult, report_path: Path) -> Optional[str]:
-    """The one sentence both entry points print when a corroborating report's
-    own values differ from the record's in a field that is not compared; `None`
-    when there is nothing to say.
+def group_note(result: RegistrationResult) -> Optional[str]:
+    """The group note both entry points print: how this run's record differs
+    from the other records of its condition group, or `None` when none differs.
 
-    Names the fields, the record and the report, never the values: the report
-    holds them, and the record keeps its own.
+    Names the records, their runs (a record written before each run had its own
+    record: "not recorded") and the differing names, never the values: each
+    record keeps its own. When both runs record deterministic algorithms on,
+    says so and asks for an investigation. Informational: every run is kept.
     """
-    if result.outcome != "corroborated" or not result.excluded_differences:
+    if not result.group_differences:
         return None
-    fields = " and ".join(result.excluded_differences)
-    sequence = result.record["registration"]["sequence"]
-    return (
-        f"This report's {fields} differ from record {sequence}'s; they are not "
-        f"compared, so the record keeps its own and this report's are in {report_path}."
-    )
+    sequence = result.record.get("registration", {}).get("sequence")
+    parts = []
+    for other in result.group_differences:
+        run = other.run_id or ("not recorded" if other.historical else "cannot be read")
+        shown = (f"record {other.sequence}" if other.sequence is not None
+                 else f"the record at index {other.index}")
+        parts.append(f"{shown} (run {run}) on {', '.join(other.differing)}")
+    note = (f"Runs under these conditions differ: record {sequence} (this run) differs from "
+            + "; ".join(parts) + ". Each run is kept as recorded.")
+    deterministic = [f"record {other.sequence}" if other.sequence is not None
+                     else f"the record at index {other.index}"
+                     for other in result.group_differences if other.deterministic]
+    if deterministic:
+        note += (f" This run and {', '.join(deterministic)} both record deterministic "
+                 "algorithms on, so they were expected to agree: investigate.")
+    return note
+
+
+def historical_note(result: RegistrationResult) -> Optional[str]:
+    """The historical note both entry points print: this run's possible overlap
+    with records written before each run had its own record, or `None`.
+    Informational: such a record never decided this outcome."""
+    if not result.historical_overlap:
+        return None
+    return "; ".join(text[:1].upper() + text[1:] for text in result.historical_overlap) + "."
+
+
+def _with_usage_clues(version: Any, notes: Tuple[HistoricalNote, ...], run_id: str,
+                      checkpoint_sha256: str, report_sha256: str) -> Tuple[str, ...]:
+    """Each note's sentence, a possible overlap citing the version's usage
+    history when it holds a ``registered`` entry naming this run, its checkpoint,
+    its report and that historical record's sequence. **A clue, never the
+    authority**: read only when there is a possible overlap to note, and an
+    absent, unreadable or silent usage history adds nothing and changes
+    nothing."""
+    entries: list = []
+    if any(note.possible_overlap and note.sequence is not None for note in notes):
+        try:
+            entries, _problems = read_usage_history(version)
+        except Exception:  # noqa: BLE001 - a clue that cannot be read is no clue
+            entries = []
+    texts = []
+    for note in notes:
+        text = note.text
+        if note.possible_overlap and note.sequence is not None and any(
+                isinstance(entry, dict) and entry.get("kind") == "registered"
+                and entry.get("run_id") == run_id
+                and entry.get("checkpoint_sha256") == checkpoint_sha256
+                and entry.get("report_sha256") == report_sha256
+                and type(entry.get("sequence")) is int and entry["sequence"] == note.sequence
+                for entry in entries):
+            text += (f" (the usage history names run {run_id}'s registration into record "
+                     f"{note.sequence})")
+        texts.append(text)
+    return tuple(texts)
 
 
 def _ledger_beside(checkpoint: Path) -> Path:
@@ -283,9 +375,10 @@ def register_report(
     **The report must be one the registry's report store holds**
     (``<registry>/versions/<label>/reports/<run id>/report.json``,
     `locate_store_report`), naming that version exactly and measured on the
-    checkpoint its run directory is named for; and **no report in the store
-    under its key may disagree with another** (D5), nor may that be uncheckable
-    (`RunsDisagree`, `DisagreementNotChecked`). **The registry must be the
+    checkpoint its run directory is named for. Its run is that run directory's
+    id: the ledger's record names it (``run_id``), and the same run is
+    recognised by it (`sidecar.find_run`). **No other report of the store is
+    read**, so none blocks or marks this registration. **The registry must be the
     deployment's**: the one ``SHEPHERD_REGISTRY`` names, read from ``environ``
     (`os.environ` when `None`), compared by resolved path before anything in the
     registry is read (`NotFromTheDeploymentRegistry`, also when it is unset).
@@ -325,8 +418,8 @@ def register_report(
       or raises ``ValueError`` saying why it names none, which is refused.
       That file must then hold the report's checkpoint bytes
       (`checkpoint_matches`), as with ``checkpoint``. Called after the report,
-      its version, its run directory and D5's block have been checked, so a
-      refused report lists nothing. The caller never reads the report itself.
+      its version and its run directory have been checked, so a refused report
+      lists nothing. The caller never reads the report itself.
 
     ``expected_report_sha256``: the digest of the report as it was shown when it
     was chosen (the Test page's Register), with ``checkpoint``,
@@ -340,14 +433,26 @@ def register_report(
     ``registered_at`` is the time the registration is made, now in UTC unless a
     caller passes one.
 
-    Returns the outcome — ``registered``, ``already_registered`` (nothing written)
-    or ``corroborated`` — the record as the ledger now holds it, for a
-    corroboration the fields not compared on which this report differs, and,
-    when the ledger was written and the version's usage history could not be
-    appended, why (`RegistrationResult.usage_history_problem`). Every
-    expected failure raises ``RegistrationRefused``; a call naming none, or more
-    than one, of ``checkpoint``, ``checkpoint_dir``, ``measured`` and ``place``
-    is a caller's error (``TypeError``).
+    **The ledger is held from its read to the usage-history entry**
+    (`sidecar.ledger_lock`, K8-6r.1), after every check of the report and the
+    checkpoint: another registration of the same ledger, from any process,
+    waits for it. One that waits past the grace is refused as `LedgerBusy`,
+    nothing written; the usage history's own lock is taken inside it, never
+    the other way, and no GPU lock is taken here. Where this account may not
+    create or open the lock file (a checkpoint directory it cannot write),
+    nothing can be written: a report the ledger already holds still answers
+    ``already_registered``, read without the lock as every reader reads, and
+    anything else is refused naming that cause.
+
+    Returns the outcome — ``registered`` (this run's own record) or
+    ``already_registered`` (this run with these bytes is held; nothing written)
+    — the record the ledger holds for this run, the group's differences and the
+    historical note (informational), and, when the ledger was written and the
+    version's usage history could not be appended, why
+    (`RegistrationResult.usage_history_problem`). Every expected failure raises
+    ``RegistrationRefused``; a call naming none, or more than one, of
+    ``checkpoint``, ``checkpoint_dir``, ``measured`` and ``place`` is a caller's
+    error (``TypeError``).
     """
     named = [arg for arg in (checkpoint, checkpoint_dir, measured, place) if arg is not None]
     if len(named) != 1:
@@ -373,15 +478,14 @@ def register_report(
     elif measured is not None:
         ledger_path = _ledger_beside(measured.checkpoint.path)
 
-    def refused(problem: str, kind: type = RegistrationRefused,
-                **fields: Any) -> RegistrationRefused:
+    def refused(problem: str, kind: type = RegistrationRefused) -> RegistrationRefused:
         # A refusal from a reader that already says nothing was written (the
         # registry's own) says it once, naming the ledger.
         problem = _SAYS_NOTHING_WRITTEN.sub("", problem.rstrip())
         if not problem.endswith("."):
             problem += "."
         where = f" to {ledger_path}" if ledger_path is not None else ""
-        return kind(f"{problem} Nothing was written{where}.", **fields)
+        return kind(f"{problem} Nothing was written{where}.")
 
     def not_a_directory(directory: Path) -> RegistrationRefused:
         return refused(
@@ -417,8 +521,8 @@ def register_report(
         # report stays as it was published (not `ReportNotAsPublished`).
         raise refused(
             f"{report_path} is not registered: {exc}. A report is registered only from the "
-            "deployment's registry (D5): another registry keeps its own report store, "
-            "disagreement block and usage history, which the service never reads.",
+            "deployment's registry (D5): another registry keeps its own report store "
+            "and usage history, which the service never reads.",
             NotFromTheDeploymentRegistry,
         ) from None
     except NotInReportStore as exc:
@@ -512,14 +616,6 @@ def register_report(
             "measurement kept that run's report."
         )
 
-    # **D5: no registration under a key whose runs disagree**, checked or
-    # unchecked, and none where that cannot be checked. This report stands for
-    # its own run directory; every other report the store keeps is read once.
-    key = record_key(record)
-    block = key_refusal(stored.version, key, known=(stored.run_id, record))
-    if block is not None:
-        raise refused(str(block), type(block), status=block.status)
-
     # **The ledger has to be beside the weights it describes.** Without this it
     # can be written into any directory, including one holding no checkpoint at
     # all, and a reader looking up a digest beside the weights they were handed
@@ -579,94 +675,99 @@ def register_report(
                 "record filed under the wrong address."
             )
 
-    try:
-        ledger, digest_at_read = read_ledger(ledger_path)
-    except (OSError, ValueError) as exc:
-        raise refused(str(exc)) from exc
+    def lock_refused(exc: OSError) -> RegistrationRefused:
+        return refused(
+            f"{report_path} is not registered: the ledger's lock "
+            f"{ledger_lock_path(ledger_path)} could not be opened or taken "
+            f"({type(exc).__name__}: {exc})."
+        )
 
-    when = registered_at if registered_at is not None else (
-        datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    )
-    try:
-        outcome, updated = append_record(ledger, record, registered_at=when)
-    except ValueError as exc:
-        raise refused(f"{report_path} is not registered: {exc}") from exc
-
-    held = next(r for r in updated["records"] if record_key(r) == key)
-    differences: Tuple[str, ...] = ()
-    if outcome == "corroborated":
-        differences = tuple(field for field in CORROBORATION_KEEPS_FIRST
-                            if held.get(field) != record[field])
-    if outcome == "already_registered":
-        return RegistrationResult(outcome, held, ledger_path)
-
-    # **The ledger record and its history entry are one step against a cancel**
-    # (M5-3 review EVAL-1, `interrupt_deferred`): a SIGINT arriving between them
-    # is held until both are written, so a registration never lacks its
-    # "registered" entry because of a cancel.
-    with interrupt_deferred():
+    # **One registration at a time per ledger** (K8-6r.1): from the read to the
+    # usage-history entry, under the ledger's lock. Only the lock's own failures
+    # are mapped here; whatever the section raises keeps its own refusal.
+    with ExitStack() as held_ledger:
+        # Set when this account may not create or open the lock file (a
+        # checkpoint directory it cannot write): then nothing can be written
+        # here, but whether the ledger already holds this report is a read, and
+        # readers take no lock (the replace is atomic). So that answer stays as
+        # it was, and anything that would write is refused with this cause.
+        cannot_lock: Optional[PermissionError] = None
         try:
-            write_ledger(ledger_path, updated, expected_digest=digest_at_read)
+            held_ledger.enter_context(ledger_lock(ledger_path))
+        except FileLockBusy as exc:
+            raise LedgerBusy(
+                f"{report_path} is not registered: the ledger is busy (another "
+                f"registration was writing {ledger_path} for the {exc.grace:g} s this one "
+                "waited). The report stays where it is kept; register it again. Nothing "
+                f"was written to {ledger_path} this time."
+            ) from None
+        except PermissionError as exc:
+            cannot_lock = exc
+        except OSError as exc:
+            raise lock_refused(exc) from exc
+
+        try:
+            ledger, digest_at_read = read_ledger(ledger_path)
         except (OSError, ValueError) as exc:
+            raise refused(str(exc)) from exc
+
+        when = registered_at if registered_at is not None else (
+            datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        )
+        # **By the verified run** (K8-6r.2): this run first, among the records
+        # that name a run; then its own record. Nothing here reads another
+        # report, and no description below decides anything.
+        try:
+            outcome, updated = append_record(ledger, record, run_id=stored.run_id,
+                                             registered_at=when)
+        except ValueError as exc:
             raise refused(f"{report_path} is not registered: {exc}") from exc
 
-        # **In the version's usage history** (D4), after the ledger was written:
-        # a failure here does not undo the registration, so it is reported with
-        # it.
+        held = held_record(updated, record, stored.run_id)
+        differences = group_differences(updated, held)
+        overlap = historical_overlap(updated, held)
         problem: Optional[str] = None
-        try:
-            record_registration(
-                stored.version, run_id=stored.run_id, report_sha256=source_digest,
-                checkpoint_sha256=digest, outcome=outcome,
-                sequence=held["registration"]["sequence"],
-            )
-        except (OSError, ValueError) as exc:
-            problem = (f"the registration was written to {ledger_path}, but the cohort "
-                       f"version's usage history could not be appended "
-                       f"({type(exc).__name__}: {exc})")
-    return RegistrationResult(outcome, held, ledger_path, differences, problem)
+        if outcome == "already_registered":
+            notes = _with_usage_clues(stored.version, overlap, stored.run_id, digest,
+                                      source_digest)
+            return RegistrationResult(outcome, held, ledger_path, differences, None, notes)
+        if cannot_lock is not None:
+            raise lock_refused(cannot_lock) from cannot_lock
 
+        # **The ledger record and its history entry are one step against a
+        # cancel** (M5-3 review EVAL-1, `interrupt_deferred`): a SIGINT arriving
+        # between them is held until both are written, so a registration never
+        # lacks its "registered" entry because of a cancel.
+        with interrupt_deferred():
+            try:
+                write_ledger(ledger_path, updated, expected_digest=digest_at_read)
+            except (OSError, ValueError) as exc:
+                raise refused(f"{report_path} is not registered: {exc}") from exc
 
-def key_refusal(
-    version: Any,
-    key: Tuple[Any, ...],
-    *,
-    known: Optional[Tuple[str, Dict[str, Any]]] = None,
-) -> Optional[RegistrationRefused]:
-    """D5's block on a key of a version's report store, as the refusal a
-    registration under it gets -- `RunsDisagree` while runs under it disagree,
-    `DisagreementNotChecked` while that cannot be checked -- or `None` when
-    nothing blocks it.
-
-    **Returned, not raised**, so the caller says it in its own place:
-    `register_report` raises it (adding that nothing was written), and a
-    measurement without ``--record`` says why it offers no register-later
-    command rather than printing one that would be refused. ``known`` is a
-    report the caller already read (`scan_report_store`). ``key`` is
-    `record_key`'s tuple.
-    """
-    status = scan_report_store(version, known=known).status(key)
-    if status.state == "uncontested":
-        return None
-    checkpoint, _role, cohort, semantics = key
-    if status.state == "contested":
-        return RunsDisagree(
-            f"runs disagree — investigate. Under this report's key (checkpoint "
-            f"{checkpoint[:12]}... on cohort version {version.manifest.get('label')} "
-            f"({cohort[:12]}...), measurement semantics {semantics[:12]}...) the report "
-            f"store holds reports that disagree on: {', '.join(status.differing)} (runs "
-            f"{', '.join(status.disagreeing_runs)}). While they do, no report under this key "
-            "is registered, checked or unchecked: registering one would be choosing between "
-            "results. Every report stays in the store; compare their environment facts "
-            "first. A deterministic re-run is another key.",
-            status,
-        )
-    problems = "; ".join(status.problems).rstrip()
-    return DisagreementNotChecked(
-        f"whether runs under this report's key disagree cannot be checked, so no report "
-        f"under the key is registered: {problems}{'' if problems.endswith('.') else '.'}",
-        status,
-    )
+            # **In the version's usage history** (D4), after the ledger was
+            # written and inside its lock (the order is ledger, then usage
+            # history, never the other way): a failure here, the usage
+            # history's lock busy included, does not undo the registration, so
+            # it is reported with it.
+            try:
+                record_registration(
+                    stored.version, run_id=stored.run_id, report_sha256=source_digest,
+                    checkpoint_sha256=digest, outcome=outcome,
+                    sequence=held["registration"]["sequence"],
+                )
+            except FileLockBusy as exc:
+                problem = (f"{USAGE_HISTORY_NOT_WRITTEN}: it was busy (another "
+                           f"writer held {exc.path} for the {exc.grace:g} s this one "
+                           f"waited). The record in {ledger_path} stands")
+            except (OSError, ValueError) as exc:
+                problem = (f"{USAGE_HISTORY_NOT_WRITTEN}: {type(exc).__name__}: "
+                           f"{exc}. The record in {ledger_path} stands")
+    # A written registration's clue is read after the ledger's lock is
+    # released; an already registered run's, above, under it (reading the usage
+    # history takes no lock, so the order ledger, then usage history, holds
+    # either way). It decides nothing.
+    notes = _with_usage_clues(stored.version, overlap, stored.run_id, digest, source_digest)
+    return RegistrationResult(outcome, held, ledger_path, differences, problem, notes)
 
 
 def _recorded_checkpoint(report: Any) -> Tuple[Optional[Path], Optional[str]]:
@@ -711,12 +812,22 @@ def report_state(
       ``cannot_be_checked``.
     - **Registered** (`REGISTERED_STATES`): the ledger beside ``checkpoint``'s
       resolved path -- the file the run was given, where `register_report`
-      files it -- holds a record naming this report's digest, as its source or
-      among its corroborating reports. The digest is the one read, or
-      ``expected_sha256`` when the report could not be read, so a registered
-      report that was later removed still reads as registered. No ledger, or no
-      such record, is ``not_registered``; a ledger that cannot be read, or no
-      digest to look for, is ``cannot_be_checked``.
+      files it -- holds a record that names **this run** (the report's run
+      directory) with **these bytes**, found by the writer's own lookup
+      (`sidecar.find_run`), so the state agrees with what a registration would
+      answer. The digest is the one read, or ``expected_sha256`` when the
+      report could not be read, so a registered report that was later removed
+      still reads as registered. A record naming this run with other bytes is
+      ``not_registered``, saying the report was replaced after it was
+      registered. A record written before each run had its own record that
+      holds these bytes is never "registered": the state is as without it, and
+      the reason adds that registering adds this run's own record. No ledger,
+      or no such record, is ``not_registered``; a ledger that cannot be read,
+      a lookup that cannot tell (this run's identity record damaged, the
+      run-identity boundary unreadable), a record whose registration sequence
+      cannot be read while none names this run (`sequence_problem`: its
+      registration would be refused), a report outside a report store (it
+      names no run), or no digest to look for, is ``cannot_be_checked``.
     - **Without** ``checkpoint`` (the server's list of a version's kept
       reports, which knows no checkpoint file; M5-1), the ledger is the one
       beside the checkpoint the report's manifest records, taken from the same
@@ -753,8 +864,9 @@ def report_state(
     report_path = Path(report_path)
     digest: Optional[str] = None
     report: Any = None
+    run_id: Optional[str] = None
     try:
-        store_report_parts(report_path)
+        _root, _label, run_id, _resolved = store_report_parts(report_path)
     except NotInReportStore:
         kept, why_kept = "not_kept", (f"{report_path} is not in a registry's report store, so it "
                                       "is not a kept report")
@@ -804,35 +916,78 @@ def report_state(
         if ledger_path is None:
             return ReportState(kept, why_kept, "cannot_be_checked", no_ledger, digest, None,
                                None)
+    if run_id is None:
+        return ReportState(kept, why_kept, "cannot_be_checked", (
+            f"{report_path} is not in a report store, so it names no run, and a record is "
+            "found by the run it names"), digest, None, ledger_path)
     try:
         ledger, _ = read_ledger(ledger_path)
     except (OSError, ValueError) as exc:
         return ReportState(kept, why_kept, "cannot_be_checked", str(exc), digest, None,
                            ledger_path)
-    for record in ledger["records"]:
-        if not isinstance(record, dict):
-            continue
-        corroborating = record.get("corroborating_reports")
-        if (record.get("source_artifact_digest") == digest
-                or (isinstance(corroborating, list) and digest in corroborating)):
-            registration = record.get("registration")
-            sequence = registration.get("sequence") if isinstance(registration, dict) else None
+    # **The writer's own lookup, first** (`find_run`): this run, among the
+    # records that name a run; never a record found by its bytes alone.
+    cohort, measured = _report_identity(report)
+    found = find_run(ledger, run_id, cohort, measured)
+    if found.problem is not None:
+        return ReportState(kept, why_kept, "cannot_be_checked",
+                           f"{ledger_path}: {found.problem}", digest, None, ledger_path)
+    if found.record is not None:
+        registration = found.record.get("registration")
+        sequence = registration.get("sequence") if isinstance(registration, dict) else None
+        if found.record.get("source_artifact_digest") == digest:
             return ReportState(kept, why_kept, "registered",
-                               f"record {sequence} in {ledger_path} names this report",
+                               f"record {sequence} in {ledger_path} names this run and report",
                                digest, sequence if type(sequence) is int else None,
                                ledger_path)
-    looked = (f"{ledger_path} holds no record naming this report" if ledger_path.exists()
+        return ReportState(kept, why_kept, "not_registered",
+                           f"{ledger_path}: {sealed_run_refusal(found, run_id, digest)}",
+                           digest, None, ledger_path, replaced_after_registration=True)
+    # **What would refuse the write** (`append_record`'s step 0) leaves the
+    # state unknown too, so the state and the writer agree.
+    uncertain = sequence_problem(ledger)
+    if uncertain is not None:
+        return ReportState(kept, why_kept, "cannot_be_checked", f"{ledger_path}: {uncertain}",
+                           digest, None, ledger_path)
+    looked = (f"{ledger_path} holds no record naming this run" if ledger_path.exists()
               else f"there is no {ledger_path}")
+    # A note, not a state: a record merged before each run had its own record
+    # may hold these bytes, and registering this run adds its own record.
+    held = [note for note in historical_overlap(ledger, {"source_artifact_digest": digest})
+            if note.possible_overlap]
+    if held:
+        shown = ", ".join(f"record {note.sequence}" if note.sequence is not None
+                          else f"the record at index {note.index}" for note in held)
+        looked += (f"; its bytes equal a report merged into {shown} before each run had its "
+                   "own record; registering it adds its own record")
+    overlap = tuple(note.sequence for note in held if note.sequence is not None)
     if checkpoint is None:
         return ReportState(kept, why_kept, "cannot_be_checked", (
             f"not registered beside the checkpoint this run read ({looked}); a ledger beside "
             "another copy of the same weights, where a registration naming that copy is filed, "
             "is not looked for without the checkpoint, so whether this report is registered "
-            "cannot be checked here"), digest, None, ledger_path)
-    return ReportState(kept, why_kept, "not_registered", looked, digest, None, ledger_path)
+            "cannot be checked here"), digest, None, ledger_path, overlap)
+    return ReportState(kept, why_kept, "not_registered", looked, digest, None, ledger_path,
+                       overlap)
 
 
-__all__ = ["DisagreementNotChecked", "KEPT_STATES", "MeasuredRun",
+def _report_identity(report: Any) -> Tuple[Optional[str], Optional[str]]:
+    """The cohort version and checkpoint digests a report names, each None when
+    it cannot be read (the report itself unread): `find_run` then does not
+    filter by it, and the run id alone decides."""
+    manifest = report.get("manifest") if isinstance(report, dict) else None
+    if not isinstance(manifest, dict):
+        return None, None
+    block = manifest.get("cohort_version")
+    digests = manifest.get("artifact_digests")
+    cohort = block.get("manifest_sha256") if isinstance(block, dict) else None
+    measured = digests.get("checkpoint") if isinstance(digests, dict) else None
+    return ((cohort if isinstance(cohort, str) and _SHA256.fullmatch(cohort) else None),
+            (measured if isinstance(measured, str) and _SHA256.fullmatch(measured) else None))
+
+
+__all__ = ["KEPT_STATES", "LedgerBusy", "MeasuredRun",
            "NotFromTheDeploymentRegistry", "REGISTERED_STATES", "RegistrationRefused",
-           "RegistrationResult", "ReportNotAsPublished", "ReportState", "RunsDisagree",
-           "corroboration_note", "key_refusal", "register_report", "report_state"]
+           "RegistrationResult", "ReportNotAsPublished", "ReportState",
+           "USAGE_HISTORY_NOT_WRITTEN",
+           "group_note", "historical_note", "register_report", "report_state"]

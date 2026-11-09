@@ -15,14 +15,22 @@ The record is derived from the report, never from the command line: a run's own
 manifest is what says which checkpoint, which cohort version and which mode it
 was, and re-asserting any of that here would let the ledger describe a run that
 did not happen. Only a registered cohort version's report is registered; a
-generated split's is refused.
+generated split's is refused, because the ledger does not yet support a
+generated split's data identity (it has no registered cohort version), not
+because such a result counts for less; its report and ranks stay at the
+measurement's `--output` (policy rev 16, K8-6r.4).
 
 **Only a report the registry's report store holds** (D5, since M5): `--report`
 names `<registry>/versions/<label>/reports/<run id>/report.json`, the path the
 measurement printed as `Report:`. A copy elsewhere is refused, saying to
-register the store's original: only the store shows whether another run under
-the report's key disagrees, and while one does, nothing under that key is
-registered ("runs disagree — investigate"). The registry is found from the
+register the store's original: a record names the run directory its report
+was kept in, and a copy is no run. **Registered by the verified run** (policy
+rev 16, K8-6r.2): only this report is read, and every verified run gets a
+record of its own; the same run's same report again writes nothing, and the
+same run with other bytes is refused (a run's report is sealed when it is
+published). How its record differs from the other records of its condition
+group, and a possible overlap with a record merged before each run had its own
+record, are printed as notes that decide nothing. The registry is found from the
 report's own path and **must be the deployment's**: the one `SHEPHERD_REGISTRY`
 names, compared by resolved path, so set the variable in this shell as the
 service's environment sets it (deployment guide §4.11). With the variable unset,
@@ -54,6 +62,15 @@ Usage:
         --checkpoint <workspace>/runs/<arch>/<run>/checkpoints/best.pt \\
         --show <checkpoint sha256>
 
+`--show` prints the records as the ledger holds them (JSON on stdout), and
+for each one its run, "not recorded" for a record merged before each run had
+its own record, and its possible overlaps with records naming a run (on the
+log). A record the shared check cannot read as a result (its run identity
+cannot be read, or it does not have the shape registration writes) is said
+instead by its index in the ledger with its reason, through the readers' one
+listing (`src.api.routes.evaluations.read_records`, as the API and Models
+list it); the JSON still shows it as written.
+
 Every refusal exits non-zero with one message that says nothing was written.
 
 Module: scripts/record_evaluation.py
@@ -74,10 +91,18 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.evaluation.caveats import RECORD_ABSENCE  # noqa: E402
 from src.evaluation.registration import (  # noqa: E402
     RegistrationRefused,
-    corroboration_note,
+    group_note,
+    historical_note,
     register_report,
 )
-from src.evaluation.sidecar import LEDGER_FILENAME, read_ledger, records_for  # noqa: E402
+from src.evaluation.sidecar import (  # noqa: E402
+    LEDGER_FILENAME,
+    indexed_records_for,
+    possible_overlaps,
+    read_ledger,
+    record_identities,
+    records_for,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +158,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(json.dumps(found, indent=2, sort_keys=True))
         if not found:
             logger.info("%s: %s", ledger_path, RECORD_ABSENCE)
+        for line in _run_lines(ledger, args.show):
+            logger.info("%s", line)
         return 0
 
     try:
@@ -149,18 +176,50 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if result.outcome == "already_registered":
         logger.info("%s already holds this report as record %d (%s); nothing written.",
                     result.ledger_path, sequence, where)
-    elif result.outcome == "corroborated":
-        logger.info("This report agrees with record %d (%s) in %s; its digest was added "
-                    "to that record's corroborating reports.",
-                    sequence, where, result.ledger_path)
-        note = corroboration_note(result, args.report)
-        if note is not None:
-            logger.info("%s", note)
     else:
         logger.info("Registered record %d (%s) -> %s", sequence, where, result.ledger_path)
+    # Two notes that decide nothing (policy rev 16): every run is kept.
+    for note in (group_note(result), historical_note(result)):
+        if note is not None:
+            logger.info("%s", note)
     if result.usage_history_problem is not None:
         logger.warning("NOTE: %s.", result.usage_history_problem)
     return 0
+
+
+def _run_lines(ledger: dict, checkpoint_digest: str) -> list:
+    """One line per record for these weights. A record the readers' one listing cannot read
+    as a result (`read_records`): its sequence and its index in the ledger,
+    "cannot be read as a result", and the listing's reason (its run identity
+    included). Any other: its sequence and its run, as the file's run-identity
+    boundary reads it (`record_identities`): "not recorded" for a record merged
+    before each run had its own record; then its possible overlaps
+    (`possible_overlaps`), never confirmed. The two kinds of record stay
+    apart."""
+    from src.api.routes.evaluations import read_records
+
+    records = ledger.get("records") if isinstance(ledger.get("records"), list) else []
+    by_record = {id(record): (identity, overlaps) for record, identity, overlaps in
+                 zip(records, record_identities(ledger), possible_overlaps(ledger))}
+    unreadable = {item.index: item for item in read_records(ledger, checkpoint_digest)[1]}
+    lines = []
+    for index, record in indexed_records_for(ledger, checkpoint_digest):
+        identity, overlaps = by_record[id(record)]
+        registration = record.get("registration")
+        sequence = registration.get("sequence") if isinstance(registration, dict) else None
+        name = f"record {sequence}" if type(sequence) is int else "a record without a sequence"
+        if index in unreadable:
+            lines.append(f"{name} (the ledger's record {index}) cannot be read as a result: "
+                         f"{unreadable[index].reason}")
+            continue
+        run = identity.run_id or ("not recorded (registered before each run had its own "
+                                  "record)")
+        line = f"{name}: run {run}"
+        if overlaps:
+            line += (f"; possible overlap with record{'s' if len(overlaps) != 1 else ''} "
+                     f"{', '.join(str(n) for n in overlaps)} (not recorded)")
+        lines.append(line)
+    return lines
 
 
 if __name__ == "__main__":

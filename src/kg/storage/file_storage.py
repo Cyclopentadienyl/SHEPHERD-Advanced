@@ -12,8 +12,8 @@ reader that does **not** retire with the frozen evaluator, and adding another
 copy to get one would have been the opposite of the point. Serving
 (`src/inference/pipeline.py`) and training (`scripts/train_model.py`) moved here
 in contract M2.1's S6 and S8, and `scripts/setup_demo.py` reads through
-training. `scripts/build_index.py` and `scripts/spikes/validate_fast_subgraph.py`
-still have their own; migrating them belongs to P1 and is not smuggled in here.
+training. `scripts/build_index.py` no longer reads them (K7 removed its
+`--checkpoint`).
 
 **No abstraction beyond the readers below.** No `Storage` Protocol, no
 backend registry, no adapter hierarchy, no migration framework. The package name
@@ -220,7 +220,7 @@ def read_graph_artifacts(data_dir: Path, *, map_location: Any = "cpu") -> GraphA
     return GraphArtifactsRead(graph_data, reads)
 
 
-def read_samples(data_dir: Path, split: str, *, training_fields: bool = False) -> SamplesRead:
+def read_samples(data_dir: Path, split: str, *, gene_fields: bool = False) -> SamplesRead:
     """Load `<split>_samples.json` as `DiagnosisSample` objects.
 
     Missing is an error, not an empty cohort: an empty list would flow into a
@@ -235,10 +235,14 @@ def read_samples(data_dir: Path, split: str, *, training_fields: bool = False) -
     the caller has to answer, since `val` is the checkpoint-selection split
     rather than held-out data.
 
-    **Three fields by default; `training_fields=True` adds the two only
-    training reads,** `candidate_disease_ids` and `gene_ids`. Measurement and
-    the verifiers read the three default fields; training passes its two extra
-    fields explicitly.
+    **Three fields by default** (`patient_id`, `phenotype_ids`, `disease_id`),
+    which training, measurement and the verifiers read; other keys of a row
+    are not read, so a row written with more (a generated row's `gene_ids`, or
+    an older row's `candidate_disease_ids`) still reads. `gene_fields=True`
+    adds the gene task's two (`gene_ids`, the candidate list, and
+    `causal_gene_ids`, with `causal_genes_unmapped` where the importer wrote
+    it), which the gene and patients-like-me tasks read (README §8), each
+    checked as the default fields are.
 
     The file is parsed by `read_samples_file`, the one samples parser; this
     function only names a workspace split's file and explains its absence.
@@ -259,13 +263,13 @@ def read_samples(data_dir: Path, split: str, *, training_fields: bool = False) -
             else "this workspace has no *_samples.json files at all"
         )
         raise FileNotFoundError(f"Samples file not found: {path} — {detail}")
-    return read_samples_file(path, training_fields=training_fields)
+    return read_samples_file(path, gene_fields=gene_fields)
 
 
 def read_samples_file(
     path: Path,
     *,
-    training_fields: bool = False,
+    gene_fields: bool = False,
     expected_sha256: Union[str, AbstractSet[str], None] = None,
 ) -> SamplesRead:
     """Load one samples file, a JSON list of sample rows, as `DiagnosisSample` objects.
@@ -283,7 +287,8 @@ def read_samples_file(
     match it, so the read could only be thrown away.
 
     Missing is `FileNotFoundError` naming the path, never an empty list.
-    `training_fields` is as `read_samples` describes.
+    `gene_fields` is as `read_samples` describes; an older row without the
+    optional fields reads them as None.
     """
     from src.kg.data_loader import DiagnosisSample
 
@@ -292,35 +297,54 @@ def read_samples_file(
         entries, identity = _read_json(path, expected)
     except FileNotFoundError as exc:
         raise FileNotFoundError(f"Samples file not found: {path}") from exc
+    if gene_fields:
+        _refuse_retired_gene_fields(path, entries, identity)
     # A file that is JSON but not a list of sample rows is refused under its
     # name too: without `expected_sha256`, the entry point compares digests only
     # after this parse.
+    optional = (("gene_ids", "causal_gene_ids", "causal_genes_unmapped") if gene_fields
+                else ())
     try:
-        if training_fields:
-            samples = [
-                DiagnosisSample(
-                    patient_id=entry["patient_id"],
-                    phenotype_ids=entry["phenotype_ids"],
-                    disease_id=entry["disease_id"],
-                    candidate_disease_ids=entry.get("candidate_disease_ids"),
-                    gene_ids=entry.get("gene_ids"),
-                )
-                for entry in entries
-            ]
-        else:
-            samples = [
-                DiagnosisSample(
-                    patient_id=entry["patient_id"],
-                    phenotype_ids=entry["phenotype_ids"],
-                    disease_id=entry["disease_id"],
-                )
-                for entry in entries
-            ]
+        samples = [
+            DiagnosisSample(
+                patient_id=entry["patient_id"],
+                phenotype_ids=entry["phenotype_ids"],
+                disease_id=entry["disease_id"],
+                **{field: entry.get(field) for field in optional},
+            )
+            for entry in entries
+        ]
     except (KeyError, TypeError, AttributeError) as exc:
         raise _unparseable(path, "a samples file (a list of sample rows)", exc, identity) from exc
     _refuse_non_integer_ids(path, samples, identity)
     _refuse_phenotype_repeats(path, samples, identity)
     return SamplesRead(samples, identity)
+
+
+#: Retired forms of the declared causal-gene truth, and what replaced each. A
+#: reader of the gene fields refuses them: read past, the truth they carried
+#: would be lost, and none of it can be recovered from them.
+RETIRED_GENE_FIELDS = {"causal_genes_listed": "causal_genes_unmapped"}
+
+
+def _refuse_retired_gene_fields(path: Path, entries: Any, identity: ReadIdentity) -> None:
+    """Refuse a row carrying a retired gene field, alone or beside its
+    replacement. `causal_genes_listed` counted the declared causal genes that
+    name no single gene of the graph, and a count cannot say which genes two
+    patients share; the version is re-imported from its source, which writes
+    the identifiers."""
+    for index, entry in enumerate(entries if isinstance(entries, list) else ()):
+        if not isinstance(entry, dict):
+            continue  # the row parser refuses it, under its own message
+        for field, replacement in RETIRED_GENE_FIELDS.items():
+            if field in entry:
+                raise UnparseableFile(
+                    f"{path}: sample {index} (patient {entry.get('patient_id')!r}) carries "
+                    f"the retired field {field!r}, whose truth cannot be read back from it. "
+                    f"Re-import the cohort from its source (scripts/import_cohort.py), "
+                    f"which writes {replacement!r}; nothing is guessed from the old field",
+                    identity=identity, what="a samples file with integer ids",
+                )
 
 
 def _expected_digests(
@@ -360,8 +384,8 @@ def _refuse_non_integer_ids(path: Path, samples: List[Any], identity: ReadIdenti
     refused although Python counts it as an `int`. Checked here because measurement,
     training, the cohort verifiers and the audits all read samples through this
     function, so the check comes before any of them converts. It says nothing
-    about range, which needs the graph: Mode C's `_assert_ids_in_range` and the
-    training loader's truth check (D3) stay where they are.
+    about range, which needs the graph: `GraphView.view_ids`, through which
+    every task binds a case, checks it.
 
     The refusal is an `UnparseableFile` carrying the read's identity; its `what`
     names the rule, never the patient or the value, which only the message does.
@@ -382,9 +406,23 @@ def _refuse_non_integer_ids(path: Path, samples: List[Any], identity: ReadIdenti
         if not is_id(sample.disease_id):
             refuse(index, sample, "disease_id", sample.disease_id, "an integer id")
         lists = {"phenotype_ids": sample.phenotype_ids}
-        for field in ("candidate_disease_ids", "gene_ids"):
+        for field in ("gene_ids", "causal_gene_ids"):
             if getattr(sample, field) is not None:
                 lists[field] = getattr(sample, field)
+        outside = sample.causal_genes_unmapped
+        if outside is not None and not (
+                isinstance(outside, list) and outside
+                and all(isinstance(g, str) and g and g == g.strip().upper() for g in outside)
+                and len(set(outside)) == len(outside)):
+            # Identifiers, not ids: compared as written, so they are refused
+            # unless they are the importer's normalised form, each once.
+            raise UnparseableFile(
+                f"{path}: sample {index} (patient {sample.patient_id!r}) has "
+                f"causal_genes_unmapped {outside!r}, which is not a non-empty list of "
+                "distinct identifiers in the importer's normalised form (stripped, "
+                "upper-case)",
+                identity=identity, what="a samples file with integer ids",
+            )
         for field, values in lists.items():
             if not isinstance(values, list):
                 refuse(index, sample, field, values, "a list of integer ids")
@@ -405,7 +443,7 @@ def _refuse_phenotype_repeats(path: Path, samples: List[Any], identity: ReadIden
     would score a list other than the one recorded. The rule is
     `normalise_phenotypes`, called rather than restated, so this check and the
     producers cannot disagree about what a repeat is. Only `phenotype_ids` is a
-    phenotype list (§4.1): `gene_ids` and `candidate_disease_ids` are not checked.
+    phenotype list (§4.1): the gene lists are not checked.
 
     **After the integer check, never before it.** The rule compares identities in
     a set, where `True` and `1` are one entry, so a boolean id would be reported

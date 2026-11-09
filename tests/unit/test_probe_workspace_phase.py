@@ -119,9 +119,16 @@ def test_a_replacement_after_the_manifest_read_is_refused_naming_the_file(
 
 
 def test_the_training_phase_checks_the_checkpoint_from_one_read(written):
-    """Phase D on CPU, one epoch: D2 checks the trained checkpoint's recorded graph
-    against the workspace from `read_checkpoint` and `verify_workspace`, the reads
-    S9 moved it onto, and every probe in the phase passes."""
+    """Phase D on CPU, one epoch each: D1 trains a model-bundle base and one
+    disease child of it, filed under the spec's encoder kind; D2 checks the
+    child's recorded graph against the workspace from `read_checkpoint` and
+    `verify_workspace`, the reads S9 moved it onto, and its model record, and
+    every probe in the phase passes. The child reads as a disease finetune of
+    that base through the one record reader."""
+    import torch
+
+    from src.models.bundle.record import check_model_record, read_model_record
+
     probe, report, sound, work = written
     before = len(report.probes)
 
@@ -133,3 +140,14 @@ def test_the_training_phase_checks_the_checkpoint_from_one_read(written):
         {p.probe_id: p.detail for p in phase if p.status != "passed"}
     )
     assert selected is not None
+    assert selected.child.parent.parent.parent == selected.base.parent.parent.parent == (
+        sound / "runs" / "gatv2")
+    record = read_model_record(torch.load(selected.child, map_location="cpu",
+                                          weights_only=True))
+    check_model_record(record, learning_stage="finetune", task="disease")
+    base_sha = hashlib.sha256(selected.base.read_bytes()).hexdigest()
+    assert record.parent["sha256"] == base_sha
+    d2 = {p.probe_id: p for p in phase}["D2"].facts
+    assert (d2["learning_stage"], d2["task"], d2["parent_sha256"]) == (
+        "finetune", "disease", base_sha)
+    assert {"train_samples", "val_samples"} <= set(d2["recorded_roles"])

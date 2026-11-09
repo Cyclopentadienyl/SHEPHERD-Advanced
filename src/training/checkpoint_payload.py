@@ -29,7 +29,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Dict, Mapping
 
-from src.utils.checkpoint_io import CHECKPOINT_RECORD_VERSION
+from src.utils.checkpoint_io import TRAINING_RULES_VERSION
 from src.utils.run_environment import assert_primitive
 
 logger = logging.getLogger(__name__)
@@ -234,10 +234,24 @@ def build_checkpoint_payload(
     the optimizer, scheduler, scaler or the resume state: a weights-only file
     is still an artifact someone will have to identify, and cannot be resumed.
 
+    **Every checkpoint carries its model record** (contract §9.1): the spec
+    the one builder rebuilds from, the lineage, data roles and graph exposure,
+    and with it the record version. A trainer without one has no checkpoint
+    to write: it is refused, and nothing is written.
+
     Raises:
+        ValueError: the trainer carries no model record (`model_record`).
         TypeError: a metadata value is not plain data; a bug here, never
             written to disk.
     """
+    from src.models.bundle.record import MODEL_RECORD_VERSION
+
+    model_record = getattr(trainer, "model_record", None)
+    if model_record is None:
+        raise ValueError(
+            "The trainer carries no model record, so it has no checkpoint to write: every "
+            "checkpoint names the model spec it is rebuilt from (contract §9.1). Nothing "
+            "was written.")
     run_record: Mapping[str, Any] = getattr(trainer, "run_record", None) or {}
 
     # **A training state is one step's model, optimizer and progress together**
@@ -256,7 +270,7 @@ def build_checkpoint_payload(
 
     if weights_only:
         payload: Dict[str, Any] = {
-            "record_version": CHECKPOINT_RECORD_VERSION,
+            "record_version": MODEL_RECORD_VERSION,
             "checkpoint_kind": "weights",
             "weights_from": (dict(restored) if restored is not None
                              else {"kind": "latest", "epoch": int(epoch)}),
@@ -276,7 +290,7 @@ def build_checkpoint_payload(
             "schedule": trainer.stage_record().get("schedule"),
         }
         payload = {
-            "record_version": CHECKPOINT_RECORD_VERSION,
+            "record_version": MODEL_RECORD_VERSION,
             "checkpoint_kind": "training_state",
             "epoch": int(epoch),
             "global_step": int(trainer.state.global_step),
@@ -292,6 +306,11 @@ def build_checkpoint_payload(
             payload["scheduler_state_dict"] = trainer.scheduler.state_dict()
         if trainer.scaler is not None:
             payload["scaler_state_dict"] = trainer.scaler.state_dict()
+
+    # The model record (contract §9.1), weights-only included, and the rules
+    # the run trained under, which a continued run must keep.
+    payload["training_rules"] = TRAINING_RULES_VERSION
+    payload.update(model_record.to_payload())
 
     # Provenance, in every checkpoint, weights-only included: which inputs
     # produced it and under which code and environment. Set by the training
@@ -312,7 +331,6 @@ def build_checkpoint_payload(
 
 
 __all__ = [
-    "CHECKPOINT_RECORD_VERSION",
     "RUN_RECORD_KEYS",
     "TENSOR_KEYS",
     "build_checkpoint_payload",

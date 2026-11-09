@@ -539,7 +539,8 @@ Write-Host ""
 Write-Host "下一步："
 Write-Host "  1. 下載資料: python scripts/download_data.py"
 Write-Host "  2. 構建知識圖譜: python scripts/build_kg.py"
-Write-Host "  3. 訓練模型: python scripts/train_model.py（須在已設定 GPU 鎖的視窗中執行，§4.11）"
+Write-Host "  3. 訓練 base: python scripts/train_model.py --data-dir <workspace> --stage base（須在已設定 GPU 鎖的視窗中執行，§4.11）"
+Write-Host "  4. 訓練任務模型: 儀表板的 Research › Prepare › Fine-tune，或 --stage finetune --task <task> --finetune-from <base run>\checkpoints\last.pt"
 ```
 
 ### 手動安裝步驟（如果腳本失敗）
@@ -762,8 +763,8 @@ echo -e "========================================${NC}"
 echo ""
 echo -e "下一步："
 echo -e "  1. 構建知識圖譜: python scripts/build_knowledge_graph.py"
-echo -e "  2. 計算最短路徑: python scripts/compute_shortest_paths.py"
-echo -e "  3. 訓練模型:     python scripts/train_model.py  (可選 --config <hyperparameters.yaml>；須在已設定 GPU 鎖的 shell 中執行，§4.11)"
+echo -e "  2. 訓練 base:     python scripts/train_model.py --data-dir <workspace> --stage base  (可選 --config <settings.yaml>；須在已設定 GPU 鎖的 shell 中執行，§4.11)"
+echo -e "  3. 訓練任務模型: 儀表板的 Research › Prepare › Fine-tune，或 --stage finetune --task <task> --finetune-from <base run>/checkpoints/last.pt"
 echo -e "  4. 啟動系統:     ./launch_shepherd.sh"
 echo ""
 echo -e "${YELLOW}注意事項：${NC}"
@@ -771,6 +772,8 @@ echo -e "  - FlashAttention-2 在 ARM 上不可用，已自動降級"
 echo -e "  - Vector Index 已自診斷管線剝離，不影響診斷；保留供未來向量映射使用"
 echo -e "  - 已針對128GB記憶體優化配置"
 ```
+
+沒有最短路徑步驟：任務模型從不讀 `shortest_paths.pt`，GB10 驗收 probe 也不讀。
 
 ### 手動排查步驟（如果腳本失敗）
 
@@ -966,105 +969,33 @@ nvidia-smi  # GPU利用率應該>80%
 
 ## 4.3 最短路徑表與 hop bound 設定
 
-工作區裡的 `shortest_paths.pt` 是預先計算好的距離表，`shortest_paths.meta.json`
-是它的 **sidecar**，記錄這張表是用什麼參數生成的——其中 `max_hops` 是最關鍵的一
-項。**兩個檔案屬於同一次 build，複製或搬移工作區時必須一起帶走。**
+舊版本建出的工作區裡可能還留著 `shortest_paths.pt`（預先計算好的距離表）與它的 sidecar
+`shortest_paths.meta.json`。**這個版本不寫入、不讀取、不拒絕，也不刪除這兩個檔案。**
+服務、訓練、任務測量與盤點（`scripts/audit_checkpoint_family.py --inventory`）有沒有這兩個
+檔案都一樣；盤點不會把這張表列為 checkpoint。
+GB10 驗收（`scripts/probe_deployment.py --m2-acceptance`）同樣兩個檔案都不讀：工作區裡的這
+一對在「工作區未被改動」的檢查（R8）涵蓋之內。這兩個檔案要保留或封存，由你決定。
 
-### 為什麼 sidecar 不能省
+任務模型不需要這張表。疾病模型對其圖視圖中的每個疾病排序，基因模型則在程序內從視圖算出
+它所用的精確跳數距離（`src/kg/graph_view.py` 的 `exact_distances`），所以建工作區時沒有
+最短路徑步驟。
 
-`max_hops` 決定「不可達」的代價值（`max_hops + 1`）。所有最短路徑分數都是相對這
-個值計算的，而它**無法從距離表本身還原**：BFS 在 `max_hops` 處停止展開，所以表內
-記錄的最大距離只是 `max_hops` 的**下界**——一張 3-hop 的表與一張「上限 5 但剛好
-沒有任何配對走到 5」的表，在張量層面完全相同。
-
-用錯的天花板評分不只是數字偏移，**它會改變候選排序**。同一張 3-hop 表、兩個候選：
-
-| 使用的 max_hops | A 分數 | B 分數 | 排序 |
-|---|---:|---:|---|
-| 正確的 3 | 0.4357142857 | 0.4250000000 | A > B |
-| 誤用 5 | 0.4166666667 | 0.4250000000 | **B > A** |
-
-因此系統**不會替你猜**。
-
-### 優先順序
-
-**距離表只會連同發佈時的 sidecar 一起上線。** 自 contract M2.5 起（2026-10-13），
-sidecar 必須帶有這張表的來源綁定（`schema_version`、`build_id`、`kg_digest`），而
-它的 `max_hops` 是 hop bound 唯一的來源。沒有 sidecar、或 sidecar 寫於配對協定之前
-的距離表，會在載入時被拒絕。
-
-1. **優先找回與距離表一起發佈的 sidecar**，之後兩個檔案一起保存、搬移。
-2. **否則為這個工作區重建這一對**：執行 `scripts/compute_shortest_paths.py`，它會把
-   距離表與 sidecar 一起發佈，並綁定到這個工作區的圖。**不要手寫 sidecar，也不要用
-   表內最大距離回推 `max_hops`**——那個數字證明不了天花板。
-3. 在那之前，要嘛保留正在服務的部署，要嘛改以不含最短路徑的方式服務：把
-   `shortest_paths.pt` **與** `shortest_paths.meta.json` 成對移出工作區並保留，再重新
-   載入。只留下 sidecar 會被當成「一對中的一邊」而拒絕。評分模式會因此改變。
-
-原本用來替缺 sidecar 的表補上 bound 的 `SHEPHERD_SP_HOP_BOUND`，已隨 M2.5 **退役**：
-這類表在讀取任何 bound 之前就會被拒絕，因此這個變數不再被讀取。請從服務環境中移除它。
-
-### 表與圖對不上的時候
-
-最短路徑表是**成對發布**的——`shortest_paths.pt` 與 `shortest_paths.meta.json`
-兩個檔案記錄同一個 `build_id`，另外還記錄了距離是從哪個圖算出來的 SHA-256。由此
-產生三種拒絕，而且三種都是部署問題，不是資料問題：
-
-| 日誌訊息 | 發生了什麼 | 怎麼處理 |
-|---|---|---|
-| *"published by different runs"* | 兩個檔案來自不同次建置。發布過程中斷，或其中一個被別處的檔案蓋過 | 對這個工作區重跑 `scripts/compute_shortest_paths.py`。**不要**從別處複製其中一個檔案去湊成對 |
-| *"computed from a different graph"* | 這張表屬於另一個工作區的 `kg.json`，它的節點索引指向的是別的節點 | 改用**這個**工作區建出來的表，或在這裡重新建 |
-| *"One side of a pair is not a pair"* | 一個檔案宣告了協定、另一個沒有——表發布了但 sidecar 沒跟上，或反過來 | 重跑生成腳本;這一對要嘛一起發布,要嘛都不發布 |
-
-**在這個機制之前建的表會被拒絕**（自 contract M2.5 起，2026-10-13；以前會帶著警告
-載入並回報為 `unrecorded`）。它沒有綁定資訊，沒有任何紀錄說明它的節點索引屬於哪個
-圖。請用 `scripts/compute_shortest_paths.py` 重新建置，或移除它、改以不含最短路徑的
-方式服務。
-
-`GET /api/v1/pipeline/status` 會回報 `sp_kg_binding`：表確實指向正在服務的那個圖
-時為 `verified`。**只要最短路徑是開啟的，它就不會是空的。**
-
-**用記憶體中的圖（而非工作區）建立管線時**根本無法檢查綁定，此時宣告了綁定的表會
-被**拒絕**而不是被假定成立；未帶綁定的表則如上所述同樣被拒絕。請改用工作區建立。
-
-
-### 缺少、未綁定或不合法的 sidecar
-
-距離表存在，而它的 sidecar **缺少、未帶綁定、或不合法**（不是 JSON 物件、`max_hops`
-不是整數或超出 1..127、或低於表內距離）時，候選 pipeline 會被**拒絕**，而不是退回
-猜測：
-
-- 服務**尚無**可用 pipeline（冷啟動）→ `/api/v1/diagnose` 回 **503**，不會回傳任何
-  候選疾病。
-- 服務**已有**正在運行的 pipeline → 該次 reload 被拒絕，**舊 pipeline 繼續服務**。
-
-### 完全沒有距離表時
-
-沒有 `shortest_paths.pt`（也沒有 sidecar）時，在預設配置（GNN 已載入、
-`sp_optional=True`）下**服務不會停止**，而是改為純 GNN 評分：`sp_ready=False`、
-`scoring_mode=gnn_only`、eta 實際為 1.0。**分數與排序會與啟用最短路徑時不同。** 每個
-結果的 served identity（§4.7）也會如實標明：最短路徑 `absent`、評分模式 `gnn_only`、eta
-`1.0`；Diagnosis 分頁與其報告會顯示 `NO SHORTEST-PATH TABLE: GNN score alone.` 橫幅。
-
-> **例外：** 若部署刻意設定了 `sp_optional=False`，SP 不可用時**不會建出 pipeline**：
-> 建置被拒絕（`PipelineBuildError`），啟動時不發布任何 pipeline、`/diagnose` 回 503；
-> reload 則被拒絕，原本的 pipeline 繼續服務。這不是「一律退回純 GNN」。目前 API 的
-> 建置路徑使用預設值 `sp_optional=True`。
+產生這張表的 `scripts/compute_shortest_paths.py`，以及證據 M5（BACKLOG 第 10 項）所用的
+可達性稽核 `scripts/audit_sp_reachability.py`，已在 K8-5 移除。仍包含它們的最後一個提交是
+`e02c0f7`（`e02c0f7562b166bf6e69677e51b8bc8ee2f0cb1a`），移除前它們的測試在該提交上通過；
+若要重建或稽核舊的表，請在該提交的 checkout 中執行它們。`SHEPHERD_SP_HOP_BOUND` 不會被讀取；
+服務環境若仍設定它，也不會有任何作用。
 
 ### 狀態檢查
 
-```bash
-curl -s http://localhost:8000/api/v1/pipeline/status
-```
+自 K8-4 起 `GET /api/v1/pipeline/status` 不再回報任何關於距離表的事：它的 `sp_ready`、
+`sp_max_hops`、`sp_hop_bound_source`、`sp_kg_binding` 與 `eta_configured` 欄位已隨 mixture
+移除。它回報的是所服務模型自己的事實：
 
 | 欄位 | 預期 |
 |---|---|
-| `sp_ready` | 啟用時 `true`；沒有距離表時 `false` |
-| `sp_max_hops` | 實際生效的天花板，讀自 sidecar |
-| `sp_hop_bound_source` | `sidecar`（設定值退役後唯一的來源） |
-| `sp_kg_binding` | `verified` |
-| `scoring_mode` | 啟用時 `gnn_plus_shortest_path`；SP 關閉且 GNN 正常時 `gnn_only` |
-| `served_identity` | 目前載入的 pipeline 服務的是什麼（§4.7）。啟用時：`shortest_paths.state` 為 `verified`，帶 sidecar 的 `build_id` 與 `max_hops`，`scoring_mode` 為 `gnn_plus_shortest_path`。沒有距離表時：`shortest_paths.state` 為 `absent`、`gnn_only`、`settings.eta` 為 `1.0` |
+| `scoring_mode` | 所服務模型的任務：`disease_task`、`gene_task` 或 `patients_like_me`；距離表從不改變它 |
+| `served_identity` | 目前載入的 pipeline 服務的是什麼（§4.7）：基因模型的 `shortest_paths.state` 為 `computed`（從其圖視圖算出的精確跳數距離，沒有距離表），另外兩種為 `absent`；`settings.eta` 為基因模型的 η，另外兩種為 null |
 
 ---
 
@@ -1146,10 +1077,9 @@ OBO 的 format version 冒充 release。
 - CSV 匯出：每一列的 `served_dataset_origin` 都是 `synthetic`，檔名為
   `diagnosis_SYNTHETIC_<patient>_<session>.csv`。
 
-紀錄自述不涵蓋的部分（`incomplete_by_design`）只顯示、不拒絕。沒有模型的 serving（只用
-`kg.json` 做路徑推理）不驗證 workspace，不受影響；它的 served identity 也如實這樣標明
-（checkpoint `absent`、圖 `unverified`、dataset record `absent`；見 §4.7「沒有模型的
-serving」）。pipeline reload 把 `kg.provenance.json` 列為必要檔案。
+紀錄自述不涵蓋的部分（`incomplete_by_design`）只顯示、不拒絕。沒有模型就不服務任何東西
+（自 K7 起）：每一個服務中的 pipeline 都讀它的 workspace，也就讀了這份紀錄（見 §4.7「沒有
+模型就沒有回答」）。pipeline reload 把 `kg.provenance.json` 列為必要檔案。
 
 ### 舊 workspace
 
@@ -1290,8 +1220,8 @@ BACKLOG 49）。
 
 ## 4.6 建圖與服務寫出的檔案權限
 
-最短路徑表與 sidecar、split manifest、`kg.provenance.json`、evaluation ledger、UI
-設定檔以及本體快取，都是先寫進暫存檔再換名到位，讀取的一方不會看到寫到一半的檔案。
+split manifest、`kg.provenance.json`、evaluation ledger、UI 設定檔以及本體快取，
+都是先寫進暫存檔再換名到位，讀取的一方不會看到寫到一半的檔案。
 它們發布時的權限，與一般 `open()` 寫出時相同：
 
 - **新建的檔案**：依目錄的規則，也就是 umask（常見是 `022`，產生 `0644`）；目錄
@@ -1315,7 +1245,7 @@ BACKLOG 49）。
 ## 4.7 診斷結果是由什麼產生的：served identity（自 contract M3c 起）
 
 自 contract M3c 起（2026-10-16），每一個診斷結果都帶有 **served identity**：產生它的
-checkpoint、圖、workspace manifest、最短路徑表與 dataset record，以 digest 或識別碼標明，
+checkpoint、圖、workspace manifest、最短路徑項與 dataset record，以 digest 或識別碼標明，
 再加上評分模式與實際生效的 serving 設定——**每個部分都用文字寫出自己的狀態**。pipeline
 是從建置時實際讀取的內容組出這份身分，產生結果時不會重新雜湊任何檔案，也不會用
 「unknown」填空。
@@ -1328,136 +1258,153 @@ checkpoint、圖、workspace manifest、最短路徑表與 dataset record，以 
   有讀取它的用戶端必須停止讀取。
 - **新增 `served_identity`**，而且一定存在。它複製自這個回應所依據的那個結果，絕不取自
   服務的共享狀態，因此請求進行中剛好發生的 reload 不會改掉它的標示。
-- **只有 demo 回答時它才是 `null`。** 完全沒有設定任何 pipeline 時，服務仍會回傳示意用的
-  候選與警告 `Pipeline not fully initialized - using mock data`；沒有任何東西被服務，所以
-  也沒有可標明的身分。已設定 pipeline 卻建置失敗的部署回 503，絕不會給 demo 回答。
+- **它永遠不是 `null`**（自 K7 起）：每一個回答都來自模型。沒有服務任何 pipeline 時——什麼都
+  沒設定、只指定了圖而沒有模型、或建置失敗——`/api/v1/diagnose` 回 503 並附上原因，`/ready`
+  也一樣；`/health` 維持 200，讓服務能啟動、能載入模型。過去在什麼都沒設定時回傳的示意用
+  「demo 回答」（`demo/v1`、`Pipeline not fully initialized - using mock data`）已移除。
 
 服務本身的版本（`/health`、`/` 與 Swagger 標題中的 `1.0.0`）是 API 的版本，不是所服務
 內容的身分。
 
-### 診斷回應分為三種類型（Batch 4）
+### 診斷回應是結果聯集中的一種類型（Batch 4；任務類型自 K3–K4 起）
 
-`POST /api/v1/diagnose` 回傳一種結果，由 `result_kind` 標明，`result_schema_version` 為 2
-（`docs/working/results-review/SPEC_1_RESULTS_REVIEW.md` §2.1）。每種類型只帶自己的值，
-並拒絕其他類型的欄位：
+`POST /api/v1/diagnose` 回傳一種結果，由 `result_kind` 標明，`result_schema_version` 為 3
+（`docs/working/results-review/SPEC_1_RESULTS_REVIEW.md` §2.1）。類型取決於所服務的模型；
+每種類型只帶自己的值，並拒絕其他類型的欄位。格式版本隨回應外形改變：自 K8-4r 起為 3，標明
+K8-4 的變更，即 served identity 的 `shortest_paths` 只留下 `state`（`build_id` 與 `max_hops`
+已移除）。版本 2 的嚴格用戶端會在這個欄位拒絕版本 3 的回應，並列出不同的鍵；診斷頁的
+Markdown 報告會寫明所保存回應的版本。
 
 | `result_kind` | 何時回傳 | 每個候選的值 | 結果層級欄位 |
 |---|---|---|---|
-| `served_mixture/v1` | 有服務模型時 | `served_score`，排名所依的值：有最短路徑表時為 η × `model_term` + (1 − η) × SP，沒有時就是 `model_term`；`model_term`，即 (cos + 1) / 2；`sp_term`，SP 紀錄 | `eta`、`candidates_reached`（截斷前 discovery 到達的疾病數）、`tie_policy` |
-| `path_reasoning/v1` | 沒有設定任何模型來源時 | `path_score`，路徑彙總分數 | `path_score_aggregation`、`tie_policy` |
-| `demo/v1` | 從未設定任何 pipeline 時 | 無：沒有分數、說明、路徑或基因 | — |
+| `disease_task/v1` | 服務的是為疾病任務 finetune 的模型 | `score`，疾病 head 的分數（在 [−4, 0]，未校準），涵蓋模型圖視圖中的每個疾病；證據欄位只解釋該列，不改變分數或順序 | `tie_policy` |
+| `gene_task/v1` | 服務的是基因任務模型；它排序請求的 `candidate_genes` | `score` = η × `embsim` + (1 − η) × `sp_similarity`；`embsim`；`sp_similarity`；`mean_distance`，從模型圖視圖算出的精確平均跳數距離 | `sp_bounds`、`tie_policy`（η 為 served identity 的 `settings.eta`） |
+| `patients_like_me/v1` | 服務的是 patients-like-me 模型，並指定參考 cohort 版本 | `similarity`（在 [−4, 0]，未校準）；`case_id`、紀錄的 `phenotypes`、診斷與 `causal_genes` | `reference_cohort`、`tie_policy` |
 
-- **已移除，沒有別名：** `confidence_score`、`gnn_score`、`sp_score`、`reasoning_score`
-  （改為 `path_score`，只在路徑推理中出現）與 `confidence_label`（改為 `evidence_label`，
-  `evidence_package` 內也一樣）。原本讀取這些欄位的用戶端，改讀該類型自己的欄位。
-- **`sp_term` 不會把缺少的值寫成 0。** 它的 `status` 為 `COMPUTED`、`COMPUTED_PARTIAL`
-  （部分送出的表型未能對應；`phenotypes_mapped` / `phenotypes_submitted` 寫明數量）、
-  `NO_TABLE`、`TARGET_UNMAPPED` 或 `NO_PHENOTYPE_MAPPED`。`mean_hop_distance` 與 `score`
-  （1 / (1 + d)）只在前兩種狀態出現。實際服務的結果中，只有 `NO_TABLE`（在 `gnn_only`
-  下，不做混合）沒有數值：圖的節點對應中缺少的疾病或表型，會先以「無法計算的模型分數」
-  被拒絕（見下）。若真有沒有數值的狀態被混合，混合分數會以 0 計入，紀錄上也會寫明
-  （`mixed_as: 0.0`）。
-- **合法輸入的排名不變**：數值、順序與平手都相同（`served_score` 就是原本的
-  `confidence_score`）。
-- **新增的拒絕條件。** 服務無法計算的模型分數（沒有 embedding、沒有表、某個節點沒有對應列，
-  或對應列超出表的範圍——過去會被截到最後一列）或不是有限值的分數，會拒絕整個結果：HTTP 500，
+路徑推理的回答（`path_reasoning/v1`，沒有模型而只服務圖）與 demo 回答（`demo/v1`）自 K7 起
+已移除：沒有模型就沒有回答（503，見上）。沒有 model spec 的 checkpoint 過去所用的 mixture
+回答（`served_mixture/v1`：`served_score`、`model_term`、`sp_term`、`eta`、
+`candidates_reached`）自 K8-4 起已移除：這類檔案在載入時就被拒絕（見下「沒有模型就沒有回答」）。
+
+- **已移除，沒有別名：** `confidence_score`、`gnn_score`、`sp_score`、`reasoning_score` 與
+  `confidence_label`（改為 `evidence_label`，`evidence_package` 內也一樣）。原本讀取這些欄位
+  的用戶端，改讀該類型自己的欄位。
+- **拒絕條件。** 服務無法計算的模型分數（圖中有、但節點對應中沒有對應列的表型）或不是有限值的
+  分數，會拒絕整個結果：HTTP 500，
   `error` 以代碼開頭（`MODEL_TERM_UNAVAILABLE: …`、`NON_FINITE_SCORE: …`）。在已驗證的
   workspace 上不應出現這些狀態。圖中沒有任何表型的輸入照舊被拒絕（`No valid phenotypes after
   validation`）。未知的 id 一律列在 `phenotype_input.unknown`；請求有回答時也會以警告
   寫明（`Unknown phenotype: …`），沒有任何已知 id 時，警告就是那則拒絕。
-- **`phenotype_input`**（收到的、未知的、移除的重複項、實際使用的）會出現在回應中；demo 回答，
-  以及在表型對應之前就被拒絕的請求，該欄為 null。
+- **`phenotype_input`**（收到的、未知的、移除的重複項、實際使用的）會出現在回應中；在表型
+  對應之前就被拒絕的請求，該欄為 null。
 
 ### 組成部分與狀態
 
 ```json
 "served_identity": {
-  "scoring_mode": "gnn_plus_shortest_path",
+  "scoring_mode": "disease_task",
   "checkpoint": {"state": "verified", "sha256": "<所讀 checkpoint 的 SHA-256>"},
   "graph": {"state": "verified", "kg_sha256": "<kg.json 的 SHA-256>",
             "split_manifest_sha256": "<split_manifest.json 的 SHA-256>"},
-  "shortest_paths": {"state": "verified", "build_id": "<sidecar 的 build_id>", "max_hops": 5},
+  "shortest_paths": {"state": "absent"},
   "dataset_record": {"state": "verified", "origin": "files",
                      "sha256": "<kg.provenance.json 的 SHA-256>"},
-  "settings": {"device": "cuda:0", "device_requested": "auto", "eta": 0.7,
+  "settings": {"device": "cuda:0", "device_requested": "auto", "eta": null,
                "max_path_length": 4, "path_length_penalty": 0.9,
-               "aggregation_method": "weighted_sum", "max_paths_per_candidate": 10,
+               "max_paths_per_candidate": 10,
                "use_direct_path_optimization": true,
                "phenotype_normalisation_version": 1}
 }
 ```
 
+**服務中的模型一律從 checkpoint 讀入，建立在連同 dataset record 一起驗證過的 workspace 之上**
+（自 K7 起），所以這三個部分各只有一種狀態；只有最短路徑部分會變，而且跟著評分模式走。
+
 | 部分 | 狀態 | 意義 | 值 |
 |---|---|---|---|
 | `checkpoint` | `verified` | 模型由一次讀取的 checkpoint 建成，且其紀錄與正在服務的圖相符（contract M2.4） | `sha256`：那次讀取的 digest |
-| | `supplied_in_memory` | 程式直接交給 pipeline 一個模型物件，沒有讀任何 checkpoint 位元組 | `sha256` 為 null |
-| | `absent` | 沒有模型：由路徑推理排序候選 | `sha256` 為 null |
 | `graph` | `verified` | `kg.json` 與 `split_manifest.json` 各讀一次，且圖的 digest 與 manifest 相符 | `kg_sha256`、`split_manifest_sha256` |
-| | `unverified` | 圖從檔案讀入，但沒有與任何 workspace manifest 比對（沒有模型的 serving，見下文） | `kg_sha256`；`split_manifest_sha256` 為 null |
-| | `in_memory` | 程式在記憶體中提供圖，沒有讀任何檔案 | 兩者皆為 null |
-| `shortest_paths` | `verified` | 距離表與其 sidecar 共用同一個 `build_id`，並指向正在服務的圖（§4.3） | `build_id`；`max_hops`（取自 sidecar） |
-| | `absent` | 沒有距離表參與評分 | 兩者皆為 null |
-| `dataset_record` | `verified` | manifest 綁定、且指向正在服務之圖的紀錄（§4.4）；恰在圖為 verified 時才是 verified | `origin`（`files` 或 `synthetic`）；`kg.provenance.json` 的 `sha256` |
-| | `absent` | 沒有驗證任何 workspace，因此沒有讀取紀錄 | 全部為 null |
-| `scoring_mode` | — | `gnn_plus_shortest_path`、`gnn_only` 或 `path_reasoning_fallback` | |
+| `shortest_paths` | `computed` | 基因任務的精確跳數距離，在程序內從模型的圖視圖算出（沒有距離表） | 無 |
+| | `absent` | 沒有最短路徑項參與評分（疾病與 patients-like-me 任務） | 無 |
+| `dataset_record` | `verified` | manifest 綁定、且指向正在服務之圖的紀錄（§4.4） | `origin`（`files` 或 `synthetic`）；`kg.provenance.json` 的 `sha256` |
+| `scoring_mode` | — | `disease_task`、`gene_task` 或 `patients_like_me`：所服務模型的任務 | |
 | `settings` | — | 會改變分數的 serving 設定，以實際生效者為準 | 見下 |
+
+checkpoint 的 `supplied_in_memory` 與 `absent` 狀態、圖的 `unverified` 與 `in_memory` 狀態，
+以及 `absent` 的 dataset record，自 K7 起已隨記憶體交入的介面與產生它們的路徑推理回答一起
+移除。最短路徑的 `verified` 狀態及其 `build_id` 與 `max_hops`，以及評分模式
+`gnn_plus_shortest_path` 與 `gnn_only`，自 K8-4 起已隨產生它們的 mixture 一起移除。
 
 `settings`：
 
 - `device`：模型實際在哪裡執行——torch 對其參數所在裝置的名稱（`cuda:0`、`cpu`）。
-  沒有模型時為 null。
 - `device_requested`：要求的是什麼——沒有指定時為 `auto`，或 `cuda`、`cuda:N`、`cpu`
-  （§4.8）。沒有模型時為 null。
-- `eta`：實際生效的混合權重——有距離表時為設定值，沒有時為 `1.0`。沒有模型時為 null。
-- `max_path_length`、`path_length_penalty`、`aggregation_method`、
-  `max_paths_per_candidate`、`use_direct_path_optimization`：路徑探索與路徑評分，
-  在每一種模式下都生效，因為候選就是這些路徑能到達的疾病。
+  （§4.8）。
+- `eta`：實際生效的混合權重——基因任務的 η（取自其 model spec）；疾病與 patients-like-me
+  任務不做混合，為 null。
+- `max_path_length`、`path_length_penalty`、`max_paths_per_candidate`、
+  `use_direct_path_optimization`：路徑探索與路徑評分——疾病列所顯示的證據路徑。路徑彙總設定（`aggregation_method`）自 K7 起已移除：不再有任何
+  東西依路徑分數的彙總排序。
 - `phenotype_normalisation_version`：評分前套用於表型清單的規則版本（目前為 `1`）。
 
-各部分不能互相矛盾：恰在模式不是 `path_reasoning_fallback` 時才有模型在服務；距離表
-恰在 `gnn_plus_shortest_path` 時才是 `verified`；verified 的 checkpoint 或距離表只會建立
-在 verified 的圖之上。只有在某部分的狀態表示沒有東西可標明時，它的值才會是 null。
+各部分不能互相矛盾：每種評分模式恰有一種最短路徑狀態（`gene_task` 為 `computed`，其餘為
+`absent`），與此不符的身分在建立時就被拒絕。
 
 ### pipeline 狀態裡的同一個欄位
 
-`GET /api/v1/pipeline/status` 會針對目前載入的 pipeline 帶出 `served_identity`，與既有
-欄位並列，既有欄位不變（`scoring_mode`、`sp_kg_binding`、`dataset_record`、含 `device` 的
-`checkpoint_meta` 等）。沒有載入任何東西時為 null。**狀態描述的是現在載入的東西，reload
-會換掉它。** 要知道某個結果是由什麼產生的，請讀那個結果自己的 `served_identity`，或它的
-報告與 CSV，而不是狀態。
+`GET /api/v1/pipeline/status` 會針對目前載入的 pipeline 帶出 `served_identity`，與其他
+欄位並列（`scoring_mode` 與 `eta_effective`，分別等於身分的評分模式與 `settings.eta`；
+`dataset_record`；含 `device` 的 `checkpoint_meta` 等）。沒有載入任何東西時為 null。距離表與
+mixture 的欄位（`sp_ready`、`eta_configured`、`sp_max_hops`、`sp_hop_bound_source`、
+`sp_kg_binding`）以及 `fingerprint_warnings` 自 K8-4 起已移除。**狀態描述的是現在載入的
+東西，reload 會換掉它。** 要知道某個結果是由什麼產生的，請讀那個結果自己的
+`served_identity`，或它的報告與 CSV，而不是狀態。
 
 ### 怎麼讀
 
-- **正常的部署**應該是：checkpoint `verified`、圖 `verified`、最短路徑 `verified`、
-  dataset record `verified` 且來源為 `files`、`gnn_plus_shortest_path`、裝置 `cuda:0`，
-  要求的是 `auto` 或 `cuda`。
+- **正常的部署**應該是：checkpoint `verified`、圖 `verified`、dataset record `verified` 且
+  來源為 `files`、任務的評分模式（`disease_task`、`gene_task` 或 `patients_like_me`）及其
+  最短路徑狀態、裝置 `cuda:0`，要求的是 `auto` 或 `cuda`。
 - **把 digest 與你部署的檔案比對**：checkpoint、`kg.json`、`split_manifest.json` 與
-  `kg.provenance.json` 的 SHA-256 應與身分中的 digest 相同，距離表的 `build_id` 應與
-  `shortest_paths.meta.json` 裡的一致。
+  `kg.provenance.json` 的 SHA-256 應與身分中的 digest 相同。
 - **其他情況都會明寫，不會隱藏**：來源 `synthetic` 表示這是產生出來的 workspace，不是臨床
-  資料（§4.4）；最短路徑 `absent` 加上 `gnn_only` 與 eta `1.0` 表示沒有服務距離表（§4.3）；
-  checkpoint `absent` 是沒有模型的路徑推理（見下文）；裝置 `cpu` 是明確要求的（§4.8）。
+  資料（§4.4）；裝置 `cpu` 是明確要求的（§4.8）。
 - **它不證明什麼**，以 contract 的宣稱界線顯示在身分下方（原文照錄）："Checked: these
   files are the ones their records name, and the records agree on the relations marked ✓.
   Not checked: who changed them, or anything a person able to edit both files and records
   could alter."
 
-### 沒有模型的 serving
+### 沒有模型就沒有回答
 
-沒有設定 checkpoint、只用 `kg.json` 做路徑推理時，不會驗證任何 workspace（§4.4），它的
-身分也如實這樣寫：checkpoint `absent`；圖 `unverified`，帶它所讀 `kg.json` 的 digest，
-沒有 manifest digest；最短路徑與 dataset record `absent`；`path_reasoning_fallback`；
-裝置、要求的裝置與 eta 皆為 null。其中沒有任何部分宣稱已驗證。這個模式是否預設保留，
-是尚未決定的政策問題（B-2），M3c 沒有決定它。
+自 K7 起，沒有模型就不會只服務圖（路徑推理的退路已移除，未決的政策問題 B-2 隨之結案），
+也不再服務以記憶體交入的模型或圖。只設定 `SHEPHERD_KG_PATH` 而沒有
+`SHEPHERD_CHECKPOINT_PATH`、或什麼都沒設定就啟動的服務，不會發布任何 pipeline：
+`/api/v1/diagnose` 與 `/ready` 回 503 並附上原因，`/health` 回 200，Diagnosis 頁面提供
+「Load a model…」。reload 失敗時，使用中的模型與其就緒狀態維持不變。
+
+**沒有 model spec 的 checkpoint（ShepherdGNN 歷史檔）在載入時就被拒絕**（自 K8-4 起）：啟動時，
+以及帶或不帶任務的 reload，都在建出任何模型之前拒絕，原因為 "written before the model spec:
+not readable by this build; start a new run"（自 K8-7b，2026-11-08 起，拒絕這類檔案時一律用這一句）。
+provenance contract 之前的檔案連訓練輸入也沒有紀錄，會先因此被拒絕（"records no
+training_input_digests"）。被拒絕的啟動不發布任何東西（503，見上）；被拒絕的 reload 讓使用中的
+模型繼續服務。這些檔案仍留在磁碟上，連同其 SHA-256、紀錄與使用紀錄一起列出，作為本版無法讀取的紀錄
+（「Record not readable」，附上那一句；自 K8-7b 起不再是「History · never run」）；過去服務它們的
+mixture 已移除。
+
+**紀錄以兩種方式指稱同一份輸入的 checkpoint 也同樣被拒絕**（自 K8-4r 起），例如
+`data_roles.kg` 與其 `training_input_digests.kg` 不同："the record contradicts itself:
+data_roles.kg … differs from training_input_digests.kg …"。服務、量測與訓練（finetune、resume、
+extend、branch）都經由同一個讀取器讀取紀錄，所以不論兩項聲明中哪一項有誤，都不會使用這種檔案。
+同一張圖上以不同病例訓練的兩個模型不受影響：各自的紀錄都前後一致。
 
 ### Diagnosis 分頁與其匯出
 
 WebUI 顯示的是**結果自己的身分**，絕不是狀態的：
 
 - **結果上方的橫幅**，每個不可漏看的狀態一條：`SYNTHETIC WORKSPACE: not a clinical
-  result.`、`NO TRAINED MODEL: path-reasoning fallback.`、`NO SHORTEST-PATH TABLE: GNN
-  score alone.`、`DEMO ANSWER: not computed.`，以及回應沒有這個欄位時（M3c 之前的伺服器）
-  的 `WHAT PRODUCED THIS RESULT WAS NOT REPORTED.`。
+  result.`，以及回應沒有這個欄位時（M3c 之前的伺服器）的 `WHAT PRODUCED THIS RESULT WAS NOT
+  REPORTED.`。沒有訓練模型與 demo 的橫幅自 K7 起、沒有最短路徑表的橫幅自 K8-4 起，已隨它們
+  描述的回答一起移除。
 - **結果上方的標記（badge）**（自 M5-2 起）把結果的整個身分逐項與「Model in use」卡片最近一次
   讀到的使用中模型比對："Produced by the model in use"、"Produced by an earlier model or
   pipeline — N parts differ ›"，或附一個原因的 "Cannot check against the model in use yet"。
@@ -1472,18 +1419,19 @@ WebUI 顯示的是**結果自己的身分**，絕不是狀態的：
 - **Markdown 報告**在候選之前有「What produced this result」段落：同樣的橫幅、一個
   Part | State | Value 表格（digest 完整寫出，`sha256:<64 hex>`）、宣稱界線與固定聲明。
   缺少的部分寫成它的狀態與原因，絕不留白。
-- **表格上方的類型標籤**說明 Score 欄是什麼，η 取自結果本身："Served ranking today:
-  diseases reached by path discovery, scored as η × model term + (1 − η) × SP, η = 0.7"
-  （沒有表時為 "…scored by the model term alone"）、"No model loaded: ranked by path
-  reasoning, not by a model"，或 "Demo answer: no pipeline is configured; not a
-  diagnosis"。欄位依類型而定：混合排名有 Score 與 Model term，有服務最短路徑表時旁邊再加 SP
-  （沒有數值的狀態以文字顯示，絕不寫 0.000）；路徑推理只有 Score；demo 回答沒有任何分數。
+- **表格上方的類型標籤**說明 Score 欄是什麼："Disease task model: every disease of the
+  model's graph ranked by its Score (uncalibrated); paths only explain the rows shown"、
+  "Gene task model: your candidate genes ranked by their Score (uncalibrated), the model's
+  similarity mixed with shortest-path proximity"、"Patients-like-me model: the reference
+  cohort's patients ranked by Similarity (uncalibrated); a shared causal gene is not
+  implied"。欄位依類型而定：疾病任務有 Score；基因任務有 Score、模型相似度與 SP 相似度；
+  patients-like-me 有 Similarity。
 - **被拒絕的結果**（`MODEL_TERM_UNAVAILABLE`、`NON_FINITE_SCORE`）以一句話顯示代碼與節點，
   不會排出任何結果。
 - **CSV** 以欄位帶出身分（見下）。
-- **檔名**帶有複製出去後也不能遺失的兩種狀態：合成 workspace 為
-  `diagnosis_SYNTHETIC_<patient>_<session>.csv` / `_report.md`，demo 回答為
-  `diagnosis_DEMO_…`；其他情況不變。
+- **檔名**帶有複製出去後也不能遺失的狀態：合成 workspace 為
+  `diagnosis_SYNTHETIC_<patient>_<session>.csv` / `_report.md`；其他情況不變（`diagnosis_DEMO_…`
+  檔名已隨 demo 回答移除，K7）。
 
 ### CSV 的候選欄位（Batch 4）
 
@@ -1491,41 +1439,41 @@ WebUI 顯示的是**結果自己的身分**，絕不是狀態的：
 
 | 類型 | 候選欄位，依序 |
 |---|---|
-| `served_mixture/v1` | `result_kind`、`rank`、`disease_id`、`disease_name`、`served_score`、`model_term`、`sp_term_status`、`sp_term_score`、`sp_term_mean_hop_distance`、`sp_term_phenotypes_mapped`、`sp_term_phenotypes_submitted`、`sp_term_mixed_as`，接著是證據欄位 |
-| `path_reasoning/v1` | `result_kind`、`rank`、`disease_id`、`disease_name`、`path_score`，接著是證據欄位 |
-| `demo/v1` | `result_kind`、`rank`、`disease_id`、`disease_name`、`matching_phenotypes` |
+| `disease_task/v1` | `result_kind`、`rank`、`disease_id`、`disease_name`、`score`，接著是證據欄位 |
+| `gene_task/v1` | `result_kind`、`rank`、`gene_id`、`gene_name`、`score`、`embsim`、`sp_similarity`、`mean_distance`、`sp_bounds_lower`、`sp_bounds_upper` |
+| `patients_like_me/v1` | `result_kind`、`rank`、`case_id`、`similarity`、`disease_id`、`disease_name`、`causal_genes`、`phenotypes`、`reference_cohort_label`、`reference_cohort_version_sha256`、`reference_cohort_samples_sha256`、`reference_cohort_patients` |
+
+`path_reasoning/v1`（`path_score`）與 `demo/v1` 兩列自 K7 起已移除，`served_mixture/v1` 列
+（`served_score`、`model_term`、`sp_term_` 各欄）自 K8-4 起已移除。
 
 證據欄位為 `evidence_label`、`evidence_mode`、`evidence_summary`、`min_path_length`、
-`num_direct_paths`、`num_analogies`、`supporting_genes` 與 `matching_phenotypes`。
-`sp_term_status` 放在 SP 數值旁：狀態沒有數值時，數值欄留空，絕不寫 0；混合分數仍以 0 計入時，
-`sp_term_mixed_as` 為 `0.0000`。沒有建立證據包時（說明關閉），路徑數留空。`served_score`
-是候選欄位，不屬於下方的身分欄位。
+`num_direct_paths`、`supporting_genes` 與 `matching_phenotypes`（`num_analogies` 自 K8-4 起已隨
+類比證據移除）。沒有建立證據包時（說明關閉），路徑數留空。`score` 與 `similarity` 是候選欄位，
+不屬於下方的身分欄位。基因結果的 SP 上下界與 patients-like-me
+結果的參考 cohort 版本，每一列都相同。
 
 ### CSV 的身分欄位
 
-CSV 仍然**只有一列標題**、沒有前言。結果類型的候選欄位在前（見上）；其後接 21 個
+CSV 仍然**只有一列標題**、沒有前言。結果類型的候選欄位在前（見上）；其後接 18 個
 欄位，每欄存放身分的一個部分，**每一列都相同**：
 
 | 欄位 | 內容 | 身分中為 null 時 |
 |---|---|---|
-| `served_scoring_mode` | `gnn_plus_shortest_path`、`gnn_only` 或 `path_reasoning_fallback` | — |
-| `served_checkpoint_state` | `verified`、`supplied_in_memory` 或 `absent` | — |
-| `served_checkpoint_sha256` | 所讀 checkpoint 的 `sha256:<hex>` | `absent`（沒有模型）；`none`（記憶體中提供的模型） |
-| `served_kg_state` | `verified`、`unverified` 或 `in_memory` | — |
-| `served_kg_sha256` | 所讀 `kg.json` 的 `sha256:<hex>` | `none`（記憶體中提供的圖） |
-| `served_split_manifest_sha256` | 所讀 `split_manifest.json` 的 `sha256:<hex>` | `absent`（圖為 `unverified` 或 `in_memory`） |
-| `served_sp_state` | `verified` 或 `absent` | — |
-| `served_sp_build_id` | 距離表與其 sidecar 共用的 `build_id` | `absent` |
-| `served_sp_max_hops` | sidecar 的 `max_hops` | `absent` |
-| `served_dataset_record_state` | `verified` 或 `absent` | — |
-| `served_dataset_origin` | `files` 或 `synthetic` | `absent` |
-| `served_dataset_record_sha256` | 所讀 `kg.provenance.json` 的 `sha256:<hex>` | `absent` |
-| `served_device` | 實際生效的裝置（`cuda:0`、`cpu`） | `none`（沒有模型）；`not_stated`（記憶體中提供、未表明裝置的模型） |
-| `served_device_requested` | 所要求的 `auto`、`cuda`、`cuda:N` 或 `cpu` | `none`（沒有模型，或記憶體中提供且未指定裝置的模型） |
-| `served_eta` | 實際生效的混合權重 | `none`（沒有模型） |
+| `served_scoring_mode` | `disease_task`、`gene_task` 或 `patients_like_me` | — |
+| `served_checkpoint_state` | `verified` | — |
+| `served_checkpoint_sha256` | 所讀 checkpoint 的 `sha256:<hex>` | — |
+| `served_kg_state` | `verified` | — |
+| `served_kg_sha256` | 所讀 `kg.json` 的 `sha256:<hex>` | — |
+| `served_split_manifest_sha256` | 所讀 `split_manifest.json` 的 `sha256:<hex>` | — |
+| `served_sp_state` | `computed` 或 `absent` | — |
+| `served_dataset_record_state` | `verified` | — |
+| `served_dataset_origin` | `files` 或 `synthetic` | — |
+| `served_dataset_record_sha256` | 所讀 `kg.provenance.json` 的 `sha256:<hex>` | — |
+| `served_device` | 實際生效的裝置（`cuda:0`、`cpu`） | — |
+| `served_device_requested` | 所要求的 `auto`、`cuda`、`cuda:N` 或 `cpu` | — |
+| `served_eta` | 實際生效的混合權重 | `none`（疾病或 patients-like-me 模型，不做混合） |
 | `served_max_path_length` | 整數 | — |
 | `served_path_length_penalty` | 數字 | — |
-| `served_aggregation_method` | 文字 | — |
 | `served_max_paths_per_candidate` | 整數 | — |
 | `served_direct_path_optimization` | `true` 或 `false`（`use_direct_path_optimization`） | — |
 | `served_phenotype_normalisation_version` | 整數（目前為 `1`） | — |
@@ -1538,11 +1486,13 @@ CSV 仍然**只有一列標題**、沒有前言。結果類型的候選欄位在
 
 | 字 | 何時寫出 |
 |---|---|
-| `absent` | 該部分不存在：沒有 checkpoint、距離表、manifest 或 dataset record |
-| `none` | 不適用：沒有模型時的裝置、要求的裝置或 eta；記憶體中提供的模型或圖沒有 digest；記憶體中提供的模型沒有要求的裝置 |
-| `not_stated` | 記憶體中提供的模型沒有表明它的裝置（僅 `served_device`） |
-| `demo` | demo 回答的每一個 `served_` 欄位 |
+| `none` | 不適用：不做混合的模型沒有 η |
 | `not_reported` | 回應沒有帶 `served_identity` 時的每一個 `served_` 欄位，或回應漏掉的某個值 |
+
+記憶體中提供的模型或圖所用的字（`none` digest、`not_stated`）、沒有模型與 demo 回答所用的字
+（`demo`），以及 `served_aggregation_method` 欄位，自 K7 起已移除。`served_sp_build_id` 與
+`served_sp_max_hops` 欄位，以及寫入它們時所用的字 `absent`，自 K8-4 起已移除（距離表的 build id
+與 hop bound 已離開身分），所以 `served_sp_state` 之後的欄位比之前寫出的檔案提前兩欄。
 
 - 試算表會當成公式執行的文字儲存格——以 `=`、`+`、`-`、`@`、tab 或 carriage return
   開頭者——會在前面加上 `'`。這也適用於自由文字的候選欄位；數值欄位不受影響。
@@ -1563,7 +1513,8 @@ CSV 仍然**只有一列標題**、沒有前言。結果類型的候選欄位在
 
 - **啟動時**：服務環境中的 `SHEPHERD_DEVICE`。
 - **reload 時**：請求的 `device`（`POST /api/v1/pipeline/reload`）。null 或空白時先退回
-  `SHEPHERD_DEVICE`，再退回 `auto`；空白的環境變數也視為未設定。
+  `SHEPHERD_DEVICE`，再退回 `auto`；空白的環境變數也視為未設定。請求的五個欄位，以及任何其他
+  欄位回 422 的規則，見 §4.14（「重新載入請求」）。
 
 **何時檢查**：只要要服務 checkpoint，就在讀取任何東西之前檢查——服務在解析 `kg.json`
 之前先確定裝置（reload 則在檔案檢查之後、自動選擇讀取任何候選 checkpoint 之前），pipeline
@@ -1577,8 +1528,6 @@ CSV 仍然**只有一列標題**、沒有前言。結果類型的候選欄位在
 > SHEPHERD_DEVICE=cpu (or send device 'cpu' with a reload) explicitly for
 > development; the served identity records the device asked for and the one in
 > effect.
-
-沒有 checkpoint 的 serving（只做路徑推理）不會決定任何裝置。
 
 **部署必須有硬體加速，目前唯一支援的後端是 CUDA（NVIDIA）。** 這是目前的範圍，不是永久的
 架構限制。torch 的 ROCm 版本也把裝置稱為 `cuda`，但這裡沒有驗證過。其他加速硬體會在實際目標
@@ -1594,7 +1543,8 @@ CSV 仍然**只有一列標題**、沒有前言。結果類型的候選欄位在
 > 看得出來。**現在會被拒絕。** CPU 開發機必須設定
 > `SHEPHERD_DEVICE=cpu`（reload 時送 `"device": "cpu"`，或留 null 讓這個變數生效）。
 > 字面上的 `auto` 以前會傳到 torch 才失敗，現在與未設定是同一個要求。WebUI 沒有裝置
-> 選擇器。`scripts/setup_demo.py` 印出的 serving 指令會帶上 demo 訓練時用的裝置。
+> 選擇器。`scripts/setup_demo.py --train-model` 印出的 serving 指令會指名它訓練的疾病子模型
+> （自 K7 起先訓練一個 base，再訓練一個疾病子模型），並帶上訓練時用的裝置。
 
 ---
 
@@ -1605,8 +1555,9 @@ CSV 仍然**只有一列標題**、沒有前言。結果類型的候選欄位在
 流程如下：
 
 1. `scripts/import_cohort.py` 先預覽、再提交一個對應到某個 workspace 圖的 cohort 版本；
-2. `scripts/measure_scorer.py --cohort LABEL --registry DIR` 在這個版本上量測 checkpoint
-   （Mode C），並保留完整報告；
+2. `scripts/measure_scorer.py --mode PROTOCOL --cohort LABEL --registry DIR` 以這個 build
+   針對模型的 learning stage 與 task head 所實作的一種協定，在這個版本上量測 checkpoint，並保留
+   完整報告；
 3. `--record`，或之後用 `scripts/record_evaluation.py --report`，把報告登錄到 checkpoint 旁的
    `evaluations.json`；
 4. Diagnosis 頁面的「Model in use」卡片以狀態顯示目前載入之 checkpoint 已登錄的測試（自 M5-2
@@ -1717,12 +1668,27 @@ manifest 所綁定的圖，並印出：
 ### 量測
 
 ```bash
-python scripts/measure_scorer.py \
+python scripts/measure_scorer.py --mode disease \
     --checkpoint data/workspaces/<ws>/runs/<arch>/<run>/checkpoints/<file>.pt \
     --data-dir data/workspaces/<ws> \
     --cohort mygene2-2026-10 --registry /srv/shepherd/cohorts \
     [--training-evidence DIR ...] [--record] [--device auto|cuda|cpu] [--batch-size 32]
 ```
+
+`--mode` 為必填，指明**協定**（protocol）：這個 build 針對模型的 learning stage 與 task head
+所實作的量測（`src/evaluation/protocols.py`），目前是 `disease`、`gene` 與 `patients_like_me`，
+finetune 模型的每個 task head 各一種。報告的 mode 就是協定的名稱。執行時依它讀到的位元組判斷
+協定，拒絕時會說明原因，並以「Nothing was written.」結尾：已登錄的版本必須列出協定所需的基因
+（`gene` 需要致病基因與候選基因，`patients_like_me` 需要致病基因），在讀入其 `cohort.json` 後
+立即檢查，早於 workspace 與 checkpoint；checkpoint 的模型紀錄必須是協定所接受的 stage 與 task
+head，在讀入 checkpoint 後立即檢查。base 會以「This model is a base: its formal test (link
+prediction on held-out knowledge-graph edges) is not implemented yet. A model finetuned from it
+can be measured.」被拒絕，沒有 model spec 的 checkpoint（ShepherdGNN 歷史檔）則以紀錄讀取器的
+那一句 "written before the model spec: not readable by this build; start a new run" 被拒絕（自
+K8-7b，2026-11-08 起；過去是「作為歷史檔」被拒絕）。Test 頁傳入操作者選擇的協定（§4.14）。
+自 K8-6a 起沒有任何命令執行 Mode C，即任務出現
+之前模型自己的疾病排名：沒有 `--mode` 的執行會被參數解析器拒絕（結束碼 2），`--mode C` 也
+一樣，因為它不是協定。已保存的 Mode C 報告與紀錄由共用的讀取器讀取（policy rev 15）。
 
 請在已設定 GPU 鎖、且與服務使用同一把鎖的 shell 中執行（§4.11）；沒有鎖時它會拒絕，結束碼 1，
 不寫出任何東西。
@@ -1752,15 +1718,24 @@ recorded`（checkpoint 記錄了訓練輸入，而且完全沒有驗證的條目
   同一個表型）；
 - **checkpoint 沒有記錄**：它在這個範圍沒有指出任何可找的檔案，而且它的紀錄不是 pipeline 寫出
   的：每次訓練都會以 digest 記錄其訓練輸入，所以沒有這個 digest 的紀錄，或條目在、卻不是 digest
-  的紀錄，都不可能出自 pipeline。`--training-evidence` 也幫不上忙。
+  的紀錄，都不可能出自 pipeline。`--training-evidence` 也幫不上忙；
+- **搜尋未完成**：讀到的檔案中沒有一個具有所記錄的位元組，而某個可能存放它們的地方讀不了：
+  某個候選檔（權限、I/O 錯誤），或某個無法列出內容、或本身無法檢查的 `--training-evidence`
+  目錄。主控台會列出每個這樣的地方與其錯誤。請讓執行量測的程序能讀取它，再量測一次。
 
 `none` 不代表證明沒有洩漏：它只就 checkpoint 所記錄的輸入而言。
 
-**哪些情況會拒絕這次執行，而不是給出標籤。** 不存在、不是目錄，或無法列出內容（權限、網路掛載
-的 I/O 錯誤）的 `--training-evidence` 目錄，會在讀取任何候選檔之前被拒絕：沒有被查看的目錄會把
-輸入回報成找不到。存在但讀不了的候選檔（權限、I/O 錯誤）會讓這次執行被拒絕，不寫入任何東西，
-因為它可能正是證據；請讓它可讀，或把它所在的目錄從 `--training-evidence` 中拿掉。候選檔只讀到
-每個所記錄的 digest 都找到為止，所以排在符合之後的讀不了的檔案根本不會被讀到。
+**讀不了的地方會被記錄，而不是拒絕這次執行**（自 K8-6r.3 起，R10 定義版本 2）。讀不了的候選
+檔，或無法列出內容、或本身無法檢查（例如位在這個帳號無法進入的目錄之下；自 K8-6 完成審查起，
+同一版本）的 `--training-evidence` 目錄，會讓它的範圍成為 `unverifiable` 並附上這個原因，絕不是「找不到」，
+也絕不給計數。搜尋會繼續讀其餘的候選檔，所以存放在另一個檔案中的位元組仍然找得到，量測照常
+執行，其報告也可以登錄。**仍會拒絕這次執行的情況：** 已知不是目錄的 `--training-evidence` 路徑
+（不存在、是檔案、是連結迴圈，或名稱長到不可能存在；引數錯誤，在讀取任何東西之前），以及必要
+的輸入：checkpoint、圖檔或 cohort 樣本檔遺失、讀不了，或不是為它記錄的位元組。讀取候選檔時
+記憶體不足，會以資源失敗結束這次執行，並指出該檔案：它對重疊不做任何陳述，也不會更動任何已
+保存的報告或 ledger 紀錄。候選檔只讀到每個所記錄的 digest 都找到為止，
+所以排在符合之後的讀不了的檔案根本不會被讀到。K8-6r.3 之前寫出的報告（R10 定義版本 1）照原樣
+讀取：在那裡，「找不到」表示每個候選檔都已讀取並比對過。
 
 **報告保存在哪裡。** 在 registry 中、該版本之下：
 `<registry>/versions/<label>/reports/<UTC 時間>-<checkpoint digest 前 12 個十六進位字元>-<8 個
@@ -1768,47 +1743,32 @@ recorded`（checkpoint 記錄了訓練輸入，而且完全沒有驗證的條目
 後者以 digest 指明排名檔。報告絕不覆寫，不論是否登錄，每份報告都會保留。`--cohort` 搭配
 `--output` 會被拒絕。
 
-主控台會印出 Mode C 的指標、覆蓋率（`N ranked of M source cases; K excluded`，附各類別）、
+主控台會印出這次執行的指標（其協定的）、覆蓋率（`N ranked of M source cases; K excluded`，附各類別）、
 以 `src/evaluation/caveats.py` 共用字句表示的四個 R10 標籤（`unverifiable` 附其原因）、一次標籤定義、報告路徑
 與 run id。報告本身只保存狀態，不含任何說明文字。
 
-### Mode D：今日服務的排名（自 Batch 3 起）
+### Mode D（已於 K7 移除）
 
-`--mode D` 在同一個已登記版本上量測 **Diagnosis 頁今天實際提供的排名**：checkpoint 由服務自己的
-builder 在 `--data-dir` 上建成 pipeline（工作區有最短路徑表時一併載入，與服務相同），每個
-匯入後合格（import-eligible）的病例都經由服務 pipeline 自己的 `rank()` 排名，並在同一組
-embedding 上同時執行 Mode C。它是評分政策 gate 1 比較的輸入，不是核准的政策
-（`docs/working/scorer-measurement/PLAN_B05.md`）。
+Mode D（`--mode D`，Batch 3 對 Diagnosis 頁 2026 年 10 月所提供排名的量測，評分政策 gate 1 比較
+的輸入）已在 K7 隨其執行器與 probe 一起移除：`--mode D` 在命令列就被拒絕（結束碼 2），沒有任何
+頁面或工作會啟動它。它 2026-10-27 的 GB10 執行保留為證據，在
+`docs/working/batch3-acceptance-2026-10-27/`；設計在 `docs/working/scorer-measurement/PLAN_B05.md`。
 
-```bash
-python scripts/measure_scorer.py --mode D \
-    --checkpoint data/workspaces/<ws>/runs/<arch>/<run>/checkpoints/<file>.pt \
-    --data-dir data/workspaces/<ws> \
-    --cohort mygene2-2026-10 --registry /srv/shepherd/cohorts \
-    [--training-evidence DIR ...] [--record] [--device auto|cuda|cpu] [--batch-size 32]
-```
+**已保存的 Mode D 報告與紀錄仍可閱讀**，由這個版本未描述的每種模式共用的同一種顯示，依記錄內容顯示
+（自 K8-6e.2 起，2026-11-07；在此之前以 Mode D 自己的標籤顯示）：在 Test 頁的 Result 與 Models 頁上，
+它們讀作「Mode D (a measurement mode this version does not describe)」，每個指標以記錄中的名稱與數值
+顯示、不四捨五入（`post_import_mrr 0.35`），score semantics 依記錄原文顯示
+（`served:gnn_only:eta=1.0:sp=none`），絕不拆成評分模式與 η。Models 頁每種模式的紀錄各列一張表，
+依首次出現的順序排列，不依測試分數為任何紀錄排名。Batch 3 這些名稱的意義：`post_import_*` 與
+`coverage` 以版本的匯入後合格病例為分母，未觸及的病例計 0；`reached_*` 只計觸及的病例；匯入時排除
+的病例另列在旁，絕不計入。每份報告也在同一組 embedding 上並列了 Mode C。Mode D 的數字不是模型的
+核准排名，也不描述目前的診斷模型。
 
-- **同一次執行、同一套規則。** 上面的每項檢查、GPU 鎖、報告庫與登錄都照常適用。`--mode D` 搭配
-  `--split` 會被拒絕（結束碼 2）：它的比較以版本的匯入後合格病例為準。會只以路徑推理提供服務的
-  pipeline、綁定到另一個工作區的版本，以及以不同於服務端的 phenotype 正規化版本匯入的版本（兩側
-  會為不同的 term 評分），都在任何病例排名之前被拒絕；`--batch-size` 小於 1 會在命令列就被拒絕
-  （結束碼 2）。排名過程中，若某個病例送進服務的輸入不是版本所對應的 term，整次執行被拒絕，不寫出
-  任何東西。主控台會輸出約 20 行進度，說明已有多少病例經過服務路徑、花了多少時間與目前的結果。
-- **一次一個病例。** Mode D 經由服務路徑逐案排名（manifest 中 `batch_size` 為 1；`--batch-size`
-  是 Mode C 那一側的），所以比 Mode C 慢：大型 cohort 請先跑一次試量計時。
-- **報告多了什麼。** 每份報告都有的欄位，加上 `outcomes`（`ranked`、`not_reached`——其中
-  `no_candidates`——與 `refused`，加總等於匯入後合格病例數）、`import_counts`、`served`（服務
-  身分）與 `comparison`：同一組 embedding 上的 Mode C、逐步推導 C → G1 → G2 → D（先候選集、再
-  平手規則、再分數），以及對同一 checkpoint 與版本的每份已保存 Mode C 報告，有多少個排名一致
-  （只陳述，絕不視為錯誤）。`ranks.json` 每個匯入後合格病例一列。
-- **以病例集命名。** `post_import_*` 與 `coverage` 以匯入後合格病例為分母，未觸及的病例計 0；
-  `reached_*` 只計觸及的病例。沒有任何數字是端到端的：匯入時排除的病例另列在旁。
-- **分開登錄。** 加 `--record` 時它成為 checkpoint 旁自己的一筆紀錄。它的評分語意與 Mode C
-  不同，所以兩者永不互相比對是否不一致，Mode D 紀錄在 Models 頁只顯示、永不參與排序。主控台、
-  Test 頁的 Result 與 Models 頁都以「Served ranking today (Mode D) … not the approved scorer
-  policy」標示，並附上服務的評分模式與 η（Models 頁上，若所列 Mode D 紀錄的評分模式與 η 都相同，
-  就寫在標籤裡，否則寫在各紀錄的明細列）；Models 頁每種模式的紀錄各列一張表。沒有任何頁面能
-  啟動 Mode D 執行：Test 頁的 Start 執行的是 Mode C。
+**已保存的 Mode D 報告依一般規則、以它自己的模式登錄**（自 K8-6c 起，政策 rev 15）：
+`scripts/record_evaluation.py` 與 Test 頁的 Register 會像檢查每一份報告一樣檢查它（report store、
+它的版本區塊、執行目錄、checkpoint 的位元組與 ledger），其紀錄保留 mode D。
+同一次執行的同一份報告再登錄一次會回答 `already_registered`，不寫入任何東西。ledger 中既有的紀錄保留，也不會
+擋下其他報告的下一次登錄。
 
 ### 登錄
 
@@ -1836,29 +1796,52 @@ python scripts/measure_scorer.py --mode D \
   第二個 ledger。量測與服務都以解析後路徑讀取 checkpoint，所以目錄在讀取檔案時就已確定。執行
   期間、或載入後未重新載入時被改指向的連結，不會改變該次執行的紀錄登錄在哪裡，也不會改變到哪裡
   找已載入模型的紀錄。不會為 ledger 建立任何目錄。
-- **結果**：已登錄（附序號）；已存在（同一份報告再次登錄：不寫入任何東西）；與既有紀錄一致
-  （報告的 digest 加入該紀錄的佐證報告清單）。R10 與環境不參與比對，因為各自只對自己的報告
-  成立。當佐證報告的 R10 或環境與紀錄不同時（例如重跑時加上 `--training-evidence`，找到了第一次
-  沒找到的證據），**紀錄保留自己的值，不會更新**。登錄會以一行說明這件事並指出該報告，較晚那次
-  執行的 R10 就保存在其中。與同一鍵——同一個 checkpoint、cohort 版本與量測設定，結果卻不同——
-  的紀錄互相矛盾的報告會被拒絕，並指出不同的欄位。沒有覆寫旗標；錯誤的紀錄以編輯這個可讀的
-  JSON 檔來更正，會留下 diff。
+- **依執行登錄**（政策 rev 16，自 K8-6r.2 起）。一次執行就是版本報告存放處中的一個執行目錄。
+  每筆紀錄都寫明它（`run_id`），ledger 會先找這次執行。結果：
+  - **已登錄**（附序號）：每一次經過驗證的執行都有自己的紀錄，保留自己的數值、環境與 R10，
+    不論位元組或時間為何。報告位元組完全相同的兩次執行是兩筆紀錄，數值不同的兩次執行也是。
+  - **已存在**（`already_registered`）：同一次執行、同一份報告位元組再次登錄；不寫入任何東西。
+  - **拒絕**：同一次執行帶著其他位元組回來。一次執行的報告在發佈時即封存，所以這個檔案是在
+    登錄之後被替換的。訊息會指出該紀錄與兩個 digest。
+  - **拒絕，不寫入任何東西**：這次寫入本身無法安全完成時，訊息會指出該紀錄：某筆紀錄不是物件
+    或遺失了登錄序號（無法配置下一個序號），或這次執行自己的身分紀錄損壞（從執行身分邊界起
+    應寫明執行卻沒有寫明的紀錄、寫明這次執行但 cohort、checkpoint 或報告 digest 讀不了的紀錄，
+    或兩筆紀錄寫明同一次執行）。請從可信的備份還原該紀錄，再重新登錄。系統不猜測、不略過、
+    不重新編號。找到完好紀錄的執行仍照上述回答。
+
+  結果之後可能附上兩則說明，只供參考，從不拒絕任何東西。**群組說明**列出同一組條件（同一個
+  checkpoint、cohort 版本與量測設定）下結果不同的其他紀錄、其執行與不同之處："Runs under these
+  conditions differ: … Each run is kept as recorded."。兩次執行都開啟 deterministic algorithms
+  時，會補充它們本應一致，需要調查。**歷史說明**指出在每次執行各有自己的紀錄之前寫入、且持有這份
+  報告位元組的紀錄："possible overlap with record N, … not recorded whether this run is one of
+  them"。這種舊紀錄從不替另一次執行回答 `already_registered`。沒有覆寫旗標；錯誤的紀錄以編輯
+  這個可讀的 JSON 檔來更正，會留下 diff。
 - **之後查看**：`python scripts/record_evaluation.py --checkpoint <file> --show
-  <checkpoint sha256>` 讀取服務為該檔案所讀的 ledger，也就是其解析後路徑旁的那一個。若改用
+  <checkpoint sha256>` 讀取服務為該檔案所讀的 ledger，也就是其解析後路徑旁的那一個。它照原樣
+  印出紀錄（JSON），再為每筆紀錄印一行：它的執行（在每次執行各有自己的紀錄之前寫入的紀錄為「not
+  recorded」），以及這種紀錄與具名執行之間可能的重疊。共用檢查無法當作結果讀取的紀錄，則改印
+  "record N (the ledger's record I) cannot be read as a result: <原因>"（自 K8-6e.1 起），原因與 API
+  及 Models 所給的相同；JSON 仍照原樣印出它。若改用
   `--checkpoint-dir <dir>`，`--show` 讀的是該目錄內的 `evaluations.json`；對一個放連結的目錄
   而言，那不是服務所讀的 ledger。空的回答代表這個 ledger 沒有這組權重的結果，不代表它們從未被
   評估過。
-- **一次只能有一個寫入者。** 登錄時若發現 ledger 在讀取之後被改過，會拒絕而不是覆蓋；這不是
-  鎖，所以不要從兩個地方同時登錄到同一個目錄。
-- 只有**已登錄 cohort 版本**的報告會被登錄；`--split` 的報告不會。
+- **登錄同一個 ledger 會輪流進行。** 登錄從讀取 ledger 到寫入 ledger 及其使用紀錄，全程持有
+  ledger 的鎖（旁邊的 `evaluations.json.lock`，用後保留），跨 process 有效。等待超過 10 秒的登錄
+  會以「忙碌」拒絕：這次沒有寫入任何東西，報告仍保留，請再登錄一次（`--record` 結束碼 3，
+  `record_evaluation.py` 結束碼 1）。若 ledger 已寫入但使用紀錄沒有，會說「the usage history
+  was not written」並附原因，紀錄照樣成立。不取鎖的修改（例如手動編輯）改過 ledger 時，仍會
+  拒絕而不是覆蓋。
+- 只有**已登錄 cohort 版本**的報告會被登錄；`--split` 的報告不會，原因是 ledger 尚未支援產生的
+  split 這種資料身分（它沒有已登錄的 cohort 版本），而不是這樣的結果比較不重要（政策 rev 16）。
+  它的報告與排名檔留在 `--output`；把 ledger 擴充到它們是之後的工作。
 
 ### 結束碼
 
 | 指令 | 0 | 1 | 2 | 3 |
 |---|---|---|---|---|
 | `import_cohort.py` | 已印出預覽，或已提交版本 | 拒絕，一則以 "Nothing was written." 結尾的訊息（沒有任何案例可排名的預覽也是） | 命令列被拒絕 | — |
-| `measure_scorer.py` | 已量測（加 `--record` 時：已登錄、已存在或一致） | 某項檢查拒絕了這次執行：一則訊息，不寫入任何東西（在沒有 CUDA 的主機上給 `--device auto` 或 `cuda` 也是，在讀取任何東西之前）；或**已量測，但報告沒有寫出**（例如磁碟已滿或唯讀）：一則訊息說明可能留下了什麼，而那絕不會是可登錄的報告——`--output` 旁這次執行的排名檔，或報告存放處中沒有 `report.json` 的執行目錄（寫出報告之後才失敗的執行，例如主控台被關閉，會說明報告在哪裡） | 命令列被拒絕，包括屬於另一種 cohort 的參數 | **已量測，但登錄被拒絕**：訊息會指出報告與之後登錄用的 `record_evaluation.py` 指令；若報告檔已不是這次執行發佈的位元組，則如實說明，並要求重新量測（那份報告可能已不存在）；若這份報告的鍵下有結果不一致的執行，則說明 "runs disagree — investigate" 並保留報告，不印出之後登錄用的指令（只要這些執行仍不一致，任何登錄都不會被接受） |
-| `record_evaluation.py` | 已登錄、已存在、一致，或已顯示 | 拒絕，一則訊息；不寫入任何東西 | 命令列被拒絕，包括 `--checkpoint` 與 `--checkpoint-dir` 都沒給或都給 | — |
+| `measure_scorer.py` | 已量測（加 `--record` 時：已登錄或已存在） | 某項檢查拒絕了這次執行：一則訊息，不寫入任何東西（在沒有 CUDA 的主機上給 `--device auto` 或 `cuda` 也是，在讀取任何東西之前）；或**已量測，但報告沒有寫出**（例如磁碟已滿或唯讀）：一則訊息說明可能留下了什麼，而那絕不會是可登錄的報告——`--output` 旁這次執行沒有報告的排名檔，或它在 `--output` 或排名檔位置佔用的空檔案（自 K8-6r.4 起，兩者都會讓同一路徑上的下一次執行被拒絕），或報告存放處中沒有 `report.json` 的執行目錄（寫出報告之後才失敗的執行，例如主控台被關閉，會說明報告在哪裡） | 命令列被拒絕，包括屬於另一種 cohort 的參數 | **已量測，但登錄被拒絕**：訊息會指出報告與之後登錄用的 `record_evaluation.py` 指令；若報告檔已不是這次執行發佈的位元組，則如實說明，並要求重新量測（那份報告可能已不存在） |
+| `record_evaluation.py` | 已登錄、已存在，或已顯示 | 拒絕，一則訊息；不寫入任何東西 | 命令列被拒絕，包括 `--checkpoint` 與 `--checkpoint-dir` 都沒給或都給 | — |
 | `audit_split_overlap.py` | 已寫出報告 | 拒絕，一則訊息；不寫入任何東西 | 命令列被拒絕（例如已移除的 `--evaluation-cohort-kind`、只給 `--registry` 不給 `--cohort` 或反之，或與 `--cohort` 一起給出 `--splits`），並印出 usage 行 | — |
 
 若 checkpoint 目錄對你而言是唯讀的，量測會以結束碼 3 結束：報告會保留，由可以寫入該目錄的人
@@ -1870,28 +1853,43 @@ python scripts/measure_scorer.py --mode D \
 ——即使換成另一份合法報告（另一個 checkpoint 的，或另一個 cohort 版本的），或已變成指向報告存放處之外
 檔案的連結——就不登錄任何東西，以結束碼 3 結束，並說明該路徑上的檔案不是它發佈的報告（或已不存在），
 因此這次執行自己的報告可能已不存在：請重新量測以登錄這次量測。只有在讀回的報告確實是發佈的那份、而是
-其他環節（例如 ledger）拒絕時，才會印出之後登錄用的指令；這個鍵下的執行結果不一致時則絕不印出。之後用
-`record_evaluation.py` 登錄時，仍照舊以指定的 checkpoint 檔核對報告。
+其他環節（例如 ledger）拒絕時，才會印出之後登錄用的指令。不加 `--record` 時一律印出這行指令：其他
+執行的報告或結果都不能拒絕一次登錄。之後用 `record_evaluation.py` 登錄時，仍照舊以指定的
+checkpoint 檔核對報告。
 
 ### Diagnosis 頁面顯示什麼
 
 **自 M5-2 起（2026-10-21），Diagnosis 頁面只以狀態顯示目前載入之 checkpoint 已登錄的測試**，
-位於「Model in use」卡片上："Recorded tests: 3 · 1 contested"、"3 · contested state not checked"（未設定 registry，
-或沒有任何一筆紀錄的 cohort 版本或其報告存放處能讀取；絕不顯示為沒有爭議）、"3 · 1 contested ·
-contested state of 1 not checked"（部分紀錄的狀態無法檢查；分開計數）、"none in ledger"、
+位於「Model in use」卡片上："Recorded tests: 3 · runs differ for 1"、"3 · comparison incomplete"（未設定
+registry，或沒有任何一筆紀錄的 cohort 版本或其報告存放處能讀取；絕不顯示為一致）、"3 · runs differ
+for 1; comparison incomplete for 1"（分開計數）、"3 · 1 not readable"（自 K8-6e.1 起：3 筆結果，以及 1 筆
+共用檢查無法當作結果讀取的紀錄，分開計數，絕不算作結果；只有這一筆時為 "0 · 1 not readable"）、
+"none in ledger"（兩者皆無）、
 "no ledger"、"ledger not readable" 或 "not read"，與該 checkpoint 在「Change model…」中那一列的用語相同，並以
 checkpoint 的 digest 而不是檔名來找（換成另一個模型之後，絕不會顯示前一個模型的狀態）。它的 ›
-會打開 Details 的 Evidence，同一個狀態在那裡與訓練器的驗證數值並列（"Validation MRR (Trainer,
-top-20) … — selection metric on val, not an independent test"）；頁面上不顯示任何 Mode C 數字。
+會打開 Details 的 Evidence，同一個狀態在那裡與訓練器的驗證數值並列（任務模型為 "Validation pooled MRR
+(Trainer) … — selection metric on val, not an independent test"）；頁面上不顯示任何測試數字。
 紀錄本身列在 Research › Evaluate › Models。
 
 在 M5-2 之前，模型狀態（Model Configuration）在「Serving」那一行下方，為目前載入的 checkpoint
 （`sha256:<前 12 字元>…`）完整列出 **「Recorded test results (Mode C)」**，透過
 `GET /api/v1/evaluations/loaded-model` 讀取，用語如下。這個 route 仍以這些紀錄回應 API 用戶端，
-且自 M5 審查起（BACKLOG 36）每筆紀錄都附上它的 D5 狀態（`contest`：`uncontested`；`contested`，
-附上不一致的欄位與各次執行；`cannot_be_checked`，絕不視為沒有爭議），由儀表板本身的實作依服務的
-`SHEPHERD_REGISTRY` 算出，但不附原因本身的文字，因為那些文字可能指名伺服器上的路徑。D5 的調查
-備註（investigation notes）不會顯示（BACKLOG 40）：
+且自 M5 審查起（BACKLOG 36）每筆紀錄都附上它的條件群組在存放處中的比較情形（`contest`），由儀表板
+本身的實作依服務的 `SHEPHERD_REGISTRY` 算出，但不附原因本身的文字，因為那些文字可能指名伺服器上的
+路徑。**自 K8-6r.2 起這些值只做描述**（政策 rev 16）：`uncontested`（各次執行一致）、`contested`
+（同樣條件下的執行結果不同，附上不同的欄位與每一個帶有不同報告的執行）與 `cannot_be_checked`
+（比較不完整，絕不視為一致）對 API 用戶端保留同樣的字串，但都不再隱藏、排除或拒絕任何紀錄。每筆
+紀錄也附上 `run_id`（登錄它的那次執行；在每次執行各有自己的紀錄之前寫入的紀錄為 `null`，顯示為
+「not recorded」）與 `historical_overlap`（它可能與之為同一次執行的紀錄序號，從未確認）。**自
+K8-6e.1 起，這組權重中共用檢查無法當作結果讀取的紀錄**（無法讀取執行身分，或不符登錄寫出的形狀）
+依 ledger 中的順序列在 `unreadable_records`：它在 ledger 紀錄清單中的 `index`（從 0 起算，與寫入端
+拒絕時所稱的編號相同）、仍可讀取時的登錄 `sequence`、`source_artifact_digest` 與 `run_id`（否則為
+`null`），以及 `reason`：一行、至多 300 字元，以 ledger 紀錄中的路徑（也就是手動修正時要改的鍵）
+指名每個被拒絕的欄位，絕不寫出其值（例如 "n_ranked: missing"、"environment.facts.gpu: missing" 或
+"the regime's device is neither CUDA nor CPU"）；紀錄本身在某個物件內帶有的鍵（例如指標名稱或排除
+原因）照原樣寫出，與可讀紀錄的指標名稱照原樣顯示相同。它絕不是結果，ledger 也照原樣保留它。`records_not_shown` 的意義不變，且一律等於這份清單的長度。不是物件、或未指名 checkpoint
+digest 的紀錄不屬於任何模型，不會列出；整份無法讀取的 ledger 仍是 `ledger_not_read`，其中任何紀錄都
+不列出。調查備註（investigation notes）不會顯示（BACKLOG 40）：
 
 - 紀錄區塊開頭（第一筆紀錄之前）出現一次 **"Disease ranking by the model, approved scorer
   policy (Mode C)."** 與說明 **"This is the model's own Mode C disease ranking. Until B-1 ships,
@@ -1904,11 +1902,15 @@ top-20) … — selection metric on val, not an independent test"）；頁面上
   排除數）；已檢查的關係（✓ 或不適用）；四個 R10 標籤——`unverifiable`（附該範圍的原因，與主控台
   相同）與 `no validation inputs recorded` 以文字顯示，**絕不顯示為零或數字**；環境類別（CUDA
   且開或關 deterministic algorithms，或 CPU）與 GPU；dataset 來源（合成 workspace 會特別標出）；
-  登錄序號與時間，以及佐證報告數。
+  登錄序號與時間、它的執行，以及在每次執行各有自己的紀錄之前併入它的報告數。
 - 沒有紀錄時改為一句話：載入的 checkpoint 旁沒有 ledger；ledger 未讀取，附原因，原因會指出
-  檔案、絕不指出其目錄（例如下述的 schema 2 檔案）；這個 ledger 沒有這組權重的結果；有些紀錄
-  因不符登錄寫出的形狀而未顯示；或 "The loaded model changed while its recorded results were
-  read; refresh the page."。
+  檔案、絕不指出其目錄（例如下述的 schema 2 檔案）；這個 ledger 沒有這組權重的結果；或 "The
+  loaded model changed while its recorded results were read; refresh the page."。
+- **共用檢查無法當作結果讀取的紀錄**（不符登錄寫出的形狀，或無法讀取執行身分；自 K8-6e.1 起）
+  列在結果之下，沒有結果時則單獨列出：一句附 ▲ 的琥珀色句子（"1 record for these weights cannot
+  be read as a result. The ledger keeps it as written."）與一張表格 Index · Registration · Report ·
+  Reason，各欄取自 route 的 `unreadable_records`（紀錄未以可讀形式帶有的序號或報告 digest 顯示為
+  "not readable"）。它們絕不計為結果。
 - **這個 route** 不接受任何參數，每次請求都讀取載入之 checkpoint 旁的 ledger，不寫入任何東西，
   也不回傳任何路徑、case id 或排名。「旁」指的是 pipeline 載入時所讀 checkpoint 之解析後路徑的
   目錄，所以之後未重新載入而被改指向的連結，不會讓查找離開服務中位元組的 ledger。它掛在自己的
@@ -1921,15 +1923,40 @@ top-20) … — selection metric on val, not an independent test"）；頁面上
   `<split>_samples.json` 也一併移除。`--split` 只接受產生器的 `train` 或 `val`，且需要
   `--output`；與它一起給出 `--registry`、`--training-evidence` 或 `--record` 會被拒絕。院方或外部
   cohort 以 `--cohort LABEL --registry DIR` 匯入並量測。
-- **產生的 split 的報告不可登錄**：`record_evaluation.py` 拒絕它（"a generated split's report
-  is not registered"）。`--split val` 是挑選 checkpoint 用的 split，不是保留的測試資料。
+- **產生的 split 的報告不會被登錄**：`record_evaluation.py` 拒絕它（"a generated split's report
+  is not registered"）。*K8-6r.4（2026-11-07）改寫說法，行為不變：* 原因是 ledger 尚未支援產生的
+  split 這種資料身分（它沒有已登錄的 cohort 版本），而不是這樣的結果比較不重要；它的報告與排名檔
+  留在 `--output`，把 ledger 擴充到它們是之後的工作。自 M5 起，`--output` 上的報告會更早被拒絕，
+  因為沒有任何 registry 的報告存放處持有它（"… is not a report the registry's report store
+  holds"，見下文）；上面引用的訊息是給被放進存放處的報告。兩者背後是同一個原因：產生的 split
+  沒有已登錄的 cohort 版本，因此也沒有報告存放處。
+  `--split val` 是挑選 checkpoint 用的 split，不是保留的測試資料。
 - **產生的 split 的報告與排名檔改為先寫入暫存檔再改名就位**（排名檔先）；已存在的 `--output`
-  仍會被取代。
-- **ledger schema 3。** 既有的 schema 1 或 2 的 `evaluations.json` 會被拒絕——`--record`、
-  `record_evaluation.py`（`--report` 與 `--show`）以及讀取已登錄結果的程式都會拒絕，後者會回報
-  ledger 未讀取（Diagnosis 卡片上為 "Recorded tests: ledger not readable"）。沒有任何東西會遷移它，其結果也不會被帶過來：**請手動封存**，例如
+  仍會被取代。*已由 K8-6r.4（2026-11-07）取代：* 兩個檔案都絕不取代既有檔案。`--output` 或
+  `<output stem>_ranks.json` 已存在（連結也算）的執行，會在讀取任何東西之前被拒絕，並說明它找到
+  什麼；在檢查之後才出現的檔案同樣不會被覆寫：這次執行會失敗，並說明它留下了什麼。`--output`
+  上的空檔案是一個發佈失敗的已佔用位置，不是報告；旁邊沒有報告的排名檔是一次中斷的發佈，不是
+  結果：兩者都會讓同一路徑上的下一次執行被拒絕，並留在原處，因為不會為了騰出位置而刪除或改名
+  任何既有檔案。拒絕訊息只檢查這兩個名稱，所以也會說明這樣的檔案還可能是什麼：另一次尚未完成的
+  發佈，或在排名檔名稱上，另一個 `--output` 寫下的檔案。請改用新的 `--output` 重新量測。每個檔案以硬連結放到位，只要那裡已有任何東西，
+  硬連結就會失敗；在沒有硬連結的檔案系統上（例如 FAT 或 exFAT），會先以新的空檔案佔用目標，再把
+  寫好的檔案改名到它上面。這次改名本身就是會覆寫的呼叫：只有在目標仍是這次執行剛佔用的那個空檔案
+  時，它才不會覆寫其他執行的檔案，因此它依賴期間沒有其他東西取代或移除這個佔用：本程式從不這麼
+  做，但無法阻止其他寫入者或人這麼做。Windows 與真正的 FAT 或
+  exFAT 掛載都未測試。
+- **ledger schema 3（M4），自 K8-6r.2 起為 schema 4。** 既有的 schema 1 或 2 的 `evaluations.json`
+  會被拒絕——`--record`、`record_evaluation.py`（`--report` 與 `--show`）以及讀取已登錄結果的程式
+  都會拒絕，後者會回報 ledger 未讀取（Diagnosis 卡片上為 "Recorded tests: ledger not readable"）。
+  沒有任何東西會遷移它，其結果也不會被帶過來：**請手動封存**，例如
   `mv evaluations.json evaluations.v2.json`，以寫出它的版本讀取，並以這個版本重新量測需要的
   結果，再登錄新的報告（拒絕訊息也這麼說）。M4 之前寫出的報告同樣會被拒絕，並指示重新量測。
+  **schema 3 與 4 都照原樣讀取**，讀取從不改寫檔案。第一次登錄進 schema 3 檔案時會寫成 schema 4，
+  並記錄從哪個序號起每筆紀錄都寫明它的執行（`run_identity_from_sequence`）；較早的紀錄照原樣保留，
+  其執行為「not recorded」，不會替它們編造執行。新的 ledger 從 schema 4 開始。只認得 schema 3 的
+  版本會拒絕 schema 4 檔案（「ledger not readable」），直到再次升級為止；檔案中的內容不會遺失。
+  `run_identity_from_sequence` 遺失或變得讀不了（檔案有紀錄卻沒有這個欄位、不是整數、小於 1，
+  或大於下一個序號）的 schema 4 檔案仍可讀取，但沒有紀錄寫明的執行都不能登錄進去：請從可信的
+  備份還原這個欄位。手動修改後仍可讀取的值會照寫入的樣子採用，與其他手動修改一樣。
 - **`record_evaluation.py`** 接受 `--checkpoint FILE` 或 `--checkpoint-dir DIR`，恰好一個。不論
   哪一個，ledger 都寫在 checkpoint 解析後路徑的旁邊。對於 checkpoint 是連結的目錄，那是在連結
   目標旁邊，不再是所指名的目錄中。
@@ -1939,7 +1966,7 @@ top-20) … — selection metric on val, not an independent test"）；頁面上
   dataset record digest 會與這個 workspace 的 manifest 所記錄的比對，不載入 tensor；只讀
   `train`。報告的 `schema_version` 為 6。
 
-### 自 M5-1 起：只從報告存放處登錄、結果不一致的執行、使用紀錄、確定性執行
+### 自 M5-1 起：只從報告存放處登錄、結果不同的執行、使用紀錄、確定性執行
 
 以下同時適用於 `measure_scorer.py --record` 與 `record_evaluation.py --report`，因為兩者走同一個
 登錄函式。上面的結束碼不變。
@@ -1957,7 +1984,7 @@ top-20) … — selection metric on val, not an independent test"）；頁面上
 holds … Register the store's original instead」。副本仍可閱讀與分享，但不能登錄。指向存放處中
 報告的連結，視為存放處中的原件；存放處中那個本身是連結、指向別處檔案的 `report.json` 則不算。
 **registry 必須是部署的 registry**（自 M5 審查起，BACKLOG 37）：整個 registry 的副本以相同的結構
-持有相同的位元組，但它會有自己的使用紀錄與自己的不一致封鎖，而 Research › Models 與 job runner
+持有相同的位元組，但它會有自己的報告存放處與使用紀錄，而 Research › Models 與 job runner
 從不讀取它們，所以副本中的報告會被拒絕（「… is not registered: the registry … is not the
 deployment's: SHEPHERD_REGISTRY (…) resolves to …」）。整個搬移的 registry，在服務與你的 shell
 中的 `SHEPHERD_REGISTRY` 都指名它的新位置之後，便可再次使用；沒有任何絕對路徑被存成身分。如果
@@ -1966,43 +1993,42 @@ deployment's: SHEPHERD_REGISTRY (…) resolves to …」）。整個搬移的 re
 誤用的 registry；刻意把這個變數設成副本後執行的指令，就會使用那個副本。產生的 split 的報告寫在
 `--output`，從不在存放處中，所以現在它是因為這個原因被拒絕。
 
-**結果不一致的執行會封鎖其鍵（"runs disagree — investigate"）。** 存放處中同一個鍵（同一個
-checkpoint、cohort 版本與量測設定）下的報告，會用 ledger 所用的同一種比對互相比較。只要其中兩份
-結果不同，這個鍵下的任何報告都不會被登錄。這適用於加或不加 `--record` 的執行、之後的
-`record_evaluation.py`，以及再次登錄一份已登錄的報告。訊息會指出哪些不同、是哪些執行。在不一致
-出現之前已登錄的紀錄仍留在 ledger 中。在 `--record` 之下，執行以結束碼 3 結束並保留報告，但不會
-印出之後登錄用的指令，因為只要這些執行仍不一致，任何登錄都不會被接受。不加 `--record` 時，執行在
-發佈報告後以同樣方式檢查存放處：它以結束碼 0 結束（如同任何不登錄的執行），印出
-"Not registered (no --record), and runs disagree — investigate" 與不同之處，取代那行指令；它的
-`--outcome` 檔中 `registration.why` 也這樣說明。若無法檢查這些執行是否不一致（見下文），不加
-`--record` 的執行會印出指令，並說明在能夠檢查之前登錄都會被拒絕。往下走的方式：
+**結果不同的執行都會保留並加以描述，從不拒絕**（政策 rev 16，自 K8-6r.2 起；在此之前它們會封鎖其鍵）。
+每一次有效的執行都是自己的紀錄，所以同一組條件（同一個 checkpoint、cohort 版本與量測設定）下結果
+不同的執行都照記錄保留。登錄只讀取它要登錄的那次執行，並在結果之後印出群組說明（見上文）。存放處、
+Test 頁、Models 與 API 把這樣的群組描述為「runs under these conditions differ」，指出不同之處與每一個
+帶有不同報告的執行。未開啟 deterministic algorithms 時，執行結果本來就可能不同：這段描述是中性的，
+每一個結果照記錄都是有效的。只有當該群組記錄 deterministic algorithms 開啟時，它的執行才本應一致，
+頁面才以琥珀色加上「— investigate」標出差異。API 對它保留 `contested` 這個值，但意義已改為上述描述。
+不加 `--record` 時，執行一律印出之後登錄用的指令。調查的方式：
 
 - 比較各報告的環境資訊（每份 `report.json` 的 `manifest.environment`）；
-- 以 `--deterministic` 重跑，這是不同的鍵。
+- 以 `--deterministic` 重跑，這是自己的一組條件。確定性執行本應一致，所以說明與頁面會把它們之間的
+  差異標出、要求調查。
 
 調查備註記錄誰看過、何時看過、發現了什麼。備註存在
-`<registry>/versions/<label>/reports/notes.jsonl`，與該鍵的報告放在一起，絕不寫進 ledger，也不會
-解除封鎖。Research › Test 可從儀表板新增備註，這是操作者控制項（§4.14）。封鎖建立在一般檔案上：刪除不一致的
-報告就會解除它。這些工具從不刪除任何東西。
+`<registry>/versions/<label>/reports/notes.jsonl`，與該群組的報告放在一起，絕不寫進 ledger，也不
+改變任何東西。Research › Test 可從儀表板新增備註，這是操作者控制項（§4.14）。這些工具從不刪除任何
+東西。
 
-**「無法檢查」同樣會被拒絕，絕不視為沒有爭議。** 存放處中有下列任一情形時，整個版本都無法檢查：
-
-- 一份無法讀取或解析的報告；
-- 一個是連結、指向存放處之外的執行目錄或 `report.json`；
-- 一份無法判斷其鍵的報告。
-
-較早版本寫出、本版本不讀取其 manifest 的報告，只會封鎖它所指名的那個鍵。拒絕訊息會指出每個檔案。
-把檔案移出 `reports/` 或加以修復，再登錄一次。
+**其他執行的報告從不擋下一次登錄。** 存放處中無法讀取或解析的報告、是連結且指向存放處之外的執行目錄
+或 `report.json`，以及無法判斷其條件的報告，都各自以自己的執行、附自己的原因列出，不會標記其他執行
+或任何群組。同一組條件下本版本無法比較的報告，會讓該群組的比較不完整（`cannot_be_checked`，
+「comparison incomplete」），這只是描述。你要登錄的報告仍會完整檢查：它在存放處中的位置、位元組、
+版本區塊、執行目錄、checkpoint 與 ledger。完全無法列出的存放處會讓 Test 頁無法確認任何報告，因此
+Register 保持不可用並說明原因；請以 `record_evaluation.py --report …` 登錄該次執行，它只讀取那份
+報告。
 
 **使用紀錄**是 `<registry>/versions/<label>/reports/usage.jsonl`，每行一個 JSON 物件，只追加、
 從不改寫。它記錄：
 
-- 這個版本的每一次量測（`test_run`：時間、run id、checkpoint 與報告的 digest、Mode C 的指標、
+- 這個版本的每一次量測（`test_run`：時間、run id、checkpoint 與報告的 digest、該次的 mode 與指標、
   `n_ranked`、是否為確定性執行、裝置、是否要求 `--record`）；
-- 每一次寫入 ledger 的登錄（`registered`：結果與序號）；
-- 每一次從依該版本分數排序的清單載入的模型（`model_load`：排序清單所用的指標與 scoring 分組，以及
-  載入是否生效並附原因；由儀表板唯一的 Load 在 Research › Models 依測試分數排序時使用而寫入，
-  §4.14）。
+- 每一次寫入 ledger 的登錄（`registered`：它的 run id、結果與該次執行自己的序號）。K8-6r.2 之前
+  以已退役的結果 `corroborated` 寫入的項目保留在檔案中，並依其記錄內容顯示；
+- 在 K8-6d 之前，每一次從依該版本分數排序的清單載入的模型（`model_load`：排序清單所用的指標與
+  scoring 分組，以及載入是否生效並附原因）。依測試分數排序已退役，現在沒有任何程式寫入這類條目；
+  已寫入的條目留在檔案中，Research › Models 依其記錄內容顯示（§4.14）。
 
 它只保存彙總資料，不含任何 case id。量測會在報告發佈後、寫出 `--outcome` 檔之前，立即追加它的
 條目。若追加失敗，執行會以結束碼 1 停止（"measured, but the run did not finish"），說明報告已寫出、
@@ -2010,7 +2036,10 @@ checkpoint、cohort 版本與量測設定）下的報告，會用 ledger 所用�
 無法寫出，執行也同樣停止，並說明它已在紀錄中。若登錄自己的條目無法追加，登錄仍然成立，並以一行
 `NOTE:` 說明。每個條目都從新的一行開始：被中斷的追加（當機、斷電）會留下一行不完整的最後一行，下一個
 條目會先把它結束，而不是接在它後面，讀取時則把它指出為不是條目的一行。寫入失敗的追加會被收回，不留下
-條目的任何部分；若連收回也失敗，錯誤訊息會說明檔案末端可能留有它的一部分。
+條目的任何部分；若連收回也失敗，錯誤訊息會說明檔案末端可能留有它的一部分。每次追加 `usage.jsonl` 或
+`notes.jsonl` 時，都會持有它旁邊的鎖檔（`usage.jsonl.lock`、`notes.jsonl.lock`），用後保留：請不要
+刪除。另一個寫入者最多等待 10 秒。超過時，這個檔案不會寫入任何東西：備註會請你再新增一次，登錄仍然
+成立並說明使用紀錄沒有寫入，量測則如上停止（結束碼 1），並印出之後登錄用的指令。
 
 **`measure_scorer.py` 的新選項。** 它們是為 M5 的工作執行器準備的，也可以在已設定 GPU 鎖的
 shell 中手動使用（§4.11）。
@@ -2018,7 +2047,8 @@ shell 中手動使用（§4.11）。
 結束碼為 2）；另外兩個兩者皆適用：
 
 ```bash
-python scripts/measure_scorer.py --checkpoint <file>.pt --data-dir data/workspaces/<ws> \
+python scripts/measure_scorer.py --mode <protocol> \
+    --checkpoint <file>.pt --data-dir data/workspaces/<ws> \
     --cohort <label> --registry /srv/shepherd/cohorts [--record] \
     [--deterministic] [--expect-checkpoint-sha256 HEX] [--expect-version-sha256 HEX] \
     [--outcome FILE]
@@ -2028,7 +2058,7 @@ python scripts/measure_scorer.py --checkpoint <file>.pt --data-dir data/workspac
   warn-only）、確定性的 cuDNN 並關閉其 benchmark，以及在該變數未設定時設定
   `CUBLAS_WORKSPACE_CONFIG=:4096:8`。它絕不退回非確定性執行或改用其他裝置。沒有確定性實作的運算會
   讓這次執行被拒絕、不寫入任何東西；PyTorch 未記載為確定性的 `CUBLAS_WORKSPACE_CONFIG` 也是。
-  manifest 會記錄這些設定，所以確定性執行是不同的鍵。PyTorch 只在相同平台、裝置與版本上承諾可重現；
+  manifest 會記錄這些設定，所以確定性執行是自己的一組條件。PyTorch 只在相同平台、裝置與版本上承諾可重現；
   確定性模式防範已知的非確定性運算，並不為某個數字背書。
 - `--expect-checkpoint-sha256` 與 `--expect-version-sha256`：當讀到的 checkpoint，或版本的
   `cohort.json`，具有其他 SHA-256 時（檔案在被選定之後改變了），在量測或寫入任何東西之前就拒絕這次
@@ -2165,6 +2195,16 @@ measure_scorer: refused: the GPU lock /srv/shepherd/workspaces/.shepherd-gpu.loc
 先檢查鎖，並以同樣的占用者拒絕這次啟動（"Nothing was started."）；工作自己的行程隨後再自行
 取鎖。
 
+**`train_model.py` 的每一個拒絕都只有一行**（自 K8-7b，2026-11-08 起）：它在佔用自己的 run 目錄
+之前拒絕的任何事，都以 `train_model: refused: <原因> Nothing was written.` 說明，結束碼 1，不附
+traceback（traceback 只在 `--debug` 下記錄）。其中包括：沒有 `--stage` 的執行（每次執行都要指明
+stage，續接的執行也一樣：`--resume <checkpoint>` 加上它所續接之執行的 `--stage`）、已有檔案的
+run 目錄，以及寫了本版沒有之設定的 `--config` 檔（"The configuration … names settings this
+version does not have: num_workers."；自 K8-7 起，`num_workers` 與舊的模型設定如 `conv_type`、
+`hidden_dim` 都屬此類，`--conv-type`、`--hidden-dim` 與 `--num-layers` 也已移除）。佔用 run 目錄
+之後發生的錯誤則是一次失敗的執行，以 "Training failed:" 連同 traceback 記錄；在那之前發生、並非
+拒絕的意外錯誤也是如此。
+
 **請在服務與執行 CLI 的 shell 中設定同一個根目錄**（例如你在 systemd unit 中設定的
 `Environment=` 行（§4.12；unit 的範本為根目錄與 registry 各留有一行註解掉的設定）——unit 本身不讀取
 任何環境檔——或一個同時由 unit 的 `EnvironmentFile=` 與你的 shell 讀取的檔案）。看不到根目錄的
@@ -2198,19 +2238,18 @@ registry 中運作，它未設定時一律拒絕（§4.9）。`EnvironmentFile=`
 - **它是合作式的。** 不取鎖的 GPU 程式不會被它擋住。推論服務不取這把鎖，可能占用 GPU 記憶體；
   拿不到記憶體的測試執行會以執行失敗回報，不登錄任何東西。
 - **繼承的檔案描述子。** 工作啟動的程式不會保有這把鎖（描述子設為 close-on-exec）。工作以 fork
-  產生、卻沒有啟動新程式的行程——例如 `fork` 啟動方式下的 DataLoader worker——與工作共用這把鎖：
+  產生、卻沒有啟動新程式的行程——例如 `fork` 啟動方式下的 worker pool——與工作共用這把鎖：
   工作正常結束時，鎖也會一併對該行程釋放；但工作被強制結束（或未釋放就結束）時，該行程會保有
   鎖直到它自己結束；這時拒絕訊息會說明所記錄的持有者已經結束。**服務啟動的工作各自是自己行程群組
   的 leader**（自 8242b47 的審查起），停止與 job runner 會結束整個群組，包括這些行程（見下）。
-  訓練 CLI（`train_model.py`、`setup_demo.py --train-model`）若只有主行程被結束——`kill <pid>`
-  或 `kill -9 <pid>`——它 fork 出的 DataLoader worker 會保有鎖，直到它們察覺為止（torch 的 5 秒
-  watchdog 加上正在處理的樣本，若有 worker 卡住則更久）；`kill -INT <pid>`（Ctrl-C 的訊號，也是
-  runner 自己的正常停止步驟）即使只送給主行程也會立即釋放鎖，而當 CLI 是自己群組的 leader 時
-  （在互動式 shell 中啟動的 CLI 透過 job control 就是），`kill -TERM -- -<pid>` 會結束整個群組。
-  `measure_scorer.py` 不會 fork 任何 worker。
+  訓練 CLI（`train_model.py`、`setup_demo.py --train-model`）不會 fork 任何 worker（自 K8-7，
+  2026-11-08 起：它的各階段 sampler 在主行程中取出 batch，過去 fork 出的 DataLoader worker 已隨
+  ShepherdGNN 的 loader 一併移除），所以不論以哪個訊號結束它的主行程，都會釋放鎖；當 CLI 是自己
+  群組的 leader 時（在互動式 shell 中啟動的 CLI 透過 job control 就是），`kill -TERM -- -<pid>`
+  會結束整個群組。`measure_scorer.py` 也不會 fork 任何 worker。
 - **工作區根目錄（鎖檔所在之處）請放在本機檔案系統上。**
 - **Windows** 使用 `msvcrt.locking` 鎖住檔案的第一個位元組；Windows 後端尚未測試。在那裡
-  DataLoader worker 是以 spawn 而非 fork 產生，不會繼承鎖的 handle；系統釋放已結束行程的檔案鎖可能
+  子行程是以 spawn 而非 fork 產生，不會繼承鎖的 handle；系統釋放已結束行程的檔案鎖可能
   有延遲；停止時對工作的主控台行程群組送出 CTRL_BREAK_EVENT，沒有主控台、無法送出的後端會改用
   TerminateProcess，它只結束主行程。在 Windows 後端未經測試之前，不加入行程群組真正的對應物 Job
   Object。
@@ -2225,8 +2264,8 @@ Training Console 與訓練 API 背後的服務現在執行兩種工作，各自�
   會被拒絕（以前會被接受，可能在正被停止的行程旁再啟動第二個行程）。
 - **停止只作用於自己的工作類型**：訓練的停止永遠不會停止測試執行，反之亦然。它先對工作的主行程送
   SIGINT（它的正常停止），30 秒後對工作的整個行程群組送 SIGTERM，再過 10 秒對群組送 SIGKILL，並在
-  工作沒有任何行程留下之後才回應：每個工作是自己行程群組的 leader，所以它 fork 出、與它共用 GPU 鎖的
-  DataLoader worker 會跟著結束；主行程結束後，runner 先結束群組中剩下的行程，才說明工作如何結束並
+  工作沒有任何行程留下之後才回應：每個工作是自己行程群組的 leader，所以它未經 exec 而 fork 出、
+  與它共用 GPU 鎖的任何行程會跟著結束；主行程結束後，runner 先結束群組中剩下的行程，才說明工作如何結束並
   釋出 GPU（自 8242b47 的審查起：以前 worker 可能在停止回答 "stopped" 之後仍存活並保有鎖）。成為
   zombie 的 worker（PID 1 從不回收的容器中）不持有任何東西，不會占住 GPU。
   `POST /api/v1/training/stop` 等待期間不再卡住 API 的其他部分與儀表板。**行程已經自行結束後
@@ -2235,7 +2274,11 @@ Training Console 與訓練 API 背後的服務現在執行兩種工作，各自�
 - **工作如何結束：** 訓練為 `completed`、`failed` 或 `stopped`（與以前相同）；測試執行為
   `completed`、`failed` 或 `cancelled`，只有在取消確實結束了它時才是 `cancelled`（取消送達時
   正好自行結束的執行，保留它自己的結束狀態）。因訊號而失敗時會說明是哪個訊號（例如記憶體不足被系統
-  結束時為 `Process ended by SIGKILL`）。
+  結束時為 `Process ended by SIGKILL`）。**在測試執行的直譯器仍在啟動時送達的取消，也是取消**（自
+  K8-13，2026-11-08 起）：在 POSIX 上，runner 啟動測試執行時暫擋 SIGINT，`measure_scorer.py` 一裝好
+  自己的 handler 就接手，所以這次執行會印出 "measure_scorer: cancelled" 並因 SIGINT 結束。以前它會
+  讓啟動以結束碼 1 或 2 結束（Python 匯入 `site` 時的 "Fatal Python error"），並被記錄為 `failed`。
+  訓練執行不以這種方式啟動。
 - **測試執行結束後，它的報告從磁碟讀取。** 每次測試執行都把它的 outcome 檔
   （`measure_scorer.py --outcome`，§4.9）寫進一個只屬於這個工作的目錄，其中寫明它發布的報告與那些
   位元組的 digest；這份報告是否保留、是否登錄，接著由登錄流程本身的 helper 以這個 digest 從
@@ -2304,8 +2347,7 @@ M5 的控制項只作用於伺服器列出的項目，從不作用於請求指�
 | `SHEPHERD_WORKSPACES_ROOT` | 一個已存在目錄的絕對路徑；其子目錄就是各個 workspace，其正下方的 `.shepherd-gpu.lock` 就是 GPU 鎖（§4.11） | 不列出任何 workspace，也沒有 GPU 鎖：每個訓練與測試執行都會被拒絕 |
 | `SHEPHERD_REGISTRY` | cohort registry（§4.9），即各指令以 `--registry` 接收的目錄：絕對路徑、已存在、位於 repository 之外；服務與各指令唯一從中登錄報告、在其中進行 `--cohort` 量測的 registry | 不列出任何 cohort 版本；每次登錄與 `--cohort` 量測都被拒絕 |
 | `SHEPHERD_INTAKE_DIR` | 位於 repository 之外的已存在目錄，你把要匯入的 `shepherd-cases/1` 檔案放在這裡；絕對路徑 | 不提供任何匯入來源 |
-| `SHEPHERD_TRAINING_EVIDENCE_DIRS` | 選填：R10 證據目錄，與 `--training-evidence` 接收的相同，以 `:` 分隔（Windows 為 `;`）；每一個都必須是已存在的絕對路徑 | 無；只要有一個項目不合格，整個設定就被拒絕 |
-| `SHEPHERD_ORDERING_ROLES` | 選填：提供依測試分數排序（D4）的 cohort 角色，以逗號分隔 | 無；`institutional_acceptance` 即使列出也會被忽略（`docs/working/PLAN_TEST_RESULTS.md` §4.9 問題 1） |
+| `SHEPHERD_TRAINING_EVIDENCE_DIRS` | 選填：R10 證據目錄，與 `--training-evidence` 接收的相同，以 `:` 分隔（Windows 為 `;`）；每一個都必須是已存在的絕對路徑 | 無；已知不是目錄的項目會讓整個設定被拒絕；無法檢查的項目會保留並附註 |
 
 ```bash
 export SHEPHERD_DEPLOYMENT_MODE=M1
@@ -2329,11 +2371,13 @@ export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
   `--registry` 與 `SHEPHERD_REGISTRY` 由同一個函式檢查。請把兩者建在只有執行服務與指令的帳號
   讀得到的地方，例如 `mkdir -m 700`。
 - **服務帳號無法到達的目錄**（它無權進入的上層目錄）會以「無法檢查」（cannot be checked）
-  拒絕並附上錯誤，其功能關閉。在 registry 內，服務讀不到的 `versions/` 會讓 cohort 清單附上
-  這個原因、不列出任何項目；讀不到的版本、`reports/` 或 run 目錄會附原因列出，清單的其餘部分
-  照常列出。
+  拒絕並附上錯誤，其功能關閉；證據目錄是例外（見下一項）。在 registry 內，服務讀不到的
+  `versions/` 會讓 cohort 清單附上這個原因、不列出任何項目；讀不到的版本、`reports/` 或 run
+  目錄會附原因列出，清單的其餘部分照常列出。
 - **證據目錄**：空的項目（重複或結尾的分隔符）會被略過，絕不會被當成工作目錄讀取。重複的項目
-  只保留一次。
+  只保留一次。服務帳號無法檢查的項目（無權進入的上層目錄、I/O 錯誤）是選用的證據，因此會保留：
+  Test 頁面以琥珀色標出它，Start 仍可使用。R10 無法查看它：在別處找到的範圍仍是找到；在別處都
+  找不到的範圍為 `unverifiable`，並指出它。相對路徑、不存在的目錄與檔案仍會讓整個設定被拒絕。
 
 ### 伺服器列出什麼
 
@@ -2352,45 +2396,66 @@ export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
   - 它是否**可訓練**，以及不可訓練的原因：沒有可讀取的 `split_manifest.json`、資料集紀錄未
     通過驗證，或 manifest 綁定的某個檔案不存在或無法檢查。清單不計算任何圖檔案的雜湊。訓練
     執行時會以實際讀取的位元組檢查每個檔案，仍可能拒絕。
-- **某個 workspace 的 checkpoint**：某個已列出 workspace 的 run 版面中的 checkpoint，所有
-  架構或單一架構，最新的 run 在前。每個檔案只讀取一次，且只載入權重，並顯示：
+- **某個 workspace 的 checkpoint**：某個已列出 workspace 的 run checkpoint，最新的 run 在前，
+  來自它的 `runs/` 之下的每一個目錄，不論目錄名稱為何（自 K8-7b，2026-11-08 起；以前只讀取版面中
+  各架構的目錄，所以放在其他名稱之下的模型在哪裡都不會列出），或只來自其中一個目錄。檔案是什麼
+  取決於它自己的紀錄，絕不取決於它所在的目錄。每個檔案只讀取一次，且只載入權重，並顯示：
   - 所讀位元組的 SHA-256；
-  - Trainer 的驗證數字：trainer 的 top-20 選擇指標，絕不是測試結果；檔案沒有記錄時為無；
+  - Trainer 的驗證數字：Trainer 記錄的、該階段的選擇指標（base 為 LP accuracy，任務模型為
+    pooled MRR），不論檔案的紀錄如何，都從檔案的 logs 讀取，絕不是測試結果；檔案未被讀取、或其
+    logs 兩者皆無時為無（沒有 model spec 的檔案記錄的是 `val_mrr`，它不會被讀取）；
+  - 其模型紀錄的摘要：`record` 為 `model`，或為附原因的 `refused`（沒有 model spec 的檔案：
+    "written before the model spec: not readable by this build; start a new run"），檔案的紀錄
+    未被讀取時（其 `problem` 說明原因）則為 null；自 K8-7b 起不再有 `history` 紀錄值、History 群組或
+    `history` 篩選（`?task=` 與 `?learning_stage=` 仍保留紀錄寫明它們的檔案）；
   - checkpoint 記錄的資料集指紋，以及它是否就是這個 workspace 目前的指紋；
   - 無法讀取的檔案會附上原因（包括目標已不存在的連結）。沒有任何檔案被略去；
   - 解析後落在 workspace 之外的檔案（以 symlink 指向 workspace 之外的 run 或 checkpoint）只
     附上這個原因：它絕不會被開啟，因此不顯示 digest、大小或紀錄。
 
-  每個項目都以清單中的名稱指稱 workspace：對 `current -> builds/2026-10-20` 而言，它寫的是
-  `current`。列出時會開啟每個 checkpoint，SPEC_4 將此歸類為 checkpoint 檢視（C3），而 D8 只在
-  操作者控制項所在之處提供它：它以 `GET /api/v1/workspaces/{name}/checkpoints` 提供（例如
-  `?architecture=gat` 只列一種架構），位於 D8 的檢查之後（§4.13），被拒絕的請求不會開啟任何檔案。
+  `runs/` 之下無法列出的目錄會成為一個附原因的項目，其他 run 仍照常列出；只有 `runs/` 本身失敗時
+  整份清單才失敗。名稱不是有效文字的目錄也是這樣的項目，其名稱以反斜線跳脫寫出（`runs/bad\xff`；
+  自 K8-7b 之後的修正起）。run 或檔案本身的名稱不是有效文字時，這份清單與下面那份仍會回應
+  HTTP 500，與 K8 之前相同（BACKLOG 66）；請將它改名。每個項目都以清單中的名稱指稱 workspace：對
+  `current -> builds/2026-10-20` 而言，它寫的是 `current`。列出時會開啟每個 checkpoint，SPEC_4
+  將此歸類為 checkpoint 檢視（C3），而 D8 只在操作者控制項所在之處提供它：它以
+  `GET /api/v1/workspaces/{name}/checkpoints` 提供（`?architecture=<目錄>` 只列 `runs/` 之下某一個
+  目錄的 run，以完全相同的名稱比對；沒有任何目錄叫這個名稱時，清單為空），位於 D8 的檢查之後
+  （§4.13），被拒絕的請求不會開啟任何檔案。
 - **既有的 checkpoint 清單**（`GET /api/v1/training/checkpoints`；自 M5-2 起，Training
-  頁面的 parent 清單是上面那份依 workspace 的清單）以同樣的方式讀取每個檔案。每個項目新增
+  頁面的 parent 清單是上面那份依 workspace 的清單）以同樣的方式、在 workspace 之內讀取每個檔案：
+  自 K8-7b 起，經由連結到 workspace 之外才到達的檔案會附上 "resolves outside the workspace, so it
+  is not read" 列出，與伺服器清單自 K8-1r 起的做法相同（以前它會被讀取並計算雜湊）。每個項目新增
   `sha256`、`validation`、`dataset_fingerprint` 與 `metadata_problem`，全部來自同一次讀取。以前它載入每個檔案卻不保留
   digest，而且載入錯誤時一聲不響地略過。讀取時已經不存在的檔案（目標已被移除的連結）沒有
-  大小或時間可顯示，會從這份清單中略去；它不再讓整份清單失敗。自 M5-1 起，D8 像檢查控制項
-  一樣檢查它（§4.13）。
+  大小或時間可顯示，會從這份清單中略去；它不再讓整份清單失敗。`runs/` 之下無法列出的目錄會保留，
+  附上原因；其大小與時間是該目錄本身的，名稱不是有效文字時則大小為 0.0、沒有時間（沒有任何路徑
+  叫所顯示的名稱）。自 M5-1 起，D8 像檢查控制項一樣檢查它（§4.13）。
 - **Cohort 版本**（`GET /api/v1/cohorts`）：registry 中的每個版本，以 label 及其 `cohort.json`
-  的 SHA-256 識別，附上它的角色，以及這個角色是否提供排序。它也顯示版本的計數、所綁定的圖與
+  的 SHA-256 識別，附上它的角色。它也顯示版本的計數、所綁定的圖與
   資料集紀錄，以及匯入時間。清單絕不顯示病例識別碼或排除清單：D7 把它們留在這台機器上的
   registry 中。中斷的匯入會附原因列出。每個版本的報告庫以 run id 列出，每個 run 都會說明它的
   報告是否保留、是否已登錄（`kept`、`registered`，各附原因，以及報告的 digest 與紀錄的序號），
   來自登錄流程本身對報告庫的讀取，以及對報告所記錄、它量測的 checkpoint 旁邊那份 ledger 的讀取。
-  那份 ledger 載有這份報告時，`registered` 為 `registered`，否則為 `cannot_be_checked`，絕不是
-  `not_registered`：登錄在同一份權重的其他副本旁邊的紀錄（`record_evaluation --checkpoint` 接受
+  那份 ledger 載有這份報告時，`registered` 為 `registered`；只有在它以其他位元組寫明這次執行時
+  才是 `not_registered`（`replaced_after_registration` 為 true：報告在登錄之後被替換，原因會指出
+  該紀錄與兩個 digest）；其他情況為 `cannot_be_checked`：登錄在同一份權重的其他副本旁邊的紀錄（`record_evaluation --checkpoint` 接受
   任何位元組相同的檔案）不會被查找，原因會指出查過的是哪一份 ledger。以相對路徑記錄 checkpoint 的
   報告，或無法讀取的報告，沒有可查的 ledger：這時 `registered` 同樣為 `cannot_be_checked`，並說明
-  原因。執行之後被移走的 checkpoint，會在執行讀取它的位置查找。有 `report.json` 的每個 run 也帶有
-  它的報告所屬 key 的 D5 狀態（`contest`：`uncontested`；`contested`，附上不同的欄位與 run；
-  `cannot_be_checked`，絕不能當成 uncontested 解讀），與 Research › Test 對那個 run 顯示的狀態相同，
-  但不含原因本身的文字，因為它可能指出伺服器路徑（自審查修正的根因回合起）。沒有 `report.json` 的
+  原因。執行之後被移走的 checkpoint，會在執行讀取它的位置查找。`registered` 表示有一筆紀錄寫明
+  **這次執行**與這些位元組（自 K8-6r.2 起）：另一次執行位元組相同的報告不算這次執行的登錄。只有
+  在每次執行各有自己的紀錄之前寫入的紀錄持有其位元組的執行，是未登錄，原因會說明（「its bytes equal
+  a report merged into record N …」）。有 `report.json` 的每個 run 也帶有它的報告所屬條件在報告庫中
+  的比較情形（`contest`），與 Research › Test 對那個 run 顯示的描述相同，但不含原因本身的文字，因為
+  它可能指出伺服器路徑。自 K8-6r.2 起這些值只做描述，字串對 API 用戶端保留不變：`uncontested`；
+  `contested`（同樣條件下的執行結果不同，附上不同的欄位與每一個帶有不同報告的執行，位元組相同的
+  執行各自列名）；`cannot_be_checked`（比較不完整，絕不能當成一致解讀）。沒有 `report.json` 的
   run 目錄（中斷、取消或被拒絕的執行），以及狀態沒有被讀取的 run（它的 `problem` 說明原因），
-  `contest` 為 `null`。報告無法讀取、或無法得知其 key 的 run 是 `cannot_be_checked`；可以讀取但無法
-  比較的 run 是 `cannot_be_checked`，除非它的 key 底下的報告已經不一致（這時是 `contested`）。無法
-  掃描的報告庫中的每個 run 也是 `cannot_be_checked`，報告在報告庫的掃描與其狀態的讀取之間被替換的
-  run 也是：一個 run 的狀態與它的 `contest` 永遠描述同一份位元組。每個請求會把每個列出版本的報告庫
-  掃描一次。
+  `contest` 為 `null`。報告無法讀取、或無法得知其條件的 run 是 `cannot_be_checked`，只附它自己的
+  原因，不會標記其他 run。可以讀取但無法比較的報告會讓其群組的比較不完整，除非該群組的執行已經不同
+  （這時是 `contested`）。無法掃描的報告庫中的每個 run 也是 `cannot_be_checked`，報告在報告庫的
+  掃描與其狀態的讀取之間被替換的 run 也是：一個 run 的狀態與它的 `contest` 永遠描述同一份位元組。
+  每個請求會把每個列出版本的報告庫掃描一次。
 
 ### 建置時間：`workspace_build.json`
 
@@ -2442,10 +2507,10 @@ M5 在 SPEC_4 的部署模式 **M1** 下執行：由 owner 或指定的技術人
 
 | 位置 | 控制項 |
 |---|---|
-| API | `POST /api/v1/pipeline/reload`、`POST /api/v1/pipeline/config`、`POST /api/v1/training/start`、`POST /api/v1/training/stop`、`GET /api/v1/training/checkpoints`、`GET /api/v1/workspaces/{name}/checkpoints` |
+| API | `POST /api/v1/pipeline/reload`、`POST /api/v1/pipeline/config`、`POST /api/v1/training/start`、`POST /api/v1/training/finetune`、`POST /api/v1/training/stop`、`GET /api/v1/training/checkpoints`、`GET /api/v1/workspaces/{name}/checkpoints`、`GET /api/v1/workspaces/{name}/family` |
 | 儀表板 | Diagnosis：Change model…（其 checkpoint 清單與它的 Load；自 M5-2 起）。⚙ Settings（Runtime Settings）：Restart Backend 與 Apply Settings。Research › Training：Start、Stop（它的確認會讀取該 run 最後的 checkpoint）、Continue…（它列出 parent）、parent 清單的 Refresh、Check checkpoint 與 Continue Training |
 
-兩份 checkpoint 清單與 Check checkpoint 會開啟 checkpoint 檔案，SPEC_4 將此歸類為 checkpoint 檢視
+三份 checkpoint 清單（含家族檢視）與 Check checkpoint 會開啟 checkpoint 檔案，SPEC_4 將此歸類為 checkpoint 檢視
 （C3），因此它們與控制項一樣受檢查。為了顯示而開啟 checkpoint 的讀取也一樣：Diagnosis 卡片的
 「trained on」一行（所服務的 checkpoint）與 Training 頁面的 run 標題（該 run 的 checkpoint）；
 唯讀的瀏覽器在卡片上會看到 "not shown · reading the checkpoint is an operator control"，在 run 標題則看到
@@ -2493,7 +2558,7 @@ Refused: This request did not arrive on a loopback address of this machine. The 
 `enabled`、決定結果的 `condition`，以及它的 `reason`。它是唯讀且開放的；顯示它並不是控制本身。
 
 **被 D8 拒絕的重新載入不改變任何東西。** 以前，任何人的重新載入請求，不論是否被拒絕，都會讓之後的
-每次診斷從 demo 回答變成「已設定但未提供服務」（503）。
+每次診斷從 demo 回答（自 K7 起已移除）變成「已設定但未提供服務」（503）。
 
 **不宣稱的事。** loopback 不是授權：任何能到達這台機器 loopback 的人，包括經由他自己的 SSH
 forward，都會通過。因此 M1 指的是一個經過驗證、由 owner 或指定技術人員操作的單一 workspace 部署。
@@ -2555,7 +2620,7 @@ launcher 與 `python -m src.api.main` 會把它們綁定的主機以 `SHEPHERD_B
   shepherd` 會顯示原因）。這時操作者
   控制項只能在本機上或經由 SSH forward 使用；
 - 透過 HTTP 重新載入 pipeline 的腳本需要服務處於 M1 模式，並且必須呼叫
-  `http://127.0.0.1:<port>`。`scripts/measure_served_pipeline.py` 因此在它自己啟動的服務中設定
+  `http://127.0.0.1:<port>`；為此自行啟動服務的腳本，要在其環境中設定
   `SHEPHERD_DEPLOYMENT_MODE=M1`。
 
 ### CORS：沒有跨來源的瀏覽器存取
@@ -2582,8 +2647,9 @@ CORS 只決定頁面能讀取什麼。不需要預檢的跨來源請求仍會抵
 | **Diagnosis (clinical)** | 病患表型、結果與選中候選的細節，使用中的模型顯示在一張卡片上（見下文）。它是第一個畫面 |
 | **Research (pre-clinical)** › Prepare › **Datasets** | 伺服器的 workspace，唯讀（見下文） |
 | **Research (pre-clinical)** › Prepare › **Training** | run bar、下一次 run 的參數、Continue… 與附圖表的 run 檢視（見下文）。它是 Research 下最先顯示的頁面 |
+| **Research (pre-clinical)** › Prepare › **Fine-tune** | 一個 base 的任務模型（自 K6 起）：一個已列出的 base、一到三個任務（Disease、Gene、Patients-like-me），每個任務依序各自訓練成一個 run；一張 job card 顯示每個任務的狀態、Stop 與產出 |
 | **Research (pre-clinical)** › Evaluate › **Test** | 從伺服器的 intake 目錄匯入 cohort 版本、執行測試、保留並登錄其報告（見下文） |
-| **Research (pre-clinical)** › Evaluate › **Models** | 伺服器為某個 workspace 列出的 checkpoint、它們已記錄的測試結果、依測試分數排序與 Load（見下文） |
+| **Research (pre-clinical)** › Evaluate › **Models** | 伺服器為某個 workspace 列出的 checkpoint、它們已記錄的測試結果、最新在前或依 family 排列，以及 Load（見下文） |
 | 頁首右側的 **⚙ Settings** | Runtime Settings，與以前相同。對唯讀的瀏覽器，Apply Settings 與 Restart Backend 會呈灰色不可用，原因寫在它們下方 |
 
 - 選中的階段（Diagnosis 或 Research）以填色加粗體顯示；選中的研究頁面以底線加粗體顯示；
@@ -2665,8 +2731,8 @@ Matching phenotypes · Paths）。選取一列（點擊，或在聚焦的列上�
   checkpoint 檔，屬於操作者控制項（§4.13）：唯讀的瀏覽器看到 "not shown · reading the checkpoint
   is an operator control"。若另一個瀏覽器更換了模型，這張卡片會顯示 "not read yet · read it"，
   直到頁面再次打開或按下 "read it"（每 5 秒的讀取絕不打開 checkpoint）；
-- 只在成立時出現的標籤：`synthetic data`（琥珀色）、`no SP table`、`no trained model` 或
-  `GNN not loaded`（紅色）、`unverified`（琥珀色：圖未對照任何 workspace manifest 檢查）；
+- 只在成立時出現的標籤：`synthetic data`（琥珀色）。`no trained model` 與 `unverified` 標籤
+  已隨路徑推理狀態移除（K7），`no SP table` 與 `GNN not loaded` 已隨 mixture 移除（K8-4）；
 - "Recorded tests: <狀態>"（§4.9），它的 › 會打開 Details 的 Evidence；"Details ›"；
   "🔒 Change model…"。紀錄的測試與 workspace 名稱會在每次顯示 Diagnosis、每次診斷後、更換模型後
   以及按下 ↻ 時重新讀取（每 5 秒的讀取只讀目前服務的內容）：在 Research › Test 記錄的測試，回到
@@ -2677,8 +2743,7 @@ Matching phenotypes · Paths）。選取一列（點擊，或在聚焦的列上�
 | "Model changed at HH:MM — was <舊>, now <新>"，附 × | 這次讀取發現的模型（或所服務內容的其他部分）與這個瀏覽器上一次讀取的不同（例如另一個瀏覽器做了 Change model）。× 可關閉它 |
 | 灰色："cannot check · <原因> · Retry"、"last known HH:MM:SS · not current" | 無法讀取目前服務的內容："status not read"（完整原因寫在標記下方那一行與 Details 中）或 "timed out (5 s)"。顯示的是最後已知的狀態，沒有 ✓，標籤為灰色虛線 |
 | 灰色："read HH:MM:SS · older than this result" | 最後一次成功的讀取早於畫面上的結果 |
-| "No model loaded" 與 "🔒 Load a model…" | 沒有設定任何 pipeline。Run Diagnosis 呈灰色且無法點擊：滑鼠指向它，或以 Tab 移到它，會說明原因，下方也寫著 "Disabled: no model loaded. …"。API 用戶端此時提出請求，仍會得到 demo 回答 |
-| "No trained model · path reasoning only" 與紅色標籤 | 服務的是沒有訓練模型的圖。Run Diagnosis 仍可使用，結果帶有 `NO TRAINED MODEL: path-reasoning fallback.` |
+| "No model loaded" 與 "🔒 Load a model…" | 沒有服務任何模型：什麼都沒設定、只指定了圖而沒有模型，或建置失敗（自 K7 起，圖從不單獨服務）。Run Diagnosis 呈灰色且無法點擊：滑鼠指向它，或以 Tab 移到它，會說明原因，下方也寫著 "Disabled: no model loaded. …"。API 用戶端此時提出請求，會得到附原因的 503（§4.7） |
 | "🔒 Change model…" 呈灰色，附 "Operator controls only: <原因>" | 唯讀的瀏覽器（§4.13）。它永遠看不到 checkpoint 清單 |
 
 結果上方的**標記（badge）**（§4.7）把結果的整個 served identity 與卡片最近一次的讀取比對，而
@@ -2687,9 +2752,9 @@ use"。不論標記怎麼說，CSV 與報告都保留結果自己的身分。"No
 support for a qualified clinician." 位於結果的底部。
 
 **身分抽屜**蓋在細節面板上，有兩個檢視。"Model in use" 是所服務模型的資料，分五節（Identity，
-附完整 digest 與 Copy；Uses；Data；Evidence；Warnings，永遠展開）、結構 fingerprint 那一行（列出
-並計數不同之處；checkpoint 沒有記錄結構 fingerprint 時為 "not compared"），以及通往 Research ›
-Models 完整紀錄的連結。"This result" 只顯示結果本身帶有的內容，每一項與目前使用中的對照。
+附完整 digest 與 Copy；Uses；Data；Evidence；Warnings，永遠展開），以及通往 Research › Models
+完整紀錄的連結（結構 fingerprint 那一行自 K8-4 起已移除：checkpoint 的紀錄以 digest 綁定它的圖，
+在載入時檢查）。"This result" 只顯示結果本身帶有的內容，每一項與目前使用中的對照。
 "Details ›" 與 "Recorded tests ›" 打開前者，標記打開後者；更換模型進行中（確認畫面打開，或正在
 重新載入）時，它們不會蓋掉 Change model 抽屜。
 
@@ -2715,10 +2780,32 @@ Close 或 × 會立即關閉抽屜，重新載入照常進行（無法中止）�
 重新載入的狀態。在 Research › Models 中，Close 也以同樣方式關閉確認畫面。
 從 Research › Models 做的 Load 也會更新這張卡片。同一時間只會打開一個抽屜。
 
+**重新載入請求**（`POST /api/v1/pipeline/reload`，儀表板 Load 背後的 API）宣告五個欄位：
+`data_dir`、`checkpoint_path`、`task`、`device` 與 `expected_checkpoint_sha256`。它要指定一個
+任務或一個 `checkpoint_path`，或兩者都指定：只有任務時，服務最新一個含有為該任務 finetune 之
+模型的 run；有路徑時服務那個檔案（同時指定任務時，模型必須屬於該任務）；兩者都沒有的請求會被
+拒絕，並指出缺少的任務或路徑，而且在讀取任何 checkpoint 之前（自 K8-4 起）。**任何其他欄位都
+回 422**（`extra_forbidden`，指出該欄位），在讀取或選擇任何東西之前，所以服務沒有宣告的欄位
+絕不會被丟掉、其餘照常服務。*舊腳本*（自 K8-4 起）：`conv_type` 已移除，因為架構是從
+checkpoint 的 model spec 讀出的。不論它的值為何，都要從指定路徑、任務或兩者的請求中拿掉。
+帶 `conv_type` `"hgt"` 的任務請求，要求的是現在沒有任何欄位能指定的架構：待多架構移植讓
+HGT 可以服務之後，請改以 `checkpoint_path`（以及 `expected_checkpoint_sha256`）指定一個
+model spec 確認為 HGT 的 checkpoint；在那之前，本版不服務任何 HGT 模型。並請正確拼寫 `expected_checkpoint_sha256`：拼錯的 `expected_checkpoint_sha` 過去
+會被丟掉、讓重新載入不受綁定，現在會被拒絕。**自動選擇只讀取 workspace 內的檔案**，依每次讀取
+實際開啟的檔案判斷（伺服器向已開啟的檔案詢問它位於何處，而不是看它的名稱），所以被選中的檔案若
+在讀取前被換成 workspace 外的檔案，會被拒絕，不從中讀取任何內容、也不發布，使用中的模型維持
+不變；伺服器無法判斷已開啟檔案位於何處時，自動選擇會拒絕它；明確指定的 `checkpoint_path` 則不論
+位於何處都會讀取（自 K8-4r 起）。自 K8-7b（2026-11-08）起，它讀取 `runs/` 之下每一個目錄的
+run，不論目錄名稱為何，所以放在其他名稱之下的模型也會被找到並服務；它無法列出的 `runs/` 之下的
+目錄，會在原因中最先指名，並列入它沒有讀取的項目，絕不悄悄略過。回應中的 `architecture` 是
+已載入 model spec 的 encoder 種類，指定任務或路徑時都一樣；run 目錄的名稱只用來定位檔案，原因則以
+`<目錄>/<run>` 指稱該 run，即放置它的 `runs/` 之下的目錄（自 K8-4r 起；自 K8-7b 起可為任何目錄
+名稱）。
+
 ### Research › Prepare › Datasets
 
 伺服器在 `SHEPHERD_WORKSPACES_ROOT` 下列出的 workspace 的唯讀清單（§4.12）：也就是 Training、
-Test 與 Models 選擇時使用的同一份清單。每一列顯示名稱；建置時間（UTC，來自
+Fine-tune、Test 與 Models 選擇時使用的同一份清單。每一列顯示名稱；建置時間（UTC，來自
 `workspace_build.json`），或「build time not recorded」加上各來源宣告的版本；**資料集指紋**，
 即其 `split_manifest.json` 的 SHA-256 的前 12 個十六進位數字（Copy 會複製完整的 64 個；兩個
 workspace 前 12 個相同時會顯示更多位數）；來源（`synthetic` 以琥珀色顯示）；資料集紀錄是否通過
@@ -2795,6 +2882,12 @@ Training Console 現在是分成三部分的一個頁面：上方橫跨整頁的
   訓練行程在這之前不檢查 workspace 的任何東西，所以已無法解析或已不存在的 manifest（連整個
   workspace 都不在了也一樣）也以同樣的文字拒絕；正是所顯示的那份、但現在讀不了的 manifest，
   則以讀不了為由拒絕。
+- **經由 HTTP，`POST /api/v1/training/start` 就是這個表單的啟動**（自 K7 起）：嚴格的 base
+  啟動。`learning_stage` 必須是 `base`；它接受這次執行（`data_dir`、`run_name`、`device`、
+  `resume_from`、`extend_epochs`）與參考配方的 base 設定，各項預設不設定，由配方補上。finetune
+  stage、ShepherdGNN 設定（`conv_type`、`hidden_dim` 等）或任何它未定義的欄位以 422 拒絕，續接
+  一個不是 base 的 checkpoint 以 409 拒絕，都在佔用 GPU 名額或建立 run 目錄之前。任務模型以
+  `POST /api/v1/training/finetune` 啟動，與 Fine-tune 頁相同。
 - 失敗的 run 的**錯誤橫幅**橫跨整頁。標題（"Training failed: Process exited with code 1"）
   之下是 run 印出的最後一行錯誤（"Last error printed: TrainingDeviceUnavailable: --device auto
   requires CUDA, …"），對唯讀瀏覽器與輸出一樣經過遮蔽。run 旁邊只在有日誌時說明日誌在哪裡（它的
@@ -2804,8 +2897,13 @@ Training Console 現在是分成三部分的一個頁面：上方橫跨整頁的
   瀏覽器分頁中隱藏橫幅。run bar 中的每則通知都把名稱與路徑當作文字顯示，不論 workspace 或 run
   名稱含有什麼字元。
 
-**參數，「for the next run」**：欄位、分組、預設值與驗證都與以前相同，Basic 展開，Advanced 與
-Expert 收合。**Data Paths 與它的 Save Path 已移除**：workspace 由 run bar 選擇，儀表板不再
+**參數，「for the next run」**（K6：base 的設定）：恰為 base 階段的參考設定（`src/config/recipe.py`
+的 BASE），每一欄都從參考值開始。Epochs、Learning rate、Batch size 與 Seed 直接顯示，其餘七欄
+收在預設收合的「More reference settings」之下。Early stopping patience 關閉時（參考值）顯示
+「off」，填入整數即開啟。表單下方一行顯示「Uses the reference settings.」或「Differs from the
+reference settings: Epochs 5 (200)」；欄位拒絕的值會在這一行指出（「Not valid: …」），Start 也會
+拒絕；Start 只送出與參考值不同的設定。任務模型由 base 在 Research › Prepare › Fine-tune 訓練。
+**Data Paths 與它的 Save Path 已移除**：workspace 由 run bar 選擇，儀表板不再
 讀取或寫入伺服器工作目錄中的 `.shepherd_training_config.json`（留在那裡的檔案會被忽略；是否
 提供「Save as the default dataset」是擁有者要決定的問題）。三個分組放不進視窗時（1920 × 1080
 放得下），參數在自己的欄內捲動；run bar 永遠不捲動。run 檢視分成三列：標題與狀態行、圖表、
@@ -2816,22 +2914,28 @@ Expert 收合。**Data Paths 與它的 Save Path 已移除**：workspace 由 run
 只由版面決定，不受畫在裡面的 canvas 影響，所以同一個視窗大小下，不論是直接開啟、重新載入，
 還是從窄視窗恢復，圖表大小都相同。
 
-**Continue…** 會打開一個取代參數欄的抽屜：run bar 所選 workspace 的 checkpoint（伺服器的清單：
-列出時會開啟每個 checkpoint，所以是操作者控制項），分兩步選擇，或手動輸入其中某個 checkpoint
-的路徑。**Run**：各個 run，最新的在前，每個以名稱、架構與開始時間表示（「ui-live-stop-02 · GAT ·
-2026-10-24 17:39」；沒有命名的 run 只有架構與時間）。**Checkpoint**：該 run 的檔案，最新的在前，
-每個以它自己紀錄中的幾個詞表示：「Latest save · 195 epochs completed」，或「Top-k save · 21
-epochs completed · Trainer val MRR 0.2867」（訓練器因 validation MRR 保留的檔案，是 Trainer 的
-數字，不是測試結果）；epoch 數取自檔案的進度紀錄（沒有進度紀錄的檔案只說它記錄的 epoch，從不由此
-推算完成數），限制繼續訓練的條件直接寫在選項裡（「finished」、「stopped early, cannot continue」、
-「weights only, cannot continue」、「cannot be read」）。改選另一個 run 時，會列出它的檔案並選好它
-的 Latest save。兩個選單下方有一張表，列出選項沒說的部分：檔案、保存的內容、階段已結束時繼續訓練
-會做什麼、模型指紋（Copy 會複製完整的 64 個）與 run 的目錄名稱。自 M5-3 起，手動輸入的路徑只會找到該清單中的 checkpoint，其他任何檔案都會在
-開啟之前被拒絕（`PLAN_TEST_RESULTS.md` D8）。
+**Continue…** 會打開一個取代參數欄的抽屜：run bar 所選 workspace 的模型紀錄，也就是 base 與任務
+模型（自 K6 起，沒有 model spec 的檔案永遠不會從儀表板繼續訓練；伺服器的清單：列出時會開啟每個
+checkpoint，所以是操作者控制項），分兩步選擇，或手動輸入其中某個 checkpoint 的路徑。**Run**：
+各個 run，最新的在前，來自 `runs/` 之下的每一個目錄（自 K8-7b，2026-11-08 起），每個以名稱、
+目錄與開始時間表示（「base-a · GATv2 · 2026-10-28 13:57」：目錄名稱轉成大寫，`gatv2` 則寫成
+「GATv2」；它是位置，不是模型的架構，架構由紀錄指明；沒有命名的 run 只有目錄與時間）。
+**Checkpoint**：該 run 的檔案，最新的在前，每個最多 40 個字元，
+說明它是什麼以及訓練到哪裡：「Latest save · 195 epochs completed」，或「Top-k save · 21 epochs
+completed」（訓練器因驗證數值保留的檔案）；epoch 數取自檔案的進度紀錄（沒有進度紀錄的檔案只說它
+記錄的 epoch，從不由此推算完成數），只保存權重或無法讀取的檔案會直接說明（「weights only」、
+「cannot be read」）。改選另一個 run 時，會列出它的檔案並選好它的 Latest save。兩個選單下方有一張
+表，列出選項沒說的部分：檔案、階段、保存的內容、階段已結束時繼續訓練會做什麼（提前停止的檔案為
+「not possible: it stopped early」）、Trainer 的驗證數值（base 為「LP accuracy (Trainer) 0.5000」；
+是 Trainer 的數字，不是測試結果）、模型指紋（Copy 會複製完整的 64 個）與 run 的目錄名稱。
+自 M5-3 起，手動輸入的路徑只會找到該清單中的 checkpoint，其他任何檔案都會在開啟之前被拒絕（`PLAN_TEST_RESULTS.md` D8）。
 **Check checkpoint** 顯示繼續訓練會做什麼，並比較 parent 記錄的資料集指紋與 workspace 目前的
 指紋：相同時為 ✓，不同時為琥珀色（附上相符的已列出 workspace，或「matches no listed
-workspace」）。抽屜打開期間，run bar 顯示 Start（停用：「close Continue… to start a new
-run」）、**🔒 Continue Training**（資料集不同時停用，並附原因）與 **Cancel**。從清單選的
+workspace」）。自 K8-7（2026-11-08）起，續接的執行只繼承本版仍有的設定：parent 記錄了、但本版
+已沒有的設定（`num_workers`、舊的模型設定如 `conv_type`）既不繼承，也不構成拒絕的理由；缺少
+目前某個設定的 parent 會被拒絕；Check checkpoint 與訓練行程的判斷相同，用語也相同。抽屜打開
+期間，run bar 顯示 Start（停用：「close Continue… to start a new run」）、
+**🔒 Continue Training**（資料集不同時停用，並附原因）與 **Cancel**。從清單選的
 checkpoint 會在伺服器的清單中重新找到。**繼續訓練所用的就是所顯示的模型指紋**（於根因修正輪
 實作）。從清單選的 checkpoint，Check checkpoint 與 Continue Training 都送出清單上的指紋；手動
 輸入的路徑，則由 Check checkpoint 讀取檔案並顯示它的指紋，Continue Training 再送出所顯示的那個。
@@ -2847,7 +2951,7 @@ checkpoint）。API 也以選用的查詢參數接受 parent 的 digest，
 `expected_parent_sha256=<64 個十六進位數字>`，與 `resume_from` 一起使用（不是該檔案時 409，
 格式錯誤時 422）；沒有這個參數時，訓練行程仍綁定在 runner 讀到的 parent。job runner 與訓練
 行程在啟動時仍會檢查其他一切。Check checkpoint 會說明它讀取的是清單上的哪個檔案（「Checked
-gat/<run>/<file> from the run list」；手動輸入的路徑則顯示路徑與指紋），資料集相符時只說一次
+gatv2/<run>/<file> from the run list」；手動輸入的路徑則顯示路徑與指紋），資料集相符時只說一次
 「✓ Trained on the dataset selected in the run bar」（指紋在 run bar）。抽屜打開期間，run bar 的
 那一行是「Run: a new one, continued from the checkpoint chosen in Continue a run」：繼續訓練的
 run 會在自己的 run 目錄中訓練。抽屜有自己的 **Device**（auto、cuda 或 cpu），每次打開時
@@ -2870,8 +2974,13 @@ checkpoint（相對於 workspace 根目錄；執行中為最新的一個）、�
 to train further, use Continue…」、「Stopped early (…) · … · cannot be continued」、「Running ·
 epoch 12 of 100」或「No checkpoint saved, so nothing can be continued」；沒有 run 目錄的 run（在
 建立 run 目錄之前就被拒絕）會如實說明：沒有 checkpoint、沒有日誌，也沒有可畫的圖。下方是一張共用 epoch 軸的四格圖：Loss（train，以及以虛線表示的
-validation）、MRR（validation，Trainer top-20）、Hits@K（validation，Trainer），以及對數軸的
-learning rate（0 或缺少的值為空隙）。圖下是資源列（GPU 與記憶體）。
+validation：記錄下來的 `val_loss` 或 `val_lp_loss`，不論是哪種 run）、該 run 的驗證值與其伴隨
+指標，以及對數軸的 learning rate（0 或缺少的值為空隙）。中間兩張依 run 記錄的內容而定：base 畫
+LP accuracy，再畫 ROC-AUC 與 AP；任務模型畫 pooled MRR，再畫 pooled top-k。驗證項目兩種數值都
+沒有的日誌（例如沒有 model spec 的檔案）在那裡不畫任何序列，標題為「No other figure charted:
+Export CSV has every logged figure」與「No further figure charted」（自 K8-7b，2026-11-08 起；
+它的 MRR 與 Hits@K 圖已移除），它的 Loss 與 learning rate 圖則與任何 run 一樣畫出；第一次驗證之前，
+這兩張圖照舊等待。圖下是資源列（GPU 與記憶體）。
 
 - **縮放與平移**：在圖上滾動滾輪會以指標為中心縮放；在 epoch 軸上只縮放 epoch（四張圖一起），
   在數值軸上只縮放該圖的數值。拖曳可平移；雙擊或 **Reset view** 會重新容納全部資料；+ 與 −
@@ -2906,8 +3015,9 @@ checkpoint：run 標題的標籤顯示「dataset not shown · operator control�
   （registry 的清單，`SHEPHERD_REGISTRY`），附上它的 role、各項數量、版本 digest，以及它是否
   對照這個 workspace 的圖譜映射（「bound to this graph」，或「mapped against another graph」，
   執行時會被拒絕）。其下是該版本 report store 的每一個執行目錄，最新的在前：何時執行、用哪個
-  模型、是否保留了報告、是否已登錄；當同一個 key 下的報告不一致時顯示「runs disagree —
-  investigate」（D5）。沒有保留報告的執行會說明這一點；目前正在執行的測試位於最上方一列，而這台
+  模型、是否保留了報告、是否已登錄；當同一群組的執行結果不同時顯示「runs under these conditions
+  differ」（只有當該群組記錄 deterministic algorithms 開啟時，才以琥珀色加上「— investigate」），
+  比較不完整時顯示「comparison incomplete」。沒有保留報告的執行會說明這一點；目前正在執行的測試位於最上方一列，而這台
   伺服器上最後一次結束時 store 中什麼也沒有的測試執行（在建立執行目錄之前就被取消，或失敗）會
   保留為一列，直到下一次啟動或重新啟動伺服器。清單列出最新的 8 份報告以及選取的那一份；
   **Show all N reports** 會列出其餘的（這個瀏覽器分頁會記住這個選擇）。對操作者而言，每一列的
@@ -2916,10 +3026,18 @@ checkpoint：run 標題的標籤顯示「dataset not shown · operator control�
   報告，在被選取之前顯示「registration cannot be checked from the list」。
 - **Run。** 模型：伺服器清單中該 workspace 的 checkpoint，依執行、epoch、檔案與模型指紋列出。
   列出它們會開啟每一個 checkpoint，因此這是操作者控制項：唯讀的瀏覽器不會看到它，而且頁面對
-  每個 workspace 只列出一次（↻ 會重新讀取清單）。接著是執行時會尋找的 R10 證據（被量測的
+  每個 workspace 只列出一次（↻ 會重新讀取清單）。接著是 **Measurement**（自 K8-6a 起），即執行
+  以 `--mode <protocol>` 傳入的協定（§4.9）：選項是這個 build 所實作、且所選模型的紀錄符合其
+  learning stage 與 task head 的協定，目前 finetune 模型的每個 task head 各一種（Disease、Gene
+  或 Patients-like-me）。只有一個選項時它已被選取；有多個時，在你選擇之前都不選取；沒有任何
+  選項時（base，其正式測試尚未實作），Start 會說明原因。紀錄無法讀取的檔案同樣沒有任何選項，
+  Start 為停用，並附上紀錄自己的原因（沒有 model spec 的檔案為「Record not readable (written
+  before the model spec: not readable by this build; start a new run): not measured here. Choose
+  a model finetuned for a task」；自 K8-7b，2026-11-08 起）。它和模型一樣是操作者控制項。Mode C 與
+  Mode D 都不是協定，因此沒有任何頁面或命令會執行它們。接著是執行時會尋找的 R10 證據（被量測的
   workspace，以及 `SHEPHERD_TRAINING_EVIDENCE_DIRS`）、**Register the result**、
-  **Deterministic execution**，以及由伺服器固定的 batch size、裝置與模式（量測程式的預設值；
-  `SHEPHERD_DEVICE`；Mode C，模型自己的排名：Mode D 是操作者以命令列執行的）。**🔒 Start test** 透過 job runner（§4.11）啟動真正的
+  **Deterministic execution**，以及由伺服器固定的 batch size 與裝置（量測程式的預設值；
+  `SHEPHERD_DEVICE`）。**🔒 Start test** 透過 job runner（§4.11）啟動真正的
   `measure_scorer.py`，使用伺服器在自己的清單中重新找到的 workspace、版本與 checkpoint，並以
   **頁面顯示過的完整模型指紋與版本 digest 作為預期值**：執行時讀到的檔案或版本若是其他位元組，
   會在量測之前拒絕。Start 會說明它為何不可用：先說 GPU 工作（「Disabled: GPU job: … One
@@ -2936,27 +3054,36 @@ checkpoint：run 標題的標籤顯示「dataset not shown · operator control�
   登錄的報告，卡片仍保留執行結束時的狀態，並指向 Result：報告現在的登錄狀態以 Result 為準。頁面顯示時每 5 秒讀取一次工作狀態；剛結束的執行的報告會被選取，
   每次執行只選取一次。頁面重新讀取版本的報告庫期間（工作狀態改變、某個操作或匯入之後）所做的
   選擇，會在那次讀取結束後套用，絕不會被它改回；期間做了多次選擇時，留下的是最後一次。
-- **Result。** 選取的報告，以帳本將會保存的紀錄形式顯示：對已排名案例的 Mode C 指標、含每一類
-  排除的涵蓋率、各項關係、以文字表示的 R10（*unverifiable* 從不顯示為 0）、環境、資料集來源，
+- **Result。** 選取的報告，以帳本將會保存的紀錄形式、由每種模式共用的同一種顯示呈現（自 K8-6e.2 起）：
+  任務的方塊與文字指標，每個指標的記錄原文收在一次點擊之內（「Recorded metrics (N)」）；這個版本
+  未描述的模式（包括已保存的 Mode C 或 Mode D 報告）的報告讀作「Mode <mode> (a measurement mode this
+  version does not describe)」，以一列「Recorded metrics」列出每個指標的記錄名稱與數值；score
+  semantics 依記錄原文顯示；含每一類排除的涵蓋率、各項關係、以文字表示的 R10（*unverifiable* 從不顯示為 0）、環境、資料集來源，
   以及是否已登錄（對操作者而言，是在清單中持有它所量測權重的 checkpoint 旁的帳本中檢查）。
+  有紀錄以其他位元組寫明這次執行（報告在登錄之後被替換），或那份帳本無法判斷時，Result 會列出
+  登錄給的原因。
   **🔒 Register this report** 透過唯一的登錄函式（§4.9）登錄一份已保留的報告：伺服器在版本的
   store 中找到報告、確認其位元組就是顯示過的那些、從它自己的 checkpoint 清單找出帳本應在的
   位置（以完整 digest 找到持有該權重的已列出檔案，從不使用報告記錄的路徑：若執行讀取的那個
   檔案以這些權重列出，就用它，這也是清單查看的地方；否則用執行所量測的 workspace 中另一個已
   列出的副本；再否則用所顯示 workspace 中的副本），然後登錄。執行之後
   被移動過的 checkpoint 無法以這種方式找到；頁面會說明，機器上的
-  `scripts/record_evaluation.py` 仍然可用。當報告所屬 key 下的多次執行不一致時，頁面顯示這個
-  封鎖、Register 不可用，並列出與新增 **investigation notes**（誰、何時、發現了什麼；🔒 Add
-  note），與該 key 的報告保存在一起。筆記從不解除封鎖。在寬螢幕上，筆記表單（Who、What was
+  `scripts/record_evaluation.py` 仍然可用。已保存的 Mode D 報告以同樣的方式、以它自己的模式登錄；
+  同一次執行再登錄一次會說明已登錄，不寫入任何東西（§4.9）。**對頁面能確認的這次執行的已保留報告，
+  Register 一律可用**（政策 rev 16，自 K8-6r.2 起）。它只在下列情形不可用：唯讀請求、這次執行沒有
+  保留報告、這次執行已登錄，或這次執行自己的報告無法建立（附它自己的原因）或清單沒有讀到它。存放處
+  無法列出時會說明這一點，並指向 `record_evaluation.py --report …`。其他執行、結果不同的群組，以及
+  別處無法讀取的報告，從不讓它不可用。當報告所屬群組的執行結果不同、或比較不完整時，頁面加以描述，並
+  列出與新增 **investigation notes**（誰、何時、發現了什麼；🔒 Add note），與該群組的報告保存在一起。
+  筆記記錄發現了什麼，不改變任何東西。登錄的訊息附上群組說明與歷史說明。在寬螢幕上，筆記表單（Who、What was
   found、🔒 Add note）固定在面板底部、Register 之上，所以無論報告或筆記多長都保持可見（What
   was found 最多長到四行，之後在框內捲動）。筆記檔案無法讀取時，頁面會說明這一點（可能缺少某
   則筆記），從不顯示「沒有保存筆記」。
 
 **🔒 Import a new version…** 會在 Run 與 Result 上方打開一個抽屜：intake 目錄中的檔案
 （`SHEPHERD_INTAKE_DIR`，§4.12：其中的 `*.json` 檔案，依名稱、大小與修改時間列出；連結到目錄
-之外的檔案會列出但不提供選擇；不會從瀏覽器上傳任何東西）、版本標籤、role（並說明它是否在
-Models 中提供依測試分數排序：`SHEPHERD_ORDERING_ROLES`，`institutional_acceptance` 永遠不提供）
-以及遺失 term 的政策。**🔒 Preview** 在服務內以 CPU 執行匯入程式（它會讀取 workspace 的圖譜），
+之外的檔案會列出但不提供選擇；不會從瀏覽器上傳任何東西）、版本標籤、role（版本宣告的用途，例如
+mygene2、research_selection 或 institutional_acceptance）以及遺失 term 的政策。**🔒 Preview** 在服務內以 CPU 執行匯入程式（它會讀取 workspace 的圖譜），
 不寫入任何東西。預覽顯示各項數量、排除原因及其數量、無法映射的 term 及列出每個 term 的案例數，
 以及版本綁定的內容；**案例 id 不會傳送到瀏覽器**（機器上的命令列預覽會列出它們，提交後的版本
 會記錄它們）。不符合 `shepherd-cases/1` 的檔案會被拒絕，其問題依案例索引列出（最多 10 項），
@@ -2974,19 +3101,29 @@ repository 之下的路徑以其名稱書寫（`<registry>/versions/…`），�
 ### Research › Evaluate › Models
 
 這是 Diagnosis 分頁「Change model…」所用的同一份模型清單的研究檢視，列出伺服器為某一個 workspace
-列出的 checkpoint（選擇 **Workspace**；**Architecture** 可縮小清單）。Workspace 選單下方會再次列出所選
+列出的 checkpoint（選擇 **Workspace**；自 K6 起以 **Task** 縮小清單：All、Base、Disease、Gene 或
+Patients-like-me；History 以及它所選的「history」紀錄已於 K8-7b，2026-11-08 移除，所以紀錄無法讀取的
+檔案只列在 All 之下）。Workspace 選單下方會再次列出所選
 workspace 的資料集識別（建置時間、資料集指紋、`synthetic`、紀錄的狀態），因此即使選單截斷了很長的
-workspace 名稱，這些資訊也不會被遮住。所有 run 都會顯示，最新的在前。各欄：
+workspace 名稱，這些資訊也不會被遮住。所有 run 都會顯示，最新的在前，來自 workspace 的 `runs/`
+之下的每一個目錄，不論其名稱（自 K8-7b 起）。各欄：
 
-- **Model**：架構、run 的開始時間、epoch；正在提供服務的 checkpoint 標示 **In use (Diagnosis)**
-  （以完整的模型指紋比對）；
+- **Model**：先說明檔案是什麼（Base、Disease、Gene、Patients-like-me、「Record not readable」或
+  「Record not read」；沒有 model spec 的檔案為「Record not readable」，附上 "written before the
+  model spec: not readable by this build; start a new run"，自 K8-7b 起不再是「History · never
+  run」），然後是 run 的目錄（轉成大寫，`gatv2` 寫成「GATv2」：它是位置，不是架構，架構由紀錄
+  指明）、run 的開始時間、epoch；正在提供服務的 checkpoint 標示 **In use (Diagnosis)**（以完整的
+  模型指紋比對）；
 - **Fingerprints: model · dataset trained on**：模型指紋（checkpoint 的 SHA-256 的前 12 個十六進位
   數字），下方是 checkpoint 所記錄的完整資料集指紋所對應的已列出 workspace，或「matches no listed
   workspace」；`synthetic` 以琥珀色顯示；
-- **Validation MRR (Trainer, top-20)**：Trainer 自己在 val 樣本上的數值，也就是訓練用來挑選
-  checkpoint 的指標。它從來不是測試結果，也從不與測試結果放在同一欄；
+- **Validation (Trainer)**：Trainer 自己在 val 樣本上的數值，也就是訓練用來挑選 checkpoint 的
+  指標，數值下方寫出它的名稱（base 為 LP accuracy，任務模型為 pooled MRR），不論檔案的紀錄如何，
+  都從檔案的 logs 讀取；logs 兩者皆無時為無，沒有 model spec 的檔案即是如此，它的 `val_mrr` 不會
+  被讀取（自 K8-7b 起不再顯示歷史檔前 20 名的 MRR；其原始數值仍留在檔案中，明細寫「Validation
+  (Trainer): not read (record not readable)」）。它從來不是測試結果，也從不與測試結果放在同一欄；
 - **Recorded tests**：checkpoint 旁的 ledger 所記錄的內容，以狀態顯示（「none in ledger」、「no
-  ledger」、「3 · 1 contested」……），從不顯示某個結果的數值。
+  ledger」、「3 · runs differ for 1」……），從不顯示某個結果的數值。
 
 **列出清單會開啟該 workspace 的每一個 checkpoint**，因此清單是操作者控制項（§4.13）。
 自 M5-3 起，伺服器對每個 checkpoint 檔案只讀一次，檔案改變時（依其裝置、inode、大小、修改與
@@ -2999,47 +3136,47 @@ workspace 名稱，這些資訊也不會被遮住。所有 run 都會顯示，�
 紀錄附上 `deterministic_algorithms`；CPU 紀錄單憑 environment class 看不出來）。那裡沒有 Trainer 的
 驗證數值，也沒有 Load。
 
-**Order: Newest first | By test score。** 只有角色列在 `SHEPHERD_ORDERING_ROLES`（§4.12）中的 cohort
-version 才提供依測試分數排序；其他 version 會列出並說明為何關閉，而 `institutional_acceptance` 一律
-關閉（「awaits the institution's formal evaluation rules」），即使設定中列出它也一樣。選擇指標（Mode C
-MRR (untruncated)、Hits@k，或 mean rank——它以最低者在前排序）與 cohort version。其他 scoring
-semantics 下的紀錄從不與這些一起排序；當該 version 的紀錄分屬不止一種時，會出現 **Scoring
-semantics** 選項。凡是提供排序的地方，頁面都會說明：「A cohort version whose scores were used to
-choose a model is no longer an independent final test for that model.」系統從不依測試分數自動選擇
-模型。各分組：
-
-| 分組 | 內容 |
-|---|---|
-| Ordered by … on … · highest first | 每個 checkpoint 一個數值，依固定規則：它第一筆以 deterministic 環境登錄的紀錄，否則為它第一筆登錄的紀錄（有多筆時顯示 `#3 · D4 rule`）。每一列顯示該紀錄的數值環境（`CUDA · deterministic`），若不是多數已排序列共有的環境則標示 **regime differs** 並附 ⓘ |
-| Contested on this version · not ordered | 規則選中的紀錄有爭議：該 version 的報告庫中同一鍵下的報告彼此不一致。它不參與排序，也從不以下一筆紀錄遞補 |
-| Contested status cannot be checked · not ordered | 無法讀出該鍵下的報告是否彼此一致（該 version 的報告庫或其中某份報告無法讀取；該 version 不在登錄庫的清單中）。它同樣不參與排序，也從不顯示為無爭議 |
-| Not compared on this version · not ordered | 其他 scoring semantics 下的紀錄、分在兩個 ledger 中的紀錄、無法讀取的紀錄或 ledger，或無法讀取的 checkpoint；該列會說明是哪一種 |
-| Not tested on this cohort version · newest first | 在此 version 上沒有紀錄 |
-
-剛選擇另一個 workspace 時，它的各列可能短暫顯示在「Records not read yet」之下，直到頁面讀完它們的
-ledger。
+**Order: Newest first | By family。** By family（自 K6 起）每個 family 一組，parent 在前，並有
+Lineage 欄。沒有任何排列方式依測試分數為模型排名：依測試分數排序已在 K8-6d 退役，連同它的角色設定、
+它的 Mode C 規則與每個 checkpoint 只取一筆紀錄的規則。每一筆紀錄都仍可在下方的細節區讀取，系統也從不
+依測試分數自動選擇模型。
 
 **選取一列**會顯示完整的模型指紋與 Copy、它在什麼資料上訓練（以及那是否為此 workspace 目前的資料
 集）、自成一張卡片的 Trainer 驗證數值、任何警告，以及兩個分段：
 
-- **Recorded test results**：ledger 為這組權重記錄的每一筆紀錄，每種量測模式各一張表，各自在該模式的
-  標籤與說明之下（自 Batch 3 起：先 Mode C 的紀錄，再 Mode D 的）。每一列有 cohort version 與其角色、
-  該模式的 MRR 與 Hits@10（表頭寫出全名：Mode C MRR (untruncated) 與 Hits@10；Mode D 的以匯入後合格
-  病例為分母）、列出每一項排除的涵蓋率（Mode D 的寫成匯入後合格病例中觸及的數目），以及 `registered #N` 或琥珀色的 `contested #N` 並
-  說明各次執行在哪裡不一致（或「contested status cannot be checked」，從不顯示為無爭議）、
-  deterministic 開或關；清單已排序時，標出固定規則選中哪一筆，以及其他紀錄與它的差異；接著是各項
-  關係、該紀錄的其他指標、以狀態顯示的 R10（*unverifiable* 是一個原因，從不是 0）、執行環境、資料集
-  與登錄資訊；
-- **Usage history**：每一個已列出的 cohort version 的使用紀錄中提及此 checkpoint 的項目：測試執行、
-  登錄，以及從已排序清單進行的載入，最新的在前。
+- **Recorded test results**：ledger 為這組權重記錄的每一筆紀錄，每種量測模式各一張表，依首次出現的
+  順序排列，各自在該模式的標籤（任務另有說明）之下，由每種模式共用的同一種顯示呈現（自 K8-6e.2 起；
+  在此之前先列 Mode C 的紀錄，再列 Mode D 的，各有自己的標籤）。每一列有 cohort version 與其角色；
+  任務的 pooled MRR 與第二個指標（表頭寫出全名），或者對這個版本未描述的模式（包括已保存的 Mode C 或
+  Mode D 紀錄），以一欄「Recorded metrics」列出每個指標的記錄名稱與數值、不四捨五入；列出每一項排除
+  的涵蓋率；以及 `registered #N`，或
+  `runs differ #N` 附「runs under these conditions differ」與不同之處（中性；只有當該群組記錄
+  deterministic algorithms 開啟、執行本應一致時，才以琥珀色加 ▲ 與「— investigate」標出），或「comparison
+  incomplete」（從不顯示為一致）、deterministic 開或關、在每次執行各有自己的紀錄之前併入它的報告
+  （若有），以及這種紀錄與具名執行之間的「possible overlap with record N (not recorded)」；接著是
+  各項關係、任務紀錄的其他文字指標、以狀態顯示的 R10（*unverifiable* 是一個原因，從不是 0）、依記錄
+  原文的「Score semantics: …」、任務紀錄收在「Recorded metrics (N)」之後的每個指標原文、執行環境、
+  資料集，以及附上其執行的登錄資訊（在每次執行各有自己的紀錄之前寫入的紀錄為「not recorded」）。
+  每一筆紀錄都會顯示，這些描述不會隱藏或排除任何紀錄。這組權重中無法當作結果讀取的紀錄（自
+  K8-6e.1 起）絕不顯示為結果、也不算作結果：表格下方是 "▲ 1 record for these weights cannot be read
+  as a result. The ledger keeps it as written." 與一張小表 Index · Registration · Report · Reason
+  （它未以可讀形式帶有的序號或報告 digest 顯示為 "not readable"）；此時分頁標籤為 "Recorded test
+  results · 3 (1 not readable)"。唯讀檢視列出同樣的項目，取自該 route；
+- **Usage history**：每一個已列出的 cohort version 的使用紀錄中提及此 checkpoint 的項目，最新的在前：
+  測試執行與登錄，以及 K8-6d 之前留下的模型載入，依其記錄內容顯示（「ordered by」加上它記錄的指標名稱，
+  以及它的 scoring semantics）。測試執行讀作任務在已排名案例上的第一個指標，或其他模式的標籤與案例數，
+  接著是執行方式，再來是收在「Recorded metrics (N)」之後、它記錄的每個指標（未記錄任何指標時為
+  「no metric recorded」）。使用紀錄尚未記錄模式之前寫入的項目讀作「Measurement mode not recorded」
+  （自 K8-6e.2 起；在此之前讀作 Mode C）。
 
 **🔒 Load this model** 是共用的 Load（與 Diagnosis 的「Change model…」相同的確認；確認開啟時會蓋住
 細節區，不論視窗多矮，它的按鈕都留在表格下方的可見範圍內；按 Close 回到細節區，且仍選取同一個
-checkpoint）。清單依測試分數排序時，按鈕旁的說明會指出這一點，而這次 Load 會以「依該指標排序的模型
-載入」寫入該 version 的使用紀錄，不論是否生效，並附上原因。從「Newest first」清單進行的 Load 不會在
-那裡寫入任何內容。頁面在顯示時、更換 workspace 時以及每一次 Load 之後讀取，包括沒有改變任何服務內容
-的 Load（重新載入被拒絕、再次載入正在使用的模型），因此使用紀錄會顯示該次 Load 寫入的項目；頁面上
-沒有任何東西依計時器執行。
+checkpoint）。對 base 以及紀錄無法讀取的檔案，它在讀取任何東西之前就是停用的，原因寫在旁邊（沒有
+model spec 的檔案為「Record not readable: written before the model spec: not readable by this
+build; start a new run.」）。Load 不會寫入任何使用紀錄。頁面在顯示時、更換 workspace 時以及
+每一次 Load 之後讀取，
+包括沒有改變任何服務內容的 Load（重新載入被拒絕、再次載入正在使用的模型），因此期間發生的變化會顯示
+出來；頁面上沒有任何東西依計時器執行。
 
 **窄版**（寬度低於 1400 或高度低於 760，各區域上下堆疊時），選取一列會捲動到它的細節區並把鍵盤焦點
 移到那裡；細節區標題列的 **↑ Back to the list** 會回到該列。
@@ -3067,7 +3204,10 @@ pyparsing 3.3.3、xxhash 4.0.2：與 M5 GB10 驗收時的版本相同）。`uv s
 `uv sync --inexact` 會把已安裝的 2.8.0.post1 換成 2.8.1：這是環境變更，之前做的驗收不會延續過來。
 
 **A5 的說法**：已安裝的 `torch_geometric` 版本不同時，會列出兩個版本；專案宣告了但沒有安裝時，
-會列出 lock 的版本；這兩種情況下 A5 都不再顯示「已安裝版本與 lock 相同」。
+會列出 lock 的版本；這兩種情況下 A5 都不再顯示「已安裝版本與 lock 相同」。自 K8-7（2026-11-08）
+起，A5 不再記錄 DataLoader worker 的 socket 能否放在暫存目錄之下，也不再印出 TMPDIR 提示：本版
+沒有任何東西會啟動 DataLoader worker。它的其他事實（與 lock 的比較、環境）不變，較早的報告則保留
+它們當時記錄的這項事實。
 
 **這裡固定的是目前正式部署的組合，不是對 PyG、torch 或 CUDA 版本的永久限制。** 版本只存在於
 依賴與部署層：訓練、推理與 UI 的程式都不檢查套件版本（執行時的檢查只問 torch 與 PyG 能否匯入），

@@ -1,88 +1,136 @@
 """
-The Test page's start, outcome and registration with a real test run (M5-2, UI-D).
-=================================================================================
+The Test page's start, outcome and registration with a real test run (M5-2, UI-D; K6).
+=====================================================================================
 `src/webui/components/test_page.py` over the real job runner and the real
-`scripts/measure_scorer.py` (CPU, the fixture cohort, an untrained checkpoint):
-the page's Start hands the runner the inputs from the server's lists and the
-digests shown; once the run has ended, the job card says what the runner read
-from disk (kept, not registered without "Register the result"), the version's
-report store lists the new report, and the page's Register files it in the
-ledger beside the listed checkpoint, after which the page reads it as
-registered.
+`scripts/measure_scorer.py` (CPU, the fixture cohort, a base and a disease
+child trained for one epoch by `tests/fixtures/trained_children.train_children`
+into the workspace's `runs/gatv2`, beside a checkpoint without a model spec
+under `runs/hgt`, listed with its record refused): the page offers the child the one measurement its record
+admits (disease), and Start hands the runner the inputs from the server's
+lists, the digests shown, that measurement and, apart from it, the model's
+learning stage and task the listing's model record names; once the run has
+ended, the job card says what the runner read from disk (kept, not registered
+without "Register the result") and which measurement it ran, the version's
+report store lists the new report under that measurement's own metrics, and
+the page's Register files it in the ledger beside the listed child, under
+`runs/gatv2`, after which the page reads it as registered. The base and the
+file without a model spec are listed, offered no measurement, and Start says
+why it does not measure them (for the base, the base message; for the other,
+the record reader's one phrase).
 
-> The checkpoint is untrained and the graph synthetic: nothing here is a result
-> about the scorer, only about the page's flow.
+> The model is trained for one epoch on CPU and the graph is synthetic: nothing
+> here is a result about the model, only about the page's flow.
 
 Module: tests/integration/test_test_page_job.py
 """
 from __future__ import annotations
 
 import json
-import shutil
 
 import pytest
 
 pytest.importorskip("torch")
 pytest.importorskip("gradio")
 
+from src.config.model_types import WRITTEN_BEFORE_SPEC  # noqa: E402
 from tests.fixtures.operator_access import operator_request  # noqa: E402
+from tests.fixtures.trained_children import BASE_RUN, CHILD_RUNS  # noqa: E402
 
-RUN = "20261017-091500_run_3fa9c1"
+#: The run of a checkpoint without a model spec, kept beside the bundles:
+#: listed, its record refused, never run.
+HISTORY_RUN = "20261017-091500_run_3fa9c1"
 LABEL = "demo-test-1"
 
 
 @pytest.fixture
 def site(tmp_path, monkeypatch):
     from src.webui.components import served_status
-    from tests.fixtures.registered_cohort import build_registered_cohort
+    from tests.fixtures.registered_cohort import (
+        graph_source_cases,
+        import_version,
+        write_checkpoint_without_model_spec,
+        write_demo_workspace,
+        write_source,
+    )
+    from tests.fixtures.trained_children import train_children
 
-    cohort = build_registered_cohort(tmp_path / "c")
     workspaces = tmp_path / "ws"
     workspaces.mkdir()
-    demo = workspaces / "demo"
-    shutil.move(str(cohort.data_dir), demo)
-    checkpoints = demo / "runs" / "gat" / RUN / "checkpoints"
-    checkpoints.mkdir(parents=True)
-    shutil.copy2(cohort.checkpoint, checkpoints / "best.pt")
+    demo = write_demo_workspace(workspaces / "demo")
+    registry = tmp_path / "registry"
+    registry.mkdir()
+    import_version(registry, demo, write_source(tmp_path / "cases.json",
+                                                graph_source_cases(demo)))
+    write_checkpoint_without_model_spec(
+        demo / "runs" / "hgt" / HISTORY_RUN / "checkpoints" / "best.pt", data_dir=demo)
+    trained = train_children(demo, ("disease",))
     monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(workspaces))
-    monkeypatch.setenv("SHEPHERD_REGISTRY", str(cohort.registry))
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(registry))
     monkeypatch.setenv("SHEPHERD_DEVICE", "cpu")
     monkeypatch.setattr(served_status, "read_status", lambda: (None, "not read"))
-    return cohort, checkpoints / "best.pt"
+    return registry, demo, trained["disease"]
+
+
+def _key(models, architecture, run, filename="last.pt"):
+    from src.webui.components import test_page as tp
+
+    (item,) = [i for i in models["items"]
+               if (i["architecture"], i["run"], i["filename"]) == (architecture, run, filename)]
+    return tp.item_key(item)
 
 
 def test_a_run_started_from_the_page_is_kept_shown_and_registered(site, monkeypatch):
     from src.api.services.training_manager import TrainingManager
+    from src.utils.fingerprint import file_sha256
     from src.webui.components import test_page as tp
 
-    cohort, checkpoint = site
+    registry, demo, child = site
     request = operator_request(monkeypatch)
     page = tp.read_page(request)
     models = tp.read_models("demo", request)
-    key = f"gat/{RUN}/best.pt"
+    key = _key(models, "gatv2", CHILD_RUNS["disease"])
+    binding = tp.workspace_binding(demo, tp.find(page["workspaces"], "name", "demo"))
+    # The radio offers the child one measurement, chosen as the only one.
+    choices = tp.measurement_choices(tp.find_model(models, key))
+    assert choices == [("Disease", "disease")]
+    protocol = tp.chosen_measurement(choices, None)
+    assert tp.start_state(page, models, "demo", LABEL, key, binding, ("none", ""),
+                          protocol=protocol) == (True, None)
     manager = TrainingManager()
     started = tp.start_test_run(page, models, "demo", LABEL, key, False, False, request,
-                                manager=manager)
+                                protocol=protocol, manager=manager)
     assert started["success"], started
     assert manager._last["test"].done.wait(600), "the run did not end"
 
     job = tp.read_job(manager=manager)
     assert job["status"] == "completed", job.get("log")
-    assert job["inputs"]["checkpoint_sha256"] == cohort.checkpoint_sha256
+    assert job["inputs"]["checkpoint_sha256"] == file_sha256(child)
+    assert job["inputs"]["protocol"] == "disease"
+    assert (job["inputs"]["learning_stage"], job["inputs"]["task"]) == ("finetune", "disease")
     assert job["outcome"]["kept"] is True and job["outcome"]["registered"] is False
     card = tp.job_html(job, tp.path_roots(), ("none", "GPU jobs: none"))
     assert 'data-status="completed"' in card and "Report kept" in card
-    assert "Not registered" in card and str(cohort.registry) not in card
+    assert "Disease measurement" in card
+    assert "Not registered" in card and str(registry) not in card
 
     reports = tp.read_reports(LABEL)
     (run,) = reports["runs"]
     assert run["run_id"] == job["outcome"]["report_dir"].rsplit("/", 1)[-1]
+    assert run["record"]["scoring"]["mode"] == "disease"
+    result = tp.result_html(reports, run["run_id"], tp.path_roots())
+    assert "Disease pooled MRR" in result and "Mode C" not in result
+    assert "disease task: report kept" in tp.reports_html(reports, None)
     allowed, _why = tp.register_state(page, reports, run["run_id"])
     assert allowed is True
     done, said = tp.register_selected(page, reports, models, "demo", run["run_id"], request)
     assert done is True and said.startswith("Registered as record 1."), said
-    ledger = json.loads((checkpoint.parent / "evaluations.json").read_text())
+    # The ledger is the child's own, under runs/gatv2 (K5a's layout key).
+    ledger_path = demo / "runs" / "gatv2" / CHILD_RUNS["disease"] / "checkpoints" / \
+        "evaluations.json"
+    assert child.parent / "evaluations.json" == ledger_path
+    ledger = json.loads(ledger_path.read_text())
     assert ledger["records"][0]["source_artifact_digest"] == run["state"]["report_sha256"]
+    assert ledger["records"][0]["scoring"]["mode"] == "disease"
 
     shown = tp.refine_registration(page, tp.read_reports(LABEL), run["run_id"], models)
     assert shown["runs"][0]["state"]["registered"] == "registered"
@@ -102,3 +150,42 @@ def test_a_run_started_from_the_page_is_kept_shown_and_registered(site, monkeypa
     assert "it was not registered (at that time: " in card
     assert "it is not registered" not in card and "there is no" not in card.split(
         "at that time: ", 1)[0]
+
+
+def test_a_base_and_a_file_without_a_model_spec_are_listed_and_never_started(site,
+                                                                              monkeypatch):
+    """On the records the production path wrote: the base and the checkpoint
+    without a model spec are listed, led by what they are, and offered no
+    measurement; Start says why it does not measure them (for the base, the
+    protocol definition's base message); the start itself refuses them before
+    the runner is asked. The child is offered its one measurement."""
+    from src.evaluation import protocols
+    from src.webui.components import test_page as tp
+
+    _registry, demo, _child = site
+    request = operator_request(monkeypatch)
+    page = tp.read_page(request)
+    models = tp.read_models("demo", request)
+    binding = tp.workspace_binding(demo, tp.find(page["workspaces"], "name", "demo"))
+    labels = dict((key, label) for label, key in tp.model_choices(models))
+    base = _key(models, "gatv2", BASE_RUN)
+    history = _key(models, "hgt", HISTORY_RUN, "best.pt")
+    child = _key(models, "gatv2", CHILD_RUNS["disease"])
+    assert labels[base].startswith("Base · ") and labels[child].startswith("Disease · ")
+    assert labels[history].startswith("Record not readable · ")
+
+    class Unasked:
+        def start_test(self, inputs):
+            raise AssertionError("the runner was asked to start a refused checkpoint")
+
+    for key, says in ((base, protocols.BASE_MESSAGE),
+                      (history, f"Record not readable ({WRITTEN_BEFORE_SPEC})")):
+        assert tp.measurement_choices(tp.find_model(models, key)) == []
+        allowed, why = tp.start_state(page, models, "demo", LABEL, key, binding, ("none", ""))
+        assert allowed is False and why.startswith(f"Disabled: {says}"), why
+        result = tp.start_test_run(page, models, "demo", LABEL, key, False, False, request,
+                                   manager=Unasked())
+        assert result["success"] is False and result["error"].endswith("Nothing was started.")
+        assert result["error"].startswith(says[:1].upper() + says[1:])
+    # The fixture version lists no genes; the disease measurement needs none.
+    assert tp.measurement_choices(tp.find_model(models, child)) == [("Disease", "disease")]

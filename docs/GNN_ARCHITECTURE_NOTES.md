@@ -3,10 +3,22 @@
 > **Purpose**: Technical reference for the engineering team. Evaluates GNN architecture options for SHEPHERD-Advanced, including compatibility with PyTorch 2.9+ and PyG 2.7+.
 >
 > **Last updated**: 2026-05-14
+>
+> **Note (2026-10-27).** None of the encoders here is the reference paper's, a homogeneous three-layer
+> GATv2 over a learned node table. The paper-aligned design, its GraphEncoder contract and its five
+> module boundaries are [`working/scorer-retraining/README.md`](working/scorer-retraining/README.md)
+> §2–§3. This file stays a survey of options.
 
 ---
 
 ## Current Architecture
+
+> **Note (2026-11-08): no longer current.** The ShepherdGNN path that offered the three conv types
+> below, its `--conv-type` flag and its "production default" GAT were removed in K8 (its training
+> path in K8-7, the wrapper and its encoders in K8-10). A model bundle's encoder is its model spec's
+> (the reference GATv2, `src/models/bundle/encoders.py`). `HeteroGNNLayer`
+> (`src/models/gnn/layers.py`) keeps the GAT, HGT and SAGE layers for the multi-architecture port,
+> not yet behind the `GraphEncoder` contract. The table stays as the survey it was.
 
 SHEPHERD-Advanced supports three GNN conv types via PyG's `HeteroConv` wrapper:
 
@@ -153,7 +165,7 @@ PhenoKG 的核心創新不在 GNN 層，而在子圖建構：
 
 **和我們的差異**：我們對所有病患用同一個通用 subgraph sampling（`max_subgraph_nodes=5000`）。PhenoKG 為每個病患建不同的子圖，讓 GNN 只看到相關的局部結構。
 
-**實作難度**：中等（~1 週）。需要改 `DiagnosisDataLoader` 的 subgraph sampling 邏輯。核心算法是 BFS，已有現成（`compute_shortest_paths.py`）。
+**實作難度**：中等（~1 週）。需要改 `DiagnosisDataLoader` 的 subgraph sampling 邏輯。核心算法是 BFS，已有現成（`compute_shortest_paths.py`）。*(Note, K8-5: the BFS this points to, `scripts/compute_shortest_paths.py`, was removed in K8-5; it is at `e02c0f7`.)*
 
 ### Transformer Gene Encoder
 
@@ -378,6 +390,18 @@ Layer 3 — Decoder（百搭，可替換）：
   HOPE（plug-and-play 升級）
   Transformer Gene Encoder（PhenoKG 風格）
 ```
+
+**Correction (2026-10-27): "FlashAttention (needs an encoder with attention)" is too loose.**
+- **What it accelerates:** FlashAttention, xFormers and SageAttention speed up *dense* attention
+  (`QKᵀ` over a sequence).
+- **Where it does not apply:** GAT, GATv2 and HGT attend sparsely, along edges, so these kernels
+  cannot replace that attention.
+- **Its first legitimate use here:** the paper-aligned design's patient encoder, a Transformer over a
+  patient's phenotype sequence.
+- **A graph encoder** would use them only if it were a global-attention graph Transformer.
+
+The boundaries and their candidate routes are `working/scorer-retraining/README.md` §3.4. The plug-in
+system stays BACKLOG 58.
 
 ---
 
