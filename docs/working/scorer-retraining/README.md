@@ -1041,12 +1041,13 @@ both checkpoint lists as before K8 (`../BACKLOG.md` 66); cosmetic and open items
 68, 69). **Checked since (2026-11-09):** the full suite on `f2c2012` (6080 passed, 9 skipped, 0
 failed); the reviewer's external review of `af3a8a9..f2c2012`, with no P1 or P2 in the product code
 (its one P2, F1, was in the GB10 acceptance script outside the repository, fixed there); and
-**the GB10 acceptance on the reviewed head, passed** in an explicitly selected local build of the
-PyG extensions, after the prebuilt download failed: 101 of 101 probes, the closing check 110 of
-110 (`../k8-acceptance-2026-11-09/`). It does not cover the prebuilt deployment path at this code,
+**the GB10 acceptance on the reviewed head, passed** in an explicitly selected environment, after
+the prebuilt download failed (`pyg-lib` 0.8.0 built locally; the other three extensions
+byte-identical to the prebuilt release's): 101 of 101 probes, the closing check 110 of 110
+(`../k8-acceptance-2026-11-09/`). It does not cover the prebuilt deployment path at this code,
 gene and patients-like-me on GPU, other architectures, bfloat16 or the WebUI in a browser (that
 record's §3; `../BACKLOG.md` 70, 71). AP's autocast check ran on CPU with bfloat16 only; float16
-with its scaler ran on the GB10 (M2, M9). The HGT node-order tests skip on a host without
+with its scaler ran on the GB10, on the demo (M2, M9). The HGT node-order tests skip on a host without
 pyg_lib's grouped matmul.
 
 **BACKLOG items in scope, bounded:** 23 (branch's closed list and lineage), 54 (shared validation and
