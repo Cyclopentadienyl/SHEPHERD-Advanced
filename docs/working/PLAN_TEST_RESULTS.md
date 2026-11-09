@@ -453,6 +453,14 @@ and the decision's text is history.
   --kind kg_edges --from-checkpoint`), one part of a checkpoint's recorded edge split with its
   role (`train`, `val` or `test`) as given and its fixed LP pairs in a digest-bound file. A
   supplied cohort's role is still never `train` or `val`. No protocol measures a KG edge set yet.
+  Since Stage 4b a third kind, also schema 2: a generated split, `kind` `generated`
+  (`scripts/import_cohort.py --kind generated`), one of a workspace's own generated splits with
+  its role as given, its samples copied byte for byte and its data identity the samples' digest,
+  the split manifest's and split files' digests, the generation definition and the role. It is
+  never presented as a supplied cohort; it is listed and read, and not measured yet (Stage 5).
+  Reports measured with `--split` stay as they are, unregistrable, with no identity made up. Every
+  version names its dependencies by content (`version_references`), never by path, and a missing
+  one is a state (`check_references`).
 - **Keeping.** Every valid result of every real execution is kept as its own report (policy
   rev 16), a run that repeats another's conditions included; a generated split's report never
   replaces an earlier run's (K8-6r.4).

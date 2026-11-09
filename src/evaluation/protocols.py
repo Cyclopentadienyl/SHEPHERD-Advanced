@@ -59,10 +59,19 @@ FULL_VIEW_INPUTS = ("edge_relation_ids", "node_ids", "node_types", "relation_ids
 
 #: The data kinds measured (`src.evaluation.cohort.COHORT_KINDS`): a generated
 #: split, and a registered version's recorded kind (a supplied cohort, a KG
-#: edge set).
+#: edge set, a generated split kept in the registry).
 GENERATED = "generated"
 SUPPLIED = "supplied"
 KG_EDGES = "kg_edges"
+
+#: The reason a registered generated split is not measured yet: the registry
+#: keeps and lists one (research comparison §5 Stage 4), and measuring it is
+#: the round's Stage 5. A stated capability gap, said before anything is read,
+#: never a judgment of its role; the workspace's own split is measured as
+#: before.
+GENERATED_VERSION_GAP = ("this build lists and reads a registered generated split but does not "
+                         "measure one yet; the workspace's own generated split is measured by "
+                         "the command line's --split.")
 
 #: The task heads' scoring semantics, by task, as
 #: `src.models.bundle.capabilities.TASK_HEAD_SEMANTICS` states them.
@@ -303,11 +312,13 @@ def model_refusal(name: Any, model: Any) -> str | None:
 def inputs_refusal(name: Any, kind: Any, counts: Mapping[str, Any] | None) -> str | None:
     """Why data of the kind `kind` (`GENERATED` for a generated split, a
     registered version's recorded kind otherwise) whose counts are `counts`
-    (a registered version's `cohort.json` counts) cannot be measured by the
-    protocol `name`, or None: a kind the protocol does not measure; then, for
-    a registered version, the first of its needs the version's
-    `counts["genes"]` does not have above 0. A name that is not a protocol
-    gets the same reason as from `model_refusal`."""
+    (a registered version's `cohort.json` counts; None for a workspace's own
+    generated split, which has none) cannot be measured by the protocol
+    `name`, or None: a kind the protocol does not measure; a registered
+    generated split, which this build does not measure yet
+    (`GENERATED_VERSION_GAP`); then, for a registered version, the first of
+    its needs the version's `counts["genes"]` does not have above 0. A name
+    that is not a protocol gets the same reason as from `model_refusal`."""
     protocol = _protocol(name)
     if protocol is None:
         return _unknown(name)
@@ -317,7 +328,7 @@ def inputs_refusal(name: Any, kind: Any, counts: Mapping[str, Any] | None) -> st
         takes = " or ".join(_KIND_WORDS.get(k, k) for k in protocol.data_kinds)
         return f"the {protocol.name} measurement does not measure {said}; it measures {takes}."
     if kind == GENERATED:
-        return None
+        return None if counts is None else GENERATED_VERSION_GAP
     genes = counts.get("genes") if isinstance(counts, Mapping) else None
     genes = genes if isinstance(genes, Mapping) else {}
     for need in protocol.needs:
@@ -340,6 +351,6 @@ def refusal(name: Any, model: Any, kind: Any, counts: Mapping[str, Any] | None) 
     return model_refusal(name, model) or inputs_refusal(name, kind, counts)
 
 
-__all__ = ["BASE_MESSAGE", "FULL_VIEW_INPUTS", "GENERATED", "KG_EDGES", "NO_RECORD", "PROTOCOLS",
-           "Protocol", "SUPPLIED", "available", "inputs_refusal", "model_refusal", "names",
-           "refusal", "task_head"]
+__all__ = ["BASE_MESSAGE", "FULL_VIEW_INPUTS", "GENERATED", "GENERATED_VERSION_GAP", "KG_EDGES",
+           "NO_RECORD", "PROTOCOLS", "Protocol", "SUPPLIED", "available", "inputs_refusal",
+           "model_refusal", "names", "refusal", "task_head"]

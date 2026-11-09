@@ -169,7 +169,7 @@ def test_every_command_parses_with_its_script_s_own_parser(document, script, arg
 
 
 #: The deployment guides, whose importer commands are parsed too: §4.9 gives
-#: both kinds of import (research comparison §5 Stage 4).
+#: every kind of import (research comparison §5 Stage 4).
 GUIDES = ("deployment-guide.en.md", "deployment-guide.md")
 
 GUIDE_IMPORTS = [(document, argv)
@@ -189,11 +189,14 @@ def _readings(argv: List[str]) -> List[List[str]]:
     return [argv]
 
 
-def test_the_guides_give_both_kinds_of_import():
+def test_the_guides_give_every_kind_of_import():
+    from src.evaluation.cohort_registry import VERSION_KINDS
+
     for document in GUIDES:
         kinds = {argv[argv.index("--kind") + 1] if "--kind" in argv else "supplied"
                  for given, argv in GUIDE_IMPORTS if given == document}
-        assert kinds == {"supplied", "kg_edges"}, (document, kinds)
+        assert kinds == set(VERSION_KINDS) == {"supplied", "kg_edges", "generated"}, (
+            document, kinds)
 
 
 @pytest.mark.parametrize("document, argv", GUIDE_IMPORTS,

@@ -264,7 +264,10 @@ class CohortVersionItem:
     (`src.evaluation.protocols.inputs_refusal`); `None` when it was not read.
     A KG edge set (`kind` ``kg_edges``) is listed the same way: its role (the
     split's part), its counts (edges and pairs, the units in its manifest),
-    graph and dataset record; no source, and never an edge."""
+    graph and dataset record; no source, and never an edge. So is a generated
+    split (`kind` ``generated``): its role (the split it is), its counts
+    (generated patients and diseases), graph and dataset record; no source,
+    and never a sample."""
 
     label: str
     manifest_sha256: Optional[str]

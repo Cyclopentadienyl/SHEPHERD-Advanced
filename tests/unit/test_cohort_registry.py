@@ -1034,7 +1034,7 @@ def _counts(manifest, **changes):
     (lambda m: {**m, "schema_version": 3}, "schema 3; this revision reads schemas 1 and 2 only"),
     (lambda m: {**m, "kind": "supplied"}, "schema 1, which records no kind, yet states kind"),
     (lambda m: {**m, "schema_version": 2, "kind": "cases"},
-     "kind 'cases'; this revision reads kinds supplied and kg_edges only"),
+     "kind 'cases'; this revision reads kinds supplied, kg_edges and generated only"),
     (lambda m: {**m, "schema_version": True}, "schema True"),
     (lambda m: {**m, "label": "v2"}, "names the label 'v2'"),
     (lambda m: _without(m, "samples"), "missing samples"),

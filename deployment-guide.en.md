@@ -1217,7 +1217,7 @@ renamed into place, with the directory's permission policy.
 <registry>/
   sources/<sha256>.json                  the source file's bytes, verbatim, named by their digest
   versions/<label>/cohort.json           the version manifest, written last: it makes the version exist
-  versions/<label>/samples.json          the mapped samples, bound by cohort.json's digest
+  versions/<label>/samples.json          the mapped samples (a generated split's: the workspace's file), bound by cohort.json's digest
   versions/<label>/pairs.bin             a KG edge set's pairs instead of samples (below), bound the same way
   versions/<label>/reports/<run id>/     one directory per measurement: ranks.json, then report.json
 ```
@@ -1265,7 +1265,7 @@ python scripts/import_cohort.py --registry /srv/shepherd/cohorts \
 
 Labels and roles are lowercase identifiers (letters, digits, `_`, `-`, `.`; at most 64
 characters); a supplied cohort's role may not be `train` or `val` (a KG edge set's role is its
-part of the split, below).
+part of the split, and a generated split's the split it is, below).
 
 **The preview writes nothing.** It maps every case against the graph the workspace manifest
 binds, through the same readers and checks as training and serving, and prints:
@@ -1352,12 +1352,71 @@ Reference cohort select lists it marked "KG edge set" and never chooses it by de
 registry holds no readable supplied cohort, Run Diagnosis is off with that reason.
 
 **Schema 1 and 2.** A supplied import still writes schema 1, byte for byte as before, and schema 1
-is read as a supplied cohort. A KG edge set is schema 2, which states its kind. Schema 2 is read
-only for the kind written in it: a schema-2 manifest of kind `supplied`, which no revision writes,
-is refused ("which no revision writes: a supplied version is schema 1"), never read by the
-schema-1 rules. A revision from before schema 2 lists a KG edge set as unreadable with its reason
-("is schema 2; this revision reads schema 1 only"), so an older revision never reads one as a
-supplied cohort.
+is read as a supplied cohort. A KG edge set and a generated split (below) are schema 2, which
+states its kind. Schema 2 is read only for the kinds written in it: a schema-2 manifest of kind
+`supplied`, which no revision writes, is refused ("which no revision writes: a supplied version is
+schema 1"), never read by the schema-1 rules. A revision from before schema 2 lists a KG edge set
+or a generated split as unreadable with its reason ("is schema 2; this revision reads schema 1
+only"), so an older revision never reads one as a supplied cohort; one that reads KG edge sets
+but not generated splits (research comparison Stage 4a) lists a generated split as "of kind
+'generated'; this revision reads kinds supplied and kg_edges only".
+
+### A generated split: `--kind generated` (since research comparison Stage 4b)
+
+A **generated split** is one of the workspace's own generated patient splits, the
+`<role>_samples.json` the generator wrote and `measure_scorer.py --split` measures in place, kept
+as a registry version with a limited data identity of its own:
+
+```bash
+python scripts/import_cohort.py --kind generated --registry /srv/shepherd/cohorts \
+    --data-dir data/workspaces/<ws> --label gen-val-2026-11 --role val
+```
+
+- **The role is the split, recorded as given:** `train`, `val` or `test`; none is refused for
+  what it is, and none is relabelled. The generator writes `train` and `val` only, so `--role
+  test` is refused where the workspace's split manifest binds no generated test split, naming
+  the splits it binds, with nothing written.
+- **What is checked.** The importer reads the workspace as `--split` measurement does: the graph
+  against the split manifest, the dataset record, and both generated splits against that one
+  manifest reading (their digests, disease sets and disjointness). A split that is not the file
+  the manifest binds is refused, and so is a workspace re-sampled between the preview and the
+  commit (its preview id changes). Every check runs before anything is written. `--source`,
+  `--partial-phenotypes` and `--from-checkpoint` do not apply (exit 2).
+- **Its data identity** is the samples' digest, the split manifest's digest and the digest of each
+  samples file it binds, the generation definition (the generator's algorithm, version and
+  recorded settings, and the disease allocation it cut, copied from the split manifest as they
+  are), and the role. The counts are the split's generated patients and its distinct diseases,
+  each with its unit. The version records no path.
+- **The samples are copied, not bound in place.** The version keeps the workspace's file byte for
+  byte as `samples.json`, bound by the digest the split manifest records, so it stays readable and
+  verifiable after the workspace is rebuilt or re-sampled; whether the workspace still holds that
+  split is then a reference's state, not a condition of reading the version.
+- **The preview** prints the counts, the generation definition and allocation, the split manifest
+  and the split's files by digest, the samples kept, what was verified, and the graph and dataset
+  record it binds, never a sample or a patient id. A split with no sample cannot be committed.
+
+The server's lists (`GET /cohorts`) give a generated split with its kind, role and counts, never a
+sample; the Test page lists it by label and role. It is never presented as a supplied cohort, or
+as test unless its role is test: the Diagnosis route and `audit_split_overlap.py --cohort` refuse
+it with the registry's shared reason ("a generated split (val), not a supplied cohort version"),
+and the Diagnosis page's Reference cohort select lists it marked "generated split" and never
+chooses it by default. **This build lists and reads a registered generated split but does not
+measure one yet** (research comparison Stage 5): `measure_scorer.py --cohort`, the job runner and
+the Test page's Start naming one are refused with that sentence before anything is read, and the
+workspace's own split is measured with `--split` as before. Reports measured with `--split` are
+untouched: they stay where they were written, no identity is made up for them, and
+`record_evaluation.py` still refuses to register them.
+
+**Moving a registry.** No version records a path: each names what it depends on by content (the
+graph's four digests, the dataset record and each source it names by role, and by kind the view,
+split, pairs and checkpoint of a KG edge set, or the split manifest, split files and samples of a
+generated split). A registry copied or moved to another directory that `--registry` or
+`SHEPHERD_REGISTRY` then names reads the same versions under the same digests; which directory is
+allowed is that setting's rule, apart from the content check. Whether a dependency is present at
+a location is a state (verified, differs, missing, unreadable or not checked), never a reason a
+version cannot be read. The source roles a version names are the dataset record's, with no list
+of allowed roles; today's KG builder records four (MONDO, HPO, the phenotype annotations and
+genes-to-phenotype), and a new source needs the builder's own extension first.
 
 ### Measure
 
@@ -1574,7 +1633,7 @@ registration of another report.
 
 | Command | 0 | 1 | 2 | 3 |
 |---|---|---|---|---|
-| `import_cohort.py` | preview printed, or version committed | refused, with one message ending "Nothing was written." (also a preview with nothing to commit: no case can be ranked, or no edge of the part has a negative tail) | the command line was rejected | — |
+| `import_cohort.py` | preview printed, or version committed | refused, with one message ending "Nothing was written." (also a preview with nothing to commit: no case can be ranked, no edge of the part has a negative tail, or the generated split holds no sample) | the command line was rejected | — |
 | `measure_scorer.py` | measured (with `--record`: registered or already held) | a check refused the run: one message, nothing written (so does `--device auto` or `cuda` on a host without CUDA, before anything is read); or **measured, but the report was not written** (a full or read-only disk, for example): one message saying what may be left, which is never a report that can be registered -- this run's ranks beside `--output` with no report, or an empty file it claimed at `--output` or at the ranks (since K8-6r.4 each refuses the next run on that path), or a run directory without `report.json` in the report store (a run that fails after writing its report, its console closed for example, says where the report is) | the command line was rejected, including an argument of the other kind of cohort | **measured, but the registration refused**: the message names the report and the `record_evaluation.py` command to register it later; or, when the report file no longer holds the bytes the run published, says so and asks for a re-measurement instead (that report may be gone) |
 | `record_evaluation.py` | registered, already held, or shown | refused, with one message; nothing written | the command line was rejected, including neither or both of `--checkpoint` and `--checkpoint-dir` | — |
 | `audit_split_overlap.py` | report written | refused, with one message; nothing written | the command line was rejected (for example the removed `--evaluation-cohort-kind`, `--registry` without `--cohort` or the reverse, or `--splits` beside `--cohort`), with the usage line | — |

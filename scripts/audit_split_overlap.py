@@ -43,9 +43,11 @@ and mapped to one graph by ``scripts/import_cohort.py`` and audited here with
 ``cohort.json``, its ``samples.json`` is read once and refused unless its digest
 is the one that manifest binds, and the version's recorded graph and dataset
 record digests must be the ones this workspace's manifest records, because its
-disease indices name nodes of the graph it was mapped against. A KG edge set,
-the registry's other kind of version, holds edges, not cases, and is refused
-with the registry's reason (`not_a_supplied_cohort`). The loose
+disease indices name nodes of the graph it was mapped against. A KG edge set
+holds edges, not cases, and a generated split kept in the registry is the
+workspace generator's own, whose relation to train is the allocation's and is
+audited without ``--registry``; either is refused with the registry's reason
+(`not_a_supplied_cohort`). The loose
 ``<split>_samples.json`` this mode used to read from the workspace is gone with
 ``--evaluation-cohort-kind``.
 
@@ -240,8 +242,9 @@ def build_registered_report(
     In order, refusing at the first failure and before anything is written:
     `train` is resolved; the version is resolved (`resolve_version`, one read of
     its ``cohort.json``) and must be a supplied cohort, whose cases' diseases
-    are compared (a KG edge set holds edges, not cases, and is refused with
-    the registry's reason, `not_a_supplied_cohort`); the workspace manifest is
+    are compared (a KG edge set holds edges, not cases, and a generated split
+    is the generator's own; either is refused with the registry's reason,
+    `not_a_supplied_cohort`); the workspace manifest is
     read once; the version's
     four recorded graph digests and its dataset record digest are compared with
     the ones that manifest records (`verify_cohort_binding`, the measurement's
@@ -294,8 +297,8 @@ def build_registered_report(
     # manifest's `split` does. Only a supplied version reaches here, and
     # `resolve_version` has checked its role by the supplied rule
     # (`validate_role`, which refuses `train` and `val`), so it cannot collide
-    # with `train`; a KG edge set's role may be `train`, and it was refused
-    # above.
+    # with `train`; a KG edge set's or a generated split's role may be
+    # `train`, and it was refused above.
     reads[role] = read_samples_file(
         version.samples_path, expected_sha256=version.manifest["samples"]["sha256"]
     )

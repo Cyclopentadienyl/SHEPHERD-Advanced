@@ -1321,7 +1321,8 @@ FIELD_HELP = {
         "Reference cohort",
         "The registered cohort version whose patients a patients-like-me model ranks for this "
         "query. Every version in the server's registry is listed. One mapped against another "
-        "graph, a KG edge set, or one that cannot be read is marked; the server refuses it. "
+        "graph, a KG edge set, a generated split, or one that cannot be read is marked; the "
+        "server refuses it. "
         "Under the select: the chosen version's fingerprint and its graph check.",
     ),
     "dx_patient_id": (
@@ -1431,10 +1432,11 @@ NO_COHORT_VERSION = ("The registry holds no cohort version yet; an operator impo
                      "Research\u00a0› Test.")
 NO_READABLE_VERSION = ("Every version in the registry is marked “cannot be read”; an operator "
                        "imports a readable one in Research\u00a0› Test.")
-#: Every readable version is of another kind (a KG edge set), which holds no
-#: patients (`diagnosis_card.NOT_A_COHORT`).
-NO_REFERENCE_VERSION = ("No listed version is a reference cohort: each is a KG edge set or cannot "
-                        "be read. An operator imports a cohort in Research\u00a0› Test.")
+#: Every readable version is of another kind (a KG edge set, a generated
+#: split), which is not a supplied cohort (`diagnosis_card.NOT_A_COHORT`).
+NO_REFERENCE_VERSION = ("No listed version is a reference cohort: each is a KG edge set, a "
+                        "generated split or cannot be read. An operator imports a cohort in "
+                        "Research\u00a0› Test.")
 
 #: The change drawer's link to Research › Models: each "›" held to the word
 #: before it by a no-break space, so it is never alone on a line.
@@ -2051,7 +2053,7 @@ OPTION_MAX = 40
 #: kind, which holds no patients (`card.NOT_A_COHORT`), marked by its kind.
 _VERSION_MARKS = {"another": " · another graph", "unreadable": " · cannot be read",
                   card.NOT_A_COHORT: " · not a cohort"}
-_KIND_MARKS = {"kg_edges": " · KG edge set"}
+_KIND_MARKS = {"kg_edges": " · KG edge set", "generated": " · generated split"}
 
 
 def _version_mark(version: Mapping[str, Any]) -> str:
@@ -2066,7 +2068,8 @@ def _version_mark(version: Mapping[str, Any]) -> str:
 
 def _reference(version: Mapping[str, Any]) -> bool:
     """Whether a listed version can be ranked as a reference cohort: it can be
-    read and is a cohort (not a KG edge set); its graph is the server's check."""
+    read and is a supplied cohort (not a KG edge set or a generated split); its
+    graph is the server's check."""
     return not version.get("problem") and version.get("binding") != card.NOT_A_COHORT
 
 
@@ -2148,12 +2151,12 @@ def cohort_choices(cohorts: Mapping[str, Any], current: Any
                    ) -> Tuple[List[Tuple[str, str]], Optional[str]]:
     """The Reference cohort options and the version chosen. Every listed
     version, as ``(text, full label)``: the text is the label with at most one
-    mark ("another graph", "cannot be read", "KG edge set"), at most
+    mark ("another graph", "cannot be read", "KG edge set", "generated split"), at most
     `OPTION_MAX` characters (a long label shortened where it shows what tells
     it from the others, `_option_text`) and unique. The chosen one is the
     current value while it is listed, else the first version mapped against
     the serving workspace's graph, else the first readable cohort; a KG edge
-    set is never chosen by default."""
+    set or a generated split is never chosen by default."""
     versions = cohorts.get("versions") or []
     labels = [str(v.get("label")) for v in versions]
     options: List[Tuple[str, str]] = []
@@ -2189,7 +2192,8 @@ def cohort_info(cohorts: Mapping[str, Any], chosen: Any) -> str:
 def cohort_refusal(state: Mapping[str, Any]) -> Optional[str]:
     """Why Run Diagnosis is off for a patients-like-me model, or None: no
     usable registry, no version, no readable one, or no readable cohort (each
-    readable version a KG edge set), each in its own words with who can act
+    readable version a KG edge set or a generated split), each in its own words
+    with who can act
     (the registry's own problem, an operator's text, is not repeated here)."""
     if card.served_task(state.get("status")) != "patients_like_me":
         return None

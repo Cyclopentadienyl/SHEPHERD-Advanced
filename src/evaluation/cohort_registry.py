@@ -80,11 +80,13 @@ is of one data kind (`VERSION_KINDS`, the words of
   before schema 2 is; a supplied import still writes schema 1, byte for byte
   as before (golden P0-4);
 - **schema 2** states its ``kind``, and is read only for a kind written in
-  it (`KIND_SCHEMAS`: a KG edge set); a schema-2 manifest of kind
-  ``supplied`` is a shape no revision writes, and is refused rather than read
-  by the schema-1 rules. A revision that reads schema 1 only refuses a
-  schema-2 version by its schema check ("is schema 2; this revision reads
-  schema 1 only"), so it never reads one as a supplied cohort.
+  it (`KIND_SCHEMAS`: a KG edge set, a generated split); a schema-2 manifest
+  of kind ``supplied`` is a shape no revision writes, and is refused rather
+  than read by the schema-1 rules. A revision that reads schema 1 only
+  refuses a schema-2 version by its schema check ("is schema 2; this revision
+  reads schema 1 only"), so it never reads one as a supplied cohort, and a
+  revision that reads schema 2 but not a kind refuses that kind by name
+  ("this revision reads kinds ... only").
 
 A **KG edge set** (``kg_edges``) is one part of a recorded edge split of one
 graph view, kept as fixed link-prediction pairs. `prepare_kg_edges_import`
@@ -108,6 +110,64 @@ stream is not promised across releases, so the pairs are kept, never rebuilt.
 Its counts carry their units (``count_units``). The checkpoint it was taken
 from is named by its digest only, never by its file name, so a copy or a link
 of the same checkpoint makes the same version. Nothing about it holds a case.
+
+A **generated split** (``generated``; research comparison §3 (A), a limited
+data identity) is one of a workspace's generated patient splits, the
+``<role>_samples.json`` that `src/kg/sample_generator.py` wrote and the split
+manifest binds, which ``measure_scorer --split`` reads in place.
+`prepare_generated_import` reads and verifies the workspace as that
+measurement does (the graph, the dataset record, and both generated splits
+against the one split manifest reading: their digests, disease sets and
+disjointness, `verify_cohort_reads`), then keeps the role's samples. Its data
+identity is the samples' content digest, the workspace's split artefact
+digests (the split manifest and every samples file it binds), the generation
+definition (the generator's algorithm, version and recorded settings, and the
+allocation it cut), and its role, recorded as given: ``train``, ``val`` or
+``test`` (`GENERATED_ROLES`). It is listed and named as a generated split of
+its role, never as a supplied cohort, and as test only when its role is test;
+no role is refused. The generator writes, and `verify_cohort_reads` checks,
+``train`` and ``val`` only, so a ``test`` import is refused for what the
+workspace lacks (a generated test split this revision can verify), never for
+the role. **The samples are
+copied, not bound in place**: a workspace is rebuilt or re-sampled in its own
+directory, and a version that only named the workspace's files by digest
+would stop being readable, and verifiable as data, the day that happened. The
+copy is the bytes the workspace held, bound by the digest its split manifest
+records, so a registered generated version is as immutable and verifiable as
+a supplied one, and the workspace's split is still named by content: whether
+the workspace still holds it is a reference's state (`check_references`), not
+a condition of reading the version. Archived reports measured with
+``--split`` are untouched: no identity is made up for them, and registering
+them stays refused (`src.evaluation.sidecar.build_record`). Measuring a
+registered generated split and registering that result are the research
+comparison's Stages 5 and 6.
+
+**Content references** (E3). Every version records what it depends on by
+content identity, never by path: `version_references` names each reference
+of a version by its kind's own fields (the four graph digests: ``kg.json``,
+which carries the node naming, node types, species, namespaces and external
+ids, and the tensors; the dataset record; each source the record names, by
+role; and per kind the view, the split, the pairs and the checkpoint the view
+and split were taken from, by its SHA-256; the split manifest, the split's
+files and the samples; or the case source and the samples). A path is only a
+location: `check_references` compares the bytes found at a location the
+caller gives (a version's own directory, a workspace, a checkpoint file) with
+the recorded digests, and reports each reference's state (verified, differs,
+missing, unreadable, or not checked); a missing dependency is a state, never
+a crash and never a pass. Which roots may be read is decided apart from this:
+a registry root by `validate_registry` (and the service's
+``SHEPHERD_REGISTRY``), a workspace by its caller. A registry copied to
+another authorised root resolves to the same versions, by the same digests.
+
+**Source roles** (E4). A KG edge set's and a generated split's
+``dataset_record.sources`` list each named source as its record names it:
+role, digest and declared version, with no list of allowed roles (any role
+that is an identifier, each once, each with a SHA-256). Species, namespace and
+external-id distinctions are kept by reference to the graph (``kg.json``) and,
+for a KG edge set, the view, never derived from symbols. Today's KG builder
+names four roles (`src.kg.provenance.SOURCE_ROLES`); a real new source needs
+the builder's own provenance extension first, which this module does not
+make.
 
 Module: src/evaluation/cohort_registry.py
 """
@@ -155,21 +215,32 @@ KINDED_SCHEMA_VERSION = 2
 #: rather than guessing.
 VERSION_SCHEMAS: Tuple[int, ...] = (VERSION_SCHEMA_VERSION, KINDED_SCHEMA_VERSION)
 
-#: The kinds a registered version is (`src.evaluation.cohort.COHORT_KINDS` but
-#: ``generated``, the generator's own splits in a workspace): a supplied cohort,
-#: and a KG edge set. One name per kind, the measurement manifest's words.
+#: The kinds a registered version is, one name each, the words of
+#: `src.evaluation.cohort.COHORT_KINDS` (the measurement manifest's
+#: ``cohort_kind``): a supplied cohort, a KG edge set, and a generated split
+#: kept from a workspace.
 SUPPLIED = "supplied"
 KG_EDGES = "kg_edges"
-VERSION_KINDS: Tuple[str, ...] = (SUPPLIED, KG_EDGES)
+GENERATED = "generated"
+VERSION_KINDS: Tuple[str, ...] = (SUPPLIED, KG_EDGES, GENERATED)
 #: The schema each kind is written in. A manifest stating a kind in another
 #: schema is a shape no revision writes, so it is refused, never read by the
 #: rules of the shape it resembles (research comparison §2: nothing guessed).
-KIND_SCHEMAS: Dict[str, int] = {SUPPLIED: VERSION_SCHEMA_VERSION, KG_EDGES: KINDED_SCHEMA_VERSION}
+KIND_SCHEMAS: Dict[str, int] = {SUPPLIED: VERSION_SCHEMA_VERSION, KG_EDGES: KINDED_SCHEMA_VERSION,
+                                GENERATED: KINDED_SCHEMA_VERSION}
 
 #: A KG edge set's roles: the parts of an edge split
 #: (`src.kg.graph_view.SPLIT_NAMES`, pinned equal by
 #: tests/unit/test_kg_edge_versions.py; this module imports no torch).
 KG_EDGES_ROLES: Tuple[str, ...] = ("train", "val", "test")
+
+#: A generated split's roles, recorded as given (owner's O7): the split it is,
+#: whose samples are the workspace's ``<role>_samples.json``. The generator
+#: writes ``train`` and ``val`` (`src.evaluation.cohort.GENERATED_SPLITS`), the
+#: splits `verify_cohort_reads` checks; a ``test`` version needs a workspace
+#: holding a generated test split this revision verifies, which none does
+#: today, so its import is refused for that absence, never for the role.
+GENERATED_ROLES: Tuple[str, ...] = ("train", "val", "test")
 
 VERSION_MANIFEST = "cohort.json"
 VERSION_SAMPLES = "samples.json"
@@ -252,6 +323,31 @@ KG_EDGES_TAKEN_FROM = ("data_roles.graph_view", "data_roles.split")
 KG_EDGES_BLOCK_FIELDS: Tuple[str, ...] = (
     "label", "role", "kind", "manifest_sha256", "graph", "dataset_record_sha256",
     "graph_view", "split", "message_passing", "pairs", "counts", "count_units",
+)
+
+#: Every field `commit_import` writes for a generated split
+#: (`build_generated_manifest`).
+GENERATED_REQUIRED_FIELDS: Tuple[str, ...] = (
+    "schema_version", "kind", "what_this_is", "label", "role", "graph", "dataset_record",
+    "split_manifest", "split_artifacts", "generation", "allocation", "realised", "verified",
+    "samples", "counts", "count_units", "imported",
+)
+
+GENERATED_WHAT_THIS_IS = ("a generated split: one of a workspace's generated patient splits, "
+                          "its samples kept as the generator wrote them")
+
+#: A generated split's counts, each with its unit.
+GENERATED_COUNT_UNITS: Dict[str, str] = {
+    "samples": "generated patients: the sample rows of the role's split, as written",
+    "diseases": "distinct diseases among those patients (the split's realised disease set)",
+}
+
+#: What `cohort_version_block` gives for a generated split, exactly:
+#: aggregates and digests, never a sample.
+GENERATED_BLOCK_FIELDS: Tuple[str, ...] = (
+    "label", "role", "kind", "manifest_sha256", "graph", "dataset_record_sha256",
+    "samples_sha256", "split_manifest", "split_artifacts", "generation", "allocation",
+    "counts", "count_units",
 )
 
 
@@ -378,7 +474,9 @@ class ImportPlan(NamedTuple):
     bytes parsed, kept so the copy in the registry is the file that was
     mapped, not a second read of it, and `samples_bytes` the mapped samples.
     A KG edge set keeps no source file (its graph is the workspace's, bound by
-    digest) and no samples: `pairs_bytes` are its pairs (`VERSION_PAIRS`).
+    digest) and no samples: `pairs_bytes` are its pairs (`VERSION_PAIRS`). A
+    generated split keeps no source file either: `samples_bytes` are the
+    workspace's samples file, the bytes its split manifest binds.
     """
 
     label: str
@@ -399,7 +497,8 @@ class ImportPlan(NamedTuple):
 class CohortVersionRead(NamedTuple):
     """A committed version as resolved: its manifest, the identity of the bytes
     that manifest was parsed from, its directory, and where its samples are
-    (None for a kind that keeps none: a KG edge set's pairs are read by
+    (a supplied cohort's and a generated split's ``samples.json``; None for a
+    kind that keeps none: a KG edge set's pairs are read by
     `read_kg_edge_pairs`)."""
 
     manifest: Dict[str, Any]
@@ -451,8 +550,20 @@ def not_a_supplied_cohort(kind: Any, role: Any) -> Optional[str]:
     comparison §5 Stage 4)."""
     if kind == SUPPLIED:
         return None
-    what = f"a KG edge set ({role})" if kind == KG_EDGES else f"a version of kind {kind!r}"
-    return f"{what}, not a supplied cohort version"
+    return f"{version_words(kind, role)}, not a supplied cohort version"
+
+
+def version_words(kind: Any, role: Any) -> str:
+    """A version of another kind than a supplied cohort as a sentence names
+    it, by its kind and role: ``a KG edge set (test)``, ``a generated split
+    (val)`` (`not_a_supplied_cohort`'s words). Never "cohort": a KG edge set
+    holds edges, and a generated split is the workspace generator's, never a
+    supplied cohort (research comparison §5 Stage 4)."""
+    if kind == KG_EDGES:
+        return f"a KG edge set ({role})"
+    if kind == GENERATED:
+        return f"a generated split ({role})"
+    return f"a version of kind {kind!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -569,6 +680,19 @@ def validate_kg_edges_role(role: Any) -> str:
         raise CohortVersionRefused(
             f"a KG edge set's role is the part of the edge split it holds, one of "
             f"{', '.join(KG_EDGES_ROLES)}; got {role!r}"
+        )
+    return role
+
+
+def validate_generated_role(role: Any) -> str:
+    """A generated split's role: the split it is, recorded as given (owner's
+    O7), one of `GENERATED_ROLES`. ``train`` is a fitting diagnostic, ``val``
+    the checkpoint-selection split, ``test`` a held-out split where a workspace
+    has one; none is refused for what it is, and none is ever relabelled."""
+    if not (isinstance(role, str) and role in GENERATED_ROLES):
+        raise CohortVersionRefused(
+            f"a generated split's role is the split it is, one of "
+            f"{', '.join(GENERATED_ROLES)}; got {role!r}"
         )
     return role
 
@@ -1114,6 +1238,21 @@ def prepare_import(
 # ---------------------------------------------------------------------------
 # A KG edge set (research comparison §5 Stage 4)
 # ---------------------------------------------------------------------------
+def _dataset_record_block(dataset_record: "DatasetRecord") -> Dict[str, Any]:
+    """The dataset record as a KG edge set and a generated split record it:
+    its digest, its origin, and every source it names, by role, as it names
+    them (role, digest, declared version), with no list of allowed roles
+    (E4). Species, namespaces and external ids are not derived here: they are
+    the graph's, referenced by its digest."""
+    return {
+        "sha256": dataset_record.identity.sha256,
+        "origin": dataset_record.origin,
+        "sources": [{"role": entry["role"], "digest": entry["digest"],
+                     "declared_version": entry.get("declared_version")}
+                    for entry in dataset_record.record["sources"]],
+    }
+
+
 def build_kg_edges_manifest(
     *,
     label: str,
@@ -1154,13 +1293,7 @@ def build_kg_edges_manifest(
         "label": label,
         "role": role,
         "graph": {role_name: bound[role_name] for role_name in GRAPH_ARTIFACTS},
-        "dataset_record": {
-            "sha256": dataset_record.identity.sha256,
-            "origin": dataset_record.origin,
-            "sources": [{"role": entry["role"], "digest": entry["digest"],
-                         "declared_version": entry.get("declared_version")}
-                        for entry in dataset_record.record["sources"]],
-        },
+        "dataset_record": _dataset_record_block(dataset_record),
         "graph_view": {"rule": copy.deepcopy(view.rule), "digest": view.digest},
         "split": record,
         # README A4: base validation and test message passing are the training
@@ -1344,6 +1477,177 @@ def prepare_kg_edges_import(
     return ImportPlan(label, role, version, preview_id(version), None, None, None, pairs_bytes)
 
 
+# ---------------------------------------------------------------------------
+# A generated split (research comparison §3 (A), §5 Stage 4)
+# ---------------------------------------------------------------------------
+#: The split manifest's blocks a generated split's version copies, as they are:
+#: the generation definition (the generator's algorithm, its version and the
+#: settings it recorded) and the disease allocation it cut, both counts and
+#: digests only, and what each split realised.
+_SPLIT_MANIFEST_BLOCKS = ("generation", "allocation", "realised")
+
+
+def _split_files(artifacts: Mapping[str, Any]) -> Dict[str, Any]:
+    """The samples files a split manifest's ``artifacts`` binds, by name
+    (``train_samples``, ``val_samples``, ...), each with its digest: the
+    workspace's split artefacts beside the manifest itself."""
+    return {name: digest for name, digest in sorted(artifacts.items())
+            if name.endswith("_samples")}
+
+
+def build_generated_manifest(
+    *,
+    label: str,
+    role: str,
+    bound: Mapping[str, str],
+    dataset_record: "DatasetRecord",
+    split_manifest: Mapping[str, Any],
+    split_manifest_sha256: str,
+    verified: Any,
+    samples_sha256: str,
+    n_samples: int,
+) -> Dict[str, Any]:
+    """A generated split's manifest (schema 2) without its ``imported`` block.
+
+    Built only from what was read and verified: the four digests the
+    workspace manifest binds and the dataset record the import verified
+    (`_dataset_record_block`); the split manifest, by the digest of the bytes
+    read, and its blocks copied as they are (`_SPLIT_MANIFEST_BLOCKS`: the
+    generation definition, the allocation, what each split realised); the
+    split's files by the digests that manifest binds (`_split_files`); what
+    was verified (`GeneratedCohorts`: the splits in scope, disjointness
+    measured); the samples, the role's file kept as ``samples.json``, by
+    digest and row count; and the counts with their units (the role's
+    patients, and the diseases its realised set holds). Aggregates and
+    digests only: no sample, and no path.
+    """
+    realised = split_manifest.get("realised")
+    realised = realised if isinstance(realised, Mapping) else {}
+    return {
+        "schema_version": KINDED_SCHEMA_VERSION,
+        "kind": GENERATED,
+        "what_this_is": GENERATED_WHAT_THIS_IS,
+        "label": label,
+        "role": role,
+        "graph": {role_name: bound[role_name] for role_name in GRAPH_ARTIFACTS},
+        "dataset_record": _dataset_record_block(dataset_record),
+        "split_manifest": {"sha256": split_manifest_sha256,
+                           "schema_version": split_manifest.get("schema_version")},
+        "split_artifacts": _split_files(split_manifest.get("artifacts") or {}),
+        **{block: copy.deepcopy(split_manifest.get(block)) for block in _SPLIT_MANIFEST_BLOCKS},
+        "verified": {"splits": list(verified.verified),
+                     "disjointness_measured": bool(verified.disjointness_measured)},
+        "samples": {"file": VERSION_SAMPLES, "sha256": samples_sha256, "n": int(n_samples)},
+        "counts": {"samples": int(n_samples), "diseases": realised.get(f"{role}_diseases")},
+        "count_units": dict(GENERATED_COUNT_UNITS),
+    }
+
+
+def prepare_generated_import(
+    registry: Any,
+    data_dir: Path,
+    label: str,
+    role: str,
+) -> ImportPlan:
+    """Read and verify a workspace's generated splits, keep the role's; write
+    nothing.
+
+    In order, each refusal before anything is written:
+
+    1. the registry, the label (free, as at commit) and the role
+       (`validate_generated_role`);
+    2. the workspace through the readers ``measure_scorer --split`` uses: the
+       split manifest, the tensors against it, ``kg.json`` identified against
+       it and the dataset record (`verify_graph_reads`,
+       `check_unparsed_kg_json`, `verify_dataset_record`);
+    3. the role's split must be one the split manifest binds: the generator
+       writes ``train`` and ``val`` only, so ``test`` is refused here, for
+       what the workspace lacks, naming the splits it binds;
+    4. the generator's splits, one read each (`read_samples`), against that
+       one manifest reading (`verify_cohort_reads`: their digests, disease
+       sets and disjointness);
+    5. the role's file read once more for its bytes, which must hash to the
+       digest just verified, so the bytes kept are the bytes verified.
+
+    **Why the samples are copied** (the module's note): a registered version
+    is immutable, and a workspace is not; the copy is bound by the digest the
+    workspace's split manifest records, so it is verifiable after the
+    workspace changes, and the workspace's split stays named by content.
+
+    Raises:
+        RegistryRefused, CohortVersionRefused: the registry, label or role is
+            refused, the workspace binds no split of that role, or its file
+            changed while it was read.
+        ValueError: from the workspace readers and verifiers, naming the file.
+        OSError: a file could not be read.
+    """
+    from src.evaluation.cohort import GENERATED_SPLITS, verify_cohort_reads
+    from src.kg.artifacts import (
+        MANIFEST_FILENAME,
+        check_unparsed_kg_json,
+        manifest_section,
+        read_split_manifest,
+        verify_dataset_record,
+        verify_graph_reads,
+    )
+    from src.kg.storage.file_storage import read_graph_artifacts, read_samples
+    from src.utils.fingerprint import read_once
+
+    root = validate_registry(registry)
+    label = validate_label(label)
+    role = validate_generated_role(role)
+    _require_label_free(root, label)
+
+    data_dir = Path(data_dir)
+    manifest = read_split_manifest(data_dir)
+    graph = read_graph_artifacts(data_dir, map_location="cpu")
+    bound = verify_graph_reads(manifest, graph.reads)
+    del graph
+    check_unparsed_kg_json(data_dir, manifest)
+    dataset_record = verify_dataset_record(manifest, bound["kg"])
+
+    split_files = _split_files(manifest_section(manifest.manifest, manifest.identity.path,
+                                                "artifacts"))
+    if f"{role}_samples" not in split_files or role not in GENERATED_SPLITS:
+        held = ", ".join(name[: -len("_samples")] for name in split_files) or "none"
+        raise CohortVersionRefused(
+            f"the workspace {data_dir} holds no generated {role} split this revision can "
+            f"verify: its {MANIFEST_FILENAME} binds the splits {held}, and the generator "
+            f"writes and verifies {' and '.join(GENERATED_SPLITS)} only, so there is no "
+            f"{role} split to keep."
+        )
+    reads = {name: read_samples(data_dir, name) for name in GENERATED_SPLITS}
+    verified = verify_cohort_reads(manifest, reads)
+    verified_sha256 = reads[role].identity.sha256
+    n_samples = len(reads[role].samples)
+    del reads
+
+    kept = read_once(data_dir / f"{role}_samples.json")
+    if kept.sha256 != verified_sha256:
+        raise CohortVersionRefused(
+            f"{kept.identity.path} changed while it was read (its bytes are {kept.sha256[:12]}"
+            f"..., the {verified_sha256[:12]}... verified a moment before against "
+            f"{MANIFEST_FILENAME}); nothing is kept. Import again once the workspace is not "
+            "being written."
+        )
+    version = build_generated_manifest(
+        label=label, role=role, bound=bound, dataset_record=dataset_record,
+        split_manifest=manifest.manifest, split_manifest_sha256=manifest.identity.sha256,
+        verified=verified, samples_sha256=kept.sha256, n_samples=n_samples,
+    )
+    # The reader's rules, before anything is written: a split manifest the
+    # verifiers passed but which does not state the generation definition a
+    # version records (an algorithm and its version) is refused here, not
+    # published as a version every reader refuses.
+    problems = _generated_shape_problems({**version, "imported": {}})
+    if problems:
+        raise CohortVersionRefused(
+            f"the workspace {data_dir}'s {MANIFEST_FILENAME} does not describe its {role} split "
+            f"as a generated split version records it: {'; '.join(problems)}."
+        )
+    return ImportPlan(label, role, version, preview_id(version), None, None, kept.data)
+
+
 def _utc(now: datetime, pattern: str) -> str:
     if now.tzinfo is None:
         raise ValueError(f"{now!r} has no time zone; a recorded time must say which it is in")
@@ -1397,7 +1701,9 @@ def commit_import(
     non-empty sample set; a KG edge set's pairs), and a free label. Then, in
     order: a supplied version's source is kept (no-clobber), the version
     directory is claimed with ``mkdir(exist_ok=False)``, its data file is
-    published (``samples.json``; a KG edge set's ``pairs.bin``), and
+    published (``samples.json``, a supplied cohort's mapped samples or a
+    generated split's samples as the workspace held them; a KG edge set's
+    ``pairs.bin``), and
     ``cohort.json`` -- the commit point -- last, with the ``imported`` block
     (when, and `code_revision(REPO_ROOT)`, both taken before the first write).
     ``sources/``, ``versions/`` and, after the claim, the version directory are
@@ -1487,7 +1793,8 @@ def _plan_data_file(plan: ImportPlan, label: str) -> Tuple[str, bytes]:
 
     A supplied version: its label, source and samples, and at least one case
     eligible for ranking. A KG edge set: its label and pairs, and at least one
-    pair (a part none of whose edges has a negative would measure nothing)."""
+    pair (a part none of whose edges has a negative would measure nothing). A
+    generated split: its label and samples, and at least one sample."""
     manifest = plan.manifest
     kind = plan.kind
     if kind == SUPPLIED:
@@ -1522,6 +1829,21 @@ def _plan_data_file(plan: ImportPlan, label: str) -> Tuple[str, bytes]:
                 f"in its batch), so the KG edge set {label!r} would measure nothing."
             )
         return VERSION_PAIRS, plan.pairs_bytes
+    if kind == GENERATED:
+        if (plan.label != label or plan.samples_bytes is None
+                or plan.source_bytes is not None or plan.pairs_bytes is not None
+                or _sha256(plan.samples_bytes) != manifest["samples"]["sha256"]):
+            raise CohortVersionRefused(
+                f"the plan for {label!r} carries a label or samples its manifest does not "
+                "bind, so it is not one prepare_generated_import made from one read of each "
+                "input."
+            )
+        if not manifest["samples"]["n"]:
+            raise CohortVersionRefused(
+                f"the workspace's generated {manifest['role']} split holds no sample, so the "
+                f"version {label!r} would measure nobody."
+            )
+        return VERSION_SAMPLES, plan.samples_bytes
     raise CohortVersionRefused(f"the plan for {label!r} is of kind {kind!r}, which this "
                                f"revision does not write ({', '.join(VERSION_KINDS)}).")
 
@@ -1621,7 +1943,7 @@ def _kind_problem(manifest: Dict[str, Any]) -> Optional[str]:
     kind = version_kind(manifest)
     if kind not in VERSION_KINDS:
         return (f"is of kind {manifest['kind']!r}; this revision reads kinds "
-                f"{' and '.join(VERSION_KINDS)} only.")
+                f"{', '.join(VERSION_KINDS[:-1])} and {VERSION_KINDS[-1]} only.")
     if KIND_SCHEMAS[kind] != schema:
         return (f"is schema {schema!r} of kind {kind!r}, which no revision writes: a {kind} "
                 f"version is schema {KIND_SCHEMAS[kind]}.")
@@ -1630,10 +1952,14 @@ def _kind_problem(manifest: Dict[str, Any]) -> Optional[str]:
 
 def _version_shape_problems(manifest: Dict[str, Any]) -> List[str]:
     """What a reader relies on, beyond the field list, by the manifest's kind
-    (`version_kind`): a supplied cohort's (`_supplied_shape_problems`) or a KG
-    edge set's (`_kg_edges_shape_problems`)."""
-    if version_kind(manifest) == KG_EDGES:
+    (`version_kind`): a supplied cohort's (`_supplied_shape_problems`), a KG
+    edge set's (`_kg_edges_shape_problems`) or a generated split's
+    (`_generated_shape_problems`)."""
+    kind = version_kind(manifest)
+    if kind == KG_EDGES:
         return _kg_edges_shape_problems(manifest)
+    if kind == GENERATED:
+        return _generated_shape_problems(manifest)
     return _supplied_shape_problems(manifest)
 
 
@@ -1704,10 +2030,7 @@ def _kg_edges_shape_problems(manifest: Dict[str, Any]) -> List[str]:
         return problems
 
     problems += _graph_problems(manifest)
-    record = manifest["dataset_record"]
-    if not (isinstance(record, dict) and _is_sha(record.get("sha256"))
-            and isinstance(record.get("sources"), list)):
-        problems.append("dataset_record must hold a sha256 and its sources")
+    problems += _dataset_record_problems(manifest["dataset_record"])
     role = manifest["role"]
     try:
         validate_kg_edges_role(role)
@@ -1829,14 +2152,139 @@ def _batch_pairs_problems(batch_pairs: Any, batch_size: int, positive: int,
     return problems
 
 
+def _dataset_record_problems(record: Any) -> List[str]:
+    """Why a KG edge set's or a generated split's ``dataset_record`` is not
+    one a reader can name its sources by, or none: a SHA-256, and its sources
+    as `_source_roles_problems` reads them."""
+    if not (isinstance(record, dict) and _is_sha(record.get("sha256"))
+            and isinstance(record.get("sources"), list)):
+        return ["dataset_record must hold a sha256 and its sources"]
+    return _source_roles_problems(record["sources"])
+
+
+def _source_roles_problems(sources: List[Any]) -> List[str]:
+    """Why a version's named sources (``dataset_record.sources``) are not each
+    a named, digested source role, or none (E4): each an object with a
+    ``role`` that is an identifier (`validate_split_name`, the label's rule),
+    a ``digest`` that is a SHA-256 and a ``declared_version`` that is text or
+    null, no role twice. **No list of allowed roles**: the KG builder's four
+    (`src.kg.provenance.SOURCE_ROLES`) are what today's records name, not what
+    a version may carry."""
+    problems: List[str] = []
+    seen: List[str] = []
+    for index, entry in enumerate(sources):
+        where = f"dataset_record.sources[{index}]"
+        if not (isinstance(entry, dict) and set(entry) == {"role", "digest", "declared_version"}):
+            problems.append(f"{where} must hold exactly role, digest and declared_version")
+            continue
+        try:
+            role = validate_split_name(entry["role"])
+        except ValueError:
+            problems.append(f"{where}.role ({entry['role']!r}) is not an identifier")
+            continue
+        if role in seen:
+            problems.append(f"{where} names the role {role!r} a second time")
+        seen.append(role)
+        if not _is_sha(entry["digest"]):
+            problems.append(f"{where}.digest (role {role}) must be a SHA-256")
+        if not (entry["declared_version"] is None or isinstance(entry["declared_version"], str)):
+            problems.append(f"{where}.declared_version (role {role}) must be text or null")
+    return problems
+
+
+def _generated_shape_problems(manifest: Dict[str, Any]) -> List[str]:
+    """What a reader relies on in a generated split, beyond the field list,
+    each problem naming its field: the four graph digests and the dataset
+    record (its digest and named sources); a role of `GENERATED_ROLES`; the
+    split manifest's digest; the split's files, each by a SHA-256, among them
+    the role's, which is the samples' digest (the samples are the file the
+    workspace's split manifest binds); the generation definition (an
+    algorithm and its version) and the allocation, each an object; what each
+    split realised, holding the role's disease count, which ``counts.diseases``
+    is; what was verified; the samples (``samples.json``, a SHA-256 and a
+    count, which ``counts.samples`` is); and counts with their units."""
+    problems = [f"missing {name}" for name in GENERATED_REQUIRED_FIELDS
+                if name not in manifest]
+    if problems:
+        return problems
+
+    problems += _graph_problems(manifest)
+    problems += _dataset_record_problems(manifest["dataset_record"])
+    role = manifest["role"]
+    try:
+        validate_generated_role(role)
+    except CohortVersionRefused as exc:
+        problems.append(str(exc))
+        role = None
+
+    split_manifest = manifest["split_manifest"]
+    if not (isinstance(split_manifest, dict) and _is_sha(split_manifest.get("sha256"))):
+        problems.append("split_manifest must hold a sha256")
+    files = manifest["split_artifacts"]
+    if not (isinstance(files, dict) and files
+            and all(isinstance(name, str) and name.endswith("_samples") and _is_sha(digest)
+                    for name, digest in files.items())):
+        problems.append("split_artifacts must name each split's samples file "
+                        "(<split>_samples) with a SHA-256")
+        files = {}
+
+    generation = manifest["generation"]
+    if not (isinstance(generation, dict) and isinstance(generation.get("algorithm"), str)
+            and generation["algorithm"] and _is_whole(generation.get("algorithm_version"))):
+        problems.append("generation must state the generator's algorithm and algorithm_version")
+    if not isinstance(manifest["allocation"], dict):
+        problems.append("allocation must be an object")
+    realised = manifest["realised"]
+    if not isinstance(realised, dict):
+        problems.append("realised must be an object")
+        realised = {}
+    verified = manifest["verified"]
+    if not (isinstance(verified, dict) and isinstance(verified.get("splits"), list)
+            and (role is None or role in verified["splits"])
+            and isinstance(verified.get("disjointness_measured"), bool)):
+        problems.append("verified must list the splits verified, the role's among them, and "
+                        "whether disjointness was measured")
+
+    samples = manifest["samples"]
+    n = samples.get("n") if isinstance(samples, dict) else None
+    if not (isinstance(samples, dict) and samples.get("file") == VERSION_SAMPLES
+            and _is_sha(samples.get("sha256")) and _is_count(n)):
+        problems.append(f"samples must hold the file {VERSION_SAMPLES}, a sha256 and a count n")
+        samples = {}
+    elif role is not None and files and files.get(f"{role}_samples") != samples["sha256"]:
+        problems.append(f"samples.sha256 is not split_artifacts.{role}_samples: the samples are "
+                        "the file the workspace's split manifest binds")
+
+    keys = list(GENERATED_COUNT_UNITS)
+    units = manifest["count_units"]
+    if not (isinstance(units, dict) and set(units) == set(keys)
+            and all(isinstance(u, str) and u for u in units.values())):
+        problems.append(f"count_units must give a unit for each of {keys}")
+    counts = manifest["counts"]
+    if not (isinstance(counts, dict) and set(counts) == set(keys)
+            and all(_is_count(counts[key]) for key in keys)):
+        problems.append(f"counts must hold a whole number of at least 0 for exactly {keys}")
+    else:
+        if _is_count(n) and counts["samples"] != n:
+            problems.append(f"counts.samples ({counts['samples']}) is not samples.n ({n})")
+        if role is not None and counts["diseases"] != realised.get(f"{role}_diseases"):
+            problems.append(f"counts.diseases ({counts['diseases']}) is not "
+                            f"realised.{role}_diseases ({realised.get(f'{role}_diseases')!r})")
+    if not isinstance(manifest["imported"], dict):
+        problems.append("imported must be an object")
+    return problems
+
+
 def resolve_version(registry: Any, label: str, *,
                     expected_sha256: Optional[str] = None) -> CohortVersionRead:
     """Resolve a committed version: one read of its ``cohort.json``, parsed from
     those bytes, and the identity of those bytes.
 
-    Does not read ``samples.json``: its path is returned, and the caller reads
-    it once, comparing the read's digest with ``manifest["samples"]["sha256"]``.
-    Nor a KG edge set's ``pairs.bin``, which `read_kg_edge_pairs` reads.
+    Does not read ``samples.json`` (a supplied cohort's or a generated
+    split's): its path is returned, and the caller reads it once, comparing
+    the read's digest with ``manifest["samples"]["sha256"]``. Nor a KG edge
+    set's ``pairs.bin``, which `read_kg_edge_pairs` reads. Nor anything a
+    version references outside its directory (`check_references` does).
 
     **Either schema, by kind** (`VERSION_SCHEMAS`): schema 1 is a supplied
     cohort and states no kind; schema 2 states its kind (`VERSION_KINDS`).
@@ -1930,7 +2378,8 @@ def resolve_version(registry: Any, label: str, *,
         raise CohortVersionRefused(
             f"{path} is not a complete, consistent version manifest: {'; '.join(problems)}."
         )
-    samples = directory / VERSION_SAMPLES if version_kind(manifest) == SUPPLIED else None
+    samples = (directory / VERSION_SAMPLES if version_kind(manifest) in (SUPPLIED, GENERATED)
+               else None)
     return CohortVersionRead(manifest, identity, directory, samples)
 
 
@@ -2215,9 +2664,13 @@ def cohort_version_block(version: CohortVersionRead) -> Dict[str, Any]:
     was. A KG edge set's (`KG_EDGES_BLOCK_FIELDS`) names its kind and role,
     the manifest digest, the graph and dataset record digests, the view, the
     split, the message-passing graph, the pairs' rule and digests, and the
-    counts with their units: aggregates only, never an edge. What a
-    measurement of one records, and what a registration compares, is Stage 5's
-    and 6's (research comparison §5).
+    counts with their units: aggregates only, never an edge. A generated
+    split's (`GENERATED_BLOCK_FIELDS`) names its kind and role, the manifest
+    digest, the graph and dataset record digests, the samples' digest, the
+    split manifest and the split's files by digest, the generation definition
+    and allocation, and the counts with their units: never a sample. What a
+    measurement of either records, and what a registration compares, is
+    Stage 5's and 6's (research comparison §5).
 
     Raises:
         CohortVersionRefused: the manifest does not state its source format,
@@ -2235,6 +2688,20 @@ def cohort_version_block(version: CohortVersionRead) -> Dict[str, Any]:
             # Copies, so the block cannot alias the version read.
             **{key: copy.deepcopy(manifest[key]) for key in (
                 "graph_view", "split", "message_passing", "pairs", "counts", "count_units")},
+        }
+    if version.kind == GENERATED:
+        return {
+            "label": manifest["label"],
+            "role": manifest["role"],
+            "kind": GENERATED,
+            "manifest_sha256": version.identity.sha256,
+            "graph": dict(manifest["graph"]),
+            "dataset_record_sha256": manifest["dataset_record"]["sha256"],
+            "samples_sha256": manifest["samples"]["sha256"],
+            # Copies, so the block cannot alias the version read.
+            **{key: copy.deepcopy(manifest[key]) for key in (
+                "split_manifest", "split_artifacts", "generation", "allocation", "counts",
+                "count_units")},
         }
     source_format = manifest["source"].get("format")
     if not isinstance(source_format, str) or not source_format:
@@ -2255,6 +2722,213 @@ def cohort_version_block(version: CohortVersionRead) -> Dict[str, Any]:
         "mapping": copy.deepcopy(manifest["mapping"]),
         "counts": copy.deepcopy(manifest["counts"]),
     }
+
+
+# ---------------------------------------------------------------------------
+# Content references (E3)
+# ---------------------------------------------------------------------------
+#: Where a reference's bytes are kept, which is where `check_references` looks:
+#: a file of the version's own directory; a file the registry keeps beside the
+#: versions (a supplied source); a file of the workspace the version was made
+#: from; the checkpoint it was taken from; an object rebuilt from the graph by a
+#: recorded rule (a view, a split); a source named by the dataset record only.
+IN_VERSION = "version"
+IN_REGISTRY = "registry"
+IN_WORKSPACE = "workspace"
+IN_CHECKPOINT = "checkpoint"
+REBUILT = "rebuilt"
+NAMED = "named"
+
+#: A reference's state, as `check_references` finds it: the bytes at the
+#: location given hash to the recorded digest; they hash to another; there is
+#: nothing there; it cannot be read; or it was not looked for (no location was
+#: given, or it is rebuilt or only named), which is never a pass.
+VERIFIED = "verified"
+DIFFERS = "differs"
+MISSING = "missing"
+UNREADABLE = "unreadable"
+NOT_CHECKED = "not checked"
+REFERENCE_STATES: Tuple[str, ...] = (VERIFIED, DIFFERS, MISSING, UNREADABLE, NOT_CHECKED)
+
+
+class ContentReference(NamedTuple):
+    """One thing a version depends on, by content identity: its name in the
+    version (``graph.kg``, ``source.mondo``, ``checkpoint``, ...), what it is,
+    its SHA-256, where its bytes are kept (`IN_VERSION` ...) and, for a file,
+    its name there. The name of a file is a location, never the identity."""
+
+    name: str
+    what: str
+    sha256: str
+    kept: str
+    file: Optional[str] = None
+
+
+class ReferenceState(NamedTuple):
+    """A reference as `check_references` found it: its state
+    (`REFERENCE_STATES`), the digest found when its bytes were read, and why,
+    in words."""
+
+    reference: ContentReference
+    state: str
+    found: Optional[str]
+    reason: str
+
+
+_GRAPH_WHAT = {
+    "kg": ("the graph (kg.json): its node naming, node types, species, namespaces and external "
+           "ids; every node index the version holds names a node of it"),
+    "node_features": "the graph's node features (node_features.pt)",
+    "edge_indices": "the graph's typed edges (edge_indices.pt)",
+    "num_nodes": "the graph's node counts by type (num_nodes.json)",
+}
+
+
+def version_references(version: Any) -> Tuple[ContentReference, ...]:
+    """What a version depends on, by content identity, read from its kind's
+    own fields (a `CohortVersionRead` or a manifest): the one list of a
+    version's dependency references, never a path.
+
+    Every kind: the four graph files (``graph.<role>``) and the dataset record
+    (``kg.provenance.json``), and each source the record names, by role
+    (``source.<role>``; E4, any role it names). Then by kind:
+
+    - a KG edge set: the graph view (its relations and the raw-to-view node
+      mapping) and the edge split, both rebuilt from the graph by their
+      recorded rules; the pairs (``pairs.bin``, in the version); and the
+      checkpoint whose model record named the view and split, by its SHA-256;
+    - a generated split: the workspace's split manifest and each split's
+      samples file it binds (``split.<name>``), and the samples the version
+      keeps (``samples.json``, which is the role's file of the workspace);
+    - a supplied cohort: its case source, which the registry keeps
+      (``sources/<sha256>.json``), and its mapped samples (``samples.json``).
+    """
+    from src.kg.artifacts import MANIFEST_FILENAME
+    from src.kg.provenance import PROVENANCE_FILENAME
+
+    manifest = version.manifest if isinstance(version, CohortVersionRead) else version
+    kind = version_kind(manifest)
+    record = manifest["dataset_record"]
+    refs: List[ContentReference] = [
+        ContentReference(f"graph.{role}", _GRAPH_WHAT[role], manifest["graph"][role],
+                         IN_WORKSPACE, GRAPH_ARTIFACTS[role])
+        for role in GRAPH_ARTIFACTS
+    ]
+    refs.append(ContentReference("dataset_record", "the dataset record: what the graph was "
+                                 "built from", record["sha256"], IN_WORKSPACE,
+                                 PROVENANCE_FILENAME))
+    if kind == SUPPLIED:
+        named = [(role, record[role]) for role in ("hpo", "mondo")
+                 if isinstance(record.get(role), Mapping)]
+    else:
+        named = [(entry["role"], entry) for entry in record["sources"]]
+    refs += [ContentReference(f"source.{role}", f"the {role} source the graph was built from, "
+                              "as the dataset record names it", entry["digest"], NAMED)
+             for role, entry in named]
+    if kind == KG_EDGES:
+        refs += [
+            ContentReference("graph_view", "the graph view: its relations and the raw-to-view "
+                             "node mapping, rebuilt from the graph by its recorded rule",
+                             manifest["graph_view"]["digest"], REBUILT),
+            ContentReference("split", "the edge split of that view, rebuilt by its recorded "
+                             "rule and seed", manifest["split"]["digest"], REBUILT),
+            ContentReference("pairs", "the fixed link-prediction pairs",
+                             manifest["pairs"]["sha256"], IN_VERSION, VERSION_PAIRS),
+            ContentReference("checkpoint", "the checkpoint whose model record named the view "
+                             "and split", manifest["taken_from"]["checkpoint_sha256"],
+                             IN_CHECKPOINT),
+        ]
+    elif kind == GENERATED:
+        refs.append(ContentReference("split_manifest", "the workspace's split manifest: the "
+                                     "generation definition, the allocation and the split's "
+                                     "files", manifest["split_manifest"]["sha256"],
+                                     IN_WORKSPACE, MANIFEST_FILENAME))
+        refs += [ContentReference(f"split.{name}", f"the workspace's generated "
+                                  f"{name[: -len('_samples')]} split", digest, IN_WORKSPACE,
+                                  f"{name}.json")
+                 for name, digest in manifest["split_artifacts"].items()]
+        refs.append(ContentReference("samples", f"the {manifest['role']} split's samples, kept "
+                                     "in the version", manifest["samples"]["sha256"],
+                                     IN_VERSION, VERSION_SAMPLES))
+    else:
+        sha = manifest["source"]["sha256"]
+        refs += [
+            ContentReference("source", "the case source, kept by the registry", sha,
+                             IN_REGISTRY, f"{SOURCES_DIR}/{sha}.json"),
+            ContentReference("samples", "the mapped samples, kept in the version",
+                             manifest["samples"]["sha256"], IN_VERSION, VERSION_SAMPLES),
+        ]
+    return tuple(refs)
+
+
+def check_references(
+    version: CohortVersionRead,
+    *,
+    workspace: Optional[Path] = None,
+    checkpoint: Optional[Path] = None,
+) -> Tuple[ReferenceState, ...]:
+    """Each of the version's references (`version_references`) and its state,
+    found by comparing the bytes at a location with the recorded digest.
+
+    **Locations, not identities.** The version's own files are looked for in
+    its directory, a supplied source in the registry it was resolved from, a
+    workspace's files in `workspace` and the checkpoint at `checkpoint`, each
+    only when given; nothing a version records is a path. A reference with no
+    location given, one rebuilt from the graph by a recorded rule (checked by
+    rebuilding, as the import and a measurement do) and one only named by the
+    dataset record are `NOT_CHECKED`, with the reason: never a pass.
+
+    **A missing dependency is a state**, never an exception: a file that is
+    not there is `MISSING`, one that cannot be read (a directory, a file this
+    account may not read) is `UNREADABLE`, other bytes are `DIFFERS`.
+
+    **Authorisation is not this.** Which registry roots may be read is
+    `validate_registry`'s (and the service's ``SHEPHERD_REGISTRY``), checked
+    when the version was resolved; which workspace may be read is its
+    caller's. This compares bytes with digests and reads only the files named
+    by the references, writing nothing.
+    """
+    from src.utils.fingerprint import file_sha256
+
+    registry_root = version.directory.parent.parent
+    places = {IN_VERSION: version.directory, IN_REGISTRY: registry_root,
+              IN_WORKSPACE: None if workspace is None else Path(workspace)}
+    states: List[ReferenceState] = []
+    for ref in version_references(version):
+        if ref.kept == REBUILT:
+            states.append(ReferenceState(ref, NOT_CHECKED, None, (
+                "rebuilt from the graph by its recorded rule, and checked by that rebuild "
+                "(the import and a measurement rebuild it), not by a file")))
+            continue
+        if ref.kept == NAMED:
+            states.append(ReferenceState(ref, NOT_CHECKED, None, (
+                "named by the dataset record; its file is an input of the KG build and is not "
+                "kept with the version")))
+            continue
+        if ref.kept == IN_CHECKPOINT:
+            path = None if checkpoint is None else Path(checkpoint)
+            where = "no checkpoint location was given"
+        else:
+            place = places[ref.kept]
+            path = None if place is None else place / ref.file
+            where = f"no {ref.kept} location was given"
+        if path is None:
+            states.append(ReferenceState(ref, NOT_CHECKED, None, where))
+            continue
+        try:
+            found = file_sha256(path)
+        except OSError as exc:
+            states.append(ReferenceState(ref, UNREADABLE, None, (
+                f"{path} cannot be read ({type(exc).__name__}: {exc.strerror or exc})")))
+            continue
+        if found is None:
+            states.append(ReferenceState(ref, MISSING, None, f"{path} is not there"))
+        elif found != ref.sha256:
+            states.append(ReferenceState(ref, DIFFERS, found, (
+                f"{path} holds {found[:12]}..., not the {ref.sha256[:12]}... recorded")))
+        else:
+            states.append(ReferenceState(ref, VERIFIED, found, f"{path} holds the bytes recorded"))
+    return tuple(states)
 
 
 def is_run_id(name: Any) -> bool:
@@ -2338,8 +3012,20 @@ __all__ = [
     "CohortVersionChanged",
     "CohortVersionRead",
     "CohortVersionRefused",
+    "ContentReference",
     "DEFAULT_PARTIAL_PHENOTYPES",
+    "DIFFERS",
     "EXCLUSION_CATEGORIES",
+    "GENERATED",
+    "GENERATED_BLOCK_FIELDS",
+    "GENERATED_COUNT_UNITS",
+    "GENERATED_REQUIRED_FIELDS",
+    "GENERATED_ROLES",
+    "GENERATED_WHAT_THIS_IS",
+    "IN_CHECKPOINT",
+    "IN_REGISTRY",
+    "IN_VERSION",
+    "IN_WORKSPACE",
     "ImportPlan",
     "KG_EDGES",
     "KG_EDGES_BLOCK_FIELDS",
@@ -2353,22 +3039,30 @@ __all__ = [
     "KgEdgePairsRead",
     "ListedRun",
     "ListedVersion",
+    "MISSING",
     "MalformedSource",
     "MappedCohort",
+    "NAMED",
+    "NOT_CHECKED",
     "PARTIAL_PHENOTYPE_POLICIES",
     "RANKS_FILE",
+    "REBUILT",
+    "REFERENCE_STATES",
     "REPORTS_DIR",
     "REPORT_FILE",
     "REPO_ROOT",
     "REQUIRED_VERSION_FIELDS",
     "RUN_ID_PATTERN",
+    "ReferenceState",
     "RegistryRefused",
     "SOURCES_DIR",
     "SOURCE_FORMAT",
     "SUPPLIED",
     "SourceCase",
+    "UNREADABLE",
     "UNSUPPORTED_DISEASE_NAMESPACES",
     "UnsupportedDiseaseNamespace",
+    "VERIFIED",
     "VERSIONS_DIR",
     "VERSION_KINDS",
     "VERSION_MANIFEST",
@@ -2378,8 +3072,10 @@ __all__ = [
     "VERSION_SCHEMA_VERSION",
     "WHAT_THIS_IS",
     "WorkspaceGraph",
+    "build_generated_manifest",
     "build_kg_edges_manifest",
     "build_version_manifest",
+    "check_references",
     "cohort_version_block",
     "commit_import",
     "create_report_dir",
@@ -2390,6 +3086,7 @@ __all__ = [
     "map_cases",
     "not_a_supplied_cohort",
     "parse_source",
+    "prepare_generated_import",
     "prepare_import",
     "prepare_kg_edges_import",
     "preview_id",
@@ -2398,6 +3095,7 @@ __all__ = [
     "report_run_directory",
     "report_store_directory",
     "resolve_version",
+    "validate_generated_role",
     "validate_kg_edges_role",
     "validate_label",
     "validate_partial_policy",
@@ -2405,4 +3103,6 @@ __all__ = [
     "validate_role",
     "verify_cohort_binding",
     "version_kind",
+    "version_references",
+    "version_words",
 ]

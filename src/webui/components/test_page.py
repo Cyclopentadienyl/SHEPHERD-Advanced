@@ -2041,8 +2041,8 @@ def role_choices(page: Mapping[str, Any]) -> List[str]:
     """The import form's Role choices: the listed supplied cohorts' own roles,
     then mygene2 and institutional_acceptance, each once (a role may also be
     typed). A KG edge set's role (``train``, ``val``, ``test``) is a part of an
-    edge split, which a supplied import refuses for ``train`` and ``val``, so
-    it is not offered."""
+    edge split, and a generated split's the split it is; a supplied import
+    refuses ``train`` and ``val``, so neither is offered."""
     roles: List[str] = []
     supplied = (v.get("role") for v in page.get("versions") or []
                 if v.get("kind") == protocols.SUPPLIED)

@@ -1600,7 +1600,7 @@ run 目錄）在寫入任何東西、或從中讀取版本之前，都會再解�
 <registry>/
   sources/<sha256>.json                  來源檔的位元組，原樣保存，以其 digest 命名
   versions/<label>/cohort.json           版本 manifest；最後寫入，它存在才代表版本存在
-  versions/<label>/samples.json          對應後的樣本，由 cohort.json 的 digest 綁定
+  versions/<label>/samples.json          對應後的樣本（generated split 則為 workspace 的檔案），由 cohort.json 的 digest 綁定
   versions/<label>/pairs.bin             KG 邊集合以此取代樣本（見下文），以同樣方式綁定
   versions/<label>/reports/<run id>/     每次量測一個目錄：先 ranks.json，再 report.json
 ```
@@ -1643,7 +1643,8 @@ python scripts/import_cohort.py --registry /srv/shepherd/cohorts \
 ```
 
 label 與 role 是小寫識別字（字母、數字、`_`、`-`、`.`；最多 64 字元）；supplied cohort 的 role
-不可為 `train` 或 `val`（KG 邊集合的 role 是它在切分中的部分，見下文）。
+不可為 `train` 或 `val`（KG 邊集合的 role 是它在切分中的部分，generated split 的 role 是它本身
+那個 split，見下文）。
 
 **預覽不寫入任何東西。** 它以與訓練、serving 相同的讀取器與檢查，把每個案例對應到 workspace
 manifest 所綁定的圖，並印出：
@@ -1716,11 +1717,60 @@ supplied cohort version"）：Diagnosis 路由（作為參考 cohort）與 `audi
 附上理由。
 
 **Schema 1 與 2。**supplied 匯入仍寫出 schema 1，位元組與過去完全相同；schema 1 讀作 supplied
-cohort。KG 邊集合是 schema 2，會註明其 kind。schema 2 只讀取以它寫出的 kind：kind 為 `supplied`
-的 schema-2 manifest 沒有任何版本會寫出，因此會被拒絕（"which no revision writes: a supplied
-version is schema 1"），絕不以 schema 1 的規則讀取。schema 2 之前的版本會把 KG 邊集合列為無法
-讀取並附上原因（"is schema 2; this revision reads schema 1 only"），因此舊版本絕不會把它誤讀成
-supplied cohort。
+cohort。KG 邊集合與 generated split（見下文）是 schema 2，會註明其 kind。schema 2 只讀取以它寫出
+的 kind：kind 為 `supplied` 的 schema-2 manifest 沒有任何版本會寫出，因此會被拒絕（"which no
+revision writes: a supplied version is schema 1"），絕不以 schema 1 的規則讀取。schema 2 之前的
+版本會把 KG 邊集合或 generated split 列為無法讀取並附上原因（"is schema 2; this revision reads
+schema 1 only"），因此舊版本絕不會把它誤讀成 supplied cohort；能讀 KG 邊集合但不能讀 generated
+split 的版本（research comparison Stage 4a）會把 generated split 列為 "of kind 'generated'; this
+revision reads kinds supplied and kg_edges only"。
+
+### Generated split：`--kind generated`（自 research comparison Stage 4b 起）
+
+**Generated split** 是 workspace 自己產生的病人切分之一，也就是產生器寫出、`measure_scorer.py
+--split` 就地量測的 `<role>_samples.json`，以 registry 版本保存，並有其有限的資料身分：
+
+```bash
+python scripts/import_cohort.py --kind generated --registry /srv/shepherd/cohorts \
+    --data-dir data/workspaces/<ws> --label gen-val-2026-11 --role val
+```
+
+- **role 就是那個 split，依給定值記錄：**`train`、`val` 或 `test`；沒有任何 role 因其為何而被拒絕，
+  也從不改標。產生器只寫出 `train` 與 `val`，因此當 workspace 的 split manifest 沒有綁定任何
+  generated test split 時，`--role test` 會被拒絕，並列出它所綁定的 split，不寫入任何東西。
+- **檢查的內容。**匯入工具以 `--split` 量測相同的方式讀取 workspace：依 split manifest 檢查圖、
+  dataset record，以及兩個 generated split 對同一次 manifest 讀取的比對（digest、疾病集合與互斥
+  性）。不是 manifest 所綁定檔案的 split 會被拒絕；在預覽與提交之間被重新抽樣的 workspace 也會
+  被拒絕（其預覽 id 會改變）。每項檢查都在寫入任何東西之前執行。`--source`、
+  `--partial-phenotypes` 與 `--from-checkpoint` 不適用（結束碼 2）。
+- **它的資料身分**是樣本的 digest、split manifest 的 digest 與它所綁定每個樣本檔的 digest、產生
+  定義（產生器的演算法、版本與記錄的設定，以及它切出的疾病分配，原樣自 split manifest 複製），
+  以及 role。計數是該 split 產生的病人數與相異疾病數，各附單位。版本不記錄任何路徑。
+- **樣本是複製的，而不是就地綁定。**版本把 workspace 的檔案逐位元組保存為 `samples.json`，由
+  split manifest 記錄的 digest 綁定，因此 workspace 重建或重新抽樣之後它仍可讀取、可驗證；
+  workspace 是否仍持有該 split，則成為一個參照的狀態，而不是讀取版本的條件。
+- **預覽**會印出計數、產生定義與分配、split manifest 與各 split 檔的 digest、保存的樣本、驗證
+  了什麼，以及所綁定的圖與 dataset record，絕不印出任何樣本或病人 id。沒有樣本的 split 無法
+  提交。
+
+伺服器的清單（`GET /cohorts`）會列出 generated split，附其 kind、role 與計數，絕不列出樣本；
+Test 頁以 label 與 role 列出它。它絕不會被呈現為 supplied cohort，除非 role 是 test 也不會被
+呈現為 test：Diagnosis 路由與 `audit_split_overlap.py --cohort` 以 registry 的共用理由拒絕它
+（"a generated split (val), not a supplied cohort version"），Diagnosis 頁的 Reference cohort
+選單會列出它並標上 "generated split"，但絕不預設選它。**這個 build 會列出並讀取已登錄的
+generated split，但還不會量測它**（research comparison Stage 5）：指名它的
+`measure_scorer.py --cohort`、job runner 與 Test 頁的 Start，都會在讀取任何東西之前以該句話被
+拒絕；workspace 自己的 split 仍照舊以 `--split` 量測。以 `--split` 量測的報告維持原狀：它們留在
+寫出的位置，不會為它們捏造任何身分，`record_evaluation.py` 也仍然拒絕登錄它們。
+
+**搬移 registry。**沒有任何版本記錄路徑：每個版本都以內容指名它所依賴的東西（圖的四個
+digest、dataset record 與它依角色列出的每個來源，以及依 kind 而定的：KG 邊集合的 view、
+split、配對與 checkpoint，或 generated split 的 split manifest、split 檔與樣本）。複製或搬移到
+另一個目錄、並由 `--registry` 或 `SHEPHERD_REGISTRY` 指名的 registry，會以相同的 digest 讀到
+相同的版本；哪個目錄被允許是該設定的規則，與內容檢查分開。某個依賴是否存在於某個位置是一個
+狀態（verified、differs、missing、unreadable 或 not checked），從不是版本無法讀取的理由。版本
+所列的來源角色就是 dataset record 的角色，沒有允許清單；目前的 KG builder 記錄四個（MONDO、
+HPO、表型註解與 genes-to-phenotype），新的來源需要先擴充 builder 本身。
 
 ### 量測
 
@@ -1896,7 +1946,7 @@ Mode D（`--mode D`，Batch 3 對 Diagnosis 頁 2026 年 10 月所提供排名�
 
 | 指令 | 0 | 1 | 2 | 3 |
 |---|---|---|---|---|
-| `import_cohort.py` | 已印出預覽，或已提交版本 | 拒絕，一則以 "Nothing was written." 結尾的訊息（沒有東西可提交的預覽也是：沒有任何案例可排名，或該部分沒有任何邊有負樣本 tail） | 命令列被拒絕 | — |
+| `import_cohort.py` | 已印出預覽，或已提交版本 | 拒絕，一則以 "Nothing was written." 結尾的訊息（沒有東西可提交的預覽也是：沒有任何案例可排名、該部分沒有任何邊有負樣本 tail，或該 generated split 沒有任何樣本） | 命令列被拒絕 | — |
 | `measure_scorer.py` | 已量測（加 `--record` 時：已登錄或已存在） | 某項檢查拒絕了這次執行：一則訊息，不寫入任何東西（在沒有 CUDA 的主機上給 `--device auto` 或 `cuda` 也是，在讀取任何東西之前）；或**已量測，但報告沒有寫出**（例如磁碟已滿或唯讀）：一則訊息說明可能留下了什麼，而那絕不會是可登錄的報告——`--output` 旁這次執行沒有報告的排名檔，或它在 `--output` 或排名檔位置佔用的空檔案（自 K8-6r.4 起，兩者都會讓同一路徑上的下一次執行被拒絕），或報告存放處中沒有 `report.json` 的執行目錄（寫出報告之後才失敗的執行，例如主控台被關閉，會說明報告在哪裡） | 命令列被拒絕，包括屬於另一種 cohort 的參數 | **已量測，但登錄被拒絕**：訊息會指出報告與之後登錄用的 `record_evaluation.py` 指令；若報告檔已不是這次執行發佈的位元組，則如實說明，並要求重新量測（那份報告可能已不存在） |
 | `record_evaluation.py` | 已登錄、已存在，或已顯示 | 拒絕，一則訊息；不寫入任何東西 | 命令列被拒絕，包括 `--checkpoint` 與 `--checkpoint-dir` 都沒給或都給 | — |
 | `audit_split_overlap.py` | 已寫出報告 | 拒絕，一則訊息；不寫入任何東西 | 命令列被拒絕（例如已移除的 `--evaluation-cohort-kind`、只給 `--registry` 不給 `--cohort` 或反之，或與 `--cohort` 一起給出 `--splits`），並印出 usage 行 | — |

@@ -64,8 +64,9 @@ it is shown, after each diagnosis, after a Load ("served model changed") and on
   report store is scanned), each with whether it was mapped against the
   serving workspace's graph (`workspaces.binding_state`, the registry's one
   comparison), read with the rest on a queued refresh and kept on the timer.
-  A version of another kind (a KG edge set) is listed with the registry's
-  reason it is not one (`NOT_A_COHORT`), never as bound or chosen by default.
+  A version of another kind (a KG edge set, a generated split) is listed with
+  the registry's reason it is not one (`NOT_A_COHORT`), never as bound or
+  chosen by default.
   A hint only: the server checks the version it is sent.
 
 **Details** (the identity drawer's "Model in use") is the shared Model Facts
@@ -225,8 +226,10 @@ def task_model_name(task: str) -> str:
 SERVER_PATH = "a server path"
 
 #: A listed reference cohort's ``binding`` when it is a readable version of
-#: another kind (a KG edge set): it holds no patients, so it is listed with
-#: its reason and is never bound (`reference_cohorts`).
+#: another kind than a supplied cohort (a KG edge set, which holds no
+#: patients; a generated split, the workspace generator's, never a supplied
+#: cohort): it is listed with its reason and is never bound
+#: (`reference_cohorts`).
 NOT_A_COHORT = "not_a_cohort"
 
 
@@ -257,8 +260,9 @@ def reference_cohorts(serving: Optional[str], rows: List[Mapping[str, Any]],
     `workspaces.version_row` with ``binding`` and ``binding_words``: whether
     it was mapped against the serving workspace's graph (`binding_state`, the
     registry's one comparison; a hint, the server checks the version it is
-    sent). A readable version of another kind, which holds no patients (a KG
-    edge set), is listed with ``binding`` `NOT_A_COHORT` and, as its words,
+    sent). A readable version of another kind than a supplied cohort (a KG
+    edge set, a generated split) is listed with ``binding`` `NOT_A_COHORT`
+    and, as its words,
     the reason the server refuses it with
     (`cohort_registry.not_a_supplied_cohort`), so it is never bound or chosen
     by default. ``problem``: why no version is listed (no registry, or one

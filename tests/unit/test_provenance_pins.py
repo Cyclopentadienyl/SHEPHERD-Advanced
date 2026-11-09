@@ -141,6 +141,23 @@ ALLOWED = {
     # Research comparison Stage 4: a KG edge set's pairs file, compared with the
     # digest its version binds before the same bytes are parsed.
     ("src/evaluation/cohort_registry.py", "read_kg_edge_pairs", "read_once"): (1, _READER),
+    # Research comparison Stage 4b: a generated split's samples, kept from the
+    # workspace. read_samples parsed the file and verify_cohort_reads compared
+    # that read's digest with the split manifest; this read takes the bytes to
+    # keep and is refused unless they hash to that verified digest, so the
+    # bytes kept are the bytes verified. Nothing is parsed from it.
+    ("src/evaluation/cohort_registry.py", "prepare_generated_import", "read_once"):
+        (1, "Stage 4b: the generated split's file read for the bytes a version keeps, "
+            "refused unless its digest is the one read_samples parsed and the split "
+            "manifest binds; nothing is parsed from it"),
+    # Research comparison Stage 4b (E3): a reference's state, the digest of the
+    # file found at a location the caller gives compared with the digest the
+    # version records. A state shown, never an input: nothing is parsed,
+    # recorded or written from it. Owner: the results service (Stage 8).
+    ("src/evaluation/cohort_registry.py", "check_references", "file_sha256"):
+        (1, _NOT_INPUT.format(what="a version reference's state (verified, differs, missing), "
+                                   "the bytes at a given location against the recorded "
+                                   "digest")),
     ("src/ontology/loader.py", "OntologyLoader.load", "hashlib.sha256"):
         (1, "KG build, unchanged by M2.1 (BACKLOG 19.13): the digest of the handle that "
             "is parsed, M2.1's precedent"),

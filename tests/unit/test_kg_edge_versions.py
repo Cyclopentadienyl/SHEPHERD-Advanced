@@ -126,7 +126,9 @@ def test_one_name_per_kind_shared_with_the_measurement_manifest():
     from src.kg.graph_view import SPLIT_NAMES
 
     assert len(set(COHORT_KINDS)) == len(COHORT_KINDS)
-    assert set(cr.VERSION_KINDS) == set(COHORT_KINDS) - {"generated"}
+    # Every kind is a registered version's since Stage 4b kept generated
+    # splits in the registry (tests/unit/test_generated_versions.py).
+    assert set(cr.VERSION_KINDS) == set(COHORT_KINDS)
     assert (cr.SUPPLIED, cr.KG_EDGES) == (protocols.SUPPLIED, protocols.KG_EDGES)
     assert cr.KG_EDGES_ROLES == SPLIT_NAMES
     assert cr.VERSION_SCHEMAS == (1, 2) and cr.VERSION_SCHEMA_VERSION == 1
@@ -830,7 +832,7 @@ def test_a_schema_2_supplied_manifest_which_no_revision_writes_is_refused(both):
     from src.evaluation.cohort_registry import list_versions
 
     registry, supplied, edges = both
-    assert cr.KIND_SCHEMAS == {"supplied": 1, "kg_edges": 2}
+    assert cr.KIND_SCHEMAS == {"supplied": 1, "kg_edges": 2, "generated": 2}
     assert (supplied.manifest["schema_version"], edges.manifest["schema_version"]) == (1, 2)
     manifest = {**supplied.manifest, "schema_version": 2, "kind": "supplied"}
     (supplied.directory / "cohort.json").write_bytes(encode_json(manifest))

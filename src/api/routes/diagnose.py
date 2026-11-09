@@ -602,8 +602,10 @@ def _reference_cohort(label: Optional[str], served_mode: str, pipeline: Any) -> 
         version = resolve_version(registry, label)
         other = not_a_supplied_cohort(version.kind, version.manifest["role"])
         if other is not None:
-            # A KG edge set holds no patients to rank; listed and readable, it
-            # is not a reference cohort (research comparison §5 Stage 4).
+            # A KG edge set holds no patients to rank, and a generated split is
+            # the workspace generator's, never a supplied cohort; listed and
+            # readable, neither is a reference cohort (research comparison §5
+            # Stage 4).
             raise CohortVersionRefused(
                 f"it is {other}: a patients-like-me model ranks a reference cohort's patients")
         bound = version.manifest["samples"]["sha256"]
