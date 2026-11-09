@@ -1,0 +1,4194 @@
+{
+  "available": [
+    {
+      "learning_stage": "base",
+      "protocols": [],
+      "reason": "This model is a base: its formal test (link prediction on held-out knowledge-graph edges) is not implemented yet. A model finetuned from it can be measured.",
+      "task": null
+    },
+    {
+      "learning_stage": "finetune",
+      "protocols": [
+        "disease"
+      ],
+      "reason": null,
+      "task": "disease"
+    },
+    {
+      "learning_stage": "finetune",
+      "protocols": [
+        "gene"
+      ],
+      "reason": null,
+      "task": "gene"
+    },
+    {
+      "learning_stage": "finetune",
+      "protocols": [
+        "patients_like_me"
+      ],
+      "reason": null,
+      "task": "patients_like_me"
+    },
+    {
+      "learning_stage": null,
+      "protocols": [],
+      "reason": "this checkpoint has no model record this build reads.",
+      "task": null
+    }
+  ],
+  "counts_cases": {
+    "booleans": {
+      "genes": {
+        "cases_with_candidate_genes": true,
+        "cases_with_causal_genes": true
+      }
+    },
+    "both": {
+      "genes": {
+        "cases_with_candidate_genes": 3,
+        "cases_with_causal_genes": 4
+      }
+    },
+    "candidate_only": {
+      "genes": {
+        "cases_with_candidate_genes": 4,
+        "cases_with_causal_genes": 0
+      }
+    },
+    "causal_only": {
+      "genes": {
+        "cases_with_candidate_genes": 0,
+        "cases_with_causal_genes": 4
+      }
+    },
+    "empty": {},
+    "genes_empty": {
+      "genes": {}
+    },
+    "genes_not_an_object": {
+      "genes": [
+        1,
+        2
+      ]
+    },
+    "genes_zero": {
+      "genes": {
+        "cases_with_candidate_genes": 0,
+        "cases_with_causal_genes": 0
+      }
+    },
+    "negative": {
+      "genes": {
+        "cases_with_candidate_genes": -1,
+        "cases_with_causal_genes": -1
+      }
+    },
+    "no_counts": null,
+    "no_genes_block": {
+      "ranked_eligible": 10,
+      "source_cases": 13
+    },
+    "text": {
+      "genes": {
+        "cases_with_candidate_genes": "3",
+        "cases_with_causal_genes": "4"
+      }
+    }
+  },
+  "inputs_refusal": [
+    {
+      "counts": "no_counts",
+      "name": "disease",
+      "refusal": null
+    },
+    {
+      "counts": "empty",
+      "name": "disease",
+      "refusal": null
+    },
+    {
+      "counts": "no_genes_block",
+      "name": "disease",
+      "refusal": null
+    },
+    {
+      "counts": "genes_not_an_object",
+      "name": "disease",
+      "refusal": null
+    },
+    {
+      "counts": "genes_empty",
+      "name": "disease",
+      "refusal": null
+    },
+    {
+      "counts": "genes_zero",
+      "name": "disease",
+      "refusal": null
+    },
+    {
+      "counts": "causal_only",
+      "name": "disease",
+      "refusal": null
+    },
+    {
+      "counts": "candidate_only",
+      "name": "disease",
+      "refusal": null
+    },
+    {
+      "counts": "both",
+      "name": "disease",
+      "refusal": null
+    },
+    {
+      "counts": "booleans",
+      "name": "disease",
+      "refusal": null
+    },
+    {
+      "counts": "text",
+      "name": "disease",
+      "refusal": null
+    },
+    {
+      "counts": "negative",
+      "name": "disease",
+      "refusal": null
+    },
+    {
+      "counts": "no_counts",
+      "name": "gene",
+      "refusal": "this cohort version lists no causal genes, which the gene measurement needs. Import a source that lists causal_genes."
+    },
+    {
+      "counts": "empty",
+      "name": "gene",
+      "refusal": "this cohort version lists no causal genes, which the gene measurement needs. Import a source that lists causal_genes."
+    },
+    {
+      "counts": "no_genes_block",
+      "name": "gene",
+      "refusal": "this cohort version lists no causal genes, which the gene measurement needs. Import a source that lists causal_genes."
+    },
+    {
+      "counts": "genes_not_an_object",
+      "name": "gene",
+      "refusal": "this cohort version lists no causal genes, which the gene measurement needs. Import a source that lists causal_genes."
+    },
+    {
+      "counts": "genes_empty",
+      "name": "gene",
+      "refusal": "this cohort version lists no causal genes, which the gene measurement needs. Import a source that lists causal_genes."
+    },
+    {
+      "counts": "genes_zero",
+      "name": "gene",
+      "refusal": "this cohort version lists no causal genes, which the gene measurement needs. Import a source that lists causal_genes."
+    },
+    {
+      "counts": "causal_only",
+      "name": "gene",
+      "refusal": "this cohort version lists no candidate genes, which the gene measurement needs. Import a source that lists candidate_genes."
+    },
+    {
+      "counts": "candidate_only",
+      "name": "gene",
+      "refusal": "this cohort version lists no causal genes, which the gene measurement needs. Import a source that lists causal_genes."
+    },
+    {
+      "counts": "both",
+      "name": "gene",
+      "refusal": null
+    },
+    {
+      "counts": "booleans",
+      "name": "gene",
+      "refusal": "this cohort version lists no causal genes, which the gene measurement needs. Import a source that lists causal_genes."
+    },
+    {
+      "counts": "text",
+      "name": "gene",
+      "refusal": "this cohort version lists no causal genes, which the gene measurement needs. Import a source that lists causal_genes."
+    },
+    {
+      "counts": "negative",
+      "name": "gene",
+      "refusal": "this cohort version lists no causal genes, which the gene measurement needs. Import a source that lists causal_genes."
+    },
+    {
+      "counts": "no_counts",
+      "name": "patients_like_me",
+      "refusal": "this cohort version lists no causal genes, which the patients_like_me measurement needs. Import a source that lists causal_genes."
+    },
+    {
+      "counts": "empty",
+      "name": "patients_like_me",
+      "refusal": "this cohort version lists no causal genes, which the patients_like_me measurement needs. Import a source that lists causal_genes."
+    },
+    {
+      "counts": "no_genes_block",
+      "name": "patients_like_me",
+      "refusal": "this cohort version lists no causal genes, which the patients_like_me measurement needs. Import a source that lists causal_genes."
+    },
+    {
+      "counts": "genes_not_an_object",
+      "name": "patients_like_me",
+      "refusal": "this cohort version lists no causal genes, which the patients_like_me measurement needs. Import a source that lists causal_genes."
+    },
+    {
+      "counts": "genes_empty",
+      "name": "patients_like_me",
+      "refusal": "this cohort version lists no causal genes, which the patients_like_me measurement needs. Import a source that lists causal_genes."
+    },
+    {
+      "counts": "genes_zero",
+      "name": "patients_like_me",
+      "refusal": "this cohort version lists no causal genes, which the patients_like_me measurement needs. Import a source that lists causal_genes."
+    },
+    {
+      "counts": "causal_only",
+      "name": "patients_like_me",
+      "refusal": null
+    },
+    {
+      "counts": "candidate_only",
+      "name": "patients_like_me",
+      "refusal": "this cohort version lists no causal genes, which the patients_like_me measurement needs. Import a source that lists causal_genes."
+    },
+    {
+      "counts": "both",
+      "name": "patients_like_me",
+      "refusal": null
+    },
+    {
+      "counts": "booleans",
+      "name": "patients_like_me",
+      "refusal": "this cohort version lists no causal genes, which the patients_like_me measurement needs. Import a source that lists causal_genes."
+    },
+    {
+      "counts": "text",
+      "name": "patients_like_me",
+      "refusal": "this cohort version lists no causal genes, which the patients_like_me measurement needs. Import a source that lists causal_genes."
+    },
+    {
+      "counts": "negative",
+      "name": "patients_like_me",
+      "refusal": "this cohort version lists no causal genes, which the patients_like_me measurement needs. Import a source that lists causal_genes."
+    },
+    {
+      "counts": "no_counts",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "empty",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "no_genes_block",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "genes_not_an_object",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "genes_empty",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "genes_zero",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "causal_only",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "candidate_only",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "both",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "booleans",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "text",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "negative",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "no_counts",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "empty",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "no_genes_block",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "genes_not_an_object",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "genes_empty",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "genes_zero",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "causal_only",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "candidate_only",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "both",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "booleans",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "text",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "negative",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "no_counts",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "empty",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "no_genes_block",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "genes_not_an_object",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "genes_empty",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "genes_zero",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "causal_only",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "candidate_only",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "both",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "booleans",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "text",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "negative",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "no_counts",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "empty",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "no_genes_block",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "genes_not_an_object",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "genes_empty",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "genes_zero",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "causal_only",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "candidate_only",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "both",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "booleans",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "text",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "negative",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "no_counts",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "empty",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "no_genes_block",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "genes_not_an_object",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "genes_empty",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "genes_zero",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "causal_only",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "candidate_only",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "both",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "booleans",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "text",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me)."
+    },
+    {
+      "counts": "negative",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me)."
+    }
+  ],
+  "model_refusal": [
+    {
+      "learning_stage": "base",
+      "name": "disease",
+      "refusal": "This model is a base: its formal test (link prediction on held-out knowledge-graph edges) is not implemented yet. A model finetuned from it can be measured.",
+      "task": null
+    },
+    {
+      "learning_stage": "finetune",
+      "name": "disease",
+      "refusal": null,
+      "task": "disease"
+    },
+    {
+      "learning_stage": "finetune",
+      "name": "disease",
+      "refusal": "the disease measurement takes a finetune model with the disease head; this checkpoint is a finetune model with the gene head. It can be measured by gene.",
+      "task": "gene"
+    },
+    {
+      "learning_stage": "finetune",
+      "name": "disease",
+      "refusal": "the disease measurement takes a finetune model with the disease head; this checkpoint is a finetune model with the patients_like_me head. It can be measured by patients_like_me.",
+      "task": "patients_like_me"
+    },
+    {
+      "learning_stage": null,
+      "name": "disease",
+      "refusal": "this checkpoint has no model record this build reads.",
+      "task": null
+    },
+    {
+      "learning_stage": "base",
+      "name": "gene",
+      "refusal": "This model is a base: its formal test (link prediction on held-out knowledge-graph edges) is not implemented yet. A model finetuned from it can be measured.",
+      "task": null
+    },
+    {
+      "learning_stage": "finetune",
+      "name": "gene",
+      "refusal": "the gene measurement takes a finetune model with the gene head; this checkpoint is a finetune model with the disease head. It can be measured by disease.",
+      "task": "disease"
+    },
+    {
+      "learning_stage": "finetune",
+      "name": "gene",
+      "refusal": null,
+      "task": "gene"
+    },
+    {
+      "learning_stage": "finetune",
+      "name": "gene",
+      "refusal": "the gene measurement takes a finetune model with the gene head; this checkpoint is a finetune model with the patients_like_me head. It can be measured by patients_like_me.",
+      "task": "patients_like_me"
+    },
+    {
+      "learning_stage": null,
+      "name": "gene",
+      "refusal": "this checkpoint has no model record this build reads.",
+      "task": null
+    },
+    {
+      "learning_stage": "base",
+      "name": "patients_like_me",
+      "refusal": "This model is a base: its formal test (link prediction on held-out knowledge-graph edges) is not implemented yet. A model finetuned from it can be measured.",
+      "task": null
+    },
+    {
+      "learning_stage": "finetune",
+      "name": "patients_like_me",
+      "refusal": "the patients_like_me measurement takes a finetune model with the patients_like_me head; this checkpoint is a finetune model with the disease head. It can be measured by disease.",
+      "task": "disease"
+    },
+    {
+      "learning_stage": "finetune",
+      "name": "patients_like_me",
+      "refusal": "the patients_like_me measurement takes a finetune model with the patients_like_me head; this checkpoint is a finetune model with the gene head. It can be measured by gene.",
+      "task": "gene"
+    },
+    {
+      "learning_stage": "finetune",
+      "name": "patients_like_me",
+      "refusal": null,
+      "task": "patients_like_me"
+    },
+    {
+      "learning_stage": null,
+      "name": "patients_like_me",
+      "refusal": "this checkpoint has no model record this build reads.",
+      "task": null
+    },
+    {
+      "learning_stage": "base",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "learning_stage": "finetune",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "learning_stage": "finetune",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "learning_stage": "finetune",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "learning_stage": null,
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "learning_stage": "base",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "learning_stage": "finetune",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "learning_stage": "finetune",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "learning_stage": "finetune",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "learning_stage": null,
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "learning_stage": "base",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "learning_stage": "finetune",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "learning_stage": "finetune",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "learning_stage": "finetune",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "learning_stage": null,
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "learning_stage": "base",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "learning_stage": "finetune",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "learning_stage": "finetune",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "learning_stage": "finetune",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "learning_stage": null,
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "learning_stage": "base",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "learning_stage": "finetune",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "learning_stage": "finetune",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "learning_stage": "finetune",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "learning_stage": null,
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    }
+  ],
+  "names": [
+    "disease",
+    "gene",
+    "patients_like_me"
+  ],
+  "refusal": [
+    {
+      "counts": "no_counts",
+      "learning_stage": "base",
+      "name": "disease",
+      "refusal": "This model is a base: its formal test (link prediction on held-out knowledge-graph edges) is not implemented yet. A model finetuned from it can be measured.",
+      "task": null
+    },
+    {
+      "counts": "empty",
+      "learning_stage": "base",
+      "name": "disease",
+      "refusal": "This model is a base: its formal test (link prediction on held-out knowledge-graph edges) is not implemented yet. A model finetuned from it can be measured.",
+      "task": null
+    },
+    {
+      "counts": "no_genes_block",
+      "learning_stage": "base",
+      "name": "disease",
+      "refusal": "This model is a base: its formal test (link prediction on held-out knowledge-graph edges) is not implemented yet. A model finetuned from it can be measured.",
+      "task": null
+    },
+    {
+      "counts": "genes_not_an_object",
+      "learning_stage": "base",
+      "name": "disease",
+      "refusal": "This model is a base: its formal test (link prediction on held-out knowledge-graph edges) is not implemented yet. A model finetuned from it can be measured.",
+      "task": null
+    },
+    {
+      "counts": "genes_empty",
+      "learning_stage": "base",
+      "name": "disease",
+      "refusal": "This model is a base: its formal test (link prediction on held-out knowledge-graph edges) is not implemented yet. A model finetuned from it can be measured.",
+      "task": null
+    },
+    {
+      "counts": "genes_zero",
+      "learning_stage": "base",
+      "name": "disease",
+      "refusal": "This model is a base: its formal test (link prediction on held-out knowledge-graph edges) is not implemented yet. A model finetuned from it can be measured.",
+      "task": null
+    },
+    {
+      "counts": "causal_only",
+      "learning_stage": "base",
+      "name": "disease",
+      "refusal": "This model is a base: its formal test (link prediction on held-out knowledge-graph edges) is not implemented yet. A model finetuned from it can be measured.",
+      "task": null
+    },
+    {
+      "counts": "candidate_only",
+      "learning_stage": "base",
+      "name": "disease",
+      "refusal": "This model is a base: its formal test (link prediction on held-out knowledge-graph edges) is not implemented yet. A model finetuned from it can be measured.",
+      "task": null
+    },
+    {
+      "counts": "both",
+      "learning_stage": "base",
+      "name": "disease",
+      "refusal": "This model is a base: its formal test (link prediction on held-out knowledge-graph edges) is not implemented yet. A model finetuned from it can be measured.",
+      "task": null
+    },
+    {
+      "counts": "booleans",
+      "learning_stage": "base",
+      "name": "disease",
+      "refusal": "This model is a base: its formal test (link prediction on held-out knowledge-graph edges) is not implemented yet. A model finetuned from it can be measured.",
+      "task": null
+    },
+    {
+      "counts": "text",
+      "learning_stage": "base",
+      "name": "disease",
+      "refusal": "This model is a base: its formal test (link prediction on held-out knowledge-graph edges) is not implemented yet. A model finetuned from it can be measured.",
+      "task": null
+    },
+    {
+      "counts": "negative",
+      "learning_stage": "base",
+      "name": "disease",
+      "refusal": "This model is a base: its formal test (link prediction on held-out knowledge-graph edges) is not implemented yet. A model finetuned from it can be measured.",
+      "task": null
+    },
+    {
+      "counts": "no_counts",
+      "learning_stage": "finetune",
+      "name": "disease",
+      "refusal": null,
+      "task": "disease"
+    },
+    {
+      "counts": "empty",
+      "learning_stage": "finetune",
+      "name": "disease",
+      "refusal": null,
+      "task": "disease"
+    },
+    {
+      "counts": "no_genes_block",
+      "learning_stage": "finetune",
+      "name": "disease",
+      "refusal": null,
+      "task": "disease"
+    },
+    {
+      "counts": "genes_not_an_object",
+      "learning_stage": "finetune",
+      "name": "disease",
+      "refusal": null,
+      "task": "disease"
+    },
+    {
+      "counts": "genes_empty",
+      "learning_stage": "finetune",
+      "name": "disease",
+      "refusal": null,
+      "task": "disease"
+    },
+    {
+      "counts": "genes_zero",
+      "learning_stage": "finetune",
+      "name": "disease",
+      "refusal": null,
+      "task": "disease"
+    },
+    {
+      "counts": "causal_only",
+      "learning_stage": "finetune",
+      "name": "disease",
+      "refusal": null,
+      "task": "disease"
+    },
+    {
+      "counts": "candidate_only",
+      "learning_stage": "finetune",
+      "name": "disease",
+      "refusal": null,
+      "task": "disease"
+    },
+    {
+      "counts": "both",
+      "learning_stage": "finetune",
+      "name": "disease",
+      "refusal": null,
+      "task": "disease"
+    },
+    {
+      "counts": "booleans",
+      "learning_stage": "finetune",
+      "name": "disease",
+      "refusal": null,
+      "task": "disease"
+    },
+    {
+      "counts": "text",
+      "learning_stage": "finetune",
+      "name": "disease",
+      "refusal": null,
+      "task": "disease"
+    },
+    {
+      "counts": "negative",
+      "learning_stage": "finetune",
+      "name": "disease",
+      "refusal": null,
+      "task": "disease"
+    },
+    {
+      "counts": "no_counts",
+      "learning_stage": "finetune",
+      "name": "disease",
+      "refusal": "the disease measurement takes a finetune model with the disease head; this checkpoint is a finetune model with the gene head. It can be measured by gene.",
+      "task": "gene"
+    },
+    {
+      "counts": "empty",
+      "learning_stage": "finetune",
+      "name": "disease",
+      "refusal": "the disease measurement takes a finetune model with the disease head; this checkpoint is a finetune model with the gene head. It can be measured by gene.",
+      "task": "gene"
+    },
+    {
+      "counts": "no_genes_block",
+      "learning_stage": "finetune",
+      "name": "disease",
+      "refusal": "the disease measurement takes a finetune model with the disease head; this checkpoint is a finetune model with the gene head. It can be measured by gene.",
+      "task": "gene"
+    },
+    {
+      "counts": "genes_not_an_object",
+      "learning_stage": "finetune",
+      "name": "disease",
+      "refusal": "the disease measurement takes a finetune model with the disease head; this checkpoint is a finetune model with the gene head. It can be measured by gene.",
+      "task": "gene"
+    },
+    {
+      "counts": "genes_empty",
+      "learning_stage": "finetune",
+      "name": "disease",
+      "refusal": "the disease measurement takes a finetune model with the disease head; this checkpoint is a finetune model with the gene head. It can be measured by gene.",
+      "task": "gene"
+    },
+    {
+      "counts": "genes_zero",
+      "learning_stage": "finetune",
+      "name": "disease",
+      "refusal": "the disease measurement takes a finetune model with the disease head; this checkpoint is a finetune model with the gene head. It can be measured by gene.",
+      "task": "gene"
+    },
+    {
+      "counts": "causal_only",
+      "learning_stage": "finetune",
+      "name": "disease",
+      "refusal": "the disease measurement takes a finetune model with the disease head; this checkpoint is a finetune model with the gene head. It can be measured by gene.",
+      "task": "gene"
+    },
+    {
+      "counts": "candidate_only",
+      "learning_stage": "finetune",
+      "name": "disease",
+      "refusal": "the disease measurement takes a finetune model with the disease head; this checkpoint is a finetune model with the gene head. It can be measured by gene.",
+      "task": "gene"
+    },
+    {
+      "counts": "both",
+      "learning_stage": "finetune",
+      "name": "disease",
+      "refusal": "the disease measurement takes a finetune model with the disease head; this checkpoint is a finetune model with the gene head. It can be measured by gene.",
+      "task": "gene"
+    },
+    {
+      "counts": "booleans",
+      "learning_stage": "finetune",
+      "name": "disease",
+      "refusal": "the disease measurement takes a finetune model with the disease head; this checkpoint is a finetune model with the gene head. It can be measured by gene.",
+      "task": "gene"
+    },
+    {
+      "counts": "text",
+      "learning_stage": "finetune",
+      "name": "disease",
+      "refusal": "the disease measurement takes a finetune model with the disease head; this checkpoint is a finetune model with the gene head. It can be measured by gene.",
+      "task": "gene"
+    },
+    {
+      "counts": "negative",
+      "learning_stage": "finetune",
+      "name": "disease",
+      "refusal": "the disease measurement takes a finetune model with the disease head; this checkpoint is a finetune model with the gene head. It can be measured by gene.",
+      "task": "gene"
+    },
+    {
+      "counts": "no_counts",
+      "learning_stage": "finetune",
+      "name": "disease",
+      "refusal": "the disease measurement takes a finetune model with the disease head; this checkpoint is a finetune model with the patients_like_me head. It can be measured by patients_like_me.",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "empty",
+      "learning_stage": "finetune",
+      "name": "disease",
+      "refusal": "the disease measurement takes a finetune model with the disease head; this checkpoint is a finetune model with the patients_like_me head. It can be measured by patients_like_me.",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "no_genes_block",
+      "learning_stage": "finetune",
+      "name": "disease",
+      "refusal": "the disease measurement takes a finetune model with the disease head; this checkpoint is a finetune model with the patients_like_me head. It can be measured by patients_like_me.",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "genes_not_an_object",
+      "learning_stage": "finetune",
+      "name": "disease",
+      "refusal": "the disease measurement takes a finetune model with the disease head; this checkpoint is a finetune model with the patients_like_me head. It can be measured by patients_like_me.",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "genes_empty",
+      "learning_stage": "finetune",
+      "name": "disease",
+      "refusal": "the disease measurement takes a finetune model with the disease head; this checkpoint is a finetune model with the patients_like_me head. It can be measured by patients_like_me.",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "genes_zero",
+      "learning_stage": "finetune",
+      "name": "disease",
+      "refusal": "the disease measurement takes a finetune model with the disease head; this checkpoint is a finetune model with the patients_like_me head. It can be measured by patients_like_me.",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "causal_only",
+      "learning_stage": "finetune",
+      "name": "disease",
+      "refusal": "the disease measurement takes a finetune model with the disease head; this checkpoint is a finetune model with the patients_like_me head. It can be measured by patients_like_me.",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "candidate_only",
+      "learning_stage": "finetune",
+      "name": "disease",
+      "refusal": "the disease measurement takes a finetune model with the disease head; this checkpoint is a finetune model with the patients_like_me head. It can be measured by patients_like_me.",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "both",
+      "learning_stage": "finetune",
+      "name": "disease",
+      "refusal": "the disease measurement takes a finetune model with the disease head; this checkpoint is a finetune model with the patients_like_me head. It can be measured by patients_like_me.",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "booleans",
+      "learning_stage": "finetune",
+      "name": "disease",
+      "refusal": "the disease measurement takes a finetune model with the disease head; this checkpoint is a finetune model with the patients_like_me head. It can be measured by patients_like_me.",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "text",
+      "learning_stage": "finetune",
+      "name": "disease",
+      "refusal": "the disease measurement takes a finetune model with the disease head; this checkpoint is a finetune model with the patients_like_me head. It can be measured by patients_like_me.",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "negative",
+      "learning_stage": "finetune",
+      "name": "disease",
+      "refusal": "the disease measurement takes a finetune model with the disease head; this checkpoint is a finetune model with the patients_like_me head. It can be measured by patients_like_me.",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "no_counts",
+      "learning_stage": null,
+      "name": "disease",
+      "refusal": "this checkpoint has no model record this build reads.",
+      "task": null
+    },
+    {
+      "counts": "empty",
+      "learning_stage": null,
+      "name": "disease",
+      "refusal": "this checkpoint has no model record this build reads.",
+      "task": null
+    },
+    {
+      "counts": "no_genes_block",
+      "learning_stage": null,
+      "name": "disease",
+      "refusal": "this checkpoint has no model record this build reads.",
+      "task": null
+    },
+    {
+      "counts": "genes_not_an_object",
+      "learning_stage": null,
+      "name": "disease",
+      "refusal": "this checkpoint has no model record this build reads.",
+      "task": null
+    },
+    {
+      "counts": "genes_empty",
+      "learning_stage": null,
+      "name": "disease",
+      "refusal": "this checkpoint has no model record this build reads.",
+      "task": null
+    },
+    {
+      "counts": "genes_zero",
+      "learning_stage": null,
+      "name": "disease",
+      "refusal": "this checkpoint has no model record this build reads.",
+      "task": null
+    },
+    {
+      "counts": "causal_only",
+      "learning_stage": null,
+      "name": "disease",
+      "refusal": "this checkpoint has no model record this build reads.",
+      "task": null
+    },
+    {
+      "counts": "candidate_only",
+      "learning_stage": null,
+      "name": "disease",
+      "refusal": "this checkpoint has no model record this build reads.",
+      "task": null
+    },
+    {
+      "counts": "both",
+      "learning_stage": null,
+      "name": "disease",
+      "refusal": "this checkpoint has no model record this build reads.",
+      "task": null
+    },
+    {
+      "counts": "booleans",
+      "learning_stage": null,
+      "name": "disease",
+      "refusal": "this checkpoint has no model record this build reads.",
+      "task": null
+    },
+    {
+      "counts": "text",
+      "learning_stage": null,
+      "name": "disease",
+      "refusal": "this checkpoint has no model record this build reads.",
+      "task": null
+    },
+    {
+      "counts": "negative",
+      "learning_stage": null,
+      "name": "disease",
+      "refusal": "this checkpoint has no model record this build reads.",
+      "task": null
+    },
+    {
+      "counts": "no_counts",
+      "learning_stage": "base",
+      "name": "gene",
+      "refusal": "This model is a base: its formal test (link prediction on held-out knowledge-graph edges) is not implemented yet. A model finetuned from it can be measured.",
+      "task": null
+    },
+    {
+      "counts": "empty",
+      "learning_stage": "base",
+      "name": "gene",
+      "refusal": "This model is a base: its formal test (link prediction on held-out knowledge-graph edges) is not implemented yet. A model finetuned from it can be measured.",
+      "task": null
+    },
+    {
+      "counts": "no_genes_block",
+      "learning_stage": "base",
+      "name": "gene",
+      "refusal": "This model is a base: its formal test (link prediction on held-out knowledge-graph edges) is not implemented yet. A model finetuned from it can be measured.",
+      "task": null
+    },
+    {
+      "counts": "genes_not_an_object",
+      "learning_stage": "base",
+      "name": "gene",
+      "refusal": "This model is a base: its formal test (link prediction on held-out knowledge-graph edges) is not implemented yet. A model finetuned from it can be measured.",
+      "task": null
+    },
+    {
+      "counts": "genes_empty",
+      "learning_stage": "base",
+      "name": "gene",
+      "refusal": "This model is a base: its formal test (link prediction on held-out knowledge-graph edges) is not implemented yet. A model finetuned from it can be measured.",
+      "task": null
+    },
+    {
+      "counts": "genes_zero",
+      "learning_stage": "base",
+      "name": "gene",
+      "refusal": "This model is a base: its formal test (link prediction on held-out knowledge-graph edges) is not implemented yet. A model finetuned from it can be measured.",
+      "task": null
+    },
+    {
+      "counts": "causal_only",
+      "learning_stage": "base",
+      "name": "gene",
+      "refusal": "This model is a base: its formal test (link prediction on held-out knowledge-graph edges) is not implemented yet. A model finetuned from it can be measured.",
+      "task": null
+    },
+    {
+      "counts": "candidate_only",
+      "learning_stage": "base",
+      "name": "gene",
+      "refusal": "This model is a base: its formal test (link prediction on held-out knowledge-graph edges) is not implemented yet. A model finetuned from it can be measured.",
+      "task": null
+    },
+    {
+      "counts": "both",
+      "learning_stage": "base",
+      "name": "gene",
+      "refusal": "This model is a base: its formal test (link prediction on held-out knowledge-graph edges) is not implemented yet. A model finetuned from it can be measured.",
+      "task": null
+    },
+    {
+      "counts": "booleans",
+      "learning_stage": "base",
+      "name": "gene",
+      "refusal": "This model is a base: its formal test (link prediction on held-out knowledge-graph edges) is not implemented yet. A model finetuned from it can be measured.",
+      "task": null
+    },
+    {
+      "counts": "text",
+      "learning_stage": "base",
+      "name": "gene",
+      "refusal": "This model is a base: its formal test (link prediction on held-out knowledge-graph edges) is not implemented yet. A model finetuned from it can be measured.",
+      "task": null
+    },
+    {
+      "counts": "negative",
+      "learning_stage": "base",
+      "name": "gene",
+      "refusal": "This model is a base: its formal test (link prediction on held-out knowledge-graph edges) is not implemented yet. A model finetuned from it can be measured.",
+      "task": null
+    },
+    {
+      "counts": "no_counts",
+      "learning_stage": "finetune",
+      "name": "gene",
+      "refusal": "the gene measurement takes a finetune model with the gene head; this checkpoint is a finetune model with the disease head. It can be measured by disease.",
+      "task": "disease"
+    },
+    {
+      "counts": "empty",
+      "learning_stage": "finetune",
+      "name": "gene",
+      "refusal": "the gene measurement takes a finetune model with the gene head; this checkpoint is a finetune model with the disease head. It can be measured by disease.",
+      "task": "disease"
+    },
+    {
+      "counts": "no_genes_block",
+      "learning_stage": "finetune",
+      "name": "gene",
+      "refusal": "the gene measurement takes a finetune model with the gene head; this checkpoint is a finetune model with the disease head. It can be measured by disease.",
+      "task": "disease"
+    },
+    {
+      "counts": "genes_not_an_object",
+      "learning_stage": "finetune",
+      "name": "gene",
+      "refusal": "the gene measurement takes a finetune model with the gene head; this checkpoint is a finetune model with the disease head. It can be measured by disease.",
+      "task": "disease"
+    },
+    {
+      "counts": "genes_empty",
+      "learning_stage": "finetune",
+      "name": "gene",
+      "refusal": "the gene measurement takes a finetune model with the gene head; this checkpoint is a finetune model with the disease head. It can be measured by disease.",
+      "task": "disease"
+    },
+    {
+      "counts": "genes_zero",
+      "learning_stage": "finetune",
+      "name": "gene",
+      "refusal": "the gene measurement takes a finetune model with the gene head; this checkpoint is a finetune model with the disease head. It can be measured by disease.",
+      "task": "disease"
+    },
+    {
+      "counts": "causal_only",
+      "learning_stage": "finetune",
+      "name": "gene",
+      "refusal": "the gene measurement takes a finetune model with the gene head; this checkpoint is a finetune model with the disease head. It can be measured by disease.",
+      "task": "disease"
+    },
+    {
+      "counts": "candidate_only",
+      "learning_stage": "finetune",
+      "name": "gene",
+      "refusal": "the gene measurement takes a finetune model with the gene head; this checkpoint is a finetune model with the disease head. It can be measured by disease.",
+      "task": "disease"
+    },
+    {
+      "counts": "both",
+      "learning_stage": "finetune",
+      "name": "gene",
+      "refusal": "the gene measurement takes a finetune model with the gene head; this checkpoint is a finetune model with the disease head. It can be measured by disease.",
+      "task": "disease"
+    },
+    {
+      "counts": "booleans",
+      "learning_stage": "finetune",
+      "name": "gene",
+      "refusal": "the gene measurement takes a finetune model with the gene head; this checkpoint is a finetune model with the disease head. It can be measured by disease.",
+      "task": "disease"
+    },
+    {
+      "counts": "text",
+      "learning_stage": "finetune",
+      "name": "gene",
+      "refusal": "the gene measurement takes a finetune model with the gene head; this checkpoint is a finetune model with the disease head. It can be measured by disease.",
+      "task": "disease"
+    },
+    {
+      "counts": "negative",
+      "learning_stage": "finetune",
+      "name": "gene",
+      "refusal": "the gene measurement takes a finetune model with the gene head; this checkpoint is a finetune model with the disease head. It can be measured by disease.",
+      "task": "disease"
+    },
+    {
+      "counts": "no_counts",
+      "learning_stage": "finetune",
+      "name": "gene",
+      "refusal": "this cohort version lists no causal genes, which the gene measurement needs. Import a source that lists causal_genes.",
+      "task": "gene"
+    },
+    {
+      "counts": "empty",
+      "learning_stage": "finetune",
+      "name": "gene",
+      "refusal": "this cohort version lists no causal genes, which the gene measurement needs. Import a source that lists causal_genes.",
+      "task": "gene"
+    },
+    {
+      "counts": "no_genes_block",
+      "learning_stage": "finetune",
+      "name": "gene",
+      "refusal": "this cohort version lists no causal genes, which the gene measurement needs. Import a source that lists causal_genes.",
+      "task": "gene"
+    },
+    {
+      "counts": "genes_not_an_object",
+      "learning_stage": "finetune",
+      "name": "gene",
+      "refusal": "this cohort version lists no causal genes, which the gene measurement needs. Import a source that lists causal_genes.",
+      "task": "gene"
+    },
+    {
+      "counts": "genes_empty",
+      "learning_stage": "finetune",
+      "name": "gene",
+      "refusal": "this cohort version lists no causal genes, which the gene measurement needs. Import a source that lists causal_genes.",
+      "task": "gene"
+    },
+    {
+      "counts": "genes_zero",
+      "learning_stage": "finetune",
+      "name": "gene",
+      "refusal": "this cohort version lists no causal genes, which the gene measurement needs. Import a source that lists causal_genes.",
+      "task": "gene"
+    },
+    {
+      "counts": "causal_only",
+      "learning_stage": "finetune",
+      "name": "gene",
+      "refusal": "this cohort version lists no candidate genes, which the gene measurement needs. Import a source that lists candidate_genes.",
+      "task": "gene"
+    },
+    {
+      "counts": "candidate_only",
+      "learning_stage": "finetune",
+      "name": "gene",
+      "refusal": "this cohort version lists no causal genes, which the gene measurement needs. Import a source that lists causal_genes.",
+      "task": "gene"
+    },
+    {
+      "counts": "both",
+      "learning_stage": "finetune",
+      "name": "gene",
+      "refusal": null,
+      "task": "gene"
+    },
+    {
+      "counts": "booleans",
+      "learning_stage": "finetune",
+      "name": "gene",
+      "refusal": "this cohort version lists no causal genes, which the gene measurement needs. Import a source that lists causal_genes.",
+      "task": "gene"
+    },
+    {
+      "counts": "text",
+      "learning_stage": "finetune",
+      "name": "gene",
+      "refusal": "this cohort version lists no causal genes, which the gene measurement needs. Import a source that lists causal_genes.",
+      "task": "gene"
+    },
+    {
+      "counts": "negative",
+      "learning_stage": "finetune",
+      "name": "gene",
+      "refusal": "this cohort version lists no causal genes, which the gene measurement needs. Import a source that lists causal_genes.",
+      "task": "gene"
+    },
+    {
+      "counts": "no_counts",
+      "learning_stage": "finetune",
+      "name": "gene",
+      "refusal": "the gene measurement takes a finetune model with the gene head; this checkpoint is a finetune model with the patients_like_me head. It can be measured by patients_like_me.",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "empty",
+      "learning_stage": "finetune",
+      "name": "gene",
+      "refusal": "the gene measurement takes a finetune model with the gene head; this checkpoint is a finetune model with the patients_like_me head. It can be measured by patients_like_me.",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "no_genes_block",
+      "learning_stage": "finetune",
+      "name": "gene",
+      "refusal": "the gene measurement takes a finetune model with the gene head; this checkpoint is a finetune model with the patients_like_me head. It can be measured by patients_like_me.",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "genes_not_an_object",
+      "learning_stage": "finetune",
+      "name": "gene",
+      "refusal": "the gene measurement takes a finetune model with the gene head; this checkpoint is a finetune model with the patients_like_me head. It can be measured by patients_like_me.",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "genes_empty",
+      "learning_stage": "finetune",
+      "name": "gene",
+      "refusal": "the gene measurement takes a finetune model with the gene head; this checkpoint is a finetune model with the patients_like_me head. It can be measured by patients_like_me.",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "genes_zero",
+      "learning_stage": "finetune",
+      "name": "gene",
+      "refusal": "the gene measurement takes a finetune model with the gene head; this checkpoint is a finetune model with the patients_like_me head. It can be measured by patients_like_me.",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "causal_only",
+      "learning_stage": "finetune",
+      "name": "gene",
+      "refusal": "the gene measurement takes a finetune model with the gene head; this checkpoint is a finetune model with the patients_like_me head. It can be measured by patients_like_me.",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "candidate_only",
+      "learning_stage": "finetune",
+      "name": "gene",
+      "refusal": "the gene measurement takes a finetune model with the gene head; this checkpoint is a finetune model with the patients_like_me head. It can be measured by patients_like_me.",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "both",
+      "learning_stage": "finetune",
+      "name": "gene",
+      "refusal": "the gene measurement takes a finetune model with the gene head; this checkpoint is a finetune model with the patients_like_me head. It can be measured by patients_like_me.",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "booleans",
+      "learning_stage": "finetune",
+      "name": "gene",
+      "refusal": "the gene measurement takes a finetune model with the gene head; this checkpoint is a finetune model with the patients_like_me head. It can be measured by patients_like_me.",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "text",
+      "learning_stage": "finetune",
+      "name": "gene",
+      "refusal": "the gene measurement takes a finetune model with the gene head; this checkpoint is a finetune model with the patients_like_me head. It can be measured by patients_like_me.",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "negative",
+      "learning_stage": "finetune",
+      "name": "gene",
+      "refusal": "the gene measurement takes a finetune model with the gene head; this checkpoint is a finetune model with the patients_like_me head. It can be measured by patients_like_me.",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "no_counts",
+      "learning_stage": null,
+      "name": "gene",
+      "refusal": "this checkpoint has no model record this build reads.",
+      "task": null
+    },
+    {
+      "counts": "empty",
+      "learning_stage": null,
+      "name": "gene",
+      "refusal": "this checkpoint has no model record this build reads.",
+      "task": null
+    },
+    {
+      "counts": "no_genes_block",
+      "learning_stage": null,
+      "name": "gene",
+      "refusal": "this checkpoint has no model record this build reads.",
+      "task": null
+    },
+    {
+      "counts": "genes_not_an_object",
+      "learning_stage": null,
+      "name": "gene",
+      "refusal": "this checkpoint has no model record this build reads.",
+      "task": null
+    },
+    {
+      "counts": "genes_empty",
+      "learning_stage": null,
+      "name": "gene",
+      "refusal": "this checkpoint has no model record this build reads.",
+      "task": null
+    },
+    {
+      "counts": "genes_zero",
+      "learning_stage": null,
+      "name": "gene",
+      "refusal": "this checkpoint has no model record this build reads.",
+      "task": null
+    },
+    {
+      "counts": "causal_only",
+      "learning_stage": null,
+      "name": "gene",
+      "refusal": "this checkpoint has no model record this build reads.",
+      "task": null
+    },
+    {
+      "counts": "candidate_only",
+      "learning_stage": null,
+      "name": "gene",
+      "refusal": "this checkpoint has no model record this build reads.",
+      "task": null
+    },
+    {
+      "counts": "both",
+      "learning_stage": null,
+      "name": "gene",
+      "refusal": "this checkpoint has no model record this build reads.",
+      "task": null
+    },
+    {
+      "counts": "booleans",
+      "learning_stage": null,
+      "name": "gene",
+      "refusal": "this checkpoint has no model record this build reads.",
+      "task": null
+    },
+    {
+      "counts": "text",
+      "learning_stage": null,
+      "name": "gene",
+      "refusal": "this checkpoint has no model record this build reads.",
+      "task": null
+    },
+    {
+      "counts": "negative",
+      "learning_stage": null,
+      "name": "gene",
+      "refusal": "this checkpoint has no model record this build reads.",
+      "task": null
+    },
+    {
+      "counts": "no_counts",
+      "learning_stage": "base",
+      "name": "patients_like_me",
+      "refusal": "This model is a base: its formal test (link prediction on held-out knowledge-graph edges) is not implemented yet. A model finetuned from it can be measured.",
+      "task": null
+    },
+    {
+      "counts": "empty",
+      "learning_stage": "base",
+      "name": "patients_like_me",
+      "refusal": "This model is a base: its formal test (link prediction on held-out knowledge-graph edges) is not implemented yet. A model finetuned from it can be measured.",
+      "task": null
+    },
+    {
+      "counts": "no_genes_block",
+      "learning_stage": "base",
+      "name": "patients_like_me",
+      "refusal": "This model is a base: its formal test (link prediction on held-out knowledge-graph edges) is not implemented yet. A model finetuned from it can be measured.",
+      "task": null
+    },
+    {
+      "counts": "genes_not_an_object",
+      "learning_stage": "base",
+      "name": "patients_like_me",
+      "refusal": "This model is a base: its formal test (link prediction on held-out knowledge-graph edges) is not implemented yet. A model finetuned from it can be measured.",
+      "task": null
+    },
+    {
+      "counts": "genes_empty",
+      "learning_stage": "base",
+      "name": "patients_like_me",
+      "refusal": "This model is a base: its formal test (link prediction on held-out knowledge-graph edges) is not implemented yet. A model finetuned from it can be measured.",
+      "task": null
+    },
+    {
+      "counts": "genes_zero",
+      "learning_stage": "base",
+      "name": "patients_like_me",
+      "refusal": "This model is a base: its formal test (link prediction on held-out knowledge-graph edges) is not implemented yet. A model finetuned from it can be measured.",
+      "task": null
+    },
+    {
+      "counts": "causal_only",
+      "learning_stage": "base",
+      "name": "patients_like_me",
+      "refusal": "This model is a base: its formal test (link prediction on held-out knowledge-graph edges) is not implemented yet. A model finetuned from it can be measured.",
+      "task": null
+    },
+    {
+      "counts": "candidate_only",
+      "learning_stage": "base",
+      "name": "patients_like_me",
+      "refusal": "This model is a base: its formal test (link prediction on held-out knowledge-graph edges) is not implemented yet. A model finetuned from it can be measured.",
+      "task": null
+    },
+    {
+      "counts": "both",
+      "learning_stage": "base",
+      "name": "patients_like_me",
+      "refusal": "This model is a base: its formal test (link prediction on held-out knowledge-graph edges) is not implemented yet. A model finetuned from it can be measured.",
+      "task": null
+    },
+    {
+      "counts": "booleans",
+      "learning_stage": "base",
+      "name": "patients_like_me",
+      "refusal": "This model is a base: its formal test (link prediction on held-out knowledge-graph edges) is not implemented yet. A model finetuned from it can be measured.",
+      "task": null
+    },
+    {
+      "counts": "text",
+      "learning_stage": "base",
+      "name": "patients_like_me",
+      "refusal": "This model is a base: its formal test (link prediction on held-out knowledge-graph edges) is not implemented yet. A model finetuned from it can be measured.",
+      "task": null
+    },
+    {
+      "counts": "negative",
+      "learning_stage": "base",
+      "name": "patients_like_me",
+      "refusal": "This model is a base: its formal test (link prediction on held-out knowledge-graph edges) is not implemented yet. A model finetuned from it can be measured.",
+      "task": null
+    },
+    {
+      "counts": "no_counts",
+      "learning_stage": "finetune",
+      "name": "patients_like_me",
+      "refusal": "the patients_like_me measurement takes a finetune model with the patients_like_me head; this checkpoint is a finetune model with the disease head. It can be measured by disease.",
+      "task": "disease"
+    },
+    {
+      "counts": "empty",
+      "learning_stage": "finetune",
+      "name": "patients_like_me",
+      "refusal": "the patients_like_me measurement takes a finetune model with the patients_like_me head; this checkpoint is a finetune model with the disease head. It can be measured by disease.",
+      "task": "disease"
+    },
+    {
+      "counts": "no_genes_block",
+      "learning_stage": "finetune",
+      "name": "patients_like_me",
+      "refusal": "the patients_like_me measurement takes a finetune model with the patients_like_me head; this checkpoint is a finetune model with the disease head. It can be measured by disease.",
+      "task": "disease"
+    },
+    {
+      "counts": "genes_not_an_object",
+      "learning_stage": "finetune",
+      "name": "patients_like_me",
+      "refusal": "the patients_like_me measurement takes a finetune model with the patients_like_me head; this checkpoint is a finetune model with the disease head. It can be measured by disease.",
+      "task": "disease"
+    },
+    {
+      "counts": "genes_empty",
+      "learning_stage": "finetune",
+      "name": "patients_like_me",
+      "refusal": "the patients_like_me measurement takes a finetune model with the patients_like_me head; this checkpoint is a finetune model with the disease head. It can be measured by disease.",
+      "task": "disease"
+    },
+    {
+      "counts": "genes_zero",
+      "learning_stage": "finetune",
+      "name": "patients_like_me",
+      "refusal": "the patients_like_me measurement takes a finetune model with the patients_like_me head; this checkpoint is a finetune model with the disease head. It can be measured by disease.",
+      "task": "disease"
+    },
+    {
+      "counts": "causal_only",
+      "learning_stage": "finetune",
+      "name": "patients_like_me",
+      "refusal": "the patients_like_me measurement takes a finetune model with the patients_like_me head; this checkpoint is a finetune model with the disease head. It can be measured by disease.",
+      "task": "disease"
+    },
+    {
+      "counts": "candidate_only",
+      "learning_stage": "finetune",
+      "name": "patients_like_me",
+      "refusal": "the patients_like_me measurement takes a finetune model with the patients_like_me head; this checkpoint is a finetune model with the disease head. It can be measured by disease.",
+      "task": "disease"
+    },
+    {
+      "counts": "both",
+      "learning_stage": "finetune",
+      "name": "patients_like_me",
+      "refusal": "the patients_like_me measurement takes a finetune model with the patients_like_me head; this checkpoint is a finetune model with the disease head. It can be measured by disease.",
+      "task": "disease"
+    },
+    {
+      "counts": "booleans",
+      "learning_stage": "finetune",
+      "name": "patients_like_me",
+      "refusal": "the patients_like_me measurement takes a finetune model with the patients_like_me head; this checkpoint is a finetune model with the disease head. It can be measured by disease.",
+      "task": "disease"
+    },
+    {
+      "counts": "text",
+      "learning_stage": "finetune",
+      "name": "patients_like_me",
+      "refusal": "the patients_like_me measurement takes a finetune model with the patients_like_me head; this checkpoint is a finetune model with the disease head. It can be measured by disease.",
+      "task": "disease"
+    },
+    {
+      "counts": "negative",
+      "learning_stage": "finetune",
+      "name": "patients_like_me",
+      "refusal": "the patients_like_me measurement takes a finetune model with the patients_like_me head; this checkpoint is a finetune model with the disease head. It can be measured by disease.",
+      "task": "disease"
+    },
+    {
+      "counts": "no_counts",
+      "learning_stage": "finetune",
+      "name": "patients_like_me",
+      "refusal": "the patients_like_me measurement takes a finetune model with the patients_like_me head; this checkpoint is a finetune model with the gene head. It can be measured by gene.",
+      "task": "gene"
+    },
+    {
+      "counts": "empty",
+      "learning_stage": "finetune",
+      "name": "patients_like_me",
+      "refusal": "the patients_like_me measurement takes a finetune model with the patients_like_me head; this checkpoint is a finetune model with the gene head. It can be measured by gene.",
+      "task": "gene"
+    },
+    {
+      "counts": "no_genes_block",
+      "learning_stage": "finetune",
+      "name": "patients_like_me",
+      "refusal": "the patients_like_me measurement takes a finetune model with the patients_like_me head; this checkpoint is a finetune model with the gene head. It can be measured by gene.",
+      "task": "gene"
+    },
+    {
+      "counts": "genes_not_an_object",
+      "learning_stage": "finetune",
+      "name": "patients_like_me",
+      "refusal": "the patients_like_me measurement takes a finetune model with the patients_like_me head; this checkpoint is a finetune model with the gene head. It can be measured by gene.",
+      "task": "gene"
+    },
+    {
+      "counts": "genes_empty",
+      "learning_stage": "finetune",
+      "name": "patients_like_me",
+      "refusal": "the patients_like_me measurement takes a finetune model with the patients_like_me head; this checkpoint is a finetune model with the gene head. It can be measured by gene.",
+      "task": "gene"
+    },
+    {
+      "counts": "genes_zero",
+      "learning_stage": "finetune",
+      "name": "patients_like_me",
+      "refusal": "the patients_like_me measurement takes a finetune model with the patients_like_me head; this checkpoint is a finetune model with the gene head. It can be measured by gene.",
+      "task": "gene"
+    },
+    {
+      "counts": "causal_only",
+      "learning_stage": "finetune",
+      "name": "patients_like_me",
+      "refusal": "the patients_like_me measurement takes a finetune model with the patients_like_me head; this checkpoint is a finetune model with the gene head. It can be measured by gene.",
+      "task": "gene"
+    },
+    {
+      "counts": "candidate_only",
+      "learning_stage": "finetune",
+      "name": "patients_like_me",
+      "refusal": "the patients_like_me measurement takes a finetune model with the patients_like_me head; this checkpoint is a finetune model with the gene head. It can be measured by gene.",
+      "task": "gene"
+    },
+    {
+      "counts": "both",
+      "learning_stage": "finetune",
+      "name": "patients_like_me",
+      "refusal": "the patients_like_me measurement takes a finetune model with the patients_like_me head; this checkpoint is a finetune model with the gene head. It can be measured by gene.",
+      "task": "gene"
+    },
+    {
+      "counts": "booleans",
+      "learning_stage": "finetune",
+      "name": "patients_like_me",
+      "refusal": "the patients_like_me measurement takes a finetune model with the patients_like_me head; this checkpoint is a finetune model with the gene head. It can be measured by gene.",
+      "task": "gene"
+    },
+    {
+      "counts": "text",
+      "learning_stage": "finetune",
+      "name": "patients_like_me",
+      "refusal": "the patients_like_me measurement takes a finetune model with the patients_like_me head; this checkpoint is a finetune model with the gene head. It can be measured by gene.",
+      "task": "gene"
+    },
+    {
+      "counts": "negative",
+      "learning_stage": "finetune",
+      "name": "patients_like_me",
+      "refusal": "the patients_like_me measurement takes a finetune model with the patients_like_me head; this checkpoint is a finetune model with the gene head. It can be measured by gene.",
+      "task": "gene"
+    },
+    {
+      "counts": "no_counts",
+      "learning_stage": "finetune",
+      "name": "patients_like_me",
+      "refusal": "this cohort version lists no causal genes, which the patients_like_me measurement needs. Import a source that lists causal_genes.",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "empty",
+      "learning_stage": "finetune",
+      "name": "patients_like_me",
+      "refusal": "this cohort version lists no causal genes, which the patients_like_me measurement needs. Import a source that lists causal_genes.",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "no_genes_block",
+      "learning_stage": "finetune",
+      "name": "patients_like_me",
+      "refusal": "this cohort version lists no causal genes, which the patients_like_me measurement needs. Import a source that lists causal_genes.",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "genes_not_an_object",
+      "learning_stage": "finetune",
+      "name": "patients_like_me",
+      "refusal": "this cohort version lists no causal genes, which the patients_like_me measurement needs. Import a source that lists causal_genes.",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "genes_empty",
+      "learning_stage": "finetune",
+      "name": "patients_like_me",
+      "refusal": "this cohort version lists no causal genes, which the patients_like_me measurement needs. Import a source that lists causal_genes.",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "genes_zero",
+      "learning_stage": "finetune",
+      "name": "patients_like_me",
+      "refusal": "this cohort version lists no causal genes, which the patients_like_me measurement needs. Import a source that lists causal_genes.",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "causal_only",
+      "learning_stage": "finetune",
+      "name": "patients_like_me",
+      "refusal": null,
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "candidate_only",
+      "learning_stage": "finetune",
+      "name": "patients_like_me",
+      "refusal": "this cohort version lists no causal genes, which the patients_like_me measurement needs. Import a source that lists causal_genes.",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "both",
+      "learning_stage": "finetune",
+      "name": "patients_like_me",
+      "refusal": null,
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "booleans",
+      "learning_stage": "finetune",
+      "name": "patients_like_me",
+      "refusal": "this cohort version lists no causal genes, which the patients_like_me measurement needs. Import a source that lists causal_genes.",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "text",
+      "learning_stage": "finetune",
+      "name": "patients_like_me",
+      "refusal": "this cohort version lists no causal genes, which the patients_like_me measurement needs. Import a source that lists causal_genes.",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "negative",
+      "learning_stage": "finetune",
+      "name": "patients_like_me",
+      "refusal": "this cohort version lists no causal genes, which the patients_like_me measurement needs. Import a source that lists causal_genes.",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "no_counts",
+      "learning_stage": null,
+      "name": "patients_like_me",
+      "refusal": "this checkpoint has no model record this build reads.",
+      "task": null
+    },
+    {
+      "counts": "empty",
+      "learning_stage": null,
+      "name": "patients_like_me",
+      "refusal": "this checkpoint has no model record this build reads.",
+      "task": null
+    },
+    {
+      "counts": "no_genes_block",
+      "learning_stage": null,
+      "name": "patients_like_me",
+      "refusal": "this checkpoint has no model record this build reads.",
+      "task": null
+    },
+    {
+      "counts": "genes_not_an_object",
+      "learning_stage": null,
+      "name": "patients_like_me",
+      "refusal": "this checkpoint has no model record this build reads.",
+      "task": null
+    },
+    {
+      "counts": "genes_empty",
+      "learning_stage": null,
+      "name": "patients_like_me",
+      "refusal": "this checkpoint has no model record this build reads.",
+      "task": null
+    },
+    {
+      "counts": "genes_zero",
+      "learning_stage": null,
+      "name": "patients_like_me",
+      "refusal": "this checkpoint has no model record this build reads.",
+      "task": null
+    },
+    {
+      "counts": "causal_only",
+      "learning_stage": null,
+      "name": "patients_like_me",
+      "refusal": "this checkpoint has no model record this build reads.",
+      "task": null
+    },
+    {
+      "counts": "candidate_only",
+      "learning_stage": null,
+      "name": "patients_like_me",
+      "refusal": "this checkpoint has no model record this build reads.",
+      "task": null
+    },
+    {
+      "counts": "both",
+      "learning_stage": null,
+      "name": "patients_like_me",
+      "refusal": "this checkpoint has no model record this build reads.",
+      "task": null
+    },
+    {
+      "counts": "booleans",
+      "learning_stage": null,
+      "name": "patients_like_me",
+      "refusal": "this checkpoint has no model record this build reads.",
+      "task": null
+    },
+    {
+      "counts": "text",
+      "learning_stage": null,
+      "name": "patients_like_me",
+      "refusal": "this checkpoint has no model record this build reads.",
+      "task": null
+    },
+    {
+      "counts": "negative",
+      "learning_stage": null,
+      "name": "patients_like_me",
+      "refusal": "this checkpoint has no model record this build reads.",
+      "task": null
+    },
+    {
+      "counts": "no_counts",
+      "learning_stage": "base",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "empty",
+      "learning_stage": "base",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "no_genes_block",
+      "learning_stage": "base",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "genes_not_an_object",
+      "learning_stage": "base",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "genes_empty",
+      "learning_stage": "base",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "genes_zero",
+      "learning_stage": "base",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "causal_only",
+      "learning_stage": "base",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "candidate_only",
+      "learning_stage": "base",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "both",
+      "learning_stage": "base",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "booleans",
+      "learning_stage": "base",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "text",
+      "learning_stage": "base",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "negative",
+      "learning_stage": "base",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "no_counts",
+      "learning_stage": "finetune",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "empty",
+      "learning_stage": "finetune",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "no_genes_block",
+      "learning_stage": "finetune",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "genes_not_an_object",
+      "learning_stage": "finetune",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "genes_empty",
+      "learning_stage": "finetune",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "genes_zero",
+      "learning_stage": "finetune",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "causal_only",
+      "learning_stage": "finetune",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "candidate_only",
+      "learning_stage": "finetune",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "both",
+      "learning_stage": "finetune",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "booleans",
+      "learning_stage": "finetune",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "text",
+      "learning_stage": "finetune",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "negative",
+      "learning_stage": "finetune",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "no_counts",
+      "learning_stage": "finetune",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "empty",
+      "learning_stage": "finetune",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "no_genes_block",
+      "learning_stage": "finetune",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "genes_not_an_object",
+      "learning_stage": "finetune",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "genes_empty",
+      "learning_stage": "finetune",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "genes_zero",
+      "learning_stage": "finetune",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "causal_only",
+      "learning_stage": "finetune",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "candidate_only",
+      "learning_stage": "finetune",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "both",
+      "learning_stage": "finetune",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "booleans",
+      "learning_stage": "finetune",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "text",
+      "learning_stage": "finetune",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "negative",
+      "learning_stage": "finetune",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "no_counts",
+      "learning_stage": "finetune",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "empty",
+      "learning_stage": "finetune",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "no_genes_block",
+      "learning_stage": "finetune",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "genes_not_an_object",
+      "learning_stage": "finetune",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "genes_empty",
+      "learning_stage": "finetune",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "genes_zero",
+      "learning_stage": "finetune",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "causal_only",
+      "learning_stage": "finetune",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "candidate_only",
+      "learning_stage": "finetune",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "both",
+      "learning_stage": "finetune",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "booleans",
+      "learning_stage": "finetune",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "text",
+      "learning_stage": "finetune",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "negative",
+      "learning_stage": "finetune",
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "no_counts",
+      "learning_stage": null,
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "empty",
+      "learning_stage": null,
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "no_genes_block",
+      "learning_stage": null,
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "genes_not_an_object",
+      "learning_stage": null,
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "genes_empty",
+      "learning_stage": null,
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "genes_zero",
+      "learning_stage": null,
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "causal_only",
+      "learning_stage": null,
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "candidate_only",
+      "learning_stage": null,
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "both",
+      "learning_stage": null,
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "booleans",
+      "learning_stage": null,
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "text",
+      "learning_stage": null,
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "negative",
+      "learning_stage": null,
+      "name": "C",
+      "refusal": "'C' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "no_counts",
+      "learning_stage": "base",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "empty",
+      "learning_stage": "base",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "no_genes_block",
+      "learning_stage": "base",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "genes_not_an_object",
+      "learning_stage": "base",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "genes_empty",
+      "learning_stage": "base",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "genes_zero",
+      "learning_stage": "base",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "causal_only",
+      "learning_stage": "base",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "candidate_only",
+      "learning_stage": "base",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "both",
+      "learning_stage": "base",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "booleans",
+      "learning_stage": "base",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "text",
+      "learning_stage": "base",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "negative",
+      "learning_stage": "base",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "no_counts",
+      "learning_stage": "finetune",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "empty",
+      "learning_stage": "finetune",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "no_genes_block",
+      "learning_stage": "finetune",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "genes_not_an_object",
+      "learning_stage": "finetune",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "genes_empty",
+      "learning_stage": "finetune",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "genes_zero",
+      "learning_stage": "finetune",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "causal_only",
+      "learning_stage": "finetune",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "candidate_only",
+      "learning_stage": "finetune",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "both",
+      "learning_stage": "finetune",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "booleans",
+      "learning_stage": "finetune",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "text",
+      "learning_stage": "finetune",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "negative",
+      "learning_stage": "finetune",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "no_counts",
+      "learning_stage": "finetune",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "empty",
+      "learning_stage": "finetune",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "no_genes_block",
+      "learning_stage": "finetune",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "genes_not_an_object",
+      "learning_stage": "finetune",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "genes_empty",
+      "learning_stage": "finetune",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "genes_zero",
+      "learning_stage": "finetune",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "causal_only",
+      "learning_stage": "finetune",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "candidate_only",
+      "learning_stage": "finetune",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "both",
+      "learning_stage": "finetune",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "booleans",
+      "learning_stage": "finetune",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "text",
+      "learning_stage": "finetune",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "negative",
+      "learning_stage": "finetune",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "no_counts",
+      "learning_stage": "finetune",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "empty",
+      "learning_stage": "finetune",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "no_genes_block",
+      "learning_stage": "finetune",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "genes_not_an_object",
+      "learning_stage": "finetune",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "genes_empty",
+      "learning_stage": "finetune",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "genes_zero",
+      "learning_stage": "finetune",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "causal_only",
+      "learning_stage": "finetune",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "candidate_only",
+      "learning_stage": "finetune",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "both",
+      "learning_stage": "finetune",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "booleans",
+      "learning_stage": "finetune",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "text",
+      "learning_stage": "finetune",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "negative",
+      "learning_stage": "finetune",
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "no_counts",
+      "learning_stage": null,
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "empty",
+      "learning_stage": null,
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "no_genes_block",
+      "learning_stage": null,
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "genes_not_an_object",
+      "learning_stage": null,
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "genes_empty",
+      "learning_stage": null,
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "genes_zero",
+      "learning_stage": null,
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "causal_only",
+      "learning_stage": null,
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "candidate_only",
+      "learning_stage": null,
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "both",
+      "learning_stage": null,
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "booleans",
+      "learning_stage": null,
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "text",
+      "learning_stage": null,
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "negative",
+      "learning_stage": null,
+      "name": "D",
+      "refusal": "'D' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "no_counts",
+      "learning_stage": "base",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "empty",
+      "learning_stage": "base",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "no_genes_block",
+      "learning_stage": "base",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "genes_not_an_object",
+      "learning_stage": "base",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "genes_empty",
+      "learning_stage": "base",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "genes_zero",
+      "learning_stage": "base",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "causal_only",
+      "learning_stage": "base",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "candidate_only",
+      "learning_stage": "base",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "both",
+      "learning_stage": "base",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "booleans",
+      "learning_stage": "base",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "text",
+      "learning_stage": "base",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "negative",
+      "learning_stage": "base",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "no_counts",
+      "learning_stage": "finetune",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "empty",
+      "learning_stage": "finetune",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "no_genes_block",
+      "learning_stage": "finetune",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "genes_not_an_object",
+      "learning_stage": "finetune",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "genes_empty",
+      "learning_stage": "finetune",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "genes_zero",
+      "learning_stage": "finetune",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "causal_only",
+      "learning_stage": "finetune",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "candidate_only",
+      "learning_stage": "finetune",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "both",
+      "learning_stage": "finetune",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "booleans",
+      "learning_stage": "finetune",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "text",
+      "learning_stage": "finetune",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "negative",
+      "learning_stage": "finetune",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "no_counts",
+      "learning_stage": "finetune",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "empty",
+      "learning_stage": "finetune",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "no_genes_block",
+      "learning_stage": "finetune",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "genes_not_an_object",
+      "learning_stage": "finetune",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "genes_empty",
+      "learning_stage": "finetune",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "genes_zero",
+      "learning_stage": "finetune",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "causal_only",
+      "learning_stage": "finetune",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "candidate_only",
+      "learning_stage": "finetune",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "both",
+      "learning_stage": "finetune",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "booleans",
+      "learning_stage": "finetune",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "text",
+      "learning_stage": "finetune",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "negative",
+      "learning_stage": "finetune",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "no_counts",
+      "learning_stage": "finetune",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "empty",
+      "learning_stage": "finetune",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "no_genes_block",
+      "learning_stage": "finetune",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "genes_not_an_object",
+      "learning_stage": "finetune",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "genes_empty",
+      "learning_stage": "finetune",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "genes_zero",
+      "learning_stage": "finetune",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "causal_only",
+      "learning_stage": "finetune",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "candidate_only",
+      "learning_stage": "finetune",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "both",
+      "learning_stage": "finetune",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "booleans",
+      "learning_stage": "finetune",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "text",
+      "learning_stage": "finetune",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "negative",
+      "learning_stage": "finetune",
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "no_counts",
+      "learning_stage": null,
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "empty",
+      "learning_stage": null,
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "no_genes_block",
+      "learning_stage": null,
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "genes_not_an_object",
+      "learning_stage": null,
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "genes_empty",
+      "learning_stage": null,
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "genes_zero",
+      "learning_stage": null,
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "causal_only",
+      "learning_stage": null,
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "candidate_only",
+      "learning_stage": null,
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "both",
+      "learning_stage": null,
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "booleans",
+      "learning_stage": null,
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "text",
+      "learning_stage": null,
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "negative",
+      "learning_stage": null,
+      "name": "Disease",
+      "refusal": "'Disease' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "no_counts",
+      "learning_stage": "base",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "empty",
+      "learning_stage": "base",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "no_genes_block",
+      "learning_stage": "base",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "genes_not_an_object",
+      "learning_stage": "base",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "genes_empty",
+      "learning_stage": "base",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "genes_zero",
+      "learning_stage": "base",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "causal_only",
+      "learning_stage": "base",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "candidate_only",
+      "learning_stage": "base",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "both",
+      "learning_stage": "base",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "booleans",
+      "learning_stage": "base",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "text",
+      "learning_stage": "base",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "negative",
+      "learning_stage": "base",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "no_counts",
+      "learning_stage": "finetune",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "empty",
+      "learning_stage": "finetune",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "no_genes_block",
+      "learning_stage": "finetune",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "genes_not_an_object",
+      "learning_stage": "finetune",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "genes_empty",
+      "learning_stage": "finetune",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "genes_zero",
+      "learning_stage": "finetune",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "causal_only",
+      "learning_stage": "finetune",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "candidate_only",
+      "learning_stage": "finetune",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "both",
+      "learning_stage": "finetune",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "booleans",
+      "learning_stage": "finetune",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "text",
+      "learning_stage": "finetune",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "negative",
+      "learning_stage": "finetune",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "no_counts",
+      "learning_stage": "finetune",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "empty",
+      "learning_stage": "finetune",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "no_genes_block",
+      "learning_stage": "finetune",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "genes_not_an_object",
+      "learning_stage": "finetune",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "genes_empty",
+      "learning_stage": "finetune",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "genes_zero",
+      "learning_stage": "finetune",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "causal_only",
+      "learning_stage": "finetune",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "candidate_only",
+      "learning_stage": "finetune",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "both",
+      "learning_stage": "finetune",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "booleans",
+      "learning_stage": "finetune",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "text",
+      "learning_stage": "finetune",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "negative",
+      "learning_stage": "finetune",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "no_counts",
+      "learning_stage": "finetune",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "empty",
+      "learning_stage": "finetune",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "no_genes_block",
+      "learning_stage": "finetune",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "genes_not_an_object",
+      "learning_stage": "finetune",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "genes_empty",
+      "learning_stage": "finetune",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "genes_zero",
+      "learning_stage": "finetune",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "causal_only",
+      "learning_stage": "finetune",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "candidate_only",
+      "learning_stage": "finetune",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "both",
+      "learning_stage": "finetune",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "booleans",
+      "learning_stage": "finetune",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "text",
+      "learning_stage": "finetune",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "negative",
+      "learning_stage": "finetune",
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "no_counts",
+      "learning_stage": null,
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "empty",
+      "learning_stage": null,
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "no_genes_block",
+      "learning_stage": null,
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "genes_not_an_object",
+      "learning_stage": null,
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "genes_empty",
+      "learning_stage": null,
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "genes_zero",
+      "learning_stage": null,
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "causal_only",
+      "learning_stage": null,
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "candidate_only",
+      "learning_stage": null,
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "both",
+      "learning_stage": null,
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "booleans",
+      "learning_stage": null,
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "text",
+      "learning_stage": null,
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "negative",
+      "learning_stage": null,
+      "name": "",
+      "refusal": "'' is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "no_counts",
+      "learning_stage": "base",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "empty",
+      "learning_stage": "base",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "no_genes_block",
+      "learning_stage": "base",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "genes_not_an_object",
+      "learning_stage": "base",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "genes_empty",
+      "learning_stage": "base",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "genes_zero",
+      "learning_stage": "base",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "causal_only",
+      "learning_stage": "base",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "candidate_only",
+      "learning_stage": "base",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "both",
+      "learning_stage": "base",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "booleans",
+      "learning_stage": "base",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "text",
+      "learning_stage": "base",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "negative",
+      "learning_stage": "base",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "no_counts",
+      "learning_stage": "finetune",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "empty",
+      "learning_stage": "finetune",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "no_genes_block",
+      "learning_stage": "finetune",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "genes_not_an_object",
+      "learning_stage": "finetune",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "genes_empty",
+      "learning_stage": "finetune",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "genes_zero",
+      "learning_stage": "finetune",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "causal_only",
+      "learning_stage": "finetune",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "candidate_only",
+      "learning_stage": "finetune",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "both",
+      "learning_stage": "finetune",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "booleans",
+      "learning_stage": "finetune",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "text",
+      "learning_stage": "finetune",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "negative",
+      "learning_stage": "finetune",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "disease"
+    },
+    {
+      "counts": "no_counts",
+      "learning_stage": "finetune",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "empty",
+      "learning_stage": "finetune",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "no_genes_block",
+      "learning_stage": "finetune",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "genes_not_an_object",
+      "learning_stage": "finetune",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "genes_empty",
+      "learning_stage": "finetune",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "genes_zero",
+      "learning_stage": "finetune",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "causal_only",
+      "learning_stage": "finetune",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "candidate_only",
+      "learning_stage": "finetune",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "both",
+      "learning_stage": "finetune",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "booleans",
+      "learning_stage": "finetune",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "text",
+      "learning_stage": "finetune",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "negative",
+      "learning_stage": "finetune",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "gene"
+    },
+    {
+      "counts": "no_counts",
+      "learning_stage": "finetune",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "empty",
+      "learning_stage": "finetune",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "no_genes_block",
+      "learning_stage": "finetune",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "genes_not_an_object",
+      "learning_stage": "finetune",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "genes_empty",
+      "learning_stage": "finetune",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "genes_zero",
+      "learning_stage": "finetune",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "causal_only",
+      "learning_stage": "finetune",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "candidate_only",
+      "learning_stage": "finetune",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "both",
+      "learning_stage": "finetune",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "booleans",
+      "learning_stage": "finetune",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "text",
+      "learning_stage": "finetune",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "negative",
+      "learning_stage": "finetune",
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": "patients_like_me"
+    },
+    {
+      "counts": "no_counts",
+      "learning_stage": null,
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "empty",
+      "learning_stage": null,
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "no_genes_block",
+      "learning_stage": null,
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "genes_not_an_object",
+      "learning_stage": null,
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "genes_empty",
+      "learning_stage": null,
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "genes_zero",
+      "learning_stage": null,
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "causal_only",
+      "learning_stage": null,
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "candidate_only",
+      "learning_stage": null,
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "both",
+      "learning_stage": null,
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "booleans",
+      "learning_stage": null,
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "text",
+      "learning_stage": null,
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    },
+    {
+      "counts": "negative",
+      "learning_stage": null,
+      "name": null,
+      "refusal": "None is not a measurement this build implements (disease, gene, patients_like_me).",
+      "task": null
+    }
+  ],
+  "sentences": {
+    "BASE_MESSAGE": "This model is a base: its formal test (link prediction on held-out knowledge-graph edges) is not implemented yet. A model finetuned from it can be measured.",
+    "NO_RECORD": "this checkpoint has no model record this build reads."
+  }
+}

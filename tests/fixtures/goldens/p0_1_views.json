@@ -1,0 +1,1081 @@
+{
+  "ledgers": {
+    "registered.json": [
+      {
+        "checkpoint_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "records": [
+          {
+            "cohort": {
+              "kind": "supplied",
+              "label": "mygene2-2026-10",
+              "role": "mygene2",
+              "samples_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+              "source_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "version_manifest_sha256": "065e145158742c8faaf4875cc623424ac62f780e0ba76a464c9616c7886d88a0"
+            },
+            "counts": {
+              "excluded": {
+                "ground_truth_absent": 12,
+                "phenotype_unmappable": 8
+              },
+              "n_excluded": 20,
+              "ranked_eligible": 80,
+              "source_cases": 100
+            },
+            "dataset_origin": "synthetic",
+            "deterministic_algorithms": true,
+            "environment_class": "CUDA, deterministic algorithms on",
+            "gpu": {
+              "driver": "560.35",
+              "name": "NVIDIA GeForce RTX 4090"
+            },
+            "historical_overlap": [],
+            "measurement_semantics_digest": "8e26996deac6e34bbfade0cd33f9d9d748af8c41b3c43b9acf7ae7fb21233b39",
+            "metrics": {
+              "best_positive_mrr": 0.45,
+              "conservative_pooled_mrr": 0.45,
+              "coverage": 1.0,
+              "macro_mrr": 0.45,
+              "macro_precision@1": 0.25,
+              "macro_precision@10": 0.075,
+              "macro_precision@100": 0.01,
+              "macro_precision@20": 0.05,
+              "macro_precision@3": 0.16666666666666666,
+              "macro_precision@5": 0.15,
+              "macro_precision@50": 0.02,
+              "macro_recall@1": 0.25,
+              "macro_recall@10": 0.75,
+              "macro_recall@100": 1.0,
+              "macro_recall@20": 1.0,
+              "macro_recall@3": 0.5,
+              "macro_recall@5": 0.75,
+              "macro_recall@50": 1.0,
+              "pooled_mrr": 0.45,
+              "pooled_top1": 0.25,
+              "pooled_top10": 0.75,
+              "pooled_top100": 1.0,
+              "pooled_top20": 1.0,
+              "pooled_top3": 0.5,
+              "pooled_top5": 0.75,
+              "pooled_top50": 1.0
+            },
+            "mode": "disease",
+            "n_corroborating": 0,
+            "n_ranked": 80,
+            "r10": {
+              "training": {
+                "disease_overlap": {
+                  "cases": null,
+                  "k": null,
+                  "n": 50,
+                  "state": "unverifiable"
+                },
+                "evidence": {
+                  "state": "not_found"
+                },
+                "phenotype_set_overlap": {
+                  "k": null,
+                  "n": 80,
+                  "state": "unverifiable"
+                }
+              },
+              "validation": {
+                "disease_overlap": {
+                  "cases": null,
+                  "k": null,
+                  "n": 50,
+                  "state": "no_validation_inputs_recorded"
+                },
+                "evidence": {
+                  "state": "not_recorded"
+                },
+                "phenotype_set_overlap": {
+                  "k": null,
+                  "n": 80,
+                  "state": "no_validation_inputs_recorded"
+                }
+              }
+            },
+            "registration": {
+              "registered_at": "2026-11-10T01:01:00Z",
+              "sequence": 1
+            },
+            "relations": {
+              "R1": "verified",
+              "R2": "not_applicable",
+              "R3": "verified",
+              "R5": "verified",
+              "cohort_graph": "verified"
+            },
+            "run_id": "20261016T120001Z-cccccccccccc-00000001",
+            "score_semantics": "disease head: -||z_d - z_P||^2 on L2-normalised projected vectors",
+            "scoring_semantics_digest": "9f842397a3f0a58c234e56d066eecc5e66febd0d45dfc5f19b0963127b283e12",
+            "source_artifact_digest": "254ebd7bb29954a90c9ccaa77014a01b1f4365a2221381fb9f6f6d252387cc42"
+          },
+          {
+            "cohort": {
+              "kind": "supplied",
+              "label": "mygene2-2026-10",
+              "role": "mygene2",
+              "samples_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+              "source_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "version_manifest_sha256": "065e145158742c8faaf4875cc623424ac62f780e0ba76a464c9616c7886d88a0"
+            },
+            "counts": {
+              "excluded": {
+                "ground_truth_absent": 12,
+                "phenotype_unmappable": 8
+              },
+              "n_excluded": 20,
+              "ranked_eligible": 80,
+              "source_cases": 100
+            },
+            "dataset_origin": "synthetic",
+            "deterministic_algorithms": true,
+            "environment_class": "CUDA, deterministic algorithms on",
+            "gpu": {
+              "driver": "560.35",
+              "name": "NVIDIA GeForce RTX 4090"
+            },
+            "historical_overlap": [],
+            "measurement_semantics_digest": "8e26996deac6e34bbfade0cd33f9d9d748af8c41b3c43b9acf7ae7fb21233b39",
+            "metrics": {
+              "best_positive_mrr": 0.45,
+              "conservative_pooled_mrr": 0.45,
+              "coverage": 1.0,
+              "macro_mrr": 0.45,
+              "macro_precision@1": 0.25,
+              "macro_precision@10": 0.075,
+              "macro_precision@100": 0.01,
+              "macro_precision@20": 0.05,
+              "macro_precision@3": 0.16666666666666666,
+              "macro_precision@5": 0.15,
+              "macro_precision@50": 0.02,
+              "macro_recall@1": 0.25,
+              "macro_recall@10": 0.75,
+              "macro_recall@100": 1.0,
+              "macro_recall@20": 1.0,
+              "macro_recall@3": 0.5,
+              "macro_recall@5": 0.75,
+              "macro_recall@50": 1.0,
+              "pooled_mrr": 0.45,
+              "pooled_top1": 0.25,
+              "pooled_top10": 0.75,
+              "pooled_top100": 1.0,
+              "pooled_top20": 1.0,
+              "pooled_top3": 0.5,
+              "pooled_top5": 0.75,
+              "pooled_top50": 1.0
+            },
+            "mode": "disease",
+            "n_corroborating": 0,
+            "n_ranked": 80,
+            "r10": {
+              "training": {
+                "disease_overlap": {
+                  "cases": null,
+                  "k": null,
+                  "n": 50,
+                  "state": "unverifiable"
+                },
+                "evidence": {
+                  "state": "not_found"
+                },
+                "phenotype_set_overlap": {
+                  "k": null,
+                  "n": 80,
+                  "state": "unverifiable"
+                }
+              },
+              "validation": {
+                "disease_overlap": {
+                  "cases": null,
+                  "k": null,
+                  "n": 50,
+                  "state": "no_validation_inputs_recorded"
+                },
+                "evidence": {
+                  "state": "not_recorded"
+                },
+                "phenotype_set_overlap": {
+                  "k": null,
+                  "n": 80,
+                  "state": "no_validation_inputs_recorded"
+                }
+              }
+            },
+            "registration": {
+              "registered_at": "2026-11-10T01:02:00Z",
+              "sequence": 2
+            },
+            "relations": {
+              "R1": "verified",
+              "R2": "not_applicable",
+              "R3": "verified",
+              "R5": "verified",
+              "cohort_graph": "verified"
+            },
+            "run_id": "20261016T120002Z-cccccccccccc-00000002",
+            "score_semantics": "disease head: -||z_d - z_P||^2 on L2-normalised projected vectors",
+            "scoring_semantics_digest": "9f842397a3f0a58c234e56d066eecc5e66febd0d45dfc5f19b0963127b283e12",
+            "source_artifact_digest": "9f07875acc58b360622b4440d5666b653ce17d187ec23d6714e89450d0d537d8"
+          },
+          {
+            "cohort": {
+              "kind": "supplied",
+              "label": "mygene2-2026-10",
+              "role": "mygene2",
+              "samples_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+              "source_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "version_manifest_sha256": "065e145158742c8faaf4875cc623424ac62f780e0ba76a464c9616c7886d88a0"
+            },
+            "counts": {
+              "excluded": {
+                "ground_truth_absent": 12,
+                "phenotype_unmappable": 8
+              },
+              "n_excluded": 20,
+              "ranked_eligible": 80,
+              "source_cases": 100
+            },
+            "dataset_origin": "synthetic",
+            "deterministic_algorithms": false,
+            "environment_class": "CUDA, deterministic algorithms off",
+            "gpu": {
+              "driver": "560.35",
+              "name": "NVIDIA GeForce RTX 4090"
+            },
+            "historical_overlap": [],
+            "measurement_semantics_digest": "b08c2eaf7d2ea60396d58f2f914d3d4a00e4b74a8eac8002dc477774ee1e3d92",
+            "metrics": {
+              "hits@1": 0.25,
+              "hits@10": 0.75,
+              "mean_rank": 3.0,
+              "untruncated_mrr": 0.5
+            },
+            "mode": "C",
+            "n_corroborating": 0,
+            "n_ranked": 80,
+            "r10": {
+              "training": {
+                "disease_overlap": {
+                  "cases": null,
+                  "k": null,
+                  "n": 50,
+                  "state": "unverifiable"
+                },
+                "evidence": {
+                  "state": "not_found"
+                },
+                "phenotype_set_overlap": {
+                  "k": null,
+                  "n": 80,
+                  "state": "unverifiable"
+                }
+              },
+              "validation": {
+                "disease_overlap": {
+                  "cases": null,
+                  "k": null,
+                  "n": 50,
+                  "state": "no_validation_inputs_recorded"
+                },
+                "evidence": {
+                  "state": "not_recorded"
+                },
+                "phenotype_set_overlap": {
+                  "k": null,
+                  "n": 80,
+                  "state": "no_validation_inputs_recorded"
+                }
+              }
+            },
+            "registration": {
+              "registered_at": "2026-11-10T01:03:00Z",
+              "sequence": 3
+            },
+            "relations": {
+              "R1": "verified",
+              "R2": "not_applicable",
+              "R3": "verified",
+              "R5": "verified",
+              "cohort_graph": "verified"
+            },
+            "run_id": "20261016T120003Z-cccccccccccc-00000003",
+            "score_semantics": "raw cosine, no eta mixture and no shortest-path term",
+            "scoring_semantics_digest": "f55a3a368b819b99b2bdb2e58a6e786857c5323a0b5a74fd2ab0396c9c40cac9",
+            "source_artifact_digest": "aa75c3896c118aaa5a225e584a9d66b179962132107bb9611e528fa51f0e80cb"
+          },
+          {
+            "cohort": {
+              "kind": "supplied",
+              "label": "mygene2-2026-10",
+              "role": "mygene2",
+              "samples_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+              "source_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "version_manifest_sha256": "065e145158742c8faaf4875cc623424ac62f780e0ba76a464c9616c7886d88a0"
+            },
+            "counts": {
+              "excluded": {
+                "ground_truth_absent": 12,
+                "phenotype_unmappable": 8
+              },
+              "n_excluded": 20,
+              "ranked_eligible": 80,
+              "source_cases": 100
+            },
+            "dataset_origin": "synthetic",
+            "deterministic_algorithms": true,
+            "environment_class": "CUDA, deterministic algorithms on",
+            "gpu": {
+              "driver": "560.35",
+              "name": "NVIDIA GeForce RTX 4090"
+            },
+            "historical_overlap": [],
+            "measurement_semantics_digest": "56b0a9b99cbfc9857d11ab7769a833c6dc892cfa87e1dfa2618dbb4f5e058e9c",
+            "metrics": {
+              "coverage": 0.7,
+              "post_import_hits@1": 0.2,
+              "post_import_hits@10": 0.63,
+              "post_import_mrr": 0.35,
+              "reached_hits@1": 0.29,
+              "reached_hits@10": 0.9,
+              "reached_mean_rank": 2.43,
+              "reached_mrr": 0.5
+            },
+            "mode": "D",
+            "n_corroborating": 0,
+            "n_ranked": 56,
+            "r10": {
+              "training": {
+                "disease_overlap": {
+                  "cases": null,
+                  "k": null,
+                  "n": 50,
+                  "state": "unverifiable"
+                },
+                "evidence": {
+                  "state": "not_found"
+                },
+                "phenotype_set_overlap": {
+                  "k": null,
+                  "n": 80,
+                  "state": "unverifiable"
+                }
+              },
+              "validation": {
+                "disease_overlap": {
+                  "cases": null,
+                  "k": null,
+                  "n": 50,
+                  "state": "no_validation_inputs_recorded"
+                },
+                "evidence": {
+                  "state": "not_recorded"
+                },
+                "phenotype_set_overlap": {
+                  "k": null,
+                  "n": 80,
+                  "state": "no_validation_inputs_recorded"
+                }
+              }
+            },
+            "registration": {
+              "registered_at": "2026-11-10T01:04:00Z",
+              "sequence": 4
+            },
+            "relations": {
+              "R1": "verified",
+              "R2": "not_applicable",
+              "R3": "verified",
+              "R5": "verified",
+              "cohort_graph": "verified"
+            },
+            "run_id": "20261016T120004Z-cccccccccccc-00000004",
+            "score_semantics": "served:gnn_only:eta=1.0:sp=none",
+            "scoring_semantics_digest": "fb95ea0290d471bb48f30a4f85eb3a9bc3c02edf409903bfcf582b77b8617426",
+            "source_artifact_digest": "479ae9caf03d118a2ff4088bec539df5434e1b1d55229592daf5da22ea05ebaf"
+          }
+        ],
+        "unreadable": []
+      },
+      {
+        "checkpoint_digest": "f4c9c4ede24b53985eba841102d56d05f5d90d4150d1a31c97da3ddedb1d20e2",
+        "records": [
+          {
+            "cohort": {
+              "kind": "supplied",
+              "label": "demo-genes-1",
+              "role": "demo",
+              "samples_sha256": "6e61021ab077cefceb1e958572ec6ec5234944b9437be9d29a406856b7e53d42",
+              "source_sha256": "f2f888631aecc5d3e259dda074ead6b6c31fb9ae6e802799148d1b5306492622",
+              "version_manifest_sha256": "4bf2f89e5348b3d7fc29c1b1c1a53b601ba286da2d45551cebc8e2eb22c33f15"
+            },
+            "counts": {
+              "excluded": {
+                "ground_truth_absent": 2,
+                "phenotype_unmappable": 1
+              },
+              "n_excluded": 3,
+              "ranked_eligible": 10,
+              "source_cases": 13
+            },
+            "dataset_origin": "synthetic",
+            "deterministic_algorithms": false,
+            "environment_class": "CPU (development; a different measurement from a CUDA run)",
+            "gpu": null,
+            "historical_overlap": [],
+            "measurement_semantics_digest": "eb9dbe514d0c22ecc8b66a74728a7343042d11898287aa24f98ae6619938cb15",
+            "metrics": {
+              "best_positive_mrr": 0.36874999999999997,
+              "conservative_pooled_mrr": 0.295,
+              "coverage": 0.8,
+              "macro_mrr": 0.36874999999999997,
+              "macro_precision@1": 0.125,
+              "macro_precision@10": 0.1,
+              "macro_precision@100": 0.01,
+              "macro_precision@20": 0.05,
+              "macro_precision@3": 0.16666666666666666,
+              "macro_precision@5": 0.2,
+              "macro_precision@50": 0.02,
+              "macro_recall@1": 0.125,
+              "macro_recall@10": 1.0,
+              "macro_recall@100": 1.0,
+              "macro_recall@20": 1.0,
+              "macro_recall@3": 0.5,
+              "macro_recall@5": 1.0,
+              "macro_recall@50": 1.0,
+              "pooled_mrr": 0.36874999999999997,
+              "pooled_top1": 0.125,
+              "pooled_top10": 1.0,
+              "pooled_top100": 1.0,
+              "pooled_top20": 1.0,
+              "pooled_top3": 0.5,
+              "pooled_top5": 1.0,
+              "pooled_top50": 1.0
+            },
+            "mode": "disease",
+            "n_corroborating": 0,
+            "n_ranked": 8,
+            "r10": {
+              "training": {
+                "disease_overlap": {
+                  "cases": 7,
+                  "k": 3,
+                  "n": 5,
+                  "state": "overlap"
+                },
+                "evidence": {
+                  "state": "found"
+                },
+                "phenotype_set_overlap": {
+                  "k": 0,
+                  "n": 10,
+                  "state": "none"
+                }
+              },
+              "validation": {
+                "disease_overlap": {
+                  "cases": 2,
+                  "k": 1,
+                  "n": 5,
+                  "state": "overlap"
+                },
+                "evidence": {
+                  "state": "found"
+                },
+                "phenotype_set_overlap": {
+                  "k": 0,
+                  "n": 10,
+                  "state": "none"
+                }
+              }
+            },
+            "registration": {
+              "registered_at": "2026-11-10T01:05:00Z",
+              "sequence": 5
+            },
+            "relations": {
+              "R1": "verified",
+              "R2": "not_applicable",
+              "R3": "verified",
+              "R5": "verified",
+              "cohort_graph": "verified"
+            },
+            "run_id": "20261110T000001Z-f4c9c4ede24b-00000001",
+            "score_semantics": "disease head: -||z_d - z_P||^2 on L2-normalised projected vectors",
+            "scoring_semantics_digest": "9f842397a3f0a58c234e56d066eecc5e66febd0d45dfc5f19b0963127b283e12",
+            "source_artifact_digest": "0cd39011713e636dbf1fcdffb85cb2a4ce5ace3b11266b3a70d9a80284bd0197"
+          }
+        ],
+        "unreadable": []
+      },
+      {
+        "checkpoint_digest": "b7ec7f3096cd11b395cb03fb3f63a7d7d6fbd082b0a841cf068ef8fe00fc6b2b",
+        "records": [
+          {
+            "cohort": {
+              "kind": "supplied",
+              "label": "demo-genes-1",
+              "role": "demo",
+              "samples_sha256": "6e61021ab077cefceb1e958572ec6ec5234944b9437be9d29a406856b7e53d42",
+              "source_sha256": "f2f888631aecc5d3e259dda074ead6b6c31fb9ae6e802799148d1b5306492622",
+              "version_manifest_sha256": "4bf2f89e5348b3d7fc29c1b1c1a53b601ba286da2d45551cebc8e2eb22c33f15"
+            },
+            "counts": {
+              "excluded": {
+                "ground_truth_absent": 2,
+                "phenotype_unmappable": 1
+              },
+              "n_excluded": 3,
+              "ranked_eligible": 10,
+              "source_cases": 13
+            },
+            "dataset_origin": "synthetic",
+            "deterministic_algorithms": false,
+            "environment_class": "CPU (development; a different measurement from a CUDA run)",
+            "gpu": null,
+            "historical_overlap": [],
+            "measurement_semantics_digest": "189bddaae9ce9d44673e111c5d8ebe1bd857c58e181a68197dba10b3c6d3d77e",
+            "metrics": {
+              "best_positive_mrr": 0.5625,
+              "conservative_pooled_mrr": 0.4090909090909091,
+              "coverage": 0.8,
+              "macro_mrr": 0.5625,
+              "macro_precision@1": 0.375,
+              "macro_precision@10": 0.1,
+              "macro_precision@100": 0.01,
+              "macro_precision@20": 0.05,
+              "macro_precision@3": 0.25,
+              "macro_precision@5": 0.2,
+              "macro_precision@50": 0.02,
+              "macro_recall@1": 0.375,
+              "macro_recall@10": 0.9375,
+              "macro_recall@100": 0.9375,
+              "macro_recall@20": 0.9375,
+              "macro_recall@3": 0.75,
+              "macro_recall@5": 0.9375,
+              "macro_recall@50": 0.9375,
+              "pooled_mrr": 0.5625,
+              "pooled_top1": 0.375,
+              "pooled_top10": 1.0,
+              "pooled_top100": 1.0,
+              "pooled_top20": 1.0,
+              "pooled_top3": 0.75,
+              "pooled_top5": 1.0,
+              "pooled_top50": 1.0
+            },
+            "mode": "gene",
+            "n_corroborating": 0,
+            "n_ranked": 8,
+            "r10": {
+              "training": {
+                "disease_overlap": {
+                  "cases": 7,
+                  "k": 3,
+                  "n": 5,
+                  "state": "overlap"
+                },
+                "evidence": {
+                  "state": "found"
+                },
+                "phenotype_set_overlap": {
+                  "k": 0,
+                  "n": 10,
+                  "state": "none"
+                }
+              },
+              "validation": {
+                "disease_overlap": {
+                  "cases": 2,
+                  "k": 1,
+                  "n": 5,
+                  "state": "overlap"
+                },
+                "evidence": {
+                  "state": "found"
+                },
+                "phenotype_set_overlap": {
+                  "k": 0,
+                  "n": 10,
+                  "state": "none"
+                }
+              }
+            },
+            "registration": {
+              "registered_at": "2026-11-10T01:06:00Z",
+              "sequence": 6
+            },
+            "relations": {
+              "R1": "verified",
+              "R2": "not_applicable",
+              "R3": "verified",
+              "R5": "verified",
+              "cohort_graph": "verified"
+            },
+            "run_id": "20261110T000002Z-b7ec7f3096cd-00000002",
+            "score_semantics": "gene head: eta*EMBSIM + (1-eta)*SPLSIM, eta=0.5; SPLSIM on exact view hops, bounds [1.0, 6.84], no clipping; Eq 10 augmentation K=3, omega=0.7",
+            "scoring_semantics_digest": "b8d58cd80114b0b55ff3f776ef48d26b5b5afc8e88f4a4a43874fab75a387602",
+            "source_artifact_digest": "a776fabdc2370866317baea37f280d8098788f11ac5db52245d1ff37b6497b62"
+          }
+        ],
+        "unreadable": []
+      },
+      {
+        "checkpoint_digest": "597b5dc88cb61b643310bfa42793c2648f9553780ae6642be00d4310abc0f303",
+        "records": [
+          {
+            "cohort": {
+              "kind": "supplied",
+              "label": "demo-genes-1",
+              "role": "demo",
+              "samples_sha256": "6e61021ab077cefceb1e958572ec6ec5234944b9437be9d29a406856b7e53d42",
+              "source_sha256": "f2f888631aecc5d3e259dda074ead6b6c31fb9ae6e802799148d1b5306492622",
+              "version_manifest_sha256": "4bf2f89e5348b3d7fc29c1b1c1a53b601ba286da2d45551cebc8e2eb22c33f15"
+            },
+            "counts": {
+              "excluded": {
+                "ground_truth_absent": 2,
+                "phenotype_unmappable": 1
+              },
+              "n_excluded": 3,
+              "ranked_eligible": 10,
+              "source_cases": 13
+            },
+            "dataset_origin": "synthetic",
+            "deterministic_algorithms": false,
+            "environment_class": "CPU (development; a different measurement from a CUDA run)",
+            "gpu": null,
+            "historical_overlap": [],
+            "measurement_semantics_digest": "f819860176771b728c3e8e702b39f2db38c7e8ac5fd0a1e8df720d6eadb2b637",
+            "metrics": {
+              "best_positive_mrr": 0.29166666666666663,
+              "conservative_pooled_mrr": 0.14583333333333331,
+              "coverage": 0.2,
+              "macro_mrr": 0.29166666666666663,
+              "macro_precision@1": 0.0,
+              "macro_precision@10": 0.1,
+              "macro_precision@100": 0.01,
+              "macro_precision@20": 0.05,
+              "macro_precision@3": 0.16666666666666666,
+              "macro_precision@5": 0.2,
+              "macro_precision@50": 0.02,
+              "macro_recall@1": 0.0,
+              "macro_recall@10": 1.0,
+              "macro_recall@100": 1.0,
+              "macro_recall@20": 1.0,
+              "macro_recall@3": 0.5,
+              "macro_recall@5": 1.0,
+              "macro_recall@50": 1.0,
+              "pooled_mrr": 0.29166666666666663,
+              "pooled_top1": 0.0,
+              "pooled_top10": 1.0,
+              "pooled_top100": 1.0,
+              "pooled_top20": 1.0,
+              "pooled_top3": 0.5,
+              "pooled_top5": 1.0,
+              "pooled_top50": 1.0
+            },
+            "mode": "patients_like_me",
+            "n_corroborating": 0,
+            "n_ranked": 2,
+            "r10": {
+              "training": {
+                "disease_overlap": {
+                  "cases": 7,
+                  "k": 3,
+                  "n": 5,
+                  "state": "overlap"
+                },
+                "evidence": {
+                  "state": "found"
+                },
+                "phenotype_set_overlap": {
+                  "k": 0,
+                  "n": 10,
+                  "state": "none"
+                }
+              },
+              "validation": {
+                "disease_overlap": {
+                  "cases": 2,
+                  "k": 1,
+                  "n": 5,
+                  "state": "overlap"
+                },
+                "evidence": {
+                  "state": "found"
+                },
+                "phenotype_set_overlap": {
+                  "k": 0,
+                  "n": 10,
+                  "state": "none"
+                }
+              }
+            },
+            "registration": {
+              "registered_at": "2026-11-10T01:07:00Z",
+              "sequence": 7
+            },
+            "relations": {
+              "R1": "verified",
+              "R2": "not_applicable",
+              "R3": "verified",
+              "R5": "verified",
+              "cohort_graph": "verified"
+            },
+            "run_id": "20261110T000003Z-597b5dc88cb6-00000003",
+            "score_semantics": "patient tower: -||z_a - z_b||^2 on L2-normalised projected vectors; a pair is positive when the declared causal-gene sets intersect: the same gene of the graph, or the same normalised identifier outside it (no alias resolved)",
+            "scoring_semantics_digest": "2f3ef294fbce3754bf7d5ee61b1b140ee5d2f22d086ce5c02136310d2826464c",
+            "source_artifact_digest": "fe1764285414afad86a21b810beaf08713fbf40189c82ad7f98227d568bd4c88"
+          }
+        ],
+        "unreadable": []
+      }
+    ],
+    "schema3_appended.json": [
+      {
+        "checkpoint_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "records": [
+          {
+            "cohort": {
+              "kind": "supplied",
+              "label": "mygene2-2026-10",
+              "role": "mygene2",
+              "samples_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+              "source_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "version_manifest_sha256": "065e145158742c8faaf4875cc623424ac62f780e0ba76a464c9616c7886d88a0"
+            },
+            "counts": {
+              "excluded": {
+                "ground_truth_absent": 12,
+                "phenotype_unmappable": 8
+              },
+              "n_excluded": 20,
+              "ranked_eligible": 80,
+              "source_cases": 100
+            },
+            "dataset_origin": "synthetic",
+            "deterministic_algorithms": true,
+            "environment_class": "CUDA, deterministic algorithms on",
+            "gpu": {
+              "driver": "560.35",
+              "name": "NVIDIA GeForce RTX 4090"
+            },
+            "historical_overlap": [
+              2
+            ],
+            "measurement_semantics_digest": "8e26996deac6e34bbfade0cd33f9d9d748af8c41b3c43b9acf7ae7fb21233b39",
+            "metrics": {
+              "best_positive_mrr": 0.45,
+              "conservative_pooled_mrr": 0.45,
+              "coverage": 1.0,
+              "macro_mrr": 0.45,
+              "macro_precision@1": 0.25,
+              "macro_precision@10": 0.075,
+              "macro_precision@100": 0.01,
+              "macro_precision@20": 0.05,
+              "macro_precision@3": 0.16666666666666666,
+              "macro_precision@5": 0.15,
+              "macro_precision@50": 0.02,
+              "macro_recall@1": 0.25,
+              "macro_recall@10": 0.75,
+              "macro_recall@100": 1.0,
+              "macro_recall@20": 1.0,
+              "macro_recall@3": 0.5,
+              "macro_recall@5": 0.75,
+              "macro_recall@50": 1.0,
+              "pooled_mrr": 0.45,
+              "pooled_top1": 0.25,
+              "pooled_top10": 0.75,
+              "pooled_top100": 1.0,
+              "pooled_top20": 1.0,
+              "pooled_top3": 0.5,
+              "pooled_top5": 0.75,
+              "pooled_top50": 1.0
+            },
+            "mode": "disease",
+            "n_corroborating": 1,
+            "n_ranked": 80,
+            "r10": {
+              "training": {
+                "disease_overlap": {
+                  "cases": null,
+                  "k": null,
+                  "n": 50,
+                  "state": "unverifiable"
+                },
+                "evidence": {
+                  "state": "not_found"
+                },
+                "phenotype_set_overlap": {
+                  "k": null,
+                  "n": 80,
+                  "state": "unverifiable"
+                }
+              },
+              "validation": {
+                "disease_overlap": {
+                  "cases": null,
+                  "k": null,
+                  "n": 50,
+                  "state": "no_validation_inputs_recorded"
+                },
+                "evidence": {
+                  "state": "not_recorded"
+                },
+                "phenotype_set_overlap": {
+                  "k": null,
+                  "n": 80,
+                  "state": "no_validation_inputs_recorded"
+                }
+              }
+            },
+            "registration": {
+              "registered_at": "2026-10-16T12:30:00Z",
+              "sequence": 1
+            },
+            "relations": {
+              "R1": "verified",
+              "R2": "not_applicable",
+              "R3": "verified",
+              "R5": "verified",
+              "cohort_graph": "verified"
+            },
+            "run_id": null,
+            "score_semantics": "disease head: -||z_d - z_P||^2 on L2-normalised projected vectors",
+            "scoring_semantics_digest": "9f842397a3f0a58c234e56d066eecc5e66febd0d45dfc5f19b0963127b283e12",
+            "source_artifact_digest": "254ebd7bb29954a90c9ccaa77014a01b1f4365a2221381fb9f6f6d252387cc42"
+          },
+          {
+            "cohort": {
+              "kind": "supplied",
+              "label": "mygene2-2026-10",
+              "role": "mygene2",
+              "samples_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+              "source_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "version_manifest_sha256": "065e145158742c8faaf4875cc623424ac62f780e0ba76a464c9616c7886d88a0"
+            },
+            "counts": {
+              "excluded": {
+                "ground_truth_absent": 12,
+                "phenotype_unmappable": 8
+              },
+              "n_excluded": 20,
+              "ranked_eligible": 80,
+              "source_cases": 100
+            },
+            "dataset_origin": "synthetic",
+            "deterministic_algorithms": true,
+            "environment_class": "CUDA, deterministic algorithms on",
+            "gpu": {
+              "driver": "560.35",
+              "name": "NVIDIA GeForce RTX 4090"
+            },
+            "historical_overlap": [
+              1
+            ],
+            "measurement_semantics_digest": "8e26996deac6e34bbfade0cd33f9d9d748af8c41b3c43b9acf7ae7fb21233b39",
+            "metrics": {
+              "best_positive_mrr": 0.45,
+              "conservative_pooled_mrr": 0.45,
+              "coverage": 1.0,
+              "macro_mrr": 0.45,
+              "macro_precision@1": 0.25,
+              "macro_precision@10": 0.075,
+              "macro_precision@100": 0.01,
+              "macro_precision@20": 0.05,
+              "macro_precision@3": 0.16666666666666666,
+              "macro_precision@5": 0.15,
+              "macro_precision@50": 0.02,
+              "macro_recall@1": 0.25,
+              "macro_recall@10": 0.75,
+              "macro_recall@100": 1.0,
+              "macro_recall@20": 1.0,
+              "macro_recall@3": 0.5,
+              "macro_recall@5": 0.75,
+              "macro_recall@50": 1.0,
+              "pooled_mrr": 0.45,
+              "pooled_top1": 0.25,
+              "pooled_top10": 0.75,
+              "pooled_top100": 1.0,
+              "pooled_top20": 1.0,
+              "pooled_top3": 0.5,
+              "pooled_top5": 0.75,
+              "pooled_top50": 1.0
+            },
+            "mode": "disease",
+            "n_corroborating": 0,
+            "n_ranked": 80,
+            "r10": {
+              "training": {
+                "disease_overlap": {
+                  "cases": null,
+                  "k": null,
+                  "n": 50,
+                  "state": "unverifiable"
+                },
+                "evidence": {
+                  "state": "not_found"
+                },
+                "phenotype_set_overlap": {
+                  "k": null,
+                  "n": 80,
+                  "state": "unverifiable"
+                }
+              },
+              "validation": {
+                "disease_overlap": {
+                  "cases": null,
+                  "k": null,
+                  "n": 50,
+                  "state": "no_validation_inputs_recorded"
+                },
+                "evidence": {
+                  "state": "not_recorded"
+                },
+                "phenotype_set_overlap": {
+                  "k": null,
+                  "n": 80,
+                  "state": "no_validation_inputs_recorded"
+                }
+              }
+            },
+            "registration": {
+              "registered_at": "2026-10-18T09:00:00Z",
+              "sequence": 2
+            },
+            "relations": {
+              "R1": "verified",
+              "R2": "not_applicable",
+              "R3": "verified",
+              "R5": "verified",
+              "cohort_graph": "verified"
+            },
+            "run_id": "20261016T120002Z-cccccccccccc-00000002",
+            "score_semantics": "disease head: -||z_d - z_P||^2 on L2-normalised projected vectors",
+            "scoring_semantics_digest": "9f842397a3f0a58c234e56d066eecc5e66febd0d45dfc5f19b0963127b283e12",
+            "source_artifact_digest": "9f07875acc58b360622b4440d5666b653ce17d187ec23d6714e89450d0d537d8"
+          }
+        ],
+        "unreadable": []
+      }
+    ],
+    "schema3_merged.json": [
+      {
+        "checkpoint_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "records": [
+          {
+            "cohort": {
+              "kind": "supplied",
+              "label": "mygene2-2026-10",
+              "role": "mygene2",
+              "samples_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+              "source_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "version_manifest_sha256": "065e145158742c8faaf4875cc623424ac62f780e0ba76a464c9616c7886d88a0"
+            },
+            "counts": {
+              "excluded": {
+                "ground_truth_absent": 12,
+                "phenotype_unmappable": 8
+              },
+              "n_excluded": 20,
+              "ranked_eligible": 80,
+              "source_cases": 100
+            },
+            "dataset_origin": "synthetic",
+            "deterministic_algorithms": true,
+            "environment_class": "CUDA, deterministic algorithms on",
+            "gpu": {
+              "driver": "560.35",
+              "name": "NVIDIA GeForce RTX 4090"
+            },
+            "historical_overlap": [],
+            "measurement_semantics_digest": "8e26996deac6e34bbfade0cd33f9d9d748af8c41b3c43b9acf7ae7fb21233b39",
+            "metrics": {
+              "best_positive_mrr": 0.45,
+              "conservative_pooled_mrr": 0.45,
+              "coverage": 1.0,
+              "macro_mrr": 0.45,
+              "macro_precision@1": 0.25,
+              "macro_precision@10": 0.075,
+              "macro_precision@100": 0.01,
+              "macro_precision@20": 0.05,
+              "macro_precision@3": 0.16666666666666666,
+              "macro_precision@5": 0.15,
+              "macro_precision@50": 0.02,
+              "macro_recall@1": 0.25,
+              "macro_recall@10": 0.75,
+              "macro_recall@100": 1.0,
+              "macro_recall@20": 1.0,
+              "macro_recall@3": 0.5,
+              "macro_recall@5": 0.75,
+              "macro_recall@50": 1.0,
+              "pooled_mrr": 0.45,
+              "pooled_top1": 0.25,
+              "pooled_top10": 0.75,
+              "pooled_top100": 1.0,
+              "pooled_top20": 1.0,
+              "pooled_top3": 0.5,
+              "pooled_top5": 0.75,
+              "pooled_top50": 1.0
+            },
+            "mode": "disease",
+            "n_corroborating": 1,
+            "n_ranked": 80,
+            "r10": {
+              "training": {
+                "disease_overlap": {
+                  "cases": null,
+                  "k": null,
+                  "n": 50,
+                  "state": "unverifiable"
+                },
+                "evidence": {
+                  "state": "not_found"
+                },
+                "phenotype_set_overlap": {
+                  "k": null,
+                  "n": 80,
+                  "state": "unverifiable"
+                }
+              },
+              "validation": {
+                "disease_overlap": {
+                  "cases": null,
+                  "k": null,
+                  "n": 50,
+                  "state": "no_validation_inputs_recorded"
+                },
+                "evidence": {
+                  "state": "not_recorded"
+                },
+                "phenotype_set_overlap": {
+                  "k": null,
+                  "n": 80,
+                  "state": "no_validation_inputs_recorded"
+                }
+              }
+            },
+            "registration": {
+              "registered_at": "2026-10-16T12:30:00Z",
+              "sequence": 1
+            },
+            "relations": {
+              "R1": "verified",
+              "R2": "not_applicable",
+              "R3": "verified",
+              "R5": "verified",
+              "cohort_graph": "verified"
+            },
+            "run_id": null,
+            "score_semantics": "disease head: -||z_d - z_P||^2 on L2-normalised projected vectors",
+            "scoring_semantics_digest": "9f842397a3f0a58c234e56d066eecc5e66febd0d45dfc5f19b0963127b283e12",
+            "source_artifact_digest": "254ebd7bb29954a90c9ccaa77014a01b1f4365a2221381fb9f6f6d252387cc42"
+          }
+        ],
+        "unreadable": []
+      }
+    ]
+  }
+}

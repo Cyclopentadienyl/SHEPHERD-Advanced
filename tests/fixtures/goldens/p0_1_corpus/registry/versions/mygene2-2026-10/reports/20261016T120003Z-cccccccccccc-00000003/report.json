@@ -1,0 +1,169 @@
+{
+  "authoritative_metrics": {
+    "hits@1": 0.25,
+    "hits@10": 0.75,
+    "mean_rank": 3.0,
+    "untruncated_mrr": 0.5
+  },
+  "manifest": {
+    "amp_dtype": null,
+    "amp_enabled": false,
+    "artifact_digests": {
+      "checkpoint": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "edge_indices": "3333333333333333333333333333333333333333333333333333333333333333",
+      "kg": "1111111111111111111111111111111111111111111111111111111111111111",
+      "node_features": "2222222222222222222222222222222222222222222222222222222222222222",
+      "num_nodes": "4444444444444444444444444444444444444444444444444444444444444444",
+      "samples": "5555555555555555555555555555555555555555555555555555555555555555"
+    },
+    "batch_size": 32,
+    "candidate_construction": "every disease in the knowledge graph",
+    "canonical_tie_policy_version": "score-desc-then-global-id-asc/v1",
+    "checkpoint_path": "/srv/ws/runs/shepherd/r1/checkpoints/best.pt",
+    "cohort_kind": "supplied",
+    "cohort_version": {
+      "counts": {
+        "cases_with_lost_terms": 9,
+        "cases_with_repeats": 2,
+        "excluded": {
+          "ground_truth_absent": 12,
+          "phenotype_unmappable": 8
+        },
+        "n_excluded": 20,
+        "ranked_eligible": 80,
+        "repeats_removed": 3,
+        "source_cases": 100,
+        "terms_unmappable": 14
+      },
+      "dataset_record_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "graph": {
+        "edge_indices": "3333333333333333333333333333333333333333333333333333333333333333",
+        "kg": "1111111111111111111111111111111111111111111111111111111111111111",
+        "node_features": "2222222222222222222222222222222222222222222222222222222222222222",
+        "num_nodes": "4444444444444444444444444444444444444444444444444444444444444444"
+      },
+      "label": "mygene2-2026-10",
+      "manifest_sha256": "065e145158742c8faaf4875cc623424ac62f780e0ba76a464c9616c7886d88a0",
+      "mapping": {
+        "disease_namespace": "MONDO",
+        "partial_phenotypes": "keep",
+        "phenotype_namespace": "HP",
+        "phenotype_normalisation_version": 1
+      },
+      "role": "mygene2",
+      "samples_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+      "source_format": "shepherd-cases/1",
+      "source_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "cuda_executed": true,
+    "cuda_version": "13.0",
+    "cudnn_benchmark": false,
+    "cudnn_deterministic": false,
+    "data_dir": "/srv/ws",
+    "dataset_record": {
+      "binding": "verified",
+      "incomplete_by_design": [
+        "no ontology files"
+      ],
+      "origin": "synthetic",
+      "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "sources": []
+    },
+    "deterministic_algorithms": false,
+    "device": "cuda",
+    "dtype": "torch.float32",
+    "environment": {
+      "code": {
+        "dirty": false,
+        "modified_tracked": 0,
+        "revision": "9999999999999999999999999999999999999999",
+        "state": "recorded",
+        "untracked": 0
+      },
+      "facts": {
+        "cudnn": 91501,
+        "gpu": {
+          "capability": [
+            8,
+            9
+          ],
+          "driver": "560.35",
+          "name": "NVIDIA GeForce RTX 4090"
+        },
+        "python": "3.12.3",
+        "torch": "2.10.0"
+      }
+    },
+    "graph_fingerprint": {
+      "num_nodes": {
+        "disease": 4
+      }
+    },
+    "metric_schema_version": 1,
+    "mode": "C",
+    "model_construction": "production (build_shepherd_model)",
+    "n_samples": 80,
+    "r10": {
+      "candidates_examined": 2,
+      "definition_version": 1,
+      "training": {
+        "disease_overlap": {
+          "cases": null,
+          "k": null,
+          "n": 50,
+          "state": "unverifiable"
+        },
+        "evidence": {
+          "path": null,
+          "problem": null,
+          "state": "not_found"
+        },
+        "phenotype_set_overlap": {
+          "k": null,
+          "n": 80,
+          "state": "unverifiable"
+        },
+        "recorded_sha256": "7777777777777777777777777777777777777777777777777777777777777777"
+      },
+      "validation": {
+        "disease_overlap": {
+          "cases": null,
+          "k": null,
+          "n": 50,
+          "state": "no_validation_inputs_recorded"
+        },
+        "evidence": {
+          "path": null,
+          "problem": null,
+          "state": "not_recorded"
+        },
+        "phenotype_set_overlap": {
+          "k": null,
+          "n": 80,
+          "state": "no_validation_inputs_recorded"
+        },
+        "recorded_sha256": null
+      }
+    },
+    "relations": {
+      "R1": "verified",
+      "R2": "not_applicable",
+      "R3": "verified",
+      "R5": "verified",
+      "cohort_graph": "verified"
+    },
+    "score_semantics": "raw cosine, no eta mixture and no shortest-path term",
+    "software_revision": "9999999999999999999999999999999999999999",
+    "split": "mygene2",
+    "torch_compile_wrapped": false,
+    "torch_version": "2.10.0"
+  },
+  "n_ground_truth_absent": 0,
+  "n_ranked": 80,
+  "sampler_evidence": {
+    "candidate_columns": {
+      "max": 4,
+      "min": 4
+    }
+  }
+}

@@ -1,0 +1,191 @@
+{
+  "authoritative_metrics": {
+    "best_positive_mrr": 0.45,
+    "conservative_pooled_mrr": 0.45,
+    "coverage": 1.0,
+    "macro_mrr": 0.45,
+    "macro_precision@1": 0.25,
+    "macro_precision@10": 0.075,
+    "macro_precision@100": 0.01,
+    "macro_precision@20": 0.05,
+    "macro_precision@3": 0.16666666666666666,
+    "macro_precision@5": 0.15,
+    "macro_precision@50": 0.02,
+    "macro_recall@1": 0.25,
+    "macro_recall@10": 0.75,
+    "macro_recall@100": 1.0,
+    "macro_recall@20": 1.0,
+    "macro_recall@3": 0.5,
+    "macro_recall@5": 0.75,
+    "macro_recall@50": 1.0,
+    "pooled_mrr": 0.45,
+    "pooled_top1": 0.25,
+    "pooled_top10": 0.75,
+    "pooled_top100": 1.0,
+    "pooled_top20": 1.0,
+    "pooled_top3": 0.5,
+    "pooled_top5": 0.75,
+    "pooled_top50": 1.0
+  },
+  "manifest": {
+    "amp_dtype": null,
+    "amp_enabled": false,
+    "artifact_digests": {
+      "checkpoint": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "edge_indices": "3333333333333333333333333333333333333333333333333333333333333333",
+      "kg": "1111111111111111111111111111111111111111111111111111111111111111",
+      "node_features": "2222222222222222222222222222222222222222222222222222222222222222",
+      "num_nodes": "4444444444444444444444444444444444444444444444444444444444444444",
+      "samples": "5555555555555555555555555555555555555555555555555555555555555555"
+    },
+    "batch_size": 32,
+    "candidate_construction": "every disease of the model's graph view",
+    "canonical_tie_policy_version": "average-rank/v1",
+    "checkpoint_path": "/srv/ws-moved/runs/shepherd/r1/checkpoints/best.pt",
+    "cohort_kind": "supplied",
+    "cohort_version": {
+      "counts": {
+        "cases_with_lost_terms": 9,
+        "cases_with_repeats": 2,
+        "excluded": {
+          "ground_truth_absent": 12,
+          "phenotype_unmappable": 8
+        },
+        "n_excluded": 20,
+        "ranked_eligible": 80,
+        "repeats_removed": 3,
+        "source_cases": 100,
+        "terms_unmappable": 14
+      },
+      "dataset_record_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "graph": {
+        "edge_indices": "3333333333333333333333333333333333333333333333333333333333333333",
+        "kg": "1111111111111111111111111111111111111111111111111111111111111111",
+        "node_features": "2222222222222222222222222222222222222222222222222222222222222222",
+        "num_nodes": "4444444444444444444444444444444444444444444444444444444444444444"
+      },
+      "label": "mygene2-2026-10",
+      "manifest_sha256": "065e145158742c8faaf4875cc623424ac62f780e0ba76a464c9616c7886d88a0",
+      "mapping": {
+        "disease_namespace": "MONDO",
+        "partial_phenotypes": "keep",
+        "phenotype_namespace": "HP",
+        "phenotype_normalisation_version": 1
+      },
+      "role": "mygene2",
+      "samples_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+      "source_format": "shepherd-cases/1",
+      "source_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "cuda_executed": true,
+    "cuda_version": "13.0",
+    "cudnn_benchmark": false,
+    "cudnn_deterministic": true,
+    "data_dir": "/srv/ws",
+    "dataset_record": {
+      "binding": "verified",
+      "incomplete_by_design": [
+        "no ontology files"
+      ],
+      "origin": "synthetic",
+      "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "sources": []
+    },
+    "deterministic_algorithms": true,
+    "device": "cuda",
+    "dtype": "torch.float32",
+    "environment": {
+      "code": {
+        "dirty": false,
+        "modified_tracked": 0,
+        "revision": "9999999999999999999999999999999999999999",
+        "state": "recorded",
+        "untracked": 0
+      },
+      "facts": {
+        "cudnn": 91501,
+        "gpu": {
+          "capability": [
+            8,
+            9
+          ],
+          "driver": "560.35",
+          "name": "NVIDIA GeForce RTX 4090"
+        },
+        "python": "3.12.3",
+        "torch": "2.10.0"
+      }
+    },
+    "graph_fingerprint": {
+      "num_nodes": {
+        "disease": 4
+      }
+    },
+    "metric_schema_version": 2,
+    "mode": "disease",
+    "model_construction": "model bundle (src.models.bundle.build_bundle) from its model spec",
+    "n_samples": 80,
+    "r10": {
+      "candidates_examined": 2,
+      "definition_version": 1,
+      "training": {
+        "disease_overlap": {
+          "cases": null,
+          "k": null,
+          "n": 50,
+          "state": "unverifiable"
+        },
+        "evidence": {
+          "path": null,
+          "problem": null,
+          "state": "not_found"
+        },
+        "phenotype_set_overlap": {
+          "k": null,
+          "n": 80,
+          "state": "unverifiable"
+        },
+        "recorded_sha256": "7777777777777777777777777777777777777777777777777777777777777777"
+      },
+      "validation": {
+        "disease_overlap": {
+          "cases": null,
+          "k": null,
+          "n": 50,
+          "state": "no_validation_inputs_recorded"
+        },
+        "evidence": {
+          "path": null,
+          "problem": null,
+          "state": "not_recorded"
+        },
+        "phenotype_set_overlap": {
+          "k": null,
+          "n": 80,
+          "state": "no_validation_inputs_recorded"
+        },
+        "recorded_sha256": null
+      }
+    },
+    "relations": {
+      "R1": "verified",
+      "R2": "not_applicable",
+      "R3": "verified",
+      "R5": "verified",
+      "cohort_graph": "verified"
+    },
+    "score_semantics": "disease head: -||z_d - z_P||^2 on L2-normalised projected vectors",
+    "software_revision": "9999999999999999999999999999999999999999",
+    "split": "mygene2",
+    "torch_compile_wrapped": false,
+    "torch_version": "2.10.0"
+  },
+  "n_ground_truth_absent": 0,
+  "n_ranked": 80,
+  "sampler_evidence": {
+    "candidate_columns": {
+      "max": 4,
+      "min": 4
+    }
+  }
+}

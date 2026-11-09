@@ -1,0 +1,196 @@
+{
+  "counts": {
+    "cases_with_lost_terms": 9,
+    "cases_with_repeats": 2,
+    "excluded": {
+      "ground_truth_absent": 12,
+      "phenotype_unmappable": 8
+    },
+    "n_excluded": 20,
+    "ranked_eligible": 80,
+    "repeats_removed": 3,
+    "source_cases": 100,
+    "terms_unmappable": 14
+  },
+  "dataset_record": {
+    "hpo": null,
+    "mondo": null,
+    "origin": "synthetic",
+    "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  },
+  "exclusions": [
+    {
+      "category": "ground_truth_absent",
+      "index": 0,
+      "reasons": [
+        "ground_truth_absent"
+      ]
+    },
+    {
+      "category": "ground_truth_absent",
+      "index": 1,
+      "reasons": [
+        "ground_truth_absent"
+      ]
+    },
+    {
+      "category": "ground_truth_absent",
+      "index": 2,
+      "reasons": [
+        "ground_truth_absent"
+      ]
+    },
+    {
+      "category": "ground_truth_absent",
+      "index": 3,
+      "reasons": [
+        "ground_truth_absent"
+      ]
+    },
+    {
+      "category": "ground_truth_absent",
+      "index": 4,
+      "reasons": [
+        "ground_truth_absent"
+      ]
+    },
+    {
+      "category": "ground_truth_absent",
+      "index": 5,
+      "reasons": [
+        "ground_truth_absent"
+      ]
+    },
+    {
+      "category": "ground_truth_absent",
+      "index": 6,
+      "reasons": [
+        "ground_truth_absent"
+      ]
+    },
+    {
+      "category": "ground_truth_absent",
+      "index": 7,
+      "reasons": [
+        "ground_truth_absent"
+      ]
+    },
+    {
+      "category": "ground_truth_absent",
+      "index": 8,
+      "reasons": [
+        "ground_truth_absent"
+      ]
+    },
+    {
+      "category": "ground_truth_absent",
+      "index": 9,
+      "reasons": [
+        "ground_truth_absent"
+      ]
+    },
+    {
+      "category": "ground_truth_absent",
+      "index": 10,
+      "reasons": [
+        "ground_truth_absent"
+      ]
+    },
+    {
+      "category": "ground_truth_absent",
+      "index": 11,
+      "reasons": [
+        "ground_truth_absent"
+      ]
+    },
+    {
+      "category": "phenotype_unmappable",
+      "index": 0,
+      "reasons": [
+        "phenotype_unmappable"
+      ]
+    },
+    {
+      "category": "phenotype_unmappable",
+      "index": 1,
+      "reasons": [
+        "phenotype_unmappable"
+      ]
+    },
+    {
+      "category": "phenotype_unmappable",
+      "index": 2,
+      "reasons": [
+        "phenotype_unmappable"
+      ]
+    },
+    {
+      "category": "phenotype_unmappable",
+      "index": 3,
+      "reasons": [
+        "phenotype_unmappable"
+      ]
+    },
+    {
+      "category": "phenotype_unmappable",
+      "index": 4,
+      "reasons": [
+        "phenotype_unmappable"
+      ]
+    },
+    {
+      "category": "phenotype_unmappable",
+      "index": 5,
+      "reasons": [
+        "phenotype_unmappable"
+      ]
+    },
+    {
+      "category": "phenotype_unmappable",
+      "index": 6,
+      "reasons": [
+        "phenotype_unmappable"
+      ]
+    },
+    {
+      "category": "phenotype_unmappable",
+      "index": 7,
+      "reasons": [
+        "phenotype_unmappable"
+      ]
+    }
+  ],
+  "graph": {
+    "edge_indices": "3333333333333333333333333333333333333333333333333333333333333333",
+    "kg": "1111111111111111111111111111111111111111111111111111111111111111",
+    "node_features": "2222222222222222222222222222222222222222222222222222222222222222",
+    "num_nodes": "4444444444444444444444444444444444444444444444444444444444444444"
+  },
+  "imported": {
+    "at": "2026-10-16T12:00:00Z",
+    "code_revision": {
+      "state": "not_recorded"
+    }
+  },
+  "label": "mygene2-2026-10",
+  "mapping": {
+    "disease_namespace": "MONDO",
+    "partial_phenotypes": "keep",
+    "phenotype_namespace": "HP",
+    "phenotype_normalisation_version": 1
+  },
+  "role": "mygene2",
+  "samples": {
+    "n": 80,
+    "sha256": "5555555555555555555555555555555555555555555555555555555555555555"
+  },
+  "schema_version": 1,
+  "source": {
+    "filename": "cases.json",
+    "format": "shepherd-cases/1",
+    "n_cases": 100,
+    "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "unmappable_terms": {},
+  "what_this_is": "a test cohort version: a source case set mapped to one graph's node indices"
+}
