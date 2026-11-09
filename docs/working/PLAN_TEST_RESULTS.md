@@ -446,6 +446,13 @@ and the decision's text is history.
   serves validation and measurement; each protocol's evaluator is in
   `src/evaluation/task_measurement.py` (`TASK_RUNS`, metric schema 2). A base has no protocol yet:
   its formal KG test is a later item (`protocols.BASE_MESSAGE`; `BACKLOG.md` §0).
+- **Data versions** (research comparison Stage 4, 2026-11-10, on `claude/research-comparison`).
+  The registry (`src/evaluation/cohort_registry.py`) holds versions of two kinds, both read by its
+  one reader, `resolve_version`: a supplied cohort, schema 1, which records no kind and is
+  written as since M4; and a KG edge set, schema 2, `kind` `kg_edges` (`scripts/import_cohort.py
+  --kind kg_edges --from-checkpoint`), one part of a checkpoint's recorded edge split with its
+  role (`train`, `val` or `test`) as given and its fixed LP pairs in a digest-bound file. A
+  supplied cohort's role is still never `train` or `val`. No protocol measures a KG edge set yet.
 - **Keeping.** Every valid result of every real execution is kept as its own report (policy
   rev 16), a run that repeats another's conditions included; a generated split's report never
   replaces an earlier run's (K8-6r.4).

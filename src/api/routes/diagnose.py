@@ -573,6 +573,8 @@ def _reference_cohort(label: Optional[str], served_mode: str, pipeline: Any) -> 
     is refused as a request error."""
     from src.config.server_settings import cohort_registry
     from src.evaluation.cohort_registry import (
+        KG_EDGES,
+        SUPPLIED,
         CohortVersionRefused,
         RegistryRefused,
         resolve_version,
@@ -599,6 +601,14 @@ def _reference_cohort(label: Optional[str], served_mode: str, pipeline: Any) -> 
     registry = registry.value
     try:
         version = resolve_version(registry, label)
+        if version.kind != SUPPLIED:
+            # A KG edge set holds no patients to rank; listed and readable, it
+            # is not a reference cohort (research comparison §5 Stage 4).
+            what = (f"a KG edge set ({version.manifest['role']})" if version.kind == KG_EDGES
+                    else f"a version of kind {version.kind!r}")
+            raise CohortVersionRefused(
+                f"it is {what}, not a supplied cohort version: a patients-like-me model "
+                "ranks a reference cohort's patients")
         bound = version.manifest["samples"]["sha256"]
         key = (str(version.samples_path), bound)
         samples = _REFERENCE_SAMPLES.get(key)

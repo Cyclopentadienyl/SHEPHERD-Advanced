@@ -93,7 +93,7 @@ def test_each_protocol_names_an_evaluator_and_needs_what_a_writable_model_offers
     assert (protocols.NODE_VECTORS, protocols.PATIENT_REPRESENTATION, protocols.FULL_VIEW) == (
         cap.NODE_VECTORS, cap.PATIENT_REPRESENTATION, cap.FULL_VIEW)
     assert set(protocols.FULL_VIEW_INPUTS) == inputs
-    assert (protocols.GENERATED, protocols.SUPPLIED) == COHORT_KINDS
+    assert (protocols.GENERATED, protocols.SUPPLIED, protocols.KG_EDGES) == COHORT_KINDS
     assert {task: protocols.task_head(task) for task in TASKS} == {
         task: (cap.TASK, task, cap.TASK_HEAD_SEMANTICS[task]) for task in TASKS}
 

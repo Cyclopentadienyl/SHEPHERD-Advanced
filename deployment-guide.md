@@ -1601,6 +1601,7 @@ run 目錄）在寫入任何東西、或從中讀取版本之前，都會再解�
   sources/<sha256>.json                  來源檔的位元組，原樣保存，以其 digest 命名
   versions/<label>/cohort.json           版本 manifest；最後寫入，它存在才代表版本存在
   versions/<label>/samples.json          對應後的樣本，由 cohort.json 的 digest 綁定
+  versions/<label>/pairs.bin             KG 邊集合以此取代樣本（見下文），以同樣方式綁定
   versions/<label>/reports/<run id>/     每次量測一個目錄：先 ranks.json，再 report.json
 ```
 
@@ -1641,8 +1642,8 @@ python scripts/import_cohort.py --registry /srv/shepherd/cohorts \
     --label mygene2-2026-10 --role mygene2 [--partial-phenotypes keep|exclude]
 ```
 
-label 與 role 是小寫識別字（字母、數字、`_`、`-`、`.`；最多 64 字元）；role 不可為 `train`
-或 `val`。
+label 與 role 是小寫識別字（字母、數字、`_`、`-`、`.`；最多 64 字元）；supplied cohort 的 role
+不可為 `train` 或 `val`（KG 邊集合的 role 是它在切分中的部分，見下文）。
 
 **預覽不寫入任何東西。** 它以與訓練、serving 相同的讀取器與檢查，把每個案例對應到 workspace
 manifest 所綁定的圖，並印出：
@@ -1663,6 +1664,54 @@ manifest 所綁定的圖，並印出：
 **提交**：執行印出的指令，也就是相同參數加上 `--commit <preview id>`。匯入工具會重新讀取所有
 輸入，只有結果仍是同一個 id 時才發布；否則拒絕（"inputs changed since the preview"）。它會印出
 版本目錄與 manifest 的 SHA-256。沒有任何案例可排名的來源在提交時會被拒絕，因為沒有東西可量測。
+
+### KG 邊集合：`--kind kg_edges`（自 research comparison Stage 4 起）
+
+**KG 邊集合**（KG edge set）是另一種類的版本：模型訓練時所用邊切分中的一個部分，以固定的
+link-prediction 配對保存，供 link-prediction 量測使用（research comparison Stage 5，尚未建置）。
+它以同樣的預覽與提交匯入：
+
+```bash
+python scripts/import_cohort.py --kind kg_edges --registry /srv/shepherd/cohorts \
+    --data-dir data/workspaces/<ws> \
+    --from-checkpoint data/workspaces/<ws>/runs/gatv2/<run>/checkpoints/best.pt \
+    --label kg-test-2026-11 --role test
+```
+
+- **role 就是該部分，照實記錄：**`train`、`val` 或 `test`。不會因為不是 test 而被拒絕。量測 train
+  部分是擬合診斷，量測 val 部分是開發量測；兩者都不會被改標為 test。
+- **切分從哪裡來。**checkpoint 的 model record 記錄了它的圖 view 規則與邊切分（`data_roles`）；
+  finetune 的即其 base 的。匯入工具以與量測相同的讀取器讀取 workspace 的圖，並檢查 checkpoint
+  是在這張圖上訓練的。它依記錄的規則重建 view，digest 不同即拒絕；再重建切分，逐欄檢查（規則、
+  seed、view digest、digest、各部分的邊數），並指出第一個不同的欄位。沒有 model record、屬於
+  另一張圖，或紀錄自相矛盾的 checkpoint 會被拒絕。所有檢查都在寫入任何東西之前進行，也不複製
+  checkpoint 的任何內容。
+- **配對**依 base validation 的規則作用在該 role 的部分上（`fixed_lp_pairs`、`BASE_FIXED`）：每條
+  邊一次，以切分 seed 推得種子的產生器打亂順序並配上一個負樣本 tail，每批 512。若某條邊的
+  relation 在其批次中沒有其他 tail，它就沒有負樣本：會被排除並計數，絕不替它捏造一個。因此
+  `val` 集合的配對恰好就是 base validation 所評分的配對。不同的規則、seed 或批次大小即是另一個
+  版本。
+- **訊息傳遞圖**是切分的 train 部分（scorer-retraining README A4）。role 為 `train` 時，被量測的
+  邊就在其中，版本會如此註明；不移除任何東西。
+- **預覽**會印出 view、切分的各部分、正樣本邊數、配對數與沒有負樣本的邊數，各附分母。計數以
+  有向的 graph-view 邊為單位：一條邊與其反向邊是一個事實、兩條邊，永遠在同一部分。它也印出配對
+  規則、配對檔的 digest、訊息傳遞圖，以及所綁定的圖與 dataset record，但絕不印出任何一條邊。
+  沒有任何配對的部分無法提交。
+
+版本由 `cohort.json`（schema 2、kind `kg_edges`，最後寫入）與 `pairs.bin` 組成：配對以小端序
+int64 列（head、relation、tail、negative tail）依產生順序存放。manifest 以其位元組的 digest
+綁定 `pairs.bin`；讀取者在解析位元組之前先比對該 digest，因此被改動、截斷或遺失的檔案都會被
+拒絕。配對是保存的、從不重建，因為 torch 的亂數序列不保證跨版本一致。不保存來源檔：圖就是
+workspace 的圖，由其四個 digest 與 dataset record 綁定，量測時與 supplied 版本一樣比對。
+
+伺服器的清單（`GET /cohorts`）會列出 KG 邊集合，附其 kind、role 與計數，絕不列出邊；Test 頁以
+label 與 role 列出它。這個 build 還沒有任何協定量測它：指名它的 `measure_scorer.py --cohort` 或 Test 頁的 Start 會以
+協定的理由被拒絕（"the disease measurement does not measure a KG edge set; ..."），不寫出任何
+東西。
+
+**Schema 1 與 2。**supplied 匯入仍寫出 schema 1，位元組與過去完全相同；schema 1 讀作 supplied
+cohort。KG 邊集合是 schema 2，會註明其 kind。schema 2 之前的版本會把它列為無法讀取並附上原因
+（"is schema 2; this revision reads schema 1 only"），因此舊版本絕不會把它誤讀成 supplied cohort。
 
 ### 量測
 

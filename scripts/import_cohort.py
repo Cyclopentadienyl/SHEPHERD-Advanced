@@ -1,16 +1,24 @@
 #!/usr/bin/env python
 """
-Import a test cohort: preview what a source maps to, then commit it as a version.
-================================================================================
-Contract M4 (`docs/working/PLAN_TEST_RESULTS.md` D6, D7). A source case file
-(`shepherd-cases/1`) is mapped against the graph a workspace manifest binds and
-published as an immutable cohort version in a registry the operator keeps
-outside the repository (`src/evaluation/cohort_registry.py`).
+Import a data version: preview what it would hold, then commit it to the registry.
+==================================================================================
+Contract M4 (`docs/working/PLAN_TEST_RESULTS.md` D6, D7). Two kinds
+(`--kind`), each published as an immutable version in a registry the operator
+keeps outside the repository (`src/evaluation/cohort_registry.py`):
+
+- ``supplied`` (the default): a source case file (`shepherd-cases/1`) mapped
+  against the graph a workspace manifest binds, a test cohort version;
+- ``kg_edges`` (research comparison §5 Stage 4): a KG edge set, one part
+  (``--role train|val|test``) of the edge split a checkpoint's model record
+  names (``--from-checkpoint``), rebuilt and checked against the workspace's
+  graph, with its fixed link-prediction pairs. Its role is recorded as given.
 
 **Two steps, and the second repeats the first.** Without ``--commit`` this
-prints what the import would produce -- every exclusion with its case id and
-reasons, the terms that did not map, the graph and dataset record it binds, the
-policy -- and a preview id, and writes nothing. ``--commit PREVIEW_ID`` with the
+prints what the import would produce -- for a supplied cohort every exclusion
+with its case id and reasons, the terms that did not map, the graph and
+dataset record it binds, the policy; for a KG edge set the view, the split,
+the pairs and their counts, the message-passing graph and what it binds --
+and a preview id, and writes nothing. ``--commit PREVIEW_ID`` with the
 same arguments reads every input again and publishes only if they still give
 that id, so what is committed is what the operator saw.
 
@@ -27,6 +35,12 @@ Usage:
 
     # then, with the same arguments, the id the preview printed:
     python scripts/import_cohort.py ... --commit 0123456789abcdef
+
+    # a KG edge set: the test part of the split a base was trained on
+    python scripts/import_cohort.py --kind kg_edges \\
+        --registry /srv/shepherd/cohorts --data-dir data/workspaces/<ws> \\
+        --from-checkpoint data/workspaces/<ws>/runs/gatv2/<run>/checkpoints/best.pt \\
+        --label kg-test-2026-11 --role test
 
 Module: scripts/import_cohort.py
 """
@@ -46,11 +60,16 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.evaluation.cohort_registry import (  # noqa: E402
     DEFAULT_PARTIAL_PHENOTYPES,
     EXCLUSION_CATEGORIES,
+    KG_EDGES,
+    KG_EDGES_ROLES,
     PARTIAL_PHENOTYPE_POLICIES,
     SOURCE_FORMAT,
+    SUPPLIED,
+    VERSION_KINDS,
     ImportPlan,
     commit_import,
     prepare_import,
+    prepare_kg_edges_import,
 )
 
 #: How many of the unmappable terms the preview lists by name, most frequent
@@ -60,40 +79,87 @@ TOP_UNMAPPABLE_TERMS = 10
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Preview, then commit, a test cohort version mapped to a workspace graph"
+        description="Preview, then commit, a data version: a test cohort mapped to a workspace "
+                    "graph, or a KG edge set taken from a checkpoint's edge split"
     )
+    parser.add_argument("--kind", choices=VERSION_KINDS, default=SUPPLIED,
+                        help="supplied (the default): a case file mapped to the workspace's "
+                             "graph. kg_edges: a KG edge set, one part of the edge split a "
+                             "checkpoint was trained on, with its fixed link-prediction "
+                             "pairs.")
     parser.add_argument("--registry", type=Path, required=True,
                         help="The cohort registry: an existing directory, given as an "
                              "absolute path outside the repository. It holds "
                              "patient-level data.")
     parser.add_argument("--data-dir", type=Path, required=True,
-                        help="The workspace whose graph the cases are mapped to.")
-    parser.add_argument("--source", type=Path, required=True,
-                        help=f"The case file, in the {SOURCE_FORMAT} format. Its bytes are "
-                             "kept verbatim in the registry.")
+                        help="The workspace whose graph the cases are mapped to, or whose "
+                             "graph the KG edge set is taken from.")
+    parser.add_argument("--source", type=Path, default=None,
+                        help=f"--kind supplied: the case file, in the {SOURCE_FORMAT} format. "
+                             "Its bytes are kept verbatim in the registry.")
+    parser.add_argument("--from-checkpoint", type=Path, default=None,
+                        help="--kind kg_edges: the checkpoint whose model record names the "
+                             "graph view rule and edge split to take the part from, trained "
+                             "on this workspace's graph. Nothing of it is copied.")
     parser.add_argument("--label", required=True,
                         help="The version's label: a lowercase identifier, unique in the "
                              "registry, never reused.")
     parser.add_argument("--role", required=True,
-                        help="The cohort's role, such as mygene2: a lowercase identifier, "
-                             "not train or val.")
+                        help="--kind supplied: the cohort's role, such as mygene2, a "
+                             "lowercase identifier, not train or val. --kind kg_edges: the "
+                             f"part of the split, {', '.join(KG_EDGES_ROLES)}, recorded as "
+                             "given.")
     parser.add_argument("--partial-phenotypes", choices=PARTIAL_PHENOTYPE_POLICIES,
-                        default=DEFAULT_PARTIAL_PHENOTYPES,
-                        help="A case some of whose terms do not map: keep it, ranked on "
-                             "the terms that map, or exclude it. Recorded in the version.")
+                        default=None,
+                        help="--kind supplied: a case some of whose terms do not map: keep "
+                             "it, ranked on the terms that map, or exclude it (default "
+                             f"{DEFAULT_PARTIAL_PHENOTYPES}). Recorded in the version.")
     parser.add_argument("--commit", metavar="PREVIEW_ID", default=None,
                         help="Publish the version, if the inputs still give this preview "
                              "id. Without it nothing is written.")
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    _check_kind_arguments(parser, args)
+    return args
+
+
+def _check_kind_arguments(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    """Each kind's arguments, and none of the other's (argparse's exit 2 with
+    the reason). A supplied import needs ``--source``; a KG edge set needs
+    ``--from-checkpoint`` and takes no source or phenotype policy. The role's
+    rule is the registry's, said by its refusal."""
+    if args.kind == SUPPLIED:
+        if args.from_checkpoint is not None:
+            parser.error("--from-checkpoint applies to --kind kg_edges only")
+        if args.source is None:
+            parser.error("--source is required for --kind supplied (the default)")
+        if args.partial_phenotypes is None:
+            args.partial_phenotypes = DEFAULT_PARTIAL_PHENOTYPES
+        return
+    given = [flag for flag, value in (("--source", args.source),
+                                      ("--partial-phenotypes", args.partial_phenotypes))
+             if value is not None]
+    if given:
+        parser.error(f"{' and '.join(given)} {'apply' if len(given) > 1 else 'applies'} to "
+                     "--kind supplied only; a KG edge set is taken from --from-checkpoint")
+    if args.from_checkpoint is None:
+        parser.error("--from-checkpoint is required for --kind kg_edges")
 
 
 def _commit_command(args: argparse.Namespace, preview: str) -> str:
-    parts = [
-        "python", "scripts/import_cohort.py",
-        "--registry", str(args.registry), "--data-dir", str(args.data_dir),
-        "--source", str(args.source), "--label", args.label, "--role", args.role,
-        "--partial-phenotypes", args.partial_phenotypes, "--commit", preview,
-    ]
+    if args.kind == KG_EDGES:
+        parts = [
+            "python", "scripts/import_cohort.py", "--kind", KG_EDGES,
+            "--registry", str(args.registry), "--data-dir", str(args.data_dir),
+            "--from-checkpoint", str(args.from_checkpoint), "--label", args.label,
+            "--role", args.role, "--commit", preview,
+        ]
+    else:
+        parts = [
+            "python", "scripts/import_cohort.py",
+            "--registry", str(args.registry), "--data-dir", str(args.data_dir),
+            "--source", str(args.source), "--label", args.label, "--role", args.role,
+            "--partial-phenotypes", args.partial_phenotypes, "--commit", preview,
+        ]
     return " ".join(shlex.quote(part) for part in parts)
 
 
@@ -115,7 +181,10 @@ def _shown_id(case_id: str) -> str:
 
 def format_preview(plan: ImportPlan) -> List[str]:
     """The preview, as lines: counts with their denominators, each exclusion by
-    case id with its reasons, the unmappable terms, and what the version binds."""
+    case id with its reasons, the unmappable terms, and what the version binds.
+    A KG edge set's is `format_kg_edges_preview`."""
+    if plan.kind == KG_EDGES:
+        return format_kg_edges_preview(plan)
     manifest = plan.manifest
     counts, source, record = manifest["counts"], manifest["source"], manifest["dataset_record"]
     lines = [
@@ -173,13 +242,80 @@ def format_preview(plan: ImportPlan) -> List[str]:
     return lines
 
 
+def _graph_lines(manifest: Dict[str, Any]) -> List[str]:
+    lines = ["  graph (the workspace manifest's digests):"]
+    return lines + [f"    {role:14s} {digest}" for role, digest in manifest["graph"].items()]
+
+
+def format_kg_edges_preview(plan: ImportPlan) -> List[str]:
+    """A KG edge set's preview, as lines: where its view and split were taken
+    from, the view, the split's parts, the counts with their denominators and
+    units, the pair rule, the pairs file, the message-passing graph (and, for
+    role train, that the measured edges are in it), and what the version binds.
+    Aggregates only: no edge is printed."""
+    manifest = plan.manifest
+    counts, pairs, split = manifest["counts"], manifest["pairs"], manifest["split"]
+    view, taken, record = manifest["graph_view"], manifest["taken_from"], manifest["dataset_record"]
+    positive = counts["positive_edges"]
+    parts = ", ".join(f"{part} {n}" for part, n in split["edges"].items())
+    batches = f"{pairs['batches']} batch{'es' if pairs['batches'] != 1 else ''}"
+    passing = manifest["message_passing"]
+    inside = (f"which include the {positive} measured edges (role train: nothing is removed)"
+              if passing["includes_measured_edges"] else "the measured edges are not in it")
+    lines = [
+        f"KG edge set preview: label {plan.label}, role {plan.role}",
+        f"  taken from        checkpoint {taken['checkpoint_filename']}, sha256 "
+        f"{taken['checkpoint_sha256']} (its model record's "
+        f"{' and '.join(taken['record_fields'])})",
+        f"  graph view        rule {view['rule']['rule']}, digest {view['digest']}",
+        f"  edge split        rule {split['rule']}, seed {split['seed']}, digest {split['digest']}",
+        f"    edges by part   {parts} (directed graph-view edges)",
+        f"  positive edges    {positive} (the {plan.role} part)",
+        f"  pairs             {counts['pairs']} of {positive} positive edges, each with one "
+        "negative tail",
+        f"  without negative  {counts['edges_without_negative']} of {positive} (no other tail "
+        "of their relation in their batch; left out, counted)",
+        f"  pair rule         {pairs['rule']}, seed {pairs['seed']}, batches of "
+        f"{pairs['batch_size']} ({batches}): base validation's rule",
+        f"  pairs file        {pairs['file']}, {pairs['rows']} rows, sha256 {pairs['sha256']}",
+        f"  message passing   the split's train part: {passing['edges']} directed edges; {inside}",
+        *_graph_lines(manifest),
+        f"  dataset record    origin {record['origin']}, sha256 {record['sha256']}",
+    ]
+    sources = record["sources"]
+    if not sources:
+        lines.append("    sources         none named")
+    for entry in sources:
+        lines.append(f"    {entry['role']:15s} {_entry(entry)}")
+    if record["origin"] == "synthetic":
+        lines.append("  SYNTHETIC WORKSPACE: this graph was not built from real files.")
+    return lines
+
+
+def _nothing_to_commit(plan: ImportPlan) -> Optional[str]:
+    """Why the preview offers no commit, or None: nothing would be measured."""
+    manifest = plan.manifest
+    if plan.kind == KG_EDGES:
+        if manifest["counts"]["pairs"]:
+            return None
+        return (f"no edge of the {plan.role} part has a negative tail, so there is nothing to "
+                "commit.")
+    if manifest["samples"]["n"]:
+        return None
+    return "no case is eligible for ranking against this graph, so there is nothing to commit."
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
     args = parse_args(argv)
 
     try:
-        plan = prepare_import(args.registry, args.data_dir, args.source, args.label,
-                              args.role, args.partial_phenotypes)
+        if args.kind == KG_EDGES:
+            plan = prepare_kg_edges_import(args.registry, args.data_dir, args.from_checkpoint,
+                                           args.label, args.role)
+        else:
+            plan = prepare_import(args.registry, args.data_dir, args.source, args.label,
+                                  args.role, args.partial_phenotypes)
     except OSError as exc:
         print(f"import_cohort: refused: {exc}. Nothing was written.", file=sys.stderr)
         return 1
@@ -190,10 +326,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.commit is None:
         print("\n".join(format_preview(plan)))
         print(f"\nPreview id: {plan.preview_id}")
-        if not plan.manifest["samples"]["n"]:
-            print("import_cohort: refused: no case is eligible for ranking against this "
-                  "graph, so there is nothing to commit. Nothing was written.",
-                  file=sys.stderr)
+        why = _nothing_to_commit(plan)
+        if why is not None:
+            print(f"import_cohort: refused: {why} Nothing was written.", file=sys.stderr)
             return 1
         print("Nothing was written. To publish this version, run:")
         print(f"  {_commit_command(args, plan.preview_id)}")
@@ -210,9 +345,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     except ValueError as exc:
         print(f"import_cohort: refused: {exc}", file=sys.stderr)
         return 1
-    print(f"Committed cohort version {plan.label} (role {plan.role}): "
-          f"{version.manifest['samples']['n']} ranked of "
-          f"{version.manifest['counts']['source_cases']} source cases")
+    if version.kind == KG_EDGES:
+        counts = version.manifest["counts"]
+        print(f"Committed KG edge set {plan.label} ({plan.role}): {counts['pairs']} pairs of "
+              f"{counts['positive_edges']} positive edges")
+    else:
+        print(f"Committed cohort version {plan.label} (role {plan.role}): "
+              f"{version.manifest['samples']['n']} ranked of "
+              f"{version.manifest['counts']['source_cases']} source cases")
     print(f"  directory        {version.directory}")
     print(f"  manifest sha256  {version.identity.sha256}")
     return 0

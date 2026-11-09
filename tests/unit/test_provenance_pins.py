@@ -138,6 +138,9 @@ ALLOWED = {
             "must hash to its name before an import relies on it; records nothing"),
     ("src/evaluation/cohort_registry.py", "resolve_version", "read_once"): (1, _READER),
     ("src/evaluation/cohort_registry.py", "resolve_version", "json.loads"): (1, _READER),
+    # Research comparison Stage 4: a KG edge set's pairs file, compared with the
+    # digest its version binds before the same bytes are parsed.
+    ("src/evaluation/cohort_registry.py", "read_kg_edge_pairs", "read_once"): (1, _READER),
     ("src/ontology/loader.py", "OntologyLoader.load", "hashlib.sha256"):
         (1, "KG build, unchanged by M2.1 (BACKLOG 19.13): the digest of the handle that "
             "is parsed, M2.1's precedent"),

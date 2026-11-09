@@ -1029,7 +1029,12 @@ def _counts(manifest, **changes):
 @pytest.mark.parametrize("edit, problem", [
     (lambda m: b"\xff not json", "not UTF-8 JSON"),
     (lambda m: [m], "not a JSON object"),
-    (lambda m: {**m, "schema_version": 2}, "schema 2"),
+    # Schema 2 states its kind; a supplied manifest marked schema 2 states none.
+    (lambda m: {**m, "schema_version": 2}, "schema 2, which must state its kind"),
+    (lambda m: {**m, "schema_version": 3}, "schema 3; this revision reads schemas 1 and 2 only"),
+    (lambda m: {**m, "kind": "supplied"}, "schema 1, which records no kind, yet states kind"),
+    (lambda m: {**m, "schema_version": 2, "kind": "cases"},
+     "kind 'cases'; this revision reads kinds supplied and kg_edges only"),
     (lambda m: {**m, "schema_version": True}, "schema True"),
     (lambda m: {**m, "label": "v2"}, "names the label 'v2'"),
     (lambda m: _without(m, "samples"), "missing samples"),

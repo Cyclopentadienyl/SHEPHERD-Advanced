@@ -113,6 +113,7 @@ guide §4.11): `SHEPHERD_REGISTRY` naming the deployment's registry, the `<regis
 | Step | Command | Produces |
 |---|---|---|
 | 1. Import a cohort | `scripts/import_cohort.py --registry <registry> --data-dir <workspace> --source <cases.json> --label <label> --role <role>`: a preview, then the same with `--commit <preview id>` | an immutable cohort version, mapped to one workspace's graph, in a registry outside the repository |
+| 1b. Import a KG edge set | `scripts/import_cohort.py --kind kg_edges --registry <registry> --data-dir <workspace> --from-checkpoint <file> --label <label> --role test`, the role `train`, `val` or `test`: a preview, then the same with `--commit <preview id>` | an immutable KG edge set in the same registry: that part of the edge split the checkpoint was trained on, with its fixed link-prediction pairs (deployment guide §4.9); no protocol measures one yet |
 | 2. Measure | `scripts/measure_scorer.py --checkpoint <file> --data-dir <workspace> --mode disease --cohort <label> --registry <registry>`, with `--mode` (required) a protocol this build implements that the model's capabilities admit (today `disease`, `gene` or `patients_like_me`, each taking a model that carries its task head) | a task report, kept in the registry's report store |
 | 3. Record | `--record` on step 2, or later `scripts/record_evaluation.py --report <report> --checkpoint <file>`, the command step 2 prints | a record in `evaluations.json` beside the checkpoint's resolved path, where the service reads it |
 

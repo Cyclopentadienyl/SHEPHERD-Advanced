@@ -58,9 +58,11 @@ FULL_VIEW = "full_view"
 FULL_VIEW_INPUTS = ("edge_relation_ids", "node_ids", "node_types", "relation_ids")
 
 #: The data kinds measured (`src.evaluation.cohort.COHORT_KINDS`): a generated
-#: split, and a registered version's recorded kind.
+#: split, and a registered version's recorded kind (a supplied cohort, a KG
+#: edge set).
 GENERATED = "generated"
 SUPPLIED = "supplied"
+KG_EDGES = "kg_edges"
 
 #: The task heads' scoring semantics, by task, as
 #: `src.models.bundle.capabilities.TASK_HEAD_SEMANTICS` states them.
@@ -155,7 +157,8 @@ _CAPABILITY_WORDS: dict[str, str] = {
 
 #: A data kind as a reason names it.
 _KIND_WORDS: dict[str, str] = {GENERATED: "a generated split",
-                               SUPPLIED: "a supplied cohort version"}
+                               SUPPLIED: "a supplied cohort version",
+                               KG_EDGES: "a KG edge set"}
 
 
 def names() -> tuple[str, ...]:
@@ -337,6 +340,6 @@ def refusal(name: Any, model: Any, kind: Any, counts: Mapping[str, Any] | None) 
     return model_refusal(name, model) or inputs_refusal(name, kind, counts)
 
 
-__all__ = ["BASE_MESSAGE", "FULL_VIEW_INPUTS", "GENERATED", "NO_RECORD", "PROTOCOLS", "Protocol",
-           "SUPPLIED", "available", "inputs_refusal", "model_refusal", "names", "refusal",
-           "task_head"]
+__all__ = ["BASE_MESSAGE", "FULL_VIEW_INPUTS", "GENERATED", "KG_EDGES", "NO_RECORD", "PROTOCOLS",
+           "Protocol", "SUPPLIED", "available", "inputs_refusal", "model_refusal", "names",
+           "refusal", "task_head"]

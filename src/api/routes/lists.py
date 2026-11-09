@@ -9,8 +9,10 @@ request.
 
 - `GET /workspaces`: the workspaces under `SHEPHERD_WORKSPACES_ROOT`, each with
   its dataset identity. Reads small JSON files only; read-only and open.
-- `GET /cohorts`: the cohort versions in `SHEPHERD_REGISTRY`, with aggregates
-  only (never a case identifier, D7) and their report stores' runs, each with
+- `GET /cohorts`: the versions in `SHEPHERD_REGISTRY`, each with its kind (a
+  supplied cohort, or a KG edge set with its role and edge counts, never an
+  edge), with aggregates only (never a case identifier, D7) and their report
+  stores' runs, each with
   whether its report is kept and registered as the registration reads them
   from the store and the ledger (`server_lists.stored_report_state`).
   Read-only and open. ``registered`` is read from the ledger beside the

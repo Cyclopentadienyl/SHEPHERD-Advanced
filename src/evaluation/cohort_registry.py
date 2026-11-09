@@ -1,6 +1,6 @@
 """
-Test cohort versions: a source case set mapped to one graph, kept outside the repository.
-========================================================================================
+Data versions: a source case set mapped to one graph, or a KG edge set, kept outside the repository.
+====================================================================================================
 Contract M4 (item 14, phase 1; `docs/working/PLAN_TEST_RESULTS.md` D6, D7). A
 supplied cohort used to be a loose `<split>_samples.json` dropped into a
 workspace: integer indices with nothing saying which graph's node order they
@@ -71,6 +71,38 @@ node's id (``disgenet:SCN1A``) or a symbol only one gene node carries
 left out and counted, and the case is not excluded for it (a task binds what
 it needs). The ``genes`` counts appear only when the source lists genes.
 
+**Kinds and schemas** (research comparison §5 Stage 4, owner's O7). A version
+is of one data kind (`VERSION_KINDS`, the words of
+`src.evaluation.cohort.COHORT_KINDS`), read and checked by the one reader,
+`resolve_version`, in either schema it reads (`VERSION_SCHEMAS`):
+
+- **schema 1** records no kind and is a ``supplied`` cohort, as every version
+  before schema 2 is; a supplied import still writes schema 1, byte for byte
+  as before (golden P0-4);
+- **schema 2** states its ``kind``. A revision that reads schema 1 only
+  refuses a schema-2 version by its schema check ("is schema 2; this revision
+  reads schema 1 only"), so it never reads one as a supplied cohort.
+
+A **KG edge set** (``kg_edges``) is one part of a recorded edge split of one
+graph view, kept as fixed link-prediction pairs. `prepare_kg_edges_import`
+takes the view's rule and the split from a named checkpoint's model record
+(``data_roles``), rebuilds both from the workspace's graph and checks them
+(`src.kg.graph_view.rebuild_split`), then builds the pairs of the chosen part
+by base validation's rule (`src.models.bundle.lp_head.fixed_lp_pairs`, the
+split's seed, `BASE_FIXED`'s batch size). Its role is the part, recorded as
+given: ``train``, ``val`` or ``test``, none refused for not being test. Its
+manifest binds the four graph digests and the dataset record (compared by
+`verify_cohort_binding`, as a supplied version's are), the view's rule and
+digest, the split's rule, seed, digest and part counts, the message-passing
+graph (the split's train part, README A4; for role ``train`` the measured
+edges are in it, and the manifest says so), the pair rule with its seed and
+batch size, and ``pairs.bin``: the pairs as compact little-endian int64 rows
+(head, relation, tail, negative tail) in the order made, bound by the digest
+of its bytes and read only through `read_kg_edge_pairs`. torch's generator
+stream is not promised across releases, so the pairs are kept, never rebuilt.
+Its counts carry their units (``count_units``). Nothing about it holds a
+case.
+
 Module: src/evaluation/cohort_registry.py
 """
 from __future__ import annotations
@@ -107,12 +139,32 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: (OWNER Q5).
 SOURCE_FORMAT = "shepherd-cases/1"
 
-#: Bumped when the version manifest's shape changes in a way an old reader
-#: cannot read. A reader refuses any other value rather than guessing.
+#: The schema a supplied import writes: schema 1, which records no kind, so a
+#: supplied version's bytes are what they always were (golden P0-4).
 VERSION_SCHEMA_VERSION = 1
+#: The schema that states its kind, which a KG edge set is written in.
+KINDED_SCHEMA_VERSION = 2
+#: The schemas `resolve_version` reads, each bumped when the manifest's shape
+#: changes in a way an old reader cannot read. A reader refuses any other value
+#: rather than guessing.
+VERSION_SCHEMAS: Tuple[int, ...] = (VERSION_SCHEMA_VERSION, KINDED_SCHEMA_VERSION)
+
+#: The kinds a registered version is (`src.evaluation.cohort.COHORT_KINDS` but
+#: ``generated``, the generator's own splits in a workspace): a supplied cohort,
+#: and a KG edge set. One name per kind, the measurement manifest's words.
+SUPPLIED = "supplied"
+KG_EDGES = "kg_edges"
+VERSION_KINDS: Tuple[str, ...] = (SUPPLIED, KG_EDGES)
+
+#: A KG edge set's roles: the parts of an edge split
+#: (`src.kg.graph_view.SPLIT_NAMES`, pinned equal by
+#: tests/unit/test_kg_edge_versions.py; this module imports no torch).
+KG_EDGES_ROLES: Tuple[str, ...] = ("train", "val", "test")
 
 VERSION_MANIFEST = "cohort.json"
 VERSION_SAMPLES = "samples.json"
+#: A KG edge set's pairs (`lp_pairs_table`'s bytes), bound by its manifest.
+VERSION_PAIRS = "pairs.bin"
 SOURCES_DIR = "sources"
 VERSIONS_DIR = "versions"
 REPORTS_DIR = "reports"
@@ -154,12 +206,42 @@ _MONDO_TERM = re.compile(r"MONDO:[0-9]{7}")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _PREVIEW_ID = re.compile(r"[0-9a-f]{16}")
 
-#: Every field `commit_import` writes. A manifest missing one is not a version
-#: this revision reads.
+#: Every field `commit_import` writes for a supplied version. A manifest
+#: missing one is not a version this revision reads.
 REQUIRED_VERSION_FIELDS: Tuple[str, ...] = (
     "schema_version", "what_this_is", "label", "role", "source", "graph",
     "dataset_record", "mapping", "counts", "samples", "unmappable_terms",
     "exclusions", "imported",
+)
+
+#: Every field `commit_import` writes for a KG edge set (`build_kg_edges_manifest`).
+KG_EDGES_REQUIRED_FIELDS: Tuple[str, ...] = (
+    "schema_version", "kind", "what_this_is", "label", "role", "graph", "dataset_record",
+    "graph_view", "split", "message_passing", "pairs", "counts", "count_units",
+    "taken_from", "imported",
+)
+
+KG_EDGES_WHAT_THIS_IS = ("a KG edge set: one part of a recorded edge split of one graph view, "
+                         "kept as fixed link-prediction pairs")
+
+#: A KG edge set's counts, each with its unit. An edge is a directed edge of
+#: the graph view: an edge and its reverse twin are one fact and two edges, and
+#: always in the same part.
+KG_EDGES_COUNT_UNITS: Dict[str, str] = {
+    "positive_edges": "directed graph-view edges of the role's part, each a positive",
+    "pairs": "(positive, negative) pairs: a positive edge with its one negative tail",
+    "edges_without_negative": ("positive edges left out: no other tail of their relation in "
+                               "their batch to draw a negative from"),
+    "message_passing_edges": "directed graph-view edges of the split's train part",
+}
+
+#: The model-record fields a KG edge set's view and split are taken from.
+KG_EDGES_TAKEN_FROM = ("data_roles.graph_view", "data_roles.split")
+
+#: What `cohort_version_block` gives for a KG edge set, exactly.
+KG_EDGES_BLOCK_FIELDS: Tuple[str, ...] = (
+    "label", "role", "kind", "manifest_sha256", "graph", "dataset_record_sha256",
+    "graph_view", "split", "message_passing", "pairs", "counts", "count_units",
 )
 
 
@@ -282,36 +364,67 @@ class ImportPlan(NamedTuple):
     """Everything a commit writes, computed from one read of each input.
 
     `manifest` is the version manifest without its ``imported`` block, which is
-    what `preview_id` covers. `source_bytes` are the bytes parsed, kept so the
-    copy in the registry is the file that was mapped, not a second read of it.
+    what `preview_id` covers. For a supplied version, `source_bytes` are the
+    bytes parsed, kept so the copy in the registry is the file that was
+    mapped, not a second read of it, and `samples_bytes` the mapped samples.
+    A KG edge set keeps no source file (its graph is the workspace's, bound by
+    digest) and no samples: `pairs_bytes` are its pairs (`VERSION_PAIRS`).
     """
 
     label: str
     role: str
     manifest: Dict[str, Any]
     preview_id: str
-    source_sha256: str
-    source_bytes: bytes
-    samples_bytes: bytes
+    source_sha256: Optional[str]
+    source_bytes: Optional[bytes]
+    samples_bytes: Optional[bytes]
+    pairs_bytes: Optional[bytes] = None
+
+    @property
+    def kind(self) -> Optional[str]:
+        """The kind of the version this plan writes (`version_kind`)."""
+        return version_kind(self.manifest)
 
 
 class CohortVersionRead(NamedTuple):
     """A committed version as resolved: its manifest, the identity of the bytes
-    that manifest was parsed from, its directory, and where its samples are."""
+    that manifest was parsed from, its directory, and where its samples are
+    (None for a kind that keeps none: a KG edge set's pairs are read by
+    `read_kg_edge_pairs`)."""
 
     manifest: Dict[str, Any]
     identity: ReadIdentity
     directory: Path
-    samples_path: Path
+    samples_path: Optional[Path]
 
     @property
     def kind(self) -> str:
         """The version's data kind, in the words a measurement manifest's
         `cohort_kind` uses (`src.evaluation.cohort.COHORT_KINDS`), which a
-        new measurement is judged by (`src.evaluation.protocols`): a version
-        of the one schema this revision reads (`VERSION_SCHEMA_VERSION`)
-        records no kind and is a supplied cohort."""
-        return "supplied"
+        new measurement is judged by (`src.evaluation.protocols`): a schema-1
+        version records no kind and is a supplied cohort; a schema-2 version
+        states its own (`version_kind`)."""
+        return version_kind(self.manifest)
+
+
+class KgEdgePairsRead(NamedTuple):
+    """A KG edge set's pairs as `read_kg_edge_pairs` parsed them from one read
+    of ``pairs.bin`` (`src.models.bundle.lp_head.LPPairs`, with the version's
+    counts and the pairs' digest), and the identity of those bytes."""
+
+    pairs: Any
+    identity: ReadIdentity
+
+
+def version_kind(manifest: Mapping[str, Any]) -> Optional[str]:
+    """The kind of a version manifest: ``supplied`` for schema 1, which records
+    none, and the stated ``kind`` for schema 2 (None when it states none, which
+    `resolve_version` refuses). The one rule the reader, a plan and every
+    listing read a kind by."""
+    if manifest.get("schema_version") == VERSION_SCHEMA_VERSION:
+        return SUPPLIED
+    kind = manifest.get("kind")
+    return kind if isinstance(kind, str) else None
 
 
 # ---------------------------------------------------------------------------
@@ -398,11 +511,13 @@ def validate_label(label: Any) -> str:
 
 
 def validate_role(role: Any) -> str:
-    """A cohort role: the identifier rule, and never a generator split name.
+    """A supplied cohort's role: the identifier rule, and never a generator
+    split name.
 
     `train` and `val` name the generator's cohorts; a test cohort carrying one
     would read as a generated cohort in every artifact downstream, the hazard
-    `src/evaluation/cohort.py` refuses for a supplied split.
+    `src/evaluation/cohort.py` refuses for a supplied split. A KG edge set's
+    role is another rule (`validate_kg_edges_role`).
     """
     try:
         validate_split_name(role)
@@ -413,6 +528,19 @@ def validate_role(role: Any) -> str:
             f"the cohort role {role!r} is one of the generator's own split names "
             f"({', '.join(GENERATED_SPLITS)}); a test cohort carrying it would read as "
             "a generated cohort. Give it its own role, such as mygene2."
+        )
+    return role
+
+
+def validate_kg_edges_role(role: Any) -> str:
+    """A KG edge set's role: the part of the edge split it holds, recorded as
+    given (owner's O7). ``train`` and ``val`` are roles like ``test``: measuring
+    the train part is a fitting diagnostic and the val part a development
+    measurement, and neither is ever relabelled as test."""
+    if not (isinstance(role, str) and role in KG_EDGES_ROLES):
+        raise CohortVersionRefused(
+            f"a KG edge set's role is the part of the edge split it holds, one of "
+            f"{', '.join(KG_EDGES_ROLES)}; got {role!r}"
         )
     return role
 
@@ -436,7 +564,7 @@ def _require_label_free(root: Path, label: str) -> None:
         return
     if (directory / VERSION_MANIFEST).is_file():
         raise CohortVersionRefused(
-            f"the cohort version {label!r} already exists ({directory}). Versions are "
+            f"the version {label!r} already exists ({directory}). Versions are "
             "immutable; import under a new label."
         )
     raise CohortVersionRefused(
@@ -955,6 +1083,236 @@ def prepare_import(
                       samples_bytes)
 
 
+# ---------------------------------------------------------------------------
+# A KG edge set (research comparison §5 Stage 4)
+# ---------------------------------------------------------------------------
+def build_kg_edges_manifest(
+    *,
+    label: str,
+    role: str,
+    bound: Mapping[str, str],
+    dataset_record: "DatasetRecord",
+    checkpoint_sha256: str,
+    checkpoint_filename: str,
+    view: Any,
+    split: Any,
+    pairs: Any,
+    pairs_sha256: str,
+    batch_size: int,
+) -> Dict[str, Any]:
+    """A KG edge set's manifest (schema 2) without its ``imported`` block.
+
+    Built only from what was read and computed: the four digests the workspace
+    manifest binds and the dataset record the run verified (its digest, origin
+    and every source it names, by role, with no list of allowed roles); the
+    graph view (`GraphView`: its rule and digest) and the edge split
+    (`EdgeSplit.record`: rule, seed, view digest, digest, edges per part) the
+    checkpoint's record named and this workspace rebuilt; the message-passing
+    graph, the split's train part; the pairs (`LPPairs`) of the role's part,
+    with the rule, seed and batch size that made them, the digest of the
+    file's bytes and the LP core's pairs digest; and the counts with their
+    units. Aggregates only: no edge is listed here.
+    """
+    from src.models.bundle.lp_head import LP_PAIR_RULE, LP_PAIRS_LAYOUT
+
+    record = split.record()
+    edges = record["edges"]
+    positive = int(pairs.counts["edges"])
+    return {
+        "schema_version": KINDED_SCHEMA_VERSION,
+        "kind": KG_EDGES,
+        "what_this_is": KG_EDGES_WHAT_THIS_IS,
+        "label": label,
+        "role": role,
+        "graph": {role_name: bound[role_name] for role_name in GRAPH_ARTIFACTS},
+        "dataset_record": {
+            "sha256": dataset_record.identity.sha256,
+            "origin": dataset_record.origin,
+            "sources": [{"role": entry["role"], "digest": entry["digest"],
+                         "declared_version": entry.get("declared_version")}
+                        for entry in dataset_record.record["sources"]],
+        },
+        "graph_view": {"rule": copy.deepcopy(view.rule), "digest": view.digest},
+        "split": record,
+        # README A4: base validation and test message passing are the training
+        # edges only. For role train the measured edges are among them, and
+        # the version says so rather than removing anything.
+        "message_passing": {"part": "train", "edges": edges["train"],
+                            "includes_measured_edges": role == "train"},
+        "pairs": {
+            "file": VERSION_PAIRS,
+            "layout": copy.deepcopy(LP_PAIRS_LAYOUT),
+            "rows": int(pairs.counts["pairs"]),
+            "sha256": pairs_sha256,
+            "lp_pairs_digest": pairs.digest,
+            "rule": LP_PAIR_RULE,
+            "part": role,
+            "seed": int(split.seed),
+            "batch_size": int(batch_size),
+            "batches": -(-positive // int(batch_size)),
+        },
+        "counts": {
+            "positive_edges": positive,
+            "pairs": int(pairs.counts["pairs"]),
+            "edges_without_negative": int(pairs.counts["without_negative"]),
+            "message_passing_edges": edges["train"],
+        },
+        "count_units": dict(KG_EDGES_COUNT_UNITS),
+        "taken_from": {"checkpoint_sha256": checkpoint_sha256,
+                       "checkpoint_filename": checkpoint_filename,
+                       "record_fields": list(KG_EDGES_TAKEN_FROM)},
+    }
+
+
+def _read_checkpoint_record(checkpoint: Path) -> Tuple[Any, Any]:
+    """The checkpoint at `checkpoint`, one read at its resolved path, and its
+    model record (`read_model_record`), or a refusal naming the file.
+
+    A file torch cannot parse as a weights-only checkpoint is named, with
+    torch's error; a file that cannot be read keeps the read's own `OSError`.
+    A checkpoint without a model record this build reads is refused for that
+    (`ModelRecordError`, a `ValueError`): its view and split are not known.
+    """
+    from src.models.bundle.record import ModelRecordError, read_model_record
+    from src.utils.checkpoint_io import read_checkpoint
+
+    try:
+        read = read_checkpoint(Path(checkpoint).resolve(), map_location="cpu",
+                               weights_only=True)
+    except (OSError, MemoryError):
+        raise
+    except Exception as exc:  # noqa: BLE001 - torch raises a different type for each kind of junk
+        raise CohortVersionRefused(
+            f"{checkpoint} could not be read as a checkpoint ({type(exc).__name__}: {exc})"
+        ) from exc
+    try:
+        record = read_model_record(read.checkpoint)
+    except ModelRecordError as exc:
+        raise CohortVersionRefused(
+            f"the checkpoint {checkpoint} has no model record this build reads ({exc}), so "
+            "the graph view and edge split it was trained on are not known"
+        ) from None
+    return read, record
+
+
+def prepare_kg_edges_import(
+    registry: Any,
+    data_dir: Path,
+    checkpoint: Path,
+    label: str,
+    role: str,
+) -> ImportPlan:
+    """Read the workspace and the checkpoint, rebuild the checkpoint's view and
+    split, build the role's pairs and the version; write nothing.
+
+    In order, each refusal before anything is written:
+
+    1. the registry, the label (free, as at commit) and the role
+       (`validate_kg_edges_role`);
+    2. the workspace graph through the readers measurement uses: the split
+       manifest, the tensors against it, ``kg.json`` identified against it and
+       the dataset record (`verify_graph_reads`, `check_unparsed_kg_json`,
+       `verify_dataset_record`);
+    3. the checkpoint, one read, trained on this graph (`verify_training_record`,
+       contract M2.4), with a model record this build reads (which refuses a
+       record naming one input two ways);
+    4. the view its record names (``data_roles.graph_view``), rebuilt from this
+       graph by its rule, must have the recorded digest; its split
+       (``data_roles.split``) is rebuilt and checked field by field
+       (`rebuild_split`), the first field that differs named;
+    5. the pairs of the role's part by base validation's rule
+       (`fixed_lp_pairs` with the split's seed and `BASE_FIXED`'s
+       ``validation_batch_size``), so a ``val`` set's pairs are the ones base
+       validation scores.
+
+    Raises:
+        RegistryRefused, CohortVersionRefused: the registry, label, role,
+            checkpoint, view or split is refused.
+        ValueError: from the workspace readers and verifiers, naming the file.
+        OSError: a file could not be read.
+    """
+    from src.config.recipe import BASE_FIXED
+    from src.kg.artifacts import (
+        check_unparsed_kg_json,
+        read_split_manifest,
+        verify_dataset_record,
+        verify_graph_reads,
+    )
+    from src.kg.graph_view import (
+        GraphViewError,
+        SplitMismatchError,
+        build_graph_view,
+        rebuild_split,
+    )
+    from src.kg.storage.file_storage import read_graph_artifacts
+    from src.models.bundle.lp_head import fixed_lp_pairs, lp_pairs_table
+    from src.utils.fingerprint import verify_training_record
+
+    root = validate_registry(registry)
+    label = validate_label(label)
+    role = validate_kg_edges_role(role)
+    _require_label_free(root, label)
+
+    data_dir, checkpoint = Path(data_dir), Path(checkpoint)
+    manifest = read_split_manifest(data_dir)
+    graph = read_graph_artifacts(data_dir, map_location="cpu")
+    bound = verify_graph_reads(manifest, graph.reads)
+    check_unparsed_kg_json(data_dir, manifest)
+    dataset_record = verify_dataset_record(manifest, bound["kg"])
+
+    read, record = _read_checkpoint_record(checkpoint)
+    verify_training_record(read.checkpoint, bound, tuple(GRAPH_ARTIFACTS),
+                           recorded_by=f"checkpoint {checkpoint}",
+                           compared_with=f"the workspace {data_dir}")
+    checkpoint_sha256 = read.identity.sha256
+    del read
+
+    roles = record.data_roles
+    view_record = roles.get("graph_view")
+    split_record = roles.get("split")
+    if not (isinstance(view_record, Mapping) and isinstance(view_record.get("rule"), Mapping)
+            and isinstance(split_record, Mapping)):
+        raise CohortVersionRefused(
+            f"the checkpoint {checkpoint}'s model record names no graph view rule or edge "
+            f"split ({', '.join(KG_EDGES_TAKEN_FROM)}), so there is no split to take a part of"
+        )
+    try:
+        view = build_graph_view(graph.graph_data, rule=copy.deepcopy(dict(view_record["rule"])))
+    except GraphViewError as exc:
+        raise CohortVersionRefused(
+            f"the graph view rule the checkpoint {checkpoint} records cannot be applied to "
+            f"this workspace's graph: {exc}"
+        ) from None
+    del graph
+    recorded_digest = view_record.get("digest")
+    if view.digest != recorded_digest:
+        raise CohortVersionRefused(
+            f"the checkpoint {checkpoint} records graph view {str(recorded_digest)[:12]}..., "
+            f"but its rule builds view {view.digest[:12]}... from this workspace's graph: the "
+            "record does not describe this graph's view"
+        )
+    try:
+        split = rebuild_split(view, split_record)
+    except SplitMismatchError as exc:
+        raise CohortVersionRefused(
+            f"the checkpoint {checkpoint}'s recorded edge split does not rebuild from this "
+            f"workspace's view: {exc}"
+        ) from None
+
+    part = split.mask(role)
+    batch_size = int(BASE_FIXED["validation_batch_size"])
+    pairs = fixed_lp_pairs(view.edge_index(part), view.rel[part], seed=split.seed,
+                           batch_size=batch_size)
+    pairs_bytes = lp_pairs_table(pairs.head, pairs.relation, pairs.tail, pairs.negative_tail)
+    version = build_kg_edges_manifest(
+        label=label, role=role, bound=bound, dataset_record=dataset_record,
+        checkpoint_sha256=checkpoint_sha256, checkpoint_filename=checkpoint.name,
+        view=view, split=split, pairs=pairs, pairs_sha256=_sha256(pairs_bytes),
+        batch_size=batch_size,
+    )
+    return ImportPlan(label, role, version, preview_id(version), None, None, None, pairs_bytes)
+
+
 def _utc(now: datetime, pattern: str) -> str:
     if now.tzinfo is None:
         raise ValueError(f"{now!r} has no time zone; a recorded time must say which it is in")
@@ -1004,17 +1362,19 @@ def commit_import(
 
     Writes nothing until every check passes: the registry, the preview id
     (recomputed from `plan.manifest`, not taken from `plan`), the plan's label
-    and bytes against what its manifest binds, a non-empty sample set, and a
-    free label. Then, in order: the source is kept (no-clobber), the version
-    directory is claimed with ``mkdir(exist_ok=False)``, ``samples.json`` is
-    published, and ``cohort.json`` -- the commit point -- last, with the
-    ``imported`` block (when, and `code_revision(REPO_ROOT)`, both taken before
-    the first write). ``sources/``, ``versions/`` and, after the claim, the
-    version directory are each resolved again before anything is written into
-    them, and refused when a link takes one outside the registry or into the
-    repository (`_registry_directory`); the refusal says what was already
-    written. A failure after the claim leaves a directory without
-    ``cohort.json``, which every reader refuses as incomplete.
+    and bytes against what its manifest binds, something to measure (a
+    non-empty sample set; a KG edge set's pairs), and a free label. Then, in
+    order: a supplied version's source is kept (no-clobber), the version
+    directory is claimed with ``mkdir(exist_ok=False)``, its data file is
+    published (``samples.json``; a KG edge set's ``pairs.bin``), and
+    ``cohort.json`` -- the commit point -- last, with the ``imported`` block
+    (when, and `code_revision(REPO_ROOT)`, both taken before the first write).
+    ``sources/``, ``versions/`` and, after the claim, the version directory are
+    each resolved again before anything is written into them, and refused when
+    a link takes one outside the registry or into the repository
+    (`_registry_directory`); the refusal says what was already written. A
+    failure after the claim leaves a directory without ``cohort.json``, which
+    every reader refuses as incomplete.
 
     `now` is the time recorded as ``imported.at``; the current time when omitted.
 
@@ -1041,20 +1401,7 @@ def commit_import(
         # The id covers the manifest, not the bytes beside it; those must be the
         # ones it binds, or the registry would keep a file under another's name.
         label = validate_label(plan.manifest["label"])
-        source_sha256 = plan.manifest["source"]["sha256"]
-        if (plan.label != label or plan.source_sha256 != source_sha256
-                or _sha256(plan.source_bytes) != source_sha256
-                or _sha256(plan.samples_bytes) != plan.manifest["samples"]["sha256"]):
-            raise CohortVersionRefused(
-                f"the plan for {label!r} carries a label, source or samples its manifest "
-                "does not bind, so it is not one prepare_import made from one read of each "
-                "input."
-            )
-        if not plan.manifest["samples"]["n"]:
-            raise CohortVersionRefused(
-                f"no case of the source is eligible for ranking against this graph, so the "
-                f"version {label!r} would measure nobody. See the preview's exclusions."
-            )
+        data_file = _plan_data_file(plan, label)
         _require_label_free(root, label)
     except (RegistryRefused, CohortVersionRefused) as exc:
         raise type(exc)(f"{exc} Nothing was written.") from None
@@ -1069,9 +1416,14 @@ def commit_import(
 
     # Each directory is resolved again before it is written into: a link below
     # the root would otherwise carry the files wherever it points (D7).
-    sources = _keep_source(root, plan)
-    kept = (f"Only the source copy was written (under {sources}, named by its digest, which "
-            "is harmless to keep).")
+    if plan.kind == SUPPLIED:
+        sources = _keep_source(root, plan)
+        kept = (f"Only the source copy was written (under {sources}, named by its digest, "
+                "which is harmless to keep).")
+        claimed = f"Only the source copy (under {sources}) and the empty directory"
+    else:
+        kept = "Nothing was written."
+        claimed = "Only the empty directory"
 
     versions = _registry_directory(root / VERSIONS_DIR, within=root, done=kept)
     versions.mkdir(exist_ok=True)
@@ -1085,14 +1437,62 @@ def commit_import(
         ) from None
     directory = _registry_directory(
         directory, within=root,
-        done=(f"Only the source copy (under {sources}) and the empty directory {directory}, "
-              "which claimed the label, were written; nothing was written into it. Every "
-              "reader refuses it as an interrupted import; remove it to reuse the label."),
+        done=(f"{claimed} {directory}, which claimed the label, "
+              f"{'were' if plan.kind == SUPPLIED else 'was'} written; nothing was written "
+              "into it. Every reader refuses it as an interrupted import; remove it to reuse "
+              "the label."),
     )
 
-    publish_bytes(directory / VERSION_SAMPLES, plan.samples_bytes)
+    name, data = data_file
+    publish_bytes(directory / name, data)
     publish_bytes(directory / VERSION_MANIFEST, manifest_bytes)
     return resolve_version(root, label)
+
+
+def _plan_data_file(plan: ImportPlan, label: str) -> Tuple[str, bytes]:
+    """The data file a commit publishes before the manifest, by the plan's
+    kind, once the plan's label and bytes are those its manifest binds and it
+    holds something to measure; else a refusal.
+
+    A supplied version: its label, source and samples, and at least one case
+    eligible for ranking. A KG edge set: its label and pairs, and at least one
+    pair (a part none of whose edges has a negative would measure nothing)."""
+    manifest = plan.manifest
+    kind = plan.kind
+    if kind == SUPPLIED:
+        source_sha256 = manifest["source"]["sha256"]
+        if (plan.label != label or plan.source_sha256 != source_sha256
+                or plan.source_bytes is None or plan.samples_bytes is None
+                or _sha256(plan.source_bytes) != source_sha256
+                or _sha256(plan.samples_bytes) != manifest["samples"]["sha256"]):
+            raise CohortVersionRefused(
+                f"the plan for {label!r} carries a label, source or samples its manifest "
+                "does not bind, so it is not one prepare_import made from one read of each "
+                "input."
+            )
+        if not manifest["samples"]["n"]:
+            raise CohortVersionRefused(
+                f"no case of the source is eligible for ranking against this graph, so the "
+                f"version {label!r} would measure nobody. See the preview's exclusions."
+            )
+        return VERSION_SAMPLES, plan.samples_bytes
+    if kind == KG_EDGES:
+        if (plan.label != label or plan.pairs_bytes is None
+                or _sha256(plan.pairs_bytes) != manifest["pairs"]["sha256"]):
+            raise CohortVersionRefused(
+                f"the plan for {label!r} carries a label or pairs its manifest does not "
+                "bind, so it is not one prepare_kg_edges_import made from one read of each "
+                "input."
+            )
+        if not manifest["counts"]["pairs"]:
+            raise CohortVersionRefused(
+                f"none of the {manifest['counts']['positive_edges']} edges of the "
+                f"{manifest['role']} part has a negative tail (no other tail of its relation "
+                f"in its batch), so the KG edge set {label!r} would measure nothing."
+            )
+        return VERSION_PAIRS, plan.pairs_bytes
+    raise CohortVersionRefused(f"the plan for {label!r} is of kind {kind!r}, which this "
+                               f"revision does not write ({', '.join(VERSION_KINDS)}).")
 
 
 # ---------------------------------------------------------------------------
@@ -1154,7 +1554,52 @@ def _counts_problems(manifest: Dict[str, Any], samples_n: Any) -> List[str]:
     return problems
 
 
+def _is_sha(value: Any) -> bool:
+    return isinstance(value, str) and bool(_SHA256.fullmatch(value))
+
+
+def _is_whole(value: Any) -> bool:
+    """A whole number, and not a boolean (a seed may be any integer)."""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _graph_problems(manifest: Dict[str, Any]) -> List[str]:
+    """The four graph digests, which `verify_cohort_binding` compares, of
+    either kind."""
+    graph = manifest["graph"]
+    if not isinstance(graph, dict) or not all(_is_sha(graph.get(r)) for r in GRAPH_ARTIFACTS):
+        return [f"graph must hold a SHA-256 for each of {list(GRAPH_ARTIFACTS)}"]
+    return []
+
+
+def _kind_problem(manifest: Dict[str, Any]) -> Optional[str]:
+    """Why a manifest of a schema this revision reads does not say its kind as
+    that schema does, or None: schema 1 states none (it is a supplied cohort),
+    schema 2 states one of `VERSION_KINDS`."""
+    if manifest.get("schema_version") == VERSION_SCHEMA_VERSION:
+        if "kind" in manifest:
+            return (f"is schema {VERSION_SCHEMA_VERSION}, which records no kind, yet states kind "
+                    f"{manifest['kind']!r}: it was edited, so it does not say what it is.")
+        return None
+    if "kind" not in manifest:
+        return (f"is schema {manifest.get('schema_version')!r}, which must state its kind "
+                "(missing kind).")
+    if version_kind(manifest) not in VERSION_KINDS:
+        return (f"is of kind {manifest['kind']!r}; this revision reads kinds "
+                f"{' and '.join(VERSION_KINDS)} only.")
+    return None
+
+
 def _version_shape_problems(manifest: Dict[str, Any]) -> List[str]:
+    """What a reader relies on, beyond the field list, by the manifest's kind
+    (`version_kind`): a supplied cohort's (`_supplied_shape_problems`) or a KG
+    edge set's (`_kg_edges_shape_problems`)."""
+    if version_kind(manifest) == KG_EDGES:
+        return _kg_edges_shape_problems(manifest)
+    return _supplied_shape_problems(manifest)
+
+
+def _supplied_shape_problems(manifest: Dict[str, Any]) -> List[str]:
     """What a reader relies on, beyond the field list: the four graph digests,
     the dataset record's digest, the samples' digest and count, the source's
     digest, counts that are present and consistent (`_counts_problems`), and a
@@ -1163,18 +1608,13 @@ def _version_shape_problems(manifest: Dict[str, Any]) -> List[str]:
     if problems:
         return problems
 
-    def is_sha(value: Any) -> bool:
-        return isinstance(value, str) and bool(_SHA256.fullmatch(value))
-
-    graph = manifest["graph"]
-    if not isinstance(graph, dict) or not all(is_sha(graph.get(r)) for r in GRAPH_ARTIFACTS):
-        problems.append(f"graph must hold a SHA-256 for each of {list(GRAPH_ARTIFACTS)}")
+    problems += _graph_problems(manifest)
     for block in ("dataset_record", "source"):
-        if not (isinstance(manifest[block], dict) and is_sha(manifest[block].get("sha256"))):
+        if not (isinstance(manifest[block], dict) and _is_sha(manifest[block].get("sha256"))):
             problems.append(f"{block} must hold a sha256")
     samples = manifest["samples"]
     n = samples.get("n") if isinstance(samples, dict) else None
-    if not (isinstance(samples, dict) and is_sha(samples.get("sha256")) and _is_count(n)):
+    if not (isinstance(samples, dict) and _is_sha(samples.get("sha256")) and _is_count(n)):
         problems.append("samples must hold a sha256 and a count n")
     for block in ("mapping", "unmappable_terms", "imported"):
         if not isinstance(manifest[block], dict):
@@ -1189,6 +1629,145 @@ def _version_shape_problems(manifest: Dict[str, Any]) -> List[str]:
     return problems
 
 
+def _kg_edges_counts(manifest: Dict[str, Any], problems: List[str]) -> Optional[Dict[str, int]]:
+    """A KG edge set's counts when they are exactly `KG_EDGES_COUNT_UNITS`' keys,
+    each a whole number of at least 0, with a unit each; else None, with the
+    problems named."""
+    keys = list(KG_EDGES_COUNT_UNITS)
+    units = manifest["count_units"]
+    if not (isinstance(units, dict) and set(units) == set(keys)
+            and all(isinstance(u, str) and u for u in units.values())):
+        problems.append(f"count_units must give a unit for each of {keys}")
+    counts = manifest["counts"]
+    if not (isinstance(counts, dict) and set(counts) == set(keys)):
+        problems.append(f"counts must hold exactly {keys}")
+        return None
+    bad = [f"counts.{key} must be a whole number of at least 0"
+           for key in keys if not _is_count(counts[key])]
+    problems += bad
+    return None if bad else counts
+
+
+def _kg_edges_shape_problems(manifest: Dict[str, Any]) -> List[str]:
+    """What a reader relies on in a KG edge set, beyond the field list, each
+    problem naming its field: the four graph digests and the dataset record's
+    digest (`verify_cohort_binding` compares them); a role that is a part of
+    the split; the view's rule and digest; the split's rule, seed, digest and
+    part counts, recorded for this view; counts with their units, equal to
+    what the split and the pairs say (the pairs plus the edges without a
+    negative are the part's edges, the message-passing edges the train part's);
+    the message-passing graph, the split's train part, saying whether the
+    measured edges are in it (exactly when the role is ``train``); the pairs
+    file's name, digests, rule, layout, part, seed, batch size and batch count
+    and its row count; and where the view and split were taken from."""
+    problems = [f"missing {name}" for name in KG_EDGES_REQUIRED_FIELDS if name not in manifest]
+    if problems:
+        return problems
+
+    problems += _graph_problems(manifest)
+    record = manifest["dataset_record"]
+    if not (isinstance(record, dict) and _is_sha(record.get("sha256"))
+            and isinstance(record.get("sources"), list)):
+        problems.append("dataset_record must hold a sha256 and its sources")
+    role = manifest["role"]
+    try:
+        validate_kg_edges_role(role)
+    except CohortVersionRefused as exc:
+        problems.append(str(exc))
+        role = None
+
+    view = manifest["graph_view"]
+    if not (isinstance(view, dict) and isinstance(view.get("rule"), dict)
+            and _is_sha(view.get("digest"))):
+        problems.append("graph_view must hold a rule (an object) and a digest (a SHA-256)")
+        view = {}
+    split = manifest["split"]
+    parts: Optional[Dict[str, Any]] = None
+    if not isinstance(split, dict):
+        problems.append("split must be an object")
+        split = {}
+    else:
+        if not (isinstance(split.get("rule"), str) and split["rule"]):
+            problems.append("split.rule must be a non-empty string")
+        if not _is_whole(split.get("seed")):
+            problems.append("split.seed must be a whole number")
+        if not _is_sha(split.get("digest")):
+            problems.append("split.digest must be a SHA-256")
+        if split.get("view_digest") != view.get("digest"):
+            problems.append("split.view_digest is not graph_view.digest")
+        parts = split.get("edges")
+        if not (isinstance(parts, dict) and set(parts) == set(KG_EDGES_ROLES)
+                and all(_is_count(n) for n in parts.values())):
+            problems.append(f"split.edges must hold a whole number of at least 0 for exactly "
+                            f"{list(KG_EDGES_ROLES)}")
+            parts = None
+
+    counts = _kg_edges_counts(manifest, problems)
+    if counts is not None:
+        positive, paired = counts["positive_edges"], counts["pairs"]
+        without = counts["edges_without_negative"]
+        if paired + without != positive:
+            problems.append(f"counts.pairs ({paired}) plus counts.edges_without_negative "
+                            f"({without}) is not counts.positive_edges ({positive})")
+        if parts is not None and role is not None and positive != parts[role]:
+            problems.append(f"counts.positive_edges ({positive}) is not split.edges.{role} "
+                            f"({parts[role]})")
+        if parts is not None and counts["message_passing_edges"] != parts["train"]:
+            problems.append(f"counts.message_passing_edges ({counts['message_passing_edges']}) "
+                            f"is not split.edges.train ({parts['train']})")
+
+    passing = manifest["message_passing"]
+    if not (isinstance(passing, dict) and passing.get("part") == "train"):
+        problems.append("message_passing must be the split's train part (part train, README A4)")
+    else:
+        if counts is not None and not (_is_count(passing.get("edges"))
+                                       and passing["edges"] == counts["message_passing_edges"]):
+            problems.append(f"message_passing.edges ({passing.get('edges')!r}) is not "
+                            f"counts.message_passing_edges ({counts['message_passing_edges']})")
+        if role is not None and passing.get("includes_measured_edges") is not (role == "train"):
+            problems.append(f"message_passing.includes_measured_edges must be "
+                            f"{str(role == 'train').lower()} for role {role}: the train part "
+                            "is the message-passing graph")
+
+    pairs = manifest["pairs"]
+    if not isinstance(pairs, dict):
+        problems.append("pairs must be an object")
+    else:
+        if pairs.get("file") != VERSION_PAIRS:
+            problems.append(f"pairs.file must be {VERSION_PAIRS}")
+        problems += [f"pairs.{key} must be a SHA-256" for key in ("sha256", "lp_pairs_digest")
+                     if not _is_sha(pairs.get(key))]
+        if not (isinstance(pairs.get("rule"), str) and pairs["rule"]):
+            problems.append("pairs.rule must be a non-empty string")
+        if not isinstance(pairs.get("layout"), dict):
+            problems.append("pairs.layout must be an object")
+        if role is not None and pairs.get("part") != role:
+            problems.append(f"pairs.part ({pairs.get('part')!r}) is not the role ({role})")
+        if not (_is_whole(pairs.get("seed")) and pairs.get("seed") == split.get("seed")):
+            problems.append(f"pairs.seed ({pairs.get('seed')!r}) is not split.seed "
+                            f"({split.get('seed')!r})")
+        batch = pairs.get("batch_size")
+        if not (_is_count(batch) and batch > 0):
+            problems.append("pairs.batch_size must be a whole number above 0")
+        elif counts is not None:
+            batches = -(-counts["positive_edges"] // batch)
+            if not (_is_count(pairs.get("batches")) and pairs["batches"] == batches):
+                problems.append(f"pairs.batches ({pairs.get('batches')!r}) is not "
+                                f"counts.positive_edges in batches of {batch} ({batches})")
+        if counts is not None and not (_is_count(pairs.get("rows"))
+                                       and pairs["rows"] == counts["pairs"]):
+            problems.append(f"pairs.rows ({pairs.get('rows')!r}) is not counts.pairs "
+                            f"({counts['pairs']})")
+
+    taken = manifest["taken_from"]
+    if not (isinstance(taken, dict) and _is_sha(taken.get("checkpoint_sha256"))
+            and isinstance(taken.get("checkpoint_filename"), str)):
+        problems.append("taken_from must hold a checkpoint_sha256 and a checkpoint_filename")
+    if not isinstance(manifest["imported"], dict):
+        problems.append("imported must be an object")
+    return problems
+
+
 def resolve_version(registry: Any, label: str, *,
                     expected_sha256: Optional[str] = None) -> CohortVersionRead:
     """Resolve a committed version: one read of its ``cohort.json``, parsed from
@@ -1196,6 +1775,11 @@ def resolve_version(registry: Any, label: str, *,
 
     Does not read ``samples.json``: its path is returned, and the caller reads
     it once, comparing the read's digest with ``manifest["samples"]["sha256"]``.
+    Nor a KG edge set's ``pairs.bin``, which `read_kg_edge_pairs` reads.
+
+    **Either schema, by kind** (`VERSION_SCHEMAS`): schema 1 is a supplied
+    cohort and states no kind; schema 2 states its kind (`VERSION_KINDS`).
+    Each kind's fields are checked by its own rules (`_version_shape_problems`).
 
     The version directory is resolved before anything is read from it, and the
     resolved path is the one returned, so a caller writing reports under it
@@ -1217,10 +1801,11 @@ def resolve_version(registry: Any, label: str, *,
             it, or there is nothing to read.
         CohortVersionRefused: the label is invalid; there is no such version;
             the directory has no ``cohort.json`` (an interrupted import); the
-            manifest cannot be read or parsed, is not an object, is not schema
-            `VERSION_SCHEMA_VERSION`, names another label than its directory,
-            lacks a required field, or holds counts that are missing or
-            contradict each other or the version (`_counts_problems`).
+            manifest cannot be read or parsed, is not an object, is of a schema
+            not in `VERSION_SCHEMAS`, does not state its kind as its schema
+            does or states one this revision does not read, names another label
+            than its directory, lacks a required field of its kind, or holds
+            counts that are missing or contradict each other or the version.
     """
     from src.utils.fingerprint import read_once
 
@@ -1264,11 +1849,14 @@ def resolve_version(registry: Any, label: str, *,
     if not isinstance(manifest, dict):
         raise CohortVersionRefused(f"{path} is not a JSON object.")
     schema = manifest.get("schema_version")
-    if isinstance(schema, bool) or schema != VERSION_SCHEMA_VERSION:
+    if isinstance(schema, bool) or schema not in VERSION_SCHEMAS:
         raise CohortVersionRefused(
-            f"{path} is schema {schema!r}; this revision reads schema "
-            f"{VERSION_SCHEMA_VERSION} only."
+            f"{path} is schema {schema!r}; this revision reads schemas "
+            f"{' and '.join(str(s) for s in VERSION_SCHEMAS)} only."
         )
+    kind_problem = _kind_problem(manifest)
+    if kind_problem is not None:
+        raise CohortVersionRefused(f"{path} {kind_problem}")
     if manifest.get("label") != label:
         raise CohortVersionRefused(
             f"{path} names the label {manifest.get('label')!r}, not its directory's "
@@ -1280,7 +1868,96 @@ def resolve_version(registry: Any, label: str, *,
         raise CohortVersionRefused(
             f"{path} is not a complete, consistent version manifest: {'; '.join(problems)}."
         )
-    return CohortVersionRead(manifest, identity, directory, directory / VERSION_SAMPLES)
+    samples = directory / VERSION_SAMPLES if version_kind(manifest) == SUPPLIED else None
+    return CohortVersionRead(manifest, identity, directory, samples)
+
+
+def read_kg_edge_pairs(version: CohortVersionRead) -> KgEdgePairsRead:
+    """A KG edge set's pairs, from one read of its ``pairs.bin`` (contract M2.1).
+
+    **The digest is of the bytes parsed, and compared before they are**: the
+    file is read once (`read_once`), its digest compared with the one the
+    version binds (``pairs.sha256``), and only then are the same bytes parsed
+    (`lp_pairs_from_table`, by the layout the version records, which must be
+    the LP core's `LP_PAIRS_LAYOUT`). The parsed pairs must then be the rows
+    and the pairs digest the version records (``pairs.rows``,
+    ``pairs.lp_pairs_digest``). A file changed after the import, gone, or of
+    another layout is refused by name; nothing is ever rebuilt in its place.
+
+    The version directory is resolved before anything is read from it
+    (`_registry_directory`), as every read of a registry file is.
+
+    Returns:
+        The pairs as `LPPairs` (head, relation, tail, negative tail, in the
+        order made; the version's counts as `fixed_lp_pairs` names them; the
+        pairs digest), and the identity of the bytes read.
+
+    Raises:
+        CohortVersionRefused: the version is not a KG edge set, or its pairs
+            file is missing, is not the bytes it binds, or does not parse to
+            the pairs it records.
+        RegistryRefused: the version directory resolves into the repository.
+    """
+    from src.models.bundle.lp_head import (
+        LP_PAIRS_LAYOUT,
+        LPPairs,
+        lp_pairs_digest,
+        lp_pairs_from_table,
+    )
+    from src.utils.fingerprint import read_once
+
+    manifest = version.manifest
+    if version.kind != KG_EDGES:
+        raise CohortVersionRefused(
+            f"{version.identity.path} is a version of kind {version.kind!r}, which keeps no "
+            "pairs file."
+        )
+    block = manifest["pairs"]
+    if block["layout"] != LP_PAIRS_LAYOUT:
+        raise CohortVersionRefused(
+            f"{version.identity.path} lays its pairs out as {block['layout']!r}; this revision "
+            f"reads {LP_PAIRS_LAYOUT!r} only. Nothing was read."
+        )
+    directory = _registry_directory(version.directory, within=None, done="Nothing was read.")
+    path = directory / VERSION_PAIRS
+    try:
+        read = read_once(path)
+    except FileNotFoundError:
+        raise CohortVersionRefused(
+            f"{path} is missing, though {version.identity.path} binds it: the KG edge set "
+            "cannot be read."
+        ) from None
+    identity = read.identity
+    if identity.sha256 != block["sha256"]:
+        del read
+        raise CohortVersionRefused(
+            f"{path} is not the pairs file {version.identity.path} binds (its bytes are "
+            f"{identity.sha256[:12]}..., the version binds {block['sha256'][:12]}...): it was "
+            "changed after the import, so it is not read."
+        )
+    try:
+        head, relation, tail, negative_tail = lp_pairs_from_table(read.data)
+    except ValueError as exc:
+        raise CohortVersionRefused(f"{path} is not a pairs table: {exc}") from None
+    finally:
+        del read
+    counts = manifest["counts"]
+    if head.numel() != block["rows"]:
+        raise CohortVersionRefused(
+            f"{path} holds {head.numel()} pairs, and {version.identity.path} records "
+            f"{block['rows']}."
+        )
+    digest = lp_pairs_digest(head, relation, tail, negative_tail)
+    if digest != block["lp_pairs_digest"]:
+        raise CohortVersionRefused(
+            f"{path} parses to pairs {digest[:12]}..., not the {block['lp_pairs_digest'][:12]}"
+            f"... {version.identity.path} records."
+        )
+    pairs = LPPairs(head, relation, tail, negative_tail,
+                    {"edges": counts["positive_edges"],
+                     "without_negative": counts["edges_without_negative"],
+                     "pairs": counts["pairs"]}, digest)
+    return KgEdgePairsRead(pairs, identity)
 
 
 # ---------------------------------------------------------------------------
@@ -1471,11 +2148,31 @@ def cohort_version_block(version: CohortVersionRead) -> Dict[str, Any]:
     report store holds it under (`src/evaluation/registration.py`), so a report
     is registered only under the version it measured, with that version's counts.
 
+    **By kind.** A supplied version's block is the fields above, as it always
+    was. A KG edge set's (`KG_EDGES_BLOCK_FIELDS`) names its kind and role,
+    the manifest digest, the graph and dataset record digests, the view, the
+    split, the message-passing graph, the pairs' rule and digests, and the
+    counts with their units: aggregates only, never an edge. What a
+    measurement of one records, and what a registration compares, is Stage 5's
+    and 6's (research comparison §5).
+
     Raises:
         CohortVersionRefused: the manifest does not state its source format,
             which `resolve_version`'s shape checks do not cover.
     """
     manifest = version.manifest
+    if version.kind == KG_EDGES:
+        return {
+            "label": manifest["label"],
+            "role": manifest["role"],
+            "kind": KG_EDGES,
+            "manifest_sha256": version.identity.sha256,
+            "graph": dict(manifest["graph"]),
+            "dataset_record_sha256": manifest["dataset_record"]["sha256"],
+            # Copies, so the block cannot alias the version read.
+            **{key: copy.deepcopy(manifest[key]) for key in (
+                "graph_view", "split", "message_passing", "pairs", "counts", "count_units")},
+        }
     source_format = manifest["source"].get("format")
     if not isinstance(source_format, str) or not source_format:
         raise CohortVersionRefused(
@@ -1581,6 +2278,15 @@ __all__ = [
     "DEFAULT_PARTIAL_PHENOTYPES",
     "EXCLUSION_CATEGORIES",
     "ImportPlan",
+    "KG_EDGES",
+    "KG_EDGES_BLOCK_FIELDS",
+    "KG_EDGES_COUNT_UNITS",
+    "KG_EDGES_REQUIRED_FIELDS",
+    "KG_EDGES_ROLES",
+    "KG_EDGES_TAKEN_FROM",
+    "KG_EDGES_WHAT_THIS_IS",
+    "KINDED_SCHEMA_VERSION",
+    "KgEdgePairsRead",
     "ListedRun",
     "ListedVersion",
     "MalformedSource",
@@ -1595,15 +2301,20 @@ __all__ = [
     "RegistryRefused",
     "SOURCES_DIR",
     "SOURCE_FORMAT",
+    "SUPPLIED",
     "SourceCase",
     "UNSUPPORTED_DISEASE_NAMESPACES",
     "UnsupportedDiseaseNamespace",
     "VERSIONS_DIR",
+    "VERSION_KINDS",
     "VERSION_MANIFEST",
+    "VERSION_PAIRS",
     "VERSION_SAMPLES",
+    "VERSION_SCHEMAS",
     "VERSION_SCHEMA_VERSION",
     "WHAT_THIS_IS",
     "WorkspaceGraph",
+    "build_kg_edges_manifest",
     "build_version_manifest",
     "cohort_version_block",
     "commit_import",
@@ -1615,14 +2326,18 @@ __all__ = [
     "map_cases",
     "parse_source",
     "prepare_import",
+    "prepare_kg_edges_import",
     "preview_id",
+    "read_kg_edge_pairs",
     "read_workspace_graph",
     "report_run_directory",
     "report_store_directory",
     "resolve_version",
+    "validate_kg_edges_role",
     "validate_label",
     "validate_partial_policy",
     "validate_registry",
     "validate_role",
     "verify_cohort_binding",
+    "version_kind",
 ]

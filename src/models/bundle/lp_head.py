@@ -93,8 +93,17 @@ def corrupt_tails(relations: Tensor, tails: Tensor, generator: torch.Generator
 #: The fixed-pairs rule seeds its torch generator with `seed` plus this offset
 #: (training rules 1 pin the base's validation pairs, so it never changes).
 _PAIR_SEED_OFFSET = 7919
+#: The name of `fixed_lp_pairs`' rule, as a record states which rule made a
+#: set of pairs (with its `seed` and `batch_size`): another rule, seed or batch
+#: size is other pairs.
+LP_PAIR_RULE = "fixed-lp-pairs/v1"
 #: A pairs table's columns, in the order `lp_pairs_digest` reads each row.
 LP_PAIR_COLUMNS = ("head", "relation", "tail", "negative_tail")
+#: How a pairs table is laid out as bytes (`lp_pairs_table`): one row per
+#: pair, the columns `LP_PAIR_COLUMNS`, each a little-endian int64.
+LP_PAIRS_LAYOUT: Dict[str, Any] = {"columns": list(LP_PAIR_COLUMNS), "dtype": "<i8",
+                                   "order": "rows"}
+_ROW_BYTES = 8 * len(LP_PAIR_COLUMNS)
 
 
 @dataclass
@@ -113,16 +122,39 @@ class LPPairs:
     digest: str
 
 
-def lp_pairs_digest(head: Tensor, relation: Tensor, tail: Tensor, negative_tail: Tensor) -> str:
-    """SHA-256 over the exact pair bytes: a JSON header naming the layout, then
-    the pairs as one row-major `[pairs, 4]` table of little-endian int64, a row
-    per pair, columns `LP_PAIR_COLUMNS`. Any changed id, a reordered pair or a
-    pair added or dropped changes it."""
-    h = hashlib.sha256()
-    h.update(json.dumps({"columns": list(LP_PAIR_COLUMNS), "dtype": "<i8", "order": "rows"},
-                        sort_keys=True).encode())
+def lp_pairs_table(head: Tensor, relation: Tensor, tail: Tensor, negative_tail: Tensor) -> bytes:
+    """The pairs as bytes (`LP_PAIRS_LAYOUT`): one row-major `[pairs, 4]` table
+    of little-endian int64, a row per pair in the pairs' order, columns
+    `LP_PAIR_COLUMNS`. What `lp_pairs_digest` hashes after its header, and
+    what a kept pairs file holds, so the file and the digest are of one
+    encoding."""
     table = torch.stack([head, relation, tail, negative_tail], dim=1).to(torch.int64).cpu()
-    h.update(np.ascontiguousarray(table.numpy(), dtype="<i8").tobytes())
+    return np.ascontiguousarray(table.numpy(), dtype="<i8").tobytes()
+
+
+def lp_pairs_from_table(data: bytes) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
+    """The pairs `lp_pairs_table` encoded as `data`: head, relation, tail and
+    negative tail, each a CPU int64 tensor in row order. Parses the bytes
+    given and reads no file.
+
+    Raises:
+        ValueError: `data` is not a whole number of rows.
+    """
+    if len(data) % _ROW_BYTES:
+        raise ValueError(f"{len(data)} bytes are not a whole number of {_ROW_BYTES}-byte pair "
+                         f"rows ({', '.join(LP_PAIR_COLUMNS)}, little-endian int64)")
+    table = np.frombuffer(data, dtype="<i8").reshape(-1, len(LP_PAIR_COLUMNS))
+    columns = torch.from_numpy(table.astype(np.int64)).t().contiguous()
+    return columns[0], columns[1], columns[2], columns[3]
+
+
+def lp_pairs_digest(head: Tensor, relation: Tensor, tail: Tensor, negative_tail: Tensor) -> str:
+    """SHA-256 over the exact pair bytes: a JSON header naming the layout
+    (`LP_PAIRS_LAYOUT`), then the pairs' table (`lp_pairs_table`). Any changed
+    id, a reordered pair or a pair added or dropped changes it."""
+    h = hashlib.sha256()
+    h.update(json.dumps(LP_PAIRS_LAYOUT, sort_keys=True).encode())
+    h.update(lp_pairs_table(head, relation, tail, negative_tail))
     return h.hexdigest()
 
 
@@ -207,5 +239,6 @@ def score_lp_pairs(bundle: Any, pairs: LPPairs, edges: Tensor, relations: Tensor
     return LPScores(positive.cpu(), negative.cpu(), metrics)
 
 
-__all__ = ["DistMultHead", "LPPairs", "LPScores", "LP_PAIR_COLUMNS", "corrupt_tails",
-           "fixed_lp_pairs", "lp_pairs_digest", "score_lp_pairs"]
+__all__ = ["DistMultHead", "LPPairs", "LPScores", "LP_PAIRS_LAYOUT", "LP_PAIR_COLUMNS",
+           "LP_PAIR_RULE", "corrupt_tails", "fixed_lp_pairs", "lp_pairs_digest",
+           "lp_pairs_from_table", "lp_pairs_table", "score_lp_pairs"]

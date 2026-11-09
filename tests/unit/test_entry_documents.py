@@ -168,6 +168,46 @@ def test_every_command_parses_with_its_script_s_own_parser(document, script, arg
                     f"parser (exit {exc.code})")
 
 
+#: The deployment guides, whose importer commands are parsed too: §4.9 gives
+#: both kinds of import (research comparison §5 Stage 4).
+GUIDES = ("deployment-guide.en.md", "deployment-guide.md")
+
+GUIDE_IMPORTS = [(document, argv)
+                 for document in GUIDES
+                 for _heading, body in _sections(_text(document))
+                 for script, argv in _script_commands(body) if script == "import_cohort"]
+
+
+def _readings(argv: List[str]) -> List[List[str]]:
+    """Each reading of a command whose optional part offers alternatives
+    (``keep|exclude``): one argument list per alternative, every such token
+    expanded."""
+    for i, token in enumerate(argv):
+        if "|" in token and not token.startswith("<"):
+            return [reading for choice in token.split("|")
+                    for reading in _readings([*argv[:i], choice, *argv[i + 1:]])]
+    return [argv]
+
+
+def test_the_guides_give_both_kinds_of_import():
+    for document in GUIDES:
+        kinds = {argv[argv.index("--kind") + 1] if "--kind" in argv else "supplied"
+                 for given, argv in GUIDE_IMPORTS if given == document}
+        assert kinds == {"supplied", "kg_edges"}, (document, kinds)
+
+
+@pytest.mark.parametrize("document, argv", GUIDE_IMPORTS,
+                         ids=[f"{d}:{' '.join(a)}" for d, a in GUIDE_IMPORTS])
+def test_every_import_command_in_the_guides_parses_with_the_importer_s_parser(
+        document, argv, monkeypatch):
+    for reading in _readings(argv):
+        try:
+            _parse("import_cohort", reading, monkeypatch)
+        except SystemExit as exc:
+            pytest.fail(f"{document}: scripts/import_cohort.py {' '.join(reading)} is refused "
+                        f"by its parser (exit {exc.code})")
+
+
 # ---------------------------------------------------------------------------
 # The pages and fields they name
 # ---------------------------------------------------------------------------

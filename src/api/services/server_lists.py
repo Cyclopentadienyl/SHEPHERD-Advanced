@@ -255,13 +255,16 @@ class ReportItem:
 
 @dataclass(frozen=True)
 class CohortVersionItem:
-    """One cohort version in the registry: its label and the digest of its
+    """One version in the registry: its label and the digest of its
     `cohort.json` (the version's identity), its role, and the aggregates its
     manifest records. Never its exclusions by case: D7 keeps
     case identifiers on the machine. A version that cannot be read is listed
     with `problem`. `kind` is its data kind as the version read says it
     (`CohortVersionRead.kind`), which a new measurement of it is judged by
-    (`src.evaluation.protocols.inputs_refusal`); `None` when it was not read."""
+    (`src.evaluation.protocols.inputs_refusal`); `None` when it was not read.
+    A KG edge set (`kind` ``kg_edges``) is listed the same way: its role (the
+    split's part), its counts (edges and pairs, the units in its manifest),
+    graph and dataset record; no source, and never an edge."""
 
     label: str
     manifest_sha256: Optional[str]

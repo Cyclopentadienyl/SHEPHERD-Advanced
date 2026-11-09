@@ -166,7 +166,11 @@ class CohortVersions:
             if entry.version is None:
                 continue
             digest = entry.version.identity.sha256
-            found.listed[digest] = {"label": entry.label, "sha256": digest}
+            # The version's kind and role, as its one read says them: a KG edge
+            # set is listed as one, beside the supplied cohorts.
+            found.listed[digest] = {"label": entry.label, "sha256": digest,
+                                    "kind": entry.version.kind,
+                                    "role": entry.version.manifest.get("role")}
             found._resolved[entry.label] = (entry.version, None)
         return found
 

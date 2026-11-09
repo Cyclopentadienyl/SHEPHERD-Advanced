@@ -1218,6 +1218,7 @@ renamed into place, with the directory's permission policy.
   sources/<sha256>.json                  the source file's bytes, verbatim, named by their digest
   versions/<label>/cohort.json           the version manifest, written last: it makes the version exist
   versions/<label>/samples.json          the mapped samples, bound by cohort.json's digest
+  versions/<label>/pairs.bin             a KG edge set's pairs instead of samples (below), bound the same way
   versions/<label>/reports/<run id>/     one directory per measurement: ranks.json, then report.json
 ```
 
@@ -1263,7 +1264,8 @@ python scripts/import_cohort.py --registry /srv/shepherd/cohorts \
 ```
 
 Labels and roles are lowercase identifiers (letters, digits, `_`, `-`, `.`; at most 64
-characters); a role may not be `train` or `val`.
+characters); a supplied cohort's role may not be `train` or `val` (a KG edge set's role is its
+part of the split, below).
 
 **The preview writes nothing.** It maps every case against the graph the workspace manifest
 binds, through the same readers and checks as training and serving, and prints:
@@ -1290,6 +1292,61 @@ importer reads every input again and publishes only if they still give that id; 
 refuses ("inputs changed since the preview"). It prints the version's directory and the manifest's
 SHA-256. A source in which no case can be ranked is refused at commit, since there would be nothing
 to measure.
+
+### A KG edge set: `--kind kg_edges` (since research comparison Stage 4)
+
+A **KG edge set** is a version of another kind: one part of the edge split a model was trained
+on, kept as fixed link-prediction pairs, for the link-prediction measurement (research comparison
+Stage 5, not built yet). The same preview and commit import it:
+
+```bash
+python scripts/import_cohort.py --kind kg_edges --registry /srv/shepherd/cohorts \
+    --data-dir data/workspaces/<ws> \
+    --from-checkpoint data/workspaces/<ws>/runs/gatv2/<run>/checkpoints/best.pt \
+    --label kg-test-2026-11 --role test
+```
+
+- **The role is the part, recorded as given:** `train`, `val` or `test`. None is refused for not
+  being test. Measuring the train part is a fitting diagnostic and the val part a development
+  measurement; neither is ever relabelled as test.
+- **Where the split comes from.** The checkpoint's model record names its graph view rule and
+  edge split (`data_roles`); a finetune's are its base's. The importer reads the workspace's
+  graph through the same readers as measurement and checks that the checkpoint was trained on
+  it. It rebuilds the view by the recorded rule, refusing a digest that differs, and rebuilds the
+  split, checking it field by field (rule, seed, view digest, digest, edges per part) and naming
+  the first that differs. A checkpoint without a model record, of another graph, or whose record
+  contradicts itself is refused. Every check runs before anything is written, and nothing of the
+  checkpoint is copied.
+- **The pairs** follow base validation's rule on the role's part (`fixed_lp_pairs`, `BASE_FIXED`):
+  every edge once, permuted and given one negative tail by a generator seeded from the split's
+  seed, in batches of 512. An edge whose relation has no other tail in its batch has no negative:
+  it is left out and counted, never given an invented one. So a `val` set's pairs are exactly the
+  pairs base validation scores. Another rule, seed or batch size is another version.
+- **The message-passing graph** is the split's train part (scorer-retraining README A4). For role
+  `train` the measured edges are in it, and the version says so; nothing is removed.
+- **The preview** prints the view, the split's parts, the positive edges, the pairs and the edges
+  without a negative, each with its denominator. Counts are in directed graph-view edges: an edge
+  and its reverse twin are one fact and two edges, always in the same part. It also prints the
+  pair rule, the pairs file's digest, the message-passing graph and the graph and dataset record
+  it binds, but never an edge. A part with no pair cannot be committed.
+
+The version is `cohort.json` (schema 2, kind `kg_edges`, written last) and `pairs.bin`: the pairs
+as little-endian int64 rows (head, relation, tail, negative tail) in the order made. The manifest
+binds `pairs.bin` by the digest of its bytes; a reader compares that digest before it parses the
+bytes, so a changed, truncated or missing file is refused. The pairs are kept, never rebuilt,
+because torch's random stream is not promised across releases. No source file is kept: the graph
+is the workspace's, bound by its four digests and the dataset record, which a measurement
+compares as it does a supplied version's.
+
+The server's lists (`GET /cohorts`) give a KG edge set with its kind, role and counts, never an
+edge; the Test page lists it by label and role. No protocol of this build measures one yet:
+`measure_scorer.py --cohort` or the Test page's Start naming one is refused with the protocol's
+reason ("the disease measurement does not measure a KG edge set; ..."), and nothing is written.
+
+**Schema 1 and 2.** A supplied import still writes schema 1, byte for byte as before, and schema 1
+is read as a supplied cohort. A KG edge set is schema 2, which states its kind. A revision from
+before schema 2 lists it as unreadable with its reason ("is schema 2; this revision reads schema 1
+only"), so an older revision never reads one as a supplied cohort.
 
 ### Measure
 
