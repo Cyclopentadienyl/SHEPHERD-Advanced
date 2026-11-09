@@ -110,7 +110,8 @@ _ROW_BYTES = 8 * len(LP_PAIR_COLUMNS)
 class LPPairs:
     """Fixed LP pairs: the kept edges `head -relation-> tail`, each with its
     one corrupted tail, in the rule's order (CPU, int64); the rule's counts;
-    and the digest of the pairs' bytes (`lp_pairs_digest`)."""
+    the digest of the pairs' bytes (`lp_pairs_digest`); and how many pairs
+    each batch kept, in batch order (`batch_pairs`)."""
 
     head: Tensor
     relation: Tensor
@@ -120,6 +121,13 @@ class LPPairs:
     #: `pairs` kept (`edges - without_negative`).
     counts: Dict[str, int]
     digest: str
+    #: The pairs each batch kept, one count per batch of the permuted edges,
+    #: in order: the batch boundaries in the pairs' own rows (batch `k`'s
+    #: pairs are the `batch_pairs[k]` rows after the earlier batches'), and,
+    #: against each batch's edge count, the edges it left out. They sum to
+    #: ``counts["pairs"]``. Kept apart from `counts`, which base validation
+    #: records as it always has.
+    batch_pairs: Tuple[int, ...]
 
 
 def lp_pairs_table(head: Tensor, relation: Tensor, tail: Tensor, negative_tail: Tensor) -> bytes:
@@ -169,7 +177,9 @@ def fixed_lp_pairs(edges: Tensor, relations: Tensor, *, seed: int, batch_size: i
     from the same generator, among the tails of its relation's edges in that
     batch. An edge whose relation has no other tail in its batch has no
     negative: it is dropped and counted (`without_negative`), never given an
-    invented one. The pairs keep the permuted order.
+    invented one. The pairs keep the permuted order, and each batch's count
+    of kept pairs is recorded (`batch_pairs`), so the batch boundaries can be
+    found in the pairs themselves.
 
     Base validation takes its pairs here (the split's val edges, the split's
     seed, `BASE_FIXED`'s batch size), and training rules 1 pin those pairs, so
@@ -184,12 +194,14 @@ def fixed_lp_pairs(edges: Tensor, relations: Tensor, *, seed: int, batch_size: i
     heads, tails, rels = edges[0][order], edges[1][order], relations[order]
     keep_h, keep_r, keep_t, neg = [], [], [], []
     without = 0
+    batch_pairs = []
     for start in range(0, heads.numel(), batch_size):
         h = heads[start:start + batch_size]
         t = tails[start:start + batch_size]
         r = rels[start:start + batch_size]
         chosen, ok = corrupt_tails(r, t, generator)
         without += int((~ok).sum())
+        batch_pairs.append(int(ok.sum()))
         keep_h.append(h[ok])
         keep_r.append(r[ok])
         keep_t.append(t[ok])
@@ -199,7 +211,7 @@ def fixed_lp_pairs(edges: Tensor, relations: Tensor, *, seed: int, batch_size: i
     counts = {"edges": int(heads.numel()), "without_negative": without,
               "pairs": int(head.numel())}
     return LPPairs(head, relation, tail, negative_tail, counts,
-                   lp_pairs_digest(head, relation, tail, negative_tail))
+                   lp_pairs_digest(head, relation, tail, negative_tail), tuple(batch_pairs))
 
 
 @dataclass

@@ -761,7 +761,7 @@ def test_no_registry_is_said_without_a_path(root, tmp_path, monkeypatch):
     registry = tmp_path / "reg"
     registry.mkdir()
     monkeypatch.setenv("SHEPHERD_REGISTRY", str(registry))
-    said = card.redacted(f"the registry {registry} holds no cohort version 'x' (no "
+    said = card.redacted(f"the registry {registry} holds no version 'x' (no "
                          f"{registry}/versions/x); see /etc/shepherd/notes.txt")
-    assert said == ("the registry <registry> holds no cohort version 'x' (no "
+    assert said == ("the registry <registry> holds no version 'x' (no "
                     "<registry>/versions/x); see a server path")

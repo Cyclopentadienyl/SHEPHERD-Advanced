@@ -79,9 +79,12 @@ is of one data kind (`VERSION_KINDS`, the words of
 - **schema 1** records no kind and is a ``supplied`` cohort, as every version
   before schema 2 is; a supplied import still writes schema 1, byte for byte
   as before (golden P0-4);
-- **schema 2** states its ``kind``. A revision that reads schema 1 only
-  refuses a schema-2 version by its schema check ("is schema 2; this revision
-  reads schema 1 only"), so it never reads one as a supplied cohort.
+- **schema 2** states its ``kind``, and is read only for a kind written in
+  it (`KIND_SCHEMAS`: a KG edge set); a schema-2 manifest of kind
+  ``supplied`` is a shape no revision writes, and is refused rather than read
+  by the schema-1 rules. A revision that reads schema 1 only refuses a
+  schema-2 version by its schema check ("is schema 2; this revision reads
+  schema 1 only"), so it never reads one as a supplied cohort.
 
 A **KG edge set** (``kg_edges``) is one part of a recorded edge split of one
 graph view, kept as fixed link-prediction pairs. `prepare_kg_edges_import`
@@ -95,13 +98,16 @@ manifest binds the four graph digests and the dataset record (compared by
 `verify_cohort_binding`, as a supplied version's are), the view's rule and
 digest, the split's rule, seed, digest and part counts, the message-passing
 graph (the split's train part, README A4; for role ``train`` the measured
-edges are in it, and the manifest says so), the pair rule with its seed and
-batch size, and ``pairs.bin``: the pairs as compact little-endian int64 rows
-(head, relation, tail, negative tail) in the order made, bound by the digest
-of its bytes and read only through `read_kg_edge_pairs`. torch's generator
+edges are in it, and the manifest says so), the pair rule with its seed, its
+batch size and the pairs each batch kept (the batch boundaries in the stored
+rows, and each batch's edges left out), and ``pairs.bin``: the pairs as
+compact little-endian int64 rows (head, relation, tail, negative tail) in the
+order made, bound by the digest of its bytes and read only through
+`read_kg_edge_pairs`. torch's generator
 stream is not promised across releases, so the pairs are kept, never rebuilt.
-Its counts carry their units (``count_units``). Nothing about it holds a
-case.
+Its counts carry their units (``count_units``). The checkpoint it was taken
+from is named by its digest only, never by its file name, so a copy or a link
+of the same checkpoint makes the same version. Nothing about it holds a case.
 
 Module: src/evaluation/cohort_registry.py
 """
@@ -155,6 +161,10 @@ VERSION_SCHEMAS: Tuple[int, ...] = (VERSION_SCHEMA_VERSION, KINDED_SCHEMA_VERSIO
 SUPPLIED = "supplied"
 KG_EDGES = "kg_edges"
 VERSION_KINDS: Tuple[str, ...] = (SUPPLIED, KG_EDGES)
+#: The schema each kind is written in. A manifest stating a kind in another
+#: schema is a shape no revision writes, so it is refused, never read by the
+#: rules of the shape it resembles (research comparison §2: nothing guessed).
+KIND_SCHEMAS: Dict[str, int] = {SUPPLIED: VERSION_SCHEMA_VERSION, KG_EDGES: KINDED_SCHEMA_VERSION}
 
 #: A KG edge set's roles: the parts of an edge split
 #: (`src.kg.graph_view.SPLIT_NAMES`, pinned equal by
@@ -427,6 +437,24 @@ def version_kind(manifest: Mapping[str, Any]) -> Optional[str]:
     return kind if isinstance(kind, str) else None
 
 
+def not_a_supplied_cohort(kind: Any, role: Any) -> Optional[str]:
+    """Why a version of `kind` (its role `role`) is not a supplied cohort
+    version, or None when it is one: ``a KG edge set (test), not a supplied
+    cohort version``.
+
+    The one sentence a reader of a supplied cohort's cases gives a version of
+    another kind, which it lists or is named but cannot read as cases: the
+    Diagnosis route and its card (a reference cohort's patients) and the
+    overlap audit (`scripts/audit_split_overlap.py`, a cohort's diseases).
+    Each caller says what it needed the cases for. A KG edge set holds edges,
+    not cases, and is named by its role, never as a cohort (research
+    comparison §5 Stage 4)."""
+    if kind == SUPPLIED:
+        return None
+    what = f"a KG edge set ({role})" if kind == KG_EDGES else f"a version of kind {kind!r}"
+    return f"{what}, not a supplied cohort version"
+
+
 # ---------------------------------------------------------------------------
 # Registry, labels and roles
 # ---------------------------------------------------------------------------
@@ -507,7 +535,7 @@ def validate_label(label: Any) -> str:
     try:
         return validate_split_name(label)
     except ValueError as exc:
-        raise CohortVersionRefused(f"the cohort label is refused: {exc}") from None
+        raise CohortVersionRefused(f"the version label is refused: {exc}") from None
 
 
 def validate_role(role: Any) -> str:
@@ -1093,7 +1121,6 @@ def build_kg_edges_manifest(
     bound: Mapping[str, str],
     dataset_record: "DatasetRecord",
     checkpoint_sha256: str,
-    checkpoint_filename: str,
     view: Any,
     split: Any,
     pairs: Any,
@@ -1109,9 +1136,11 @@ def build_kg_edges_manifest(
     (`EdgeSplit.record`: rule, seed, view digest, digest, edges per part) the
     checkpoint's record named and this workspace rebuilt; the message-passing
     graph, the split's train part; the pairs (`LPPairs`) of the role's part,
-    with the rule, seed and batch size that made them, the digest of the
-    file's bytes and the LP core's pairs digest; and the counts with their
-    units. Aggregates only: no edge is listed here.
+    with the rule, seed and batch size that made them, the pairs each batch
+    kept, the digest of the file's bytes and the LP core's pairs digest; the
+    counts with their units; and the checkpoint the view and split were taken
+    from, by its digest (a dependency reference: its file name is a location
+    and is not recorded). Aggregates only: no edge is listed here.
     """
     from src.models.bundle.lp_head import LP_PAIR_RULE, LP_PAIRS_LAYOUT
 
@@ -1150,6 +1179,10 @@ def build_kg_edges_manifest(
             "seed": int(split.seed),
             "batch_size": int(batch_size),
             "batches": -(-positive // int(batch_size)),
+            # The batch boundaries in the stored rows: batch k's pairs are the
+            # batch_pairs[k] rows after the earlier batches'; its edges less
+            # that count are the ones it left out (plan review §5 item 7).
+            "batch_pairs": [int(n) for n in pairs.batch_pairs],
         },
         "counts": {
             "positive_edges": positive,
@@ -1159,7 +1192,6 @@ def build_kg_edges_manifest(
         },
         "count_units": dict(KG_EDGES_COUNT_UNITS),
         "taken_from": {"checkpoint_sha256": checkpoint_sha256,
-                       "checkpoint_filename": checkpoint_filename,
                        "record_fields": list(KG_EDGES_TAKEN_FROM)},
     }
 
@@ -1306,9 +1338,8 @@ def prepare_kg_edges_import(
     pairs_bytes = lp_pairs_table(pairs.head, pairs.relation, pairs.tail, pairs.negative_tail)
     version = build_kg_edges_manifest(
         label=label, role=role, bound=bound, dataset_record=dataset_record,
-        checkpoint_sha256=checkpoint_sha256, checkpoint_filename=checkpoint.name,
-        view=view, split=split, pairs=pairs, pairs_sha256=_sha256(pairs_bytes),
-        batch_size=batch_size,
+        checkpoint_sha256=checkpoint_sha256, view=view, split=split, pairs=pairs,
+        pairs_sha256=_sha256(pairs_bytes), batch_size=batch_size,
     )
     return ImportPlan(label, role, version, preview_id(version), None, None, None, pairs_bytes)
 
@@ -1575,18 +1606,25 @@ def _graph_problems(manifest: Dict[str, Any]) -> List[str]:
 def _kind_problem(manifest: Dict[str, Any]) -> Optional[str]:
     """Why a manifest of a schema this revision reads does not say its kind as
     that schema does, or None: schema 1 states none (it is a supplied cohort),
-    schema 2 states one of `VERSION_KINDS`."""
-    if manifest.get("schema_version") == VERSION_SCHEMA_VERSION:
+    schema 2 states one of `VERSION_KINDS` that is written in schema 2
+    (`KIND_SCHEMAS`). A kind stated in a schema it is not written in is a
+    shape no revision writes; reading it by the rules of the shape it
+    resembles would guess at what its fields mean."""
+    schema = manifest.get("schema_version")
+    if schema == VERSION_SCHEMA_VERSION:
         if "kind" in manifest:
             return (f"is schema {VERSION_SCHEMA_VERSION}, which records no kind, yet states kind "
                     f"{manifest['kind']!r}: it was edited, so it does not say what it is.")
         return None
     if "kind" not in manifest:
-        return (f"is schema {manifest.get('schema_version')!r}, which must state its kind "
-                "(missing kind).")
-    if version_kind(manifest) not in VERSION_KINDS:
+        return f"is schema {schema!r}, which must state its kind (missing kind)."
+    kind = version_kind(manifest)
+    if kind not in VERSION_KINDS:
         return (f"is of kind {manifest['kind']!r}; this revision reads kinds "
                 f"{' and '.join(VERSION_KINDS)} only.")
+    if KIND_SCHEMAS[kind] != schema:
+        return (f"is schema {schema!r} of kind {kind!r}, which no revision writes: a {kind} "
+                f"version is schema {KIND_SCHEMAS[kind]}.")
     return None
 
 
@@ -1658,8 +1696,9 @@ def _kg_edges_shape_problems(manifest: Dict[str, Any]) -> List[str]:
     negative are the part's edges, the message-passing edges the train part's);
     the message-passing graph, the split's train part, saying whether the
     measured edges are in it (exactly when the role is ``train``); the pairs
-    file's name, digests, rule, layout, part, seed, batch size and batch count
-    and its row count; and where the view and split were taken from."""
+    file's name, digests, rule, layout, part, seed, batch size, batch count,
+    the pairs each batch kept (`_batch_pairs_problems`) and its row count; and
+    the checkpoint the view and split were taken from."""
     problems = [f"missing {name}" for name in KG_EDGES_REQUIRED_FIELDS if name not in manifest]
     if problems:
         return problems
@@ -1754,6 +1793,9 @@ def _kg_edges_shape_problems(manifest: Dict[str, Any]) -> List[str]:
             if not (_is_count(pairs.get("batches")) and pairs["batches"] == batches):
                 problems.append(f"pairs.batches ({pairs.get('batches')!r}) is not "
                                 f"counts.positive_edges in batches of {batch} ({batches})")
+            else:
+                problems += _batch_pairs_problems(pairs.get("batch_pairs"), batch,
+                                                  counts["positive_edges"], counts["pairs"])
         if counts is not None and not (_is_count(pairs.get("rows"))
                                        and pairs["rows"] == counts["pairs"]):
             problems.append(f"pairs.rows ({pairs.get('rows')!r}) is not counts.pairs "
@@ -1761,10 +1803,29 @@ def _kg_edges_shape_problems(manifest: Dict[str, Any]) -> List[str]:
 
     taken = manifest["taken_from"]
     if not (isinstance(taken, dict) and _is_sha(taken.get("checkpoint_sha256"))
-            and isinstance(taken.get("checkpoint_filename"), str)):
-        problems.append("taken_from must hold a checkpoint_sha256 and a checkpoint_filename")
+            and isinstance(taken.get("record_fields"), list)):
+        problems.append("taken_from must hold a checkpoint_sha256 and the record_fields read")
     if not isinstance(manifest["imported"], dict):
         problems.append("imported must be an object")
+    return problems
+
+
+def _batch_pairs_problems(batch_pairs: Any, batch_size: int, positive: int,
+                          rows: int) -> List[str]:
+    """Why ``pairs.batch_pairs`` is not the pairs each batch kept, or none: one
+    whole number per batch of `batch_size` over the `positive` edges, none
+    above its batch's edge count (the last batch holds the remainder), summing
+    to the `rows` the pairs file holds."""
+    batches = -(-positive // batch_size)
+    sizes = [min(batch_size, positive - k * batch_size) for k in range(batches)]
+    if not (isinstance(batch_pairs, list) and len(batch_pairs) == batches
+            and all(_is_count(n) for n in batch_pairs)):
+        return [f"pairs.batch_pairs must hold a whole number of at least 0 for each of the "
+                f"{batches} batches"]
+    problems = [f"pairs.batch_pairs[{k}] ({n}) is above its batch's {size} edges"
+                for k, (n, size) in enumerate(zip(batch_pairs, sizes, strict=True)) if n > size]
+    if sum(batch_pairs) != rows:
+        problems.append(f"pairs.batch_pairs sum to {sum(batch_pairs)}, not counts.pairs ({rows})")
     return problems
 
 
@@ -1803,7 +1864,8 @@ def resolve_version(registry: Any, label: str, *,
             the directory has no ``cohort.json`` (an interrupted import); the
             manifest cannot be read or parsed, is not an object, is of a schema
             not in `VERSION_SCHEMAS`, does not state its kind as its schema
-            does or states one this revision does not read, names another label
+            does, states one this revision does not read or one in a schema
+            that kind is not written in (`KIND_SCHEMAS`), names another label
             than its directory, lacks a required field of its kind, or holds
             counts that are missing or contradict each other or the version.
     """
@@ -1818,7 +1880,7 @@ def resolve_version(registry: Any, label: str, *,
         if expected_sha256 is not None:
             raise CohortVersionChanged(path, expected_sha256, None)
         raise CohortVersionRefused(
-            f"the registry {root} holds no cohort version {label!r} (no {directory})."
+            f"the registry {root} holds no version {label!r} (no {directory})."
         )
     try:
         read = read_once(path)
@@ -1890,7 +1952,8 @@ def read_kg_edge_pairs(version: CohortVersionRead) -> KgEdgePairsRead:
     Returns:
         The pairs as `LPPairs` (head, relation, tail, negative tail, in the
         order made; the version's counts as `fixed_lp_pairs` names them; the
-        pairs digest), and the identity of the bytes read.
+        pairs digest; the pairs each batch kept), and the identity of the
+        bytes read.
 
     Raises:
         CohortVersionRefused: the version is not a KG edge set, or its pairs
@@ -1956,7 +2019,7 @@ def read_kg_edge_pairs(version: CohortVersionRead) -> KgEdgePairsRead:
     pairs = LPPairs(head, relation, tail, negative_tail,
                     {"edges": counts["positive_edges"],
                      "without_negative": counts["edges_without_negative"],
-                     "pairs": counts["pairs"]}, digest)
+                     "pairs": counts["pairs"]}, digest, tuple(block["batch_pairs"]))
     return KgEdgePairsRead(pairs, identity)
 
 
@@ -2286,6 +2349,7 @@ __all__ = [
     "KG_EDGES_TAKEN_FROM",
     "KG_EDGES_WHAT_THIS_IS",
     "KINDED_SCHEMA_VERSION",
+    "KIND_SCHEMAS",
     "KgEdgePairsRead",
     "ListedRun",
     "ListedVersion",
@@ -2324,6 +2388,7 @@ __all__ = [
     "list_report_runs",
     "list_versions",
     "map_cases",
+    "not_a_supplied_cohort",
     "parse_source",
     "prepare_import",
     "prepare_kg_edges_import",

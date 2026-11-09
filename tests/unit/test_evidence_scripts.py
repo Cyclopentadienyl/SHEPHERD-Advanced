@@ -306,7 +306,7 @@ def test_a_relative_registry_is_refused(registered, tmp_path):
 def test_an_unknown_label_is_refused(registered, tmp_path):
     out = tmp_path / "m4.json"
 
-    with pytest.raises(SystemExit, match="holds no cohort version 'no-such-version'"):
+    with pytest.raises(SystemExit, match="holds no version 'no-such-version'"):
         _registered(registered, out, label="no-such-version")
     assert not out.exists()
 

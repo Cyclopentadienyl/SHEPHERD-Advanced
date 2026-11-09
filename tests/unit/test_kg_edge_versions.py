@@ -18,16 +18,21 @@ on the demo workspace (`trained_disease_child`):
   ones the base's own training recorded;
 - **the flow**: the preview id is the commit id (through the command line,
   the printed command run as printed); a change of seed, view or graph
-  between preview and commit is refused; a taken label is refused; a
-  checkpoint whose record does not rebuild, contradicts itself or is of
-  another graph is refused before anything is written;
+  between preview and commit is refused, each by the part of the manifest it
+  changes; a copy or link of the same checkpoint makes the same version (the
+  checkpoint is named by its digest, never its file name); a taken label is
+  refused; a checkpoint whose record does not rebuild, contradicts itself or
+  is of another graph is refused before anything is written;
 - **the reader**: a tampered, truncated or missing pairs file is refused on
-  read; a hand-edited manifest is refused naming the field;
+  read; a hand-edited manifest is refused naming the field; the pairs each
+  batch kept are recorded and checked;
 - **every listing** shows a KG edge set's kind, role and counts, never an edge
-  or a case id; a task protocol refuses it with its reason, and the
-  Diagnosis route refuses it as a reference cohort;
-- **a supplied version** still reads in schema 1, and the reader takes a
-  schema-2 supplied manifest by the supplied rules.
+  or a case id; a task protocol refuses it with its reason; the Diagnosis
+  route refuses it as a reference cohort, and its card lists it marked,
+  never chosen by default; the overlap audit refuses it with one message;
+  the supplied import form never offers its role;
+- **a supplied version** still reads in schema 1, and a schema-2 manifest of
+  kind supplied, which no revision writes, is refused.
 
 Module: tests/unit/test_kg_edge_versions.py
 """
@@ -160,7 +165,11 @@ def test_every_role_imports_as_recorded_and_binds_what_it_was_made_from(trained,
     assert (pairs["rule"], pairs["part"], pairs["seed"], pairs["batch_size"]) == (
         LP_PAIR_RULE, role, roles["split"]["seed"], BASE_FIXED["validation_batch_size"])
     assert pairs["batches"] == -(-edges[role] // pairs["batch_size"])
-    assert manifest["taken_from"]["checkpoint_sha256"] == _sha(base.read_bytes())
+    assert len(pairs["batch_pairs"]) == pairs["batches"]
+    assert sum(pairs["batch_pairs"]) == pairs["rows"] == counts["pairs"]
+    assert manifest["taken_from"] == {"checkpoint_sha256": _sha(base.read_bytes()),
+                                      "record_fields": ["data_roles.graph_view",
+                                                        "data_roles.split"]}
 
     # The version holds its manifest and its pairs, nothing else; no source is
     # kept for a KG edge set.
@@ -179,6 +188,7 @@ def test_every_role_imports_as_recorded_and_binds_what_it_was_made_from(trained,
     for column in ("head", "relation", "tail", "negative_tail"):
         assert torch.equal(getattr(read.pairs, column), getattr(expected, column)), column
     assert read.pairs.counts == expected.counts and read.pairs.digest == expected.digest
+    assert read.pairs.batch_pairs == expected.batch_pairs == tuple(pairs["batch_pairs"])
     assert read.pairs.digest == pairs["lp_pairs_digest"]
     assert read.identity.sha256 == pairs["sha256"]
 
@@ -216,6 +226,7 @@ def test_val_pairs_are_base_validation_s_pairs_exactly(trained, registry):
     for column in ("head", "relation", "tail", "negative_tail"):
         assert torch.equal(getattr(pairs, column), getattr(task.val_pairs, column)), column
     assert pairs.digest == task.val_pairs.digest
+    assert pairs.batch_pairs == task.val_pairs.batch_pairs
     logs = payload["logs"]
     assert (logs["val_val_edges"], logs["val_val_without_negative"], logs["val_lp_positives"]) \
         == (version.manifest["counts"]["positive_edges"],
@@ -323,17 +334,53 @@ def _other_view(payload, data_dir):
     payload["model_spec"]["graph_view"]["exclude_relations"] = list(rule["exclude_relations"])
 
 
-@pytest.mark.parametrize("change", [_other_seed, _other_view])
+@pytest.mark.parametrize("change, parts", [
+    (_other_seed, ("split", "pairs")),
+    (_other_view, ("graph_view", "split", "pairs")),
+])
 def test_a_change_of_seed_or_view_after_the_preview_is_refused(trained, registry, tmp_path,
-                                                              change):
+                                                              change, parts):
+    """The seed or the view is bound by the preview id itself, not only by the
+    checkpoint's digest: the manifest parts the change touches differ, and
+    with the checkpoint's reference held equal the ids still differ."""
     data_dir, base = trained["data_dir"], trained["base"]
     shown = prepare_kg_edges_import(registry, data_dir, base, "kg-test", "test")
     other = _rewritten(base, tmp_path / "other.pt", lambda p: change(p, data_dir))
     now = prepare_kg_edges_import(registry, data_dir, other, "kg-test", "test")
+    for part in parts:
+        assert now.manifest[part] != shown.manifest[part], part
+    assert (now.manifest["graph"], now.manifest["dataset_record"]) == (
+        shown.manifest["graph"], shown.manifest["dataset_record"])
+    same_checkpoint = {**now.manifest, "taken_from": shown.manifest["taken_from"]}
+    assert cr.preview_id(same_checkpoint) != shown.preview_id
     assert now.preview_id != shown.preview_id
     with pytest.raises(CohortVersionRefused, match="inputs changed since the preview"):
         commit_import(now, registry, shown.preview_id)
     assert list(registry.iterdir()) == []
+
+
+def test_a_copy_or_link_of_the_same_checkpoint_makes_the_same_version(trained, registry,
+                                                                     tmp_path):
+    """Identity by content (research comparison §4.8, E3): the checkpoint is
+    named by its digest, and its file name or place is a location, so a copy
+    under another name, or a link to it, previews the same id and commits
+    under it."""
+    import shutil
+
+    data_dir, base = trained["data_dir"], trained["base"]
+    shown = prepare_kg_edges_import(registry, data_dir, base, "kg-test", "test")
+    copied = tmp_path / "renamed-copy.pt"
+    shutil.copyfile(base, copied)
+    linked = tmp_path / "linked.pt"
+    linked.symlink_to(base)
+    for checkpoint in (copied, linked):
+        again = prepare_kg_edges_import(registry, data_dir, checkpoint, "kg-test", "test")
+        assert again.manifest == shown.manifest and again.preview_id == shown.preview_id
+    assert "renamed-copy" not in json.dumps(shown.manifest) and base.name not in json.dumps(
+        shown.manifest)
+    version = commit_import(prepare_kg_edges_import(registry, data_dir, copied, "kg-test",
+                                                    "test"), registry, shown.preview_id)
+    assert version.manifest["taken_from"]["checkpoint_sha256"] == _sha(base.read_bytes())
 
 
 def test_a_change_of_graph_after_the_preview_is_refused(trained, registry, tmp_path, capsys):
@@ -514,11 +561,22 @@ def _set(manifest, dotted, value):
     (lambda m: _set(m, "pairs.rows", m["pairs"]["rows"] + 1), "pairs.rows ("),
     (lambda m: _set(m, "pairs.seed", m["pairs"]["seed"] + 1), "pairs.seed ("),
     (lambda m: _set(m, "pairs.batches", 7), "pairs.batches (7)"),
+    (lambda m: _set(m, "pairs", _without(m["pairs"], "batch_pairs")),
+     "pairs.batch_pairs must hold a whole number"),
+    (lambda m: _set(m, "pairs.batch_pairs", m["pairs"]["batch_pairs"] + [0]),
+     "pairs.batch_pairs must hold a whole number of at least 0 for each of the"),
+    (lambda m: _set(m, "pairs.batch_pairs", [m["pairs"]["batch_pairs"][0] - 1,
+                                              *m["pairs"]["batch_pairs"][1:]]),
+     "pairs.batch_pairs sum to"),
+    (lambda m: _set(m, "pairs.batch_pairs", [m["pairs"]["batch_size"] + 1,
+                                              *m["pairs"]["batch_pairs"][1:]]),
+     "pairs.batch_pairs[0] ("),
     (lambda m: _set(m, "pairs.part", "val"), "pairs.part ('val') is not the role (test)"),
     (lambda m: _set(m, "pairs.sha256", "x"), "pairs.sha256 must be a SHA-256"),
     (lambda m: _set(m, "count_units", {}), "count_units must give a unit"),
     (lambda m: _set(m, "graph", _without(m["graph"], "kg")), "graph must hold"),
-    (lambda m: _set(m, "taken_from", {}), "taken_from must hold"),
+    (lambda m: _set(m, "taken_from", {}), "taken_from must hold a checkpoint_sha256"),
+    (lambda m: {**m, "schema_version": 1}, "is schema 1, which records no kind, yet states"),
 ])
 def test_a_hand_edited_manifest_is_refused_naming_the_field(committed, edit, said):
     registry, version = committed
@@ -528,11 +586,13 @@ def test_a_hand_edited_manifest_is_refused_naming_the_field(committed, edit, sai
     assert said in str(refused.value), str(refused.value)
 
 
-def test_a_revision_reading_schema_1_only_refuses_a_kg_edge_set_by_its_schema(committed):
-    """Before schema 2, `resolve_version` refused every schema but 1 by its
-    schema check; a KG edge set is schema 2, so that check refuses it with its
-    reason and never reads it as a supplied cohort. The same check, here with
-    schema 1 alone readable, says so."""
+def test_the_schema_check_refuses_a_schema_it_does_not_read_before_any_field(committed):
+    """The current schema check, with schema 1 alone readable: a KG edge set
+    (schema 2) is refused by its schema, with its reason, before any field or
+    kind is read, so it is never read by the supplied rules. This pins the
+    current check only; that the revision before schema 2 refuses one the
+    same way ("is schema 2; this revision reads schema 1 only") was checked
+    out of tree, on that revision's own reader, and is not shown here."""
     registry, version = committed
     assert version.manifest["schema_version"] == 2
     with pytest.MonkeyPatch.context() as patch:
@@ -682,24 +742,104 @@ def test_the_diagnosis_route_refuses_a_kg_edge_set_as_a_reference_cohort(trained
     assert refused.value.status_code == 422
     assert ("reference cohort 'kg-test': it is a KG edge set (test), not a supplied cohort "
             "version") in refused.value.detail
+    assert cr.not_a_supplied_cohort("kg_edges", "test") in refused.value.detail
+
+
+def _serving(state_cohorts):
+    """A Diagnosis card state serving a patients-like-me model, its facts
+    holding `state_cohorts` (`diagnosis_card.reference_cohorts`)."""
+    identity = {"scoring_mode": "patients_like_me"}
+    return {"status": {"initialized": True, "served_identity": identity},
+            "facts": {"cohorts": state_cohorts}}
+
+
+def test_the_diagnosis_card_lists_a_kg_edge_set_marked_and_never_chooses_it(both, trained,
+                                                                             tmp_path):
+    """The Reference cohort select lists every registry version: a KG edge set
+    with its kind and the server's reason, never bound and never the default,
+    even when it was taken from the serving graph and sorts first; a supplied
+    cohort is chosen. With KG edge sets alone, Run is off with its reason."""
+    pytest.importorskip("gradio")
+    from src.config import server_settings as ss
+    from src.webui.components import diagnosis_card as card
+    from src.webui.components import diagnosis_panel as dp
+
+    registry, supplied, edges = both
+    _import(registry, trained["data_dir"], trained["base"], "train", "a-edges")
+    environ = {ss.ENV_REGISTRY: str(registry)}
+    record = edges.manifest["dataset_record"]["sha256"]
+    rows = [{"name": "ws", "dataset_record": {"binding": "verified", "sha256": record}}]
+    cohorts = card.reference_cohorts("ws", rows, {"ws": trained["data_dir"]}, environ=environ)
+    by_label = {v["label"]: v for v in cohorts["versions"]}
+    assert list(by_label) == ["a-edges", "cases-1", "kg-test"]
+    for label, role in (("a-edges", "train"), ("kg-test", "test")):
+        row = by_label[label]
+        assert (row["kind"], row["binding"], row["problem"]) == ("kg_edges", card.NOT_A_COHORT,
+                                                                 None)
+        assert row["binding_words"] == f"a KG edge set ({role}), not a supplied cohort version"
+    assert by_label["cases-1"]["binding"] != card.NOT_A_COHORT
+
+    options, chosen = dp.cohort_choices(cohorts, None)
+    texts = {value: text for text, value in options}
+    assert (texts["a-edges"], texts["kg-test"]) == ("a-edges · KG edge set",
+                                                    "kg-test · KG edge set")
+    assert "KG edge set" not in texts["cases-1"]
+    assert chosen == "cases-1"
+    assert "a KG edge set (test), not a supplied cohort version" in dp.cohort_info(cohorts,
+                                                                                   "kg-test")
+    assert dp.cohort_refusal(_serving(cohorts)) is None
+
+    only_edges = {**cohorts, "versions": [by_label["a-edges"], by_label["kg-test"]]}
+    assert dp.cohort_choices(only_edges, None)[1] is None
+    assert dp.cohort_refusal(_serving(only_edges)) == (
+        f"{dp.RUN_DISABLED_NO_COHORT} {dp.NO_REFERENCE_VERSION}")
+    assert "operator" in dp.NO_REFERENCE_VERSION
+
+
+def test_the_overlap_audit_refuses_a_kg_edge_set_with_one_message(both, trained, tmp_path):
+    """The registered overlap audit compares a supplied cohort's diseases; a
+    KG edge set of any role (``train`` included, which would collide with
+    the generated split's side) is refused with one message and exit 1,
+    before anything is read past its manifest, and nothing is written."""
+    from scripts import audit_split_overlap
+
+    registry, _, _ = both
+    _import(registry, trained["data_dir"], trained["base"], "train", "kg-train")
+    for label, role in (("kg-test", "test"), ("kg-train", "train")):
+        output = tmp_path / f"{label}.json"
+        with pytest.raises(SystemExit) as exited:
+            audit_split_overlap.main(["--data-dir", str(trained["data_dir"]), "--output",
+                                      str(output), "--registry", str(registry),
+                                      "--cohort", label])
+        said = str(exited.value.code)
+        assert said == (f"the version {label!r} is a KG edge set ({role}), not a supplied "
+                        "cohort version: this audit compares the diseases of a supplied "
+                        "cohort's cases with train's. Nothing was written."), said
+        assert not output.exists()
 
 
 # ---------------------------------------------------------------------------
 # Supplied versions
 # ---------------------------------------------------------------------------
-def test_a_schema_2_supplied_manifest_is_read_by_the_supplied_rules(both):
-    """One parser reads a known shape: schema 2 stating kind ``supplied`` is a
-    supplied cohort, checked by the supplied rules (no writer makes one yet)."""
-    from src.evaluation.cohort_registry import cohort_version_block
+def test_a_schema_2_supplied_manifest_which_no_revision_writes_is_refused(both):
+    """Nothing is guessed (research comparison §2): a supplied version is
+    written in schema 1, so a schema-2 manifest of kind ``supplied`` is a shape
+    no revision writes. It is refused with its reason, listed as unreadable,
+    never read by the schema-1 rules; the schema-1 version it was made from
+    still reads, and a KG edge set stays schema 2."""
+    from src.evaluation.cohort_registry import list_versions
 
-    registry, supplied, _ = both
+    registry, supplied, edges = both
+    assert cr.KIND_SCHEMAS == {"supplied": 1, "kg_edges": 2}
+    assert (supplied.manifest["schema_version"], edges.manifest["schema_version"]) == (1, 2)
     manifest = {**supplied.manifest, "schema_version": 2, "kind": "supplied"}
     (supplied.directory / "cohort.json").write_bytes(encode_json(manifest))
-    again = resolve_version(registry, "cases-1")
-    assert again.kind == "supplied" and again.samples_path == supplied.samples_path
-    assert cohort_version_block(again) == {**cohort_version_block(supplied),
-                                           "manifest_sha256": again.identity.sha256}
-    broken = {**manifest, "samples": None}
-    (supplied.directory / "cohort.json").write_bytes(encode_json(broken))
-    with pytest.raises(CohortVersionRefused, match="samples must hold"):
+    said = ("is schema 2 of kind 'supplied', which no revision writes: a supplied version is "
+            "schema 1.")
+    with pytest.raises(CohortVersionRefused, match=re.escape(said)):
         resolve_version(registry, "cases-1")
+    listed = {entry.label: entry for entry in list_versions(registry)}
+    assert listed["cases-1"].version is None and said in listed["cases-1"].problem
+    assert listed["kg-test"].version.kind == "kg_edges"
+    (supplied.directory / "cohort.json").write_bytes(encode_json(supplied.manifest))
+    assert resolve_version(registry, "cases-1").kind == "supplied"

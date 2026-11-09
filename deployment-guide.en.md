@@ -1316,12 +1316,15 @@ python scripts/import_cohort.py --kind kg_edges --registry /srv/shepherd/cohorts
   split, checking it field by field (rule, seed, view digest, digest, edges per part) and naming
   the first that differs. A checkpoint without a model record, of another graph, or whose record
   contradicts itself is refused. Every check runs before anything is written, and nothing of the
-  checkpoint is copied.
+  checkpoint is copied. The version names the checkpoint by its SHA-256 only, never by its file
+  name or path, so a copy or a link of the same checkpoint makes the same version.
 - **The pairs** follow base validation's rule on the role's part (`fixed_lp_pairs`, `BASE_FIXED`):
   every edge once, permuted and given one negative tail by a generator seeded from the split's
   seed, in batches of 512. An edge whose relation has no other tail in its batch has no negative:
-  it is left out and counted, never given an invented one. So a `val` set's pairs are exactly the
-  pairs base validation scores. Another rule, seed or batch size is another version.
+  it is left out and counted, never given an invented one. The version records the pairs each
+  batch kept (`pairs.batch_pairs`, counts only), so the batch boundaries can be found in the stored
+  rows, and each batch's left-out edges are its edges less that count. So a `val` set's pairs are
+  exactly the pairs base validation scores. Another rule, seed or batch size is another version.
 - **The message-passing graph** is the split's train part (scorer-retraining README A4). For role
   `train` the measured edges are in it, and the version says so; nothing is removed.
 - **The preview** prints the view, the split's parts, the positive edges, the pairs and the edges
@@ -1342,11 +1345,19 @@ The server's lists (`GET /cohorts`) give a KG edge set with its kind, role and c
 edge; the Test page lists it by label and role. No protocol of this build measures one yet:
 `measure_scorer.py --cohort` or the Test page's Start naming one is refused with the protocol's
 reason ("the disease measurement does not measure a KG edge set; ..."), and nothing is written.
+Each reader of a supplied cohort's cases refuses one with one shared reason, "a KG edge set
+(test), not a supplied cohort version": the Diagnosis route, as a reference cohort, and
+`audit_split_overlap.py --cohort` (exit 1, one message, nothing written). The Diagnosis page's
+Reference cohort select lists it marked "KG edge set" and never chooses it by default; when the
+registry holds no readable supplied cohort, Run Diagnosis is off with that reason.
 
 **Schema 1 and 2.** A supplied import still writes schema 1, byte for byte as before, and schema 1
-is read as a supplied cohort. A KG edge set is schema 2, which states its kind. A revision from
-before schema 2 lists it as unreadable with its reason ("is schema 2; this revision reads schema 1
-only"), so an older revision never reads one as a supplied cohort.
+is read as a supplied cohort. A KG edge set is schema 2, which states its kind. Schema 2 is read
+only for the kind written in it: a schema-2 manifest of kind `supplied`, which no revision writes,
+is refused ("which no revision writes: a supplied version is schema 1"), never read by the
+schema-1 rules. A revision from before schema 2 lists a KG edge set as unreadable with its reason
+("is schema 2; this revision reads schema 1 only"), so an older revision never reads one as a
+supplied cohort.
 
 ### Measure
 
@@ -1563,7 +1574,7 @@ registration of another report.
 
 | Command | 0 | 1 | 2 | 3 |
 |---|---|---|---|---|
-| `import_cohort.py` | preview printed, or version committed | refused, with one message ending "Nothing was written." (also a preview in which no case can be ranked) | the command line was rejected | — |
+| `import_cohort.py` | preview printed, or version committed | refused, with one message ending "Nothing was written." (also a preview with nothing to commit: no case can be ranked, or no edge of the part has a negative tail) | the command line was rejected | — |
 | `measure_scorer.py` | measured (with `--record`: registered or already held) | a check refused the run: one message, nothing written (so does `--device auto` or `cuda` on a host without CUDA, before anything is read); or **measured, but the report was not written** (a full or read-only disk, for example): one message saying what may be left, which is never a report that can be registered -- this run's ranks beside `--output` with no report, or an empty file it claimed at `--output` or at the ranks (since K8-6r.4 each refuses the next run on that path), or a run directory without `report.json` in the report store (a run that fails after writing its report, its console closed for example, says where the report is) | the command line was rejected, including an argument of the other kind of cohort | **measured, but the registration refused**: the message names the report and the `record_evaluation.py` command to register it later; or, when the report file no longer holds the bytes the run published, says so and asks for a re-measurement instead (that report may be gone) |
 | `record_evaluation.py` | registered, already held, or shown | refused, with one message; nothing written | the command line was rejected, including neither or both of `--checkpoint` and `--checkpoint-dir` | — |
 | `audit_split_overlap.py` | report written | refused, with one message; nothing written | the command line was rejected (for example the removed `--evaluation-cohort-kind`, `--registry` without `--cohort` or the reverse, or `--splits` beside `--cohort`), with the usage line | — |

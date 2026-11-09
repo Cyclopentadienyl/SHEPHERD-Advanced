@@ -1005,7 +1005,7 @@ def test_resolving_keeps_no_raw_buffer(committed, monkeypatch):
 
 def test_resolving_refuses_an_unknown_or_invalid_label(committed):
     registry, _ = committed
-    with pytest.raises(CohortVersionRefused, match="holds no cohort version 'v9'"):
+    with pytest.raises(CohortVersionRefused, match="holds no version 'v9'"):
         resolve_version(registry, "v9")
     with pytest.raises(CohortVersionRefused, match="label is refused"):
         resolve_version(registry, "../v1")

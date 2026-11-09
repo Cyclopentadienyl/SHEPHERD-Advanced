@@ -1685,12 +1685,14 @@ python scripts/import_cohort.py --kind kg_edges --registry /srv/shepherd/cohorts
   是在這張圖上訓練的。它依記錄的規則重建 view，digest 不同即拒絕；再重建切分，逐欄檢查（規則、
   seed、view digest、digest、各部分的邊數），並指出第一個不同的欄位。沒有 model record、屬於
   另一張圖，或紀錄自相矛盾的 checkpoint 會被拒絕。所有檢查都在寫入任何東西之前進行，也不複製
-  checkpoint 的任何內容。
+  checkpoint 的任何內容。版本只以 SHA-256 指明 checkpoint，絕不記錄其檔名或路徑，因此同一個
+  checkpoint 的複本或連結會得到同一個版本。
 - **配對**依 base validation 的規則作用在該 role 的部分上（`fixed_lp_pairs`、`BASE_FIXED`）：每條
   邊一次，以切分 seed 推得種子的產生器打亂順序並配上一個負樣本 tail，每批 512。若某條邊的
-  relation 在其批次中沒有其他 tail，它就沒有負樣本：會被排除並計數，絕不替它捏造一個。因此
-  `val` 集合的配對恰好就是 base validation 所評分的配對。不同的規則、seed 或批次大小即是另一個
-  版本。
+  relation 在其批次中沒有其他 tail，它就沒有負樣本：會被排除並計數，絕不替它捏造一個。版本會
+  記錄每一批保留的配對數（`pairs.batch_pairs`，只有計數），因此能在保存的列中找出批次邊界，而每
+  一批被排除的邊數就是該批的邊數減去這個計數。因此 `val` 集合的配對恰好就是 base validation 所
+  評分的配對。不同的規則、seed 或批次大小即是另一個版本。
 - **訊息傳遞圖**是切分的 train 部分（scorer-retraining README A4）。role 為 `train` 時，被量測的
   邊就在其中，版本會如此註明；不移除任何東西。
 - **預覽**會印出 view、切分的各部分、正樣本邊數、配對數與沒有負樣本的邊數，各附分母。計數以
@@ -1707,11 +1709,18 @@ workspace 的圖，由其四個 digest 與 dataset record 綁定，量測時與 
 伺服器的清單（`GET /cohorts`）會列出 KG 邊集合，附其 kind、role 與計數，絕不列出邊；Test 頁以
 label 與 role 列出它。這個 build 還沒有任何協定量測它：指名它的 `measure_scorer.py --cohort` 或 Test 頁的 Start 會以
 協定的理由被拒絕（"the disease measurement does not measure a KG edge set; ..."），不寫出任何
-東西。
+東西。讀取 supplied cohort 案例的每個讀取者都以同一個共用理由拒絕它（"a KG edge set (test), not a
+supplied cohort version"）：Diagnosis 路由（作為參考 cohort）與 `audit_split_overlap.py --cohort`
+（結束碼 1，一則訊息，不寫入任何東西）。Diagnosis 頁的 Reference cohort 選單會列出它並標上
+"KG edge set"，但絕不預設選它；registry 中沒有可讀的 supplied cohort 時，Run Diagnosis 會停用並
+附上理由。
 
 **Schema 1 與 2。**supplied 匯入仍寫出 schema 1，位元組與過去完全相同；schema 1 讀作 supplied
-cohort。KG 邊集合是 schema 2，會註明其 kind。schema 2 之前的版本會把它列為無法讀取並附上原因
-（"is schema 2; this revision reads schema 1 only"），因此舊版本絕不會把它誤讀成 supplied cohort。
+cohort。KG 邊集合是 schema 2，會註明其 kind。schema 2 只讀取以它寫出的 kind：kind 為 `supplied`
+的 schema-2 manifest 沒有任何版本會寫出，因此會被拒絕（"which no revision writes: a supplied
+version is schema 1"），絕不以 schema 1 的規則讀取。schema 2 之前的版本會把 KG 邊集合列為無法
+讀取並附上原因（"is schema 2; this revision reads schema 1 only"），因此舊版本絕不會把它誤讀成
+supplied cohort。
 
 ### 量測
 
@@ -1887,7 +1896,7 @@ Mode D（`--mode D`，Batch 3 對 Diagnosis 頁 2026 年 10 月所提供排名�
 
 | 指令 | 0 | 1 | 2 | 3 |
 |---|---|---|---|---|
-| `import_cohort.py` | 已印出預覽，或已提交版本 | 拒絕，一則以 "Nothing was written." 結尾的訊息（沒有任何案例可排名的預覽也是） | 命令列被拒絕 | — |
+| `import_cohort.py` | 已印出預覽，或已提交版本 | 拒絕，一則以 "Nothing was written." 結尾的訊息（沒有東西可提交的預覽也是：沒有任何案例可排名，或該部分沒有任何邊有負樣本 tail） | 命令列被拒絕 | — |
 | `measure_scorer.py` | 已量測（加 `--record` 時：已登錄或已存在） | 某項檢查拒絕了這次執行：一則訊息，不寫入任何東西（在沒有 CUDA 的主機上給 `--device auto` 或 `cuda` 也是，在讀取任何東西之前）；或**已量測，但報告沒有寫出**（例如磁碟已滿或唯讀）：一則訊息說明可能留下了什麼，而那絕不會是可登錄的報告——`--output` 旁這次執行沒有報告的排名檔，或它在 `--output` 或排名檔位置佔用的空檔案（自 K8-6r.4 起，兩者都會讓同一路徑上的下一次執行被拒絕），或報告存放處中沒有 `report.json` 的執行目錄（寫出報告之後才失敗的執行，例如主控台被關閉，會說明報告在哪裡） | 命令列被拒絕，包括屬於另一種 cohort 的參數 | **已量測，但登錄被拒絕**：訊息會指出報告與之後登錄用的 `record_evaluation.py` 指令；若報告檔已不是這次執行發佈的位元組，則如實說明，並要求重新量測（那份報告可能已不存在） |
 | `record_evaluation.py` | 已登錄、已存在，或已顯示 | 拒絕，一則訊息；不寫入任何東西 | 命令列被拒絕，包括 `--checkpoint` 與 `--checkpoint-dir` 都沒給或都給 | — |
 | `audit_split_overlap.py` | 已寫出報告 | 拒絕，一則訊息；不寫入任何東西 | 命令列被拒絕（例如已移除的 `--evaluation-cohort-kind`、只給 `--registry` 不給 `--cohort` 或反之，或與 `--cohort` 一起給出 `--splits`），並印出 usage 行 | — |

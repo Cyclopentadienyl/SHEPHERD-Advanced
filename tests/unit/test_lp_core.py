@@ -90,6 +90,7 @@ def test_the_counts_name_every_edge_and_every_one_dropped_without_a_negative():
     relations = torch.tensor([0, 0, 0, 1, 2, 2])
     pairs = fixed_lp_pairs(edges, relations, seed=0, batch_size=6)
     assert pairs.counts == {"edges": 6, "without_negative": 3, "pairs": 3}
+    assert pairs.batch_pairs == (3,)
     assert sorted((h, r, t) for h, r, t, _ in _rows(pairs)) == [(0, 0, 1), (2, 0, 3), (4, 0, 5)]
     for _, _, tail, negative in _rows(pairs):
         assert negative in {1, 3, 5} - {tail}
@@ -102,10 +103,34 @@ def test_a_negative_is_drawn_within_a_batch_never_across_its_boundary():
     edges = _ei([(0, 1), (2, 3), (4, 5)])
     pairs = fixed_lp_pairs(edges, torch.zeros(3, dtype=torch.long), seed=0, batch_size=1)
     assert pairs.counts == {"edges": 3, "without_negative": 3, "pairs": 0}
+    assert pairs.batch_pairs == (0, 0, 0)
     assert _rows(pairs) == []
     assert pairs.head.dtype == torch.long
     with pytest.raises(ValueError, match="batch_size must be positive"):
         fixed_lp_pairs(edges, torch.zeros(3, dtype=torch.long), seed=0, batch_size=0)
+
+
+def test_each_batch_s_kept_pairs_are_counted_in_batch_order():
+    """`batch_pairs` gives the batch boundaries in the pairs' own rows (plan
+    review §5 item 7): batch k's pairs are the next `batch_pairs[k]` rows, each
+    an edge of that batch, and the batch's edges less that count are the ones
+    it left out; the counts sum to the pairs, the left-out to `without_negative`.
+    Eight relations over 60 edges, in batches of 16, leave some edges out."""
+    edges, relations = _graph(n_relations=8)
+    batch = 16
+    pairs = fixed_lp_pairs(edges, relations, seed=5, batch_size=batch)
+    order = torch.randperm(edges.size(1), generator=torch.Generator().manual_seed(5 + 7919))
+    permuted = [(int(edges[0, i]), int(relations[i]), int(edges[1, i])) for i in order]
+    assert len(pairs.batch_pairs) == -(-edges.size(1) // batch)
+    assert sum(pairs.batch_pairs) == pairs.counts["pairs"]
+    rows = [(h, r, t) for h, r, t, _ in _rows(pairs)]
+    start, left_out = 0, 0
+    for k, kept in enumerate(pairs.batch_pairs):
+        in_batch = permuted[k * batch:(k + 1) * batch]
+        assert set(rows[start:start + kept]) <= set(in_batch), k
+        left_out += len(in_batch) - kept
+        start += kept
+    assert left_out == pairs.counts["without_negative"] > 0
 
 
 def _digest_by_hand(rows):
@@ -185,7 +210,7 @@ def test_scores_and_metrics_by_hand():
     columns = (torch.tensor([0, 2]), torch.tensor([0, 1]), torch.tensor([2, 3]),
                torch.tensor([1, 0]))
     pairs = LPPairs(*columns, counts={"edges": 2, "without_negative": 0, "pairs": 2},
-                    digest=lp_pairs_digest(*columns))
+                    digest=lp_pairs_digest(*columns), batch_pairs=(2,))
     message_passing = _ei([(1, 0), (3, 2)])
 
     scored = score_lp_pairs(bundle, pairs, message_passing, torch.tensor([1, 0]),

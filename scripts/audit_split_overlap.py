@@ -43,7 +43,9 @@ and mapped to one graph by ``scripts/import_cohort.py`` and audited here with
 ``cohort.json``, its ``samples.json`` is read once and refused unless its digest
 is the one that manifest binds, and the version's recorded graph and dataset
 record digests must be the ones this workspace's manifest records, because its
-disease indices name nodes of the graph it was mapped against. The loose
+disease indices name nodes of the graph it was mapped against. A KG edge set,
+the registry's other kind of version, holds edges, not cases, and is refused
+with the registry's reason (`not_a_supplied_cohort`). The loose
 ``<split>_samples.json`` this mode used to read from the workspace is gone with
 ``--evaluation-cohort-kind``.
 
@@ -237,7 +239,10 @@ def build_registered_report(
 
     In order, refusing at the first failure and before anything is written:
     `train` is resolved; the version is resolved (`resolve_version`, one read of
-    its ``cohort.json``); the workspace manifest is read once; the version's
+    its ``cohort.json``) and must be a supplied cohort, whose cases' diseases
+    are compared (a KG edge set holds edges, not cases, and is refused with
+    the registry's reason, `not_a_supplied_cohort`); the workspace manifest is
+    read once; the version's
     four recorded graph digests and its dataset record digest are compared with
     the ones that manifest records (`verify_cohort_binding`, the measurement's
     comparison); `train` is read once and verified against the same manifest
@@ -254,7 +259,12 @@ def build_registered_report(
     **Generated val is not read.** It is not an input to a train-versus-test
     overlap, so a missing or corrupt one must not block this measurement.
     """
-    from src.evaluation.cohort_registry import resolve_version, verify_cohort_binding
+    from src.evaluation.cohort_registry import (
+        CohortVersionRefused,
+        not_a_supplied_cohort,
+        resolve_version,
+        verify_cohort_binding,
+    )
     from src.kg.artifacts import (
         DATASET_RECORD_ROLE,
         GRAPH_ARTIFACTS,
@@ -265,6 +275,12 @@ def build_registered_report(
 
     resolve_cohort(data_dir, TRAINING_SPLIT)
     version = resolve_version(registry, label)
+    role = version.manifest["role"]
+    other = not_a_supplied_cohort(version.kind, role)
+    if other is not None:
+        raise CohortVersionRefused(
+            f"the version {label!r} is {other}: this audit compares the diseases of a supplied "
+            f"cohort's cases with {TRAINING_SPLIT}'s.")
     manifest = read_split_manifest(data_dir)
     artifacts = manifest_section(manifest.manifest, manifest.identity.path, "artifacts")
     verify_cohort_binding(
@@ -275,9 +291,11 @@ def build_registered_report(
     reads = {TRAINING_SPLIT: read_samples(data_dir, TRAINING_SPLIT)}
     verified = verify_cohort_reads(manifest, reads)
     # The role, not the label, names the evaluation side, as a measurement
-    # manifest's `split` does; `validate_role` (inside `resolve_version`) has
-    # already refused `train` and `val`, so it cannot collide with `train`.
-    role = version.manifest["role"]
+    # manifest's `split` does. Only a supplied version reaches here, and
+    # `resolve_version` has checked its role by the supplied rule
+    # (`validate_role`, which refuses `train` and `val`), so it cannot collide
+    # with `train`; a KG edge set's role may be `train`, and it was refused
+    # above.
     reads[role] = read_samples_file(
         version.samples_path, expected_sha256=version.manifest["samples"]["sha256"]
     )

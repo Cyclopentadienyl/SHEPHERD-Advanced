@@ -308,10 +308,15 @@ def test_the_job_card_shows_the_tail_redacted_and_the_failure():
 def test_the_import_form_offers_the_versions_own_roles_and_asks_for_one():
     """Guard (K8-6d): the cohort-import form's Role select and its note belong
     to the form, not to the retired ordering. The select offers the listed
-    versions' own roles, then mygene2 and institutional_acceptance, each once;
-    with no role chosen the note asks for one."""
-    page = {"versions": [{"role": "research_selection"}, {"role": "mygene2"}, {"role": None},
-                         {"role": "exploration"}, {}]}
+    supplied versions' own roles, then mygene2 and institutional_acceptance,
+    each once; a KG edge set's role (a part of an edge split, which a supplied
+    import refuses for train and val) is not offered (research comparison
+    Stage 4). With no role chosen the note asks for one."""
+    page = {"versions": [{"role": "research_selection", "kind": "supplied"},
+                         {"role": "mygene2", "kind": "supplied"}, {"role": None, "kind": None},
+                         {"role": "train", "kind": "kg_edges"},
+                         {"role": "val", "kind": "kg_edges"},
+                         {"role": "exploration", "kind": "supplied"}, {}]}
     assert tp.role_choices(page) == ["research_selection", "mygene2", "exploration",
                                      "institutional_acceptance"]
     assert tp.role_choices({}) == ["mygene2", "institutional_acceptance"]

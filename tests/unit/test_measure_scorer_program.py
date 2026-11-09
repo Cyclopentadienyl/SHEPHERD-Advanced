@@ -166,7 +166,7 @@ def _samples_removed(cohort):
 
 def _unknown_label(cohort):
     return {"argv": _registered(cohort, label="no-such-version"),
-            "says": "holds no cohort version 'no-such-version'"}
+            "says": "holds no version 'no-such-version'"}
 
 
 def _evidence_missing(cohort):

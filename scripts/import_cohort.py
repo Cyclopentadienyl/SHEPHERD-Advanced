@@ -264,9 +264,8 @@ def format_kg_edges_preview(plan: ImportPlan) -> List[str]:
               if passing["includes_measured_edges"] else "the measured edges are not in it")
     lines = [
         f"KG edge set preview: label {plan.label}, role {plan.role}",
-        f"  taken from        checkpoint {taken['checkpoint_filename']}, sha256 "
-        f"{taken['checkpoint_sha256']} (its model record's "
-        f"{' and '.join(taken['record_fields'])})",
+        f"  taken from        checkpoint sha256 {taken['checkpoint_sha256']} (its "
+        f"model record's {' and '.join(taken['record_fields'])})",
         f"  graph view        rule {view['rule']['rule']}, digest {view['digest']}",
         f"  edge split        rule {split['rule']}, seed {split['seed']}, digest {split['digest']}",
         f"    edges by part   {parts} (directed graph-view edges)",

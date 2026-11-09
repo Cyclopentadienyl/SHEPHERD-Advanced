@@ -600,7 +600,7 @@ def test_a_deployment_device_the_cli_cannot_take_refuses_the_start(monkeypatch, 
     ({"version_sha256": "E" * 64}, "not a full SHA-256"),
     ({"workspace": Path("relative/ws")}, "not an absolute path"),
     ({"evidence_dirs": (Path("evidence"),)}, "not an absolute path"),
-    ({"version_label": "../x"}, "cohort label is refused"),
+    ({"version_label": "../x"}, "version label is refused"),
     ({"registry": Path("registry")}, "not an absolute path"),
     # The measurement asked, judged by the one protocol definition on the
     # listed model's capabilities and the listed version, whoever calls. A name that is not a protocol,

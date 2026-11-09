@@ -1321,8 +1321,8 @@ FIELD_HELP = {
         "Reference cohort",
         "The registered cohort version whose patients a patients-like-me model ranks for this "
         "query. Every version in the server's registry is listed. One mapped against another "
-        "graph, or one that cannot be read, is marked; the server refuses it. Under the "
-        "select: the chosen version's fingerprint and its graph check.",
+        "graph, a KG edge set, or one that cannot be read is marked; the server refuses it. "
+        "Under the select: the chosen version's fingerprint and its graph check.",
     ),
     "dx_patient_id": (
         "Patient ID (optional)",
@@ -1406,9 +1406,9 @@ TOPIC_HELP = {
     ),
     "dx-run-no-cohort": (
         "Run Diagnosis is disabled",
-        "This model ranks a registered reference cohort's patients, and no version can be read. "
-        "The registry is not set or refused, holds no version yet, or "
-        "every version is marked \"cannot be read\". An operator imports a version in "
+        "This model ranks a registered reference cohort's patients, and no such version can be "
+        "read. The registry is not set or refused, holds no version yet, or holds only KG edge "
+        "sets and versions marked \"cannot be read\". An operator imports a cohort in "
         "Research › Test, or corrects the server's cohort registry setting.",
     ),
     **{f"dx-banner-{key}": (headline, detail) for key, (headline, detail) in IDENTITY_BANNERS.items()},
@@ -1431,6 +1431,10 @@ NO_COHORT_VERSION = ("The registry holds no cohort version yet; an operator impo
                      "Research\u00a0› Test.")
 NO_READABLE_VERSION = ("Every version in the registry is marked “cannot be read”; an operator "
                        "imports a readable one in Research\u00a0› Test.")
+#: Every readable version is of another kind (a KG edge set), which holds no
+#: patients (`diagnosis_card.NOT_A_COHORT`).
+NO_REFERENCE_VERSION = ("No listed version is a reference cohort: each is a KG edge set or cannot "
+                        "be read. An operator imports a cohort in Research\u00a0› Test.")
 
 #: The change drawer's link to Research › Models: each "›" held to the word
 #: before it by a no-break space, so it is never alone on a line.
@@ -2042,8 +2046,28 @@ _TASK_BOX = ("shep-dx-task-box",)
 #: An option's visible text is at most this long (skill §8); its value is the
 #: version's full label.
 OPTION_MAX = 40
-#: The marks an option carries for a version the server would refuse.
-_VERSION_MARKS = {"another": " · another graph", "unreadable": " · cannot be read"}
+#: The marks an option carries for a version the server would refuse: one
+#: mapped against another graph, one that cannot be read, and one of another
+#: kind, which holds no patients (`card.NOT_A_COHORT`), marked by its kind.
+_VERSION_MARKS = {"another": " · another graph", "unreadable": " · cannot be read",
+                  card.NOT_A_COHORT: " · not a cohort"}
+_KIND_MARKS = {"kg_edges": " · KG edge set"}
+
+
+def _version_mark(version: Mapping[str, Any]) -> str:
+    """The mark of a listed version's option (`_VERSION_MARKS`), or none."""
+    if version.get("problem"):
+        return _VERSION_MARKS["unreadable"]
+    binding = version.get("binding")
+    if binding == card.NOT_A_COHORT:
+        return _KIND_MARKS.get(version.get("kind"), _VERSION_MARKS[binding])
+    return _VERSION_MARKS.get(binding, "")
+
+
+def _reference(version: Mapping[str, Any]) -> bool:
+    """Whether a listed version can be ranked as a reference cohort: it can be
+    read and is a cohort (not a KG edge set); its graph is the server's check."""
+    return not version.get("problem") and version.get("binding") != card.NOT_A_COHORT
 
 
 def _cohorts(state: Mapping[str, Any]) -> Dict[str, Any]:
@@ -2124,26 +2148,26 @@ def cohort_choices(cohorts: Mapping[str, Any], current: Any
                    ) -> Tuple[List[Tuple[str, str]], Optional[str]]:
     """The Reference cohort options and the version chosen. Every listed
     version, as ``(text, full label)``: the text is the label with at most one
-    mark ("another graph", "cannot be read"), at most `OPTION_MAX` characters
-    (a long label shortened where it shows what tells it from the others,
-    `_option_text`) and unique. The chosen one is the current value while it
-    is listed, else the first version mapped against the serving workspace's
-    graph, else the first readable one."""
+    mark ("another graph", "cannot be read", "KG edge set"), at most
+    `OPTION_MAX` characters (a long label shortened where it shows what tells
+    it from the others, `_option_text`) and unique. The chosen one is the
+    current value while it is listed, else the first version mapped against
+    the serving workspace's graph, else the first readable cohort; a KG edge
+    set is never chosen by default."""
     versions = cohorts.get("versions") or []
     labels = [str(v.get("label")) for v in versions]
     options: List[Tuple[str, str]] = []
     taken: set = set()
     for index, version in enumerate(versions):
         label = labels[index]
-        mark = _VERSION_MARKS["unreadable"] if version.get("problem") else \
-            _VERSION_MARKS.get(version.get("binding"), "")
+        mark = _version_mark(version)
         text = _option_text(label, mark, labels[:index] + labels[index + 1:], taken)
         taken.add(text)
         options.append((text, label))
     if current in labels:
         return options, current
     bound = [str(v.get("label")) for v in versions if v.get("binding") == "bound"]
-    readable = [str(v.get("label")) for v in versions if not v.get("problem")]
+    readable = [str(v.get("label")) for v in versions if _reference(v)]
     return options, (bound or readable or [None])[0]
 
 
@@ -2164,9 +2188,9 @@ def cohort_info(cohorts: Mapping[str, Any], chosen: Any) -> str:
 
 def cohort_refusal(state: Mapping[str, Any]) -> Optional[str]:
     """Why Run Diagnosis is off for a patients-like-me model, or None: no
-    usable registry, no version, or no readable one, each in its own words
-    with who can act (the registry's own problem, an operator's text, is not
-    repeated here)."""
+    usable registry, no version, no readable one, or no readable cohort (each
+    readable version a KG edge set), each in its own words with who can act
+    (the registry's own problem, an operator's text, is not repeated here)."""
     if card.served_task(state.get("status")) != "patients_like_me":
         return None
     cohorts = _cohorts(state)
@@ -2177,6 +2201,8 @@ def cohort_refusal(state: Mapping[str, Any]) -> Optional[str]:
         return f"{RUN_DISABLED_NO_COHORT} {NO_COHORT_VERSION}"
     if all(v.get("problem") for v in versions):
         return f"{RUN_DISABLED_NO_COHORT} {NO_READABLE_VERSION}"
+    if not any(_reference(v) for v in versions):
+        return f"{RUN_DISABLED_NO_COHORT} {NO_REFERENCE_VERSION}"
     return None
 
 
