@@ -673,8 +673,9 @@ def test_every_listing_shows_kind_role_and_counts_never_an_edge_or_a_case_id(bot
 
 def test_the_test_page_lists_a_kg_edge_set_and_its_start_says_why_it_is_not_measured(both):
     """The Test page's reader of the listing (its rows, options and summary)
-    takes a KG edge set without failing, by label and role; its listing by
-    kind is research comparison Stage 7's. Start's check refuses it with the
+    takes a KG edge set without failing, by label, kind and role, never in a
+    supplied cohort's words; its listing by kind with each kind's counts is
+    research comparison Stage 7's. Start's check refuses it with the
     protocol's own reason."""
     pytest.importorskip("gradio")
     from src.api.services import server_lists
@@ -687,9 +688,11 @@ def test_the_test_page_lists_a_kg_edge_set_and_its_start_says_why_it_is_not_meas
     registry, _, edges = both
     listing = server_lists.list_cohort_versions(environ={ss.ENV_REGISTRY: str(registry)})
     page = {"versions": [version_row(item) for item in listing.items]}
-    assert ("kg-test" in dict((value, label) for label, value in tp.version_choices(page, None))
-            ["kg-test"])
-    assert "role" in tp.version_html(page, "kg-test", None)
+    options = {value: label for label, value in tp.version_choices(page, None)}
+    assert options["kg-test"] == "kg-test · a KG edge set (test)"
+    shown = tp.version_html(page, "kg-test", None)
+    assert "A KG edge set (test)" in shown
+    assert "source cases" not in shown and "ranked-eligible" not in shown
     (row,) = [v for v in page["versions"] if v["label"] == "kg-test"]
     model = {"record": "model", "learning_stage": "finetune", "task": "disease",
              "capabilities": described("finetune", "disease")}

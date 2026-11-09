@@ -2,7 +2,7 @@
 """
 Import a data version: preview what it would hold, then commit it to the registry.
 ==================================================================================
-Contract M4 (`docs/working/PLAN_TEST_RESULTS.md` D6, D7). Two kinds
+Contract M4 (`docs/working/PLAN_TEST_RESULTS.md` D6, D7). Three kinds
 (`--kind`), each published as an immutable version in a registry the operator
 keeps outside the repository (`src/evaluation/cohort_registry.py`):
 
@@ -15,17 +15,18 @@ keeps outside the repository (`src/evaluation/cohort_registry.py`):
 - ``generated`` (research comparison §3 (A)): one of the workspace's own
   generated patient splits (``--role train|val|test``, the split it is),
   verified against the workspace's split manifest as ``measure_scorer --split``
-  verifies it, its samples kept as written. Its role is recorded as given; the
-  generator writes ``train`` and ``val``, so ``test`` is refused where the
-  workspace holds no generated test split.
+  verifies it, its samples and that split manifest kept as written. Its role
+  is recorded as given; the generator writes ``train`` and ``val``, so
+  ``test`` is refused where the workspace holds no generated test split.
 
 **Two steps, and the second repeats the first.** Without ``--commit`` this
 prints what the import would produce -- for a supplied cohort every exclusion
 with its case id and reasons, the terms that did not map, the graph and
 dataset record it binds, the policy; for a KG edge set the view, the split,
 the pairs and their counts, the message-passing graph and what it binds; for a
-generated split the generation definition, the split's files and the samples
-by digest, and their counts -- and a preview id, and writes nothing.
+generated split the generation definition, the split manifest, the split's
+files and the samples by digest, and their counts -- and a preview id, and
+writes nothing.
 ``--commit PREVIEW_ID`` with the same arguments reads every input again and
 publishes only if they still give that id, so what is committed is what the
 operator saw.
@@ -336,9 +337,10 @@ def _record_lines(record: Dict[str, Any]) -> List[str]:
 
 def format_generated_preview(plan: ImportPlan) -> List[str]:
     """A generated split's preview, as lines: the split and its counts with
-    their units, the generation definition and the allocation it cut, the
-    split manifest and the split's files by digest, the samples kept, what was
-    verified, and what the version binds. Aggregates only: no sample or
+    their units (counted from the samples verified), the generation
+    definition and the allocation it cut, the split manifest kept and the
+    split's files by digest, the samples kept, what was verified, and what
+    the version binds. Aggregates only: no sample or
     patient id is printed."""
     manifest = plan.manifest
     counts, generation = manifest["counts"], manifest["generation"]
@@ -348,12 +350,14 @@ def format_generated_preview(plan: ImportPlan) -> List[str]:
     lines = [
         f"Generated split preview: label {plan.label}, role {plan.role}",
         f"  samples           {counts['samples']} generated patients of the {plan.role} split",
-        f"  diseases          {counts['diseases']} distinct (the split's realised set)",
+        f"  diseases          {counts['diseases']} distinct among them (the split's realised "
+        "set)",
         f"  generation        {generation['algorithm']} v{generation['algorithm_version']}"
         + (f" ({settings})" if settings else ""),
         f"  allocation        {allocation.get('algorithm')} "
         f"v{allocation.get('algorithm_version')}, seed {allocation.get('seed')}",
-        f"  split manifest    sha256 {manifest['split_manifest']['sha256']}",
+        f"  split manifest    {manifest['split_manifest']['file']}, sha256 "
+        f"{manifest['split_manifest']['sha256']} (the workspace's file, as written)",
     ]
     lines += [f"    {name:15s} {digest}" for name, digest in manifest["split_artifacts"].items()]
     lines += [

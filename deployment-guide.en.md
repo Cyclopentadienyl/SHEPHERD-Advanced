@@ -1219,6 +1219,7 @@ renamed into place, with the directory's permission policy.
   versions/<label>/cohort.json           the version manifest, written last: it makes the version exist
   versions/<label>/samples.json          the mapped samples (a generated split's: the workspace's file), bound by cohort.json's digest
   versions/<label>/pairs.bin             a KG edge set's pairs instead of samples (below), bound the same way
+  versions/<label>/split_manifest.json   a generated split's copy of the workspace's split manifest (below), bound the same way
   versions/<label>/reports/<run id>/     one directory per measurement: ranks.json, then report.json
 ```
 
@@ -1342,7 +1343,8 @@ is the workspace's, bound by its four digests and the dataset record, which a me
 compares as it does a supplied version's.
 
 The server's lists (`GET /cohorts`) give a KG edge set with its kind, role and counts, never an
-edge; the Test page lists it by label and role. No protocol of this build measures one yet:
+edge; the Test page lists it by label, kind and role ("a KG edge set (test)"), never with a
+supplied cohort's counts. No protocol of this build measures one yet:
 `measure_scorer.py --cohort` or the Test page's Start naming one is refused with the protocol's
 reason ("the disease measurement does not measure a KG edge set; ..."), and nothing is written.
 Each reader of a supplied cohort's cases refuses one with one shared reason, "a KG edge set
@@ -1386,17 +1388,22 @@ python scripts/import_cohort.py --kind generated --registry /srv/shepherd/cohort
   samples file it binds, the generation definition (the generator's algorithm, version and
   recorded settings, and the disease allocation it cut, copied from the split manifest as they
   are), and the role. The counts are the split's generated patients and its distinct diseases,
-  each with its unit. The version records no path.
-- **The samples are copied, not bound in place.** The version keeps the workspace's file byte for
-  byte as `samples.json`, bound by the digest the split manifest records, so it stays readable and
-  verifiable after the workspace is rebuilt or re-sampled; whether the workspace still holds that
-  split is then a reference's state, not a condition of reading the version.
+  counted from the samples verified, each with its unit; a split manifest whose own count of
+  them differs is refused. Each split file is named by its split's name, never a path. The
+  version records no path.
+- **The samples and the split manifest are copied, not bound in place.** The version keeps the
+  workspace's file byte for byte as `samples.json`, bound by the digest the split manifest
+  records, and the split manifest itself as `split_manifest.json` (digests and counts only, no
+  sample), bound by its own digest, so it stays readable and verifiable after the workspace is
+  rebuilt or re-sampled, its generation definition included; whether the workspace still holds
+  that split is then a reference's state, not a condition of reading the version.
 - **The preview** prints the counts, the generation definition and allocation, the split manifest
   and the split's files by digest, the samples kept, what was verified, and the graph and dataset
   record it binds, never a sample or a patient id. A split with no sample cannot be committed.
 
 The server's lists (`GET /cohorts`) give a generated split with its kind, role and counts, never a
-sample; the Test page lists it by label and role. It is never presented as a supplied cohort, or
+sample; the Test page lists it by label, kind and role ("a generated split (val)"), never with a
+supplied cohort's counts. It is never presented as a supplied cohort, or
 as test unless its role is test: the Diagnosis route and `audit_split_overlap.py --cohort` refuse
 it with the registry's shared reason ("a generated split (val), not a supplied cohort version"),
 and the Diagnosis page's Reference cohort select lists it marked "generated split" and never
@@ -1412,10 +1419,12 @@ graph's four digests, the dataset record and each source it names by role, and b
 split, pairs and checkpoint of a KG edge set, or the split manifest, split files and samples of a
 generated split). A registry copied or moved to another directory that `--registry` or
 `SHEPHERD_REGISTRY` then names reads the same versions under the same digests; which directory is
-allowed is that setting's rule, apart from the content check. Whether a dependency is present at
-a location is a state (verified, differs, missing, unreadable or not checked), never a reason a
-version cannot be read. The source roles a version names are the dataset record's, with no list
-of allowed roles; today's KG builder records four (MONDO, HPO, the phenotype annotations and
+allowed is that setting's rule, apart from the content check. No command or page shows whether
+a version's dependencies are present yet: the registry's library check (`check_references`)
+gives each as a state (verified, differs, missing, unreadable or not checked), never a reason a
+version cannot be read, and the results service is to show those states (research comparison
+Stage 8). The source roles a version names are the dataset record's, with no list of allowed
+roles; today's KG builder records four (MONDO, HPO, the phenotype annotations and
 genes-to-phenotype), and a new source needs the builder's own extension first.
 
 ### Measure

@@ -924,6 +924,21 @@ def model_choices(models: Mapping[str, Any]) -> List[Tuple[str, str]]:
     return choices
 
 
+def _kind_words(version: Mapping[str, Any]) -> Optional[str]:
+    """A version of another kind than a supplied cohort in the registry's
+    words, by its kind and role ("a generated split (val)", "a KG edge set
+    (test)", `cohort_registry.version_words`), or None for a supplied cohort.
+    Such a version has no source cases or ranked-eligible count, so it is
+    never described in a supplied cohort's words; listing every kind with its
+    own counts is research comparison Stage 7's."""
+    from src.evaluation.cohort_registry import version_words
+
+    kind = version.get("kind")
+    if kind in (None, protocols.SUPPLIED):
+        return None
+    return version_words(kind, version.get("role"))
+
+
 def version_choices(page: Mapping[str, Any], binding: Optional[Mapping[str, Any]]
                     ) -> List[Tuple[str, str]]:
     choices = []
@@ -933,7 +948,9 @@ def version_choices(page: Mapping[str, Any], binding: Optional[Mapping[str, Any]
             choices.append((f"{label} · cannot be read", label))
             continue
         counts = version.get("counts") or {}
-        text = (f"{label} · role {version.get('role')} · {_count(counts.get('ranked_eligible'))} "
+        kind_words = _kind_words(version)
+        text = (f"{label} · {kind_words}" if kind_words else
+                f"{label} · role {version.get('role')} · {_count(counts.get('ranked_eligible'))} "
                 f"of {_count(counts.get('source_cases'))} ranked-eligible")
         state, _words = binding_state(version, binding)
         if state == "another":
@@ -1001,7 +1018,8 @@ def workspace_html(page: Mapping[str, Any], workspace: Optional[str]) -> str:
 def version_html(page: Mapping[str, Any], label: Optional[str],
                  binding: Optional[Mapping[str, Any]]) -> str:
     """The chosen version: role, counts, its digest, and whether it was mapped
-    against this workspace's graph."""
+    against this workspace's graph. A version of another kind is named by its
+    kind and role instead of a supplied cohort's counts (`_kind_words`)."""
     if page.get("registry_problem"):
         return ""
     version = find(page.get("versions") or [], "label", label)
@@ -1021,14 +1039,20 @@ def version_html(page: Mapping[str, Any], label: Optional[str],
     excluded = counts.get("excluded") if isinstance(counts.get("excluded"), Mapping) else {}
     reasons = " · ".join(f"{str(k).replace('_', ' ')} {_count(v)}" for k, v in excluded.items())
     imported = str(version.get("imported_at") or "").replace("T", " ").replace("Z", " UTC")
+    kind_words = _kind_words(version)
+    if kind_words:
+        what = e(kind_words[:1].upper() + kind_words[1:])
+    else:
+        what = (f'role {r.ident_html(version.get("role"))} · {_count(counts.get("source_cases"))} '
+                f'source cases · {_count(counts.get("ranked_eligible"))} ranked-eligible'
+                f'{" (" + e(reasons) + " excluded)" if reasons else ""}')
+    source_format = version.get("source_format")
     return (
         '<div class="shep-test-vd">'
-        f'<div>role {r.ident_html(version.get("role"))} · {_count(counts.get("source_cases"))} '
-        f'source cases · {_count(counts.get("ranked_eligible"))} ranked-eligible'
-        f'{" (" + e(reasons) + " excluded)" if reasons else ""}</div>'
+        f'<div>{what}</div>'
         f'<div>{r.fingerprint_html("version", version.get("manifest_sha256"))} {chip}</div>'
-        f'<div class="shep-sub">Imported {e(imported or "—")} · '
-        f'{e(version.get("source_format") or "")}</div></div>')
+        f'<div class="shep-sub">Imported {e(imported or "—")}'
+        f'{" · " + e(source_format) if source_format else ""}</div></div>')
 
 
 def _row_chip(run: Mapping[str, Any]) -> str:

@@ -118,25 +118,32 @@ manifest binds, which ``measure_scorer --split`` reads in place.
 `prepare_generated_import` reads and verifies the workspace as that
 measurement does (the graph, the dataset record, and both generated splits
 against the one split manifest reading: their digests, disease sets and
-disjointness, `verify_cohort_reads`), then keeps the role's samples. Its data
-identity is the samples' content digest, the workspace's split artefact
-digests (the split manifest and every samples file it binds), the generation
+disjointness, `verify_cohort_reads`), then keeps the role's samples and the
+split manifest. Its data identity is the samples' content digest, the
+workspace's split artefact digests (the split manifest and every samples file
+it binds, each named by its split's name, never a path), the generation
 definition (the generator's algorithm, version and recorded settings, and the
 allocation it cut), and its role, recorded as given: ``train``, ``val`` or
-``test`` (`GENERATED_ROLES`). It is listed and named as a generated split of
+``test`` (`GENERATED_ROLES`). Its counts (patients, distinct diseases) are
+counted from the samples verified, never taken from the split manifest's
+word. It is listed and named as a generated split of
 its role, never as a supplied cohort, and as test only when its role is test;
 no role is refused. The generator writes, and `verify_cohort_reads` checks,
 ``train`` and ``val`` only, so a ``test`` import is refused for what the
 workspace lacks (a generated test split this revision can verify), never for
-the role. **The samples are
-copied, not bound in place**: a workspace is rebuilt or re-sampled in its own
-directory, and a version that only named the workspace's files by digest
-would stop being readable, and verifiable as data, the day that happened. The
-copy is the bytes the workspace held, bound by the digest its split manifest
-records, so a registered generated version is as immutable and verifiable as
-a supplied one, and the workspace's split is still named by content: whether
-the workspace still holds it is a reference's state (`check_references`), not
-a condition of reading the version. Archived reports measured with
+the role. **The samples and the split manifest are copied, not bound in
+place**: a workspace is rebuilt or re-sampled in its own directory, and a
+version that only named the workspace's files by digest would stop being
+readable, and verifiable as data, the day that happened. The copies are the
+bytes the workspace held: ``samples.json``, bound by the digest the split
+manifest records, and ``split_manifest.json`` (small, digests and counts
+only, no sample), bound by its own digest, from whose parse the version's
+generation definition, allocation and realised sets were copied. So a
+registered generated version, its generation definition included, is as
+immutable and verifiable as a supplied one, and the workspace's split is
+still named by content: whether the workspace still holds it is a
+reference's state (`check_references`), not a condition of reading the
+version. Archived reports measured with
 ``--split`` are untouched: no identity is made up for them, and registering
 them stays refused (`src.evaluation.sidecar.build_record`). Measuring a
 registered generated split and registering that result are the research
@@ -153,8 +160,11 @@ files and the samples; or the case source and the samples). A path is only a
 location: `check_references` compares the bytes found at a location the
 caller gives (a version's own directory, a workspace, a checkpoint file) with
 the recorded digests, and reports each reference's state (verified, differs,
-missing, unreadable, or not checked); a missing dependency is a state, never
-a crash and never a pass. Which roots may be read is decided apart from this:
+missing, unreadable, or not checked), its reason naming the location by its
+kind and file name, never by a path; a missing dependency is a state, never
+a crash and never a pass. No command or page shows these states yet: the
+results service is their consumer (research comparison Stage 8). Which roots
+may be read is decided apart from this:
 a registry root by `validate_registry` (and the service's
 ``SHEPHERD_REGISTRY``), a workspace by its caller. A registry copied to
 another authorised root resolves to the same versions, by the same digests.
@@ -246,6 +256,10 @@ VERSION_MANIFEST = "cohort.json"
 VERSION_SAMPLES = "samples.json"
 #: A KG edge set's pairs (`lp_pairs_table`'s bytes), bound by its manifest.
 VERSION_PAIRS = "pairs.bin"
+#: A generated split's copy of the workspace's split manifest, the bytes its
+#: generation definition, allocation and realised sets were copied from, bound
+#: by its manifest.
+VERSION_SPLIT_MANIFEST = "split_manifest.json"
 SOURCES_DIR = "sources"
 VERSIONS_DIR = "versions"
 REPORTS_DIR = "reports"
@@ -336,7 +350,8 @@ GENERATED_REQUIRED_FIELDS: Tuple[str, ...] = (
 GENERATED_WHAT_THIS_IS = ("a generated split: one of a workspace's generated patient splits, "
                           "its samples kept as the generator wrote them")
 
-#: A generated split's counts, each with its unit.
+#: A generated split's counts, each with its unit. Both are counted from the
+#: samples the import verified, never taken from the split manifest's word.
 GENERATED_COUNT_UNITS: Dict[str, str] = {
     "samples": "generated patients: the sample rows of the role's split, as written",
     "diseases": "distinct diseases among those patients (the split's realised disease set)",
@@ -476,7 +491,10 @@ class ImportPlan(NamedTuple):
     A KG edge set keeps no source file (its graph is the workspace's, bound by
     digest) and no samples: `pairs_bytes` are its pairs (`VERSION_PAIRS`). A
     generated split keeps no source file either: `samples_bytes` are the
-    workspace's samples file, the bytes its split manifest binds.
+    workspace's samples file, the bytes its split manifest binds, and
+    `split_manifest_bytes` that split manifest (`VERSION_SPLIT_MANIFEST`), the
+    bytes the version's generation definition, allocation and realised sets
+    were copied from.
     """
 
     label: str
@@ -487,6 +505,7 @@ class ImportPlan(NamedTuple):
     source_bytes: Optional[bytes]
     samples_bytes: Optional[bytes]
     pairs_bytes: Optional[bytes] = None
+    split_manifest_bytes: Optional[bytes] = None
 
     @property
     def kind(self) -> Optional[str]:
@@ -1490,9 +1509,25 @@ _SPLIT_MANIFEST_BLOCKS = ("generation", "allocation", "realised")
 def _split_files(artifacts: Mapping[str, Any]) -> Dict[str, Any]:
     """The samples files a split manifest's ``artifacts`` binds, by name
     (``train_samples``, ``val_samples``, ...), each with its digest: the
-    workspace's split artefacts beside the manifest itself."""
+    workspace's split artefacts beside the manifest itself. Every key ending
+    in ``_samples`` is taken as it is; one that is not a split's name
+    (`_is_split_file`) is refused by the reader's rules, never dropped."""
     return {name: digest for name, digest in sorted(artifacts.items())
             if name.endswith("_samples")}
+
+
+def _is_split_file(name: Any) -> bool:
+    """Whether `name` names a split's samples file as a split manifest binds
+    it, ``<split>_samples``, the split a name `validate_split_name` accepts:
+    a name, never a path, so the file it names (``<split>_samples.json``) can
+    only lie inside the workspace that holds the manifest."""
+    if not (isinstance(name, str) and name.endswith("_samples")):
+        return False
+    try:
+        validate_split_name(name[: -len("_samples")])
+    except ValueError:
+        return False
+    return True
 
 
 def build_generated_manifest(
@@ -1511,18 +1546,22 @@ def build_generated_manifest(
 
     Built only from what was read and verified: the four digests the
     workspace manifest binds and the dataset record the import verified
-    (`_dataset_record_block`); the split manifest, by the digest of the bytes
-    read, and its blocks copied as they are (`_SPLIT_MANIFEST_BLOCKS`: the
-    generation definition, the allocation, what each split realised); the
-    split's files by the digests that manifest binds (`_split_files`); what
-    was verified (`GeneratedCohorts`: the splits in scope, disjointness
-    measured); the samples, the role's file kept as ``samples.json``, by
-    digest and row count; and the counts with their units (the role's
-    patients, and the diseases its realised set holds). Aggregates and
-    digests only: no sample, and no path.
+    (`_dataset_record_block`); the split manifest, kept in the version as
+    ``split_manifest.json`` (`VERSION_SPLIT_MANIFEST`) and bound by the digest
+    of the bytes read, and its blocks copied as they are from the parse of
+    those bytes (`_SPLIT_MANIFEST_BLOCKS`: the generation definition, the
+    allocation, what each split realised); the split's files by the digests
+    that manifest binds (`_split_files`); what was verified
+    (`GeneratedCohorts`: the splits in scope, disjointness measured); the
+    samples, the role's file kept as ``samples.json``, by digest and row
+    count; and the counts with their units, both counted from the verified
+    samples: the role's patients, and the distinct diseases among them
+    (`verified.disease_sets`, the set whose digest the split manifest records
+    as realised). The manifest's own count of them is copied in ``realised``
+    as it is, and the reader refuses a version whose count is not it
+    (`_generated_shape_problems`). Aggregates and digests only: no sample,
+    and no path.
     """
-    realised = split_manifest.get("realised")
-    realised = realised if isinstance(realised, Mapping) else {}
     return {
         "schema_version": KINDED_SCHEMA_VERSION,
         "kind": GENERATED,
@@ -1531,14 +1570,14 @@ def build_generated_manifest(
         "role": role,
         "graph": {role_name: bound[role_name] for role_name in GRAPH_ARTIFACTS},
         "dataset_record": _dataset_record_block(dataset_record),
-        "split_manifest": {"sha256": split_manifest_sha256,
+        "split_manifest": {"file": VERSION_SPLIT_MANIFEST, "sha256": split_manifest_sha256,
                            "schema_version": split_manifest.get("schema_version")},
         "split_artifacts": _split_files(split_manifest.get("artifacts") or {}),
         **{block: copy.deepcopy(split_manifest.get(block)) for block in _SPLIT_MANIFEST_BLOCKS},
         "verified": {"splits": list(verified.verified),
                      "disjointness_measured": bool(verified.disjointness_measured)},
         "samples": {"file": VERSION_SAMPLES, "sha256": samples_sha256, "n": int(n_samples)},
-        "counts": {"samples": int(n_samples), "diseases": realised.get(f"{role}_diseases")},
+        "counts": {"samples": int(n_samples), "diseases": len(verified.disease_sets[role])},
         "count_units": dict(GENERATED_COUNT_UNITS),
     }
 
@@ -1566,18 +1605,28 @@ def prepare_generated_import(
     4. the generator's splits, one read each (`read_samples`), against that
        one manifest reading (`verify_cohort_reads`: their digests, disease
        sets and disjointness);
-    5. the role's file read once more for its bytes, which must hash to the
-       digest just verified, so the bytes kept are the bytes verified.
+    5. the role's file and the split manifest read once more for their bytes,
+       each of which must hash to the digest just verified (the samples
+       `read_samples` parsed, the split manifest `read_split_manifest`
+       parsed), so the bytes kept are the bytes verified;
+    6. the version as the reader reads it (`_generated_shape_problems`): a
+       split manifest that names a split file by anything but a split's name,
+       states no generation definition, or counts the role's realised
+       diseases otherwise than the samples hold them (the counts are taken
+       from the samples verified) is refused here, naming the split manifest.
 
-    **Why the samples are copied** (the module's note): a registered version
-    is immutable, and a workspace is not; the copy is bound by the digest the
-    workspace's split manifest records, so it is verifiable after the
-    workspace changes, and the workspace's split stays named by content.
+    **Why the samples and the split manifest are copied** (the module's
+    note): a registered version is immutable, and a workspace is not; the
+    copies are bound by the digests the workspace's split manifest records and
+    its own, so the version, its generation definition included, is
+    verifiable after the workspace changes, and the workspace's split stays
+    named by content.
 
     Raises:
         RegistryRefused, CohortVersionRefused: the registry, label or role is
-            refused, the workspace binds no split of that role, or its file
-            changed while it was read.
+            refused, the workspace binds no split of that role, a file changed
+            while it was read, or the split manifest does not describe the
+            split as a version records it.
         ValueError: from the workspace readers and verifiers, naming the file.
         OSError: a file could not be read.
     """
@@ -1622,30 +1671,39 @@ def prepare_generated_import(
     n_samples = len(reads[role].samples)
     del reads
 
-    kept = read_once(data_dir / f"{role}_samples.json")
-    if kept.sha256 != verified_sha256:
-        raise CohortVersionRefused(
-            f"{kept.identity.path} changed while it was read (its bytes are {kept.sha256[:12]}"
-            f"..., the {verified_sha256[:12]}... verified a moment before against "
-            f"{MANIFEST_FILENAME}); nothing is kept. Import again once the workspace is not "
-            "being written."
-        )
+    # The bytes kept are the bytes verified: each file is read once more and
+    # kept only when it hashes to the digest of the read that was parsed.
+    kept = {}
+    for name, verified_digest in ((f"{role}_samples.json", verified_sha256),
+                                  (MANIFEST_FILENAME, manifest.identity.sha256)):
+        read = read_once(data_dir / name)
+        if read.sha256 != verified_digest:
+            raise CohortVersionRefused(
+                f"{read.identity.path} changed while it was read (its bytes are "
+                f"{read.sha256[:12]}..., the {verified_digest[:12]}... verified a moment "
+                "before); nothing is kept. Import again once the workspace is not being "
+                "written."
+            )
+        kept[name] = read
+    samples = kept[f"{role}_samples.json"]
     version = build_generated_manifest(
         label=label, role=role, bound=bound, dataset_record=dataset_record,
         split_manifest=manifest.manifest, split_manifest_sha256=manifest.identity.sha256,
-        verified=verified, samples_sha256=kept.sha256, n_samples=n_samples,
+        verified=verified, samples_sha256=samples.sha256, n_samples=n_samples,
     )
     # The reader's rules, before anything is written: a split manifest the
-    # verifiers passed but which does not state the generation definition a
-    # version records (an algorithm and its version) is refused here, not
-    # published as a version every reader refuses.
+    # verifiers passed but which names a split file by a path, states no
+    # generation definition (an algorithm and its version), or counts the
+    # role's realised diseases otherwise than its samples hold them is refused
+    # here, not published as a version every reader refuses.
     problems = _generated_shape_problems({**version, "imported": {}})
     if problems:
         raise CohortVersionRefused(
             f"the workspace {data_dir}'s {MANIFEST_FILENAME} does not describe its {role} split "
             f"as a generated split version records it: {'; '.join(problems)}."
         )
-    return ImportPlan(label, role, version, preview_id(version), None, None, kept.data)
+    return ImportPlan(label, role, version, preview_id(version), None, None, samples.data,
+                      split_manifest_bytes=kept[MANIFEST_FILENAME].data)
 
 
 def _utc(now: datetime, pattern: str) -> str:
@@ -1700,10 +1758,10 @@ def commit_import(
     and bytes against what its manifest binds, something to measure (a
     non-empty sample set; a KG edge set's pairs), and a free label. Then, in
     order: a supplied version's source is kept (no-clobber), the version
-    directory is claimed with ``mkdir(exist_ok=False)``, its data file is
-    published (``samples.json``, a supplied cohort's mapped samples or a
-    generated split's samples as the workspace held them; a KG edge set's
-    ``pairs.bin``), and
+    directory is claimed with ``mkdir(exist_ok=False)``, its data files are
+    published (``samples.json``, a supplied cohort's mapped samples; a KG edge
+    set's ``pairs.bin``; a generated split's ``split_manifest.json`` and
+    ``samples.json``, as the workspace held them), and
     ``cohort.json`` -- the commit point -- last, with the ``imported`` block
     (when, and `code_revision(REPO_ROOT)`, both taken before the first write).
     ``sources/``, ``versions/`` and, after the claim, the version directory are
@@ -1738,7 +1796,7 @@ def commit_import(
         # The id covers the manifest, not the bytes beside it; those must be the
         # ones it binds, or the registry would keep a file under another's name.
         label = validate_label(plan.manifest["label"])
-        data_file = _plan_data_file(plan, label)
+        data_files = _plan_data_files(plan, label)
         _require_label_free(root, label)
     except (RegistryRefused, CohortVersionRefused) as exc:
         raise type(exc)(f"{exc} Nothing was written.") from None
@@ -1780,21 +1838,22 @@ def commit_import(
               "the label."),
     )
 
-    name, data = data_file
-    publish_bytes(directory / name, data)
+    for name, data in data_files:
+        publish_bytes(directory / name, data)
     publish_bytes(directory / VERSION_MANIFEST, manifest_bytes)
     return resolve_version(root, label)
 
 
-def _plan_data_file(plan: ImportPlan, label: str) -> Tuple[str, bytes]:
-    """The data file a commit publishes before the manifest, by the plan's
-    kind, once the plan's label and bytes are those its manifest binds and it
-    holds something to measure; else a refusal.
+def _plan_data_files(plan: ImportPlan, label: str) -> List[Tuple[str, bytes]]:
+    """The data files a commit publishes before the manifest, in order, by the
+    plan's kind, once the plan's label and bytes are those its manifest binds
+    and it holds something to measure; else a refusal.
 
     A supplied version: its label, source and samples, and at least one case
     eligible for ranking. A KG edge set: its label and pairs, and at least one
     pair (a part none of whose edges has a negative would measure nothing). A
-    generated split: its label and samples, and at least one sample."""
+    generated split: its label, split manifest and samples, and at least one
+    sample."""
     manifest = plan.manifest
     kind = plan.kind
     if kind == SUPPLIED:
@@ -1813,7 +1872,7 @@ def _plan_data_file(plan: ImportPlan, label: str) -> Tuple[str, bytes]:
                 f"no case of the source is eligible for ranking against this graph, so the "
                 f"version {label!r} would measure nobody. See the preview's exclusions."
             )
-        return VERSION_SAMPLES, plan.samples_bytes
+        return [(VERSION_SAMPLES, plan.samples_bytes)]
     if kind == KG_EDGES:
         if (plan.label != label or plan.pairs_bytes is None
                 or _sha256(plan.pairs_bytes) != manifest["pairs"]["sha256"]):
@@ -1828,22 +1887,25 @@ def _plan_data_file(plan: ImportPlan, label: str) -> Tuple[str, bytes]:
                 f"{manifest['role']} part has a negative tail (no other tail of its relation "
                 f"in its batch), so the KG edge set {label!r} would measure nothing."
             )
-        return VERSION_PAIRS, plan.pairs_bytes
+        return [(VERSION_PAIRS, plan.pairs_bytes)]
     if kind == GENERATED:
         if (plan.label != label or plan.samples_bytes is None
+                or plan.split_manifest_bytes is None
                 or plan.source_bytes is not None or plan.pairs_bytes is not None
-                or _sha256(plan.samples_bytes) != manifest["samples"]["sha256"]):
+                or _sha256(plan.samples_bytes) != manifest["samples"]["sha256"]
+                or _sha256(plan.split_manifest_bytes) != manifest["split_manifest"]["sha256"]):
             raise CohortVersionRefused(
-                f"the plan for {label!r} carries a label or samples its manifest does not "
-                "bind, so it is not one prepare_generated_import made from one read of each "
-                "input."
+                f"the plan for {label!r} carries a label, split manifest or samples its "
+                "manifest does not bind, so it is not one prepare_generated_import made from "
+                "one read of each input."
             )
         if not manifest["samples"]["n"]:
             raise CohortVersionRefused(
                 f"the workspace's generated {manifest['role']} split holds no sample, so the "
                 f"version {label!r} would measure nobody."
             )
-        return VERSION_SAMPLES, plan.samples_bytes
+        return [(VERSION_SPLIT_MANIFEST, plan.split_manifest_bytes),
+                (VERSION_SAMPLES, plan.samples_bytes)]
     raise CohortVersionRefused(f"the plan for {label!r} is of kind {kind!r}, which this "
                                f"revision does not write ({', '.join(VERSION_KINDS)}).")
 
@@ -1918,7 +1980,7 @@ def _is_whole(value: Any) -> bool:
 
 def _graph_problems(manifest: Dict[str, Any]) -> List[str]:
     """The four graph digests, which `verify_cohort_binding` compares, of
-    either kind."""
+    every kind."""
     graph = manifest["graph"]
     if not isinstance(graph, dict) or not all(_is_sha(graph.get(r)) for r in GRAPH_ARTIFACTS):
         return [f"graph must hold a SHA-256 for each of {list(GRAPH_ARTIFACTS)}"]
@@ -2196,9 +2258,12 @@ def _generated_shape_problems(manifest: Dict[str, Any]) -> List[str]:
     """What a reader relies on in a generated split, beyond the field list,
     each problem naming its field: the four graph digests and the dataset
     record (its digest and named sources); a role of `GENERATED_ROLES`; the
-    split manifest's digest; the split's files, each by a SHA-256, among them
-    the role's, which is the samples' digest (the samples are the file the
-    workspace's split manifest binds); the generation definition (an
+    split manifest, kept as ``split_manifest.json``, and its digest; the
+    split's files, each named by a split's name (`_is_split_file`: never a
+    path, so a reference to one cannot address a file outside the workspace
+    it is looked for in) with a SHA-256, among them the role's, which is the
+    samples' digest (the samples are the file the workspace's split manifest
+    binds); the generation definition (an
     algorithm and its version) and the allocation, each an object; what each
     split realised, holding the role's disease count, which ``counts.diseases``
     is; what was verified; the samples (``samples.json``, a SHA-256 and a
@@ -2218,14 +2283,16 @@ def _generated_shape_problems(manifest: Dict[str, Any]) -> List[str]:
         role = None
 
     split_manifest = manifest["split_manifest"]
-    if not (isinstance(split_manifest, dict) and _is_sha(split_manifest.get("sha256"))):
-        problems.append("split_manifest must hold a sha256")
+    if not (isinstance(split_manifest, dict)
+            and split_manifest.get("file") == VERSION_SPLIT_MANIFEST
+            and _is_sha(split_manifest.get("sha256"))):
+        problems.append(f"split_manifest must hold the file {VERSION_SPLIT_MANIFEST} and a "
+                        "sha256")
     files = manifest["split_artifacts"]
     if not (isinstance(files, dict) and files
-            and all(isinstance(name, str) and name.endswith("_samples") and _is_sha(digest)
-                    for name, digest in files.items())):
+            and all(_is_split_file(name) and _is_sha(digest) for name, digest in files.items())):
         problems.append("split_artifacts must name each split's samples file "
-                        "(<split>_samples) with a SHA-256")
+                        "(<split>_samples, the split an identifier) with a SHA-256")
         files = {}
 
     generation = manifest["generation"]
@@ -2268,8 +2335,9 @@ def _generated_shape_problems(manifest: Dict[str, Any]) -> List[str]:
         if _is_count(n) and counts["samples"] != n:
             problems.append(f"counts.samples ({counts['samples']}) is not samples.n ({n})")
         if role is not None and counts["diseases"] != realised.get(f"{role}_diseases"):
-            problems.append(f"counts.diseases ({counts['diseases']}) is not "
-                            f"realised.{role}_diseases ({realised.get(f'{role}_diseases')!r})")
+            problems.append(f"counts.diseases ({counts['diseases']}, the distinct diseases "
+                            f"among the samples) is not realised.{role}_diseases "
+                            f"({realised.get(f'{role}_diseases')!r})")
     if not isinstance(manifest["imported"], dict):
         problems.append("imported must be an object")
     return problems
@@ -2283,8 +2351,9 @@ def resolve_version(registry: Any, label: str, *,
     Does not read ``samples.json`` (a supplied cohort's or a generated
     split's): its path is returned, and the caller reads it once, comparing
     the read's digest with ``manifest["samples"]["sha256"]``. Nor a KG edge
-    set's ``pairs.bin``, which `read_kg_edge_pairs` reads. Nor anything a
-    version references outside its directory (`check_references` does).
+    set's ``pairs.bin``, which `read_kg_edge_pairs` reads. Nor a generated
+    split's ``split_manifest.json``, nor anything a version references outside
+    its directory (`check_references` compares those).
 
     **Either schema, by kind** (`VERSION_SCHEMAS`): schema 1 is a supplied
     cohort and states no kind; schema 2 states its kind (`VERSION_KINDS`).
@@ -2740,9 +2809,11 @@ REBUILT = "rebuilt"
 NAMED = "named"
 
 #: A reference's state, as `check_references` finds it: the bytes at the
-#: location given hash to the recorded digest; they hash to another; there is
-#: nothing there; it cannot be read; or it was not looked for (no location was
-#: given, or it is rebuilt or only named), which is never a pass.
+#: location given hash to the recorded digest; they hash to another (or, for a
+#: generated split's kept split manifest, the version's copies of its blocks
+#: are not that file's); there is nothing there; it cannot be read; or it was
+#: not looked for (no location was given, or it is rebuilt or only named),
+#: which is never a pass.
 VERIFIED = "verified"
 DIFFERS = "differs"
 MISSING = "missing"
@@ -2766,13 +2837,20 @@ class ContentReference(NamedTuple):
 
 class ReferenceState(NamedTuple):
     """A reference as `check_references` found it: its state
-    (`REFERENCE_STATES`), the digest found when its bytes were read, and why,
-    in words."""
+    (`REFERENCE_STATES`), the digest found when its bytes were read, why, in
+    words, and where it was looked for.
+
+    **The reason names the location by its kind and the file's name** ("the
+    workspace's kg.json is not there", "the given checkpoint holds ..."),
+    never by a path, so a view or an export can show it as it is (D7). The
+    path looked at is `location` alone, for a caller on the machine that gave
+    it (a command line) to print; it is None where nothing was looked for."""
 
     reference: ContentReference
     state: str
     found: Optional[str]
     reason: str
+    location: Optional[Path] = None
 
 
 _GRAPH_WHAT = {
@@ -2797,13 +2875,14 @@ def version_references(version: Any) -> Tuple[ContentReference, ...]:
       mapping) and the edge split, both rebuilt from the graph by their
       recorded rules; the pairs (``pairs.bin``, in the version); and the
       checkpoint whose model record named the view and split, by its SHA-256;
-    - a generated split: the workspace's split manifest and each split's
-      samples file it binds (``split.<name>``), and the samples the version
-      keeps (``samples.json``, which is the role's file of the workspace);
+    - a generated split: the split manifest the version keeps
+      (``split_manifest.json``, the workspace's, whose blocks the version
+      copies), each split's samples file it binds (``split.<name>``, in the
+      workspace), and the samples the version keeps (``samples.json``, which
+      is the role's file of the workspace);
     - a supplied cohort: its case source, which the registry keeps
       (``sources/<sha256>.json``), and its mapped samples (``samples.json``).
     """
-    from src.kg.artifacts import MANIFEST_FILENAME
     from src.kg.provenance import PROVENANCE_FILENAME
 
     manifest = version.manifest if isinstance(version, CohortVersionRead) else version
@@ -2839,10 +2918,11 @@ def version_references(version: Any) -> Tuple[ContentReference, ...]:
                              IN_CHECKPOINT),
         ]
     elif kind == GENERATED:
-        refs.append(ContentReference("split_manifest", "the workspace's split manifest: the "
-                                     "generation definition, the allocation and the split's "
-                                     "files", manifest["split_manifest"]["sha256"],
-                                     IN_WORKSPACE, MANIFEST_FILENAME))
+        refs.append(ContentReference("split_manifest", "the workspace's split manifest, kept "
+                                     "in the version: the generation definition, the "
+                                     "allocation, the realised sets and the split's files the "
+                                     "version copies", manifest["split_manifest"]["sha256"],
+                                     IN_VERSION, VERSION_SPLIT_MANIFEST))
         refs += [ContentReference(f"split.{name}", f"the workspace's generated "
                                   f"{name[: -len('_samples')]} split", digest, IN_WORKSPACE,
                                   f"{name}.json")
@@ -2874,13 +2954,22 @@ def check_references(
     its directory, a supplied source in the registry it was resolved from, a
     workspace's files in `workspace` and the checkpoint at `checkpoint`, each
     only when given; nothing a version records is a path. A reference with no
-    location given, one rebuilt from the graph by a recorded rule (checked by
-    rebuilding, as the import and a measurement do) and one only named by the
-    dataset record are `NOT_CHECKED`, with the reason: never a pass.
+    location given, one rebuilt from the graph by a recorded rule (checked
+    when the import rebuilds it) and one only named by the dataset record are
+    `NOT_CHECKED`, with the reason: never a pass.
+
+    **A generated split's kept split manifest** is compared twice: its bytes
+    with the recorded digest, and then, parsed from those same bytes, its
+    blocks with the version's copies of them (`_split_manifest_copies_differ`:
+    the generation definition, the allocation, the realised sets, the split's
+    files and the schema), so the generation definition the version records
+    is checked against bytes it keeps, whatever became of the workspace.
 
     **A missing dependency is a state**, never an exception: a file that is
     not there is `MISSING`, one that cannot be read (a directory, a file this
-    account may not read) is `UNREADABLE`, other bytes are `DIFFERS`.
+    account may not read) is `UNREADABLE`, other bytes are `DIFFERS`. Each
+    reason names the location by its kind and the file's name, never by a
+    path; the path looked at is the state's `location` (`ReferenceState`).
 
     **Authorisation is not this.** Which registry roots may be read is
     `validate_registry`'s (and the service's ``SHEPHERD_REGISTRY``), checked
@@ -2888,7 +2977,7 @@ def check_references(
     caller's. This compares bytes with digests and reads only the files named
     by the references, writing nothing.
     """
-    from src.utils.fingerprint import file_sha256
+    from src.utils.fingerprint import file_sha256, read_once
 
     registry_root = version.directory.parent.parent
     places = {IN_VERSION: version.directory, IN_REGISTRY: registry_root,
@@ -2897,8 +2986,8 @@ def check_references(
     for ref in version_references(version):
         if ref.kept == REBUILT:
             states.append(ReferenceState(ref, NOT_CHECKED, None, (
-                "rebuilt from the graph by its recorded rule, and checked by that rebuild "
-                "(the import and a measurement rebuild it), not by a file")))
+                "rebuilt from the graph by its recorded rule, and checked when the import "
+                "rebuilds it, not by a file")))
             continue
         if ref.kept == NAMED:
             states.append(ReferenceState(ref, NOT_CHECKED, None, (
@@ -2907,28 +2996,76 @@ def check_references(
             continue
         if ref.kept == IN_CHECKPOINT:
             path = None if checkpoint is None else Path(checkpoint)
-            where = "no checkpoint location was given"
+            where, unlocated = "the given checkpoint", "no checkpoint location was given"
         else:
             place = places[ref.kept]
             path = None if place is None else place / ref.file
-            where = f"no {ref.kept} location was given"
+            where, unlocated = f"the {ref.kept}'s {ref.file}", f"no {ref.kept} location was given"
         if path is None:
-            states.append(ReferenceState(ref, NOT_CHECKED, None, where))
+            states.append(ReferenceState(ref, NOT_CHECKED, None, unlocated))
             continue
+        copies = ref.kept == IN_VERSION and ref.file == VERSION_SPLIT_MANIFEST
+        data: Optional[bytes] = None
         try:
-            found = file_sha256(path)
+            if copies:
+                read = read_once(path)
+                found, data = read.sha256, read.data
+                del read
+            else:
+                found = file_sha256(path)
+        except FileNotFoundError:
+            found = None
         except OSError as exc:
             states.append(ReferenceState(ref, UNREADABLE, None, (
-                f"{path} cannot be read ({type(exc).__name__}: {exc.strerror or exc})")))
+                f"{where} cannot be read ({type(exc).__name__}: "
+                f"{exc.strerror or 'no reason given'})"), path))
             continue
+        differ = ([] if data is None or found != ref.sha256
+                  else _split_manifest_copies_differ(version.manifest, data))
         if found is None:
-            states.append(ReferenceState(ref, MISSING, None, f"{path} is not there"))
+            states.append(ReferenceState(ref, MISSING, None, f"{where} is not there", path))
         elif found != ref.sha256:
             states.append(ReferenceState(ref, DIFFERS, found, (
-                f"{path} holds {found[:12]}..., not the {ref.sha256[:12]}... recorded")))
+                f"{where} holds {found[:12]}..., not the {ref.sha256[:12]}... recorded"), path))
+        elif differ:
+            states.append(ReferenceState(ref, DIFFERS, found, (
+                f"{where} holds the bytes recorded, but the version's {', '.join(differ)} "
+                f"{'is' if len(differ) == 1 else 'are'} not that file's"), path))
         else:
-            states.append(ReferenceState(ref, VERIFIED, found, f"{path} holds the bytes recorded"))
+            states.append(ReferenceState(ref, VERIFIED, found, f"{where} holds the bytes recorded",
+                                         path))
     return tuple(states)
+
+
+def _split_manifest_copies_differ(manifest: Mapping[str, Any], data: bytes) -> List[str]:
+    """Which of a generated split's copies of its split manifest's blocks are
+    not the blocks of `data`, the kept split manifest's bytes (already
+    compared with their recorded digest): ``generation``, ``allocation``,
+    ``realised`` (`_SPLIT_MANIFEST_BLOCKS`), ``split_artifacts`` (the split's
+    files it binds, `_split_files`) and ``split_manifest.schema_version``.
+    None differ for a version as `prepare_generated_import` made it, since it
+    copied them from the parse of these very bytes; one that differs was
+    edited after the import. Bytes that are not a JSON object differ in
+    every block."""
+    try:
+        kept = json.loads(data.decode("utf-8"))
+    except (ValueError, RecursionError):
+        kept = None
+    if not isinstance(kept, dict):
+        kept = {}
+    artifacts = kept.get("artifacts")
+    copies = {
+        **{block: kept.get(block) for block in _SPLIT_MANIFEST_BLOCKS},
+        "split_artifacts": _split_files(artifacts) if isinstance(artifacts, Mapping) else None,
+        "split_manifest.schema_version": kept.get("schema_version"),
+    }
+    recorded = {
+        **{block: manifest.get(block) for block in _SPLIT_MANIFEST_BLOCKS},
+        "split_artifacts": manifest.get("split_artifacts"),
+        "split_manifest.schema_version": (manifest.get("split_manifest") or {}).get(
+            "schema_version"),
+    }
+    return [name for name in copies if copies[name] != recorded[name] or not kept]
 
 
 def is_run_id(name: Any) -> bool:

@@ -447,17 +447,18 @@ and the decision's text is history.
   `src/evaluation/task_measurement.py` (`TASK_RUNS`, metric schema 2). A base has no protocol yet:
   its formal KG test is a later item (`protocols.BASE_MESSAGE`; `BACKLOG.md` §0).
 - **Data versions** (research comparison Stage 4, 2026-11-10, on `claude/research-comparison`).
-  The registry (`src/evaluation/cohort_registry.py`) holds versions of two kinds, both read by its
-  one reader, `resolve_version`: a supplied cohort, schema 1, which records no kind and is
-  written as since M4; and a KG edge set, schema 2, `kind` `kg_edges` (`scripts/import_cohort.py
+  The registry (`src/evaluation/cohort_registry.py`) holds versions of three kinds, all read by
+  its one reader, `resolve_version`: a supplied cohort, schema 1, which records no kind and is
+  written as since M4; a KG edge set, schema 2, `kind` `kg_edges` (`scripts/import_cohort.py
   --kind kg_edges --from-checkpoint`), one part of a checkpoint's recorded edge split with its
-  role (`train`, `val` or `test`) as given and its fixed LP pairs in a digest-bound file. A
-  supplied cohort's role is still never `train` or `val`. No protocol measures a KG edge set yet.
-  Since Stage 4b a third kind, also schema 2: a generated split, `kind` `generated`
-  (`scripts/import_cohort.py --kind generated`), one of a workspace's own generated splits with
-  its role as given, its samples copied byte for byte and its data identity the samples' digest,
-  the split manifest's and split files' digests, the generation definition and the role. It is
-  never presented as a supplied cohort; it is listed and read, and not measured yet (Stage 5).
+  role (`train`, `val` or `test`) as given and its fixed LP pairs in a digest-bound file; and,
+  since Stage 4b, a generated split, schema 2, `kind` `generated` (`scripts/import_cohort.py
+  --kind generated`), one of a workspace's own generated splits with its role as given, its
+  samples and split manifest copied byte for byte and its data identity the samples' digest, the
+  split manifest's and split files' digests, the generation definition and the role. A supplied
+  cohort's role is still never `train` or `val`. No protocol measures a KG edge set yet. A
+  generated split is never presented as a supplied cohort; it is listed and read, and not
+  measured yet (Stage 5).
   Reports measured with `--split` stay as they are, unregistrable, with no identity made up. Every
   version names its dependencies by content (`version_references`), never by path, and a missing
   one is a state (`check_references`).

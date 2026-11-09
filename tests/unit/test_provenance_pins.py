@@ -141,15 +141,16 @@ ALLOWED = {
     # Research comparison Stage 4: a KG edge set's pairs file, compared with the
     # digest its version binds before the same bytes are parsed.
     ("src/evaluation/cohort_registry.py", "read_kg_edge_pairs", "read_once"): (1, _READER),
-    # Research comparison Stage 4b: a generated split's samples, kept from the
-    # workspace. read_samples parsed the file and verify_cohort_reads compared
-    # that read's digest with the split manifest; this read takes the bytes to
-    # keep and is refused unless they hash to that verified digest, so the
-    # bytes kept are the bytes verified. Nothing is parsed from it.
+    # Research comparison Stage 4b: a generated split's samples and split
+    # manifest, kept from the workspace. read_samples and read_split_manifest
+    # parsed the files and verify_cohort_reads compared those reads; this read
+    # (one site, once per file) takes the bytes to keep and is refused unless
+    # they hash to the digest of the read that was parsed, so the bytes kept
+    # are the bytes verified. Nothing is parsed from it.
     ("src/evaluation/cohort_registry.py", "prepare_generated_import", "read_once"):
-        (1, "Stage 4b: the generated split's file read for the bytes a version keeps, "
-            "refused unless its digest is the one read_samples parsed and the split "
-            "manifest binds; nothing is parsed from it"),
+        (1, "Stage 4b: the generated split's samples file and split manifest read for the "
+            "bytes a version keeps, each refused unless its digest is the one read_samples "
+            "or read_split_manifest parsed; nothing is parsed from it"),
     # Research comparison Stage 4b (E3): a reference's state, the digest of the
     # file found at a location the caller gives compared with the digest the
     # version records. A state shown, never an input: nothing is parsed,
@@ -158,6 +159,18 @@ ALLOWED = {
         (1, _NOT_INPUT.format(what="a version reference's state (verified, differs, missing), "
                                    "the bytes at a given location against the recorded "
                                    "digest")),
+    # The same state for a generated split's kept split manifest: one read,
+    # its digest compared with the recorded one, then the same bytes parsed
+    # and its blocks compared with the version's copies of them. Owner: the
+    # results service (Stage 8).
+    ("src/evaluation/cohort_registry.py", "check_references", "read_once"):
+        (1, _NOT_INPUT.format(what="a generated split's kept split manifest, read once for a "
+                                   "reference's state: its digest against the recorded one, "
+                                   "and its blocks against the version's copies")),
+    ("src/evaluation/cohort_registry.py", "_split_manifest_copies_differ", "json.loads"):
+        (1, _NOT_INPUT.format(what="the kept split manifest's blocks, parsed from the bytes of "
+                                   "check_references' one read_once, against the version's "
+                                   "copies of them")),
     ("src/ontology/loader.py", "OntologyLoader.load", "hashlib.sha256"):
         (1, "KG build, unchanged by M2.1 (BACKLOG 19.13): the digest of the handle that "
             "is parsed, M2.1's precedent"),
