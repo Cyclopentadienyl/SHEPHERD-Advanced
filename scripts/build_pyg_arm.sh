@@ -16,9 +16,11 @@ set -uo pipefail
 #   1. Maintainer: run it on a DGX whose deploy .venv has the project's locked
 #      torch (currently 2.10.0+cu130) to produce the wheels that get uploaded to
 #      a GitHub Release. deploy.sh's "pull prebuilt" path then downloads those.
-#   2. End-user fallback: deploy.sh calls it when the host's torch/CUDA does NOT
-#      match the prebuilt Release wheels (e.g. after a future torch bump), to
-#      compile against whatever torch the host actually has.
+#   2. End-user: deploy.sh calls it for the compile route (the menu's
+#      recommendation when the host's torch/CUDA does NOT match the prebuilt
+#      Release wheels, e.g. after a future torch bump), and after a failed pull
+#      only where PYG_ARM_ON_PULL_FAILURE=build allows it, to compile against
+#      whatever torch the host actually has.
 #
 # Design: VERSION-AGNOSTIC. It builds against the torch already present in the
 #   target venv (default: the project's ./.venv produced by `uv sync`), so the
@@ -31,20 +33,50 @@ set -uo pipefail
 #
 # Overridable via environment:
 #   TARGET_PYTHON         - python whose torch to build against (default ./.venv)
-#   PYG_WHEEL_OUT         - where built wheels land  (default $HOME/pyg-wheels-arm)
+#   PYG_WHEEL_OUT         - parent of each run's output directory (default
+#                           $HOME/pyg-wheels-arm). Every run builds into a new
+#                           run-<date>-<time>-<random> directory under it, so an
+#                           earlier run's wheel is never installed or shipped as
+#                           this run's; earlier runs' directories are left as they are
 #   CUDA_HOME             - CUDA toolkit root         (default: auto-detect)
 #   TORCH_CUDA_ARCH_LIST  - GPU targets, e.g. "12.0;12.1" (default: auto-detect)
 #   MAX_JOBS              - parallel build jobs       (default: nproc-4)
 #   ASSUME_YES=1          - skip the (y/N) dep-install prompt (for deploy.sh)
 #   INSTALL_AFTER_BUILD=0 - build wheels only, don't install into target venv
-#   {SCATTER,SPARSE,CLUSTER,PYGLIB}_SPEC - pip spec override per package
+#   {SCATTER,SPARSE,CLUSTER,PYGLIB}_SPEC - pip spec override per package: a
+#                           registry requirement (torch-scatter==2.1.2), a VCS URL
+#                           (git+https://...@<tag>) or a local sdist or tree
+#
+# What a run does (BACKLOG 70, 71; research-comparison Stage 2):
+#   - builds all four packages with --no-cache-dir (pip's wheel cache is keyed by
+#     the source, not by the torch, ABI or arch a wheel was built against);
+#   - installs exactly the four wheels this run built, by file path, with
+#     --reinstall --no-deps, and only when all four built (a part of the set
+#     would mix this build with whatever is installed);
+#   - checks each installed distribution's version and native libraries'
+#     SHA-256 against its wheel (scripts/validate_pyg_ext.py --check-wheels) and
+#     that each extension imports;
+#   - writes the path-free source receipt into the virtual environment
+#     (share/shepherd-advanced/pyg-native-receipt.json): per wheel the requested
+#     source (registry name, VCS URL and its resolved commit, or a local
+#     source's SHA-256), the resolved and installed identity and the wheel's
+#     and native libraries' digests; the torch and CUDA build compiled against;
+#     nvcc, gcc and g++; TORCH_CUDA_ARCH_LIST, FORCE_CUDA, MAX_JOBS. Recorded,
+#     never a gate: no version is judged.
+#
+# Exit status: 0 built (and, by default, installed, checked and receipted);
+#   1 a setup problem (wrong architecture; no uv, venv, torch or CUDA; missing
+#     build tools or build deps); 2 a package did not build: nothing installed;
+#   3 the install failed; 4 the check failed: what is installed is not exactly
+#   the wheels built, an extension does not import, or the receipt could not
+#   be written.
 # ============================================================================
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
 say()  { echo -e "$@"; }
 die()  { echo -e "${RED}[ERROR] $*${NC}" >&2; exit 1; }
 
-OUT_DIR="${PYG_WHEEL_OUT:-$HOME/pyg-wheels-arm}"
+OUT_BASE="${PYG_WHEEL_OUT:-$HOME/pyg-wheels-arm}"
 ASSUME_YES="${ASSUME_YES:-0}"
 INSTALL_AFTER_BUILD="${INSTALL_AFTER_BUILD:-1}"
 
@@ -64,6 +96,11 @@ say "${CYAN}====================================================================
 
 # === Architecture guard =====================================================
 [ "$(uname -m)" = "aarch64" ] || die "This compiles linux_aarch64 wheels and must run on an ARM target (got $(uname -m))."
+
+# The install check, the source description and the receipt (one implementation,
+# src/utils/pyg_native_check.py, reached through this script's sibling).
+HELPER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/validate_pyg_ext.py"
+[ -f "$HELPER" ] || die "The install check ($HELPER) is missing; this script runs from the repository's scripts/."
 
 # === Resolve uv + target venv ===============================================
 command -v uv >/dev/null 2>&1 || export PATH="$HOME/.local/bin:$PATH"
@@ -191,10 +228,16 @@ fi
 # === Compile =================================================================
 say "\n${CYAN}[STAGE 4/5] Compiling (this can take many minutes per package)${NC}"
 say "----------------------------------------------------------------------------"
-mkdir -p "$OUT_DIR"
+# A fresh directory for this run's wheels: nothing an earlier run left can be
+# taken for this run's, and nothing is deleted to make room.
+mkdir -p "$OUT_BASE" || die "Cannot create $OUT_BASE (PYG_WHEEL_OUT)."
+OUT_DIR="$(mktemp -d "$OUT_BASE/run-$(date +%Y%m%d-%H%M%S)-XXXXXX")" || die "Cannot create a run directory under $OUT_BASE."
+say "[INFO] This run's wheels go to: $OUT_DIR"
 LOGDIR="$(mktemp -d)"
-declare -a RESULTS
-declare -a OK_PKGS
+declare -a RESULTS=()
+declare -a BUILT_WHEELS=()     # exactly the wheel files this run built, by path
+declare -a SOURCE_ARGS=()      # --source <wheel> <path-free description>
+declare -a COMMIT_ARGS=()      # --resolved-commit <wheel> <commit> (VCS sources)
 
 run_build() {  # run_build "<label>" "<logfile>" <cmd...>
     local label="$1" logf="$2"; shift 2
@@ -224,23 +267,48 @@ run_build() {  # run_build "<label>" "<logfile>" <cmd...>
     return $rc
 }
 
+wheels_made() { find "$OUT_DIR" -maxdepth 1 -type f -name '*.whl' | LC_ALL=C sort; }
+
 build_one() {  # build_one <pkg-name> <pip-spec>
-    local name="$1" spec="$2"; shift 2  # remaining args -> extra pip flags
+    local name="$1" spec="$2" desc before after new count commit
     say "\n${CYAN}>>> $name${NC}  ($spec)"
-    # Drop any prior wheel of this package so a stale version can't shadow the
-    # fresh build at --find-links install time (e.g. an old pyg_lib-0.7.0).
-    rm -f "$OUT_DIR/$(echo "$name" | tr '-' '_')-"*.whl 2>/dev/null
-    # --no-deps: build ONLY this package's wheel, not its runtime deps
-    # (otherwise pip drags numpy/scipy/etc. into the output dir).
-    # -v: surface the build backend's output (incl. CMake's ABI decision) into
-    # the saved log for diagnostics; only shown on failure (run_build tails it).
-    if run_build "$name" "$LOGDIR/$name.log" \
-        "$TPY" -m pip wheel "$spec" -w "$OUT_DIR" --no-build-isolation --no-deps -v "$@"; then
-        RESULTS+=("OK   $name")
-        OK_PKGS+=("$name")
-    else
-        RESULTS+=("FAIL $name")
+    # What was asked for, described before anything is built from it: a local
+    # source's SHA-256 is of the file or tree as requested (an in-tree build
+    # writes into it), and the description carries no path or credential.
+    if ! desc="$("$TPY" "$HELPER" --describe-source "$spec")"; then
+        RESULTS+=("FAIL $name (its source cannot be described; see above)"); return
     fi
+    before="$(wheels_made)"
+    # --no-cache-dir, for every package: pip's wheel cache is keyed by the
+    # source, not by the torch, ABI or arch a wheel was built against, so it
+    # would serve an earlier build (another torch; pyg-lib's ABI=0 wheel) as
+    # this one. --no-deps: build ONLY this package's wheel, not its runtime deps
+    # (otherwise pip drags numpy/scipy/etc. into the output dir).
+    # -v: surface the build backend's output (incl. CMake's ABI decision and
+    # the commit a VCS source resolved to) into the saved log for diagnostics;
+    # only shown on failure (run_build tails it).
+    if ! run_build "$name" "$LOGDIR/$name.log" \
+        "$TPY" -m pip wheel "$spec" -w "$OUT_DIR" --no-build-isolation --no-deps --no-cache-dir -v; then
+        RESULTS+=("FAIL $name"); return
+    fi
+    after="$(wheels_made)"
+    new="$(LC_ALL=C comm -13 <(printf '%s\n' "$before") <(printf '%s\n' "$after") | sed '/^$/d')"
+    count="$(printf '%s\n' "$new" | sed '/^$/d' | wc -l | tr -d ' ')"
+    if [ "$count" != "1" ]; then
+        RESULTS+=("FAIL $name (the build left $count new wheels, not one)"); return
+    fi
+    BUILT_WHEELS+=("$new")
+    SOURCE_ARGS+=(--source "$new" "$desc")
+    commit="$(grep -oE 'Resolved [^ ]+ to commit [0-9a-f]{40,64}' "$LOGDIR/$name.log" | tail -1 | awk '{print $NF}')"
+    if [ -n "$commit" ]; then
+        COMMIT_ARGS+=(--resolved-commit "$new" "$commit")
+        say "  [INFO] $name source resolved to commit $commit"
+    else
+        case "$desc" in *'"kind": "vcs"'*)
+            say "  ${YELLOW}[WARN] $name: its build log names no resolved commit; the receipt records it as unknown.${NC}" ;;
+        esac
+    fi
+    RESULTS+=("OK   $name -> $(basename "$new")")
 }
 
 # Order: scatter first (sparse/cluster use it at runtime), then sparse/cluster,
@@ -251,6 +319,7 @@ build_one() {  # build_one <pkg-name> <pip-spec>
 # links a symbol (torch::autograd::Node::name() const) absent from torch 2.10's
 # libtorch -> "undefined symbol" at load. When bumping torch, set PYGLIB_SPEC to
 # the tag matching the new torch (check the data.pyg.org index for that torch).
+say "[INFO] specs         : torch-scatter=${SCATTER_SPEC:-torch-scatter}  torch-sparse=${SPARSE_SPEC:-torch-sparse}  torch-cluster=${CLUSTER_SPEC:-torch-cluster}  pyg-lib=${PYGLIB_SPEC:-<resolved below>}"
 build_one "torch-scatter" "${SCATTER_SPEC:-torch-scatter}"
 build_one "torch-sparse"  "${SPARSE_SPEC:-torch-sparse}"
 build_one "torch-cluster" "${CLUSTER_SPEC:-torch-cluster}"
@@ -277,50 +346,68 @@ if [ -z "${PYGLIB_SPEC:-}" ]; then
         say "${YELLOW}         PYGLIB_SPEC=git+https://github.com/pyg-team/pyg-lib.git@<tag> bash $0${NC}"
     fi
 fi
-# --no-cache-dir: pip caches VCS-built wheels keyed by commit, ignoring our env
-# (e.g. the ABI flags), so it would otherwise serve a previously-built ABI=0
-# wheel. Force a fresh build so the venv-python/ABI fix actually takes effect.
-build_one "pyg-lib"       "$PYGLIB_SPEC" --no-cache-dir
+build_one "pyg-lib"       "$PYGLIB_SPEC"
 
-# === Summary + optional install =============================================
+# === Summary, install, check, receipt ======================================
 say "\n${CYAN}[STAGE 5/5] Summary${NC}"
 say "----------------------------------------------------------------------------"
 NFAIL=0
 for r in "${RESULTS[@]}"; do
     case "$r" in OK*) say "  ${GREEN}$r${NC}" ;; *) say "  ${RED}$r${NC}"; NFAIL=$((NFAIL+1)) ;; esac
 done
-say "\n[INFO] Wheels in $OUT_DIR:"
-ls -1 "$OUT_DIR"/*.whl 2>/dev/null | sed 's/^/  /' || say "${YELLOW}  (none)${NC}"
+say "\n[INFO] This run's wheels (a fresh directory): $OUT_DIR"
 
-if [ "$INSTALL_AFTER_BUILD" = "1" ] && [ "${#OK_PKGS[@]}" -gt 0 ]; then
-    say "\n[INFO] Installing built wheels into target venv (--no-deps, from $OUT_DIR):"
-    say "       ${OK_PKGS[*]}"
-    # Install only what actually built, so one failure can't block the rest.
-    # --reinstall: force the freshly built wheel in, even if a higher version is
-    # already installed (e.g. a previously-built pyg_lib-0.7.0 would otherwise
-    # not be downgraded to the torch-matched 0.6.0).
-    uv pip install --python "$TPY" --reinstall --no-deps --find-links "$OUT_DIR" "${OK_PKGS[@]}" 2>&1 | tail -8 \
-        || say "${YELLOW}[WARN] install reported issues${NC}"
+if [ "$NFAIL" -ne 0 ]; then
+    say "\n${RED}$NFAIL package(s) did not build; nothing was installed${NC} (installing part of the"
+    say "set would mix this build with whatever is installed). See logs in $LOGDIR"
+    say "(re-run with e.g. SCATTER_SPEC=torch-scatter==<version> to choose a source)."
+    exit 2
+fi
+
+if [ "$INSTALL_AFTER_BUILD" != "1" ]; then
+    say "\n${GREEN}All 4 wheels built${NC}; not installed (INSTALL_AFTER_BUILD=$INSTALL_AFTER_BUILD)."
+    say "${CYAN}Next (maintainer):${NC} upload $OUT_DIR/*.whl to a GitHub Release so deploy.sh can fetch them."
+    say "${YELLOW}[REMINDER] These wheels are ABI-locked to torch $TORCH_VER (cu$TORCH_CUDA). Rebuild if torch changes.${NC}"
+    exit 0
+fi
+
+say "\n[INFO] Installing exactly this run's 4 wheels into the target venv, by file path"
+say "       (--reinstall --no-deps; whatever was installed under these names is replaced):"
+for w in "${BUILT_WHEELS[@]}"; do say "       $(basename "$w")"; done
+if ! uv pip install --python "$TPY" --reinstall --no-deps "${BUILT_WHEELS[@]}"; then
+    say "\n${RED}[ERROR] The install of this run's wheels failed (see above).${NC}"
+    exit 3
+fi
+
+say "\n[INFO] Checking what is installed against this run's wheels:"
+if ! "$TPY" "$HELPER" --check-wheels "${BUILT_WHEELS[@]}" --write-receipt "local build" \
+        "${SOURCE_ARGS[@]}" ${COMMIT_ARGS[@]+"${COMMIT_ARGS[@]}"} \
+        --compiled-against-torch "$TORCH_VER" --compiled-against-cuda "$TORCH_CUDA"; then
+    say "\n${RED}[ERROR] What is installed is not exactly what this run built, or its receipt${NC}"
+    say "${RED}        could not be written (see above).${NC}"
+    exit 4
 fi
 
 say "\n[INFO] Import smoke test (in target venv):"
-"$TPY" - <<'PY' || true
-import importlib, torch
+if ! "$TPY" - <<'PY'
+import importlib, sys, torch
 print(f"  torch {torch.__version__} | cuda available: {torch.cuda.is_available()}")
+failed = 0
 for mod in ("torch_scatter", "torch_sparse", "torch_cluster", "pyg_lib"):
     try:
         m = importlib.import_module(mod)
         print(f"  [OK] {mod} {getattr(m, '__version__', '?')}")
     except Exception as e:
+        failed += 1
         print(f"  [--] {mod}: {e}")
+sys.exit(1 if failed else 0)
 PY
-
-if [ "$NFAIL" -eq 0 ]; then
-    say "\n${GREEN}All 4 wheels built.${NC}"
-    say "${CYAN}Next (maintainer):${NC} upload $OUT_DIR/*.whl to a GitHub Release so deploy.sh can fetch them."
-    say "${YELLOW}[REMINDER] These wheels are ABI-locked to torch $TORCH_VER (cu$TORCH_CUDA). Rebuild if torch changes.${NC}"
-    exit 0
-else
-    say "\n${RED}$NFAIL package(s) failed.${NC} See logs in $LOGDIR (re-run a single one with e.g. SCATTER_SPEC=torch-scatter)."
-    exit 1
+then
+    say "\n${RED}[ERROR] An installed extension does not import (see above).${NC}"
+    exit 4
 fi
+
+say "\n${GREEN}All 4 wheels built, installed exactly and checked; source receipt written.${NC}"
+say "${CYAN}Next (maintainer):${NC} upload $OUT_DIR/*.whl to a GitHub Release so deploy.sh can fetch them."
+say "${YELLOW}[REMINDER] These wheels are ABI-locked to torch $TORCH_VER (cu$TORCH_CUDA). Rebuild if torch changes.${NC}"
+exit 0

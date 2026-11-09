@@ -203,6 +203,17 @@ ALLOWED = {
     ("src/webui/components/charts.py", "_versioned", "hashlib.sha256"):
         (1, _NOT_INPUT.format(what="the dashboard's own chart script, its digest in the "
                                    "script's URL so a browser never runs an old copy (M5-2)")),
+    # The PyG install identity (BACKLOG 70, 71; research-comparison Stage 2):
+    # the environment's description, never a run's input. Deploy time only;
+    # deliberately not file_sha256, which carries the path-form poison.
+    ("src/utils/pyg_native_check.py", "stream_sha256", "hashlib.sha256"):
+        (1, _NOT_INPUT.format(what="the one digest of the PyG install identity: a wheel, "
+                                   "its members, an installed native library, a local "
+                                   "source and their aggregates, compared with each other "
+                                   "at deploy time and kept in the source receipt")),
+    ("src/utils/pyg_native_check.py", "read_receipt", "json.loads"):
+        (1, _NOT_INPUT.format(what="the deploy layer's PyG source receipt in the virtual "
+                                   "environment, shown against the installed bytes")),
     # --- The deployment probe: identification of files nobody parses there ---
     ("scripts/probe_deployment.py", "snapshot", "file_sha256"):
         (1, _PROBE + "An untouched-directory check (a location check, contract §2 rule "

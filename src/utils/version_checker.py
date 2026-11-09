@@ -35,8 +35,12 @@ untouched. Consolidating them is separate work.
 
 Three layers of check, kept distinct because conflating them is how "installed"
 gets mistaken for "works":
-  - this module and ``src/utils/pyg_native_check.py`` — import/presence only,
-    cheap enough to run on every page load;
+  - this module and the import probe of ``src/utils/pyg_native_check.py``
+    (``check_pyg_native_extensions``) — import/presence only, cheap enough to
+    run on every page load. That module's install identity (the SHA-256 of
+    wheels and installed native libraries, and the source receipt; BACKLOG 70,
+    71) reads and hashes files, so it runs at deploy time and nothing here
+    calls it (tests/unit/test_pyg_install_identity.py);
   - ``scripts/validate_pyg_ext.py`` — functional: it executes each compiled
     kernel and verifies the numbers.
 Nothing here claims native-kernel correctness; only that the modules import.

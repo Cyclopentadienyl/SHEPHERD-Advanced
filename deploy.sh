@@ -23,6 +23,21 @@ set -u
 #
 # Environment Variables:
 #   PYTHON_EXE   - Python executable used to bootstrap uv venv (default: python3)
+#   PYG_ARM_STRATEGY - ARM + CUDA only: pull | compile | skip | abort, instead of
+#                  the menu (with no TTY and no setting: skip)
+#   PYG_ARM_ON_PULL_FAILURE - ARM + CUDA, pull only: what a failed pull does.
+#                  stop (default): the deployment stops and names what failed;
+#                  build: it builds from source instead (scripts/build_pyg_arm.sh),
+#                  non-interactively too. Decided once, before anything is fetched.
+#   SCATTER_SPEC, SPARSE_SPEC, CLUSTER_SPEC, PYGLIB_SPEC, PYG_WHEEL_OUT - passed to
+#                  the source build (see scripts/build_pyg_arm.sh)
+#
+# Exit status: 0 done; 1 Python or uv missing; 2 uv sync failed; 3 torch_geometric
+#   does not import; 4 an invalid PYG_ARM_ON_PULL_FAILURE; 10 aborted at the PyG
+#   menu. A stopped prebuilt pull (ARM + CUDA): 11 the release is not usable on
+#   this host (its torch or CUDA, or its Python, is not the release's); 12 the
+#   download failed; 13 the checksum failed or could not be taken; 14 the install
+#   failed; 15 the installed extensions are not the release's wheels (the check).
 #
 # Note on Optional Accelerators (xFormers, FlashAttention, SageAttention):
 #   These are NOT installed during deployment. They are auto-installed
@@ -45,6 +60,16 @@ echo -e "${CYAN}================================================================
 PYTHON_EXE="${PYTHON_EXE:-python3}"
 # The PyG wheel index is not configured here: Stage 3 derives it from the
 # installed torch, which uv.lock pins (BACKLOG 50).
+
+# What a failed prebuilt pull does (ARM + CUDA): stop unless a source build was
+# explicitly allowed (BACKLOG 70; the owner's O5, 2026-11-10). Decided here, once,
+# so nothing waits for a person after the pull has started.
+PYG_ON_PULL_FAILURE="${PYG_ARM_ON_PULL_FAILURE:-}"
+case "$PYG_ON_PULL_FAILURE" in
+    ""|stop|build) ;;
+    *) echo -e "${RED}[ERROR] PYG_ARM_ON_PULL_FAILURE='$PYG_ON_PULL_FAILURE' is not 'stop' or 'build'. Nothing was changed.${NC}"
+       exit 4 ;;
+esac
 
 # Prebuilt PyG ARM wheels (Phase D). data.pyg.org publishes NO aarch64 wheels,
 # so for ARM+CUDA hosts we host self-compiled wheels on a GitHub Release built
@@ -193,7 +218,10 @@ echo -e "\n${GREEN}[OK] torch_geometric ${TG_VER} (from uv.lock)${NC}"
 #   - ARM + CUDA (DGX): data.pyg.org has NO aarch64 wheel for ANY torch/CUDA, so
 #     offer: prebuilt-from-Release (only if host torch matches what we prebuilt,
 #     "Case A") / self-compile / skip-with-fallback / abort.
-# Non-interactive override: PYG_ARM_STRATEGY=pull|compile|skip|abort
+# Non-interactive override: PYG_ARM_STRATEGY=pull|compile|skip|abort; with pull,
+# PYG_ARM_ON_PULL_FAILURE=stop (default) | build. A failed pull stops unless a
+# build was allowed; Case B (host torch/CUDA is not the release's) is a failed
+# pull too, so PYG_ARM_STRATEGY=pull there stops too unless a build was allowed.
 # ---------------------------------------------------------------------------
 NATIVE_PKGS="pyg-lib torch-scatter torch-sparse torch-cluster"
 
@@ -229,44 +257,84 @@ run_source_build() {  # self-compile via the standalone builder
     fi
     echo -e "[INFO] Compiling from source via scripts/build_pyg_arm.sh ..."
     # ASSUME_YES: deploy menu already obtained consent. Builder targets ./.venv.
+    # It installs exactly the wheels it built, checks them and writes the source
+    # receipt; *_SPEC and PYG_WHEEL_OUT reach it through the environment.
     ASSUME_YES=1 INSTALL_AFTER_BUILD=1 bash scripts/build_pyg_arm.sh
 }
 
-fetch_prebuilt_wheels() {  # downloads, verifies + extracts Release tarball; sets WHEELDIR
-    local pyver asset url tmp expected_var expected actual
+# The prebuilt pull: fetch, verify, install exactly the release's wheels, check
+# them and write the source receipt. On failure it returns non-zero with
+# PULL_FAILED set to what failed (target, fetch, checksum, install, check); a
+# pull is "verified" only when the checksum matched, and "installed" only when
+# the installed bytes are the release's wheels.
+PULL_FAILED=""
+pull_prebuilt() {
+    local pyver asset url tmp expected_var expected actual pkg found wheels=()
+    if [ "$PYG_CASE" != "A" ]; then
+        echo -e "${RED}[ERROR] Pull not usable: host torch ${TVER:-unknown} is not the release's torch ${PYG_PREBUILT_TORCH}+cu${PYG_PREBUILT_CUDA}.${NC}"
+        PULL_FAILED=target; return 1
+    fi
     pyver="$("$PY" -c 'import sys;print(f"cp{sys.version_info.major}{sys.version_info.minor}")')"
     asset="pyg-ext-torch${PYG_PREBUILT_TORCH}-cu${PYG_PREBUILT_CUDA}-${pyver}-linux_aarch64.tar.gz"
     expected_var="PYG_PREBUILT_SHA256_${pyver}"
     expected="${!expected_var:-}"
     if [ -z "$expected" ]; then
-        echo -e "${YELLOW}[WARN] No pinned SHA-256 for $asset; not downloading it.${NC}"
-        return 1
+        echo -e "${RED}[ERROR] Pull not usable: the release has no asset pinned for ${pyver} ($asset); not downloading it.${NC}"
+        PULL_FAILED=target; return 1
     fi
     if ! command -v sha256sum > /dev/null 2>&1; then
-        echo -e "${YELLOW}[WARN] sha256sum not found; $asset cannot be verified, so it is not downloaded.${NC}"
-        return 1
+        echo -e "${RED}[ERROR] Checksum: sha256sum not found, so $asset cannot be verified; not downloading it.${NC}"
+        PULL_FAILED=checksum; return 1
     fi
     url="https://github.com/${PYG_RELEASE_REPO}/releases/download/${PYG_RELEASE_TAG}/${asset}"
     tmp="$(mktemp -d)"
     echo -e "[INFO] Downloading prebuilt wheels: $url"
     if ! curl -fSL "$url" -o "$tmp/$asset"; then
-        rm -rf "$tmp"; return 1
+        echo -e "${RED}[ERROR] Download failed: $asset could not be fetched (see curl's message above).${NC}"
+        rm -rf "$tmp"; PULL_FAILED=fetch; return 1
     fi
     actual="$(sha256sum "$tmp/$asset" | cut -d' ' -f1)"
     if [ "$actual" != "$expected" ]; then
-        echo -e "${RED}[ERROR] SHA-256 mismatch for $asset: expected $expected, got $actual. Not installing it.${NC}"
-        rm -rf "$tmp"; return 1
+        echo -e "${RED}[ERROR] SHA-256 mismatch for $asset: expected $expected, got $actual. The download is NOT verified and is not installed.${NC}"
+        rm -rf "$tmp"; PULL_FAILED=checksum; return 1
     fi
     echo -e "${GREEN}[OK] SHA-256 verified: $asset${NC}"
-    if tar xzf "$tmp/$asset" -C "$tmp"; then
-        WHEELDIR="$tmp"; return 0
+    if ! tar xzf "$tmp/$asset" -C "$tmp"; then
+        echo -e "${RED}[ERROR] Install: the verified $asset could not be unpacked.${NC}"
+        rm -rf "$tmp"; PULL_FAILED=install; return 1
     fi
-    rm -rf "$tmp"; return 1
+    # Exactly one wheel of each native package, from the asset's top level.
+    for pkg in $NATIVE_PKGS; do
+        found=( "$tmp/$(echo "$pkg" | tr '-' '_')"-*.whl )
+        if [ "${#found[@]}" -ne 1 ] || [ ! -f "${found[0]}" ]; then
+            echo -e "${RED}[ERROR] Install: $asset does not hold exactly one $pkg wheel.${NC}"
+            rm -rf "$tmp"; PULL_FAILED=install; return 1
+        fi
+        wheels+=("${found[0]}")
+    done
+    echo -e "[INFO] Installing exactly the release's wheels, by file path (--reinstall --no-deps):"
+    for w in "${wheels[@]}"; do echo -e "       $(basename "$w")"; done
+    if ! uv pip install --python "$PY" --reinstall --no-deps "${wheels[@]}"; then
+        echo -e "${RED}[ERROR] Install: installing the release's wheels failed (see above).${NC}"
+        rm -rf "$tmp"; PULL_FAILED=install; return 1
+    fi
+    echo -e "[INFO] Checking what is installed against the release's wheels:"
+    if ! "$PY" scripts/validate_pyg_ext.py --check-wheels "${wheels[@]}" \
+            --write-receipt "prebuilt release" --release-tag "$PYG_RELEASE_TAG" \
+            --release-asset "$asset" --release-asset-sha256 "$actual" \
+            --compiled-against-torch "$PYG_PREBUILT_TORCH" --compiled-against-cuda "$PYG_PREBUILT_CUDA"; then
+        echo -e "${RED}[ERROR] Check: the installed PyG extensions are NOT the release's wheels (see above).${NC}"
+        rm -rf "$tmp"; PULL_FAILED=check; return 1
+    fi
+    rm -rf "$tmp"
+    return 0
 }
 
-# Set when the user asked for native ext (pull/compile) but we ended up on the
-# torch.scatter_reduce fallback, so Stage 4 can surface a remediation warning.
+# Set when the user asked for native ext (pull/compile) but this run installed
+# none, so Stage 4 can surface a remediation warning.
 PYG_FALLBACK_REASON=""
+# The route this run took, stated at the end of Stage 3 and in Stage 4.
+PYG_ROUTE=""
 
 if [ "$ARCH" = "aarch64" ] && [ "$CUDA_AVAIL" = "1" ]; then
     echo -e "[INFO] ARM + CUDA detected; data.pyg.org has no aarch64 wheels."
@@ -283,7 +351,8 @@ if [ "$ARCH" = "aarch64" ] && [ "$CUDA_AVAIL" = "1" ]; then
         echo -e "[INFO] PYG_ARM_STRATEGY=$PYG_STRAT (non-interactive override)"
     elif [ ! -t 0 ]; then
         PYG_STRAT="skip"
-        echo -e "${YELLOW}[INFO] No TTY; defaulting to 'skip' (fallback). Set PYG_ARM_STRATEGY=pull|compile|skip|abort to override.${NC}"
+        echo -e "${YELLOW}[INFO] No TTY; defaulting to 'skip' (fallback). Set PYG_ARM_STRATEGY=pull|compile|skip|abort to override${NC}"
+        echo -e "${YELLOW}       (with pull, PYG_ARM_ON_PULL_FAILURE=stop|build says what a failed pull does).${NC}"
     elif [ "$PYG_CASE" = "A" ]; then
         echo ""
         echo -e "  ${GREEN}1)${NC} Download prebuilt wheels from GitHub Release   ${GREEN}[recommended]${NC}"
@@ -292,6 +361,15 @@ if [ "$ARCH" = "aarch64" ] && [ "$CUDA_AVAIL" = "1" ]; then
         echo -e "  ${CYAN}4)${NC} Abort deployment"
         read -r -p "Select [1-4] (default 1): " c
         case "${c:-1}" in 1) PYG_STRAT=pull;; 2) PYG_STRAT=compile;; 3) PYG_STRAT=skip;; 4) PYG_STRAT=abort;; *) PYG_STRAT=pull;; esac
+        # Asked now, once: nothing waits for a person after the pull has started.
+        if [ "$PYG_STRAT" = "pull" ] && [ -z "$PYG_ON_PULL_FAILURE" ]; then
+            echo ""
+            echo -e "  If the download, its checksum, its install or its check fails:"
+            echo -e "  ${GREEN}1)${NC} Stop the deployment and say what failed   ${GREEN}[default]${NC}"
+            echo -e "  ${CYAN}2)${NC} Build from source instead (scripts/build_pyg_arm.sh; other versions may result)"
+            read -r -p "Select [1-2] (default 1): " c
+            case "${c:-1}" in 2) PYG_ON_PULL_FAILURE=build;; *) PYG_ON_PULL_FAILURE=stop;; esac
+        fi
     else
         echo ""
         echo -e "  ${YELLOW}Host torch (${TVER}) != prebuilt (torch ${PYG_PREBUILT_TORCH}+cu${PYG_PREBUILT_CUDA}); prebuilt wheels are NOT usable.${NC}"
@@ -301,37 +379,62 @@ if [ "$ARCH" = "aarch64" ] && [ "$CUDA_AVAIL" = "1" ]; then
         read -r -p "Select [1-3] (default 1): " c
         case "${c:-1}" in 1) PYG_STRAT=compile;; 2) PYG_STRAT=skip;; 3) PYG_STRAT=abort;; *) PYG_STRAT=compile;; esac
     fi
-
-    # Case B can never use prebuilt wheels.
-    if [ "$PYG_CASE" = "B" ] && [ "$PYG_STRAT" = "pull" ]; then
-        echo -e "${YELLOW}[WARN] prebuilt wheels don't match host torch; switching to source build.${NC}"
-        PYG_STRAT=compile
+    PYG_ON_PULL_FAILURE="${PYG_ON_PULL_FAILURE:-stop}"
+    if [ "$PYG_STRAT" = "pull" ]; then
+        echo -e "[INFO] If the pull fails: ${PYG_ON_PULL_FAILURE} (PYG_ARM_ON_PULL_FAILURE)"
     fi
 
     case "$PYG_STRAT" in
         pull)
-            if fetch_prebuilt_wheels && uv pip install --no-deps --find-links "$WHEELDIR" $NATIVE_PKGS; then
-                echo -e "${GREEN}[OK] Prebuilt PyG wheels installed.${NC}"
+            # Case B can never use the prebuilt wheels: that is a failed pull
+            # too, and it builds only where a build was allowed.
+            if pull_prebuilt; then
+                PYG_ROUTE="prebuilt release ${PYG_RELEASE_TAG}: installed and checked against its wheels"
+                echo -e "${GREEN}[OK] Prebuilt PyG wheels installed and checked; source receipt written.${NC}"
             else
-                echo -e "${YELLOW}[WARN] Prebuilt wheels not installed (download, checksum or install failed; see above). Falling back to source build...${NC}"
-                if ! run_source_build; then
-                    echo -e "${YELLOW}[WARN] source build failed; using torch.scatter_reduce fallback${NC}"
+                case "$PULL_FAILED" in
+                    target)   PULL_WORDS="the prebuilt release is not usable on this host"; PULL_EXIT=11 ;;
+                    fetch)    PULL_WORDS="the download failed"; PULL_EXIT=12 ;;
+                    checksum) PULL_WORDS="the checksum failed or could not be taken (the download is not verified)"; PULL_EXIT=13 ;;
+                    install)  PULL_WORDS="the install failed"; PULL_EXIT=14 ;;
+                    *)        PULL_WORDS="the installed extensions are not the release's wheels"; PULL_EXIT=15 ;;
+                esac
+                if [ "$PYG_ON_PULL_FAILURE" != "build" ]; then
+                    echo -e "\n${RED}[STOP] Prebuilt PyG pull failed: ${PULL_WORDS}.${NC}"
+                    echo -e "${RED}       The deployment stops here (exit ${PULL_EXIT}); nothing was built in its place.${NC}"
+                    echo -e "${YELLOW}[HINT] Re-run when the cause is fixed, or choose another route: PYG_ARM_STRATEGY=compile, or${NC}"
+                    echo -e "${YELLOW}       PYG_ARM_STRATEGY=pull PYG_ARM_ON_PULL_FAILURE=build to build from source when a pull fails.${NC}"
+                    exit "$PULL_EXIT"
+                fi
+                echo -e "${YELLOW}[WARN] Prebuilt PyG pull failed: ${PULL_WORDS}. Building from source instead,${NC}"
+                echo -e "${YELLOW}       as PYG_ARM_ON_PULL_FAILURE=build allows (other versions than the release's may result).${NC}"
+                if run_source_build; then
+                    PYG_ROUTE="local build, after the prebuilt pull failed (${PULL_FAILED}): installed and checked against the wheels it built"
+                else
+                    echo -e "${YELLOW}[WARN] The source build did not complete (see its output above).${NC}"
+                    PYG_ROUTE="none: the prebuilt pull failed (${PULL_FAILED}) and the source build did not complete"
                     PYG_FALLBACK_REASON="build-failed"
                 fi
             fi ;;
         compile)
-            if ! run_source_build; then
-                echo -e "${YELLOW}[WARN] source build failed; using torch.scatter_reduce fallback${NC}"
+            if run_source_build; then
+                PYG_ROUTE="local build: installed and checked against the wheels it built"
+            else
+                echo -e "${YELLOW}[WARN] The source build did not complete (see its output above).${NC}"
+                PYG_ROUTE="none: the source build did not complete"
                 PYG_FALLBACK_REASON="build-failed"
             fi ;;
         skip)
             echo -e "${YELLOW}[SKIP] PyG native ext not installed; using torch.scatter_reduce fallback.${NC}"
+            PYG_ROUTE="none: skipped"
             PYG_FALLBACK_REASON="user-skipped" ;;
         abort)
             echo -e "${RED}[ABORT] Deployment terminated by user at PyG native-extension stage.${NC}"; exit 10 ;;
         *)
-            echo -e "${YELLOW}[WARN] Unknown strategy '$PYG_STRAT'; skipping (fallback).${NC}" ;;
+            echo -e "${YELLOW}[WARN] Unknown strategy '$PYG_STRAT'; skipping (fallback).${NC}"
+            PYG_ROUTE="none: unknown strategy '$PYG_STRAT', skipped" ;;
     esac
+    echo -e "[INFO] PyG native route: ${PYG_ROUTE}"
 else
     install_pyg_from_index
 fi
@@ -384,14 +487,17 @@ fi
 # remediation. Only the opening line differs by reason; impact + how-to are shared.
 if [ -n "$PYG_FALLBACK_REASON" ]; then
     echo -e "\n${YELLOW}----------------------------------------------------------------------------${NC}"
-    echo -e "${YELLOW}[WARN] PyG native extensions are NOT installed — running on the${NC}"
-    echo -e "${YELLOW}       torch.scatter_reduce fallback.${NC}"
+    echo -e "${YELLOW}[WARN] This deployment did not install the PyG native extensions; any that${NC}"
+    echo -e "${YELLOW}       are missing run on the torch.scatter_reduce fallback.${NC}"
     if [ "$PYG_FALLBACK_REASON" = "build-failed" ]; then
         echo -e "${YELLOW}       You chose to build PyG from source but the build did not complete${NC}"
         echo -e "${YELLOW}       (commonly: missing system build tools — see the [STAGE 2/5] output above).${NC}"
+        echo -e "${YELLOW}       A build that failed installs nothing; an install or check that failed${NC}"
+        echo -e "${YELLOW}       is named in its output above.${NC}"
     else
         echo -e "${YELLOW}       You chose to skip the PyG native extensions.${NC}"
     fi
+    echo -e "${YELLOW}       What imports now: $("$PY" -c 'from src.utils.pyg_native_check import format_status_line; print(format_status_line())' 2>/dev/null || echo 'not known')${NC}"
     echo -e "${YELLOW}       Impact: training and inference still RUN correctly, but some GNN ops${NC}"
     echo -e "${YELLOW}       (notably HGTConv message-passing and neighbor sampling) run slower${NC}"
     echo -e "${YELLOW}       than with the native CUDA kernels.${NC}"
@@ -409,6 +515,9 @@ echo -e "${GREEN}===============================================================
 echo -e "[INFO] Virtual environment: .venv"
 echo -e "[INFO] Python interpreter:  $PY"
 echo -e "[INFO] Lock file:           uv.lock (commit'd to repo)"
+if [ -n "$PYG_ROUTE" ]; then
+    echo -e "[INFO] PyG native route:    ${PYG_ROUTE}"
+fi
 echo -e "\nNext steps:"
 echo -e "   1. Verify the installation:"
 echo -e "      ${YELLOW}$PY -c \"import torch; print(torch.cuda.is_available())\"${NC}"
@@ -446,7 +555,8 @@ echo -e "      Compatibility not guaranteed; fallback to PyTorch SDPA is always 
 echo -e ""
 echo -e "[TIP] If you compiled PyG natively (ARM host, or a GPU newer than the"
 echo -e "      prebuilt wheels support), confirm the compiled kernels actually run"
-echo -e "      correctly on your GPU (not just that they import):"
+echo -e "      correctly on your GPU (not just that they import); it also shows the"
+echo -e "      source receipt against what is installed now:"
 echo -e "        ${YELLOW}$PY scripts/validate_pyg_ext.py${NC}"
 echo -e ""
 echo -e "[TIP] For development (pytest, linting, etc.):"

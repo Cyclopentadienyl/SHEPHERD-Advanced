@@ -3130,6 +3130,57 @@ writing the version a second time), or on ARM from the prebuilt release or a loc
 (`PYG_ARM_STRATEGY`). Their versions differ by platform (the GB10's prebuilt pyg-lib is 0.6.0, the
 x86 index's 0.8.0) and are recorded by the probe's A1 and A5, not pinned.
 
+**The ARM + CUDA route** (`deploy.sh` Stage 3; since research-comparison Stage 2a, BACKLOG 70 and
+71). data.pyg.org has no aarch64 wheels, so the menu, or `PYG_ARM_STRATEGY`, chooses the prebuilt
+release (`pull`), a source build (`compile`), `skip` or `abort`; with no terminal and no setting it
+is `skip`, as before.
+
+- **A failed pull stops by default.** The pull downloads the release asset pinned in `deploy.sh`
+  (`PYG_RELEASE_TAG`, one SHA-256 per CPython tag), verifies its SHA-256, installs exactly its four
+  wheels by file path (`--reinstall --no-deps`) and checks what was installed. When a step fails,
+  the deployment stops and names it: the release is not usable on this host (exit 11: the host's
+  torch or CUDA is not the release's, "Case B", or the release has no asset for its Python), the
+  download failed (12), the checksum failed or could not be taken (13; such a download is never
+  reported as verified), the install failed (14), or the installed extensions are not the release's
+  wheels (15).
+- **`PYG_ARM_ON_PULL_FAILURE=build`** lets a failed pull build from source instead, non-interactively
+  too; `stop` is the default. On a terminal, choosing the pull in the menu asks this once, right
+  then; nothing waits for a person after the pull has started. An unknown value is refused before
+  anything runs (exit 4). Before Stage 2a a failed pull, and `PYG_ARM_STRATEGY=pull` on a Case B
+  host, built from source without being asked; both now need this setting.
+- **The source build** (`compile`, or a failed pull where allowed: `scripts/build_pyg_arm.sh`)
+  builds all four packages with `--no-cache-dir` into a fresh directory per run under
+  `PYG_WHEEL_OUT` (default `~/pyg-wheels-arm`; earlier runs' directories are left as they are). Only
+  when all four built does it install them, exactly those four wheels by file path
+  (`--reinstall --no-deps`); it then checks them and that each imports, and exits non-zero when a
+  build (2, nothing installed), the install (3) or the check (4) fails. `SCATTER_SPEC`,
+  `SPARSE_SPEC`, `CLUSTER_SPEC` and `PYGLIB_SPEC` choose each package's source: a registry
+  requirement (`torch-scatter==2.1.2`), a VCS URL (`git+https://github.com/pyg-team/pyg-lib.git@0.6.0`)
+  or a local sdist or tree; `deploy.sh` passes them through. Without them the builder takes the
+  newest pyg-lib tag the data.pyg.org index lists for the installed torch and the unversioned names
+  of the other three, so a build can resolve other versions than the release's; the receipt says
+  which. Under `compile`, a build that did not complete is said and the deployment continues, as
+  before.
+- **The check** (`scripts/validate_pyg_ext.py --check-wheels`, over `src/utils/pyg_native_check.py`):
+  each installed distribution's version, and each installed native library's SHA-256, equal its
+  wheel's. Only the two routes above run it: the Linux index route (x86, or no CUDA) and Windows'
+  `deploy.cmd` install from the data.pyg.org index by name, as before, and are **not covered** by it.
+- **The source receipt.** After a passing check, either route writes
+  `.venv/share/shepherd-advanced/pyg-native-receipt.json`, outside every distribution, so
+  `uv sync --inexact` leaves it (a test runs uv to show it). Per wheel: the requested source (a
+  registry name and specifier, a VCS URL with the commit it resolved to, or a local source's
+  SHA-256; for the pull, the release tag, the asset and its SHA-256), the resolved and installed
+  version, the wheel's SHA-256 and the installed native libraries' count, digests and aggregate
+  digest. A build adds the torch and CUDA build compiled against, nvcc, gcc and g++, and
+  `TORCH_CUDA_ARCH_LIST`, `FORCE_CUDA` and `MAX_JOBS`; the release carries no compiler facts, and
+  they read unknown. No path, user name or URL credential is recorded. The receipt is keyed by the
+  installed native digests: `scripts/validate_pyg_ext.py` (or `--receipt`) shows per distribution
+  whether what is installed now is what it records, and a later install from elsewhere reads as
+  differing, never as the receipt's. A record, never a gate: no version is judged anywhere.
+- **What is verified**: these routes run in tests with stand-ins for the ARM host, GitHub, pip and
+  the compilers (`tests/unit/test_deploy_pyg_route.py`), which is software simulation. Neither route
+  has run on a GB10 since Stage 2a; each counts as verified there only by its own GB10 run.
+
 **The verified set**: `torch_geometric` 2.8.1 with torch 2.10.0+cu130 and the prebuilt ARM
 release's extensions (pyg-lib 0.6.0, torch-scatter 2.1.2, torch-sparse 0.6.18, torch-cluster
 1.6.3), in M5's GB10 acceptance at `b14c4de`. Since Batch 1, `deploy.sh` installs that set from the
@@ -3161,8 +3212,9 @@ maintained, goes through the same entry points:
    installed torch by itself.
 3. On ARM, the prebuilt extension release (`PYG_PREBUILT_*` in `deploy.sh`) matches one torch and
    CUDA only. Another torch takes the source build (`scripts/build_pyg_arm.sh`, which builds
-   against whatever torch is installed) or the fallback, so the release never blocks an upgrade;
-   publishing a new release and updating those four values is optional.
+   against whatever torch is installed; `compile`, or `pull` with `PYG_ARM_ON_PULL_FAILURE=build`)
+   or the fallback, so the release never blocks an upgrade; publishing a new release and updating
+   those four values is optional.
 4. Run the deployment probe and keep its record; checks follow what the upgrade changed, not a
    rerun of every past acceptance. The new set becomes the baseline once verified, and an older
    acceptance stays with the environment it ran in.
