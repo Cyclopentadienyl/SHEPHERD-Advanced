@@ -147,7 +147,7 @@ from src.evaluation.caveats import (
     mode_note,
     recorded_metric_lines,
 )
-from src.utils.run_environment import native_identity, native_identity_text
+from src.utils.run_environment import native_identity, native_identity_lines
 from src.webui.components import renderers as r
 from src.webui.components.chips import D8_SHORT, chips_on_change
 from src.webui.components.help import help_button
@@ -1608,11 +1608,14 @@ def _environment(record: Mapping[str, Any]) -> str:
 def _native_build(record: Mapping[str, Any]) -> str:
     """The record's native build identity in the run environment's one
     projection and wording (`native_identity`, as the API's record view and
-    Models show it); "not recorded" for a run recorded before its environment
-    named components."""
+    Models show it): a lead with the route and the count, then one line per
+    component (`native_identity_lines`), since the one line runs to four in
+    this column (the skill's §4: past two lines, structure); "not recorded"
+    for a run recorded before its environment named components."""
     environment = record.get("environment") if isinstance(record.get("environment"), Mapping) else {}
     facts = environment.get("facts") if isinstance(environment.get("facts"), Mapping) else {}
-    return e(native_identity_text(native_identity(facts.get("components"))))
+    return "".join(f"<div>{e(line)}</div>"
+                   for line in native_identity_lines(native_identity(facts.get("components"))))
 
 
 def result_html(reports: Mapping[str, Any], run_id: Optional[str],

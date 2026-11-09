@@ -911,15 +911,23 @@ def _native_row(html):
     return match.group(1)
 
 
-def test_the_result_names_its_native_build_in_one_line(site):
+def _native_lines(html):
+    return [_plain(line) for line in re.findall(r"<div>(.*?)</div>", _native_row(html))]
+
+
+def test_the_result_names_its_native_build_as_a_lead_and_one_line_per_component(site):
     """research-comparison Stage 2b: the record's native build identity in the
-    run environment's one projection and wording, as Models shows it; a record
-    whose environment names no components (recorded before) reads "not
-    recorded"; what it shows is escaped."""
+    run environment's one projection and wording, as Models shows it, here as
+    a lead (the route once, and the count) and one line per component: in
+    this column the one line ran to four (the webui-design skill's §4, seen
+    at 1850 x 960 in the 2b review). A record whose environment names no
+    components (recorded before) reads "not recorded"; what it shows is
+    escaped."""
     from src.utils.run_environment import (
         PYG_NATIVE_KIND,
         component_facts,
         native_identity,
+        native_identity_lines,
         native_identity_text,
     )
 
@@ -929,14 +937,20 @@ def test_the_result_names_its_native_build_in_one_line(site):
     components = record["environment"]["facts"]["components"]
     assert components, "the measured run's environment names its components"
 
-    shown = _plain(_native_row(tp._record_html(record, run, {})))
-    assert shown == native_identity_text(native_identity(components))
-    assert all(name in shown for name in components)
+    lines = _native_lines(tp._record_html(record, run, {}))
+    identity = native_identity(components)
+    assert lines == native_identity_lines(identity)
+    assert len(lines) == len(components) + 1
+    assert lines[0].endswith(f" · {len(components)} components")
+    # The same words as the one line Models shows, with the route said once.
+    assert native_identity_text(identity) == f"{lines[0].split(' · ')[0]} — " + ", ".join(
+        lines[1:])
+    assert [line.split(" ")[0] for line in lines[1:]] == sorted(components)
 
     facts = {key: value for key, value in record["environment"]["facts"].items()
              if key != "components"}
     older = {**record, "environment": {**record["environment"], "facts": facts}}
-    assert _native_row(tp._record_html(older, run, {})) == "not recorded"
+    assert _native_lines(tp._record_html(older, run, {})) == ["not recorded"]
     hostile = {**record, "environment": {**record["environment"], "facts": {
         **facts, "components": {"<img src=x onerror=alert(1)>": component_facts(
             PYG_NATIVE_KIND, version="<b>1</b>")}}}}

@@ -59,6 +59,7 @@ from src.utils.run_environment import (
     collect_environment,
     component_facts,
     native_identity,
+    native_identity_lines,
     native_identity_text,
 )
 from tests.unit.test_pyg_install_identity import _install, _wheel
@@ -646,6 +647,31 @@ def test_the_one_line_says_each_identity_and_one_shared_route_once():
     assert native_identity_text(native_identity(
         {"pure": _entry("1.0", hashlib.sha256(b"").hexdigest(), "local build", count=0)})) == (
         "local build — pure 1.0 no native library")
+
+
+def test_the_lines_say_the_lines_words_with_a_lead_and_one_component_each():
+    """For a column too narrow for the one line (the Test page): a lead with
+    the route said once and the count, then each component in the line's
+    words; where routes differ, the lead says so and each line names its
+    own."""
+    shared = native_identity({"torch_scatter": _entry("2.1.2", "b" * 64, "local build"),
+                              "pyg_lib": _entry("0.8.0", "a" * 64, "local build"),
+                              "torch_cluster": _entry(None, None, state="not installed")})
+    assert native_identity_lines(shared) == [
+        "local build · 3 components", "pyg_lib 0.8.0 aaaaaaaaaaaa", "torch_cluster not installed",
+        "torch_scatter 2.1.2 bbbbbbbbbbbb"]
+
+    mixed = native_identity({"pyg_lib": _entry("0.8.0", "a" * 64, "local build"),
+                             "torch_scatter": _entry("2.1.2", "b" * 64)})
+    assert native_identity_lines(mixed) == [
+        "2 components · routes differ", "pyg_lib 0.8.0 aaaaaaaaaaaa (local build)",
+        "torch_scatter 2.1.2 bbbbbbbbbbbb (route not recorded)"]
+    assert native_identity_text(mixed) == ", ".join(native_identity_lines(mixed)[1:])
+
+    absent = native_identity({"pyg_lib": _entry(None, None, state="not installed")})
+    assert native_identity_lines(absent) == ["1 component", "pyg_lib not installed"]
+    for whole in (None, {}, ["pyg_lib"]):
+        assert native_identity_lines(whole) == [native_identity_text(whole)]
 
 
 def test_the_projection_picks_the_identity_and_passes_anything_else_on():

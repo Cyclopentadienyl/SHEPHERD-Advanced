@@ -671,24 +671,22 @@ def _identity_of(entry: Any) -> Any:
     return picked
 
 
-def native_identity_text(identity: Any) -> str:
-    """`native_identity` as one line of plain text, the same on every surface:
-    each component by name (in code-point order, whatever order the record
-    keeps), its version and the first 12 hex digits of its native
-    libraries' aggregate digest (or the state that stands in for it), and its
-    source's route, said once in front when every installed component shares
-    it. ``"not recorded"`` when there is no identity (a record written before
-    research-comparison Stage 2b). Never raises: a part that cannot be read
-    says so."""
+def _identity_items(identity: Any) -> Tuple[Optional[str], List[Tuple[str, Optional[str]]]]:
+    """The words of `native_identity`, for its line and its lines: the state
+    that stands in for the whole identity (``"not recorded"`` when there is
+    none, a record written before research-comparison Stage 2b), or None and
+    each component's words with its route's (None where it has no route: it
+    is not installed, or its entry cannot be read). By name, in code-point
+    order, whatever order the record keeps: a record read from the ledger,
+    whose encoding orders keys, and the same record read from its report give
+    the same words. Never raises: a part that cannot be read says so."""
     if identity is None:
-        return "not recorded"
+        return "not recorded", []
     if not isinstance(identity, Mapping):
-        return "cannot be read"
+        return "cannot be read", []
     if not identity:
-        return "no component recorded"
-    items: List[Tuple[str, Optional[str]]] = []  # (text, route words; None: no route)
-    # By name: a record read from the ledger, whose encoding orders keys, and
-    # the same record read from its report give one line.
+        return "no component recorded", []
+    items: List[Tuple[str, Optional[str]]] = []
     for name, entry in sorted(identity.items(), key=lambda item: str(item[0])):
         if not isinstance(entry, Mapping):
             items.append((f"{name} cannot be read", None))
@@ -709,10 +707,43 @@ def native_identity_text(identity: Any) -> str:
         source = entry.get("source") if isinstance(entry.get("source"), Mapping) else {}
         route = source.get("route") if source.get("state") == SOURCE_RECORDED else None
         items.append((" ".join(words), str(route) if route else "route not recorded"))
+    return None, items
+
+
+def native_identity_text(identity: Any) -> str:
+    """`native_identity` as one line of plain text (Models, the probe's
+    console): each component by name, its version and the first 12 hex
+    digits of its native libraries' aggregate digest (or the state that
+    stands in for it), and its source's route, said once in front when every
+    installed component shares it (`_identity_items`). ``"not recorded"``
+    when there is no identity. Never raises."""
+    whole, items = _identity_items(identity)
+    if whole is not None:
+        return whole
     routes = {route for _text, route in items if route is not None}
     if len(routes) == 1:
         return f"{routes.pop()} — " + ", ".join(text for text, _route in items)
     return ", ".join(text if route is None else f"{text} ({route})" for text, route in items)
+
+
+def native_identity_lines(identity: Any) -> List[str]:
+    """`native_identity` in the line's words (`native_identity_text`), as a
+    lead and one line per component, for a surface whose column is too narrow
+    for the one line (the Test page's result). The lead says the route once
+    when every installed component shares it, and how many components there
+    are (``"local build · 4 components"``); where the routes differ, it says
+    so and each component's line names its own. The state that stands in for
+    the whole identity is the only line when there is no component. Never
+    raises."""
+    whole, items = _identity_items(identity)
+    if whole is not None:
+        return [whole]
+    routes = {route for _text, route in items if route is not None}
+    count = f"{len(items)} component{'' if len(items) == 1 else 's'}"
+    if len(routes) == 1:
+        return [f"{routes.pop()} · {count}", *(text for text, _route in items)]
+    lead = f"{count} · routes differ" if routes else count
+    return [lead, *(text if route is None else f"{text} ({route})" for text, route in items)]
 
 
 @dataclass(frozen=True)
@@ -787,6 +818,7 @@ __all__: List[str] = [
     "collect_environment",
     "component_facts",
     "native_identity",
+    "native_identity_lines",
     "native_identity_text",
     "observe_autocast_regime",
     "read_pyg_native",

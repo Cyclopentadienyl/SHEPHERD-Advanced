@@ -876,8 +876,8 @@ def _mode_table(mode: Optional[str], views: Sequence[Mapping[str, Any]],
         if gpu is not None:
             environment += (f" · GPU {gpu.get('name') or 'name not read'}, driver "
                             f"{gpu.get('driver') or 'not read'}")
-        # The run environment's one wording of the native build identity, as
-        # the Test page shows it.
+        # The run environment's one wording of the native build identity, on
+        # one line (the Test page's narrower column puts a component per line).
         native = native_identity_text(view.get("native_identity"))
         origin = view.get("dataset_origin")
         # The record's run once, here; its merged reports and overlaps are in

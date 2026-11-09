@@ -3250,8 +3250,8 @@ data.pyg.org 沒有 aarch64 wheel，所以由選單或 `PYG_ARM_STRATEGY` 在預
   來源、wheel 的 SHA-256、torch 與 CUDA 版本、編譯器版本與旗標；否則記為「not recorded」並說明原因。
   PyG 在某個運算是否實際使用了某個擴充並未被觀測，記為未知。不記錄本機上的任何路徑，也不記錄
   wheel、函式庫或發行版資產（release asset）的檔名（由它們的 SHA-256 識別）；所要求來源的 URL
-  會去除使用者名稱、密碼、查詢字串與片段後保留。Models 與 Test
-  頁面以一行（「Native build」）顯示這個身分；在此之前寫入的紀錄顯示「not recorded」。這適用於
+  會去除使用者名稱、密碼、查詢字串與片段後保留。Models 與 Test 頁面以「Native build」顯示這個身分：
+  Models 為一行，Test 頁面每個元件一行；在此之前寫入的紀錄顯示「not recorded」。這適用於
   每一條安裝路徑，包括 Linux 索引路徑與 `deploy.cmd`；只有收據是兩條 ARM 路徑才有的。
 - **已驗證的範圍**：這些路徑在測試中以替身取代 ARM 主機、GitHub、pip 與編譯器執行
   （`tests/unit/test_deploy_pyg_route.py`），屬於軟體模擬。Stage 2a 之後兩條路徑都尚未在 GB10 上

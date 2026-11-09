@@ -3198,8 +3198,9 @@ is `skip`, as before.
   versions and flags; otherwise "not recorded", with why. Whether PyG used an extension for a given
   operation is not observed and reads unknown. No path on the machine and no wheel, library or
   release asset file name is recorded (their SHA-256 names them); a requested source's URL is kept
-  without user name, password, query or fragment. The Models and Test pages show the identity on
-  one line ("Native build"); a record written before reads "not recorded". This holds for every
+  without user name, password, query or fragment. The Models and Test pages show the identity as
+  "Native build", on one line on Models and a component per line on Test; a record written before
+  reads "not recorded". This holds for every
   route, the Linux index route and `deploy.cmd` included; only the receipt is the two ARM routes'.
 - **What is verified**: these routes run in tests with stand-ins for the ARM host, GitHub, pip and
   the compilers (`tests/unit/test_deploy_pyg_route.py`), which is software simulation. Neither route

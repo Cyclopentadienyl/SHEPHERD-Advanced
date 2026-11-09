@@ -579,8 +579,8 @@ def test_kept_c_and_d_records_are_shown_as_recorded_by_the_one_display():
 
 def test_a_records_native_build_is_one_line_of_its_detail():
     """research-comparison Stage 2b: each record's detail has one "Native
-    build" line, in the run environment's one wording (as the Test page shows
-    it): "not recorded" for the kept records, whose environment names no
+    build" line, in the run environment's one wording (the Test page shows
+    its words a component per line): "not recorded" for the kept records, whose environment names no
     components, and each component's identity and route for one that does."""
     from src.utils.run_environment import PYG_NATIVE_KIND, component_facts, native_identity_text
     from tests.unit.test_evaluation_sidecar import environment_block, registered_report
