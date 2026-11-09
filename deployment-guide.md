@@ -1556,8 +1556,7 @@ CSV 仍然**只有一列標題**、沒有前言。結果類型的候選欄位在
 
 1. `scripts/import_cohort.py` 先預覽、再提交一個對應到某個 workspace 圖的 cohort 版本；
 2. `scripts/measure_scorer.py --mode PROTOCOL --cohort LABEL --registry DIR` 以這個 build
-   針對模型的 learning stage 與 task head 所實作的一種協定，在這個版本上量測 checkpoint，並保留
-   完整報告；
+   所實作、依模型所提供的能力判斷可用的一種協定，在這個版本上量測 checkpoint，並保留完整報告；
 3. `--record`，或之後用 `scripts/record_evaluation.py --report`，把報告登錄到 checkpoint 旁的
    `evaluations.json`；
 4. Diagnosis 頁面的「Model in use」卡片以狀態顯示目前載入之 checkpoint 已登錄的測試（自 M5-2

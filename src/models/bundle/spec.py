@@ -291,7 +291,7 @@ class EncoderSpec:
     `output`; every layer has `heads` heads, concatenated, so the encoder's
     output width is `output * heads`, and the sampler takes one hop per layer.
     A kind `ENCODER_KINDS` names without a declaration here is read, and
-    refused when it is built.
+    refused when a run of it starts (`hops_problem`) and when it is built.
     """
 
     kind: str = "gatv2"
@@ -746,12 +746,19 @@ def hops_problem(num_neighbors: Sequence[Any], encoder: EncoderSpec) -> Optional
     statement of this check**: the start's check of a new base run
     (`training_manager._new_bundle_run`), the Training page's base form
     (`training_console.setting_problem`) and the training process
-    (`scripts/train_model.py`) all ask it. An encoder whose kind this build
-    does not implement declares no hops here (its build refuses it), nor does
-    one that offers no sampled computation."""
+    (`scripts/train_model.py`) all ask it. No hop list fits an encoder a run
+    cannot sample, so the run is refused before it starts: one whose kind this
+    build does not implement, in the builder's own sentence
+    (`encoder_not_built`), and one whose declaration offers no sampled
+    computation."""
     declaration = encoder_declaration(encoder.kind)
-    hops = declaration.sampled_hops(encoder) if declaration is not None else None
-    if hops is None or len(num_neighbors) == hops:
+    if declaration is None:
+        return f"{encoder_not_built(encoder.kind)}."
+    hops = declaration.sampled_hops(encoder) if SAMPLED in declaration.computation else None
+    if hops is None:
+        return (f"encoder kind {encoder.kind!r} offers no sampled computation in this build, "
+                "which training's sampler needs.")
+    if len(num_neighbors) == hops:
         return None
     return (f"num_neighbors needs {hops} numbers, {declaration.hops_words}, "
             f"not {len(num_neighbors)}.")

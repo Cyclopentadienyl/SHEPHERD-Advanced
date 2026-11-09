@@ -469,8 +469,9 @@ def _new_bundle_run(config: Mapping[str, Any]) -> Tuple[Optional[str], Optional[
     recipe's base settings and `_NEW_RUN_KEYS`, each value one its field spec
     takes (`_recipe_settings_problem`), and its hop list one number per hop
     the spec's encoder declares (`hops_problem`, the recipe's list when it
-    names none; GATv2: one per layer); a setting outside them is refused,
-    never passed on for the process to refuse."""
+    names none; GATv2: one per layer), so a spec whose encoder this build
+    cannot build or sample is refused here too; a setting outside them is
+    refused, never passed on for the process to refuse."""
     from src.config.recipe import reference_settings
     from src.models.bundle.spec import ModelSpec, SpecError, hops_problem, reference_spec
 

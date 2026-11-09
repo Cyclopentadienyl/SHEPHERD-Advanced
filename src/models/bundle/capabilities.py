@@ -16,8 +16,10 @@ finetune the patient encoder and the task head. `model_capabilities` says:
 - `heads`: each head it carries, as `(kind, name, scoring semantics)`: the LP
   head (`LINK_PREDICTION`, its spec kind, its semantics stated by
   `LP_HEAD_SEMANTICS`, never assumed from the attribute name `lp_head`) and
-  each task head (`TASK`, its task, `TASK_HEAD_SEMANTICS`). A model offers a
-  set of heads; nothing here assumes it carries one task;
+  each task head (`TASK`, its task, `TASK_HEAD_SEMANTICS`). A head whose
+  semantics this build does not state is listed with None: no protocol scores
+  with it, and the description is still given, so a list never fails on it.
+  A model offers a set of heads; nothing here assumes it carries one task;
 - `node_inputs`: `node_ids` (its learned table's rows) and `node_types` where
   its input adds a type embedding or its encoder reads them;
 - `relation_inputs`: `relation_ids` (the LP head scores each pair under its
@@ -29,8 +31,8 @@ finetune the patient encoder and the task head. `model_capabilities` says:
 
 An encoder kind this build does not implement declares nothing: its model
 offers no computation, its hops and width are None, and a measurement that
-needs a computation refuses it before anything is built (the builder refuses
-it too).
+needs a computation refuses it before anything is built, as the start of a
+training run of it does (`hops_problem`); the builder refuses it too.
 
 **Plain data**: strings, integers, None and tuples (sorted where the order
 means nothing), so `src.evaluation.protocols` judges it with the standard
@@ -49,7 +51,6 @@ from src.models.bundle.spec import (
     FULL_VIEW,
     SAMPLED,
     ModelSpec,
-    SpecError,
     encoder_declaration,
 )
 
@@ -91,10 +92,11 @@ CAPABILITY_FIELDS = ("learning_stage", "encoder", "representations", "heads", "n
                      "relation_inputs", "computation", "sampled_hops", "node_vector_width")
 
 
-def _semantics(table: Mapping[str, str], name: str, what: str) -> str:
-    if name not in table:
-        raise SpecError(f"{what} {name!r} states no scoring semantics in this build")
-    return table[name]
+def _semantics(table: Mapping[str, str], name: str) -> str | None:
+    """The scoring semantics `table` states for `name`, or None: a head whose
+    semantics this build does not state is still described (so a list that
+    carries the description never fails on it), and no protocol scores with it."""
+    return table.get(name)
 
 
 def model_capabilities(spec: ModelSpec) -> dict[str, Any]:
@@ -103,15 +105,15 @@ def model_capabilities(spec: ModelSpec) -> dict[str, Any]:
     description, field for field."""
     spec.validate()
     declaration = encoder_declaration(spec.encoder.kind)
-    heads: tuple[tuple[str, str, str], ...] = ((
+    heads: tuple[tuple[str, str, str | None], ...] = ((
         LINK_PREDICTION, spec.lp_head.kind,
-        _semantics(LP_HEAD_SEMANTICS, spec.lp_head.kind, "the LP head")),)
+        _semantics(LP_HEAD_SEMANTICS, spec.lp_head.kind)),)
     representations = {NODE_VECTORS}
     if spec.patient_encoder is not None:
         representations.add(PATIENT_REPRESENTATION)
     if spec.task_head is not None:
         task = spec.task_head.task
-        heads += ((TASK, task, _semantics(TASK_HEAD_SEMANTICS, task, "the task")),)
+        heads += ((TASK, task, _semantics(TASK_HEAD_SEMANTICS, task)),)
     node_inputs = {NODE_IDS}
     relation_inputs = {RELATION_IDS}
     if spec.input.type_embedding:

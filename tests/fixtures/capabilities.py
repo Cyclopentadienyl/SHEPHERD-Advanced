@@ -16,11 +16,45 @@ by its learning stage and task head gets that model's description here:
   heads replaced by the head `task` names (none for None; an unknown task's
   semantics is its name), and nothing else changed.
 
+And a test-only encoder declaration, never shipped as a product option
+(`DoubleDeclaration`), declared for one test at a time by `declare_encoder`:
+another output width and another sampling need than GATv2's, so a test shows
+that no shared layer gates on `gatv2` or on layers == hops.
+
 Module: tests/fixtures/capabilities.py
 """
 from __future__ import annotations
 
 from typing import Any
+
+from src.models.bundle import spec as spec_module
+from src.models.bundle.spec import FULL_VIEW, SAMPLED, EncoderDeclaration
+
+
+class DoubleDeclaration(EncoderDeclaration):
+    """A test-only encoder declaration, never shipped: its node vectors are
+    `hidden` wide, its sampler takes two hops whatever its layers, it reads
+    no relation feature and has no concat rule. No implementation exists."""
+
+    kind = "double"
+    computation = (FULL_VIEW, SAMPLED)
+    hops_words = "one hop per sampled ring the double declares"
+
+    def width(self, spec: Any) -> int:
+        return spec.hidden
+
+    def sampled_hops(self, spec: Any) -> int | None:
+        return 2
+
+
+def declare_encoder(monkeypatch: Any, declaration: EncoderDeclaration) -> None:
+    """Declare `declaration`'s kind for one test (`monkeypatch` undoes it): a
+    kind of the spec's list and a declaration of this build's, both read when
+    a judgment is made."""
+    kind = declaration.kind
+    monkeypatch.setattr(spec_module, "ENCODER_KINDS", (*spec_module.ENCODER_KINDS, kind))
+    monkeypatch.setattr(spec_module, "ENCODER_DECLARATIONS",
+                        {**spec_module.ENCODER_DECLARATIONS, kind: declaration})
 
 
 def described(stage: str | None, task: str | None) -> dict[str, Any] | None:
@@ -39,4 +73,4 @@ def described(stage: str | None, task: str | None) -> dict[str, Any] | None:
     return {**nearest, "heads": heads}
 
 
-__all__ = ["described"]
+__all__ = ["DoubleDeclaration", "declare_encoder", "described"]

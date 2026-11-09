@@ -309,8 +309,8 @@ def inputs_refusal(name: Any, kind: Any, counts: Mapping[str, Any] | None) -> st
     if protocol is None:
         return _unknown(name)
     if kind not in protocol.data_kinds:
-        said = _KIND_WORDS.get(kind, f"a cohort of kind {kind!r}") if isinstance(kind, str) \
-            else "a cohort of no kind this build reads"
+        said = _KIND_WORDS.get(kind, f"data of kind {kind!r}") if isinstance(kind, str) \
+            else "data of no kind this build reads"
         takes = " or ".join(_KIND_WORDS.get(k, k) for k in protocol.data_kinds)
         return f"the {protocol.name} measurement does not measure {said}; it measures {takes}."
     if kind == GENERATED:

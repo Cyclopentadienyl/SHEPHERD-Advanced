@@ -1162,8 +1162,8 @@ acceptance — and its result is recorded beside the checkpoint. The flow is:
 1. `scripts/import_cohort.py` previews, then commits, a cohort version mapped to one workspace's
    graph;
 2. `scripts/measure_scorer.py --mode PROTOCOL --cohort LABEL --registry DIR` measures the
-   checkpoint on it by a protocol this build implements for the model's learning stage and task
-   head, and keeps the full report;
+   checkpoint on it by a protocol this build implements that the model's capabilities admit,
+   and keeps the full report;
 3. `--record`, or later `scripts/record_evaluation.py --report`, registers the report in
    `evaluations.json` beside the checkpoint;
 4. the Diagnosis page's "Model in use" card shows the loaded checkpoint's recorded tests as a

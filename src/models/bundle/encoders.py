@@ -32,7 +32,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-from src.models.bundle.spec import EncoderSpec, InputSpec, SpecError
+from src.models.bundle.spec import EncoderSpec, InputSpec, SpecError, require_encoder_declaration
 
 
 class InputModule(nn.Module):
@@ -112,7 +112,11 @@ class GATv2Encoder(GraphEncoder):
         if spec.kind != "gatv2":
             raise SpecError(f"GATv2Encoder built for encoder kind {spec.kind!r}")
         self.spec = spec
-        self.width = spec.width
+        # The width and what it reads are its declaration's answers for its spec.
+        declaration = require_encoder_declaration(spec.kind)
+        self.width = declaration.width(spec)
+        self.uses_node_types = declaration.reads_node_types(spec)
+        self.uses_relations = declaration.reads_edge_relations(spec)
         widths: List[int] = []
         for i in range(spec.layers):
             if i == spec.layers - 1:
@@ -121,7 +125,6 @@ class GATv2Encoder(GraphEncoder):
                 widths.append(spec.hidden * spec.first_hidden_multiplier)
             else:
                 widths.append(spec.hidden)
-        self.uses_relations = spec.relation_edge_dim is not None
         self.relation_embedding: Optional[nn.Embedding] = None
         if self.uses_relations:
             if num_relations <= 0:

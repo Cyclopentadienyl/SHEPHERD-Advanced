@@ -2572,7 +2572,7 @@ def create_test_page(ctx: Any) -> None:
                                              elem_id="shep-test-model-reload",
                                              interactive=False)
                 model_info = plain_html("", elem_id="shep-test-model-info")
-                # The protocols the chosen model's record admits (`measurement_choices`).
+                # The protocols the chosen model's listed capabilities admit (`measurement_choices`).
                 measurement = gr.Radio(label="Measurement", choices=[], value=None,
                                        elem_id="shep-test-measurement", interactive=False)
                 evidence = plain_html("", elem_id="shep-test-evidence")

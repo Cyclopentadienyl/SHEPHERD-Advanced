@@ -353,7 +353,8 @@ class RecordView(_Strict):
     mode: _Text = Field(
         ..., description="the record's measurement mode (`scoring.mode`), as recorded: the "
         "protocol its report names. This build runs disease, gene and patients_like_me, each "
-        "for a finetuned model's learning stage and task head (what the Test page runs); a "
+        "offered where a model's capabilities admit it, today a finetuned model that carries "
+        "its task head (what the Test page runs); a "
         "record of any other mode is read and returned the same way. A surface labels each "
         "record by its own mode")
     score_semantics: _Text = Field(

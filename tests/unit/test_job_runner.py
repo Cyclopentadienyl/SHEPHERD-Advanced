@@ -628,8 +628,8 @@ def test_a_deployment_device_the_cli_cannot_take_refuses_the_start(monkeypatch, 
      "this cohort version lists no causal genes, which the gene measurement needs. Import a "
      "source that lists causal_genes."),
     # A listed version of a kind the protocol does not measure.
-    ({"version_kind": "kg_edges"},
-     "the disease measurement does not measure a cohort of kind 'kg_edges'; it measures a "
+    ({"version_kind": "unknown_kind"},
+     "the disease measurement does not measure data of kind 'unknown_kind'; it measures a "
      "generated split or a supplied cohort version."),
 ])
 def test_inputs_of_the_wrong_shape_are_refused_before_launch(monkeypatch, popen, inputs,

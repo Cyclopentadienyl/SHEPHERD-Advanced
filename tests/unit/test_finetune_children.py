@@ -369,13 +369,19 @@ def test_a_parent_trained_on_another_graph_is_refused_before_any_child_starts(ba
     assert calls.calls == [] and manager.get_status()["finetune"] is None
 
 
-def test_a_new_base_run_is_filed_under_its_spec_encoder_with_only_what_was_sent(base, popen):
+def test_a_new_base_run_is_filed_under_its_spec_encoder_with_only_what_was_sent(
+        base, popen, monkeypatch):
     """G1: a base run named no conv type, so it was filed under the ShepherdGNN
     default ``runs/gat`` while its record said gatv2. Its configuration holds
-    what was sent and nothing more, so the recipe fills the rest."""
+    what was sent and nothing more, so the recipe fills the rest. A spec's own
+    encoder kind is its layout key (a test-only declared double, two hops);
+    a kind this build cannot build (`sage`) is refused before anything is
+    spawned, in the builder's sentence (research comparison §4 invariant 2)."""
     import dataclasses
 
     from src.models.bundle import reference_spec
+    from src.models.bundle.spec import encoder_not_built
+    from tests.fixtures.capabilities import DoubleDeclaration, declare_encoder
 
     jobs = [FakeProcess(pid=1), FakeProcess(pid=2)]
     calls = popen(*jobs)
@@ -392,10 +398,24 @@ def test_a_new_base_run_is_filed_under_its_spec_encoder_with_only_what_was_sent(
 
     spec = reference_spec("base")
     sage = dataclasses.replace(spec, encoder=dataclasses.replace(spec.encoder, kind="sage"))
-    started = manager.start_training({"data_dir": str(base[0]), "learning_stage": "base",
+    refused = manager.start_training({"data_dir": str(base[0]), "learning_stage": "base",
                                       "device": "cpu", "model_spec": sage.to_dict()})
+    assert refused["success"] is False and refused["invalid_settings"] is True
+    assert refused["error"] == f"{encoder_not_built('sage')}. Nothing was started."
+    assert len(calls.calls) == 1 and not (base[0] / "runs" / "sage").exists()
+
+    import src.utils.checkpoint_paths as checkpoint_paths
+    from src.models.bundle import spec as spec_module
+
+    # The run layout keys are the spec's encoder kinds, taken at import.
+    declare_encoder(monkeypatch, DoubleDeclaration())
+    monkeypatch.setattr(checkpoint_paths, "RUN_LAYOUT_KEYS", spec_module.ENCODER_KINDS)
+    double = dataclasses.replace(spec, encoder=dataclasses.replace(spec.encoder, kind="double"))
+    started = manager.start_training({"data_dir": str(base[0]), "learning_stage": "base",
+                                      "device": "cpu", "model_spec": double.to_dict(),
+                                      "num_neighbors": [15, 10]})
     assert started["success"], started
-    assert "/runs/sage/" in started["run_dir"], "the spec's own encoder kind"
+    assert "/runs/double/" in started["run_dir"], "the spec's own encoder kind"
     jobs[1].finish(0)
     _wait(lambda: manager.active_job() is None)
 

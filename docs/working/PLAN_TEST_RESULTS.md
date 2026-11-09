@@ -431,6 +431,9 @@ What holds today for measuring, keeping, registering and showing test results. D
 below keep their reasoning and dates; where one of them says otherwise, this list is today's rule
 and the decision's text is history.
 
+*(2026-11-10: the Measuring item is as of research comparison Stage 3 on
+`claude/research-comparison`, after this stamp; the rest of the list holds as stamped.)*
+
 - **Measuring.** `scripts/measure_scorer.py --mode <protocol>` (`--mode` required) runs a protocol
   of `src/evaluation/protocols.py` (`PROTOCOLS`: `disease`, `gene`, `patients_like_me`). A protocol
   is offered for what a model can do: it states what it needs of a model (the head it scores with,

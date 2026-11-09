@@ -593,7 +593,7 @@ def test_build_manifest_takes_the_mode_from_the_protocol(cli):
     device = torch.device("cpu")
     graph = {"num_nodes_dict": {"disease": 1}}
     common = {"digests": {"checkpoint": "a" * 64}, "dataset_record": {"origin": "synthetic"},
-              "regime": AutocastRegime(enabled=False, dtype=None)}
+              "regime": AutocastRegime(enabled=False, dtype=None), "cohort_kind": "generated"}
     semantics = disease_semantics(4)
     assert "mode" not in semantics and set(semantics) == set(cli.SEMANTIC_FIELDS)
 

@@ -20,8 +20,11 @@ A model's capability description, and protocols judged by it (Stage 3, E2, E5).
   without any gatv2 name or layers == hops rule firing; and its build is still
   refused, having no implementation.
 - **An encoder kind this build does not implement** is read, offers no
-  computation, is refused by a protocol in words that say so, has no hops to
-  check and is refused at build; a kind outside the list is refused at read.
+  computation, is refused by a protocol in words that say so, is refused by
+  the hop check (so by the base start, whatever its hop list) in the builder's
+  own sentence, and is refused at build; a declared kind that offers no
+  sampled computation is refused by the hop check too; a kind outside the list
+  is refused at read.
 - **E5**: a model offering two task heads is taken by both task protocols; an
   input no evaluator supplies refuses; the data kinds are judged, a generated
   split's counts are not.
@@ -44,7 +47,6 @@ from src.models.bundle.spec import (
     FULL_VIEW,
     SAMPLED,
     TASKS,
-    EncoderDeclaration,
     ModelSpec,
     SpecError,
     ViewShape,
@@ -52,6 +54,7 @@ from src.models.bundle.spec import (
     hops_problem,
     reference_spec,
 )
+from tests.fixtures.capabilities import DoubleDeclaration, declare_encoder
 
 #: A view shape as a checkpoint's record names it.
 VIEW = ViewShape("d" * 64, 6, ("disease", "gene", "phenotype"), ("a|r|b", "b|r_rev|a"))
@@ -147,6 +150,45 @@ def test_the_built_bundle_agrees_with_its_description():
                                                   and not spec.input.type_embedding)
 
 
+def test_a_head_whose_semantics_this_build_does_not_state_never_fails_a_listing(monkeypatch):
+    """Reading never depends on the capability judgment: a head whose scoring
+    semantics this build does not state is described with None, so the one
+    listing reader still lists the model; no protocol scores with that head,
+    and a protocol that does not read it still takes the model."""
+    spec = reference_spec("finetune", "disease")
+    monkeypatch.setattr(cap, "LP_HEAD_SEMANTICS", {})
+    item = _listed(spec)
+    assert item["record"] == "model" and item["record_problem"] is None
+    assert item["capabilities"]["heads"][0] == (cap.LINK_PREDICTION, "distmult_tanh", None)
+    assert all(_plain(v) for v in item["capabilities"].values())
+    assert protocols.available(item["capabilities"]) == (("disease",), None)
+    monkeypatch.setattr(cap, "TASK_HEAD_SEMANTICS", {})
+    item = _listed(spec)
+    assert item["record"] == "model"
+    assert item["capabilities"]["heads"][1] == (cap.TASK, "disease", None)
+    assert protocols.available(item["capabilities"])[0] == ()
+    assert protocols.model_refusal("disease", item["capabilities"]) is not None
+
+
+def test_the_built_encoder_reads_what_its_declaration_says(monkeypatch):
+    """A built encoder's width and the inputs it reads are its declaration's
+    answers, not a second statement of them: a declaration that says another
+    thing is followed."""
+    pytest.importorskip("torch")
+    pytest.importorskip("torch_geometric")
+    from src.models.bundle.encoders import GATv2Encoder
+
+    class _ReadsTypes(spec_module.GATv2Declaration):
+        def reads_node_types(self, spec: Any) -> bool:
+            return True
+
+    encoder_spec = replace(reference_spec("base").encoder, hidden=4, output=3, heads=2)
+    built = GATv2Encoder(encoder_spec, 8, 2)
+    assert (built.width, built.uses_node_types, built.uses_relations) == (6, False, False)
+    monkeypatch.setattr(spec_module, "ENCODER_DECLARATIONS", {"gatv2": _ReadsTypes()})
+    assert GATv2Encoder(encoder_spec, 8, 2).uses_node_types is True
+
+
 # --------------------------------------------------------------------------- GATv2's own rules
 def test_gatv2_keeps_its_rules_and_its_sentences():
     """The width, the one-hop-per-layer rule and the concat rule are GATv2's
@@ -165,29 +207,11 @@ def test_gatv2_keeps_its_rules_and_its_sentences():
 
 
 # --------------------------------------------------------------------------- a test-only double
-class _DoubleDeclaration(EncoderDeclaration):
-    """A test-only encoder declaration, never shipped: its node vectors are
-    `hidden` wide, its sampler takes two hops whatever its layers, it reads
-    no relation feature and has no concat rule. No implementation exists."""
-
-    kind = "double"
-    computation = (FULL_VIEW, SAMPLED)
-    hops_words = "one hop per sampled ring the double declares"
-
-    def width(self, spec: Any) -> int:
-        return spec.hidden
-
-    def sampled_hops(self, spec: Any) -> int | None:
-        return 2
-
-
 @pytest.fixture
 def double(monkeypatch):
-    """The double declared for this test only: a kind of the spec's list and a
-    declaration of this build's, both read when a judgment is made."""
-    monkeypatch.setattr(spec_module, "ENCODER_KINDS", (*spec_module.ENCODER_KINDS, "double"))
-    monkeypatch.setattr(spec_module, "ENCODER_DECLARATIONS",
-                        {**spec_module.ENCODER_DECLARATIONS, "double": _DoubleDeclaration()})
+    """The test-only double (`tests.fixtures.capabilities.DoubleDeclaration`)
+    declared for this test only, and a maker of its specs."""
+    declare_encoder(monkeypatch, DoubleDeclaration())
 
     def make(stage: str = "finetune", task: str | None = "disease") -> ModelSpec:
         spec = reference_spec(stage, task)
@@ -283,8 +307,9 @@ def test_the_double_has_no_implementation_so_its_build_is_refused(double):
 def test_a_kind_this_build_does_not_implement_offers_no_computation():
     """`hgt` is a kind the spec names and this build implements no encoder
     of: its record is read and listed, its model offers no computation, so a
-    protocol refuses it in words that say so (never as a missing head), it has
-    no hops for the start to check and no width, and its build is refused."""
+    protocol refuses it in words that say so (never as a missing head), no hop
+    list fits it (the builder's sentence), it has no width, and its build is
+    refused."""
     spec = reference_spec("finetune", "disease")
     hgt = replace(spec, encoder=replace(spec.encoder, kind="hgt")).validate()
     described = model_capabilities(hgt)
@@ -295,7 +320,8 @@ def test_a_kind_this_build_does_not_implement_offers_no_computation():
     assert protocols.model_refusal("disease", described) == said
     assert protocols.available(described) == ((), said)
     assert _listed(hgt)["capabilities"] == described
-    assert hops_problem([1], hgt.encoder) is None
+    for hops in ([1], [15, 10, 5]):
+        assert hops_problem(hops, hgt.encoder) == f"{encoder_not_built('hgt')}."
     with pytest.raises(SpecError, match="not yet behind the GraphEncoder contract"):
         hgt.encoder.width  # noqa: B018
     pytest.importorskip("torch_geometric")
@@ -304,6 +330,55 @@ def test_a_kind_this_build_does_not_implement_offers_no_computation():
     with pytest.raises(SpecError) as refused:
         build_bundle(hgt, VIEW)
     assert str(refused.value) == encoder_not_built("hgt")
+
+
+@pytest.mark.parametrize("kind", ["hgt", "sage", "hetero_gat"])
+def test_the_base_start_refuses_a_kind_this_build_does_not_implement(kind, tmp_path):
+    """A run that cannot be built is refused at the start, in the builder's
+    own sentence, whatever its hop list (a list of the reference GATv2's three
+    hops included) and whatever its concat setting (GATv2's rule is not
+    another kind's): research comparison §4 invariant 2."""
+    pytest.importorskip("fastapi")
+    from src.api.services.training_manager import _new_bundle_run
+
+    base = reference_spec("base")
+    start = {"learning_stage": "base", "data_dir": str(tmp_path)}
+    for concat in (True, False):
+        spec = replace(base, encoder=replace(base.encoder, kind=kind, concat=concat)).validate()
+        for hops in ([15, 10, 5], [15, 10], [5]):
+            assert _new_bundle_run({**start, "model_spec": spec.to_dict(),
+                                    "num_neighbors": hops}) == (
+                None, f"{encoder_not_built(kind)}."), (concat, hops)
+
+
+def test_a_declared_kind_without_sampled_computation_fits_no_hop_list(monkeypatch, tmp_path):
+    """A declaration that offers full-view computation only (a test-only
+    double) has no sampled hops in its description, and the hop check, so the
+    base start, refuses any hop list in words that say so, naming no gatv2
+    rule."""
+    pytest.importorskip("fastapi")
+    from src.api.services.training_manager import _new_bundle_run
+
+    class _FullViewOnly(DoubleDeclaration):
+        kind = "full_only"
+        computation = (FULL_VIEW,)
+
+        def sampled_hops(self, spec: Any) -> int | None:
+            return None
+
+    declare_encoder(monkeypatch, _FullViewOnly())
+    base = reference_spec("base")
+    spec = replace(base, encoder=replace(base.encoder, kind="full_only", concat=False)).validate()
+    described = model_capabilities(spec)
+    assert (described["computation"], described["sampled_hops"]) == ((FULL_VIEW,), None)
+    said = ("encoder kind 'full_only' offers no sampled computation in this build, which "
+            "training's sampler needs.")
+    for hops in ([15, 10, 5], [15, 10]):
+        assert hops_problem(hops, spec.encoder) == said
+        assert _new_bundle_run({"learning_stage": "base", "data_dir": str(tmp_path),
+                                "model_spec": spec.to_dict(), "num_neighbors": hops}) == (
+            None, said)
+    assert "gatv2" not in said and "encoder layer" not in said
 
 
 def test_a_kind_outside_the_list_is_refused_when_read():
@@ -338,11 +413,12 @@ def test_the_data_kind_is_judged_and_a_generated_split_has_no_counts_to_judge():
     for name in protocols.names():
         assert protocols.inputs_refusal(name, protocols.GENERATED, None) is None
         assert protocols.inputs_refusal(name, protocols.SUPPLIED, GENES) is None
-        assert protocols.inputs_refusal(name, "kg_edges", GENES) == (
-            f"the {name} measurement does not measure a cohort of kind 'kg_edges'; it measures "
+        # A kind no protocol names is said in neutral words, never as a cohort.
+        assert protocols.inputs_refusal(name, "unknown_kind", GENES) == (
+            f"the {name} measurement does not measure data of kind 'unknown_kind'; it measures "
             "a generated split or a supplied cohort version.")
         assert protocols.inputs_refusal(name, None, GENES) == (
-            f"the {name} measurement does not measure a cohort of no kind this build reads; it "
+            f"the {name} measurement does not measure data of no kind this build reads; it "
             "measures a generated split or a supplied cohort version.")
     # The counts are a registered version's: a gene measurement of one listing none is refused.
     assert protocols.inputs_refusal("gene", protocols.SUPPLIED, None).startswith(

@@ -366,6 +366,11 @@ class MeasurementInputs(NamedTuple):
     #: The R10 block (contract §5.4) for a registered version; `None` for a
     #: generated split, whose relation to training is the allocation's.
     r10: Optional[Dict[str, Any]]
+    #: The kind of data measured, as the protocol judged it
+    #: (`protocols.inputs_refusal`): `generated` for a generated split, the
+    #: registered version's recorded kind (`CohortVersionRead.kind`) otherwise.
+    #: The manifest records this same kind (`build_manifest(cohort_kind=)`).
+    data_kind: str
     #: A protocol with gene fields over a generated split: the workspace's
     #: functional fixture read against this manifest reading; `samples` is its split.
     task_data: Optional[Any] = None
@@ -506,7 +511,8 @@ def read_measurement_inputs(
         resolved, siblings = _resolve_generated(data_dir, split)
         version = cohort_version = candidates = None
         # **The data's kind**: a generated split, which the protocol must measure.
-        why = protocols.inputs_refusal(protocol, protocols.GENERATED, None)
+        data_kind = protocols.GENERATED
+        why = protocols.inputs_refusal(protocol, data_kind, None)
     else:
         resolved, siblings = None, ()
         version, cohort_version, candidates = _resolve_registered(
@@ -516,7 +522,8 @@ def read_measurement_inputs(
         # **What the protocol needs from the version**, its recorded kind and
         # its counts, judged on this one read of its `cohort.json`, before the
         # workspace or the checkpoint is read.
-        why = protocols.inputs_refusal(protocol, version.kind, version.manifest.get("counts"))
+        data_kind = version.kind
+        why = protocols.inputs_refusal(protocol, data_kind, version.manifest.get("counts"))
     if why is not None:
         raise ValueError(f"{why} Nothing was written.")
 
@@ -589,7 +596,7 @@ def read_measurement_inputs(
         dataset_record.identity.sha256[:12],
     )
     return MeasurementInputs(resolved, version, cohort_version, manifest, graph, samples, read,
-                             bound, dataset_record, r10, task_data)
+                             bound, dataset_record, r10, data_kind, task_data)
 
 
 def _changed_since_chosen(what: str, found: Optional[str],
@@ -962,6 +969,7 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
                    digests: Mapping[str, str],
                    dataset_record: Mapping[str, Any],
                    regime: Any,
+                   cohort_kind: str,
                    cohort_version: Optional[Mapping[str, Any]] = None,
                    r10: Optional[Mapping[str, Any]] = None,
                    cuda_executed: Optional[bool] = None,
@@ -993,12 +1001,14 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
     `git rev-parse HEAD` names, so taking it from there changes no semantics
     digest. Recorded, never enforced (contract §5.3).
 
-    **The kind of cohort follows from `cohort_version`, never from an argument
-    that states it.** With a version (`cohort_version_block`) the manifest is a
-    registered cohort's: `split` is the version's role, `cohort_kind` is
-    `supplied`, the relations are a registered cohort's and `r10` is required.
-    Without one it is the generated split `args.split`, with no R10. The
-    manifest refuses any other combination when it is built.
+    **The kind of cohort is the kind the protocol judged**
+    (`MeasurementInputs.data_kind`: `generated`, or the registered version's
+    recorded kind), so the run is judged and recorded by one kind. With a
+    version (`cohort_version_block`) the manifest is a registered cohort's:
+    `split` is the version's role, the relations are a registered cohort's and
+    `r10` is required. Without one it is the generated split `args.split`, with
+    no R10. The manifest refuses a kind that does not match whether a version
+    is given (today `supplied` with one, `generated` without) when it is built.
 
     **The mode is the protocol asked, set here once** (`args.mode`, the
     `--mode` the run was started with), never by the evaluator. **The
@@ -1033,7 +1043,7 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
         mode=args.mode,
         split=cohort_version["role"] if registered else args.split,
         metric_schema_version=semantics["metric_schema_version"],
-        cohort_kind="supplied" if registered else "generated",
+        cohort_kind=cohort_kind,
         n_samples=n_samples,
         candidate_construction=semantics["candidate_construction"],
         batch_size=semantics["batch_size"],
@@ -1951,9 +1961,9 @@ def _measure_task(args: argparse.Namespace, registry: Optional[Path], device: to
     bundle.to(device)
     manifest = build_manifest(
         args, graph_data, len(samples), device, digests=measurement_input_digests(inputs),
-        dataset_record=inputs.dataset_record.summary(), cohort_version=inputs.cohort_version,
-        r10=inputs.r10, cuda_executed=cuda_executed, model=bundle,
-        regime=observe_autocast_regime(device),
+        dataset_record=inputs.dataset_record.summary(), cohort_kind=inputs.data_kind,
+        cohort_version=inputs.cohort_version, r10=inputs.r10, cuda_executed=cuda_executed,
+        model=bundle, regime=observe_autocast_regime(device),
         semantics=task_semantics(asked.evaluator, args.batch_size, bundle),
     )
     result = TASK_RUNS[asked.evaluator](bundle=bundle, view=view, samples=samples,
