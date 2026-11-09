@@ -416,17 +416,17 @@ model spec (versioned, self-describing)
   digests. A batch with no valid LP term is handled explicitly: no empty mean, no invented loss, and
   no optimizer update in an LP-only base step.
 
-### 3.2 Shared math and its import boundary (RD5)
+### 3.2 Shared math and the scorer-independence contract (RD5)
 
 - **Where it lives.** Encoder, head, loss and scorer math lives in `src.models`; training, inference
   and evaluation import it. No second NCA, multi-similarity loss or metrics module exists for another
   entry.
-- **The layers contract keeps it below its users.** `.import-linter.ini`'s `layers` contract keeps
-  `src.models` below `src.training`, `src.reasoning`, `src.inference` and `src.evaluation`; four
-  contracts remain. *(History: the `scorer-independence` contract, which forbade
-  `src.inference.scoring` from importing `src.training`, held until K8-7 (`e35b2a3`, D2 (b)), when
-  it retired with row 23 and the Trainer value test it protected; `src/inference/scoring.py` went in
-  K8-11 (`9d76bbe`). The K8 record in §8.)*
+- **The contract still holds.** `scorer-independence` (`.import-linter.ini`) only forbids
+  `src.inference.scoring` from importing `src.training`. *(2026-11-08, superseded by K8-7 `e35b2a3`
+  and K8-11 `9d76bbe`: the contract retired with row 23, the Trainer value test it protected, and
+  `src/inference/scoring.py` with K8-11; the shared math lives in `src.models`, which the layers
+  contract keeps below `src.training`, `src.reasoning`, `src.inference` and `src.evaluation`. The
+  K8 record in §8.)* *(2026-11-09: four import contracts remain, the layers contract among them.)*
 - **What changes is the oracle.** Tests use hand arithmetic or a short, independently written
   computation. **Expected and actual never both call the code under test.**
 - **No new dependency.** pytorch-metric-learning and allennlp are not added. The small tensor losses
@@ -715,9 +715,11 @@ reviewer's audit and the owner's authorisation; the K7 record in §8).
 
 **Kept:** PathReasoner evidence (`find_paths`, `score_paths`); the KG builder's cross-species
 option; build_index (retrieval stays for planned natural-language work), which since K7 reads
-exported embeddings only (`--embeddings`) and builds no model; `HeteroGNNLayer` (the GAT, HGT and
-SAGE layers, `src/models/gnn/layers.py`), kept for the multi-architecture milestone (§3.3), not yet
-behind the contract; every historical artifact.
+exported embeddings only (`--embeddings`) and builds no model; the heterogeneous GAT/HGT/SAGE
+encoders behind the contract; every historical artifact. *(2026-11-08: the ShepherdGNN encoders
+package went in K8-10, `822452b`; the GAT, HGT and SAGE layers are kept as `HeteroGNNLayer`
+(`src/models/gnn/layers.py`) and come behind the `GraphEncoder` contract in the
+multi-architecture milestone, not yet built.)*
 
 **Listed at K6 for K7, as K7 closed them** (checkpoint check 6). Each part stayed because a file
 without a model spec (history) could still be served or trained outside the WebUI, or an old report
