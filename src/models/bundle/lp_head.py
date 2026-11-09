@@ -23,7 +23,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 import torch
@@ -184,18 +184,20 @@ class LPScores:
 
 @torch.no_grad()
 def score_lp_pairs(bundle: Any, pairs: LPPairs, edges: Tensor, relations: Tensor,
-                   device: torch.device, *, chunk_size: int = 65536) -> LPScores:
+                   device: torch.device, *, chunk_size: int = 65536,
+                   node_type: Optional[Tensor] = None) -> LPScores:
     """Score fixed pairs with `bundle`'s LP head, in evaluation mode.
 
     Node vectors are the full-view rule's (§2.8), message passing over `edges`
     with their `relations` and nothing else: the pairs are supervision, never
     message passing (G4). They come from `full_view_vectors`, the one
     full-view entry that validation, measurement and serving share, so this
-    scoring has no forward of its own; `chunk_size` is that entry's.
+    scoring has no forward of its own; `chunk_size` and `node_type` (every
+    view node's type id, in the view's node order) are that entry's.
 
     Every positive is scored before every negative, each side in pair order.
     """
-    z = full_view_vectors(bundle, edges, relations, device, chunk_size)
+    z = full_view_vectors(bundle, edges, relations, device, chunk_size, node_type=node_type)
     head = z[pairs.head.to(device)]
     relation = pairs.relation.to(device)
     positive = bundle.lp_head.raw_score(head, relation, z[pairs.tail.to(device)])

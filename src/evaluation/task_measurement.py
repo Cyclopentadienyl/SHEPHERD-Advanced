@@ -126,7 +126,7 @@ def run_disease_measurement(*, bundle: Any, view: Any, samples: Sequence[Any],
     binding = bind_disease_cases(view, samples)
     _require_bound(binding, "disease")
     _check_regime(device, manifest)
-    z = full_view_vectors(bundle, view.edge_index(), view.rel, device)
+    z = full_view_vectors(bundle, view.edge_index(), view.rel, device, node_type=view.node_type)
     diseases = view.type_nodes("disease")
     ranked = rank_cases(bundle, z, binding.cases, diseases, case_chunk=batch_size)
     report = ranking_report(ranked + binding.excluded_outcomes(), TASK_KS)
@@ -162,7 +162,7 @@ def run_gene_measurement(*, bundle: Any, view: Any, samples: Sequence[Any],
     distances = distance_table(view, torch.cat([c.phenotypes for c in cases]),
                                torch.cat([c.candidates for c in cases]))
     neighbours = neighbour_table(view, gene.augmentation_k) if gene.augmentation else None
-    z = full_view_vectors(bundle, view.edge_index(), view.rel, device)
+    z = full_view_vectors(bundle, view.edge_index(), view.rel, device, node_type=view.node_type)
     ranked = rank_gene_cases(bundle, z, cases, distances, neighbours, case_chunk=batch_size)
     lengths = [int(c.candidates.numel()) for c in cases]
     evidence: Dict[str, Any] = {
@@ -218,7 +218,7 @@ def run_patients_like_me_measurement(*, bundle: Any, view: Any, samples: Sequenc
                          "positive; nothing was written")
     _check_regime(device, manifest)
     cases = binding.cases
-    z = full_view_vectors(bundle, view.edge_index(), view.rel, device)
+    z = full_view_vectors(bundle, view.edge_index(), view.rel, device, node_type=view.node_type)
     ranked = rank_patients(bundle, z, cases, cases, chunk=batch_size,
                            unranked=binding.unranked_positives)
     report = ranking_report(ranked + binding.excluded_outcomes(), TASK_KS)

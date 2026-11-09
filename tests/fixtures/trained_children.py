@@ -94,17 +94,25 @@ def _train(**settings: Any) -> None:
 
 
 def train_children(data_dir: Path, tasks: Sequence[str] = ("disease",), *,
-                   runs: Optional[Path] = None) -> Dict[str, Path]:
+                   runs: Optional[Path] = None,
+                   base_model_spec: Optional[Dict[str, Any]] = None) -> Dict[str, Path]:
     """Train a base on `data_dir` (a complete workspace, `write_demo_workspace`)
     and one child of it per task in `tasks`, and return each one's
-    ``checkpoints/last.pt`` by ``"base"`` and by task, beside ``"data_dir"``."""
+    ``checkpoints/last.pt`` by ``"base"`` and by task, beside ``"data_dir"``.
+
+    `base_model_spec` (plain data, `ModelSpec.to_dict()`) is the base's spec
+    in place of the demo's, as an operator's configuration states one; each
+    child keeps its graph side, as every finetune does."""
     data_dir = Path(data_dir)
     runs = Path(runs) if runs is not None else data_dir / "runs" / "gatv2"
     demo = _demo_training()
     child_settings = {**_CHILD_SETTINGS, "disease": demo["disease"]}
+    base_settings = dict(demo["base"])
+    if base_model_spec is not None:
+        base_settings["model_spec"] = dict(base_model_spec)
     base_run = runs / BASE_RUN
     _train(data_dir=str(data_dir), run_dir=str(base_run), learning_stage="base",
-           num_epochs=1, device="cpu", save_top_k=1, **demo["base"])
+           num_epochs=1, device="cpu", save_top_k=1, **base_settings)
     base = base_run / "checkpoints" / "last.pt"
     out: Dict[str, Path] = {"data_dir": data_dir, "base": base}
     for task in tasks:

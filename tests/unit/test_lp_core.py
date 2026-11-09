@@ -158,8 +158,9 @@ class _Bundle:
         self.modes.append("eval")
         return self
 
-    def node_vectors_full(self, edge_index, *, edge_type=None, chunk_size=65536):
-        self.calls.append((edge_index.tolist(), edge_type.tolist(), chunk_size))
+    def node_vectors_full(self, edge_index, *, edge_type=None, node_type=None, chunk_size=65536):
+        self.calls.append((edge_index.tolist(), edge_type.tolist(),
+                           None if node_type is None else node_type.tolist(), chunk_size))
         return self.z
 
 
@@ -176,7 +177,7 @@ def test_scores_and_metrics_by_hand():
       max(0, 1 − (tanh 3.5 − tanh 2)).
 
     Message passing is exactly the edges given, in evaluation mode, with the
-    chunk size given; the pairs never reach it."""
+    chunk size and the view's node types given; the pairs never reach it."""
     head = DistMultHead(LPHeadSpec(), num_relations=2, width=2)
     with torch.no_grad():
         head.relation_weights.copy_(torch.tensor([[1.0, 1.0], [2.0, 0.5]]))
@@ -188,10 +189,11 @@ def test_scores_and_metrics_by_hand():
     message_passing = _ei([(1, 0), (3, 2)])
 
     scored = score_lp_pairs(bundle, pairs, message_passing, torch.tensor([1, 0]),
-                            torch.device("cpu"), chunk_size=7)
+                            torch.device("cpu"), chunk_size=7,
+                            node_type=torch.tensor([0, 1, 1, 0]))
 
     assert bundle.modes == ["eval"]
-    assert bundle.calls == [([[1, 3], [0, 2]], [1, 0], 7)]
+    assert bundle.calls == [([[1, 3], [0, 2]], [1, 0], [0, 1, 1, 0], 7)]
     assert scored.positive.tolist() == [1.0, 3.5]
     assert scored.negative.tolist() == [0.0, 2.0]
     loss = (max(0.0, 1.0 - (math.tanh(1.0) - math.tanh(0.0)))

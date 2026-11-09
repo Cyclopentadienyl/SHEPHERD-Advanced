@@ -13,7 +13,9 @@ own way.
   outside the view, or with no phenotype left, is excluded and counted, never
   dropped silently.
 - **Node vectors (§2.8).** The full-view chunked rule, over the edges the
-  caller passes (the whole view for a finetuned model, G4).
+  caller passes (the whole view for a finetuned model, G4), with each edge's
+  relation and each view node's type taken from the same graph view
+  (`docs/working/research-comparison/README.md` §3, F6).
 - **Ranking (U6, E3).** Every candidate of the task, exactly, in chunks of
   cases; average ranks; the positives' ranks as `QueryOutcome`s for the one
   metrics module.
@@ -23,7 +25,7 @@ Module: src/models/tasks/scoring.py
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import torch
 from torch import Tensor
@@ -116,11 +118,21 @@ def padded(cases: Sequence[BoundCase]) -> Tuple[Tensor, Tensor]:
 
 @torch.no_grad()
 def full_view_vectors(bundle: Any, edges: Tensor, relations: Tensor, device: torch.device,
-                      chunk_size: int = 65536) -> Tensor:
-    """Every view node's vector by the full-view rule (§2.8), in evaluation mode."""
+                      chunk_size: int = 65536, *, node_type: Optional[Tensor] = None) -> Tensor:
+    """Every view node's vector by the full-view rule (§2.8), in evaluation mode.
+
+    The one full-view entry of validation, measurement and serving. Its graph
+    input comes from the graph view the bundle was checked against: message
+    passing over `edges` with each edge's relation id in `relations` (the
+    same order), and `node_type`, every view node's type id in the view's node
+    order (`GraphView.node_type`). A bundle whose input adds a type embedding
+    reads the types and refuses to run without them; one without reads none,
+    so its vectors are the same with or without them."""
     bundle.eval()
-    return bundle.node_vectors_full(edges.to(device), edge_type=relations.to(device),
-                                    chunk_size=chunk_size)
+    return bundle.node_vectors_full(
+        edges.to(device), edge_type=relations.to(device),
+        node_type=node_type.to(device) if node_type is not None else None,
+        chunk_size=chunk_size)
 
 
 @torch.no_grad()

@@ -1372,10 +1372,13 @@ def train(config: TrainConfig, explicit: Collection[str], *,
         weight_transfer = _transfer_parent_weights(
             bundle, branch_parent.checkpoint["state_dict"], new_parts=())
     seed = int(config.seed or 0)
+    # Both graph inputs carry the view's own node types (research-comparison
+    # README §3, F6): each step's sampled nodes' and, in validation, every
+    # view node's; a spec whose input adds a type embedding reads them.
     lp_sampler = BaseLPSampler(
         view.num_nodes, view.edge_index(train_mask), view.rel[train_mask],
         view.edge_index(train_mask), view.rel[train_mask], sizes=config.num_neighbors,
-        batch_size=config.batch_size, seed=seed)
+        batch_size=config.batch_size, seed=seed, node_type=view.node_type)
     if stage == "base":
         sampler = lp_sampler
         # The validation pairs are the split's (BASE_FIXED): seeded by the
@@ -1385,7 +1388,7 @@ def train(config: TrainConfig, explicit: Collection[str], *,
             num_nodes=view.num_nodes, train_edges=view.edge_index(train_mask),
             train_relations=view.rel[train_mask], val_edges=view.edge_index(val_mask),
             val_relations=view.rel[val_mask], seed=int(config.split_seed),
-            val_batch_size=BASE_FIXED["validation_batch_size"])
+            val_batch_size=BASE_FIXED["validation_batch_size"], node_type=view.node_type)
         monitor = BASE_SELECTION_METRIC
     elif config.task == "disease":
         from src.training.finetune_task import (

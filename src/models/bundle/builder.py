@@ -73,7 +73,13 @@ class ModelBundle(nn.Module):
                              nodes_per_hop: Sequence[int], edges_per_hop: Sequence[int], *,
                              edge_type: Optional[Tensor] = None,
                              node_type: Optional[Tensor] = None) -> Tensor:
-        """Vectors of a sampled subgraph's seeds (README §2.8)."""
+        """Vectors of a sampled subgraph's seeds (README §2.8).
+
+        `node_ids` are view ids in the sampler's hop order; `node_type` holds
+        each one's view type id in that order, and `edge_type` each
+        message-passing edge's relation id in `edge_index`'s column order. The
+        training steps call this through `LPBatch.node_vectors`, whose sampler
+        reads both from the graph view."""
         x = self.input(node_ids, node_type)
         return self.encoder.forward_sampled(x, edge_index, nodes_per_hop, edges_per_hop,
                                             edge_type=edge_type, node_type=node_type)
@@ -82,7 +88,13 @@ class ModelBundle(nn.Module):
     def node_vectors_full(self, edge_index: Tensor, *, edge_type: Optional[Tensor] = None,
                           node_type: Optional[Tensor] = None, chunk_size: int = 65536) -> Tensor:
         """Vectors of every view node by the chunked full-graph rule (§2.8).
-        Call in evaluation mode."""
+        Call in evaluation mode.
+
+        The nodes are the view's, in its node order; `node_type` holds each
+        one's view type id in that order (the view's `GraphView.node_type`),
+        and `edge_type` each edge's relation id in `edge_index`'s column order.
+        Validation, measurement and serving call this through
+        `src.models.tasks.scoring.full_view_vectors`."""
         if self.training:
             raise RuntimeError("full-view inference runs in evaluation mode")
         ids = torch.arange(self.view.num_nodes, device=edge_index.device)
