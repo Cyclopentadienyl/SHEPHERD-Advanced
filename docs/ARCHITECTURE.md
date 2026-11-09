@@ -487,9 +487,9 @@ scripts take them from the data.pyg.org index for the installed torch (derived, 
 second time), or on ARM from the prebuilt release or a local build; A1 and A5 record their
 versions. Since research-comparison Stage 2b (BACKLOG 71) the one run environment collector
 (`src/utils/run_environment.py`), and so every checkpoint, every measurement's manifest, every ledger
-record and A1, also records each extension as a named component: installed, available, selected and
-in effect told apart (what was not observed reads unknown), its native libraries' count and aggregate
-SHA-256 (two builds of one version differ there; no file name is recorded), and the source receipt's
+record and A1, also records each extension as a named component: requested, installed, available,
+selected and in effect told apart (what was not observed reads unknown), its native libraries' count
+and aggregate SHA-256 (two builds of one version differ there; no file name is recorded), and the source receipt's
 facts where the receipt matches what is installed. The record views (Models, Test) show that identity
 on one line. Recorded, never a gate. The launcher's optional accelerators stay out of the lock, and every install of one is
 constrained to it (deployment guide §4.15). M5's GB10 acceptances (`b14c4de`, and the WebUI rounds of 2026-10-25) ran torch 2.10.0+cu130 with

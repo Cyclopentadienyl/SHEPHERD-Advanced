@@ -329,8 +329,10 @@ class RecordComponentSource(_Strict):
 class RecordComponent(_Strict):
     """One named component of the measuring run's environment (E1), by its
     identity: what it is, its distribution version, its native libraries and
-    its source's route. What was installed, available, selected or in effect
-    stays in the ledger record."""
+    its source's route. What was requested, installed, available, selected or
+    in effect stays in the ledger record. The collector holds every component
+    to this shape (`src.utils.run_environment.component_facts`), so a record
+    it wrote is never refused here."""
 
     kind: _Text
     version: Optional[str]

@@ -377,11 +377,14 @@ def test_the_receipt_is_kept_in_the_virtual_environment_and_read_back(tmp_path, 
     with pytest.raises(ValueError, match="schema 99"):
         read_receipt(venv)
     # NaN or infinity is no value a receipt records, and a run environment
-    # that copied one would stop its record's write (research-comparison 2b).
-    for constant in ("NaN", "Infinity", "-Infinity"):
+    # that copied one would stop its record's write (research-comparison 2b):
+    # written as such, or as a number too large for a float.
+    for constant in ("NaN", "Infinity", "-Infinity", "1e400", "-1.5e999"):
         written.write_text(json.dumps(receipt)[:-1] + f', "x": {constant}}}')
         with pytest.raises(ValueError, match=f"holds {constant}"):
             read_receipt(venv)
+    written.write_text(json.dumps(receipt)[:-1] + ', "x": 1.5e300, "y": 12}')
+    assert read_receipt(venv) == {**receipt, "x": 1.5e300, "y": 12}
 
     monkeypatch.setattr(sys, "base_prefix", sys.prefix)
     with pytest.raises(NotAVirtualEnvironment):

@@ -19,11 +19,12 @@ so a checkpoint carrying them loads with `torch.load(..., weights_only=True)`.
 **Named components** (research-comparison README §6, E1; BACKLOG 71, since
 Stage 2b). Under ``components`` each named component of the stack is recorded in
 one shape, whatever it is (`COMPONENT_FIELDS`, `component_facts`): its kind;
-whether it is installed, available, selected and observed in effect, each true,
-false or ``"unknown"``; why it fell back, where that is known; its distribution
-version; its native identity; and its source. ``selected`` and ``in_effect``
-carry a value only where something observed it and read ``"unknown"``
-otherwise: an installed or importable component is never read as one in effect.
+whether it is requested, installed, available, selected and observed in effect,
+each true, false or ``"unknown"``; why it fell back, where that is known; its
+distribution version; its native identity; and its source. ``requested``,
+``selected`` and ``in_effect`` carry a value only where something observed it
+and read ``"unknown"`` otherwise: an installed or importable component is never
+read as one in effect.
 Today's components are PyG's native extensions (`COMPONENT_READERS`); nothing
 here or in a reader of records takes that list, or a CUDA device, for a rule,
 and a component another part of the stack adds is one more reader. A component
@@ -47,7 +48,9 @@ Module: src/utils/run_environment.py
 from __future__ import annotations
 
 import copy
+import json
 import platform
+import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -246,28 +249,39 @@ UNKNOWN = "unknown"
 #: Every component's facts, in this order:
 #:
 #: - ``kind``: what sort of component it is (``"PyG native extension"``);
+#: - ``requested``: a setting of the run asked for it, as recorded; true, false
+#:   or ``"unknown"``. Apart from ``selected``: a setting can ask for one
+#:   backend while a dispatcher chooses another;
 #: - ``installed``: a distribution of it is installed (its package metadata is
-#:   found on the interpreter's path); true, false or ``"unknown"``;
+#:   found on the interpreter's path); true, false or ``"unknown"`` (it imports,
+#:   but no distribution's metadata names it);
 #: - ``available``: this process can use it (it imports); true, false or
 #:   ``"unknown"``;
-#: - ``selected``: a setting or a dispatcher chose it, as observed; true, false
+#: - ``selected``: a dispatcher chose it for the run, as observed; true, false
 #:   or ``"unknown"``;
 #: - ``in_effect``: observed to be what ran; true, false or ``"unknown"``. Never
 #:   true for a component that is not available or fell back;
-#: - ``fallback_reason``: why it is not what runs, where that is known; null
-#:   otherwise;
+#: - ``fallback_reason``: why it is not what runs, as observed; null otherwise;
 #: - ``version``: its distribution's version, from the package metadata; null
 #:   when none is installed or it cannot be read;
 #: - ``native``: its native identity, ``{"state", "count", "aggregate_sha256"}``
-#:   and a ``reason`` where the state is not ``recorded`` (`NATIVE_STATES`);
-#: - ``source``: where it came from, ``{"state": "recorded", "route",
-#:   "requested", "resolved", "wheel_sha256", "compiled_against", "toolchain",
-#:   "flags"}`` or ``{"state": "not recorded", "reason"}``.
+#:   and a ``reason`` where the state is not ``recorded`` (`NATIVE_STATES`):
+#:   the count is a whole number or null, and the aggregate a SHA-256 given
+#:   exactly when the state is ``recorded``, which gives its count too;
+#: - ``source``: where it came from, ``{"state": "recorded", "route", ...}``
+#:   (the route is text; PyG's native extensions add the receipt's
+#:   ``requested``, ``resolved``, ``wheel_sha256``, ``compiled_against``,
+#:   ``toolchain`` and ``flags``) or ``{"state": "not recorded", "reason"}``.
+#:
+#: `component_facts` holds every component to this shape, which is what the
+#: record view reads (`src.api.routes.evaluations.RecordComponent`): a fact
+#: the view would refuse is refused when it is collected, and becomes the
+#: component's status, so a record is never hidden for its environment.
 COMPONENT_FIELDS: Tuple[str, ...] = (
-    "kind", "installed", "available", "selected", "in_effect", "fallback_reason",
-    "version", "native", "source",
+    "kind", "requested", "installed", "available", "selected", "in_effect",
+    "fallback_reason", "version", "native", "source",
 )
-_STATE_FIELDS = ("installed", "available", "selected", "in_effect")
+_STATE_FIELDS = ("requested", "installed", "available", "selected", "in_effect")
 
 #: A native identity's states: its libraries' count and aggregate digest
 #: recorded; no distribution installed; installed, and its file list or a
@@ -306,12 +320,17 @@ def component_facts(kind: str, **observed: Any) -> Dict[str, Any]:
     (its states ``"unknown"``, no fallback known, no version, its native
     identity and source not recorded).
 
-    Refuses (`ValueError`, `TypeError`) what no observation can say: a fact
+    Refuses (`ValueError`, `TypeError`) what no observation can say, and so
+    everything the record view would refuse (`COMPONENT_FIELDS`): a fact
     outside the shape; a state that is neither a boolean nor ``"unknown"``; a
     component in effect that is not available or fell back; a fallback reason
-    or version that is not text; a native identity or source without a state;
-    a value that is not plain data (`assert_primitive`). `collect_components`
-    records such a refusal as the component's status and never raises it.
+    or version that is not text; a native identity whose state, count or
+    aggregate is not one of the shape's (`_check_native`); a source whose state
+    is not ``recorded`` or ``not recorded``, or with a route that is not text
+    exactly when it is recorded (`_check_source`); a value that is not plain
+    data (`assert_primitive`), or a number the records' JSON encoding refuses
+    (NaN or infinity). `collect_components` records such a refusal as the
+    component's status and never raises it.
     """
     if not isinstance(kind, str) or not kind:
         raise ValueError("a component's kind is text")
@@ -319,8 +338,8 @@ def component_facts(kind: str, **observed: Any) -> Dict[str, Any]:
     if outside:
         raise ValueError(f"facts outside a component's shape: {outside}")
     facts: Dict[str, Any] = {
-        "kind": kind, "installed": UNKNOWN, "available": UNKNOWN, "selected": UNKNOWN,
-        "in_effect": UNKNOWN, "fallback_reason": None, "version": None,
+        "kind": kind, "requested": UNKNOWN, "installed": UNKNOWN, "available": UNKNOWN,
+        "selected": UNKNOWN, "in_effect": UNKNOWN, "fallback_reason": None, "version": None,
         "native": _native_block(NATIVE_NOT_RECORDED),
         "source": _not_recorded("no source is recorded for this component"),
     }
@@ -330,18 +349,70 @@ def component_facts(kind: str, **observed: Any) -> Dict[str, Any]:
         if type(value) is not bool and value != UNKNOWN:
             raise ValueError(f"a component's {field} is true, false or {UNKNOWN!r}")
     reason = facts["fallback_reason"]
-    if reason is not None and (type(reason) is not str or not reason):
+    if reason is not None and not _is_text(reason):
         raise ValueError("a fallback reason is text")
     if facts["in_effect"] is True and (facts["available"] is False or reason is not None):
         raise ValueError("a component in effect is available and has not fallen back")
     if facts["version"] is not None and type(facts["version"]) is not str:
         raise ValueError("a component's version is text")
-    for part in ("native", "source"):
-        block = facts[part]
-        if type(block) is not dict or type(block.get("state")) is not str or not block["state"]:
-            raise ValueError(f"a component's {part} is an object with a state")
+    _check_native(facts["native"])
+    _check_source(facts["source"])
     assert_primitive(facts, "component")
+    # The encoding every record is written with (the report, the ledger)
+    # refuses NaN and infinity; a fact carrying one would stop the record.
+    json.dumps(facts, allow_nan=False)
     return facts
+
+
+_SHA256_HEX = re.compile(r"[0-9a-f]{64}")
+
+
+def _is_text(value: Any) -> bool:
+    return type(value) is str and bool(value)
+
+
+def _check_reason(block: Mapping[str, Any], part: str) -> None:
+    if "reason" in block and not _is_text(block["reason"]):
+        raise ValueError(f"a component's {part} reason is text")
+
+
+def _check_native(block: Any) -> None:
+    """A native identity in the shape (`COMPONENT_FIELDS`): a state of
+    `NATIVE_STATES`; its ``count`` and ``aggregate_sha256`` both given, the
+    count a whole number or null, the aggregate 64 lowercase hex digits given
+    exactly when the state is recorded, which gives its count too; a reason,
+    where there is one, is text."""
+    if type(block) is not dict or block.get("state") not in NATIVE_STATES:
+        raise ValueError(f"a component's native identity has one of the states {NATIVE_STATES}")
+    if "count" not in block or "aggregate_sha256" not in block:
+        raise ValueError("a component's native identity gives its count and aggregate_sha256")
+    count, aggregate = block["count"], block["aggregate_sha256"]
+    if count is not None and (type(count) is not int or count < 0):
+        raise ValueError("a native library count is a whole number of at least 0")
+    if aggregate is not None and (type(aggregate) is not str
+                                  or not _SHA256_HEX.fullmatch(aggregate)):
+        raise ValueError("a native aggregate is a SHA-256 in 64 lowercase hex digits")
+    recorded = block["state"] == NATIVE_RECORDED
+    if recorded != (aggregate is not None) or (recorded and count is None):
+        raise ValueError("a native identity's aggregate is given exactly when it is recorded, "
+                         "with its count")
+    _check_reason(block, "native identity")
+
+
+def _check_source(block: Any) -> None:
+    """A source in the shape (`COMPONENT_FIELDS`): ``recorded`` with its route
+    as text, or ``not recorded`` with no route; a reason, where there is one,
+    is text."""
+    if type(block) is not dict or block.get("state") not in (SOURCE_RECORDED,
+                                                             SOURCE_NOT_RECORDED):
+        raise ValueError(f"a component's source is {SOURCE_RECORDED!r} or "
+                         f"{SOURCE_NOT_RECORDED!r}")
+    route = block.get("route")
+    if (block["state"] == SOURCE_RECORDED) != (route is not None) or (
+            route is not None and not _is_text(route)):
+        raise ValueError("a component's source gives its route, as text, exactly when it is "
+                         "recorded")
+    _check_reason(block, "source")
 
 
 @dataclass(frozen=True)
@@ -403,14 +474,38 @@ def _native_identity(installed: "_native.InstalledIdentity", available: Any) -> 
     return _native_block(NATIVE_RECORDED, facts["native_count"], facts["native_aggregate_sha256"])
 
 
-def _receipt_source(name: str, installed: "_native.InstalledIdentity",
+#: The fields of a receipt's requested source that a record leaves out: the
+#: prebuilt release's asset file name, which its ``asset_sha256`` names, as the
+#: wheel's SHA-256 names the wheel.
+_REQUESTED_LEFT_OUT = ("asset",)
+
+
+def _requested_source(requested: Any) -> Any:
+    """A receipt entry's requested source as a record keeps it: no file name
+    (`_REQUESTED_LEFT_OUT`), and its URL without user information, query or
+    fragment (`pyg_native_check.strip_credentials`, as the deploy layer wrote
+    it), whatever a hand-edited receipt holds. None when the receipt names
+    none; a value that is not an object raises `ValueError`."""
+    if requested is None:
+        return None
+    if not isinstance(requested, Mapping):
+        raise ValueError("the requested source is not an object")
+    kept = {key: value for key, value in requested.items() if key not in _REQUESTED_LEFT_OUT}
+    if isinstance(kept.get("url"), str):
+        kept["url"] = _native.strip_credentials(kept["url"])
+    return kept
+
+
+def _receipt_source(name: str, installed: "_native.InstalledIdentity", available: Any,
                     receipt: Optional[Mapping[str, Any]], problem: str) -> Dict[str, Any]:
     """The receipt's facts for one installed distribution, only when the
     receipt's entry for it matches what is installed (`receipt_entry_state`,
-    the deploy check's own comparison); otherwise why not. The wheel's file
-    name is left out: its SHA-256 names it."""
+    the deploy check's own comparison); otherwise why not. No file name is
+    kept: the wheel's SHA-256 names the wheel, and the requested source is
+    `_requested_source`'s."""
     if installed.copies == 0:
-        return _not_recorded("it is not installed")
+        return _not_recorded("no installed distribution names it" if available is True
+                             else "it is not installed")
     if receipt is None:
         return _not_recorded(problem)
     wanted = _native.normalised_name(name)
@@ -429,9 +524,13 @@ def _receipt_source(name: str, installed: "_native.InstalledIdentity",
     route = receipt.get("route")
     if type(route) is not str or not route:
         return _not_recorded("the source receipt names no route")
+    try:
+        requested = _requested_source(entry.get("requested"))
+    except ValueError:
+        return _not_recorded("the source receipt's requested source is not one this build reads")
     wheel = entry.get("wheel") if isinstance(entry.get("wheel"), Mapping) else {}
     return {"state": SOURCE_RECORDED, "route": route,
-            "requested": entry.get("requested"), "resolved": entry.get("resolved"),
+            "requested": requested, "resolved": entry.get("resolved"),
             "wheel_sha256": wheel.get("sha256"),
             "compiled_against": receipt.get("compiled_against"),
             "toolchain": receipt.get("toolchain"), "flags": receipt.get("flags")}
@@ -445,13 +544,17 @@ def read_pyg_native(names: Tuple[str, ...]) -> Dict[str, Dict[str, Any]]:
 
     - ``installed`` and ``version``: the first distribution of the name on the
       interpreter's path, as an import finds it, and its version from its
-      package metadata (`pyg_native_check.installed_identity`);
+      package metadata (`pyg_native_check.installed_identity`); ``"unknown"``
+      when it imports but no distribution's metadata names it;
     - ``available``: whether it imports in this process (the import probe,
-      `check_pyg_native_extensions`, cached). Where it does not, PyG runs its
-      own code for the operations it would serve: ``in_effect`` is false,
-      which is observed (it cannot run here), with the reason. Where it does,
+      `check_pyg_native_extensions`, cached). Where it does not, ``in_effect``
+      is false, which is observed (it cannot run here), and the fallback reason
+      says only what was observed: it is not installed, or it is installed but
+      does not import. What PyG does instead is not observed here (it differs
+      by operation and by PyG release) and is not said. Where it imports,
       ``selected`` and ``in_effect`` stay ``"unknown"``: PyG chooses per
-      operation, and nothing here observes it;
+      operation, and nothing here observes it. ``requested`` stays
+      ``"unknown"``: nothing here reads a setting that asks for one;
     - ``native``: **the native identity.** The distribution's file list
       (``RECORD``) names its files; those inside site-packages whose names are
       a native library's (`is_native_library`) are each hashed with SHA-256
@@ -462,8 +565,9 @@ def read_pyg_native(names: Tuple[str, ...]) -> Dict[str, Dict[str, Any]]:
       hashed, never recorded; two builds of one version differ here. The
       source receipt keys on the same aggregate;
     - ``source``: the deploy layer's source receipt (`pyg_native_check`), its
-      route, requested and resolved source, wheel SHA-256, the torch and CUDA
-      build compiled against, toolchain and flags, only when its entry's
+      route, requested source (no file name, its URL without credentials:
+      `_requested_source`) and resolved source, wheel SHA-256, the torch and
+      CUDA build compiled against, toolchain and flags, only when its entry's
       version and native aggregate equal the installed ones; otherwise ``not
       recorded``, with why (no receipt, it does not name the extension, or
       what differs).
@@ -480,18 +584,19 @@ def read_pyg_native(names: Tuple[str, ...]) -> Dict[str, Dict[str, Any]]:
             status = imports.get(name)
             available: Any = bool(status.available) if status is not None else UNKNOWN
             facts: Dict[str, Any] = {
-                "installed": installed.copies > 0,
+                # Something imports under the name, but no distribution's
+                # metadata names it: whether it is installed is not known.
+                "installed": (True if installed.copies
+                              else UNKNOWN if available is True else False),
                 "available": available,
                 "version": _plain(installed.version) if installed.copies else None,
                 "native": _native_identity(installed, available),
-                "source": _receipt_source(name, installed, receipt, problem),
+                "source": _receipt_source(name, installed, available, receipt, problem),
             }
             if available is False:
                 facts["in_effect"] = False
-                facts["fallback_reason"] = (
-                    ("it is installed but does not import" if installed.copies
-                     else "it is not installed")
-                    + "; PyG runs its own code for the operations it would serve")
+                facts["fallback_reason"] = ("it is installed but does not import"
+                                            if installed.copies else "it is not installed")
             observed[name] = facts
         except Exception:  # noqa: BLE001 — this extension's facts are not known
             continue
@@ -568,7 +673,8 @@ def _identity_of(entry: Any) -> Any:
 
 def native_identity_text(identity: Any) -> str:
     """`native_identity` as one line of plain text, the same on every surface:
-    each component's name, version and the first 12 hex digits of its native
+    each component by name (in code-point order, whatever order the record
+    keeps), its version and the first 12 hex digits of its native
     libraries' aggregate digest (or the state that stands in for it), and its
     source's route, said once in front when every installed component shares
     it. ``"not recorded"`` when there is no identity (a record written before
@@ -581,7 +687,9 @@ def native_identity_text(identity: Any) -> str:
     if not identity:
         return "no component recorded"
     items: List[Tuple[str, Optional[str]]] = []  # (text, route words; None: no route)
-    for name, entry in identity.items():
+    # By name: a record read from the ledger, whose encoding orders keys, and
+    # the same record read from its report give one line.
+    for name, entry in sorted(identity.items(), key=lambda item: str(item[0])):
         if not isinstance(entry, Mapping):
             items.append((f"{name} cannot be read", None))
             continue

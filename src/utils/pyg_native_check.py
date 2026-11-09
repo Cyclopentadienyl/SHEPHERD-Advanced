@@ -43,6 +43,7 @@ import importlib.metadata
 import io
 import json
 import logging
+import math
 import os
 import re
 import sys
@@ -655,20 +656,32 @@ def _no_constant(name: str) -> Any:
     raise ValueError(f"the receipt holds {name}, which is not a number it records")
 
 
+def _finite(text: str) -> float:
+    """A JSON number with a fraction or an exponent, refused when it does not
+    fit a finite float (``1e400`` reads as infinity)."""
+    value = float(text)
+    if not math.isfinite(value):
+        _no_constant(text)
+    return value
+
+
 def read_receipt(prefix: Optional[os.PathLike] = None) -> Optional[Dict[str, Any]]:
     """The receipt kept at `prefix` (default: this interpreter's), or None when
     there is none. A file that is not a receipt of a known schema raises
-    `ValueError`, with what it is not (NaN or infinity included)."""
+    `ValueError`, with what it is not (NaN or infinity included, and a number
+    too large for a float)."""
     target = receipt_path(prefix)
     try:
         with target.open("rb") as handle:
             data = handle.read()
     except FileNotFoundError:
         return None
-    # A receipt is plain JSON: NaN or infinity is no value it holds, and one
-    # would stop every record that copies the receipt's facts (the ledger's
-    # encoding refuses them).
-    receipt = json.loads(data.decode("utf-8"), parse_constant=_no_constant)
+    # A receipt is plain JSON: NaN or infinity is no value it holds, written
+    # as such or as a number too large for a float, and one would stop every
+    # record that copies the receipt's facts (the ledger's encoding refuses
+    # them).
+    receipt = json.loads(data.decode("utf-8"), parse_constant=_no_constant,
+                         parse_float=_finite)
     if not isinstance(receipt, dict) or receipt.get("receipt") != RECEIPT_KIND:
         raise ValueError("the file is not a PyG native source receipt")
     if receipt.get("schema") != RECEIPT_SCHEMA or not isinstance(receipt.get("wheels"), list):

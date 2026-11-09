@@ -178,44 +178,156 @@ def test_a_fallback_carries_its_reason(stack):
 
     broken, absent = components["pyg_lib"], components["torch_cluster"]
     assert (broken["installed"], broken["available"], broken["in_effect"]) == (True, False, False)
-    assert broken["fallback_reason"] == ("it is installed but does not import; PyG runs its own "
-                                         "code for the operations it would serve")
+    # Only what was observed: what PyG does instead differs by operation and
+    # by release (2.8.1 ignores torch_cluster, and refuses some operations
+    # without pyg_lib or torch_sparse), and nothing here observes it.
+    assert broken["fallback_reason"] == "it is installed but does not import"
     assert broken["native"]["state"] == "recorded" and broken["version"] == "1.0"
     assert (absent["installed"], absent["available"], absent["in_effect"]) == (False, False, False)
-    assert absent["fallback_reason"].startswith("it is not installed; ")
+    assert absent["fallback_reason"] == "it is not installed"
     assert absent["version"] is None
     assert absent["native"] == {"state": "not installed", "count": None, "aggregate_sha256": None}
     assert absent["source"] == {"state": "not recorded", "reason": "it is not installed"}
     assert broken["selected"] == absent["selected"] == UNKNOWN
+    assert broken["requested"] == absent["requested"] == UNKNOWN
 
 
-@pytest.mark.parametrize("facts, words", [
+def test_an_extension_that_imports_without_a_distribution_is_not_said_to_be_absent(stack):
+    """Something imports under the name, but no distribution's metadata names
+    it (a copied directory, say): whether it is installed is not known, and
+    nothing says it is not installed."""
+    shutil.rmtree(stack.site / "torch_sparse-1.0.dist-info")
+
+    facts = stack.fresh()["torch_sparse"]
+
+    assert (facts["installed"], facts["available"], facts["in_effect"]) == (UNKNOWN, True,
+                                                                             UNKNOWN)
+    assert facts["fallback_reason"] is None and facts["version"] is None
+    assert facts["native"] == {"state": "cannot be read", "count": None,
+                               "aggregate_sha256": None, "reason": "it imports, but no "
+                               "installed distribution lists its files"}
+    assert facts["source"] == {"state": "not recorded",
+                               "reason": "no installed distribution names it"}
+
+
+_NATIVE = {"state": "recorded", "count": 2, "aggregate_sha256": "a" * 64}
+_SOURCE = {"state": "recorded", "route": "pip install"}
+
+#: Facts no observation can say, and so facts the record view would refuse
+#: (each would hide the record that carries it): every one is refused when
+#: it is collected, and becomes the component's status.
+REFUSED = [
     ({"in_effect": True, "fallback_reason": "dtype"}, "in effect is available"),
     ({"in_effect": True, "available": False}, "in effect is available"),
     ({"selected": "yes"}, "selected is true, false or 'unknown'"),
+    ({"requested": "flash"}, "requested is true, false or 'unknown'"),
     ({"installed": 1}, "installed is true, false or 'unknown'"),
     ({"fallback_reason": ""}, "fallback reason is text"),
     ({"version": 2}, "version is text"),
-    ({"native": {"count": 1}}, "native is an object with a state"),
-    ({"source": "receipt"}, "source is an object with a state"),
+    ({"native": {"count": 1}}, "native identity has one of the states"),
+    ({"native": {"state": "bundled", "count": None, "aggregate_sha256": None}},
+     "native identity has one of the states"),
+    ({"native": {"state": "not recorded"}}, "gives its count and aggregate_sha256"),
+    ({"native": {**_NATIVE, "aggregate_sha256": "abc"}}, "64 lowercase hex"),
+    ({"native": {**_NATIVE, "aggregate_sha256": "A" * 64}}, "64 lowercase hex"),
+    ({"native": {**_NATIVE, "count": -1}}, "whole number of at least 0"),
+    ({"native": {**_NATIVE, "count": True}}, "whole number of at least 0"),
+    ({"native": {**_NATIVE, "count": "one"}}, "whole number of at least 0"),
+    ({"native": {**_NATIVE, "count": None}}, "given exactly when it is recorded"),
+    ({"native": {**_NATIVE, "aggregate_sha256": None}}, "given exactly when it is recorded"),
+    ({"native": {"state": "cannot be read", "count": 2, "aggregate_sha256": "a" * 64}},
+     "given exactly when it is recorded"),
+    ({"native": {"state": "not installed", "count": None, "aggregate_sha256": None,
+                 "reason": ""}}, "native identity reason is text"),
+    ({"source": "receipt"}, "source is 'recorded' or 'not recorded'"),
+    ({"source": {"state": "bundled with torch"}}, "source is 'recorded' or 'not recorded'"),
+    ({"source": {"state": "observed at run time"}}, "source is 'recorded' or 'not recorded'"),
+    ({"source": {"state": "recorded"}}, "route, as text, exactly when it is recorded"),
+    ({"source": {"state": "recorded", "route": ""}}, "route, as text, exactly when"),
+    ({"source": {"state": "recorded", "route": 3}}, "route, as text, exactly when"),
+    ({"source": {"state": "not recorded", "route": "pip install"}},
+     "route, as text, exactly when it is recorded"),
+    ({"source": {"state": "not recorded", "reason": 5}}, "source reason is text"),
+    ({"source": {**_SOURCE, "flags": {"MAX_JOBS": float("inf")}}}, "Out of range float"),
+    ({"source": {**_SOURCE, "flags": {"MAX_JOBS": float("nan")}}}, "Out of range float"),
     ({"speed": "fast"}, "outside a component's shape"),
-])
+]
+
+
+@pytest.mark.parametrize("facts, words", REFUSED)
 def test_component_facts_refuses_what_no_observation_can_say(facts, words):
     with pytest.raises(ValueError, match=words):
         component_facts("attention kernel", **facts)
+
+
+#: Facts a reader may give, among them a component installed by pip with a
+#: recorded source and no native library, and one whose libraries could not
+#: all be read.
+ACCEPTED = [
+    {},
+    {"requested": True, "selected": False, "available": True, "in_effect": False,
+     "fallback_reason": "the setting asks for flash, the dispatcher chose math"},
+    {"installed": True, "version": "2.0", "native": _NATIVE,
+     "source": {**_SOURCE, "requested": {"kind": "registry", "name": "x", "specifier": ""},
+                "flags": {"MAX_JOBS": 8, "SCALE": 1.5}}},
+    {"native": {"state": "recorded", "count": 0,
+                "aggregate_sha256": hashlib.sha256(b"").hexdigest()}, "source": _SOURCE},
+    {"native": {"state": "cannot be read", "count": 3, "aggregate_sha256": None,
+                "reason": "a library cannot be read"}},
+    {"native": {"state": "not installed", "count": None, "aggregate_sha256": None},
+     "source": {"state": "not recorded", "reason": "it is not installed"}},
+]
+
+
+@pytest.mark.parametrize("facts", ACCEPTED)
+def test_every_component_the_collector_accepts_the_record_view_reads(facts):
+    """One shape on both sides of the record (E1): whatever `component_facts`
+    accepts, the record view validates (`RecordComponent`), so no record is
+    hidden for the environment it was measured in (§4.2)."""
+    from src.api.routes.evaluations import RecordComponent
+
+    collected = component_facts("attention kernel", **facts)
+
+    (shown,) = native_identity({"test_attention": collected}).values()
+    RecordComponent.model_validate(shown)
+
+
+def test_a_reader_giving_what_the_view_would_refuse_becomes_a_readable_status(
+        stack, monkeypatch):
+    """A second reader that gives a recorded source without its route (or any
+    other refused fact) is recorded as that component's status, which the
+    record view reads; the reader's other components are kept."""
+    from src.api.routes.evaluations import RecordComponent
+
+    reader = ComponentReader("attention kernel", ("test_attention", "test_kernel"),
+                             lambda names: {
+                                 "test_attention": {"installed": True,
+                                                    "source": {"state": "recorded"}},
+                                 "test_kernel": {"installed": True, "source": _SOURCE}})
+    monkeypatch.setattr(run_environment, "COMPONENT_READERS",
+                        (*run_environment.COMPONENT_READERS, reader))
+
+    components = stack.fresh()
+
+    assert components["test_attention"]["installed"] == UNKNOWN
+    assert components["test_attention"]["source"] == {"state": "not recorded",
+                                                      "reason": "its facts could not be read"}
+    assert components["test_kernel"]["source"] == _SOURCE
+    for shown in native_identity(components).values():
+        RecordComponent.model_validate(shown)
 
 
 def test_component_facts_reads_what_is_not_observed_as_not_observed():
     facts = component_facts("attention kernel", installed=True)
 
     assert facts == {
-        "kind": "attention kernel", "installed": True, "available": UNKNOWN,
-        "selected": UNKNOWN, "in_effect": UNKNOWN, "fallback_reason": None, "version": None,
+        "kind": "attention kernel", "requested": UNKNOWN, "installed": True,
+        "available": UNKNOWN, "selected": UNKNOWN, "in_effect": UNKNOWN,
+        "fallback_reason": None, "version": None,
         "native": {"state": "not recorded", "count": None, "aggregate_sha256": None},
         "source": {"state": "not recorded", "reason": "no source is recorded for this component"}}
     with pytest.raises(TypeError):
-        component_facts("attention kernel", version="1", native={"state": "recorded",
-                                                                   "count": (1, 2)})
+        component_facts("attention kernel", version="1", source={**_SOURCE, "flags": (1, 2)})
 
 
 # --- The source receipt: recorded only where it matches -------------------------
@@ -262,6 +374,67 @@ def test_the_receipts_facts_are_recorded_when_its_digests_match(stack):
     assert identity["pyg_lib"]["source"] == {"state": "not recorded"}
 
 
+#: The prebuilt release's asset, as deploy.sh names it: a file name.
+ASSET = "pyg-ext-torch2.10.0-cu130-cp312-linux_aarch64.tar.gz"
+
+
+def test_a_prebuilt_release_receipt_is_recorded_without_its_asset_file_name(stack):
+    """The prebuilt route's requested source names the release's asset file;
+    the record keeps the tag and the asset's SHA-256, which names it, as the
+    wheel's SHA-256 names the wheel."""
+    checks = check_installed_against_wheels([stack.wheels["pyg_lib"]], path=[str(stack.site)])
+    wheel = stack.wheels["pyg_lib"]
+    release = {"kind": "prebuilt release", "tag": "pyg-ext-v1", "asset": ASSET,
+               "asset_sha256": "d" * 64}
+    write_receipt(build_receipt(
+        route="prebuilt release", checks=checks, requested={wheel.name: release},
+        compiled_against={"torch": "2.10.0", "cuda": "13.0",
+                          "basis": "the release's declared target"},
+        toolchain=None, flags=None), stack.venv)
+
+    source = stack.fresh()["pyg_lib"]["source"]
+
+    assert source == {
+        "state": "recorded", "route": "prebuilt release",
+        "requested": {"kind": "prebuilt release", "tag": "pyg-ext-v1", "asset_sha256": "d" * 64},
+        "resolved": {"version": "1.0"},
+        "wheel_sha256": hashlib.sha256(wheel.read_bytes()).hexdigest(),
+        "compiled_against": {"torch": "2.10.0", "cuda": "13.0",
+                             "basis": "the release's declared target"},
+        "toolchain": None, "flags": None}
+    assert ASSET not in json.dumps(source) and wheel.name not in json.dumps(source)
+
+
+def _edit_receipt(stack, change):
+    target = native.receipt_path(stack.venv)
+    receipt = json.loads(target.read_text())
+    change(receipt["wheels"][0])
+    write_receipt(receipt, stack.venv)
+
+
+def test_a_hand_edited_receipt_never_carries_a_credential_into_a_record(stack):
+    """The deploy layer strips a source URL (`describe_source`); a receipt
+    edited by hand whose digests still match is stripped again when it is
+    copied (`strip_credentials`), and a requested source that is not an
+    object is not copied at all."""
+    _keep_receipt(stack)
+    _edit_receipt(stack, lambda entry: entry.update(requested={
+        "kind": "url", "url": "https://reader:t0ken@example.org/scatter.tar.gz?token=s3cret#x"}))
+
+    source = stack.fresh()["torch_scatter"]["source"]
+
+    assert source["state"] == "recorded"
+    assert source["requested"] == {"kind": "url", "url": "https://example.org/scatter.tar.gz"}
+    for secret in ("t0ken", "reader", "s3cret"):
+        assert secret not in json.dumps(source)
+
+    _edit_receipt(stack, lambda entry: entry.update(
+        requested="git+https://reader:t0ken@github.com/rusty1s/pytorch_scatter.git"))
+    assert stack.fresh()["torch_scatter"]["source"] == {
+        "state": "not recorded",
+        "reason": "the source receipt's requested source is not one this build reads"}
+
+
 def test_a_receipt_that_does_not_match_records_no_source_and_says_why(stack):
     _keep_receipt(stack)
     (stack.site / "torch_scatter" / "_scatter_cpu.so").write_bytes(b"replaced since")
@@ -281,6 +454,9 @@ def test_a_receipt_that_does_not_match_records_no_source_and_says_why(stack):
     (None, "no source receipt is kept in this environment"),
     (b"{not json", "the file in the source receipt's place is not a receipt this build reads"),
     (b'{"receipt": "shepherd-pyg-native-receipt", "schema": 1, "wheels": [], "x": NaN}',
+     "the file in the source receipt's place is not a receipt this build reads"),
+    (b'{"receipt": "shepherd-pyg-native-receipt", "schema": 1, "wheels": [], '
+     b'"flags": {"MAX_JOBS": 1e400}}',
      "the file in the source receipt's place is not a receipt this build reads"),
 ])
 def test_without_a_readable_receipt_each_source_says_why(stack, content, reason):
@@ -448,8 +624,13 @@ def test_the_one_line_says_each_identity_and_one_shared_route_once():
                               "torch_scatter": _entry("2.1.2", "b" * 64, "local build"),
                               "torch_cluster": _entry(None, None, state="not installed")})
     assert native_identity_text(shared) == (
-        "local build — pyg_lib 0.8.0 aaaaaaaaaaaa, torch_scatter 2.1.2 bbbbbbbbbbbb, "
-        "torch_cluster not installed")
+        "local build — pyg_lib 0.8.0 aaaaaaaaaaaa, torch_cluster not installed, "
+        "torch_scatter 2.1.2 bbbbbbbbbbbb")
+    # By name, whatever order the record keeps: a report keeps the
+    # collector's, the ledger's encoding sorts keys; both read alike.
+    assert native_identity_text(json.loads(json.dumps(shared, sort_keys=True))) == \
+        native_identity_text(dict(reversed(list(shared.items())))) == \
+        native_identity_text(shared)
 
     mixed = native_identity({"pyg_lib": _entry("0.8.0", "a" * 64, "local build"),
                              "torch_scatter": _entry("2.1.2", "b" * 64),
