@@ -33,7 +33,10 @@ training and from the validation edges in validation.
 order and fixed batches, against negatives drawn once by the same rule under
 the recorded seed; node vectors by full-view chunked inference (§2.8) over the
 training edges; whole-set LP accuracy (the selection metric), ROC-AUC and AP.
-Two evaluations of the same weights give identical numbers.
+Two evaluations of the same weights give identical numbers. The pair rule and
+the scoring are the one LP core's (`src.models.bundle.lp_head`
+`fixed_lp_pairs` and `score_lp_pairs`, README §3.2); this task gives them the
+split's val edges, the split's seed and the training edges.
 
 Module: src/training/lp_task.py
 """
@@ -45,8 +48,7 @@ from typing import Any, Dict, Iterator, List, Optional, Sequence
 import torch
 from torch import Tensor
 
-from src.models.bundle.lp_head import corrupt_tails
-from src.models.bundle.metrics import lp_metrics
+from src.models.bundle.lp_head import LPPairs, corrupt_tails, fixed_lp_pairs, score_lp_pairs
 
 #: The selection metric of the base stage (A5), as the Trainer logs it.
 BASE_SELECTION_METRIC = "val_lp_accuracy"
@@ -245,8 +247,12 @@ class BaseLPTask:
         self.train_relations = train_relations
         self.seed = int(seed)
         self.chunk_size = int(chunk_size)
-        self.val_head, self.val_rel, self.val_tail, self.val_neg_tail, self.val_counts = \
-            self._fixed_validation(val_edges, val_relations, int(val_batch_size))
+        #: The fixed validation pairs (F3): the split's val edges by the one
+        #: pair rule, under the split's seed.
+        self.val_pairs: LPPairs = fixed_lp_pairs(val_edges, val_relations, seed=self.seed,
+                                                 batch_size=int(val_batch_size))
+        self.val_counts = {"val_edges": self.val_pairs.counts["edges"],
+                           "val_without_negative": self.val_pairs.counts["without_negative"]}
         if self.val_head.numel() == 0:
             # Refused before the job starts, not at the first validation.
             raise ValueError(
@@ -254,27 +260,21 @@ class BaseLPTask:
                 "(no other tail of its relation in its batch), so the base stage cannot be "
                 "validated on this split")
 
-    def _fixed_validation(self, edges: Tensor, relations: Tensor, batch_size: int):
-        """Every validation edge once, in a seeded order and fixed batches, with
-        one negative drawn once per edge by U5's rule (F3)."""
-        generator = torch.Generator().manual_seed(self.seed + 7919)
-        order = torch.randperm(edges.size(1), generator=generator)
-        heads, tails, rels = edges[0][order], edges[1][order], relations[order]
-        keep_h, keep_r, keep_t, neg = [], [], [], []
-        without = 0
-        for start in range(0, heads.numel(), batch_size):
-            h = heads[start:start + batch_size]
-            t = tails[start:start + batch_size]
-            r = rels[start:start + batch_size]
-            chosen, ok = corrupt_tails(r, t, generator)
-            without += int((~ok).sum())
-            keep_h.append(h[ok])
-            keep_r.append(r[ok])
-            keep_t.append(t[ok])
-            neg.append(t[chosen[ok]])
-        cat = (lambda xs: torch.cat(xs) if xs else torch.empty(0, dtype=torch.long))
-        counts = {"val_edges": int(heads.numel()), "val_without_negative": without}
-        return cat(keep_h), cat(keep_r), cat(keep_t), cat(neg), counts
+    @property
+    def val_head(self) -> Tensor:
+        return self.val_pairs.head
+
+    @property
+    def val_rel(self) -> Tensor:
+        return self.val_pairs.relation
+
+    @property
+    def val_tail(self) -> Tensor:
+        return self.val_pairs.tail
+
+    @property
+    def val_neg_tail(self) -> Tensor:
+        return self.val_pairs.negative_tail
 
     def training_step(self, model: Any, batch: LPBatch, device: torch.device) -> StepResult:
         counts = dict(batch.counts)
@@ -295,17 +295,10 @@ class BaseLPTask:
 
     @torch.no_grad()
     def validate(self, model: Any, device: torch.device) -> Dict[str, Any]:
-        model.eval()
-        z = model.node_vectors_full(self.train_edges.to(device),
-                                    edge_type=self.train_relations.to(device),
-                                    chunk_size=self.chunk_size)
-        h = z[self.val_head.to(device)]
-        r = self.val_rel.to(device)
-        pos = model.lp_head.raw_score(h, r, z[self.val_tail.to(device)])
-        neg = model.lp_head.raw_score(h, r, z[self.val_neg_tail.to(device)])
-        metrics = lp_metrics(pos.cpu().tolist(), neg.cpu().tolist())
-        hinge = model.lp_head.hinge(torch.tanh(pos), torch.tanh(neg))
-        metrics["lp_loss"] = float(hinge)
+        """The fixed pairs scored over the training edges' full view: the LP
+        core's metrics, then `val_counts`."""
+        metrics = score_lp_pairs(model, self.val_pairs, self.train_edges, self.train_relations,
+                                 device, chunk_size=self.chunk_size).metrics
         metrics.update(self.val_counts)
         return metrics
 

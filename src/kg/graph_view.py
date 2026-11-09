@@ -21,7 +21,9 @@ homogeneous graph with typed edges, in a fixed order:
    are excluded from this view, keep their ids and are counted, so coverage
    denominators never shrink silently.
 5. **Only then the split** (`split_facts`): an edge and its reverse twin are one
-   fact and always land in the same part.
+   fact and always land in the same part. A recorded split is rebuilt in one
+   checked place (`rebuild_split`): the record's every field is compared with
+   the split rebuilt from the view, and the first that differs is named.
 
 **Exact distances** (`exact_distances`, README §6 rule 5): the gene task's one
 distance interface, hop counts over the whole view, undirected and
@@ -439,15 +441,104 @@ def split_facts(view: GraphView, seed: int) -> EdgeSplit:
     return split
 
 
+#: The fields of a split's record (`EdgeSplit.record`) a rebuild checks, in the
+#: order it checks them; `edges` holds each part's edge count.
+SPLIT_RECORD_FIELDS = ("rule", "seed", "view_digest", "digest", "edges")
+
+
+def _shown_value(value: Any) -> str:
+    text = repr(value)
+    return text if len(text) <= 80 else text[:77] + "..."
+
+
+@dataclass(frozen=True)
+class SplitMismatch:
+    """The first field of a recorded split (`SPLIT_RECORD_FIELDS`) that the
+    split rebuilt from the view does not have: the record's value, and the
+    rebuilt one (None where nothing could be rebuilt from the record)."""
+
+    field: str
+    recorded: Any
+    rebuilt: Any
+
+    def sentence(self) -> str:
+        if self.rebuilt is None:
+            return (f"the split's recorded {self.field} {_shown_value(self.recorded)} cannot be "
+                    f"rebuilt from this view by {SPLIT_RULE}")
+        return (f"the split's recorded {self.field} {_shown_value(self.recorded)} is not "
+                f"{_shown_value(self.rebuilt)}, rebuilt from this view by {SPLIT_RULE}")
+
+
+class SplitMismatchError(GraphViewError):
+    """A recorded split that the view does not rebuild; `mismatch` names the
+    field."""
+
+    def __init__(self, mismatch: SplitMismatch):
+        super().__init__(mismatch.sentence())
+        self.mismatch = mismatch
+
+
+def _is_seed(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def rebuild_split(view: GraphView, record: Mapping[str, Any], *,
+                  seed: Optional[int] = None) -> EdgeSplit:
+    """The recorded split, rebuilt from `view` by `split_facts` and checked
+    against its record (`EdgeSplit.record`) field by field, in
+    `SPLIT_RECORD_FIELDS`' order:
+
+    - `rule`: `SPLIT_RULE`, the one rule this build rebuilds; a split recorded
+      by another rule is not rebuilt, never guessed;
+    - `seed`: an integer, the split is rebuilt from it; a caller that names the
+      seed it will use (`seed`) gets the recorded split only when they are one;
+    - `view_digest`: the view's digest;
+    - `digest` and `edges` (each part's edge count): the rebuilt split's.
+
+    A record that is not a mapping records none of them.
+
+    Returns:
+        The rebuilt split, equal to the recorded one in every field.
+
+    Raises:
+        SplitMismatchError: the first field that differs, with the recorded and
+            rebuilt values (`SplitMismatch`).
+    """
+    fields: Mapping[str, Any] = record if isinstance(record, Mapping) else {}
+
+    def refuse(field_name: str, rebuilt: Any) -> SplitMismatchError:
+        return SplitMismatchError(SplitMismatch(field_name, fields.get(field_name), rebuilt))
+
+    if fields.get("rule") != SPLIT_RULE:
+        raise refuse("rule", SPLIT_RULE)
+    recorded_seed = fields.get("seed")
+    if seed is not None and not (_is_seed(recorded_seed) and recorded_seed == int(seed)):
+        raise refuse("seed", int(seed))
+    if not _is_seed(recorded_seed):
+        raise refuse("seed", None)
+    if fields.get("view_digest") != view.digest:
+        raise refuse("view_digest", view.digest)
+    split = split_facts(view, recorded_seed)
+    rebuilt = split.record()
+    for field_name in ("digest", "edges"):
+        if fields.get(field_name) != rebuilt[field_name]:
+            raise refuse(field_name, rebuilt[field_name])
+    return split
+
+
 __all__ = [
     "EdgeSplit",
     "GraphView",
     "GraphViewError",
     "SPLIT_NAMES",
+    "SPLIT_RECORD_FIELDS",
     "SPLIT_RULE",
+    "SplitMismatch",
+    "SplitMismatchError",
     "VIEW_RULE",
     "build_graph_view",
     "exact_distances",
+    "rebuild_split",
     "relation_key",
     "split_facts",
     "view_digest",

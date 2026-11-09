@@ -10,6 +10,9 @@ a toy graph.
 `view_ids` refuses a local id outside its type's raw range, and the disease
 binder lets that refusal through (NEW-kg-1, K8-6b).
 
+`rebuild_split` rebuilds a recorded split from its view and checks the record
+field by field; the first field that differs is named.
+
 Module: tests/unit/test_graph_view.py
 """
 from __future__ import annotations
@@ -21,8 +24,12 @@ import pytest
 torch = pytest.importorskip("torch")
 
 from src.kg.graph_view import (  # noqa: E402
+    SPLIT_RECORD_FIELDS,
+    SPLIT_RULE,
     GraphViewError,
+    SplitMismatchError,
     build_graph_view,
+    rebuild_split,
     split_facts,
 )
 
@@ -216,13 +223,91 @@ def test_split_digest_changes_with_the_view():
     assert split_facts(a, 7).digest != split_facts(b, 7).digest
 
 
+def _star(n=50):
+    """Node 0 linked to each of n others, every link with its twin: n facts."""
+    return build_graph_view({
+        "num_nodes_dict": {"gene": n + 1},
+        "edge_index_dict": {
+            ("gene", "link", "gene"): _ei([(0, i) for i in range(1, n + 1)]),
+            ("gene", "rev_link", "gene"): _ei([(i, 0) for i in range(1, n + 1)])}})
+
+
 def test_split_proportions_over_facts():
-    n = 50
-    data = {"num_nodes_dict": {"gene": n + 1},
-            "edge_index_dict": {
-                ("gene", "link", "gene"): _ei([(0, i) for i in range(1, n + 1)]),
-                ("gene", "rev_link", "gene"): _ei([(i, 0) for i in range(1, n + 1)])}}
-    view = build_graph_view(data)
+    view = _star(50)
     split = split_facts(view, seed=1)
-    assert view.num_facts == n
+    assert view.num_facts == 50
     assert split.record()["edges"] == {"train": 80, "val": 10, "test": 10}
+
+
+# --------------------------------------------------------------------------- rebuild_split
+
+
+def test_a_recorded_split_is_rebuilt_from_its_view():
+    view = _star()
+    split = split_facts(view, seed=1)
+    for seed in (None, 1):
+        rebuilt = rebuild_split(view, split.record(), seed=seed)
+        assert torch.equal(rebuilt.part, split.part)
+        assert rebuilt.record() == split.record()
+
+
+#: A record's field, a value the view does not rebuild, by hand.
+WRONG_FIELDS = {
+    "rule": "facts-70/15/15/v1",
+    "view_digest": "0" * 64,
+    "digest": "0" * 64,
+    "edges": {"train": 79, "val": 11, "test": 10},
+}
+
+
+@pytest.mark.parametrize("field", sorted(WRONG_FIELDS))
+def test_each_field_the_rebuild_does_not_match_is_named(field):
+    """One field changed in an otherwise true record: that field is named,
+    with the recorded value and the rebuilt one."""
+    view = _star()
+    split = split_facts(view, seed=1)
+    with pytest.raises(SplitMismatchError) as refused:
+        rebuild_split(view, {**split.record(), field: WRONG_FIELDS[field]})
+    mismatch = refused.value.mismatch
+    assert (mismatch.field, mismatch.recorded, mismatch.rebuilt) == (
+        field, WRONG_FIELDS[field], split.record()[field])
+    assert f"the split's recorded {field} " in str(refused.value)
+    assert isinstance(refused.value, GraphViewError)
+
+
+def test_a_seed_is_named_when_the_caller_s_differs_or_it_is_not_a_seed():
+    view = _star()
+    record = split_facts(view, seed=1).record()
+    with pytest.raises(SplitMismatchError) as refused:
+        rebuild_split(view, record, seed=2)
+    assert (refused.value.mismatch.field, refused.value.mismatch.recorded,
+            refused.value.mismatch.rebuilt) == ("seed", 1, 2)
+    for seed in ("1", True, None, 1.0):
+        with pytest.raises(SplitMismatchError, match="cannot be rebuilt") as refused:
+            rebuild_split(view, {**record, "seed": seed})
+        assert (refused.value.mismatch.field, refused.value.mismatch.recorded) == ("seed", seed)
+
+
+def test_a_seed_that_is_not_its_digest_s_is_named_by_the_digest():
+    """The split is rebuilt from the recorded seed: a record whose seed and
+    digest disagree names the digest the seed does not rebuild."""
+    view = _star()
+    record = split_facts(view, seed=1).record()
+    with pytest.raises(SplitMismatchError) as refused:
+        rebuild_split(view, {**record, "seed": 2})
+    assert refused.value.mismatch.field == "digest"
+    assert refused.value.mismatch.rebuilt == split_facts(view, seed=2).digest
+
+
+def test_the_first_field_that_differs_is_named_and_an_absent_record_records_none():
+    view = _star()
+    record = split_facts(view, seed=1).record()
+    assert SPLIT_RECORD_FIELDS == ("rule", "seed", "view_digest", "digest", "edges")
+    with pytest.raises(SplitMismatchError) as refused:
+        rebuild_split(view, {**record, "view_digest": "0" * 64, "digest": "0" * 64})
+    assert refused.value.mismatch.field == "view_digest"
+    for absent in ({}, None, ["rule"]):
+        with pytest.raises(SplitMismatchError) as refused:
+            rebuild_split(view, absent)
+        assert (refused.value.mismatch.field, refused.value.mismatch.recorded,
+                refused.value.mismatch.rebuilt) == ("rule", None, SPLIT_RULE)

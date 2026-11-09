@@ -1176,7 +1176,7 @@ def train(config: TrainConfig, explicit: Collection[str], *,
     """
     from dataclasses import asdict as _asdict
 
-    from src.kg.graph_view import build_graph_view, split_facts
+    from src.kg.graph_view import SplitMismatchError, build_graph_view, rebuild_split, split_facts
     from src.models.bundle import ModelSpec, build_bundle, finetune_spec_from_parent, reference_spec
     from src.models.bundle.spec import hops_problem
     from src.models.bundle.record import (
@@ -1328,13 +1328,21 @@ def train(config: TrainConfig, explicit: Collection[str], *,
     view_rule = _asdict(spec.graph_view)
     view_rule["exclude_relations"] = list(view_rule["exclude_relations"])
     view = build_graph_view(inputs.graph.graph_data, rule=view_rule)
-    split = split_facts(view, config.split_seed)
-    if lineage is not None:
+    if lineage is None:
+        split = split_facts(view, config.split_seed)
+    else:
+        # The parent's recorded split, rebuilt from this view and checked field
+        # by field, this run's seed included (`rebuild_split`); the field that
+        # differs is the refusal's cause, the sentence stays the same.
         recorded = lineage.data_roles
-        if (recorded.get("graph_view") or {}).get("digest") != view.digest \
-                or (recorded.get("split") or {}).get("digest") != split.digest:
+        mismatch: Optional[SplitMismatchError] = None
+        try:
+            split = rebuild_split(view, recorded.get("split") or {}, seed=config.split_seed)
+        except SplitMismatchError as exc:
+            mismatch = exc
+        if mismatch is not None or (recorded.get("graph_view") or {}).get("digest") != view.digest:
             raise ValueError("the graph view or edge split differs from the parent's record; "
-                             "a child trains on its parent's view and split")
+                             "a child trains on its parent's view and split") from mismatch
     train_mask, val_mask = split.mask("train"), split.mask("val")
 
     # The task data, bound to the view (F7), and its derived tables, before
