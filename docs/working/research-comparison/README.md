@@ -188,8 +188,8 @@ The full suite runs at the checkpoints, not on every small commit.
   - Native identity: each extension's version, native file count and a stable aggregate digest. The ordering
     and aggregation are specified, and no file names are emitted.
   - Receipt facts, when they match the installed bytes; a mismatch shows its reason.
-  - Separate facts for installed, available, selected and observed in effect, each with a fallback reason.
-    Anything not observed reads unknown.
+  - Separate facts for requested, installed, available, selected and observed in effect, each with a fallback
+    reason. Anything not observed reads unknown.
   - Named, extensible component facts, so neither "only these four extensions" nor "CUDA is present" becomes
     a record rule.
   - Facts that cannot be read are a status; they never block a measurement.
@@ -394,7 +394,7 @@ what is wired and tested, what has a central boundary but no implementation, and
 gap.
 
 - **E1, acceleration:**
-  - installed, available, selected, in effect and fallback are recorded apart;
+  - requested, installed, available, selected, in effect and fallback are recorded apart;
   - README §3.4's five computation boundaries are kept;
   - there is no permanent package version or hardware allow-list;
   - an algorithmic change to scoring (ANN truncation, quantisation) enters protocol or model semantics, not
@@ -512,4 +512,7 @@ golden difference stops that commit until its cause is found, not the round.
 
 | Date | Stage | Commits | Note |
 |---|---|---|---|
-| 2026-11-10 | plan | — | This plan, integrating the reviewer's rev 2 review and the owner's authorisation |
+| 2026-11-10 | plan | `5e9a908` | This plan, integrating the reviewer's rev 2 review and the owner's authorisation. Baseline at `2da28cf` plus this commit: the full suite 6081 passed, 9 skipped; the 4 import contracts kept |
+| 2026-11-10 | 1 | `edb52ba`..`084737c` | Goldens P0-1–P0-5 on the unchanged tree; strict goldens refuse regeneration. One LP core (`fixed_lp_pairs`, `score_lp_pairs`, `lp_pairs_digest`) with base validation byte-identical. One checked split rebuild. Node types through the shared graph input (F6), reproduced first through `train_model.train` with a typed base; a small cross-species graph through view, split and a typed forward (E4). Full suite: 6136 passed, 9 skipped |
+| 2026-11-10 | 2 | `1837a3b`..`0cbe952` | A failed ARM pull stops by default, naming the failure (fetch, checksum, install or check); `PYG_ARM_ON_PULL_FAILURE=build` allows the build. Exact by-path installs with a version and native-digest check. A path-free source receipt in the venv (kept by `uv sync --inexact`). An install that was not verified stops (exits 16, 17). The one collector records named components (requested, installed, available, selected, in effect, fallback reason, version, native identity, source), with "unknown" where not observed; record views and probe A1 show the native identity. Software simulation only: neither route has run on a GB10 since |
+| 2026-11-10 | 3 | `be4446d`..`6c7a66d` | Protocols judged by a capability description derived from the validated spec (`src/models/bundle/capabilities.py`), carried by the one listing to the CLI, runner, Test page and probe; P0-2 unchanged. GATv2's width and hop rules stay in its declaration; a test-only double passes the shared checks. An encoder kind this build cannot build is now refused at the training start instead of failing in the training process. Checkpoint A, the full suite: 6289 passed, 9 skipped; 4 import contracts kept |
