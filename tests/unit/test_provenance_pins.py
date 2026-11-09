@@ -164,6 +164,12 @@ ALLOWED = {
         (1, _IN_MEMORY.format(what="the graph view's rule, mapping and edges (README G1)")),
     ("src/kg/graph_view.py", "split_facts", "hashlib.sha256"):
         (1, _IN_MEMORY.format(what="the edge split's rule, seed, view and parts (README F2)")),
+    # The one LP core (research-comparison Stage 1): fixed pairs are identified
+    # by the digest of their in-memory table, never of a file.
+    ("src/models/bundle/lp_head.py", "lp_pairs_digest", "hashlib.sha256"):
+        (1, _IN_MEMORY.format(what="the fixed LP pairs' table: head, relation, tail and "
+                                   "negative tail per pair (README F3; kept with each LP "
+                                   "run's scores, research-comparison F4)")),
     ("src/models/tasks/gene.py", "neighbour_table", "hashlib.sha256"):
         (1, _IN_MEMORY.format(what="the gene augmentation neighbour table (README F10)")),
     ("src/models/tasks/gene.py", "distance_table", "hashlib.sha256"):

@@ -453,20 +453,25 @@ def _shown_value(value: Any) -> str:
 
 @dataclass(frozen=True)
 class SplitMismatch:
-    """The first field of a recorded split (`SPLIT_RECORD_FIELDS`) that the
-    split rebuilt from the view does not have: the record's value, and the
-    rebuilt one (None where nothing could be rebuilt from the record)."""
+    """The first field of a recorded split (`SPLIT_RECORD_FIELDS`) that does
+    not hold: the record's value, and the value it is checked against in
+    `rebuilt`. That is the one rebuilt from the view (None where nothing could
+    be rebuilt from the record) or, when `requested`, the value the caller
+    asked for (`rebuild_split`'s `seed`), which nothing rebuilt."""
 
     field: str
     recorded: Any
     rebuilt: Any
+    requested: bool = False
 
     def sentence(self) -> str:
+        recorded = f"the split's recorded {self.field} {_shown_value(self.recorded)}"
+        if self.requested:
+            return f"{recorded} is not the requested {self.field} {_shown_value(self.rebuilt)}"
         if self.rebuilt is None:
-            return (f"the split's recorded {self.field} {_shown_value(self.recorded)} cannot be "
-                    f"rebuilt from this view by {SPLIT_RULE}")
-        return (f"the split's recorded {self.field} {_shown_value(self.recorded)} is not "
-                f"{_shown_value(self.rebuilt)}, rebuilt from this view by {SPLIT_RULE}")
+            return f"{recorded} cannot be rebuilt from this view by {SPLIT_RULE}"
+        return (f"{recorded} is not {_shown_value(self.rebuilt)}, rebuilt from this view by "
+                f"{SPLIT_RULE}")
 
 
 class SplitMismatchError(GraphViewError):
@@ -501,19 +506,21 @@ def rebuild_split(view: GraphView, record: Mapping[str, Any], *,
         The rebuilt split, equal to the recorded one in every field.
 
     Raises:
-        SplitMismatchError: the first field that differs, with the recorded and
-            rebuilt values (`SplitMismatch`).
+        SplitMismatchError: the first field that differs, with the recorded
+            value and the rebuilt one, or the caller's seed marked `requested`
+            (`SplitMismatch`).
     """
     fields: Mapping[str, Any] = record if isinstance(record, Mapping) else {}
 
-    def refuse(field_name: str, rebuilt: Any) -> SplitMismatchError:
-        return SplitMismatchError(SplitMismatch(field_name, fields.get(field_name), rebuilt))
+    def refuse(field_name: str, rebuilt: Any, *, requested: bool = False) -> SplitMismatchError:
+        return SplitMismatchError(
+            SplitMismatch(field_name, fields.get(field_name), rebuilt, requested=requested))
 
     if fields.get("rule") != SPLIT_RULE:
         raise refuse("rule", SPLIT_RULE)
     recorded_seed = fields.get("seed")
     if seed is not None and not (_is_seed(recorded_seed) and recorded_seed == int(seed)):
-        raise refuse("seed", int(seed))
+        raise refuse("seed", int(seed), requested=True)
     if not _is_seed(recorded_seed):
         raise refuse("seed", None)
     if fields.get("view_digest") != view.digest:

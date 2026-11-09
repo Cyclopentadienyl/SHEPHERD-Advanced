@@ -271,17 +271,23 @@ def test_each_field_the_rebuild_does_not_match_is_named(field):
     mismatch = refused.value.mismatch
     assert (mismatch.field, mismatch.recorded, mismatch.rebuilt) == (
         field, WRONG_FIELDS[field], split.record()[field])
+    assert not mismatch.requested
     assert f"the split's recorded {field} " in str(refused.value)
+    assert ", rebuilt from this view by " in str(refused.value)
     assert isinstance(refused.value, GraphViewError)
 
 
 def test_a_seed_is_named_when_the_caller_s_differs_or_it_is_not_a_seed():
+    """The caller's seed is what the record is checked against, not a value
+    rebuilt from the view, and the sentence says so."""
     view = _star()
     record = split_facts(view, seed=1).record()
     with pytest.raises(SplitMismatchError) as refused:
         rebuild_split(view, record, seed=2)
     assert (refused.value.mismatch.field, refused.value.mismatch.recorded,
-            refused.value.mismatch.rebuilt) == ("seed", 1, 2)
+            refused.value.mismatch.rebuilt, refused.value.mismatch.requested) == (
+        "seed", 1, 2, True)
+    assert str(refused.value) == "the split's recorded seed 1 is not the requested seed 2"
     for seed in ("1", True, None, 1.0):
         with pytest.raises(SplitMismatchError, match="cannot be rebuilt") as refused:
             rebuild_split(view, {**record, "seed": seed})
