@@ -9,8 +9,11 @@ Run from the repository root with the project's interpreter:
 
 Each golden file is `encode` of what `values.py` computes; the tests compute
 the same values and compare them with the committed bytes. A golden is
-rewritten only to record a change that names it (README §4 invariant 1: the
-P0-1 records and keys never).
+rewritten only to record a change that names it, and a strict one
+(`goldens.STRICT`: the P0-1 records and keys, base validation, the supplied
+importer's `cohort.json` bytes) never this round: every golden asked for is
+computed first, and when one strict golden's bytes would differ, the command
+says which and why it is strict, writes nothing and exits 1.
 
 **The P0-1 corpus** (`build_corpus`, written once and never rewritten: a kept
 artefact is read as it is) is a registry with two schema-1 versions and the
@@ -64,7 +67,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from tests.fixtures.goldens import CORPUS, GOLDENS, encode, sha256
+from tests.fixtures.goldens import CORPUS, GOLDENS, STRICT, encode, sha256
 
 #: Where the measured reports' paths are said to be, in place of the build's
 #: temporary root.
@@ -259,13 +262,29 @@ def main(argv: list[str] | None = None) -> int:
         build_corpus(CORPUS)
         print(f"wrote {CORPUS}")
         return 0
+    computed: dict[str, bytes] = {}
     for name in args.goldens or sorted(GOLDEN_WRITERS):
         with tempfile.TemporaryDirectory() as tmp:
-            for filename, data in GOLDEN_WRITERS[name](Path(tmp).resolve()).items():
-                path = GOLDENS / filename
-                changed = not path.exists() or path.read_bytes() != data
-                path.write_bytes(data)
-                print(f"{'wrote' if changed else 'unchanged'} {path.relative_to(GOLDENS)}")
+            computed.update(GOLDEN_WRITERS[name](Path(tmp).resolve()))
+    committed = {filename: (GOLDENS / filename).read_bytes()
+                 if (GOLDENS / filename).exists() else None for filename in computed}
+    refused = sorted(filename for filename in computed
+                     if filename in STRICT and committed[filename] != computed[filename])
+    if refused:
+        for filename in refused:
+            what = "is missing" if committed[filename] is None else "would change"
+            print(f"refused: {filename} {what}; it is strict ({STRICT[filename]})",
+                  file=sys.stderr)
+        print("nothing was written: a strict golden's difference is a change of the code it "
+              "pins, found by its test (tests/unit/test_golden_p0_*.py), which names what "
+              "differs", file=sys.stderr)
+        return 1
+    for filename, data in computed.items():
+        if committed[filename] == data:
+            print(f"unchanged {filename}")
+            continue
+        (GOLDENS / filename).write_bytes(data)
+        print(f"wrote {filename}")
     return 0
 
 

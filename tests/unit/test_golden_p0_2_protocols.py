@@ -5,13 +5,18 @@ P0-2: the protocol judgments and their sentences, as on the unchanged tree.
 Stage 3: the protocols are re-expressed by capability "with the same
 acceptance and sentences". This pins, for every record the model spec can
 write (a base with no task; a finetune with the disease, gene or
-patients-like-me head) and for no record read, every protocol name and five
-names that are none (retired modes, a wrong case, an empty name, None), and
-twelve cohort-version counts cases (none; without genes; each gene need met
-or missing; counts of the wrong type), what `src/evaluation/protocols.py`'s
-`available`, `model_refusal`, `inputs_refusal` and `refusal` return, with
-their sentences, and `names()` and the two standing sentences
-(`tests/fixtures/goldens/values.p0_2_values`).
+patients-like-me head), for no record read and for three records the spec
+refuses (a finetune with no head or an unknown head, a base with a head:
+only they reach `available`'s sentence for a record no protocol takes and
+`model_refusal`'s without "It can be measured by"), every protocol name and
+five names that are none (retired modes, a wrong case, an empty name, None),
+and twelve cohort-version counts cases (none; without genes; each gene need
+met or missing; counts of the wrong type), what
+`src/evaluation/protocols.py`'s `available`, `model_refusal`,
+`inputs_refusal` and `refusal` return, with their sentences, and `names()`
+and the two standing sentences (`tests/fixtures/goldens/values.p0_2_values`).
+That is every sentence the module can say for these inputs; the one it has
+for a need without words (`inputs_refusal`) no protocol of the table has.
 
 A later stage that adds a protocol (Stage 5) changes this golden by name in
 its own commit; the three existing rows' acceptance and sentences do not
@@ -22,7 +27,7 @@ Module: tests/unit/test_golden_p0_2_protocols.py
 from __future__ import annotations
 
 from tests.fixtures.goldens import encode, golden, golden_bytes
-from tests.fixtures.goldens.values import P0_2_RECORDS, p0_2_values
+from tests.fixtures.goldens.values import P0_2_RECORDS, P0_2_UNWRITABLE_RECORDS, p0_2_values
 
 
 def test_p0_2_the_records_judged_are_every_one_the_spec_can_write():
@@ -33,6 +38,26 @@ def test_p0_2_the_records_judged_are_every_one_the_spec_can_write():
     writable = {("base", None)} | {("finetune", task) for task in TASKS}
     assert {stage for stage, _task in writable} == set(LEARNING_STAGES)
     assert set(P0_2_RECORDS) == writable | {(None, None)}
+
+
+def test_p0_2_the_records_the_spec_cannot_write_reach_what_no_written_one_does():
+    """P0-2's coverage of the sentences for a record no protocol takes: none
+    of `P0_2_UNWRITABLE_RECORDS` is a record the spec can write or the record
+    of none read, and between them they reach an `available` reason and a
+    `model_refusal` sentence that no record of `P0_2_RECORDS` reaches, which
+    the golden holds."""
+    from src.models.bundle.spec import TASKS
+
+    writable = {("base", None)} | {("finetune", task) for task in TASKS}
+    unwritable = set(P0_2_UNWRITABLE_RECORDS)
+    assert len(unwritable) == len(P0_2_UNWRITABLE_RECORDS)
+    assert not unwritable & (writable | {(None, None)})
+    expected = golden("p0_2_protocols.json")
+    for section, key in (("available", "reason"), ("model_refusal", "refusal")):
+        said = {True: set(), False: set()}
+        for entry in expected[section]:
+            said[(entry["learning_stage"], entry["task"]) in unwritable].add(entry[key])
+        assert said[True] - said[False], section
 
 
 def test_p0_2_every_protocol_judgment_and_its_sentence():

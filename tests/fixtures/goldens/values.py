@@ -179,6 +179,18 @@ P0_2_RECORDS: tuple[tuple[str | None, str | None], ...] = (
     (None, None),
 )
 
+#: Records the model spec cannot write (`ModelSpec.validate` refuses a
+#: finetune without a known task head and a base with one), judged beside
+#: `P0_2_RECORDS` because only they reach `available`'s sentence for a record
+#: no protocol takes and `model_refusal`'s sentence without "It can be
+#: measured by": a finetune with no head, one with an unknown head, and a base
+#: with a head.
+P0_2_UNWRITABLE_RECORDS: tuple[tuple[str | None, str | None], ...] = (
+    ("finetune", None),
+    ("finetune", "unknown"),
+    ("base", "disease"),
+)
+
 #: Names that are no protocol of this build: retired modes, a wrong case, an
 #: empty name and none at all.
 P0_2_UNKNOWN_NAMES: tuple[Any, ...] = ("C", "D", "Disease", "", None)
@@ -208,10 +220,12 @@ def p0_2_values() -> dict[str, Any]:
     """P0-2 (`p0_2_protocols.json`): `names()`, the two standing sentences,
     and every result of `available`, `model_refusal`, `inputs_refusal` and
     `refusal` for each protocol and unknown name, each record of
-    `P0_2_RECORDS` and each counts case of `P0_2_COUNTS`, with its sentence."""
+    `P0_2_RECORDS` and then of `P0_2_UNWRITABLE_RECORDS`, and each counts
+    case of `P0_2_COUNTS`, with its sentence."""
     from src.evaluation import protocols
 
     names = (*protocols.names(), *P0_2_UNKNOWN_NAMES)
+    records = (*P0_2_RECORDS, *P0_2_UNWRITABLE_RECORDS)
     return {
         "names": list(protocols.names()),
         "sentences": {"BASE_MESSAGE": protocols.BASE_MESSAGE,
@@ -220,19 +234,19 @@ def p0_2_values() -> dict[str, Any]:
         "available": [
             {"learning_stage": stage, "task": task,
              "protocols": list(found), "reason": reason}
-            for stage, task in P0_2_RECORDS
+            for stage, task in records
             for found, reason in [protocols.available(stage, task)]],
         "model_refusal": [
             {"name": name, "learning_stage": stage, "task": task,
              "refusal": protocols.model_refusal(name, stage, task)}
-            for name in names for stage, task in P0_2_RECORDS],
+            for name in names for stage, task in records],
         "inputs_refusal": [
             {"name": name, "counts": case, "refusal": protocols.inputs_refusal(name, counts)}
             for name in names for case, counts in P0_2_COUNTS.items()],
         "refusal": [
             {"name": name, "learning_stage": stage, "task": task, "counts": case,
              "refusal": protocols.refusal(name, stage, task, counts)}
-            for name in names for stage, task in P0_2_RECORDS
+            for name in names for stage, task in records
             for case, counts in P0_2_COUNTS.items()],
     }
 
@@ -327,10 +341,17 @@ def toy_spec() -> Any:
     ).validate()
 
 
-def _validated(task: Any, bundle: Any) -> tuple[dict[str, Any], list[Any]]:
-    """`task.validate(bundle)` on CPU, and every score the LP head's
-    `raw_score` returned during it, in call order (positives, then
-    negatives), as validation itself computed them."""
+def _validated(task: Any, bundle: Any) -> tuple[dict[str, Any], dict[str, Any]]:
+    """`task.validate(bundle)` on CPU, and the raw scores it computed, as
+    validation itself computed them: every output of the LP head's
+    `raw_score` during it, concatenated in call order, the first
+    `task.val_head.numel()` being the positives' and the rest the negatives'.
+
+    Only the scores are pinned, not how many calls made them: one call per
+    side today, and one call over both sides or one per chunk score the same
+    pairs. What this assumes is the order: every positive, in pair order,
+    before every negative, in pair order. A validation that interleaved them
+    would fail P0-3 with no score changed, which its author then states."""
     import torch
 
     scores: list[Any] = []
@@ -346,7 +367,10 @@ def _validated(task: Any, bundle: Any) -> tuple[dict[str, Any], list[Any]]:
         metrics = task.validate(bundle, torch.device("cpu"))
     finally:
         del bundle.lp_head.raw_score
-    return metrics, scores
+    scored = torch.cat(scores)
+    positives = task.val_head.numel()
+    return metrics, {"positive": _tensor(scored[:positives]),
+                     "negative": _tensor(scored[positives:])}
 
 
 def _validation_case(view: Any, split: Any, spec: Any, *, seed: int,
@@ -369,11 +393,7 @@ def _validation_case(view: Any, split: Any, spec: Any, *, seed: int,
         "pairs": {name: _tensor(getattr(task, name))
                   for name in ("val_head", "val_rel", "val_tail", "val_neg_tail")},
         "weights": {"seed": WEIGHT_SEED, "state_sha256": weights},
-        # The number of calls is pinned itself; the first two are the
-        # positives' and the negatives' scores.
-        "scores": {"calls": len(scores),
-                   **{name: _tensor(t) for name, t in zip(("positive", "negative"), scores,
-                                                         strict=False)}},
+        "scores": scores,
         "metrics": metrics,
     }
 
@@ -511,7 +531,7 @@ def p0_4_values(scratch: Path) -> tuple[dict[str, Any], dict[str, bytes]]:
 
 
 __all__ = ["FIXED_CODE_REVISION", "GENE_LABEL", "P0_2_COUNTS", "P0_2_RECORDS",
-           "P0_2_UNKNOWN_NAMES", "TAKEN_ON", "WEIGHT_SEED", "cpu_environment",
-           "fixed_code_revision", "fixed_weights", "gene_source_cases", "p0_1_values",
-           "p0_2_values", "p0_3_values", "p0_4_values", "state_digest", "toy_spec",
-           "toy_view"]
+           "P0_2_UNKNOWN_NAMES", "P0_2_UNWRITABLE_RECORDS", "TAKEN_ON", "WEIGHT_SEED",
+           "cpu_environment", "fixed_code_revision", "fixed_weights", "gene_source_cases",
+           "p0_1_values", "p0_2_values", "p0_3_values", "p0_4_values", "state_digest",
+           "toy_spec", "toy_view"]

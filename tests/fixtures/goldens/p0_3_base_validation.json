@@ -186,7 +186,6 @@
         }
       },
       "scores": {
-        "calls": 2,
         "negative": {
           "dtype": "torch.float32",
           "sha256": "5600fc2645048864a6f6a27240fd673f0cee005d68e15ba7534a6482262d513e",
@@ -365,7 +364,6 @@
         }
       },
       "scores": {
-        "calls": 2,
         "negative": {
           "dtype": "torch.float32",
           "sha256": "3d0a22a22bbab6365c46e4ae54d674049d6c9471f2016c859ef509657ce21f92",
@@ -500,7 +498,6 @@
         }
       },
       "scores": {
-        "calls": 2,
         "negative": {
           "dtype": "torch.float32",
           "sha256": "6b0c09674499fa6e1379da78b960f36476eaaac8501866bb446bdf87be8de6ab",

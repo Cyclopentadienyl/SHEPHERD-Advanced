@@ -14,19 +14,20 @@ by `tests/unit/test_golden_p0_*.py` and `tests/unit/test_pin_p0_5_*.py`:
   the commit that adds it);
 - **P0-2** (`p0_2_protocols.json`): every judgment of
   `src/evaluation/protocols.py` with its sentence;
-- **P0-3** (`p0_3_base_validation.json`): base validation's fixed pairs,
-  scores and returned dict on CPU;
-- **P0-4** (`p0_4_registry.json`, `p0_4_cohort_graph.json`,
-  `p0_4_cohort_genes.json`): the registry's schema-1 reads, the report block
-  and the exact `cohort.json` bytes the supplied importer writes.
+- **P0-3** (`p0_3_base_validation.json`, strict): base validation's fixed
+  pairs, scores and returned dict on CPU;
+- **P0-4** (`p0_4_registry.json`; `p0_4_cohort_graph.json` and
+  `p0_4_cohort_genes.json`, strict): the registry's schema-1 reads, the
+  report block and the exact `cohort.json` bytes the supplied importer
+  writes.
 
 **How they were made.** `values.py` computes every pinned value from the
 production functions; `generate.py` writes the files from those same
 functions (``python -m tests.fixtures.goldens.generate`` from the repository
 root) and built the P0-1 corpus once (``--corpus``). The tests compute the
 values again and compare them with the committed bytes. A golden is updated
-only by a change that names what it changes, and the strict ones not at all
-this round.
+only by a change that names what it changes, and the strict ones (`STRICT`)
+not at all this round: the generator refuses to write one.
 
 **One encoding** (`encode`): ASCII JSON, keys sorted, two-space indent, no NaN
 or infinity, one final newline. It is the ledger writer's and the registry's
@@ -50,6 +51,23 @@ GOLDENS = Path(__file__).resolve().parent
 #: kept artefacts are read as they are.
 CORPUS = GOLDENS / "p0_1_corpus"
 
+#: The strict goldens, by file, each with the rule of the round's plan that
+#: fixes its bytes. No change of this round rewrites one: `generate.main`
+#: refuses, writing nothing, when what it computes differs from one, and the
+#: golden's test names what differs.
+STRICT: dict[str, str] = {
+    "p0_1_records.json": (
+        "README §4 invariant 1: build_record output, store-scan keys and manifest digests "
+        "stay byte-identical over the whole round"),
+    "p0_3_base_validation.json": (
+        "README §5 Stage 1: base validation stays byte-identical, its old validation pairs "
+        "and math holding in a fixed environment (Checkpoint A)"),
+    "p0_4_cohort_graph.json": (
+        "README §5 Stage 4: supplied imports keep writing schema 1 byte-identically"),
+    "p0_4_cohort_genes.json": (
+        "README §5 Stage 4: supplied imports keep writing schema 1 byte-identically"),
+}
+
 
 def encode(value: Any) -> bytes:
     """The one encoding of every golden file (module docstring)."""
@@ -71,4 +89,4 @@ def golden(name: str) -> Any:
     return json.loads(golden_bytes(name))
 
 
-__all__ = ["CORPUS", "GOLDENS", "encode", "golden", "golden_bytes", "sha256"]
+__all__ = ["CORPUS", "GOLDENS", "STRICT", "encode", "golden", "golden_bytes", "sha256"]

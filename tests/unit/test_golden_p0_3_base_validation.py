@@ -19,11 +19,17 @@ tests/unit/test_base_lp_task.py and for two demo-size synthetic workspaces
   bits, so there they are compared to within 1e-5 relative (counts exactly),
   which still catches a refactor that changes a pair or a score.
 
+The scores are pinned, not the calls that made them: whether the LP head
+scores the pairs in one call per side (as today), in one over both sides or in
+chunks, the same scores pin the same values. What is assumed is the order:
+every positive, in pair order, before every negative (`values._validated`).
+
 Module: tests/unit/test_golden_p0_3_base_validation.py
 """
 from __future__ import annotations
 
 import math
+from types import SimpleNamespace
 
 import pytest
 
@@ -62,8 +68,9 @@ def regenerated(tmp_path_factory):
 def test_p0_3_the_fixed_validation_pairs_are_exact(regenerated):
     """P0-3: for each case, the view, split, task settings, the fixed pairs
     and their counts, and the weights' digest equal the golden exactly on any
-    machine: they are integers and digests, and validation scores twice per
-    call (positives, then negatives)."""
+    machine: they are integers and digests; and validation scores each fixed
+    pair once, as many positive scores as positives and negative scores as
+    negatives."""
     expected = golden("p0_3_base_validation.json")
     assert sorted(regenerated["cases"]) == sorted(expected["cases"]) == [
         "base_workspace", "demo_workspace", "toy_view"]
@@ -71,7 +78,9 @@ def test_p0_3_the_fixed_validation_pairs_are_exact(regenerated):
         got = regenerated["cases"][name]
         for key in ("view_digest", "split", "task", "pairs", "weights"):
             assert got[key] == want[key], (name, key)
-        assert got["scores"]["calls"] == want["scores"]["calls"] == 2, name
+        for side, pairs in (("positive", "val_head"), ("negative", "val_neg_tail")):
+            assert (got["scores"][side]["shape"] == want["scores"][side]["shape"]
+                    == want["pairs"][pairs]["shape"]), (name, side)
         assert want["pairs"]["val_head"]["shape"][0] == got["metrics"]["lp_positives"] > 0, name
 
 
@@ -94,3 +103,41 @@ def test_p0_3_validation_scores_and_its_returned_dict(regenerated):
             _close(got["metrics"], want["metrics"], f"{name}.metrics")
     if same_cpu:
         assert encode(regenerated) == golden_bytes("p0_3_base_validation.json")
+
+
+def test_p0_3_pins_the_scores_not_how_many_calls_made_them():
+    """P0-3 pins what validation scored, not how it called the LP head: a
+    validation that scores the same pairs, positives before negatives, in one
+    call over both sides, in one call per side or in uneven chunks is pinned
+    the same (`values._validated`), so moving the scoring into a shared
+    function that keeps every score keeps P0-3. Integer-valued scores, so the
+    comparison is about the pin, not about float rounding."""
+    import torch
+
+    from tests.fixtures.goldens.values import _validated
+
+    class Head:
+        def raw_score(self, head, relation, tail):
+            return (head * tail).sum(dim=-1) + relation
+
+    generator = torch.Generator().manual_seed(0)
+    head, tail, negative = (torch.randint(-3, 4, (5, 3), generator=generator).float()
+                            for _ in range(3))
+    relation = torch.arange(5).float()
+    heads, relations = torch.cat([head, head]), torch.cat([relation, relation])
+    tails = torch.cat([tail, negative])
+
+    def task(bounds):
+        def validate(bundle, device):
+            for start, stop in zip(bounds, bounds[1:], strict=False):
+                bundle.lp_head.raw_score(heads[start:stop], relations[start:stop],
+                                         tails[start:stop])
+            return {}
+        return SimpleNamespace(val_head=torch.zeros(5, dtype=torch.long), validate=validate)
+
+    pinned = [_validated(task(bounds), SimpleNamespace(lp_head=Head()))[1]
+              for bounds in ((0, 5, 10), (0, 10), (0, 3, 5, 8, 9, 10))]
+    assert pinned[0]["positive"]["shape"] == pinned[0]["negative"]["shape"] == [5]
+    assert pinned[0]["positive"] != pinned[0]["negative"]
+    assert pinned[1] == pinned[0]
+    assert pinned[2] == pinned[0]
