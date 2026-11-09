@@ -65,7 +65,11 @@ map beside it ([`ENTRY_MAP.md`](ENTRY_MAP.md), §10) is an inventory of the code
   - **The rest of the evaluation-holdout protocol**, the institution: how many diseases to reserve
     and from which strata, whether to apply for the larger in-hospital database, and whether the
     generator is faithful enough (`../BACKLOG.md` 11, partly answered; `../EVALUATION_COHORTS.md`
-    §5). It blocks any held-out or generalisation claim, package C's research report included.
+    §5). These open choices constrain the corresponding institutional evaluation and acceptance,
+    and claims that depend on those choices. Other research studies define and record their own
+    protocols, data roles, exposure and selection history; any held-out or generalisation claim must
+    be supported by that study's evidence. This is not a platform gate on measurement, registration,
+    query, comparison or export.
   - **Gate 3's design approval**, the reviewer's technical review and then the owner's
     confirmation (`../results-review/SPEC_3_EVIDENCE_AND_AUDIT.md` §7); not approved, not built.
   - **Patient-level reference rows against D7**, the owner, before any institutional cohort is
@@ -1141,10 +1145,19 @@ record's §3; `../BACKLOG.md` 70, 71). AP's autocast check ran on CPU with bfloa
 with its scaler ran on the GB10, on the demo (M2, M9). The HGT node-order tests skip on a host without
 pyg_lib's grouped matmul.
 
-*(2026-11-09, added to the K8 record. In its deferred list, N2 is a label of the reviewer's
-closeout assessment of 2026-11-08, whose text is not in this repository; N3 is cross-model
-selection, side-by-side comparison and export, its direction set by the owner on 2026-11-09,
-`../BACKLOG.md` §0 and 63.)*
+*(2026-11-09, added to the K8 record. N2 in its deferred list is "N2, data roles and reusable
+measurement" of the K8 closeout plan, rev 9, §3.2 (`K8_PLAN_rev9.md`, kept outside this repository;
+SHA-256 `2653128f81059a1ef540a57dda81f5b720a45fee818fc24f2d587f2bd4a7cfc1`). It extends the same
+data versions, report store and ledger to the data kinds a protocol measures (for example a
+generated `train` or `val` split, KG edge test data or an external cohort), so that one entry
+measures, keeps, registers and compares them. Each result keeps its data role as recorded: `train`
+or `val` is never presented as test, no `cohort_version` or `disease_id` is made up, and datasets
+need not be the same to be compared. K8's part is done (K8-6r.4, `4eaa67b`): a generated split's
+report and ranks never replace another run's, and the ledger's refusal of a generated split says the
+ledger does not yet record that data identity, not that research forbids it. The rest is later work.
+This N2 is neither item 16's phenotype-normalisation N2 (`../BACKLOG.md` 16) nor §2.7's "Not
+verified" N2. N3 is cross-model selection, side-by-side comparison and export, its direction set by
+the owner on 2026-11-09, `../BACKLOG.md` §0 and 63.)*
 
 *(2026-11-09, added to the K8 record.)* **K8-1 to K8-6, which landed before the closeout,** by
 commit (2026-11-02 to 2026-11-08, up to `af3a8a9`; K8 was cleared to start on 2026-10-30, the K7
