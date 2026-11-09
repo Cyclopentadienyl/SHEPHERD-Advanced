@@ -222,7 +222,7 @@ class CheckpointInfo(BaseModel):
     # The model record's summary (`src.models.bundle.record.listed_record`):
     # model or refused (with why); a model's stage, task, operation, family and
     # parent, encoder kind, the spec fields that differ from the reference
-    # recipe and whether there are none.
+    # recipe, whether there are none, and its capability description.
     record: Optional[str] = None
     record_problem: Optional[str] = None
     learning_stage: Optional[str] = None
@@ -234,6 +234,7 @@ class CheckpointInfo(BaseModel):
     encoder: Optional[str] = None
     reference: Optional[bool] = None
     differences: Optional[List[str]] = None
+    capabilities: Optional[Dict[str, Any]] = None
 
 
 # =============================================================================

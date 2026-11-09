@@ -183,8 +183,8 @@ route.
     child copied into a run there, filed under its encoder kind, and T1's
     registry; W7-W11's test runs measure that listed copy by the disease
     protocol (a test run measures a model by a protocol this build implements
-    for its stage and task head, which the runner judges on the listed model
-    record and version, `src.evaluation.protocols`). The server's lists name
+    that its capabilities admit, which the runner judges on the listed model's
+    capability description and the listed version, `src.evaluation.protocols`). The server's lists name
     the workspace, its
     checkpoints and the cohort versions by name and digest and resolve only
     what they list (W1). The service, started as the launcher starts it in its
@@ -4219,14 +4219,14 @@ def _listed_test_inputs(label: str, workspace: str, run: str, filename: str, *,
     (`test_page.start_test_run`): the version, the workspace and the checkpoint
     found in the server's lists again by name, the digests those lists show
     passed as the expected ones, the evaluation `protocol` asked apart from the
-    learning stage and task the listing's model record names, the listed
-    version's counts, and the registry and evidence directories from their
-    settings. `protocol` and `choices` (`record`, `deterministic`) are the
-    operator's. As the page's Start does, the protocol is first judged on that
-    record and those counts (`src.evaluation.protocols.refusal`); the runner
-    judges it again before it starts, and the run on the bytes it reads. M5's
-    test runs ask for the disease protocol on the probe's own disease
-    children."""
+    learning stage, task and capability description the listing's model
+    record gives, the listed version's kind and counts, and the registry and
+    evidence directories from their settings. `protocol` and `choices`
+    (`record`, `deterministic`) are the operator's. As the page's Start does,
+    the protocol is first judged on that description and that version
+    (`src.evaluation.protocols.refusal`); the runner judges it again before it
+    starts, and the run on the bytes it reads. M5's test runs ask for the
+    disease protocol on the probe's own disease children."""
     from src.api.services import server_lists
     from src.api.services.training_manager import TestRunInputs
     from src.config import server_settings
@@ -4240,7 +4240,7 @@ def _listed_test_inputs(label: str, workspace: str, run: str, filename: str, *,
                    if (item.run, item.filename) == (run, filename)), None)
     assert listed is not None and listed.sha256, (
         f"the server lists no readable checkpoint {run}/{filename} in {workspace}")
-    why = protocols.refusal(protocol, listed.learning_stage, listed.task, version.counts)
+    why = protocols.refusal(protocol, listed.capabilities, version.kind, version.counts)
     assert why is None, (
         f"the {protocol} measurement is refused for the listed checkpoint {run}/{filename}: {why}")
     registry, evidence = (server_settings.cohort_registry(),
@@ -4252,8 +4252,9 @@ def _listed_test_inputs(label: str, workspace: str, run: str, filename: str, *,
         checkpoint=server_lists.resolve_checkpoint(workspace, listed.architecture, run,
                                                    filename),
         checkpoint_sha256=listed.sha256, protocol=protocol,
-        learning_stage=listed.learning_stage, task=listed.task, version_counts=version.counts,
-        evidence_dirs=tuple(evidence.value), **choices)
+        learning_stage=listed.learning_stage, task=listed.task,
+        capabilities=listed.capabilities, version_kind=version.kind,
+        version_counts=version.counts, evidence_dirs=tuple(evidence.value), **choices)
 
 
 def _first_line(process: Any, timeout: float) -> str:
@@ -5325,9 +5326,9 @@ def _m5_real(report: Report, runs: Path, real: Path, workspaces_root: Path, devi
         """The disease child RW2 measures and RW3's refused test start names:
         finetuned by the production trainer from R4's resumed base on the real
         workspace, which is only read, into a run directory of its own under
-        <work>/real/m5 (`_train_disease_child`), with the learning stage and
-        task its model record names (through the one reader), which the test
-        runs' inputs carry as the listed record's. Trained once, by RW2; a
+        <work>/real/m5 (`_train_disease_child`), with the learning stage, task
+        and capability description its model record gives (through the one
+        reader), which the test runs' inputs carry as the listed record's. Trained once, by RW2; a
         training that fails is RW2's failure, and RW3 then says it is not
         available."""
         from src.models.bundle.record import read_model_record
@@ -5346,6 +5347,7 @@ def _m5_real(report: Report, runs: Path, real: Path, workspaces_root: Path, devi
             state["task_child"] = {"path": trained.child, "sha256": read.identity.sha256,
                                    "learning_stage": record.learning_stage,
                                    "task": record.task,
+                                   "capabilities": record.capabilities,
                                    "training_seconds": trained.seconds}
         return state["task_child"]
 
@@ -5364,6 +5366,7 @@ def _m5_real(report: Report, runs: Path, real: Path, workspaces_root: Path, devi
                 version_sha256=version.identity.sha256, workspace=real,
                 checkpoint=child["path"], checkpoint_sha256=child["sha256"],
                 protocol="disease", learning_stage=child["learning_stage"], task=child["task"],
+                capabilities=child["capabilities"], version_kind=version.kind,
                 version_counts=version.manifest.get("counts"), record=True))
             assert started.get("success"), "the runner refused the test run"
             not_reached = _training_stop_does_not_reach_a_test_run(manager)
@@ -5424,6 +5427,7 @@ def _m5_real(report: Report, runs: Path, real: Path, workspaces_root: Path, devi
             version_sha256=version.identity.sha256, workspace=real, checkpoint=child["path"],
             checkpoint_sha256=child["sha256"], protocol="disease",
             learning_stage=child["learning_stage"], task=child["task"],
+            capabilities=child["capabilities"], version_kind=version.kind,
             version_counts=version.manifest.get("counts"))
         manager = TrainingManager()
         # A new base run by the reference recipe (or `task_sizes` over it, as

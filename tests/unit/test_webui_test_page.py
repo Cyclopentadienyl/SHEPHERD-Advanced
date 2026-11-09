@@ -67,6 +67,7 @@ pytest.importorskip("torch")
 
 from src.config.model_types import WRITTEN_BEFORE_SPEC  # noqa: E402
 from src.webui.components import test_page as tp  # noqa: E402
+from tests.fixtures.capabilities import described  # noqa: E402
 from tests.fixtures.operator_access import (  # noqa: E402
     OPERATOR_BASE_URL,
     gradio_request,
@@ -3151,7 +3152,15 @@ NO_CAUSAL = {**NO_GENES, "genes": {"cases_with_causal_genes": 0,
 
 
 def _model(task="disease", stage="finetune", record="model", **extra):
-    return {"record": record, "learning_stage": stage, "task": task, **extra}
+    """A listed model as the server's list gives it: its record's stage and
+    task, and the capability description the protocols judge (none for a
+    record not read as a model)."""
+    return {"record": record, "learning_stage": stage, "task": task,
+            "capabilities": described(stage, task) if record == "model" else None, **extra}
+
+
+#: A listed supplied cohort version's kind, as the server's list gives it.
+SUPPLIED = "supplied"
 
 
 def test_measure_refusal_says_why_each_kind_is_not_measured():
@@ -3165,12 +3174,14 @@ def test_measure_refusal_says_why_each_kind_is_not_measured():
     from src.webui.components import renderers as r
 
     refusal = tp.measure_refusal
-    assert refusal(_model("disease"), {"counts": NO_GENES}, "disease") is None
+    assert refusal(_model("disease"), {"kind": SUPPLIED, "counts": NO_GENES}, "disease") is None
     # No measurement chosen while the record admits one is said, never filled in.
-    assert refusal(_model("disease"), {"counts": NO_GENES}, None) == tp.CHOOSE_A_MEASUREMENT
+    assert refusal(_model("disease"), {"kind": SUPPLIED, "counts": NO_GENES}, None) == (
+        tp.CHOOSE_A_MEASUREMENT)
     # A base: the base message, whatever is asked of it (§5.4).
     for protocol in (None, "disease", "gene"):
-        assert refusal(_model(None, "base"), {"counts": NO_GENES}, protocol) == (
+        assert refusal(_model(None, "base"), {"kind": SUPPLIED, "counts": NO_GENES},
+                       protocol) == (
             protocols.BASE_MESSAGE)
     specless, refused, unread = ({"record": "refused", "record_problem": WRITTEN_BEFORE_SPEC},
                                  {"record": "refused", "record_problem": "record version 9"},
@@ -3187,13 +3198,13 @@ def test_measure_refusal_says_why_each_kind_is_not_measured():
     assert refusal(unread, None, None) == "Record not read: " + tp.NOT_MEASURED_HERE
     # A record no protocol takes, a protocol the record does not meet, and a
     # name that is no protocol: the definition's sentences, by its ordinary rules.
-    assert refusal(_model("C"), None, None) == protocols.available("finetune", "C")[1]
+    assert refusal(_model("C"), None, None) == protocols.available(described("finetune", "C"))[1]
     assert refusal(_model("gene"), None, "disease") == (
-        protocols.model_refusal("disease", "finetune", "gene"))
+        protocols.model_refusal("disease", described("finetune", "gene")))
     assert "It can be measured by gene." in refusal(_model("gene"), None, "disease")
     for name in ("C", "D", "Disease"):
         assert refusal(_model("disease"), None, name) == (
-            protocols.model_refusal(name, "finetune", "disease"))
+            protocols.model_refusal(name, described("finetune", "disease")))
         assert "is not a measurement this build implements" in refusal(_model("disease"), None,
                                                                         name)
 
@@ -3236,9 +3247,9 @@ def test_a_measurement_needs_a_version_that_lists_its_genes(protocol, counts, mi
     source field that lists them."""
     from src.evaluation import protocols
 
-    model = _model(protocols.PROTOCOLS[protocol].task)
-    got = tp.measure_refusal(model, {"counts": counts}, protocol)
-    assert got == protocols.inputs_refusal(protocol, counts)
+    model = _model(protocols.PROTOCOLS[protocol].head[1])
+    got = tp.measure_refusal(model, {"kind": SUPPLIED, "counts": counts}, protocol)
+    assert got == protocols.inputs_refusal(protocol, SUPPLIED, counts)
     if missing is None:
         assert got is None
     else:
@@ -3263,13 +3274,15 @@ def test_start_and_its_reason_refuse_what_is_not_measured_with_one_rule(site, mo
     binding = tp.workspace_binding(site.demo, tp.find(page["workspaces"], "name", "demo"))
     manager = FakeManager()
     gene = "gatv2/20261022-000000_gene_dddddd/last.pt"
-    counts = tp.find(page["versions"], "label", LABEL)["counts"]
+    version = tp.find(page["versions"], "label", LABEL)
+    counts = version["counts"]
+    assert version["kind"] == SUPPLIED
     cases = {
         f"gatv2/{BUNDLE_BASE_RUN}/last.pt": (None, protocols.BASE_MESSAGE),
         "gatv2/20261021-000000_refused_cccccc/last.pt":
             (None, "Record not readable (checkpoint record version 999"),
         site.history_key: (None, f"Record not readable ({WRITTEN_BEFORE_SPEC})"),
-        gene: ("gene", protocols.inputs_refusal("gene", counts)),
+        gene: ("gene", protocols.inputs_refusal("gene", SUPPLIED, counts)),
     }
     assert cases[gene][1].startswith("this cohort version lists no causal genes")
     for key, (protocol, says) in cases.items():
@@ -3600,10 +3613,12 @@ def test_the_help_says_what_the_measurement_options_are():
     assert title == "Measurement" and len(lead) <= 100 and len(text.split()) <= 80
     assert "measurements this build implements" in lead
     assert "formal test is not implemented" in text and "Mode C" not in text
+    # Offered by what the model offers (Stage 3), not by a stage list.
+    assert "capabilities meet" in text and "learning stage" not in text
     title, text = tp.FIELD_HELP["shep-test-model"]
     assert title == "Model" and len(text.split("\n")[0]) <= 100
     assert "a base, or a file without a model spec, is listed but not measured here" in text
-    assert "measured by that task" not in text
+    assert "measured by that task" not in text and "capabilities meet" in text
 
 
 @pytest.fixture
@@ -3611,10 +3626,11 @@ def test_only_protocols(monkeypatch):
     """§5.5's test-only protocols, the product table untouched: p1 and p2 both
     take a finetuned model with the disease head and run the disease
     evaluator, so neither name is a task."""
+    from dataclasses import replace
+
     from src.evaluation import protocols
 
-    table = {name: protocols.Protocol(name, "finetune", "disease", "disease")
-             for name in ("p1", "p2")}
+    table = {name: replace(protocols.PROTOCOLS["disease"], name=name) for name in ("p1", "p2")}
     monkeypatch.setattr(protocols, "PROTOCOLS", table)
     return table
 
@@ -3675,8 +3691,9 @@ def test_a_listed_disease_child_offers_the_test_only_protocols_and_starts_one(
                             ("busy", ""))
     assert "p2 measurement" in card
 
-    counts = tp.find(page["versions"], "label", LABEL)["counts"]
-    reason = protocols.refusal("p1", "base", None, counts)
+    version = tp.find(page["versions"], "label", LABEL)
+    reason = protocols.refusal("p1", tp.find_model(models, base)["capabilities"],
+                               version["kind"], version["counts"])
     assert reason == protocols.BASE_MESSAGE and tp.measurement_choices(
         tp.find_model(models, base)) == []
     assert state(base, "p1") == (False, f"Disabled: {reason}")

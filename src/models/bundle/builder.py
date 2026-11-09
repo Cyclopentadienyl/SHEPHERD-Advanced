@@ -21,7 +21,8 @@ from torch import Tensor
 
 from src.models.bundle.encoders import GATv2Encoder, GraphEncoder, InputModule
 from src.models.bundle.lp_head import DistMultHead
-from src.models.bundle.spec import ModelSpec, SpecError, ViewShape
+from src.models.bundle.spec import (ModelSpec, SpecError, ViewShape, encoder_declaration,
+                                    encoder_not_built)
 from src.models.tasks.heads import PatientEncoder, TaskHead, build_task_head
 
 
@@ -124,12 +125,20 @@ def _refuse_contradictory_shared_weights(module: nn.Module, state: Mapping[str, 
                     "state is not a model it describes")
 
 
+#: The encoder implementation of each kind this build builds. A kind is built
+#: only when it is declared (`src.models.bundle.spec.ENCODER_DECLARATIONS`,
+#: what its capabilities and checks are read from) and implemented here.
+_ENCODERS: Dict[str, type] = {"gatv2": GATv2Encoder}
+
+
 def _build_encoder(spec: ModelSpec, view: ViewShape) -> GraphEncoder:
+    """The spec's encoder, dispatched by its kind; any kind without both a
+    declaration and an implementation is refused (`encoder_not_built`)."""
     kind = spec.encoder.kind
-    if kind == "gatv2":
-        return GATv2Encoder(spec.encoder, spec.input.dim, len(view.relations))
-    raise SpecError(f"encoder kind {kind!r} is declared but not yet behind the GraphEncoder "
-                    "contract in this build")
+    implementation = _ENCODERS.get(kind) if encoder_declaration(kind) is not None else None
+    if implementation is None:
+        raise SpecError(encoder_not_built(kind))
+    return implementation(spec.encoder, spec.input.dim, len(view.relations))
 
 
 def build_bundle(spec: ModelSpec, view: Any) -> ModelBundle:

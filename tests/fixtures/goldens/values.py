@@ -216,16 +216,34 @@ P0_2_COUNTS: dict[str, Any] = {
 }
 
 
+def p0_2_model(stage: str | None, task: str | None) -> dict[str, Any] | None:
+    """The capability description P0-2 judges for the record `(stage, task)`
+    (research comparison Stage 3: protocols judge a model's capabilities),
+    `tests.fixtures.capabilities.described`: None for no record read; for a
+    record the spec can write, its reference spec's description by the one
+    derivation (`model_capabilities`); for one it cannot write
+    (`P0_2_UNWRITABLE_RECORDS`), a test double changed from its stage's
+    reference description only in the task heads the record names: a
+    finetune with no task head, a finetune with the unknown head and a base
+    carrying the disease head."""
+    from tests.fixtures.capabilities import described
+
+    return described(stage, task)
+
+
 def p0_2_values() -> dict[str, Any]:
     """P0-2 (`p0_2_protocols.json`): `names()`, the two standing sentences,
     and every result of `available`, `model_refusal`, `inputs_refusal` and
     `refusal` for each protocol and unknown name, each record of
-    `P0_2_RECORDS` and then of `P0_2_UNWRITABLE_RECORDS`, and each counts
-    case of `P0_2_COUNTS`, with its sentence."""
+    `P0_2_RECORDS` and then of `P0_2_UNWRITABLE_RECORDS` (judged by its
+    capability description, `p0_2_model`), and each counts case of
+    `P0_2_COUNTS` (a supplied cohort version's counts), with its sentence."""
     from src.evaluation import protocols
 
     names = (*protocols.names(), *P0_2_UNKNOWN_NAMES)
     records = (*P0_2_RECORDS, *P0_2_UNWRITABLE_RECORDS)
+    models = {record: p0_2_model(*record) for record in records}
+    kind = protocols.SUPPLIED
     return {
         "names": list(protocols.names()),
         "sentences": {"BASE_MESSAGE": protocols.BASE_MESSAGE,
@@ -235,17 +253,18 @@ def p0_2_values() -> dict[str, Any]:
             {"learning_stage": stage, "task": task,
              "protocols": list(found), "reason": reason}
             for stage, task in records
-            for found, reason in [protocols.available(stage, task)]],
+            for found, reason in [protocols.available(models[stage, task])]],
         "model_refusal": [
             {"name": name, "learning_stage": stage, "task": task,
-             "refusal": protocols.model_refusal(name, stage, task)}
+             "refusal": protocols.model_refusal(name, models[stage, task])}
             for name in names for stage, task in records],
         "inputs_refusal": [
-            {"name": name, "counts": case, "refusal": protocols.inputs_refusal(name, counts)}
+            {"name": name, "counts": case,
+             "refusal": protocols.inputs_refusal(name, kind, counts)}
             for name in names for case, counts in P0_2_COUNTS.items()],
         "refusal": [
             {"name": name, "learning_stage": stage, "task": task, "counts": case,
-             "refusal": protocols.refusal(name, stage, task, counts)}
+             "refusal": protocols.refusal(name, models[stage, task], kind, counts)}
             for name in names for stage, task in records
             for case, counts in P0_2_COUNTS.items()],
     }
@@ -533,5 +552,5 @@ def p0_4_values(scratch: Path) -> tuple[dict[str, Any], dict[str, bytes]]:
 __all__ = ["FIXED_CODE_REVISION", "GENE_LABEL", "P0_2_COUNTS", "P0_2_RECORDS",
            "P0_2_UNKNOWN_NAMES", "P0_2_UNWRITABLE_RECORDS", "TAKEN_ON", "WEIGHT_SEED",
            "cpu_environment", "fixed_code_revision", "fixed_weights", "gene_source_cases",
-           "p0_1_values", "p0_2_values", "p0_3_values", "p0_4_values", "state_digest",
+           "p0_1_values", "p0_2_model", "p0_2_values", "p0_3_values", "p0_4_values", "state_digest",
            "toy_spec", "toy_view"]

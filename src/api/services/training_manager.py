@@ -13,8 +13,8 @@ Purpose:
       scripts/train_model.py with its config in a temp YAML, and **test runs**,
       scripts/measure_scorer.py on one registered cohort version, measuring a
       model by the evaluation protocol asked (`--mode <protocol>`), once
-      `src.evaluation.protocols` has judged that the listed model record and
-      version admit it
+      `src.evaluation.protocols` has judged that the listed model's
+      capabilities and the listed version admit it
     - Holds **one GPU slot**: a job that is running or stopping keeps it,
       whatever its type, and the deployment's GPU lock
       (src/utils/gpu_lock.py) is checked before a start, so a job a CLI
@@ -273,16 +273,18 @@ class TestRunInputs:
 
     The caller resolves a request's names through those lists (WP1): the
     registry from its setting, the version by label with its `cohort.json`
-    digest and `version_counts` (that listing's `counts`), the workspace by
-    name under the workspace root, the checkpoint by name and digest from that
-    workspace's listing, `learning_stage` and `task` from the same listing's
-    model record (`task` is the model's task head, None for none), the
-    evidence directories from their setting. `protocol`, `record` and
-    `deterministic` are the operator's choices: `protocol` is the evaluation
-    protocol asked (`--mode`), one `src.evaluation.protocols` admits for that
-    record and version, and it need not be the model's task. The run judges it
-    again on the bytes it reads. Nothing else is chosen: the batch size is the
-    CLI's default and the device the deployment's (D5).
+    digest, `version_kind` and `version_counts` (that listing's `kind` and
+    `counts`), the workspace by name under the workspace root, the checkpoint
+    by name and digest from that workspace's listing, `learning_stage`, `task`
+    and `capabilities` from the same listing's model record (`task` is the
+    model's task head, None for none; `capabilities` its capability
+    description, which the protocol is judged by), the evidence directories
+    from their setting. `protocol`, `record` and `deterministic` are the
+    operator's choices: `protocol` is the evaluation protocol asked
+    (`--mode`), one `src.evaluation.protocols` admits for that model and
+    version, and it need not be the model's task. The run judges it again on
+    the bytes it reads. Nothing else is chosen: the batch size is the CLI's
+    default and the device the deployment's (D5).
     """
 
     __test__ = False  # a dataclass, not a pytest test class, whatever its name says
@@ -296,6 +298,8 @@ class TestRunInputs:
     protocol: str
     learning_stage: Optional[str]
     task: Optional[str]
+    capabilities: Optional[Mapping[str, Any]]
+    version_kind: Optional[str]
     version_counts: Optional[Mapping[str, Any]]
     evidence_dirs: Tuple[Path, ...] = ()
     record: bool = False
@@ -308,15 +312,16 @@ class TestRunInputs:
 
         Raises:
             ValueError: the reason `src.evaluation.protocols.refusal` gives
-                for the protocol asked on the listed record and version (a
-                name that is not a protocol, a model record it does not take,
-                or a version that lacks what it needs), a digest that is not
-                a full SHA-256, a path that is not absolute, or a registry or
-                label the registry's rules refuse.
+                for the protocol asked on the listed model's capabilities and
+                the listed version (a name that is not a protocol, a model it
+                does not take, or a version of a kind it does not measure or
+                that lacks what it needs), a digest that is not a full SHA-256,
+                a path that is not absolute, or a registry or label the
+                registry's rules refuse.
         """
         from src.evaluation import cohort_registry, protocols
 
-        why = protocols.refusal(self.protocol, self.learning_stage, self.task,
+        why = protocols.refusal(self.protocol, self.capabilities, self.version_kind,
                                 self.version_counts)
         if why:
             raise ValueError(why)
@@ -462,10 +467,10 @@ def _new_bundle_run(config: Mapping[str, Any]) -> Tuple[Optional[str], Optional[
     Only a base starts here: a finetune is a Fine-tune start's
     (`start_finetune`, one child per task from a base). Its keys are the
     recipe's base settings and `_NEW_RUN_KEYS`, each value one its field spec
-    takes (`_recipe_settings_problem`), and its hop list one number per layer
-    of the spec's encoder (`hops_problem`, the recipe's list when it names
-    none); a setting outside them is refused, never passed on for the process
-    to refuse."""
+    takes (`_recipe_settings_problem`), and its hop list one number per hop
+    the spec's encoder declares (`hops_problem`, the recipe's list when it
+    names none; GATv2: one per layer); a setting outside them is refused,
+    never passed on for the process to refuse."""
     from src.config.recipe import reference_settings
     from src.models.bundle.spec import ModelSpec, SpecError, hops_problem, reference_spec
 

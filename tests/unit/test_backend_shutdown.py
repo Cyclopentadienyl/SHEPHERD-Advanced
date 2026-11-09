@@ -41,6 +41,7 @@ import pytest
 pytest.importorskip("fastapi")
 
 import src.api.services.training_manager as tm  # noqa: E402
+from tests.fixtures.capabilities import described  # noqa: E402
 from tests.fixtures.job_processes import FakeProcess  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
@@ -135,6 +136,7 @@ def test_inputs(tmp_path):
         registry=registry, version_label="mygene2-2026-10", version_sha256="e" * 64,
         workspace=workspace, checkpoint=workspace / "runs" / "gatv2" / "r" / "checkpoints" / "b.pt",
         checkpoint_sha256="c" * 64, protocol="disease", learning_stage="finetune", task="disease",
+        capabilities=described("finetune", "disease"), version_kind="supplied",
         version_counts={"source_cases": 3, "ranked_eligible": 3})
 
 

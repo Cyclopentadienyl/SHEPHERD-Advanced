@@ -3,17 +3,18 @@ r"""
 Measure a model on a cohort by an evaluation protocol.
 ======================================================
 **`--mode` names the protocol, and is required** (`src/evaluation/protocols.py`):
-a measurement this build implements for a model's learning stage and task
-head, today disease, gene and patients_like_me, one for each task head. A
-protocol states the model record it takes and the evaluator that runs it
-(`src/evaluation/task_measurement.py`, `docs/working/PLAN_TEST_RESULTS.md` §8),
-and the report's `mode` is its name. A registered version's counts are judged
-against what the protocol needs right after its `cohort.json` is read, before
-the workspace or the checkpoint is; the checkpoint's model record is judged
-against the model the protocol takes right after the checkpoint is read. A
-refusal writes nothing. **The Test page runs these**: the job runner passes
-`--mode <protocol>`, the protocol the operator chose among those the listed
-model's record admits.
+a measurement this build implements, today disease, gene and patients_like_me,
+each taking a model that carries its task head. A protocol states what it needs
+of a model's capabilities, the data kinds it measures and the evaluator that
+runs it (`src/evaluation/task_measurement.py`,
+`docs/working/PLAN_TEST_RESULTS.md` §8), and the report's `mode` is its name.
+The data's kind (and a registered version's counts) is judged against what the
+protocol needs right after the split is resolved or the version's `cohort.json`
+is read, before the workspace or the checkpoint is; the checkpoint's capability
+description is judged against what the protocol needs right after the
+checkpoint is read. A refusal writes nothing. **The Test page runs these**: the
+job runner passes `--mode <protocol>`, the protocol the operator chose among
+those the listed model's capabilities admit.
 
 **Mode D** (Batch 3's measurement of the served ranking) was removed in K7: it
 no longer runs, and its kept reports and records are read by the shared
@@ -389,14 +390,17 @@ def read_measurement_inputs(
     **`protocol`** names the measurement asked for (`--mode`;
     `src.evaluation.protocols`), and the inputs are judged by it, never by
     taking its name for the model's task. A name that is not a protocol is
-    refused before anything is read. A registered version's counts are judged
-    against what the protocol needs (`protocols.inputs_refusal`) right after
-    its `cohort.json` is read, before the workspace and the checkpoint are.
-    The checkpoint's model record is judged against the stage and head the
-    protocol takes (`protocols.model_refusal`, raised as `ModelRecordError`)
-    right after the checkpoint is read and its graph roles compared, before
-    anything protocol-specific (README §8 regression 7: the model filter runs
-    first). For a protocol with `gene_fields`, a registered version's samples
+    refused before anything is read. The data's kind is judged against the
+    kinds the protocol measures (`protocols.inputs_refusal`): a generated
+    split's (`generated`) right after it is resolved, a registered version's
+    recorded kind (`CohortVersionRead.kind`) with its counts, against what the
+    protocol needs, right after its `cohort.json` is read; both before the
+    workspace and the checkpoint are. The checkpoint's model is judged by its
+    capability description (`ModelRecord.capabilities`, the description the
+    lists carry) against what the protocol needs (`protocols.model_refusal`,
+    raised as `ModelRecordError`) right after the checkpoint is read and its
+    graph roles compared, before anything protocol-specific (README §8
+    regression 7: the model filter runs first). For a protocol with `gene_fields`, a registered version's samples
     are read with their gene fields, and a generated split, once verified as
     always, is measured through the workspace's functional fixture of that
     split, read after the model check: its record against this manifest reading
@@ -496,22 +500,25 @@ def read_measurement_inputs(
     if asked is None:
         # `model_refusal` names a protocol it does not know before it looks at
         # any record: the same sentence the runner and the Test page give.
-        raise ValueError(f"{protocols.model_refusal(protocol, None, None)} Nothing was written.")
+        raise ValueError(f"{protocols.model_refusal(protocol, None)} Nothing was written.")
 
     if split is not None:
         resolved, siblings = _resolve_generated(data_dir, split)
         version = cohort_version = candidates = None
+        # **The data's kind**: a generated split, which the protocol must measure.
+        why = protocols.inputs_refusal(protocol, protocols.GENERATED, None)
     else:
         resolved, siblings = None, ()
         version, cohort_version, candidates = _resolve_registered(
             data_dir, cohort, registry, training_evidence,
             expected_sha256=expect_version_sha256,
         )
-        # **What the protocol needs from the version**, judged on this one read
-        # of its `cohort.json`, before the workspace or the checkpoint is read.
-        why = protocols.inputs_refusal(protocol, version.manifest.get("counts"))
-        if why is not None:
-            raise ValueError(f"{why} Nothing was written.")
+        # **What the protocol needs from the version**, its recorded kind and
+        # its counts, judged on this one read of its `cohort.json`, before the
+        # workspace or the checkpoint is read.
+        why = protocols.inputs_refusal(protocol, version.kind, version.manifest.get("counts"))
+    if why is not None:
+        raise ValueError(f"{why} Nothing was written.")
 
     manifest = read_split_manifest(data_dir)
     graph = read_graph_artifacts(data_dir, map_location="cpu")
@@ -550,11 +557,12 @@ def read_measurement_inputs(
         recorded_by=f"checkpoint {checkpoint}",
         compared_with=f"the workspace {data_dir}",
     )
-    # **The model the protocol takes**: the record's stage and head against the
-    # protocol's requirement, never its name. A file without a model spec is
-    # refused by the record reader itself (not readable by this build).
+    # **The model the protocol takes**: the record's capability description
+    # (the one the lists carry) against what the protocol needs, never its
+    # name. A file without a model spec is refused by the record reader itself
+    # (not readable by this build).
     record = read_model_record(read.checkpoint)
-    why = protocols.model_refusal(protocol, record.learning_stage, record.task)
+    why = protocols.model_refusal(protocol, record.capabilities)
     if why is not None:
         raise ModelRecordError(f"{why} Nothing was written.")
     task_data = None
@@ -1064,16 +1072,17 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Measure a model on a cohort by an evaluation protocol this build "
-                    "implements for the model's learning stage and task head (what the Test "
-                    "page runs)"
+                    "implements that the model's capabilities admit (what the Test page "
+                    "runs)"
     )
     # The protocol names are read now, from the one definition, not copied at import.
     parser.add_argument("--mode", choices=protocols.names(), required=True,
-                        help="The evaluation protocol: a measurement this build implements "
-                             "for a model's learning stage and task head "
-                             "(src/evaluation/protocols.py), average ranks "
-                             "(docs/working/PLAN_TEST_RESULTS.md §8). The checkpoint's model "
-                             "record must be one the protocol takes; the report's mode is the "
+                        help="The evaluation protocol: a measurement this build implements, "
+                             "judged by what the model offers (its capability description: "
+                             "heads and their scoring semantics, representations, "
+                             "computation, inputs; src/evaluation/protocols.py), average "
+                             "ranks (docs/working/PLAN_TEST_RESULTS.md §8). The checkpoint's "
+                             "model must be one the protocol takes; the report's mode is the "
                              "protocol's name")
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--data-dir", type=Path, required=True)
@@ -1906,12 +1915,12 @@ def _measure_task(args: argparse.Namespace, registry: Optional[Path], device: to
     (`src.evaluation.protocols`, `src.evaluation.task_measurement`).
 
     Every input read once and verified before anything is built or written,
-    the model record judged against the stage and head the protocol takes
-    right after the checkpoint read (provenance §9.3 hazard 3;
-    `read_measurement_inputs(protocol=)`); then the graph view rebuilt from the
-    graph read by the spec's rule and compared with the record, and the bundle
-    built and strictly loaded with the protocol's stage and task, never its
-    name. The semantics and the run are the protocol's evaluator's, and the
+    the model judged by what the protocol needs right after the checkpoint
+    read (provenance §9.3 hazard 3; `read_measurement_inputs(protocol=)`: the
+    record's capability description, never the protocol's name); then the
+    graph view rebuilt from the graph read by the spec's rule and compared
+    with the record, and the bundle built from that same record and strictly
+    loaded. The semantics and the run are the protocol's evaluator's, and the
     manifest's mode is the protocol's name (`build_manifest`). A checkpoint
     without a model spec is refused: it was written before the switch and is
     history.
@@ -1936,9 +1945,9 @@ def _measure_task(args: argparse.Namespace, registry: Optional[Path], device: to
     rule = _asdict(record.model_spec.graph_view)
     rule["exclude_relations"] = list(rule["exclude_relations"])
     view = build_graph_view(graph_data, rule=rule)
-    bundle, record = load_bundle(inputs.checkpoint.checkpoint,
-                                 learning_stage=asked.learning_stage, task=asked.task,
-                                 view_digest=view.digest)
+    # The record the protocol judged (`read_measurement_inputs`), read from the
+    # same payload: what the model offers decided, so the load checks the view.
+    bundle, record = load_bundle(inputs.checkpoint.checkpoint, view_digest=view.digest)
     bundle.to(device)
     manifest = build_manifest(
         args, graph_data, len(samples), device, digests=measurement_input_digests(inputs),

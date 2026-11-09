@@ -35,6 +35,7 @@ from src.utils.gpu_lock import (
     GpuLock,
     probe,
 )
+from tests.fixtures.capabilities import described
 from tests.fixtures.job_processes import FakeProcess
 
 SHA_CKPT = "c" * 64
@@ -116,7 +117,8 @@ def inputs(tmp_path):
         workspace=workspace,
         checkpoint=workspace / "runs" / "gatv2" / "r1" / "checkpoints" / "best.pt",
         checkpoint_sha256=SHA_CKPT, protocol="disease", learning_stage="finetune",
-        task="disease", version_counts=COUNTS)
+        task="disease", capabilities=described("finetune", "disease"),
+        version_kind=protocols.SUPPLIED, version_counts=COUNTS)
 
 
 def reports(inputs: TestRunInputs) -> Path:
@@ -507,7 +509,7 @@ def test_the_stop_route_does_not_run_on_the_event_loop():
 # --------------------------------------------------------------------------- the test job's inputs
 def test_the_test_command_line_comes_from_the_inputs_only(inputs):
     """`--mode` is the protocol asked (`inputs.protocol`), which the CLI
-    requires; the listed record's stage and task are judged, never passed."""
+    requires; the listed model's capabilities are judged, never passed."""
     outcome = Path("/tmp/job/outcome.json")
     argv = build_test_argv(inputs, None, outcome)
     assert argv[:2] == [sys.executable, str(tm.PROJECT_ROOT / "scripts" / "measure_scorer.py")]
@@ -521,10 +523,9 @@ def test_the_test_command_line_comes_from_the_inputs_only(inputs):
     from dataclasses import replace
 
     for name in ("gene", "patients_like_me"):
-        # Each protocol asked of a listed record it takes (its own stage and head).
-        taken = protocols.PROTOCOLS[name]
-        asked = replace(inputs, protocol=name, learning_stage=taken.learning_stage,
-                        task=taken.task)
+        # Each protocol asked of a listed model it takes (a finetune carrying its head).
+        asked = replace(inputs, protocol=name, task=name,
+                        capabilities=described("finetune", name))
         assert asked.reports_dir() == reports(inputs)
         argv = build_test_argv(asked, None, outcome)
         assert argv[argv.index("--mode") + 1] == name and argv.count("--mode") == 1
@@ -602,7 +603,7 @@ def test_a_deployment_device_the_cli_cannot_take_refuses_the_start(monkeypatch, 
     ({"version_label": "../x"}, "cohort label is refused"),
     ({"registry": Path("registry")}, "not an absolute path"),
     # The measurement asked, judged by the one protocol definition on the
-    # listed record and version, whoever calls. A name that is not a protocol,
+    # listed model's capabilities and the listed version, whoever calls. A name that is not a protocol,
     # whatever it may once have meant, gets the ordinary sentence naming the
     # protocols this build implements.
     ({"protocol": "C"},
@@ -613,17 +614,23 @@ def test_a_deployment_device_the_cli_cannot_take_refuses_the_start(monkeypatch, 
      "None is not a measurement this build implements (disease, gene, patients_like_me)."),
     ({"protocol": "Disease"},
      "'Disease' is not a measurement this build implements (disease, gene, patients_like_me)."),
-    # A listed record the protocol does not take: a base, a head that differs,
+    # A listed model the protocol does not take: a base, a head that differs,
     # no record read.
-    ({"learning_stage": "base", "task": None}, protocols.BASE_MESSAGE),
+    ({"learning_stage": "base", "task": None, "capabilities": described("base", None)},
+     protocols.BASE_MESSAGE),
     ({"protocol": "gene"},
      "the gene measurement takes a finetune model with the gene head; this checkpoint is a "
      "finetune model with the disease head. It can be measured by disease."),
-    ({"learning_stage": None, "task": None}, protocols.NO_RECORD),
+    ({"learning_stage": None, "task": None, "capabilities": None}, protocols.NO_RECORD),
     # A listed version without what the protocol needs.
-    ({"protocol": "gene", "task": "gene", "version_counts": {"source_cases": 3}},
+    ({"protocol": "gene", "task": "gene", "capabilities": described("finetune", "gene"),
+      "version_counts": {"source_cases": 3}},
      "this cohort version lists no causal genes, which the gene measurement needs. Import a "
      "source that lists causal_genes."),
+    # A listed version of a kind the protocol does not measure.
+    ({"version_kind": "kg_edges"},
+     "the disease measurement does not measure a cohort of kind 'kg_edges'; it measures a "
+     "generated split or a supplied cohort version."),
 ])
 def test_inputs_of_the_wrong_shape_are_refused_before_launch(monkeypatch, popen, inputs,
                                                              change, says):

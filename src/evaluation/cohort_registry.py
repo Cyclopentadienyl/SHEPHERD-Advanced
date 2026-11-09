@@ -304,6 +304,15 @@ class CohortVersionRead(NamedTuple):
     directory: Path
     samples_path: Path
 
+    @property
+    def kind(self) -> str:
+        """The version's data kind, in the words a measurement manifest's
+        `cohort_kind` uses (`src.evaluation.cohort.COHORT_KINDS`), which a
+        new measurement is judged by (`src.evaluation.protocols`): a version
+        of the one schema this revision reads (`VERSION_SCHEMA_VERSION`)
+        records no kind and is a supplied cohort."""
+        return "supplied"
+
 
 # ---------------------------------------------------------------------------
 # Registry, labels and roles

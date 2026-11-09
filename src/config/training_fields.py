@@ -277,8 +277,9 @@ FIELDS: Tuple[FieldSpec, ...] = (
               item_valid={"ge": 1}, min_length=1,
               current_api={}, current_api_item={"ge": 1}, current_api_min_length=1,
               known_divergence=True,
-              divergence_note="One hop per layer of the model spec's encoder (`hops_problem`), "
-                              "checked by the base start and by the run.",
+              divergence_note="One number per hop the model spec's encoder declares "
+                              "(`hops_problem`; GATv2: one per layer), checked by the base "
+                              "start and by the run.",
               description="Neighbor fan-out per sampling hop."),
     # ---- trainer (TrainerConfig) ------------------------------------------------------------
     FieldSpec("num_epochs", "int", 100, "trainer", projects_to="TrainerConfig.num_epochs",

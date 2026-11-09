@@ -76,6 +76,14 @@ class GraphEncoder(nn.Module):
     message-passing edges (kept apart from supervision edges by the caller),
     and, for encoders that use them, node types and relation ids. Out: one
     vector of `width` per node the caller asked for.
+
+    Each kind states, without torch, what its implementation here does: its
+    declaration (`src.models.bundle.spec.EncoderDeclaration`) gives its width,
+    the computations it offers, the hops its sampled computation needs and the
+    inputs it reads, and the model's capability description is read from it.
+    A built encoder's `width`, `uses_node_types` and `uses_relations` are its
+    declaration's answers for its spec. `chunk_size` is an execution parameter
+    of the implementation's full-view computation, not a rule of the contract.
     """
 
     #: Output width (`EncoderSpec.width`).

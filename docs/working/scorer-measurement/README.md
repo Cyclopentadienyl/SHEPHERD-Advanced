@@ -73,9 +73,10 @@ python scripts/measure_scorer.py --mode disease --checkpoint <ckpt> --data-dir <
     --split val --output reports/measurement.json
 ```
 
-`--mode` is required and names a protocol this build implements for the model's
-learning stage and task head (`src/evaluation/protocols.py`; today `disease`, `gene`
-and `patients_like_me`); the Test page passes the one the operator picks. Since
+`--mode` is required and names a protocol this build implements that the model's
+capabilities admit (`src/evaluation/protocols.py`; today `disease`, `gene` and
+`patients_like_me`, each taking a model that carries its task head); the Test page
+passes the one the operator picks. Since
 K8-6a no command runs Mode C: a run without `--mode`, or with `--mode C` or
 `--mode D`, is refused by the argument parser (exit 2). Kept Mode C and Mode D
 reports and records are read by the shared readers (policy rev 15). Every run reads

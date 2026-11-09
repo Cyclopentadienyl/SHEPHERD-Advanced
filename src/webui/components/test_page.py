@@ -23,22 +23,23 @@ docstring. Three panels, as the mockup draws them (``test-wide.png``,
   `renderers.record_kind_text`: listing opens every checkpoint, so it is an
   operator control and a read-only request is not shown it), the measurement
   (a radio of the protocols this build implements that the chosen model's
-  listed record admits, `protocols.available`: the only one is chosen, of
+  listed capabilities admit, `protocols.available`: the only one is chosen, of
   several none is until the operator picks one, and with none Start says why),
   the R10 evidence the server's setting names, "Register the result" and
   "Deterministic execution", the batch size and device the server fixes (D5),
   "🔒 Start test" through the job runner (`TrainingManager.start_test`, given
-  the measurement chosen and the model's learning stage and task from the
-  session's listing) with the **full digests shown** as the expected ones, so
+  the measurement chosen, the model's learning stage, task and capability
+  description and the version's kind from the session's listings) with the
+  **full digests shown** as the expected ones, so
   the run refuses before measuring when the file or the version it reads is
   not the one chosen. **A run starts only for a measurement this build
   implements that takes the model's record and the version's inputs**
   (`measure_refusal`, one rule for Start's reason and for the start itself,
   which asks `protocols.refusal` after the page's own record states): a
   record refused (a file without a model spec among them) or not read, a base (its
-  formal test is not implemented yet), a measurement the model's stage or task
-  head does not meet, and a measurement needing genes the version does not
-  list are refused with their reason; then the job: its state, elapsed time,
+  formal test is not implemented yet), a measurement whose needs the model's
+  capabilities do not meet (its task head among them), and a measurement
+  needing genes the version does not list are refused with their reason; then the job: its state, elapsed time,
   inputs, output tail, "🔒 Cancel" (the runner's stop for test runs only), and
   once it has ended, **what it left, from the runner** (its outcome file, kept
   and registered read from disk by WP4's helper; "no report was published"
@@ -255,9 +256,9 @@ FIELD_HELP = {
         "Model",
         "The workspace's checkpoints from the server's list, each led by what its record "
         "says it is.\n"
-        "• A model is measured by a measurement this build implements for its stage and task "
-        "head (Measurement); a base, or a file without a model spec, is listed but not "
-        "measured here.\n"
+        "• A model is measured by a measurement its capabilities meet, today its task head "
+        "(Measurement); a base, or a file without a model spec, is listed but not measured "
+        "here.\n"
         "• Listing opens every checkpoint, so it is an operator control.\n"
         "• The run is given the model fingerprint shown here and refuses before measuring if "
         "the file it reads holds other bytes.",
@@ -266,8 +267,8 @@ FIELD_HELP = {
         "Measurement",
         "What the run measures: one of the measurements this build implements for the chosen "
         "model.\n"
-        "• Each takes a model of one learning stage and task head; the options are those the "
-        "chosen model's record meets.\n"
+        "• Each needs what a model offers, such as its task head; the options are those the "
+        "chosen model's capabilities meet.\n"
         "• A single option is chosen already; of several, choose one.\n"
         "• A base is listed but not measured yet: its formal test is not implemented.\n"
         "• The report records the measurement as its mode.",
@@ -1331,13 +1332,13 @@ def measurement_label(name: Any) -> str:
 
 def measurement_choices(item: Optional[Mapping[str, Any]]) -> List[Tuple[str, str]]:
     """The Measurement radio's options for the chosen listing entry `item`
-    (None: no model chosen): the protocols this build implements whose model
-    requirement its listed record meets (`protocols.available`, in their
+    (None: no model chosen): the protocols this build implements whose needs
+    its listed capability description meets (`protocols.available`, in their
     order), each labelled by `measurement_label`, its value the protocol's
     name. Empty when none does; Start then says why (`measure_refusal`)."""
     if not item:
         return []
-    names, _reason = protocols.available(item.get("learning_stage"), item.get("task"))
+    names, _reason = protocols.available(item.get("capabilities"))
     return [(measurement_label(name), name) for name in names]
 
 
@@ -1369,22 +1370,23 @@ def measure_refusal(item: Mapping[str, Any], version: Optional[Mapping[str, Any]
     spec among them) or not read is said in the word the Model option leads
     with (`renderers.record_kind_text`), then this page's reason
     (`NOT_MEASURED_HERE`). Otherwise, with no protocol chosen, the reason no
-    protocol takes the record (`protocols.available`: a base's is the base
+    protocol takes the model (`protocols.available`: a base's is the base
     message) or `CHOOSE_A_MEASUREMENT`; with one, the protocol definition's
-    reason (`protocols.refusal`: the record's stage and task head, then the
-    version's counts, which the importer writes for genes only for a source
-    that lists them). A version whose causal genes are all unmapped passes here
-    and the run refuses it."""
+    reason (`protocols.refusal`: the listed capability description, then the
+    version's listed kind and counts, which the importer writes for genes only
+    for a source that lists them). A version whose causal genes are all
+    unmapped passes here and the run refuses it."""
     record = item.get("record")
     if record in ("refused", None):
         why = (f" ({item.get('record_problem') or 'no reason was given'})"
                if record == "refused" else "")
         return f"{r.record_kind_text(item)}{why}: {NOT_MEASURED_HERE}"
-    stage, task = item.get("learning_stage"), item.get("task")
+    model = item.get("capabilities")
     if protocol is None:
-        names, reason = protocols.available(stage, task)
+        names, reason = protocols.available(model)
         return reason if not names else CHOOSE_A_MEASUREMENT
-    return protocols.refusal(protocol, stage, task, (version or {}).get("counts"))
+    return protocols.refusal(protocol, model, (version or {}).get("kind"),
+                             (version or {}).get("counts"))
 
 
 def start_state(page: Mapping[str, Any], models: Mapping[str, Any], workspace: Optional[str],
@@ -2167,12 +2169,12 @@ def start_test_run(page: Mapping[str, Any], models: Mapping[str, Any], workspace
     measurement `protocol` (the Measurement radio's value) this page does not
     start for that checkpoint and version refused (`measure_refusal`, the rule
     Start's reason shows); the **digests shown to the operator** passed as the
-    expected ones, with the protocol apart from the model's learning stage and
-    task from the session's listing and the listed version's counts, so the
-    runner judges again before it starts and the run refuses before measuring
-    when the checkpoint or the version it reads is not the one chosen, or its
-    record is not one the protocol takes; the runner's one start for test
-    runs."""
+    expected ones, with the protocol apart from the model's learning stage,
+    task and capability description from the session's listing and the listed
+    version's kind and counts, so the runner judges again before it starts and
+    the run refuses before measuring when the checkpoint or the version it
+    reads is not the one chosen, or its model is not one the protocol takes;
+    the runner's one start for test runs."""
     from src.api.services.server_lists import (
         ServerListRefused,
         resolve_checkpoint,
@@ -2215,6 +2217,7 @@ def start_test_run(page: Mapping[str, Any], models: Mapping[str, Any], workspace
         version_sha256=version["manifest_sha256"], workspace=data_dir, checkpoint=checkpoint,
         checkpoint_sha256=item["sha256"], protocol=protocol,
         learning_stage=item["learning_stage"], task=item["task"],
+        capabilities=item["capabilities"], version_kind=version["kind"],
         version_counts=version["counts"], evidence_dirs=tuple(evidence.value),
         record=bool(record), deterministic=bool(deterministic))
     return manager.start_test(inputs)

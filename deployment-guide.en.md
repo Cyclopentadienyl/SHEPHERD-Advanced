@@ -1301,14 +1301,16 @@ python scripts/measure_scorer.py --mode disease \
     [--training-evidence DIR ...] [--record] [--device auto|cuda|cpu] [--batch-size 32]
 ```
 
-`--mode` is required and names the **protocol**: a measurement this build implements for a
-model's learning stage and task head (`src/evaluation/protocols.py`), today `disease`, `gene` and
-`patients_like_me`, one for each task head of a finetuned model. The report's mode is the
+`--mode` is required and names the **protocol**: a measurement this build implements, judged by
+what the model offers (its capability description, read from its model spec;
+`src/evaluation/protocols.py`), today `disease`, `gene` and `patients_like_me`, each taking a
+finetuned model that carries its task head. The report's mode is the
 protocol's name. The run judges the protocol on the bytes it reads, and a refusal says why and
 ends "Nothing was written.": a registered version must list the genes the protocol needs (`gene`
 causal and candidate genes, `patients_like_me` causal genes), checked right after its
-`cohort.json` is read, before the workspace or the checkpoint; the checkpoint's model record must
-be of the stage and task head the protocol takes, checked right after the checkpoint is read. A
+`cohort.json` is read, before the workspace or the checkpoint; the checkpoint's model must offer
+what the protocol needs (for these three, its task head), checked right after the checkpoint is
+read. A
 base is refused with "This model is a base: its formal test (link prediction on held-out
 knowledge-graph edges) is not implemented yet. A model finetuned from it can be measured.", and a
 checkpoint without a model spec (a ShepherdGNN history file) with the record reader's phrase,
@@ -2919,9 +2921,9 @@ and register it. Three panels:
   and model fingerprint. Listing them opens every checkpoint, so it is an operator control: a
   read-only browser is not shown it, and the page lists them once per workspace (↻ reads the
   list again). Then **Measurement** (since K8-6a), the protocol the run passes as
-  `--mode <protocol>` (§4.9): the options are the protocols this build implements whose learning
-  stage and task head the chosen model's record meets, today one for each task head of a
-  finetuned model (Disease, Gene or Patients-like-me). A single option is chosen already; of
+  `--mode <protocol>` (§4.9): the options are the protocols this build implements whose needs
+  the chosen model's listed capabilities meet, today one for each task head of a finetuned model
+  (Disease, Gene or Patients-like-me). A single option is chosen already; of
   several, none is until you choose one; with none (a base, whose formal test is not implemented
   yet), Start says why. A file whose record cannot be read offers none either, and Start is off
   with the record's own reason ("Record not readable (written before the model spec: not

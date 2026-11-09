@@ -1675,13 +1675,13 @@ python scripts/measure_scorer.py --mode disease \
     [--training-evidence DIR ...] [--record] [--device auto|cuda|cpu] [--batch-size 32]
 ```
 
-`--mode` 為必填，指明**協定**（protocol）：這個 build 針對模型的 learning stage 與 task head
-所實作的量測（`src/evaluation/protocols.py`），目前是 `disease`、`gene` 與 `patients_like_me`，
-finetune 模型的每個 task head 各一種。報告的 mode 就是協定的名稱。執行時依它讀到的位元組判斷
+`--mode` 為必填，指明**協定**（protocol）：這個 build 所實作的量測，依模型所提供的能力判斷
+（由其 model spec 讀出的能力描述；`src/evaluation/protocols.py`），目前是 `disease`、`gene` 與
+`patients_like_me`，各自接受帶有其 task head 的 finetune 模型。報告的 mode 就是協定的名稱。執行時依它讀到的位元組判斷
 協定，拒絕時會說明原因，並以「Nothing was written.」結尾：已登錄的版本必須列出協定所需的基因
 （`gene` 需要致病基因與候選基因，`patients_like_me` 需要致病基因），在讀入其 `cohort.json` 後
-立即檢查，早於 workspace 與 checkpoint；checkpoint 的模型紀錄必須是協定所接受的 stage 與 task
-head，在讀入 checkpoint 後立即檢查。base 會以「This model is a base: its formal test (link
+立即檢查，早於 workspace 與 checkpoint；checkpoint 的模型必須提供協定所需的能力（這三種協定即其
+task head），在讀入 checkpoint 後立即檢查。base 會以「This model is a base: its formal test (link
 prediction on held-out knowledge-graph edges) is not implemented yet. A model finetuned from it
 can be measured.」被拒絕，沒有 model spec 的 checkpoint（ShepherdGNN 歷史檔）則以紀錄讀取器的
 那一句 "written before the model spec: not readable by this build; start a new run" 被拒絕（自
@@ -3027,9 +3027,8 @@ checkpoint：run 標題的標籤顯示「dataset not shown · operator control�
 - **Run。** 模型：伺服器清單中該 workspace 的 checkpoint，依執行、epoch、檔案與模型指紋列出。
   列出它們會開啟每一個 checkpoint，因此這是操作者控制項：唯讀的瀏覽器不會看到它，而且頁面對
   每個 workspace 只列出一次（↻ 會重新讀取清單）。接著是 **Measurement**（自 K8-6a 起），即執行
-  以 `--mode <protocol>` 傳入的協定（§4.9）：選項是這個 build 所實作、且所選模型的紀錄符合其
-  learning stage 與 task head 的協定，目前 finetune 模型的每個 task head 各一種（Disease、Gene
-  或 Patients-like-me）。只有一個選項時它已被選取；有多個時，在你選擇之前都不選取；沒有任何
+  以 `--mode <protocol>` 傳入的協定（§4.9）：選項是這個 build 所實作、且所選模型列出的能力符合其
+  需求的協定，目前 finetune 模型的每個 task head 各一種（Disease、Gene 或 Patients-like-me）。只有一個選項時它已被選取；有多個時，在你選擇之前都不選取；沒有任何
   選項時（base，其正式測試尚未實作），Start 會說明原因。紀錄無法讀取的檔案同樣沒有任何選項，
   Start 為停用，並附上紀錄自己的原因（沒有 model spec 的檔案為「Record not readable (written
   before the model spec: not readable by this build; start a new run): not measured here. Choose

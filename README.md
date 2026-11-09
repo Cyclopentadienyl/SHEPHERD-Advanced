@@ -113,15 +113,15 @@ guide §4.11): `SHEPHERD_REGISTRY` naming the deployment's registry, the `<regis
 | Step | Command | Produces |
 |---|---|---|
 | 1. Import a cohort | `scripts/import_cohort.py --registry <registry> --data-dir <workspace> --source <cases.json> --label <label> --role <role>`: a preview, then the same with `--commit <preview id>` | an immutable cohort version, mapped to one workspace's graph, in a registry outside the repository |
-| 2. Measure | `scripts/measure_scorer.py --checkpoint <file> --data-dir <workspace> --mode disease --cohort <label> --registry <registry>`, with `--mode` (required) a protocol this build implements for the model's learning stage and task head (today `disease`, `gene` or `patients_like_me`, one for each task head) | a task report, kept in the registry's report store |
+| 2. Measure | `scripts/measure_scorer.py --checkpoint <file> --data-dir <workspace> --mode disease --cohort <label> --registry <registry>`, with `--mode` (required) a protocol this build implements that the model's capabilities admit (today `disease`, `gene` or `patients_like_me`, each taking a model that carries its task head) | a task report, kept in the registry's report store |
 | 3. Record | `--record` on step 2, or later `scripts/record_evaluation.py --report <report> --checkpoint <file>`, the command step 2 prints | a record in `evaluations.json` beside the checkpoint's resolved path, where the service reads it |
 
 The Diagnosis page's "Model in use" card shows the loaded checkpoint's recorded results as a
 state (how many, and for how many the runs under the same conditions differ); Research › Evaluate › Models lists them, each with its run, and API clients
 read them through `GET /api/v1/evaluations/loaded-model`. The Test page measures a model as step 2
-does, by a protocol this build implements for its learning stage and task head, chosen among those
-its model record admits: today one for each task head of a finetuned model, and none yet for a
-base, whose formal test is not implemented. A record it registers names the mode of its report: the
+does, by a protocol this build implements, chosen among those its listed capabilities admit:
+today one for each task head of a finetuned model, and none yet for a base, whose formal test is
+not implemented. A record it registers names the mode of its report: the
 protocol of a new run (Disease, Gene or Patients-like-me), or a kept report's own mode. A Mode C record, the model's own disease
 ranking from before the tasks, is historical: kept Mode C reports and records are read by the
 shared readers (policy rev 15), and since K8-6a no command writes one (`--mode` is required and

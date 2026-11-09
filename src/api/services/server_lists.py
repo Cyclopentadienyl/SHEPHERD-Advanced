@@ -200,9 +200,10 @@ class CheckpointItem:
     among them, with the record reader's one phrase); a model adds its learning stage, task, operation,
     family, parent (`parent_sha256`, the exact parent file, and `parent_run`),
     encoder kind, the names of its spec's fields that differ from the
-    reference recipe (`differences`, sorted; empty for the reference) and
-    whether there are none (`reference`). All `None` for a file that was not
-    read.
+    reference recipe (`differences`, sorted; empty for the reference),
+    whether there are none (`reference`) and its capability description
+    (`capabilities`), from which every consumer judges a new measurement of it
+    (`src.evaluation.protocols`). All `None` for a file that was not read.
     """
 
     workspace: str
@@ -230,6 +231,7 @@ class CheckpointItem:
     encoder: Optional[str] = None
     reference: Optional[bool] = None
     differences: Optional[Tuple[str, ...]] = None
+    capabilities: Optional[Dict[str, Any]] = None
 
 
 @dataclass(frozen=True)
@@ -257,7 +259,9 @@ class CohortVersionItem:
     `cohort.json` (the version's identity), its role, and the aggregates its
     manifest records. Never its exclusions by case: D7 keeps
     case identifiers on the machine. A version that cannot be read is listed
-    with `problem`."""
+    with `problem`. `kind` is its data kind as the version read says it
+    (`CohortVersionRead.kind`), which a new measurement of it is judged by
+    (`src.evaluation.protocols.inputs_refusal`); `None` when it was not read."""
 
     label: str
     manifest_sha256: Optional[str]
@@ -271,6 +275,7 @@ class CohortVersionItem:
     problem: Optional[str]
     reports: Tuple[ReportItem, ...] = ()
     reports_problem: Optional[str] = None
+    kind: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -1058,6 +1063,7 @@ def _version_item(listed: Any, report_state: Optional[ReportStateReader], *,
         problem=None,
         reports=reports,
         reports_problem=reports_problem,
+        kind=listed.version.kind,
     )
 
 

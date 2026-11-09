@@ -43,6 +43,7 @@ from src.utils.gpu_lock import (  # noqa: E402
     WORKSPACES_ROOT_ENV,
     probe,
 )
+from tests.fixtures.capabilities import described  # noqa: E402
 from tests.fixtures.registered_cohort import LABEL, build_registered_cohort  # noqa: E402
 
 
@@ -71,27 +72,39 @@ pytestmark = pytest.mark.skipif(
 @pytest.fixture(scope="module")
 def cohort(tmp_path_factory):
     """The registered fixture cohort, its workspace holding a base and a
-    disease child trained for one epoch (`child`, its digest `child_sha256`)."""
+    disease child trained for one epoch (`child`, its digest `child_sha256`),
+    each file's capability description as the one listing reader gives it
+    (`listed_record`)."""
     from types import SimpleNamespace
 
+    from src.models.bundle.record import listed_record
+    from src.utils.checkpoint_io import read_checkpoint
     from src.utils.fingerprint import file_sha256
     from tests.fixtures.trained_children import train_children
+
+    def listed(path):
+        payload = read_checkpoint(path, map_location="cpu", weights_only=True).checkpoint
+        return listed_record(payload)["capabilities"]
 
     built = build_registered_cohort(tmp_path_factory.mktemp("runner") / "c")
     trained = train_children(built.data_dir, ("disease",))
     return SimpleNamespace(registry=built.registry, version=built.version,
                            data_dir=built.data_dir, base=trained["base"],
                            child=trained["disease"],
-                           child_sha256=file_sha256(trained["disease"]))
+                           child_sha256=file_sha256(trained["disease"]),
+                           base_capabilities=listed(trained["base"]),
+                           child_capabilities=listed(trained["disease"]))
 
 
 def _fields(cohort):
     """The inputs as the server's lists give them for the disease child: the
-    protocol asked, the listed record's stage and task, the version's counts."""
+    protocol asked, the listed record's stage, task and capability
+    description, the version's kind and counts."""
     return {"registry": cohort.registry, "version_label": LABEL,
             "version_sha256": cohort.version.identity.sha256, "workspace": cohort.data_dir,
             "checkpoint": cohort.child, "checkpoint_sha256": cohort.child_sha256,
             "protocol": "disease", "learning_stage": "finetune", "task": "disease",
+            "capabilities": cohort.child_capabilities, "version_kind": cohort.version.kind,
             "version_counts": cohort.version.manifest["counts"]}
 
 
@@ -182,7 +195,7 @@ def test_a_listed_record_the_protocol_does_not_take_is_refused_before_a_job_star
     fields, change = _fields(cohort), dict(change)
     if change.pop("base", False):
         fields.update(checkpoint=cohort.base, checkpoint_sha256=file_sha256(cohort.base),
-                      learning_stage="base", task=None)
+                      learning_stage="base", task=None, capabilities=cohort.base_capabilities)
     fields.update(change)
     before = _stored(cohort)
     spawned = []
@@ -199,7 +212,7 @@ def test_a_listed_record_the_protocol_does_not_take_is_refused_before_a_job_star
     # Listed as a gene child on a version that lists genes; the files are the
     # disease child and a version that lists none. The run reads the version
     # first and refuses before it opens the checkpoint.
-    ({"protocol": "gene", "task": "gene",
+    ({"protocol": "gene", "task": "gene", "capabilities": described("finetune", "gene"),
       "version_counts": {"genes": {"cases_with_causal_genes": 1,
                                    "cases_with_candidate_genes": 1}}},
      "this cohort version lists no causal genes, which the gene measurement needs. Import a "

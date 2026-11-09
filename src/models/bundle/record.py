@@ -39,6 +39,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from src.config.model_types import MODEL_RECORD_KEYS, WRITTEN_BEFORE_SPEC
+from src.models.bundle.capabilities import model_capabilities
 from src.models.bundle.spec import LEARNING_STAGES, TASKS, ModelSpec, SpecError, ViewShape, _shown
 from src.utils.checkpoint_paths import text_problem
 
@@ -76,6 +77,14 @@ class ModelRecord:
     @property
     def task(self) -> Optional[str]:
         return self.model_spec.task
+
+    @property
+    def capabilities(self) -> Dict[str, Any]:
+        """What this model offers a measurement and what it needs, read from its
+        spec (`src.models.bundle.capabilities.model_capabilities`): the one
+        description every list carries (`listed_record`) and every new
+        measurement is judged by (`src.evaluation.protocols`)."""
+        return model_capabilities(self.model_spec)
 
     def validate(self) -> "ModelRecord":
         self.model_spec.validate()
@@ -392,7 +401,7 @@ def finetune_parent_problem(record: ModelRecord, payload: Mapping[str, Any]) -> 
 #: What a model list shows of a checkpoint's record (`listed_record`).
 LISTED_RECORD_FIELDS = ("record", "record_problem", "learning_stage", "task", "operation",
                         "family_id", "parent_sha256", "parent_run", "encoder", "reference",
-                        "differences")
+                        "differences", "capabilities")
 
 
 def listed_record(payload: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
@@ -408,7 +417,11 @@ def listed_record(payload: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
     the reference recipe (README §5, axis 2): `differences`, the sorted names
     (``section.field``) of the spec's fields that differ from it
     (`ModelSpec.differences_from_reference`), and `reference`, true exactly
-    when there are none."""
+    when there are none; and `capabilities`, its capability description
+    (`ModelRecord.capabilities`), from which the Test page, the job runner,
+    the command line and the probe judge a new measurement of it
+    (`src.evaluation.protocols`). Reading, comparing and exporting what is
+    kept never consult it."""
     summary: Dict[str, Any] = dict.fromkeys(LISTED_RECORD_FIELDS)
     try:
         record = read_model_record(payload if payload is not None else {})
@@ -421,7 +434,7 @@ def listed_record(payload: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
                    operation=record.operation, family_id=record.family_id,
                    parent_sha256=parent.get("sha256"), parent_run=parent.get("run"),
                    encoder=record.model_spec.encoder.kind, reference=not differences,
-                   differences=differences)
+                   differences=differences, capabilities=record.capabilities)
     return summary
 
 

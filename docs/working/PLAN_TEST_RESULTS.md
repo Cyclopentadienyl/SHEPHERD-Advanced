@@ -433,8 +433,12 @@ and the decision's text is history.
 
 - **Measuring.** `scripts/measure_scorer.py --mode <protocol>` (`--mode` required) runs a protocol
   of `src/evaluation/protocols.py` (`PROTOCOLS`: `disease`, `gene`, `patients_like_me`). A protocol
-  is offered for what a model can do, its learning stage and task head (`model_refusal`), and its
-  name is not the model's task (K8-6a). One task scorer (`src/models/tasks/scoring.py`) serves
+  is offered for what a model can do: it states what it needs of a model (the head it scores with,
+  the representations and computation it reads, the inputs it supplies) and the data kinds it
+  measures, and every consumer judges the model's one capability description, derived from its
+  spec and carried by the listing (`src/models/bundle/capabilities.py`; `model_refusal`,
+  `inputs_refusal`; research comparison Stage 3). Today each protocol takes a model carrying its
+  task head. Its name is not the model's task (K8-6a). One task scorer (`src/models/tasks/scoring.py`) serves
   validation, measurement and serving, and one metrics module (`src/models/bundle/metrics.py`)
   serves validation and measurement; each protocol's evaluator is in
   `src/evaluation/task_measurement.py` (`TASK_RUNS`, metric schema 2). A base has no protocol yet:

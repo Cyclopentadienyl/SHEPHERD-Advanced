@@ -430,12 +430,16 @@ def _listed_form(payload):
 
 
 def test_the_listed_record_states():
+    from src.models.bundle.capabilities import model_capabilities
+
     child = listed_record(_listed_form(_record_payload("disease")))
     assert set(child) == set(LISTED_RECORD_FIELDS)
     assert child == {"record": "model", "record_problem": None, "learning_stage": "finetune",
                      "task": "disease", "operation": "finetune", "family_id": BASE_RUN,
                      "parent_sha256": "a" * 64, "parent_run": BASE_RUN, "encoder": "gatv2",
-                     "reference": False, "differences": SMALL_SPEC_DIFFERENCES}
+                     "reference": False, "differences": SMALL_SPEC_DIFFERENCES,
+                     "capabilities": model_capabilities(
+                         finetune_spec_from_parent(_base_spec(), "disease"))}
     base = listed_record(_listed_form(_record_payload()))
     assert (base["learning_stage"], base["task"], base["operation"], base["parent_sha256"]) == (
         "base", None, "new", None)
@@ -449,6 +453,7 @@ def test_the_listed_record_states():
     assert refused["record"] == "refused" and "record version" in refused["record_problem"]
     assert refused["task"] is None, "a refused record states nothing it could not read"
     assert refused["differences"] is None and refused["reference"] is None
+    assert refused["capabilities"] is None, "a refused record offers nothing to judge"
 
 
 #: The fields `_base_spec` changes from the reference recipe (README §5, axis 2).
@@ -459,7 +464,7 @@ SMALL_SPEC_DIFFERENCES = ("encoder.heads", "encoder.hidden", "encoder.layers", "
 def test_the_listed_record_names_the_fields_that_differ_from_the_reference():
     """README §5 axis 2 lists the differing items, not a bool: a reference spec
     lists none and is the reference; a changed one names each field, sorted."""
-    assert LISTED_RECORD_FIELDS[-1] == "differences"
+    assert "differences" in LISTED_RECORD_FIELDS
     for task in (None, "gene"):
         spec = reference_spec("base")
         if task is not None:

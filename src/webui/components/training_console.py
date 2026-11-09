@@ -351,9 +351,10 @@ def setting_problem(name: str, value: Any, reference: Any) -> Tuple[Any, Optiona
     the one check the start makes again): ``(value, problem)``, the problem
     named by the field's label (`SETTING_LABELS`). Empty is taken only where the
     reference value is (early stopping's patience). The hop list also needs
-    one number per layer of the encoder the base form's run builds, the
-    reference recipe's (`hops_problem`, which the start asks too: the form
-    offers no encoder setting, and the Fine-tune page no hop list)."""
+    one number per hop the encoder the base form's run builds declares, the
+    reference recipe's GATv2, one per layer (`hops_problem`, which the start
+    asks too: the form offers no encoder setting, and the Fine-tune page no
+    hop list)."""
     label = SETTING_LABELS[name]
     parsed, why = _parsed(name, value)
     if why:
