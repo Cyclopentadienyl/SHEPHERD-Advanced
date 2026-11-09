@@ -1,7 +1,10 @@
 # Paper-aligned two-stage training — reference recipe, model bundle and checkpoint contract
 
-**Status: design revision 2 (2026-10-27), on `claude/paper-aligned-two-stage` from `main` `0e64666`;
-the A + B integration is being built on this branch (§8).** Revision 1 (`5d0327a`) was reviewed by
+**Status: design revision 2 (2026-10-27). The A + B integration (K0–K8) is built, closed per the
+converged scope and accepted on the GB10 (2026-11-09; §8, "K8 record"), and merged into `main` as
+#131 (`db8ee5a`; product code `f2c2012`).** What comes next, and what was deferred, is
+[`../BACKLOG.md`](../BACKLOG.md) §0. *(History: built on `claude/paper-aligned-two-stage` from `main`
+`0e64666`, 2026-10-27 to 2026-11-09.)* Revision 1 (`5d0327a`) was reviewed by
 the reviewer. That review's R1–R3, the owner's later decisions and the reviewer's decision record of
 the same day are folded in below. Until 2026-10-27 this file was "Scorer retraining — scoping only"
 (moved from `../task-scope/README.md` §6); what of that scoping still holds is §9, the rest is in git
@@ -29,8 +32,58 @@ map beside it ([`ENTRY_MAP.md`](ENTRY_MAP.md), §10) is an inventory of the code
   `5d0327a` (R1–R3) and the decision record of 2026-10-27. They are adopted for this blueprint as
   **reviewer recommendations, not institutional approval**. Review decisions are cited "RDn"; the
   rows of §2 have their own letters, so a row number never names a review decision.
-- **Not decided here:** clinical adoption. It needs its own effect evidence and the institution's
-  procedure (`../../DISEASE_SCORER_POLICY.md`, rev 12).
+- **Not decided here, and open (2026-11-09):** each waits for the one named. None blocks starting
+  the research work of `../BACKLOG.md` §0; an item that blocks something says what. The policy's
+  own list, with who decides each, is its §2.1, "Who decides what"
+  (`../../DISEASE_SCORER_POLICY.md`), and this list agrees with it. A backlog item's owner is its
+  row in `../BACKLOG.md` §4.
+  - **Clinical adoption**, owner first and then the institution: it needs its own effect evidence
+    and the institution's procedure (`../../DISEASE_SCORER_POLICY.md`, rev 12, which separated it
+    from the research platform). Still open:
+    - what replaces the policy's statement 2 (raw cosine) and B-1 for task models (rev 11's
+      proposal, not approved);
+    - what gate 1's report compares (rev 11's proposal, not approved: the served ranking against
+      the scorer to be switched to, measured as its own mode);
+    - what replaces gate 1's B-0 prerequisite (rev 12's proposal, not approved: the task models' own
+      effect evaluation);
+    - the clinical switch (policy §7).
+    Until approved, statement 2 and gate 1 stand as written; they bind the clinical switch, not
+    research implementation (rev 11). Gate 1 is not cleared (policy §6). The policy's current
+    revision is rev 18, a statement of fact.
+  - **The switch's default**, the owner: recorded as open (policy §7; §2.1, "Who decides what", as
+    written on 2026-10-25).
+  - **Gate 1's report as written**, B-0's Mode C and Mode D report (`../BACKLOG.md` 8a, the author's
+    design; 7b and 8b, the institutional run, the institution with the author): it rests on the
+    B-0 comparison the owner archived (rev 12), whose executors are removed (Mode D in K7, Mode C in
+    K8-6b), so it can be reproduced only from a revision before K7 (rev 13). What replaces this
+    prerequisite for task models is open: rev 12's proposal, above.
+  - **Which checkpoint is authoritative**, the institution (`../BACKLOG.md` 6).
+  - **The institution's values for the three limits:** `selection_limit`'s default and bounds, the
+    storage and export bounds and the latency target, [OPEN] (policy §1.3). They moved with the
+    clinical switch to package C (`../BACKLOG.md` §0, the note of 2026-10-27); what else batch 5
+    waited on from the institution is listed there, "Waits on the institution".
+  - **The rest of the evaluation-holdout protocol**, the institution: how many diseases to reserve
+    and from which strata, whether to apply for the larger in-hospital database, and whether the
+    generator is faithful enough (`../BACKLOG.md` 11, partly answered; `../EVALUATION_COHORTS.md`
+    §5). These open choices constrain the corresponding institutional evaluation and acceptance,
+    and claims that depend on those choices. Other research studies define and record their own
+    protocols, data roles, exposure and selection history; any held-out or generalisation claim must
+    be supported by that study's evidence. This is not a platform gate on measurement, registration,
+    query, comparison or export.
+  - **Gate 3's design approval**, the reviewer's technical review and then the owner's
+    confirmation (`../results-review/SPEC_3_EVIDENCE_AND_AUDIT.md` §7); not approved, not built.
+  - **Patient-level reference rows against D7**, the owner, before any institutional cohort is
+    registered as a reference cohort (`../BACKLOG.md` 62; `../PLAN_TEST_RESULTS.md` D7).
+  - **A default order for task records and the figure each task is ordered by**, the owner, proposed
+    when needed. The direction is set: comparing, querying and exporting results (`../BACKLOG.md` 63,
+    N3).
+  - **The institutional cohort's metrics and acceptance rule**, the institution, declared before the
+    first institutional result (`../PLAN_TEST_RESULTS.md` §4.9, Q1).
+  - **Authorising (b)'s product engineering**, the owner: the direction of 2026-11-09 authorises
+    none yet, and the reviewer's suggested package for (b) is a recommendation
+    (`../BACKLOG.md` §0).
+  - **Which model serves after a start or a restart**, the owner, decided with a release designation
+    and the serving mode (`../BACKLOG.md` 55, with 30 and 48).
 
 **Why.** The owner and the reviewer found that the paper's SP is nothing like this project's SP, and a
 wider check followed. This repository's model differs from the paper's at every layer:
@@ -89,6 +142,10 @@ is further evidence that the scripts are not a proven executed configuration.
   rules, multi-positive metric formulas and the graph view are written and tested in this round. No
   undefined behaviour and no placeholder number stands in for a finished computation.
 
+*(2026-11-09: "this round" is the A + B integration (K0–K8), closed and merged (§8, "K8 record").
+Package C's formal data and effect studies are its research row; clinical adoption is its own row
+(`../BACKLOG.md` §0).)*
+
 ---
 
 ## 1. The design
@@ -112,8 +169,8 @@ feeds another. The "finetuned base" of a task is simply that task's first finetu
 flag read in different ways.
 - `resume` and `extend` keep their contracts (`../PLAN_PROVENANCE_CONTRACT.md`, M3a).
 - `branch` keeps architecture and data (BACKLOG 23), starts a new optimizer and records every
-  difference. Its closed list of changeable settings is built in this round, before any variable
-  comparison. An extend never carries a seed or learning-setting change.
+  difference. Its closed list of changeable settings was built in the A + B round (K5), before any
+  variable comparison. An extend never carries a seed or learning-setting change.
   - As built at K5: the list is `src.config.recipe.branch_settings`, the stage's reference settings
     plus `min_lr_ratio`, `amp_dtype` and `gradient_accumulation_steps`. Early stopping, the split
     seed, the evaluation cadence, the kept files, the model spec and the data stay the parent's.
@@ -133,7 +190,9 @@ nesting, no copies). One reader serves the tree and the tag filter; tags stay no
 - As built at K5: `server_lists.family_rows` builds the tree from the one listing. Each file sits
   under the listed file whose SHA-256 its record names. Families are grouped by family id, and
   files without a model spec form a history group. A task or stage filter keeps a child's base as a
-  context row. `GET /workspaces/{name}/family` serves it behind D8.
+  context row. `GET /workspaces/{name}/family` serves it behind D8. *(2026-11-09: since K8-7b,
+  `ecc367f`, the last group is the files whose record was refused or not read, a file without a
+  model spec among them; there is no history kind.)*
 - As built at K6: Research › Models draws it as the By family order (`models_page.family_view`
   over `server_lists.list_family`): one group per family, the parent first, a Lineage column,
   a task filter's context rows, and "parent unavailable" in amber.
@@ -158,7 +217,7 @@ a graph and no model, diagnosis is refused, not answered by path scores.
   - installed, selected and actually used stay distinct.
 - **The old comparison:** Mode C/D is archived. It is not marked as passed, nor as scientifically
   meaningless; the owner no longer requires it. Mode D is not re-pointed at a new head. Its
-  executors retire once the new task measurement and serving are wired (§7).
+  executors are retired (Mode D in K7, Mode C in K8-6a and K8-6b; §7).
 - **No raw-cosine B-1** is built.
 
 ---
@@ -340,9 +399,11 @@ model spec (versioned, self-describing)
 - **Every consumer goes through it:** the Trainer's optimizer, the checkpoint writer and reader,
   serving, measurement and `scripts/setup_demo.py`. `scripts/build_index.py` does not: since K7
   (TM10) it builds no model and reads exported embeddings (`--embeddings`) only.
-- **What it replaces:** `build_shepherd_model` (`src/models/gnn/shepherd_gnn.py:506`),
-  `create_model_from_config` (`scripts/train_model.py:928`) and `build_index.py`'s own construction
-  (`:169`). After the switch there is no second builder and no structural guess from weight names.
+- **What it replaced, now deleted:** `build_index.py`'s own construction (`:169` at `0e64666`;
+  K7, TM10), `create_model_from_config` (`scripts/train_model.py:928`; K8-7, `e35b2a3`) and
+  `build_shepherd_model` with `src/models/gnn/shepherd_gnn.py` (`:506`; K8-10, `822452b`). The one
+  builder is `src/models/bundle/builder.py`; there is no second builder and no structural guess from
+  weight names.
 - **Shared parts across tasks:** the disease and patients-like-me tasks share the patient encoder,
   attention pooling, projection towers and one NCA loss; all three share the exact chunked scorer
   and ranker and one metrics module (E1–E7); the patient Transformer uses torch's
@@ -369,7 +430,7 @@ model spec (versioned, self-describing)
   and K8-11 `9d76bbe`: the contract retired with row 23, the Trainer value test it protected, and
   `src/inference/scoring.py` with K8-11; the shared math lives in `src.models`, which the layers
   contract keeps below `src.training`, `src.reasoning`, `src.inference` and `src.evaluation`. The
-  K8 record in §8.)*
+  K8 record in §8.)* *(2026-11-09: four import contracts remain, the layers contract among them.)*
 - **What changes is the oracle.** Tests use hand arithmetic or a short, independently written
   computation. **Expected and actual never both call the code under test.**
 - **No new dependency.** pytorch-metric-learning and allennlp are not added. The small tensor losses
@@ -389,19 +450,23 @@ model spec (versioned, self-describing)
 - **A swap is not automatically one variable.** Width, head capacity, type information, sampling and
   initialisation that change with the encoder are listed as differences.
 - **Inheritance.** A finetune child uses its parent's encoder spec.
-- **Existing encoders** (the heterogeneous GAT, HGT and SAGE) move behind the same contract as
-  non-reference options with the same input module and LP head. They get the minimal build,
-  forward, gradient and save/reload checks; no effect study. HGT carries BACKLOG 20 (Edit 2 waits
-  for the GB10), and `segment_matmul` has no fp16 or bf16.
+- **The multi-architecture milestone (after K8, not yet built).** The existing encoders (the
+  heterogeneous GAT, HGT and SAGE, kept as `HeteroGNNLayer` in `src/models/gnn/layers.py`) come
+  behind the same contract as non-reference options with the same input module and LP head. They
+  get the minimal build, forward, gradient and save/reload checks; no effect study. HGT carries
+  BACKLOG 20 (Edit 2 waits for the GB10), and `segment_matmul` has no fp16 or bf16. Until then only
+  GATv2 is behind the contract: `src.config.model_types.ENCODER_KINDS` declares `hetero_gat`, `hgt`
+  and `sage`, and the builder refuses them ("declared but not yet behind the GraphEncoder
+  contract", `src/models/bundle/builder.py` `_build_encoder`).
 
 **Cross-species reasoning replaces OrthologGate** (the reviewer's review of the proposal, accepted).
 The requirement stays; the faulty module goes.
 - **S1, the graph view:** cross-species nodes and relations, with their reverse mappings, are part
   of the view (G5). The view records which graphs message passing, LP supervision, SP and evidence
   each read; switching relations off forms a different view and model metadata.
-- **S2, the input module:** an optional node-type embedding, moved from the existing
-  `HeteroFeatureEncoder.type_embeddings`; species, node kind and source ids stay in the data, never
-  guessed from a name. Off in the reference. No separate species embedding.
+- **S2, the input module:** an optional node-type embedding in the input module
+  (`InputModule.type_embedding`, `src/models/bundle/encoders.py`); species, node kind and source ids
+  stay in the data, never guessed from a name. Off in the reference. No separate species embedding.
 - **S3, relation-aware message passing:** each encoder's standard mechanism. HGT and the
   heterogeneous GAT/SAGE carry relation-specific parameters; GATv2 may take a relation embedding as
   `edge_dim` (an identified, non-reference configuration; self-loop edge features are explicit
@@ -414,7 +479,8 @@ The requirement stays; the faulty module goes.
   loss and the "X% influenced" claim.
 - **Not claimed:** an excluded relation does not keep other-species nodes out of graph-norm
   statistics; "no cross-species information at all" needs those nodes out of the view.
-- **Later:** real cross-species KG data and HP↔MP mappings, effect studies, attention views.
+- **Later:** the multi-architecture port above, with its cross-species checks (§8, regression 11);
+  real cross-species KG data and HP↔MP mappings, effect studies, attention views.
 
 ### 3.4 Five boundaries and their candidate acceleration routes
 
@@ -472,6 +538,12 @@ weights-only base **with a model spec** may be a finetune parent; strict resume 
   `legacy/` tree as a second live pipeline.
 - Intermediate commits may still hold a path not yet retired; the delivered batch completes the
   retirement list (§7).
+
+*(2026-11-09: R2 is delivered. A checkpoint without a model spec is listed as a record this build
+cannot read, with its SHA-256, records and usage history, and finetune, resume, measurement and
+serving refuse it (K8-7b, `ecc367f`). Its kept reports are read by the shared readers and
+registered by the general rules (policy rev 15 and 16; K8-6c `701d743`, K8-6r.2 `f74db89`). The
+retirement list is complete except TM27, deferred (§7, `../BACKLOG.md` 67); the K8 record in §8.)*
 
 ---
 
@@ -558,11 +630,15 @@ policy):
 10. **Graph and exposure:** the gene task's SP is computed on the full view; a model finetuned with it
     has seen held-out structure (G4).
 
-**Today's SP is neither.** Today's producer runs an undirected BFS from phenotypes up to 5 hops,
-and reads `max_hops+1` both beyond the cap and unreachable. Today's disease SP term `1/(1+mean hops)`
-is neither the gene SPLSIM nor a per-list min-max (`../../SP_SCORE_GUIDE.md` §3). *Superseded at
-K4:* the plan to extend the producer and reader for exact distances gave way to the in-process
-computation below; there is no distance file of either kind.
+**SP today is the gene task's SPLSIM only** (`core.types.SCORING_MODE_SP_STATES`: `computed` for
+the gene task, `absent` for disease and patients-like-me), over the exact in-process distances
+below. *Superseded at K4:* the plan to extend the producer and reader for exact distances gave way
+to the in-process computation below; there is no distance file of either kind. *(2026-11-09: until
+K8-4, `f4a8c0f`, the served disease SP term was `1/(1+mean hops)` from a producer that ran an
+undirected BFS from phenotypes up to 5 hops and read `max_hops+1` both beyond the cap and
+unreachable: neither the gene SPLSIM nor a per-list min-max (`../../SP_SCORE_GUIDE.md`, "What the
+retired implementation computed"). The producer, its sidecar, index and reader were removed in K8-4
+and K8-5, `85a0689`.)*
 
 **As built (K4, 2026-10-27).**
 - **Distances:** one function, `src.kg.graph_view.exact_distances`, computes the exact hops from the
@@ -570,11 +646,16 @@ computation below; there is no distance file of either kind.
   goes into the record. There is no distance file. The view is one connected component, so the
   distances are a pure function of the view. The file reader lives in `src.inference`, which the
   training layer cannot import. The hop-capped producer, its sidecar and its reader now serve only
-  the retiring disease mixture, and retire with it (§7).
+  the retiring disease mixture, and retire with it (§7). *(2026-11-09: since K8-4 and K8-5 this
+  function is the only distance path: the hop-capped file's reader, producer, sidecar and index are
+  removed, §7.)*
 - **Distance cost:** one unweighted search per phenotype source, at every training start and every
   measurement. About 0.11 s a source on a synthetic 100k-node, 8M-edge graph (review of K4), so a
   few thousand case phenotypes take minutes. The GB10 acceptance times it on the real view. If it is
   too slow, the computed table becomes a derived artifact bound by digest, like the fixture.
+  *(2026-11-09: not yet timed on the real view; K8's GB10 acceptance trained and served a disease
+  child only, and gene and patients-like-me ran in CPU tests only,
+  `../k8-acceptance-2026-11-09/README.md` §3.)*
 - **Augmentation:** the paper's Eq 10–11 (`src.models.tasks.gene`): neighbours by the raw count of
   shared phenotypes, and the degree gate `θ = ω·exp(−ω·|N_g|) + 0.2`, with `|N_g|` the gene's degree in
   the view. The source's form `+ (1 − ω − 0.1)` equals it only at ω = 0.7.
@@ -609,9 +690,10 @@ computation below; there is no distance file of either kind.
 
 An inventory carried out as each part's callers move, not a questionnaire and not a tail job (§10
 maps every entry). No retired part keeps a UI switch, a no-op flag, a command alias or an import
-fallback. **K7 (2026-10-29) is the retirement check**: each row says whether its part was removed
-in K7 or waits for K8, and why (the K7 deletion list, 127 rows, with the reviewer's audit and the
-owner's authorisation; the K7 record in §8).
+fallback. **Status at the K8 closeout (2026-11-08): every row is removed, except TM27, deferred
+(`../BACKLOG.md` 67); the Node column says where** (the K8 record in §8). K7 (2026-10-29) was the
+retirement check, which sorted each row into K7 or K8 (the K7 deletion list, 127 rows, with the
+reviewer's audit and the owner's authorisation; the K7 record in §8).
 
 | Part | Where | Replaced by / why | Node |
 |---|---|---|---|
@@ -619,19 +701,19 @@ owner's authorisation; the K7 record in §8).
 | The path-reasoning fallback ranking (`path_reasoning/v1`), with its scoring mode, the "absent" checkpoint and "unverified" graph states, PathReasoner's path-score ranking (`aggregate_path_scores`, `get_top_candidates`, `aggregation_method`), the no-model `create_diagnosis_pipeline` and the WebUI's no-trained-model state | `src/inference/pipeline.py`; `src/core/types.py`; `src/reasoning/path_reasoning.py`; the API and the Diagnosis page | Refusal when a graph has no model (owner decision): `/diagnose` and `/ready` answer 503. PathReasoner's `find_paths` and `score_paths` stay as evidence | **removed in K7** |
 | The demo answer (`demo/v1`) and the in-memory model and graph seams (`DiagnosisPipeline(model=, graph_data=)`, the `supplied_in_memory` / `in_memory` states) | `src/api/routes/diagnose.py`; `src/inference/pipeline.py`; `src/core/types.py`; the Diagnosis page | Owner decision (DEMO1): with no pipeline `/diagnose` and `/ready` answer 503 from one predicate, `/health` stays 200. A served model is always read from a checkpoint over a verified workspace | **removed in K7** |
 | Mode D (`run_mode_d`, the `run_mode_c` observer, `--mode D`, the serving hooks only it read, probe T7) | `src/evaluation/mode_d.py` (deleted); `scripts/measure_scorer.py`; `src/inference/pipeline.py`; `scripts/probe_deployment.py` | Archived (owner decision); kept reports and records stay readable; a kept D report registers by the general rules under its own mode (K7's refusal in `register_report` went in K8-6c, policy rev 15) | **removed in K7** |
-| Mode C's masked-mean raw-cosine recipe | `src/evaluation/measurement.py`; `scripts/measure_scorer.py` (`--mode` default C) | Task measurement through the same entry, with task, metric and scoring semantics (K3, K4). Shared ranking, metrics, readers, registry, report store, ledger and GPU lock are kept. Command line only; probe M3, M7, M11, T2–T4, R5 and RT2 still run it. Its registration gate goes in `register_report` with them | **removed in K8-6a** (`22487a6`, the command line) **and K8-6b** (`f35bb93`, the executor) |
-| Structural inference and old-checkpoint execution (`build_shepherd_model`, `resolve_arch_params`, `create_model_from_config`) | `src/models/gnn/shepherd_gnn.py`; `scripts/train_model.py` | The one builder and the model spec. The probe chain and the API's reload of a history file still use them (`create_model` was removed in K7) | **removed in K8-7** (`e35b2a3`, `create_model_from_config`) **and K8-10** (`822452b`, `build_shepherd_model`, `resolve_arch_params`) |
-| `OrthologGate`, the edge-type split, `use_ortholog_gate`, `ortholog_gate_type` | `src/models/gnn/layers.py`; `src/models/gnn/shepherd_gnn.py` | S1–S3 (§3.3). Its weights are in every ShepherdGNN checkpoint the probe trains | **removed in K8-7** (`e35b2a3`, the settings) **and K8-10** (`822452b`) |
+| Mode C's masked-mean raw-cosine recipe | `src/evaluation/measurement.py`; `scripts/measure_scorer.py` (`--mode` default C) | Task measurement through the same entry, with task, metric and scoring semantics (K3, K4). Shared ranking, metrics, readers, registry, report store, ledger and GPU lock are kept. The probe chain measures task models since K8-1 (`ddfef42`). Kept C reports are read by the shared readers and registered by the general rules under their own mode; no rule is keyed on C (policy rev 15) | **removed in K8-6a** (`22487a6`, the command line) **and K8-6b** (`f35bb93`, the executor) |
+| Structural inference and old-checkpoint execution (`build_shepherd_model`, `resolve_arch_params`, `create_model_from_config`) | `src/models/gnn/shepherd_gnn.py`; `scripts/train_model.py` | The one builder and the model spec. The probe chain moved to it in K8-1 (`ddfef42`), and the API's reload refuses a file without a model spec since K8-4 (`f4a8c0f`); `create_model` was removed in K7 | **removed in K8-7** (`e35b2a3`, `create_model_from_config`) **and K8-10** (`822452b`, `build_shepherd_model`, `resolve_arch_params`) |
+| `OrthologGate`, the edge-type split, `use_ortholog_gate`, `ortholog_gate_type` | `src/models/gnn/layers.py`; `src/models/gnn/shepherd_gnn.py` | S1–S3 (§3.3). Its weights stay only in old ShepherdGNN files, which are listed and never run | **removed in K8-7** (`e35b2a3`, the settings) **and K8-10** (`822452b`) |
 | Positional encoder | `src/models/encoders/position_encoder.py`; built in `shepherd_gnn.py` | Unfed (no caller passes `pos_encoding_dict`), but its state is in every ShepherdGNN checkpoint. Its orphaned producer was removed in K7 (the positional-encoding preprocessing row below) | **removed in K8-10** (`822452b`) |
 | Ortholog consistency loss | `src/training/loss_functions.py` | No data reaches it (BACKLOG 57). The weight slider went with the ShepherdGNN form (K6) | **removed in K8-7** (`e35b2a3`) |
 | The disease objective CE + hinge + InfoNCE on raw cosine over a masked mean; `LinkPredictionLoss`; `MultiTaskLoss` uncertainty weighting | `loss_functions.py`; `src/training/trainer.py` | The disease head's NCA; the LP head's hinge; the two named loss weights | **removed in K8-7** (`e35b2a3`) |
 | The decoders package: `DiagnosisHead`, `LinkPredictionHead`, `NodeClassificationHead`, `ExplanationHead` | `src/models/decoders/` (deleted) | Unwired, not paper parts: the LP head is `bundle/lp_head.py`, the task heads `models/tasks/heads.py` | **removed in K7** |
 | `PhenotypeDiseaseMatcher`, `EdgeTypeEncoder`, `FlexHeteroAttention` (with its ontology and species score mods), ShepherdGNN's layer-output capture | `shepherd_gnn.py`; `src/models/encoders/type_encoder.py`; `src/models/attention/flex_attention.py` (deleted) | Unwired: the paper's patient encoder and heads; GATv2Encoder's relation embedding; PyG attention and S1–S3. `AdaptiveAttentionBackend` and `HeteroGNNLayer` stay | **removed in K7** |
 | The positional-encoding preprocessing and its stub (`src/kg/preprocessing.py`, `scripts/preprocess_data.py`, `KnowledgeGraph.metadata` and `to_pyg_hetero_data`) | `src/kg/` (deleted); `scripts/` (deleted) | Orphaned: the encoder it fed is unfed, and relation metadata comes from the graph view | **removed in K7** |
-| The ShepherdGNN data-loader stack (`SubgraphSampler`, `NegativeSampler`, `DiagnosisDataset`, `DiagnosisDataLoader`, `create_diagnosis_dataloader`) | `src/kg/data_loader.py` | The stage samplers and task binders. `DiagnosisSample` stays (the samples reader and R10 use it). One consumer, the stage-less `train()`, which the probe still runs | **removed in K8-7** (`e35b2a3`); `DiagnosisSample` stays |
-| The unwired metric classes beside `RankingMetrics` and the `compute_*` helpers; the core `ModelConfig`, `TrainingConfig`, `DataConfig` | `src/utils/metrics.py`; `src/core/types.py` | Bundle metrics; the spec, the recipe and `TrainConfig`. `RankingMetrics` stays for the ShepherdGNN validation and Mode C until K8 | **removed in K7**; `RankingMetrics` **in K8-8** (`9d76bbe`) |
+| The ShepherdGNN data-loader stack (`SubgraphSampler`, `NegativeSampler`, `DiagnosisDataset`, `DiagnosisDataLoader`, `create_diagnosis_dataloader`) | `src/kg/data_loader.py` | The stage samplers and task binders. `DiagnosisSample` stays (the samples reader and R10 use it). Its one consumer, the stage-less `train()`, retired with it: the one training entry is `train(config, explicit)` with a required learning stage | **removed in K8-7** (`e35b2a3`); `DiagnosisSample` stays |
+| The unwired metric classes beside `RankingMetrics` and the `compute_*` helpers; the core `ModelConfig`, `TrainingConfig`, `DataConfig` | `src/utils/metrics.py`; `src/core/types.py` | Bundle metrics (`src/models/bundle/metrics.py`); the spec, the recipe and `TrainConfig`. `RankingMetrics`, the last class, went with `src/utils/metrics.py` once ShepherdGNN validation and Mode C had gone | **removed in K7**; `RankingMetrics` **in K8-8** (`9d76bbe`) |
 | Separate pooling and scoring copies (Trainer, measurement, pipeline) | `trainer.py`; `src/evaluation/measurement.py`; `src/inference/scoring.py` | The bundle's shared math | **removed**: measurement's in K8-6b (`f35bb93`), the Trainer's in K8-7 (`e35b2a3`), `src/inference/scoring.py` in K8-11 (`9d76bbe`) |
-| The hop-capped SP file: producer, sidecar binding, index and reader (`compute_shortest_paths`, `sp_artifact`, `sp_index`, `_load_shortest_paths`, `sp_analysis_records`), with their oracle and tests | `scripts/compute_shortest_paths.py`; `src/inference/sp_artifact.py`; `src/inference/sp_index.py`; `src/inference/pipeline.py`; `scripts/sp_scan_reference.py` | Exact distances computed in process from the view (§6, as built at K4); they serve only the mixture and the probe (R1's pre-check, M4, R6) and leave with it. Its benchmark `scripts/benchmark_sp_lookup.py` was removed in K7. Documents no longer teach the table as a build step (K7); one transition note says what the probe needs until then. **Done at K8-5**: the reader and `sp_analysis_records` were removed in K8-4; the producer, sidecar binding, index, oracle and their tests in K8-5 | K8-4, K8-5 |
+| The hop-capped SP file: producer, sidecar binding, index and reader (`compute_shortest_paths`, `sp_artifact`, `sp_index`, `_load_shortest_paths`, `sp_analysis_records`), with their oracle and tests | `scripts/compute_shortest_paths.py`; `src/inference/sp_artifact.py`; `src/inference/sp_index.py`; `src/inference/pipeline.py`; `scripts/sp_scan_reference.py` | Exact distances computed in process from the view (§6, as built at K4), the only distance path. Its benchmark `scripts/benchmark_sp_lookup.py` was removed in K7. Documents no longer teach the table as a build step; K7's transition note for the probe gave way to "There is no shortest-path step" (`../../../README.md`, both deployment guides). **Done at K8-5**: the reader and `sp_analysis_records` were removed in K8-4; the producer, sidecar binding, index, oracle and their tests in K8-5 | K8-4, K8-5 |
 | `read_samples`' `training_fields` | `src/kg/storage/file_storage.py` | Its one reader was ShepherdGNN's `DiagnosisDataset`. Training reads the three default fields; the gene and patients-like-me task data read candidate genes through `gene_fields`, with their type and source checks | **removed in K8-7** (`e35b2a3`) |
 | The ordinary generator's disease genes in `gene_ids` (K8-9 / TM27) | `src/kg/sample_generator.py` | **Not changed; deferred out of K8.** The generator keeps writing `gene_ids`, which the training read path no longer uses; the gene and patients-like-me task data still read candidate genes through `gene_fields`, with their type and source checks. A later change of the generator's output raises `GENERATION_ALGORITHM_VERSION` and never refuses an old workspace (`../BACKLOG.md` 67) | deferred |
 
@@ -647,7 +729,8 @@ multi-architecture milestone, not yet built.)*
 without a model spec (history) could still be served or trained outside the WebUI, or an old report
 had to stay readable (item 8: read, never run); each is deleted, not adapted, when its reason goes.
 *(2026-11-08: every "Until K8" below is closed or deferred as the K8 record in §8 says; the
-bullets stay as K7 left them.)*
+bullets stay as K7 left them.)* *(2026-11-09: the K8 record lists K8-1 to K8-6 and the closeout by
+commit; today's rules are §4 and the table above.)*
 - **ShepherdGNN starts outside the WebUI.** K7: `POST /training/start` is a strict base start
   (`learning_stage` must be `base`; ShepherdGNN and unknown fields refused; owner decision 2).
   Until K8: `scripts/train_model.py`'s ShepherdGNN path (`SHEPHERD_ONLY_FIELDS`),
@@ -689,16 +772,18 @@ bullets stay as K7 left them.)*
 
 ## 8. Scope of this round and acceptance
 
-**This round: the A + B integration** (the reviewer's workflow and decision record). Package A
-(base, disease) and package B (gene, patients-like-me, family operations) are internal dependencies
-and commit boundaries, not stops for external review. Package C (formal research, clinical adoption)
-and site-wide UI/UX refinement stay outside.
+**This round: the A + B integration (K0–K8, 2026-10-27 to 2026-11-09), closed; its status is the
+K8 record below** (the reviewer's workflow and decision record). Package A (base, disease) and
+package B (gene, patients-like-me, family operations) were internal dependencies and commit
+boundaries, not stops for external review. Package C, its research part and clinical adoption
+(`../BACKLOG.md` §0), and site-wide UI/UX refinement stayed outside.
 
 **Order, by dependency, not by a clock:** K0 (documents and the entry map) → K1 (shared model, graph
 and contracts) → K2 (base) → K3 (disease, first full vertical flow) → K4 (gene, patients-like-me) →
 K5 (family operations, several children) → K6 (functional UI) → K7 (retirement check) → K8
-(integration). Retirements happen as callers move; K7 is the final check. Each meaningful change is
-a revertible commit; reverting relies on Git, never on a runtime compatibility flag.
+(integration). Retirements happened as callers moved; K7 was the retirement check, and K8 completed
+it (TM27 deferred, §7). Each meaningful change is a revertible commit; reverting relies on Git,
+never on a runtime compatibility flag.
 
 **Checkpoint review (the owner, 2026-10-27).** Every K node closes only after these six checks,
 recorded with the node's commit:
@@ -718,7 +803,10 @@ Diagnosis:** a registered reference cohort version chosen from the server list, 
 query; candidates show research id, rank, similarity and the recorded HPO terms and diagnosis or
 gene; a known causal gene is used as evaluation truth or reference context, never as input for an
 unknown query; results, exports and caches carry the reference cohort version; no name or contact
-field is added. Existing D8 and session isolation apply; no multi-tenant platform.
+field is added. Open (the owner): patient-level rows against `../PLAN_TEST_RESULTS.md` D7 for an
+institutional reference cohort, to decide before one is registered as a reference (`../BACKLOG.md`
+62; "Who decided what", "Not decided here, and open"). Existing D8 and session isolation apply; no
+multi-tenant platform.
 
 As built at K6 (`2827428..f835fc5`):
 - **Base and Fine-tune separately.** Research › Prepare › Training's form offers exactly
@@ -744,6 +832,8 @@ As built at K6 (`2827428..f835fc5`):
   records only, K6 decision 14). Every row leads with its kind word (`renderers.record_kind_text`);
   a base, a history file or a refused record is refused from its listed record, before the file is
   read again (`model_list.load_refusal`). Task records have their own metric columns.
+  *(2026-11-09: since K8-6d, `3ed3938`, and K8-7b, `ecc367f`, two orders, Newest first and By
+  family; no History choice; a file without a model spec reads "Record not readable".)*
 - **Test by task.** The runner always passes `--mode <task>` (`TestRunInputs.task`); the page never
   starts Mode C or D. Every checkpoint is listed, led by its kind word; Start is disabled, with the
   reason, for anything that is not a model finetuned for a task and for a gene or patients-like-me
@@ -798,13 +888,18 @@ additive optional import format; older formats stay readable.
 11. **Cross-species (§3.3):** a synthetic graph with human genes, animal genes and phenotypes and
     ortholog relations; each kept encoder builds, runs forward, gets gradients and reloads; turning
     relations off equals a view built without them with the same weights; no second mixing step.
+    *(2026-11-09: deferred out of K8 with the multi-architecture port, the K8 record. Delivered in
+    K8: excluding a relation also removes its reverse twin (`tests/unit/test_graph_view.py`), GATv2
+    builds relation-aware (`tests/unit/test_model_bundle.py`), and there is no second mixing
+    step.)*
 
 **Delivery:** "functional integration done in the container, awaiting external review and a short
 GB10 acceptance". The full suite, `lint-imports` and the diff check run once on the integrated
 batch; later narrow fixes rerun what they touch. A browser smoke of the new UI runs on the normal
 launcher with an explicit CPU setting; what cannot be checked is reported as not verified. A
 functional pass, alignment with the paper's method, reproduction on the original data and clinical
-validity are reported separately.
+validity are reported separately. *(2026-11-09: delivered; K8 was reviewed and accepted on the
+GB10, the K8 record.)*
 
 **K6 delivery (2026-10-28): functional integration done in the container, awaiting external review
 and the GB10 acceptance.**
@@ -1050,6 +1145,45 @@ record's §3; `../BACKLOG.md` 70, 71). AP's autocast check ran on CPU with bfloa
 with its scaler ran on the GB10, on the demo (M2, M9). The HGT node-order tests skip on a host without
 pyg_lib's grouped matmul.
 
+*(2026-11-09, added to the K8 record. N2 in its deferred list is "N2, data roles and reusable
+measurement" of the K8 closeout plan, rev 9, §3.2 (`K8_PLAN_rev9.md`, kept outside this repository;
+SHA-256 `2653128f81059a1ef540a57dda81f5b720a45fee818fc24f2d587f2bd4a7cfc1`). It extends the same
+data versions, report store and ledger to the data kinds a protocol measures (for example a
+generated `train` or `val` split, KG edge test data or an external cohort), so that one entry
+measures, keeps, registers and compares them. Each result keeps its data role as recorded: `train`
+or `val` is never presented as test, no `cohort_version` or `disease_id` is made up, and datasets
+need not be the same to be compared. K8's part is done (K8-6r.4, `4eaa67b`): a generated split's
+report and ranks never replace another run's, and the ledger's refusal of a generated split says the
+ledger does not yet record that data identity, not that research forbids it. The rest is later work.
+This N2 is neither item 16's phenotype-normalisation N2 (`../BACKLOG.md` 16) nor §2.7's "Not
+verified" N2. N3 is cross-model selection, side-by-side comparison and export, its direction set by
+the owner on 2026-11-09, `../BACKLOG.md` §0 and 63.)*
+
+*(2026-11-09, added to the K8 record.)* **K8-1 to K8-6, which landed before the closeout,** by
+commit (2026-11-02 to 2026-11-08, up to `af3a8a9`; K8 was cleared to start on 2026-10-30, the K7
+delivery record above); the later documents point here for them:
+- **K8-1 `ddfef42`** (its review and recheck fixes `04da55f`, `65cb3dd`, `bf7cd22`, `68300ac`,
+  `3049b96`, `017b1f5`): the GB10 probe on the model-bundle flow; selection reads only inside the
+  workspace; the model spec's declared types checked.
+- **K8-2a/2b/2c `9c1a192`, `1100d2f`, `58966e7`, `42d2656`, `9cd98a8`**: tests moved off `runs/gat`,
+  onto trained task children, disease reports and bundle bases and children, before anything they
+  covered was deleted.
+- **K8-3 `f92541d`**: policy rev 14 and the SP guide's status box (docs only).
+- **K8-4 `f4a8c0f`** (its review fixes `ede98c2`, `14fe7a8`, `28f1ac7`, `e02c0f7`): serving runs task
+  models only and a reload is strict; the η/SP mixture, the conv-type selection and six authorised
+  files retire; K7's owner-decision rows M1 (the served-pipeline measurement, retired and pending
+  re-attachment, `../BACKLOG.md` 64), TM8/D4 (`migrate_checkpoints.py` retired) and X20 (the
+  analogy mode retired) are decided here; one bad file never fails a listing.
+- **K8-5 `85a0689`**: the shortest-path table's code retires, nine authorised files (SP3 (a)).
+- **K8-6** (policy rev 15 `f4f507a`, rev 16 `da9e93b`): one protocol definition, and Mode C leaves the
+  command line (K8-6a `22487a6`); the registration refusal keyed on Mode D goes (K8-6c `701d743`);
+  Mode C's executor retires (K8-6b `f35bb93`); By test score retires (K8-6d `3ed3938`); one
+  registration at a time (K8-6r.1 `f9769c7`); registration by the verified run, ledger schema 4
+  (K8-6r.2 `f74db89`, `9dc8c36`); an R10 place not looked in is recorded (K8-6r.3 `082f90b`); a
+  generated split's report never replaces another (K8-6r.4 `4eaa67b`); unreadable records listed
+  with their reasons (K8-6e.1 `6107215`); one generic display for every record (K8-6e.2
+  `6992597`); the completion review's fixes (`af3a8a9`).
+
 **BACKLOG items in scope, bounded:** 23 (branch's closed list and lineage), 54 (shared validation and
 unknown-field refusal for the training API, CLI and UI touched here, without the unsupported HGT/AMP
 ban), 57 (LP and task losses really wired; dead weights and replaced losses gone), 60 (stale
@@ -1079,12 +1213,15 @@ round touches them: 53, 40, 56, 52.
 ## 10. Entry map: kept, changed or retired
 
 [`ENTRY_MAP.md`](ENTRY_MAP.md) is the K0 inventory of the code at `0e64666`: 464 entries in six
-areas, each with its verdict (148 keep, 212 modify, 42 replace, 47 retire, 15 uncertain), its role
-after the switch, its callers and its tests, and the 118 hazards the passes found; a completeness
-pass adds 39 rows and 15 hazards. It guides the nodes; this blueprint decides, and a row found
-wrong is corrected at the node that touches it.
+areas, each with its verdict (the counts are the map's Summary), its role after the switch, its
+callers and its tests, and the 118 hazards the passes found; a completeness pass adds 39 rows and
+15 hazards. It guided K1–K8; this blueprint decided, and its rows carry dated markers through the
+K8 closeout.
 
-**Hazards that change how the nodes are built** (decided in K0):
+**Hazards that change how the nodes are built** (decided in K0): *(2026-11-09: a K0 record. Today's
+rules are §4, the provenance contract §9 and `../PLAN_TEST_RESULTS.md` §4, "Current rules"; a
+ledger file is written as schema 4 since K8-6r.2, `f74db89`, and schema 3 and 4 files are read,
+policy rev 16.)*
 
 | Hazard | Decision | Node |
 |---|---|---|
@@ -1105,4 +1242,5 @@ wrong is corrected at the node that touches it.
 node touches them.
 
 **Authority above everything here:** `docs/DISEASE_SCORER_POLICY.md` for what may be offered to
-doctors.
+doctors. Its open items, each with who decides, are its §2.1, "Who decides what"; "Who decided
+what", "Not decided here, and open" above agrees with it.

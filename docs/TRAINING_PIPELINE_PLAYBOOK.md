@@ -41,14 +41,14 @@ serves inference.
 - `./deploy.sh` already run successfully (creates `.venv/` from `uv.lock`). All
   `python` calls below use that interpreter — prefix with `.venv/bin/python` if it
   is not on your `PATH`.
-- Confirm PyG native extensions are actually active (matters for HGT speed):
+- Confirm PyG native extensions are actually active:
   ```bash
   .venv/bin/python scripts/validate_pyg_ext.py      # expect 5/5 on GB10
   ```
   At training start the console/log also prints one line, e.g.
   `PyG native extensions: pyg_lib 0.6.0 OK | torch_scatter ... OK | ...`.
   If any read `MISSING`, you are on slow fallback kernels — re-run the deploy
-  PyG-extension step before training (especially for HGT).
+  PyG-extension step before training.
 - **The service's settings**, as the [deployment guide](../deployment-guide.en.md)
   §4.12 states them: the dashboard lists the subdirectories of
   `SHEPHERD_WORKSPACES_ROOT` as datasets, and its Start is an operator control,
@@ -304,8 +304,8 @@ drawer shows no structural line.
 | Symptom | Where to look |
 |---------|---------------|
 | Training crashed | Red error banner on Research › Prepare › Training (the last error line and the output's tail); full run output in the console where uvicorn runs |
-| "Running slow" / HGT sluggish | PyG status line at training start; if any extension `MISSING`, re-run deploy PyG step |
+| "Running slow" | PyG status line at training start; if any extension `MISSING`, re-run deploy PyG step |
 | A model will not load after a rebuild ("does not match this workspace's graph") | Expected: the checkpoint was trained on the old build (see the safety net above); retrain on the rebuilt workspace |
-| Inference rankings look wrong | The Diagnosis page's **Details ›** drawer: which workspace is served and whether the model was trained on it ("the same dataset ✓" or "another dataset"), and the structural fingerprint's warnings |
+| Inference rankings look wrong | The Diagnosis page's **Details ›** drawer: which workspace is served and whether the model was trained on it ("the same dataset ✓" or "another dataset"), the graph's state ("graph ✓"), whether the task uses SP, and the dataset record ("dataset record ✓") |
 | `No paths found` beside a disease, or no result at inference | Check, in order: a model is loaded (with none, nothing is served and a diagnosis is refused with the reason); the pipeline is pointed at the intended `$WS`; the submitted HPO ids exist in the KG (unknown ids are dropped before scoring and listed in `phenotype_input.unknown`; with none known the request is refused). Ranking is not path-gated: a disease task model ranks every disease of its graph view, and paths are looked for only to explain the rows shown, so a disease with no path is still ranked |
-| Build killed (OOM) | Expected only on small-RAM machines; Spark's 128 GB is fine. See `docs/MILESTONE_REPORT.md` SP memory section |
+| Build killed (OOM) | Expected only on small-RAM machines; Spark's 128 GB is fine. The build has no shortest-path step (Step 1), so `docs/MILESTONE_REPORT.md`'s SP memory appendix, about loading the retired table, does not apply |

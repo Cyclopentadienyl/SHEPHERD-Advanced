@@ -1,22 +1,39 @@
 # PLAN — backlog item 14: test results recorded by the pipeline, shown where a model is chosen
 
-**Current status (2026-10-25, at `main` `416a242`).** Both phases are complete, accepted and
-merged. **Phase 1** (the contract's M4): test cohorts imported as immutable versions, Mode C
-measured on them, every report kept, one registration function, ledger schema 3; accepted on the
-GB10 at `2c94a4e` (84 of 84) and merged as #126. **Phase 2** (the contract's M5): the research WebUI
-(Datasets, Training, Test, Models), the job runner and GPU lock, D4, D5 and D8; accepted on the GB10
-at `b14c4de` (99 of 99) and in the WebUI's manual rounds to `773dc4a`, and merged as #129. **What is
-complete is the engineering tool; the institution's evaluation conditions are not** (§4.9: the
-acceptance rule and metric, the institutional cohort's data, terms and protocol, MyGene2's terms;
-EVALUATION_COHORTS §5). The WebUI's usability is not accepted (BACKLOG 52). Where each capability is
-entered: `docs/ARCHITECTURE.md` §11. The status record below is dated history: "on this branch",
-"not merged" and "not yet reviewed" there describe the date written.
+**Current status (2026-11-09, at `main` `db8ee5a`).** Both phases of item 14 and §8's task-aware
+evaluation are built, accepted and merged. *As accepted by 2026-10-25:* **Phase 1** (the contract's
+M4): test cohorts imported as immutable versions, Mode C measured on them, every report kept, one
+registration function, ledger schema 3; accepted on the GB10 at `2c94a4e` (84 of 84) and merged as
+#126. **Phase 2** (the contract's M5): the research WebUI (Datasets, Training, Test, Models), the
+job runner and GPU lock, D4, D5 and D8; accepted on the GB10 at `b14c4de` (99 of 99) and in the
+WebUI's manual rounds to `773dc4a`, and merged as #129. **K8 changed what the phases built:**
+measurement is `--mode <protocol>` and Mode C leaves the command line (K8-6a `22487a6`), Mode C's
+executor retires (K8-6b `f35bb93`), D4's ordering by test score retires (K8-6d `3ed3938`), and D5's
+block is withdrawn: registration is by the verified run, ledger schema 4 (K8-6r.2 `f74db89`; policy
+rev 16). Today's rules are §4, "Current rules". **What is complete is the engineering tool; the
+institution's evaluation conditions are not** (§4.9: the acceptance rule and metric, the
+institutional cohort's data, terms and protocol, MyGene2's terms; EVALUATION_COHORTS §5). The
+WebUI's usability is not accepted (BACKLOG 52). Where each capability is entered:
+`docs/ARCHITECTURE.md` §11. The status record below is dated history: "on this branch", "not merged"
+and "not yet reviewed" there describe the date written.
+
+**§8, task-aware evaluation, is built and merged** (#131, `db8ee5a`): the base's link-prediction
+validation (K2), the disease task (K3), the gene and patients-like-me tasks (K4) and their pages
+(K6), on this plan's infrastructure. The K8 reference flow passed its functional acceptance on the
+GB10 at `f2c2012` (2026-11-09; 101 of 101 probes, the closing check 110 of 110;
+[`k8-acceptance-2026-11-09/`](k8-acceptance-2026-11-09/README.md)); the gene and patients-like-me
+tasks ran on synthetic functional fixtures and were checked on CPU only (`BACKLOG.md` §0, package
+B). Deferred out of K8 ([`scorer-retraining/README.md`](scorer-retraining/README.md) §8, "K8
+record"), among others: the base's formal KG test (N1), comparing, querying and exporting results
+(N3; its direction set on 2026-11-09, `BACKLOG.md` §0 and 63), the patients-like-me reference set
+and R10's exposure scope. §8.6's institutional-approval record does not exist yet (§8.6 is design).
 
 **2026-10-27: task-aware evaluation for the paper-aligned stages is designed in §8, not
 implemented.** It covers the base's link-prediction validation and the disease, gene and
 patients-like-me tasks, with their candidates, denominators and reference cohort. It also defines
 the clinical evaluation status as three kinds of evidence. Work packages A and B build it on this
 plan's infrastructure ([`scorer-retraining/README.md`](scorer-retraining/README.md) §8).
+*(2026-11-09: built and merged since; the paragraph above.)*
 
 **Status history: revision 4, corrected 2026-10-16.** **Phase 1 (the contract's M4) is implemented on
 this branch (2026-10-16)** (§6, "Phase 1 as implemented"; the contract's §4, "M4 as implemented").
@@ -194,9 +211,12 @@ question one, and BACKLOG item 14):
   the candidate-gene score, and the clinician-facing results view was redesigned so that
   auxiliary scores are optional views the clinician turns on.
 
-## 2. What exists today
+## 2. What existed when this plan was written
 
 ### 2.1 The evaluation ledger
+
+*As it stood at `1cab39f`, with M4's changes. Today's ledger (schema 4, registration by the
+verified run, one registration at a time; K8-6r.1, K8-6r.2): §4, "Current rules".*
 
 `src/evaluation/sidecar.py` and `scripts/record_evaluation.py` implement
 `EVALUATION_COHORTS.md` §6.5. The bullets below describe the ledger at `1cab39f`, before M4; the
@@ -245,9 +265,17 @@ last one says what M4 changed.
   `record_evaluation.py` with `--checkpoint FILE` or `--checkpoint-dir DIR`) and on the read
   side, so a symlinked checkpoint's ledger is beside the link's target. The read-only route
   `GET /api/v1/evaluations/loaded-model` reads it for the Diagnosis tab's model status. The
-  contract's §4, "M4 as implemented", has the detail.
+  contract's §4, "M4 as implemented", has the detail. *(2026-11-09: K8-6r.2, `f74db89`, withdrew
+  the duplicate rule; today's ledger: §4, "Current rules".)*
 
 ### 2.2 The measurement engine, and what each mode measures
+
+*As it stood at `1cab39f`, before M4 and K8.* Since K8, `measure_scorer.py --mode <protocol>` is
+required and runs only the task protocols (K8-6a, `22487a6`): Mode D was removed in K7,
+`run_mode_c` retired in K8-6b (`f35bb93`), and the served mixture in K8-4 (`f4a8c0f`), so Diagnosis
+serves task models only. `src/inference/scoring.py` was removed in K8-11 (`9d76bbe`); the one task
+scorer is `src/models/tasks/scoring.py`, used in validation, measurement and serving (policy
+rev 17). Today's rules: §4, "Current rules"; the tasks: §8.
 
 `scripts/measure_scorer.py` is the only producer whose output the ledger accepts.
 
@@ -393,8 +421,49 @@ branch. F4 is a documentation fix, left to §6 step 4.
 
 ## 4. Decisions
 
-Each lists the options and a recommendation. **D3 is settled by the scorer policy**; the rest
-are recommendations until the owner confirms them. §4.9 gathers what is actually asked.
+Each lists the options and a recommendation. **D3 was settled by the scorer policy** for Mode C
+(for task models today: D3, "Today"); the rest are recommendations until the owner confirms
+them. §4.9 gathers what is actually asked.
+
+### Current rules (2026-11-09, `main` `db8ee5a`)
+
+What holds today for measuring, keeping, registering and showing test results. D1–D8 and §4.9
+below keep their reasoning and dates; where one of them says otherwise, this list is today's rule
+and the decision's text is history.
+
+- **Measuring.** `scripts/measure_scorer.py --mode <protocol>` (`--mode` required) runs a protocol
+  of `src/evaluation/protocols.py` (`PROTOCOLS`: `disease`, `gene`, `patients_like_me`). A protocol
+  is offered for what a model can do, its learning stage and task head (`model_refusal`), and its
+  name is not the model's task (K8-6a). One task scorer (`src/models/tasks/scoring.py`) serves
+  validation, measurement and serving, and one metrics module (`src/models/bundle/metrics.py`)
+  serves validation and measurement; each protocol's evaluator is in
+  `src/evaluation/task_measurement.py` (`TASK_RUNS`, metric schema 2). A base has no protocol yet:
+  its formal KG test is a later item (`protocols.BASE_MESSAGE`; `BACKLOG.md` §0).
+- **Keeping.** Every valid result of every real execution is kept as its own report (policy
+  rev 16), a run that repeats another's conditions included; a generated split's report never
+  replaces an earlier run's (K8-6r.4).
+- **Registering.** One writer, `register_report` (`src/evaluation/registration.py`), by the verified
+  run (K8-6r.2): the same run with the same bytes answers `already_registered` and writes nothing;
+  the same run with other bytes is refused; any other run gets its own record. Differences between
+  runs are described, never used to refuse (rev 16).
+- **The ledger.** Schema 4 (`src/evaluation/sidecar.py`, `LEDGER_SCHEMA_VERSION`). Schemas 3 and 4
+  are read as written, and reading never rewrites a file; schemas 1 and 2 are refused. The first
+  registration into a schema 3 file writes schema 4. One registration at a time per ledger, and one
+  append at a time per usage-history file (K8-6r.1).
+- **Kept reports of retired modes.** Kept Mode C and D reports are read by the shared readers,
+  shown by the one display for every record and registered by the general rules under their own
+  mode (rev 15; K8-6c, K8-6e.2). A record a reader cannot read is listed with its reason, never
+  counted as a result and never hidden (K8-6e.1).
+- **R10.** Every measurement records R10. An unverifiable cell never reads 0, and a scope found
+  nowhere while a place could not be looked in is `search_incomplete` (K8-6r.3, `082f90b`;
+  extended to optional evidence directories in the K8-6 completion review, `af3a8a9`).
+- **Ordering and comparing.** Nothing is ordered by test score (By test score retired in K8-6d;
+  Models offers Newest first and By family). Automatic checkpoint selection never reads test
+  results (`.import-linter.ini`, `selection-ignores-test-results`). The owner set the direction on
+  2026-11-09: comparing, querying and exporting results (`BACKLOG.md` 63, N3), for any models,
+  datasets or environments, with a default order or the figure per task proposed when needed.
+  Different tasks' metrics are never read as one scale.
+- **Who may act.** D8's one check governs every operator operation (`src/utils/operator_access.py`).
 
 ### 4.0 One path per concern
 
@@ -412,6 +481,11 @@ with the first, although only the newer one will be used. This item adds none:
 | Listing checkpoints | one listing function behind the existing route and the Training Console's resume dropdown, upgraded: by workspace and architecture chosen among those the server lists, with a safe metadata read (§5) | a second listing path |
 | A checkpoint's validation ranking score | `RANKING_SCORE_KEYS` and `ranking_score_detail` | a second key list (F2 removed one) |
 
+*(2026-11-09: the table is revision 2's. Today's paths are §4, "Current rules": `measure_scorer.py
+--mode <protocol>`, one task scorer (`src/models/tasks/scoring.py`), and ledger schema 4, whose one
+reader reads schemas 3 and 4. Mode D was removed in K7 and Mode C in K8-6a and K8-6b; B-1 is not
+built.)*
+
 **Existing paths are changed to fit, not worked around.** Where an existing path has a defect or
 a shape that does not fit, it is upgraded, and the new module is built for the upgraded path. A
 new module is not bent around an old one's limits.
@@ -427,6 +501,10 @@ then states the condition for removing it.
 | In the file name | The current practice, and what the owner wants to replace |
 | **Beside it, in the existing ledger** | Bound by checkpoint and cohort digest; survives a rename; contradictions refused; already built |
 
+*(2026-11-09: since K8-6r.2, policy rev 16, a run's registered report is sealed: the same run offered
+with other bytes is refused, and a different result from another run is its own record. §4,
+"Current rules".)*
+
 **Recommendation:** the ledger. The file name stays as it is; a display name can show the score
 without becoming the record.
 
@@ -435,7 +513,11 @@ without becoming the record.
 - **What digest binding gives:**
   - a result cannot be moved onto another model or cohort without the mismatch showing;
   - a rename cannot detach it;
-  - a second, different number for the same measurement is refused.
+  - a second, different number for the same measurement is refused. *(2026-11-09: since K8-6r.2,
+    policy rev 16, a run's registered report cannot be replaced: the same run offered with other
+    bytes is refused, and another run's different number is its own record. A record written before
+    each run had its own record (schema 3, and schema 4 before its run-identity boundary) names no
+    run, so this check does not cover it.)*
 - **What it does not give.** Anyone who can write the directory can edit `evaluations.json`.
   `PLAN_ONTOLOGY_PHASE2.md`'s rule applies: *a digest is not a signature*.
 
@@ -445,6 +527,22 @@ or asymmetric), an append-only log and a hash chain are out of scope. The claim 
 contract's §6.
 
 ### D3 — What a test result measures: settled by the scorer policy
+
+**Today (2026-11-09).** A test result is a task protocol's measurement (§8; §4, "Current rules").
+The disease protocol ranks every disease of the model's graph view by the disease head
+(`-||z_d - z_P||^2` on L2-normalised projected vectors), ties by average rank (`average-rank/v1`),
+and reports metric schema 2: pooled and macro readings, coverage and the conservative reading
+(`src/evaluation/task_measurement.py`, `src/models/bundle/metrics.py`). The policy's statements 1
+and 3–6 bind the new disease ranking (rev 12). **Proposed, not approved (the owner, then the
+institution):** rev 11's revisions of statement 2 (raw cosine), gate 1's comparison and B-1's scope,
+and rev 12's replacement of gate 1's B-0 prerequisite by the task models' own effect evaluation.
+Until approved, statement 2 and gate 1 stand as written; they bind the clinical switch, not research
+implementation (rev 11). The open decisions: the policy's §2.1, "Who decides what", and
+[`scorer-retraining/README.md`](scorer-retraining/README.md), "Who decided what", "Not decided here,
+and open". This engineering rule approves nothing for clinical use. *The rest of D3 is history
+(revision 2, 2026-10-02, to K8): Mode C as the policy settled it (retired in K8-6a and K8-6b), its
+labels (K8-6e.2) and Mode D (removed in K7). "What it does not claim" still holds for the paper's
+cohort.*
 
 Revision 1 offered Mode C as the model-only fallback and asked whether acceptance needed the
 served ranking. That framing was wrong. A test examines the network itself (§1), and the
@@ -521,6 +619,16 @@ this one.
 
 ### D4 — Ordering by test score
 
+**Today: retired in K8-6d (`3ed3938`, 2026-11-06).** Nothing is ordered by test score:
+`src/evaluation/ordering.py`, `SHEPHERD_ORDERING_ROLES` and `role_offers_ordering` are deleted, and
+Models offers Newest first and By family (`src/webui/components/models_page.py`). What stands:
+automatic selection never reads test results (below), and the usage history keeps `test_run` and
+`registered` entries; kept `model_load` entries are read as written, and none is written now
+(`src/evaluation/report_store.py`). Ordering or comparing task records: the direction is set
+(comparing, querying and exporting results, `BACKLOG.md` 63, N3), and a default order and the
+figure per task are the owner's, proposed when needed (§4, "Current rules"). *The rest of D4 is
+history (revision 2, 2026-10-02, built in M5, to K8-6d).*
+
 A list ordered by test score invites choosing by it. A cohort used to choose stops being an
 independent test (EC §4.1 condition 6, EC §6.7). The owner asked for ordering as an advanced option,
 so the aim is to make that use visible and comparable, not to forbid it.
@@ -576,7 +684,8 @@ so the aim is to make that use visible and comparable, not to forbid it.
     the ledger and the report store's contested status, and carries D5's limit: it rests on
     plain files.
 - **Auto-selection never reads test results.** `select_auto_checkpoint`
-  (`src/utils/checkpoint_paths.py`) stays on validation under every option.
+  (`src/utils/checkpoint_paths.py`) stays on validation under every option. *(2026-11-09: the
+  rule still holds; the function is `select_auto_run_checkpoint` since M3a-2.)*
 - **The cohort's usage history is kept.** It holds:
   - every run and every registration against a cohort version;
   - every model load made from a list ordered by that version's score.
@@ -608,6 +717,7 @@ ledger, and `record_model_load` serves M5-2's Load from an ordered list. Automat
 kept away from the ledger by the import-linter contract `selection-ignores-test-results` (direct
 imports of the reload route and `checkpoint_paths`) and a behavioural test. Model Management and
 the Load control are M5-2's (done: §6, "M5's boundaries", Model Management as implemented).
+*(2026-11-09: retired in K8-6d, `3ed3938`; D4's opening paragraph.)*
 
 ### D5 — The checkbox, reports and records
 
@@ -621,6 +731,10 @@ the Load control are M5-2's (done: §6, "M5's boundaries", Model Management as i
 > registers. The ledger is schema 4 since then (schema 3 is still read; §5's schema-3 passages
 > are history too). The current rules: `docs/DISEASE_SCORER_POLICY.md` rev 16 and
 > `deployment-guide.en.md` §4.9.
+>
+> *(2026-11-09: today's rules are §4, "Current rules". The owner's semantics just below still
+> hold; from "Repeat runs that disagree" to the end of D5 the text is history to K8-6r.2
+> (`f74db89`; the amber rule `9dc8c36`), and D4's fixed rule retired in K8-6d.)*
 
 The owner's semantics, followed as stated:
 
@@ -923,6 +1037,12 @@ case count and every case that will not map, in categories:
   is 1.0 over 80, coverage is 80/100, and the all-source MRR is 0.8 over 100. "MRR 1.0" is never
   shown beside a denominator of 100. The all-source figure exists so that a cohort cannot look
   better by losing its hard cases.
+
+  *(2026-11-09: Mode C retired in K8-6a and K8-6b. Today the task metrics, pooled MRR and top-k
+  (E1) and macro readings (E2), keep the ranked cases and their positive pairs as their
+  denominator (`ranked_units`, `positive_pairs`). Beside them stands the conservative reading
+  (E5): `conservative_pooled_mrr`, an assessable case the model could not rank counted as 0, over
+  `conservative_denominator_pairs`, the cases after import (never called end to end).)*
 - **Binding.** A run against a workspace whose graph artifact digests differ from the mapped
   version's is refused. This closes §2.3's undetected-index hazard.
 - **No URL download** in this item (EC §5 item 5). If wanted later, it goes through the existing
@@ -942,6 +1062,14 @@ two about the data (questions 3 and 4).
   are the source file, the mapped samples, and the per-patient rank and prediction files.
 - **The UI shows aggregate metrics only.** The import preview lists excluded cases by their
   case identifier only, on the machine.
+  **Open (owner; `BACKLOG.md` 62):** for an institutional reference cohort, the patient-level
+  reference rows on Diagnosis conflict with this rule, and the conflict is undecided. Since K6, a
+  patients-like-me result on Diagnosis shows each reference patient's research id, rank,
+  similarity, recorded HPO terms and diagnosis or gene, in rows, the CSV and the report (§8.4).
+  Today's reference cohorts are synthetic functional fixtures, and nothing in the code
+  enforces that. Before an institutional cohort is registered as a reference, the owner chooses
+  patient-level rows, aggregates only, or a role that may not be a reference; the reviewer's
+  2026-10-29 recommendation is not a decision.
 - **Sources come from a server intake directory** (the reviewer's decisions, relayed by the owner, 2026-10-19). The operator places a
   `shepherd-cases/1` file in it and chooses it from the Test tab's list; the same importer
   previews and commits it. The intake directory and the registry are both outside the
@@ -1044,6 +1172,7 @@ Test-tab button is a Gradio callback, an HTTP endpoint reachable by anyone who r
   - Taking a safe metadata read out of C3 would be an amendment to SPEC_4. This plan does not
     propose one.
 - **Known exceptions, outside this item,** named so the gap is not read as closed:
+  *(2026-11-09: history; closed on 2026-10-19 by the next bullet.)*
   - **training start and stop stay ungated,** through the Training Console and
     `POST /api/v1/training/start` and `/stop` alike. Until SPEC_4's C4 is addressed, the one
     job runner has two entry policies: test start gated, training start not. Stop is per job
@@ -1064,7 +1193,8 @@ Test-tab button is a Gradio callback, an HTTP endpoint reachable by anyone who r
     like the rest. The CLI keeps its typed paths: it runs on the machine.
   The check reads the triggering request's own arrival: a WebUI handler that reaches the API
   through a loopback self-call is checked in the handler, never by the API's view of that
-  self-call.
+  self-call. *(2026-11-09: since work packages A and B, the finetune start,
+  `POST /api/v1/training/finetune` (`src/api/routes/training.py`), takes the same check.)*
 - **As implemented (M5-1, 2026-10-20).** One check, `check_operator_access`
   (`src/utils/operator_access.py`), a pure function of the triggering request's own ASGI scope
   and the deployment setting; one FastAPI dependency (`src/api/operator_access.py`) and one
@@ -1135,10 +1265,18 @@ gates phase 2; question 4 is answered:
 
 1. **The test's use.**
    - Confirm D3: a test result is the model's disease ranking under the approved policy.
+     *(2026-11-09: D3's engineering rule is §4, "Current rules"; for task models, rev 11's and
+     rev 12's proposals are not approved and wait for the owner and then the institution, and until
+     approved statement 2 and gate 1 stand as written (policy §2.1, "Who decides what";
+     [`scorer-retraining/README.md`](scorer-retraining/README.md), "Not decided here, and open").)*
    - For the institutional cohort: which metrics, and which acceptance rule, are declared
      before the first result (EC §4.1)? **Open, and not an engineering question:** it is the
      institution's, and it is declared before the first institutional result.
    - Is ordering by its score offered (D4)? Phase 2. **Answered 2026-10-19** (the reviewer's decisions, relayed by the owner, 2026-10-19):
+     *(2026-11-09: retired in K8-6d, `3ed3938`: the ordering, its role setting, its predicate and
+     the `model_load` writer are gone, and kept `model_load` entries are read as written; the
+     answer below is history except the independence principle of its last point, which stays
+     protocol guidance.)*
      - a cohort version whose declared purpose is exploration, comparison and model selection
        offers ordering; the purpose is its role, never inferred from the source's name;
      - `institutional_acceptance` does not, until the institution's formal evaluation rules
@@ -1197,7 +1335,8 @@ gates phase 2; question 4 is answered:
    Old-pipeline artifacts are not supported. Any earlier `evaluations.json` (schema 1, or 2
    since R2) describes old-pipeline models, and is archived with them. Schema 3 starts clean
    (§5): since M4 a schema 1 or 2 file is refused, naming the file, and the operator archives it
-   by hand (for example as `evaluations.v2.json`).
+   by hand (for example as `evaluations.v2.json`). *(2026-11-09: since K8-6r.2 the ledger is
+   schema 4, and the one reader reads schema 3 and 4; §4, "Current rules".)*
 
 **Asked once with M4 (2026-10-16).** Each changes behaviour, so each is asked once, with the
 default M4 runs on and a concrete example. An answer changes a default; it adds no second path.
@@ -1436,6 +1575,11 @@ This is one pipeline extended, not a second one.
     through the new path if they are wanted.
   - Nothing is backfilled, converted or inferred, and no earlier record is displayed. An
     earlier ledger describes old-pipeline models, which are archived with it (§4.9 question 4).
+
+  *Since K8-6r.2 (`f74db89`, policy rev 16):* the format is schema 4, and one reader reads schema 3
+  and 4, each with its own meaning, and never rewrites a file; schema 1 and 2 are still refused.
+  The duplicate rule and the refusal while reports disagree are withdrawn (§4, "Current rules").
+  The design above is kept as written.
 - **Job runner.** `training_manager`'s subprocess core becomes the one job runner, reshaped for
   both jobs rather than extracted around the old one (§4.0).
   - **A test run's inputs are fixed** (D5): the batch size (since R2 there is no seed or worker
@@ -2306,26 +2450,38 @@ contract and BACKLOG stay the record, and no new planning document is added.
 - Refit, and a synthetic test partition (`EVALUATION_COHORTS.md` §5).
 - Auto-selection by test score.
 - Pooling MyGene2 with the institutional cohort.
-- Patient-level display.
-- Evaluating Patients-like-me and causal gene discovery.
-- Mode D, B-1, and the Training Console's exposure.
+- Patient-level display. *(Patient-level reference rows on Diagnosis, built in K6, are open
+  against D7: the owner decides, `BACKLOG.md` 62; D7.)*
+- B-1, which is not built (`DISEASE_SCORER_POLICY.md` rev 11, rev 12). *(This bullet also named
+  Mode D, removed in K7, and the Training Console's exposure, behind D8 since 2026-10-19.)*
 
 *2026-10-27:* evaluating patients-like-me and the gene task is no longer out of scope: §8 designs
 it for work package B. B-1 as a raw-cosine ranking is not built (`DISEASE_SCORER_POLICY.md` rev 11).
+*(2026-11-09: K4 built it (§8.3–8.4 as built), so its bullet, "Evaluating Patients-like-me and
+causal gene discovery.", is taken off the list.)*
 
 ## 8. Task-aware evaluation for the paper-aligned stages (design revision 2, 2026-10-27)
 
-**Status: designed, being built on this branch.** Revision 2 applies the reviewer's decision record
-of 2026-10-27 (multi-positive metrics, patients-like-me on Diagnosis, the archived Mode C/D). The
-recipe it measures is [`scorer-retraining/README.md`](scorer-retraining/README.md) §2, whose §2.6
-(E1–E7) holds the metric rules this section applies; the records are `PLAN_PROVENANCE_CONTRACT.md`
-§9. It reuses this plan's infrastructure:
+**Status: built and merged** (K2–K6, closed at K8; #131, `db8ee5a`; the opening status says what
+the GB10 acceptance covered). Deferred out of K8, among others: the base's formal held-out KG test
+(§8.1; `protocols.BASE_MESSAGE`, N1), comparing, querying and exporting task records
+(`BACKLOG.md` 63, N3), the patients-like-me reference set and R10's exposure scope; §8.6's
+institutional-approval record does not exist yet (§8.6 is design). *(History: designed as
+revision 2, 2026-10-27, and built on `claude/paper-aligned-two-stage`.)* Revision 2
+applies the reviewer's decision record of 2026-10-27 (multi-positive metrics, patients-like-me on
+Diagnosis, the archived Mode C/D). The recipe it measures is
+[`scorer-retraining/README.md`](scorer-retraining/README.md) §2, whose §2.6 (E1–E7) holds the
+metric rules this section applies; the records are `PLAN_PROVENANCE_CONTRACT.md` §9. It reuses
+this plan's infrastructure:
 - the cohort registry, `measure_scorer.py` and the measurement engine;
 - the report store, the one registration function and the sidecar;
-- D4's ordering and R10.
+- R10 and the usage history *(the design also named D4's ordering, which never ordered a task
+  record and retired in K8-6d; `BACKLOG.md` 63)*.
 
 It adds a task, a metric schema and a scoring identity to the same entry. There is no second
-evaluation, report, ledger or registration system, and no evaluator per task.
+evaluation, report, ledger or registration system: one entry and one metrics module, and each
+protocol names its evaluator function (`task_measurement.TASK_RUNS`: disease, gene,
+patients_like_me). *(The design, 2026-10-27, said "and no evaluator per task".)*
 
 ### 8.1 The base: link-prediction validation
 
@@ -2345,8 +2501,12 @@ evaluation, report, ledger or registration system, and no evaluator per task.
     difference is recorded.
 - **Embeddings** come from the forward rule of the model spec (README §2.8).
 - **Selection.** The full schedule runs and the best validation epoch by LP accuracy is restored
-  (early stopping disabled, as the source). A finetune child records the selection rule and the
-  validation report's digest. Test edges never take part in selection.
+  (early stopping disabled, as the source). A finetune child records its selection as
+  `{"rule": "the operator's choice of base checkpoint", "parent_logs": <the base's logs>}`
+  (`scripts/train_model.py`). The validation report's digest is designed (2026-10-27: the
+  selection rule and the validation report's digest), not built: no validation report artifact
+  exists, so no digest of one is recorded, a gap against the design. Test edges never take part in
+  selection.
 - **Not a patient-task claim.** A base has no task head, so no patient-task MRR is a property of a
   base.
 - **The held-out boundary.** A finetune's validation, tests and serving pass messages over the full
@@ -2405,7 +2565,10 @@ evaluation, report, ledger or registration system, and no evaluator per task.
 - **On Diagnosis (this round):** a reference cohort version chosen from the server list; candidates
   show research id, rank, similarity and the recorded HPO terms and diagnosis or gene; no name or
   contact field. A known causal gene is truth or reference context, never an input for an unknown
-  query.
+  query. K6 built these rows, in the CSV and the report too. **Open (owner; `BACKLOG.md` 62):** for
+  an institutional reference cohort they conflict with D7's aggregates-only rule; today's reference
+  cohorts are synthetic functional fixtures, and the choice is made before an institutional cohort
+  is registered as a reference.
 
 ### 8.3–8.4 as built (K4, 2026-10-27)
 
@@ -2420,6 +2583,37 @@ evaluation, report, ledger or registration system, and no evaluator per task.
   embeds the version once per samples digest.
 
 ### 8.5 Manifests, ordering and registration
+
+*Today (2026-11-09); the 2026-10-27 design is the history block at the end.*
+
+- **Manifests.** A task report has the same manifest fields as every measurement. Its `mode` is the
+  protocol's name, and its evaluator gives the values: `metric_schema_version` 2,
+  `candidate_construction`, `score_semantics` (for the gene task with η, the SP bounds and the
+  augmentation), `model_construction` and `canonical_tie_policy_version` `average-rank/v1`
+  (`src/evaluation/task_measurement.py`). The graph view's digest is in the report's
+  `sampler_evidence`. No field gives a per-record manifest schema version. A patients-like-me
+  measurement names no separate reference cohort: it ranks the measured version's patients against
+  each other (§8.3–8.4 as built).
+- **The ledger** is schema 4, and the one reader reads schema 3 and 4 (K8-6r.2; §4, "Current
+  rules"); its key fields are unchanged.
+- **No ordering.** Nothing is ordered by test score (K8-6d, `3ed3938`). Every record, a kept Mode C
+  or D one included, is shown by one generic display under its recorded mode, and none is named,
+  ordered or hidden by its mode (K8-6e.2, `6992597`). The Mode C/D comparison is archived by the
+  owner: not run again, not a prerequisite, not marked as passed (policy rev 12). "Archived" means
+  that the build no longer runs Mode C or D; it does not restrict research, and whether two results
+  are comparable is the researcher's judgement: the platform records each result's conditions
+  (rev 15).
+  Comparing, querying and exporting task records is the set direction (`BACKLOG.md` 63, N3); a
+  default order and the figure per task are the owner's, proposed when needed.
+- **Registration** is one function, `register_report`, by the verified run (§4, "Current rules"),
+  with the protocol in the record (`mode`). A kept report of any mode registers under its own mode
+  when its manifest carries exactly the current field set and it passes registration's checks
+  (the store, the version, the report's digest and the checkpoint), and a repeat answers
+  `already_registered`. `build_record` refuses another field set and names the fields: a format
+  rule, not a mode rule (`src/evaluation/sidecar.py`).
+
+*History (2026-10-27 to K8-6c): §8.5 as written, kept verbatim.* *(2026-11-09: today's rules are
+the bullets above; K8-6c is `701d743`.)*
 
 - **New manifests** name the task, the metric schema, the scoring identity, the candidate universe,
   the reference cohort (patients-like-me), the graph view and the forward rule, with a per-record
@@ -2447,6 +2641,10 @@ evaluation, report, ledger or registration system, and no evaluator per task.
   under its own mode, and a repeat answers `already_registered`.
 
 ### 8.6 Clinical evaluation status: three kinds of evidence
+
+*Design (2026-10-27), not built as a whole: no institutional-approval record exists in the code yet,
+and the clinical adoption it serves is open (owner, then the institution;
+[`scorer-retraining/README.md`](scorer-retraining/README.md), "Not decided here, and open").*
 
 These are axis 3 of README §5. They are not one promotion line.
 

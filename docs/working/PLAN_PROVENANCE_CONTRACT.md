@@ -1,7 +1,9 @@
 # PLAN — the provenance contract: every link in the pipeline checked where it is used
 
-**Current status (2026-10-25, at `main` `416a242`): M1–M5 are complete contract features, merged
-and accepted.** The paragraph after this table is the dated record of how each got there; where it
+**Current status (2026-11-09, at `main` `db8ee5a`): M1–M5 and the paper-aligned two-stage
+extension (§9, K0–K8) are complete contract features, merged and accepted.** The status history
+after this table is the dated record of how M1–M5 got there, and §9's is
+[`scorer-retraining/README.md`](scorer-retraining/README.md) §8, "K8 record"; where a dated record
 says "on the branch", "not merged", "not yet implemented" or "next", it describes that date.
 
 | Milestone | What it delivers | Merged | Acceptance (commit tested) |
@@ -13,6 +15,13 @@ says "on the branch", "not merged", "not yet implemented" or "next", it describe
 | M3c | Every result names what served it; serving's `auto` refuses without CUDA | #124, `ed8f51d` | [`m3c-acceptance-2026-10-16/`](m3c-acceptance-2026-10-16/README.md) at `52152e4` |
 | M4 (item 14, phase 1) | Test cohorts imported, Mode C measured, reports kept, one registration, ledger schema 3 | #126, `d2d31dd` | [`m4-acceptance-2026-10-17/`](m4-acceptance-2026-10-17/README.md) at `2c94a4e` |
 | M5 (item 14, phase 2) | The research WebUI, job runner and GPU lock, D4, D5, D8 | #129, `416a242` | [`m5-acceptance-2026-10-24/`](m5-acceptance-2026-10-24/README.md) at `b14c4de`; [`m5-webui-acceptance-2026-10-25/`](m5-webui-acceptance-2026-10-25/README.md) at `b14c4de`, `f9202b6`, `773dc4a` |
+| §9, the paper-aligned two-stage extension (K0–K8) | The model spec, learning stage, task, operation, exact parent, family and weight transfer in every new checkpoint (record version 2); base training and finetune children of a base | #131, `db8ee5a` (product code `f2c2012`) | [`k8-acceptance-2026-11-09/`](k8-acceptance-2026-11-09/README.md) at `f2c2012`: 101 of 101 probes, the closing check 110 of 110; not the prebuilt deployment path, gene or patients-like-me on GPU, other architectures, bfloat16 or the WebUI in a browser |
+
+The M4 and M5 rows say what was delivered then. Changed since, in K8: Mode C's measurement retired
+(K8-6a `22487a6`, K8-6b `f35bb93`); D4's ordering by test score retired (K8-6d `3ed3938`);
+registration is by the verified run, which withdrew D5's block on a key whose runs disagree, and
+the ledger is schema 4 (K8-6r.2 `f74db89`; `docs/DISEASE_SCORER_POLICY.md` rev 16). Today's rules
+are [`PLAN_TEST_RESULTS.md`](PLAN_TEST_RESULTS.md) §4, "Current rules".
 
 What each capability is today, and where it is entered, is `docs/ARCHITECTURE.md` §11. Not part of
 any milestone's acceptance: the WebUI's usability (BACKLOG 52), model quality and institutional
@@ -23,6 +32,9 @@ the learning stage, the task, the operation, the exact parent, the weight transf
 loss and scoring identity to the records M3a writes. Work package A builds it
 ([`scorer-retraining/README.md`](scorer-retraining/README.md) §8). It extends decision 7 and
 question 3 (§8): fine-tuning on other data becomes its own operation. Resume keeps decision 7.
+*(2026-11-09: built in K0–K8 and merged as #131, `db8ee5a`, as the table above and §9 say;
+fine-tuning on other data is the `finetune` operation. What comes next is
+[`BACKLOG.md`](BACKLOG.md) §0.)*
 
 **Status history (dated). Revision 2, amended twice after review. M1 is implemented, code-reviewed with no P1 or P2
 at `ed4872a`, and accepted on the homelab GB10 at `7714459` (evidence recorded by SHA-256 below; the
@@ -3762,7 +3774,8 @@ Each of these is done when its entry point is next touched, or on its own merit:
   - the annotation release labels;
   - edge-drop counters;
 - **an SP producer check** against the workspace it publishes into
-  (`compute_shortest_paths.py:419-425, 458`);
+  (`compute_shortest_paths.py:419-425, 458`; *without a subject since K8-5 `85a0689`, which
+  deleted that producer with the shortest-path table's code*);
 - **thresholds for source compatibility.**
 
 ## 5. What changes in existing records
@@ -3779,9 +3792,9 @@ own.
 | Run listing (`run.json`), new | A projection of its run's checkpoint records, never an authority (M3a-2). Not built in M3a: the listing reads each checkpoint's record when listed | Later |
 | `split_manifest.json` | Binding to `kg.provenance.json` required | M3b |
 | `kg.provenance.json` | Unchanged until the KG record v2 | — |
-| SP sidecar | Unchanged; it already records `kg_digest`, `build_id` and `max_hops` | — |
+| SP sidecar | Unchanged; it already records `kg_digest`, `build_id` and `max_hops`. *(K8-5 `85a0689` retired the shortest-path table's code: nothing writes or reads a sidecar now.)* | — |
 | Measurement manifest and report | Input digests from the bytes read, except `kg`, the manifest-bound source graph (M2; M2.1's stated exceptions); environment facts; the workspace's graph digests for both cohort kinds; the dataset record's binding state and origin, apart (`dataset_record`, M3b, outside the semantics digest); R10's evidence and labels (§5.4). M4's part is implemented on the branch (2026-10-16; merged since as #126, `d2d31dd`): `cohort_version`, `relations`, `r10` and `environment`, all outside the semantics digest, and for a registered version a report kept in the report store with its ranks named by digest (§4, "M4 as implemented") | M2, M3b, M4 |
-| Ledger | item 14's **ledger schema 3** (`PLAN_TEST_RESULTS.md` §5), the schema number after the `schema_version` 2 that the retirement's R2 set (`src/evaluation/sidecar.py`). Implemented in M4 on the branch (2026-10-16; merged since as #126): a schema 1 or 2 file is refused and archived by hand, never read or migrated (§4, "M4 as implemented") | M4 |
+| Ledger | item 14's **ledger schema 3** (`PLAN_TEST_RESULTS.md` §5), the schema number after the `schema_version` 2 that the retirement's R2 set (`src/evaluation/sidecar.py`). Implemented in M4 on the branch (2026-10-16; merged since as #126): a schema 1 or 2 file is refused and archived by hand, never read or migrated (§4, "M4 as implemented"). **Ledger schema 4 since K8-6r.2 (`f74db89`):** each record names its run from the file's run-identity boundary on; the one reader reads schemas 3 and 4 as written and never rewrites a file; the first registration into a schema 3 file writes schema 4; schemas 1 and 2 are still refused (`LEDGER_SCHEMA_VERSION`, `READABLE_LEDGER_SCHEMAS`; [`PLAN_TEST_RESULTS.md`](PLAN_TEST_RESULTS.md) §4, "Current rules") | M4, K8 |
 | `InferenceResult`, `DiagnoseResponse`, serving state | `get_pipeline_config()` and the API's pipeline status carry the served workspace's dataset record, binding state and origin apart (M3b); one structured served-identity field replaces `model_version` and `kg_version`; `get_pipeline_config()` carries the settings in effect. M3c's part is implemented (2026-10-16, code-reviewed with no P1 or P2 at `1246f0c`): every result and the diagnose response carry the served identity, with the settings in effect, and `get_pipeline_config()` and the pipeline status report it for the loaded pipeline (§4, "M3c as implemented") | M3b, M3c |
 
 ### 5.2 Required versus displayed
@@ -3868,15 +3881,25 @@ evidence.
   clinical presentation of the same disease. A cohort can be disjoint by phenotype set and
   overlapping by disease, and both labels are shown.
 - **Phenotype-set overlap does not say the model saw the same scoring input.**
-  - Repetition is not neutral. Mode C averages over every listed position (`masked_mean_pool`
-    in `run_mode_c`, `src/evaluation/measurement.py`), and nothing on the stored-file path
-    removes a repeated id on the way (`read_samples_file` in `src/kg/storage/file_storage.py`,
-    `DiagnosisDataset` in `src/kg/data_loader.py`, `_assert_ids_in_range` in `measurement.py`).
+  - *Until K8-6b (`f35bb93`)*, which retired Mode C's executor, repetition was not neutral. Mode C
+    averaged over every listed position (`masked_mean_pool` in `run_mode_c`,
+    `src/evaluation/measurement.py`), and nothing on the stored-file path removed a repeated id on
+    the way (`read_samples_file` in `src/kg/storage/file_storage.py`, `DiagnosisDataset` in
+    `src/kg/data_loader.py`, `_assert_ids_in_range` in `measurement.py`).
     *Since N2 (2026-10-18)* `read_samples_file` refuses a stored case that lists a phenotype
     twice, so none reaches Mode C or training from a file; it still removes nothing (below).
-  - So two cases with the same set can be scored differently. A training case `[0, 1]` and a
-    test case `[0, 0, 1]` average to different patient vectors, and can rank the true disease
+    So two cases with the same set could be scored differently: a training case `[0, 1]` and a
+    test case `[0, 0, 1]` averaged to different patient vectors, and could rank the true disease
     differently.
+  - *Since K8-6b* no scorer pools a repeated id. The task models' patient encoder
+    (`PatientEncoder`, `src/models/tasks/heads.py`) receives phenotypes only through the task
+    binders (`bind_disease_cases` in `src/models/tasks/scoring.py`, `bind_gene_cases` in
+    `src/models/tasks/gene.py`, `bind_patients` in `src/models/tasks/patients_like_me.py`) and
+    serving's `_bundle_phenotypes` (`src/inference/pipeline.py`), and each takes `torch.unique` of
+    the view ids: `[0, 1]` and `[0, 0, 1]` reach it as the same phenotypes.
+    `read_samples_file` itself still removes nothing. The node vectors the encoder pools still
+    differ by stage: a finetune passes messages over the training edges in training and over the
+    full view in validation, task tests and serving (`graph_exposure`, §9.1).
 - **The set is the unit this label's purpose needs.** R10 shows a reader where a test result
   may rest on what the model was trained on. A comparison that kept repetition would report
   `[0, 1]` and `[0, 0, 1]` as unrelated, and hide exactly that.
@@ -4007,11 +4030,17 @@ labelled differently. *(K8-6r.3, 2026-11-07, made it 2 when it added the evidenc
 - Accounts, keys, signing, an append-only or chained log.
 - A lineage registry, or walking a resume chain through ancestor files (M2.3 makes it
   unnecessary).
-- File locks or a locking service. M2.1 reads each input once and compares it with one manifest
-  reading, so a mixed read is refused rather than locked out. This is not a snapshot (§4, M2.1,
-  "Boundaries"). The evaluation ledger's check-then-replace window stays open, and the ledger
-  stays single-writer by operational rule (M2.1 decision 5; BACKLOG item 18, whose one-read fix
-  M4 made without closing that window).
+- A locking service, and file locks on the inputs a run reads. M2.1 reads each input once and
+  compares it with one manifest reading, so a mixed read is refused rather than locked out. This
+  is not a snapshot (§4, M2.1, "Boundaries"). The evaluation ledger and the report store's files
+  have per-file cooperative locks since K8-6r.1 (`f9769c7`, `src/utils/file_lock.py`): a
+  registration holds the ledger's lock (`evaluations.json.lock`) across processes from its read
+  through its write and usage-history entry, and is refused as busy (`LedgerBusy`), with nothing
+  written, when it cannot take it; each usage-history and notes append holds its own file's lock;
+  the stale-write guard stays as the second line, for a writer that takes no lock. *(Until K8-6r.1
+  the ledger's check-then-replace window stayed open and the ledger was single-writer by
+  operational rule: M2.1 decision 5; BACKLOG item 18, whose one-read fix M4 made without closing
+  that window.)*
 - A general verification framework. Each check lives at its consumer's entry point.
 - Conformance claims to SLSA, in-toto or PROV.
 - Reading or migrating old-pipeline artifacts (decision 2).
@@ -4038,7 +4067,11 @@ labelled differently. *(K8-6r.3, 2026-11-07, made it 2 when it added the evidenc
      - if research needs path-only results, they come later, by explicit opt-in, with result
        semantics that tell them apart;
      - no new formal path is built to keep the old fallback.
-   - This is a recommendation. The owner has not decided.
+   - This was the reviewer's recommendation, undecided until K7.
+   - **Decided by the owner at K7 (2026-10-29; `docs/DISEASE_SCORER_POLICY.md` rev 13):**
+     nothing is served without a model. The path-reasoning fallback ranking is removed; with no
+     pipeline, `/diagnose` and `/ready` answer 503 with the reason. Path reasoning stays as
+     post-ranking evidence.
 3. **Fine-tuning on other data — decided by the owner, 2026-10-06.** In the first version,
    resume continues the same data as its parent (M2.3). Fine-tuning on other data is not
    supported yet. This is a product restriction, not a validity verdict, and it gates data, not
@@ -4050,16 +4083,27 @@ labelled differently. *(K8-6r.3, 2026-11-07, made it 2 when it added the evidenc
      second training pipeline, and nothing is built for it now.
    - **Scheduled 2026-10-27:** §9 designs it as the `finetune` operation, built in work package A,
      on the same entry point and checkpoint record, with the parent's roles carried for R10.
+     *(2026-11-09: built as `finetune` (K3, K5; merged as #131, `db8ee5a`), with §9.2's parent
+     check (`TrainingManager.start_finetune`, `POST /training/finetune`). The parent's roles are not
+     carried for R10, and R10 takes no union: it reads the checkpoint's own `train_samples` and
+     `val_samples` (`src/evaluation/r10.py`); R10's exposure scope was deferred out of K8
+     ([`scorer-retraining/README.md`](scorer-retraining/README.md) §8, "K8 record").)*
 
-## 9. The paper-aligned two-stage extension (design, 2026-10-27)
+## 9. The paper-aligned two-stage extension (designed 2026-10-27; built K0–K8, merged as #131)
 
-**Status: designed, being built on this branch (revision 2, 2026-10-27).** The A + B integration
-builds it. Revision 2 applies the reviewer's review of `5d0327a` (R2: one switch, no second
-execution path) and the decision record of the same day. The recipe, the model bundle and
-the work packages are [`scorer-retraining/README.md`](scorer-retraining/README.md); this section is
-the record contract. It extends the record M3a writes (`build_checkpoint_payload`,
-`CHECKPOINT_RECORD_VERSION`). It adds no second provenance system, ledger or model database. The
-fields it names are design names; package A fixes the code names.
+**Status: built (K0–K8), accepted on the GB10 at `f2c2012` and merged into `main` as #131
+(`db8ee5a`).** The design is revision 2 (2026-10-27). Revision 2 applies the reviewer's review of
+`5d0327a` (R2: one switch, no second execution path) and the decision record of the same day. The
+recipe, the model bundle and the work packages are
+[`scorer-retraining/README.md`](scorer-retraining/README.md); its §8, "K8 record", says what was
+built and what was deferred. This section is the record contract. The record is record version 2
+(`MODEL_RECORD_VERSION`), written by the one payload builder (`build_checkpoint_payload`,
+`src/training/checkpoint_payload.py`) and read by the one reader (`read_model_record`,
+`src/models/bundle/record.py`); M3a's record version 1 (`CHECKPOINT_RECORD_VERSION`) retired in
+K8-7 (`e35b2a3`). It adds no second provenance system, ledger or model database. The code names
+are the model record's keys (`MODEL_RECORD_KEYS`, `src/config/model_types.py`): `model_spec`,
+`graph_view`, `learning_stage`, `task`, `operation`, `parent`, `family_id`, `weight_transfer`,
+`data_roles`, `graph_exposure`, `loss_identity`, `scoring_identity` and `selection`.
 
 ### 9.1 What every new checkpoint records
 
@@ -4075,11 +4119,11 @@ These come in addition to `record_version`, `producer`, `environment`, `training
 | `parent` | The SHA-256 of the exact parent checkpoint file, and the parent run. It generalises today's `training_input_digests.resume_checkpoint`. A branch adds `changes`: each changed setting, `{parent, new}` | every operation but `new` |
 | `family_id` | The id of the root run (the one whose operation is `new`), inherited unchanged. Not the seed, and not a dataset digest plus seed | every operation |
 | `weight_transfer` | Per parameter group: loaded from the parent or initialised new, trainable or frozen. A branch loads every part, strictly | `finetune` and `branch`, and any operation that loads weights |
-| Data roles | The digests of the KG, the graph view (its rule and result, and the stable node mapping) and the edge split artifact; the base's train, validation and test edge roles; a finetune's task data artifacts (train and validation roles) and, for patients-like-me, the reference cohort version; derived tables (SP distances, the augmentation neighbour table) by digest. R10 takes the union of the roles it can verify (§8, question 3) | every operation |
+| Data roles (`data_roles`) | `kg`, the manifest-bound source graph's digest; `graph_view`, the view's digest (over its rule, node mapping and edges) and rule; `split`, the edge split's rule, seed, view digest, digest and train, validation and test edge counts (`src/kg/graph_view.py`). A finetune adds `task_data`, its train and validation cases' digests, each with its binding counts; `task_fixture`, when the run read one; and, for gene, `derived_tables` (the SP distances and the augmentation neighbour table, by digest) (`scripts/train_model.py`). *Designed, not in the record:* a patients-like-me reference cohort version (Diagnosis takes one per request and names it on each result; §9.3, "Reference cohorts"), and R10's union of the parent's roles (§8, question 3): R10 reads the checkpoint's own `train_samples` and `val_samples`, and its exposure scope was deferred out of K8 ([`scorer-retraining/README.md`](scorer-retraining/README.md) §8, "K8 record") | every operation |
 | `graph_exposure` | For each stage: the message-passing graph, the supervision edges and the SP graph it saw. Base: training edges for message passing in training and LP validation. Finetune: training edges in training; the full view in validation, task tests and serving | every operation |
 | Loss identity | Term names, `task_loss_weight` and `lp_loss_weight`, versions | every operation |
 | Scoring identity | The task scorer's name and version: distance, normalisation, candidate universe | `finetune` |
-| `selection` | The digest of the validation report that selected the parent, and the selection rule | `finetune` |
+| `selection` | The selection rule, `"the operator's choice of base checkpoint"`, and the parent's logs as its checkpoint holds them (`parent_logs`; `scripts/train_model.py`). *Designed (2026-10-27), not built:* the digest of a validation report that selected the parent; no validation report is written as a file of its own (a stage's validation figures are in its checkpoint's `logs`), a gap against the design | `finetune` |
 
 **`progress.stage` keeps its meaning,** the M3a schedule stage (`original` / `extension`). The new
 learning stage never reuses that name.
@@ -4127,11 +4171,16 @@ comparing.
 ### 9.3 One switch, and the six hazards
 
 **One switch (the reviewer's R2, adopted by the owner).** When the integration is delivered, active
-training, inference and evaluation accept only this contract.
+training, inference and evaluation accept only this contract. *(2026-11-09: delivered in K8;
+[`scorer-retraining/README.md`](scorer-retraining/README.md) §4, "One switch (R2)".)*
 - A checkpoint without a `model_spec` is listed as history. The new system never runs it, never
   guesses its spec from weight names and never re-registers its reports. *(2026-11-08, superseded
   in part by K8-7b `ecc367f`: it is listed as a record this build cannot read, "written before
   the model spec: not readable by this build; start a new run", never as history.)*
+  *(2026-11-09: the phrase is `WRITTEN_BEFORE_SPEC`, `src/config/model_types.py`, and it stays
+  listed with its SHA-256, records and usage history. Its kept reports are read by the shared
+  readers and registered when they meet the general registration conditions: policy rev 15 and
+  rev 16, K8-6c `701d743`.)*
 - Historical checkpoints, reports, ledgers, registries, workspaces and fixed Git revisions stay as
   they are: not overwritten, not migrated in bulk.
 - Old code and environments are preserved by fixed revisions and existing evidence, never by a
@@ -4140,25 +4189,39 @@ training, inference and evaluation accept only this contract.
 
 The six hazards found in the verification, each with its rule:
 
-1. **A new record version means old checkpoints do not resume.** The extension raises the record
-   version for checkpoints written by the new path.
+1. **A new record version means old checkpoints do not resume.** The build reads and writes only
+   record version 2 (`MODEL_RECORD_VERSION`, `src/models/bundle/record.py`).
    - Checkpoints written before it stay readable as history and keep their records. *(2026-11-08,
      superseded in part: they stay on disk and listed with their SHA-256, records and usage
      history, as records this build cannot read (K8-7b `ecc367f`); record version 1 retired in
      K8-7 `e35b2a3`.)*
-   - Resume across the boundary is refused with the reason ("written before the model spec; start a
-     new run"). No missing field is filled in by guessing.
-   - While old and new paths coexist inside the build, the new version and the `model_spec`
-     requirement apply to checkpoints the new path writes; the old path's removal ends the overlap.
-2. **New manifests must not orphan old records.** A new measurement manifest names its task, metric
-   schema and scoring identity in its semantic fields, with a per-record manifest schema version.
-   - The ledger's file-level schema stays 3 and its key fields are unchanged, so existing ledgers
-     stay readable and appendable.
-   - Old Mode C/D records are listed read-only as historical, with their own scoring semantics,
-     never ordered with new records and never re-registered. `build_record` does not keep accepting
-     old manifests for new registration (it already refuses a foreign field set today).
+   - Resume across the boundary is refused with the reason ("written before the model spec: not
+     readable by this build; start a new run", `src/utils/run_plan.py`). No missing field is
+     filled in by guessing.
+   - *(History: while old and new paths coexisted, the new version and the `model_spec`
+     requirement applied to checkpoints the new path wrote. The old path's removal ended the
+     overlap: record version 1 and the ShepherdGNN path retired in K8-7 `e35b2a3` and K8-10
+     `822452b`.)*
+2. **New manifests must not orphan old records.** A task measurement's manifest has the same
+   fields as every measurement: its protocol as `mode`, and its metric schema
+   (`metric_schema_version` 2) and scoring identity as the values of its semantic fields
+   (`src/evaluation/task_measurement.py`); no per-record manifest schema version is written.
+   Today's rules for the ledger, registration and display are
+   [`PLAN_TEST_RESULTS.md`](PLAN_TEST_RESULTS.md) §4, "Current rules".
+   - The ledger is schema 4 since K8-6r.2 (`f74db89`). The one reader reads schemas 3 and 4 as
+     written and never rewrites a file, and the key fields (`KEY_FIELDS`,
+     `src/evaluation/sidecar.py`) are unchanged, so existing ledgers stay readable and appendable.
+   - Kept Mode C/D records are shown by the one display for every record, under their recorded
+     mode and scoring semantics (K8-6e.2 `6992597`), and nothing is ordered by test score (K8-6d
+     `3ed3938`). A kept report registers by the general rules when its manifest carries exactly
+     the fields the current measurement records (policy rev 15; K8-6c `701d743`); `build_record`
+     refuses any other field set and names the fields.
    - No existing ledger, registry or workspace is refused as a whole. If that proves unavoidable for
      some part, that part stops and is recorded for the owner.
+   - *(History: as designed on 2026-10-27, a new manifest carried a per-record manifest schema
+     version, which was not built; the ledger's file-level schema stayed 3; and old C/D records
+     were listed read-only, never ordered with new records and never re-registered. K8-6 changed
+     the last two, under policy rev 15 (K8-6c) and rev 16 (K8-6r.2).)*
 3. **Checkpoint selection filters by task first.** Automatic selection reads `learning_stage` and
    `task` from the record before it chooses.
    - A base or gene checkpoint is never selected for disease serving, and a base serves no
@@ -4172,6 +4235,8 @@ The six hazards found in the verification, each with its rule:
      lists (`GET /workspaces/{name}/checkpoints`, `/family`, `GET /training/checkpoints`) show each
      file's record (stage, task, operation, family, parent), read by the one reader; the pages
      show it from K6.
+     *(2026-11-09: since K8-4 `f4a8c0f` a reload names a task or a `checkpoint_path`; one naming
+     neither is refused and nothing is published, `src/api/routes/pipeline.py`.)*
 4. **Task parameters are submodules of the bundle,** so the optimizer updates them and the
    checkpoint saves them. The one builder guarantees it, and regressions 2 and 6 pin it.
 5. **Finetune gets its own check; resume keeps its blocks.** Decision 7, `check_resume_parent`'s data
@@ -4209,8 +4274,11 @@ data artifacts are bound by digest to the workspace they come from and are produ
 Derived tables (SP distances, the augmentation neighbours) are computed in process from the
 digest-bound view and recorded by digest in the model record (as built at K4).
 
-**Mode D is archived.** Its runner, observer, CLI branch and probes retire once task measurement is
-wired; its reports stay readable as history.
+**Modes C and D are archived:** this build no longer runs their implementations (policy rev 15,
+"What 'archived' means"). Mode D's runner, observer, CLI branch and probe T7 were removed in K7, and
+Mode C's measurement in K8-6a (`22487a6`) and K8-6b (`f35bb93`). Their kept reports are read by the
+shared readers, shown by the one display under their recorded mode and registered by the general
+rules (rev 15; K8-6c `701d743`, K8-6e.2 `6992597`). Archiving places no limit on research.
 
 ### 9.4 What these records claim
 

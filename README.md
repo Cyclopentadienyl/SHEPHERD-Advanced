@@ -189,10 +189,10 @@ Start here for the living documents:
 | [`DIRECTORY_STRUCTURE.md`](docs/DIRECTORY_STRUCTURE.md) | Where artifacts live and why |
 | [`TRAINING_PIPELINE_PLAYBOOK.md`](docs/TRAINING_PIPELINE_PLAYBOOK.md) | End-to-end build walkthrough |
 | [`CONFIG_AUTHORITY.md`](docs/CONFIG_AUTHORITY.md) | Which module owns which configuration, and why |
-| [`RETRIEVAL_AND_CANDIDATE_DISCOVERY_FINDINGS.md`](docs/RETRIEVAL_AND_CANDIDATE_DISCOVERY_FINDINGS.md) | Open architecture findings under review |
+| [`RETRIEVAL_AND_CANDIDATE_DISCOVERY_FINDINGS.md`](docs/RETRIEVAL_AND_CANDIDATE_DISCOVERY_FINDINGS.md) | Findings on candidate discovery (the BFS gate, gone from serving since K8-4), retrieval and the vector-index subsystem |
 | [`DISEASE_SCORER_POLICY.md`](docs/DISEASE_SCORER_POLICY.md) | Decision record: what ranks disease candidates, and the role of the shortest-path signal |
 | [`SP_SCORE_GUIDE.md`](docs/SP_SCORE_GUIDE.md) | **For clinicians:** what the shortest-path score means, and when it should and should not be consulted |
-| [`GNN_ARCHITECTURE_NOTES.md`](docs/GNN_ARCHITECTURE_NOTES.md) | Model design notes |
+| [`GNN_ARCHITECTURE_NOTES.md`](docs/GNN_ARCHITECTURE_NOTES.md) | Survey of GNN encoder options (2026-05-14, with dated notes); the reference encoder is GATv2 |
 | [`module_dependencies.md`](docs/module_dependencies.md) | Inter-module dependency map |
 
 [`docs/README.md`](docs/README.md) indexes **every** Markdown document in the repository and labels

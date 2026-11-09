@@ -1,7 +1,43 @@
 # Disease Scorer Policy — Decision Record
 
-**Status:** Accepted (2026-08) by the deploying institution. **Not yet implemented** — see the
-status table in §2. Implementation is work item B-1, which remains gated (§6).
+**Status:** Accepted (2026-08) by the deploying institution. **Work item B-1, the implementation it
+approved, is not built:** its raw cosine (statement 2) will not be built first (rev 11), and B-1
+remains gated (§6). No deployment exists (rev 12). The research platform, `main` at `db8ee5a`
+(rev 18), serves finetuned task models only: a disease task model ranks every disease of its
+model's graph view by its disease head, with no SP term, no discovery gate and no fallback, and
+paths only explain the rows shown (§2). That ranking is GNN-primary, scores every disease of the
+view before selection and uses no SP (statements 1, 3 and 4a), as a fact of the research platform,
+not clinical adoption.
+**Clinical adoption is open:** rev 11's and rev 12's proposals (statement 2, gate 1) and the
+clinical switch wait for the owner and then the institution (§2.1, "Who decides what").
+
+**Revision: rev 18 (dated by the commit that lands it). A statement of fact, as rev 17 was; no
+normative change.** The seven normative statements (§1), the institution's disease SP-context
+decision (§1.2), §1.3's open values, the gates' text (§6), the rollout's rules (§7), the conditions
+for revisiting (§8) and rev 16's rules are unchanged, and no clinical decision is made. K0–K8 were
+merged into `main` as #131 (`db8ee5a`, 2026-11-09; product code `f2c2012`, whose GB10 acceptance,
+an engineering one, passed the same day: `working/k8-acceptance-2026-11-09/`). Passages that still
+described `main` at `416a242`, the served mixture, the path-reasoning fallback or B-0's executors
+in the present tense are corrected, in place or in notes marked rev 18:
+- **The status line** says what is built and what is open.
+- **§2** has a table of current behaviour at `main` `db8ee5a`; the table at `416a242` (rev 5, with
+  notes to rev 13) stays below it as dated history.
+- **What K7 and K8 removed**, named where this record still cited it as present: the path-reasoning
+  fallback with `path_reasoning/v1`, the demo answer with `demo/v1`, and Mode D's executor (K7);
+  the served mixture with `served_mixture/v1`, `_served_score`, `PipelineConfig.eta` and
+  `sp_analysis_records` (K8-4, `f4a8c0f`); `src/inference/sp_index.py` with `sp_mean_distances`, and
+  `scripts/compute_shortest_paths.py`, the producer of `shortest_paths.pt` (K8-5, `85a0689`); Mode
+  C's executor, `run_mode_c` (K8-6b, `f35bb93`). Notes under §1 (statements 2 and 7), §1.1 (C9),
+  §2.1, §3.2, §3.5, §4 (the cascade), §5, §6, §7 and §8 (conditions 1 and 4) say so, and the text
+  they annotate is kept.
+- **Restated in place, each keeping what it said:** §2.1's "One scorer, not two", "Gate 1's
+  evidence" and "Who decides what", which now lists the decisions still open and who holds each,
+  as recorded, and marks the engineering items it named done or archived, with dates; and §5's
+  first bullet. Each is followed by its text as written before rev 18, verbatim, marked "History".
+  §5's second bold lead, §6's gate 1 status and the line on `ARCHITECTURE.md` in the scope
+  paragraph and the related documents quote what they said in a dated clause.
+- **Notice:** as with rev 4 and rev 11, the institution should be informed that its authority
+  document was corrected; a factual amendment needs no reapproval.
 
 **Revision: rev 17 (dated by the commit that lands it). A statement of fact, as rev 16's
 corrections were; no normative change.** The seven normative statements (§1), the institution's
@@ -420,7 +456,9 @@ is conditional on that optional audit being run (§8).
 shortest-path (SP) signal and path reasoning may play. This record is the **authority** for that
 policy. [`SP_SCORE_GUIDE.md`](SP_SCORE_GUIDE.md) explains what the SP score *means* to a clinician
 and does not define policy; [`ARCHITECTURE.md`](ARCHITECTURE.md) describes the system as a whole and
-will be reconciled with this record when B-1 lands.
+was brought into line with this record's facts in rev 18; B-1, on whose landing this record
+conditioned their reconciliation, is not built first (rev 11) *(until rev 18: "will be reconciled
+with this record when B-1 lands")*.
 
 ---
 
@@ -449,6 +487,16 @@ Statement 2 is explicitly **interim**. It reflects what the deployed checkpoint'
 optimised, not the reference paper's disease scorer (§3.1). It is expected to change if and when the
 paper-parity retraining track is undertaken, which is outside work item B. *(Rev 11: that track is
 scheduled as work packages A–C; the proposed revision of this statement is in rev 11, not approved.)*
+
+*(Rev 18, a statement of fact, on statement 2: it has no implementation. No model this build serves
+has a raw-cosine disease score: serving loads finetuned task models only (K8-4, `f4a8c0f`), and a
+disease task model scores with its disease head, `−‖z_d − z_P‖²` on normalised vectors
+(`DiseaseHead.scores`, `src/models/tasks/heads.py`). Replacing statement 2 by that head for
+clinical use is rev 11's proposal; it is not approved and waits for the owner and then the
+institution (§2.1, "Who decides what").)*
+
+*(Rev 18, a statement of fact, on statement 7: it has had no subject since K7 removed the
+path-reasoning fallback, and rev 13 keeps it as written.)*
 
 ### 1.1 Conditions on clinician-controlled view operations
 
@@ -481,6 +529,10 @@ On the served path only `NO_TABLE` occurs (nothing is mixed): an unmapped candid
 now refuses the result first, since the model shares the node mapping (`MODEL_TERM_UNAVAILABLE`,
 or no phenotype in the graph). Were a status with no number mixed, the record would mark its 0
 (`mixed_as: 0.0`). This is C9's representation in the result, not C9's view, which B-1b builds.)*
+*(Rev 18, a statement of fact: the rev 9 note is dated history. `sp_analysis_records` was removed
+in K8-4 (`f4a8c0f`) and `src/inference/sp_index.py` in K8-5 (`85a0689`). A disease result carries
+no SP: its served identity's shortest-path state is `absent` (`SCORING_MODE_SP_STATES`,
+`src/core/types.py`). C9 binds the SP view when one is built.)*
 
 ### 1.2 Computation schedule — decided
 
@@ -541,6 +593,27 @@ condition above, and permits nothing.**
 
 ## 2. Status — current behaviour vs approved target
 
+**At `main` `db8ee5a` (rev 18).** The research platform serves finetuned task models only (K8-4,
+`f4a8c0f`), and no deployment exists (rev 12). "Met" below is a fact about the research platform,
+not clinical adoption, which is open (§2.1, "Who decides what"). This record governs the disease
+ranking; the gene and patients-like-me tasks keep their own formulas (§1.4).
+
+| Concern | Current behaviour (`main` `db8ee5a`) | Approved target | Status |
+|---|---|---|---|
+| **Candidate universe** | A disease task model (`disease_task/v1`) scores every disease of its model's graph view before selection, with no discovery gate (`_rank_by_disease_task` in `src/inference/pipeline.py`); `top_k` only cuts the ranked list | Every disease in the configured KG universe is scored; no discovery gate | **Met on the research platform**, the universe being the model's graph view. `selection_limit` is not separated from the display limits (§1.3) |
+| **Disease score** | The disease head's `−‖z_d − z_P‖²` on normalised vectors (`DiseaseHead.scores`, `src/models/tasks/heads.py`), uncalibrated; equal scores ordered by view id (`score-desc-then-view-id-asc/v1`) | Raw cosine (interim, statement 2) | **Pending decision.** Raw cosine is not built (B-1, rev 11); replacing it by the disease head for clinical use is proposed, not approved (rev 11, rev 12): the owner, then the institution |
+| **SP role** | None: a disease result has no SP term or field, and its served identity's shortest-path state is `absent` (`SCORING_MODE_SP_STATES`, `src/core/types.py`). The mixture went in K8-4, the table's code in K8-5 (`85a0689`) | Optional post-ranking contextual analysis only; separate field or panel; no effect on identity, order, rank or ranking score | **Met in the ranking on the research platform.** The optional SP view (B-1b, C1–C10) is not built |
+| **Evidence-path role** | Paths are found after ranking, for the rows shown, from the patient's phenotypes (`_find_all_paths` in `src/inference/pipeline.py`), and never rank; the path search's two caps (the dated table's first row) now bound evidence only. It is not target-restricted. With explanations on, a shown row it misses is searched again from each phenotype (`_find_direct_paths` in `src/reasoning/evidence_panel.py`), and a row with no path gets the evidence label "Insufficient evidence" | Evidence only, via a target-restricted traversal that cannot alter the candidate set | **Partly met:** paths no longer alter the candidate set. The target-restricted traversal is not built, and its design is not approved (gate 3, §6) |
+| **GNN-unavailable fallback** | None. With no model nothing is served, and `/diagnose` and `/ready` answer 503 with the reason (K7) | Discriminated score semantics; fail-closed by default; fallback only by explicit request or approved deployment policy | **Settled at K7** (rev 13): fail-closed, with no fallback |
+
+`get_pipeline_config()` and every result's served identity name the scoring mode, `disease_task`,
+`gene_task` or `patients_like_me` (`TASK_SCORING_MODES`, `src/core/types.py`); the result's kind,
+`disease_task/v1`, `gene_task/v1` or `patients_like_me/v1`, follows from it (`result_kind_for`). η
+is only the gene task's mixing weight (`eta_effective`, null for the other tasks).
+
+**Dated history, kept as written: the status at `main` `416a242`** (re-checked in rev 5, with notes
+to rev 13), from here to §2.1. It is not today's behaviour; the table above is.
+
 **The gap between these columns is the point of this table.** Nothing in the "approved target"
 column is implemented.
 
@@ -570,6 +643,10 @@ starting point. "One scorer, not two" applies to the paper-aligned disease head 
 shared from `src.models`, and its oracle tests are hand-computed rather than a second product copy
 (`working/scorer-retraining/README.md` §3.2).)*
 
+*(Rev 18, a statement of fact: this section stays the gap list of 2026-10-25. Notes marked rev 18
+say what holds at `main` `db8ee5a`, and "One scorer, not two", "Gate 1's evidence" and "Who decides
+what" are restated for today, each followed by its text as written before rev 18.)*
+
 A gap list, not a design: the designs are batch 2's work under gate 1 as written, and only B-1's
 implementation waits for the gates (§6). Each line names
 what exists to build on, so B-1 extends it rather than writing a second copy.
@@ -595,10 +672,22 @@ what exists to build on, so B-1 extends it rather than writing a second copy.
   statement of fact: Mode C's `canonical_ranking`, named here before, retired with its executor
   in K8-6b; B-1a's "shared canonical order", below, meant it.)*
 - The SP primitive with its availability mask: `sp_mean_distances` (`src/inference/sp_index.py`).
+  *(Rev 18, a statement of fact: removed with `src/inference/sp_index.py` in K8-5 (`85a0689`). The
+  one shortest-path computation left is the gene task's exact hop distances on its model's graph
+  view (`exact_distances` in `src/kg/graph_view.py`, `distance_table` in
+  `src/models/tasks/gene.py`), part of the gene task's score; §1.2's SP context for a disease list
+  would compute the distances it needs (rev 14).)*
 - The per-result description: the served identity's `scoring_mode` (provenance contract M3c).
 - The evidence panel and the result's evidence fields, which B-1c fills from a different source.
 
-**One scorer, not two (`PLAN_TEST_RESULTS.md` D3).** Only the cosine is shared today. The patient
+**One scorer, not two (`PLAN_TEST_RESULTS.md` D3).** *(Restated in rev 18, a statement of fact.)*
+One task scorer, `src/models/tasks/scoring.py`, is shared by a finetuned task's validation, task
+measurement and serving (rev 17). In validation and measurement a case's phenotype outside the
+model's graph view is dropped and counted, and a case whose truth is outside the view, or with no
+phenotype left, is excluded and counted; in serving such a phenotype is dropped with a warning that
+names it, and a request left with no phenotype is refused (`src/inference/pipeline.py`). A local id
+outside its node type's range is refused (`GraphView.view_ids` in `src/kg/graph_view.py`, since
+K8-6b, `f35bb93`). *History, as written to rev 17:* Only the cosine is shared today. The patient
 pool and the candidate universe are not: serving clamps disease indices and drops an unmapped
 phenotype silently, where Mode C refuses. B-1 settles both (D3); the recommendation is Mode C's
 rule, the stricter one. *(Corrected 2026-10-26, rev 6: a phenotype the graph lacks is dropped with a
@@ -614,19 +703,28 @@ no phenotype left, excluded and counted.)*
 
 **B-1a — the canonical ranking.** Score every disease in the graph by raw cosine and order it by the
 shared canonical order; remove the BFS gate and its two caps from candidate selection (§2, first
-row); separate `selection_limit` from the two display limits (§1.3).
+row); separate `selection_limit` from the two display limits (§1.3). *(Rev 18, a statement of fact:
+not built (rev 11). A disease task model scores every disease of its model's graph view, with no
+BFS gate (§2); `top_k` only cuts the ranked list, and `selection_limit` is not separated.)*
 
 **B-1b — SP as an optional view.** Eager SP over the selected set (§1.2); the SP surface under
 C1–C10, none of which exists. C9's representation is in place since Batch 4: an unavailable SP is
 a status with no number in the result and its exports (a mixed 0 would be marked `mixed_as`). `selection_limit`'s default, minimum and maximum,
-the storage and export bounds and the latency target are [OPEN] (§1.3).
+the storage and export bounds and the latency target are [OPEN] (§1.3). *(Rev 18, a statement of
+fact: since K8-4 (`f4a8c0f`) a disease result carries no SP, so C9's representation in the result
+left with the mixture; C9 binds the SP view when it is built.)*
 
 **B-1c — evidence after ranking.** A target-restricted evidence traversal for the visible page;
 its design is gate 3, written 2026-10-26 and awaiting approval
 (`working/results-review/SPEC_3_EVIDENCE_AND_AUDIT.md` §7). Today every candidate comes from discovery paths, so the evidence
 it shows is the discovery path itself, and the evidence states for a candidate without one (the
 evidence panel's Mode B and INSUFFICIENT) are never reached on the served path; B-1c makes them
-reachable and needs a traversal budget for them.
+reachable and needs a traversal budget for them. *(Rev 18, a statement of fact: candidates now come
+from the disease head over every disease of the model's graph view, and paths are found after
+ranking for the rows shown (§2). The evidence panel's Mode B, the analogy mode, was removed in K8-4
+(`f4a8c0f`). A shown row with no path now reaches INSUFFICIENT on the served path, after a second
+search that keeps the paths ending at it, bounded by the path search's caps and not by a budget of
+gate 3's kind (`_find_direct_paths` in `src/reasoning/evidence_panel.py`).)*
 
 **The result union (§7).** Designed 2026-10-26
 (`working/results-review/SPEC_1_RESULTS_REVIEW.md` §2.1): one `result_kind` per result, with
@@ -634,7 +732,10 @@ required and forbidden fields per kind. Batch 4 built its three kinds for today'
 2026-10-27), which replace `confidence_score` in the API with one score field per kind, with no alias.
 B-1's kind, `gnn_ranking/v1` (`ranking_score`, the raw cosine), is batch 5's; the former
 `confidence_score` `Field(ge=0.0, le=1.0)` that would have refused a cosine below 0 is gone. The configuration switch's default is a
-separate open decision (§7).
+separate open decision (§7). *(Rev 18, a statement of fact: the kinds today are `disease_task/v1`,
+`gene_task/v1` and `patients_like_me/v1`, each derived from the served identity's `scoring_mode`
+(`result_kind_for` in `src/core/types.py`). `served_mixture/v1` was removed in K8-4 (`f4a8c0f`),
+`path_reasoning/v1` and `demo/v1` in K7; `gnn_ranking/v1` is not built.)*
 
 **B-2.** Done: a requested model that cannot be built is refused (M1); every result names its
 scoring mode (M3c); the path-reasoning fallback is its own kind, `path_reasoning/v1`, whose
@@ -644,9 +745,15 @@ opt-in (provenance contract §8, question 2), which stays the owner's decision. 
 at K7 (2026-10-29) by the owner's decision: nothing is served without a model, and with no model
 `/diagnose` and `/ready` answer 503.)*
 
-**Gate 1's evidence.** Mode C is built and has run on synthetic and demo cohorts (M4 acceptance,
-`2c94a4e`; M5 close-out, `773dc4a`). Mode D (the served ranking measured on the same cohort, B-0.5)
-is built (Batch 3, 2026-10-26; reviewed, and run once on a synthetic cohort on the GB10, 2026-10-27:
+**Gate 1's evidence.** *(Restated in rev 18, a statement of fact.)* Neither B-0 executor exists in
+this build: Mode D's was removed in K7, and Mode C's, `run_mode_c`, in K8-6b (`f35bb93`). Gate 1 as
+written can be reproduced only from a revision before K7 (`a7d0171` or earlier; rev 13, rev 15);
+their kept reports are read by the shared readers (rev 15). No institutional run and no report
+exist (BACKLOG 7b, 8a, 8b). Rev 12 proposes the task models' own effect evaluation in its place;
+the proposal is not approved, and gate 1 stands as written (§6). *History, as written to rev 16:*
+Mode C is built and has run on synthetic and demo cohorts (M4 acceptance, `2c94a4e`; M5 close-out,
+`773dc4a`). Mode D (the served ranking measured on the same cohort, B-0.5) is built (Batch 3,
+2026-10-26; reviewed, and run once on a synthetic cohort on the GB10, 2026-10-27:
 `scripts/measure_scorer.py --mode D`; design and as-built record in
 `working/scorer-measurement/PLAN_B05.md`). The design problem it resolves is recorded in
 `working/scorer-measurement/PLAN_B03.md` §4: the public entry point truncates to `top_k` and builds
@@ -660,7 +767,39 @@ built. *(Corrected in rev 16, a statement of fact: Mode D retired in K7 and Mode
 `run_mode_c`, in K8-6b; their kept reports are read by the shared readers, rev 15.)* No
 institutional run and no report exist (BACKLOG 7b, 8a, 8b).
 
-**Who decides what.**
+**Who decides what** *(restated in rev 18, a statement of fact; the list as written to rev 17
+follows it)*. Open, each with who holds it, as recorded. The project's list of open decisions is
+`working/scorer-retraining/README.md`, "Not decided here, and open (2026-11-09)"; this record's
+are listed here:
+- **Clinical adoption, the owner and then the institution.** Any model's clinical use needs its own
+  effect evidence and the institution's procedure (rev 12). Open: rev 11's proposed revisions
+  (statement 2, gate 1's comparison, B-1's scope) and rev 12's (gate 1's B-0 prerequisite replaced
+  by the task models' own effect evaluation); the clinical switch (§7). None is approved. Until
+  approved, statement 2 and gate 1 stand as written; they bind the clinical switch, not research
+  implementation (rev 11). For gate 1, as the list below records: engineering proposes a revision
+  only with a concrete reason and never skips the gate silently; the owner decides whether a
+  proposed revision is put to the institution, and without one the gate stands and needs no new
+  approval; the institution decides any revision, which amends this record normatively, not as a
+  factual update. Statement 7 has had no subject since K7 and is kept as written (rev 13).
+- **The owner:** the configuration switch's default (§7), recorded as open and, since 2026-10-25,
+  as the owner's decision.
+- **The institution:** `selection_limit`'s default and bounds, the storage and export bounds and
+  the latency target (§1.3); item 11's holdout protocol, which B-0.5's protocol design (BACKLOG 8a,
+  the author's) consumes; and, with the author, the B-0.5 institutional run (BACKLOG 8b). BACKLOG
+  7b, 8a and 8b still name the archived Mode D and wait on the decision on rev 12's proposal.
+- **Gate 3's design** (`working/results-review/SPEC_3_EVIDENCE_AND_AUDIT.md` §7, written
+  2026-10-26): its approval, by its approval route there (the reviewer's technical review, then the
+  owner's confirmation); not approved, not built.
+- **Done or archived (engineering):** the minimal Mode D design (Batch 2, 2026-10-26), built (Batch
+  3, 2026-10-26), archived (rev 12, 2026-10-27), its executor removed in K7; the shared scoring
+  boundary, designed in Spec 1 §2.2 (2026-10-26), today `src/models/tasks/scoring.py` (rev 17); the
+  union's shape, designed in Spec 1 §2.1 (2026-10-26) and built in Batch 4 (accepted 2026-10-27),
+  its kinds today the three task kinds (K8-4); C9's unavailable state as a status with no number,
+  built in Batch 4 and gone with the mixture in K8-4 (C9 binds the SP view); B-2's no-model
+  serving, settled at K7 (2026-10-29) by the owner's decision: nothing is served without a model
+  (rev 13).
+
+*History, as written to rev 17 (worded 2026-10-26, `1e13d22`, with rev 13's note):*
 - The engineering team, under gate 1 as written (it limits B-1's implementation, not design): the
   minimal Mode D design over the formal pipeline, the shared scoring boundary and gate 3's traversal
   design; the union's shape; how C9's unavailable state is represented; and, only with a concrete
@@ -722,6 +861,11 @@ and the decision does not rest on them:
 ### 3.2 Repository evidence
 
 Sources are named by function (re-anchored at `416a242`, rev 5); the facts are unchanged.
+*(Rev 18, a statement of fact: this is dated evidence of `416a242` (rev 17). `PipelineConfig.eta`
+was removed in K8-4 (`f4a8c0f`), `sp_index.py` in K8-5 (`85a0689`), `Trainer._compute_model_outputs`
+and `MultiTaskLoss` in K8-7 (`e35b2a3`), `ShepherdGNN` in K8-10 (`822452b`) and
+`src/inference/scoring.py` in K8-11 (`9d76bbe`); the path search's caps remain and bound evidence
+only (§2).)*
 
 | Fact | Source |
 |---|---|
@@ -758,6 +902,10 @@ A future reader should not mistake it for an empirical finding, nor reopen it as
 unexamined default.
 
 ### 3.5 Engineering inference — weigh accordingly; one item is now measured, the rest are not
+
+*(Rev 18, a statement of fact: the scorer analysed here is the served mixture, removed in K8-4
+(`f4a8c0f`), with `src/inference/sp_index.py` in K8-5 (`85a0689`); no deployment exists (rev 12).
+The analysis is kept as evidence, in the tense it was written in.)*
 
 - ~~Over the full disease universe most candidates fall outside the 5-hop table and receive the same
   floor value, so the SP term degenerates towards a binary reachability indicator.~~ **The premise is
@@ -800,24 +948,34 @@ unexamined default.
 |---|---|
 | **Keep η in ranking, applied to the full universe** | Requires SP over the whole disease universe — ~27,990 when this table was written, 29,866 on the audited deployment workspace. The degeneracy this row relied on is **no longer an established reason**: §3.5's premise was measured and refuted, and what remains of the concern is unsettled rather than supported. Min–max normalisation over that set is *mathematically* well defined; the objections are that its clinical and task meaning is unvalidated, and that min–max is set by the two extreme candidates, so extreme candidates may compress much of the remaining distribution into a narrow band. No paper support for the disease task. |
 | **Keep η in ranking, applied to a GNN top-N cut** | Reintroduces a candidate gate — softer than BFS, but still able to hide a candidate the GNN ranked highly. Adds an N-selection problem (recall, top-k set and rank preservation, latency) that pure cosine does not have. |
-| **Cascade: use SP only to break ties among candidates the GNN cannot separate** | The most defensible of the alternatives, because it applies SP to a bounded set of already-plausible candidates. Deferred rather than rejected: it needs an operational definition of "cannot separate", which is an uncalibrated threshold; and it is a deviation from the paper requiring its own evidence — the resemblance to the paper's short-list setting is limited to list size and does not carry the paper's validation across (see §5). It does not require a new scoring mode. It can be evaluated without a second institutional inference run only if B-0.5 records an approved bounded per-candidate component artifact, or computes the predeclared analysis during the B-0.5 run. **The currently implemented B-0 artifacts do not contain those components.** |
+| **Cascade: use SP only to break ties among candidates the GNN cannot separate** | The most defensible of the alternatives, because it applies SP to a bounded set of already-plausible candidates. Deferred rather than rejected: it needs an operational definition of "cannot separate", which is an uncalibrated threshold; and it is a deviation from the paper requiring its own evidence — the resemblance to the paper's short-list setting is limited to list size and does not carry the paper's validation across (see §5). It does not require a new scoring mode. It can be evaluated without a second institutional inference run only if B-0.5 records an approved bounded per-candidate component artifact, or computes the predeclared analysis during the B-0.5 run. **The currently implemented B-0 artifacts do not contain those components.** *(Rev 18, a statement of fact: this depends on archived B-0 machinery: B-0.5, the Mode D measurement, is archived with the Mode C/D comparison (rev 12), its executor removed in K7, and Mode C's executor in K8-6b (`f35bb93`). No revision says what would evaluate the cascade now; the text stands as written.)* |
 | **Remove the SP subsystem entirely** | Rejected. B-0's comparison modes need it; the paper places KG-distance fusion in candidate-gene scoring, which is unbuilt future work; and clinicians may legitimately want SP context on a short list. Demoted, not deleted. *(Rev 14: two of the three reasons have changed. B-0's comparison modes are archived (Mode D's executor removed in K7, Mode C's in K8), and the served mixture and its precomputed table retire in K8. The paper's KG-distance fusion in candidate-gene scoring is built: the gene task model computes exact graph distances in process, and K8 keeps them. Disease SP context on a short list stays permitted and unbuilt (§1.2). What K8 removes is the disease mixture's SP machinery, not SP as a concept.)* |
 
 ---
 
 ## 5. Consequences
 
-- **`eta`, `_calculate_combined_score`, `_calculate_sp_score`, `shortest_paths.pt` and
-  `scripts/compute_shortest_paths.py` are demoted, not removed.** They remain required for B-0's
-  comparison modes and for the optional contextual analysis. *(Rev 9: since Batch 4 the mixture
-  is `_served_score` and SP's one caller is `sp_analysis_records`; the two per-candidate helpers
-  named here are gone, the capability is not.)* *(Rev 14: K8 removes what is left of them: the
-  mixture, its SP term and η's disease use with the serving deletion (K8-4); the producer of
-  `shortest_paths.pt` and its remaining readers with the SP files (K8-5). η stays as the gene
-  task's mixing weight, and the gene task's SP similarity comes from exact hop distances, not from
-  the table. The contextual analysis stays permitted and unbuilt.)*
-- **This is a behaviour change on a live clinical system.** η = 0.7 is what runs today. The change
-  must be visible to the institution, not silent, and is gated accordingly (§6).
+- **`eta`'s disease use, `_calculate_combined_score`, `_calculate_sp_score` and
+  `scripts/compute_shortest_paths.py` are removed, and `shortest_paths.pt` is neither produced nor
+  read** *(restated in rev 18, a statement of fact)*: the two per-candidate helpers in Batch 4
+  (`c92cd6b`, rev 9), the mixture, its SP term and η's disease use in K8-4 (`f4a8c0f`), the
+  producer of `shortest_paths.pt` and its remaining readers in K8-5 (`85a0689`). η stays only as
+  the gene task's mixing weight, and the gene task's SP similarity comes from exact hop distances,
+  not from the table. The optional contextual analysis stays permitted and unbuilt (§1.2).
+  *History, as written to rev 17:* **`eta`, `_calculate_combined_score`, `_calculate_sp_score`,
+  `shortest_paths.pt` and `scripts/compute_shortest_paths.py` are demoted, not removed.** They
+  remain required for B-0's comparison modes and for the optional contextual analysis. *(Rev 9:
+  since Batch 4 the mixture is `_served_score` and SP's one caller is `sp_analysis_records`; the two
+  per-candidate helpers named here are gone, the capability is not.)* *(Rev 14: K8 removes what is
+  left of them: the mixture, its SP term and η's disease use with the serving deletion (K8-4); the
+  producer of `shortest_paths.pt` and its remaining readers with the SP files (K8-5). η stays as the
+  gene task's mixing weight, and the gene task's SP similarity comes from exact hop distances, not
+  from the table. The contextual analysis stays permitted and unbuilt.)*
+- **A clinical switch, when one is decided, is a behaviour change the institution must see**
+  *(restated in rev 18, a statement of fact: no deployment exists (rev 12), and η = 0.7 runs
+  nowhere since K8-4; until rev 18: "This is a behaviour change on a live clinical system. η = 0.7
+  is what runs today.")*. The change must be visible to the institution, not silent, and is gated
+  accordingly (§6).
 - **The candidate list a clinician sees will change**: composition, ordering, and which candidates
   carry supporting paths. Some candidates will appear with no path at all, labelled.
 - **A separate SP analysis over the displayed top-k creates a bounded, candidate-relative analysis
@@ -832,7 +990,9 @@ unexamined default.
 - **Two implementation defects are recorded and deferred**, not fixed by this decision: the range
   mismatch between the two score terms, and the absence of candidate-relative normalisation
   (§3.5, and `SP_SCORE_GUIDE.md` §3). *(Rev 11, corrected: the second is not a defect measured
-  against the paper, whose released code uses fixed bounds; the first stands.)*
+  against the paper, whose released code uses fixed bounds; the first stands.)* *(Rev 18, a
+  statement of fact: the first has had no subject since the mixture was removed in K8-4
+  (`f4a8c0f`); C7 still binds any normalisation an SP view uses.)*
 
 ---
 
@@ -842,9 +1002,15 @@ B-1 implementation may not begin until all three clear:
 
 | Gate | Status |
 |---|---|
-| **1 — B-0 measurement report** | Not cleared. Of B-0, Mode C (the approved ranking, measured) is built and has run on synthetic and demo cohorts; Mode D (the served ranking, measured) is built (Batch 3, reviewed; one synthetic run on the GB10), and no institutional run or report exists (§2.1). It stands as written and limits B-1's implementation: the minimal Mode D design, the shared scoring boundary and gate 3's traversal design go ahead under it (BACKLOG §0, batch 2). Only a concrete revision, with its reason, goes to the owner and then the institution (§2.1). |
+| **1 — B-0 measurement report** | Not cleared. As written (B-0's Mode C and Mode D report), it can be reproduced only from a revision before K7 (`a7d0171` or earlier): Mode D's executor was removed in K7 and Mode C's in K8-6b (`f35bb93`), and no institutional run or report exists (§2.1). It stands as written and limits B-1's implementation. A revision is proposed (rev 12: the task models' own effect evaluation in its place), not approved (the owner, then the institution). Only a concrete revision, with its reason, goes to the owner and then the institution (§2.1). *(Restated in rev 18, a statement of fact; as written to rev 17, after "Not cleared.": "Of B-0, Mode C (the approved ranking, measured) is built and has run on synthetic and demo cohorts; Mode D (the served ranking, measured) is built (Batch 3, reviewed; one synthetic run on the GB10), and no institutional run or report exists (§2.1). It stands as written and limits B-1's implementation: the minimal Mode D design, the shared scoring boundary and gate 3's traversal design go ahead under it (BACKLOG §0, batch 2).")* |
 | **2 — Institutional scorer-policy decision** | **Cleared by this record.** |
 | **3 — Approved target-restricted evidence-traversal design** | Not cleared. Requires legal reachability × completeness combinations, visited-state and cycle semantics, multi-source provenance, deterministic ordering, global-budget units and enforcement, target fairness, and cancellation behaviour. |
+
+*(Rev 18, a statement of fact: the gates gate B-1, the raw-cosine implementation, which is not
+built, and do not block the research implementation (rev 12); until a revision is approved,
+statement 2 and gate 1 bind the clinical switch (rev 11). Rev 12's proposal to replace gate 1's
+B-0 prerequisite for task models is not approved: the owner, then the institution (§2.1, "Who
+decides what").)*
 
 ---
 
@@ -853,6 +1019,10 @@ B-1 implementation may not begin until all three clear:
 - The change ships behind a configuration switch. **Its default value is an explicit
   pre-implementation decision**, not an implementation detail, because it determines whether the
   live system changes behaviour on deploy or on a later deliberate switch. Recorded as open.
+  *(Rev 18, a statement of fact: the research platform keeps no configuration switch, by the
+  owner's one-switch decision of 2026-10-27 (rev 12). For clinical use the switch stays open (the
+  owner, then the institution); its default stays the owner's decision, as recorded (§2.1, "Who
+  decides what").)*
 - B-1 and B-2 both modify the candidate and result types. **One versioned discriminated result
   union is agreed before either lands.** Each result variant defines its own **required** and
   **forbidden** fields, selected by the mode discriminator. This explicitly rules out a flat
@@ -870,6 +1040,10 @@ B-1 implementation may not begin until all three clear:
     `path_reasoning/v1` and `demo/v1`, each with its own required and forbidden fields, the kind
     derived from the served identity's `scoring_mode` (Spec 1 §2.1). B-1 adds `gnn_ranking/v1`
     *(rev 11: for the paper-aligned disease model, its definition fixed with package A's spec)*.
+    *(Rev 18, a statement of fact: the kinds today are `disease_task/v1`, `gene_task/v1` and
+    `patients_like_me/v1`, derived the same way (`result_kind_for`, `src/core/types.py`);
+    `served_mixture/v1` was removed in K8-4 (`f4a8c0f`), `path_reasoning/v1` and `demo/v1` in K7,
+    and `gnn_ranking/v1` is not built.)*
 - The clinician-facing guide's status box and the SP presentation change together with the code, not
   before it.
 
@@ -884,7 +1058,10 @@ This record should be reopened if any of the following occurs:
    non-gating under the agreed B-0 scope, so this condition may simply never be evaluated. Note also
    that the comparison tests *this repository's* SP term, `1/(1+mean(d))`, which is not the paper's
    Eq 13 — so a result in either direction is a statement about this implementation, not about the
-   paper's formula.
+   paper's formula. *(Rev 18, a statement of fact: this depends on archived B-0 machinery: the η
+   disease mixture was removed in K8-4 (`f4a8c0f`) and Mode C's executor in K8-6b (`f35bb93`), and
+   this build has no E′. No revision addresses this condition; it stands as written, and this build
+   cannot evaluate it.)*
 2. **The paper-parity retraining track is undertaken**, changing the trained scorer. Statement 2 is
    interim precisely because of this. *(Rev 11: undertaken, scheduled as work packages A–C. Rev 11's
    proposed revisions are the reopening; package C brings the evidence for them.)*
@@ -892,14 +1069,18 @@ This record should be reopened if any of the following occurs:
 4. **A cascade or tie-break design is evaluated and shown to help** (§4). Evaluating it without a
    further measurement run is conditional on B-0.5 either recording an approved bounded
    per-candidate component artifact or computing the predeclared analysis during that run; the
-   implemented B-0 artifacts do not carry those components (rev 4).
+   implemented B-0 artifacts do not carry those components (rev 4). *(Rev 18, a statement of fact:
+   this depends on archived B-0 machinery: B-0.5, the Mode D measurement, is archived with the
+   Mode C/D comparison (rev 12), and its executor was removed in K7. No revision says what would
+   evaluate a cascade now; the condition stands as written.)*
 
 ---
 
 ## Related documents
 
 - [`SP_SCORE_GUIDE.md`](SP_SCORE_GUIDE.md) — what the SP score means clinically, and safe use
-- [`ARCHITECTURE.md`](ARCHITECTURE.md) — system architecture; to be reconciled with this record when
-  B-1 lands
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) — system architecture; brought into line with this record's
+  facts in rev 18; B-1, on whose landing their reconciliation was conditioned, is not built first
+  (rev 11) *(until rev 18: "to be reconciled with this record when B-1 lands")*
 - [`RETRIEVAL_AND_CANDIDATE_DISCOVERY_FINDINGS.md`](RETRIEVAL_AND_CANDIDATE_DISCOVERY_FINDINGS.md) —
   the findings that opened the candidate-discovery question

@@ -8,6 +8,26 @@
 > GATv2 over a learned node table. The paper-aligned design, its GraphEncoder contract and its five
 > module boundaries are [`working/scorer-retraining/README.md`](working/scorer-retraining/README.md)
 > §2–§3. This file stays a survey of options.
+>
+> **Note (2026-11-09, `main` `db8ee5a`): what this survey calls current ("目前", "當前", "現在") is
+> the state of 2026-05.** Today:
+> - **One encoder kind is built,** `gatv2`, the reference: a homogeneous `GATv2Encoder`
+>   (`src/models/bundle/encoders.py`), the model spec's default kind since K1. The GAT → GATv2
+>   upgrade proposed below is therefore done, though not as a swap in `layers.py`; no formal model
+>   path uses `GATConv`.
+> - **`hetero_gat`, `hgt` and `sage` are declared and refused at build**
+>   (`src/config/model_types.py` `ENCODER_KINDS`; `src/models/bundle/builder.py`) until the
+>   multi-architecture milestone, a later one, brings `HeteroGNNLayer` (`src/models/gnn/layers.py`,
+>   kept for it) behind the `GraphEncoder` contract
+>   ([`working/scorer-retraining/README.md`](working/scorer-retraining/README.md) §3.3). The HGT items
+>   here, BACKLOG 20's Edit 2 among them, wait for that milestone; `hgt-lite` is unverified.
+> - **Removed in K8-7** (`e35b2a3`): `SubgraphSampler`, `DiagnosisDataLoader`, `MultiTaskLoss` and
+>   `max_subgraph_nodes`. Each stage has its own sampler and loss (`src/training/lp_task.py`, which
+>   samples with PyG's `NeighborSampler`; `src/training/finetune_task.py`;
+>   `src/models/tasks/losses.py`). The heads are the bundle's task heads (`src/models/tasks/heads.py`)
+>   and the DistMult link-prediction head (`src/models/bundle/lp_head.py`), not a linear head.
+> - **The conv-type choice is gone** with the ShepherdGNN path: its form in K6, its selection in K8-4
+>   and its `--conv-type` flag in K8-7. An encoder is the model spec's, not a form field.
 
 ---
 
@@ -19,6 +39,8 @@
 > (the reference GATv2, `src/models/bundle/encoders.py`). `HeteroGNNLayer`
 > (`src/models/gnn/layers.py`) keeps the GAT, HGT and SAGE layers for the multi-architecture port,
 > not yet behind the `GraphEncoder` contract. The table stays as the survey it was.
+>
+> **Note (2026-11-09).** What is built at `main` `db8ee5a` is the note at the top of this file.
 
 SHEPHERD-Advanced supports three GNN conv types via PyG's `HeteroConv` wrapper:
 
@@ -257,6 +279,11 @@ GATv2Conv 支持 `edge_attr` 參數，可以把 type embedding 作為邊特徵�
 
 ## 計劃中的 Conv Type 選項
 
+*(2026-11-09, `main` `db8ee5a`: the table is the survey of 2026-05, as written then. Today `gatv2`
+is built, as the reference: a homogeneous `GATv2Encoder` since K1, not via `HeteroConv`. `gat`
+(declared as `hetero_gat`), `hgt` and `sage` are declared and refused at build until the
+multi-architecture milestone; `hgt-lite` is still unverified.)*
+
 | 選項 | 架構 | AMP | 預估 VRAM | 狀態 |
 |------|------|-----|-----------|------|
 | `gat` | GATConv via HeteroConv | ✅ float16 | ~6 GB | ✅ 已實作 |
@@ -270,6 +297,9 @@ GATv2Conv 支持 `edge_attr` 參數，可以把 type embedding 作為邊特徵�
 - `sehgnn`：SeHGNN 預計算架構（需要較大改動）
 
 ### UI 設計方案
+
+*(2026-11-09: this proposal belongs to the ShepherdGNN form retired in K6; an encoder is the model
+spec's, not a form field.)*
 
 當架構選項超過 5 個時，Radio 按鈕 + 單行 info 不再適用。改用 Dropdown + 動態說明區：
 
@@ -290,6 +320,11 @@ GATv2Conv 支持 `edge_attr` 參數，可以把 type embedding 作為邊特徵�
 ---
 
 ## 建議路線圖
+
+*(2026-11-09, `main` `db8ee5a`: the roadmap of 2026-05, as written then; its last four rows repeat
+four items above in other wording. P0, the GATv2 upgrade, is done: the reference encoder since K1.
+HGT Lite and HGT with gradient checkpointing wait for the multi-architecture milestone. The P1 UI
+redesign belonged to the ShepherdGNN form, retired in K6.)*
 
 | 優先級 | 動作 | 預估工時 | 影響 |
 |--------|------|---------|------|
