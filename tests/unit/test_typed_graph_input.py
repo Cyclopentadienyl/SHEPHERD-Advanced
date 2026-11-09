@@ -32,10 +32,13 @@ Through the formal paths, on CPU, with `encoder.relation_edge_dim` off and on:
   same, bit for bit, with the view's types, other types or none;
 - types or relation ids that are not one per node or edge are refused.
 
-**E4, a small synthetic cross-species graph** (ten human genes, one mouse
-gene, ten phenotypes, ortholog and association relations and their reverse
-twins). The graph view keeps every node and relation, its types and both
-mappings; reverse twins share one fact and one split part; the LP pairs keep
+**E4, a small synthetic cross-species graph** (eleven human genes, one of
+them with no edge, one mouse gene, ten phenotypes, ortholog and association
+relations and their reverse twins). The graph view keeps every node of every
+species and every relation, its types and both mappings; only the edgeless
+human gene leaves, by the largest-component rule and not by species, so view
+ids differ from raw ids and types and mappings are checked at view ids;
+reverse twins share one fact and one split part; the LP pairs keep
 relation identity; a typed base step and validation run through the formal
 pieces (`BaseLPSampler`, `BaseLPTask`, `fixed_lp_pairs`,
 `full_view_vectors`). The bundle has no ortholog gate and runs one message
@@ -355,13 +358,19 @@ ORTHOLOG = "gene|human_mouse_ortholog|mouse_gene"
 REV_ORTHOLOG = "mouse_gene|rev_human_mouse_ortholog|gene"
 
 
+#: The human gene with no edge. The reference view's largest-component rule
+#: drops it (that rule, not a species filter), so the mouse gene and every
+#: phenotype have a view id other than their raw id.
+EDGELESS_GENE = 10
+
+
 def _cross_species_graph() -> Dict[str, Any]:
-    """Ten human genes, one mouse gene, ten phenotypes, as a workspace exports
-    them (`KnowledgeGraph.export_to_model`): each gene has four phenotypes,
-    genes 0 and 5 are orthologs of the mouse gene, and every relation has its
-    `rev_` twin."""
+    """Eleven human genes, one mouse gene, ten phenotypes, as a workspace
+    exports them (`KnowledgeGraph.export_to_model`): genes 0-9 have four
+    phenotypes each, gene 10 (`EDGELESS_GENE`) has no edge, genes 0 and 5 are
+    orthologs of the mouse gene, and every relation has its `rev_` twin."""
     phenotypes = [(g, (g + k) % 10) for g in range(10) for k in (0, 1, 3, 7)]
-    graph: Dict[str, Any] = {"num_nodes_dict": {"gene": 10, "mouse_gene": 1, "phenotype": 10},
+    graph: Dict[str, Any] = {"num_nodes_dict": {"gene": 11, "mouse_gene": 1, "phenotype": 10},
                              "edge_index_dict": {}}
     for (src, rel, dst), pairs in ((("gene", "gene_has_phenotype", "phenotype"), phenotypes),
                                    (("gene", "human_mouse_ortholog", "mouse_gene"),
@@ -373,15 +382,21 @@ def _cross_species_graph() -> Dict[str, Any]:
 
 
 def test_a_cross_species_view_keeps_species_relations_mappings_and_twins():
-    """The view keeps every node of every species and every relation, with
-    each edge's relation naming its ends' types; the raw-to-view and
-    view-to-raw mappings and each type's local ids round trip; each reverse
-    twin is in its forward edge's fact and split part."""
+    """The view keeps every node of every species and every relation; only
+    the edgeless human gene leaves, by the largest-component rule, so the
+    mouse gene and every phenotype have a view id other than their raw id.
+    Each edge's relation names its ends' types read at view ids; the
+    raw-to-view and view-to-raw mappings round trip over the kept nodes, and
+    each type's kept local ids map to view ids and back; each reverse twin is
+    in its forward edge's fact and split part."""
     from src.kg.graph_view import build_graph_view, split_facts
 
-    view = build_graph_view(_cross_species_graph())
+    graph = _cross_species_graph()
+    view = build_graph_view(graph)
     assert view.node_types == ["gene", "mouse_gene", "phenotype"]
-    assert view.num_nodes == 21 and set(view.counts["nodes_excluded_by_type"].values()) == {0}
+    assert (view.raw_num_nodes, view.num_nodes) == (22, 21)
+    assert view.counts["nodes_excluded_by_type"] == {"gene": 1, "mouse_gene": 0, "phenotype": 0}
+    assert view.view_ids("gene", torch.tensor([EDGELESS_GENE])).tolist() == [-1]
     assert {ORTHOLOG, REV_ORTHOLOG} <= set(view.relations) and len(view.relations) == 4
     for i, name in enumerate(view.relations):
         twin = int(view.reverse_relation[i])
@@ -393,14 +408,21 @@ def test_a_cross_species_view_keeps_species_relations_mappings_and_twins():
     identity = {i: i for i in range(view.num_nodes)}
     assert _types_agree_with_relations(view, triples, view.node_type, identity)
 
+    edgeless_raw = view.type_offsets["gene"] + EDGELESS_GENE
+    kept = torch.tensor([r for r in range(view.raw_num_nodes) if r != edgeless_raw])
+    assert int(view.raw_to_view[edgeless_raw]) == -1
+    assert torch.equal(view.view_to_raw[view.raw_to_view[kept]], kept)
     assert torch.equal(view.raw_to_view[view.view_to_raw], torch.arange(view.num_nodes))
-    for t, count in _cross_species_graph()["num_nodes_dict"].items():
-        ids = view.view_ids(t, torch.arange(count))
-        assert bool((ids >= 0).all()), t
-        assert torch.equal(view.local_index(ids), torch.arange(count)), t
+    for t, count in graph["num_nodes_dict"].items():
+        local = torch.arange(count)
+        ids = view.view_ids(t, local)
+        kept_local, ids = local[ids >= 0], ids[ids >= 0]
+        assert count - kept_local.numel() == view.counts["nodes_excluded_by_type"][t], t
+        assert torch.equal(view.local_index(ids), kept_local), t
         assert bool((view.node_type[ids] == view.node_types.index(t)).all()), t
-        assert torch.equal(view.view_to_raw[ids], torch.arange(count) + view.type_offsets[t]), t
+        assert torch.equal(view.view_to_raw[ids], kept_local + view.type_offsets[t]), t
     (mouse,) = view.view_ids("mouse_gene", torch.tensor([0])).tolist()
+    assert int(view.view_to_raw[mouse]) == view.type_offsets["mouse_gene"] != mouse
     assert view.node_types[int(view.node_type[mouse])] == "mouse_gene"
 
     split = split_facts(view, seed=0)
@@ -469,6 +491,7 @@ def test_a_typed_base_runs_on_the_cross_species_graph_through_the_formal_pieces(
     assert metrics["lp_positives"] > 0
 
     (mouse,) = view.view_ids("mouse_gene", torch.tensor([0])).tolist()
+    assert mouse != int(view.view_to_raw[mouse])
     as_gene = view.node_type.clone()
     as_gene[mouse] = view.node_types.index("gene")
     z = full_view_vectors(bundle, view.edge_index(train), view.rel[train], CPU,
