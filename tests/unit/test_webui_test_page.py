@@ -3192,7 +3192,8 @@ def test_measure_refusal_says_why_each_kind_is_not_measured():
     assert refusal(base, supplied, None) == protocols.available(
         described("base", None), SUPPLIED)[1] == (
         "no measurement that takes this checkpoint's model measures a supplied cohort version: "
-        "it can be measured by kg_link_prediction, which measures a KG edge set.")
+        "it can be measured by KG link prediction (kg_link_prediction), which measures a KG "
+        "edge set.")
     assert refusal(base, {"kind": "kg_edges", "counts": {"pairs": 4}}, None) == (
         tp.CHOOSE_A_MEASUREMENT)
     assert refusal(base, None, None) == tp.CHOOSE_A_MEASUREMENT
@@ -3878,6 +3879,13 @@ def test_the_data_panel_lists_every_kind_by_kind_and_role_with_its_counts(
     for value in (KG_LABEL, GEN_LABEL):
         assert len(labels[value]) <= 40 and labels[value].count(" · ") == 1
     assert labels[LABEL].startswith(f"{LABEL} · role ")
+    # The version chosen is the first option, whatever order the registry
+    # lists versions in (the review of Stage 7: it was the registry's first).
+    for versions in (page["versions"], list(reversed(page["versions"]))):
+        shuffled = {**page, "versions": versions}
+        for bound in (binding, None):
+            assert tp.default_version(shuffled, bound, None) == (
+                tp.version_choices(shuffled, bound)[0][1]), [v["label"] for v in versions]
 
     for version, words in ((kinds.edges, "KG edge set (test)"),
                            (kinds.generated, "Generated split (val)")):
@@ -3886,8 +3894,18 @@ def test_the_data_panel_lists_every_kind_by_kind_and_role_with_its_counts(
         assert shown.startswith(words), shown
         counts, units = version.manifest["counts"], version.manifest["count_units"]
         assert f"Counts and units ({len(counts)})" in shown
+        # Each count's unit by name; its value only where the words above do
+        # not give it, so no count is shown twice (skill §1.2; the review of
+        # Stage 7).
+        said = {"kg_edges": ("pairs", "positive_edges", "message_passing_edges"),
+                "generated": ("samples", "diseases", "task_fixture_samples")}[
+            version.manifest["kind"]]
+        read = shown.replace(" :", ":")  # `_visible` puts a space where </code> was
         for name, unit in units.items():
-            assert f"{name} {counts[name]}: {unit}" in shown, name
+            assert (f"{name}: {unit}" if name in said else f"{name} {counts[name]}: {unit}"
+                    ) in read, name
+            assert f"{name} {counts[name]}:" not in read or name not in said, name
+        assert any(name not in said for name in units) or version is kinds.generated
         for said in ("source cases", "ranked-eligible", "cohort", "No KG edge set"):
             assert said not in shown, (label, said)
     edges = kinds.edges.manifest["counts"]
@@ -3952,7 +3970,8 @@ def test_the_measurement_options_follow_the_model_and_the_chosen_versions_kind(
     for label, kind in ((LABEL, protocols.SUPPLIED), (GEN_LABEL, protocols.GENERATED)):
         assert tp.measurement_choices(based, version[label]) == []
         said = protocols.available(based["capabilities"], kind)[1]
-        assert "it can be measured by kg_link_prediction, which measures a KG edge set" in said
+        assert ("it can be measured by KG link prediction (kg_link_prediction), which measures "
+                "a KG edge set") in said
         assert tp.start_state(page, models, "demo", label, base, binding, ("none", ""),
                               protocol=None) == (False, f"Disabled: {said}")
     assert tp.start_state(page, models, "demo", KG_LABEL, base, binding, ("none", ""),

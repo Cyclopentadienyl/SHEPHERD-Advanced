@@ -155,7 +155,10 @@ TASK_NAMES = {"disease": "Disease", "gene": "Gene", "patients_like_me": "Patient
 #: `tests/unit/test_kg_link_prediction.py`): a task's measurement by its task's
 #: name (`TASK_NAMES`), and the common KG link-prediction measurement by its
 #: own words (research comparison Stage 5). Never a task name: no task filter
-#: or option reads it.
+#: or option reads it. Each protocol row restates its words as its `label`
+#: (that module imports the standard library only), which its reasons name it
+#: by, pinned equal by the same test; the words of a recorded mode stay here,
+#: whatever protocols this build implements.
 MEASUREMENT_NAMES = {**TASK_NAMES, "kg_link_prediction": "KG link prediction"}
 
 

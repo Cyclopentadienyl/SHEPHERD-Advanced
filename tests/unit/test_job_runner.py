@@ -617,18 +617,17 @@ def test_the_evidence_choice_is_made_once_by_the_version_s_kind(monkeypatch, tmp
     assert protocols.training_evidence_refusal(protocols.SUPPLIED) is None
 
 
-@pytest.mark.parametrize("state", ["set", "refused"])
 @pytest.mark.parametrize("kind, protocol, counts", OTHER_KINDS, ids=["kg_edges", "generated"])
-def test_a_kg_or_generated_start_takes_no_evidence_whatever_the_setting(
-        popen, inputs, monkeypatch, tmp_path, state, kind, protocol, counts):
-    """A run on a KG edge set or a generated split built with the runner's
-    choice starts, with the evidence setting set or refused, and its command
-    line carries no `--training-evidence` (before Stage 7 every run was given
-    the setting's directories, so such a run was refused after it started).
-    Its status names its kind."""
+def test_a_kg_or_generated_start_carries_no_evidence_and_names_its_kind(
+        popen, inputs, kind, protocol, counts):
+    """A run on a KG edge set or a generated split, its inputs built with the
+    runner's choice (which gives such a kind no directory: the test above,
+    and the Test page's and the probe's with the setting set and refused),
+    starts, and the runner adds no evidence of its own: its command line
+    carries no `--training-evidence`. Its status names its kind
+    (`version_kind`) and lists no evidence directory."""
     from dataclasses import replace
 
-    _evidence_setting(monkeypatch, tmp_path, state)
     asked = replace(inputs, protocol=protocol, version_kind=kind, version_counts=counts,
                     evidence_dirs=tm.evidence_choice(kind).dirs)
     process = FakeProcess(pid=7)

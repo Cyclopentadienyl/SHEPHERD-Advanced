@@ -567,8 +567,11 @@ def test_the_test_page_names_it_by_kind_and_role_never_in_a_cohort_s_words(liste
     counts = generated.manifest["counts"]
     disease = "disease" if counts["diseases"] == 1 else "diseases"
     assert f"{counts['samples']} generated patients of {counts['diseases']} {disease}" in shown
+    # Each count's unit under Counts and units; the counts the line above
+    # gives are not repeated there (skill §1.2; the review of Stage 7).
+    read = " ".join(shown.split()).replace(" :", ":")
     for name, unit in generated.manifest["count_units"].items():
-        assert f"{name} {counts[name]}: {unit}" in " ".join(shown.split())
+        assert f"{name}: {unit}" in read and f"{name} {counts[name]}:" not in read, name
     for words in ("source cases", "ranked-eligible", "test", "cohort"):
         assert words not in shown, words
     assert "source cases" in tp.version_html(page, "cases-1", None)

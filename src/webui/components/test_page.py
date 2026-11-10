@@ -1028,11 +1028,15 @@ def default_workspace(page: Mapping[str, Any], current: Any) -> Optional[str]:
 
 def default_version(page: Mapping[str, Any], binding: Optional[Mapping[str, Any]],
                     current: Any) -> Optional[str]:
-    labels = [v["label"] for v in page.get("versions") or []]
+    """The version chosen: `current` while it is listed; otherwise the first
+    one mapped against this workspace's graph, else the first listed, in the
+    order the select shows them (`_by_kind`), so the version chosen is the
+    first option of its kind."""
+    versions = _by_kind(page.get("versions") or [])
+    labels = [v["label"] for v in versions]
     if current in labels:
         return current
-    bound = [v["label"] for v in page.get("versions") or []
-             if binding_state(v, binding)[0] == "bound"]
+    bound = [v["label"] for v in versions if binding_state(v, binding)[0] == "bound"]
     return (bound or labels or [None])[0]
 
 
@@ -1086,15 +1090,19 @@ def kg_edges_empty_html(page: Mapping[str, Any]) -> str:
 
 def _version_counts(version: Mapping[str, Any]) -> str:
     """A KG edge set's or a generated split's counts, each in its own unit:
-    the counts that say what it holds first, in words, then every count with
-    the unit its manifest records, one click away ("Counts and units (N)")."""
+    the counts that say what it holds first, in words, then the unit its
+    manifest records for every count, one click away ("Counts and units
+    (N)"), with the value of each count the words above do not give, so no
+    count is shown twice (skill §1.2)."""
     counts = version.get("counts") if isinstance(version.get("counts"), Mapping) else {}
     units = version.get("count_units") if isinstance(version.get("count_units"), Mapping) else {}
     if version.get("kind") == protocols.KG_EDGES:
+        said: Tuple[str, ...] = ("pairs", "positive_edges", "message_passing_edges")
         lead = (f"{_count(counts.get('pairs'))} pairs from {_count(counts.get('positive_edges'))} "
                 f"positive edges; message passing over "
                 f"{_count(counts.get('message_passing_edges'))} edges")
     elif version.get("kind") == protocols.GENERATED:
+        said = ("samples", "diseases", protocols.GENERATED_FIXTURE_COUNT)
         diseases = counts.get("diseases")
         fixture = counts.get(protocols.GENERATED_FIXTURE_COUNT)
         lead = (f"{_count(counts.get('samples'))} generated patients of {_count(diseases)} "
@@ -1102,8 +1110,10 @@ def _version_counts(version: Mapping[str, Any]) -> str:
                 + (f"{_count(fixture)} gene fixture rows" if protocols.GENERATED_FIXTURE_COUNT
                    in counts else "no gene fixture kept"))
     else:
+        said = tuple(counts)
         lead = ", ".join(f"{name} {_count(value)}" for name, value in counts.items())
-    rows = "".join(f"<div><code>{e(name)}</code> {e(_count(value))}: "
+    rows = "".join(f"<div><code>{e(name)}</code>"
+                   f"{'' if name in said else ' ' + e(_count(value))}: "
                    f"{e(units.get(name) or 'unit not recorded')}</div>"
                    for name, value in counts.items())
     return (f"<div>{e(lead)}</div>"

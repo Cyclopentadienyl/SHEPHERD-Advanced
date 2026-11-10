@@ -210,8 +210,10 @@ class CheckpointItem:
     identity, apart from those names (`checkpoint_paths.listing_key`, BACKLOG
     66): ``architecture/run/filename`` for names that are text, a form no text
     names give otherwise, so two entries shown alike never share a key and
-    selecting one never picks the other. An item built without one is keyed by
-    its names.
+    selecting one never picks the other. `run_key` is its run's identity the
+    same way (``architecture/run`` for names that are text), by which a list
+    groups its entries, so two runs shown alike are never one group. An item
+    built without them is keyed by its names.
     """
 
     workspace: str
@@ -241,13 +243,16 @@ class CheckpointItem:
     differences: Optional[Tuple[str, ...]] = None
     capabilities: Optional[Dict[str, Any]] = None
     key: Optional[str] = None
+    run_key: Optional[str] = None
 
     def __post_init__(self) -> None:
-        if self.key is None:
-            from src.utils.checkpoint_paths import listing_key
+        from src.utils.checkpoint_paths import listing_key
 
+        if self.key is None:
             object.__setattr__(self, "key", listing_key(
                 (self.architecture, self.run, self.filename)))
+        if self.run_key is None:
+            object.__setattr__(self, "run_key", listing_key((self.architecture, self.run)))
 
 
 @dataclass(frozen=True)
@@ -651,6 +656,7 @@ def list_checkpoints(
             run=run_name,
             filename=filename,
             key=entry.key,
+            run_key=entry.run_key,
             sha256=entry.sha256,
             size_bytes=entry.size_bytes,
             checkpoint_kind=entry.checkpoint_kind,

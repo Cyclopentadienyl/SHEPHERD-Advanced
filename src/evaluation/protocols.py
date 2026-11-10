@@ -133,6 +133,12 @@ class Protocol:
     #: The head its evaluator scores with, `(kind, name, scoring semantics)`,
     #: as a model's capability description lists its heads.
     head: tuple[str, str, str]
+    #: Its plain words, which a reason names it by with its name beside
+    #: ("KG link prediction (kg_link_prediction)", `_named`): the words a page
+    #: offers it under (`caveats.MEASUREMENT_NAMES`, restated here because this
+    #: module imports the standard library only, and pinned equal by
+    #: tests/unit/test_kg_link_prediction.py). "" names it by its name alone.
+    label: str = ""
     #: The representations its evaluator reads.
     representations: tuple[str, ...] = (NODE_VECTORS,)
     #: The computation its evaluator asks of the encoder.
@@ -162,19 +168,19 @@ _TASK_REPRESENTATIONS = (NODE_VECTORS, PATIENT_REPRESENTATION)
 
 #: The measurements this build implements, by name, in the order they are offered.
 PROTOCOLS: dict[str, Protocol] = {p.name: p for p in (
-    Protocol("disease", "disease", task_head("disease"),
+    Protocol("disease", "disease", task_head("disease"), "Disease",
              representations=_TASK_REPRESENTATIONS),
-    Protocol("gene", "gene", task_head("gene"), representations=_TASK_REPRESENTATIONS,
+    Protocol("gene", "gene", task_head("gene"), "Gene", representations=_TASK_REPRESENTATIONS,
              gene_fields=True,
              needs=("cases_with_causal_genes", "cases_with_candidate_genes")),
     Protocol("patients_like_me", "patients_like_me", task_head("patients_like_me"),
-             representations=_TASK_REPRESENTATIONS, gene_fields=True,
+             "Patients-like-me", representations=_TASK_REPRESENTATIONS, gene_fields=True,
              needs=("cases_with_causal_genes",)),
     # The common KG link-prediction measurement (research comparison §5 Stage
     # 5, owner's O3): a KG edge set's fixed pairs scored by the LP head over
     # the version's message-passing graph, for a base and a finetune alike.
-    Protocol("kg_link_prediction", "kg_link_prediction", LP_HEAD, data_kinds=(KG_EDGES,),
-             needs=("pairs",)),
+    Protocol("kg_link_prediction", "kg_link_prediction", LP_HEAD, "KG link prediction",
+             data_kinds=(KG_EDGES,), needs=("pairs",)),
 )}
 
 #: The reason for a listing whose checkpoint has no model record this build
@@ -336,6 +342,14 @@ def _words(names: Any) -> str:
     return ", ".join(_CAPABILITY_WORDS.get(n, n) for n in sorted(names))
 
 
+def _named(name: str) -> str:
+    """A protocol as a reason for a page names it: its plain words with its
+    name beside ("KG link prediction (kg_link_prediction)"), or its name for
+    one without words (skill: an internal code only beside a plain label)."""
+    label = PROTOCOLS[name].label
+    return f"{label} ({name})" if label else name
+
+
 def _unmet(protocol: Protocol, model: Mapping[str, Any]) -> str:
     """Why `protocol` does not take `model`, which carries the head it scores
     with: the representations or computation it lacks, then the inputs it
@@ -364,8 +378,9 @@ def available(model: Any, kind: Any = None) -> tuple[tuple[str, ...], str | None
     protocol and the reason none does. With `kind`, a data kind measured
     (research comparison Stage 7: the Test page's options for the chosen
     version), only those of them that measure it; when none does, no protocol
-    and the reason, naming the protocols that take the model and the kinds
-    they measure. A version's counts are never judged here: a protocol that
+    and the reason, naming the protocols that take the model, each by its
+    plain words with its name beside (`_named`), and the kinds they measure.
+    A version's counts are never judged here: a protocol that
     measures its kind is offered, and what the version lacks is its refusal's
     (`inputs_refusal`)."""
     found = _found(model)
@@ -379,7 +394,7 @@ def available(model: Any, kind: Any = None) -> tuple[tuple[str, ...], str | None
         for name in found:
             kinds += [k for k in PROTOCOLS[name].data_kinds if k not in kinds]
         return (), (f"no measurement that takes this checkpoint's model measures {said}: it can "
-                    f"be measured by {', '.join(found)}, which measure"
+                    f"be measured by {', '.join(_named(name) for name in found)}, which measure"
                     f"{'s' if len(found) == 1 else ''} "
                     f"{' or '.join(_KIND_WORDS.get(k, k) for k in kinds)}.")
     if found:

@@ -442,11 +442,16 @@ def name_key(name: str) -> str:
 
 
 def listing_key(names: Tuple[str, ...]) -> str:
-    """**The one identity of a listed entry** (BACKLOG 66): its names (the
-    directory under ``runs/``, the run, the file), each by `name_key`, joined
-    by ``/``. For names that are text it is ``architecture/run/file``, as the
-    lists always keyed an entry; an entry with a name that is not text gets a
-    key no text names give, so selecting one never picks another."""
+    """**The one identity of a listed entry** (BACKLOG 66): its own names
+    under ``runs/``, each by `name_key`, joined by ``/``: a checkpoint file's
+    three (the directory under ``runs/``, the run, the file), a run
+    directory's two, a directory directly under ``runs/`` its one
+    (`ListedCheckpoint.key`, `ListedCheckpoint.run_key`). For names that are
+    text a file's is ``architecture/run/file``, as the lists always keyed an
+    entry. Two different name tuples never share a key, whatever their
+    lengths: a name that is text is never empty and holds no ``/``, and one
+    that is not text is keyed ``/`` and its bytes, so the empty part before
+    its hexadecimal marks it. Selecting one entry never picks another."""
     return "/".join(name_key(name) for name in names)
 
 
@@ -614,7 +619,13 @@ class ListedCheckpoint(NamedTuple):
 
     `names` and `key` are its shown names and its identity (BACKLOG 66): a
     name that is not text is shown with backslash escapes and identified by
-    its bytes, so two entries never share a key.
+    its bytes, so two entries never share a key; `run_key` is its run's
+    identity, by which a list groups its entries. `under` is set for an
+    entry that is a directory (`run_dir` and `path` that directory): its own
+    names under ``runs/``, one for a directory directly under it, two for a
+    run directory, which its identity is made of (`listing_key`), so it never
+    shares one with a run or a file whose names read alike; `None` for a
+    file, identified by its run's names and its own.
 
     `size_bytes` is the file's size as listed (a `stat` beside the read,
     descriptive only); `None` for a file not read because it is outside, or one
@@ -649,6 +660,7 @@ class ListedCheckpoint(NamedTuple):
     completed_epochs: Optional[int] = None
     end: Optional[str] = None
     model_record: Optional[Dict[str, Any]] = None
+    under: Optional[Tuple[str, ...]] = None
 
     @property
     def names(self) -> Tuple[str, str, str]:
@@ -661,9 +673,22 @@ class ListedCheckpoint(NamedTuple):
     def key(self) -> str:
         """The entry's identity in its workspace's listing, apart from its
         shown names (`listing_key`, BACKLOG 66): ``architecture/run/file``
-        for names that are text."""
+        for a file whose names are text; a directory's own names under
+        ``runs/`` (`under`) for a directory."""
+        if self.under is not None:
+            return listing_key(self.under)
         return listing_key((Path(self.run_dir).parent.name, Path(self.run_dir).name,
                             Path(self.path).name))
+
+    @property
+    def run_key(self) -> str:
+        """The identity of the run the entry belongs to, by which a list
+        groups its entries (`listing_key` of the run directory's names:
+        ``architecture/run`` for names that are text); a directory directly
+        under ``runs/`` is its own group."""
+        if self.under is not None:
+            return listing_key(self.under[:2])
+        return listing_key((Path(self.run_dir).parent.name, Path(self.run_dir).name))
 
 
 #: How much of a problem's text a reason keeps (`problem_line`): its first line,
@@ -1033,13 +1058,15 @@ def read_run_checkpoints(
     name is not text by its name as shown): what it holds is not read, and
     nothing else is hidden. So is a run directory or a checkpoint file whose
     name is not text (BACKLOG 66), each shown with backslash escapes
-    (`ListedCheckpoint.names`) and identified by its bytes
-    (`ListedCheckpoint.key`). Only ``runs/`` itself failing to list raises.
+    (`ListedCheckpoint.names`) and identified by its own names under
+    ``runs/``, a name that is not text by its bytes (`ListedCheckpoint.key`,
+    `under`). Only ``runs/`` itself failing to list raises.
 
     torch is imported only here, when a file is read, so this module stays
     importable without it.
     """
     bound = Path(within).resolve() if within is not None else None
+    base = Path(data_dir) / RUNS_DIRNAME
     entries: List[ListedCheckpoint] = []
     unlisted: List[Tuple[Path, Path, str]] = []
     for run_dir, path in list_run_checkpoints(data_dir, conv_type, run=run, unlisted=unlisted):
@@ -1056,7 +1083,11 @@ def read_run_checkpoints(
         entry, opened = _read_one(run_dir, path, bound)
         _remember(path, bound, identity, opened, started_ns, entry)
         entries.append(entry)
-    entries.extend(ListedCheckpoint(run_dir, path, problem=problem)
+    # A directory entry is identified by its own names under runs/ (one or
+    # two), a file by its run's and its own (`ListedCheckpoint.key`).
+    entries.extend(ListedCheckpoint(run_dir, path, problem=problem,
+                                    under=path.relative_to(base).parts if path == run_dir
+                                    else None)
                    for run_dir, path, problem in unlisted)
     return entries
 

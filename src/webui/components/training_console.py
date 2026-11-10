@@ -2163,12 +2163,24 @@ def run_words(architecture: Any, run: Any) -> str:
 
 
 def _run_key(item: Mapping[str, Any]) -> str:
+    """A listed checkpoint's run's identity (`model_list.item_run_key`, the
+    list's `run_key`: ``<architecture>/<run>`` for names that are text), by
+    which the runs are grouped and the run select's value is made."""
+    from src.webui.components.model_list import item_run_key
+
+    return item_run_key(item)
+
+
+def _run_label(item: Mapping[str, Any]) -> str:
+    """A listed checkpoint's run as its details show it: its shown names,
+    ``<architecture>/<run>``."""
     return f"{item.get('architecture')}/{item.get('run')}"
 
 
 def runs_of(parents: Mapping[str, Any]) -> Dict[str, List[str]]:
     """The listed checkpoints by run, in the list's order (latest run first,
-    newest file first): ``{"<architecture>/<run>": [key, ...]}``."""
+    newest file first): ``{run identity: [key, ...]}`` (`_run_key`:
+    ``"<architecture>/<run>"`` for names that are text)."""
     runs: Dict[str, List[str]] = {}
     for key, item in parents.items():
         runs.setdefault(_run_key(item), []).append(key)
@@ -2370,7 +2382,7 @@ def parent_details_html(item: Optional[Mapping[str, Any]]) -> str:
     rows.append(("Validation", r.e(figure.removeprefix("Validation ") if figure
                                    else "not recorded in this file")))
     rows.append(("Model fingerprint", digest_html(item["sha256"], what="model fingerprint")))
-    rows.append(("Run", f"<code>{r.e(_run_key(item))}</code>"))
+    rows.append(("Run", f"<code>{r.e(_run_label(item))}</code>"))
     cells = "".join(f'<span class="shep-k">{k}</span><span class="shep-v">{v}</span>' for k, v in rows)
     return f'<div class="shep-ckpt"><div class="shep-kv">{cells}</div></div>'
 
@@ -2458,7 +2470,7 @@ def _chosen(source: str, listed: Any, manual: Any, parents: Mapping[str, Any],
     if not item:
         return {"chosen": False, "source": source}
     return {"chosen": True, "source": source, "fingerprint": item.get("dataset_fingerprint"),
-            "run_label": _run_key(item), "key": listed,
+            "run_label": _run_label(item), "key": listed,
             "workspace": item.get("workspace"), "sha256": item.get("sha256")}
 
 
@@ -2617,6 +2629,7 @@ def _parent_path(source: str, listed: Any, manual: Any, ws: Mapping[str, Any],
         locate_checkpoint,
         resolve_checkpoint,
     )
+    from src.utils.checkpoint_paths import listing_key
 
     if source == CONTINUE_FROM_PATH:
         typed = _strip_display_prefix(manual or "")
@@ -2628,7 +2641,7 @@ def _parent_path(source: str, listed: Any, manual: Any, ws: Mapping[str, Any],
             architecture, run, filename = locate_checkpoint(ws.get("name"), typed)
         except ServerListRefused as exc:
             return None, redact(exc, workspaces_root()[0]), None
-        item = (parents or {}).get(f"{architecture}/{run}/{filename}")
+        item = (parents or {}).get(listing_key((architecture, run, filename)))
         if not item:
             # Only a model record the run list offers is continued (K6
             # decision 1), so a file without a model spec is refused unopened.

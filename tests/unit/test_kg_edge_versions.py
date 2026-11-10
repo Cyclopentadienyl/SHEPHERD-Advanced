@@ -697,8 +697,14 @@ def test_the_test_page_lists_a_kg_edge_set_and_its_start_says_why_it_is_not_meas
     assert (f"{counts['pairs']} pairs from {counts['positive_edges']} positive edges; message "
             f"passing over {counts['message_passing_edges']} edges") in shown
     assert f"Counts and units ({len(counts)})" in shown
+    # Each count's unit under Counts and units, with the value of the one the
+    # line above does not give; no count is shown twice (skill §1.2; the
+    # review of Stage 7).
     for name, unit in edges.manifest["count_units"].items():
-        assert f"<code>{name}</code> {counts[name]}: {html.escape(unit)}" in shown, name
+        value = "" if name in ("pairs", "positive_edges", "message_passing_edges") else (
+            f" {counts[name]}")
+        assert f"<code>{name}</code>{value}: {html.escape(unit)}" in shown, name
+    assert f"<code>edges_without_negative</code> {counts['edges_without_negative']}:" in shown
     assert "source cases" not in shown and "ranked-eligible" not in shown
     assert tp.kg_edges_empty_html(page) == "" and "No KG edge set" not in shown
     (row,) = [v for v in page["versions"] if v["label"] == "kg-test"]

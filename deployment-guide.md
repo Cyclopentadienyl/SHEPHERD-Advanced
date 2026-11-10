@@ -2611,9 +2611,12 @@ export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
   自 K8-7b 之後的修正起）。名稱不是有效文字的 run 目錄或 checkpoint 檔案也是如此（自 research
   comparison Stage 7 起，BACKLOG 66）：一個附原因的項目（「… is not listed (its name is not valid
   text, …), so it is not read」），絕不會被開啟、選取或以名稱找到；其他檔案照常列出，這份清單與
-  下面那份都會回應。每個項目都帶有 `key`，即與顯示名稱分開的識別：名稱都是文字時為
-  `architecture/run/file`，名稱不是文字時則是任何文字名稱都不會產生的形式（其位元組的十六進位），
-  因此以反斜線跳脫顯示的名稱絕不會取代名稱真的寫成那樣的檔案。若要使用這樣的檔案，請將它改名。每個項目都以清單中的名稱指稱 workspace：對
+  下面那份都會回應。每個項目都帶有 `key`，即與顯示名稱分開的識別，由它自己在 `runs/` 之下的
+  名稱構成：名稱都是文字的檔案為 `architecture/run/file`，run 目錄為兩個名稱，`runs/` 正下方的
+  目錄為一個名稱；名稱不是文字時則是任何文字名稱都不會產生的形式（其位元組的十六進位），因此以
+  反斜線跳脫顯示的名稱絕不會取代名稱真的寫成那樣的檔案，也沒有兩個項目共用同一個 key。
+  `run_key` 以同樣的方式識別它所屬的 run（`architecture/run`），清單依它把項目分組，因此兩個
+  顯示相同的 run 是兩組。若要使用這樣的檔案，請將它改名。每個項目都以清單中的名稱指稱 workspace：對
   `current -> builds/2026-10-20` 而言，它寫的是 `current`。列出時會開啟每個 checkpoint，SPEC_4
   將此歸類為 checkpoint 檢視（C3），而 D8 只在操作者控制項所在之處提供它：它以
   `GET /api/v1/workspaces/{name}/checkpoints` 提供（`?architecture=<目錄>` 只列 `runs/` 之下某一個
@@ -2626,8 +2629,8 @@ export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
   `sha256`、`validation`、`dataset_fingerprint` 與 `metadata_problem`，全部來自同一次讀取。以前它載入每個檔案卻不保留
   digest，而且載入錯誤時一聲不響地略過。讀取時已經不存在的檔案（目標已被移除的連結）沒有
   大小或時間可顯示，會從這份清單中略去；它不再讓整份清單失敗。`runs/` 之下無法列出的目錄會保留，
-  附上原因；其大小與時間是該目錄本身的，名稱不是有效文字時則大小為 0.0、沒有時間（沒有任何路徑
-  叫所顯示的名稱）。自 M5-1 起，D8 像檢查控制項一樣檢查它（§4.13）。
+  附上原因；無論其名稱為何，其大小與時間都是該目錄本身的。自 M5-1 起，D8 像檢查控制項一樣檢查它
+  （§4.13）。
 - **Cohort 版本**（`GET /api/v1/cohorts`）：registry 中的每個版本，以 label 及其 `cohort.json`
   的 SHA-256 識別，附上它的角色。它也顯示版本的計數（KG 邊集合與 generated split 附上其 manifest
   記錄的單位 `count_units`，自 research comparison Stage 7 起）、所綁定的圖與資料集紀錄，以及匯入時間。清單絕不顯示病例識別碼或排除清單：D7 把它們留在這台機器上的

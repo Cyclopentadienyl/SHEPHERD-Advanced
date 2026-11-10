@@ -240,6 +240,20 @@ def item_key(item: Mapping[str, Any]) -> str:
                         str(item.get("filename"))))
 
 
+def item_run_key(item: Mapping[str, Any]) -> str:
+    """A listed checkpoint's run's identity, by which a list groups its
+    entries: the server's list's (`CheckpointItem.run_key`: architecture/run
+    for names that are text, BACKLOG 66), never its shown names, so two runs
+    shown alike are never one group; an item that carries none (one built by
+    hand) by its names, as `item_key`."""
+    key = item.get("run_key")
+    if isinstance(key, str) and key:
+        return key
+    from src.utils.checkpoint_paths import listing_key
+
+    return listing_key((str(item.get("architecture")), str(item.get("run"))))
+
+
 def ledger_records(workspace_dir: Path, items: Sequence[Mapping[str, Any]]
                    ) -> Dict[str, Dict[str, Any]]:
     """For each listed checkpoint with a digest, what the ledger beside it holds
@@ -473,11 +487,15 @@ def _recorded(listing: Mapping[str, Any], key: str) -> Optional[r.RecordedTests]
 
 
 def _runs_in_order(items: Sequence[Mapping[str, Any]]) -> List[Tuple[str, List[Mapping[str, Any]]]]:
-    """Items grouped by run, in the listing's order (latest run first)."""
+    """Items grouped by run, in the listing's order (latest run first), each
+    group with its run's shown names (``architecture/run``). Grouped by the
+    run's identity (`item_run_key`), never by those names, so two runs shown
+    alike (BACKLOG 66) are two groups."""
     runs: Dict[str, List[Mapping[str, Any]]] = {}
     for item in items:
-        runs.setdefault(f"{item.get('architecture')}/{item.get('run')}", []).append(item)
-    return list(runs.items())
+        runs.setdefault(item_run_key(item), []).append(item)
+    return [(f"{group[0].get('architecture')}/{group[0].get('run')}", group)
+            for group in runs.values()]
 
 
 def _view(view: Any) -> Mapping[str, Any]:

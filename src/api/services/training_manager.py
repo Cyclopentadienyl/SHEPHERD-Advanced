@@ -2483,6 +2483,7 @@ class TrainingManager:
                 "run_dir": shown_path(entry.run_dir),
                 "architecture": architecture,
                 "key": entry.key,
+                "run_key": entry.run_key,
                 "sha256": entry.sha256,
                 "validation": ({"metric": entry.validation[0], "value": entry.validation[1]}
                                if entry.validation else None),

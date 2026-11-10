@@ -768,6 +768,7 @@ class TestCheckpointsInAndOut:
         the WebUI's lists answer."""
         import json
         import os
+        from datetime import datetime
 
         from fastapi.testclient import TestClient
 
@@ -815,8 +816,9 @@ class TestCheckpointsInAndOut:
         entries = read_run_checkpoints(ws, within=ws)
         assert [(e.names[1], e.names[2], e.problem) for e in entries] == [
             (run.parent.name, "last.pt", None), (r"bad\xff", r"bad\xff", problem)]
-        # Its identity is its bytes, apart from its shown name (BACKLOG 66).
-        assert entries[1].key == "runs//626164ff//626164ff"
+        # Its identity is its own name under runs/, by its bytes, apart from
+        # its shown name (BACKLOG 66).
+        assert entries[1].key == "/626164ff" and entries[1].run_key == "/626164ff"
         not_read = []
         path, _key, reason = select_auto_run_checkpoint(ws, not_read=not_read)
         assert path == run / "last.pt" and not_read == [problem]
@@ -836,6 +838,9 @@ class TestCheckpointsInAndOut:
         training = answers(TrainingManager().get_checkpoints(str(ws)))
         assert [(t["run"], t["filename"], t["metadata_problem"]) for t in training] == [
             (run.parent.name, "last.pt", None), (r"bad\xff", r"bad\xff", problem)]
+        # Its time is the directory's own, whatever its name (the guides say so).
+        assert training[1]["modified"] == datetime.fromtimestamp(
+            hidden.parent.parent.stat().st_mtime).isoformat()
 
         monkeypatch.setattr(ml, "read_status", lambda: (None, "not read"))
         listing_ui = ml.list_models("demo", operator_request(monkeypatch), family=True)
@@ -843,7 +848,7 @@ class TestCheckpointsInAndOut:
         assert answers(listing_ui["family"])
         assert r"bad\xff" in ml.list_html(listing_ui, None, ml.PRESETS["research"])
         assert list(answers(tc.checkpoint_items(listing)[0])) == [
-            f"gatv2/{run.parent.name}/last.pt", "runs//626164ff//626164ff"]
+            f"gatv2/{run.parent.name}/last.pt", "/626164ff"]
 
     def test_a_run_or_file_whose_name_is_not_text_is_listed_and_every_list_answers(
             self, demo_workspace, tmp_path, monkeypatch):
@@ -914,9 +919,10 @@ class TestCheckpointsInAndOut:
             (("gatv2", newer.parent.name, r"bad\xff.pt"), file_problem)]
         assert reads == ["last.pt", "last.pt"], "a name that is not text was opened"
         assert [e.key for e in entries][2:] == [
-            "gatv2//" + b"20261021-000000_y_\xff".hex() + "//"
-            + b"20261021-000000_y_\xff".hex(),
+            "gatv2//" + b"20261021-000000_y_\xff".hex(),
             f"gatv2/{newer.parent.name}//" + b"bad\xff.pt".hex()]
+        assert [e.run_key for e in entries][2:] == [
+            "gatv2//" + b"20261021-000000_y_\xff".hex(), f"gatv2/{newer.parent.name}"]
         assert all(e.sha256 is None for e in entries[2:])
 
         not_read = []
@@ -1023,6 +1029,64 @@ class TestCheckpointsInAndOut:
         assert sorted(set(family)) == sorted(keys)
         assert sl.resolve_checkpoint("demo", "gatv2", r"bad\xff", r"bad\xff.pt",
                                      environ=_roots(root)) == literal / r"bad\xff.pt"
+
+        # The two runs shown alike are two runs wherever a list groups by run
+        # (the review of Stage 7): the Models list draws two run sections, each
+        # with its own files, and counts two runs; the console groups them apart.
+        assert sorted(i["run_key"] for i in items) == sorted(
+            ["gatv2/bad\\xff"] * 3 + ["gatv2//" + b"bad\xff".hex()])
+        groups = ml._runs_in_order(listing_ui["items"])
+        assert sorted((label, len(group)) for label, group in groups) == [
+            (r"gatv2/bad\xff", 1), (r"gatv2/bad\xff", 3)]
+        by_run = ml.Preset("by_run", None, "In use", layout="rows")  # every row, by run
+        html = ml.list_html(listing_ui, None, by_run)
+        assert html.count(r"Run gatv2/bad\xff") == 2, html
+        assert sorted(len(v) for v in tc.runs_of(console).values()) == [1, 3]
+
+    def test_a_directory_entry_never_shares_a_key_with_a_run_or_file_named_alike(
+            self, tmp_path, monkeypatch):
+        """The review of Stage 7 (BACKLOG 66): an entry is identified by its
+        own names under runs/, one for a directory directly under it, two for
+        a run directory, three for a file. A directory under runs/ that cannot
+        be listed was keyed by three names, ``runs/X/X``, the key of a run or
+        a file in an architecture directory literally named ``runs``: two
+        entries shared it, so the console's items dropped one and selecting
+        the second found the first. Each now has its own."""
+        import os
+
+        from src.utils.checkpoint_io import write_checkpoint
+        from src.utils.checkpoint_paths import read_run_checkpoints
+
+        # A name that is not text: runs/<bad> beside runs/runs/<bad>/ (a run).
+        bad = os.fsdecode(b"bad\xff")
+        ws = tmp_path / "bytes"
+        (ws / "runs" / bad).mkdir(parents=True)
+        write_checkpoint({"epoch": 1}, _run(ws, "runs", bad) / "last.pt")
+        write_checkpoint({"epoch": 2}, _run(ws, "gatv2", "20261020-000000_z_cccccc") / "last.pt")
+        entries = read_run_checkpoints(ws, within=ws)
+        assert [(e.key, "no run" in e.problem if e.problem else None) for e in entries] == [
+            ("gatv2/20261020-000000_z_cccccc/last.pt", None),
+            ("/626164ff", True), ("runs//626164ff", False)]
+        assert len({e.run_key for e in entries}) == 3
+
+        # Names that are text: runs/x.pt (a directory this account may not
+        # enter) beside runs/runs/x.pt/checkpoints/x.pt, a file that is read.
+        ws = tmp_path / "text"
+        (ws / "runs" / "x.pt").mkdir(parents=True)
+        write_checkpoint({"epoch": 1}, _run(ws, "runs", "x.pt") / "x.pt")
+        locked = ws / "runs" / "x.pt"
+        original = Path.iterdir
+
+        def iterdir(self):
+            if self == locked:
+                raise PermissionError(13, "Permission denied", str(self))
+            return original(self)
+
+        monkeypatch.setattr(Path, "iterdir", iterdir)
+        entries = read_run_checkpoints(ws, within=ws)
+        assert [(e.key, e.sha256 is not None) for e in entries] == [
+            ("runs/x.pt/x.pt", True), ("x.pt", False)]
+        assert entries[1].problem.startswith("runs/x.pt cannot be listed (PermissionError")
 
     def test_the_latest_run_is_one_inside_the_workspace(self, tmp_path):
         """The review of C3 (listing nit): the Training page's latest run is

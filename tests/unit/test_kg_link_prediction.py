@@ -564,7 +564,8 @@ def test_the_shared_vocabularies_are_one():
     records every kind the registry holds (research comparison Stage 6); each
     protocol has the words a page offers it under, the LP metrics' words are
     the evaluator's metrics, and the kind words a protocol's refusal restates
-    (it imports the standard library only) are the readers'."""
+    and the plain words a reason names a protocol by (`Protocol.label`; it
+    imports the standard library only) are the readers'."""
     from src.evaluation import cohort_registry, exposure, protocols, sidecar, task_measurement
     from src.evaluation.caveats import (
         DATA_KIND_WORDS,
@@ -589,6 +590,7 @@ def test_the_shared_vocabularies_are_one():
     assert exposure.EXPOSURE_READINGS is __import__(
         "src.evaluation.caveats", fromlist=["EXPOSURE_READINGS"]).EXPOSURE_READINGS
     assert set(MEASUREMENT_NAMES) == set(protocols.names())
+    assert {name: row.label for name, row in protocols.PROTOCOLS.items()} == MEASUREMENT_NAMES
     assert {k: MEASUREMENT_NAMES[k] for k in TASK_NAMES} == TASK_NAMES
     assert MEASUREMENT_NAMES[LP] == "KG link prediction"
 

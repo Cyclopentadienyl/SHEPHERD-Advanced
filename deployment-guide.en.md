@@ -2436,10 +2436,13 @@ and a file, or a label, and the server finds that name in its own list again.
   text (since research comparison Stage 7, BACKLOG 66): one item with its reason ("… is not
   listed (its name is not valid text, …), so it is not read"), never opened, chosen or found by
   name; every other file is listed, and this list and the one below answer. Each item carries
-  `key`, its identity apart from the names shown: `architecture/run/file` for names that are
-  text, and for a name that is not text a form no text name gives (its bytes in hexadecimal), so
-  a name shown with backslash escapes never takes the place of a file whose name really reads so.
-  Rename such a file to use it.
+  `key`, its identity apart from the names shown, made of its own names under `runs/`:
+  `architecture/run/file` for a file whose names are text, two names for a run directory and one
+  for a directory directly under `runs/`, and for a name that is not text a form no text name
+  gives (its bytes in hexadecimal), so a name shown with backslash escapes never takes the place
+  of a file whose name really reads so, and no two items share a key. `run_key` is its run's
+  identity the same way (`architecture/run`), by which a list groups its items, so two runs
+  shown alike are two groups. Rename such a file to use it.
   Each item names the workspace as the list does: for
   `current -> builds/2026-10-20`, it says `current`. Listing opens every checkpoint, which SPEC_4
   classes as checkpoint inspection (C3), and D8 offers that only where the operator controls
@@ -2455,9 +2458,8 @@ and a file, or a label, and the server finds that name in its own list again.
   file without keeping its digest, and dropped a load error without a word. A file that is gone
   by the time it is read (a link whose target was removed) has no size or time to show and is
   left out of this list; it no longer fails the whole list. A directory under `runs/` that
-  cannot be listed is kept, with its reason; its size and time are the directory's own, or 0.0
-  and no time when its name is not text (no path has the name shown). Since M5-1 D8 checks it
-  like the controls (§4.13).
+  cannot be listed is kept, with its reason; its size and time are the directory's own, whatever
+  its name. Since M5-1 D8 checks it like the controls (§4.13).
 - **Cohort versions** (`GET /api/v1/cohorts`): each version in the registry, by label and the
   SHA-256 of its `cohort.json`, with its role. It also shows
   its counts (a KG edge set's and a generated split's with the units its manifest records,
