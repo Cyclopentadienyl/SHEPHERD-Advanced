@@ -145,7 +145,6 @@ from __future__ import annotations
 import logging
 import re
 import time
-from collections import Counter
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
@@ -385,7 +384,12 @@ TOPIC_HELP = {
 # Small pieces
 # ---------------------------------------------------------------------------
 e = r.e
+#: A report row's time from its run id: the one `renderers.run_time` every
+#: page names a run by.
+run_time = r.run_time
 
+#: A report store run id, read here only for its checkpoint's 12 hex digits
+#: (`run_sha12`).
 _RUN_ID = re.compile(r"^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z-([0-9a-f]{12})-[0-9a-f]{8}$")
 
 
@@ -490,16 +494,6 @@ def _reason_html(text: Optional[str], *, kind: str = "") -> str:
         return ""
     lock = '<span aria-hidden="true">🔒</span>' if kind == "lock" else ""
     return f'<div class="shep-reason shep-test-reason">{lock}<span>{e(text)}</span></div>'
-
-
-def run_time(run_id: Any, *, seconds: bool = False) -> Optional[str]:
-    """"2026-10-17 15:24 UTC" (with `seconds`, "2026-10-17 15:24:12 UTC") from
-    a run id (`create_report_dir` names it by its UTC time), else None."""
-    match = _RUN_ID.match(str(run_id or ""))
-    if not match:
-        return None
-    y, mo, d, h, mi, sec, _sha = match.groups()
-    return f"{y}-{mo}-{d} {h}:{mi}{':' + sec if seconds else ''} UTC"
 
 
 def run_sha12(run_id: Any) -> Optional[str]:
@@ -1263,25 +1257,16 @@ def _model_words(sha12: Optional[str], models: Mapping[str, Any]) -> str:
 def _row_names(runs: Sequence[Mapping[str, Any]], models: Mapping[str, Any]) -> Dict[str, str]:
     """Each report row's visible name, by run id: its time and model. Rows that
     would read the same (one model run twice in a minute) get the seconds, and
-    if those match too, the run id's own last part. A row still selects and
-    registers by its full run id (``data-key``)."""
+    if those match too, the run id's own last part (`renderers.distinct_names`,
+    as Models › Results names its rows). A row still selects and registers by
+    its full run id (``data-key``)."""
     def name(run: Mapping[str, Any], level: int) -> str:
         run_id = str(run["run_id"])
         when = (run_time(run_id, seconds=True) if level else None) or run.get("when") or run_id
         tail = f" · run …{run_id[-8:]}" if level > 1 else ""
         return f"{e(when)} · {_model_words(run.get('sha12'), models)}{e(tail)}"
 
-    by_id = {str(run["run_id"]): run for run in runs}
-    levels = dict.fromkeys(by_id, 0)
-    while True:
-        names = {run_id: name(run, levels[run_id]) for run_id, run in by_id.items()}
-        seen = Counter(names.values())
-        clashing = [run_id for run_id, text in names.items()
-                    if seen[text] > 1 and levels[run_id] < 2]
-        if not clashing:
-            return names
-        for run_id in clashing:
-            levels[run_id] += 1
+    return r.distinct_names({str(run["run_id"]): run for run in runs}, name)
 
 
 def _ended_row(job: Mapping[str, Any], label: Any, run_ids: Sequence[str],

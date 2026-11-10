@@ -2869,6 +2869,31 @@ def test_report_rows_that_would_read_the_same_are_told_apart_by_their_run_id():
     assert tp.run_time(ids[0], seconds=True) == "2026-10-24 11:10:47 UTC"
 
 
+def test_report_rows_are_named_by_the_shared_run_time_and_distinct_names(monkeypatch):
+    """Review of the browser-check fixes (AGENTS.md: no second implementation):
+    the Test page names its report rows by the one `renderers.run_time` and
+    tells alike names apart by the one `renderers.distinct_names`, as Models ›
+    Results does, not by copies of its own."""
+    from src.webui.components import renderers as r
+
+    assert tp.run_time is r.run_time
+    calls = []
+    shared = r.distinct_names
+
+    def spy(items, name_at, **kwargs):
+        calls.append(list(items))
+        return shared(items, name_at, **kwargs)
+
+    monkeypatch.setattr(r, "distinct_names", spy)
+    sha = "f6f7e5cab280"
+    ids = [f"20261024T111012Z-{sha}-0c0ffee0", f"20261024T111012Z-{sha}-7a7a7a7a"]
+    runs = [{"run_id": x, "when": tp.run_time(x), "sha12": sha,
+             "state": {"kept": "kept", "registered": "not_registered"}} for x in ids]
+    html = tp.reports_html({"label": LABEL, "runs": runs}, ids[0])
+    assert calls == [ids]
+    assert f"2026-10-24 11:10:12 UTC · model <code>{sha}</code> · run …7a7a7a7a" in html
+
+
 def test_a_long_report_list_shows_the_newest_and_keeps_the_selected():
     runs = _runs(20)
     reports = {"label": LABEL, "runs": runs}

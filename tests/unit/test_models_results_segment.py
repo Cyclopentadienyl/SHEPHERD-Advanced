@@ -604,22 +604,21 @@ def test_a_name_sets_no_column_wider_than_its_longest_part(world, monkeypatch):
 
 def test_the_shared_run_time_reads_a_run_id_as_the_test_page_does():
     """Review of the fix (AGENTS.md: no second implementation): the one
-    `renderers.run_time` names a report store run id's time exactly as the
-    Test page's own `run_time` does, to the minute and to the second, and
-    names nothing else, so that page can take it in place of its own (its
-    step's change) with nothing it shows changed."""
+    `renderers.run_time` names a report store run id's time, to the minute and
+    to the second, and names nothing else; the Test page names its report rows
+    by this same function, not a copy of its own."""
     from src.webui.components import renderers as r
     from src.webui.components import test_page as tp
 
-    ids = ["20261110T110547Z-a6eb26c11d90-9bfd7c23", "20261017T152412Z-15f098277b54-0a1b2c3d",
-           "20261110T110547Z-a6eb26c11d90", "20261110T110547Z-", "usage.jsonl", "", None,
-           HOSTILE, "20261110T110547Z-A6EB26C11D90-9BFD7C23"]
-    for run_id in ids:
+    assert tp.run_time is r.run_time
+    for run_id in ["20261110T110547Z-a6eb26c11d90", "20261110T110547Z-", "usage.jsonl", "", None,
+                   HOSTILE, "20261110T110547Z-A6EB26C11D90-9BFD7C23"]:
         for seconds in (False, True):
-            assert r.run_time(run_id, seconds=seconds) == tp.run_time(run_id, seconds=seconds), (
-                run_id, seconds)
-    assert r.run_time(ids[0]) == "2026-11-10 11:05 UTC"
-    assert r.run_time(ids[0], seconds=True) == "2026-11-10 11:05:47 UTC"
+            assert r.run_time(run_id, seconds=seconds) is None, (run_id, seconds)
+    assert r.run_time("20261110T110547Z-a6eb26c11d90-9bfd7c23") == "2026-11-10 11:05 UTC"
+    assert r.run_time("20261110T110547Z-a6eb26c11d90-9bfd7c23",
+                      seconds=True) == "2026-11-10 11:05:47 UTC"
+    assert r.run_time("20261017T152412Z-15f098277b54-0a1b2c3d") == "2026-10-17 15:24 UTC"
 
 
 def _read_in_full(state):
