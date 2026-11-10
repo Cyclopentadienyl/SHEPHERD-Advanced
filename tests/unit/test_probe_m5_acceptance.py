@@ -549,7 +549,8 @@ def test_a5_runs_after_the_device_probes_in_a_full_run(probe, monkeypatch):
                         lambda path: {"version_differs": [], "installed_not_in_lock": []})
     report = probe.Report()
     probe.phase_environment(report, "cpu")
-    assert [p.probe_id for p in report.probes] == ["A1", "A2", "A3", "A4", "A5"]
+    # A6 (research comparison Stage 10) closes the phase, reading A1's facts.
+    assert [p.probe_id for p in report.probes] == ["A1", "A2", "A3", "A4", "A5", "A6"]
 
 
 def test_the_committed_lock_is_read_as_it_is(probe):

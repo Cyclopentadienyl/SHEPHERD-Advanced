@@ -8,11 +8,10 @@ wrote, not a payload a test assembled. A gene or patients-like-me child trains
 on the gene task's functional fixture, derived first through
 `scripts/derive_task_fixture.py` when the workspace has none.
 
-The base's spec and sizes and the disease child's sizes are the demo's, read
-from `scripts/setup_demo.py`'s `demo_task_training` (the one statement of the
-demo's sizes), so a test's child is trained at the demo's sizes; the gene and
-patients-like-me children's sizes, which the demo does not train, are this
-helper's own.
+The base's spec and sizes and every child's sizes are the demo's, read from
+`scripts/setup_demo.py`'s `demo_task_training` (the one statement of the
+demo's sizes, which the deployment probe's L7 children train at too), so a
+test's child is trained at the demo's sizes.
 
 The runs are filed where the server's list finds them by default
 (``<workspace>/runs/gatv2/<run>``, named by a start time so the listing's
@@ -43,14 +42,6 @@ BASE_RUN = "20261001-000000_base_aaaaaa"
 CHILD_RUNS = {"disease": "20261002-000000_disease_bbbbbb",
               "gene": "20261003-000000_gene_cccccc",
               "patients_like_me": "20261004-000000_patients_like_me_dddddd"}
-
-#: The gene and patients-like-me tasks' settings for a 1-epoch CPU child on
-#: the demo workspace; the task's recipe fills the rest. The disease child's
-#: are the demo's (`demo_task_training`).
-_CHILD_SETTINGS: Dict[str, Dict[str, Any]] = {
-    "gene": {"batch_size": 4, "num_neighbors": [3, 3], "sparse_sample_size": 4},
-    "patients_like_me": {"batch_size": 4, "num_neighbors": [3, 3], "sparse_sample_size": 4},
-}
 
 #: The settings a base or child trained before K8-7 (training rules 1) records
 #: in `config.requested` and this build no longer has (the ShepherdGNN path's
@@ -160,7 +151,6 @@ def train_children(data_dir: Path, tasks: Sequence[str] = ("disease",), *,
     data_dir = Path(data_dir)
     runs = Path(runs) if runs is not None else data_dir / "runs" / "gatv2"
     demo = _demo_training()
-    child_settings = {**_CHILD_SETTINGS, "disease": demo["disease"]}
     base_settings = dict(demo["base"])
     if base_model_spec is not None:
         base_settings["model_spec"] = dict(base_model_spec)
@@ -177,11 +167,13 @@ def train_children(data_dir: Path, tasks: Sequence[str] = ("disease",), *,
                 sys.path.insert(0, str(_SCRIPTS))
             from derive_task_fixture import derive
 
-            derive(data_dir, distractors=4)
+            from scripts.setup_demo import DEMO_FIXTURE_DISTRACTORS
+
+            derive(data_dir, distractors=DEMO_FIXTURE_DISTRACTORS)
         child_run = runs / CHILD_RUNS[task]
         _train(data_dir=str(data_dir), run_dir=str(child_run), learning_stage="finetune",
                task=task, finetune_from=str(base), num_epochs=1, device="cpu", save_top_k=1,
-               **child_settings[task])
+               **demo[task])
         out[task] = child_run / "checkpoints" / "last.pt"
     return out
 

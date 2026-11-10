@@ -31,6 +31,17 @@ from R4's resumed base into a run directory of its own. The phase tests
 require every one to pass and check its evidence against the disk; the
 helpers' own checks are shown to fire in tests/unit/test_probe_m5_acceptance.py.
 
+The research comparison round's flow rides on the demo phase too (L1-L8 after
+W11, research comparison Stage 10): a KG edge set imported from D1's base and
+measured by the KG link-prediction protocol through measure_scorer and the job
+runner, its refusals, D1's disease child by two protocols, a generated split
+with its functional fixture, a short disease, gene and patients-like-me child
+(the GPU regression cases, here on the CPU) and the results export. The demo
+phase test requires every one to pass and checks its evidence against the
+disk of the flow's own deployment; the required lists' addition is pinned
+against the IDs of checkpoint C, none renamed. The L probes' helpers' own
+checks are shown to fire in tests/unit/test_probe_research_comparison.py.
+
 Module: tests/unit/test_probe_m2_phase.py
 """
 from __future__ import annotations
@@ -155,7 +166,9 @@ def test_the_m4_probes_are_required_in_both_parts():
     # required under its own ID, no ID renamed.
     assert "M5.no_model_spec" in probe.M2_DEMO_REQUIRED
     assert "R4.finetune" in probe.M2_REAL_REQUIRED
-    assert (len(probe.M2_DEMO_REQUIRED), len(probe.M2_REAL_REQUIRED)) == (52, 15)
+    # 52 demo and 15 real until the research comparison round, whose Stage 10
+    # added 14 demo probes (A6, L1-L8) under new IDs.
+    assert (len(probe.M2_DEMO_REQUIRED), len(probe.M2_REAL_REQUIRED)) == (66, 15)
     assert len(set(probe.M2_DEMO_REQUIRED)) == len(probe.M2_DEMO_REQUIRED)
     assert len(set(probe.M2_REAL_REQUIRED)) == len(probe.M2_REAL_REQUIRED)
     report = probe.Report()
@@ -164,6 +177,47 @@ def test_the_m4_probes_are_required_in_both_parts():
     report.probes = [p for p in report.probes if p.probe_id != "T5"]
     assert probe.m2_acceptance(report, False)["demo"]["not_passed"] == {"T5": "not run"}
     assert "M4" in probe.m2_acceptance(report, False)["scope"]
+
+
+#: The demo part's required IDs at checkpoint C (`a696e39`), in their order:
+#: an external closing check reads the report's required lists, so none of
+#: them is renamed, dropped or moved by a later addition.
+REQUIRED_AT_CHECKPOINT_C = (
+    "A2", "B1", "C1", "D1", "D2", "E1", "E7", "E8", "M1", "M2", "M3", "M4",
+    "M5.pre_contract", "M5.other_graph", "M5.other_samples", "M5.validated_parent",
+    "M5.missing", "M5.no_model_spec", "M6", "M7", "M8", "M9", "M10",
+    "C5.missing", "C5.replaced", "C5.other_graph", "C5.unbound", "C5.unreadable",
+    "C5.unidentified", "B22", "B23", "M11.training", "M11.serving", "M11.measurement",
+    "T1", "T2", "T3", "T4", "T5", "T6",
+    "A5", "W1", "W2", "W3", "W4", "W5", "W6", "W7", "W8", "W9", "W10", "W11",
+)
+
+
+def test_the_research_comparison_probes_are_required_under_new_ids():
+    """Research comparison Stage 10 (the owner's O9): the round's probes are
+    required in the demo part as a named addition after every earlier ID,
+    each under an ID of its own (A6 in phase A, L1-L8 in phase M); the real
+    part's list is unchanged. A missing one leaves the demo part incomplete,
+    and the scope says what they cover."""
+    probe = _probe()
+    assert probe.M2_DEMO_REQUIRED[:len(REQUIRED_AT_CHECKPOINT_C)] == REQUIRED_AT_CHECKPOINT_C
+    assert probe.M2_DEMO_REQUIRED[len(REQUIRED_AT_CHECKPOINT_C):] == (
+        "A6", *probe.RC_DEMO_PROBES)
+    assert probe.RC_DEMO_PROBES == (
+        "L1", "L2", "L3", "L4.other_graph", "L4.tampered_pairs", "L4.other_view",
+        "L4.split_record", "L5", "L6", "L7.disease", "L7.gene", "L7.patients_like_me", "L8")
+    assert probe.M2_REAL_REQUIRED == ("R1", "R2", "R3", "R4", "R4.finetune", "R5", "R6", "R7",
+                                      "R8", "RT1", "RT2", "RT3", "RW1", "RW2", "RW3")
+    report = probe.Report()
+    for probe_id in probe.M2_DEMO_REQUIRED:
+        report.probes.append(probe.Probe(probe_id, "m2", "x", status="passed"))
+    for missing in ("A6", "L4.split_record", "L7.gene"):
+        kept = [p for p in report.probes if p.probe_id != missing]
+        partial = probe.Report()
+        partial.probes = kept
+        assert probe.m2_acceptance(partial, False)["demo"]["not_passed"] == {missing: "not run"}
+    scope = probe.m2_acceptance(report, False)["scope"]
+    assert "A6, L1-L8" in scope and "regression cases, not studies" in scope
 
 
 def test_r2s_serving_half_refuses_before_a_model_is_built(trained_disease_child, served_state,
@@ -404,6 +458,114 @@ def test_the_demo_phase_passes_and_every_required_probe_runs(tmp_path, served_st
     # W11: stopped, never completed; the lock is the probe's, under its root.
     assert facts["W11"]["stop"]["status"] == "stopped"
     assert (tmp_path / "m5" / "workspaces" / ".shepherd-gpu.lock").is_file()
+
+    _check_the_research_comparison_flow(probe, report, tmp_path, models)
+
+
+def _check_the_research_comparison_flow(probe, report, tmp_path, models):
+    """The research comparison round's flow (L1-L8), after W11: every probe
+    passed, its evidence holds no path, and what it says is on the disk of
+    its own deployment under <work>/rc."""
+    import json
+
+    from src.evaluation.cohort_registry import resolve_version
+    from src.evaluation.sidecar import read_ledger
+
+    rc = _statuses(report, "L")
+    assert list(rc) == list(probe.RC_DEMO_PROBES)
+    assert {k: v[0] for k, v in rc.items()} == dict.fromkeys(rc, "passed"), (
+        {k: v[1] for k, v in rc.items() if v[0] != "passed"})
+    facts = {p.probe_id: p.facts for p in report.probes}
+    assert str(tmp_path) not in json.dumps({k: facts[k] for k in probe.RC_DEMO_PROBES})
+
+    def sha(path):
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    registry = tmp_path / "rc" / "registry"
+    runs = tmp_path / "rc" / "workspaces" / probe.RC_WORKSPACE / "runs" / "gatv2"
+    base, child = (runs / run / "checkpoints" / "last.pt"
+                   for run in (probe.RC_BASE_RUN, probe.RC_CHILD_RUN))
+    # L1: the listed base and child are D1's bytes; the KG edge set on disk is
+    # the one the facts name, taken from that base, its test part.
+    assert base.read_bytes() == models.base.read_bytes()
+    assert child.read_bytes() == models.child.read_bytes()
+    kg = resolve_version(registry, probe.RC_KG_LABEL)
+    assert facts["L1"]["manifest_sha256"] == kg.identity.sha256
+    assert (kg.kind, kg.manifest["role"]) == ("kg_edges", "test")
+    assert kg.manifest["taken_from"]["checkpoint_sha256"] == sha(base)
+
+    def store(label):
+        reports = registry / "versions" / label / "reports"
+        return sorted(p.parent for p in reports.glob("*/report.json")) if reports.is_dir() else []
+
+    # L2, L3 and L5: the KG edge set's store keeps exactly their three runs,
+    # each report the bytes its facts name; L2's and L3's records are the two
+    # beside the listed base, one after the other.
+    kept_kg = {run.name: sha(run / "report.json") for run in store(probe.RC_KG_LABEL)}
+    lp_runs = {facts["L2"]["run_id"], facts["L3"]["run_id"],
+               facts["L5"]["kg_link_prediction"]["run_id"]}
+    assert set(kept_kg) == lp_runs and len(lp_runs) == 3
+    assert kept_kg[facts["L2"]["run_id"]] == facts["L2"]["report_sha256"]
+    assert kept_kg[facts["L3"]["run_id"]] == facts["L3"]["report_sha256"]
+    for probe_id in ("L2", "L3"):
+        scores = facts[probe_id]["scores"]
+        run = registry / "versions" / probe.RC_KG_LABEL / "reports" / facts[probe_id]["run_id"]
+        assert sha(run / "scores.bin") == scores["scores_sha256"]
+        assert scores["pairs_sha256"] == kg.manifest["pairs"]["sha256"]
+        # On the CPU the recomputed raw scores are the stored ones exactly.
+        assert scores["largest_raw_score_difference"] == 0.0
+        assert facts[probe_id]["exposure"]["state"] == "held_out"
+    base_ledger, _ = read_ledger(base.parent / "evaluations.json")
+    assert [(r["run_id"], r["registration"]["sequence"]) for r in base_ledger["records"]] == [
+        (facts["L2"]["run_id"], 1), (facts["L3"]["run_id"], 2)]
+    assert facts["L3"]["kept"] is facts["L3"]["registered"] is True
+    # L4: nothing measured on a refused version, and the refusals came where
+    # they say: the graph, the pairs and the view before any model was built.
+    for label in (probe.RC_KG_OTHER_GRAPH_LABEL, probe.RC_KG_TAMPERED_LABEL,
+                  probe.RC_KG_SPLIT_LABEL):
+        assert (registry / "versions" / label / "cohort.json").is_file()
+        assert store(label) == []
+    assert facts["L4.other_graph"]["checkpoint_reads"] == 0
+    assert "kg" in facts["L4.other_graph"]["differing_roles"]
+    assert facts["L4.tampered_pairs"]["checkpoint_reads"] == 0
+    assert (facts["L4.other_view"]["checkpoint_reads"], facts["L4.other_view"]["models_built"]) \
+        == (1, 0)
+    assert (facts["L4.split_record"]["checkpoint_reads"],
+            facts["L4.split_record"]["models_built"]) == (1, 1)
+    # L5 and L6: the child's ledger holds its two protocols' records and the
+    # generated split's, in that order, each a run its version's store keeps.
+    child_ledger, _ = read_ledger(child.parent / "evaluations.json")
+    assert [(r["scoring"]["mode"], r["run_id"]) for r in child_ledger["records"]] == [
+        ("disease", facts["L5"]["disease"]["run_id"]),
+        ("kg_link_prediction", facts["L5"]["kg_link_prediction"]["run_id"]),
+        ("disease", facts["L6"]["run_id"])]
+    assert facts["L5"]["kg_link_prediction"]["exposure"]["state"] == "after_full_view_exposure"
+    generated = resolve_version(registry, probe.RC_GENERATED_LABEL)
+    assert (generated.kind, generated.manifest["role"]) == ("generated", "val")
+    assert generated.manifest["task_fixture"]
+    # L7: each task's child, trained here on the CPU from the listed base, its
+    # one record beside it.
+    for task in probe.RC_TASKS:
+        case = facts[f"L7.{task}"]
+        trained = runs / probe.RC_TASK_RUNS[task] / "checkpoints" / "last.pt"
+        assert sha(trained) == case["child"]["sha256"]
+        assert case["child"]["parent_sha256"] == sha(base)
+        assert (case["trained_on_cuda"], case["cuda_executed"]) == (False, False)
+        assert case["child"]["training_rules"] == 2
+        assert isinstance(case["training_seconds"], float)
+        ledger, _ = read_ledger(trained.parent / "evaluations.json")
+        assert [(r["scoring"]["mode"], r["run_id"]) for r in ledger["records"]] == [
+            (task, case["run_id"])]
+    # L8: the export on disk is the one the facts name, and it lists exactly
+    # the eight runs L2-L7 kept.
+    export = tmp_path / "rc" / "export.json"
+    assert sha(export) == facts["L8"]["export_sha256"]
+    exported = json.loads(export.read_text())
+    listed = {row["run_id"] for row in exported["rows"]}
+    assert listed == {entry["run_id"] for entry in facts["L8"]["runs"]}
+    assert len(listed) == facts["L8"]["results"] == 8
+    assert [entry["probe"] for entry in facts["L8"]["runs"]] == [
+        "L2", "L3", "L5", "L5", "L6", "L7.disease", "L7.gene", "L7.patients_like_me"]
 
 
 def _operator_shell(monkeypatch, base):
