@@ -708,11 +708,18 @@ def test_a_completed_record_is_key_compared_and_excluded_fields_exactly():
     """The split is checkable: a field outside all three fails here, so none can
     escape the comparison by oversight. The run the ledger assigns (schema 4,
     K8-6r.2) is an excluded field: it tells runs apart and is never compared."""
+    from src.evaluation.sidecar import KIND_RECORD_FIELDS
+
     record = _registered()["records"][0]
     key, compared, excluded = set(KEY_FIELDS), set(RECORD_COMPARED_FIELDS), set(
         RECORD_EXCLUDED_FIELDS)
+    # The fields only another kind's record holds (research comparison Stage
+    # 6): a supplied cohort's record holds exactly what it always did.
+    other_kinds = {field for fields in KIND_RECORD_FIELDS.values() for field in fields}
 
-    assert set(record) == key | compared | excluded
+    assert KIND_RECORD_FIELDS["supplied"] == ()
+    assert set(record) == (key | compared | excluded) - other_kinds
+    assert other_kinds <= compared | excluded
     assert record["run_id"] == RUN_1 and "run_id" in excluded
     assert not key & compared and not key & excluded and not compared & excluded
     assert all(len(reason) > 20 for reason in RECORD_EXCLUDED_FIELDS.values())

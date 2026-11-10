@@ -128,8 +128,43 @@ def test_the_exposure_is_kept_with_each_result_and_said_on_the_console(measured)
         out = run["stdout"]
         assert f"Exposure ({exposure['definition_version']}): {exposure['reading']}" in out
         assert re.search(r"^  lp_roc_auc\s+\d", out, re.MULTILINE), out
-        # No register-later command: this revision's ledger does not record a
-        # KG edge set's run yet, and the console says so instead.
-        assert ("Not registered (no --record): this revision's ledger does not record a run "
-                "on a KG edge set (test) yet") in out
-        assert "record_evaluation.py" not in out
+        # The register-later command, as for any kept report (research
+        # comparison Stage 6: the ledger records a KG edge set's run).
+        assert "Not registered (no --record). Register it with:" in out
+        assert f'record_evaluation.py --report "{run["run"] / "report.json"}"' in out
+
+
+def test_each_run_registers_by_the_command_line_with_its_exposure(measured):
+    """Research comparison Stage 6: the command each run printed registers
+    its report; the ledger beside each checkpoint holds a KG edge set's
+    record (no R10, the run's counts and metric statuses, its exposure block
+    as the report wrote it, with its definition version), and `--show` says
+    the version and the exposure in their words. The same run with the same
+    bytes again writes nothing."""
+    env = {"SHEPHERD_REGISTRY": str(measured["registry"])}
+    for run in measured["runs"].values():
+        report_path, checkpoint = run["run"] / "report.json", run["checkpoint"]
+        done = _run("scripts/record_evaluation.py", "--report", str(report_path),
+                    "--checkpoint", str(checkpoint), env=env)
+        assert done.returncode == 0, done.stderr[-4000:]
+        assert f"Registered record 1 (a KG edge set (test) {LABEL} for checkpoint" in done.stderr
+        ledger_path = checkpoint.parent / "evaluations.json"
+        (record,) = json.loads(ledger_path.read_text())["records"]
+        assert (record["cohort"]["kind"], record["cohort_role"], record["run_id"]) == (
+            "kg_edges", "test", run["run"].name)
+        assert record["r10"] is None
+        assert record["exposure"] == run["report"]["exposure"]
+        assert record["measured"] == {key: run["report"]["sampler_evidence"][key]
+                                      for key in ("counts", "count_units", "metrics")}
+        written = ledger_path.read_bytes()
+        again = _run("scripts/record_evaluation.py", "--report", str(report_path),
+                     "--checkpoint", str(checkpoint), env=env)
+        assert again.returncode == 0 and "already holds this report as record 1" in again.stderr
+        assert ledger_path.read_bytes() == written
+        digest = hashlib.sha256(checkpoint.read_bytes()).hexdigest()
+        shown = _run("scripts/record_evaluation.py", "--checkpoint", str(checkpoint),
+                     "--show", digest)
+        assert shown.returncode == 0
+        reading = run["report"]["exposure"]["reading"]
+        assert (f"record 1: run {run['run'].name}; a KG edge set (test); exposure: {reading}"
+                in shown.stderr)

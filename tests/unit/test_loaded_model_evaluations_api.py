@@ -707,6 +707,8 @@ MALFORMED = {
     "cohort digest not hex": _set(("cohort_digest",), "a" * 63),
     "cohort a list": _set(("cohort",), []),
     "cohort kind generated": _set(("cohort", "kind"), "generated"),
+    "cohort kind no build reads": _set(("cohort", "kind"), "/srv/private/cases"),
+    "no cohort kind": _delete("cohort", "kind"),
     "samples digest not hex": _set(("cohort", "samples_sha256"), "not-a-digest"),
     "empty label": _set(("cohort", "label"), ""),
     "cohort_role is not the cohort's role": _set(("cohort_role",), "udn"),
@@ -771,6 +773,14 @@ MALFORMED_REASONS = {
     "environment a string": "environment.facts.gpu: missing",
     "dataset_record a number": "dataset_record.origin: missing",
     "corroborating reports not a list": "its corroborating_reports is not a list",
+    # One reader by data kind (research comparison Stage 6): a kind no build
+    # reads is named by its field, never its value; a supplied record edited
+    # to another kind is read as that kind's and lacks its fields.
+    "cohort kind no build reads": (
+        "cohort.kind: not a data kind this build reads (supplied, kg_edges, generated)"),
+    "no cohort kind": "cohort.kind: missing",
+    "cohort kind generated": ("cohort.split_manifest: missing; cohort.generation: missing; "
+                              "cohort.allocation: missing; 4 more"),
     "r10 null": ("r10.training.evidence: missing; r10.training.disease_overlap: missing; "
                  "r10.training.phenotype_set_overlap: missing; 3 more"),
 }
@@ -817,8 +827,10 @@ def test_a_malformed_record_for_these_weights_is_listed_with_its_reason_not_show
     if name in MALFORMED_REASONS:
         assert reason == MALFORMED_REASONS[name]
     # Every field the reason names is a path the record registration wrote
-    # has: the key a hand edit corrects, never the view's name for it.
-    for part in reason.split("; "):
+    # has: the key a hand edit corrects, never the view's name for it. (A
+    # record whose kind was edited to another kind's is read as that kind's,
+    # so its reason names that kind's paths, pinned above.)
+    for part in reason.split("; ") if name != "cohort kind generated" else ():
         if ": " in part and not part.startswith(("its ", "the ")):
             target = written
             for step in part.split(": ", 1)[0].split("."):

@@ -71,6 +71,20 @@ finite number is null, and a ``contested`` description whose details fail
 validation is shown contested without them. Investigation notes are not shown
 here, nor by the Models page; only the Test page lists them (BACKLOG 40).
 
+**One reader, discriminated by data kind** (research comparison §5 Stage 6).
+A record is read by its own ``cohort.kind`` into that kind's view, every kind
+with the same common fields (its mode, metrics, relations, environment,
+registration, run and digests): a supplied cohort version's as `RecordView`,
+exactly as before (its cohort, counts and R10); a KG edge set's as
+`KgEdgesRecordView` (its view, split, message-passing graph and pairs by
+digest and rule, its counts with their units, no R10, the run's counts and
+each metric's status, and its exposure, `ExposureView`); a generated split's
+as `GeneratedRecordView` (its role and generation identity, its counts with
+their units, no R10). A record whose kind this build does not read is listed
+in ``unreadable_records``, naming the field and never its value, and hides no
+other record. Each view keeps the record's own paths, so a refusal names the
+key a hand edit of the ledger corrects.
+
 **Aggregates only** (D7). A record is shown as its counts, metrics, relation
 states, R10 states and counts, environment class, GPU and native build identity
 (each component's version, native libraries' count and aggregate digest, and
@@ -79,7 +93,10 @@ digests and group description (field names, run ids and
 values; never a problem's words, which may name a server path: an unreadable
 record's reason is built from field names and fixed words only). No path (a record's R10
 evidence paths among them), no case id, no rank; a ledger problem names the
-file, never its directory.
+file, never its directory. A KG edge set's exposure is shown by its definition
+version, state, reading, counts and sources' identities; its reason, which may
+quote the model's record, and its caveat stay in the ledger (the surfaces say
+the caveat in this build's words, `caveats.EXPOSURE_CAVEAT`).
 
 **Expected failures are states; nothing else is swallowed.** A ledger that cannot
 be read as a whole is ``ledger_not_read`` with its reason, and none of its
@@ -117,10 +134,11 @@ from typing import (
     Literal,
     Optional,
     Tuple,
+    Union,
 )
 
 from fastapi import APIRouter
-from pydantic import Field, field_validator, model_validator
+from pydantic import Discriminator, Field, Tag, field_validator, model_validator
 from starlette.concurrency import run_in_threadpool
 
 from src.api.routes.diagnose import _SHA256, _Strict
@@ -345,16 +363,21 @@ class RecordRegistration(_Strict):
     registered_at: _Text
 
 
-class RecordView(_Strict):
-    """One recorded result, as a person reads it: aggregates and digests only."""
+class _RecordViewFields(_Strict):
+    """The fields every kind's record view holds, in the order a supplied
+    cohort's view always had them; each kind's view (`RecordView`,
+    `KgEdgesRecordView`, `GeneratedRecordView`) states its own ``cohort``,
+    ``counts`` and ``r10`` in their places and adds what only its kind
+    holds. Never shown as itself."""
 
-    cohort: RecordCohort
-    counts: RecordCounts
+    cohort: Any
+    counts: Any
     mode: _Text = Field(
         ..., description="the record's measurement mode (`scoring.mode`), as recorded: the "
         "protocol its report names. This build runs disease, gene and patients_like_me, each "
         "offered where a model's capabilities admit it, today a finetuned model that carries "
-        "its task head (what the Test page runs); a "
+        "its task head (what the Test page runs), and kg_link_prediction, on a KG edge set, "
+        "for every model with the LP head; a "
         "record of any other mode is read and returned the same way. A surface labels each "
         "record by its own mode")
     score_semantics: _Text = Field(
@@ -366,13 +389,15 @@ class RecordView(_Strict):
         "wrote it, with its value. A task mode's: `pooled_mrr`, `pooled_top<k>`, "
         "`macro_recall@<k>`, `macro_precision@<k>`, `macro_mrr`, `best_positive_mrr` and "
         "`conservative_pooled_mrr` (each left out when it has no case to average), and "
-        "`coverage`, the share of the cases measured that were ranked. None of them is the "
-        "Trainer's validation figure")
+        "`coverage`, the share of the cases measured that were ranked. KG link prediction's: "
+        "`lp_accuracy`, `lp_roc_auc`, `lp_average_precision` and `lp_loss`, each that could "
+        "be computed (a KG edge set's `measured.metrics` gives every metric's status, unit "
+        "and denominator). None of them is the Trainer's validation figure")
     n_ranked: _Count = Field(
         ..., description="the record's `n_ranked`, as recorded: for a task mode, the cases "
-        "ranked")
+        "ranked; for KG link prediction, the pairs scored")
     relations: Dict[str, Literal["verified", "not_applicable"]]
-    r10: R10View
+    r10: Any
     environment_class: str
     deterministic_algorithms: Optional[bool] = Field(
         ..., description="whether deterministic algorithms were on in the measuring run, as the "
@@ -420,6 +445,289 @@ class RecordView(_Strict):
         return value
 
 
+class RecordView(_RecordViewFields):
+    """One recorded result on a supplied cohort version, as a person reads it:
+    aggregates and digests only."""
+
+    cohort: RecordCohort
+    counts: RecordCounts
+    r10: R10View
+
+
+def _units_follow_the_counts(counts: Dict[str, int], units: Dict[str, str]) -> None:
+    """Every count with its unit, and a unit only for a count (the registry's
+    rule for a version's counts, the evaluator's for a run's)."""
+    if set(counts) != set(units):
+        raise ValueError("the counts and their units do not name the same counts")
+
+
+class KgEdgesGraphView(_Strict):
+    """The graph view a KG edge set's split was cut from, by its digest."""
+
+    digest: _Digest
+
+
+class KgEdgesSplit(_Strict):
+    """The recorded edge split a KG edge set is one part of: its rule, seed and
+    digest, the view it was cut from, and each part's directed edges."""
+
+    rule: _Text
+    seed: Annotated[int, Field(strict=True)]
+    digest: _Digest
+    view_digest: _Digest
+    edges: Dict[str, _Count]
+
+
+class KgEdgesMessagePassing(_Strict):
+    """The graph a KG edge set's run passes messages over: its split's part
+    (train), its directed edges, and whether the measured edges are in it."""
+
+    part: _Text
+    edges: _Count
+    includes_measured_edges: Annotated[bool, Field(strict=True)]
+
+
+class KgEdgesPairs(_Strict):
+    """The stored pairs a KG edge set's run scores, by the digest of the file's
+    bytes and of the pairs, with their rule, seed and batch boundaries' size;
+    the file's name and each batch's pairs stay in the ledger."""
+
+    part: _Text
+    rule: _Text
+    seed: Annotated[int, Field(strict=True)]
+    sha256: _Digest
+    lp_pairs_digest: _Digest
+    rows: _Count
+    batch_size: _Count
+    batches: _Count
+
+
+class KgEdgesRecordCohort(_Strict):
+    """The KG edge set a result was measured on: its label, its role (the
+    split's part it is), its version's manifest digest, its view, split,
+    message-passing graph and pairs. Never called a cohort where a person reads
+    it ("a KG edge set (test)", `caveats.version_words`)."""
+
+    label: _Text
+    role: _Text
+    kind: Literal["kg_edges"]
+    version_manifest_sha256: _Digest = Field(
+        ..., description="SHA-256 of the version's manifest (`cohort.json`) the run read: the "
+        "record's cohort digest, a key field")
+    graph_view: KgEdgesGraphView
+    split: KgEdgesSplit
+    message_passing: KgEdgesMessagePassing
+    pairs: KgEdgesPairs
+
+
+class MetricDenominator(_Strict):
+    count: _Count
+    unit: _Text
+
+
+class LpMetricStatus(_Strict):
+    """One metric of a KG link-prediction run: computed or not computable,
+    with its unit and denominator. Why one could not be computed stays in the
+    ledger; it is never a number here."""
+
+    status: Literal["computed", "not_computable"]
+    unit: _Text
+    denominator: MetricDenominator
+
+
+class KgEdgesMeasured(_Strict):
+    """What a KG edge set's run measured beside its metrics: its counts, each
+    with its unit, and each metric's status (the report's evidence, kept in the
+    ledger record as ``measured``)."""
+
+    counts: Dict[str, _Count]
+    count_units: Dict[str, _Text]
+    metrics: Dict[str, LpMetricStatus]
+
+    @model_validator(mode="after")
+    def _each_count_has_its_unit(self) -> "KgEdgesMeasured":
+        _units_follow_the_counts(self.counts, self.count_units)
+        return self
+
+
+class ExposureEdges(_Strict):
+    """``n`` measured edges, ``in_recorded_graph_use`` of them in the model's
+    recorded training or validation graph use (null when that use could not
+    be read)."""
+
+    n: _Count
+    in_recorded_graph_use: Optional[_Count]
+
+    @model_validator(mode="after")
+    def _k_of_n(self) -> "ExposureEdges":
+        if self.in_recorded_graph_use is not None and self.in_recorded_graph_use > self.n:
+            raise ValueError("more measured edges in the recorded graph use than measured")
+        return self
+
+
+class ExposureMessagePassing(_Strict):
+    measured_edges_in_it: _Count
+    includes_measured_edges: Annotated[bool, Field(strict=True)]
+
+
+class ExposureModelSource(_Strict):
+    """The model record an exposure was read from, by its checkpoint's digest,
+    its learning stage and operation, and its recorded split's digest (null
+    where the record names none)."""
+
+    checkpoint_sha256: _Digest
+    learning_stage: Optional[_Text]
+    operation: Optional[_Text]
+    split_digest: Optional[_Digest]
+
+
+class ExposureVersionSource(_Strict):
+    label: _Text
+    kind: _Text
+    role: _Text
+    manifest_sha256: _Digest
+    split_digest: _Digest
+
+
+class ExposureSources(_Strict):
+    model_record: ExposureModelSource
+    version: ExposureVersionSource
+
+
+class ExposureView(_Strict):
+    """How a KG edge set's measured edges stand to the measured model's
+    recorded graph use, as the run wrote it (research comparison F4): its
+    definition version, state and reading, the counts, the split relation and
+    the sources' identities. Scoped to the recorded evidence and never a gate;
+    the run's reason and caveat stay in the ledger."""
+
+    definition_version: _Text
+    state: _Text = Field(
+        ..., description="As recorded: under kg-lp-exposure/v1, held_out, "
+        "in_recorded_graph_use, another_split, after_full_view_exposure or not_recorded")
+    reading: _Text = Field(..., description="The run's reading of its state, as recorded")
+    split: Optional[_Text] = Field(
+        ..., description="Whether the model's recorded split is the version's or another split "
+        "of the same view, as recorded; null when the model's record could not be read")
+    measured_edges: ExposureEdges
+    measurement_message_passing: ExposureMessagePassing
+    sources: ExposureSources
+
+
+class KgEdgesRecordView(_RecordViewFields):
+    """One recorded result on a KG edge set, as a person reads it: its
+    version's identity and counts with their units, the run's counts and each
+    metric's status, and its exposure; no R10 (a KG edge set's relation to the
+    model's training is its exposure)."""
+
+    cohort: KgEdgesRecordCohort
+    counts: Dict[str, _Count]
+    r10: None
+    count_units: Dict[str, _Text]
+    measured: KgEdgesMeasured
+    exposure: ExposureView
+
+    @model_validator(mode="after")
+    def _counts_units_and_sources_agree(self) -> "KgEdgesRecordView":
+        _units_follow_the_counts(self.counts, self.count_units)
+        if self.exposure.sources.version.manifest_sha256 != self.cohort.version_manifest_sha256:
+            raise ValueError("its exposure names another version than its cohort digest")
+        return self
+
+
+class GeneratedSplitManifest(_Strict):
+    """The workspace's split manifest a generated split was kept from, by
+    digest (the version keeps it)."""
+
+    sha256: _Digest
+
+
+class GeneratedGeneration(_Strict):
+    algorithm: _Text
+    algorithm_version: Annotated[int, Field(strict=True)]
+
+
+class GeneratedAllocation(_Strict):
+    algorithm: _Text
+    algorithm_version: Annotated[int, Field(strict=True)]
+    seed: Annotated[int, Field(strict=True)]
+
+
+class GeneratedFixtureFile(_Strict):
+    sha256: _Digest
+
+
+class GeneratedFixture(_Strict):
+    """The functional gene fixture a generated split keeps, by its rule and
+    its files' digests."""
+
+    rule: _Text
+    record: GeneratedFixtureFile
+    samples: GeneratedFixtureFile
+
+
+class GeneratedRecordCohort(_Strict):
+    """The generated split a result was measured on: its label, its role as
+    recorded (never shown as test unless it is), its version's manifest
+    digest, and its generation identity (its samples, split manifest,
+    generation definition and allocation, and the gene fixture it keeps, null
+    when none). Never called a cohort where a person reads it ("a generated
+    split (val)", `caveats.version_words`)."""
+
+    label: _Text
+    role: _Text
+    kind: Literal["generated"]
+    version_manifest_sha256: _Digest = Field(
+        ..., description="SHA-256 of the version's manifest (`cohort.json`) the run read: the "
+        "record's cohort digest, a key field")
+    samples_sha256: _Digest
+    split_manifest: GeneratedSplitManifest
+    generation: GeneratedGeneration
+    allocation: GeneratedAllocation
+    task_fixture: Optional[GeneratedFixture]
+
+
+class GeneratedRecordView(_RecordViewFields):
+    """One recorded result on a generated split kept in the registry, as a
+    person reads it: its role and generation identity and its counts with
+    their units; no R10 (its relation to training is its allocation's)."""
+
+    cohort: GeneratedRecordCohort
+    counts: Dict[str, _Count]
+    r10: None
+    count_units: Dict[str, _Text]
+
+    @model_validator(mode="after")
+    def _each_count_has_its_unit(self) -> "GeneratedRecordView":
+        _units_follow_the_counts(self.counts, self.count_units)
+        return self
+
+
+#: Each data kind's record view, by the record's ``cohort.kind``: the one
+#: reader's discrimination (research comparison Stage 6).
+RECORD_VIEWS: Dict[str, type] = {
+    "supplied": RecordView,
+    "kg_edges": KgEdgesRecordView,
+    "generated": GeneratedRecordView,
+}
+
+
+def _view_kind(value: Any) -> Optional[str]:
+    """A record view's data kind, from its ``cohort.kind``, as the API's
+    union of views is told apart by."""
+    cohort = value.get("cohort") if isinstance(value, dict) else getattr(value, "cohort", None)
+    kind = cohort.get("kind") if isinstance(cohort, dict) else getattr(cohort, "kind", None)
+    return kind if kind in RECORD_VIEWS else None
+
+
+#: Any kind's record view, told apart by ``cohort.kind``.
+AnyRecordView = Annotated[
+    Union[Annotated[RecordView, Tag("supplied")],
+          Annotated[KgEdgesRecordView, Tag("kg_edges")],
+          Annotated[GeneratedRecordView, Tag("generated")]],
+    Discriminator(_view_kind)]
+
+
 class ContestRun(_Strict):
     """One run carrying a report that differs from another of its condition
     group: its run id (time, checkpoint and a random suffix; never a path) and
@@ -464,10 +772,39 @@ class RecordContest(_Strict):
 
 
 class LoadedRecordView(RecordView):
-    """A record as this route shows it: `RecordView` and its group's
-    description."""
+    """A record on a supplied cohort version as this route shows it:
+    `RecordView` and its group's description."""
 
     contest: RecordContest
+
+
+class LoadedKgEdgesRecordView(KgEdgesRecordView):
+    """A record on a KG edge set as this route shows it: `KgEdgesRecordView`
+    and its group's description."""
+
+    contest: RecordContest
+
+
+class LoadedGeneratedRecordView(GeneratedRecordView):
+    """A record on a generated split as this route shows it:
+    `GeneratedRecordView` and its group's description."""
+
+    contest: RecordContest
+
+
+#: Each kind's view as this route shows it, by the view's class.
+_LOADED_VIEWS: Dict[type, type] = {
+    RecordView: LoadedRecordView,
+    KgEdgesRecordView: LoadedKgEdgesRecordView,
+    GeneratedRecordView: LoadedGeneratedRecordView,
+}
+
+#: Any kind's record as this route shows it, told apart by ``cohort.kind``.
+AnyLoadedRecordView = Annotated[
+    Union[Annotated[LoadedRecordView, Tag("supplied")],
+          Annotated[LoadedKgEdgesRecordView, Tag("kg_edges")],
+          Annotated[LoadedGeneratedRecordView, Tag("generated")]],
+    Discriminator(_view_kind)]
 
 
 class UnreadableRecord(_Strict):
@@ -513,9 +850,10 @@ class LoadedModelEvaluations(_Strict):
         ..., description="The digest the ledger was filtered by, from the loaded "
         "model's checkpoint read; null when there is none")
     ledger: Optional[LedgerView]
-    records: List[LoadedRecordView] = Field(
+    records: List[AnyLoadedRecordView] = Field(
         ..., description="Every readable record, sorted by registration sequence, each with "
-        "its run (null: not recorded) and its group's description")
+        "its run (null: not recorded) and its group's description, read by its data kind "
+        "(`cohort.kind`: supplied, kg_edges or generated)")
     records_not_shown: _Count = Field(
         ..., description="How many records for these weights cannot be read as a result "
         "(they do not have the shape registration writes, or their run identity cannot be "
@@ -576,8 +914,13 @@ def _pick(value: Any, fields: Iterable[str]) -> Any:
 
 
 def _record_view(record: Dict[str, Any], identity: Optional[RecordIdentity] = None,
-                 overlaps: Tuple[int, ...] = ()) -> RecordView:
-    """A ledger record as `RecordView`, or a ``ValueError`` saying why not.
+                 overlaps: Tuple[int, ...] = ()) -> Any:
+    """A ledger record as its data kind's view (`RECORD_VIEWS`: `RecordView`,
+    `KgEdgesRecordView` or `GeneratedRecordView`), or a ``ValueError`` saying
+    why not. **The one reader by data kind** (research comparison Stage 6):
+    the kind is the record's own ``cohort.kind``; a kind this build does not
+    read is refused naming that field, never its value, and a record of a
+    known kind is read by that kind's view alone.
 
     The view picks its fields out of the record by name, so what a record carries
     beyond them never reaches the response, and validates every one of them, so a
@@ -602,24 +945,51 @@ def _record_view(record: Dict[str, Any], identity: Optional[RecordIdentity] = No
         raise ValueError("its corroborating_reports is not a list")
     if record.get("cohort_role") != _at(record, "cohort", "role"):
         raise ValueError("its cohort_role is not its cohort's role")
-    r10 = record.get("r10")
+    kind = _at(record, "cohort", "kind")
+    view = RECORD_VIEWS.get(kind) if isinstance(kind, str) else None
+    if view is None:
+        # Named by its field, never its value (K8-6e.1): a hand edit can put
+        # a server path there.
+        raise ValueError(
+            "cohort.kind: missing" if kind is _NOT_THERE else
+            f"cohort.kind: not a data kind this build reads ({', '.join(RECORD_VIEWS)})")
     # The version's manifest digest is the record's key field, not a field of its
     # cohort block; a record lacking it is refused like any other missing field.
-    cohort = _pick(_at(record, "cohort"), RecordCohort.model_fields)
+    cohort = _pick(_at(record, "cohort"), view.model_fields["cohort"].annotation.model_fields)
     if isinstance(cohort, dict):
         cohort = {**cohort, "version_manifest_sha256": _at(record, "cohort_digest")}
     # The run environment's one projection; a record written before its
     # environment named components has none.
     components = _at(record, "environment", "facts", "components")
-    return RecordView(
-        cohort=cohort,
-        counts=_pick(_at(record, "cohort", "counts"), RecordCounts.model_fields),
-        mode=_at(record, "scoring", "mode"),
-        score_semantics=_at(record, "scoring", "score_semantics"),
-        metrics=_at(record, "metrics"),
-        n_ranked=_at(record, "n_ranked"),
-        relations=_at(record, "relations"),
-        r10={
+    common = {
+        "mode": _at(record, "scoring", "mode"),
+        "score_semantics": _at(record, "scoring", "score_semantics"),
+        "metrics": _at(record, "metrics"),
+        "n_ranked": _at(record, "n_ranked"),
+        "relations": _at(record, "relations"),
+        "environment_class": environment_class(record),
+        "deterministic_algorithms": _recorded_determinism(record),
+        "gpu": _pick(_at(record, "environment", "facts", "gpu"), RecordGpu.model_fields),
+        "native_identity": None if components is _NOT_THERE else native_identity(components),
+        "dataset_origin": _at(record, "dataset_record", "origin"),
+        "scoring_semantics_digest": _at(record, "scoring_semantics_digest"),
+        "measurement_semantics_digest": _at(record, "measurement_semantics_digest"),
+        "registration": _pick(_at(record, "registration"), RecordRegistration.model_fields),
+        "run_id": run_id,
+        "historical_overlap": list(overlaps),
+        "n_corroborating": len(corroborating),
+        "source_artifact_digest": _at(record, "source_artifact_digest"),
+    }
+    return view(cohort=cohort, **_KIND_PARTS[kind](record, cohort), **common)
+
+
+def _supplied_parts(record: Dict[str, Any], cohort: Any) -> Dict[str, Any]:
+    """A supplied cohort version's own parts of its view: its counts and its
+    R10 labels (each scope's evidence state, never its path)."""
+    r10 = record.get("r10")
+    return {
+        "counts": _pick(_at(record, "cohort", "counts"), RecordCounts.model_fields),
+        "r10": {
             scope: {
                 "evidence": _pick(_at(r10, scope, "evidence"), R10Evidence.model_fields),
                 "disease_overlap": _pick(_at(r10, scope, "disease_overlap"),
@@ -629,19 +999,83 @@ def _record_view(record: Dict[str, Any], identity: Optional[RecordIdentity] = No
             }
             for scope in R10View.model_fields
         },
-        environment_class=environment_class(record),
-        deterministic_algorithms=_recorded_determinism(record),
-        gpu=_pick(_at(record, "environment", "facts", "gpu"), RecordGpu.model_fields),
-        native_identity=None if components is _NOT_THERE else native_identity(components),
-        dataset_origin=_at(record, "dataset_record", "origin"),
-        scoring_semantics_digest=_at(record, "scoring_semantics_digest"),
-        measurement_semantics_digest=_at(record, "measurement_semantics_digest"),
-        registration=_pick(_at(record, "registration"), RecordRegistration.model_fields),
-        run_id=run_id,
-        historical_overlap=list(overlaps),
-        n_corroborating=len(corroborating),
-        source_artifact_digest=_at(record, "source_artifact_digest"),
-    )
+    }
+
+
+def _picked(value: Any, model: type, nested: Dict[str, type]) -> Any:
+    """`value`'s fields of `model`, each field named in `nested` picked by its
+    own model in turn: what a view shows of a block, the rest left in the
+    ledger."""
+    picked = _pick(value, model.model_fields)
+    if isinstance(picked, dict):
+        for name, inner in nested.items():
+            if name in picked:
+                picked[name] = _pick(picked[name], inner.model_fields)
+    return picked
+
+
+def _versioned_parts(record: Dict[str, Any], cohort: Any) -> Dict[str, Any]:
+    """A KG edge set's or a generated split's parts every such view holds: its
+    counts with their units, and no R10 (null)."""
+    return {"counts": _at(record, "cohort", "counts"),
+            "count_units": _at(record, "cohort", "count_units"),
+            "r10": record.get("r10", _NOT_THERE)}
+
+
+def _kg_edges_parts(record: Dict[str, Any], cohort: Any) -> Dict[str, Any]:
+    """A KG edge set's own parts of its view: its view, split, message-passing
+    graph and pairs (by digest and rule), its counts with their units, the
+    run's counts and each metric's status, and its exposure, whose model
+    record must be this record's checkpoint."""
+    if isinstance(cohort, dict):
+        for name, model in (("graph_view", KgEdgesGraphView), ("split", KgEdgesSplit),
+                            ("message_passing", KgEdgesMessagePassing),
+                            ("pairs", KgEdgesPairs)):
+            if name in cohort:
+                cohort[name] = _pick(cohort[name], model.model_fields)
+    exposure = _picked(_at(record, "exposure"), ExposureView, {
+        "measured_edges": ExposureEdges,
+        "measurement_message_passing": ExposureMessagePassing,
+        "sources": ExposureSources})
+    sources = exposure.get("sources") if isinstance(exposure, dict) else None
+    if isinstance(sources, dict):
+        sources = {name: _pick(sources[name], model.model_fields)
+                   for name, model in (("model_record", ExposureModelSource),
+                                       ("version", ExposureVersionSource)) if name in sources}
+        exposure["sources"] = sources
+        if _at(sources, "model_record", "checkpoint_sha256") != record.get("checkpoint_digest"):
+            raise ValueError("exposure.sources.model_record.checkpoint_sha256: not the record's "
+                             "checkpoint_digest")
+    measured = _picked(_at(record, "measured"), KgEdgesMeasured, {})
+    if isinstance(measured, dict) and isinstance(measured.get("metrics"), dict):
+        measured["metrics"] = {
+            name: _picked(status, LpMetricStatus, {"denominator": MetricDenominator})
+            for name, status in measured["metrics"].items()}
+    return {**_versioned_parts(record, cohort), "measured": measured, "exposure": exposure}
+
+
+def _generated_parts(record: Dict[str, Any], cohort: Any) -> Dict[str, Any]:
+    """A generated split's own parts of its view: its generation identity (the
+    split manifest by digest, the generation definition and allocation, the
+    gene fixture it keeps) and its counts with their units."""
+    if isinstance(cohort, dict):
+        for name, model in (("split_manifest", GeneratedSplitManifest),
+                            ("generation", GeneratedGeneration),
+                            ("allocation", GeneratedAllocation)):
+            if name in cohort:
+                cohort[name] = _pick(cohort[name], model.model_fields)
+        if isinstance(cohort.get("task_fixture"), dict):
+            cohort["task_fixture"] = _picked(cohort["task_fixture"], GeneratedFixture, {
+                "record": GeneratedFixtureFile, "samples": GeneratedFixtureFile})
+    return _versioned_parts(record, cohort)
+
+
+#: Each kind's own parts of its view, by the record's ``cohort.kind``.
+_KIND_PARTS: Dict[str, Callable[[Dict[str, Any], Any], Dict[str, Any]]] = {
+    "supplied": _supplied_parts,
+    "kg_edges": _kg_edges_parts,
+    "generated": _generated_parts,
+}
 
 
 def _recorded_determinism(record: Dict[str, Any]) -> Optional[bool]:
@@ -710,7 +1144,8 @@ def _recorded_results(read: "ReadIdentity") -> LoadedModelEvaluations:
         logger.warning("A ledger record for checkpoint %s... is not shown: the ledger's record "
                        "%d: %s", digest[:12], item.index, item.reason)
     contest = _contest_states([record for record, _ in viewed])
-    shown = [LoadedRecordView(**dict(view), contest=contest(record)) for record, view in viewed]
+    shown = [_LOADED_VIEWS[type(view)](**dict(view), contest=contest(record))
+             for record, view in viewed]
     shown.sort(key=lambda view: view.registration.sequence)
     return LoadedModelEvaluations(
         state="records" if shown or unreadable else "no_records",
@@ -768,6 +1203,7 @@ def unreadable_reason(exc: ValueError) -> str:
 _RECORD_PATHS: Dict[Tuple[str, ...], Tuple[str, ...]] = {
     ("cohort", "version_manifest_sha256"): ("cohort_digest",),
     ("counts",): ("cohort", "counts"),
+    ("count_units",): ("cohort", "count_units"),
     ("mode",): ("scoring", "mode"),
     ("score_semantics",): ("scoring", "score_semantics"),
     ("gpu",): ("environment", "facts", "gpu"),
@@ -796,14 +1232,16 @@ def _printable(step: Any) -> str:
 
 
 def read_records(ledger: Dict[str, Any], checkpoint_digest: str
-                 ) -> Tuple[List[Tuple[Dict[str, Any], RecordView]], List[UnreadableRecord]]:
+                 ) -> Tuple[List[Tuple[Dict[str, Any], Any]], List[UnreadableRecord]]:
     """**The one listing of a ledger's records for one set of weights**
     (K8-6e.1), for every reader (this route, Models' operator view through
     the shared model list, `record_evaluation.py --show`): the records the
-    shared check (`_record_view`) reads as results, each with its view, and
-    every other record as an `UnreadableRecord` with its index and reason, in
-    ledger order. Each record's run is read by the file's boundary, and its
-    possible overlaps, from the whole ledger once (`record_reading`).
+    shared check (`_record_view`) reads as results, each with its kind's view
+    (`RECORD_VIEWS`), and every other record as an `UnreadableRecord` with its
+    index and reason, in ledger order: a record of a kind this build does not
+    read among them, record by record, never hiding another. Each record's run
+    is read by the file's boundary, and its possible overlaps, from the whole
+    ledger once (`record_reading`).
 
     Reading one record never waits on or hides another; nothing is repaired,
     edited or dropped (a record that is not an object, or names no checkpoint
@@ -920,11 +1358,19 @@ async def get_loaded_model_evaluations() -> LoadedModelEvaluations:
 
 
 __all__ = [
+    "AnyLoadedRecordView",
+    "AnyRecordView",
     "ContestRun",
+    "ExposureView",
+    "GeneratedRecordView",
+    "KgEdgesRecordView",
     "LEDGER_WHERE",
     "LedgerView",
+    "LoadedGeneratedRecordView",
+    "LoadedKgEdgesRecordView",
     "LoadedModelEvaluations",
     "LoadedRecordView",
+    "RECORD_VIEWS",
     "RecordContest",
     "RecordView",
     "UnreadableRecord",

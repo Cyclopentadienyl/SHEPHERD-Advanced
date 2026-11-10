@@ -138,16 +138,19 @@ import gradio as gr
 
 from src.evaluation import protocols
 from src.evaluation.caveats import (
+    GENERATED_EXPOSURE_NOTE,
     MEASUREMENT_NAMES,
     R10_LABEL_TEXT,
     R10_STATE_TEXT,
     R10_UNVERIFIABLE_REASON,
     RELATION_DISPLAY_NAMES,
     TASK_NAMES,
+    exposure_text,
     metric_text,
     mode_label,
     mode_note,
     recorded_metric_lines,
+    version_words,
 )
 from src.utils.run_environment import native_identity, native_identity_lines
 from src.webui.components import renderers as r
@@ -1602,6 +1605,28 @@ def _r10_lines(r10: Any) -> List[Tuple[str, str]]:
     return lines
 
 
+def _kind_lines(record: Mapping[str, Any], kind: str) -> List[Tuple[str, str]]:
+    """The lines a record of a KG edge set or a generated split shows where a
+    supplied cohort's shows R10 (research comparison Stage 6): a KG edge set's
+    exposure in this build's words (`caveats.exposure_text`) with its
+    definition version; a generated split's generation identity and how it
+    stands to a model's training (`caveats.GENERATED_EXPOSURE_NOTE`)."""
+    if kind == "kg_edges":
+        exposure = record.get("exposure") if isinstance(record.get("exposure"), Mapping) else {}
+        return [("Exposure", f"{e(exposure_text(exposure))} "
+                             f'<span class="shep-muted">(definition '
+                             f'{e(exposure.get("definition_version"))})</span>')]
+    cohort = record.get("cohort") if isinstance(record.get("cohort"), Mapping) else {}
+    generation = cohort.get("generation") if isinstance(cohort.get("generation"), Mapping) else {}
+    allocation = cohort.get("allocation") if isinstance(cohort.get("allocation"), Mapping) else {}
+    manifest = cohort.get("split_manifest") if isinstance(cohort.get("split_manifest"),
+                                                           Mapping) else {}
+    return [("Generation", e(f"{generation.get('algorithm')} v{generation.get('algorithm_version')}"
+                             f", allocation seed {allocation.get('seed')}, split manifest "
+                             f"{str(manifest.get('sha256') or '')[:12]}")),
+            ("Training relation", e(GENERATED_EXPOSURE_NOTE))]
+
+
 def _relations(relations: Any) -> str:
     if not isinstance(relations, Mapping):
         return "not reported"
@@ -1723,13 +1748,15 @@ def _registration_reason_html(state: Mapping[str, Any], roots: Sequence[Tuple[st
     return ""
 
 
-def _tile_note(name: str) -> str:
+def _tile_note(name: str, kind: str = "supplied") -> str:
     """What a described measurement's tile figure is over: its positive pairs
     (pooled), its ranked cases (macro) or the share of the import-eligible cases
-    ranked (coverage), with no count, since the record's Coverage row says "n of
-    M" once (skill rule 1.2)."""
+    ranked (coverage; a generated split's cases are not imported, so its share
+    is of the cases measured), with no count, since the record's Coverage row
+    says "n of M" once (skill rule 1.2)."""
     if name == "coverage":
-        return "share of import-eligible cases ranked"
+        return ("share of import-eligible cases ranked" if kind == "supplied"
+                else "share of the cases measured that were ranked")
     if name.startswith("pooled_"):
         return "pooled over positive pairs"
     if name.startswith("macro_"):
@@ -1811,15 +1838,21 @@ def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
     task = mode in TASK_NAMES
     eligible = _count(counts.get("ranked_eligible"))
     deterministic = regime.get("deterministic_algorithms")
+    # The record's data kind (research comparison Stage 6): a version of
+    # another kind than a supplied cohort is named by its kind and role, and
+    # read by its own counts and exposure, never a cohort's or R10's words.
+    kind = cohort.get("kind") if isinstance(cohort.get("kind"), str) else "supplied"
+    role = (f'role {r.ident_html(record.get("cohort_role"))}' if kind == "supplied"
+            else e(version_words(kind, record.get("cohort_role"))))
     line = (f'{e(cohort.get("label"))} (version <code>{e(str(record.get("cohort_digest") or "")[:12])}</code>, '
-            f'role {r.ident_html(record.get("cohort_role"))}) · model '
+            f'{role}) · model '
             f'<code>{e(str(record.get("checkpoint_digest") or "")[:12])}</code> · '
             f'deterministic {"on" if deterministic is True else "off" if deterministic is False else "not recorded"}'
             f' · device <code>{e(regime.get("device"))}</code>')
     tiles = "".join(
         f'<div class="shep-test-tile"><div class="shep-test-tile-l">{e(metric_text(mode, name))}</div>'
         f'<div class="shep-test-tile-v">{e(_number(metrics.get(name)))}</div>'
-        f'<div class="shep-test-tile-n">{e(_tile_note(name))}</div>'
+        f'<div class="shep-test-tile-n">{e(_tile_note(name, kind))}</div>'
         '</div>'
         for name in tile_names)
     excluded = counts.get("excluded") if isinstance(counts.get("excluded"), Mapping) else {}
@@ -1827,7 +1860,20 @@ def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
     excluded_text = (f"{e(_count(counts.get('n_excluded')))} excluded"
                      f"{' at import' if task else ''}"
                      f"{': ' + e(reasons) if reasons else ''}")
-    if task:
+    if kind == "kg_edges":
+        run = record.get("measured") if isinstance(record.get("measured"), Mapping) else {}
+        run = run.get("counts") if isinstance(run.get("counts"), Mapping) else {}
+        coverage = (f"<b>{e(_count(run.get('pairs_scored')))} of {e(_count(counts.get('pairs')))}"
+                    f"</b> stored pairs scored · {e(_count(counts.get('positive_edges')))} "
+                    f"positive edges; {e(_count(counts.get('edges_without_negative')))} without a "
+                    "negative to pair")
+    elif kind == "generated":
+        diseases = counts.get("diseases")
+        coverage = (f"<b>{e(_count(n_ranked))}</b> "
+                    + ("cases ranked by the model" if task else "counted by the record")
+                    + f" · {e(_count(counts.get('samples')))} generated patients of "
+                    f"{e(_count(diseases))} disease{'' if diseases == 1 else 's'}")
+    elif task:
         coverage = (f"<b>{e(_count(n_ranked))} of {e(eligible)}</b> import-eligible cases ranked "
                     f"by the model · {e(_count(counts.get('source_cases')))} source cases; "
                     f"{excluded_text}")
@@ -1846,7 +1892,7 @@ def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
         *figures,
         ("Score semantics", _semantics_text(scoring)),
         ("Relations", _relations(record.get("relations"))),
-        *_r10_lines(record.get("r10")),
+        *(_r10_lines(record.get("r10")) if kind == "supplied" else _kind_lines(record, kind)),
         ("Environment", _environment(record)),
         ("Native build", _native_build(record)),
     ]

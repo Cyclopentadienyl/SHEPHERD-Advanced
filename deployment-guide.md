@@ -1789,9 +1789,9 @@ patients-like-me 讀取版本保存的 fixture；每個檔案只讀取一次，�
 疾病分配）。它的報告與任何版本一樣保存在該版本的 report store，每次執行一個新的 run 目錄
 （`ranks.json`，然後 `report.json`），絕不覆寫。manifest 記錄 `cohort_kind` `generated`、版本的
 區塊（其記錄的 role，目前為 train 或 val、其產生身分，以及它保存的 fixture），並以 role 作為
-`split`；沒有 R10，role 也絕不被呈現為 test。本修訂版的 ledger 還不記錄這樣的執行（research
-comparison Stage 6）：不提供登錄，`--record` 會保存報告並以 3 結束並說明原因。目前無法匯入
-generated test role，因此不會量測任何 test role。job runner 會把部署的 `--training-evidence` 目錄
+`split`；沒有 R10，role 也絕不被呈現為 test。它的報告與任何保存的報告一樣可以登錄（`--record`，
+或執行印出的之後登錄指令；research comparison Stage 6）：其 ledger 紀錄保留 role 與產生身分。目前
+無法匯入 generated test role，因此不會量測任何 test role。job runner 會把部署的 `--training-evidence` 目錄
 傳給每次執行；設定了 `SHEPHERD_TRAINING_EVIDENCE_DIRS` 時，Test 頁在 generated split 上的執行會在
 開始後被拒絕，與 KG 邊集合相同（Stage 7 會依資料種類選擇證據）。以 `--split` 量測的報告維持原狀：
 它們留在寫出的位置，不會為它們捏造任何身分，`record_evaluation.py` 也仍然拒絕登錄它們。
@@ -1926,9 +1926,12 @@ python scripts/measure_scorer.py --mode kg_link_prediction \
   非關係。
 - **保存的內容。** 在版本的報告庫中，新的執行目錄先保存 `scores.bin`（每個配對實際的原始分數與狀態，
   對應配對檔的列，分塊串流寫入並整個放置），再保存 `report.json`，以 digest 與列數指名它。在報告
-  之前被取消或失敗的執行不會留下報告，它留下的東西會被列為中斷的寫入。**登錄尚未建置**（research
-  comparison Stage 6）：`--record` 保留報告並以結束碼 3 結束，說明這個 revision 的帳本只記錄
-  supplied cohort 版本上的執行。
+  之前被取消或失敗的執行不會留下報告，它留下的東西會被列為中斷的寫入。
+- **登錄**（research comparison Stage 6）與任何保存的報告相同：`--record`，或執行印出的之後登錄
+  指令。它的 ledger 紀錄是 KG 邊集合的紀錄：版本的 view、切分、訊息傳遞圖、配對與附單位的計數，
+  沒有 R10，這次執行的計數與每個指標的狀態，以及報告寫下的 exposure 區塊，所以只有 ledger 也仍能
+  說明量測的邊與模型記錄的圖使用之間的關係。Models 與 `record_evaluation.py --show` 依其種類顯示它，
+  並附上該 exposure。
 
 ### Mode D（已於 K7 移除）
 
@@ -1964,9 +1967,8 @@ Mode D（`--mode D`，Batch 3 對 Diagnosis 頁 2026 年 10 月所提供排名�
 
   checkpoint 是這次執行讀取的檔案，取其解析後路徑，所以不論檔名為何，這個指令都能用。每個路徑
   都加上雙引號，因此含空白的路徑在 POSIX shell、cmd 或 PowerShell 中都維持為一個參數。含有
-  `"`、`$`、反引號、`%` 或 `!` 的路徑會被某個 shell 展開，必須自行加引號。KG 邊集合的執行不印出
-  指令：這個版本的 ledger 尚未記錄這類執行（research comparison Stage 6），所以執行會說明這一點，
-  它的報告保留在版本的報告存放處。
+  `"`、`$`、反引號、`%` 或 `!` 的路徑會被某個 shell 展開，必須自行加引號。任何種類版本上的執行都會
+  印出它（自 research comparison Stage 6 起，包含 KG 邊集合與 generated split 的執行）。
 - **`record_evaluation.py` 以兩個參數之一、且恰好一個，指明 checkpoint**（兩個都沒給或都給，
   命令列會被拒絕）：
   - `--checkpoint FILE`：這一個檔案，不論名稱為何，必須具有報告所量測的位元組；
@@ -2039,8 +2041,7 @@ Mode D（`--mode D`，Batch 3 對 Diagnosis 頁 2026 年 10 月所提供排名�
 檔案的連結——就不登錄任何東西，以結束碼 3 結束，並說明該路徑上的檔案不是它發佈的報告（或已不存在），
 因此這次執行自己的報告可能已不存在：請重新量測以登錄這次量測。只有在讀回的報告確實是發佈的那份、而是
 其他環節（例如 ledger）拒絕時，才會印出之後登錄用的指令。不加 `--record` 時一律印出這行指令：其他
-執行的報告或結果都不能拒絕一次登錄。唯一的例外是 KG 邊集合的執行：這個版本的 ledger 尚未記錄這類執行
-（research comparison Stage 6），所以不印出指令，而是說明這一點；它的報告保留在版本的報告存放處。之後用
+執行的報告或結果都不能拒絕一次登錄，不論這次執行量測的是哪種資料。之後用
 `record_evaluation.py` 登錄時，仍照舊以指定的 checkpoint 檔核對報告。
 
 ### Diagnosis 頁面顯示什麼
@@ -2186,7 +2187,7 @@ Test 頁、Models 與 API 把這樣的群組描述為「runs under these conditi
 帶有不同報告的執行。未開啟 deterministic algorithms 時，執行結果本來就可能不同：這段描述是中性的，
 每一個結果照記錄都是有效的。只有當該群組記錄 deterministic algorithms 開啟時，它的執行才本應一致，
 頁面才以琥珀色加上「— investigate」標出差異。API 對它保留 `contested` 這個值，但意義已改為上述描述。
-不加 `--record` 時，執行一律印出之後登錄用的指令（KG 邊集合的執行除外，這個版本的 ledger 尚未記錄它）。
+不加 `--record` 時，執行一律印出之後登錄用的指令。
 調查的方式：
 
 - 比較各報告的環境資訊（每份 `report.json` 的 `manifest.environment`）；

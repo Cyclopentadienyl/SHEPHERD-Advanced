@@ -105,17 +105,21 @@ from src.api.services.record_states import CohortVersions, key_text
 
 # Each mode's label and note, R10's and the relations' words: rendered, never reworded.
 from src.evaluation.caveats import (
+    EXPOSURE_CAVEAT,
+    GENERATED_EXPOSURE_NOTE,
     R10_LABEL_TEXT,
     R10_STATE_TEXT,
     R10_UNVERIFIABLE_REASON,
     RECORD_ABSENCE,
     RELATION_DISPLAY_NAMES,
     TASK_NAMES,
+    exposure_text,
     metric_text,
     mode_label,
     mode_note,
     recorded_metric_lines,
     recorded_value_text,
+    version_words,
 )
 from src.utils.run_environment import native_identity_text
 from src.webui.components import model_list as ml
@@ -220,6 +224,11 @@ PAGE_HELP = {
         "R10 labels",
         " · ".join(f"{text['name']}: {text['definition']}"
                    for labels in R10_LABEL_TEXT.values() for text in labels.values()) + ".",
+    ),
+    "models-exposure": (
+        "Exposure (KG edge sets)",
+        "How a KG edge set's measured edges stand to the model's recorded graph use.\n"
+        + EXPOSURE_CAVEAT,
     ),
 }
 
@@ -589,11 +598,55 @@ def regime_text(device: Any, deterministic: Any) -> str:
     return f"{kind} · {determinism}"
 
 
+def data_kind(view: Mapping[str, Any]) -> str:
+    """The kind of data a record view measured (its ``cohort.kind``, by which
+    the one reader read it): supplied, kg_edges or generated."""
+    kind = _get(view, "cohort", "kind")
+    return kind if isinstance(kind, str) else "supplied"
+
+
+def _count_text(value: Any) -> str:
+    return str(value) if type(value) is int else "not reported"
+
+
+def role_text(view: Mapping[str, Any]) -> Optional[str]:
+    """A version of another kind than a supplied cohort as the record's line
+    names it, by its kind and role ("A KG edge set (test)", "A generated split
+    (val)", `caveats.version_words`); None for a supplied cohort, whose line
+    says "role <role>" as it always did. Never "cohort" for the others."""
+    kind = data_kind(view)
+    if kind == "supplied":
+        return None
+    words = version_words(kind, _get(view, "cohort", "role"))
+    return words[:1].upper() + words[1:]
+
+
 def coverage_html(view: Mapping[str, Any]) -> str:
     """The record's case sets: a task record's ranked cases of the
     import-eligible ones (PLAN_B05 §4); for any other mode, its source cases and
-    exclusions and the cases its record counts, with no claim of what they are."""
+    exclusions and the cases its record counts, with no claim of what they are.
+    A KG edge set's record: the pairs scored of those stored, and its positive
+    edges; a generated split's: the cases ranked, and its generated patients
+    and diseases (each count's unit is in the record's counts, below)."""
+    kind = data_kind(view)
     counts = view.get("counts") if isinstance(view.get("counts"), Mapping) else {}
+    if kind == "kg_edges":
+        run = _get(view, "measured", "counts")
+        run = run if isinstance(run, Mapping) else {}
+        return (f'<div>{r.e(_count_text(run.get("pairs_scored")))} of '
+                f'{r.e(_count_text(counts.get("pairs")))} stored pairs scored</div>'
+                f'<div class="shep-sub">{r.e(_count_text(counts.get("positive_edges")))} '
+                f'positive edges; {r.e(_count_text(counts.get("edges_without_negative")))} '
+                'without a negative to pair</div>')
+    if kind == "generated":
+        ranked = (f"{_count_text(view.get('n_ranked'))} cases ranked by the model"
+                  if record_mode(view) in TASK_NAMES else
+                  f"{_count_text(view.get('n_ranked'))} counted by the record; what they are is "
+                  "not described for this mode")
+        diseases = counts.get("diseases")
+        return (f'<div>{r.e(ranked)}</div><div class="shep-sub">'
+                f'{r.e(_count_text(counts.get("samples")))} generated patients of '
+                f'{r.e(_count_text(diseases))} disease{"" if diseases == 1 else "s"}</div>')
     excluded = counts.get("excluded") if isinstance(counts.get("excluded"), Mapping) else None
     if excluded is None:
         reasons = "not reported"
@@ -652,6 +705,71 @@ def r10_label_text(label: str, name: str, part: Any, evidence: Any) -> str:
     if label == "disease_overlap":
         text += f"; {_get(part, 'cases')} test cases with one of them"
     return text
+
+
+def _counts_fold(title: str, counts: Any, units: Any) -> str:
+    """A version's or a run's counts, each with its unit as recorded, one
+    click away: a closed disclosure, "<title> (N)"."""
+    counts = counts if isinstance(counts, Mapping) else {}
+    units = units if isinstance(units, Mapping) else {}
+    lines = "".join(f'<span class="shep-mp-ln"><code>{r.e(name)}</code> '
+                    f'{r.e(_count_text(value))}: {r.e(units.get(name) or "unit not recorded")}'
+                    '</span>' for name, value in counts.items())
+    return (f'<details class="shep-mp-fold"><summary>{r.e(title)} ({len(counts)})</summary>'
+            f'{lines}</details>')
+
+
+def kind_html(view: Mapping[str, Any]) -> str:
+    """The detail lines a record's data kind decides (research comparison
+    Stage 6): a supplied cohort's R10 per scope (`r10_html`); a KG edge set's
+    exposure in this build's words (`caveats.exposure_text`, with its
+    definition version and split), its message-passing graph and pairs, each
+    metric that could not be computed, as a status, and its counts with their
+    units; a generated split's generation identity, how it stands to a model's
+    training (`caveats.GENERATED_EXPOSURE_NOTE`) and its counts with their
+    units. The KG edges' "held out" is never said for a patient cohort, and
+    R10 never for a KG edge set or a generated split."""
+    kind = data_kind(view)
+    if kind == "supplied":
+        return r10_html(view.get("r10"))
+    cohort = view.get("cohort") if isinstance(view.get("cohort"), Mapping) else {}
+    counts = _counts_fold("Data version counts", view.get("counts"), view.get("count_units"))
+    if kind == "generated":
+        generation = cohort.get("generation") or {}
+        allocation = cohort.get("allocation") or {}
+        fixture = cohort.get("task_fixture")
+        identity = (f"{generation.get('algorithm')} v{generation.get('algorithm_version')}, "
+                    f"allocation {allocation.get('algorithm')} v"
+                    f"{allocation.get('algorithm_version')} with seed {allocation.get('seed')}")
+        kept = (f"gene fixture {r.short_hex(_get(fixture, 'record', 'sha256'))}"
+                if isinstance(fixture, Mapping) else "no gene fixture kept")
+        return (f'<span class="shep-mp-ln"><b>Generation:</b> {r.e(identity)}</span>'
+                f'<span class="shep-mp-ln">Split manifest <code>'
+                f'{r.e(r.short_hex(_get(cohort, "split_manifest", "sha256")))}</code>; '
+                f'{r.e(kept)}</span>'
+                f'<span class="shep-mp-ln shep-sub">{r.e(GENERATED_EXPOSURE_NOTE)}</span>{counts}')
+    exposure = view.get("exposure") if isinstance(view.get("exposure"), Mapping) else {}
+    split = exposure.get("split")
+    said = (f'<span class="shep-mp-ln"><b>Exposure:</b> {r.e(exposure_text(exposure))}'
+            f'{help_button("models-exposure", "Exposure (KG edge sets)")}</span>'
+            '<span class="shep-mp-ln shep-sub">Definition '
+            f'{r.e(exposure.get("definition_version"))}'
+            f'; {r.e(split if isinstance(split, str) else "the model record was not read")}'
+            '</span>')
+    passing = cohort.get("message_passing") or {}
+    pairs = cohort.get("pairs") or {}
+    graph = (f"Message passing over the split's {passing.get('part')} part, "
+             f"{_count_text(passing.get('edges'))} edges; pairs {pairs.get('rule')} with seed "
+             f"{pairs.get('seed')}, {_count_text(pairs.get('rows'))} rows")
+    statuses = _get(view, "measured", "metrics")
+    not_computed = [str(name) for name, status in (statuses or {}).items()
+                    if isinstance(status, Mapping) and status.get("status") != "computed"]
+    missing = (f'<span class="shep-mp-ln">Not computable (a status, never a number): '
+               f'{r.e(", ".join(not_computed))}</span>' if not_computed else "")
+    run_counts = _counts_fold("Run counts", _get(view, "measured", "counts"),
+                              _get(view, "measured", "count_units"))
+    return (f'{said}<span class="shep-mp-ln">{r.e(graph)}</span>{missing}{counts}'
+            f'{run_counts}')
 
 
 def r10_html(r10: Any) -> str:
@@ -848,11 +966,15 @@ def _mode_table(mode: Optional[str], views: Sequence[Mapping[str, Any]],
         synthetic = (r.chip("synthetic", "amber") if view.get("dataset_origin") == "synthetic"
                      else "")
         role = cohort.get("role")
+        # A version of another kind is named by its kind and role, never as
+        # a cohort (`role_text`).
+        role_line = role_text(view)
         cohort_cell = (f'<div class="shep-w600">{r.e(cohort.get("label"))}</div>'
                        f'<div class="shep-sub">(version <code>'
                        f'{r.e(r.short_hex(cohort.get("version_manifest_sha256")))}</code>) '
-                       f'{synthetic}</div><div class="shep-sub">role '
-                       f'{r.ident_html(role)}</div>')
+                       f'{synthetic}</div><div class="shep-sub">'
+                       + (r.e(role_line) if role_line else f"role {r.ident_html(role)}")
+                       + '</div>')
         if columns:
             mrr, hits = (fmt_metric(name, metrics.get(name)) for name in columns)
             metric_cells = (f'<td class="shep-num">{r.e(mrr)}</td>'
@@ -888,7 +1010,7 @@ def _mode_table(mode: Optional[str], views: Sequence[Mapping[str, Any]],
         more = (f'<tr class="shep-mp-more"><td colspan="5">'
                 f'<span class="shep-mp-ln">{relations_html(view.get("relations"))}'
                 f'{" · " + r.e(" · ".join(others)) if others else ""}</span>'
-                f'{r10_html(view.get("r10"))}{semantics_html(view)}{fold}'
+                f'{kind_html(view)}{semantics_html(view)}{fold}'
                 f'<span class="shep-mp-ln">Environment: {r.e(environment)} · Dataset: '
                 f'<b>{r.e(origin)}</b> · {r.e(registration)}</span>'
                 f'<span class="shep-mp-ln">Native build: {r.e(native)}</span></td></tr>')
@@ -901,10 +1023,18 @@ def _mode_table(mode: Optional[str], views: Sequence[Mapping[str, Any]],
             f'aria-label="{r.e("Recorded test results, " + mode_label(mode))}">'
             '<colgroup><col class="shep-mp-c1"><col '
             'class="shep-mp-c2"><col class="shep-mp-c3"><col class="shep-mp-c4"><col></colgroup>'
-            f'<thead><tr><th scope="col">Cohort version</th>{heads}'
+            f'<thead><tr><th scope="col">{_version_head(views)}</th>{heads}'
             '<th scope="col">Coverage</th>'
             f'<th scope="col">Record</th></tr></thead><tbody>{"".join(body)}</tbody></table>'
             '</div>')
+
+
+def _version_head(views: Sequence[Mapping[str, Any]]) -> str:
+    """The first column's header: "Cohort version" for a table of supplied
+    cohorts' records, as it always was; "Data version" once a KG edge set's or
+    a generated split's record is in it (never "cohort" for those)."""
+    return ("Cohort version" if all(data_kind(view) == "supplied" for view in views)
+            else "Data version")
 
 
 def _by_mode(views: Sequence[Mapping[str, Any]]
@@ -968,8 +1098,11 @@ def records_block_html(views: Sequence[Mapping[str, Any]], contest: Mapping[str,
             parts.append(f'<p class="shep-mp-p"><b>{r.e(mode_label(mode))}.</b>'
                          + (f" {r.e(note)}" if note else "") + "</p>")
             parts.append(records_table_html(group, contest))
-        parts.append(f'<p class="shep-note">R10 labels '
-                     f'{help_button("models-r10", "R10 labels")} · The Trainer validation '
+        # R10's definitions where a supplied cohort's record is shown; a KG
+        # edge set's and a generated split's records carry none.
+        r10 = (f'R10 labels {help_button("models-r10", "R10 labels")} · '
+               if any(data_kind(view) == "supplied" for view in views) else "")
+        parts.append(f'<p class="shep-note">{r10}The Trainer validation '
                      "figure is not among these records' metrics.</p>")
     parts.append(unreadable_html(unreadable))
     return "".join(parts)
@@ -1375,8 +1508,11 @@ def usage_entry_html(entry: Mapping[str, Any]) -> str:
         n_ranked = entry.get("n_ranked")
         counted = type(n_ranked) is int
         if columns is None:
+            # What n_ranked counts: a KG link-prediction run's pairs, any
+            # other mode's cases.
+            unit = "pairs" if mode == "kg_link_prediction" else "cases"
             figure = (f"{mode_label(mode)}, "
-                      + (f"{n_ranked} cases" if counted else "case count not recorded"))
+                      + (f"{n_ranked} {unit}" if counted else f"{unit[:-1]} count not recorded"))
         else:
             value = f"{metric_label(columns[0], mode)} {fmt_metric(columns[0], metrics.get(columns[0]))}"
             figure = (f"{value} over {n_ranked} ranked cases" if counted

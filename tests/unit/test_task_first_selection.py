@@ -582,12 +582,14 @@ def test_the_lists_show_a_bundle_run_and_resolve_it_by_its_key(tmp_path):
 def test_a_ledger_does_not_change_what_automatic_selection_chooses(service):
     """Two checkpoints of one disease child run, the validation metric
     (``val_pooled_mrr``) favouring `best.pt`; a ledger beside them whose
-    test result (a registered disease task record) favours `other.pt`. The
-    reload's task-first selection and `select_auto_run_checkpoint` choose
-    `best.pt`, with or without the ledger (the import-linter contract
-    `selection-ignores-test-results` keeps the modules apart). Moved from
-    `test_test_score_ordering` at K8-2a, from a ShepherdGNN run's history
-    files to a task child's."""
+    test results favour `other.pt`: a registered disease task record on a
+    supplied cohort, and, since the ledger records every data kind (research
+    comparison Stage 6), a KG link-prediction record with its exposure and a
+    record on a generated split. The reload's task-first selection and
+    `select_auto_run_checkpoint` choose `best.pt`, with or without the ledger
+    (the import-linter contract `selection-ignores-test-results` keeps the
+    modules apart). Moved from `test_test_score_ordering` at K8-2a, from a
+    ShepherdGNN run's history files to a task child's."""
     import hashlib
     import json
 
@@ -603,6 +605,11 @@ def test_a_ledger_does_not_change_what_automatic_selection_chooses(service):
     from src.utils.checkpoint_io import read_checkpoint
     from src.utils.checkpoint_paths import ranking_score_detail, select_auto_run_checkpoint
     from tests.unit.test_evaluation_sidecar import registered_report
+    from tests.unit.test_ledger_by_data_kind import (
+        KG_METRICS,
+        generated_report,
+        kg_edges_report,
+    )
 
     run = "20261002-000000_disease_bbbbbb"
     # `best.pt` older, so recency would not favour it.
@@ -624,17 +631,27 @@ def test_a_ledger_does_not_change_what_automatic_selection_chooses(service):
 
     without = chosen()
     ledger = empty_ledger()
-    for n, (path, pooled_mrr) in enumerate(((other, 0.99), (best, 0.01)), start=1):
-        report = registered_report(metrics={"pooled_mrr": pooled_mrr}, **disease_semantics(32))
+    reports = []
+    for path, figure in ((other, 0.99), (best, 0.01)):
+        reports += [
+            (path, registered_report(metrics={"pooled_mrr": figure}, **disease_semantics(32))),
+            (path, kg_edges_report(metrics=dict(KG_METRICS, lp_roc_auc=figure))),
+            (path, generated_report(metrics={"pooled_mrr": figure}))]
+    for n, (path, report) in enumerate(reports, start=1):
         report["manifest"]["artifact_digests"]["checkpoint"] = file_sha256(path)
+        if "exposure" in report:
+            report["exposure"]["sources"]["model_record"]["checkpoint_sha256"] = file_sha256(path)
         digest = hashlib.sha256(json.dumps(report, sort_keys=True).encode()).hexdigest()
         run_id = f"20261020T090000Z-{file_sha256(path)[:12]}-0000000{n}"
         ledger = append_record(ledger, build_record(report, digest), run_id=run_id,
                                registered_at="2026-10-20T09:00:00Z")[1]
     write_ledger(best.parent / LEDGER_FILENAME, ledger, None)
-    tested = {record["checkpoint_digest"]: record["metrics"]["pooled_mrr"]
+    tested = {(record["checkpoint_digest"], record["cohort"]["kind"]):
+              record["metrics"].get("pooled_mrr", record["metrics"].get("lp_roc_auc"))
               for record in read_ledger(best.parent / LEDGER_FILENAME)[0]["records"]}
-    assert tested == {file_sha256(other): 0.99, file_sha256(best): 0.01}
+    assert tested == {(file_sha256(path), kind): figure
+                      for path, figure in ((other, 0.99), (best, 0.01))
+                      for kind in ("supplied", "kg_edges", "generated")}
 
     assert without == chosen() == (best, best)
 

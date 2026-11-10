@@ -32,9 +32,11 @@ child trained on it for real:
   record or rows, an edited copy or count), the version bound to another
   graph, a protocol the model or the data kind does not take, R10 evidence;
   a damaged kept fixture refuses only the measurements that read it;
-- **kept, never overwritten**: two runs are two run directories; ``--record``
-  keeps the report and says this revision's ledger does not record a
-  generated split's run yet (Stage 6);
+- **kept, never overwritten, registered by kind** (research comparison Stage
+  6): two runs are two run directories, each registered as its own record
+  (``--record``, or the register-later command), with equal figures; the
+  record is a generated split's (its role and generation identity, no R10)
+  and the one reader shows it as one; the store scan groups both runs;
 - **the reader and references**: an edited fixture block or count is refused
   by name; a kept fixture whose copy or bytes differ reads as ``differs``.
 
@@ -413,8 +415,9 @@ def test_a_disease_child_is_measured_on_a_generated_version_and_kept(cli, site, 
     # The role as it is, on the console; never presented as test or supplied.
     assert f"A generated split ({role}): {label}, manifest sha256 " in out
     assert "R10" not in out and "Cohort version" not in out
-    assert (f"Not registered (no --record): this revision's ledger does not record a run on a "
-            f"generated split ({role}) yet, so no registration is offered") in out
+    # Offered a later registration as any kept report is (Stage 6).
+    assert "Not registered (no --record). Register it with:" in out
+    assert f'record_evaluation.py --report "{run / "report.json"}"' in out
     assert not (site.checkpoints["disease"].parent / LEDGER).exists()
     assert [listed.run_id for listed in list_report_runs(version)] == [run.name]
 
@@ -645,32 +648,77 @@ def test_what_the_model_or_the_data_kind_does_not_take_is_refused_writing_nothin
 
 
 # ---------------------------------------------------------------------------
-# Kept, never overwritten; --record says Stage 6's gap
+# Kept, never overwritten, registered by kind (research comparison Stage 6)
 # ---------------------------------------------------------------------------
-def test_two_runs_are_both_kept_and_record_keeps_the_report_unregistered(cli, site, tmp_path,
-                                                                        capsys):
+def test_two_runs_are_both_kept_and_each_registered_as_its_own_record(cli, site, tmp_path,
+                                                                     capsys):
+    """Two runs of the disease child on the kept val split, with equal
+    figures, are two run directories and two records: the second registered by
+    ``--record``, the first later by the command it was offered. Each record is
+    a generated split's: the key fields keep their meanings (the version's
+    role, val; its manifest's digest), its cohort block keeps the role and the
+    generation identity (the split manifest and files by digest, the
+    generation definition and allocation, the fixture it keeps) with its
+    counts and their units, and no R10 and no exposure block. The one reader
+    shows both as a generated split's view, never as test or a cohort; the
+    store scan groups both runs. The same run's same bytes again write
+    nothing."""
+    from src.api.routes.evaluations import GeneratedRecordView, read_records
+    from src.evaluation.registration import register_report
+    from src.evaluation.report_store import scan_report_store
+    from src.evaluation.sidecar import read_ledger
+
     assert cli.main(_argv(site, "gen-val")) == 0
     (first,) = _runs(site, "gen-val")
     kept = _tree(first)
     outcome = tmp_path / "outcome.json"
     assert cli.main(_argv(site, "gen-val", "disease", "--record", "--outcome",
-                          str(outcome))) == cli.EXIT_NOT_REGISTERED
-    err = capsys.readouterr().err
-    assert ("this report measured a registered version of kind 'generated', and this "
-            "revision's ledger records runs on a supplied cohort version only") in err
-    assert ("This revision's ledger does not record a run on a generated split (val) yet, so no "
-            "registration is offered.") in err
-    assert "record_evaluation.py" not in err
+                          str(outcome))) == 0
     runs = _runs(site, "gen-val")
     assert len(runs) == 2 and _tree(first) == kept
     (second,) = set(runs) - {first}
     assert sorted(p.name for p in second.iterdir()) == ["ranks.json", "report.json"]
     assert _report(second)["authoritative_metrics"] == _report(first)["authoritative_metrics"]
-    assert not (site.checkpoints["disease"].parent / LEDGER).exists()
     written = json.loads(outcome.read_text())
     assert (written["cohort"]["label"], written["cohort"]["role"]) == ("gen-val", "val")
-    assert (written["registration"]["registered"], written["registration"]["outcome"]) == (
-        False, "refused")
+    assert (written["registration"]["registered"], written["registration"]["sequence"]) == (
+        True, 1)
+
+    checkpoint = site.checkpoints["disease"]
+    assert register_report(first / "report.json", checkpoint=checkpoint).outcome == "registered"
+    ledger_path = checkpoint.parent / LEDGER
+    ledger, _ = read_ledger(ledger_path)
+    assert [r["run_id"] for r in ledger["records"]] == [second.name, first.name]
+    version = _version(site, "gen-val")
+    for record in ledger["records"]:
+        assert (record["cohort_role"], record["cohort_digest"]) == ("val", version.identity.sha256)
+        assert record["r10"] is None and "exposure" not in record
+        cohort = record["cohort"]
+        assert (cohort["kind"], cohort["role"], cohort["label"]) == ("generated", "val", "gen-val")
+        for field in ("split_manifest", "split_artifacts", "generation", "allocation", "counts",
+                      "count_units", "task_fixture"):
+            assert cohort[field] == version.manifest[field], field
+        assert cohort["samples_sha256"] == version.manifest["samples"]["sha256"]
+    assert ledger["records"][0]["metrics"] == ledger["records"][1]["metrics"]
+
+    viewed, unreadable = read_records(ledger, ledger["records"][0]["checkpoint_digest"])
+    assert unreadable == [] and len(viewed) == 2
+    for _record, view in viewed:
+        assert isinstance(view, GeneratedRecordView)
+        assert (view.cohort.role, view.r10) == ("val", None)
+        assert view.cohort.split_manifest.sha256 == version.manifest["split_manifest"]["sha256"]
+
+    scan = scan_report_store(version)
+    assert scan.unbuilt == {} and scan.unplaced == ()
+    (key,) = scan.runs
+    assert scan.runs[key] == tuple(sorted((first.name, second.name)))
+    assert scan.state(key) == "uncontested"
+
+    before = ledger_path.read_bytes()
+    assert register_report(first / "report.json", checkpoint=checkpoint).outcome == (
+        "already_registered")
+    assert ledger_path.read_bytes() == before
+    capsys.readouterr()
 
 
 # ---------------------------------------------------------------------------

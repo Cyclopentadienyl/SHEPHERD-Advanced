@@ -1441,9 +1441,10 @@ its disease allocation's). Its report is kept in the version's report store like
 each run in a new run directory (`ranks.json`, then `report.json`), never overwriting one. The
 manifest records `cohort_kind` `generated`, the version's block (its role as recorded, train or
 val today, its generation identity and the fixture it keeps) and the role as `split`; there is no
-R10, and the role is never presented as test. This revision's ledger does not record such a run
-yet (research comparison Stage 6): no registration is offered, and `--record` keeps the report and
-exits 3 saying so. A generated test role cannot be imported today, so none is measured. The job
+R10, and the role is never presented as test. Its report is registered like any kept report
+(`--record`, or the register-later command the run prints; research comparison Stage 6): its
+ledger record keeps the role and the generation identity. A generated test role cannot be
+imported today, so none is measured. The job
 runner passes the deployment's `--training-evidence` directories to every run; with
 `SHEPHERD_TRAINING_EVIDENCE_DIRS` set, a Test-page run on a generated split is refused after it starts,
 as one on a KG edge set is (Stage 7 chooses the evidence by data kind). Reports measured with
@@ -1608,9 +1609,13 @@ python scripts/measure_scorer.py --mode kg_link_prediction \
   pair's actual raw scores and state, keyed to the pairs file's rows, streamed in chunks and
   placed whole) and then `report.json`, which names it by digest and row count. A run cancelled
   or failed before the report leaves no report, and what it left is listed as an interrupted
-  write. **Registering it is not built yet** (research comparison Stage 6): `--record` keeps the
-  report and exits 3, saying this revision's ledger records runs on a supplied cohort version
-  only.
+  write.
+- **Registering it** (research comparison Stage 6) works as for any kept report: `--record`, or
+  the register-later command the run prints. Its ledger record is a KG edge set's: the version's
+  view, split, message-passing graph, pairs and counts with their units, no R10, the run's counts
+  and each metric's status, and its exposure block as the report wrote it, so the ledger alone
+  still says how the measured edges stand to the model's recorded graph use. Models and
+  `record_evaluation.py --show` show it by its kind, with that exposure.
 
 ### Mode D (removed in K7)
 
@@ -1653,9 +1658,8 @@ registration of another report.
   The checkpoint is the file the run read, at its resolved path, so the command works whatever
   the file is named. Each path is double-quoted, so a path with a space stays one argument in a
   POSIX shell, cmd or PowerShell. A path holding `"`, `$`, a backtick, `%` or `!` is expanded by
-  one shell or another and has to be quoted by hand. A KG edge set's run prints no command: this
-  revision's ledger does not record such a run yet (research comparison Stage 6), so the run says
-  that, and its report stays in its version's report store.
+  one shell or another and has to be quoted by hand. A run on a version of any kind prints it (a
+  KG edge set's and a generated split's included, since research comparison Stage 6).
 - **`record_evaluation.py` names the checkpoint with exactly one of two arguments** (neither or
   both is a rejected command line):
   - `--checkpoint FILE`: that one file, under any name, must hold the bytes the report measured;
@@ -1748,10 +1752,8 @@ registered, the run exits 3, and it says the report at that path is not the one 
 is gone), so the run's own report may not exist any more: measure again to register this
 measurement. The command for a later registration is printed only when the report read back is
 the one published and something else refused it, such as the ledger. Without `--record` the
-command is always printed: no other run's report or result can refuse a registration. The one
-exception is a run on a KG edge set: this revision's ledger does not record such a run yet
-(research comparison Stage 6), so no command is printed, and the run says so instead; its report
-stays in its version's report store. A later registration with `record_evaluation.py` checks the
+command is always printed: no other run's report or result can refuse a registration, whatever
+the kind of data the run measured. A later registration with `record_evaluation.py` checks the
 checkpoint file it is given against the report, as before.
 
 ### What the Diagnosis page shows
@@ -1933,8 +1935,7 @@ differing report. Without deterministic algorithms, runs can differ: the descrip
 neutral, and every result is valid as recorded. Only when the group records deterministic
 algorithms on were its runs expected to agree, so the pages mark the difference in amber with
 "— investigate". The API keeps the value `contested` for it, with this new meaning. Without
-`--record` the run always prints the register-later command (a KG edge set's run excepted, which
-this revision's ledger does not record yet). To investigate:
+`--record` the run always prints the register-later command. To investigate:
 
 - compare the reports' environment facts (each `report.json`'s `manifest.environment`);
 - re-run with `--deterministic`, which is its own set of conditions. Deterministic runs are

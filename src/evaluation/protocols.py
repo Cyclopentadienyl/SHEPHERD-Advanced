@@ -204,7 +204,9 @@ _CAPABILITY_WORDS: dict[str, str] = {
     "edge_relation_ids": "each message-passing edge's relation id",
 }
 
-#: A data kind as a reason names it.
+#: A data kind as a reason names it: `caveats.DATA_KIND_WORDS`, the one wording
+#: every reader and refusal uses, restated because this module imports the
+#: standard library only (pinned equal by tests/unit/test_protocols.py).
 _KIND_WORDS: dict[str, str] = {GENERATED: "a generated split",
                                SUPPLIED: "a supplied cohort version",
                                KG_EDGES: "a KG edge set"}

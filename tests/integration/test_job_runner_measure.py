@@ -247,12 +247,14 @@ def test_listed_fields_the_files_do_not_bear_out_are_refused_by_the_run(
     assert _stored(cohort) == before, "the refused run left a report"
 
 
-def test_a_test_run_on_a_kept_generated_split_keeps_its_report_unrecorded(cohort, monkeypatch):
+def test_a_test_run_on_a_kept_generated_split_keeps_its_report_for_registration(
+        cohort, monkeypatch):
     """Research comparison Stage 5b: the runner starts a run on a registered
     generated split as on any version, from the listing's kind and counts;
     the real CLI measures it by the disease protocol and keeps its report in
-    that version's report store, under its role (val), with no R10; the
-    ledger does not record such a run yet, and the run's outcome says why.
+    that version's report store, under its role (val), with no R10; without
+    registration asked, the report is kept for a later registration, as any
+    kept report is (Stage 6: the ledger records a generated split's run).
     The workspace holds no functional gene fixture, so the version keeps
     none: the runner refuses gene on it before a job starts, with the stated
     data gap."""
@@ -275,8 +277,9 @@ def test_a_test_run_on_a_kept_generated_split_keeps_its_report_unrecorded(cohort
         "disease", "generated", "val")
     assert manifest["cohort_version"]["label"] == label and manifest["r10"] is None
     assert status["outcome"]["kept"] is True and status["outcome"]["registered"] is False
-    assert ("this revision's ledger does not record a run on a generated split (val) yet"
+    assert ("--record was not given; the report is kept for a later registration"
             in status["outcome"]["summary"])
+    assert "does not record" not in status["outcome"]["summary"]
 
     manager = TrainingManager()
     started = manager.start_test(TestRunInputs(**{

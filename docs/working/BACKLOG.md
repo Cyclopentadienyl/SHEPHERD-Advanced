@@ -31,6 +31,8 @@ not restate their decisions.
     for both, their data role, exposure and research question described apart; built as
     `kg_link_prediction` in research comparison Stage 5a on `claude/research-comparison`, not
     merged; registering its runs is that round's Stage 6. `research-comparison/README.md` §3, §5.)*
+    *(2026-11-10: its runs are registered since, by data kind, with their exposure: Stage 6, not
+    merged.)*
   - **Comparing, querying and exporting results** (item 63, N3) is the set direction. A default order
     and the figure each task is ordered by are proposed when a need arises.
   - **Not started.** This direction authorises no product engineering yet and makes no clinical

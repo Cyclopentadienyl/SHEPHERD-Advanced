@@ -14,11 +14,14 @@ is the same record.
 The record is derived from the report, never from the command line: a run's own
 manifest is what says which checkpoint, which cohort version and which mode it
 was, and re-asserting any of that here would let the ledger describe a run that
-did not happen. Only a registered cohort version's report is registered; a
-generated split's is refused, because the ledger does not yet support a
-generated split's data identity (it has no registered cohort version), not
+did not happen. A report of a registered version of any kind is registered (a
+supplied cohort version's, a KG edge set's, a generated split kept in the
+registry; research comparison Stage 6), its record read by its kind. A
+generated split measured with `--split` is refused, because it has no
+registered version, so no data identity the ledger records results by, not
 because such a result counts for less; its report and ranks stay at the
-measurement's `--output` (policy rev 16, K8-6r.4).
+measurement's `--output` (policy rev 16, K8-6r.4), and the same split kept in
+the registry is measured with `--cohort` and registered.
 
 **Only a report the registry's report store holds** (D5, since M5): `--report`
 names `<registry>/versions/<label>/reports/<run id>/report.json`, the path the
@@ -64,9 +67,11 @@ Usage:
 
 `--show` prints the records as the ledger holds them (JSON on stdout), and
 for each one its run, "not recorded" for a record merged before each run had
-its own record, and its possible overlaps with records naming a run (on the
-log). A record the shared check cannot read as a result (its run identity
-cannot be read, or it does not have the shape registration writes) is said
+its own record, its possible overlaps with records naming a run, and, for a
+KG edge set's or a generated split's record, its version in its kind's words
+and a KG edge set's exposure (on the log). A record the shared check cannot
+read as a result (its run identity cannot be read, it does not have the shape
+registration writes, or its kind is one this build does not read) is said
 instead by its index in the ledger with its reason, through the readers' one
 listing (`src.api.routes.evaluations.read_records`, as the API and Models
 list it); the JSON still shows it as written.
@@ -88,7 +93,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.evaluation.caveats import RECORD_ABSENCE  # noqa: E402
+from src.evaluation.caveats import RECORD_ABSENCE, exposure_text, version_words  # noqa: E402
 from src.evaluation.registration import (  # noqa: E402
     RegistrationRefused,
     group_note,
@@ -171,8 +176,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     record = result.record
     sequence = record["registration"]["sequence"]
-    where = (f"{record['cohort_role']} · {record['cohort']['label']} for checkpoint "
-             f"{record['checkpoint_digest'][:12]}...")
+    kind = record["cohort"]["kind"]
+    version = (f"{record['cohort_role']} · {record['cohort']['label']}" if kind == "supplied"
+               else f"{version_words(kind, record['cohort_role'])} {record['cohort']['label']}")
+    where = f"{version} for checkpoint {record['checkpoint_digest'][:12]}..."
     if result.outcome == "already_registered":
         logger.info("%s already holds this report as record %d (%s); nothing written.",
                     result.ledger_path, sequence, where)
@@ -194,14 +201,18 @@ def _run_lines(ledger: dict, checkpoint_digest: str) -> list:
     included). Any other: its sequence and its run, as the file's run-identity
     boundary reads it (`record_identities`): "not recorded" for a record merged
     before each run had its own record; then its possible overlaps
-    (`possible_overlaps`), never confirmed. The two kinds of record stay
-    apart."""
+    (`possible_overlaps`), never confirmed; then, for a version of another kind
+    than a supplied cohort, the version in its kind's words and, for a KG edge
+    set, its exposure, as the listing's view reads them. The two kinds of
+    record stay apart."""
     from src.api.routes.evaluations import read_records
 
     records = ledger.get("records") if isinstance(ledger.get("records"), list) else []
     by_record = {id(record): (identity, overlaps) for record, identity, overlaps in
                  zip(records, record_identities(ledger), possible_overlaps(ledger))}
-    unreadable = {item.index: item for item in read_records(ledger, checkpoint_digest)[1]}
+    viewed, unread = read_records(ledger, checkpoint_digest)
+    unreadable = {item.index: item for item in unread}
+    views = {id(record): view for record, view in viewed}
     lines = []
     for index, record in indexed_records_for(ledger, checkpoint_digest):
         identity, overlaps = by_record[id(record)]
@@ -218,6 +229,11 @@ def _run_lines(ledger: dict, checkpoint_digest: str) -> list:
         if overlaps:
             line += (f"; possible overlap with record{'s' if len(overlaps) != 1 else ''} "
                      f"{', '.join(str(n) for n in overlaps)} (not recorded)")
+        view = views.get(id(record))
+        if view is not None and view.cohort.kind != "supplied":
+            line += f"; {version_words(view.cohort.kind, view.cohort.role)}"
+            if view.cohort.kind == "kg_edges":
+                line += f"; exposure: {exposure_text(view.exposure.model_dump(mode='json'))}"
         lines.append(line)
     return lines
 

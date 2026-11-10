@@ -46,42 +46,22 @@ from typing import Any, Dict, Mapping
 
 import numpy as np
 
-#: The version of the definition below: the states, their words and how each
-#: count is taken. A reader reads a block by the version it records.
-EXPOSURE_DEFINITION_VERSION = "kg-lp-exposure/v1"
-
-#: The states an exposure block holds, each read by `EXPOSURE_READINGS`.
-HELD_OUT = "held_out"
-IN_RECORDED_GRAPH_USE = "in_recorded_graph_use"
-ANOTHER_SPLIT = "another_split"
-AFTER_FULL_VIEW_EXPOSURE = "after_full_view_exposure"
-NOT_RECORDED = "not_recorded"
-EXPOSURE_STATES = (HELD_OUT, IN_RECORDED_GRAPH_USE, ANOTHER_SPLIT, AFTER_FULL_VIEW_EXPOSURE,
-                   NOT_RECORDED)
-
-#: Each state's reading; "{k}" and "{n}" are the block's counts.
-EXPOSURE_READINGS: Dict[str, str] = {
-    HELD_OUT: "held out relative to the recorded training and validation graph use",
-    IN_RECORDED_GRAPH_USE: ("{k} of {n} measured edges were in the recorded training or "
-                            "validation graph use"),
-    ANOTHER_SPLIT: ("{k} of {n} measured edges were in this model's recorded training or "
-                    "validation graph use, on another split of the same view"),
-    AFTER_FULL_VIEW_EXPOSURE: "after full-view exposure",
-    NOT_RECORDED: "exposure not recorded",
-}
-
-#: What every block says of itself and of the negatives.
-EXPOSURE_CAVEAT = (
-    "Scoped to the recorded evidence: what the model's record and this KG edge set say, read by "
-    "this build. It does not establish that no other exposure happened (another run, a "
-    "person's choice, a file outside the record), and it is never a gate. The negatives are "
-    "rule-generated (another tail of the same relation in the pair's batch, never the "
-    "positive's own) and are never claimed as proven non-relations: a negative may be a true "
-    "relation the graph does not hold.")
-
-#: The unit of the counts, said in the block.
-MEASURED_EDGE_UNIT = ("positive edges scored: the (head, relation, tail) of each row of the "
-                      "pairs file, a directed edge of the graph view")
+# The definition's version, its states, their readings, the caveat every
+# block states and the counts' unit: the words a surface renders too, so they
+# are kept once, in `src.evaluation.caveats` (standard library only), and
+# written into each block from there.
+from src.evaluation.caveats import (
+    AFTER_FULL_VIEW_EXPOSURE,
+    ANOTHER_SPLIT,
+    EXPOSURE_CAVEAT,
+    EXPOSURE_DEFINITION_VERSION,
+    EXPOSURE_READINGS,
+    EXPOSURE_STATES,
+    HELD_OUT,
+    IN_RECORDED_GRAPH_USE,
+    MEASURED_EDGE_UNIT,
+    NOT_RECORDED,
+)
 
 #: The model-record fields an exposure block reads.
 RECORD_FIELDS_READ = ("graph_exposure", "data_roles.split")

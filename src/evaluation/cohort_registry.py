@@ -156,8 +156,9 @@ gap, never for the role. ``measure_scorer --cohort`` measures a registered
 generated split (Stage 5b) by the protocols the model's capabilities admit,
 its report kept in the version's report store. Archived reports measured with
 ``--split`` are untouched: no identity is made up for them, and registering
-them stays refused (`src.evaluation.sidecar.build_record`). Registering a
-result on a registered generated split is the research comparison's Stage 6.
+them stays refused (`src.evaluation.sidecar.build_record`). A result on a
+registered generated split is registered in the ledger like any other kept
+report, under its role and generation identity (research comparison Stage 6).
 
 **Content references** (E3). Every version records what it depends on by
 content identity, never by path: `version_references` names each reference
@@ -205,7 +206,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Mapping, NamedTuple, Optional, Sequence, Tuple
 
 from src.config.server_settings import DirectoryRefused, check_registry_root
+from src.evaluation.caveats import version_words
 from src.evaluation.cohort import GENERATED_SPLITS, validate_split_name
+from src.evaluation.sidecar import VERSION_BLOCK_FIELDS
 from src.kg.artifacts import GRAPH_ARTIFACTS
 from src.kg.phenotype_normalisation import PHENOTYPE_NORMALISATION_VERSION, normalise_phenotypes
 from src.utils.fingerprint import ReadIdentity
@@ -352,11 +355,10 @@ KG_EDGES_COUNT_UNITS: Dict[str, str] = {
 #: The model-record fields a KG edge set's view and split are taken from.
 KG_EDGES_TAKEN_FROM = ("data_roles.graph_view", "data_roles.split")
 
-#: What `cohort_version_block` gives for a KG edge set, exactly.
-KG_EDGES_BLOCK_FIELDS: Tuple[str, ...] = (
-    "label", "role", "kind", "manifest_sha256", "graph", "dataset_record_sha256",
-    "graph_view", "split", "message_passing", "pairs", "counts", "count_units",
-)
+#: What `cohort_version_block` gives for a KG edge set, exactly: the ledger's
+#: list of that kind's block (`sidecar.VERSION_BLOCK_FIELDS`), which a
+#: registration reads the block by, so the two cannot differ.
+KG_EDGES_BLOCK_FIELDS: Tuple[str, ...] = VERSION_BLOCK_FIELDS[KG_EDGES]
 
 #: Every field `commit_import` writes for a generated split
 #: (`build_generated_manifest`).
@@ -390,12 +392,9 @@ GENERATED_FIXTURE_COUNT_UNIT = (
 
 #: What `cohort_version_block` gives for a generated split, exactly:
 #: aggregates and digests, never a sample. ``task_fixture`` is the version's
-#: fixture block, or None for a version that keeps none.
-GENERATED_BLOCK_FIELDS: Tuple[str, ...] = (
-    "label", "role", "kind", "manifest_sha256", "graph", "dataset_record_sha256",
-    "samples_sha256", "split_manifest", "split_artifacts", "generation", "allocation",
-    "counts", "count_units", "task_fixture",
-)
+#: fixture block, or None for a version that keeps none. The ledger's list of
+#: that kind's block (`sidecar.VERSION_BLOCK_FIELDS`), as for a KG edge set.
+GENERATED_BLOCK_FIELDS: Tuple[str, ...] = VERSION_BLOCK_FIELDS[GENERATED]
 
 
 # ---------------------------------------------------------------------------
@@ -609,19 +608,6 @@ def not_a_supplied_cohort(kind: Any, role: Any) -> Optional[str]:
     if kind == SUPPLIED:
         return None
     return f"{version_words(kind, role)}, not a supplied cohort version"
-
-
-def version_words(kind: Any, role: Any) -> str:
-    """A version of another kind than a supplied cohort as a sentence names
-    it, by its kind and role: ``a KG edge set (test)``, ``a generated split
-    (val)`` (`not_a_supplied_cohort`'s words). Never "cohort": a KG edge set
-    holds edges, and a generated split is the workspace generator's, never a
-    supplied cohort (research comparison §5 Stage 4)."""
-    if kind == KG_EDGES:
-        return f"a KG edge set ({role})"
-    if kind == GENERATED:
-        return f"a generated split ({role})"
-    return f"a version of kind {kind!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -3078,7 +3064,8 @@ def verify_cohort_binding(
 
 def cohort_version_block(version: CohortVersionRead) -> Dict[str, Any]:
     """The registered version as a report records it: exactly the fields
-    `src.evaluation.sidecar.COHORT_VERSION_FIELDS` names, aggregates only.
+    `src.evaluation.sidecar.VERSION_BLOCK_FIELDS` names for its kind
+    (`COHORT_VERSION_FIELDS` for a supplied cohort), aggregates only.
 
     `manifest_sha256` is the digest of the `cohort.json` bytes this read parsed,
     the ledger's cohort identity (M4 decision 11). No case id, exclusion entry or
@@ -3102,7 +3089,8 @@ def cohort_version_block(version: CohortVersionRead) -> Dict[str, Any]:
     and allocation, the counts with their units, and the functional gene
     fixture it keeps (its block; None when it keeps none): never a sample. A
     measurement of either records it in its manifest (research comparison §5
-    Stage 5); what a registration compares by kind is Stage 6's.
+    Stage 5), and a registration compares the report's block with this one of
+    the version the store holds it under, whatever its kind (Stage 6).
 
     Raises:
         CohortVersionRefused: the manifest does not state its source format,

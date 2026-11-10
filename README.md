@@ -123,10 +123,11 @@ state (how many, and for how many the runs under the same conditions differ); Re
 read them through `GET /api/v1/evaluations/loaded-model`. The Test page measures a model as step 2
 does, by a protocol this build implements, chosen among those its listed capabilities admit:
 today one for each task head of a finetuned model, and the KG link-prediction measurement for a
-base and every finetune, which measures a KG edge set (research comparison Stage 5; its run from
-the Test page, with R10's evidence chosen by kind, is Stage 7, and registering its report Stage 6:
-until then its report is kept and not recorded). A record it registers names the mode of its
-report: the protocol of a new run (Disease, Gene or Patients-like-me), or a kept report's own mode. A Mode C record, the model's own disease
+base and every finetune, which measures a KG edge set (research comparison Stage 5; its report is
+registered like any kept report since Stage 6, its record keeping the run's exposure; its run from
+the Test page, with R10's evidence chosen by kind, is Stage 7). A record it registers names the
+mode of its report: the protocol of a new run (Disease, Gene, Patients-like-me or KG link
+prediction), or a kept report's own mode, and is read by the kind of data it measured. A Mode C record, the model's own disease
 ranking from before the tasks, is historical: kept Mode C reports and records are read by the
 shared readers (policy rev 15), and since K8-6a no command writes one (`--mode` is required and
 names a protocol; a checkpoint without a model spec, a ShepherdGNN history file, is refused).

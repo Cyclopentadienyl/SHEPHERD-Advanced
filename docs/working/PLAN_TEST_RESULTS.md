@@ -28,7 +28,8 @@ record"), among others: the base's formal KG test (N1), comparing, querying and 
 (N3; its direction set on 2026-11-09, `BACKLOG.md` §0 and 63), the patients-like-me reference set
 and R10's exposure scope. *(2026-11-10: N1's measurement is built since on
 `claude/research-comparison`, Stage 5a, not merged: §8.1, "The KG link-prediction measurement as
-built"; registering its runs is that round's Stage 6.)* §8.6's institutional-approval record does not exist yet (§8.6 is design).
+built"; registering its runs is that round's Stage 6.)* *(2026-11-10: registered since by data
+kind, Stage 6, not merged: §4, "Current rules".)* §8.6's institutional-approval record does not exist yet (§8.6 is design).
 
 **2026-10-27: task-aware evaluation for the paper-aligned stages is designed in §8, not
 implemented.** It covers the base's link-prediction validation and the disease, gene and
@@ -437,6 +438,8 @@ and the decision's text is history.
 comparison Stage 5a on `claude/research-comparison`, after this stamp; the rest of the list holds
 as stamped.)*
 *(2026-11-10: and, for a registered generated split, as of Stage 5b.)*
+*(2026-11-10: the Registering, The ledger and Showing items, and the registration of the runs the
+Data versions and Keeping items keep, as of Stage 6.)*
 
 - **Measuring.** `scripts/measure_scorer.py --mode <protocol>` (`--mode` required) runs a protocol
   of `src/evaluation/protocols.py` (`PROTOCOLS`: `disease`, `gene`, `patients_like_me`,
@@ -479,8 +482,8 @@ as stamped.)*
   `generated`, the version's block and its role as the split; no R10, and `--training-evidence`
   is refused (its relation to training is its allocation's), so a Test-page run on one started
   while R10 evidence directories are set is refused after it starts, as on a KG edge set, until
-  Stage 7 chooses the evidence by kind. Its report is kept in the version's report store; the
-  ledger does not record it yet (Stage 6). A generated test role cannot be imported today (the
+  Stage 7 chooses the evidence by kind. Its report is kept in the version's report store and
+  registered as any kept report is (Stage 6). A generated test role cannot be imported today (the
   generator writes train and val).
   Reports measured with `--split` stay as they are, unregistrable, with no identity made up. Every
   version names its dependencies by content (`version_references`), never by path, and a missing
@@ -495,15 +498,37 @@ as stamped.)*
 - **Registering.** One writer, `register_report` (`src/evaluation/registration.py`), by the verified
   run (K8-6r.2): the same run with the same bytes answers `already_registered` and writes nothing;
   the same run with other bytes is refused; any other run gets its own record. Differences between
-  runs are described, never used to refuse (rev 16). A KG edge set's report, and a registered
-  generated split's (Stage 5b), is not recorded yet:
-  `build_record` refuses it as a kind this revision's ledger does not record (`LEDGER_KINDS`;
-  research comparison Stage 6), and the report stays kept; `measure_scorer.py` offers no
-  register-later command for such a run, saying why instead.
+  runs are described, never used to refuse (rev 16). A kept report of a registered version of
+  any kind is registered (research comparison Stage 6): `measure_scorer.py --record`, or the
+  register-later command every run on a registered version is offered
+  (`record_evaluation.py --report`). Its record is built per data kind through one function
+  (`sidecar.build_record`): a supplied cohort's exactly as before (its cohort block, R10); a KG
+  edge set's with its own cohort block (view, split, message-passing graph, pairs, counts with
+  their units), no R10, the run's counts and each metric's status (`measured`) and the run's
+  exposure block as written, with its definition version and sources (`exposure`, F4); a
+  generated split's with its role and generation identity (split manifest and split files by
+  digest, generation definition, allocation, the gene fixture it keeps) and its counts with their
+  units, no R10. The key fields keep their names and meanings (`cohort_role` the version's role,
+  `cohort_digest` its manifest's digest); the exposure is outside the condition-group comparison.
+  A report measured with `--split` is still refused, with its sentence: it has no registered
+  version.
 - **The ledger.** Schema 4 (`src/evaluation/sidecar.py`, `LEDGER_SCHEMA_VERSION`). Schemas 3 and 4
   are read as written, and reading never rewrites a file; schemas 1 and 2 are refused. The first
   registration into a schema 3 file writes schema 4. One registration at a time per ledger, and one
-  append at a time per usage-history file (K8-6r.1).
+  append at a time per usage-history file (K8-6r.1). Records of every data kind sit in one file;
+  the record's own `cohort.kind` tells them apart (research comparison Stage 6). A reader older
+  than Stage 6 lists a KG edge set's or a generated split's record as unreadable, record by
+  record, and its writer still appends other runs beside them (checked against `2da28cf`).
+- **Showing.** One reader, discriminated by data kind (`src/api/routes/evaluations.py`,
+  `read_records`), behind the API's loaded-model route, Models and `record_evaluation.py --show`:
+  each record as its kind's view (`RecordView` for a supplied cohort, unchanged;
+  `KgEdgesRecordView` with its exposure view; `GeneratedRecordView` with its generation
+  identity). A record of a kind this build does not read is listed with its reason, naming the
+  field and never its value, and hides no other. Models shows results with their exposure (O8 ii),
+  a KG edge set's through the one display for every mode; R10 is shown for a supplied cohort only,
+  and a KG edge set's "held out" is scoped to the recorded graph use, never a patient cohort's
+  holdout. No view carries a case id, a server path or R10's evidence paths, and a KG edge set's
+  exposure reason and caveat stay in the ledger.
 - **Kept reports of retired modes.** Kept Mode C and D reports are read by the shared readers,
   shown by the one display for every record and registered by the general rules under their own
   mode (rev 15; K8-6c, K8-6e.2). A record a reader cannot read is listed with its reason, never
@@ -2612,6 +2637,11 @@ question are described apart.
   version's kind: a finetune on a supplied cohort has two options, so neither is preselected, and
   a run on a KG edge set started while R10 evidence directories are set is refused for
   `--training-evidence` after it starts.
+
+*(2026-11-10: its report is registered since, research comparison Stage 6: the register-later
+command is offered and `--record` registers it, its ledger record keeping the run's exposure block,
+counts and metric statuses; §4, "Current rules", Registering and Showing. The Test page's offer
+stays Stage 7's.)*
 
 ### 8.2 The disease task
 
