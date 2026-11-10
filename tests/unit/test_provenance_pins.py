@@ -218,6 +218,13 @@ ALLOWED = {
         (1, _IN_MEMORY.format(what="the fixed LP pairs' table: head, relation, tail and "
                                    "negative tail per pair (README F3; kept with each LP "
                                    "run's scores, research-comparison F4)")),
+    # The frozen-backbone control (research-comparison Stage 9b, O4a): two arms
+    # from one base are checked to start from identical downstream weights by
+    # the digest of the bundle's parts' state in memory, never of a file.
+    ("src/models/bundle/builder.py", "ModelBundle.parts_sha256", "hashlib.sha256"):
+        (1, _IN_MEMORY.format(what="a bundle's parts' parameters and buffers as they are, "
+                                   "recorded as weight_transfer.downstream_initial_sha256 "
+                                   "(research-comparison O4a)")),
     ("src/models/tasks/gene.py", "neighbour_table", "hashlib.sha256"):
         (1, _IN_MEMORY.format(what="the gene augmentation neighbour table (README F10)")),
     ("src/models/tasks/gene.py", "distance_table", "hashlib.sha256"):
