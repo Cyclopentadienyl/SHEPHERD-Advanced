@@ -317,12 +317,41 @@ dry-run first (item 4).
 
 ## 4. The GB10 run
 
-- **Command.** The acceptance is run as at K8 (`../k8-acceptance-2026-11-09/README.md` §1):
-  `scripts/probe_deployment.py --m2-acceptance --device cuda`, with a new copy of the real workspace, from a fresh
-  clone at the reviewed head.
-- **Time and disk.** The new probes add only demo-sized work: five short trainings (the two refusal bases and L7's
-  three children), about a dozen measurements, one job-runner test run and one export. On the CPU here the whole flow
-  (L1–L8) took about 7 s. Its GB10 time and disk are not measured. S1 adds one service start and 55 demo requests,
-  about 8 s on the CPU here.
-- **The record.** It goes in a new evidence directory, `docs/working/<round>-acceptance-<date>/README.md`. It states the
-  environment by the product's own facts (A1, A5, A6) and what the run does not cover, as K8's §3 does.
+**The code to test** is the head delivered for the round's external review, named in that delivery. Only documents may
+follow it before the run, as at K8; `src`, `scripts`, `tests`, `configs`, `pyproject.toml` and `uv.lock` are the ones
+tested. The run starts only after the external review, as O9 says.
+
+1. **A fresh clone at that head**, checked out detached in a directory of its own. The deployment checkout is not
+   touched, and neither is the real workspace: the probe gets a new copy of it.
+2. **Each deploy route in its own environment, with its own run and record** (O5 (ii), O9). One route's pass never
+   stands for the other's.
+   - **The prebuilt release:** `PYG_ARM_STRATEGY=pull ./deploy.sh`. A failed pull stops with its exit (11–15) and its
+     words, and nothing is built. That record says the route did not complete, and why. The run is a verified pull
+     only when A6's `routes` read `"prebuilt release"` for each PyG component (A6 passes either way).
+   - **The local build:** `PYG_ARM_STRATEGY=compile ./deploy.sh`, in another clone and environment. Its A6 `routes` read
+     `"local build"`.
+   - A pull that fails and is then built (`PYG_ARM_ON_PULL_FAILURE=build`) is a local build, recorded as one, never
+     as a verified pull.
+   - After either deploy, `scripts/validate_pyg_ext.py --receipt` shows whether the receipt matches what is installed.
+3. **The probe**, as at K8 (§1 of its record), while no managed GPU job runs:
+   `scripts/probe_deployment.py --m2-acceptance --device cuda --work-dir <a new directory outside the clone>
+   --real-workspace <the new copy> --real-reference-checkpoint <its model-02 file> --workspaces-root <the copy's root>`.
+4. **The closing check** in its TA-10 revision (§3), dry-run first on K8's kept report.
+5. **A run passes** when:
+   - the probe exits 0;
+   - `m2_acceptance.complete` is true, with the tested commit's lists: demo 66 and real data 15, every probe passed;
+   - the closing check passes.
+   S1's readings and any failure of S1 are printed as INFO and never judged (§2.1).
+6. **The record**, per route: a new evidence directory (`docs/working/<round>-acceptance-<date>/README.md`). It states
+   the environment by the product's own facts (A1, A5, A6), the route as A6 read it, the inputs' digests before and
+   after, the duration and the disk, and what the run does not cover.
+
+**What the run does not cover, already known:** the frozen-backbone control on CUDA, with AMP, its scaler or
+`torch.compile` (its tests run on the CPU only, and no probe trains one); the WebUI in a browser on the GB10 (the
+round's browser check ran in a CPU container); the server's CUDA allocator counters (S1 says so); HGT, SAGE or hetero
+GAT; bfloat16; model quality.
+
+**Time and disk.** The new probes add only demo-sized work: five short trainings (the two refusal bases and L7's
+three children), about a dozen measurements, one job-runner test run and one export. On the CPU here the whole flow
+(L1–L8) took about 7 s. Its GB10 time and disk are not measured. S1 adds one service start and 55 demo requests,
+about 8 s on the CPU here.
