@@ -3193,8 +3193,9 @@ comparison Stage 9a（2026-11-10）起，新的 checkpoint 記錄 training rules
 `frozen_parts`（finetune 中不訓練的部分：`none`，即 recipe 的值，或 `graph_side`）。rules 1 的
 parent 可以繼續：Check checkpoint 與訓練行程共用的同一個設定解碼，依其紀錄本身所示（rules 1
 沒有凍結；finetune 的 weight transfer 記錄每個部分皆可訓練），把它讀成 `frozen_parts` none，
-在計畫之後說明（「…; frozen_parts none, decoded from rules 1: rules 1 had no freeze and trained
-every part」），並把這個來源記錄在續接執行的 checkpoint 上；parent 的檔案不會被改寫。沒有記錄
+在「Settings taken from this checkpoint」中以這個來源列出一次（「none, decoded from rules 1:
+rules 1 had no freeze and trained every part」），訓練記錄也以獨立的一行說明，並把這個來源記錄在
+續接執行的 checkpoint 上；parent 的檔案不會被改寫。沒有記錄
 rules 的 parent（K4 的）或本版不認得的 rules 會被拒絕，任何其他缺少、矛盾或未知的設定也一樣。
 續接的執行絕不改變凍結設定；branch 也保留它。抽屜打開
 期間，run bar 顯示 Start（停用：「close Continue… to start a new run」）、

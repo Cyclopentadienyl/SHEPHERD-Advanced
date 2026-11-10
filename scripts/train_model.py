@@ -835,7 +835,7 @@ def plan_from_parent(
     loads the file (`read_checkpoint(expected_sha256=)`): the weights a run
     restores at its end are the ones its record names, or the run is refused.
     """
-    from src.utils.run_plan import RunPlanRefused, plan_continuation
+    from src.utils.run_plan import RunPlanRefused, decoded_sentence, plan_continuation
     from src.utils.checkpoint_io import read_checkpoint
 
     if explicit is None:
@@ -849,6 +849,8 @@ def plan_from_parent(
     if plan.inherited:
         logger.info("Inherited from the parent: " + ", ".join(
             f"{name}={value!r}" for name, value in sorted(plan.inherited.items())))
+    if plan.decoded:
+        logger.info(decoded_sentence(plan.decoded))
 
     best_weights = None
     if (plan.best_weights or {}).get("kind") == "file":
@@ -1069,7 +1071,8 @@ def inherited_recipe_record(stage: str, task: Optional[str], explicit: Set[str],
     reference setting is the parent's or the operator's. `decoded` is each
     setting the one settings decode gave that the parent's record does not
     hold (`run_plan.decode_learning_settings`), with its source in words
-    ("none, decoded from rules 1: ..."); the parent's file is not changed."""
+    ("none, decoded from rules 1: ..."), listed there and not as inherited
+    (one source per setting); the parent's file is not changed."""
     from src.config.recipe import reference_settings
 
     values, _ = reference_settings(stage, task)
@@ -1200,7 +1203,7 @@ def train(config: TrainConfig, explicit: Collection[str], *,
     from src.utils.checkpoint_paths import (
         check_run_dir_free, claim_run_dir, propose_run_dir, run_checkpoint_dir, run_log_dir,
     )
-    from src.utils.run_plan import RunPlanRefused, plan_branch
+    from src.utils.run_plan import RunPlanRefused, decoded_sentence, plan_branch
 
     if explicit is None:
         raise TypeError("train() needs the fields the operator set (explicit); they are "
@@ -1235,11 +1238,14 @@ def train(config: TrainConfig, explicit: Collection[str], *,
         frozen_problem = frozen_parts_problem(stage, config.frozen_parts)
         if frozen_problem:
             raise ValueError(frozen_problem)
+    # A base reads no finetune setting (a task's, or the freeze); a finetune
+    # reads its own task's, not another task's.
     unread = sorted(explicit_set & unread_settings(stage, config.task))
     if unread:
         raise ValueError(
-            f"{', '.join(unread)} configure another task, which a {stage} run"
-            + (f" for {config.task}" if config.task else "")
+            f"{', '.join(unread)} configure "
+            + ("a finetune" if stage == "base" else "another task")
+            + f", which a {stage} run" + (f" for {config.task}" if config.task else "")
             + " does not read. Remove them.")
     if expected_parent_sha256 is not None and not (config.finetune_from or config.branch_from):
         raise ValueError("--expect-parent-sha256 names a finetune or branch parent; give "
@@ -1310,6 +1316,8 @@ def train(config: TrainConfig, explicit: Collection[str], *,
                                   _asdict(config), explicit_set, device=device,
                                   record_version=MODEL_RECORD_VERSION)
         logger.info(f"{branch_plan.action}.")
+        if branch_plan.decoded:
+            logger.info(decoded_sentence(branch_plan.decoded))
         config = TrainConfig(**branch_plan.settings)
         recipe = inherited_recipe_record(stage, config.task, explicit_set,
                                          branch_plan.inherited, branch_plan.decoded)

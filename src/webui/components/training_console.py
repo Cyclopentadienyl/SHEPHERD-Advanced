@@ -2535,12 +2535,17 @@ def _check_html(preview: Mapping[str, Any], source: str, *, differs: bool = Fals
                     r.e(preview["action"]))
     lines.append(f"<p>Plan read from the checkpoint: {action}.</p>")
     inherited = preview.get("inherited") or {}
-    if inherited:
-        rows = "".join(f"<tr><td>{r.e(k)}</td><td><code>{r.e(repr(inherited[k]))}</code></td></tr>"
-                       for k in sorted(inherited))
+    # A setting the checkpoint's record does not hold, which the settings
+    # decode gave (a rules-1 parent's freeze), is listed once, with the
+    # decode's own words as its value: where it came from is the fact shown.
+    decoded = preview.get("decoded") or {}
+    if inherited or decoded:
+        values = {**{k: f"<code>{r.e(repr(v))}</code>" for k, v in inherited.items()},
+                  **{k: r.e(source) for k, source in decoded.items()}}
+        rows = "".join(f"<tr><td>{r.e(k)}</td><td>{values[k]}</td></tr>" for k in sorted(values))
         lines.append(
             f'<details class="shep-inherit"><summary>Settings taken from this checkpoint '
-            f'<span class="shep-muted">({len(inherited)}; fixed when continuing)</span></summary>'
+            f'<span class="shep-muted">({len(values)}; fixed when continuing)</span></summary>'
             '<p class="shep-note">They cannot be changed when continuing; to train with other '
             'settings, start a new run.</p>'
             f'<table class="shep-ftbl"><thead><tr><th>Setting</th><th>Value</th></tr></thead>'

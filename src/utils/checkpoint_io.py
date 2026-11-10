@@ -69,8 +69,11 @@ from src.utils.fingerprint import ReadIdentity
 #: entry for the new version in the pin of released rules
 #: (`RULES_LEARNING_SETTINGS`, tests/unit/test_training_fields.py), the decode
 #: of each earlier released version that the current executor can faithfully
-#: run, and a behaviour test for the setting whose meaning changed. A released
-#: entry is never edited.
+#: run, and a behaviour test for the setting whose meaning changed. The
+#: continued versions are listed literally (`run_plan.CONTINUED_RULES`) and
+#: pinned equal to the released entries, so a new version fails there until
+#: each earlier one is decoded, or retired with its reason. A released entry is
+#: never edited.
 TRAINING_RULES_VERSION = 2
 
 __all__ = ["CheckpointChanged", "CheckpointRead", "TRAINING_RULES_VERSION", "read_checkpoint",

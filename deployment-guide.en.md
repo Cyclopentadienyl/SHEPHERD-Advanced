@@ -3119,8 +3119,9 @@ research comparison Stage 9a (2026-11-10) new checkpoints record training rules 
 setting, `frozen_parts` (which parts of a finetune do not train: `none`, the recipe's, or
 `graph_side`). A parent of rules 1 continues: one settings decode, shared by Check checkpoint and
 the training process, reads it with `frozen_parts` none from what its record shows (rules 1 had
-no freeze; a finetune's weight transfer records every part trainable), says so after the plan
-("…; frozen_parts none, decoded from rules 1: rules 1 had no freeze and trained every part") and
+no freeze; a finetune's weight transfer records every part trainable), lists it once under
+"Settings taken from this checkpoint" with that source ("none, decoded from rules 1: rules 1 had
+no freeze and trained every part"), as the training log says it on a line of its own, and
 records that source on the continued run's checkpoints; the parent's file is not changed. A
 parent that records no rules (K4's) or rules this version does not know is refused, and so is
 any other missing, contradictory or unknown setting. A continued run never changes the freeze; a

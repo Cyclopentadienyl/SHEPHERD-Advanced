@@ -499,12 +499,18 @@ def _recipe_settings_problem(settings: Mapping[str, Any], references: Sequence[M
     the start makes (`reference_settings`: one per Fine-tune task, one for a
     base), so a setting is taken only when every run reads it, its value only
     when its field spec takes it (`value_problem`), and None only where a
-    reference value is None; the freeze, by the training process's own check
-    of it (`frozen_parts_problem`). Checked here, a refused setting starts
+    reference value is None. The freeze is checked first, by the training
+    process's own check of it and in its order (`frozen_parts_problem`, before
+    the settings a run does not read), so a base asked to freeze hears from
+    both that nothing would train. Checked here, a refused setting starts
     nothing and writes nothing."""
     from src.config.recipe import frozen_parts_problem
     from src.config.training_fields import value_problem
 
+    if "frozen_parts" in settings:
+        frozen = frozen_parts_problem(learning_stage, settings["frozen_parts"])
+        if frozen:
+            return frozen
     common = set.intersection(*(set(values) for values in references))
     unread = sorted(set(settings) - common)
     if unread:
@@ -513,9 +519,6 @@ def _recipe_settings_problem(settings: Mapping[str, Any], references: Sequence[M
     problems = [problem for name, value in sorted(settings.items())
                 for problem in [value_problem(name, value, allow_none=any(
                     values.get(name) is None for values in references))] if problem]
-    if not problems and "frozen_parts" in settings:
-        problems = [problem for problem in [frozen_parts_problem(
-            learning_stage, settings["frozen_parts"])] if problem]
     return " ".join(problems) or None
 
 

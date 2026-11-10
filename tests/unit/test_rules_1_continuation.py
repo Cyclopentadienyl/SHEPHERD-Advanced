@@ -16,18 +16,21 @@ the rules-1 build wrote of the same run, checked field by field against
 checkpoints the rules-1 code itself wrote when this stage was built). Each is
 resumed, extended and branched from both forms, through `train_model.train`,
 and the two children compared: rules 2 and `frozen_parts` "none" recorded on
-both, the decode's source on the rules-1 child only, and the same optimizer
-groups, scheduler state, mixed precision and scaler state, early stopping,
-validation (a base's on its split's pairs), progress, settings and recipe
-record. The preview says what the process logs, word for word. Every case is
-compatible: no rules-1 continuation retires. The parents' files are never
-rewritten.
+both, the decode's source on the rules-1 child only (there `frozen_parts` has
+one source, the decode, not also "inherited"), and the same optimizer groups,
+scheduler state, mixed precision and scaler state, early stopping, validation
+(a base's on its split's pairs), progress, settings and recipe record. The
+preview says what the process logs, word for word: the same plan sentence for
+both forms, and the same decoded setting with its source, which the process
+logs in a sentence of its own. Every case is compatible: no rules-1
+continuation retires. The parents' files are never rewritten.
 
 **Refused, with the reason, by the preview and the process in the same
-sentence:** a rules-1 record that names a freeze or records a weight transfer
-other than "all", a rules-1 record missing another current setting (nothing is
-filled for it), a rules-2 record with an unknown freeze, a base recorded with
-a freeze, a freeze this build does not apply yet, a resume that states another
+sentence:** a rules-1 record that names a freeze, a record of either rules
+whose weight transfer contradicts its freeze (one check: "all" exactly when
+nothing is frozen), a rules-1 record missing another current setting (nothing
+is filled for it), a rules-2 record with an unknown freeze, a base recorded
+with a freeze, a freeze this build does not apply yet, a resume that states another
 freeze (a plain continuation never swaps it; a branch keeps it too), rules
 this build does not know, and K4's records (no rules). Mixed precision on,
 which the CPU cannot run, is shown at the plan: decided for a rules-1 parent
@@ -61,9 +64,10 @@ _BASE_LP_TASK = lp_task.BaseLPTask
 TASKS = ("disease", "gene", "patients_like_me")
 MODELS = ("base",) + TASKS
 OPERATIONS = ("resume", "extend", "branch")
-#: The decode's source of a rules-1 parent's freeze, as the plan says it after
-#: its action and a continued run records it (`decoded_from_parent`): a base
-#: records no weight transfer, a finetune its own.
+#: The decode's source of a rules-1 parent's freeze, as the plan carries it
+#: (`decoded`), the process logs it and a continued run records it
+#: (`decoded_from_parent`): a base records no weight transfer, a finetune its
+#: own.
 DECODED = "none, decoded from rules 1: rules 1 had no freeze and trained every part"
 DECODED_FINETUNE = DECODED + " (its weight transfer records trainable 'all')"
 #: The paused base's own settings beside the demo's: a cosine schedule with
@@ -230,6 +234,13 @@ def test_a_rules_1_parent_continues_as_its_rules_2_form_does(runs, model, operat
     recipe_2 = dict(child_2["config"]["effective"]["loaders"]["train"]["recipe"])
     assert recipe_1.pop("decoded_from_parent") == {"frozen_parts": decoded}
     assert recipe_2.pop("decoded_from_parent") == {}
+    # One source per setting: the decoded freeze is not also inherited (a
+    # base's recipe has no freeze to list; a finetune's lists it as inherited
+    # from a rules-2 parent, which records it).
+    inherited_2 = recipe_2.pop("inherited_from_parent")
+    assert recipe_1.pop("inherited_from_parent") == [n for n in inherited_2
+                                                     if n != "frozen_parts"]
+    assert ("frozen_parts" in inherited_2) is (model != "base")
     assert recipe_1 == recipe_2
     assert {rules: _sha(path) for rules, path in files.items()} == before
 
@@ -260,19 +271,27 @@ def test_a_rules_1_parent_continues_as_its_rules_2_form_does(runs, model, operat
         assert child_1["config"]["early_stopping"] is True
         assert "scheduler_state_dict" in child_1, "the cosine schedule rebuilt and restored"
 
-    # The preview says what the process does, in its words.
+    # The preview says what the process does, in its words: the plan's
+    # sentence alike for both forms, the decoded setting in its own.
+    from src.utils.run_plan import decoded_sentence
+
+    said_decoded = decoded_sentence({"frozen_parts": decoded})
+    assert said_decoded == f"Not in the parent's record: frozen_parts {decoded}."
+    assert said_decoded in said_1
+    assert not any(s.startswith("Not in the parent's record") for s in said_2)
     if operation == "branch":
         (action,) = [s for s in said_1 if s.startswith("Branch rules1.pt:")]
-        assert action.endswith(f"; frozen_parts {decoded}.")
         (control,) = [s for s in said_2 if s.startswith("Branch last.pt:")]
-        assert action == control.replace("last.pt", "rules1.pt")[:-1] + f"; frozen_parts {decoded}."
+        assert action == control.replace("last.pt", "rules1.pt")
         return
     assert preview_1["ok"] and preview_2["ok"], (preview_1.get("reason"), preview_2.get("reason"))
     assert f"{preview_1['action']}." in said_1 and f"{preview_2['action']}." in said_2
-    assert preview_1["action"] == f"{preview_2['action']}; frozen_parts {decoded}"
+    assert preview_1["action"] == preview_2["action"]
     assert preview_1["decoded"] == {"frozen_parts": decoded} and preview_2["decoded"] == {}
-    assert preview_1["inherited"] == preview_2["inherited"]
-    assert preview_1["inherited"]["frozen_parts"] == "none"
+    assert "frozen_parts" not in preview_1["inherited"]
+    assert preview_2["inherited"]["frozen_parts"] == "none"
+    assert preview_1["inherited"] == {name: value for name, value in preview_2["inherited"].items()
+                                      if name != "frozen_parts"}
     assert ("Inherited from the parent: " + ", ".join(
         f"{name}={value!r}" for name, value in sorted(preview_1["inherited"].items()))) in said_1
     assert (preview_1["mode"], preview_1["start_epoch"], preview_1["end_epoch"]) == (
@@ -303,6 +322,9 @@ def _set_requested(name, value):
     ("gene", 1, lambda p: p["weight_transfer"].__setitem__("trainable", "task_head"),
      "records a weight transfer with trainable 'task_head' under training rules 1, which "
      "trained every part ('all'), so its record contradicts its rules."),
+    ("gene", 2, lambda p: p["weight_transfer"].__setitem__("trainable", "task_head"),
+     "records a weight transfer with trainable 'task_head' beside frozen_parts 'none', which "
+     "trains every part ('all'), so its record contradicts itself."),
     ("patients_like_me", 1, lambda p: p["config"]["requested"].pop("max_grad_norm"),
      "does not record max_grad_norm, so the run cannot inherit them."),
     ("base", 1, lambda p: p["config"]["requested"].pop("warmup_steps"),
@@ -324,7 +346,8 @@ def _set_requested(name, value):
     ("base", 1, lambda p: p.pop("training_rules"),
      "was trained under other training rules (none recorded, K4's): this build turns early "
      "stopping on exactly when a patience is in effect"),
-], ids=["r1-names-a-freeze", "r1-transfer-not-all", "r1-missing-setting", "r1-base-missing",
+], ids=["r1-names-a-freeze", "r1-transfer-not-all", "r2-none-transfer-not-all",
+        "r1-missing-setting", "r1-base-missing",
         "r2-unknown-freeze", "r2-missing-freeze", "r2-base-frozen", "r2-not-applied-yet",
         "unknown-rules", "k4-no-rules"])
 def test_what_the_decode_cannot_run_is_refused_alike(runs, tmp_path, model, rules, edit, said):
@@ -405,26 +428,43 @@ def test_mixed_precision_is_decided_for_a_rules_1_parent_as_for_its_rules_2_form
         refusals[rules] = str(refused.value)
     assert refusals[1] == refusals[2] and "mixed precision on" in refusals[1]
     assert plans[1].settings == plans[2].settings and plans[1].settings["use_amp"] is True
-    assert plans[1].inherited == plans[2].inherited
+    assert plans[1].inherited == {name: value for name, value in plans[2].inherited.items()
+                                  if name != "frozen_parts"}
     assert plans[1].decoded == {"frozen_parts": DECODED if model == "base" else DECODED_FINETUNE}
     assert plans[2].decoded == {}
 
 
-def test_a_new_run_is_checked_for_its_freeze_by_the_process_and_the_job_runner(runs, tmp_path):
-    """A new run's freeze, by the one check (`frozen_parts_problem`): a base
-    with a freeze is refused (nothing would train), and so, in this build, is
-    a finetune asked to freeze its graph side, by the training process and
-    the job runner's Fine-tune start in the same words; nothing is written or
-    started."""
+def test_a_new_run_is_checked_for_its_freeze_by_the_process_and_the_job_runner(
+        runs, tmp_path, monkeypatch):
+    """A new run's freeze, by the one check (`frozen_parts_problem`), first
+    in both: a base with a freeze is refused (nothing would train), and so, in
+    this build, is a finetune asked to freeze its graph side, by the training
+    process and the job runner's start (`start_training` for a base, the
+    Fine-tune start for a child) in the same words; nothing is written or
+    started. A base given the freeze's "none" is refused as a setting a base
+    does not read, by the process in words true of it."""
+    import subprocess
+
     from src.api.services.training_manager import FinetuneInputs, TrainingManager
     from src.config.recipe import frozen_parts_problem
 
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: pytest.fail("a run was started"))
     base = runs["files"][("base", "finished")][2]
     with pytest.raises(ValueError) as base_refused:
         _train(data_dir=str(runs["workspace"]), run_dir=str(tmp_path / "base"),
-               learning_stage="base", device="cpu", frozen_parts="graph_side")
+               learning_stage="base", device="cpu", frozen_parts="graph_side",
+               candidate_sample_size=3)
     assert str(base_refused.value) == frozen_parts_problem("base", "graph_side")
     assert "every part a base run has, so nothing would train" in str(base_refused.value)
+    started = TrainingManager().start_training({
+        "data_dir": str(runs["workspace"]), "learning_stage": "base", "device": "cpu",
+        "frozen_parts": "graph_side", "candidate_sample_size": 3})
+    assert started["success"] is False and started["invalid_settings"] is True
+    assert started["error"] == f"{base_refused.value} Nothing was started."
+    with pytest.raises(ValueError, match=r"^frozen_parts configure a finetune, which a base run "
+                                         r"does not read\. Remove them\.$"):
+        _train(data_dir=str(runs["workspace"]), run_dir=str(tmp_path / "base"),
+               learning_stage="base", device="cpu", frozen_parts="none")
     with pytest.raises(ValueError) as child_refused:
         _train(data_dir=str(runs["workspace"]), run_dir=str(tmp_path / "child"),
                learning_stage="finetune", task="disease", finetune_from=str(base), device="cpu",
@@ -436,3 +476,34 @@ def test_a_new_run_is_checked_for_its_freeze_by_the_process_and_the_job_runner(r
         device="cpu", run_name="", settings={"frozen_parts": "graph_side"}))
     assert started["success"] is False and started["error"] == f"{said} Nothing was started."
     assert not (tmp_path / "base").exists() and not (tmp_path / "child").exists()
+
+
+def test_the_continue_drawer_says_the_plan_and_lists_the_decoded_freeze_once(runs, tmp_path):
+    """The Continue drawer, from the job runner's real preview of a rules-1
+    finetune: its plan line is the same short sentence as for the rules-2
+    form (no decode clause, no internal names: WebUI skill §5), and the freeze
+    is listed once, among the settings taken from the checkpoint, with the
+    decode's own words as its source, never also as an inherited value."""
+    import html
+    import re
+
+    from src.webui.components import training_console as tc
+
+    previews = {}
+    for rules in (1, 2):
+        parent = runs["files"][("disease", "finished")][rules]
+        previews[rules] = _preview(_fields(runs, "disease", "extend", parent, tmp_path / "run"))
+        assert previews[rules]["ok"], previews[rules].get("reason")
+    shown = {rules: tc._check_html(preview, tc.CONTINUE_FROM_PATH)
+             for rules, preview in previews.items()}
+    for rules, text in shown.items():
+        (plan,) = re.findall(r"<p>Plan read from the checkpoint: (.*?)\.</p>", text)
+        plan = html.unescape(re.sub(r"<[^>]+>", "", plan))
+        assert plan == previews[rules]["action"] == previews[2]["action"]
+        assert "frozen_parts" not in plan and "rules" not in plan and len(plan.split()) <= 20
+        assert text.count("frozen_parts") == 1
+        count = len(previews[rules]["inherited"]) + len(previews[rules]["decoded"])
+        assert f"({count}; fixed when continuing)" in text
+    assert (f"<tr><td>frozen_parts</td><td>{html.escape(DECODED_FINETUNE, quote=True)}</td></tr>"
+            in shown[1])
+    assert "<tr><td>frozen_parts</td><td><code>&#x27;none&#x27;</code></td></tr>" in shown[2]

@@ -469,6 +469,23 @@ def test_the_released_rules_1_entry_is_never_edited():
     assert set(RULES_LEARNING_SETTINGS[2]) == set(entry) | {"frozen_parts"}
 
 
+def test_every_released_rules_version_is_continued():
+    """The released rules this build continues (`run_plan.CONTINUED_RULES`,
+    written as the versions themselves) are exactly the released entries, the
+    current rules among them (research comparison Stage 9a review): raising
+    `TRAINING_RULES_VERSION` without a person deciding how each earlier
+    released version decodes for the new executor (`decode_learning_settings`)
+    fails here, never drops released rules into "rules this build does not
+    know". A version that cannot be continued any more leaves both lists only
+    by a recorded retirement, its reason written here."""
+    from src.utils.checkpoint_io import TRAINING_RULES_VERSION
+    from src.utils.run_plan import CONTINUED_RULES
+
+    assert TRAINING_RULES_VERSION in CONTINUED_RULES
+    assert list(CONTINUED_RULES) == sorted(set(CONTINUED_RULES))
+    assert set(CONTINUED_RULES) == set(RULES_LEARNING_SETTINGS)
+
+
 def _released_entry():
     from src.utils.checkpoint_io import TRAINING_RULES_VERSION
 

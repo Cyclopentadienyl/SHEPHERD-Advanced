@@ -254,7 +254,8 @@ def test_another_tasks_setting_is_refused_never_ignored(trained, tmp_path):
     assert not (tmp_path / "child").exists()
     base = train_model.TrainConfig(data_dir=str(trained["data_dir"]), run_dir=str(tmp_path / "b"),
                                    learning_stage="base", task_loss_weight=0.5, device="cpu")
-    with pytest.raises(ValueError, match="task_loss_weight configure another task"):
+    with pytest.raises(ValueError, match="task_loss_weight configure a finetune, which a base "
+                                         "run does not read"):
         train_model.train(base, {"learning_stage", "task_loss_weight", "device"})
 
 

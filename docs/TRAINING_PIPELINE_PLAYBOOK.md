@@ -174,8 +174,10 @@ parent missing a current setting is refused. Check checkpoint and the run decide
 alike. Since research comparison Stage 9a (2026-11-10) checkpoints record training
 rules 2, which add `frozen_parts` (which parts of a finetune do not train). A
 rules-1 parent still continues: one settings decode reads it with `frozen_parts`
-none, from what its record shows (rules 1 had no freeze), says so after the plan
-and records that source on the continued run; its file is not changed. A parent
+none, from what its record shows (rules 1 had no freeze), lists it with that
+source beside the inherited settings (the drawer's "Settings taken from this
+checkpoint", a line of its own in the training log) and records that source on
+the continued run; its file is not changed. A parent
 with no rules recorded (K4's) or rules this version does not know is refused, and
 a continued or branched run never changes the freeze.
 
