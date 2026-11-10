@@ -310,6 +310,26 @@ ALLOWED = {
         (1, _PROBE + "A5 (BACKLOG 59): an installed distribution's direct_url.json, read to "
             "tell this checkout's editable install; the environment's description, not an "
             "input"),
+    # --- The deployment probe's research comparison (Stage 10): its own outputs ---
+    # The kept reports, the version manifests and the pairs these probes check
+    # are read through the product's readers (`_read_json`, `resolve_version`,
+    # `read_kg_edge_pairs`); what is listed here no product path reads back.
+    ("scripts/probe_deployment.py", "_lp_scores_verified", "read_once"):
+        (1, _PROBE + "L2, L3, L5: the scores file the measurement this probe ran kept, read "
+            "once; its digest and size are held to the ones its report names and the same "
+            "bytes are parsed by the LP core (lp_scores_from_table) to be checked against the "
+            "pairs and the summary. No product path reads it back (its digest is the "
+            "writer's); not an input"),
+    ("scripts/probe_deployment.py", "_rc_demo._exported", "read_once"):
+        (1, _PROBE + "L8: the export this probe had the export command write, read once; the "
+            "digest of those bytes is the evidence (export_sha256)"),
+    ("scripts/probe_deployment.py", "_rc_demo._exported", "json.loads"):
+        (1, _PROBE + "L8: that export, parsed from the bytes of its one read, its rows held to "
+            "the runs the flow kept; not an input"),
+    # --- The deployment probe's M1 readings (research comparison Stage 10b, S1) ---
+    ("scripts/probe_deployment.py", "_served_requests", "json.loads"):
+        (1, _PROBE + "S1: a timed diagnose request's HTTP answer from the service the probe "
+            "started, read for its served identity and handler time; not a file"),
 }
 
 _MODULES = ("hashlib", "json", "torch")

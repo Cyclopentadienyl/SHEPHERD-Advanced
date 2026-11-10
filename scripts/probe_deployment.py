@@ -5741,9 +5741,13 @@ def _lp_scores_verified(run: Path, report: Mapping[str, Any], version: Any, chec
       rounding.
 
     The pairs are read through the digest-checking reader
-    (`read_kg_edge_pairs`). Returns the evidence: counts, digests and the
+    (`read_kg_edge_pairs`). The scores file is read once (`read_once`), so
+    the digest held to the report's is that of the bytes the LP core then
+    parses (contract M2.1's rule for every reader). Nothing in the product
+    reads it back (the measurement's digest is its writer's,
+    `publish_chunks`): this read is the probe's own check of a file it had
+    the measurement keep. Returns the evidence: counts, digests and the
     largest raw-score difference."""
-    import hashlib
     import math
 
     import numpy as np
@@ -5760,10 +5764,12 @@ def _lp_scores_verified(run: Path, report: Mapping[str, Any], version: Any, chec
     )
     from src.models.bundle.record import load_bundle
     from src.utils.checkpoint_io import read_checkpoint
+    from src.utils.fingerprint import read_once
 
     scores = report["scores"]
-    data = (run / scores["file"]).read_bytes()
-    assert hashlib.sha256(data).hexdigest() == scores["sha256"] and len(data) == scores["bytes"], (
+    read = read_once(run / scores["file"])
+    data = read.data
+    assert read.sha256 == scores["sha256"] and len(data) == scores["bytes"], (
         "the scores file is not the bytes the report names")
     pairs = read_kg_edge_pairs(version).pairs
     block = version.manifest["pairs"]
@@ -6026,12 +6032,14 @@ def _rc_demo(report: Report, work: Path, sound: Path, base: Path, child: Path, d
 
     def _measured_and_registered(probe_id: str, checkpoint: Path, checkpoint_sha256: str,
                                  label: str, version: Any, protocol: str
-                                 ) -> Tuple[str, Dict[str, Any]]:
+                                 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """`checkpoint` measured by `protocol` on `version` through the
         measurement command with --record: one run kept in the version's
         store, its report naming the checkpoint, the version and the protocol,
         run on the probe's device (`_ran_on`), and one record of it beside the
-        checkpoint, read as its kind's view."""
+        checkpoint, read as its kind's view. Returns the evidence, and the
+        report as parsed from its one read (`_read_json`), so a caller checks
+        what else it holds without reading the file again."""
         from src.kg.storage.file_storage import _read_json
 
         reports = _reports(label)
@@ -6053,10 +6061,10 @@ def _rc_demo(report: Report, work: Path, sound: Path, base: Path, child: Path, d
         record = _registered_record(checkpoint, identity.sha256, run_id, version,
                                     checkpoint_sha256)
         _keep(probe_id, run_id, identity.sha256, checkpoint_sha256, version, record, kept_report)
-        return run_id, {"run_id": run_id, "report_sha256": identity.sha256,
-                        "protocol": protocol, "n_ranked": kept_report.get("n_ranked"),
-                        "metrics": kept_report.get("authoritative_metrics"),
-                        "cuda_executed": manifest["cuda_executed"], "record": record}
+        return {"run_id": run_id, "report_sha256": identity.sha256,
+                "protocol": protocol, "n_ranked": kept_report.get("n_ranked"),
+                "metrics": kept_report.get("authoritative_metrics"),
+                "cuda_executed": manifest["cuda_executed"], "record": record}, kept_report
 
     # ---- L1: the flow's deployment and a KG edge set imported from the base
     def _kg_edge_set() -> Tuple[str, Dict[str, Any]]:
@@ -6262,9 +6270,9 @@ def _rc_demo(report: Report, work: Path, sound: Path, base: Path, child: Path, d
         # has other node and relation ids, and this build has no mapping
         # between views: a stated capability gap, not a research rule.
         sizes = demo_task_training()["base"]
-        spec = json.loads(json.dumps(sizes["model_spec"]))
-        spec["graph_view"] = {**(spec.get("graph_view") or {}),
-                              "exclude_relations": list(RC_OTHER_VIEW_EXCLUDES)}
+        spec = {**sizes["model_spec"],
+                "graph_view": {**(sizes["model_spec"].get("graph_view") or {}),
+                               "exclude_relations": list(RC_OTHER_VIEW_EXCLUDES)}}
         other_view = _last(_train_run(state["workspace"], rc / "other_view_base", device,
                                       stage="base", epochs=1,
                                       settings={**sizes, "model_spec": spec}))
@@ -6283,13 +6291,16 @@ def _rc_demo(report: Report, work: Path, sound: Path, base: Path, child: Path, d
         # shape (the reader refuses a pairs seed that is not the split's): the
         # split record's seed and its recorded digest now contradict each
         # other on the view, so the split does not rebuild from the graph the
-        # version binds.
+        # version binds. The manifest changed is the one the import's
+        # `resolve_version` parsed from the file's bytes, never a second read.
         version, _ = _import_version(registry, state["workspace"], None, RC_KG_SPLIT_LABEL,
                                      kind_argv=_kg_edges_argv(state["base"]))
-        path = version.identity.path
-        manifest = json.loads(path.read_text(encoding="utf-8"))
-        manifest["split"]["seed"] = manifest["pairs"]["seed"] = int(manifest["split"]["seed"]) + 1
-        path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+        held = version.manifest
+        seed = int(held["split"]["seed"]) + 1
+        manifest = {**held, "split": {**held["split"], "seed": seed},
+                    "pairs": {**held["pairs"], "seed": seed}}
+        version.identity.path.write_text(json.dumps(manifest, indent=2, sort_keys=True),
+                                         encoding="utf-8")
         refusal, _ = _lp_refused(RC_KG_SPLIT_LABEL, state["base"], ValueError,
                                  ("records an edge split that does not rebuild",
                                   "its record contradicts the graph it binds"))
@@ -6308,7 +6319,7 @@ def _rc_demo(report: Report, work: Path, sound: Path, base: Path, child: Path, d
         supplied, _ = _import_version(registry, state["workspace"], source, RC_SUPPLIED_LABEL)
         state["supplied"] = supplied
         child_path, child_sha = state["child"], state["child_sha"]
-        _, disease = _measured_and_registered("L5", child_path, child_sha, RC_SUPPLIED_LABEL,
+        disease, _ = _measured_and_registered("L5", child_path, child_sha, RC_SUPPLIED_LABEL,
                                               supplied, "disease")
         # A finetune passed messages over the full view in its validation, so
         # its figure on the base's test part reads after full-view exposure.
@@ -6363,10 +6374,8 @@ def _rc_demo(report: Report, work: Path, sound: Path, base: Path, child: Path, d
                                            "workspace's"
         assert manifest.get("task_fixture"), "the generated split keeps no functional fixture"
         state["generated"] = version
-        run_id, measured = _measured_and_registered("L6", state["child"], state["child_sha"],
-                                                    RC_GENERATED_LABEL, version, "disease")
-        kept_report = json.loads((_reports(RC_GENERATED_LABEL) / run_id / REPORT_FILE)
-                                 .read_text(encoding="utf-8"))
+        measured, kept_report = _measured_and_registered(
+            "L6", state["child"], state["child_sha"], RC_GENERATED_LABEL, version, "disease")
         assert (kept_report["manifest"]["split"], kept_report["manifest"]["r10"]) == (
             "val", None), "the report is not of the generated val split, without R10"
         assert measured["record"]["view"] == "GeneratedRecordView", (
@@ -6407,7 +6416,7 @@ def _rc_demo(report: Report, work: Path, sound: Path, base: Path, child: Path, d
                 f"on {device}")
             label, version = ((RC_SUPPLIED_LABEL, state["supplied"]) if task == "disease"
                               else (RC_GENERATED_LABEL, state["generated"]))
-            _, measured = _measured_and_registered(f"L7.{task}", trained, sha, label, version,
+            measured, _ = _measured_and_registered(f"L7.{task}", trained, sha, label, version,
                                                    task)
             assert measured["record"]["sequence"] == 1, "the child's ledger held a record before"
             return f"a {task} child trained on {device}, measured by its protocol and registered", {
@@ -6426,11 +6435,11 @@ def _rc_demo(report: Report, work: Path, sound: Path, base: Path, child: Path, d
 
     # ---- L8: the results export, every record of the flow, uncapped
     def _exported() -> Tuple[str, Dict[str, Any]]:
-        import hashlib
         import io
 
         import scripts.export_results as export_results
         from src.api.services import results
+        from src.utils.fingerprint import read_once
         # Models › Results' side-by-side cap: that view's only; a query and an
         # export are never capped (owner's O6), so the flow keeps more runs.
         from src.webui.components.results_segment import COMPARE_CAP
@@ -6447,7 +6456,10 @@ def _rc_demo(report: Report, work: Path, sound: Path, base: Path, child: Path, d
             raise AssertionError(f"the export refused its arguments (exit {refused.code})"
                                  ) from None
         assert code == 0, f"the export exited {code}"
-        text = output.read_text(encoding="utf-8")
+        # One read: the digest recorded is of the bytes checked and parsed.
+        written = read_once(output)
+        export_sha256, text = written.sha256, written.data.decode("utf-8")
+        del written
         assert str(work.resolve()) not in text and str(work) not in text, (
             "the export carries a server path")
         exported = json.loads(text)
@@ -6470,8 +6482,7 @@ def _rc_demo(report: Report, work: Path, sound: Path, base: Path, child: Path, d
                 _export_row_verified(row, expected[run_id])
         return "every run of the flow exported with its identities, settings, environment and " \
                "exposure; none capped, none unreadable", {
-                   "format": exported["format"], "export_sha256": hashlib.sha256(
-                       text.encode("utf-8")).hexdigest(),
+                   "format": exported["format"], "export_sha256": export_sha256,
                    "results": len(by_run), "rows": len(rows), "unreadable": 0,
                    "ui_compare_cap": COMPARE_CAP, "capped": False,
                    "runs": [{"probe": entry["probe"], "run_id": entry["run_id"],
