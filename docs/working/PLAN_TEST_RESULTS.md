@@ -526,7 +526,10 @@ Data versions and Keeping items keep, as of Stage 6.)*
   record, and its writer still appends other runs beside them (checked against `2da28cf`).
 - **Showing.** One reader, discriminated by data kind (`src/api/services/record_views.py`,
   `read_records`; in the route until research comparison Stage 8), behind the API's
-  loaded-model route, Models, `record_evaluation.py --show` and the results service:
+  loaded-model route, Models, `record_evaluation.py --show` and the results service, and, for
+  a kept report registered or not, the Test page's Result (its kind's result view,
+  `result_view`, since Stage 8b; a record it cannot read is shown with its reason, not as a
+  result; a KG edge set's and a generated split's lines in one rendering with Models'):
   each record as its kind's view (`RecordView` for a supplied cohort, unchanged;
   `KgEdgesRecordView` with its exposure view; `GeneratedRecordView` with its generation
   identity). A record of a kind this build does not read is listed with its reason, naming the
@@ -558,7 +561,13 @@ Data versions and Keeping items keep, as of Stage 6.)*
   `claude/research-comparison`, not merged), one read-only results service
   (`src/api/services/results.py`) reads every kept report and every readable ledger record, and
   `scripts/export_results.py` exports them as CSV or JSON, one row per result and metric, each
-  protocol's metrics under their own names, never ordered by a metric.
+  protocol's metrics under their own names, never ordered by a metric. Research › Models ›
+  Results (Stage 8b) shows the same rows for the selected model's family or the workspace, one
+  table per protocol newest first by run time, compares up to five side by side (differences
+  only by default; values as recorded, no computed difference, each metric row one protocol's)
+  and exports the chosen or shown rows through the same serializer, uncapped; each of its
+  handlers asks D8 first, since reading the results opens every workspace's checkpoints. A
+  default order for task records stays the owner's.
 - **Who may act.** D8's one check governs every operator operation (`src/utils/operator_access.py`).
 
 ### 4.0 One path per concern

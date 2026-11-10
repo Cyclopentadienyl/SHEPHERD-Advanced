@@ -72,9 +72,7 @@ import csv
 import io
 import logging
 import re
-import tempfile
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 import gradio as gr
@@ -96,6 +94,7 @@ from src.webui.components.help import copy_button, help_button, text_id
 from src.webui.components.renderers import IDENTITY_BANNERS
 from src.webui.components.renderers import NOT_A_MEDICAL_DEVICE as _NOT_A_MEDICAL_DEVICE
 from src.webui.components.renderers import e as _e
+from src.webui.exports import export_dir, file_slug
 from src.webui.components.renderers import kv_cells as _kv_cells
 from src.webui.components.renderers import short_hex as _short_hex
 from src.webui.operator_access import operator_access
@@ -1233,22 +1232,6 @@ def _task_meta_lines(result: Mapping[str, Any], kind: Optional[str]) -> List[str
     return []
 
 
-def _slug(value: Any, default: str) -> str:
-    return re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value or "")).strip("_") or default
-
-
-# One export directory reused across diagnoses in this process. Files are named by
-# session signature so they don't collide; periodic cleanup is future work.
-_EXPORT_DIR: Optional[Path] = None
-
-
-def _export_dir() -> Path:
-    global _EXPORT_DIR
-    if _EXPORT_DIR is None or not _EXPORT_DIR.exists():
-        _EXPORT_DIR = Path(tempfile.mkdtemp(prefix="shepherd_export_"))
-    return _EXPORT_DIR
-
-
 def _export_basename(result: Dict[str, Any]) -> str:
     """diagnosis_[SYNTHETIC_]<patient>_<session-signature> — distinct per run
     for easy filing.
@@ -1257,8 +1240,8 @@ def _export_basename(result: Dict[str, Any]) -> str:
     M3c): SYNTHETIC for a result from a synthetic workspace. A CSV has no place
     for a banner, and a file is often seen by its name alone.
     """
-    patient = _slug(result.get("patient_id"), "webui_patient")
-    session = _slug(result.get("session_id") or result.get("timestamp"), "run")
+    patient = file_slug(result.get("patient_id"), "webui_patient")
+    session = file_slug(result.get("session_id") or result.get("timestamp"), "run")
     kind, identity = _identity_of(result)
     marker = ("SYNTHETIC_" if kind == _SERVED and identity is not None
               and _is_synthetic(identity) else "")
@@ -1269,7 +1252,9 @@ def _write_exports(result: Dict[str, Any]) -> Tuple[str, str]:
     """Generate both export files for a result up front (so the DownloadButtons
     can serve them on the first click). Returns (csv_path, md_path)."""
     base = _export_basename(result)
-    directory = _export_dir()
+    # The dashboard's one download directory (`src/webui/exports.py`); files
+    # are named by session signature so they do not collide.
+    directory = export_dir()
     csv_path = directory / f"{base}.csv"
     md_path = directory / f"{base}_report.md"
     csv_path.write_text(_build_results_csv(result), encoding="utf-8")

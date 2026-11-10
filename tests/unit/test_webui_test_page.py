@@ -969,25 +969,33 @@ def test_a_result_of_another_or_no_mode_is_shown_as_recorded(site):
     """A record whose mode this version does not describe, or whose mode cannot
     be read, is named for what it is by the one display for every mode (R2):
     its own label, no tiles and no claim of what its cases are, its metrics as
-    recorded in one "Recorded metrics" row; never another mode's words. Each
-    report row names its mode first (ui_api-5), a kept Mode C report's as "mode
-    C, not described by this version", and what the Run panel fixes names no
-    measurement: the Measurement radio offers the protocols."""
+    recorded in one "Recorded metrics" row; never another mode's words. A
+    record whose mode cannot be read is one the one reader does not read as a
+    result (research comparison Stage 8b: the result view the results service
+    and Models read by): it says so with the field named, never another mode's
+    words. Each report row names its mode first (ui_api-5), a kept Mode C
+    report's as "mode C, not described by this version", and what the Run
+    panel fixes names no measurement: the Measurement radio offers the
+    protocols."""
     import html as html_lib
 
     c_run = _keep_mode_c_report(site)
     reports = tp.read_reports(LABEL)
     run = {r["run_id"]: r for r in reports["runs"]}[c_run]
     record = run["record"]
-    for mode, label in (("E", "Mode E (a measurement mode this version does not describe)"),
-                        (None, "Measurement mode not recorded")):
-        changed = {**record, "scoring": {**record["scoring"], "mode": mode}}
-        raw = tp._record_html(changed, run, {})
-        text = html_lib.unescape(re.sub(r"<[^>]+>", "", raw))
-        assert label in text and "Mode C" not in text and "shep-test-tile-l" not in raw
-        assert "source cases ranked" not in text and "not described for this mode" in text
-        assert '<span class="shep-k">Recorded metrics</span>' in raw
-        assert "<div><code>untruncated_mrr</code> 0.5</div>" in raw
+    changed = {**record, "scoring": {**record["scoring"], "mode": "E"}}
+    raw = tp._record_html(changed, run, {})
+    text = html_lib.unescape(re.sub(r"<[^>]+>", "", raw))
+    assert "Mode E (a measurement mode this version does not describe)" in text
+    assert "Mode C" not in text and "shep-test-tile-l" not in raw
+    assert "source cases ranked" not in text and "not described for this mode" in text
+    assert '<span class="shep-k">Recorded metrics</span>' in raw
+    assert "<div><code>untruncated_mrr</code> 0.5</div>" in raw
+    unread = {**record, "scoring": {**record["scoring"], "mode": None}}
+    text = html_lib.unescape(re.sub(r"<[^>]+>", "", tp._record_html(unread, run, {})))
+    assert text.startswith("This report's record cannot be read as a result") and \
+        "scoring.mode" in text
+    assert "Mode C" not in text and "Recorded metrics" not in text
     assert "mode C, not described by this version: report kept" in tp.reports_html(reports, None)
     fixed = tp.fixed_html({})
     assert "Mode C" not in fixed and "Mode D" not in fixed and "Measurement" not in fixed
@@ -3382,14 +3390,22 @@ def test_every_checkpoint_is_listed_led_by_what_it_is(site, monkeypatch):
 
 
 def _task_record(mode, **metrics):
+    """A kept task report's record (`build_record`, as the store's scan builds
+    it, so the one reader reads it, research comparison Stage 8b) with these
+    metrics and a small cohort's counts."""
+    from tests.unit.test_evaluation_sidecar import registered_report
+
     base = {"pooled_mrr": 0.3125, "pooled_top1": 0.25, "pooled_top3": 0.5, "pooled_top10": 0.75,
             "macro_recall@1": 0.2, "macro_recall@5": 0.4, "macro_recall@10": 0.6,
             "macro_precision@1": 0.25, "macro_mrr": 0.33, "best_positive_mrr": 0.4,
             "conservative_pooled_mrr": 0.21, "coverage": 0.8}
-    return {"scoring": {"mode": mode}, "metrics": {**base, **metrics}, "n_ranked": 8,
-            "cohort": {"label": "v", "counts": {"source_cases": 13, "ranked_eligible": 10,
-                                                "n_excluded": 3,
-                                                "excluded": {"ground_truth_absent": 3}}}}
+    record = _kept_record(registered_report(mode=mode))
+    record["metrics"] = {**base, **metrics}
+    record["n_ranked"] = 8
+    record["cohort"]["label"] = "v"
+    record["cohort"]["counts"] = {"source_cases": 13, "ranked_eligible": 10, "n_excluded": 3,
+                                  "excluded": {"ground_truth_absent": 3}}
+    return record
 
 
 @pytest.mark.parametrize("mode", ["disease", "gene", "patients_like_me"])

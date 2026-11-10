@@ -2073,7 +2073,8 @@ python scripts/export_results.py --workspaces-root lab=/data/lab/workspaces \
 - **無法讀取的項目**（被拒絕的根目錄、解析到根目錄之外的 workspace 項目、版本、報告存放處、損壞的
   報告、checkpoint 檔、ledger、被手動編輯的紀錄，包括沒有指名任何權重的紀錄）自成一列並附原因，
   不會遮蔽其他任何列；若列出的 ledger 中有指名某保存報告之 run 但無法讀取的紀錄，該報告會如實說明，
-  而不是顯示「not registered」；stderr 會計數。篩選條件（`--family`、
+  而不是顯示「not registered」；stderr 會計數。篩選條件（`--family`、`--workspace`（找到該列的
+  workspace：列出其模型的 checkpoint，或持有其紀錄的 ledger；自 Stage 8b 起）、
   `--protocol`、`--data-kind`、`--role`、`--environment-class`、`--device`、`--torch-version`、
   `--cuda-version`、`--software-revision`）一律保留這些列。
 - `--output` 必須是新檔案；既有檔案絕不會被覆寫。不給 `--output` 時匯出到標準輸出。
@@ -2901,7 +2902,7 @@ CORS 只決定頁面能讀取什麼。不需要預檢的跨來源請求仍會抵
 | **Research (pre-clinical)** › Prepare › **Training** | run bar、下一次 run 的參數、Continue… 與附圖表的 run 檢視（見下文）。它是 Research 下最先顯示的頁面 |
 | **Research (pre-clinical)** › Prepare › **Fine-tune** | 一個 base 的任務模型（自 K6 起）：一個已列出的 base、一到三個任務（Disease、Gene、Patients-like-me），每個任務依序各自訓練成一個 run；一張 job card 顯示每個任務的狀態、Stop 與產出 |
 | **Research (pre-clinical)** › Evaluate › **Test** | 從伺服器的 intake 目錄匯入 cohort 版本、執行測試、保留並登錄其報告（見下文） |
-| **Research (pre-clinical)** › Evaluate › **Models** | 伺服器為某個 workspace 列出的 checkpoint、它們已記錄的測試結果、最新在前或依 family 排列，以及 Load（見下文） |
+| **Research (pre-clinical)** › Evaluate › **Models** | 伺服器為某個 workspace 列出的 checkpoint、它們已記錄的測試結果、最新在前或依 family 排列，以及 Load（見下文）；模型 family 或此 workspace 的結果，可比較與匯出（Results，自 research comparison Stage 8b 起） |
 | 頁首右側的 **⚙ Settings** | Runtime Settings，與以前相同。對唯讀的瀏覽器，Apply Settings 與 Restart Backend 會呈灰色不可用，原因寫在它們下方 |
 
 - 選中的階段（Diagnosis 或 Research）以填色加粗體顯示；選中的研究頁面以底線加粗體顯示；
@@ -3326,6 +3327,9 @@ split）上量測模型、保留報告並登錄它。共有三個面板：
   version does not describe)」，以一列「Recorded metrics」列出每個指標的記錄名稱與數值；score
   semantics 依記錄原文顯示；含每一類排除的涵蓋率、各項關係、以文字表示的 R10（*unverifiable* 從不顯示為 0）、環境、資料集來源，
   以及是否已登錄（對操作者而言，是在清單中持有它所量測權重的 checkpoint 旁的帳本中檢查）。
+  自 research comparison Stage 8b 起，報告由結果服務與 Models 共用的同一個讀取器讀取（其資料種類的
+  結果檢視，不論是否已登錄）：KG 邊集合的 exposure 與 generated split 的生成方式以與 Models 相同的
+  幾行說明；讀取器無法讀取的紀錄會附原因顯示（只指名欄位，從不顯示其值），而不當作結果顯示。
   有紀錄以其他位元組寫明這次執行（報告在登錄之後被替換），或那份帳本無法判斷時，Result 會列出
   登錄給的原因。
   **🔒 Register this report** 透過唯一的登錄函式（§4.9）登錄一份任何種類（supplied cohort、KG 邊集合
@@ -3409,7 +3413,7 @@ Lineage 欄。沒有任何排列方式依測試分數為模型排名：依測試
 依測試分數自動選擇模型。
 
 **選取一列**會顯示完整的模型指紋與 Copy、它在什麼資料上訓練（以及那是否為此 workspace 目前的資料
-集）、自成一張卡片的 Trainer 驗證數值、任何警告，以及兩個分段：
+集）、自成一張卡片的 Trainer 驗證數值、任何警告，以及三個分段：
 
 - **Recorded results**（research comparison Stage 6 之前為 "Recorded test results"）：ledger 為這組
   權重記錄的每一筆紀錄，不論資料種類與 role，各以其版本的種類與 role 命名（KG 邊集合的紀錄附其
@@ -3436,7 +3440,27 @@ Lineage 欄。沒有任何排列方式依測試分數為模型排名：依測試
   以及它的 scoring semantics）。測試執行讀作任務在已排名案例上的第一個指標，或其他模式的標籤與案例數，
   接著是執行方式，再來是收在「Recorded metrics (N)」之後、它記錄的每個指標（未記錄任何指標時為
   「no metric recorded」）。使用紀錄尚未記錄模式之前寫入的項目讀作「Measurement mode not recorded」
-  （自 K8-6e.2 起；在此之前讀作 Mode C）。
+  （自 K8-6e.2 起；在此之前讀作 Mode C）；
+- **Results**（自 research comparison Stage 8b 起）：**This family**（選取模型的 family，在此
+  workspace 內）或 **This workspace**（在其中找到的每個結果：列出其模型的 checkpoint，或持有其紀錄的
+  ledger）的每個結果，由唯一的結果服務（即 `scripts/export_results.py` 匯出的那些列）在開啟此分段時
+  讀取，按 **↻ Read again** 再讀一次。**Protocol**、**Data kind**、**Role** 與 **Environment** 篩選
+  它們，各自提供此範圍內出現的值。每個協議一張表，依執行時間最新在前（即服務的列出順序，因此沒有任何
+  排名；沒有依任何指標排序，任務紀錄的預設順序仍是擁有者未決的項目，BACKLOG 63）。每一列：執行時間與
+  報告、模型（指紋與種類）、資料（標籤、種類與 role）、依該協議紀錄的顯示方式呈現的指標（任務的兩個
+  指標，其他協議則列出每個指標的記錄原文）、狀態（報告已保留，或「Report not available (ledger record
+  only)」；已登錄、未登錄或併入的紀錄；▲ 他處的報告位元組不同；其條件群組比較的情形）、紀錄中有的
+  exposure（KG 邊集合的讀法，supplied cohort 的 R10 收在一次點擊之內；generated split 的關係是其分配
+  方式的，不做比較）以及執行環境。每個無法讀取的項目都附原因列在表格下方，不受範圍與篩選影響。
+  **Compare (up to 5)** 將選取的結果並排，每個結果一欄，預設開啟 **Differences only**：結果、模型
+  （operation、parent、family、encoder、與參考配方的關係、每個 spec 值、能力）、記錄的與實際生效的
+  訓練設定、資料的識別與 role、量測、執行環境、exposure 與每個指標，皆依記錄原文。不計算任何差值，
+  每一列指標只屬於一個協議（其他協議的結果在該列讀作「another protocol」）；沒有來源的欄位讀作
+  「Unknown」並附原因。五個只是這個檢視的上限。**Export** 把選取的結果或所有顯示的列（包括其中無法讀取
+  的項目）不設上限地，以匯出唯一的序列化器（即 `scripts/export_results.py` 的欄位）寫成 CSV 或 JSON
+  檔供下載。讀取結果會開啟每個 workspace 的 checkpoint，因此這些都是操作者控制項（§4.13）：被拒絕的
+  請求不讀取也不列出任何東西，並說明原因。在此頁面跨 workspace 比較結果尚未建置；在機器上，
+  `scripts/export_results.py` 可合併多個 workspace。
 
 **🔒 Load this model** 是共用的 Load（與 Diagnosis 的「Change model…」相同的確認；確認開啟時會蓋住
 細節區，不論視窗多矮，它的按鈕都留在表格下方的可見範圍內；按 Close 回到細節區，且仍選取同一個

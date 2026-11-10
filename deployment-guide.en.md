@@ -1789,9 +1789,10 @@ python scripts/export_results.py --workspaces-root lab=/data/lab/workspaces \
   a store, a damaged report, a checkpoint file, a ledger, a hand-edited record, one naming no
   weights among them) is a row with its reason, and hides nothing; a kept report whose run a
   listed ledger names in a record that cannot be read says so rather than "not registered";
-  stderr counts them. Filters (`--family`, `--protocol`, `--data-kind`, `--role`,
-  `--environment-class`, `--device`, `--torch-version`, `--cuda-version`, `--software-revision`)
-  always keep such rows.
+  stderr counts them. Filters (`--family`, `--workspace` (where a row was found: a listed
+  checkpoint of its model or a ledger holding its record; since Stage 8b), `--protocol`,
+  `--data-kind`, `--role`, `--environment-class`, `--device`, `--torch-version`,
+  `--cuda-version`, `--software-revision`) always keep such rows.
 - `--output` must name a new file; an existing one is never overwritten. Without it the export goes
   to standard output.
 
@@ -2777,7 +2778,7 @@ help control for every field. Nothing an operator sets changed; what moved is wh
 | **Research (pre-clinical)** › Prepare › **Training** | The run bar, the parameters for the next run, Continue… and the run view with its charts (below). It is the research page shown first |
 | **Research (pre-clinical)** › Prepare › **Fine-tune** | A base's task models (since K6): one listed base, one to three tasks (Disease, Gene, Patients-like-me), each trained as its own run in order, and a job card with each task's status, Stop and products |
 | **Research (pre-clinical)** › Evaluate › **Test** | Import a cohort version from the server's intake directory, run a test, keep and register its report (below) |
-| **Research (pre-clinical)** › Evaluate › **Models** | The server's checkpoints of a workspace, their recorded test results, newest first or by family, and Load (below) |
+| **Research (pre-clinical)** › Evaluate › **Models** | The server's checkpoints of a workspace, their recorded test results, newest first or by family, and Load (below); the results of a model's family or the workspace, compared and exported (Results, since research comparison Stage 8b) |
 | **⚙ Settings**, at the right of the header | Runtime Settings, as before. For a read-only browser, Apply Settings and Restart Backend are greyed out, with the reason written below them |
 
 - The selected stage (Diagnosis or Research) is filled and bold; the selected research page is
@@ -3288,7 +3289,11 @@ it. Three panels:
   value; the score semantics exactly as recorded; coverage with each exclusion, the relations,
   R10 in words (*unverifiable* is never a 0), the environment, the dataset origin, and whether it is registered (for an
   operator, checked in the ledger beside the listed checkpoint holding the weights it
-  measured). When a record names this run with other bytes (the report was replaced after it
+  measured). Since research comparison Stage 8b the report is read by the one reader the results
+  service and Models read with (its data kind's result view, registered or not): a KG edge set's
+  exposure and a generated split's generation are said in the same lines as on Models, and a
+  record the reader cannot read is shown with its reason (the field named, never its value),
+  not as a result. When a record names this run with other bytes (the report was replaced after it
   was registered), or that ledger cannot tell, the Result gives the registration's reason.
   **🔒 Register this report** registers a kept report of any kind (a supplied cohort's, a KG
   edge set's or a generated split's) through the one registration function (§4.9): the server finds the report in the version's store, checks that its bytes
@@ -3392,7 +3397,7 @@ score.
 
 **Selecting a row** shows its full model fingerprint with Copy, what it was trained on (and
 whether that is this workspace's current dataset), the Trainer's validation figure in its own
-card, any warning, and two segments:
+card, any warning, and three segments:
 
 - **Recorded results** ("Recorded test results" until research comparison Stage 6): every
   record the ledger holds for these weights, of any data kind and role, each named by its
@@ -3426,7 +3431,35 @@ card, any warning, and two segments:
   run reads a task's first figure over its ranked cases, or another mode's label and case count,
   then how it ran, then every metric it records behind "Recorded metrics (N)" ("no metric
   recorded" when it records none). An entry written before the usage history recorded a mode
-  reads "Measurement mode not recorded" (since K8-6e.2; before it, Mode C).
+  reads "Measurement mode not recorded" (since K8-6e.2; before it, Mode C);
+- **Results** (since research comparison Stage 8b): every result of **This family** (the
+  selected model's family, in this workspace) or **This workspace** (each result found in it: a
+  listed checkpoint of its model, or a ledger holding its record), read by the one results
+  service (the rows `scripts/export_results.py` exports) when the segment is opened, and again
+  with **↻ Read again**. **Protocol**, **Data kind**, **Role** and **Environment** filter them,
+  each offering the values the scope holds. One table per protocol, newest first by run time
+  (the service's listing order, so nothing is ranked; nothing is ordered by a metric, and a
+  default order for task records stays the owner's open item, BACKLOG 63). Each row: the run's
+  time and report, the model (fingerprint and kind), the data (label, kind and role), the
+  metrics as a record of that protocol shows them (a task's two figures, any other protocol's
+  every metric as recorded), the state (report kept, or "Report not available (ledger record
+  only)"; registered, not registered or merged; ▲ report bytes that differ elsewhere; how its
+  condition group compares), the exposure where its record holds one (a KG edge set's reading,
+  a supplied cohort's R10 one click away; a generated split's is its allocation's, not
+  compared) and the environment. Every item that could not be read is listed under the tables
+  with its reason, whatever the scope and filters. **Compare (up to 5)** puts the chosen
+  results side by side, one column each, **Differences only** on by default: the result, the
+  model (operation, parent, family, encoder, relation to the reference recipe, every spec value,
+  capabilities), the recorded and effective training settings, the data's identity and role,
+  the measurement, the environment, the exposure and every metric, as recorded. No difference
+  is computed, and each metric row is one protocol's (a result of another protocol reads
+  "another protocol" there); a field without a source reads "Unknown" with why. Five is this
+  view's cap only. **Export** writes the chosen results or every shown row (the unreadable
+  items among them), uncapped, as CSV or JSON through the export's one serializer (the columns
+  of `scripts/export_results.py`), as a file to download. Reading the results opens every
+  workspace's checkpoints, so each of these is an operator control (§4.13): a refused request
+  reads and lists nothing and says why. Comparing results across workspaces is not built in
+  this page yet; on the machine, `scripts/export_results.py` joins workspaces.
 
 **🔒 Load this model** is the shared Load (the same confirmation as Diagnosis' "Change model…";
 it covers the detail while it is open, its buttons stay in view under its table however short

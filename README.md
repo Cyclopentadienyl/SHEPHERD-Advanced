@@ -121,7 +121,9 @@ guide §4.11): `SHEPHERD_REGISTRY` naming the deployment's registry, the `<regis
 
 The Diagnosis page's "Model in use" card shows the loaded checkpoint's recorded results as a
 state (how many, and for how many the runs under the same conditions differ); Research › Evaluate › Models lists them, each with its run, and API clients
-read them through `GET /api/v1/evaluations/loaded-model`. The Test page measures a model as step 2
+read them through `GET /api/v1/evaluations/loaded-model`. Models' Results segment (research
+comparison Stage 8b) lists every result of a model's family or of the workspace through step 4's
+service, compares up to five side by side and exports them. The Test page measures a model as step 2
 does, by a protocol this build implements, chosen among those its listed capabilities admit:
 today one for each task head of a finetuned model, and the KG link-prediction measurement for a
 base and every finetune, which measures a KG edge set (research comparison Stage 5; its report is

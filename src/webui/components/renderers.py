@@ -31,7 +31,12 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping, NamedTuple, Optional, Sequence, Tuple
 
-from src.evaluation.caveats import TASK_NAMES
+from src.evaluation.caveats import (
+    EXPOSURE_CAVEAT,
+    GENERATED_EXPOSURE_NOTE,
+    TASK_NAMES,
+    exposure_text,
+)
 from src.webui.components.help import copy_button, help_button
 
 #: Hex digits of a digest shown by default.
@@ -76,6 +81,11 @@ RENDERER_HELP = {
         "The SHA-256 of the checkpoint file's bytes, as the server read them. 12 of its 64 "
         "hex digits are shown; every comparison uses all 64. A test record, a usage history "
         "entry and the served identity name the model by it.",
+    ),
+    "kg-exposure": (
+        "Exposure (KG edge sets)",
+        "How a KG edge set's measured edges stand to the model's recorded graph use.\n"
+        + EXPOSURE_CAVEAT,
     ),
     "validation-trainer": (
         "Validation (Trainer)",
@@ -808,6 +818,81 @@ def _kv(rows: Iterable[Tuple[str, str]], *, wide: Iterable[str] = ()) -> str:
     return f'<div class="shep-kv">{kv_cells(rows, wide=wide)}</div>'
 
 
+def _count_or_word(value: Any) -> str:
+    return str(value) if type(value) is int else "not reported"
+
+
+def data_kind_lines(view: Mapping[str, Any]) -> list:
+    """**The one rendering of what a result's data kind adds** (research
+    comparison Stages 6 and 8b), as ``(label, escaped HTML)`` rows, from the
+    one reader's view of a record (`record_views`: a ledger record's record
+    view, or a kept report's result view, `result_view`, as a JSON dump), so a
+    registered record on Models and a kept report on Test say it alike, each
+    page laying the rows out its own way:
+
+    - a KG edge set's exposure in this build's words (`caveats.exposure_text`,
+      the ⓘ holding `EXPOSURE_CAVEAT`) and its source (definition version and
+      split, or why its block does not read: fields named, never values), its
+      message-passing graph and pairs, and each metric that could not be
+      computed, as a status;
+    - a generated split's generation identity, its split manifest and gene
+      fixture, and how it stands to a model's training
+      (`caveats.GENERATED_EXPOSURE_NOTE`);
+    - nothing for a supplied cohort, whose relation to training is its R10.
+
+    The KG edges' "held out" is never said for a patient cohort, and R10
+    never for a KG edge set or a generated split. Every value is escaped."""
+    cohort = _get(view, "cohort")
+    cohort = cohort if isinstance(cohort, Mapping) else {}
+    kind = cohort.get("kind")
+    if kind == "generated":
+        generation = cohort.get("generation") if isinstance(cohort.get("generation"),
+                                                            Mapping) else {}
+        allocation = cohort.get("allocation") if isinstance(cohort.get("allocation"),
+                                                            Mapping) else {}
+        fixture = cohort.get("task_fixture")
+        manifest = cohort.get("split_manifest")
+        identity = (f"{generation.get('algorithm')} v{generation.get('algorithm_version')}, "
+                    f"allocation {allocation.get('algorithm')} v"
+                    f"{allocation.get('algorithm_version')} with seed {allocation.get('seed')}")
+        record = fixture.get("record") if isinstance(fixture, Mapping) else None
+        kept = (f"gene fixture {short_hex(_get(record, 'sha256'))}"
+                if isinstance(fixture, Mapping) else "no gene fixture kept")
+        return [("Generation", e(identity)),
+                ("Split manifest", f"<code>{e(short_hex(_get(manifest, 'sha256')))}</code>; "
+                                   f"{e(kept)}"),
+                ("Training relation", e(GENERATED_EXPOSURE_NOTE))]
+    if kind != "kg_edges":
+        return []
+    exposure = _get(view, "exposure")
+    exposure = exposure if isinstance(exposure, Mapping) else None
+    split = exposure.get("split") if exposure is not None else None
+    # An exposure block the one reader could not read is null with its
+    # problem (fields named, never values): the result stands beside it.
+    source = ("Definition " + str(exposure.get("definition_version")) + "; "
+              + (split if isinstance(split, str) else "the model record was not read")
+              if exposure is not None else
+              f"Its block does not read: {_get(view, 'exposure_problem') or 'no reason given'}")
+    passing = cohort.get("message_passing") if isinstance(cohort.get("message_passing"),
+                                                          Mapping) else {}
+    pairs = cohort.get("pairs") if isinstance(cohort.get("pairs"), Mapping) else {}
+    graph = (f"Message passing over the split's {passing.get('part')} part, "
+             f"{_count_or_word(passing.get('edges'))} edges; pairs {pairs.get('rule')} with seed "
+             f"{pairs.get('seed')}, {_count_or_word(pairs.get('rows'))} rows")
+    measured = _get(view, "measured")
+    statuses = measured.get("metrics") if isinstance(measured, Mapping) else None
+    not_computed = [str(name) for name, status in (statuses or {}).items()
+                    if isinstance(status, Mapping) and status.get("status") != "computed"]
+    rows = [("Exposure", e(exposure_text(exposure))
+             + help_button("kg-exposure", "Exposure (KG edge sets)")),
+            ("Exposure source", e(source)),
+            ("Graph and pairs", e(graph))]
+    if not_computed:
+        rows.append(("Not computable", e(", ".join(not_computed))
+                     + " (a status, never a number)"))
+    return rows
+
+
 #: The labels of Model Facts' digest rows (`kv_cells`' wide rows).
 FACTS_MODEL_FP = "Model fingerprint (checkpoint sha256)"
 FACTS_TRAINED_FP = ("Trained on: dataset fingerprint (split_manifest.json, from the checkpoint's "
@@ -907,6 +992,7 @@ __all__ = [
     "built_text",
     "chip",
     "configuration_text",
+    "data_kind_lines",
     "dataset_identity_html",
     "distinguishing_digits",
     "e",

@@ -977,7 +977,7 @@ def test_the_usage_history_lists_every_listed_versions_entries_for_a_listed_chec
     detail = mp.detail_parts(listing, data, _key(world, "model-05.pt"),
                              {"task": mp.ALL_TASKS, "order": mp.NEWEST})
     assert detail["seg"] == [("Recorded results · 3 (1 where runs differ)", mp.RECORDS),
-                             ("Usage history · 7", mp.USAGE)]
+                             ("Usage history · 7", mp.USAGE), ("Results", mp.RESULTS)]
     usage = detail["usage"]
     assert usage.count(">Test run<") == 3 and usage.count(">Registered<") == 3
     assert usage.count(">Model load from an ordered list<") == 1
@@ -1043,7 +1043,8 @@ def test_no_record_is_dropped_or_set_apart_for_its_family_dataset_or_cohort(worl
             assert items[key] in shown, (order, key)
             detail = mp.detail_parts(listing, data, key, ctl)
             assert detail["seg"] == [("Recorded results · 2", mp.RECORDS),
-                                     ("Usage history · 2", mp.USAGE)], (order, key)
+                                     ("Usage history · 2", mp.USAGE),
+                                     ("Results", mp.RESULTS)], (order, key)
             for label in blocks:
                 assert detail["records"].count(f'<div class="shep-w600">{label}</div>') == 1
                 assert detail["usage"].count(f"<td>{label}</td>") == 1
@@ -1636,7 +1637,7 @@ def test_a_listing_already_read_is_not_read_again(world, monkeypatch):
     states = _sync_states(demo)
     by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
     detail = [by_id[i] for i in ("shep-mp-detail-hd", "shep-mp-detail-top", "shep-mp-seg",
-                                 "shep-mp-records", "shep-mp-usage")]
+                                 "shep-mp-records", "shep-mp-usage", "shep-rs")]
     listing, data = _read(world, monkeypatch)
     monkeypatch.setattr(mp, "read_page", lambda listing: pytest.fail("read again"))
     key = _key(world, "model-05.pt")
@@ -1751,9 +1752,9 @@ def test_controls_selection_and_segments_are_wired(world, monkeypatch):
                 "shep-mp-independence"} & set(by_id)
     assert sync.trigger_mode == "always_last"
     assert sync.outputs[:3] == [states["stale"], states["last"], states["selected"]]
-    assert sync.outputs[-5:] == [by_id["shep-mp-detail-hd"], by_id["shep-mp-detail-top"],
+    assert sync.outputs[-6:] == [by_id["shep-mp-detail-hd"], by_id["shep-mp-detail-top"],
                                  by_id["shep-mp-seg"], by_id["shep-mp-records"],
-                                 by_id["shep-mp-usage"]]
+                                 by_id["shep-mp-usage"], by_id["shep-rs"]]
     assert not [fn for fn in demo.fns.values() if fn.name in ("_recompute", "_reorder", "_detail")]
     # "Reload with …" marks the page's data stale, at once, beside the shared Load.
     started = _fn(demo, "_load_started")
@@ -1762,8 +1763,13 @@ def test_controls_selection_and_segments_are_wired(world, monkeypatch):
     assert started.fn() is True
     segment = _fn(demo, "_segment")
     assert segment.queue is False
-    records, usage = segment.fn(mp.USAGE)
+    records, usage, results = segment.fn(mp.USAGE)
     assert records["visible"] is False and usage["visible"] is True
+    assert results["visible"] is False
+    # The third segment, Models › Results (research comparison Stage 8b): its
+    # column only; its content is its own gated handlers'.
+    records, usage, results = segment.fn(mp.RESULTS)
+    assert (records["visible"], usage["visible"], results["visible"]) == (False, False, True)
 
 
 def test_the_page_registers_its_help_and_every_i_it_draws(world, monkeypatch):

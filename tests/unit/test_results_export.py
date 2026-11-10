@@ -743,6 +743,33 @@ def test_filters_keep_matching_rows_and_every_unreadable_item(world):
         results.filtered(found, {"colour": ["red"]})
 
 
+def test_the_workspace_filter_keeps_what_was_found_there_by_its_model_or_its_ledger(world):
+    """Stage 8b (Models › Results scopes by it): a row is in a workspace where
+    a listed checkpoint of its model is, or a ledger holding its record; a
+    ledger-only record whose model is listed nowhere is still in its ledger's
+    workspace; the values are what a page offers (`filter_values`)."""
+    from src.api.services import results
+
+    found = _query(world)
+    rows = _by_run(found)
+    registered = rows[world["registered"].parent.name]
+    assert results.filter_values(registered, "workspace") == ["lab"]
+    assert results.filter_values(registered, "protocol") == ["disease"]
+    # Two roots, each with a workspace named "lab": one name, as the filter
+    # compares names (a page reads one source).
+    kept = results.filtered(found, {"workspace": ["lab"]})
+    assert {row["run_id"] for row in kept if row["result"] == "run"} == {
+        row["run_id"] for row in found if row["result"] == "run"
+        and (row["model"]["locations"] or row["ledgers"])}
+    assert results.filtered(found, {"workspace": ["elsewhere"]}) == [
+        row for row in found if row["result"] == "unreadable"]
+    # A ledger-only record: in its ledger's workspace, its model's location or not.
+    ledger_only = dict(rows[world["elsewhere"].parent.name])
+    ledger_only["model"] = {**ledger_only["model"], "locations": []}
+    assert results.filter_values(ledger_only, "workspace") == ["lab"]
+    assert results.filtered([ledger_only], {"workspace": ["lab"]}) == [ledger_only]
+
+
 def test_the_command_line_exports_and_never_overwrites(world, tmp_path, capsys):
     from scripts import export_results
 

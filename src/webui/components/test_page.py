@@ -58,7 +58,11 @@ docstring. Three panels, as the mockup draws them (``test-wide.png``,
   and registered read from disk by WP4's helper; "no report was published"
   when there is no outcome file; a cancel says what was left);
 - **Result**: the selected report as the record the ledger would hold
-  (`build_record`, through the store's scan), by **one display for every
+  (`build_record`, through the store's scan), read by the one reader as its
+  data kind's result view (`record_views.result_view`, the results service's
+  reading of a kept report, registered or not; a record it cannot read is
+  shown with its reason, not as a result), its kind's lines in the rendering
+  Models shares (`renderers.data_kind_lines`), by **one display for every
   mode** (R2, K8-6e.2): a measurement this build describes in its tiles and
   words (`caveats.metric_text`) with every metric as recorded one click away;
   any other mode's metrics, a kept report's included, as recorded
@@ -151,14 +155,12 @@ import gradio as gr
 
 from src.evaluation import protocols
 from src.evaluation.caveats import (
-    GENERATED_EXPOSURE_NOTE,
     MEASUREMENT_NAMES,
     R10_LABEL_TEXT,
     R10_STATE_TEXT,
     R10_UNVERIFIABLE_REASON,
     RELATION_DISPLAY_NAMES,
     TASK_NAMES,
-    exposure_text,
     metric_text,
     mode_label,
     mode_note,
@@ -1781,37 +1783,6 @@ def _r10_lines(r10: Any) -> List[Tuple[str, str]]:
     return lines
 
 
-def _kind_lines(record: Mapping[str, Any], kind: str) -> List[Tuple[str, str]]:
-    """The lines a record of a KG edge set or a generated split shows where a
-    supplied cohort's shows R10 (research comparison Stage 6): a KG edge set's
-    exposure in this build's words (`caveats.exposure_text`) with its
-    definition version; a generated split's generation identity and how it
-    stands to a model's training (`caveats.GENERATED_EXPOSURE_NOTE`).
-
-    These lines read the record built from a kept report (`build_record`),
-    beside the one reader's views that Models renders
-    (`models_page.kind_html`), because a report this page shows need not be
-    registered and the API's record view is a registered record's (it requires
-    the registration's fields). One view of a kept report, registered or not,
-    is the one results service's (research comparison Stage 8), which these
-    lines and Models' then share; until then both read the same record fields
-    in the same words (`caveats.exposure_text`, `GENERATED_EXPOSURE_NOTE`)."""
-    if kind == "kg_edges":
-        exposure = record.get("exposure") if isinstance(record.get("exposure"), Mapping) else {}
-        return [("Exposure", f"{e(exposure_text(exposure))} "
-                             f'<span class="shep-muted">(definition '
-                             f'{e(exposure.get("definition_version"))})</span>')]
-    cohort = record.get("cohort") if isinstance(record.get("cohort"), Mapping) else {}
-    generation = cohort.get("generation") if isinstance(cohort.get("generation"), Mapping) else {}
-    allocation = cohort.get("allocation") if isinstance(cohort.get("allocation"), Mapping) else {}
-    manifest = cohort.get("split_manifest") if isinstance(cohort.get("split_manifest"),
-                                                           Mapping) else {}
-    return [("Generation", e(f"{generation.get('algorithm')} v{generation.get('algorithm_version')}"
-                             f", allocation seed {allocation.get('seed')}, split manifest "
-                             f"{str(manifest.get('sha256') or '')[:12]}")),
-            ("Training relation", e(GENERATED_EXPOSURE_NOTE))]
-
-
 def _relations(relations: Any) -> str:
     if not isinstance(relations, Mapping):
         return "not reported"
@@ -2009,6 +1980,24 @@ def _semantics_text(scoring: Mapping[str, Any]) -> str:
 
 def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
                  state: Mapping[str, Any]) -> str:
+    """The selected report's record (`build_record`'s, through the store's
+    scan) as the one reader reads it (research comparison Stage 8b): its data
+    kind's result view (`record_views.result_view`, the one the results
+    service reads every kept report by, registered or not), which decides its
+    kind and gives its R10 or its kind's lines (`renderers.data_kind_lines`,
+    as Models shows a registered record's); its numbers as recorded, from the
+    record the view read (an integer stays an integer, as the service keeps
+    them). A record the reader cannot read is not shown as a result: its
+    reason, naming fields and never values, as Models and the results service
+    list it."""
+    from src.api.services.record_views import result_view, unreadable_reason
+
+    try:
+        view = result_view(dict(record)).model_dump(mode="json")
+    except ValueError as exc:
+        return _reason_html("This report's record cannot be read as a result, so it is not "
+                            "shown as one (Models › Results lists it with this reason): "
+                            + unreadable_reason(exc))
     cohort = record.get("cohort") if isinstance(record.get("cohort"), Mapping) else {}
     regime = record.get("regime") if isinstance(record.get("regime"), Mapping) else {}
     metrics = record.get("metrics") if isinstance(record.get("metrics"), Mapping) else {}
@@ -2023,10 +2012,11 @@ def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
     task = mode in TASK_NAMES
     eligible = _count(counts.get("ranked_eligible"))
     deterministic = regime.get("deterministic_algorithms")
-    # The record's data kind (research comparison Stage 6): a version of
-    # another kind than a supplied cohort is named by its kind and role, and
-    # read by its own counts and exposure, never a cohort's or R10's words.
-    kind = cohort.get("kind") if isinstance(cohort.get("kind"), str) else "supplied"
+    # The record's data kind, as the one reader read it (research comparison
+    # Stage 6): a version of another kind than a supplied cohort is named by
+    # its kind and role, and read by its own counts and exposure, never a
+    # cohort's or R10's words.
+    kind = view["cohort"]["kind"]
     role = (f'role {r.ident_html(record.get("cohort_role"))}' if kind == "supplied"
             else e(version_words(kind, record.get("cohort_role"))))
     line = (f'{e(cohort.get("label"))} (version <code>{e(str(record.get("cohort_digest") or "")[:12])}</code>, '
@@ -2077,7 +2067,7 @@ def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
         *figures,
         ("Score semantics", _semantics_text(scoring)),
         ("Relations", _relations(record.get("relations"))),
-        *(_r10_lines(record.get("r10")) if kind == "supplied" else _kind_lines(record, kind)),
+        *(_r10_lines(view.get("r10")) if kind == "supplied" else r.data_kind_lines(view)),
         ("Environment", _environment(record)),
         ("Native build", _native_build(record)),
     ]

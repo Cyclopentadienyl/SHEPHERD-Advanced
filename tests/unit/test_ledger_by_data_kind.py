@@ -703,7 +703,12 @@ def test_models_shows_each_kind_by_the_one_display_with_its_exposure():
 
     block = _text(mp.records_block_html(views[1:2], {}))
     assert "R10 labels" not in block
-    assert mp.PAGE_HELP["models-exposure"][1].endswith(
+    # The exposure's ⓘ is the shared renderers' (`renderers.data_kind_lines`,
+    # research comparison Stage 8b): the Test page's result names it too.
+    from src.webui.components.renderers import RENDERER_HELP
+
+    assert 'data-help="kg-exposure"' in mp.records_table_html(views[1:2], {})
+    assert RENDERER_HELP["kg-exposure"][1].endswith(
         __import__("src.evaluation.caveats", fromlist=["EXPOSURE_CAVEAT"]).EXPOSURE_CAVEAT)
 
     hostile = copy.deepcopy(views[1])
@@ -717,17 +722,41 @@ def test_the_test_page_says_a_kg_edge_set_and_a_generated_split_in_their_words()
     """The Test page's result shows the record the ledger would hold: a KG
     edge set's with its pairs scored and its exposure, a generated split's
     with its generation identity, named by kind and role; neither with R10 or
-    a supplied cohort's counts."""
+    a supplied cohort's counts. Since research comparison Stage 8b the kind's
+    lines are read by the one reader (the kept report's result view) and said
+    by the one rendering Models' records share (`renderers.data_kind_lines`),
+    so a kept report and a registered record say them alike."""
+    from src.webui.components import models_page as mp
     from src.webui.components import test_page as tp
+    from src.webui.components.renderers import data_kind_lines
 
-    kg = _text(tp._record_html(_record("kg_edges"), {}, {}))
+    kg_raw = tp._record_html(_record("kg_edges"), {}, {})
+    kg = _text(kg_raw)
     generated = _text(tp._record_html(_record("generated"), {}, {}))
     supplied = _text(tp._record_html(_record("supplied"), {}, {}))
 
     assert "a KG edge set (test)" in kg and "6 of 6 stored pairs scored" in kg
-    assert ("Exposure held out relative to the recorded training and validation graph use "
-            "(definition kg-lp-exposure/v1)") in kg
+    assert ("Exposure held out relative to the recorded training and validation graph use"
+            in kg)
+    assert "Exposure source Definition kg-lp-exposure/v1; the version's split" in kg
     assert "a generated split (val)" in generated and "Generation" in generated
+    assert "allocation uniform-without-replacement v1 with seed 42" in generated
+    # One rendering: each line the Test page shows is the line Models shows
+    # for the same record registered.
+    from src.api.services.record_views import record_reading
+
+    for kind, digest, run in (("kg_edges", REPORT_B, RUN_2), ("generated", "a" * 64, RUN_3)):
+        record = _record(kind, digest)
+        ledger = _ledger((record, run))
+        identity, overlaps = record_reading(ledger)[id(ledger["records"][0])]
+        view = mp.record_view(ledger["records"][0], [identity.run_id, identity.historical,
+                                                    identity.problem, list(overlaps)])
+        shown = tp._record_html(record, {}, {})
+        models = mp.kind_html(view)
+        for label, value in data_kind_lines(view):
+            assert f'<span class="shep-k">{label}</span><span class="shep-v">{value}</span>' \
+                in shown, (kind, label)
+            assert f"<b>{label}:</b> {value}" in models, (kind, label)
     assert "5 generated patients of 1 disease" in generated
     assert "share of the cases measured that were ranked" in generated
     for text in (kg, generated):

@@ -477,6 +477,12 @@ GATED_HANDLERS = {
     # the Training page's stop logic, behind handlers of its own.
     "src.webui.components.finetune_page": ("_on_finetune_bases", "_on_finetune_start",
                                             "_on_finetune_stop_request", "_on_finetune_stop"),
+    # Models › Results (research comparison Stage 8b): reading the results opens
+    # every workspace's checkpoints (C3), so listing, showing, comparing and
+    # exporting them are gated alike.
+    "src.webui.components.results_segment": ("_on_results_open", "_on_results_read",
+                                              "_on_results_shown", "_on_results_compare",
+                                              "_on_results_export"),
 }
 
 
@@ -613,6 +619,9 @@ def spies(monkeypatch, tmp_path):
 
     monkeypatch.setattr(server_lists, "list_checkpoints",
                         recorder("list_checkpoints", server_lists.Listing(())))
+    from src.api.services import results
+
+    monkeypatch.setattr(results, "query", recorder("results_query", []))
     monkeypatch.setattr(training_manager, "latest_snapshot", recorder("latest_snapshot", None))
     # A training job runs (a read, not a service: Stop's confirmation is
     # asked for the job running now), a Fine-tune child: the Fine-tune card's
@@ -633,10 +642,12 @@ def spies(monkeypatch, tmp_path):
 def _dashboard_calls():
     from src.webui.components import diagnosis_panel as dp
     from src.webui.components import finetune_page as fp
+    from src.webui.components import results_segment as results
     from src.webui.components import runtime_settings as rs
     from src.webui.components import training_console as tc
 
     path = tc.CONTINUE_FROM_PATH
+    every = ["all"] * 4
     # The Training page's handlers take the session's state (its run-bar
     # workspace, the drawer, the parent list): a fresh API session has no
     # dataset selected, so Start, Continue…, Check checkpoint, Continue
@@ -664,6 +675,17 @@ def _dashboard_calls():
         (fp._on_finetune_start, [{}, {}, None, [], 100, 33, "cpu", ""], None),
         (fp._on_finetune_stop_request, [{}], None),         # asks, reading nothing
         (fp._on_finetune_stop, [{}], "stop_training"),
+        # Models › Results: opening the segment and ↻ read the results; the
+        # others show, compare or export what was read, reading nothing.
+        (results._on_results_open, [results.RESULTS, dict(results.EMPTY_STATE), {}, None,
+                                    results.WORKSPACE, *every, [], True], "results_query"),
+        (results._on_results_read, [{}, None, results.WORKSPACE, *every, True],
+         "results_query"),
+        (results._on_results_shown, [results.RESULTS, dict(results.EMPTY_STATE), {}, None,
+                                     results.WORKSPACE, *every, [], True], None),
+        (results._on_results_compare, [dict(results.EMPTY_STATE), [], True], None),
+        (results._on_results_export, [dict(results.EMPTY_STATE), {}, None, results.WORKSPACE,
+                                      [], results.SHOWN, "csv"], None),
     ]
 
 

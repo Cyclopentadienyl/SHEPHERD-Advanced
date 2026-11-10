@@ -3,8 +3,10 @@ The one read-only results service: every kept and every recorded result, as rows
 =================================================================================
 Research comparison §5 Stage 8 (owner's O6; plan review F2, F3, E3, E5). One
 query over every result the server can read, for every client: the command
-line's export (`scripts/export_results.py`) and, next, Models › Results. It
-reads through the server's own lists and readers and writes nothing.
+line's export (`scripts/export_results.py`) and Models › Results
+(`src/webui/components/results_segment.py`, Stage 8b), which lists, compares
+and exports these rows. It reads through the server's own lists and readers
+and writes nothing.
 
 **What it reads, and through what.** Each approved source context
 (`SourceContext`: a name and the settings it is read with) is read by the
@@ -747,19 +749,25 @@ def query(sources: Iterable[SourceContext]) -> List[Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 # Filters
 # ---------------------------------------------------------------------------
-#: What a query can be filtered by, each a path into a result row; a row whose
-#: field is unknown or absent does not match a filter on it. Items that could
-#: not be read are kept whatever the filters, so a filter never hides one.
-FILTERS: Dict[str, Tuple[str, ...]] = {
-    "family": ("model", "family_id"),
-    "protocol": ("protocol",),
-    "data_kind": ("data", "kind"),
-    "role": ("data", "role"),
-    "environment_class": ("environment", "class"),
-    "device": ("measurement", "device"),
-    "torch_version": ("measurement", "torch_version"),
-    "cuda_version": ("measurement", "cuda_version"),
-    "software_revision": ("measurement", "software_revision"),
+#: What a query can be filtered by, each one or more paths into a result row
+#: (`ANY` steps into every item of a list): a row matches a filter when a value
+#: found along one of its paths is accepted; a row whose field is unknown or
+#: absent does not match a filter on it. A workspace is where the row was
+#: found: a listed checkpoint of its model, or a ledger holding its record
+#: (Models › Results scopes by it). Items that could not be read are kept
+#: whatever the filters, so a filter never hides one.
+ANY = "*"
+FILTERS: Dict[str, Tuple[Tuple[str, ...], ...]] = {
+    "family": (("model", "family_id"),),
+    "workspace": (("model", "locations", ANY, "workspace"), ("ledgers", ANY, "workspace")),
+    "protocol": (("protocol",),),
+    "data_kind": (("data", "kind"),),
+    "role": (("data", "role"),),
+    "environment_class": (("environment", "class"),),
+    "device": (("measurement", "device"),),
+    "torch_version": (("measurement", "torch_version"),),
+    "cuda_version": (("measurement", "cuda_version"),),
+    "software_revision": (("measurement", "software_revision"),),
 }
 
 
@@ -770,6 +778,28 @@ def _at(row: Mapping[str, Any], path: Sequence[str]) -> Any:
             return None
         value = value.get(step)
     return value
+
+
+def _found(value: Any, path: Sequence[str]) -> List[Any]:
+    """Every value along `path` from `value`, `ANY` stepping into each item of
+    a list; none where a step does not read."""
+    if not path:
+        return [value]
+    step, rest = path[0], path[1:]
+    if step == ANY:
+        items = value if isinstance(value, (list, tuple)) else []
+        return [found for item in items for found in _found(item, rest)]
+    if not isinstance(value, Mapping):
+        return []
+    return _found(value.get(step), rest)
+
+
+def filter_values(row: Mapping[str, Any], name: str) -> List[str]:
+    """A result's values for one filter (`FILTERS`), as text, in the order
+    found and each once: what a filter on `name` compares, and what a page
+    offers to filter by."""
+    values = [str(value) for path in FILTERS[name] for value in _found(row, path)]
+    return list(dict.fromkeys(values))
 
 
 def filtered(results: Iterable[Dict[str, Any]],
@@ -787,7 +817,8 @@ def filtered(results: Iterable[Dict[str, Any]],
     out = []
     for row in results:
         if row["result"] == UNREADABLE or all(
-                str(_at(row, FILTERS[name])) in accepted for name, accepted in wanted.items()):
+                any(value in accepted for value in filter_values(row, name))
+                for name, accepted in wanted.items()):
             out.append(row)
     return out
 
@@ -967,10 +998,12 @@ __all__ = [
     "FILTERS",
     "HISTORICAL",
     "RUN",
+    "ANY",
     "SourceContext",
     "UNREADABLE",
     "deployment_sources",
     "explicit_sources",
+    "filter_values",
     "filtered",
     "long_rows",
     "query",
