@@ -462,20 +462,22 @@ def read_measurement_inputs(
     lists carry) against what the protocol needs (`protocols.model_refusal`,
     raised as `ModelRecordError`) right after the checkpoint is read and its
     graph roles compared, before anything protocol-specific (README §8
-    regression 7: the model filter runs first). For a protocol with `gene_fields`, a supplied version's samples
-    are read with their gene fields, and a generated split, once verified as
-    always, is measured through the workspace's functional fixture of that
-    split, read after the model check: its record against this manifest reading
-    and its file against the digest the record names (`read_gene_fixture`). A
-    registered generated split is measured through the fixture it keeps, read
-    where a version's samples are read (`_read_version_fixture`), its record
-    and rows each against the digest the version binds; its counts said
-    before anything was read whether it keeps one with rows.
-    Each of these refusals ends "Nothing was written."
+    regression 7: the model filter runs first). For a protocol with
+    `gene_fields`, a supplied version's samples are read with their gene
+    fields, and a generated split, once verified as always, is measured
+    through the workspace's functional fixture of that split, read after the
+    model check: its record against this manifest reading and its files
+    against the digests and row counts the record names (`read_gene_fixture`,
+    the one reader of a workspace's fixture, by whose rules a generated split's
+    import keeps it). A registered generated split is measured through the
+    fixture it keeps, read where a version's samples are read
+    (`_read_version_fixture`), its record and rows each against the digest
+    the version binds; its counts said before anything was read whether it
+    keeps one with rows. Each of these refusals ends "Nothing was written."
 
     Exactly one of `split` (a generated split) and `cohort` (a registered
     version's label, with `registry`) is given; `training_evidence` applies to a
-    registered version only (R10).
+    supplied cohort version only (R10).
 
     **What the run was started for** (M5's job runner): with
     `expect_version_sha256`, the version's `cohort.json` read must have that
@@ -973,10 +975,14 @@ def measurement_input_digests(inputs: MeasurementInputs) -> Dict[str, str]:
     The identification check compared `kg.json` on disk with that digest at the
     start of the run; it records nothing itself.
 
-    `split_manifest` is recorded for a generated split only. A registered
-    version's run reads the manifest too, for the graph binding, but no
-    allocation cut its cohort, so the manifest says nothing about how it was
-    made; the version's own manifest is identified by `cohort_version`.
+    `split_manifest` is recorded for a ``--split`` run only, the manifest its
+    samples were verified against. A registered version's run reads the
+    workspace's manifest too, for the graph binding, but its data are checked
+    against the bytes the version binds, not against that manifest: a
+    supplied cohort or a KG edge set was cut by no allocation, and a generated
+    split version names the allocation that cut it by its own block (its kept
+    split manifest and generation definition). The version's own manifest,
+    those blocks included, is identified by `cohort_version`.
 
     Nothing globs the directory, so an unrelated file beside these does not
     change the record of a run that never read it.
@@ -1617,8 +1623,9 @@ def _not_recorded_yet(inputs: MeasurementInputs) -> Optional[str]:
     None when one is: the run measured a registered version of a data kind
     this revision's ledger does not record yet (`sidecar.LEDGER_KINDS`: a KG
     edge set's run, or a registered generated split's, until research
-    comparison §5 Stage 6 makes the record per kind). That command would be refused for certain, so it is never printed;
-    the report stays in its version's report store as written (`_KEPT_UNRECORDED`)."""
+    comparison §5 Stage 6 makes the record per kind). That command would be
+    refused for certain, so it is never printed; the report stays in its
+    version's report store as written (`_KEPT_UNRECORDED`)."""
     from src.evaluation.sidecar import LEDGER_KINDS
 
     if inputs.version is None or inputs.data_kind in LEDGER_KINDS:

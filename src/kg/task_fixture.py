@@ -194,7 +194,9 @@ def read_fixture_record(data_dir: Path, *, manifest_sha256: str) -> Tuple[Dict[s
 def parse_fixture_record(data: bytes, where: Any, *, manifest_sha256: str) -> Dict[str, Any]:
     """The one parse of a fixture record's bytes (`data`, read once by the
     caller, and named `where` in a refusal): a gene fixture record of this
-    schema whose workspace and files parts are objects, one per split, and
+    schema whose workspace and files parts are objects, one per split, each
+    split's file named as `publish_gene_fixture` names it
+    (``<split>_samples.json``, never a path) with a whole row count, and
     which names `manifest_sha256` as the split manifest it was derived from.
     The workspace's record (`read_fixture_record`) and a generated split
     version's kept copy of it (`src.evaluation.cohort_registry`, research
@@ -219,6 +221,15 @@ def parse_fixture_record(data: bytes, where: Any, *, manifest_sha256: str) -> Di
             or not all(isinstance(files.get(split), dict) for split in FIXTURE_SPLITS):
         raise TaskFixtureError(f"{where} is not a readable record: its workspace "
                                f"or files part is not an object")
+    # Each split's file is read beside the record by the name it gives, so a
+    # name that is not the one the derivation writes (a path out of the
+    # fixture's directory among them) is refused before any file is opened.
+    for split in FIXTURE_SPLITS:
+        rows = files[split].get("rows")
+        if files[split].get("name") != f"{split}_samples.json" \
+                or not isinstance(rows, int) or isinstance(rows, bool) or rows < 0:
+            raise TaskFixtureError(f"{where} is not a readable record: its {split} file is not "
+                                   f"named {split}_samples.json with a whole row count")
     bound = record["workspace"].get("split_manifest")
     if bound != manifest_sha256:
         raise TaskFixtureError(
@@ -230,22 +241,46 @@ def parse_fixture_record(data: bytes, where: Any, *, manifest_sha256: str) -> Di
 
 def read_gene_fixture(data_dir: Path, *, manifest_sha256: str) -> GeneFixtureRead:
     """The fixture of this workspace build: its record (`read_fixture_record`),
-    and each sample file read once against the digest the record names."""
-    from src.kg.storage.file_storage import SamplesDigestMismatch, read_samples_file
+    and each sample file read once against the digest the record names, which
+    must hold as many rows as the record names. The one reader of a
+    workspace's fixture: a ``--split`` measurement and training read it here,
+    and a generated split's import keeps the fixture only when this read
+    passes (`src.evaluation.cohort_registry`, research comparison Stage 5b), so
+    a fixture is measured and kept by the same rules.
+
+    Raises:
+        TaskFixtureError: as `read_fixture_record`, or with `state`
+            "unreadable" for a sample file that is missing, is not the one the
+            record names, does not parse, or holds another number of rows.
+        OSError: a sample file this account may not read.
+    """
+    from src.kg.storage.file_storage import (
+        SamplesDigestMismatch,
+        UnparseableFile,
+        read_samples_file,
+    )
 
     record, identity = read_fixture_record(data_dir, manifest_sha256=manifest_sha256)
     out = fixture_dir(data_dir)
     samples = {}
     for split in FIXTURE_SPLITS:
-        entry = (record.get("files") or {}).get(split) or {}
+        # `parse_fixture_record` checked the name and the row count's shape.
+        entry = record["files"][split]
         try:
-            samples[split] = read_samples_file(out / str(entry.get("name")), gene_fields=True,
+            samples[split] = read_samples_file(out / entry["name"], gene_fields=True,
                                                expected_sha256=str(entry.get("sha256")))
         except SamplesDigestMismatch as exc:
             raise TaskFixtureError(f"The gene fixture's {split} file is not the one its record "
                                    f"names: {exc}") from None
+        except UnparseableFile as exc:
+            raise TaskFixtureError(f"The gene fixture's {split} file does not parse: "
+                                   f"{exc}") from None
         except FileNotFoundError as exc:
             raise TaskFixtureError(str(exc)) from None
+        held = len(samples[split].samples)
+        if held != entry["rows"]:
+            raise TaskFixtureError(f"The gene fixture's {split} file holds {held} rows, and its "
+                                   f"record names {entry['rows']}")
     return GeneFixtureRead(samples, record, identity)
 
 

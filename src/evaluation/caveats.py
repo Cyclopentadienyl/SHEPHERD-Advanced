@@ -67,7 +67,7 @@ GENERATED_VAL_IS_DISEASE_DISJOINT = (
 
 #: Why a supplied cohort's relationship to training is measured, not assumed.
 #:
-#: **Since M4 every measurement of a registered cohort version takes it** (R10,
+#: **Since M4 every measurement of a supplied cohort version takes it** (R10,
 #: contract §5.4): the report records the cohort's disease and phenotype-set
 #: overlap with the training and validation inputs the checkpoint names, found
 #: by digest, so the number travels with the result it qualifies.
@@ -76,7 +76,7 @@ SUPPLIED_COHORT_OVERLAP = (
     "contract.** An institutional or external patient set was not cut from this "
     "project's disease universe, so how much of it the model has labelled examples "
     "for is an open number — the upstream team reported 109 of 319 UDN diseases "
-    "present in their simulated cohort. Each measurement of a registered cohort "
+    "present in their simulated cohort. Each measurement of a supplied cohort "
     "version records it as R10: disease and phenotype-set overlap with the training "
     "and validation inputs the checkpoint names, found by their digests in the "
     "workspace's own splits and then in each --training-evidence directory, and "
@@ -106,7 +106,10 @@ SPLIT_ARGUMENT_HELP = (
     + GENERATED_VAL_IS_DISEASE_DISJOINT
 )
 
-#: The full `--cohort` help text: a registered test cohort version (contract M4).
+#: The full `--cohort` help text: a registered data version of any kind (a
+#: supplied cohort, contract M4; a KG edge set or a generated split, research
+#: comparison Stages 4-5), and R10, which only a supplied cohort's measurement
+#: records.
 COHORT_ARGUMENT_HELP = (
     "The label of a registered data version to measure (scripts/import_cohort.py), "
     "with --registry: a supplied test cohort version, a KG edge set, or a generated "

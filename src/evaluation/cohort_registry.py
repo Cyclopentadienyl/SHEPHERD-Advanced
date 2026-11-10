@@ -1669,15 +1669,15 @@ def _task_fixture_unbound(record: Mapping[str, Any], *, role: str, kg: Any,
                           split_manifest_sha256: Any, samples_sha256: Any) -> List[str]:
     """How the fixture record does not describe the split a generated version
     keeps, or nothing: the record must name the version's split manifest, its
-    graph (``kg``) and the role's samples as the samples it derived from, and
-    the role's rows by the file name the derivation writes
-    (``<role>_samples.json``, `src.kg.task_fixture.publish_gene_fixture`), a
-    SHA-256 and a row count. The import keeps a fixture only when nothing is
-    listed; the version's reader refuses a kept record that lists anything."""
+    graph (``kg``) and the role's samples as the samples it derived from. The
+    import keeps a fixture only when nothing is listed; the version's reader
+    refuses a kept record that lists anything. What a record must be to be
+    read at all (its files named as the derivation names them, with a row
+    count) is the record's one parser's rule
+    (`src.kg.task_fixture.parse_fixture_record`), which every record passed
+    here has passed."""
     workspace = record.get("workspace") if isinstance(record.get("workspace"), Mapping) else {}
     samples = workspace.get("samples") if isinstance(workspace.get("samples"), Mapping) else {}
-    files = record.get("files") if isinstance(record.get("files"), Mapping) else {}
-    entry = files.get(role) if isinstance(files.get(role), Mapping) else {}
     problems = []
     if workspace.get("split_manifest") != split_manifest_sha256:
         problems.append("it was derived from another split manifest")
@@ -1685,10 +1685,6 @@ def _task_fixture_unbound(record: Mapping[str, Any], *, role: str, kg: Any,
         problems.append("it names another graph (kg)")
     if samples.get(role) != samples_sha256:
         problems.append(f"it was derived from other {role} samples than the version keeps")
-    if not (entry.get("name") == f"{role}_samples.json" and _is_sha(entry.get("sha256"))
-            and _is_count(entry.get("rows"))):
-        problems.append(f"its {role} file is not named {role}_samples.json with a sha256 and a "
-                        "row count")
     return problems
 
 
@@ -1842,53 +1838,34 @@ def _workspace_task_fixture(
     the digest of the read that was parsed), and None; or no block, no file,
     and why none is kept.
 
-    Read as a measurement of the workspace's split reads it: the record
-    through `read_fixture_record`, against this run's split manifest reading;
-    it must then describe the split the version keeps (`_task_fixture_unbound`:
-    the graph, the role's samples, the role's file by name, digest and rows);
-    the role's rows are read once against the digest the record names
-    (`read_samples_file`, with the gene fields) and must be as many as it
-    names. **A fixture that is absent, of another build or unreadable is not
-    kept, and never refuses the import**: the version still holds the role's
-    split, which the disease measurement reads; it then keeps no fixture, and
-    a measurement that needs one is refused with that data gap
-    (`src.evaluation.protocols`). The reason is the preview's to show."""
-    from src.kg.storage.file_storage import (
-        SamplesDigestMismatch,
-        UnparseableFile,
-        read_samples_file,
-    )
-    from src.kg.task_fixture import (
-        FIXTURE_DIR,
-        FIXTURE_RECORD,
-        TaskFixtureError,
-        fixture_dir,
-        read_fixture_record,
-    )
+    **Read as a ``--split`` measurement of the workspace reads it**, by the
+    one reader of a workspace's fixture (`src.kg.task_fixture.read_gene_fixture`),
+    against this run's split manifest reading: the record, and each split's
+    rows against the digest and the row count the record names. So a fixture
+    is kept by the rules it is measured by. The record must then describe the
+    split the version keeps (`_task_fixture_unbound`: the graph and the
+    role's samples). **A fixture that is absent, of another build or
+    unreadable is not kept, and never refuses the import**: the version still
+    holds the role's split, which the disease measurement reads; it then
+    keeps no fixture, and a measurement that needs one is refused with that
+    data gap (`src.evaluation.protocols`). The reason is the preview's to
+    show."""
+    from src.kg.task_fixture import FIXTURE_DIR, FIXTURE_RECORD, TaskFixtureError, read_gene_fixture
 
     try:
-        record, identity = read_fixture_record(data_dir, manifest_sha256=split_manifest_sha256)
+        fixture = read_gene_fixture(data_dir, manifest_sha256=split_manifest_sha256)
     except TaskFixtureError as exc:
         return None, [], f"{exc.state.replace('_', ' ')}: {exc}"
+    except OSError as exc:  # a sample file this account may not read
+        return None, [], f"the fixture cannot be read: {exc}"
+    record = fixture.record
     unbound = _task_fixture_unbound(record, role=role, kg=kg,
                                     split_manifest_sha256=split_manifest_sha256,
                                     samples_sha256=samples_sha256)
     if unbound:
         return None, [], (f"the workspace's fixture record does not describe the {role} split "
                           f"this version keeps: {'; '.join(unbound)}")
-    entry = record["files"][role]
-    name = f"{FIXTURE_DIR.as_posix()}/{entry['name']}"
-    try:
-        rows = read_samples_file(fixture_dir(data_dir) / entry["name"], gene_fields=True,
-                                 expected_sha256=entry["sha256"])
-    except SamplesDigestMismatch as exc:
-        return None, [], f"the fixture's {role} file is not the one its record names: {exc}"
-    except (UnparseableFile, OSError) as exc:
-        return None, [], f"the fixture's {role} file cannot be read: {exc}"
-    if len(rows.samples) != entry["rows"]:
-        return None, [], (f"the fixture's {role} file holds {len(rows.samples)} rows, and its "
-                          f"record names {entry['rows']}")
-    block = _task_fixture_block(record, identity.sha256, role)
+    block = _task_fixture_block(record, fixture.identity.sha256, role)
     # The reader's rules for the block, so a record the version could not
     # record as it is (a seed that is no whole number, no derivation counts)
     # is not kept, rather than refusing the whole import.
@@ -1896,8 +1873,9 @@ def _workspace_task_fixture(
     if problems:
         return None, [], (f"the workspace's fixture record does not state what a version records "
                           f"of it: {'; '.join(problems)}")
-    return (block, [(f"{FIXTURE_DIR.as_posix()}/{FIXTURE_RECORD}", identity.sha256),
-                    (name, rows.identity.sha256)], None)
+    return (block, [(f"{FIXTURE_DIR.as_posix()}/{FIXTURE_RECORD}", fixture.identity.sha256),
+                    (f"{FIXTURE_DIR.as_posix()}/{record['files'][role]['name']}",
+                     fixture.samples[role].identity.sha256)], None)
 
 
 def _utc(now: datetime, pattern: str) -> str:

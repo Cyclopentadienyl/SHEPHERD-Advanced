@@ -12,7 +12,10 @@ child trained on it for real:
   functional gene fixture of its build, the import keeps its record and the
   role's rows byte for byte, bound by digest, and counts the rows; when it
   holds none, or one of another build or that does not describe the split,
-  the version keeps none and the import says why, refusing nothing;
+  the version keeps none and the import says why, refusing nothing; a
+  fixture whose files contradict its record is read by the one reader of a
+  workspace's fixture, so ``--split`` refuses it and the import does not
+  keep it, for the same reason;
 - **the disease child** is measured on a generated train version and a
   generated val version: each report is kept in its version's report store,
   its manifest records cohort_kind ``generated``, the version's block (its
@@ -28,6 +31,7 @@ child trained on it for real:
   written: the version's record contradicting its bytes (samples, the fixture
   record or rows, an edited copy or count), the version bound to another
   graph, a protocol the model or the data kind does not take, R10 evidence;
+  a damaged kept fixture refuses only the measurements that read it;
 - **kept, never overwritten**: two runs are two run directories; ``--record``
   keeps the report and says this revision's ledger does not record a
   generated split's run yet (Stage 6);
@@ -294,15 +298,64 @@ def test_a_fixture_that_does_not_describe_the_split_is_not_kept_and_refuses_noth
     assert "task_fixture" not in version.manifest
 
 
-def test_fixture_rows_that_are_not_the_ones_its_record_names_are_not_kept(site):
-    from src.evaluation.cohort_registry import prepare_generated_import
+def _edit_record(edit):
+    def change(data_dir: Path) -> None:
+        path = data_dir / "derived" / "gene_fixture" / "task_fixture.json"
+        record = json.loads(path.read_text())
+        edit(record)
+        path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
+    return change
 
-    path = site.data_dir / "derived" / "gene_fixture" / "val_samples.json"
+
+def _val_file_short_of_a_row(data_dir: Path) -> None:
+    path = data_dir / "derived" / "gene_fixture" / "val_samples.json"
     path.write_text(json.dumps(json.loads(path.read_text())[:-1]))
+
+
+def _val_rows_one_more(record):
+    record["files"]["val"]["rows"] += 1
+
+
+def _train_rows_one_fewer(record):
+    record["files"]["train"]["rows"] -= 1
+
+
+@pytest.mark.parametrize("change, said", [
+    (_val_file_short_of_a_row, "The gene fixture's val file is not the one its record names"),
+    (_edit_record(_val_rows_one_more), "The gene fixture's val file holds 5 rows, and its "
+                                       "record names 6"),
+    (_edit_record(_train_rows_one_fewer), "The gene fixture's train file holds "),
+    (_edit_record(_path_name), "is not a readable record: its val file is not named "
+                               "val_samples.json with a whole row count"),
+], ids=["file-rows", "record-rows", "other-split-rows", "path-name"])
+def test_a_fixture_contradicting_its_record_is_refused_by_split_and_not_kept_alike(
+        cli, site, tmp_path, change, said):
+    """One reader of a workspace's fixture (`read_gene_fixture`): a fixture
+    whose files contradict its record (rows that are not the bytes named, a
+    record naming another row count, of either split, or a file by a path) is
+    refused by ``measure_scorer --split val --mode gene``, writing nothing,
+    and is not kept by the import of that very split, for the same reason
+    (the import still refuses nothing)."""
+    from src.evaluation.cohort_registry import prepare_generated_import
+    from src.kg.artifacts import read_split_manifest
+    from src.kg.task_fixture import TaskFixtureError, read_gene_fixture
+
+    change(site.data_dir)
+    with pytest.raises(TaskFixtureError) as read:
+        read_gene_fixture(site.data_dir,
+                          manifest_sha256=read_split_manifest(site.data_dir).identity.sha256)
+    reason = str(read.value)
+    assert said in reason and read.value.state == "unreadable"
+    output = tmp_path / "gene.json"
+    with pytest.raises(TaskFixtureError, match=re.escape(reason)):
+        cli.main(["--mode", "gene", "--checkpoint", str(site.checkpoints["gene"]),
+                  "--data-dir", str(site.data_dir), "--split", "val", "--output", str(output),
+                  "--device", "cpu"])
+    assert not any(p.name.startswith("gene") for p in tmp_path.iterdir())
     plan = prepare_generated_import(site.registry, site.data_dir, "gen-val-2", "val")
     assert "task_fixture" not in plan.manifest
-    assert plan.task_fixture_note.startswith("the fixture's val file is not the one its record "
-                                             "names")
+    assert plan.task_fixture_bytes is plan.task_fixture_samples_bytes is None
+    assert plan.task_fixture_note == f"unreadable: {reason}"
 
 
 def test_a_plan_whose_fixture_bytes_are_not_the_ones_it_binds_is_not_committed(site):
@@ -547,6 +600,27 @@ def test_a_version_whose_record_contradicts_its_bytes_is_refused_writing_nothing
         cli.main(_argv(site, "gen-val", task))
     assert str(refused.value).endswith("Nothing was written.") or "another graph" in said
     _nothing_written(site, before)
+
+
+@pytest.mark.parametrize("name, change, said", [
+    ("task_fixture_samples.json", lambda data: b"[]", "is not the fixture rows"),
+    ("task_fixture.json", lambda data: data.replace(b'"seed": 0', b'"seed": 3'),
+     "is not the fixture record"),
+], ids=["fixture-rows", "fixture-record"])
+def test_a_damaged_kept_fixture_refuses_only_the_measurements_that_read_it(
+        cli, site, name, change, said):
+    """A refusal is scoped to the protocol that reads the damaged file: the
+    gene measurement of a version whose kept fixture is not the bytes it
+    binds is refused, writing nothing; the disease measurement of the same
+    version, which never reads the fixture, is measured and kept."""
+    _rewrite(site, "gen-val", name, change)
+    before = _tree(site.registry)
+    with pytest.raises(ValueError, match=re.escape(said)):
+        cli.main(_argv(site, "gen-val", "gene"))
+    _nothing_written(site, before)
+    assert cli.main(_argv(site, "gen-val")) == 0
+    (run,) = _runs(site, "gen-val")
+    assert _report(run)["manifest"]["mode"] == "disease"
 
 
 @pytest.mark.parametrize("argv, said", [

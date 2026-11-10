@@ -150,10 +150,15 @@ RELATION_STATES = ("verified", "not_applicable")
 def expected_relations(*, registered: bool) -> Dict[str, str]:
     """The relation states a run earns, by the kind of cohort it measured.
 
-    A generated split is bound to the workspace manifest by its sample digests
-    (R2) and has no cohort version to bind; a registered cohort version is bound
-    to the graph by its own manifest (`cohort_graph`) and was cut by no allocation
-    of this workspace, so R2 does not apply. R1, R3 and R5 apply to both.
+    A workspace's generated split (``--split``) is bound to the workspace
+    manifest by its sample digests (R2) and has no cohort version to bind. A
+    registered version of any kind is bound to the graph by its own manifest
+    (`cohort_graph`), and its data are checked against the bytes it binds,
+    never against the workspace's split manifest, which may be of another
+    build: a supplied cohort or a KG edge set was cut by no allocation of the
+    workspace, and a generated split version names the allocation that cut it
+    by its own block (its kept split manifest and generation definition), so
+    R2 does not apply to either. R1, R3 and R5 apply to every run.
 
     A fresh dict each call, so a caller that keeps or edits it cannot change what
     the next manifest is checked against.

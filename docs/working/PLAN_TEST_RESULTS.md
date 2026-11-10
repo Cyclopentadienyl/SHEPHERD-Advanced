@@ -436,6 +436,7 @@ and the decision's text is history.
 *(2026-11-10: the Measuring, Data versions, Keeping and Registering items are as of research
 comparison Stage 5a on `claude/research-comparison`, after this stamp; the rest of the list holds
 as stamped.)*
+*(2026-11-10: and, for a registered generated split, as of Stage 5b.)*
 
 - **Measuring.** `scripts/measure_scorer.py --mode <protocol>` (`--mode` required) runs a protocol
   of `src/evaluation/protocols.py` (`PROTOCOLS`: `disease`, `gene`, `patients_like_me`,
@@ -2674,14 +2675,16 @@ question are described apart.
 - **Measurement:** `measure_scorer.py --mode gene` ranks each case's own list;
   `--mode patients_like_me` ranks each patient of the measured cohort against all the others. A
   generated split is measured through the workspace's functional fixture of that split (recorded as
-  `task_fixture`), and, since research comparison Stage 5b, a registered generated split through
-  the copy of that fixture it keeps (the same record digest; a version that keeps none is refused
-  as a stated data gap). A supplied version's cases carry genes when its source listed
+  `task_fixture`). A registered version's cases carry genes when its source listed
   `causal_genes`/`candidate_genes` (the optional import fields). The manifests name η, the SP
   bounds and the augmentation (gene task), and the self-exclusion rule (patients-like-me).
 - **Serving:** the reference cohort version is resolved by the API in `SHEPHERD_REGISTRY` and
   read against its bound digest. Its graph binding must be the served graph's. The pipeline
   embeds the version once per samples digest.
+
+*(2026-11-10, research comparison Stage 5b on `claude/research-comparison`: a registered generated
+split is measured through the copy of that fixture it keeps; a version that keeps none is refused
+as a stated data gap; §4, "Current rules".)*
 
 ### 8.5 Manifests, ordering and registration
 
