@@ -567,6 +567,18 @@ def _check_the_research_comparison_flow(probe, report, tmp_path, models):
     assert [entry["probe"] for entry in facts["L8"]["runs"]] == [
         "L2", "L3", "L5", "L5", "L6", "L7.disease", "L7.gene", "L7.patients_like_me"]
 
+    # ---- M1's served readings (S1), last and informational: D1's disease
+    # child served by a service of its own, the whole fixed workload counted.
+    # Its readings' shape and states are tests/unit/test_probe_served_readings.py's.
+    assert report.probes[-1].probe_id == probe.SERVED_READINGS_PROBE
+    served = report.probes[-1]
+    assert served.status == "passed", served.detail
+    assert served.facts["required"] is False and served.facts["complete"] is True
+    assert served.facts["subject"]["checkpoint_sha256"] == sha(models.child)
+    assert (served.facts["warm_up"]["counted"], served.facts["steady_state"]["counted"]) == (
+        probe.SERVED_WARM_UP_REQUESTS, probe.SERVED_STEADY_REQUESTS)
+    assert str(tmp_path) not in json.dumps(served.facts)
+
 
 def _operator_shell(monkeypatch, base):
     """The deployment's settings as the shell the guide prepares holds them

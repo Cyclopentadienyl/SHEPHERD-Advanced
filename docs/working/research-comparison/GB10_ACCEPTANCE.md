@@ -3,6 +3,8 @@
 **Status: prepared, not run on a GPU.** Stage 10a of this round (README §5 Stage 10, the owner's O9) added required
 probes to `scripts/probe_deployment.py --m2-acceptance`. This page is the contract the external closing check reads them
 by: the IDs, the report keys and what each must hold. It also records what the check's next revision has to do (TA-10).
+Stage 10b added one informational probe, S1, M1's minimal served readings (§2.1): it is in neither required list, and
+the check must never require it or judge its numbers.
 
 - **What was verified, and where.** The probes run, and pass, on the CPU in this container only:
   `tests/unit/test_probe_m2_phase.py` runs the demo phase end to end and checks the evidence against the disk, and
@@ -27,6 +29,8 @@ probe's own words and is never parsed.
   `L7.disease`, `L7.gene`, `L7.patients_like_me` and `L8`.
 - `m2_acceptance.real_data.required`: the real-data part's list (`M2_REAL_REQUIRED`). Unchanged: 15 entries.
 - `m2_acceptance.demo.complete` and `m2_acceptance.complete` are false until every new probe has passed.
+- S1 (§2.1) is in neither list. `m2_acceptance` never reads it, so no reading of it, however slow or large, and not even
+  a failed S1, leaves the acceptance incomplete.
 
 **Unchanged.** No earlier ID was renamed, dropped or moved. Every key the current check reads keeps its name and
 meaning:
@@ -40,7 +44,8 @@ requires to be the tested build's `TRAINING_RULES_VERSION` (`src/utils/checkpoin
 (Stage 9a), so a run of this round records 2. K8's tested commit `f2c2012` had 1, and its report records 1. The check
 must not pin either number (§3, item 3).
 
-`m2_acceptance.scope` gained a sentence about the new probes. It is prose, and nothing here needs the check to read it.
+`m2_acceptance.scope` gained a sentence about the new probes, and one about S1. It is prose, and nothing here needs the
+check to read it.
 
 ## 2. The probes and their facts
 
@@ -219,6 +224,55 @@ Before passing, the probe checks every exported row:
 - units for a KG edge set's metrics, and the absence said for the others;
 - the exposure: a KG edge set's state and reading, a supplied cohort's R10, a generated split's allocation note.
 
+## 2.1 S1 — M1's minimal served readings, informational (phase `m2`, last)
+
+Stage 10b (the owner's item D; BACKLOG 64). S1 runs after L8. It serves D1's disease child on the demo workspace from a
+service of its own, started as the launcher starts it, with the child configured at startup, and reads what that
+service does. It takes a minimal part of PLAN_B04 §7.3, the reviewed procedure of the retired
+`scripts/measure_served_pipeline.py`, which stays that script's record. Its readings are recorded and never judged:
+there is no threshold, and no accuracy figure stands in for them.
+
+- **When it fails.** Only when no reading of the child could be taken: the service did not start, `/ready` did not
+  answer 200, or the status's served identity is not the one the probe read (`_assert_served_identity`). Then its
+  `facts` are empty. A request that fails afterwards is counted by class and leaves its phase incomplete; it does not
+  fail S1.
+- **Whose readings they are.** Every reading is the server process's: its answers, or its PID's `/proc` entries. None
+  is taken in the probe's own process, which runs no part of a request.
+
+| Key | Holds |
+|---|---|
+| `required` | `false` |
+| `version` | `"served-readings/1"`, the definitions' version |
+| `subject` | `task` `"disease"`, `checkpoint_sha256` (D1's child), and `served_identity` as the status reported it at readiness |
+| `device` | the probe's device: `"cuda"` on the GB10 |
+| `query` | where the one query came from: `split` `"val"`, `case_position`, `phenotypes` (a count), `cases`, `cases_bound`. No identifier |
+| `request` | `fields_sent` `["phenotypes"]`, and `api_defaults`, the request model's own defaults (`top_k`, `include_explanations`, `include_paths`) |
+| `cold_start` | `seconds`: launch to the first `/health` answer, the startup's pipeline build included, polled every 0.5 s. `memory_at_ready`: a memory reading (below) |
+| `warm_up`, `steady_state` | one phase each: 5 and then 50 serial requests (`SERVED_WARM_UP_REQUESTS`, `SERVED_STEADY_REQUESTS`). Each has `state` `"read"`, `planned`, `sent`, `counted`, `failures` (by class), `ended` (`null`, `"no_response"` or `"server_exited"`), `complete`, `seconds` and `server_handler_seconds` (one per counted request, in order), `summary` and `server_handler_summary` (`median_seconds`, `min_seconds`, `max_seconds`), and `memory_after`. A steady state the warm-up ended is `state` `"not_taken"` with its `reason` |
+| `allocator` | `PYTORCH_ALLOC_CONF`, `PYTORCH_CUDA_ALLOC_CONF` and `SHEPHERD_ALLOC_SOURCE` as the server process was started with them, raw, `null` when absent |
+| `cuda_allocator_peak` | on the GB10, `state` `"not_obtainable"` with its `reason`: torch keeps it inside the server's process and no route exposes it. On the CPU, `"not_applicable"` |
+| `complete` | `true` when both phases sent and counted every planned request |
+| `definitions`, `not_covered` | the readings' definitions and what they do not cover, as the probe states them |
+
+**A memory reading** is `state` `"read"` with `rss_bytes` (VmRSS) and `peak_rss_since_start_bytes` (VmHWM). VmHWM is
+never reset here, so it is the peak since the process started, never one phase's. Otherwise it is
+`state` `"not_obtainable"` with its `reason`. Every reading that has no value is a `state` and a `reason`, never a
+number.
+
+**A request's time** is the probe's clock from sending the request to reading its whole answer. The service answers
+after the disease head's scores are copied to the host, so on CUDA the time includes the device's work, synchronised in
+the server's process. No synchronise call is made in the probe's process. `server_handler_seconds` is each answer's
+own `inference_time_ms`, in seconds.
+
+**Not covered** (`not_covered`):
+
+- a peak per phase (no VmHWM reset);
+- system-wide memory, swap, a baseline and OOM kills;
+- a reload, with the old and new pipelines held together;
+- concurrency, a varied or largest workload, and repeats over several cold starts;
+- the real workspace's children, and gene and patients-like-me children;
+- the server's CUDA allocator counters.
+
 ## 3. TA-10: the external closing check's next revision
 
 The check lives outside this repository, in the owner's session. Its next revision must do three things, and be
@@ -233,6 +287,7 @@ dry-run first (item 4).
      - L1's `taken_from_checkpoint_sha256` equals L2's and L3's `checkpoint_sha256` and every L7 `child.parent_sha256`;
      - L8's `runs` run ids equal those of L2, L3, L5 (both), L6 and L7.
    - Do not gate on a version, a route, a metric value or a raw-score difference (§2).
+   - Do not require S1, and do not judge its numbers (§2.1). The check may print its readings as INFO lines.
 2. **Fix the two INFO lines that read nothing.** K8's record names them (`../k8-acceptance-2026-11-09/README.md` §3).
    - `W8 training_seconds None`: W8 trains nothing, since it measures W1's listed copy of M2's child. Drop the line.
      The demo's own training time is D1's `facts.training_seconds`, a mapping by stage (K8's report gives
@@ -258,6 +313,7 @@ dry-run first (item 4).
   clone at the reviewed head.
 - **Time and disk.** The new probes add only demo-sized work: five short trainings (the two refusal bases and L7's
   three children), about a dozen measurements, one job-runner test run and one export. On the CPU here the whole flow
-  (L1–L8) took about 7 s. Its GB10 time and disk are not measured.
+  (L1–L8) took about 7 s. Its GB10 time and disk are not measured. S1 adds one service start and 55 demo requests,
+  about 8 s on the CPU here.
 - **The record.** It goes in a new evidence directory, `docs/working/<round>-acceptance-<date>/README.md`. It states the
   environment by the product's own facts (A1, A5, A6) and what the run does not cover, as K8's §3 does.

@@ -303,6 +303,31 @@ every step through its production entry point:
     training settings, environment and exposure, no row capped (L8). On CUDA
     the measurements and the L7 children run on the device; this container's
     tests run the same phase on the CPU.
+
+M1's minimal served readings (the round's Stage 10b, the owner's item D;
+BACKLOG 64), carried by the same run, last in phase M after L8, and
+**informational**: S1 is in neither required list, so `m2_acceptance` never
+reads it and no reading can leave the acceptance incomplete; nothing it reads
+is judged, and there is no threshold. It takes a minimal part of the retired
+`scripts/measure_served_pipeline.py`'s reviewed procedure (PLAN_B04 §7.3),
+which stays that script's record:
+    D1's disease child served by a service of its own, started as the
+    launcher starts it (`_ProbeServer`) with the child configured at startup,
+    readiness asserted (/ready, and the status's served identity held to the
+    probe's own reads, `_assert_served_identity`) before anything counts. Then
+    the cold start (launch to the first /health answer, the startup's
+    pipeline build included), a warm-up and a steady state of a fixed count of
+    serial diagnose requests (one query from the workspace's own validation
+    cases, the API's defaults), each counted request timed on the probe's
+    clock to its whole answer (on CUDA already synchronised by the server's
+    copy of the scores to the host) beside the server's own handler time;
+    each failure by class. The server process's own memory (VmRSS, and VmHWM,
+    its peak since the start) at readiness and after each phase, and its
+    allocator variables, from its PID's /proc entries. The server's CUDA
+    allocator peak is recorded as not obtainable, with why: torch keeps it
+    inside the server's process and no route exposes it, and a figure taken
+    in the probe's process would describe the probe. What the readings do not
+    cover is listed with them (`SERVED_READINGS_NOT_COVERED`).
 """
 from __future__ import annotations
 
@@ -2272,7 +2297,11 @@ def m2_acceptance(report: Report, real_requested: bool) -> Dict[str, Any]:
             "generated split imported, measured and registered; short disease, gene and "
             "patients-like-me children trained and measured on this device as regression "
             "cases, not studies; and the results export listing every record of that flow. "
-            "Its figures are a functional check, never a comparison of models."
+            "Its figures are a functional check, never a comparison of models. Last, it "
+            "records M1's served readings of the demo disease child (S1): the service's cold "
+            "start, warm-up and steady-state request times and its process's memory, "
+            "informational and never required, so no reading, however slow or large, leaves "
+            "the acceptance incomplete, and nothing it reads is judged."
         ),
     }
 
@@ -6475,6 +6504,334 @@ def _rc_demo(report: Report, work: Path, sound: Path, base: Path, child: Path, d
                    _exported)
 
 
+# =============================================================================
+# M1's served readings, informational (S1 in phase M)
+# =============================================================================
+#: The probe that takes M1's minimal served resource and latency readings
+#: (research comparison §5 Stage 10, the owner's item D; BACKLOG 64), after the
+#: retired `scripts/measure_served_pipeline.py` (PLAN_B04 §7.3, its reviewed
+#: procedure, of which this takes a minimal part). Its own letter: the probe
+#: ID M1 is M2's other-graph precondition, and M1 is also the deployment mode
+#: M5's service runs in. **Informational**: in neither required list
+#: (`M2_DEMO_REQUIRED`, `M2_REAL_REQUIRED`), so `m2_acceptance` never reads it
+#: and no reading, however slow or large, can leave the acceptance incomplete.
+#: There is no threshold: nothing it reads is judged.
+SERVED_READINGS_PROBE = "S1"
+#: The readings' definition, recorded with them (`SERVED_READING_DEFINITIONS`).
+SERVED_READINGS_VERSION = "served-readings/1"
+#: The fixed workload after readiness: the first requests are the warm-up, a
+#: count fixed here and never detected, and the next ones the steady state,
+#: all sent serially, one at a time.
+SERVED_WARM_UP_REQUESTS = 5
+SERVED_STEADY_REQUESTS = 50
+#: What each reading is, recorded with the readings so the report says it.
+SERVED_READING_DEFINITIONS: Dict[str, str] = {
+    "cold_start.seconds": (
+        "the probe's clock from launching the service's process (uvicorn serving the "
+        "application, as the launcher starts it; the process is the server's own) to its "
+        "first /health answer. The application builds the configured pipeline in its startup, "
+        "before the service accepts a connection, so this covers the interpreter's start, the "
+        "imports, the dashboard's mount, reading the workspace and the checkpoint, building "
+        "the model and moving it to the device. /health is asked every 0.5 s, so it reads up "
+        "to that much late"),
+    "seconds": (
+        "per counted request, the probe's clock (time.perf_counter) from sending one POST "
+        "/api/v1/diagnose, on a new loopback connection, to reading its whole answer. The "
+        "service answers after the disease head's scores are copied to the host, so on CUDA "
+        "the time includes the device's work, synchronised by that copy in the server's "
+        "process; the probe's process runs no part of the request, and no synchronise call "
+        "is made in it"),
+    "server_handler_seconds": (
+        "per counted request, the answer's own inference_time_ms in seconds: the route's "
+        "wall time from its start to the answer built, before it is validated and sent"),
+    "warm_up": "the first requests after readiness, a fixed count, whatever they took",
+    "steady_state": (
+        "the requests after the warm-up, a fixed count, sent serially. Every request asks the "
+        "same query, and the service keeps no result cache, so each answer is computed"),
+    "counted": (
+        "a request answered 200 with a JSON body whose served identity is the one the status "
+        "reported at readiness; any other answer is a failure, by class, and a phase with one "
+        "is incomplete. A request with no whole answer (timed out, reset or cut off) ends the "
+        "readings: the server may still be working on it"),
+    "memory": (
+        "the server process's VmRSS (resident now) and VmHWM (its peak resident size since the "
+        "process started) from /proc/<pid>/status, in bytes, approximate as the kernel's RSS "
+        "accounting is. VmHWM is never reset here, so it is the peak since the start, never "
+        "one phase's. Whether a unified-memory device's allocations count in it is not "
+        "established"),
+    "allocator": (
+        "the allocator variables in the environment the server process was started with "
+        "(/proc/<pid>/environ), raw, null when absent"),
+    "cuda_allocator_peak": (
+        "torch.cuda.max_memory_allocated of the server's process: torch keeps it inside that "
+        "process, and no route of the service exposes it"),
+}
+#: What these readings do not cover, said in the report with them.
+SERVED_READINGS_NOT_COVERED: Tuple[str, ...] = (
+    "a peak per phase: VmHWM is not reset between phases (PLAN_B04 §7.3's reset pauses the "
+    "server, and is not taken here)",
+    "system-wide memory and swap, a baseline before the launch, and the machine's OOM kills "
+    "(PLAN_B04 §7.3's R0 and system counters)",
+    "a reload, and the old and new pipelines held together (PLAN_B04 §7.3's R3 and R4)",
+    "concurrent requests, a varied or largest-size workload, and repeats over several cold "
+    "starts: one query, the same each time, from one cold start",
+    "the real workspace's children at deployment size, and gene and patients-like-me "
+    "children: only D1's disease child on the demo workspace is served",
+    "the server's CUDA allocator counters (cuda_allocator_peak)",
+)
+
+
+def _reading_not(state: str, reason: str) -> Dict[str, Any]:
+    """A reading that has no value: its state (``not_obtainable``,
+    ``not_applicable`` or ``not_taken``) and why, never a number."""
+    return {"state": state, "reason": reason}
+
+
+def _process_memory(pid: int, proc: Path = Path("/proc")) -> Dict[str, Any]:
+    """`pid`'s VmRSS and VmHWM in bytes, read from its ``status`` under `proc`
+    (Linux's process counters; SERVED_READING_DEFINITIONS["memory"]), or the
+    reason they cannot be read: no /proc on this platform, or the process gone
+    (a process that has exited has neither line)."""
+    if not (proc / "self" / "status").is_file():
+        return _reading_not("not_obtainable",
+                            "this platform has no /proc/<pid>/status (Linux's process counters)")
+    try:
+        text = (proc / str(pid) / "status").read_text()
+    except OSError:
+        return _reading_not("not_obtainable", "the server's process is gone")
+    values: Dict[str, int] = {}
+    for line in text.splitlines():
+        name, _, rest = line.partition(":")
+        parts = rest.split()
+        if name in ("VmRSS", "VmHWM") and len(parts) == 2 and parts[1] == "kB" \
+                and parts[0].isdigit():
+            values[name] = int(parts[0]) * 1024
+    if set(values) != {"VmRSS", "VmHWM"}:
+        return _reading_not("not_obtainable",
+                            "the server's process has exited: its status has no VmRSS or VmHWM")
+    return {"state": "read", "rss_bytes": values["VmRSS"],
+            "peak_rss_since_start_bytes": values["VmHWM"]}
+
+
+def _process_allocator(pid: int, proc: Path = Path("/proc")) -> Dict[str, Any]:
+    """The allocator variables `pid` was started with, by the names the
+    report's `allocator` records for the probe's own process
+    (`_allocator_record`), raw, None when absent, from its ``environ`` under
+    `proc`; or why they cannot be read."""
+    from src.config.runtime_presets import ALLOC_SOURCE_ENV
+
+    names = ("PYTORCH_ALLOC_CONF", "PYTORCH_CUDA_ALLOC_CONF", ALLOC_SOURCE_ENV)
+    try:
+        raw = (proc / str(pid) / "environ").read_bytes()
+    except OSError:
+        return _reading_not("not_obtainable",
+                            "the server process's environment cannot be read here "
+                            "(/proc/<pid>/environ)")
+    pairs = dict(item.split(b"=", 1) for item in raw.split(b"\0") if b"=" in item)
+    return {"state": "read", **{
+        name: (pairs[name.encode()].decode("utf-8", "replace")
+               if name.encode() in pairs else None) for name in names}}
+
+
+def _cuda_allocator_peak(device: str) -> Dict[str, Any]:
+    """The server's CUDA allocator peak, which this probe cannot read
+    (SERVED_READING_DEFINITIONS["cuda_allocator_peak"]): never a figure taken
+    in the probe's own process, which would describe the probe."""
+    if device != "cuda":
+        return _reading_not("not_applicable", f"the model is served on the {device}")
+    return _reading_not("not_obtainable",
+                        "torch keeps its allocator counters inside the server's process and "
+                        "no route of the service exposes them; a reading in the probe's "
+                        "process would describe the probe, not the server")
+
+
+def _seconds_summary(values: Sequence[float]) -> Dict[str, Any]:
+    """The median, smallest and largest of `values` (no mean, as PLAN_B04 §7.3
+    reports), or the state that none was counted."""
+    import statistics
+
+    if not values:
+        return _reading_not("not_obtainable", "no request of this phase was counted")
+    return {"state": "read", "median_seconds": round(statistics.median(values), 6),
+            "min_seconds": min(values), "max_seconds": max(values)}
+
+
+def _served_requests(server: Any, body: bytes, planned: int,
+                     identity: Mapping[str, Any]) -> Dict[str, Any]:
+    """`planned` diagnose requests of `body` to `server`, serially, each timed
+    on the probe's clock (SERVED_READING_DEFINITIONS["seconds"]). A request
+    counts only by SERVED_READING_DEFINITIONS["counted"]; a failure is
+    counted by class (``http_<status>``, with ``out_of_memory_in_body``
+    beside it when the body says so, ``not_json``, ``served_identity_mismatch``,
+    ``no_inference_time``), and the phase goes on. A request with no whole
+    answer (``no_response``) or a server that has exited (``server_exited``)
+    ends it, said in ``ended``."""
+    import http.client
+
+    seconds: List[float] = []
+    handler: List[float] = []
+    failures: Dict[str, int] = {}
+    sent, ended = 0, None
+
+    def fail(kind: str) -> None:
+        failures[kind] = failures.get(kind, 0) + 1
+
+    for _ in range(planned):
+        if server.process is None or server.process.poll() is not None:
+            ended = "server_exited"
+            fail(ended)
+            break
+        sent += 1
+        started = time.perf_counter()
+        try:
+            status, _, answer = server.request(
+                "POST", "/api/v1/diagnose", {"Content-Type": "application/json"}, body)
+        except (OSError, http.client.HTTPException):
+            ended = "no_response"
+            fail(ended)
+            break
+        elapsed = time.perf_counter() - started
+        if status != 200:
+            fail(f"http_{status}")
+            if b"out of memory" in answer.lower():
+                fail("out_of_memory_in_body")
+            continue
+        try:
+            result = json.loads(answer)
+        except ValueError:
+            fail("not_json")
+            continue
+        if not isinstance(result, dict) or result.get("served_identity") != identity:
+            fail("served_identity_mismatch")
+            continue
+        try:
+            handler_seconds = float(result["inference_time_ms"]) / 1000.0
+        except (KeyError, TypeError, ValueError):
+            fail("no_inference_time")
+            continue
+        seconds.append(round(elapsed, 6))
+        handler.append(round(handler_seconds, 6))
+    return {
+        "state": "read", "planned": planned, "sent": sent, "counted": len(seconds),
+        "failures": failures, "ended": ended,
+        "complete": sent == planned and len(seconds) == planned,
+        "seconds": seconds, "summary": _seconds_summary(seconds),
+        "server_handler_seconds": handler, "server_handler_summary": _seconds_summary(handler),
+    }
+
+
+def _served_reading(server: Any, query: Sequence[str], identity: Mapping[str, Any],
+                    device: str, cold_start_seconds: float,
+                    memory_at_ready: Mapping[str, Any]) -> Dict[str, Any]:
+    """The readings of a service already shown ready and serving `identity`,
+    beside its cold start and the memory read at readiness: the warm-up and
+    then the steady state of `query` (each with the memory after it), its
+    allocator variables and the CUDA allocator peak's state. Everything is
+    read from the server's process (its PID's /proc entries) or its answers,
+    never from the probe's process. A warm-up ended by a request with no whole
+    answer or the server's exit leaves the steady state not taken."""
+    pid = server.process.pid
+    body = json.dumps({"phenotypes": list(query)}).encode("utf-8")
+    warm_up = _served_requests(server, body, SERVED_WARM_UP_REQUESTS, identity)
+    warm_up["memory_after"] = _process_memory(pid)
+    if warm_up["ended"] is None:
+        steady = _served_requests(server, body, SERVED_STEADY_REQUESTS, identity)
+        steady["memory_after"] = _process_memory(pid)
+    else:
+        steady = {**_reading_not("not_taken", f"the warm-up ended: {warm_up['ended']}"),
+                  "planned": SERVED_STEADY_REQUESTS, "complete": False}
+    return {
+        "version": SERVED_READINGS_VERSION,
+        "cold_start": {"seconds": cold_start_seconds, "memory_at_ready": dict(memory_at_ready)},
+        "warm_up": warm_up,
+        "steady_state": steady,
+        "allocator": _process_allocator(pid),
+        "cuda_allocator_peak": _cuda_allocator_peak(device),
+        "complete": bool(warm_up["complete"] and steady["complete"]),
+    }
+
+
+def _served_readings(report: Report, work: Path, sound: Path, checkpoint: Path,
+                     device: str) -> None:
+    """S1, M1's minimal served readings (`SERVED_READINGS_PROBE`): D1's disease
+    child (`checkpoint`) on the demo workspace, served by a service of its own,
+    started as the launcher starts it (`_ProbeServer`) with the pipeline
+    configured at startup (`SHEPHERD_KG_PATH`, `SHEPHERD_DATA_DIR`,
+    `SHEPHERD_CHECKPOINT_PATH`, `SHEPHERD_DEVICE`), its files under
+    <work>/served-readings. Readiness is asserted before anything counts:
+    /ready answers 200 and the status's served identity names the child, the
+    workspace and its dataset record by the digests this probe read, the
+    disease task and the device asked for, in effect (`_assert_served_identity`).
+    Then the fixed workload of one query from the workspace's own validation
+    cases (`_workspace_query`), sent with the API's defaults
+    (`_served_reading`).
+
+    **Informational, never required** (`SERVED_READINGS_PROBE`). The probe
+    fails only when no reading of the child could be taken: the service did
+    not start, was not ready or served something else. Every reading that
+    cannot be taken is recorded as a state with its reason, never a number,
+    and an incomplete workload is recorded as incomplete, not as a failure."""
+    def _read() -> Tuple[str, Dict[str, Any]]:
+        from src.api.routes.diagnose import DiagnoseRequest
+        from src.kg.artifacts import GRAPH_ARTIFACTS
+
+        _, _, reads, record = verify_workspace(sound)
+        query, asked = _workspace_query(checkpoint, sound, reads)
+        checkpoint_sha256 = _read_run_checkpoint(checkpoint)["sha256"]
+        server = _ProbeServer(SERVED_READINGS_PROBE, work / "served-readings", {
+            "SHEPHERD_KG_PATH": str(sound / GRAPH_ARTIFACTS["kg"]),
+            "SHEPHERD_DATA_DIR": str(sound),
+            "SHEPHERD_CHECKPOINT_PATH": str(checkpoint),
+            "SHEPHERD_DEVICE": device,
+        })
+        try:
+            server.start()
+            cold_start = server.wait_ready()
+            ready = server.request("GET", "/ready")[0]
+            assert ready == 200, (
+                f"the service answered /ready {ready}: it serves no pipeline (its log is under "
+                "the work directory)")
+            identity = _assert_served_identity(
+                server.json("/api/v1/pipeline/status").get("served_identity"),
+                checkpoint_sha256=checkpoint_sha256, workspace_digests=reads, record=record,
+                task="disease", device=device)
+            reading = _served_reading(server, query, identity, device, cold_start,
+                                      _process_memory(server.process.pid))
+        finally:
+            server.stop()
+        defaults = {name: DiagnoseRequest.model_fields[name].default
+                    for name in ("top_k", "include_explanations", "include_paths")}
+        steady = reading["steady_state"]
+        summary = steady.get("summary") or {}
+        memory = steady.get("memory_after") or {}
+        print(f"         Served readings: cold start {cold_start} s; steady state "
+              f"{steady.get('counted', 0)} of {steady['planned']} counted"
+              + (f", median {summary['median_seconds']} s" if summary.get("state") == "read"
+                 else "")
+              + (f"; server resident {memory['rss_bytes'] / 1e9:.2f} GB, peak since start "
+                 f"{memory['peak_rss_since_start_bytes'] / 1e9:.2f} GB"
+                 if memory.get("state") == "read" else ""))
+        detail = ("readings taken: cold start, warm-up and steady state, each counted request "
+                  "timed" if reading["complete"] else
+                  "readings incomplete: recorded as taken, each failure by class")
+        return detail, {
+            "required": False,
+            "subject": {"task": "disease", "checkpoint_sha256": checkpoint_sha256,
+                        "served_identity": identity},
+            "device": device,
+            "query": asked,
+            "request": {"fields_sent": ["phenotypes"], "api_defaults": defaults},
+            **reading,
+            "definitions": dict(SERVED_READING_DEFINITIONS),
+            "not_covered": list(SERVED_READINGS_NOT_COVERED),
+        }
+
+    report.run(SERVED_READINGS_PROBE, "m2",
+               "M1's served readings of D1's disease child: cold start, warm-up and "
+               "steady-state request times and the server's memory (informational: never "
+               "required, never judged)", _read)
+
+
 def _under_the_probes_own_gpu_lock(phase: Callable[..., None]) -> Callable[..., None]:
     """`phase(report, work, ...)` run with the lock under `<work>/probe-gpu-lock/`
     as the GPU lock in effect (`_probes_own_gpu_lock`), the operator's setting
@@ -6494,12 +6851,13 @@ def phase_m2_demo(
     """Contract M2's acceptance on the demo workspace: the successes first, then
     every refusal, each from the production entry point that makes it; then
     contract M4's flow on the same workspace (T1-T6), then M5's (W1-W11), then
-    the research comparison round's (L1-L8, `_rc_demo`). The formal entry
+    the research comparison round's (L1-L8, `_rc_demo`), and last M1's served
+    readings (S1, `_served_readings`), informational. The formal entry
     points take the probe's own GPU lock (`_probes_own_gpu_lock`), and M5's
     and the research comparison's each that of their own deployment.
 
     `checkpoint` is D1's disease child, the resume refusals' parent and the
-    subject of M6, M7, M8, T2 and L5; `base` is D1's base, which M2 finetunes
+    subject of M6, M7, M8, T2, L5 and S1; `base` is D1's base, which M2 finetunes
     again into a run it pauses and resumes and the research comparison's flow
     lists, measures and finetunes."""
     print("\nM. Contract M2 on the demo workspace, then M4's flow")
@@ -7122,6 +7480,11 @@ def phase_m2_demo(
     # base and disease child, M1's other graph, the probe's own deployment
     # under <work>/rc.
     _rc_demo(report, work, sound, base, checkpoint, device, state.get("other"))
+
+    # ---- M1's served readings (S1), informational and never required: D1's
+    # disease child served by a service of its own, after every other probe
+    # of the part, so no other service or job of the probe runs meanwhile.
+    _served_readings(report, work, sound, checkpoint, device)
 
 
 # =============================================================================

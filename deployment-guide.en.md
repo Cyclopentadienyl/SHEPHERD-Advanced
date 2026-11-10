@@ -1151,6 +1151,35 @@ device the model's parameters are on (`cuda:0`, not just `cuda`). The status's
 > disease child it trained (a base, then one disease child, since K7), with the
 > device they were trained on.
 
+### What the acceptance reads of serving: S1 (since research comparison Stage 10b)
+
+The GB10 acceptance (`scripts/probe_deployment.py --m2-acceptance`) ends its demo part with
+**S1**, a minimal reading of what serving a task model takes (BACKLOG 64). It starts the
+service as the launcher does, with the demo's disease child configured at startup, checks that
+the service is ready and serves that child, and then reads:
+
+- the **cold start**: from the launch to the first `/health` answer, which includes building
+  the pipeline;
+- the **warm-up** (the first 5 diagnose requests) and the **steady state** (the next 50), sent
+  one at a time: each request's time to its whole answer, and the service's own
+  `inference_time_ms`, with their median, smallest and largest;
+- the **service process's memory**: its resident size (VmRSS) at readiness and after each phase,
+  and its peak since it started (VmHWM), from `/proc/<pid>/status`; and the allocator variables
+  it was started with.
+
+On CUDA a request's time already includes the device's work: the service copies the scores to
+the host before it answers. torch's own allocator counters (`max_memory_allocated`) live inside
+the service's process, and no route exposes them, so S1 records them as not obtainable, with
+why. Any reading S1 cannot take is recorded as a state with its reason, never as a number.
+
+**S1 is informational.** It is in neither of the acceptance's required lists, has no threshold
+and judges nothing, so a slow or large reading never leaves the acceptance incomplete. It fails
+only when it could not read the child at all: the service did not start, or did not serve that
+child. Its readings are the demo child's, for one query and one cold start. They are not the real
+workspace's model, not concurrent load and not a capacity decision. What they do not cover is
+listed beside them in the report (`not_covered`), and their fields are in
+`docs/working/research-comparison/GB10_ACCEPTANCE.md` §2.1.
+
 ---
 
 ## 4.9 Test cohorts: import, measure, record (since contract M4)
