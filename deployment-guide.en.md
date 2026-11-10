@@ -1297,8 +1297,9 @@ to measure.
 ### A KG edge set: `--kind kg_edges` (since research comparison Stage 4)
 
 A **KG edge set** is a version of another kind: one part of the edge split a model was trained
-on, kept as fixed link-prediction pairs, for the link-prediction measurement (research comparison
-Stage 5, not built yet). The same preview and commit import it:
+on, kept as fixed link-prediction pairs, for the KG link-prediction measurement (`--mode
+kg_link_prediction`, research comparison Stage 5; "The KG link-prediction measurement" below).
+The same preview and commit import it:
 
 ```bash
 python scripts/import_cohort.py --kind kg_edges --registry /srv/shepherd/cohorts \
@@ -1344,9 +1345,10 @@ compares as it does a supplied version's.
 
 The server's lists (`GET /cohorts`) give a KG edge set with its kind, role and counts, never an
 edge; the Test page lists it by label, kind and role ("a KG edge set (test)"), never with a
-supplied cohort's counts. No protocol of this build measures one yet:
-`measure_scorer.py --cohort` or the Test page's Start naming one is refused with the protocol's
-reason ("the disease measurement does not measure a KG edge set; ..."), and nothing is written.
+supplied cohort's counts. The KG link-prediction protocol measures it (below); a task protocol
+naming one, from `measure_scorer.py --cohort` or the Test page's Start, is refused with that
+protocol's reason ("the disease measurement does not measure a KG edge set; ..."), and nothing is
+written.
 Each reader of a supplied cohort's cases refuses one with one shared reason, "a KG edge set
 (test), not a supplied cohort version": the Diagnosis route, as a reference cohort, and
 `audit_split_overlap.py --cohort` (exit 1, one message, nothing written). The Diagnosis page's
@@ -1440,15 +1442,17 @@ python scripts/measure_scorer.py --mode disease \
 `--mode` is required and names the **protocol**: a measurement this build implements, judged by
 what the model offers (its capability description, read from its model spec;
 `src/evaluation/protocols.py`), today `disease`, `gene` and `patients_like_me`, each taking a
-finetuned model that carries its task head. The report's mode is the
+finetuned model that carries its task head, and `kg_link_prediction`, taking a base or any
+finetune by its LP head and measuring a KG edge set (below). The report's mode is the
 protocol's name. The run judges the protocol on the bytes it reads, and a refusal says why and
 ends "Nothing was written.": a registered version must list the genes the protocol needs (`gene`
 causal and candidate genes, `patients_like_me` causal genes), checked right after its
 `cohort.json` is read, before the workspace or the checkpoint; the checkpoint's model must offer
-what the protocol needs (for these three, its task head), checked right after the checkpoint is
-read. A
-base is refused with "This model is a base: its formal test (link prediction on held-out
-knowledge-graph edges) is not implemented yet. A model finetuned from it can be measured.", and a
+what the protocol needs (for the three task protocols, its task head), checked right after the
+checkpoint is read. A base asked for a task protocol is refused with that protocol's reason, which
+names the one that takes it ("the disease measurement takes a finetune model with the disease
+head; this checkpoint is a base model with no task head. It can be measured by
+kg_link_prediction."), and a
 checkpoint without a model spec (a ShepherdGNN history file) with the record reader's phrase,
 "written before the model spec: not readable by this build; start a new run" (since K8-7b,
 2026-11-08; it used to be refused "as history"). The Test page passes the
@@ -1526,6 +1530,53 @@ The console prints the run's metrics (its protocol's), the coverage (`N ranked o
 each category), the four R10 labels in the shared words of `src/evaluation/caveats.py` (an
 `unverifiable` label with its reason), the label definitions once, the report's path and the run
 id. The report itself keeps the states and holds no prose.
+
+### The KG link-prediction measurement: `--mode kg_link_prediction` (since research comparison Stage 5)
+
+One protocol measures a KG edge set, for a base and each of its finetunes alike (the owner's O3):
+the formal KG test and a family's common read-out use this one evaluator, and differ in the data
+role, the exposure and the research question, not in how they are scored.
+
+```bash
+python scripts/measure_scorer.py --mode kg_link_prediction \
+    --checkpoint data/workspaces/<ws>/runs/<arch>/<run>/checkpoints/<file>.pt \
+    --data-dir data/workspaces/<ws> \
+    --cohort kg-test-2026-11 --registry /srv/shepherd/cohorts [--batch-size 512] [--device cpu]
+```
+
+- **What is scored.** Each stored pair, a positive edge against its one rule-generated negative,
+  by the model's LP head (the DistMult raw score), over the full-view vectors of the version's
+  message-passing graph (its split's train part, with the view's node types) for every model. No
+  patient samples are read. `--batch-size` is the pairs scored at once.
+- **Metric schema 3.** LP accuracy (a positive's raw score above 0, a negative's at or below 0,
+  over both), ROC-AUC (average ranks), AP and lp_loss, over the whole set, each with its unit and
+  denominator; a metric that cannot be computed is a status with its reason, never a number. The
+  counts carry their units: `n_samples` is the version's positive edges, `n_ranked` the pairs.
+  There is no R10: `--training-evidence` is refused for a KG edge set.
+- **Checked as for a supplied version,** before anything is written: the version's `cohort.json`
+  and `pairs.bin` against the digest it binds (a changed file is refused before it is parsed, and
+  pairs that parse to other rows or another pairs digest than the version records are refused),
+  the workspace's graph and dataset record, the version against the workspace, the checkpoint
+  against the graph, and `--expect-*` digests. Also refused: a version of another graph view than
+  the model's (there is no node mapping between views in this build: a capability gap, not a
+  research rule), a file without a model spec, a version with no pair, a recorded split that does
+  not rebuild from the view, pairs that are not the role's edges, and `--split` with this
+  protocol. **Not refused:** a model of another split of the same view, another family, another
+  environment, or another result.
+- **The exposure** is a top-level block of the report (definition `kg-lp-exposure/v1`, with its
+  sources: the checkpoint and the version). It says how the measured edges stand to what the
+  model's record says it used of the graph: "held out relative to the recorded training and
+  validation graph use" (a base on its own test set), "k of n" (its val or train set, or a model
+  of another split), "after full-view exposure" (a finetune, whose validation passed messages over
+  the full view), or "exposure not recorded" (a record this build cannot read). It is never a
+  gate, and the negatives are never claimed as proven non-relations.
+- **What is kept.** In the version's report store, a new run directory holds `scores.bin` (each
+  pair's actual raw scores and state, keyed to the pairs file's rows, streamed in chunks and
+  placed whole) and then `report.json`, which names it by digest and row count. A run cancelled
+  or failed before the report leaves no report, and what it left is listed as an interrupted
+  write. **Registering it is not built yet** (research comparison Stage 6): `--record` keeps the
+  report and exits 3, saying this revision's ledger records runs on a supplied cohort version
+  only.
 
 ### Mode D (removed in K7)
 
@@ -3059,9 +3110,11 @@ and register it. Three panels:
   list again). Then **Measurement** (since K8-6a), the protocol the run passes as
   `--mode <protocol>` (§4.9): the options are the protocols this build implements whose needs
   the chosen model's listed capabilities meet, today one for each task head of a finetuned model
-  (Disease, Gene or Patients-like-me). A single option is chosen already; of
-  several, none is until you choose one; with none (a base, whose formal test is not implemented
-  yet), Start says why. A file whose record cannot be read offers none either, and Start is off
+  (Disease, Gene or Patients-like-me) and `kg_link_prediction` for a base and every finetune,
+  which measures a KG edge set (§4.9; run from this page with R10's evidence directories set, it
+  is refused for `--training-evidence` until the runner chooses the evidence by kind, research
+  comparison Stage 7). A single option is chosen already; of
+  several, none is until you choose one; with none, Start says why. A file whose record cannot be read offers none either, and Start is off
   with the record's own reason ("Record not readable (written before the model spec: not
   readable by this build; start a new run): not measured here. Choose a model finetuned for a
   task" for a file without a model spec; since K8-7b, 2026-11-08). Like the model, it is an

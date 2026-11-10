@@ -163,12 +163,26 @@ PATIENTS_LIKE_ME_NOTE = ("A similarity from the finetuned model's patient tower,
                          "pair is relevant when the two patients share a causal gene; a patient "
                          "with no other relevant patient has no recall, not a recall of 0.")
 
+#: The common KG link-prediction measurement (`task_measurement.run_kg_link_prediction`,
+#: research comparison Stage 5): a base's and a finetune's LP head on one KG
+#: edge set, its negatives rule-generated (never proven non-relations).
+KG_LINK_PREDICTION_RESULT_LABEL = ("KG link prediction (model bundle): each positive edge of a "
+                                   "KG edge set against its one rule-generated negative, over "
+                                   "the version's message-passing graph")
+KG_LINK_PREDICTION_NOTE = ("A raw score from the model's LP head (DistMult), uncalibrated; LP "
+                           "accuracy decides at raw > 0. The negatives are rule-generated, never "
+                           "proven non-relations. The report's exposure says how the measured "
+                           "edges stand to the model's recorded graph use: a figure after "
+                           "full-view exposure is never called held out.")
+
 MODE_RESULT_LABELS = {"disease": DISEASE_TASK_RESULT_LABEL, "gene": GENE_TASK_RESULT_LABEL,
-                      "patients_like_me": PATIENTS_LIKE_ME_RESULT_LABEL}
+                      "patients_like_me": PATIENTS_LIKE_ME_RESULT_LABEL,
+                      "kg_link_prediction": KG_LINK_PREDICTION_RESULT_LABEL}
 
 #: The note each described measurement's record is shown with.
 MODE_RESULT_NOTES = {"disease": DISEASE_TASK_NOTE, "gene": GENE_TASK_NOTE,
-                     "patients_like_me": PATIENTS_LIKE_ME_NOTE}
+                     "patients_like_me": PATIENTS_LIKE_ME_NOTE,
+                     "kg_link_prediction": KG_LINK_PREDICTION_NOTE}
 
 
 #: The label of a record whose mode cannot be read: never taken for another mode.
@@ -240,7 +254,7 @@ def metric_text(mode: Optional[str], name: str) -> str:
     described measurement's in words, by its task's name (`TASK_NAMES`): "Gene
     pooled MRR", "Disease pooled top-10", "Patients-like-me macro recall@10";
     any other mode's by its recorded mode and the name as recorded, whatever
-    the mode: "Mode kg_link_prediction pooled_mrr"; "pooled MRR (mode not
+    the mode: "Mode kg_link_prediction lp_accuracy"; "pooled MRR (mode not
     recorded)" when the mode cannot be read."""
     if not mode or not mode.strip():
         return f"{_metric_words(name)} (mode not recorded)"

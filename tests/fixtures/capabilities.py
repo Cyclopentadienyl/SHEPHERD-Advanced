@@ -14,7 +14,12 @@ by its learning stage and task head gets that model's description here:
   one, a base carrying a task head), a test double: the reference
   description of its stage (a finetune's of the disease head), with its task
   heads replaced by the head `task` names (none for None; an unknown task's
-  semantics is its name), and nothing else changed.
+  semantics is its name), and nothing else changed;
+- for `LP_HEAD_UNSTATED` (a base whose LP head declares scoring semantics
+  this build does not state, so no protocol takes it: since the common KG
+  link-prediction protocol, Stage 5, takes every model whose LP head this
+  build states), the reference base description with that head's semantics
+  None, as `model_capabilities` lists a head it has no words for.
 
 And a test-only encoder declaration, never shipped as a product option
 (`DoubleDeclaration`), declared for one test at a time by `declare_encoder`:
@@ -57,13 +62,29 @@ def declare_encoder(monkeypatch: Any, declaration: EncoderDeclaration) -> None:
                         {**spec_module.ENCODER_DECLARATIONS, kind: declaration})
 
 
+#: The `task` a record of `described` names for a base whose LP head declares
+#: scoring semantics this build does not state (and no task head): a model no
+#: protocol of this build takes.
+LP_HEAD_UNSTATED = "lp_head_unstated"
+
+
 def described(stage: str | None, task: str | None) -> dict[str, Any] | None:
     """The capability description of a record of `stage` and `task` (above)."""
-    from src.models.bundle.capabilities import TASK, TASK_HEAD_SEMANTICS, model_capabilities
+    from src.models.bundle.capabilities import (
+        LINK_PREDICTION,
+        TASK,
+        TASK_HEAD_SEMANTICS,
+        model_capabilities,
+    )
     from src.models.bundle.spec import TASKS, reference_spec
 
     if stage is None:
         return None
+    if task == LP_HEAD_UNSTATED:
+        base = model_capabilities(reference_spec("base", None))
+        return {**base, "heads": tuple((kind, name, None) if kind == LINK_PREDICTION
+                                       else (kind, name, semantics)
+                                       for kind, name, semantics in base["heads"])}
     if (stage, task) == ("base", None) or (stage == "finetune" and task in TASKS):
         return model_capabilities(reference_spec(stage, task))
     nearest = model_capabilities(reference_spec(stage, "disease" if stage == "finetune" else None))
@@ -73,4 +94,4 @@ def described(stage: str | None, task: str | None) -> dict[str, Any] | None:
     return {**nearest, "heads": heads}
 
 
-__all__ = ["DoubleDeclaration", "declare_encoder", "described"]
+__all__ = ["DoubleDeclaration", "LP_HEAD_UNSTATED", "declare_encoder", "described"]

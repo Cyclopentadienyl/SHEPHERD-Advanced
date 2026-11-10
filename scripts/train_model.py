@@ -1180,6 +1180,8 @@ def train(config: TrainConfig, explicit: Collection[str], *,
     from src.models.bundle import ModelSpec, build_bundle, finetune_spec_from_parent, reference_spec
     from src.models.bundle.spec import hops_problem
     from src.models.bundle.record import (
+        EXPOSURE_FULL_VIEW, EXPOSURE_FULL_VIEW_SP, EXPOSURE_TRAIN_CASES, EXPOSURE_TRAIN_EDGES,
+        EXPOSURE_TRAIN_EDGES_DRAWN_PAIRS_REMOVED, EXPOSURE_VAL_CASES, EXPOSURE_VAL_EDGES,
         MODEL_RECORD_VERSION, ModelRecord, ModelRecordError, read_model_record,
     )
     from src.config.recipe import BASE_FIXED, unread_settings
@@ -1509,11 +1511,14 @@ def train(config: TrainConfig, explicit: Collection[str], *,
         "graph_view": {"digest": view.digest, "rule": dict(view.rule)},
         "split": split.record(),
     }
+    # The record's graph exposure, in the words `src.models.bundle.record`
+    # names once for this writer and its readers (`recorded_graph_use`).
     if stage == "base":
         exposure = {"base": {
-            "training": {"message_passing": "train edges, the step's drawn pairs removed (F5)",
-                         "supervision": "train edges"},
-            "validation": {"message_passing": "train edges", "supervision": "val edges"}}}
+            "training": {"message_passing": EXPOSURE_TRAIN_EDGES_DRAWN_PAIRS_REMOVED,
+                         "supervision": EXPOSURE_TRAIN_EDGES},
+            "validation": {"message_passing": EXPOSURE_TRAIN_EDGES,
+                           "supervision": EXPOSURE_VAL_EDGES}}}
         loss_identity = {"terms": ["lp"], "lp_loss_weight": 1.0, "lp_head": spec.lp_head.kind,
                          "margin": spec.lp_head.margin}
         scoring = None
@@ -1525,9 +1530,9 @@ def train(config: TrainConfig, explicit: Collection[str], *,
                          "binding": dict(binding[split_name].counts)}
             for split_name in ("train", "val")}
         exposure = {"finetune": {
-            "training": {"message_passing": "train edges, the step's drawn pairs removed (F5)",
-                         "lp_supervision": "train edges", "task": "train cases"},
-            "validation": {"message_passing": "the full view", "task": "val cases"}}}
+            "training": {"message_passing": EXPOSURE_TRAIN_EDGES_DRAWN_PAIRS_REMOVED,
+                         "lp_supervision": EXPOSURE_TRAIN_EDGES, "task": EXPOSURE_TRAIN_CASES},
+            "validation": {"message_passing": EXPOSURE_FULL_VIEW, "task": EXPOSURE_VAL_CASES}}}
         loss_identity = {"terms": ["task", "lp"], "task_loss": "nca",
                          "task_loss_weight": float(config.task_loss_weight),
                          "lp_loss_weight": float(config.lp_loss_weight),
@@ -1559,7 +1564,7 @@ def train(config: TrainConfig, explicit: Collection[str], *,
                                  "genes": int(distances.table.shape[1])},
                 "augmentation_neighbours": (derived["neighbours"].record
                                             if derived["neighbours"] is not None else None)}
-            exposure["finetune"]["sp"] = "the full view (README G4, §6)"
+            exposure["finetune"]["sp"] = EXPOSURE_FULL_VIEW_SP
             alpha, beta, base, ms_margin = spec.task_head.multi_similarity
             loss_identity.update({"task_loss": "multi_similarity", "multi_similarity": {
                 "alpha": alpha, "beta": beta, "base": base, "mining_margin": ms_margin}})

@@ -5,21 +5,26 @@ P0-2: the protocol judgments and their sentences, as on the unchanged tree.
 Stage 3: the protocols are re-expressed by capability "with the same
 acceptance and sentences". This pins, for every record the model spec can
 write (a base with no task; a finetune with the disease, gene or
-patients-like-me head), for no record read and for three records the spec
-refuses (a finetune with no head or an unknown head, a base with a head:
-only they reach `available`'s sentence for a record no protocol takes and
-`model_refusal`'s without "It can be measured by"), every protocol name and
-five names that are none (retired modes, a wrong case, an empty name, None),
-and twelve cohort-version counts cases (none; without genes; each gene need
-met or missing; counts of the wrong type), what
-`src/evaluation/protocols.py`'s `available`, `model_refusal`,
+patients-like-me head), for no record read and for four records the spec
+refuses (a finetune with no head or an unknown head, a base with a head, and
+a base whose LP head declares semantics this build does not state: these
+reach sentences no written record does, the last `available`'s sentence for a
+record no protocol takes and `model_refusal`'s without "It can be measured
+by"), every protocol name and five names that are none (retired modes, a
+wrong case, an empty name, None), and twelve cohort-version counts cases
+(none; without genes; each gene need met or missing; counts of the wrong
+type), what `src/evaluation/protocols.py`'s `available`, `model_refusal`,
 `inputs_refusal` and `refusal` return, with their sentences, and `names()`
-and the two standing sentences (`tests/fixtures/goldens/values.p0_2_values`).
+and the standing sentence (`tests/fixtures/goldens/values.p0_2_values`).
 That is every sentence the module can say for these inputs; the one it has
 for a need without words (`inputs_refusal`) no protocol of the table has.
 
-A later stage that adds a protocol (Stage 5) changes this golden by name in
-its own commit; the three existing rows' acceptance and sentences do not
+Stage 5 added the common KG link-prediction protocol, `kg_link_prediction`,
+and changed this golden by that name in its own commit: every list of names
+and every "It can be measured by" gained it; a base, which it takes, is judged
+by each task protocol's own reason where the retired base message stood; and
+the record of a base with an unstated LP head was added, since every record
+the spec writes now has a protocol. The three task rows' acceptance did not
 change.
 
 Module: tests/unit/test_golden_p0_2_protocols.py
@@ -47,7 +52,9 @@ def test_p0_2_the_records_the_spec_cannot_write_reach_what_no_written_one_does()
     `model_refusal` sentence that no record of `P0_2_RECORDS` reaches, which
     the golden holds."""
     from src.models.bundle.spec import TASKS
+    from tests.fixtures.capabilities import LP_HEAD_UNSTATED
 
+    assert ("base", LP_HEAD_UNSTATED) in P0_2_UNWRITABLE_RECORDS
     writable = {("base", None)} | {("finetune", task) for task in TASKS}
     unwritable = set(P0_2_UNWRITABLE_RECORDS)
     assert len(unwritable) == len(P0_2_UNWRITABLE_RECORDS)

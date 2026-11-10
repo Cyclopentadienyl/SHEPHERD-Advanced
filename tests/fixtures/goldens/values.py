@@ -184,11 +184,16 @@ P0_2_RECORDS: tuple[tuple[str | None, str | None], ...] = (
 #: `P0_2_RECORDS` because only they reach `available`'s sentence for a record
 #: no protocol takes and `model_refusal`'s sentence without "It can be
 #: measured by": a finetune with no head, one with an unknown head, and a base
-#: with a head.
+#: with a head; and, since the common KG link-prediction protocol (research
+#: comparison Stage 5) takes every model whose LP head this build states, a
+#: base whose LP head declares semantics this build does not state
+#: (`capabilities.LP_HEAD_UNSTATED`), the one record those two sentences are
+#: now said for.
 P0_2_UNWRITABLE_RECORDS: tuple[tuple[str | None, str | None], ...] = (
     ("finetune", None),
     ("finetune", "unknown"),
     ("base", "disease"),
+    ("base", "lp_head_unstated"),
 )
 
 #: Names that are no protocol of this build: retired modes, a wrong case, an
@@ -232,7 +237,7 @@ def p0_2_model(stage: str | None, task: str | None) -> dict[str, Any] | None:
 
 
 def p0_2_values() -> dict[str, Any]:
-    """P0-2 (`p0_2_protocols.json`): `names()`, the two standing sentences,
+    """P0-2 (`p0_2_protocols.json`): `names()`, the standing sentence,
     and every result of `available`, `model_refusal`, `inputs_refusal` and
     `refusal` for each protocol and unknown name, each record of
     `P0_2_RECORDS` and then of `P0_2_UNWRITABLE_RECORDS` (judged by its
@@ -246,8 +251,7 @@ def p0_2_values() -> dict[str, Any]:
     kind = protocols.SUPPLIED
     return {
         "names": list(protocols.names()),
-        "sentences": {"BASE_MESSAGE": protocols.BASE_MESSAGE,
-                      "NO_RECORD": protocols.NO_RECORD},
+        "sentences": {"NO_RECORD": protocols.NO_RECORD},
         "counts_cases": P0_2_COUNTS,
         "available": [
             {"learning_stage": stage, "task": task,

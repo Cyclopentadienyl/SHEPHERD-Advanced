@@ -1670,8 +1670,8 @@ manifest 所綁定的圖，並印出：
 ### KG 邊集合：`--kind kg_edges`（自 research comparison Stage 4 起）
 
 **KG 邊集合**（KG edge set）是另一種類的版本：模型訓練時所用邊切分中的一個部分，以固定的
-link-prediction 配對保存，供 link-prediction 量測使用（research comparison Stage 5，尚未建置）。
-它以同樣的預覽與提交匯入：
+link-prediction 配對保存，供 KG link-prediction 量測使用（`--mode kg_link_prediction`，research
+comparison Stage 5；見下文「KG link-prediction 量測」）。它以同樣的預覽與提交匯入：
 
 ```bash
 python scripts/import_cohort.py --kind kg_edges --registry /srv/shepherd/cohorts \
@@ -1710,9 +1710,9 @@ workspace 的圖，由其四個 digest 與 dataset record 綁定，量測時與 
 
 伺服器的清單（`GET /cohorts`）會列出 KG 邊集合，附其 kind、role 與計數，絕不列出邊；Test 頁以
 label、kind 與 role 列出它（"a KG edge set (test)"），絕不使用 supplied cohort 的計數。這個
-build 還沒有任何協定量測它：指名它的 `measure_scorer.py --cohort` 或 Test 頁的 Start 會以
-協定的理由被拒絕（"the disease measurement does not measure a KG edge set; ..."），不寫出任何
-東西。讀取 supplied cohort 案例的每個讀取者都以同一個共用理由拒絕它（"a KG edge set (test), not a
+KG link-prediction 協定會量測它（見下文）；指名它的任務協定，不論來自 `measure_scorer.py
+--cohort` 或 Test 頁的 Start，都會以該協定的理由被拒絕（"the disease measurement does not
+measure a KG edge set; ..."），不寫出任何東西。讀取 supplied cohort 案例的每個讀取者都以同一個共用理由拒絕它（"a KG edge set (test), not a
 supplied cohort version"）：Diagnosis 路由（作為參考 cohort）與 `audit_split_overlap.py --cohort`
 （結束碼 1，一則訊息，不寫入任何東西）。Diagnosis 頁的 Reference cohort 選單會列出它並標上
 "KG edge set"，但絕不預設選它；registry 中沒有可讀的 supplied cohort 時，Run Diagnosis 會停用並
@@ -1793,13 +1793,15 @@ python scripts/measure_scorer.py --mode disease \
 
 `--mode` 為必填，指明**協定**（protocol）：這個 build 所實作的量測，依模型所提供的能力判斷
 （由其 model spec 讀出的能力描述；`src/evaluation/protocols.py`），目前是 `disease`、`gene` 與
-`patients_like_me`，各自接受帶有其 task head 的 finetune 模型。報告的 mode 就是協定的名稱。執行時依它讀到的位元組判斷
+`patients_like_me`，各自接受帶有其 task head 的 finetune 模型；以及 `kg_link_prediction`，依 LP
+head 接受 base 或任何 finetune，量測 KG 邊集合（見下文）。報告的 mode 就是協定的名稱。執行時依它讀到的位元組判斷
 協定，拒絕時會說明原因，並以「Nothing was written.」結尾：已登錄的版本必須列出協定所需的基因
 （`gene` 需要致病基因與候選基因，`patients_like_me` 需要致病基因），在讀入其 `cohort.json` 後
-立即檢查，早於 workspace 與 checkpoint；checkpoint 的模型必須提供協定所需的能力（這三種協定即其
-task head），在讀入 checkpoint 後立即檢查。base 會以「This model is a base: its formal test (link
-prediction on held-out knowledge-graph edges) is not implemented yet. A model finetuned from it
-can be measured.」被拒絕，沒有 model spec 的 checkpoint（ShepherdGNN 歷史檔）則以紀錄讀取器的
+立即檢查，早於 workspace 與 checkpoint；checkpoint 的模型必須提供協定所需的能力（三種任務協定
+即其 task head），在讀入 checkpoint 後立即檢查。以任務協定量測 base 時，會以該協定的理由被拒絕，
+並指出接受它的協定（"the disease measurement takes a finetune model with the disease head; this
+checkpoint is a base model with no task head. It can be measured by kg_link_prediction."），沒有
+model spec 的 checkpoint（ShepherdGNN 歷史檔）則以紀錄讀取器的
 那一句 "written before the model spec: not readable by this build; start a new run" 被拒絕（自
 K8-7b，2026-11-08 起；過去是「作為歷史檔」被拒絕）。Test 頁傳入操作者選擇的協定（§4.14）。
 自 K8-6a 起沒有任何命令執行 Mode C，即任務出現
@@ -1862,6 +1864,44 @@ recorded`（checkpoint 記錄了訓練輸入，而且完全沒有驗證的條目
 主控台會印出這次執行的指標（其協定的）、覆蓋率（`N ranked of M source cases; K excluded`，附各類別）、
 以 `src/evaluation/caveats.py` 共用字句表示的四個 R10 標籤（`unverifiable` 附其原因）、一次標籤定義、報告路徑
 與 run id。報告本身只保存狀態，不含任何說明文字。
+
+### KG link-prediction 量測：`--mode kg_link_prediction`（自 research comparison Stage 5 起）
+
+一個協定量測 KG 邊集合，base 與其每個 finetune 一視同仁（擁有者的 O3）：正式的 KG 測試與家族的
+共同讀數使用同一個 evaluator，差別在於資料角色、暴露與研究問題，而不在於計分方式。
+
+```bash
+python scripts/measure_scorer.py --mode kg_link_prediction \
+    --checkpoint data/workspaces/<ws>/runs/<arch>/<run>/checkpoints/<file>.pt \
+    --data-dir data/workspaces/<ws> \
+    --cohort kg-test-2026-11 --registry /srv/shepherd/cohorts [--batch-size 512] [--device cpu]
+```
+
+- **計分的對象。** 每個保存的配對，即一條正邊對上它的一個依規則產生的負例，由模型的 LP head
+  （DistMult 原始分數）計分，所用的是版本的 message-passing 圖（其切分的 train 部分，附 view 的
+  節點型別）之 full-view 向量，每個模型都一樣。不讀任何病患樣本。`--batch-size` 是一次計分的配對數。
+- **Metric schema 3。** LP accuracy（正例原始分數大於 0、負例小於或等於 0，兩者合計）、ROC-AUC
+  （平均名次）、AP 與 lp_loss，都對整個集合計算，各附其單位與分母；無法計算的指標是附理由的狀態，
+  絕不是數字。計數附單位：`n_samples` 是版本的正邊數，`n_ranked` 是配對數。沒有 R10：KG 邊集合
+  會拒絕 `--training-evidence`。
+- **與 supplied 版本相同的檢查**，都在寫出任何東西之前：版本的 `cohort.json` 與 `pairs.bin` 對照其
+  綁定的 digest（變更過的檔案在解析前就被拒絕；解析出的列數或 pairs digest 與版本記錄不同的配對也
+  被拒絕）、workspace 的圖與 dataset record、版本對照 workspace、checkpoint 對照圖，以及
+  `--expect-*` digest。另外會被拒絕的有：graph view 與模型不同的版本（這個 build 沒有 view 之間的
+  節點對應：這是能力上的缺口，不是研究規則）、沒有 model spec 的檔案、沒有任何配對的版本、無法從
+  view 重建的已記錄切分、不是該角色之邊的配對，以及這個協定搭配 `--split`。**不會被拒絕：** 同一
+  view 上另一個切分的模型、另一個家族、另一個環境，或另一個結果。
+- **暴露（exposure）** 是報告最上層的一個區塊（定義 `kg-lp-exposure/v1`，附其來源：checkpoint 與
+  版本）。它說明被量測的邊與模型紀錄所述的圖使用之間的關係：「held out relative to the recorded
+  training and validation graph use」（base 在自己的 test 集合上）、「k of n」（它的 val 或 train
+  集合，或另一個切分的模型）、「after full-view exposure」（finetune，其驗證在完整 view 上傳遞訊息），
+  或「exposure not recorded」（這個 build 讀不懂的紀錄）。它絕不是關卡，負例也絕不被宣稱為已證實的
+  非關係。
+- **保存的內容。** 在版本的報告庫中，新的執行目錄先保存 `scores.bin`（每個配對實際的原始分數與狀態，
+  對應配對檔的列，分塊串流寫入並整個放置），再保存 `report.json`，以 digest 與列數指名它。在報告
+  之前被取消或失敗的執行不會留下報告，它留下的東西會被列為中斷的寫入。**登錄尚未建置**（research
+  comparison Stage 6）：`--record` 保留報告並以結束碼 3 結束，說明這個 revision 的帳本只記錄
+  supplied cohort 版本上的執行。
 
 ### Mode D（已於 K7 移除）
 
@@ -3144,8 +3184,11 @@ checkpoint：run 標題的標籤顯示「dataset not shown · operator control�
   列出它們會開啟每一個 checkpoint，因此這是操作者控制項：唯讀的瀏覽器不會看到它，而且頁面對
   每個 workspace 只列出一次（↻ 會重新讀取清單）。接著是 **Measurement**（自 K8-6a 起），即執行
   以 `--mode <protocol>` 傳入的協定（§4.9）：選項是這個 build 所實作、且所選模型列出的能力符合其
-  需求的協定，目前 finetune 模型的每個 task head 各一種（Disease、Gene 或 Patients-like-me）。只有一個選項時它已被選取；有多個時，在你選擇之前都不選取；沒有任何
-  選項時（base，其正式測試尚未實作），Start 會說明原因。紀錄無法讀取的檔案同樣沒有任何選項，
+  需求的協定，目前 finetune 模型的每個 task head 各一種（Disease、Gene 或 Patients-like-me），
+  以及 base 與每個 finetune 的 `kg_link_prediction`，它量測 KG 邊集合（§4.9；在設定了 R10 證據目錄
+  時從本頁執行，會因 `--training-evidence` 被拒絕，直到執行器依種類選擇證據為止，research
+  comparison Stage 7）。只有一個選項時它已被選取；有多個時，在你選擇之前都不選取；沒有任何
+  選項時，Start 會說明原因。紀錄無法讀取的檔案同樣沒有任何選項，
   Start 為停用，並附上紀錄自己的原因（沒有 model spec 的檔案為「Record not readable (written
   before the model spec: not readable by this build; start a new run): not measured here. Choose
   a model finetuned for a task」；自 K8-7b，2026-11-08 起）。它和模型一樣是操作者控制項。Mode C 與

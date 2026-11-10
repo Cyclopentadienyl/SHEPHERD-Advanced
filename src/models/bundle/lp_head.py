@@ -14,7 +14,11 @@ used for LP accuracy is the raw score > 0, i.e. `sigmoid(raw) > 0.5`
 edge once, against one negative drawn once by U5's rule) and their scoring
 (`score_lp_pairs`: the head's raw scores over full-view node vectors, and the
 whole-set metrics) live here, beside the negative rule, so base validation and
-any LP measurement share one pair rule and one scoring.
+any LP measurement share one pair rule and one scoring. So do the two byte
+encodings of their results: a pairs table (`lp_pairs_table`, a KG edge set's
+``pairs.bin``) and a scores table (`lp_scores_table`: each pair's actual raw
+scores keyed to its row of the pairs table, with the row's state; a KG
+link-prediction run's kept scores, research comparison F4).
 
 Module: src/models/bundle/lp_head.py
 """
@@ -23,7 +27,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Iterator, Optional, Tuple
 
 import numpy as np
 import torch
@@ -229,7 +233,8 @@ class LPScores:
 @torch.no_grad()
 def score_lp_pairs(bundle: Any, pairs: LPPairs, edges: Tensor, relations: Tensor,
                    device: torch.device, *, chunk_size: int = 65536,
-                   node_type: Optional[Tensor] = None) -> LPScores:
+                   node_type: Optional[Tensor] = None,
+                   pair_chunk: Optional[int] = None) -> LPScores:
     """Score fixed pairs with `bundle`'s LP head, in evaluation mode.
 
     Node vectors are the full-view rule's (§2.8), message passing over `edges`
@@ -239,18 +244,136 @@ def score_lp_pairs(bundle: Any, pairs: LPPairs, edges: Tensor, relations: Tensor
     scoring has no forward of its own; `chunk_size` and `node_type` (every
     view node's type id, in the view's node order) are that entry's.
 
-    Every positive is scored before every negative, each side in pair order.
+    `pair_chunk` is how many pairs are scored at once (an execution
+    parameter, so the pairs' vectors need not all be gathered at once): None
+    scores them all in one pass, as base validation does; a measurement
+    records the chunk it used. Every positive is scored before every
+    negative, each side in pair order, and the metrics are the whole set's.
     """
+    if pair_chunk is not None and int(pair_chunk) <= 0:
+        raise ValueError(f"pair_chunk must be positive, not {pair_chunk}")
     z = full_view_vectors(bundle, edges, relations, device, chunk_size, node_type=node_type)
-    head = z[pairs.head.to(device)]
-    relation = pairs.relation.to(device)
-    positive = bundle.lp_head.raw_score(head, relation, z[pairs.tail.to(device)])
-    negative = bundle.lp_head.raw_score(head, relation, z[pairs.negative_tail.to(device)])
+    n = int(pairs.head.numel())
+    step = max(n, 1) if pair_chunk is None else int(pair_chunk)
+    positives, negatives = [], []
+    for start in range(0, max(n, 1), step):
+        rows = slice(start, start + step)
+        head = z[pairs.head[rows].to(device)]
+        relation = pairs.relation[rows].to(device)
+        positives.append(bundle.lp_head.raw_score(head, relation, z[pairs.tail[rows].to(device)]))
+        negatives.append(bundle.lp_head.raw_score(head, relation,
+                                                  z[pairs.negative_tail[rows].to(device)]))
+    positive = positives[0] if len(positives) == 1 else torch.cat(positives)
+    negative = negatives[0] if len(negatives) == 1 else torch.cat(negatives)
     metrics = lp_metrics(positive.cpu().tolist(), negative.cpu().tolist())
     metrics["lp_loss"] = float(bundle.lp_head.hinge(torch.tanh(positive), torch.tanh(negative)))
     return LPScores(positive.cpu(), negative.cpu(), metrics)
 
 
+#: A scores table's columns (`lp_scores_table`), in each row's order: the row
+#: of the pairs table the line scores (its index, from 0), the positive's and
+#: the negative's raw (pre-tanh) score as computed, and the row's state.
+LP_SCORE_COLUMNS = ("pair_row", "positive_raw", "negative_raw", "state")
+#: A row's state, stored as its index here: both raw scores are finite, or at
+#: least one is not (NaN or infinite), so no decision or rank is defined for it
+#: and no whole-set metric can be computed over a set holding it.
+LP_SCORE_STATES = ("scored", "not_finite")
+#: The raw-score dtypes a scores table stores exactly, by the dtype the scores
+#: were computed in: float64 as itself, every narrower float widened to float32
+#: (exact for float32, float16 and bfloat16).
+_SCORE_WIDTHS = {torch.float64: "<f8", torch.float32: "<f4", torch.float16: "<f4",
+                 torch.bfloat16: "<f4"}
+
+
+def lp_scores_layout(dtype: torch.dtype) -> Dict[str, Any]:
+    """How a scores table of raw scores computed in `dtype` is laid out as
+    bytes: one packed row per pair, `LP_SCORE_COLUMNS` as little-endian int64
+    (the pairs-table row), the raw scores at `_SCORE_WIDTHS[dtype]` (exactly
+    the values computed) and the state as one unsigned byte, an index into
+    `LP_SCORE_STATES` (listed with the layout).
+
+    Raises:
+        ValueError: `dtype` is not a float dtype a table stores exactly.
+    """
+    if dtype not in _SCORE_WIDTHS:
+        raise ValueError(f"raw scores of dtype {dtype} are not stored by a scores table")
+    width = _SCORE_WIDTHS[dtype]
+    return {"columns": list(LP_SCORE_COLUMNS), "dtypes": ["<i8", width, width, "|u1"],
+            "order": "rows", "states": list(LP_SCORE_STATES)}
+
+
+def _scores_dtype(layout: Dict[str, Any]) -> np.dtype:
+    """The packed row dtype of a scores table's `layout`, which must name
+    `LP_SCORE_COLUMNS` and `LP_SCORE_STATES` in order, rows first."""
+    if not (isinstance(layout, dict) and layout.get("columns") == list(LP_SCORE_COLUMNS)
+            and layout.get("order") == "rows" and layout.get("states") == list(LP_SCORE_STATES)
+            and isinstance(layout.get("dtypes"), list)
+            and len(layout["dtypes"]) == len(LP_SCORE_COLUMNS)
+            and layout["dtypes"][0] == "<i8" and layout["dtypes"][3] == "|u1"
+            and layout["dtypes"][1] == layout["dtypes"][2]
+            and layout["dtypes"][1] in set(_SCORE_WIDTHS.values())):
+        raise ValueError(f"{layout!r} is not a scores table layout this build reads")
+    return np.dtype(list(zip(LP_SCORE_COLUMNS, layout["dtypes"], strict=True)))
+
+
+def lp_score_states(positive: Tensor, negative: Tensor) -> Tensor:
+    """Each pair's state (`LP_SCORE_STATES`) as a uint8 index: 0 when both its
+    raw scores are finite, 1 when either is not."""
+    finite = torch.isfinite(positive) & torch.isfinite(negative)
+    return (~finite).to(torch.uint8).cpu()
+
+
+def lp_scores_table(start: int, positive: Tensor, negative: Tensor, state: Tensor,
+                    layout: Dict[str, Any]) -> bytes:
+    """Rows ``start ..`` of a scores table as bytes, by `layout`
+    (`lp_scores_layout`): one row per pair, its pairs-table row index, its raw
+    scores exactly as computed and its state. Rows written chunk by chunk are
+    one table, so a writer never holds the whole table as bytes."""
+    rows = int(positive.numel())
+    if not (int(negative.numel()) == int(state.numel()) == rows):
+        raise ValueError("a scores table row needs a positive score, a negative score and a "
+                         "state for every pair")
+    dtype = _scores_dtype(layout)
+    wide = torch.float64 if layout["dtypes"][1] == "<f8" else torch.float32
+    table = np.empty(rows, dtype=dtype)
+    table["pair_row"] = np.arange(int(start), int(start) + rows, dtype=np.int64)
+    table["positive_raw"] = positive.detach().cpu().to(wide).numpy()
+    table["negative_raw"] = negative.detach().cpu().to(wide).numpy()
+    table["state"] = state.detach().cpu().to(torch.uint8).numpy()
+    return table.tobytes()
+
+
+def lp_scores_chunks(positive: Tensor, negative: Tensor, state: Tensor,
+                     layout: Dict[str, Any], *, rows: int = 65536) -> Iterator[bytes]:
+    """The whole scores table as consecutive chunks of at most `rows` rows each
+    (`lp_scores_table`), in pair order: what a writer streams into a file."""
+    if int(rows) <= 0:
+        raise ValueError(f"rows must be positive, not {rows}")
+    total = int(positive.numel())
+    for start in range(0, total, int(rows)):
+        stop = start + int(rows)
+        yield lp_scores_table(start, positive[start:stop], negative[start:stop],
+                              state[start:stop], layout)
+
+
+def lp_scores_from_table(data: bytes, layout: Dict[str, Any]) -> np.ndarray:
+    """The scores table `data`, laid out by `layout`, as a NumPy structured
+    array of `LP_SCORE_COLUMNS` (a copy, in row order). Parses the bytes
+    given and reads no file.
+
+    Raises:
+        ValueError: `layout` is not one this build reads, or `data` is not a
+            whole number of rows.
+    """
+    dtype = _scores_dtype(layout)
+    if len(data) % dtype.itemsize:
+        raise ValueError(f"{len(data)} bytes are not a whole number of {dtype.itemsize}-byte "
+                         "score rows")
+    return np.frombuffer(data, dtype=dtype).copy()
+
+
 __all__ = ["DistMultHead", "LPPairs", "LPScores", "LP_PAIRS_LAYOUT", "LP_PAIR_COLUMNS",
-           "LP_PAIR_RULE", "corrupt_tails", "fixed_lp_pairs", "lp_pairs_digest",
-           "lp_pairs_from_table", "lp_pairs_table", "score_lp_pairs"]
+           "LP_PAIR_RULE", "LP_SCORE_COLUMNS", "LP_SCORE_STATES", "corrupt_tails",
+           "fixed_lp_pairs", "lp_pairs_digest", "lp_pairs_from_table", "lp_pairs_table",
+           "lp_score_states", "lp_scores_chunks", "lp_scores_from_table", "lp_scores_layout",
+           "lp_scores_table", "score_lp_pairs"]

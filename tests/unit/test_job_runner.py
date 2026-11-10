@@ -607,20 +607,27 @@ def test_a_deployment_device_the_cli_cannot_take_refuses_the_start(monkeypatch, 
     # whatever it may once have meant, gets the ordinary sentence naming the
     # protocols this build implements.
     ({"protocol": "C"},
-     "'C' is not a measurement this build implements (disease, gene, patients_like_me)."),
+     "'C' is not a measurement this build implements (disease, gene, patients_like_me, "
+     "kg_link_prediction)."),
     ({"protocol": "D"},
-     "'D' is not a measurement this build implements (disease, gene, patients_like_me)."),
+     "'D' is not a measurement this build implements (disease, gene, patients_like_me, "
+     "kg_link_prediction)."),
     ({"protocol": None},
-     "None is not a measurement this build implements (disease, gene, patients_like_me)."),
+     "None is not a measurement this build implements (disease, gene, patients_like_me, "
+     "kg_link_prediction)."),
     ({"protocol": "Disease"},
-     "'Disease' is not a measurement this build implements (disease, gene, patients_like_me)."),
-    # A listed model the protocol does not take: a base, a head that differs,
-    # no record read.
+     "'Disease' is not a measurement this build implements (disease, gene, patients_like_me, "
+     "kg_link_prediction)."),
+    # A listed model the protocol does not take: a base (taken by the KG
+    # link-prediction protocol, research comparison Stage 5), a head that
+    # differs, no record read.
     ({"learning_stage": "base", "task": None, "capabilities": described("base", None)},
-     protocols.BASE_MESSAGE),
+     "the disease measurement takes a finetune model with the disease head; this checkpoint "
+     "is a base model with no task head. It can be measured by kg_link_prediction."),
     ({"protocol": "gene"},
      "the gene measurement takes a finetune model with the gene head; this checkpoint is a "
-     "finetune model with the disease head. It can be measured by disease."),
+     "finetune model with the disease head. It can be measured by disease, "
+     "kg_link_prediction."),
     ({"learning_stage": None, "task": None, "capabilities": None}, protocols.NO_RECORD),
     # A listed version without what the protocol needs.
     ({"protocol": "gene", "task": "gene", "capabilities": described("finetune", "gene"),

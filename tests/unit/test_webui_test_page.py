@@ -19,7 +19,8 @@ Research › Evaluate › Test (M5-2, UI-D): import, run, keep and register.
 - **the measurement** (K2, R1): the Measurement radio offers the protocols the
   chosen model's listed record admits (`protocols.available`), Start's reason
   and the start take the chosen protocol and say the protocol definition's
-  reasons (the base message for a base), and the runner is given the protocol
+  reasons (a base is offered the KG link-prediction protocol, research
+  comparison Stage 5), and the runner is given the protocol
   apart from the model's stage and task; under test-only protocols p1 and p2 a
   disease child offers both and starts p2 with its task still disease;
 - **D5** (policy rev 16): a group whose runs differ is described in neutral
@@ -3173,8 +3174,8 @@ def test_measure_refusal_says_why_each_kind_is_not_measured():
     (`renderers.record_kind_text`, K6 decision 6; the closing review found the
     page's own copies), then the page's own reason. Past it every reason is
     the protocol definition's (`protocols`, K2): with no measurement chosen,
-    why none takes the record (a base's is the base message) or "choose a
-    measurement"; with one chosen, its refusal. The page words none itself."""
+    why none takes the record or "choose a measurement"; with one chosen, its
+    refusal. The page words none itself."""
     from src.evaluation import protocols
     from src.webui.components import renderers as r
 
@@ -3183,11 +3184,19 @@ def test_measure_refusal_says_why_each_kind_is_not_measured():
     # No measurement chosen while the record admits one is said, never filled in.
     assert refusal(_model("disease"), {"kind": SUPPLIED, "counts": NO_GENES}, None) == (
         tp.CHOOSE_A_MEASUREMENT)
-    # A base: the base message, whatever is asked of it (§5.4).
-    for protocol in (None, "disease", "gene"):
-        assert refusal(_model(None, "base"), {"kind": SUPPLIED, "counts": NO_GENES},
-                       protocol) == (
-            protocols.BASE_MESSAGE)
+    # A base: the KG link-prediction protocol takes it (research comparison
+    # Stage 5), on a KG edge set only; a task protocol says its own reason.
+    base, supplied = _model(None, "base"), {"kind": SUPPLIED, "counts": NO_GENES}
+    assert refusal(base, supplied, None) == tp.CHOOSE_A_MEASUREMENT
+    assert refusal(base, supplied, "kg_link_prediction") == (
+        "the kg_link_prediction measurement does not measure a supplied cohort version; it "
+        "measures a KG edge set.")
+    assert refusal(base, {"kind": "kg_edges", "counts": {"pairs": 4}}, "kg_link_prediction") is None
+    for protocol in ("disease", "gene"):
+        assert refusal(base, supplied, protocol) == protocols.model_refusal(
+            protocol, described("base", None))
+        assert refusal(base, supplied, protocol).endswith(
+            "It can be measured by kg_link_prediction.")
     specless, refused, unread = ({"record": "refused", "record_problem": WRITTEN_BEFORE_SPEC},
                                  {"record": "refused", "record_problem": "record version 9"},
                                  {"record": None})
@@ -3203,10 +3212,15 @@ def test_measure_refusal_says_why_each_kind_is_not_measured():
     assert refusal(unread, None, None) == "Record not read: " + tp.NOT_MEASURED_HERE
     # A record no protocol takes, a protocol the record does not meet, and a
     # name that is no protocol: the definition's sentences, by its ordinary rules.
-    assert refusal(_model("C"), None, None) == protocols.available(described("finetune", "C"))[1]
+    from tests.fixtures.capabilities import LP_HEAD_UNSTATED
+
+    assert refusal(_model(LP_HEAD_UNSTATED, "base"), None, None) == protocols.available(
+        described("base", LP_HEAD_UNSTATED))[1]
+    assert refusal(_model("C"), None, None) == tp.CHOOSE_A_MEASUREMENT
     assert refusal(_model("gene"), None, "disease") == (
         protocols.model_refusal("disease", described("finetune", "gene")))
-    assert "It can be measured by gene." in refusal(_model("gene"), None, "disease")
+    assert "It can be measured by gene, kg_link_prediction." in refusal(_model("gene"), None,
+                                                                       "disease")
     for name in ("C", "D", "Disease"):
         assert refusal(_model("disease"), None, name) == (
             protocols.model_refusal(name, described("finetune", "disease")))
@@ -3214,27 +3228,32 @@ def test_measure_refusal_says_why_each_kind_is_not_measured():
                                                                         name)
 
 
-def test_the_base_message_names_the_formal_test_as_not_implemented(site, monkeypatch):
-    """§5.4, the page's half: Start's reason for a listed base, and the start's
-    refusal, are the base message, which names the formal test as not
-    implemented and says neither "no task to measure" nor "nothing to test";
-    the Measurement radio offers nothing for it."""
+def test_a_listed_base_is_offered_the_kg_link_prediction_measurement(site, monkeypatch):
+    """§5.4, the page's half, since research comparison Stage 5: the
+    Measurement radio offers a listed base the KG link-prediction protocol, the
+    one that takes it; on a supplied cohort version Start's reason and the
+    start's refusal are that protocol's sentence for the data kind, and no
+    runner is asked."""
     from src.evaluation import protocols
 
     _path, base = _put_bundle(site, BUNDLE_BASE_RUN, None)
     page, request = _page(monkeypatch)
     models = tp.read_models("demo", request)
     binding = tp.workspace_binding(site.demo, tp.find(page["workspaces"], "name", "demo"))
-    assert tp.measurement_choices(tp.find_model(models, base)) == []
-    message = protocols.BASE_MESSAGE
-    assert "formal test" in message and "not implemented" in message
-    assert "no task to measure" not in message and "nothing to test" not in message
-    allowed, why = tp.start_state(page, models, "demo", LABEL, base, binding, ("none", ""))
+    choices = tp.measurement_choices(tp.find_model(models, base))
+    assert choices == [("kg_link_prediction", "kg_link_prediction")]
+    assert tp.chosen_measurement(choices, None) == "kg_link_prediction"
+    message = protocols.inputs_refusal("kg_link_prediction", SUPPLIED, None)
+    assert message == ("the kg_link_prediction measurement does not measure a supplied cohort "
+                       "version; it measures a KG edge set.")
+    allowed, why = tp.start_state(page, models, "demo", LABEL, base, binding, ("none", ""),
+                                  protocol="kg_link_prediction")
     assert (allowed, why) == (False, f"Disabled: {message}")
     manager = FakeManager()
     result = tp.start_test_run(page, models, "demo", LABEL, base, False, False, request,
-                               manager=manager)
-    assert result == {"success": False, "error": f"{message} Nothing was started."}
+                               protocol="kg_link_prediction", manager=manager)
+    assert result == {"success": False,
+                      "error": f"{message[:1].upper()}{message[1:]} Nothing was started."}
     assert manager.started == []
 
 
@@ -3283,7 +3302,9 @@ def test_start_and_its_reason_refuse_what_is_not_measured_with_one_rule(site, mo
     counts = version["counts"]
     assert version["kind"] == SUPPLIED
     cases = {
-        f"gatv2/{BUNDLE_BASE_RUN}/last.pt": (None, protocols.BASE_MESSAGE),
+        f"gatv2/{BUNDLE_BASE_RUN}/last.pt": (
+            "kg_link_prediction", protocols.inputs_refusal("kg_link_prediction", SUPPLIED,
+                                                           counts)),
         "gatv2/20261021-000000_refused_cccccc/last.pt":
             (None, "Record not readable (checkpoint record version 999"),
         site.history_key: (None, f"Record not readable ({WRITTEN_BEFORE_SPEC})"),
@@ -3449,14 +3470,14 @@ MODE_C_SEMANTICS_TEXT = "raw cosine, no eta mixture and no shortest-path term"
 
 
 def test_a_record_of_a_mode_no_build_has_words_for_is_shown_as_recorded():
-    """A "kg_link_prediction" record (no such test is implemented, N1) and a
+    """A "kg_lp_reader_only" record (a mode this build has no words for) and a
     record whose mode no build has ever named: the recorded metrics are the
     main result, with no tiles, no "Mean rank" row and no list of modes that
     decides what is shown (the three tasks are not a read whitelist)."""
     from src.evaluation.caveats import mode_label
     from tests.unit.test_evaluation_sidecar import registered_report
 
-    for mode in ("kg_link_prediction", "zz_protocol_never_seen"):
+    for mode in ("kg_lp_reader_only", "zz_protocol_never_seen"):
         record = _kept_record(registered_report(mode=mode))
         raw = tp._record_html(record, {}, {})
         text = _result_text(raw)
@@ -3528,14 +3549,22 @@ def test_the_measurement_options_are_the_protocols_the_record_admits():
     name, short and unique (skill §8). The only option is chosen; of several,
     none is until the operator picks one, and a pick no longer offered goes.
     What the server fixes names no measurement."""
+    lp = ("kg_link_prediction", "kg_link_prediction")
     for task, words in (("disease", "Disease"), ("gene", "Gene"),
                         ("patients_like_me", "Patients-like-me")):
+        # A finetune is taken by its task's protocol and by the KG
+        # link-prediction protocol (research comparison Stage 5).
         choices = tp.measurement_choices(_model(task))
-        assert choices == [(words, task)]
-        assert tp.chosen_measurement(choices, None) == task
-        assert tp.chosen_measurement(choices, "another") == task
-    for item in (None, _model(None, "base"), _model("C"),
-                 {"record": "refused", "record_problem": WRITTEN_BEFORE_SPEC},
+        assert choices == [(words, task), lp]
+        assert tp.chosen_measurement(choices, None) is None
+        assert tp.chosen_measurement(choices, task) == task
+        assert tp.chosen_measurement(choices, "another") is None
+    for item in (_model(None, "base"), _model("C")):
+        choices = tp.measurement_choices(item)
+        assert choices == [lp]
+        assert tp.chosen_measurement(choices, None) == "kg_link_prediction"
+        assert tp.chosen_measurement(choices, "another") == "kg_link_prediction"
+    for item in (None, {"record": "refused", "record_problem": WRITTEN_BEFORE_SPEC},
                  {"record": None}, {"record": "refused", "record_problem": "x"}):
         assert tp.measurement_choices(item) == []
     assert tp.chosen_measurement([], "disease") is None
@@ -3617,13 +3646,18 @@ def test_the_help_says_what_the_measurement_options_are():
     lead = text.split("\n")[0]
     assert title == "Measurement" and len(lead) <= 100 and len(text.split()) <= 80
     assert "measurements this build implements" in lead
-    assert "formal test is not implemented" in text and "Mode C" not in text
+    # A base is offered the KG link-prediction measurement (research comparison
+    # Stage 5), never told its test is not implemented.
+    assert "A base is offered KG link prediction only" in text and "Mode C" not in text
+    assert "not implemented" not in text
     # Offered by what the model offers (Stage 3), not by a stage list.
     assert "capabilities meet" in text and "learning stage" not in text
     title, text = tp.FIELD_HELP["shep-test-model"]
     assert title == "Model" and len(text.split("\n")[0]) <= 100
-    assert "a base, or a file without a model spec, is listed but not measured here" in text
+    assert "a file without a model spec is listed only" in text
+    assert "its LP head on a KG edge set" in text and "a base" not in text
     assert "measured by that task" not in text and "capabilities meet" in text
+    assert len(text.split()) <= 85
 
 
 @pytest.fixture
@@ -3649,7 +3683,8 @@ def test_a_listed_disease_child_offers_the_test_only_protocols_and_starts_one(
     hands the runner protocol p2 apart from the model's task disease, and the
     job card names p2. "disease" is no protocol here: the definition's
     ordinary sentence. The base asked as p1 gets the definition's one reason
-    (the base message) from Start and from the start, which asks no runner."""
+    (no head p1 scores with, and nothing in this table takes it) from Start
+    and from the start, which asks no runner."""
     from src.evaluation import protocols
 
     _path, child = _put_bundle(site)
@@ -3699,12 +3734,13 @@ def test_a_listed_disease_child_offers_the_test_only_protocols_and_starts_one(
     version = tp.find(page["versions"], "label", LABEL)
     reason = protocols.refusal("p1", tp.find_model(models, base)["capabilities"],
                                version["kind"], version["counts"])
-    assert reason == protocols.BASE_MESSAGE and tp.measurement_choices(
-        tp.find_model(models, base)) == []
+    assert reason == ("the p1 measurement takes a finetune model with the disease head; this "
+                      "checkpoint is a base model with no task head.")
+    assert tp.measurement_choices(tp.find_model(models, base)) == []
     assert state(base, "p1") == (False, f"Disabled: {reason}")
     assert tp.start_test_run(page, models, "demo", LABEL, base, False, False, request,
                              protocol="p1", manager=manager) == {
-        "success": False, "error": f"{reason} Nothing was started."}
+        "success": False, "error": f"{reason[:1].upper()}{reason[1:]} Nothing was started."}
     assert len(manager.started) == 1
 
 
@@ -3712,10 +3748,12 @@ def test_a_model_picked_after_another_answers_its_second_event_without_an_error(
         site, monkeypatch):
     """Through the page served by Gradio, for an operator: one pick of a Model
     option sends its input event twice, each with the values the browser held
-    when it was asked. The disease child chosen (the radio offers and shows
-    "disease"), then the base: the first of the base's events empties the
-    radio, and the second still carries "disease". Both answer, the radio
-    ends empty and Start's reason is the base message. When the selection's
+    when it was asked. The disease child chosen (the radio offers "disease"
+    and "kg_link_prediction", and the operator's pick is "disease"), then the
+    base: the first of the base's events writes the base's one choice,
+    "kg_link_prediction", and the second still carries "disease". Both
+    answer, the radio ends on the base's one choice and Start's reason is
+    that protocol's sentence for the supplied version. When the selection's
     listeners took the radio itself, Gradio checked the second event's value
     against the choices the first had written and answered with an error
     before the page's own handling ran (`chosen_measurement`)."""
@@ -3731,6 +3769,7 @@ def test_a_model_picked_after_another_answers_its_second_event_without_an_error(
     monkeypatch.setattr(tp, "gpu_line", lambda **k: ("none", "GPU jobs: none"))
     demo, _ctx, _registry = _page_component()
     refresh, on_model = _named(demo, "_refresh"), _named(demo, "_on_model")
+    on_pick = _named(demo, "_on_measurement")
     by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
     radio_at = on_model.outputs.index(by_id["shep-test-measurement"])
     reason_at = on_model.outputs.index(by_id["shep-test-start-reason"])
@@ -3738,19 +3777,26 @@ def test_a_model_picked_after_another_answers_its_second_event_without_an_error(
     with served(demo) as url:
         browser = ServedSession(url, demo)
         assert browser.wait(browser.join(refresh, [None] * 6))
-        picked = browser.join(on_model, [None, None, None, "demo", LABEL, site.key, None])
+        chosen = browser.join(on_model, [None, None, None, "demo", LABEL, site.key, None])
+        assert browser.wait(chosen)
+        radio = browser.done[chosen]["output"]["data"][radio_at]
+        assert radio["value"] is None and len(radio["choices"]) == 2, radio
+        # The operator picks "disease" of the child's two.
+        picked = browser.join(on_pick, [None, None, None, "demo", LABEL, site.key, "disease"])
         assert browser.wait(picked)
-        radio = browser.done[picked]["output"]["data"][radio_at]
+        radio = browser.done[picked]["output"]["data"][0]
         assert radio["value"] == "disease", radio
         # The base picked once: two events, each asked with the radio's "disease".
         events = [browser.join(on_model, [None, None, None, "demo", LABEL, base, "disease"])
                   for _ in range(2)]
         assert browser.wait(*events)
         browser.close()
+    said = protocols.inputs_refusal("kg_link_prediction", SUPPLIED, None)
     for event in events:
         out = browser.done[event]["output"]["data"]
-        assert (out[radio_at]["choices"], out[radio_at]["value"]) == ([], None)
-        assert html_lib.escape(protocols.BASE_MESSAGE) in out[reason_at], out[reason_at]
+        assert ([list(c) for c in out[radio_at]["choices"]], out[radio_at]["value"]) == (
+            [["kg_link_prediction", "kg_link_prediction"]], "kg_link_prediction")
+        assert html_lib.escape(said) in out[reason_at], out[reason_at]
 
 
 def test_a_gatv2_childs_report_is_registered_beside_its_own_file(site, monkeypatch):

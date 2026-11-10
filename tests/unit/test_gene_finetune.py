@@ -267,7 +267,6 @@ def test_the_stage_and_task_are_checked_before_the_fixture_is_read(trained, tmp_
 
     import measure_scorer
     import train_model
-    from src.evaluation import protocols
     from src.models.bundle.record import ModelRecordError
     from src.utils.run_plan import RunPlanRefused
 
@@ -279,7 +278,9 @@ def test_the_stage_and_task_are_checked_before_the_fixture_is_read(trained, tmp_
     config, explicit = _gene_config(dict(trained, data_dir=bare, base=child), tmp_path / "again")
     with pytest.raises(RunPlanRefused, match="children never chain"):
         train_model.train(config, explicit)
-    with pytest.raises(ModelRecordError, match=re.escape(protocols.BASE_MESSAGE)):
+    said = ("the gene measurement takes a finetune model with the gene head; this checkpoint "
+            "is a base model with no task head. It can be measured by kg_link_prediction.")
+    with pytest.raises(ModelRecordError, match=re.escape(said)):
         measure_scorer.main(["--mode", "gene", "--checkpoint", str(trained["base"]),
                              "--data-dir", str(bare), "--split", "val",
                              "--output", str(tmp_path / "r.json"), "--device", "cpu"])

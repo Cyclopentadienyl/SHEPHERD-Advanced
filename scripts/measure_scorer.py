@@ -4,7 +4,9 @@ Measure a model on a cohort by an evaluation protocol.
 ======================================================
 **`--mode` names the protocol, and is required** (`src/evaluation/protocols.py`):
 a measurement this build implements, today disease, gene and patients_like_me,
-each taking a model that carries its task head. A protocol states what it needs
+each taking a model that carries its task head and measuring a patient cohort,
+and kg_link_prediction, taking any model whose LP head scores by DistMult (a
+base and each of its finetunes) and measuring a KG edge set. A protocol states what it needs
 of a model's capabilities, the data kinds it measures and the evaluator that
 runs it (`src/evaluation/task_measurement.py`,
 `docs/working/PLAN_TEST_RESULTS.md` §8), and the report's `mode` is its name.
@@ -28,6 +30,31 @@ stays testable without a subprocess.
 
 **Two kinds of cohort, named by the argument that names them** (contract M4,
 decision 8): exactly one of `--split` and `--cohort`.
+
+**By data kind** (research comparison §5 Stage 5). A registered version is
+measured by its recorded kind. A supplied cohort version is read and checked
+as below. A **KG edge set** (`--mode kg_link_prediction --cohort <label>`)
+reads no patient samples: its `pairs.bin` is read once and refused before it
+is parsed unless it is the bytes the version binds, and then unless it parses
+to the rows and pairs digest the version records (`read_kg_edge_pairs`); R1,
+R3, R5, the version's graph binding and the expected digests are checked as
+for a supplied version. Refused before anything is written, besides those: the
+version's graph view other than the model's (measuring across views needs a
+node mapping this build does not have: a stated capability gap, not a research
+rule), a file without a model spec, a protocol and a data kind that do not
+match (the LP protocol on a supplied or generated version or with `--split`; a
+task protocol on a KG edge set), `--training-evidence` (R10 is a supplied
+version's; a KG edge set's relation to the model's training is its exposure),
+a version with no pair, and, in the evaluator, a version whose recorded split
+does not rebuild from the view or whose pairs are not its part's edges. A
+model whose recorded split differs from the version's, on the same view, is
+measured: its exposure says how many of the measured edges were in that
+model's recorded graph use. Its run keeps, in its run directory, `scores.bin`
+(each pair's actual raw scores and state, keyed to the pairs file's rows,
+streamed in chunks, never replacing a file) and then `report.json`, which
+names it by digest and row count and carries the run's `exposure` block. The
+ledger does not record such a run yet (research comparison Stage 6): with
+`--record` its report is kept and the registration refused saying so (exit 3).
 
     # A registered test cohort version: the formal measurement. The report is
     # kept in the registry's report store; --record registers it in the ledger
@@ -324,9 +351,9 @@ class FailedAfterPublishing(Exception):
 
 
 class MeasurementInputs(NamedTuple):
-    """What a run read once each: the workspace files it checked, the cohort, and
-    the checkpoint, whose recorded graph roles were compared with `bound`
-    (contract M2.1, S7; M2.4).
+    """What a run read once each: the workspace files it checked, the cohort (or
+    a KG edge set's pairs), and the checkpoint, whose recorded graph roles were
+    compared with `bound` (contract M2.1, S7; M2.4).
 
     Carried whole from `read_measurement_inputs` to `measurement_input_digests`
     and the manifest, so the tensors and samples a measurement scores, the
@@ -350,7 +377,8 @@ class MeasurementInputs(NamedTuple):
     cohort_version: Optional[Dict[str, Any]]
     manifest: ManifestRead
     graph: GraphArtifactsRead
-    samples: SamplesRead
+    #: The samples measured; None for a KG edge set, which has none.
+    samples: Optional[SamplesRead]
     checkpoint: CheckpointRead
     #: The digest the run's one manifest reading binds for each of the four
     #: graph roles, `kg` included, as `verify_graph_reads` returned it after
@@ -363,8 +391,10 @@ class MeasurementInputs(NamedTuple):
     #: cohort. Its summary goes on the manifest, so a number measured over a
     #: synthetic workspace says so.
     dataset_record: DatasetRecord
-    #: The R10 block (contract §5.4) for a registered version; `None` for a
-    #: generated split, whose relation to training is the allocation's.
+    #: The R10 block (contract §5.4) for a supplied cohort version; `None` for
+    #: a generated split, whose relation to training is the allocation's, and
+    #: for a KG edge set, whose relation to the model's training is its
+    #: run's exposure block.
     r10: Optional[Dict[str, Any]]
     #: The kind of data measured, as the protocol judged it
     #: (`protocols.inputs_refusal`): `generated` for a generated split, the
@@ -374,6 +404,9 @@ class MeasurementInputs(NamedTuple):
     #: A protocol with gene fields over a generated split: the workspace's
     #: functional fixture read against this manifest reading; `samples` is its split.
     task_data: Optional[Any] = None
+    #: A KG edge set's pairs, one read of its `pairs.bin` checked against the
+    #: version (`read_kg_edge_pairs`); None for every other kind.
+    pairs: Optional[Any] = None
 
 
 def read_measurement_inputs(
@@ -437,6 +470,13 @@ def read_measurement_inputs(
     split too, with the default fields, so `verify_cohort_reads` checks both
     splits' bindings (R2), the disease sets, and the manifest's disjointness
     claim and the measured disjointness.
+
+    **A KG edge set** is read like a supplied version but for its data: no
+    samples (its `pairs.bin` instead, `read_kg_edge_pairs`, where the
+    samples are read), no `--training-evidence` (refused right after its
+    `cohort.json` is judged: R10 is a supplied version's) and no R10, and its
+    graph view must be the checkpoint's model's (refused right after the model
+    is judged: there is no node mapping between views in this build).
 
     **A registered version, in this order** (M4 §6): the evidence directories
     are checked (listed, nothing read); `resolve_version` reads `cohort.json`
@@ -524,14 +564,26 @@ def read_measurement_inputs(
         # workspace or the checkpoint is read.
         data_kind = version.kind
         why = protocols.inputs_refusal(protocol, data_kind, version.manifest.get("counts"))
+        if why is None and training_evidence and data_kind != protocols.SUPPLIED:
+            why = (f"--training-evidence applies to a supplied cohort version only (R10: its "
+                   f"cases' overlap with the training and validation inputs the checkpoint "
+                   f"records); {cohort!r} is {_version_words(version)}, whose relation to the "
+                   "model's training is its run's exposure block, read from the model's own "
+                   "record.")
     if why is not None:
         raise ValueError(f"{why} Nothing was written.")
 
     manifest = read_split_manifest(data_dir)
     graph = read_graph_artifacts(data_dir, map_location="cpu")
     gene_fields = asked.gene_fields
+    pairs = None
     if version is None:
         samples, checked = _read_generated(data_dir, split, siblings)
+    elif data_kind == protocols.KG_EDGES:
+        # **No patient samples**: a KG edge set's pairs, one read, the digest
+        # compared before the bytes are parsed (M2.1).
+        samples, checked = None, {}
+        pairs = _read_version_pairs(version)
     else:
         samples, checked = _read_version_samples(version, gene_fields=gene_fields), {}
 
@@ -572,6 +624,8 @@ def read_measurement_inputs(
     why = protocols.model_refusal(protocol, record.capabilities)
     if why is not None:
         raise ModelRecordError(f"{why} Nothing was written.")
+    if pairs is not None:
+        _refuse_another_view(version, record.graph_view.digest)
     task_data = None
     if gene_fields and version is None:
         from src.kg.task_fixture import read_gene_fixture
@@ -581,13 +635,15 @@ def read_measurement_inputs(
             raise ValueError(f"the functional fixture has no {split!r} split")
         samples = task_data.samples[split]
     # R3 has passed, so the checkpoint is a mapping that records its inputs.
-    r10 = (None if version is None
-           else _r10(read.checkpoint.get("training_input_digests"), samples, candidates))
+    # R10 is a supplied cohort version's only.
+    r10 = (_r10(read.checkpoint.get("training_input_digests"), samples, candidates)
+           if data_kind == protocols.SUPPLIED and version is not None else None)
 
     logger.info(
-        "Read %d samples of %s; checkpoint %s (sha256 %s)",
-        len(samples.samples),
-        split if version is None else f"cohort version {cohort_version['label']}",
+        "Read %s of %s; checkpoint %s (sha256 %s)",
+        (f"{int(pairs.pairs.head.numel())} pairs" if pairs is not None
+         else f"{len(samples.samples)} samples"),
+        split if version is None else f"version {cohort_version['label']}",
         read.identity.path, read.identity.sha256[:12],
     )
     logger.info(
@@ -596,7 +652,50 @@ def read_measurement_inputs(
         dataset_record.identity.sha256[:12],
     )
     return MeasurementInputs(resolved, version, cohort_version, manifest, graph, samples, read,
-                             bound, dataset_record, r10, data_kind, task_data)
+                             bound, dataset_record, r10, data_kind, task_data, pairs)
+
+
+def _version_words(version: CohortVersionRead) -> str:
+    """A registered version in the registry's words, by its kind and role ("a
+    KG edge set (test)", `cohort_registry.version_words`)."""
+    from src.evaluation.cohort_registry import version_words
+
+    return version_words(version.kind, version.manifest.get("role"))
+
+
+def _read_version_pairs(version: CohortVersionRead) -> Any:
+    """A KG edge set's pairs: one read of its `pairs.bin`, refused before it is
+    parsed unless it is the bytes the version binds, then unless it parses to
+    the rows and pairs digest the version records (`read_kg_edge_pairs`,
+    M2.1). Each refusal says the registry was altered and that nothing was
+    written."""
+    from src.evaluation.cohort_registry import CohortVersionRefused, read_kg_edge_pairs
+
+    try:
+        return read_kg_edge_pairs(version)
+    except CohortVersionRefused as exc:
+        raise CohortVersionRefused(
+            f"{_sentence(exc)} The KG edge set's own record contradicts its bytes, so it is "
+            "not measured. Nothing was written.") from None
+
+
+def _refuse_another_view(version: CohortVersionRead, model_view: str) -> None:
+    """Refuse a KG edge set of another graph view than the checkpoint's model
+    reads, before anything is built or written. Its edges are view node and
+    relation ids of its own view; scoring them in another view needs a node
+    mapping, which this build does not have: a capability gap, stated as one,
+    never a rule about which model may be measured on which data."""
+    recorded = version.manifest["graph_view"]["digest"]
+    if recorded == model_view:
+        return
+    raise ValueError(
+        f"the KG edge set {version.manifest['label']!r} is a part of graph view "
+        f"{recorded[:12]}..., and this checkpoint's model reads graph view {model_view[:12]}...: "
+        "its edges are named by another view's node and relation ids, and this build has no "
+        "node mapping between graph views, so it cannot score them in this model's view. That "
+        "is a capability this build lacks, not a research rule: a KG edge set taken from a "
+        "model of this view (scripts/import_cohort.py --kind kg_edges --from-checkpoint) is "
+        "measured, whatever split, family or result that model has. Nothing was written.")
 
 
 def _changed_since_chosen(what: str, found: Optional[str],
@@ -806,7 +905,8 @@ def measurement_input_digests(inputs: MeasurementInputs) -> Dict[str, str]:
     bytes a reader parsed: the checkpoint the model was built from, the cohort
     scored (a generated split's file or a version's `samples.json`), the three
     graph tensors encoded, and, for a generated split, the manifest those were
-    verified against. Nothing here hashes a path, so a file replaced after its
+    verified against; a KG edge set's run records its pairs file as `pairs`
+    in place of `samples`. Nothing here hashes a path, so a file replaced after its
     read cannot change what is recorded, and a digest that was never taken
     cannot be recorded as `None`.
 
@@ -827,9 +927,12 @@ def measurement_input_digests(inputs: MeasurementInputs) -> Dict[str, str]:
     from src.kg.artifacts import GRAPH_TENSOR_ROLES
 
     tensors = {role: inputs.graph.reads.get(role) for role in GRAPH_TENSOR_ROLES}
+    # The data measured: a cohort's samples, or a KG edge set's pairs file.
+    data = (("pairs", inputs.pairs.identity) if inputs.pairs is not None
+            else ("samples", inputs.samples.identity))
     reads: Dict[str, Any] = {
         "checkpoint": inputs.checkpoint.identity,
-        "samples": inputs.samples.identity,
+        data[0]: data[1],
         **tensors,
     }
     if inputs.version is None:
@@ -1004,11 +1107,16 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
     **The kind of cohort is the kind the protocol judged**
     (`MeasurementInputs.data_kind`: `generated`, or the registered version's
     recorded kind), so the run is judged and recorded by one kind. With a
-    version (`cohort_version_block`) the manifest is a registered cohort's:
-    `split` is the version's role, the relations are a registered cohort's and
-    `r10` is required. Without one it is the generated split `args.split`, with
-    no R10. The manifest refuses a kind that does not match whether a version
-    is given (today `supplied` with one, `generated` without) when it is built.
+    version (`cohort_version_block`) the manifest is a registered version's:
+    `split` is the version's role and the relations are a registered
+    version's; `r10` is given for a supplied cohort version and only for one.
+    Without one it is the generated split `args.split`, with no R10. The
+    manifest refuses, when it is built, a kind that is not the version's (or,
+    with no version, not `generated`) and an R10 that is not a supplied
+    version's (`MeasurementManifest.__post_init__`).
+
+    `n_samples` is the data's measured units: a cohort's samples, a KG edge
+    set's positive edges.
 
     **The mode is the protocol asked, set here once** (`args.mode`, the
     `--mode` the run was started with), never by the evaluator. **The
@@ -1113,7 +1221,8 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
                              "zero. A path that is not a directory is refused; one that "
                              "cannot be checked or listed is not looked in, and R10 "
                              "names it for a scope found nowhere else. Repeatable; "
-                             "--cohort only")
+                             "--cohort only, and a supplied cohort version's: refused "
+                             "for a KG edge set, whose run records its exposure instead")
     parser.add_argument("--record", action="store_true",
                         help="Register the kept report in evaluations.json beside the "
                              "checkpoint, as scripts/record_evaluation.py --report "
@@ -1129,8 +1238,10 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
                              "neither is ever replaced. Required with --split; refused with "
                              "--cohort, whose report the registry's report store keeps")
     parser.add_argument("--batch-size", type=_positive_int, default=32,
-                        help="Patients scored per chunk (a positive integer). Recorded on "
-                             "the manifest: it can move the numbers at floating-point level")
+                        help="What is scored per chunk (a positive integer): patients for a "
+                             "task protocol, (positive, negative) pairs for "
+                             "kg_link_prediction. Recorded on the manifest: it can move the "
+                             "numbers at floating-point level")
     parser.add_argument("--device", default="auto", choices=["auto", "cuda", "cpu"],
                         help="auto requires CUDA and fails without it. Explicit cpu "
                              "is permitted for development and records "
@@ -1310,14 +1421,19 @@ def _publish_generated(result: ModeResult, output: Path) -> Tuple[Path, Path]:
 
 
 def _publish_to_store(
-    result: ModeResult, inputs: MeasurementInputs
+    result: Any, inputs: MeasurementInputs
 ) -> Tuple[str, Path, str]:
     """A registered version's report in a new run directory of its report store.
 
     Encoded as every registry file is (`encode_json`) and checked to encode
-    before the run directory exists. Then `ranks.json` is published, and
-    `report.json` last, carrying ``"ranks": {"file", "sha256"}`` with the digest
-    `publish_bytes` returned for the bytes it wrote: the report is the commit
+    before the run directory exists. Then the run's kept output is published
+    -- a patient cohort's `ranks.json`, or a KG edge set's `scores.bin`
+    (`SCORES_FILE`: each pair's raw scores and state, streamed into the run
+    directory in chunks and placed whole, never replacing a file,
+    `publish_chunks(replace=False)`) -- and `report.json` last, carrying
+    ``"ranks": {"file", "sha256"}`` or ``"scores": {"file", "sha256", "rows",
+    ...}`` (`LinkPredictionResult.scores_block`) with the digest the
+    publication returned for the bytes it wrote: the report is the commit
     point, and a run directory without one is an interrupted write that nothing
     registers. Returns the run id, the report's path, and the digest
     `publish_bytes` returned for the report bytes it wrote: `--record` registers
@@ -1325,17 +1441,23 @@ def _publish_to_store(
     """
     from datetime import datetime, timezone
 
-    from src.evaluation.cohort_registry import create_report_dir, encode_json
-    from src.utils.file_modes import publish_bytes
+    from src.evaluation.cohort_registry import SCORES_FILE, create_report_dir, encode_json
+    from src.utils.file_modes import publish_bytes, publish_chunks
 
     report = result.to_dict()
-    ranks_bytes = encode_json(result.to_ranks())
+    scored_pairs = inputs.data_kind == protocols.KG_EDGES
+    ranks_bytes = None if scored_pairs else encode_json(result.to_ranks())
     encode_json(report)  # refuses a value JSON cannot hold before anything exists
     run_id, run_dir = create_report_dir(
         inputs.version, inputs.checkpoint.identity.sha256, datetime.now(timezone.utc)
     )
-    ranks_sha256 = publish_bytes(run_dir / RANKS_FILE, ranks_bytes)
-    report["ranks"] = {"file": RANKS_FILE, "sha256": ranks_sha256}
+    if scored_pairs:
+        scores_sha256, size = publish_chunks(run_dir / SCORES_FILE, result.scores_chunks(),
+                                             replace=False)
+        report["scores"] = result.scores_block(SCORES_FILE, scores_sha256, size)
+    else:
+        ranks_sha256 = publish_bytes(run_dir / RANKS_FILE, ranks_bytes)
+        report["ranks"] = {"file": RANKS_FILE, "sha256": ranks_sha256}
     report_path = run_dir / REPORT_FILE
     report_sha256 = publish_bytes(report_path, encode_json(report))
     return run_id, report_path, report_sha256
@@ -1360,7 +1482,8 @@ def _publication_failure(
     no hard links, an empty file this run claimed at `output` or at the ranks;
     for a registered version, a new run directory, empty or holding only
     `RANKS_FILE`, with no report to commit it. Which of those happened depends
-    on the step that failed, so the message says "may". A generated split's
+    on the step that failed, so the message says "may" (a KG edge set's run
+    keeps `scores.bin` where a cohort's keeps `ranks.json`). A generated split's
     file that is already taken (`FileExistsError` naming it, raised only when
     something appeared there after `_check_generated_targets`) is said exactly:
     a taken ranks file means this run wrote no file at all; a taken report
@@ -1395,11 +1518,14 @@ def _publication_failure(
             f"report beside it, an interrupted write, and {output} may be an empty file this "
             "run claimed. Measure again to a new --output."
         )
+    from src.evaluation.cohort_registry import SCORES_FILE
+
+    kept = SCORES_FILE if inputs.data_kind == protocols.KG_EDGES else RANKS_FILE
     return ReportNotWritten(
         f"{_sentence(exc)} No {REPORT_FILE} was published, so this run kept no report and "
         f"nothing can register it. A new run directory in "
         f"{inputs.version.directory / REPORTS_DIR} may exist, empty or holding only "
-        f"{RANKS_FILE}: an interrupted write, which nothing registers. Measure again to "
+        f"{kept}: an interrupted write, which nothing registers. Measure again to "
         "keep a report."
     )
 
@@ -1696,9 +1822,29 @@ def _r10_label_text(label: str, value: Mapping[str, Any], evidence_state: str) -
     return f"{words} — {value['k']} of {value['n']} test cases"
 
 
+def _print_kg_edges_summary(inputs: MeasurementInputs, result: Any) -> None:
+    """A KG edge set's run: which version, its counts with their units, the
+    exposure's reading and the scores kept. Aggregates only; no edge."""
+    block = inputs.cohort_version
+    evidence = result.sampler_evidence
+    print(f"\nKG edge set {block['label']} (role {block['role']}), manifest sha256 "
+          f"{block['manifest_sha256'][:12]}...")
+    for name, value in evidence["counts"].items():
+        print(f"  {name}: {value} ({evidence['count_units'][name]})")
+    exposure = result.exposure
+    print(f"\nExposure ({exposure['definition_version']}): {exposure['reading']}")
+    if exposure["reason"]:
+        print(f"  {exposure['reason']}")
+    passing = exposure["measurement_message_passing"]
+    print(f"  message passing: {passing['graph']}; measured edges in it: "
+          f"{passing['measured_edges_in_it']}")
+    print(f"  {exposure['caveat']}")
+
+
 def _print_registered_summary(inputs: MeasurementInputs, result: ModeResult, run_id: str,
                               report_path: Path) -> None:
-    """Which version, its coverage with every denominator, and R10's labels.
+    """Which version, its coverage with every denominator, and R10's labels
+    (a KG edge set's run: `_print_kg_edges_summary`).
 
     Each R10 label is shown in the caveats' words (`_r10_label_text`), then the
     four label definitions once, as the Diagnosis panel shows them: the operator
@@ -1709,6 +1855,10 @@ def _print_registered_summary(inputs: MeasurementInputs, result: ModeResult, run
     from src.evaluation.caveats import R10_LABEL_TEXT, R10_STATE_TEXT
     from src.evaluation.r10 import R10_LABELS, R10_SCOPES
 
+    if inputs.data_kind == protocols.KG_EDGES:
+        _print_kg_edges_summary(inputs, result)
+        print(f"\nReport: {report_path}\nRun id: {run_id}")
+        return
     block = inputs.cohort_version
     counts = block["counts"]
     excluded = ", ".join(f"{name} {n}" for name, n in counts["excluded"].items())
@@ -1950,7 +2100,8 @@ def _measure_task(args: argparse.Namespace, registry: Optional[Path], device: to
         protocol=args.mode,
     )
     asked = protocols.PROTOCOLS[args.mode]
-    graph_data, samples = inputs.graph.graph_data, inputs.samples.samples
+    graph_data = inputs.graph.graph_data
+    samples = inputs.samples.samples if inputs.samples is not None else None
     record = read_model_record(inputs.checkpoint.checkpoint)
     rule = _asdict(record.model_spec.graph_view)
     rule["exclude_relations"] = list(rule["exclude_relations"])
@@ -1959,13 +2110,25 @@ def _measure_task(args: argparse.Namespace, registry: Optional[Path], device: to
     # same payload: what the model offers decided, so the load checks the view.
     bundle, record = load_bundle(inputs.checkpoint.checkpoint, view_digest=view.digest)
     bundle.to(device)
+    # The measured units (`n_samples`): a cohort's samples, a KG edge set's
+    # positive edges.
+    units = (int(inputs.cohort_version["counts"]["positive_edges"]) if samples is None
+             else len(samples))
     manifest = build_manifest(
-        args, graph_data, len(samples), device, digests=measurement_input_digests(inputs),
+        args, graph_data, units, device, digests=measurement_input_digests(inputs),
         dataset_record=inputs.dataset_record.summary(), cohort_kind=inputs.data_kind,
         cohort_version=inputs.cohort_version, r10=inputs.r10, cuda_executed=cuda_executed,
         model=bundle, regime=observe_autocast_regime(device),
         semantics=task_semantics(asked.evaluator, args.batch_size, bundle),
     )
+    # **Dispatch by the data kind**, into the one evaluator the protocol
+    # names: a KG edge set's pairs, with the model's record for the exposure;
+    # a cohort's samples.
+    if inputs.pairs is not None:
+        result = TASK_RUNS[asked.evaluator](bundle=bundle, view=view, pairs=inputs.pairs.pairs,
+                                            record=record, manifest=manifest, device=device,
+                                            batch_size=args.batch_size)
+        return inputs, result
     result = TASK_RUNS[asked.evaluator](bundle=bundle, view=view, samples=samples,
                                         manifest=manifest, device=device,
                                         batch_size=args.batch_size)
@@ -1984,10 +2147,20 @@ def _measure_task(args: argparse.Namespace, registry: Optional[Path], device: to
 
 def _print_result(result: Any) -> None:
     """The run's figures on the console, under its mode's label, and its
-    candidates as its manifest describes them (`candidate_construction`)."""
+    candidates as its manifest describes them (`candidate_construction`). A
+    KG edge set's run gives every metric of its schema, a value or the status
+    that says why none was computed."""
     from src.evaluation.caveats import mode_label
 
     print(f"\n{mode_label(result.manifest.mode)}")
+    if result.manifest.cohort_kind == protocols.KG_EDGES:
+        print(f"  {result.n_ranked} pairs scored")
+        for name, status in result.sampler_evidence["metrics"].items():
+            value = result.authoritative_metrics.get(name)
+            shown = f"{value:.6f}" if value is not None else f"not computed: {status['reason']}"
+            print(f"  {name:38s} {shown}")
+        print(f"  candidates: {result.manifest.candidate_construction}")
+        return
     print(f"  {result.n_ranked} ranked, {result.n_ground_truth_absent} absent")
     for name, value in result.authoritative_metrics.items():
         print(f"  {name:38s} {value:.6f}")

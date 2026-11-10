@@ -184,9 +184,10 @@ ALLOWED = {
     ("src/evaluation/cohort_registry.py", "_sha256", "hashlib.sha256"):
         (1, _IN_MEMORY.format(what="the mapped samples about to be written and the canonical "
                                    "form of a would-be version manifest (the preview id)")),
-    ("src/utils/file_modes.py", "publish_bytes", "hashlib.sha256"):
-        (1, _IN_MEMORY.format(what="the bytes publish_bytes is about to write, returned as "
-                                   "the writer's digest of what it wrote (contract M4)")),
+    ("src/utils/file_modes.py", "publish_chunks", "hashlib.sha256"):
+        (1, _IN_MEMORY.format(what="the bytes publish_chunks (and publish_bytes through it) "
+                                   "is about to write, chunk by chunk, returned as the "
+                                   "writer's digest of what it wrote (contract M4)")),
     ("src/kg/disease_allocation.py", "disease_set_digest", "hashlib.sha256"):
         (1, _IN_MEMORY.format(what="a disease set")),
     ("src/kg/disease_allocation.py", "universe_digest", "hashlib.sha256"):

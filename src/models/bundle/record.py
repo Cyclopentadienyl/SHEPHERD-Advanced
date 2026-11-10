@@ -27,6 +27,13 @@ holds itself, or one nested or sized past what a record holds, is refused
 naming its field, and a value compared with the reader's own (a version, a
 stage) is judged by that value's kind without being walked (`_differs`).
 
+**What `graph_exposure` says is read in its writer's words**
+(`recorded_graph_use`): the strings `scripts/train_model.py` records there are
+named here once (`EXPOSURE_TRAIN_EDGES` and the rest), the writer writes them
+through these names, and a reader takes each for the parts of the edge split
+it puts in graph use. A string no build wrote is never read as one: the
+record's exposure is then not recorded, never "unseen".
+
 Plain data only, so the payload still loads with `weights_only=True`.
 Reading and checking a record needs no torch; only `load_bundle` builds.
 
@@ -385,6 +392,87 @@ def check_model_record(record: ModelRecord, *, learning_stage: Optional[str] = N
                                f"{view_digest[:12]}")
 
 
+# ---------------------------------------------------------------------------
+# A record's graph exposure, in its writer's words
+# ---------------------------------------------------------------------------
+#: The words `scripts/train_model.py`, their one writer, records in a model
+#: record's ``graph_exposure`` (contract §9.1): what each phase of a run passed
+#: messages over and supervised with. The writer writes them through these
+#: names and a reader reads them through `recorded_graph_use`, so the two
+#: cannot drift apart.
+EXPOSURE_TRAIN_EDGES = "train edges"
+EXPOSURE_TRAIN_EDGES_DRAWN_PAIRS_REMOVED = "train edges, the step's drawn pairs removed (F5)"
+EXPOSURE_VAL_EDGES = "val edges"
+EXPOSURE_FULL_VIEW = "the full view"
+EXPOSURE_FULL_VIEW_SP = "the full view (README G4, §6)"
+EXPOSURE_TRAIN_CASES = "train cases"
+EXPOSURE_VAL_CASES = "val cases"
+
+#: Every part of an edge split (`src.kg.graph_view.SPLIT_NAMES`, restated:
+#: this module imports no graph code): what a word naming the full view puts
+#: in graph use.
+EXPOSURE_ALL_PARTS: Tuple[str, ...] = ("train", "val", "test")
+
+#: The parts of the edge split each word puts in graph use: a word naming
+#: edges, the part it names; a word naming the full view, every part; a word
+#: naming patient cases, no edge.
+EXPOSURE_EDGE_PARTS: Dict[str, Tuple[str, ...]] = {
+    EXPOSURE_TRAIN_EDGES: ("train",),
+    EXPOSURE_TRAIN_EDGES_DRAWN_PAIRS_REMOVED: ("train",),
+    EXPOSURE_VAL_EDGES: ("val",),
+    EXPOSURE_FULL_VIEW: EXPOSURE_ALL_PARTS,
+    EXPOSURE_FULL_VIEW_SP: EXPOSURE_ALL_PARTS,
+    EXPOSURE_TRAIN_CASES: (),
+    EXPOSURE_VAL_CASES: (),
+}
+
+#: The words that name the full view: a use by one of them is full-view
+#: exposure, whatever part an edge is in.
+EXPOSURE_FULL_VIEW_WORDS: Tuple[str, ...] = (EXPOSURE_FULL_VIEW, EXPOSURE_FULL_VIEW_SP)
+
+
+def recorded_graph_use(graph_exposure: Any) -> Dict[str, Tuple[str, ...]]:
+    """What a record's ``graph_exposure`` says each use of the graph covered,
+    read in its writer's words: ``{"<stage>.<phase>.<use>": parts}`` for every
+    string the record holds (`EXPOSURE_EDGE_PARTS`), in the record's order.
+
+    The record is one learning stage's block (``base`` or ``finetune``), a
+    mapping of phases (and, for a gene finetune, ``sp``) whose every value is
+    a mapping or one of the writer's words.
+
+    Raises:
+        ValueError: the record says something this build's writer never wrote,
+            the reason naming where: no stage block, a stage this build does
+            not know, a value that is neither a mapping nor a word, or a word
+            no build wrote. Its exposure is then not recorded.
+    """
+    if not isinstance(graph_exposure, Mapping) or len(graph_exposure) != 1:
+        raise ValueError("the record's graph_exposure is not one learning stage's block")
+    (stage, block), = graph_exposure.items()
+    if not isinstance(stage, str) or stage not in LEARNING_STAGES:
+        raise ValueError(f"the record's graph_exposure names the stage {_shown(stage)}, which "
+                         "this build does not write")
+    uses: Dict[str, Tuple[str, ...]] = {}
+
+    def walk(at: str, value: Any, depth: int) -> None:
+        if isinstance(value, str):
+            if value not in EXPOSURE_EDGE_PARTS:
+                raise ValueError(f"the record's graph_exposure.{at} says {_shown(value)}, which "
+                                 "no build's writer wrote")
+            uses[at] = EXPOSURE_EDGE_PARTS[value]
+            return
+        if not isinstance(value, Mapping) or not value or depth > 2:
+            raise ValueError(f"the record's graph_exposure.{at} is not a use this build's "
+                             "writer wrote")
+        for key, part in value.items():
+            walk(f"{at}.{key}", part, depth + 1)
+
+    if not isinstance(block, Mapping):
+        raise ValueError(f"the record's graph_exposure.{stage} is not a mapping of phases")
+    walk(stage, block, 0)
+    return uses
+
+
 def finetune_parent_problem(record: ModelRecord, payload: Mapping[str, Any]) -> Optional[str]:
     """Why a read checkpoint cannot be a finetune's parent (contract §9.2), as
     the rest of a sentence naming it, or None: a base with weights; children
@@ -458,6 +546,16 @@ def load_bundle(payload: Mapping[str, Any], *, learning_stage: Optional[str] = N
 
 
 __all__ = [
+    "EXPOSURE_ALL_PARTS",
+    "EXPOSURE_EDGE_PARTS",
+    "EXPOSURE_FULL_VIEW",
+    "EXPOSURE_FULL_VIEW_SP",
+    "EXPOSURE_FULL_VIEW_WORDS",
+    "EXPOSURE_TRAIN_CASES",
+    "EXPOSURE_TRAIN_EDGES",
+    "EXPOSURE_TRAIN_EDGES_DRAWN_PAIRS_REMOVED",
+    "EXPOSURE_VAL_CASES",
+    "EXPOSURE_VAL_EDGES",
     "LISTED_RECORD_FIELDS",
     "MODEL_RECORD_VERSION",
     "ModelRecord",
@@ -470,4 +568,5 @@ __all__ = [
     "listed_record",
     "load_bundle",
     "read_model_record",
+    "recorded_graph_use",
 ]

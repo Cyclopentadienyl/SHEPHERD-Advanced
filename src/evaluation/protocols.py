@@ -16,10 +16,14 @@ read through `src.models.bundle.record.listed_record` or
 it carries with their scoring semantics, the inputs it needs and the
 computations its encoder declares. A protocol takes a model that carries the
 head it scores with, outputs the representations and offers the computation
-it reads, and whose inputs its evaluator supplies. No stage list, task name or
-encoder kind decides; the learning stage and task head appear only in the
-words a reason uses. A model offers a set of heads, so one model can be taken
-by several protocols.
+it reads, and whose inputs its evaluator supplies. A head is judged by its
+kind and its declared scoring semantics, never by its name. No stage list,
+task name or encoder kind decides; the learning stage and task head appear
+only in the words a reason uses. A model offers a set of heads, so one model
+can be taken by several protocols: every model the spec writes carries the LP
+head, so the common KG link-prediction protocol (`kg_link_prediction`, owner's
+O3) takes a base and each of its finetunes alike, and a finetune is also taken
+by its task's protocol.
 
 **Only new measurements are judged here.** The command line
 (`scripts/measure_scorer.py`), the job runner (`TestRunInputs`, `start_test`),
@@ -63,6 +67,9 @@ FULL_VIEW_INPUTS = ("edge_relation_ids", "node_ids", "node_types", "relation_ids
 GENERATED = "generated"
 SUPPLIED = "supplied"
 KG_EDGES = "kg_edges"
+#: The data kinds a registered version can be (`cohort_registry.VERSION_KINDS`,
+#: pinned equal): a measurement of one records its version block.
+REGISTERED_KINDS = (SUPPLIED, KG_EDGES, GENERATED)
 
 #: The reason a registered generated split is not measured yet: the registry
 #: keeps and lists one (research comparison §5 Stage 4), and measuring it is
@@ -86,6 +93,14 @@ def task_head(task: str) -> tuple[str, str, str]:
     """The task head of `task`, as a capability description lists it:
     `(TASK, task, its scoring semantics)`."""
     return (TASK, task, _TASK_SEMANTICS[task])
+
+
+#: The LP head the common KG link-prediction protocol scores with, as a
+#: capability description lists it (`capabilities.LP_HEAD_SEMANTICS`): the
+#: DistMult raw score, decision raw > 0, trained through tanh by a margin
+#: hinge. A model is taken for carrying a link-prediction head with these
+#: scoring semantics, whatever the head's spec kind is called.
+LP_HEAD = (LINK_PREDICTION, "distmult_tanh", "distmult_raw_score/tanh_hinge/v1")
 
 
 @dataclass(frozen=True)
@@ -113,8 +128,9 @@ class Protocol:
     #: Cases are read with their gene fields, and a generated split is measured
     #: through the workspace's functional fixture.
     gene_fields: bool = False
-    #: The `counts["genes"]` entries a registered cohort version must have
-    #: above 0 (the importer writes them only for a source that lists genes).
+    #: The counts a registered version must have above 0: a supplied cohort's
+    #: `counts["genes"]` entries (the importer writes them only for a source
+    #: that lists genes), a KG edge set's `counts["pairs"]` (`_NEED_COUNTS`).
     #: A generated split has no counts; the run checks its fixture.
     needs: tuple[str, ...] = ()
 
@@ -133,13 +149,12 @@ PROTOCOLS: dict[str, Protocol] = {p.name: p for p in (
     Protocol("patients_like_me", "patients_like_me", task_head("patients_like_me"),
              representations=_TASK_REPRESENTATIONS, gene_fields=True,
              needs=("cases_with_causal_genes",)),
+    # The common KG link-prediction measurement (research comparison §5 Stage
+    # 5, owner's O3): a KG edge set's fixed pairs scored by the LP head over
+    # the version's message-passing graph, for a base and a finetune alike.
+    Protocol("kg_link_prediction", "kg_link_prediction", LP_HEAD, data_kinds=(KG_EDGES,),
+             needs=("pairs",)),
 )}
-
-#: The reason for a base no protocol takes. It never says that a base has
-#: nothing to test: its formal test is not implemented yet.
-BASE_MESSAGE = ("This model is a base: its formal test (link prediction on held-out "
-                "knowledge-graph edges) is not implemented yet. A model finetuned from it can "
-                "be measured.")
 
 #: The reason for a listing whose checkpoint has no model record this build
 #: reads (so no capability description).
@@ -151,6 +166,10 @@ _NEED_WORDS: dict[str, tuple[str, str]] = {
     "cases_with_causal_genes": ("causal", "causal_genes"),
     "cases_with_candidate_genes": ("candidate", "candidate_genes"),
 }
+
+#: Where a need is counted in a registered version's counts: a KG edge set's
+#: pairs at the top; any other need under ``genes``.
+_NEED_COUNTS: dict[str, tuple[str, ...]] = {"pairs": ("pairs",)}
 
 #: A capability or input as a reason names it.
 _CAPABILITY_WORDS: dict[str, str] = {
@@ -183,6 +202,15 @@ def _protocol(name: Any) -> Protocol | None:
     return PROTOCOLS.get(name) if isinstance(name, str) else None
 
 
+def _carries(protocol: Protocol, model: Mapping[str, Any]) -> bool:
+    """Whether the model `model` describes carries the head `protocol` scores
+    with: a head of the same kind declaring the same scoring semantics (a
+    head's name is never what decides)."""
+    kind, _name, semantics = protocol.head
+    return any(head[0] == kind and len(head) > 2 and head[2] == semantics
+               for head in _heads(model))
+
+
 def _offered(model: Mapping[str, Any], key: str) -> frozenset:
     """The names a description lists under `key` (a list or tuple of names;
     anything else lists none)."""
@@ -212,7 +240,7 @@ def _accepts(protocol: Protocol, model: Any) -> bool:
     computation it reads, and needs no input its evaluator does not supply."""
     if not isinstance(model, Mapping):
         return False
-    return (tuple(protocol.head) in _heads(model)
+    return (_carries(protocol, model)
             and set(protocol.representations) <= _offered(model, "representations")
             and protocol.computation in _offered(model, "computation")
             and _inputs(model) <= set(protocol.supplies))
@@ -226,11 +254,11 @@ def _found(model: Any) -> tuple[str, ...]:
 def _takes(protocol: Protocol) -> str:
     """The model `protocol` takes, as a reason names it: by the head it scores
     with. A task head is a finetuned model's (the model spec gives a base
-    none)."""
-    kind, name, _semantics = protocol.head
+    none); any other head is named by its kind and scoring semantics."""
+    kind, name, semantics = protocol.head
     if kind == TASK:
         return f"a finetune model with the {name} head"
-    return f"a model with the {name} head"
+    return f"a model with a {kind.replace('_', '-')} head scoring {semantics}"
 
 
 def _described(model: Mapping[str, Any]) -> str:
@@ -259,13 +287,11 @@ def _unmet(protocol: Protocol, model: Mapping[str, Any]) -> str:
             f"which the {protocol.name} measurement does not supply.")
 
 
-def _none_takes(model: Any, found: tuple[str, ...]) -> str | None:
+def _none_takes(model: Any) -> str | None:
     """The reason for a model no protocol can take, whatever is asked of it:
-    no description (no record read), or a base no protocol takes; else None."""
+    no description (no record read); else None."""
     if not isinstance(model, Mapping):
         return NO_RECORD
-    if not found and model.get("learning_stage") == "base":
-        return BASE_MESSAGE
     return None
 
 
@@ -276,11 +302,11 @@ def available(model: Any) -> tuple[tuple[str, ...], str | None]:
     found = _found(model)
     if found:
         return found, None
-    reason = _none_takes(model, found)
+    reason = _none_takes(model)
     if reason is not None:
         return (), reason
     for protocol in PROTOCOLS.values():
-        if tuple(protocol.head) in _heads(model):
+        if _carries(protocol, model):
             return (), _unmet(protocol, model)
     return (), f"no measurement this build implements takes {_described(model)}."
 
@@ -288,20 +314,19 @@ def available(model: Any) -> tuple[tuple[str, ...], str | None]:
 def model_refusal(name: Any, model: Any) -> str | None:
     """Why the protocol `name` cannot measure the model whose capability
     description is `model` (None: no record read), or None. In this order: a
-    name that is not a protocol; no description; a base no protocol takes; a
-    model without the head the protocol scores with, then one lacking what
-    else it needs, each with the protocols the model can be measured by, if
-    any."""
+    name that is not a protocol; no description; a model without the head the
+    protocol scores with, then one lacking what else it needs, each with the
+    protocols the model can be measured by, if any."""
     protocol = _protocol(name)
     if protocol is None:
         return _unknown(name)
     if _accepts(protocol, model):
         return None
     found = _found(model)
-    reason = _none_takes(model, found)
+    reason = _none_takes(model)
     if reason is not None:
         return reason
-    if tuple(protocol.head) not in _heads(model):
+    if not _carries(protocol, model):
         said = (f"the {protocol.name} measurement takes {_takes(protocol)}; this checkpoint is "
                 f"{_described(model)}.")
     else:
@@ -317,7 +342,8 @@ def inputs_refusal(name: Any, kind: Any, counts: Mapping[str, Any] | None) -> st
     `name`, or None: a kind the protocol does not measure; a registered
     generated split, which this build does not measure yet
     (`GENERATED_VERSION_GAP`); then, for a registered version, the first of
-    its needs the version's `counts["genes"]` does not have above 0. A name
+    its needs its counts do not have above 0 (a supplied cohort's
+    `counts["genes"]` entries, a KG edge set's `counts["pairs"]`). A name
     that is not a protocol gets the same reason as from `model_refusal`."""
     protocol = _protocol(name)
     if protocol is None:
@@ -329,19 +355,30 @@ def inputs_refusal(name: Any, kind: Any, counts: Mapping[str, Any] | None) -> st
         return f"the {protocol.name} measurement does not measure {said}; it measures {takes}."
     if kind == GENERATED:
         return None if counts is None else GENERATED_VERSION_GAP
-    genes = counts.get("genes") if isinstance(counts, Mapping) else None
-    genes = genes if isinstance(genes, Mapping) else {}
     for need in protocol.needs:
-        value = genes.get(need)
+        value = _counted(counts, _NEED_COUNTS.get(need, ("genes", need)))
         if isinstance(value, int) and not isinstance(value, bool) and value > 0:
             continue
         if need in _NEED_WORDS:
             what, field = _NEED_WORDS[need]
             return (f"this cohort version lists no {what} genes, which the {protocol.name} "
                     f"measurement needs. Import a source that lists {field}.")
+        if need == "pairs":
+            return (f"this KG edge set holds no (positive, negative) pair, which the "
+                    f"{protocol.name} measurement scores: no positive edge of its part had "
+                    "another tail of its relation in its batch to draw a negative from.")
         return (f"this cohort version records no {need}, which the {protocol.name} "
                 "measurement needs.")
     return None
+
+
+def _counted(counts: Any, path: tuple[str, ...]) -> Any:
+    """The value at `path` in a version's counts, or None where the counts do
+    not hold one."""
+    value = counts
+    for key in path:
+        value = value.get(key) if isinstance(value, Mapping) else None
+    return value
 
 
 def refusal(name: Any, model: Any, kind: Any, counts: Mapping[str, Any] | None) -> str | None:
@@ -351,6 +388,6 @@ def refusal(name: Any, model: Any, kind: Any, counts: Mapping[str, Any] | None) 
     return model_refusal(name, model) or inputs_refusal(name, kind, counts)
 
 
-__all__ = ["BASE_MESSAGE", "FULL_VIEW_INPUTS", "GENERATED", "GENERATED_VERSION_GAP", "KG_EDGES",
-           "NO_RECORD", "PROTOCOLS", "Protocol", "SUPPLIED", "available", "inputs_refusal",
-           "model_refusal", "names", "refusal", "task_head"]
+__all__ = ["FULL_VIEW_INPUTS", "GENERATED", "GENERATED_VERSION_GAP", "KG_EDGES", "LP_HEAD",
+           "NO_RECORD", "PROTOCOLS", "Protocol", "REGISTERED_KINDS", "SUPPLIED", "available",
+           "inputs_refusal", "model_refusal", "names", "refusal", "task_head"]

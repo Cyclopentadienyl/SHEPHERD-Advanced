@@ -26,7 +26,9 @@ tasks ran on synthetic functional fixtures and were checked on CPU only (`BACKLO
 B). Deferred out of K8 ([`scorer-retraining/README.md`](scorer-retraining/README.md) §8, "K8
 record"), among others: the base's formal KG test (N1), comparing, querying and exporting results
 (N3; its direction set on 2026-11-09, `BACKLOG.md` §0 and 63), the patients-like-me reference set
-and R10's exposure scope. §8.6's institutional-approval record does not exist yet (§8.6 is design).
+and R10's exposure scope. *(2026-11-10: N1's measurement is built since on
+`claude/research-comparison`, Stage 5a, not merged: §8.1, "The KG link-prediction measurement as
+built"; registering its runs is that round's Stage 6.)* §8.6's institutional-approval record does not exist yet (§8.6 is design).
 
 **2026-10-27: task-aware evaluation for the paper-aligned stages is designed in §8, not
 implemented.** It covers the base's link-prediction validation and the disease, gene and
@@ -431,21 +433,28 @@ What holds today for measuring, keeping, registering and showing test results. D
 below keep their reasoning and dates; where one of them says otherwise, this list is today's rule
 and the decision's text is history.
 
-*(2026-11-10: the Measuring item is as of research comparison Stage 3 on
-`claude/research-comparison`, after this stamp; the rest of the list holds as stamped.)*
+*(2026-11-10: the Measuring, Data versions, Keeping and Registering items are as of research
+comparison Stage 5a on `claude/research-comparison`, after this stamp; the rest of the list holds
+as stamped.)*
 
 - **Measuring.** `scripts/measure_scorer.py --mode <protocol>` (`--mode` required) runs a protocol
-  of `src/evaluation/protocols.py` (`PROTOCOLS`: `disease`, `gene`, `patients_like_me`). A protocol
+  of `src/evaluation/protocols.py` (`PROTOCOLS`: `disease`, `gene`, `patients_like_me`,
+  `kg_link_prediction`). A protocol
   is offered for what a model can do: it states what it needs of a model (the head it scores with,
   the representations and computation it reads, the inputs it supplies) and the data kinds it
   measures, and every consumer judges the model's one capability description, derived from its
   spec and carried by the listing (`src/models/bundle/capabilities.py`; `model_refusal`,
-  `inputs_refusal`; research comparison Stage 3). Today each protocol takes a model carrying its
-  task head. Its name is not the model's task (K8-6a). One task scorer (`src/models/tasks/scoring.py`) serves
-  validation, measurement and serving, and one metrics module (`src/models/bundle/metrics.py`)
+  `inputs_refusal`; research comparison Stage 3). Each task protocol takes a model carrying its
+  task head and measures a patient cohort; `kg_link_prediction` takes any model whose LP head
+  declares DistMult's scoring semantics (a base and every finetune; a head is judged by its
+  semantics, never its name) and measures a KG edge set (research comparison Stage 5a; §8.1, "The
+  KG link-prediction measurement as built"). Its name is not the model's task (K8-6a). One task scorer (`src/models/tasks/scoring.py`) serves
+  validation, measurement and serving, one LP core (`src/models/bundle/lp_head.py`) serves base
+  validation and the KG measurement, and one metrics module (`src/models/bundle/metrics.py`)
   serves validation and measurement; each protocol's evaluator is in
-  `src/evaluation/task_measurement.py` (`TASK_RUNS`, metric schema 2). A base has no protocol yet:
-  its formal KG test is a later item (`protocols.BASE_MESSAGE`; `BACKLOG.md` §0).
+  `src/evaluation/task_measurement.py` (`TASK_RUNS`; metric schema 2 for the tasks, 3 for KG link
+  prediction). The base message retired with its last caller: a base asked for a task protocol
+  gets that protocol's reason, naming `kg_link_prediction`.
 - **Data versions** (research comparison Stage 4, 2026-11-10, on `claude/research-comparison`).
   The registry (`src/evaluation/cohort_registry.py`) holds versions of three kinds, all read by
   its one reader, `resolve_version`: a supplied cohort, schema 1, which records no kind and is
@@ -456,7 +465,9 @@ and the decision's text is history.
   --kind generated`), one of a workspace's own generated splits with its role as given, its
   samples and split manifest copied byte for byte and its data identity the samples' digest, the
   split manifest's and split files' digests, the generation definition and the role. A supplied
-  cohort's role is still never `train` or `val`. No protocol measures a KG edge set yet. A
+  cohort's role is still never `train` or `val`. A KG edge set is measured by
+  `kg_link_prediction` only, and a task protocol refuses it; `--training-evidence` is refused for
+  it (R10 is a supplied version's; its run records its exposure instead). A
   generated split is never presented as a supplied cohort; it is listed and read, and not
   measured yet (Stage 5).
   Reports measured with `--split` stay as they are, unregistrable, with no identity made up. Every
@@ -464,11 +475,16 @@ and the decision's text is history.
   one is a state (`check_references`).
 - **Keeping.** Every valid result of every real execution is kept as its own report (policy
   rev 16), a run that repeats another's conditions included; a generated split's report never
-  replaces an earlier run's (K8-6r.4).
+  replaces an earlier run's (K8-6r.4). A KG edge set's run keeps its actual outputs beside its
+  report (research comparison F4): `scores.bin`, each pair's raw scores and state keyed to the
+  pairs file's rows, written before `report.json`, which names it by digest and row count and
+  carries the run's exposure block.
 - **Registering.** One writer, `register_report` (`src/evaluation/registration.py`), by the verified
   run (K8-6r.2): the same run with the same bytes answers `already_registered` and writes nothing;
   the same run with other bytes is refused; any other run gets its own record. Differences between
-  runs are described, never used to refuse (rev 16).
+  runs are described, never used to refuse (rev 16). A KG edge set's report is not recorded yet:
+  `build_record` refuses it as a kind this revision's ledger does not record (research comparison
+  Stage 6), and the report stays kept.
 - **The ledger.** Schema 4 (`src/evaluation/sidecar.py`, `LEDGER_SCHEMA_VERSION`). Schemas 3 and 4
   are read as written, and reading never rewrites a file; schemas 1 and 2 are refused. The first
   registration into a schema 3 file writes schema 4. One registration at a time per ledger, and one
@@ -2489,7 +2505,9 @@ causal gene discovery.", is taken off the list.)*
 the GB10 acceptance covered). Deferred out of K8, among others: the base's formal held-out KG test
 (§8.1; `protocols.BASE_MESSAGE`, N1), comparing, querying and exporting task records
 (`BACKLOG.md` 63, N3), the patients-like-me reference set and R10's exposure scope; §8.6's
-institutional-approval record does not exist yet (§8.6 is design). *(History: designed as
+institutional-approval record does not exist yet (§8.6 is design). *(2026-11-10: N1's measurement
+is built since, research comparison Stage 5a, and `protocols.BASE_MESSAGE` retired with it: §8.1,
+"The KG link-prediction measurement as built".)* *(History: designed as
 revision 2, 2026-10-27, and built on `claude/paper-aligned-two-stage`.)* Revision 2
 applies the reviewer's decision record of 2026-10-27 (multi-positive metrics, patients-like-me on
 Diagnosis, the archived Mode C/D). The recipe it measures is
@@ -2535,6 +2553,46 @@ patients_like_me). *(The design, 2026-10-27, said "and no evaluator per task".)*
 - **The held-out boundary.** A finetune's validation, tests and serving pass messages over the full
   view, and the gene task's SP uses it too (README G4, §6). After that exposure, LP figures on the
   held-out edges are never called held-out.
+
+**The KG link-prediction measurement as built** (research comparison Stage 5a, 2026-11-10, on
+`claude/research-comparison`, not merged; the owner's O3). N1's formal KG test and a family's
+common read-out use one protocol and one evaluator; their data role, exposure and research
+question are described apart.
+
+- **The protocol.** `kg_link_prediction` (`src/evaluation/protocols.py`) takes any model whose
+  capability description lists a link-prediction head with DistMult's scoring semantics, a base
+  and every finetune alike, and measures a KG edge set (`kind` `kg_edges`) of any role, `train`,
+  `val` or `test`, recorded as it is.
+- **The data.** The version's stored pairs (`pairs.bin`, the LP core's pair rule on the role's
+  part of the recorded split), read once and compared with the digest the version binds before
+  they are parsed. A `val` set's pairs are base validation's.
+- **The scoring.** The one LP core, `score_lp_pairs`, over the full-view vectors of the version's
+  message-passing graph, the split's train part with the view's node types, for every model; no
+  full-view variant. The measured edges are never in it for roles `val` and `test`; for `train`
+  they are, and the version and the exposure say so. The run draws from no random generator.
+- **Metric schema 3.** LP accuracy (raw > 0 for a positive, raw <= 0 for a negative, over both),
+  ROC-AUC (average ranks), AP and lp_loss over the whole set, each with its unit and denominator,
+  and the counts with theirs (`n_samples` the version's positive edges, `n_ranked` the pairs,
+  `n_ground_truth_absent` 0); a metric that cannot be computed is a status, never a number.
+- **The outputs kept** (F4). `scores.bin`: each pair's actual raw scores and state, keyed to the
+  pairs file's rows, streamed in chunks into the run's new directory and placed whole, never
+  replacing a file; then `report.json`, the commit point, naming it by digest and row count. The
+  scores file, the pairs and the summary verify each other.
+- **The exposure** (`src/evaluation/exposure.py`, definition `kg-lp-exposure/v1`). A top-level
+  report block, with its sources (the checkpoint's model record and the version), read from the
+  record's `graph_exposure` in its one writer's words (`src/models/bundle/record.py`). Its
+  readings: held out relative to the recorded training and validation graph use (a base on its
+  own test set), k of n (its val or train set, or a model of another split of the same view),
+  after full-view exposure (a finetune), or exposure not recorded. It is never a gate, and the
+  negatives are rule-generated, never proven non-relations.
+- **Refused before anything is written:** a pairs file that is not the bytes bound, or a record
+  that contradicts them; a recorded split that does not rebuild from the view, or pairs that are
+  not the role's edges; another graph view than the model's (no node mapping between views: a
+  capability gap, not a research rule); a file without a model spec; a protocol and data kind
+  that do not match, `--split` included; `--training-evidence`; a version with no pair. A model of
+  another split of the same view is measured, not refused.
+- **Not yet:** registering its report (research comparison Stage 6); its run from the Test page
+  with R10's evidence chosen by kind (Stage 7).
 
 ### 8.2 The disease task
 

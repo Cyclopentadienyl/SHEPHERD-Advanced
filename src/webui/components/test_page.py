@@ -36,8 +36,8 @@ docstring. Three panels, as the mockup draws them (``test-wide.png``,
   implements that takes the model's record and the version's inputs**
   (`measure_refusal`, one rule for Start's reason and for the start itself,
   which asks `protocols.refusal` after the page's own record states): a
-  record refused (a file without a model spec among them) or not read, a base (its
-  formal test is not implemented yet), a measurement whose needs the model's
+  record refused (a file without a model spec among them) or not read, a measurement
+  that does not measure the version's data kind, a measurement whose needs the model's
   capabilities do not meet (its task head among them), and a measurement
   needing genes the version does not list are refused with their reason; then the job: its state, elapsed time,
   inputs, output tail, "🔒 Cancel" (the runner's stop for test runs only), and
@@ -256,9 +256,8 @@ FIELD_HELP = {
         "Model",
         "The workspace's checkpoints from the server's list, each led by what its record "
         "says it is.\n"
-        "• A model is measured by a measurement its capabilities meet, today its task head "
-        "(Measurement); a base, or a file without a model spec, is listed but not measured "
-        "here.\n"
+        "• A model is measured by what its capabilities meet: its task head, or its LP head "
+        "on a KG edge set (Measurement); a file without a model spec is listed only.\n"
         "• Listing opens every checkpoint, so it is an operator control.\n"
         "• The run is given the model fingerprint shown here and refuses before measuring if "
         "the file it reads holds other bytes.",
@@ -270,7 +269,7 @@ FIELD_HELP = {
         "• Each needs what a model offers, such as its task head; the options are those the "
         "chosen model's capabilities meet.\n"
         "• A single option is chosen already; of several, choose one.\n"
-        "• A base is listed but not measured yet: its formal test is not implemented.\n"
+        "• A base is offered KG link prediction only, which measures a KG edge set.\n"
         "• The report records the measurement as its mode.",
     ),
     "shep-test-record": (

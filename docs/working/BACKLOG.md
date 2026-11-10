@@ -27,7 +27,10 @@ not restate their decisions.
     N1) is one. A common evaluation method that reads a base and its finetunes the same way is the
     other. Different tasks' metrics are never read as one scale: a gap between a base and a finetune
     is defined by one read-out or one evaluation question, never by subtracting a link-prediction
-    accuracy from a disease MRR.
+    accuracy from a disease MRR. *(2026-11-10: the owner's O3 chose one KG link-prediction protocol
+    for both, their data role, exposure and research question described apart; built as
+    `kg_link_prediction` in research comparison Stage 5a on `claude/research-comparison`, not
+    merged; registering its runs is that round's Stage 6. `research-comparison/README.md` §3, §5.)*
   - **Comparing, querying and exporting results** (item 63, N3) is the set direction. A default order
     and the figure each task is ordered by are proposed when a need arises.
   - **Not started.** This direction authorises no product engineering yet and makes no clinical

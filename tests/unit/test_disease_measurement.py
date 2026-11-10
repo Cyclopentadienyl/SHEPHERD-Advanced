@@ -127,10 +127,11 @@ def test_a_base_is_refused_before_anything_is_written(trained, tmp_path):
 
     import measure_scorer
 
-    from src.evaluation import protocols
-
     out = tmp_path / "base.json"
-    with pytest.raises(ValueError, match=re.escape(protocols.BASE_MESSAGE)):
+    said = ("the disease measurement takes a finetune model with the disease head; this "
+            "checkpoint is a base model with no task head. It can be measured by "
+            "kg_link_prediction.")
+    with pytest.raises(ValueError, match=re.escape(said)):
         measure_scorer.main(["--mode", "disease", "--checkpoint", str(trained["base"]),
                              "--data-dir", str(trained["data_dir"]), "--split", "val",
                              "--output", str(out), "--device", "cpu"])

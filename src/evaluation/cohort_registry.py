@@ -265,9 +265,12 @@ VERSIONS_DIR = "versions"
 REPORTS_DIR = "reports"
 
 #: A run's two files in the report store, in the order the measurement publishes
-#: them: the per-case ranks, then the report that names them by digest (the
-#: run's commit point; a run directory without it is an interrupted write).
+#: them: its kept outputs, then the report that names them by digest (the run's
+#: commit point; a run directory without it is an interrupted write). A run on
+#: a patient cohort keeps its per-case ranks; a run on a KG edge set keeps each
+#: pair's raw scores (`SCORES_FILE`, research comparison F4).
 RANKS_FILE = "ranks.json"
+SCORES_FILE = "scores.bin"
 REPORT_FILE = "report.json"
 
 #: The name `create_report_dir` gives a run directory: ``<UTC time>-<checkpoint
@@ -3192,6 +3195,7 @@ __all__ = [
     "RUN_ID_PATTERN",
     "ReferenceState",
     "RegistryRefused",
+    "SCORES_FILE",
     "SOURCES_DIR",
     "SOURCE_FORMAT",
     "SUPPLIED",

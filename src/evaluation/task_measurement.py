@@ -1,8 +1,9 @@
 """
-Task measurement: a finetuned bundle's ranking of a cohort, the one way.
-=======================================================================
+Task measurement: each protocol's evaluator, the one way.
+========================================================
 `docs/working/PLAN_TEST_RESULTS.md` §8, `docs/working/scorer-retraining/README.md`
-E1–E6, U6, G4; provenance contract §9.3 hazard 2.
+E1–E6, U6, G4; provenance contract §9.3 hazard 2; research comparison §5
+Stage 5 (the common KG link-prediction measurement).
 
 The run reuses the measurement entry's reads, report, store, usage history and
 ledger (`scripts/measure_scorer.py`): the manifest has the same fields as
@@ -12,7 +13,8 @@ its evaluator (`metric_schema_version`, `candidate_construction`,
 `batch_size`). Its `mode` is the protocol the run was asked for, which the
 entry sets (`src.evaluation.protocols`): a protocol names the evaluator here
 that runs it, and the evaluators' names ("disease", "gene",
-"patients_like_me") key `TASK_RUNS` and `task_semantics`.
+"patients_like_me", "kg_link_prediction") key `TASK_RUNS` and
+`task_semantics`.
 
 **What is computed.** The bundle's node vectors by the full-view rule over the
 whole view (G4), every case bound to the view (F7), ranked against every
@@ -22,11 +24,30 @@ top-k, macro recall, best-positive MRR, coverage and the conservative reading.
 A case excluded at binding is counted by its reason and enters the
 conservative reading as 0 (E4, E5); a contract error refuses (E6).
 
+**The KG link-prediction measurement** (`run_kg_link_prediction`; owner's O3:
+one evaluator for a base and its finetunes, the formal KG test and a family's
+common read-out alike). A KG edge set's stored pairs, each positive edge
+against its one rule-generated negative, are scored by the LP head through the
+one LP core (`src.models.bundle.lp_head.score_lp_pairs`), over the full-view
+vectors of the version's message-passing graph (its split's train part, with
+the view's node types) for every model; there is no full-view variant. Before
+anything is scored, the version's split must rebuild from the view and its
+pairs' positives must be edges of its role's part: a version whose record
+contradicts its bytes is refused. It reports metric schema 3
+(`LP_METRIC_SCHEMA_VERSION`): lp_accuracy (raw > 0 a positive's decision, raw
+<= 0 a negative's), ROC-AUC (average ranks), AP and lp_loss over the whole set,
+each with its unit and denominator; a metric that cannot be computed is a
+status, never a number. The run keeps each pair's actual raw scores and state
+(`LinkPredictionResult.scores_chunks`, the LP core's scores table) and its
+exposure (`src.evaluation.exposure`), a top-level report block.
+
 Module: src/evaluation/task_measurement.py
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Sequence
+import math
+from dataclasses import asdict, dataclass
+from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 
 import torch
 
@@ -229,13 +250,249 @@ def run_patients_like_me_measurement(*, bundle: Any, view: Any, samples: Sequenc
                                                   "max": max(len(cases) - 1, 0)}})
 
 
+# ---------------------------------------------------------------------------
+# The common KG link-prediction measurement (research comparison §5 Stage 5)
+# ---------------------------------------------------------------------------
+#: The KG link-prediction measurement's metric schema: whole-set LP metrics,
+#: each with its unit and denominator, and a status where one cannot be
+#: computed; another schema than task ranking's (`TASK_METRIC_SCHEMA_VERSION`).
+LP_METRIC_SCHEMA_VERSION = 3
+
+#: The data kind it measures (`protocols.KG_EDGES`).
+KG_EDGES = "kg_edges"
+
+#: Metric schema 3's metrics, in the report's order: each one's unit and its
+#: denominator's unit (`lp_metric_statuses` counts it).
+LP_METRICS: Dict[str, Dict[str, str]] = {
+    "lp_accuracy": {
+        "unit": ("share of raw scores on their side of the decision: a positive's above 0, a "
+                 "negative's at or below 0"),
+        "denominator": "raw scores: each pair's positive and its negative"},
+    "lp_roc_auc": {
+        "unit": ("probability that a positive's raw score is above a negative's, a tie "
+                 "counting half (average ranks)"),
+        "denominator": "(positive, negative) raw-score comparisons over the whole set"},
+    "lp_average_precision": {
+        "unit": ("step-sum average precision over the distinct raw-score thresholds, the "
+                 "positives the relevant class"),
+        "denominator": "positive raw scores (recall's denominator)"},
+    "lp_loss": {
+        "unit": "mean of the LP head's hinge over each pair's tanh scores",
+        "denominator": "(positive, negative) pairs"},
+}
+
+#: The run's counts, each with its unit.
+LP_COUNT_UNITS: Dict[str, str] = {
+    "positive_edges": ("directed graph-view edges of the version's part (the measured units), "
+                       "each a positive"),
+    "pairs": "(positive, negative) pairs stored, one per positive edge that has a negative",
+    "edges_without_negative": ("positive edges the pair rule left out: no other tail of their "
+                               "relation in their batch to draw a negative from"),
+    "pairs_scored": "pairs whose two raw scores are finite",
+    "pairs_not_finite": "pairs with a raw score that is not finite (NaN or infinite)",
+    "message_passing_edges": "directed graph-view edges of the version's message-passing graph",
+}
+
+
+def kg_link_prediction_semantics(batch_size: int, bundle: Any) -> Dict[str, Any]:
+    """The KG link-prediction evaluator's manifest values, the LP head's margin
+    named from the model's spec (it is part of what lp_loss means). Its
+    `mode` is the protocol's; `batch_size` is the pairs scored at once."""
+    margin = bundle.lp_head.spec.margin
+    return {
+        "metric_schema_version": LP_METRIC_SCHEMA_VERSION,
+        "candidate_construction": (
+            "each positive edge of the KG edge set against its one negative tail, as its pairs "
+            "file stores them (the version's pair rule: another tail of the same relation in "
+            "the edge's batch, drawn once); negatives are rule-generated, never proven "
+            "non-relations"),
+        "score_semantics": (
+            "LP head: DistMult raw score sum(h * w_r * t) over full-view vectors of the "
+            "version's message-passing graph (its split's train part) with the view's node "
+            "types; decision raw > 0; lp_loss the head's hinge "
+            f"max(0, {margin} - (tanh(raw+) - tanh(raw-)))"),
+        "model_construction": DISEASE_SEMANTICS["model_construction"],
+        "canonical_tie_policy_version": "average-rank/v1",
+        "batch_size": int(batch_size),
+    }
+
+
+def lp_metric_statuses(metrics: Dict[str, Any], *, pairs: int, not_finite: int
+                       ) -> Tuple[Dict[str, float], Dict[str, Dict[str, Any]]]:
+    """Metric schema 3 from the LP core's whole-set metrics (`score_lp_pairs`)
+    over `pairs` pairs, `not_finite` of them with a raw score that is not
+    finite: the metrics that could be computed, as numbers, and every
+    metric's status, unit and denominator.
+
+    **A metric that cannot be computed is a status, never a number:** with a
+    raw score that is not finite in the set, no whole-set metric is defined;
+    ROC-AUC and AP need both a positive and a negative (`lp_metrics` would
+    give AP 1.0 over positives alone: a stored pair always holds both, and
+    the status does not rest on that); any value that is not a finite
+    number is not one either.
+    """
+    positives = negatives = int(pairs)
+    counts = {"lp_accuracy": positives + negatives, "lp_roc_auc": positives * negatives,
+              "lp_average_precision": positives, "lp_loss": int(pairs)}
+    values: Dict[str, float] = {}
+    statuses: Dict[str, Dict[str, Any]] = {}
+    for name, words in LP_METRICS.items():
+        value = metrics.get(name)
+        if not_finite:
+            reason = (f"{not_finite} of {pairs} pairs have a raw score that is not finite, so no "
+                      "whole-set value is defined")
+        elif name in ("lp_roc_auc", "lp_average_precision") and not (positives and negatives):
+            reason = "it needs at least one positive and one negative"
+        elif (isinstance(value, bool) or not isinstance(value, (int, float))
+              or not math.isfinite(value)):
+            reason = f"its value {value!r} is not a finite number"
+        else:
+            reason = None
+            values[name] = float(value)
+        statuses[name] = {"status": "computed" if reason is None else "not_computable",
+                          "unit": words["unit"],
+                          "denominator": {"count": counts[name], "unit": words["denominator"]},
+                          "reason": reason}
+    return values, statuses
+
+
+@dataclass(frozen=True)
+class LinkPredictionResult:
+    """One KG link-prediction run: its report (`to_dict`: the manifest, the
+    metrics that could be computed, the counts, the evidence with every
+    metric's status, and the exposure block) and its actual outputs, each
+    pair's raw scores and state in pair order, kept as a scores table
+    (`scores_chunks`, `scores_block`)."""
+
+    manifest: Any
+    authoritative_metrics: Dict[str, float]
+    #: The units scored: positive edges with a negative (the pairs).
+    n_ranked: int
+    #: Every measured edge is in the view by construction: 0.
+    n_ground_truth_absent: int
+    sampler_evidence: Dict[str, Any]
+    exposure: Dict[str, Any]
+    positive: torch.Tensor
+    negative: torch.Tensor
+    state: torch.Tensor
+    #: The scores table's layout (`lp_scores_layout`).
+    layout: Dict[str, Any]
+
+    def to_dict(self) -> Dict[str, Any]:
+        """The measurement report, without its ``scores`` entry, which the
+        publication adds once the scores file is written (as a task run's
+        ``ranks``)."""
+        return {
+            "manifest": asdict(self.manifest),
+            "authoritative_metrics": self.authoritative_metrics,
+            "n_ranked": self.n_ranked,
+            "n_ground_truth_absent": self.n_ground_truth_absent,
+            "sampler_evidence": self.sampler_evidence,
+            "exposure": self.exposure,
+        }
+
+    def scores_chunks(self, rows: int = 65536) -> Iterator[bytes]:
+        """The scores table, chunk by chunk (`lp_scores_chunks`): one row per
+        pair, keyed to its row of the pairs file."""
+        from src.models.bundle.lp_head import lp_scores_chunks
+
+        return lp_scores_chunks(self.positive, self.negative, self.state, self.layout, rows=rows)
+
+    def scores_block(self, file: str, sha256: str, size: int) -> Dict[str, Any]:
+        """The report's ``scores`` entry for the table published as `file`
+        with the digest `sha256` of its `size` bytes: its rows, layout, the
+        dtype the scores were computed in, and the pairs file its rows key."""
+        pairs = self.manifest.cohort_version["pairs"]
+        return {"file": file, "sha256": sha256, "rows": int(self.positive.numel()),
+                "bytes": int(size), "layout": dict(self.layout),
+                "score_dtype": str(self.positive.dtype),
+                "keyed_to": {"file": pairs["file"], "sha256": pairs["sha256"],
+                             "lp_pairs_digest": pairs["lp_pairs_digest"]}}
+
+
+def run_kg_link_prediction(*, bundle: Any, view: Any, pairs: Any, record: Any, manifest: Any,
+                           device: torch.device, batch_size: int) -> LinkPredictionResult:
+    """Score a KG edge set's stored `pairs` (`LPPairs`, as `read_kg_edge_pairs`
+    returned them) with `bundle`'s LP head; a `LinkPredictionResult`.
+
+    The version is the manifest's (`cohort_version`, its report block). In
+    order, before anything is scored: its recorded split must rebuild from
+    `view` (`rebuild_split`), and every positive of its pairs must be an edge
+    of that split's part of its role; either refusal says the version's record
+    contradicts its bytes and that nothing was written. Then the exposure
+    block, from the model's record `record` (`src.evaluation.exposure`); the
+    regime check; and the scoring, `batch_size` pairs at a time, over the
+    version's message-passing graph (the split's train part) with the view's
+    node types. Draws from no random generator.
+    """
+    from src.evaluation.exposure import kg_edges_exposure, measured_in_parts
+    from src.kg.graph_view import GraphViewError, rebuild_split
+    from src.models.bundle.lp_head import lp_score_states, lp_scores_layout, score_lp_pairs
+
+    version = manifest.cohort_version
+    if manifest.cohort_kind != KG_EDGES or not isinstance(version, dict):
+        raise ValueError("the KG link-prediction measurement measures a KG edge set version; "
+                         "nothing was written")
+    label, role = version["label"], version["role"]
+    try:
+        split = rebuild_split(view, version["split"])
+    except GraphViewError as exc:
+        raise ValueError(
+            f"the KG edge set {label!r} records an edge split that does not rebuild from this "
+            f"graph's view ({exc}): its record contradicts the graph it binds, so it is not "
+            "measured. Nothing was written.") from None
+    n = int(pairs.head.numel())
+    in_version = measured_in_parts(view, split, pairs)
+    outside = int((~in_version[role]).sum())
+    if outside:
+        raise ValueError(
+            f"{outside} of the {n} positive edges in the KG edge set {label!r}'s pairs file are "
+            f"not edges of its split's {role} part: the pairs contradict the version's record, "
+            "so they are not measured. Nothing was written.")
+    exposure = kg_edges_exposure(
+        record=record, checkpoint_sha256=manifest.artifact_digests["checkpoint"],
+        version=version, view=view, version_split=split, pairs=pairs, in_version=in_version)
+    _check_regime(device, manifest)
+    passing = split.mask("train")
+    scored = score_lp_pairs(bundle, pairs, view.edge_index(passing), view.rel[passing], device,
+                            node_type=view.node_type, pair_chunk=batch_size)
+    state = lp_score_states(scored.positive, scored.negative)
+    not_finite = int(state.sum())
+    values, statuses = lp_metric_statuses(scored.metrics, pairs=n, not_finite=not_finite)
+    counts = version["counts"]
+    evidence = {
+        "graph_view": view.digest,
+        "message_passing": {"part": "train", "split_digest": split.digest,
+                            "edges": int(passing.sum()),
+                            "measured_edges_in_it": int(in_version["train"].sum()),
+                            "includes_measured_edges": bool(
+                                version["message_passing"]["includes_measured_edges"])},
+        "pairs": {"rule": version["pairs"]["rule"], "rows": n,
+                  "lp_pairs_digest": pairs.digest, "pairs_scored_at_once": int(batch_size)},
+        "counts": {"positive_edges": int(counts["positive_edges"]), "pairs": n,
+                   "edges_without_negative": int(counts["edges_without_negative"]),
+                   "pairs_scored": n - not_finite, "pairs_not_finite": not_finite,
+                   "message_passing_edges": int(passing.sum())},
+        "count_units": dict(LP_COUNT_UNITS),
+        "metrics": statuses,
+    }
+    return LinkPredictionResult(
+        manifest=manifest, authoritative_metrics=values, n_ranked=n, n_ground_truth_absent=0,
+        sampler_evidence=evidence, exposure=exposure, positive=scored.positive,
+        negative=scored.negative, state=state, layout=lp_scores_layout(scored.positive.dtype))
+
+
 #: The evaluators this entry runs, keyed by evaluator: a protocol names its
 #: evaluator (`src.evaluation.protocols.Protocol.evaluator`), and the run and
 #: its semantics (`task_semantics`) are found under that name, not under the
-#: protocol's name or the model's task (today the three are equal; nothing
-#: relies on it).
+#: protocol's name or the model's task (today a protocol and its evaluator
+#: share a name; nothing relies on it). The three task evaluators take the
+#: samples of a patient cohort; the KG link-prediction evaluator takes a KG
+#: edge set's pairs and the model's record (`scripts/measure_scorer.py`
+#: dispatches by the data kind measured).
 TASK_RUNS = {"disease": run_disease_measurement, "gene": run_gene_measurement,
-             "patients_like_me": run_patients_like_me_measurement}
+             "patients_like_me": run_patients_like_me_measurement,
+             "kg_link_prediction": run_kg_link_prediction}
 
 
 def task_semantics(evaluator: str, batch_size: int, bundle: Any) -> Dict[str, Any]:
@@ -247,10 +504,14 @@ def task_semantics(evaluator: str, batch_size: int, bundle: Any) -> Dict[str, An
         return gene_semantics(batch_size, bundle)
     if evaluator == "patients_like_me":
         return {**PATIENTS_LIKE_ME_SEMANTICS, "batch_size": int(batch_size)}
+    if evaluator == "kg_link_prediction":
+        return kg_link_prediction_semantics(batch_size, bundle)
     raise ValueError(f"no task measurement for {evaluator!r}")
 
 
-__all__ = ["DISEASE_SEMANTICS", "PATIENTS_LIKE_ME_SEMANTICS", "TASK_KS",
+__all__ = ["DISEASE_SEMANTICS", "LP_COUNT_UNITS", "LP_METRICS", "LP_METRIC_SCHEMA_VERSION",
+           "LinkPredictionResult", "PATIENTS_LIKE_ME_SEMANTICS", "TASK_KS",
            "TASK_METRIC_SCHEMA_VERSION", "TASK_RUNS", "disease_semantics", "gene_semantics",
-           "run_disease_measurement", "run_gene_measurement",
+           "kg_link_prediction_semantics", "lp_metric_statuses", "run_disease_measurement",
+           "run_gene_measurement", "run_kg_link_prediction",
            "run_patients_like_me_measurement", "task_semantics"]

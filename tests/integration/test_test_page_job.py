@@ -14,9 +14,11 @@ without "Register the result") and which measurement it ran, the version's
 report store lists the new report under that measurement's own metrics, and
 the page's Register files it in the ledger beside the listed child, under
 `runs/gatv2`, after which the page reads it as registered. The base and the
-file without a model spec are listed, offered no measurement, and Start says
-why it does not measure them (for the base, the base message; for the other,
-the record reader's one phrase).
+file without a model spec are listed; the base is offered the KG
+link-prediction measurement and the file none, and Start says why it does not
+measure them on the fixture's supplied version (for the base, that
+protocol's sentence for the data kind; for the other, the record reader's one
+phrase).
 
 > The model is trained for one epoch on CPU and the graph is synthetic: nothing
 > here is a result about the model, only about the page's flow.
@@ -90,10 +92,13 @@ def test_a_run_started_from_the_page_is_kept_shown_and_registered(site, monkeypa
     models = tp.read_models("demo", request)
     key = _key(models, "gatv2", CHILD_RUNS["disease"])
     binding = tp.workspace_binding(demo, tp.find(page["workspaces"], "name", "demo"))
-    # The radio offers the child one measurement, chosen as the only one.
+    # The radio offers the child its task's measurement and the KG
+    # link-prediction one (research comparison Stage 5); none is chosen until
+    # the operator picks one, and the operator picks Disease.
     choices = tp.measurement_choices(tp.find_model(models, key))
-    assert choices == [("Disease", "disease")]
-    protocol = tp.chosen_measurement(choices, None)
+    assert choices == [("Disease", "disease"), ("kg_link_prediction", "kg_link_prediction")]
+    assert tp.chosen_measurement(choices, None) is None
+    protocol = tp.chosen_measurement(choices, "disease")
     assert tp.start_state(page, models, "demo", LABEL, key, binding, ("none", ""),
                           protocol=protocol) == (True, None)
     manager = TrainingManager()
@@ -155,10 +160,13 @@ def test_a_run_started_from_the_page_is_kept_shown_and_registered(site, monkeypa
 def test_a_base_and_a_file_without_a_model_spec_are_listed_and_never_started(site,
                                                                               monkeypatch):
     """On the records the production path wrote: the base and the checkpoint
-    without a model spec are listed, led by what they are, and offered no
-    measurement; Start says why it does not measure them (for the base, the
-    protocol definition's base message); the start itself refuses them before
-    the runner is asked. The child is offered its one measurement."""
+    without a model spec are listed, led by what they are; the file without a
+    model spec is offered no measurement, and the base the KG link-prediction
+    one (research comparison Stage 5). Start says why it does not measure them
+    on the fixture's supplied version (for the base, that protocol's sentence
+    for the data kind); the start itself refuses them before the runner is
+    asked. The child is offered its task's measurement and the KG
+    link-prediction one."""
     from src.evaluation import protocols
     from src.webui.components import test_page as tp
 
@@ -178,14 +186,18 @@ def test_a_base_and_a_file_without_a_model_spec_are_listed_and_never_started(sit
         def start_test(self, inputs):
             raise AssertionError("the runner was asked to start a refused checkpoint")
 
-    for key, says in ((base, protocols.BASE_MESSAGE),
-                      (history, f"Record not readable ({WRITTEN_BEFORE_SPEC})")):
-        assert tp.measurement_choices(tp.find_model(models, key)) == []
-        allowed, why = tp.start_state(page, models, "demo", LABEL, key, binding, ("none", ""))
+    lp = "kg_link_prediction"
+    for key, protocol, offered, says in (
+            (base, lp, [(lp, lp)], protocols.inputs_refusal(lp, protocols.SUPPLIED, None)),
+            (history, None, [], f"Record not readable ({WRITTEN_BEFORE_SPEC})")):
+        assert tp.measurement_choices(tp.find_model(models, key)) == offered
+        allowed, why = tp.start_state(page, models, "demo", LABEL, key, binding, ("none", ""),
+                                      protocol=protocol)
         assert allowed is False and why.startswith(f"Disabled: {says}"), why
         result = tp.start_test_run(page, models, "demo", LABEL, key, False, False, request,
-                                   manager=Unasked())
+                                   protocol=protocol, manager=Unasked())
         assert result["success"] is False and result["error"].endswith("Nothing was started.")
         assert result["error"].startswith(says[:1].upper() + says[1:])
     # The fixture version lists no genes; the disease measurement needs none.
-    assert tp.measurement_choices(tp.find_model(models, child)) == [("Disease", "disease")]
+    assert tp.measurement_choices(tp.find_model(models, child)) == [
+        ("Disease", "disease"), ("kg_link_prediction", "kg_link_prediction")]

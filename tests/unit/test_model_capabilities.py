@@ -120,9 +120,9 @@ def test_the_input_needs_follow_the_spec():
     aware = replace(spec, encoder=replace(spec.encoder, relation_edge_dim=8)).validate()
     assert model_capabilities(aware)["relation_inputs"] == (cap.EDGE_RELATION_IDS,
                                                             cap.RELATION_IDS)
-    # The task evaluators supply both, so neither changes what is offered.
+    # The evaluators supply both, so neither changes what is offered.
     for described in (model_capabilities(typed), model_capabilities(aware)):
-        assert protocols.available(described) == (("disease",), None)
+        assert protocols.available(described) == (("disease", "kg_link_prediction"), None)
 
 
 def test_the_built_bundle_agrees_with_its_description():
@@ -262,15 +262,17 @@ def test_a_test_only_double_passes_the_shared_checks_without_a_gatv2_rule(double
 
     item = _listed(spec)
     assert item["record"] == "model" and item["capabilities"] == described
-    assert protocols.available(item["capabilities"]) == (("disease",), None)
-    assert tp.measurement_choices(item) == [("Disease", "disease")]
+    assert protocols.available(item["capabilities"]) == (("disease", "kg_link_prediction"), None)
+    assert tp.measurement_choices(item) == [("Disease", "disease"),
+                                            ("kg_link_prediction", "kg_link_prediction")]
     version = {"kind": protocols.SUPPLIED, "counts": GENES}
     assert tp.measure_refusal(item, version, "disease") is None
     for name in ("gene", "patients_like_me"):
         said.append(tp.measure_refusal(item, version, name))
         assert said[-1] == protocols.model_refusal(name, described) == (
             f"the {name} measurement takes a finetune model with the {name} head; this "
-            "checkpoint is a finetune model with the disease head. It can be measured by disease.")
+            "checkpoint is a finetune model with the disease head. It can be measured by "
+            "disease, kg_link_prediction.")
     registry = tmp_path / "registry"
     registry.mkdir()
     inputs = TestRunInputs(
@@ -288,8 +290,9 @@ def test_a_test_only_double_passes_the_shared_checks_without_a_gatv2_rule(double
     kind, why = _new_bundle_run({**start, "num_neighbors": [15, 10, 5]})
     said.append(why)
     assert kind is None and why == said[0]
-    said.append(protocols.available(model_capabilities(base))[1])
-    assert said[-1] == protocols.BASE_MESSAGE
+    # The double's base is taken by the KG link-prediction protocol as a
+    # GATv2 base is: its LP head's semantics and its full-view computation.
+    assert protocols.available(model_capabilities(base)) == (("kg_link_prediction",), None)
     assert not any("gatv2" in s or "encoder layer" in s for s in said), said
 
 
@@ -393,11 +396,12 @@ def test_a_model_offering_two_task_heads_is_taken_by_both_task_protocols():
     third names both heads."""
     described = model_capabilities(reference_spec("finetune", "disease"))
     two = {**described, "heads": (*described["heads"], protocols.task_head("patients_like_me"))}
-    assert protocols.available(two) == (("disease", "patients_like_me"), None)
+    assert protocols.available(two) == (("disease", "patients_like_me", "kg_link_prediction"),
+                                        None)
     assert protocols.model_refusal("gene", two) == (
         "the gene measurement takes a finetune model with the gene head; this checkpoint is a "
         "finetune model with the disease and patients_like_me heads. It can be measured by "
-        "disease, patients_like_me.")
+        "disease, patients_like_me, kg_link_prediction.")
 
 
 def test_an_input_no_evaluator_supplies_is_refused():
@@ -410,7 +414,9 @@ def test_an_input_no_evaluator_supplies_is_refused():
 
 
 def test_the_data_kind_is_judged_and_a_generated_split_has_no_counts_to_judge():
-    for name in protocols.names():
+    tasks = [name for name, row in protocols.PROTOCOLS.items() if row.head[0] == protocols.TASK]
+    assert tasks == ["disease", "gene", "patients_like_me"]
+    for name in tasks:
         assert protocols.inputs_refusal(name, protocols.GENERATED, None) is None
         assert protocols.inputs_refusal(name, protocols.SUPPLIED, GENES) is None
         # A kind no protocol names is said in neutral words, never as a cohort.
@@ -423,13 +429,25 @@ def test_the_data_kind_is_judged_and_a_generated_split_has_no_counts_to_judge():
     # The counts are a registered version's: a gene measurement of one listing none is refused.
     assert protocols.inputs_refusal("gene", protocols.SUPPLIED, None).startswith(
         "this cohort version lists no causal genes")
+    # The KG link-prediction protocol measures a KG edge set only, and says so.
+    for kind, words in (("unknown_kind", "data of kind 'unknown_kind'"),
+                        (None, "data of no kind this build reads")):
+        assert protocols.inputs_refusal("kg_link_prediction", kind, {"pairs": 3}) == (
+            f"the kg_link_prediction measurement does not measure {words}; it measures a KG "
+            "edge set.")
 
 
 def test_a_protocol_takes_exactly_the_writable_models_its_words_name():
-    """The words a refusal uses for what a protocol takes are the words it
-    uses for the writable models it does take, and for no other."""
+    """The words a refusal uses for what a task protocol takes are the words it
+    uses for the writable models it does take, and for no other; the KG
+    link-prediction protocol's name the LP head's scoring semantics, which
+    every writable model carries, and it takes every one."""
     for _stage, _task, spec in _writable():
         described = model_capabilities(spec)
         for protocol in protocols.PROTOCOLS.values():
             accepted = protocols.model_refusal(protocol.name, described) is None
-            assert accepted == (protocols._takes(protocol) == protocols._described(described))
+            if protocol.head[0] == protocols.TASK:
+                assert accepted == (protocols._takes(protocol) == protocols._described(described))
+            else:
+                assert accepted and protocol.head[2] in protocols._takes(protocol)
+                assert protocol.head[2] in {head[2] for head in described["heads"]}

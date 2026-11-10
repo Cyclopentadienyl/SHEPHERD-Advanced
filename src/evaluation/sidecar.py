@@ -614,7 +614,10 @@ def build_record(report: Dict[str, Any], source_digest: str) -> Dict[str, Any]:
     result by role *and version*), and a generated split has none. That is a
     limit of the ledger, not a judgement that such a result counts for less
     (policy rev 16): its report and ranks stay at `--output`, and extending the
-    ledger to them is later work. A report whose relation states are not a registered result's is refused too;
+    ledger to them is later work. A run on a registered version of another kind
+    (a KG edge set's link-prediction run, research comparison Stage 5) is
+    refused as one this revision's ledger does not record yet; its report stays
+    in its version's report store. A report whose relation states are not a registered result's is refused too;
     the measurement cannot write one, so such a file was edited or is not a
     report. Every refusal is a ``ValueError`` naming what is wrong — never a
     ``KeyError`` or ``TypeError`` from a file of the wrong shape.
@@ -671,7 +674,20 @@ def build_record(report: Dict[str, Any], source_digest: str) -> Dict[str, Any]:
             "its report and ranks stay at --output. To record a result in the ledger, "
             "measure a registered version (--cohort LABEL --registry DIR)."
         )
-    if manifest["cohort_kind"] != "supplied":
+    kind = manifest["cohort_kind"]
+    if (kind in ("kg_edges", "generated") and isinstance(cohort_version, dict)
+            and cohort_version.get("kind") == kind):
+        # A run on a registered version of another kind than a supplied
+        # cohort (research comparison Stage 5): kept in its version's report
+        # store, and not yet recordable here. Said as this revision's gap,
+        # never as a report that contradicts itself.
+        raise ValueError(
+            f"this report measured a registered version of kind {kind!r}, and this "
+            "revision's ledger records runs on a supplied cohort version only (a record "
+            "of another kind has fields it does not yet carry), so it is not recorded; "
+            "the report is kept in its version's report store as written"
+        )
+    if kind != "supplied":
         raise ValueError(
             f"this report records cohort_kind {manifest['cohort_kind']!r} beside a "
             "cohort version; a registered cohort version is a supplied cohort, so "
