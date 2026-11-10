@@ -66,10 +66,13 @@ the protocol tables' words, `caveats.metric_text`): a result of another
 protocol reads "another protocol" there, so two protocols' metrics are never
 one row as one scale. Each missing value keeps its own words: a field
 without a source reads "Unknown" with why (the row's ``unknown``), never a
-number; a value recorded as null reads "none" (on each row its entries make
-for the others); a field the result's records do not hold at all reads "not
-recorded"; a field that does not apply to the result's data kind (a KG edge
-set's exposure counts, R10) reads "not applicable".
+number, its why said once per field (its later entry rows read "Unknown",
+the why their title); a value recorded as null reads "none" (on each row its
+entries make for the others); a field the result's records do not hold at
+all reads "not recorded"; a field that does not apply to the result's data
+kind reads "not applicable": a KG edge set's exposure definition and counts,
+R10, and an entry of the data's identity, counts or content references that
+only results of another data kind hold.
 
 **Export.** Every result chosen or every row shown (the scope's and filters'
 rows, the unreadable items among them), uncapped, through the service's one
@@ -211,7 +214,7 @@ def _name(row: Mapping[str, Any], level: int) -> str:
     if row.get("result") == service.HISTORICAL:
         return f"Merged record · {report}"
     run_id = row.get("run_id")
-    when = mp.run_time(run_id, seconds=level > 0)
+    when = r.run_time(run_id, seconds=level > 0)
     if when is None:
         return f"run {run_id} · {report}"
     if level > 1:
@@ -228,19 +231,11 @@ def row_names(rows: Sequence[Mapping[str, Any]]) -> List[Optional[str]]:
     (research comparison §7), so where two names would read alike (one model
     measured twice in a minute with byte-equal reports) each gets its run's
     time to the second, and where those match too, its run id's own last part
-    in place of the report (as the Test page names its rows). A counter,
-    " (2)", is the last resort, only for names that nothing recorded tells
-    apart."""
-    levels = {index: 0 for index, row in enumerate(rows)
-              if row.get("result") != service.UNREADABLE}
-    while True:
-        names = {index: _name(rows[index], level) for index, level in levels.items()}
-        seen = Counter(names.values())
-        clashing = [index for index, name in names.items() if seen[name] > 1 and levels[index] < 2]
-        if not clashing:
-            break
-        for index in clashing:
-            levels[index] += 1
+    in place of the report (as the Test page names its rows;
+    `renderers.distinct_names`). A counter, " (2)", is the last resort, only
+    for names that nothing recorded tells apart."""
+    names = r.distinct_names({index: row for index, row in enumerate(rows)
+                              if row.get("result") != service.UNREADABLE}, _name)
     out: List[Optional[str]] = [None] * len(rows)
     counted: Counter = Counter()
     for index in sorted(names):
@@ -251,14 +246,17 @@ def row_names(rows: Sequence[Mapping[str, Any]]) -> List[Optional[str]]:
 
 
 def _name_html(name: Any) -> str:
-    """A result's name as its table cell and its Compare head show it: each
-    part kept whole, so the line wraps only after its " · ", never inside a
-    time or a fingerprint; escaped."""
+    """A result's name as its table cell and its Compare head show it: its
+    date, its clock with " ·" and its token each kept whole, so the line wraps
+    only after the date or after the " · ", never inside a date, a time or a
+    fingerprint, and a name sets no wider a column than its longest part;
+    escaped."""
     head, sep, tail = str(name).rpartition(" · ")
     if not sep:
         return f'<span class="shep-nowrap">{r.e(name)}</span>'
-    return (f'<span class="shep-nowrap">{r.e(head)} ·</span> '
-            f'<span class="shep-nowrap">{r.e(tail)}</span>')
+    first, _space, rest = head.partition(" ")
+    parts = [first, f"{rest} ·", tail] if rest else [f"{first} ·", tail]
+    return " ".join(f'<span class="shep-nowrap">{r.e(part)}</span>' for part in parts)
 
 
 # ---------------------------------------------------------------------------
@@ -679,7 +677,9 @@ OTHER_PROTOCOL = object()
 ABSENT = object()
 #: A value Compare shows where the row's field does not apply to the result's
 #: data kind ("not applicable"): a KG edge set's exposure definition and
-#: counts for another kind's result, R10 for a result not of a supplied cohort.
+#: counts for another kind's result, R10 for a result not of a supplied cohort,
+#: and an entry of the data's identity, counts or content references that only
+#: results of another kind hold (`_Field.by_kind`).
 NOT_APPLICABLE = object()
 #: The values that are no value: each passed down to every row a mapping's
 #: entries make (`_tree`), as a value recorded as null is.
@@ -688,15 +688,28 @@ _GAPS = (OTHER_PROTOCOL, ABSENT, NOT_APPLICABLE)
 COMPARE_GROUPS = ("Result", "Model", "Training settings", "Data", "Measurement", "Environment",
                   "Exposure", "Metrics", "References")
 #: Measurement settings Compare does not show as rows of their own: the mode
-#: is the result's protocol, which heads its column, and the score semantics
-#: has its own row (one fact once).
-_SHOWN_ELSEWHERE = ("mode", "score_semantics")
-#: Learning settings Compare does not show as rows of their own: the training
-#: entry records the model's spec, learning stage and task as requested
-#: settings and refuses a spec of another stage or task
-#: (`scripts/train_model.py`), so they are the Model group's "Spec",
-#: "Learning stage" and "Task" rows (one fact once; the export keeps them).
-_SAID_BY_THE_MODEL = ("model_spec", "learning_stage", "task")
+#: is the result's protocol, which heads its column, the score semantics has
+#: its own row, and the cohort kind is the data's kind, the Data group's "Data
+#: kind" row (a measurement whose cohort kind is not its version's kind is
+#: refused, `MeasurementManifest`, and its report not recorded,
+#: `sidecar.build_record`; one fact once, never "cohort" for a KG edge set).
+_SHOWN_ELSEWHERE = ("mode", "score_semantics", "cohort_kind")
+#: The entries of a model's fields that its Model group's own rows say, by
+#: field (each path an entry, "encoder.kind" one inside an entry): the learning
+#: stage, the encoder's kind and the task are its spec's (`ModelRecord`'s
+#: `learning_stage` and `task`, its `capabilities`, `listed_record`'s
+#: encoder), and the training entry records the spec, stage and task as
+#: requested settings and its loaders' recipe for that stage, refusing a spec
+#: of another stage or task (`scripts/train_model.py`). So they are the
+#: "Learning stage", "Task", "Encoder" and "Spec" rows only, never rows of the
+#: spec, the capabilities or the training settings again (one fact once; the
+#: export keeps them).
+_SAID_BY_THE_MODEL: Dict[str, Tuple[str, ...]] = {
+    "capabilities": ("learning_stage", "encoder"),
+    "spec": ("learning_stage", "encoder.kind", "task_head.task"),
+    "learning_settings": ("model_spec", "learning_stage", "task"),
+    "effective_settings": ("loaders.train.recipe.learning_stage",),
+}
 #: How a result's condition group compares, in words (a description: it
 #: decides nothing).
 _GROUP_WORDS = {"uncontested": "agree", "contested": "differ",
@@ -709,7 +722,13 @@ _FIELD_WORDS = {
     "frozen_forward": "Frozen parts' forward mode",
     "loaded_from_parent": "Loaded from the parent",
     "min_lr_ratio": "Minimum learning-rate ratio",
-    "n_ranked": "Cases ranked",
+    # What it counts is its mode's (a KG link-prediction run's pairs, another
+    # mode's cases): one row of every column, in words of neither.
+    "n_ranked": "Number ranked",
+    # The Test page's word for a version's excluded cases in all.
+    "n_excluded": "Excluded",
+    "augmentation_k": "Augmentation neighbours (K)",
+    "val_without_negative": "Validation edges without a negative",
     "save_top_k": "Top-k saves kept",
     "terms_without_trainable_parameters": "Terms without a trainable parameter",
 }
@@ -717,6 +736,10 @@ _FIELD_WORDS = {
 _ABBREVIATIONS = {"amp": "AMP", "auc": "AUC", "cuda": "CUDA", "cudnn": "cuDNN", "gpu": "GPU",
                   "id": "ID", "kg": "KG", "lp": "LP", "mrr": "MRR", "roc": "ROC",
                   "sha256": "SHA-256"}
+#: Short forms a key's words write out in full (skill §5: full words).
+_SHORT_FORMS = {"concat": "concatenate", "dim": "dimension", "eps": "epsilon",
+                "grad": "gradient", "init": "initialisation", "lr": "learning rate",
+                "norm": "normalisation", "sp": "shortest-path", "val": "validation"}
 
 
 def field_words(key: Any) -> str:
@@ -724,14 +747,17 @@ def field_words(key: Any) -> str:
     words): a learning setting by the Training page's label
     (`training_console.SETTING_LABELS`, the one map of those: "Learning
     rate"), a few other keys by Compare's words ("Top-k saves kept"), any
-    other by its own words ("downstream_initial_sha256" → "Downstream initial
-    SHA-256"). The key itself is the row's title (`compare_html`)."""
+    other by its own words, its abbreviations as written and its short forms
+    in full ("downstream_initial_sha256" → "Downstream initial SHA-256",
+    "base_lr" → "Base learning rate"). The key itself is the row's title
+    (`compare_html`)."""
     text = str(key)
     if text in SETTING_LABELS:
         return SETTING_LABELS[text]
     if text in _FIELD_WORDS:
         return _FIELD_WORDS[text]
-    words = [_ABBREVIATIONS.get(word, word) for word in text.split("_") if word]
+    words = [_ABBREVIATIONS.get(word) or _SHORT_FORMS.get(word, word)
+             for word in text.split("_") if word]
     if not words:
         return text
     if words[0] not in _ABBREVIATIONS.values():
@@ -743,19 +769,40 @@ class _Field(NamedTuple):
     """One field of a result in Compare: its group, its row's words, its value
     as recorded (a mapping, or a list of named items, is one row per entry,
     `_tree`), why it has no source, its key in the service's row (the row's
-    title) and the data kinds it applies to (None: every kind)."""
+    title), the data kinds it applies to (None: every kind) and whether its
+    entries are its data kind's own (`by_kind`: the data's identity, counts
+    and content references, which each kind records its own way, so an entry
+    only results of another kind hold reads "not applicable" for a result of
+    a kind none of them is, and "not recorded" for one whose kind holds it)."""
     group: str
     label: str
     value: Any
     why: Optional[str] = None
     ref: Optional[str] = None
     kinds: Optional[Tuple[str, ...]] = None
+    by_kind: bool = False
 
 
-def _without(value: Any, names: Sequence[str]) -> Any:
-    if isinstance(value, Mapping):
-        return {key: item for key, item in value.items() if key not in names}
-    return value
+def _without(value: Any, paths: Sequence[str]) -> Any:
+    """`value` without the entries `paths` name ("encoder.kind": the kind in
+    its encoder entry); an entry that held nothing else is left out too.
+    Any other value as it is."""
+    if not isinstance(value, Mapping):
+        return value
+    out = dict(value)
+    for path in paths:
+        head, _dot, rest = path.partition(".")
+        if head not in out:
+            continue
+        if not rest:
+            del out[head]
+        elif isinstance(out[head], Mapping) and out[head]:
+            inner = _without(out[head], (rest,))
+            if inner:
+                out[head] = inner
+            else:
+                del out[head]
+    return out
 
 
 def _fields(row: Mapping[str, Any]) -> List[_Field]:
@@ -786,22 +833,22 @@ def _fields(row: Mapping[str, Any]) -> List[_Field]:
                         ("encoder", "Encoder"), ("reference", "Reference recipe"),
                         ("differences", "Differs from the reference in"),
                         ("capabilities", "Capabilities"), ("spec", "Spec")):
-        out.append(_Field("Model", label, model.get(name), why(f"model.{name}"),
-                          ref=f"model.{name}"))
+        out.append(_Field("Model", label, _without(model.get(name),
+                                                   _SAID_BY_THE_MODEL.get(name, ())),
+                          why(f"model.{name}"), ref=f"model.{name}"))
     out.append(_Field("Training settings", "Training rules", model.get("training_rules"),
                       why("model.training_rules"), ref="model.training_rules"))
     for label, name in (("Learning setting", "learning_settings"),
                         ("Effective setting", "effective_settings"),
                         ("Weight transfer", "weight_transfer"), ("Loss", "loss_identity")):
-        value = model.get(name)
-        if name == "learning_settings":
-            value = _without(value, _SAID_BY_THE_MODEL)
-        out.append(_Field("Training settings", label, value, why(f"model.{name}"),
-                          ref=f"model.{name}"))
+        out.append(_Field("Training settings", label,
+                          _without(model.get(name), _SAID_BY_THE_MODEL.get(name, ())),
+                          why(f"model.{name}"), ref=f"model.{name}"))
     for label, name in (("Data kind", "kind"), ("Data label", "label"), ("Role", "role"),
                         ("Data version", "version_sha256"), ("Dataset origin", "dataset_origin"),
                         ("Data identity", "identity"), ("Data counts", "counts")):
-        out.append(_Field("Data", label, data.get(name), ref=f"data.{name}"))
+        out.append(_Field("Data", label, data.get(name), ref=f"data.{name}",
+                          by_kind=name in ("identity", "counts")))
     out.append(_Field("Measurement", "Score semantics", row.get("semantics"), ref="semantics"))
     for name, value in measurement.items():
         if name not in _SHOWN_ELSEWHERE:
@@ -864,7 +911,7 @@ def _fields(row: Mapping[str, Any]) -> List[_Field]:
                 out.append(_Field("Metrics", f"{words} ({part})", metric[part],
                                   ref=f"metrics.{name}.{part}"))
     out.append(_Field("References", "Content references", row.get("references"),
-                      why("references"), ref="references"))
+                      why("references"), ref="references", by_kind=True))
     return out
 
 
@@ -899,16 +946,27 @@ def _branch(value: Any) -> Optional[Tuple[Dict[str, Any], bool]]:
 _Row = Tuple[str, str, Optional[str], List[Any], List[Optional[str]]]
 
 
+class _SaidAbove(str):
+    """Why a column's field has no source, already said on the field's first
+    row: its later rows read "Unknown" with the why as their title only (one
+    fact once, rule 1.2)."""
+
+
 def _tree(group: str, label: str, ref: Optional[str], values: Sequence[Any],
-          whys: Sequence[Optional[str]], depth: int = 0) -> List[_Row]:
+          whys: Sequence[Optional[str]], depth: int = 0,
+          kinds: Optional[Sequence[Any]] = None) -> List[_Row]:
     """One field's rows across the columns: where a column holds a mapping
     (or named items) and no column holds a plain value there, one row per
     entry, "Label · Entry" and deeper "Label · Entry › Entry", so a difference
     inside a nested setting is its own row; a column holding no mapping there
     passes its value down to every entry's row (a value recorded as null
-    reads "none" on each, with why where it has no source, and "not recorded"
-    or "not applicable" alike), and a column whose mapping lacks an entry
-    reads "not recorded" there. Otherwise one row, each value as recorded."""
+    reads "none" on each, "not recorded" or "not applicable" alike, and one
+    without a source "Unknown" with why on the field's first row, the why
+    only in the title after it: `_SaidAbove`), and a column whose mapping
+    lacks an entry reads "not recorded" there, or, for a field whose entries
+    are its data kind's own (`kinds`, the columns' data kinds), "not
+    applicable" when no column of its kind holds that entry. Otherwise one
+    row, each value as recorded."""
     branches = [_branch(value) for value in values]
     deeper = any(branch and branch[0] for branch in branches) and all(
         branch is not None or value is None or any(value is gap for gap in _GAPS)
@@ -920,13 +978,25 @@ def _tree(group: str, label: str, ref: Optional[str], values: Sequence[Any],
         if branch:
             for key in branch[0]:
                 keys.setdefault(key, branch[1])
+    said = [_SaidAbove(why) if why else why for why in whys]
     out: List[_Row] = []
-    for key, named in keys.items():
-        child = [branch[0].get(key, ABSENT) if branch is not None else value
-                 for branch, value in zip(branches, values)]
+    for place, (key, named) in enumerate(keys.items()):
+        holders = {kinds[i] for i, branch in enumerate(branches)
+                   if branch is not None and key in branch[0]} if kinds else set()
+        child = []
+        for i, (branch, value) in enumerate(zip(branches, values)):
+            if branch is None:
+                child.append(value)
+            elif key in branch[0]:
+                child.append(branch[0][key])
+            elif kinds and isinstance(kinds[i], str) and kinds[i] not in holders:
+                child.append(NOT_APPLICABLE)
+            else:
+                child.append(ABSENT)
         words = key if named else field_words(key)
         out.extend(_tree(group, f"{label} · {words}" if depth == 0 else f"{label} › {words}",
-                         f"{ref}.{key}" if ref else key, child, whys, depth + 1))
+                         f"{ref}.{key}" if ref else key, child,
+                         whys if place == 0 else said, depth + 1))
     return out
 
 
@@ -939,6 +1009,7 @@ def _rows(columns: Sequence[Mapping[str, Any]]) -> List[_Row]:
     order: List[Tuple[str, str, Optional[str]]] = []
     values: Dict[Tuple[str, str, Optional[str]], List[Any]] = {}
     reasons: Dict[Tuple[str, str, Optional[str]], List[Optional[str]]] = {}
+    by_kind: Dict[Tuple[str, str, Optional[str]], bool] = {}
     for index, row in enumerate(columns):
         for field in _fields(row):
             key = (field.group, field.label, field.ref)
@@ -946,33 +1017,39 @@ def _rows(columns: Sequence[Mapping[str, Any]]) -> List[_Row]:
                 order.append(key)
                 values[key] = [_missing(field, row, column) for column in columns]
                 reasons[key] = [None] * len(columns)
+                by_kind[key] = field.by_kind
             values[key][index] = field.value
             reasons[key][index] = field.why
     rank = {group: place for place, group in enumerate(COMPARE_GROUPS)}
     order.sort(key=lambda key: rank.get(key[0], len(rank)))
+    kinds = [(column.get("data") or {}).get("kind") for column in columns]
     out: List[_Row] = []
     for key in order:
-        out.extend(_tree(key[0], key[1], key[2], values[key], reasons[key]))
+        out.extend(_tree(key[0], key[1], key[2], values[key], reasons[key],
+                         kinds=kinds if by_kind[key] else None))
     return out
 
 
 def compare_fields(row: Mapping[str, Any]) -> List[Tuple[str, str, Any, Optional[str]]]:
     """A result's comparison rows, ``(group, label, value, unknown reason)``,
     in the order Compare shows them (`COMPARE_GROUPS`; `_rows` of this one
-    result): the result, the model (its operation, parent, family, encoder,
-    relation to the reference recipe, its capabilities, every value of its
-    spec), the training settings (rules, each recorded learning setting but
-    the spec, stage and task the Model group says, each effective one, then
-    each part of its weight transfer and of its loss identity as its record
-    holds them: how its stage's weights began and its loss's terms), the data
-    (identity and role), the measurement (each setting its record holds as a
-    value, and each it does not, Unknown with why), the environment, the
-    exposure (a KG edge set's definition and counts for a KG edge set's
-    result, R10 for a supplied cohort's) and the metrics (each in the protocol
-    tables' words, its protocol's). A nested value is one row per entry, its
-    words after the field's ("Weight transfer · Parts › Encoder"); a list of
-    named items (the content references) one per item. The protocol is not a
-    row: it heads the result's column. Values are the row's own."""
+    result): the result, the model (its stage, task, operation, parent,
+    family, encoder, relation to the reference recipe, its capabilities and
+    every value of its spec but the stage, the encoder's kind and the task its
+    own rows say, `_SAID_BY_THE_MODEL`), the training settings (rules, each
+    recorded learning setting but the spec, stage and task, each effective one
+    but its loaders' recipe's stage, then each part of its weight transfer and
+    of its loss identity as its record holds them: how its stage's weights
+    began and its loss's terms), the data (identity and role), the
+    measurement (each setting its record holds as a value, and each it does
+    not, Unknown with why, but those other rows say, `_SHOWN_ELSEWHERE`), the
+    environment, the exposure (a KG edge set's definition and counts for a KG
+    edge set's result, R10 for a supplied cohort's) and the metrics (each in
+    the protocol tables' words, its protocol's). A nested value is one row
+    per entry, its words after the field's ("Weight transfer · Parts ›
+    Encoder"); a list of named items (the content references) one per item.
+    The protocol is not a row: it heads the result's column. Values are the
+    row's own."""
     return [(group, label, values[0], whys[0])
             for group, label, _ref, values, whys in _rows([row])]
 
@@ -993,10 +1070,12 @@ def _cell_html(value: Any, why: Optional[str], *, full: bool) -> str:
     """One Compare cell: "another protocol" on a metric row of another
     protocol's result; "not applicable" for a field that does not apply to
     the result's data kind; "not recorded" for a field the result's records
-    do not hold at all; "Unknown" with why for a field without a source;
-    "none" for a value recorded as null; a digest by its 12 hex digits (all
-    of them when its row's 12 do not tell it apart), the full value as its
-    title; a list as compact JSON; a number unrounded; text as recorded."""
+    do not hold at all; "Unknown" with why for a field without a source (its
+    why only as the title where its field's first row says it,
+    `_SaidAbove`); "none" for a value recorded as null; a digest by its 12
+    hex digits (all of them when its row's 12 do not tell it apart), the full
+    value as its title; a list as compact JSON; a number unrounded; text as
+    recorded."""
     if value is OTHER_PROTOCOL:
         return '<td class="shep-muted">another protocol</td>'
     if value is NOT_APPLICABLE:
@@ -1004,6 +1083,8 @@ def _cell_html(value: Any, why: Optional[str], *, full: bool) -> str:
     if value is ABSENT:
         return '<td class="shep-muted">○ not recorded</td>'
     if value is None:
+        if isinstance(why, _SaidAbove):
+            return f'<td class="shep-muted" title="{r.e(why)}">○ Unknown</td>'
         if why:
             return (f'<td class="shep-muted" title="{r.e(why)}">○ Unknown: '
                     f'{r.e(r.short_reason(why, 120))}</td>')

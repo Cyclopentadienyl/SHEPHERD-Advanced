@@ -3519,19 +3519,23 @@ card, any warning, and three segments:
   compared) and the environment. Every item that could not be read is listed under the tables
   with its reason, whatever the scope and filters. **Compare** puts the first five of the
   **Chosen results** side by side, one column each headed by its name and protocol,
-  **Differences only** on by default: the result, the model (operation, parent, family, encoder,
-  relation to the reference recipe, every spec value, capabilities), the recorded and effective
-  training settings (the spec, stage and task once, in the model's rows) with the weight
-  transfer and the loss identity (so two arms of one base are checked to start from the same
-  downstream weights here), the data's identity and role, the measurement, the environment, the
-  exposure and every metric, as recorded, each group once. Each row is named in words (a metric
-  as the tables name it, a learning setting as the Training page does; its record key in the
-  row's title), and a nested setting is one row per entry, so a difference inside it is a row of
-  its own. No difference is computed, and each metric row is one protocol's (a result of another
-  protocol reads "another protocol" there). Each missing value keeps its words: a field without
-  a source reads "Unknown" with why, a value recorded as null "none", a field the result's
-  records do not hold "not recorded", and a field that does not apply to the result's data kind
-  (a KG edge set's exposure counts, R10) "not applicable". Five is this view's
+  **Differences only** on by default: the result, the model (stage, task, operation, parent,
+  family, encoder, relation to the reference recipe, capabilities and every spec value; the
+  stage, the encoder's kind and the task once, in the model's own rows, not again under the spec,
+  the capabilities or the training settings), the recorded and effective training settings with
+  the weight transfer and the loss identity (so two arms of one base are checked to start from
+  the same downstream weights here), the data's identity and role, the measurement, the
+  environment, the exposure and every metric, as recorded, each group once. Each row is named in
+  words (a metric as the tables name it, a learning setting as the Training page does; its
+  record key in the row's title), and a nested setting is one row per entry, so a difference
+  inside it is a row of its own. No difference is computed, and each metric row is one
+  protocol's (a result of another protocol reads "another protocol" there). Each missing value
+  keeps its words: a field without a source reads "Unknown" with why (the why once per field:
+  its other rows read "Unknown", the why in their tooltip), a value recorded as null "none", a
+  field the result's records do not hold "not recorded", and a field that does not apply to the
+  result's data kind "not applicable" (a KG edge set's exposure definition and counts, R10, and
+  an entry of the data's identity, counts or content references that only another data kind
+  records). Five is this view's
   cap only: the choice is not capped. **Export** writes every chosen result or every shown row
   (the unreadable items among them), uncapped, as CSV or JSON through the export's one
   serializer (the columns and bytes of `scripts/export_results.py`), as a new file to

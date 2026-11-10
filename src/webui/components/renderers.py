@@ -28,8 +28,10 @@ from __future__ import annotations
 
 import html
 import re
+from collections import Counter
 from datetime import datetime, timezone
-from typing import Any, Iterable, Mapping, NamedTuple, Optional, Sequence, Tuple
+from typing import (Any, Callable, Dict, Hashable, Iterable, Mapping, NamedTuple, Optional,
+                    Sequence, Tuple)
 
 from src.evaluation.caveats import (
     EXPOSURE_CAVEAT,
@@ -121,6 +123,11 @@ WARN_MARK = '<span aria-hidden="true">▲</span>'
 
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _RUN_TIME = re.compile(r"^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})")
+#: A report store run id (`cohort_registry.create_report_dir`, its
+#: `RUN_ID_PATTERN`): its UTC time, then the checkpoint's 12 hex digits and the
+#: run's own 8.
+_REPORT_RUN_ID = re.compile(
+    r"^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z-[0-9a-f]{12}-[0-9a-f]{8}$")
 
 
 def e(value: Any) -> str:
@@ -510,6 +517,36 @@ def run_name(run: Any) -> Optional[str]:
     time and its 6-hex id; None when it is not named by its start time."""
     rest = run_suffix(run)
     return re.sub(r"_[0-9a-f]{6}$", "", rest) if rest else None
+
+
+def run_time(run_id: Any, *, seconds: bool = False) -> Optional[str]:
+    """A run's time from its run id, as the pages name a run: "2026-10-17
+    13:40 UTC" (with `seconds`, "2026-10-17 13:40:07 UTC") from a report store
+    run id (`create_report_dir` names it by its UTC time), else None."""
+    match = _REPORT_RUN_ID.match(str(run_id or ""))
+    if not match:
+        return None
+    y, mo, d, h, mi, s = match.groups()
+    return f"{y}-{mo}-{d} {h}:{mi}{':' + s if seconds else ''} UTC"
+
+
+def distinct_names(items: Mapping[Hashable, Any], name_at: Callable[[Any, int], str], *,
+                   top: int = 2) -> Dict[Hashable, str]:
+    """Names that read alike, told apart: each item's name, by its key, at
+    level 0 (``name_at(item, level)``), a level higher only for the items
+    whose names read alike, until no two do or each of them is at `top` (runs
+    named by their time to the minute, then to the second, then with the run
+    id's own last part: Models › Results' `row_names`). Names still alike at
+    `top` are the caller's to tell apart."""
+    levels = dict.fromkeys(items, 0)
+    while True:
+        names = {key: name_at(item, levels[key]) for key, item in items.items()}
+        seen = Counter(names.values())
+        clashing = [key for key, name in names.items() if seen[name] > 1 and levels[key] < top]
+        if not clashing:
+            return names
+        for key in clashing:
+            levels[key] += 1
 
 
 def record_kind_text(item: Any) -> str:
@@ -1070,6 +1107,7 @@ __all__ = [
     "configuration_text",
     "data_kind_lines",
     "dataset_identity_html",
+    "distinct_names",
     "distinguishing_digits",
     "e",
     "facts_from_checkpoint",
@@ -1098,6 +1136,7 @@ __all__ = [
     "run_name",
     "run_started",
     "run_suffix",
+    "run_time",
     "short_hex",
     "short_reason",
     "sources_text",

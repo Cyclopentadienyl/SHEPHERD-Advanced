@@ -321,6 +321,19 @@ def test_every_value_in_compare_and_the_status_line_is_escaped(world, monkeypatc
     for differences in (True, False):
         markup = rs.compare_html(rows, differences)
         assert "<img" not in markup and html_lib.escape(HOSTILE) in markup
+    # A key or a name is a row's title too: a quote never ends the attribute
+    # (review of the fix: HOSTILE holds no quote).
+    quote = 'k" onmouseover="x'
+    for index, row in enumerate(rows):
+        row["model"]["effective_settings"] = {quote: {quote: f"{quote}{index}"}}
+        row["measurement"][quote] = f"{quote}{index}"
+        row["references"] = [{"name": quote, "sha256": f"{quote}{index}"}]
+        row["unknown"]["model.operation"] = f"{quote}{index}"
+    for differences in (True, False):
+        markup = rs.compare_html(rows, differences)
+        assert 'onmouseover="' not in markup and "&quot; onmouseover=&quot;x" in markup
+        assert f'title="model.effective_settings.{html_lib.escape(quote)}.' in markup
+        assert f'title="measurement.{html_lib.escape(quote)}"' in markup
     scope = {"scope": rs.FAMILY, "workspace": HOSTILE, "family": HOSTILE, "note": HOSTILE}
     status = rs.status_html({**state, "read_at": HOSTILE}, scope,
                             {"shown": [], "in_scope": 0, "unplaced": 1, "unplaced_in_scope": 0})
@@ -525,17 +538,97 @@ def test_a_result_name_wraps_only_at_its_separator_and_table_words_stay_whole():
     """Browser check models-1: a protocol table's columns are sized with every
     word, fingerprint and raw value whole (``break-word``, not ``anywhere``,
     which made every character a break point), and a result's name wraps only
-    after its " · ", its time and its fingerprint each kept on one line;
-    escaped."""
+    after its date or its " · ", its date, its clock and its fingerprint each
+    kept on one line (a name to the second as one unbreakable part set a
+    column too wide for a protocol table and a five-column Compare: review of
+    the fix); escaped."""
     from src.webui.components import models_page as mp
     from src.webui.components import results_segment as rs
 
     rule = re.search(r"\.shep-rs-tbl td \{\{?([^}]*)\}", mp.PAGE_CSS).group(1)
     assert "overflow-wrap: break-word" in rule and "anywhere" not in rule
     html = rs._name_html("2026-11-10 11:05:47 UTC · 3b2c7aea27be")
-    assert html == ('<span class="shep-nowrap">2026-11-10 11:05:47 UTC ·</span> '
+    assert html == ('<span class="shep-nowrap">2026-11-10</span> '
+                    '<span class="shep-nowrap">11:05:47 UTC ·</span> '
                     '<span class="shep-nowrap">3b2c7aea27be</span>')
-    assert "<img" not in rs._name_html(f"run {HOSTILE} · {HOSTILE}")
+    assert rs._name_html("2026-11-10 11:05:47 UTC · run …9bfd7c23").endswith(
+        '<span class="shep-nowrap">run …9bfd7c23</span>')
+    assert rs._name_html("Merged record · 3b2c7aea27be") == (
+        '<span class="shep-nowrap">Merged</span> <span class="shep-nowrap">record ·</span> '
+        '<span class="shep-nowrap">3b2c7aea27be</span>')
+    hostile = rs._name_html(f"run {HOSTILE} · {HOSTILE}")
+    assert "<img" not in hostile and html_lib.escape(HOSTILE) in hostile
+
+
+#: The longest part of a result's name that never breaks: "11:05:47 UTC ·".
+#: At the dashboard's 15 px a part this long is about 110 px, so a name sets
+#: no column wider than that (the browser check's panels are 892 and 937 px:
+#: a five-column Compare's heads fit, as the protocol tables' Result column).
+_NAME_PART_MAX = len("11:05:47 UTC ·")
+
+
+def _unbreakable(markup):
+    return [html_lib.unescape(part)
+            for part in re.findall(r'<span class="shep-nowrap">(.*?)</span>', markup)]
+
+
+def test_a_name_sets_no_column_wider_than_its_longest_part(world, monkeypatch):
+    """Review of the fix (models-1, models-2): every name a read gives, to the
+    minute, to the second or with its run id's own part, is shown as parts
+    that each stay whole, none longer than a clock to the second with its
+    " ·", and the table's name cell and Compare's column head are exactly
+    those parts (the head's protocol words, under it, wrap as words), so
+    neither widens its table past the panel. Measured in the browser by the
+    author's re-look; here, in the rendered HTML."""
+    from src.webui.components import results_segment as rs
+
+    twins = _twins(world, monkeypatch)
+    state, scope, shown = _shown(_state(world, monkeypatch))
+    for read in (state, twins):
+        names = [name for name in rs.row_names(read["rows"]) if name is not None]
+        for name in names:
+            parts = _unbreakable(rs._name_html(name))
+            assert " ".join(parts) == name
+            assert max(len(part) for part in parts) <= _NAME_PART_MAX, name
+        table = rs.tables_html(read, scope, {**shown, "shown": read["shown"]})
+        cells = re.findall(r'<td class="shep-rs-name">(.*?)</td>', table)
+        assert sorted(cells) == sorted(rs._name_html(name) for name in names)
+        keys = [value for _label, value in rs.compare_choices(read)][:rs.COMPARE_CAP]
+        compare = rs.compare_state_html(read, keys, False, asked=len(keys))
+        heads = re.findall(r'<th scope="col">(<span class="shep-nowrap">.*?)<div '
+                           r'class="shep-sub">', compare)
+        assert len(heads) == min(len(names), rs.COMPARE_CAP) and all(max(map(len, _unbreakable(head))) <= _NAME_PART_MAX
+                             and " ".join(_unbreakable(head)) == _text(head)
+                             for head in heads)
+
+
+def test_the_shared_run_time_reads_a_run_id_as_the_test_page_does():
+    """Review of the fix (AGENTS.md: no second implementation): the one
+    `renderers.run_time` names a report store run id's time exactly as the
+    Test page's own `run_time` does, to the minute and to the second, and
+    names nothing else, so that page can take it in place of its own (its
+    step's change) with nothing it shows changed."""
+    from src.webui.components import renderers as r
+    from src.webui.components import test_page as tp
+
+    ids = ["20261110T110547Z-a6eb26c11d90-9bfd7c23", "20261017T152412Z-15f098277b54-0a1b2c3d",
+           "20261110T110547Z-a6eb26c11d90", "20261110T110547Z-", "usage.jsonl", "", None,
+           HOSTILE, "20261110T110547Z-A6EB26C11D90-9BFD7C23"]
+    for run_id in ids:
+        for seconds in (False, True):
+            assert r.run_time(run_id, seconds=seconds) == tp.run_time(run_id, seconds=seconds), (
+                run_id, seconds)
+    assert r.run_time(ids[0]) == "2026-11-10 11:05 UTC"
+    assert r.run_time(ids[0], seconds=True) == "2026-11-10 11:05:47 UTC"
+
+
+def _read_in_full(state):
+    """The disease results whose model and data version were read (no
+    ``unknown`` for its spec or its references): the world's runs of one
+    second are listed by their run ids' own random part, so a test that takes
+    the first results takes these, never by their place."""
+    return [row for row in _results(state)
+            if not {"model.spec", "references"} & set(row["unknown"])]
 
 
 def _finetune_base_supplied_kg(world, monkeypatch):
@@ -543,7 +636,7 @@ def _finetune_base_supplied_kg(world, monkeypatch):
     recorded as null: it loads nothing), both of a supplied cohort, and a KG
     edge set's link-prediction result (its exposure block, no R10)."""
     state, _scope, _shown_rows = _shown(_state(world, monkeypatch), protocol="disease")
-    row = next(row for row in _results(state) if "model.spec" not in row["unknown"])
+    row = _read_in_full(state)[0]
     finetune, base, kg = (copy.deepcopy(row) for _ in range(3))
     finetune["model"]["weight_transfer"] = {
         "loaded_from_parent": ["encoder", "input", "lp_head"],
@@ -553,7 +646,18 @@ def _finetune_base_supplied_kg(world, monkeypatch):
     base["model"].update(learning_stage="base", task=None, weight_transfer=None)
     base["report_sha256"] = "b" * 64
     kg.update(protocol="kg_link_prediction", report_sha256="c" * 64)
-    kg["data"] = {**kg["data"], "kind": "kg_edges", "role": "test"}
+    # A KG edge set's own identity, counts, content references and run counts,
+    # as its kind records them (`results._data`, `version_references`).
+    kg["data"] = {**kg["data"], "kind": "kg_edges", "role": "test",
+                  "identity": {"split": {"rule": "facts-80/10/10/v1", "seed": 0},
+                               "pairs": {"sha256": "2" * 64, "rows": 6}},
+                  "counts": {"pairs": 6, "positive_edges": 8}}
+    kg["references"] = [*(item for item in kg["references"] if item["name"] == "graph.kg"),
+                        {"name": "pairs", "sha256": "3" * 64, "kept": "in the version",
+                         "state": "verified", "reason": None}]
+    kg["run_counts"] = {"counts": {"pairs": 6, "pairs_scored": 6},
+                        "units": {"pairs": "pairs stored", "pairs_scored": "pairs scored"}}
+    kg["unknown"] = {name: why for name, why in kg["unknown"].items() if name != "run_counts"}
     kg["exposure"] = {"state": "measured", "reading": "6 of 6 measured edges in the recorded "
                       "graph use", "definition_version": "kg-lp-exposure/v1",
                       "measured_edges": 6, "in_recorded_graph_use": 0, "problem": None,
@@ -603,6 +707,28 @@ def test_compare_keeps_not_applicable_not_recorded_and_none_apart(world, monkeyp
     markup = rs.compare_html([bare, kg], True)
     assert _cells(markup, "Measured edges") == ["○ not recorded", "6"]
     assert _cells(markup, "Exposure problem") == ["no exposure block", "none"]
+    # The data's identity, counts and content references are each kind's own
+    # (review of the fix: a KG edge set's split read "not recorded" for a
+    # supplied cohort's result, beside its exposure's "not applicable"): an
+    # entry only another kind's results hold is "not applicable"; one a result
+    # of the column's own kind holds is "not recorded" for one that lacks it.
+    markup = rs.compare_html([kg, supplied], False)
+    assert _cells(markup, "Data identity · Split › Rule") == [
+        "facts-80/10/10/v1", "○ not applicable"]
+    assert _cells(markup, "Data identity · Samples SHA-256")[0] == "○ not applicable"
+    assert _cells(markup, "Data counts · Pairs") == ["6", "○ not applicable"]
+    assert _cells(markup, "Data counts · Source cases")[0] == "○ not applicable"
+    assert _cells(markup, "Content references · pairs › SHA-256") == [
+        "3" * 12, "○ not applicable"]
+    assert _cells(markup, "Content references · samples › SHA-256")[0] == "○ not applicable"
+    assert _cells(markup, "Content references · graph.kg › SHA-256")[0] == _cells(
+        markup, "Content references · graph.kg › SHA-256")[1]
+    lacking = copy.deepcopy(supplied)
+    lacking["data"]["identity"].pop("source_sha256")
+    markup = rs.compare_html([kg, supplied, lacking], False)
+    assert _cells(markup, "Data identity · Source SHA-256") == [
+        "○ not applicable", supplied["data"]["identity"]["source_sha256"][:12], "○ not recorded"]
+    assert "not recorded" not in "".join(_cells(markup, "Data identity · Split › Rule"))
 
 
 def test_compare_goes_down_into_nested_settings_and_says_the_spec_once(world, monkeypatch):
@@ -616,11 +742,19 @@ def test_compare_goes_down_into_nested_settings_and_says_the_spec_once(world, mo
     from src.webui.components import results_segment as rs
 
     state, _scope, _shown_rows = _shown(_state(world, monkeypatch), protocol="disease")
-    frozen, full = (copy.deepcopy(row) for row in _results(state)[:2])
+    frozen, full = (copy.deepcopy(row) for row in _read_in_full(state)[:2])
     loaders = {"train": {"batch_size": 8, "kind": "FinetuneSampler",
-                         "recipe": {"operator_set": ["seed"], "reference_filled": {}}}}
+                         "recipe": {"learning_stage": "finetune", "operator_set": ["seed"],
+                                    "reference_filled": {}}}}
     for row in (frozen, full):
-        row["model"]["spec"] = {"encoder": {"heads": 2}, "task_head": {"task": "disease"}}
+        # The spec and capabilities as a record lists them: the stage, the
+        # encoder's kind and the task are the model's own rows' facts.
+        row["model"].update(learning_stage="finetune", task="disease", encoder="gatv2")
+        row["model"]["spec"] = {"learning_stage": "finetune",
+                                "encoder": {"kind": "gatv2", "heads": 2},
+                                "task_head": {"task": "disease", "softmax_scale": 1.0}}
+        row["model"]["capabilities"] = {"learning_stage": "finetune", "encoder": "gatv2",
+                                        "sampled_hops": 2}
         row["model"]["learning_settings"] = {"model_spec": row["model"]["spec"],
                                              "learning_stage": "finetune", "task": "disease",
                                              "learning_rate": 1e-05, "save_top_k": 1}
@@ -647,7 +781,21 @@ def test_compare_goes_down_into_nested_settings_and_says_the_spec_once(world, mo
     assert not any(label.startswith(("Learning setting · Model spec",
                                      "Learning setting · Learning stage",
                                      "Learning setting · Task")) for label in every)
-    assert "Spec · Task head › Task" in every and "Learning stage" in every
+    # The stage, the encoder's kind and the task: each one row, the Model
+    # group's own (review of the fix: the spec's, the capabilities' and the
+    # loaders' recipe's copies were rows of their own); the rest of the spec
+    # and the capabilities as recorded.
+    copies = {"Spec · Learning stage", "Capabilities · Learning stage",
+              "Effective setting · Loaders › Train › Recipe › Learning stage",
+              "Spec · Encoder › Kind", "Capabilities · Encoder", "Spec · Task head › Task"}
+    assert not copies & set(every), copies & set(every)
+    for words, value in (("Learning stage", "finetune"), ("Encoder", "gatv2"),
+                         ("Task", "disease")):
+        assert every.count(words) == 1, words
+        assert _cells(rs.compare_html([frozen, full], False), words) == [value, value]
+    assert {"Spec · Encoder › Heads", "Spec · Task head › Softmax scale",
+            "Capabilities · Sampled hops", "Effective setting · Loaders › Train › Kind"
+            } <= set(every)
     # One field, two shapes (a mapping and a plain value): one row, as recorded.
     mixed = copy.deepcopy(full)
     mixed["model"]["effective_settings"]["loaders"] = "none recorded"
@@ -665,7 +813,7 @@ def test_compare_rows_are_named_in_the_segments_words(world, monkeypatch):
     from src.evaluation.caveats import metric_text
     from src.webui.components import results_segment as rs
 
-    finetune, base, _supplied, _kg = _finetune_base_supplied_kg(world, monkeypatch)
+    finetune, base, _supplied, kg = _finetune_base_supplied_kg(world, monkeypatch)
     finetune["model"]["learning_settings"] = {"learning_rate": 1e-05, "save_top_k": 1,
                                               "frozen_parts": "none"}
     finetune["data"]["identity"] = {"samples_sha256": "5" * 64}
@@ -685,6 +833,83 @@ def test_compare_rows_are_named_in_the_segments_words(world, monkeypatch):
     assert 'title="metrics.pooled_mrr">Disease pooled MRR</th>' in markup
     assert rs.field_words("cudnn_benchmark") == "cuDNN benchmark"
     assert rs.field_words("cuda_version") == "CUDA version"
+    # Short forms in full words, a count by the Test page's word (review of
+    # the fix: "Base lr", "N excluded", "Val edges" and "eps" were left).
+    finetune["model"]["effective_settings"] = {
+        "schedule": {"base_lr": 0.001}, "loaders": {"val": {"val_edges": 6,
+                                                            "val_without_negative": 0}}}
+    markup = rs.compare_html([kg, finetune], False)
+    labels = _labels(markup)
+    for label in ("Effective setting · Schedule › Base learning rate",
+                  "Effective setting · Loaders › Validation › Validation edges",
+                  "Effective setting · Loaders › Validation › Validation edges without a "
+                  "negative", "Data counts · Excluded"):
+        assert label in labels, label
+    assert 'title="data.counts.n_excluded">Data counts · Excluded</th>' in markup
+    assert (rs.field_words("distance_normalisation_eps"), rs.field_words("augmentation_k"),
+            rs.field_words("sp_lower"), rs.field_words("dim")) == (
+        "Distance normalisation epsilon", "Augmentation neighbours (K)",
+        "Shortest-path lower", "Dimension")
+    # The spec's and the effective settings' other short forms, as the real
+    # rows hold them ("Spec · Input › Init", "Effective setting · AMP › Grad
+    # scaler", "Spec · Encoder › Norm" and "Concat" were left).
+    assert [rs.field_words(key) for key in ("init", "relation_init", "grad_scaler", "norm",
+                                            "concat")] == [
+        "Initialisation", "Relation initialisation", "Gradient scaler", "Normalisation",
+        "Concatenate"]
+    # What n_ranked counts is its mode's (a KG link-prediction run's pairs):
+    # one row in words of neither, beside a KG edge set's column.
+    assert _cells(markup, "Number ranked") == [
+        str(kg["measurement"]["n_ranked"]), str(finetune["measurement"]["n_ranked"])]
+    assert 'title="measurement.n_ranked">Number ranked</th>' in markup
+    assert not [label for label in labels if "ases ranked" in label]
+    # The cohort kind is the data's kind: the Data group's row says it, never
+    # a "cohort" row for a KG edge set.
+    assert "measurement.cohort_kind" not in markup and "Cohort kind" not in labels
+    assert _cells(markup, "Data kind") is not None
+
+
+def test_compare_says_a_columns_unknown_reason_once_per_field(world, monkeypatch):
+    """Review of the fix (rule 1.2): a column whose field has no source (a
+    result whose checkpoint is no longer listed, an ordinary case: results
+    are kept whatever became of the weights they name; a disease result's run
+    counts) says why once, on the field's first row; its later entry rows
+    read "Unknown", the why their title, so differences only does not repeat
+    one reason on every row of the other column's nested value."""
+    from src.api.services import results as service
+    from src.webui.components import results_segment as rs
+
+    finetune, _base, supplied, kg = _finetune_base_supplied_kg(world, monkeypatch)
+    gone = copy.deepcopy(finetune)
+    why = "its checkpoint is not in a listed workspace"
+    for name in (*service._MODEL_FIELDS, *service._SETTINGS_FIELDS):
+        gone["model"][name] = None
+        gone["unknown"][f"model.{name}"] = why
+    for differences in (True, False):
+        markup = rs.compare_html([finetune, gone], differences)
+        transfer = [label for label in _labels(markup) if label.startswith("Weight transfer")]
+        assert len(transfer) >= 6
+        assert [_cells(markup, label)[1] for label in transfer] == (
+            [f"○ Unknown: {why}"] + ["○ Unknown"] * (len(transfer) - 1))
+        assert f'title="{html_lib.escape(why)}">○ Unknown</td>' in markup
+        # Once per field: of each model field's rows, the column says why on
+        # its first only.
+        said: dict = {}
+        for ref, cells in re.findall(r'<th scope="row" title="([^"]*)">.*?</th>(.*?)</tr>',
+                                     markup):
+            cell = re.findall(r"<td[^>]*>.*?</td>", cells)[1]
+            if f'title="{html_lib.escape(why)}"' in cell:
+                said.setdefault(".".join(ref.split(".")[:2]), []).append(_text(cell))
+        assert {"model.spec", "model.weight_transfer", "model.capabilities"} <= set(said)
+        for field, texts in said.items():
+            assert texts == [f"○ Unknown: {why}"] + ["○ Unknown"] * (len(texts) - 1), field
+        assert _text(markup).count(f"Unknown: {why}") == len(said)
+    markup = rs.compare_html([kg, supplied], True)
+    counts = [label for label in _labels(markup) if label.startswith("Run counts · ")]
+    assert len(counts) == 4
+    assert [_cells(markup, label)[1].split(":")[0] for label in counts] == (
+        ["○ Unknown"] * 4)
+    assert _text(markup).count("its record holds no run counts") == 1
 
 
 def test_compare_says_each_columns_report_once(world, monkeypatch):

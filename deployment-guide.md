@@ -3506,16 +3506,17 @@ Lineage 欄。沒有任何排列方式依測試分數為模型排名：依測試
   exposure（KG 邊集合的讀法，supplied cohort 的 R10 收在一次點擊之內；generated split 的關係是其分配
   方式的，不做比較）以及執行環境。每個無法讀取的項目都附原因列在表格下方，不受範圍與篩選影響。
   **Compare** 將 **Chosen results** 中的前五個並排，每個結果一欄、欄首寫出其名稱與協議，預設開啟
-  **Differences only**：結果、模型（operation、parent、family、encoder、與參考配方的關係、每個 spec
-  值、能力）、記錄的與實際生效的訓練設定（spec、stage 與 task 只在模型的列中出現一次）以及 weight
-  transfer 與 loss identity（同一 base 的兩組可在此核對是否從相同的下游權重開始）、資料的識別與
-  role、量測、執行環境、exposure 與每個指標，皆依記錄原文，每一組只出現一次。每一列以字詞命名（指標
-  依表格的名稱，學習設定依 Training 頁的標籤；紀錄中的鍵放在該列的 title），巢狀設定的每個項目各成一列，
+  **Differences only**：結果、模型（stage、task、operation、parent、family、encoder、與參考配方的關係、
+  能力與每個 spec 值；stage、encoder 的種類與 task 只在模型自己的列中出現一次，不再出現在 spec、能力或訓練
+  設定之下）、記錄的與實際生效的訓練設定以及 weight transfer 與 loss identity（同一 base 的兩組可在此
+  核對是否從相同的下游權重開始）、資料的識別與 role、量測、執行環境、exposure 與每個指標，皆依記錄原文，
+  每一組只出現一次。每一列以字詞命名（指標依表格的名稱，學習設定依 Training 頁的標籤；紀錄中的鍵放在該列的 title），巢狀設定的每個項目各成一列，
   因此其中的差異自成一列。不計算任何差值，每一列指標只屬於一個協議（其他協議的結果在該列讀作
-  「another protocol」）。每種缺值各有其字詞：沒有來源的欄位讀作「Unknown」並附原因，記錄為 null 的值
-  讀作「none」，結果的紀錄中完全沒有的欄位讀作「not recorded」，不適用於該結果資料種類的欄位（KG 邊
-  集合的 exposure 計數、R10）讀作「not applicable」。五個只是這個檢視的上限，選取本身不設
-  上限。**Export** 把每個選取的結果或所有顯示的列（包括其中無法讀取的項目）不設上限地，以匯出唯一的
+  「another protocol」）。每種缺值各有其字詞：沒有來源的欄位讀作「Unknown」並附原因（每個欄位只寫一次
+  原因：其餘各列讀作「Unknown」，原因放在其提示中），記錄為 null 的值讀作「none」，結果的紀錄中完全沒有的
+  欄位讀作「not recorded」，不適用於該結果資料種類的欄位讀作「not applicable」（KG 邊集合的 exposure 定義
+  與計數、R10，以及只有另一種資料種類才記錄的資料識別、計數或內容參照項目）。五個只是這個檢視的上限，
+  選取本身不設上限。**Export** 把每個選取的結果或所有顯示的列（包括其中無法讀取的項目）不設上限地，以匯出唯一的
   序列化器（即 `scripts/export_results.py` 的欄位與位元組）寫成新的 CSV 或 JSON 檔供下載。讀取結果會開啟每個 workspace 的 checkpoint，因此這些都是操作者控制項（§4.13）：被拒絕的
   請求不讀取也不列出任何東西，並說明原因。在此頁面跨 workspace 比較結果尚未建置；在機器上，
   `scripts/export_results.py` 可合併多個 workspace。

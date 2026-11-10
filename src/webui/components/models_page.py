@@ -299,8 +299,6 @@ if (!window.__shepModelsScroll) {
 }
 """
 
-_RUN_ID_TIME = re.compile(r"^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z-")
-
 
 # ---------------------------------------------------------------------------
 # Small helpers
@@ -351,16 +349,6 @@ def _utc_text(raw: Any) -> str:
     if moment.tzinfo is None:
         return raw
     return moment.strftime("%Y-%m-%d %H:%M UTC")
-
-
-def run_time(run_id: Any, *, seconds: bool = False) -> Optional[str]:
-    """"2026-10-17 13:40 UTC" (with `seconds`, "2026-10-17 13:40:07 UTC")
-    from a report store run id, else None."""
-    match = _RUN_ID_TIME.match(str(run_id or ""))
-    if not match:
-        return None
-    y, mo, d, h, mi, s = match.groups()
-    return f"{y}-{mo}-{d} {h}:{mi}{':' + s if seconds else ''} UTC"
 
 
 def listing_key(listing: Mapping[str, Any]) -> str:
@@ -768,7 +756,7 @@ def contest_html(state: Optional[Mapping[str, Any]], *, mode: Optional[str],
         names = state.get("differing") or []
         for name in names:
             per_run = [f"{contested_value_text(run['values'][name])} (run "
-                       f"{run_time(run['run']) or run['run']})"
+                       f"{r.run_time(run['run']) or run['run']})"
                        for run in state.get("runs") or [] if name in (run.get("values") or {})]
             if per_run:
                 values.append(f"{metric_label(name, mode)} " + " vs ".join(per_run))
