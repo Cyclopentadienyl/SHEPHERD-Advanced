@@ -102,7 +102,11 @@ def test_a_rules_1_child_written_before_k8_7_still_serves(trained, tmp_path):
     rules-1 child written before K8-7 records them among its requested
     settings; serving reads its model record, not those, so it serves as a
     child of this build does, with the same ranking."""
-    payload = torch.load(trained["gene"], map_location="cpu", weights_only=True)
+    from tests.fixtures.trained_children import as_rules_1
+
+    # The child as the rules-1 build wrote it (research comparison Stage 9a
+    # raised the rules to 2; `as_rules_1` is that build's record of the run).
+    payload = as_rules_1(torch.load(trained["gene"], map_location="cpu", weights_only=True))
     assert payload["training_rules"] == 1
     requested = {**payload["config"]["requested"], **RULES_1_RETIRED_SETTINGS}
     older = tmp_path / "written-before-k8-7.pt"

@@ -37,6 +37,7 @@ torch = pytest.importorskip("torch")
 from tests.fixtures.base_workspace import write_base_workspace  # noqa: E402
 from tests.fixtures.trained_children import (  # noqa: E402
     RULES_1_RETIRED_SETTINGS,
+    as_rules_1,
     small_base_spec,
 )
 
@@ -380,6 +381,9 @@ def test_a_rules_1_parent_recording_retired_settings_is_continued_and_branched_a
     from src.utils.run_plan import plan_branch
 
     path, record = parent
+    # The parent as the rules-1 build wrote it (research comparison Stage 9a
+    # raised the rules to 2): both reads below are rules-1 records.
+    record = as_rules_1(record)
     assert record["training_rules"] == 1
     if operation == "extend":
         record = _finished(record, 2e-5)

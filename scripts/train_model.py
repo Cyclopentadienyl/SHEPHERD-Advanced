@@ -201,6 +201,12 @@ class TrainConfig:
     candidate_sample_size: Optional[int] = None
     sparse_sample_size: Optional[int] = None
     candidate_upsample_size: Optional[int] = None
+    # The parts of a finetune that do not train (research comparison Stage 9,
+    # owner's O4a; `src.config.recipe.FROZEN_PARTS`): "none", or "graph_side"
+    # (the input module, the encoder and the LP head). A base with any freeze
+    # is refused (`frozen_parts_problem`); a continued or branched run keeps
+    # its parent's.
+    frozen_parts: str = "none"
 
     # Training configuration
     num_epochs: int = 100
@@ -1056,16 +1062,21 @@ def apply_stage_recipe(config: TrainConfig, explicit: Set[str]
 
 
 def inherited_recipe_record(stage: str, task: Optional[str], explicit: Set[str],
-                            inherited: Mapping[str, Any]) -> Dict[str, Any]:
+                            inherited: Mapping[str, Any],
+                            decoded: Mapping[str, str]) -> Dict[str, Any]:
     """The recipe record of a run whose settings come from its parent (a
     resume, an extension, a branch): nothing is filled from the recipe; each
-    reference setting is the parent's or the operator's."""
+    reference setting is the parent's or the operator's. `decoded` is each
+    setting the one settings decode gave that the parent's record does not
+    hold (`run_plan.decode_learning_settings`), with its source in words
+    ("none, decoded from rules 1: ..."); the parent's file is not changed."""
     from src.config.recipe import reference_settings
 
     values, _ = reference_settings(stage, task)
     return {"learning_stage": stage, "reference_filled": {},
             "inherited_from_parent": sorted(name for name in values if name in inherited),
-            "operator_set": sorted(name for name in values if name in explicit)}
+            "operator_set": sorted(name for name in values if name in explicit),
+            "decoded_from_parent": dict(sorted(decoded.items()))}
 
 
 def _read_bundle_parent(requested: str, role: str, device: str, *,
@@ -1184,7 +1195,7 @@ def train(config: TrainConfig, explicit: Collection[str], *,
         EXPOSURE_TRAIN_EDGES_DRAWN_PAIRS_REMOVED, EXPOSURE_VAL_CASES, EXPOSURE_VAL_EDGES,
         MODEL_RECORD_VERSION, ModelRecord, ModelRecordError, read_model_record,
     )
-    from src.config.recipe import BASE_FIXED, unread_settings
+    from src.config.recipe import BASE_FIXED, frozen_parts_problem, unread_settings
     from src.training.lp_task import BASE_SELECTION_METRIC, BaseLPSampler, BaseLPTask
     from src.utils.checkpoint_paths import (
         check_run_dir_free, claim_run_dir, propose_run_dir, run_checkpoint_dir, run_log_dir,
@@ -1214,6 +1225,16 @@ def train(config: TrainConfig, explicit: Collection[str], *,
         if not parents:
             raise ValueError("a finetune run starts from a base (finetune_from), resumes a "
                              "finetune run (resume_from) or branches one (branch_from)")
+    # The freeze of a new run (a base, a finetune), by its one check
+    # (`frozen_parts_problem`), before the unread settings, so a base asked to
+    # freeze hears why; its value is final here (a finetune's recipe value is
+    # "none"). A continued or branched run trains with its parent's, which the
+    # settings decode checks (`run_plan.decode_learning_settings`), a different
+    # one stated being refused there, as the job runner's preview refuses it.
+    if not (config.resume_from or config.branch_from):
+        frozen_problem = frozen_parts_problem(stage, config.frozen_parts)
+        if frozen_problem:
+            raise ValueError(frozen_problem)
     unread = sorted(explicit_set & unread_settings(stage, config.task))
     if unread:
         raise ValueError(
@@ -1279,7 +1300,8 @@ def train(config: TrainConfig, explicit: Collection[str], *,
         plan, best_weights = plan_from_parent(parent, config, explicit_set, device,
                                               record_version=MODEL_RECORD_VERSION)
         config = TrainConfig(**plan.settings)
-        recipe = inherited_recipe_record(stage, config.task, explicit_set, plan.inherited)
+        recipe = inherited_recipe_record(stage, config.task, explicit_set, plan.inherited,
+                                         plan.decoded)
     if branch_parent is not None:
         # The branch's data is its parent's (BACKLOG 23, M2.3's rule), its
         # settings the parent's but the changes on the stage's list.
@@ -1290,7 +1312,7 @@ def train(config: TrainConfig, explicit: Collection[str], *,
         logger.info(f"{branch_plan.action}.")
         config = TrainConfig(**branch_plan.settings)
         recipe = inherited_recipe_record(stage, config.task, explicit_set,
-                                         branch_plan.inherited)
+                                         branch_plan.inherited, branch_plan.decoded)
 
     # The spec: the operator's (read strictly), the parent's (inherited with
     # the settings), the base's graph side with the task's reference head, or

@@ -76,6 +76,7 @@ FINETUNE: Dict[str, Any] = {
     "warmup_steps": 0,
     "use_amp": False,
     "early_stopping_patience": None,
+    "frozen_parts": "none",
 }
 
 FINETUNE_SOURCES: Dict[str, str] = {
@@ -88,6 +89,8 @@ FINETUNE_SOURCES: Dict[str, str] = {
     "warmup_steps": "no warmup in the source (README C6)",
     "use_amp": f"{UPSTREAM} train.py:308-317 (precision 16 never passed: fp32; README U15)",
     "early_stopping_patience": _NO_EARLY_STOPPING,
+    "frozen_parts": f"{UPSTREAM} train.py:267 and gene_prioritization_model.py:541-543 (the "
+                    "GNN keeps training: Adam over the whole model; README A10, U8)",
 }
 
 #: Per task: learning rate, first-hop size, sparse sample and the two named
@@ -148,8 +151,61 @@ FINETUNE_FIXED: Dict[str, Any] = {"monitor": "val_pooled_mrr", "monitor_mode": "
 #: (BACKLOG 23: the schedule's floor, the precision and the accumulation).
 BRANCH_COMPANIONS = ("min_lr_ratio", "amp_dtype", "gradient_accumulation_steps")
 #: Reference settings a branch keeps: early stopping on or off is not a
-#: setting to compare runs by this round.
-BRANCH_KEPT = ("early_stopping_patience",)
+#: setting to compare runs by this round, and a branch starts from its
+#: parent's weights, trained or frozen as the parent trained them, so a freeze
+#: changed is a new finetune from the base, recorded as such (owner's O4a).
+BRANCH_KEPT = ("early_stopping_patience", "frozen_parts")
+
+#: What each value of the learning setting `frozen_parts` keeps from training,
+#: by the model bundle's part names (`src.models.bundle.builder.ModelBundle`;
+#: research comparison Stage 9, owner's O4a): ``graph_side`` is the input
+#: module, the encoder and the LP head, so a finetune trains only its patient
+#: encoder and task head (the frozen-backbone control); ``none`` keeps nothing
+#: from training, as the source's finetune (README A10, U8) and every run of
+#: training rules 1, which had no freeze.
+FROZEN_PARTS: Dict[str, Tuple[str, ...]] = {
+    "none": (),
+    "graph_side": ("input", "encoder", "lp_head"),
+}
+_PART_WORDS = {"input": "the input module", "encoder": "the encoder", "lp_head": "the LP head"}
+#: The values of `frozen_parts` this build's training process applies. A value
+#: the field spec declares and the process does not apply is refused by the
+#: one check below, never trained as another value under a record that names
+#: it.
+FROZEN_PARTS_APPLIED: Tuple[str, ...] = ("none",)
+
+
+def frozen_parts_problem(learning_stage: Any, frozen_parts: Any) -> Optional[str]:
+    """**The one check of the freeze setting** of a run of `learning_stage`:
+    why `frozen_parts` cannot be run, or None. Shared by the training process
+    (`train_model.train`, every run's final settings), the job runner's new
+    runs (`training_manager._recipe_settings_problem`) and every continuation's
+    settings decode (`run_plan.decode_learning_settings`), so the three answer
+    one value alike.
+
+    - a value outside the field spec's closed values (`value_problem`);
+    - **a freeze that leaves nothing to train**: a base is its graph side
+      alone, so a base with any freeze is refused (a freeze applies to a
+      finetune, whose patient encoder and task head train);
+    - a value this build's training does not apply (`FROZEN_PARTS_APPLIED`).
+    """
+    from src.config.training_fields import value_problem
+
+    problem = value_problem("frozen_parts", frozen_parts)
+    if problem:
+        return problem
+    frozen = FROZEN_PARTS[frozen_parts]
+    if frozen and learning_stage != "finetune":
+        words = [_PART_WORDS[part] for part in frozen]
+        parts = " and ".join([", ".join(words[:-1]), words[-1]] if len(words) > 1 else words)
+        return (f"frozen_parts {frozen_parts!r} freezes {parts}, every part a "
+                f"{learning_stage} run has, so nothing would train. A freeze applies to a "
+                "finetune, whose patient encoder and task head train.")
+    if frozen_parts not in FROZEN_PARTS_APPLIED:
+        return (f"frozen_parts {frozen_parts!r} is not applied by this build's training yet "
+                f"(it applies {', '.join(repr(v) for v in FROZEN_PARTS_APPLIED)}), so a run "
+                "of it would not be what its record says.")
+    return None
 
 
 def reference_settings(learning_stage: str, task: Optional[str] = None
@@ -188,4 +244,5 @@ def branch_settings(learning_stage: str, task: Optional[str] = None) -> FrozenSe
 
 __all__ = ["BASE", "BASE_FIXED", "BASE_SOURCES", "BRANCH_COMPANIONS", "BRANCH_KEPT", "FINETUNE",
            "FINETUNE_FIXED", "FINETUNE_SOURCES", "FINETUNE_TASKS", "FINETUNE_TASK_SOURCES",
-           "branch_settings", "reference_settings", "unread_settings"]
+           "FROZEN_PARTS", "FROZEN_PARTS_APPLIED", "branch_settings", "frozen_parts_problem",
+           "reference_settings", "unread_settings"]

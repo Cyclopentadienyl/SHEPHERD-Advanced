@@ -171,7 +171,13 @@ Only the current settings are inherited (since K8-7, 2026-11-08): a setting the
 parent recorded that this version no longer has (`num_workers`, the old model
 settings such as `conv_type`) is neither inherited nor a reason to refuse, and a
 parent missing a current setting is refused. Check checkpoint and the run decide
-alike.
+alike. Since research comparison Stage 9a (2026-11-10) checkpoints record training
+rules 2, which add `frozen_parts` (which parts of a finetune do not train). A
+rules-1 parent still continues: one settings decode reads it with `frozen_parts`
+none, from what its record shows (rules 1 had no freeze), says so after the plan
+and records that source on the continued run; its file is not changed. A parent
+with no rules recorded (K4's) or rules this version does not know is refused, and
+a continued or branched run never changes the freeze.
 
 The child is a new run in its own folder and records its parent by SHA-256. To
 train from a checkpoint with other settings, start a new run: changing settings

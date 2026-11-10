@@ -31,17 +31,23 @@ each change; a new optimizer, schedule and stage.
 Each refusal says why. Nothing falls back to training from scratch.
 
 **Learning settings are inherited and locked** (decision 8). Every field of
-the request outside `OPERATIONAL_FIELDS` takes the parent's recorded value
-(`config.requested`); the request holds the current settings only (the
-`TrainConfig` fields, `src.config.training_fields.names()` for a preview), so
-a setting a parent records and this build no longer has is not inherited, and
-a current setting the parent does not record is refused. A field the operator
-set is the operator's, whatever its value, a default included: set to
-another value than the parent's it is refused, never ignored; one not set is
-inherited and shown in the plan. Changing settings from a parent is a branch
-(`plan_branch`), and only the settings on its closed list. Which settings a
-continued run reads is fixed by the rules it was trained under
-(`TRAINING_RULES_VERSION`, checked first).
+the request outside `OPERATIONAL_FIELDS` takes the parent's value, as **the one
+settings decode** reads its record (`decode_learning_settings`; research
+comparison Stage 9, review F1): its recorded settings (`config.requested`)
+under the current training rules, and under released rules 1 the same with
+the one setting rules 1 did not have, `frozen_parts`, read as "none" from the
+released semantics the record shows (rules 1 had no freeze; every part
+trained). The request holds the current settings only (the `TrainConfig`
+fields, `src.config.training_fields.names()` for a preview), so a setting a
+parent records and this build no longer has is not inherited, and a current
+setting the decode does not give is refused. A field the operator set is the
+operator's, whatever its value, a default included: set to another value than
+the parent's it is refused, never ignored; one not set is inherited and shown
+in the plan. Changing settings from a parent is a branch (`plan_branch`), and
+only the settings on its closed list, which never holds the freeze. The
+parent is judged by what this build's one executor can faithfully run, never
+by its rules number alone; rules it cannot run (K4's, none recorded; rules it
+does not know) are refused first, with the reason.
 
 **Provenance and mode rules stay apart.** Whether the parent was trained on
 this workspace's data and graph is M2.3's check (`train_model.check_resume_
@@ -64,7 +70,7 @@ from pathlib import Path
 from typing import Any, Collection, Dict, List, Mapping, Optional
 
 from src.config.model_types import WRITTEN_BEFORE_SPEC
-from src.config.recipe import branch_settings
+from src.config.recipe import FROZEN_PARTS, branch_settings, frozen_parts_problem
 from src.utils.checkpoint_io import TRAINING_RULES_VERSION
 
 #: Fields that say where a run reads and writes, how it is run on this host, or
@@ -113,6 +119,10 @@ class ContinuationPlan:
     best_k: List[Dict[str, Any]] = field(default_factory=list)
     #: The parent's callback state as recorded.
     callbacks: Optional[Dict[str, Any]] = None
+    #: Each learning setting the settings decode gave that the parent's record
+    #: does not hold as a value, with its source in words
+    #: (`decode_learning_settings`); empty for a parent of the current rules.
+    decoded: Dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -123,13 +133,25 @@ class BranchPlan:
     settings, the request's changes and its operational fields. `inherited`
     lists the settings taken from the parent that the request did not set;
     `changes` each changed setting as ``{"parent": old, "new": new}``, as the
-    record keeps them (`parent.changes`).
+    record keeps them (`parent.changes`); `decoded` as a continuation's.
     """
 
     action: str
     settings: Dict[str, Any]
     inherited: Dict[str, Any]
     changes: Dict[str, Dict[str, Any]]
+    decoded: Dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class DecodedSettings:
+    """A parent's learning settings in this build's representation
+    (`decode_learning_settings`): `settings`, every setting its record holds
+    and every one the decode gave, and `decoded`, each one the decode gave
+    with its source in words, as a continued run records it."""
+
+    settings: Dict[str, Any]
+    decoded: Dict[str, str]
 
 
 def _same(a: Any, b: Any) -> bool:
@@ -263,7 +285,7 @@ def plan_continuation(
     else:
         raise RunPlanRefused(f"{where} records an unknown end state {end!r}.")
 
-    settings, inherited, _ = _inherit_settings(parent, request, explicit, where)
+    settings, inherited, _, decoded = _inherit_settings(parent, request, explicit, where)
     _check_amp_takes_effect_alike(parent, settings, device, where)
     if mode == "resume" and request.get("extend_lr") is not None:
         raise RunPlanRefused("extend_lr applies only when extending a finished stage.")
@@ -296,10 +318,17 @@ def plan_continuation(
 
     best_weights, best_k = _locate_best_weights(parent, parent_path, where, parent_sha256)
     return ContinuationPlan(
-        mode=mode, action=action, settings=settings, inherited=inherited,
-        stage=run_stage, start_epoch=start_epoch, end_epoch=end_epoch,
+        mode=mode, action=action + _decoded_text(decoded), settings=settings,
+        inherited=inherited, stage=run_stage, start_epoch=start_epoch, end_epoch=end_epoch,
         best_weights=best_weights, best_k=best_k, callbacks=parent.get("callbacks"),
+        decoded=decoded,
     )
+
+
+def _decoded_text(decoded: Mapping[str, str]) -> str:
+    """The settings the decode gave, said after a plan's action, so the preview
+    and the training process say them in the same words."""
+    return "".join(f"; {name} {source}" for name, source in sorted(decoded.items()))
 
 
 def _check_record_version(parent: Any, record_version: int, where: str) -> None:
@@ -325,17 +354,106 @@ def _check_record_version(parent: Any, record_version: int, where: str) -> None:
         shown = found if found is None or type(found) is int else f"a {type(found).__name__}"
         raise RunPlanRefused(f"{where}: checkpoint record version {shown} is not "
                              f"{record_version}; this build reads only its own")
-    if parent.get("training_rules") != TRAINING_RULES_VERSION:
-        # A model bundle trained under other rules (the reviewer's K5 review,
-        # P2-1): continuing it would change early stopping and the base's
-        # validation pairs mid-run, beside its restored best value and history.
+    _check_training_rules(parent, where)
+
+
+#: The training rules a parent may have been written under that this build's
+#: executor can faithfully continue: its own (`TRAINING_RULES_VERSION`) and the
+#: released rules 1, whose record the settings decode reads into this build's
+#: settings (`decode_learning_settings`).
+CONTINUED_RULES = (1, TRAINING_RULES_VERSION)
+
+
+def _check_training_rules(parent: Mapping[str, Any], where: str) -> None:
+    """Refuse a parent of training rules this build's executor cannot run as
+    they were: none recorded (K4's, the reviewer's K5 review, P2-1: continuing
+    it would change early stopping and the base's validation pairs mid-run,
+    beside its restored best value and history) or rules it does not know,
+    whose meaning is not guessed. Checked before anything else of the parent
+    but its record version."""
+    rules = parent.get("training_rules")
+    if type(rules) is int and rules in CONTINUED_RULES:
+        return
+    if rules is None:
         raise RunPlanRefused(
-            f"{where} was trained under other training rules (rules "
-            f"{parent.get('training_rules')!r}, not {TRAINING_RULES_VERSION}): this build "
-            "turns early stopping on exactly when a patience is in effect and validates a "
-            "base on the pairs its split fixes, so continuing it would change both mid-run. "
+            f"{where} was trained under other training rules (none recorded, K4's): this "
+            "build turns early stopping on exactly when a patience is in effect and validates "
+            "a base on the pairs its split fixes, so continuing it would change both mid-run. "
             "Start a new run, or finetune from it: a finetune takes its weights, not these "
             "rules.")
+    shown = rules if type(rules) is int else f"a {type(rules).__name__}"
+    raise RunPlanRefused(
+        f"{where} was trained under other training rules (rules {shown}), which this build "
+        f"does not know (it continues rules {', '.join(str(r) for r in CONTINUED_RULES)}), "
+        "so what its settings mean is not guessed. Start a new run, or finetune from it: a "
+        "finetune takes its weights, not these rules.")
+
+
+def decode_learning_settings(parent: Mapping[str, Any], where: str) -> DecodedSettings:
+    """**The one settings decode** (research comparison Stage 9, owner's O4,
+    review F1): a parent's recorded learning settings in this build's
+    representation, for the one executor this build has. Every resume,
+    extension and branch reads its parent through it (`_inherit_settings`),
+    in the training process and in the job runner's preview alike.
+
+    - **The current rules** (`TRAINING_RULES_VERSION`): the record's settings
+      (`config.requested`) as recorded.
+    - **Released rules 1**: the same, and `frozen_parts` "none", because the
+      record itself shows rules 1's semantics: rules 1 had no freeze setting,
+      so it records none, and a weight transfer, where it records one (a
+      finetune, a branch), records every part trainable ("all"). Nothing else
+      is filled: a current setting a rules-1 record lacks stays missing and is
+      refused as such; no default of this build stands in for it.
+    - **Anything else is refused** with its reason: rules this build cannot
+      run (`_check_training_rules`), no recorded settings, a rules-1 record
+      that names a freeze or records a weight transfer other than "all", a
+      freeze value outside the setting's closed values, one that contradicts
+      the record's stage or its weight transfer, or one this build's training
+      does not apply (`frozen_parts_problem`).
+
+    The parent's record is read, never changed; what the decode gave is
+    returned with its source (`DecodedSettings.decoded`), which a continued
+    run records.
+
+    Raises:
+        RunPlanRefused: with the reason.
+    """
+    _check_training_rules(parent, where)
+    recorded = (parent.get("config") or {}).get("requested")
+    if not isinstance(recorded, Mapping):
+        raise RunPlanRefused(
+            f"{where} does not record the settings it was trained with, so they cannot "
+            "be inherited.")
+    settings = dict(recorded)
+    decoded: Dict[str, str] = {}
+    transfer = parent.get("weight_transfer")
+    if parent.get("training_rules") == 1:
+        if "frozen_parts" in recorded:
+            raise RunPlanRefused(
+                f"{where} records frozen_parts {recorded['frozen_parts']!r} under training "
+                "rules 1, which had no freeze setting, so its record contradicts its rules.")
+        if transfer is not None and not (isinstance(transfer, Mapping)
+                                         and transfer.get("trainable") == "all"):
+            found = transfer.get("trainable") if isinstance(transfer, Mapping) else transfer
+            raise RunPlanRefused(
+                f"{where} records a weight transfer with trainable {found!r} under training "
+                "rules 1, which trained every part ('all'), so its record contradicts its "
+                "rules.")
+        settings["frozen_parts"] = "none"
+        decoded["frozen_parts"] = (
+            "none, decoded from rules 1: rules 1 had no freeze and trained every part"
+            + (" (its weight transfer records trainable 'all')" if transfer is not None else ""))
+    if "frozen_parts" in settings:
+        value = settings["frozen_parts"]
+        problem = frozen_parts_problem(parent.get("learning_stage"), value)
+        if problem is None and isinstance(transfer, Mapping) and (
+                transfer.get("trainable") == "all" and FROZEN_PARTS[value]):
+            problem = (f"its weight transfer records every part trainable ('all') beside "
+                       f"frozen_parts {value!r}, so its record contradicts itself.")
+        if problem:
+            raise RunPlanRefused(f"{where} cannot be continued with its recorded freeze: "
+                                 f"{problem}")
+    return DecodedSettings(settings=settings, decoded=decoded)
 
 
 def plan_branch(
@@ -372,8 +490,8 @@ def plan_branch(
             "setting kept, and a branch starts a new run: remove them to branch, or resume "
             "the parent (resume_from, without branch_from) to extend it.")
     changeable = branch_settings(parent.get("learning_stage"), parent.get("task"))
-    settings, inherited, changes = _inherit_settings(parent, request, explicit, where,
-                                                     changeable=changeable)
+    settings, inherited, changes, decoded = _inherit_settings(parent, request, explicit, where,
+                                                              changeable=changeable)
     if not changes:
         raise RunPlanRefused(
             f"A branch changes at least one setting of its parent ({', '.join(sorted(changeable))}), "
@@ -392,22 +510,21 @@ def plan_branch(
         _check_amp_takes_effect_alike(parent, settings, device, where)
     shown = "; ".join(f"{name} {change['parent']!r} -> {change['new']!r}"
                       for name, change in sorted(changes.items()))
-    return BranchPlan(action=f"Branch {parent_path.name}: {shown}", settings=settings,
-                      inherited=inherited, changes=changes)
+    return BranchPlan(action=f"Branch {parent_path.name}: {shown}{_decoded_text(decoded)}",
+                      settings=settings, inherited=inherited, changes=changes, decoded=decoded)
 
 
 def _inherit_settings(
     parent: Mapping[str, Any], request: Mapping[str, Any], explicit: Collection[str],
     where: str, *, changeable: Collection[str] = frozenset(),
-) -> "tuple[Dict[str, Any], Dict[str, Any], Dict[str, Dict[str, Any]]]":
-    """The parent's learning settings with the request's operational fields:
-    `(settings, inherited, changes)`. A setting set explicitly to another value
-    is a change when `changeable` names it (a branch), and refused otherwise."""
-    recorded = (parent.get("config") or {}).get("requested")
-    if not isinstance(recorded, Mapping):
-        raise RunPlanRefused(
-            f"{where} does not record the settings it was trained with, so they cannot "
-            "be inherited.")
+) -> "tuple[Dict[str, Any], Dict[str, Any], Dict[str, Dict[str, Any]], Dict[str, str]]":
+    """The parent's learning settings, as the one decode reads them
+    (`decode_learning_settings`), with the request's operational fields:
+    `(settings, inherited, changes, decoded)`. A setting set explicitly to
+    another value is a change when `changeable` names it (a branch), and
+    refused otherwise."""
+    parent_settings = decode_learning_settings(parent, where)
+    recorded = parent_settings.settings
 
     settings = dict(request)
     inherited: Dict[str, Any] = {}
@@ -434,18 +551,23 @@ def _inherit_settings(
         raise RunPlanRefused(
             f"{where} does not record {', '.join(sorted(missing))}, so the run cannot "
             "inherit them.")
+    # The freeze is never changed from a parent (owner's O4a): every
+    # continuation and branch keeps it, so another freeze is a new finetune.
+    freeze = (" The freeze (frozen_parts) is kept by every continuation and branch: to "
+              "train with another, finetune the base again (finetune_from)."
+              if any(c.startswith("frozen_parts:") for c in conflicts) else "")
     if conflicts and changeable:
         raise RunPlanRefused(
             f"A branch keeps every setting of its parent but those on its list "
             f"({', '.join(sorted(changeable))}); this request changes others: "
-            + "; ".join(conflicts) + ".")
+            + "; ".join(conflicts) + "." + freeze)
     if conflicts:
         raise RunPlanRefused(
             f"{where} was trained with other settings than this request sets explicitly: "
             + "; ".join(conflicts) + ". A continued run keeps every learning setting of "
             "its parent; remove these to inherit them, or branch the parent (branch_from) "
-            "to change settings on a model bundle's list.")
-    return settings, inherited, changes
+            "to change settings on a model bundle's list." + freeze)
+    return settings, inherited, changes, dict(parent_settings.decoded)
 
 
 def _check_amp_takes_effect_alike(
@@ -577,9 +699,12 @@ def _locate_best_weights(
 
 __all__ = [
     "BranchPlan",
+    "CONTINUED_RULES",
     "ContinuationPlan",
+    "DecodedSettings",
     "OPERATIONAL_FIELDS",
     "RunPlanRefused",
+    "decode_learning_settings",
     "plan_branch",
     "plan_continuation",
     "recorded_training_settings",

@@ -3188,7 +3188,15 @@ completed」（訓練器因驗證數值保留的檔案）；epoch 數取自檔�
 指紋：相同時為 ✓，不同時為琥珀色（附上相符的已列出 workspace，或「matches no listed
 workspace」）。自 K8-7（2026-11-08）起，續接的執行只繼承本版仍有的設定：parent 記錄了、但本版
 已沒有的設定（`num_workers`、舊的模型設定如 `conv_type`）既不繼承，也不構成拒絕的理由；缺少
-目前某個設定的 parent 會被拒絕；Check checkpoint 與訓練行程的判斷相同，用語也相同。抽屜打開
+目前某個設定的 parent 會被拒絕；Check checkpoint 與訓練行程的判斷相同，用語也相同。自 research
+comparison Stage 9a（2026-11-10）起，新的 checkpoint 記錄 training rules 2，新增一個設定
+`frozen_parts`（finetune 中不訓練的部分：`none`，即 recipe 的值，或 `graph_side`）。rules 1 的
+parent 可以繼續：Check checkpoint 與訓練行程共用的同一個設定解碼，依其紀錄本身所示（rules 1
+沒有凍結；finetune 的 weight transfer 記錄每個部分皆可訓練），把它讀成 `frozen_parts` none，
+在計畫之後說明（「…; frozen_parts none, decoded from rules 1: rules 1 had no freeze and trained
+every part」），並把這個來源記錄在續接執行的 checkpoint 上；parent 的檔案不會被改寫。沒有記錄
+rules 的 parent（K4 的）或本版不認得的 rules 會被拒絕，任何其他缺少、矛盾或未知的設定也一樣。
+續接的執行絕不改變凍結設定；branch 也保留它。抽屜打開
 期間，run bar 顯示 Start（停用：「close Continue… to start a new run」）、
 **🔒 Continue Training**（資料集不同時停用，並附原因）與 **Cancel**。從清單選的
 checkpoint 會在伺服器的清單中重新找到。**繼續訓練所用的就是所顯示的模型指紋**（於根因修正輪

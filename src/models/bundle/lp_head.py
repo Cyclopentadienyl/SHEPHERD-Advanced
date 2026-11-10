@@ -95,7 +95,7 @@ def corrupt_tails(relations: Tensor, tails: Tensor, generator: torch.Generator
 
 
 #: The fixed-pairs rule seeds its torch generator with `seed` plus this offset
-#: (training rules 1 pin the base's validation pairs, so it never changes).
+#: (training rules 1 and 2 pin the base's validation pairs, so it never changes).
 _PAIR_SEED_OFFSET = 7919
 #: The name of `fixed_lp_pairs`' rule, as a record states which rule made a
 #: set of pairs (with its `seed` and `batch_size`): another rule, seed or batch
@@ -186,7 +186,7 @@ def fixed_lp_pairs(edges: Tensor, relations: Tensor, *, seed: int, batch_size: i
     found in the pairs themselves.
 
     Base validation takes its pairs here (the split's val edges, the split's
-    seed, `BASE_FIXED`'s batch size), and training rules 1 pin those pairs, so
+    seed, `BASE_FIXED`'s batch size), and training rules 1 and 2 pin those pairs, so
     the generator's consumption (one permutation, then each batch's draws in
     order) never changes.
     """

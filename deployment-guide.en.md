@@ -3114,7 +3114,17 @@ when it differs (with the listed workspace it matches, or "matches no listed wor
 K8-7 (2026-11-08) a continued run inherits only the settings this version has: a setting the
 parent recorded that this version no longer has (`num_workers`, the old model settings such as
 `conv_type`) is neither inherited nor a reason to refuse, a parent missing a current setting is
-refused, and Check checkpoint and the training process decide alike, in the same words. While
+refused, and Check checkpoint and the training process decide alike, in the same words. Since
+research comparison Stage 9a (2026-11-10) new checkpoints record training rules 2, which add one
+setting, `frozen_parts` (which parts of a finetune do not train: `none`, the recipe's, or
+`graph_side`). A parent of rules 1 continues: one settings decode, shared by Check checkpoint and
+the training process, reads it with `frozen_parts` none from what its record shows (rules 1 had
+no freeze; a finetune's weight transfer records every part trainable), says so after the plan
+("…; frozen_parts none, decoded from rules 1: rules 1 had no freeze and trained every part") and
+records that source on the continued run's checkpoints; the parent's file is not changed. A
+parent that records no rules (K4's) or rules this version does not know is refused, and so is
+any other missing, contradictory or unknown setting. A continued run never changes the freeze; a
+branch keeps it too. While
 the drawer is open the run bar shows Start (disabled: "close Continue… to start a new run"),
 **🔒 Continue Training** (disabled while the datasets differ, with the reason) and **Cancel**.
 A listed checkpoint is found again in the server's list. **The model fingerprint shown is the one

@@ -4163,6 +4163,18 @@ comparing.
   checkpoint with a model record, of the branch's stage and task, trained on the same data, view
   and split. Any end state qualifies, since nothing of its progress continues. A weights-only file
   is refused: it records no settings.
+- **The parent's learning settings, by its training rules** (as built at research comparison
+  Stage 9a, 2026-11-10; `run_plan.decode_learning_settings`). A resume, an extension and a branch
+  read the parent's recorded settings through one settings decode, which the job runner's preview
+  and the training process share, and a parent is judged by what this build's one executor can
+  faithfully run, never by its rules number alone. Rules 2 add the freeze setting `frozen_parts`
+  (`src.config.recipe.FROZEN_PARTS`). A rules-1 parent continues with `frozen_parts` "none", from
+  the released semantics its record shows (rules 1 had no freeze; a weight transfer, where it
+  records one, records every part trainable, "all"); the decoded value and its source are
+  recorded on the continued run's checkpoints, and the parent's file is never rewritten. A parent
+  of no recorded rules (K4's) or of rules this build does not know is refused, and so is any other
+  missing, contradictory or unknown setting. The freeze is not on a branch's list: a continuation
+  and a branch keep it, and another freeze is a new finetune from the base.
 - **Refused as a finetune parent:**
   - a weights-only file **without** a `model_spec`, since nothing is guessed from weight names;
   - a finetune checkpoint, since children never chain.

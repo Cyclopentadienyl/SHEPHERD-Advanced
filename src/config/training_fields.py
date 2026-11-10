@@ -266,6 +266,16 @@ FIELDS: Tuple[FieldSpec, ...] = (
               current_api=None,
               known_divergence=True, divergence_note="Unset is the task's reference (U14).",
               description="Rarely seen genes added to each gene-task patient's list in training."),
+    # The freeze setting (research comparison Stage 9, owner's O4a): which parts
+    # of a finetune train. Its parts and the stage rule are `src.config.recipe`'s
+    # (`FROZEN_PARTS`, `frozen_parts_problem`).
+    FieldSpec("frozen_parts", "str", "none", "trainer", projects_to="TrainConfig.frozen_parts",
+              choices=("none", "graph_side"), current_api=None,
+              known_divergence=True,
+              divergence_note="A finetune setting (the recipe's reference 'none'); a base with "
+                              "any freeze is refused. Not a WebUI or base-start field.",
+              description="Parts of a finetune that do not train: none, or graph_side (the "
+                          "input module, the encoder and the LP head)."),
 
     # ---- sampling (the stage samplers, from TrainConfig) ------------------------------------
     FieldSpec("batch_size", "int", 32, "dataloader", projects_to="TrainConfig.batch_size",

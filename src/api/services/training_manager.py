@@ -491,15 +491,18 @@ def _task_words(tasks: Sequence[str]) -> str:
 
 
 def _recipe_settings_problem(settings: Mapping[str, Any], references: Sequence[Mapping[str, Any]],
-                             what: str) -> Optional[str]:
+                             what: str, *, learning_stage: str) -> Optional[str]:
     """**The one check of the settings a new model bundle run is started with**
     (BACKLOG 54), shared by `start_training` (a base) and `start_finetune`
-    (every child): why `settings` cannot start `what`, or None. `references`
-    are the recipe values of every run the start makes (`reference_settings`:
-    one per Fine-tune task, one for a base), so a setting is taken only when
-    every run reads it, its value only when its field spec takes it
-    (`value_problem`), and None only where a reference value is None. Checked
-    here, a refused setting starts nothing and writes nothing."""
+    (every child): why `settings` cannot start `what`, a run of
+    `learning_stage`, or None. `references` are the recipe values of every run
+    the start makes (`reference_settings`: one per Fine-tune task, one for a
+    base), so a setting is taken only when every run reads it, its value only
+    when its field spec takes it (`value_problem`), and None only where a
+    reference value is None; the freeze, by the training process's own check
+    of it (`frozen_parts_problem`). Checked here, a refused setting starts
+    nothing and writes nothing."""
+    from src.config.recipe import frozen_parts_problem
     from src.config.training_fields import value_problem
 
     common = set.intersection(*(set(values) for values in references))
@@ -510,6 +513,9 @@ def _recipe_settings_problem(settings: Mapping[str, Any], references: Sequence[M
     problems = [problem for name, value in sorted(settings.items())
                 for problem in [value_problem(name, value, allow_none=any(
                     values.get(name) is None for values in references))] if problem]
+    if not problems and "frozen_parts" in settings:
+        problems = [problem for problem in [frozen_parts_problem(
+            learning_stage, settings["frozen_parts"])] if problem]
     return " ".join(problems) or None
 
 
@@ -543,7 +549,7 @@ def _new_bundle_run(config: Mapping[str, Any]) -> Tuple[Optional[str], Optional[
     references = reference_settings("base")[0]
     problem = _recipe_settings_problem(
         {name: value for name, value in config.items() if name not in _NEW_RUN_KEYS},
-        [references], "a base run")
+        [references], "a base run", learning_stage="base")
     if problem:
         return None, problem
     if config.get("model_spec") is None:
@@ -1315,7 +1321,7 @@ class TrainingManager:
             return refused("A task is named more than once; each task is one child.")
         problem = _recipe_settings_problem(
             inputs.settings, [reference_settings("finetune", task)[0] for task in tasks],
-            f"a Fine-tune start of {_task_words(tasks)}")
+            f"a Fine-tune start of {_task_words(tasks)}", learning_stage="finetune")
         if problem:
             return {**refused(problem), "invalid_settings": True}
         if expected_dataset_fingerprint is not None:
@@ -2395,7 +2401,10 @@ class TrainingManager:
         # set explicitly, so every other learning setting shows as inherited.
         # A setting the parent records and this build does not have is not in
         # it, so not inherited; a current one the parent does not record is in
-        # it with nothing behind it, so refused, as the process refuses it.
+        # it with nothing behind it, and the plan reads the parent through the
+        # one settings decode (`run_plan.decode_learning_settings`), as the
+        # process does: a rules-1 parent's freeze is decoded, any other
+        # missing setting refused, as the process refuses it.
         explicit = dict(requested or {})
         recorded = (record.get("config") or {}).get("requested")
         recorded = recorded if isinstance(recorded, dict) else {}
@@ -2420,8 +2429,9 @@ class TrainingManager:
         except RunPlanRefused as exc:
             return {**facts, "ok": False, "reason": str(exc)}
         return {**facts, "ok": True, "mode": plan.mode, "action": plan.action,
-                "inherited": plan.inherited, "start_epoch": plan.start_epoch,
-                "end_epoch": plan.end_epoch, "stage": plan.stage}
+                "inherited": plan.inherited, "decoded": plan.decoded,
+                "start_epoch": plan.start_epoch, "end_epoch": plan.end_epoch,
+                "stage": plan.stage}
 
     # =========================================================================
     # Checkpoint Management

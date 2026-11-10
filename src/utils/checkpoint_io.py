@@ -32,27 +32,46 @@ from typing import Any, NamedTuple, Optional
 
 from src.utils.fingerprint import ReadIdentity
 
-#: **The training rules a model bundle's training-state checkpoint was written
-#: under** (its `training_rules`), read by `src.utils.run_plan` before a run
-#: continues one: a resume, an extension or a branch keeps its parent's rules,
-#: so a parent written under other rules is refused, never carried across
-#: (the reviewer's K5 review, P2-1). Rules 1 are K5's: early stopping is on
-#: exactly when a patience is in effect, and the base validates on the pairs its
-#: split fixes (seeded by the split's seed, in fixed batches), whatever a run's
-#: seed and batch size.
+#: **The training rules a model bundle's checkpoint was written under** (its
+#: `training_rules`), which every checkpoint records and `src.utils.run_plan`
+#: reads before a run continues one (a resume, an extension or a branch). Rules
+#: 1 are K5's (the reviewer's K5 review, P2-1): early stopping is on exactly
+#: when a patience is in effect, and the base validates on the pairs its split
+#: fixes (seeded by the split's seed, in fixed batches), whatever a run's seed
+#: and batch size. Rules 2 (research comparison Stage 9, owner's O4 and O4a)
+#: keep all of that and add one learning setting, `frozen_parts`: which parts
+#: of a finetune train (`src.config.recipe.FROZEN_PARTS`).
 #:
-#: **The continuation contract.** A continued run inherits its parent's learning
-#: settings, the current settings only (`run_plan._inherit_settings`): a setting
-#: the parent records that this build no longer has is not inherited, and a
-#: current one the parent does not record is refused. Removing a setting no
-#: rules-1 run reads (K8-7: the ShepherdGNN path's architecture, loader and loss
+#: **The continuation contract** (review F1). A parent is judged by what this
+#: build's one executor can faithfully run, never by its rules number alone:
+#: **one settings decode** (`run_plan.decode_learning_settings`, which the job
+#: runner's preview and the training process's resume, extend and branch all
+#: reach) reads a parent's recorded learning settings into this build's
+#: settings. A record of the current rules is read as recorded. A record of
+#: released rules 1 is read with `frozen_parts` "none", from the released
+#: semantics its own record shows (rules 1 had no freeze setting, and a
+#: finetune's weight transfer records every part trainable, "all"); that value
+#: and its source are recorded on the continued run's checkpoints, and the
+#: parent's file is never rewritten. A record of other rules (none recorded:
+#: K4's, whose early stopping and base validation differ; or rules this build
+#: does not know), a rules-1 record that contradicts rules 1, and any other
+#: missing, contradictory or unknown setting is refused with its reason. The
+#: same Trainer runs every continuation; no executor is chosen by a rules
+#: number.
+#:
+#: A continued run inherits its parent's decoded learning settings, the
+#: current settings only (`run_plan._inherit_settings`): a setting the parent
+#: records that this build no longer has is not inherited, and a current one
+#: the decode does not give is refused. Removing a setting no run of these
+#: rules reads (K8-7: the ShepherdGNN path's architecture, loader and loss
 #: settings) is not a rules change. **A change of what a setting means, or of
-#: which learning settings a run of these rules reads, raises this constant**,
-#: with a new entry for the new version in the pin of released rules
-#: (`RULES_LEARNING_SETTINGS`, tests/unit/test_training_fields.py) and a
-#: behaviour test for the setting whose meaning changed. A released entry is
-#: never edited.
-TRAINING_RULES_VERSION = 1
+#: which learning settings a run reads, raises this constant**, with a new
+#: entry for the new version in the pin of released rules
+#: (`RULES_LEARNING_SETTINGS`, tests/unit/test_training_fields.py), the decode
+#: of each earlier released version that the current executor can faithfully
+#: run, and a behaviour test for the setting whose meaning changed. A released
+#: entry is never edited.
+TRAINING_RULES_VERSION = 2
 
 __all__ = ["CheckpointChanged", "CheckpointRead", "TRAINING_RULES_VERSION", "read_checkpoint",
            "write_checkpoint"]

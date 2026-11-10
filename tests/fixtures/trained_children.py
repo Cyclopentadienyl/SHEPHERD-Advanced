@@ -67,6 +67,33 @@ RULES_1_RETIRED_SETTINGS = {
 }
 
 
+def as_rules_1(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """A checkpoint payload this build wrote, as the build of training rules 1
+    wrote the same run (research comparison Stage 9a: the branch at `cbd2e3f`,
+    the last commit of rules 1): `training_rules` 1, and the one setting rules
+    2 added, `frozen_parts`, nowhere in its record (not requested, not filled
+    from the recipe, not inherited, no setting decoded). Everything else is
+    the same bytes, the weights and the optimizer, scheduler and scaler state
+    included: rules 2 changed nothing else a checkpoint holds. A copy; the
+    payload given is not changed."""
+    import copy
+
+    old = copy.deepcopy(payload)
+    old["training_rules"] = 1
+    config = old.get("config")
+    if isinstance(config, dict):
+        (config.get("requested") or {}).pop("frozen_parts", None)
+        recipe = (((config.get("effective") or {}).get("loaders") or {}).get("train")
+                  or {}).get("recipe")
+        if isinstance(recipe, dict):
+            recipe.pop("decoded_from_parent", None)
+            (recipe.get("reference_filled") or {}).pop("frozen_parts", None)
+            for key in ("operator_set", "inherited_from_parent"):
+                if isinstance(recipe.get(key), list):
+                    recipe[key] = [name for name in recipe[key] if name != "frozen_parts"]
+    return old
+
+
 def _demo_training() -> Dict[str, Dict[str, Any]]:
     from scripts.setup_demo import demo_task_training
 
@@ -181,6 +208,6 @@ def serve(trained: Dict[str, Path], task: str = "disease", **kwargs: Any) -> Any
                                  data_dir=str(data_dir), **{"device": "cpu", **kwargs})
 
 
-__all__ = ["BASE_RUN", "CHILD_RUNS", "RULES_1_RETIRED_SETTINGS", "demo_fixture",
+__all__ = ["BASE_RUN", "CHILD_RUNS", "RULES_1_RETIRED_SETTINGS", "as_rules_1", "demo_fixture",
            "finetune_demo_base", "serve", "small_base_spec", "train_children",
            "workspace_fixture"]
