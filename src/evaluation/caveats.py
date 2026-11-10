@@ -329,6 +329,16 @@ def version_words(kind: Any, role: Any) -> str:
     return f"a version of kind {kind!r}"
 
 
+def label_words(words: str) -> str:
+    """Words a sentence names a thing by, as a label or an option leads with
+    them: the leading article dropped and the first letter capitalised ("a KG
+    edge set (test)" → "KG edge set (test)", "a supplied cohort version" →
+    "Supplied cohort version"). With `version_words` and `DATA_KIND_WORDS`,
+    the one wording of a version or a data kind in a label."""
+    words = words[2:] if words.startswith("a ") else words
+    return words[:1].upper() + words[1:]
+
+
 #: The version of the KG link-prediction exposure definition below: the
 #: states, their readings and how each count is taken
 #: (`src.evaluation.exposure`, which writes a run's exposure block by it). A

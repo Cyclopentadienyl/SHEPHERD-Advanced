@@ -756,7 +756,8 @@ def test_the_workspace_filter_keeps_what_was_found_there_by_its_model_or_its_led
     assert results.filter_values(registered, "workspace") == ["lab"]
     assert results.filter_values(registered, "protocol") == ["disease"]
     # Two roots, each with a workspace named "lab": one name, as the filter
-    # compares names (a page reads one source).
+    # compares names (a page reads one source; the command line's help says
+    # the name is matched in every named root).
     kept = results.filtered(found, {"workspace": ["lab"]})
     assert {row["run_id"] for row in kept if row["result"] == "run"} == {
         row["run_id"] for row in found if row["result"] == "run"
@@ -768,6 +769,25 @@ def test_the_workspace_filter_keeps_what_was_found_there_by_its_model_or_its_led
     ledger_only["model"] = {**ledger_only["model"], "locations": []}
     assert results.filter_values(ledger_only, "workspace") == ["lab"]
     assert results.filtered([ledger_only], {"workspace": ["lab"]}) == [ledger_only]
+
+
+def test_a_field_without_a_value_gives_no_filter_value_and_matches_none(world):
+    """Stage 8b review: as `FILTERS` says, a row whose field is unknown or
+    absent (null) has no value there, so no filter value matches it: never
+    the text "None", which a page would offer as a value and a recorded
+    "None" would share."""
+    from src.api.services import results
+
+    row = next(row for row in _query(world) if row["result"] == "run")
+    unknown = {**row, "environment": {**row["environment"], "class": None},
+               "measurement": {key: value for key, value in row["measurement"].items()
+                               if key != "device"}}
+    assert results.filter_values(unknown, "environment_class") == []
+    assert results.filter_values(unknown, "device") == []
+    assert results.filtered([unknown], {"environment_class": ["None"]}) == []
+    assert results.filtered([unknown], {"device": ["None"]}) == []
+    recorded = {**row, "environment": {**row["environment"], "class": "None"}}
+    assert results.filter_values(recorded, "environment_class") == ["None"]
 
 
 def test_the_command_line_exports_and_never_overwrites(world, tmp_path, capsys):
@@ -811,7 +831,10 @@ def test_the_command_lines_help_says_it_runs_as_the_operator(capsys):
 
     with pytest.raises(SystemExit):
         export_results.main(["--help"])
-    assert "operator on this machine" in " ".join(capsys.readouterr().out.split())
+    text = " ".join(capsys.readouterr().out.split())
+    assert "operator on this machine" in text
+    # The workspace filter compares a name: matched in every named root.
+    assert "the name is matched in every named workspaces root" in text
 
 
 # ---------------------------------------------------------------------------

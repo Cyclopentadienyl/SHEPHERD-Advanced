@@ -861,13 +861,13 @@ def test_the_pages_amber_sentences_are_amber_and_the_note_after_the_list_stands_
 def test_unverifiable_is_a_word_and_never_a_count(world, monkeypatch):
     listing, data = _read(world, monkeypatch)
     records = mp.detail_parts(listing, data, _key(world, "model-08.pt"), NEWEST_CTL)["records"]
-    assert "Training disease overlap: unverifiable" in records
+    assert "Training disease overlap: <b>unverifiable</b>" in records
     assert "there is no count" in records
-    line = records[records.index("R10, training inputs"):]
-    line = line[:line.index("</span>")]
+    line = records[records.index("<b>R10, training</b>"):]
+    line = line[:line.index('<span class="shep-mp-ln">')]
     assert " of 50 " not in line and " of 80 " not in line
-    text = mp.r10_label_text("disease_overlap", "D", {"state": "unverifiable", "k": None,
-                                                      "n": 50, "cases": None}, "not_found")
+    text = r.r10_label_text("disease_overlap", "D", {"state": "unverifiable", "k": None,
+                                                     "n": 50, "cases": None}, "not_found")
     assert "0" not in text.replace("D:", "")
 
 
@@ -896,11 +896,12 @@ def test_a_records_r10_reads_in_its_states_words_never_a_count(version, state,
 
     html = mp.r10_html(block)
 
-    line = html[:html.index("</span>")]
-    assert line.startswith('<span class="shep-mp-ln"><b>R10, training inputs (evidence '
-                           f'{evidence_words}):</b> ')
+    # The one R10 rendering (`renderers.r10_rows`), its scope's label leading.
+    line = html[:html.index('<span class="shep-mp-ln">', 1)]
+    assert line.startswith('<span class="shep-mp-ln"><b>R10, training</b> <span '
+                           f'class="shep-muted">inputs (evidence {evidence_words}):</span> ')
     for name in ("Training disease overlap", "Training phenotype-set overlap"):
-        assert f"{name}: unverifiable: {reason}" in line
+        assert f"{name}: <b>unverifiable</b>: {reason}" in line
     text = re.sub(r"<[^>]+>", "", line).split("):", 1)[1]  # the labels, after "R10, ..."
     assert not re.search(r"\d", text) and "—" not in text and " none" not in text
     assert "/srv/secret" not in html

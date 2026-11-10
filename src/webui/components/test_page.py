@@ -157,17 +157,16 @@ from src.evaluation import protocols
 from src.evaluation.caveats import (
     MEASUREMENT_NAMES,
     R10_LABEL_TEXT,
-    R10_STATE_TEXT,
-    R10_UNVERIFIABLE_REASON,
     RELATION_DISPLAY_NAMES,
     TASK_NAMES,
+    label_words,
     metric_text,
     mode_label,
     mode_note,
     recorded_metric_lines,
     version_words,
 )
-from src.utils.run_environment import native_identity, native_identity_lines
+from src.utils.run_environment import native_identity_lines
 from src.webui.components import renderers as r
 from src.webui.components.chips import D8_SHORT, chips_on_change
 from src.webui.components.help import help_button
@@ -219,13 +218,6 @@ POLICY_CHOICES = [("keep case", "keep"),
 _ORIGIN_MEANING = {
     "synthetic": "a generated stand-in, not a clinical knowledge graph",
     "files": "built from identified source files",
-}
-_R10_EVIDENCE_WORDS = {
-    "found": "evidence found",
-    "not_found": "evidence not found",
-    "unreadable": "evidence found, not readable",
-    "not_recorded": "evidence not recorded by the checkpoint",
-    "search_incomplete": "evidence search incomplete",
 }
 #: The metrics shown as tiles, in order, by the record's mode (`scoring.mode`),
 #: for a measurement this build describes; each is named by
@@ -955,16 +947,14 @@ def model_choices(models: Mapping[str, Any]) -> List[Tuple[str, str]]:
 def _kind_words(version: Mapping[str, Any]) -> Optional[str]:
     """A version of another kind than a supplied cohort by its kind and role,
     as an option and the version's details lead with it: "KG edge set
-    (test)", "Generated split (val)" (`caveats.version_words` without its
-    article), or None for a supplied cohort. Such a version has no source
-    cases or ranked-eligible count, so it is never described in a supplied
-    cohort's words."""
+    (test)", "Generated split (val)" (`caveats.version_words` as a label,
+    `caveats.label_words`), or None for a supplied cohort. Such a version has
+    no source cases or ranked-eligible count, so it is never described in a
+    supplied cohort's words."""
     kind = version.get("kind")
     if kind in (None, protocols.SUPPLIED):
         return None
-    words = version_words(kind, version.get("role"))
-    words = words[2:] if words.startswith("a ") else words
-    return words[:1].upper() + words[1:]
+    return label_words(version_words(kind, version.get("role")))
 
 
 #: The order the version select lists the kinds in: supplied cohorts, then KG
@@ -1748,41 +1738,6 @@ def outcome_html(outcome: Mapping[str, Any], roots: Sequence[Tuple[str, str]]) -
 # ---------------------------------------------------------------------------
 # Rendering: Result
 # ---------------------------------------------------------------------------
-def _r10_label(label: str, name: str, part: Any, evidence: Any) -> str:
-    """One R10 label in the caveats' words: a count with its denominator only
-    where the state has one; *unverifiable* is a reason, never a 0."""
-    state = part.get("state") if isinstance(part, Mapping) else None
-    words = R10_STATE_TEXT.get(state) if isinstance(state, str) else None
-    if state == "unverifiable" and isinstance(evidence, str):
-        words = R10_UNVERIFIABLE_REASON.get(evidence, words)
-    if words is None:
-        return f"{e(name)}: not reported"
-    if state not in ("overlap", "none"):
-        if state == "unverifiable":
-            reason = words.split(":", 1)
-            return f"{e(name)}: <b>{e(reason[0])}</b>{e(':' + reason[1]) if len(reason) > 1 else ''}"
-        return f"{e(name)}: {e(words)}"
-    unit = "distinct test diseases" if label == "disease_overlap" else "test cases"
-    count = f"{_count(part.get('k'))} of {_count(part.get('n'))} {unit}"
-    if label == "disease_overlap":
-        count += f"; {_count(part.get('cases'))} test cases with one of them"
-    return f"{e(name)}: {e(words)} — {e(count)}"
-
-
-def _r10_lines(r10: Any) -> List[Tuple[str, str]]:
-    lines = []
-    for scope, labels in R10_LABEL_TEXT.items():
-        part = r10.get(scope) if isinstance(r10, Mapping) else None
-        part = part if isinstance(part, Mapping) else {}
-        evidence = (part.get("evidence") or {}).get("state") if isinstance(part.get("evidence"), Mapping) else None
-        found = _R10_EVIDENCE_WORDS.get(evidence, "evidence not reported")
-        text = (f'<span class="shep-muted">inputs ({e(found)}):</span> '
-                + " · ".join(_r10_label(label, t["name"], part.get(label), evidence)
-                             for label, t in labels.items()))
-        lines.append((f"R10, {scope}", text))
-    return lines
-
-
 def _relations(relations: Any) -> str:
     if not isinstance(relations, Mapping):
         return "not reported"
@@ -1799,32 +1754,26 @@ def _relations(relations: Any) -> str:
     return " · ".join(parts)
 
 
-def _environment(record: Mapping[str, Any]) -> str:
-    from src.evaluation.sidecar import environment_class
-
-    try:
-        text = environment_class(record)
-    except ValueError:
-        text = "not classified"
-    facts = (record.get("environment") or {}).get("facts") if isinstance(record.get("environment"), Mapping) else None
-    gpu = facts.get("gpu") if isinstance(facts, Mapping) else None
+def _environment(view: Mapping[str, Any]) -> str:
+    """The view's environment class (`sidecar.environment_class`, as the one
+    reader classified it) and, for a run on CUDA, its GPU and driver."""
+    text = str(view["environment_class"])
+    gpu = view["gpu"]
     if isinstance(gpu, Mapping):
         text += (f" · GPU {gpu.get('name') or 'name not read'}, driver "
                  f"{gpu.get('driver') or 'not read'}")
     return e(text)
 
 
-def _native_build(record: Mapping[str, Any]) -> str:
-    """The record's native build identity in the run environment's one
-    projection and wording (`native_identity`, as the API's record view and
-    Models show it): a lead with the route and the count, then one line per
-    component (`native_identity_lines`), since the one line runs to four in
+def _native_build(view: Mapping[str, Any]) -> str:
+    """The view's native build identity (the run environment's one
+    projection, `native_identity`, as the API's record view and Models show
+    it) in its one wording: a lead with the route and the count, then one line
+    per component (`native_identity_lines`), since the one line runs to four in
     this column (the skill's §4: past two lines, structure); "not recorded"
     for a run recorded before its environment named components."""
-    environment = record.get("environment") if isinstance(record.get("environment"), Mapping) else {}
-    facts = environment.get("facts") if isinstance(environment.get("facts"), Mapping) else {}
     return "".join(f"<div>{e(line)}</div>"
-                   for line in native_identity_lines(native_identity(facts.get("components"))))
+                   for line in native_identity_lines(view["native_identity"]))
 
 
 def result_html(reports: Mapping[str, Any], run_id: Optional[str],
@@ -1969,10 +1918,10 @@ def recorded_metrics_html(metrics: Mapping[str, Any]) -> str:
     return "".join(f"<div><code>{e(name)}</code> {e(value)}</div>" for name, value in lines)
 
 
-def _semantics_text(scoring: Mapping[str, Any]) -> str:
-    """The record's `scoring.score_semantics` exactly as recorded, a code, or
-    "not recorded": never split, interpreted or rebuilt."""
-    raw = scoring.get("score_semantics")
+def _semantics_text(raw: Any) -> str:
+    """The record's `scoring.score_semantics` exactly as recorded (the view's
+    ``score_semantics``), a code, or "not recorded": never split, interpreted
+    or rebuilt."""
     if isinstance(raw, str) and raw.strip():
         return f"<code>{e(raw)}</code>"
     return '<span class="shep-muted">not recorded</span>'
@@ -1983,14 +1932,23 @@ def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
     """The selected report's record (`build_record`'s, through the store's
     scan) as the one reader reads it (research comparison Stage 8b): its data
     kind's result view (`record_views.result_view`, the one the results
-    service reads every kept report by, registered or not), which decides its
-    kind and gives its R10 or its kind's lines (`renderers.data_kind_lines`,
-    as Models shows a registered record's); its numbers as recorded, from the
-    record the view read (an integer stays an integer, as the service keeps
-    them). A record the reader cannot read is not shown as a result: its
-    reason, naming fields and never values, as Models and the results service
-    list it."""
-    from src.api.services.record_views import result_view, unreadable_reason
+    service reads every kept report by, registered or not). Every field shown
+    is the view's: its mode, data (label, role, version, kind and counts),
+    the run's counts, score semantics, relations, R10 or the kind's lines (the
+    shared renderings, `renderers.r10_rows` and `renderers.data_kind_lines`,
+    as Models shows a registered record's), environment, native build and
+    dataset origin; the measurement's device is the record's recorded
+    setting (`record_views.recorded_settings`, as the service reads it), and
+    the model is the record's key field. Only the metric values are the
+    record's own, by the names the view read (an integer stays an integer,
+    as the service keeps them, `results._metrics`). A record the reader
+    cannot read is not shown as a result: its reason, naming fields and
+    never values, as Models and the results service list it."""
+    from src.api.services.record_views import (
+        recorded_settings,
+        result_view,
+        unreadable_reason,
+    )
 
     try:
         view = result_view(dict(record)).model_dump(mode="json")
@@ -1998,32 +1956,29 @@ def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
         return _reason_html("This report's record cannot be read as a result, so it is not "
                             "shown as one (Models › Results lists it with this reason): "
                             + unreadable_reason(exc))
-    cohort = record.get("cohort") if isinstance(record.get("cohort"), Mapping) else {}
-    regime = record.get("regime") if isinstance(record.get("regime"), Mapping) else {}
-    metrics = record.get("metrics") if isinstance(record.get("metrics"), Mapping) else {}
-    n_ranked = record.get("n_ranked")
-    counts = cohort.get("counts") if isinstance(cohort.get("counts"), Mapping) else {}
+    cohort, counts, n_ranked = view["cohort"], view["counts"], view["n_ranked"]
+    metrics = {name: record["metrics"][name] for name in view["metrics"]}
     # Labelled by the record's own mode, as recorded, never by another's.
-    scoring = record.get("scoring") if isinstance(record.get("scoring"), Mapping) else {}
-    mode = scoring.get("mode") if isinstance(scoring.get("mode"), str) and \
-        scoring.get("mode").strip() else None
+    mode = view["mode"]
     label = mode_label(mode)
     tile_names = _TILES.get(mode, ())
     task = mode in TASK_NAMES
     eligible = _count(counts.get("ranked_eligible"))
-    deterministic = regime.get("deterministic_algorithms")
+    deterministic = view["deterministic_algorithms"]
+    device = recorded_settings(record)["regime"].get("device")
     # The record's data kind, as the one reader read it (research comparison
     # Stage 6): a version of another kind than a supplied cohort is named by
     # its kind and role, and read by its own counts and exposure, never a
     # cohort's or R10's words.
-    kind = view["cohort"]["kind"]
-    role = (f'role {r.ident_html(record.get("cohort_role"))}' if kind == "supplied"
-            else e(version_words(kind, record.get("cohort_role"))))
-    line = (f'{e(cohort.get("label"))} (version <code>{e(str(record.get("cohort_digest") or "")[:12])}</code>, '
-            f'{role}) · model '
+    kind = cohort["kind"]
+    role = (f'role {r.ident_html(cohort["role"])}' if kind == "supplied"
+            else e(version_words(kind, cohort["role"])))
+    determinism = ("on" if deterministic is True else "off" if deterministic is False
+                   else "not recorded")
+    line = (f'{e(cohort["label"])} (version '
+            f'<code>{e(cohort["version_manifest_sha256"][:12])}</code>, {role}) · model '
             f'<code>{e(str(record.get("checkpoint_digest") or "")[:12])}</code> · '
-            f'deterministic {"on" if deterministic is True else "off" if deterministic is False else "not recorded"}'
-            f' · device <code>{e(regime.get("device"))}</code>')
+            f'deterministic {determinism} · device <code>{e(device)}</code>')
     tiles = "".join(
         f'<div class="shep-test-tile"><div class="shep-test-tile-l">{e(metric_text(mode, name))}</div>'
         f'<div class="shep-test-tile-v">{e(_number(metrics.get(name)))}</div>'
@@ -2036,8 +1991,7 @@ def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
                      f"{' at import' if task else ''}"
                      f"{': ' + e(reasons) if reasons else ''}")
     if kind == "kg_edges":
-        run = record.get("measured") if isinstance(record.get("measured"), Mapping) else {}
-        run = run.get("counts") if isinstance(run.get("counts"), Mapping) else {}
+        run = view["measured"]["counts"]
         coverage = (f"<b>{e(_count(run.get('pairs_scored')))} of {e(_count(counts.get('pairs')))}"
                     f"</b> stored pairs scored · {e(_count(counts.get('positive_edges')))} "
                     f"positive edges; {e(_count(counts.get('edges_without_negative')))} without a "
@@ -2065,13 +2019,13 @@ def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
     lines = [
         ("Coverage", coverage),
         *figures,
-        ("Score semantics", _semantics_text(scoring)),
-        ("Relations", _relations(record.get("relations"))),
-        *(_r10_lines(view.get("r10")) if kind == "supplied" else r.data_kind_lines(view)),
-        ("Environment", _environment(record)),
-        ("Native build", _native_build(record)),
+        ("Score semantics", _semantics_text(view["score_semantics"])),
+        ("Relations", _relations(view["relations"])),
+        *(r.r10_rows(view["r10"]) if kind == "supplied" else r.data_kind_lines(view)),
+        ("Environment", _environment(view)),
+        ("Native build", _native_build(view)),
     ]
-    origin = (record.get("dataset_record") or {}).get("origin") if isinstance(record.get("dataset_record"), Mapping) else None
+    origin = view["dataset_origin"]
     meaning = _ORIGIN_MEANING.get(origin)
     lines.append(("Dataset", (f'<b class="shep-amber-t">{e(origin)}</b>' if origin == "synthetic"
                               else e(origin or "not reported"))

@@ -67,6 +67,7 @@ gr = pytest.importorskip("gradio")
 pytest.importorskip("torch")
 
 from src.config.model_types import WRITTEN_BEFORE_SPEC  # noqa: E402
+from src.webui.components import renderers  # noqa: E402
 from src.webui.components import test_page as tp  # noqa: E402
 from tests.fixtures.capabilities import described  # noqa: E402
 from tests.fixtures.operator_access import (  # noqa: E402
@@ -355,7 +356,7 @@ def test_unverifiable_is_a_word_never_a_count():
                           "disease_overlap": {"state": "unverifiable", "k": None, "n": 5,
                                               "cases": None},
                           "phenotype_set_overlap": {"state": "unverifiable", "k": None, "n": 10}}}
-    lines = dict(tp._r10_lines(r10))
+    lines = dict(renderers.r10_rows(r10))  # the one R10 rendering the page shows
     validation = lines["R10, validation"]
     assert "<b>unverifiable</b>" in validation and " of " not in validation
     assert "3 of 5 distinct test diseases; 7 test cases" in lines["R10, training"]
@@ -404,7 +405,7 @@ def test_a_kept_reports_r10_reads_in_its_states_words_never_a_count(
 
     html = tp.result_html(reports, run_id, [], notes=[])
 
-    line = dict(tp._r10_lines(record["r10"]))["R10, training"]
+    line = dict(renderers.r10_rows(record["r10"]))["R10, training"]
     assert line.startswith(f'<span class="shep-muted">inputs ({evidence_words}):</span> ')
     for name in ("Training disease overlap", "Training phenotype-set overlap"):
         assert f"{name}: <b>unverifiable</b>: {reason}" in line
@@ -963,6 +964,54 @@ def test_the_result_names_its_native_build_as_a_lead_and_one_line_per_component(
             PYG_NATIVE_KIND, version="<b>1</b>")}}}}
     row = _native_row(tp._record_html(hostile, run, {}))
     assert "<img" not in row and "<b>" not in row and "&lt;img src=x" in row
+
+
+def test_the_result_shows_the_one_readers_view_of_its_record(site, monkeypatch):
+    """Stage 8b review (one reader of a result for every surface): every field
+    the Result shows but the metric values is the one reader's view of the
+    record (`record_views.result_view`, what the results service and Models
+    read by) and its R10 the one rendering (`renderers.r10_rows`), never the
+    page's own read of the raw record: a view that says otherwise than the
+    record is what is shown."""
+    import html as html_lib
+
+    from src.api.services import record_views
+
+    reports = tp.read_reports(LABEL)
+    run = tp.find(reports["runs"], "run_id", site.run_id)
+    record = run["record"]
+    assert record["cohort"]["kind"] == "supplied"
+    real = record_views.result_view
+
+    class Said:
+        def __init__(self, view):
+            self.view = view
+
+        def model_dump(self, mode="json"):
+            dump = self.view.model_dump(mode=mode)
+            dump["cohort"]["label"] = "label-from-the-view"
+            dump["environment_class"] = "class-from-the-view"
+            dump["score_semantics"] = "semantics-from-the-view"
+            dump["dataset_origin"] = "files"
+            dump["deterministic_algorithms"] = None
+            dump["native_identity"] = None
+            dump["r10"]["training"]["evidence"]["state"] = "not_recorded"
+            return dump
+
+    monkeypatch.setattr(record_views, "result_view", lambda value: Said(real(value)))
+    raw = tp._record_html(record, run, {})
+    text = html_lib.unescape(re.sub(r"<[^>]+>", " ", raw))
+    assert "label-from-the-view (version" in text
+    assert f"{record['cohort']['label']} (version" not in text
+    assert "class-from-the-view" in text and "semantics-from-the-view" in text
+    assert "deterministic not recorded" in text
+    assert record["dataset_record"]["origin"] != "files" and "files — built from" in text
+    assert _native_lines(raw) == ["not recorded"]
+    training = dict(renderers.r10_rows(
+        {**record["r10"], "training": {**record["r10"]["training"],
+                                       "evidence": {"state": "not_recorded"}}}))
+    assert training["R10, training"] in raw
+    assert "inputs (evidence not recorded by the checkpoint):" in text
 
 
 def test_a_result_of_another_or_no_mode_is_shown_as_recorded(site):

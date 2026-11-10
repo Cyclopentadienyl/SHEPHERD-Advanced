@@ -752,10 +752,14 @@ def query(sources: Iterable[SourceContext]) -> List[Dict[str, Any]]:
 #: What a query can be filtered by, each one or more paths into a result row
 #: (`ANY` steps into every item of a list): a row matches a filter when a value
 #: found along one of its paths is accepted; a row whose field is unknown or
-#: absent does not match a filter on it. A workspace is where the row was
-#: found: a listed checkpoint of its model, or a ledger holding its record
-#: (Models › Results scopes by it). Items that could not be read are kept
-#: whatever the filters, so a filter never hides one.
+#: absent (null) has no value there (`filter_values`), so it does not match a
+#: filter on it. A workspace is where the row was found: a listed checkpoint of
+#: its model, or a ledger holding its record (Models › Results scopes by it);
+#: it is compared by the workspace's name, so over several sources one name
+#: keeps that name's workspace in every source (each location names its
+#: ``source``). A row found in no listed workspace has no workspace. Items
+#: that could not be read are kept whatever the filters, so a filter never
+#: hides one.
 ANY = "*"
 FILTERS: Dict[str, Tuple[Tuple[str, ...], ...]] = {
     "family": (("model", "family_id"),),
@@ -797,8 +801,10 @@ def _found(value: Any, path: Sequence[str]) -> List[Any]:
 def filter_values(row: Mapping[str, Any], name: str) -> List[str]:
     """A result's values for one filter (`FILTERS`), as text, in the order
     found and each once: what a filter on `name` compares, and what a page
-    offers to filter by."""
-    values = [str(value) for path in FILTERS[name] for value in _found(row, path)]
+    offers to filter by. A field that is unknown or absent (null) gives no
+    value, so no filter value matches it (never the text "None")."""
+    values = [str(value) for path in FILTERS[name] for value in _found(row, path)
+              if value is not None]
     return list(dict.fromkeys(values))
 
 

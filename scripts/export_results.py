@@ -91,6 +91,16 @@ def _named(texts: Sequence[str], word: str) -> List[Tuple[str, str]]:
     return out
 
 
+#: A filter's help where "keep the results whose <name> is VALUE" would say
+#: less than it does.
+_FILTER_HELP = {
+    "workspace": ("keep the results found in a workspace named VALUE (a listed checkpoint "
+                  "of their model or a ledger holding their record); the name is matched "
+                  "in every named workspaces root, and each row's locations name the root "
+                  "it was found in"),
+}
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=("Export every kept and recorded result of the named workspaces roots and "
@@ -112,8 +122,9 @@ def build_parser() -> argparse.ArgumentParser:
     for name in results.FILTERS:
         parser.add_argument(f"--{name.replace('_', '-')}", action="append", default=[],
                             dest=name, metavar="VALUE",
-                            help=f"keep the results whose {name.replace('_', ' ')} is VALUE "
-                                 "(repeatable: any of the values)")
+                            help=_FILTER_HELP.get(name, f"keep the results whose "
+                                                        f"{name.replace('_', ' ')} is VALUE")
+                            + " (repeatable: any of the values)")
     parser.add_argument("--format", choices=("csv", "json"), required=True,
                         help="the long form as CSV (one header row) or JSON")
     parser.add_argument("--output", type=Path, default=None,

@@ -123,7 +123,8 @@ The Diagnosis page's "Model in use" card shows the loaded checkpoint's recorded 
 state (how many, and for how many the runs under the same conditions differ); Research › Evaluate › Models lists them, each with its run, and API clients
 read them through `GET /api/v1/evaluations/loaded-model`. Models' Results segment (research
 comparison Stage 8b) lists every result of a model's family or of the workspace through step 4's
-service, compares up to five side by side and exports them. The Test page measures a model as step 2
+service (the workspace's with any result found in no listed workspace, counted in either scope),
+compares up to five side by side and exports every one chosen or shown. The Test page measures a model as step 2
 does, by a protocol this build implements, chosen among those its listed capabilities admit:
 today one for each task head of a finetuned model, and the KG link-prediction measurement for a
 base and every finetune, which measures a KG edge set (research comparison Stage 5; its report is

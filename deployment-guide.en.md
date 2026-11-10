@@ -1790,9 +1790,11 @@ python scripts/export_results.py --workspaces-root lab=/data/lab/workspaces \
   weights among them) is a row with its reason, and hides nothing; a kept report whose run a
   listed ledger names in a record that cannot be read says so rather than "not registered";
   stderr counts them. Filters (`--family`, `--workspace` (where a row was found: a listed
-  checkpoint of its model or a ledger holding its record; since Stage 8b), `--protocol`,
-  `--data-kind`, `--role`, `--environment-class`, `--device`, `--torch-version`,
-  `--cuda-version`, `--software-revision`) always keep such rows.
+  checkpoint of its model or a ledger holding its record; since Stage 8b; it matches the
+  workspace's name in every named `--workspaces-root`, and each row's locations name the root),
+  `--protocol`, `--data-kind`, `--role`, `--environment-class`, `--device`, `--torch-version`,
+  `--cuda-version`, `--software-revision`) always keep such rows; a row whose field has no value
+  matches no filter on it.
 - `--output` must name a new file; an existing one is never overwritten. Without it the export goes
   to standard output.
 
@@ -2624,7 +2626,8 @@ reading the checkpoint is an operator control" on the card, and "dataset not sho
 control" in the run header. Research › Test (§4.14)
 uses the same check for its import (the intake list, Preview and Commit), Start test, Cancel,
 Register this report, Add note and its model list, and Research › Models for its checkpoint
-list and its Load (§4.14). Everything else stays open:
+list, its Load and its Results segment (reading, showing, comparing and exporting the results,
+since research comparison Stage 8b; §4.14). Everything else stays open:
 diagnosis, the HPO and disease lookups, the pipeline status and the saved UI paths, the training
 status and metrics, the workspace and cohort lists, the recorded results and the system pages.
 
@@ -3436,27 +3439,35 @@ card, any warning, and three segments:
   selected model's family, in this workspace) or **This workspace** (each result found in it: a
   listed checkpoint of its model, or a ledger holding its record), read by the one results
   service (the rows `scripts/export_results.py` exports) when the segment is opened, and again
-  with **↻ Read again**. **Protocol**, **Data kind**, **Role** and **Environment** filter them,
-  each offering the values the scope holds. One table per protocol, newest first by run time
+  with **↻ Read again**. A result found in no listed workspace (a kept report no listed ledger
+  registered, whose weights are not listed now: moved, or a `last.pt` saved over) is listed
+  under This workspace too, its model "Unknown" with why, and the line over the tables counts
+  such results in either scope, so none is hidden. **Protocol**, **Data kind**, **Role** and
+  **Environment** filter them, each offering the values the scope holds (a field without a
+  value offers none). One table per protocol, newest first by run time
   (the service's listing order, so nothing is ranked; nothing is ordered by a metric, and a
   default order for task records stays the owner's open item, BACKLOG 63). Each row: the run's
-  time and report, the model (fingerprint and kind), the data (label, kind and role), the
-  metrics as a record of that protocol shows them (a task's two figures, any other protocol's
-  every metric as recorded), the state (report kept, or "Report not available (ledger record
+  time and report, the model (fingerprint and kind; its family under This workspace), the data
+  (label, kind and role), the metrics as a record of that protocol shows them (a task's two
+  figures, unrounded where its condition group's runs differ on them; any other protocol's every
+  metric as recorded), the state (report kept, or "Report not available (ledger record
   only)"; registered, not registered or merged; ▲ report bytes that differ elsewhere; how its
   condition group compares), the exposure where its record holds one (a KG edge set's reading,
   a supplied cohort's R10 one click away; a generated split's is its allocation's, not
   compared) and the environment. Every item that could not be read is listed under the tables
-  with its reason, whatever the scope and filters. **Compare (up to 5)** puts the chosen
-  results side by side, one column each, **Differences only** on by default: the result, the
-  model (operation, parent, family, encoder, relation to the reference recipe, every spec value,
-  capabilities), the recorded and effective training settings, the data's identity and role,
-  the measurement, the environment, the exposure and every metric, as recorded. No difference
-  is computed, and each metric row is one protocol's (a result of another protocol reads
-  "another protocol" there); a field without a source reads "Unknown" with why. Five is this
-  view's cap only. **Export** writes the chosen results or every shown row (the unreadable
-  items among them), uncapped, as CSV or JSON through the export's one serializer (the columns
-  of `scripts/export_results.py`), as a file to download. Reading the results opens every
+  with its reason, whatever the scope and filters. **Compare** puts the first five of the
+  **Chosen results** side by side, one column each headed by its protocol, **Differences only**
+  on by default: the result, the model (operation, parent, family, encoder, relation to the
+  reference recipe, every spec value, capabilities), the recorded and effective training
+  settings, the data's identity and role, the measurement, the environment, the exposure and
+  every metric, as recorded, each group once. No difference is computed, and each metric row is
+  one protocol's (a result of another protocol reads "another protocol" there). Each missing
+  value keeps its words: a field without a source reads "Unknown" with why, a value recorded as
+  null "none", and a field the result's records do not hold "not recorded". Five is this view's
+  cap only: the choice is not capped. **Export** writes every chosen result or every shown row
+  (the unreadable items among them), uncapped, as CSV or JSON through the export's one
+  serializer (the columns and bytes of `scripts/export_results.py`), as a new file to
+  download. Reading the results opens every
   workspace's checkpoints, so each of these is an operator control (§4.13): a refused request
   reads and lists nothing and says why. Comparing results across workspaces is not built in
   this page yet; on the machine, `scripts/export_results.py` joins workspaces.

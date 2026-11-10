@@ -2074,9 +2074,10 @@ python scripts/export_results.py --workspaces-root lab=/data/lab/workspaces \
   報告、checkpoint 檔、ledger、被手動編輯的紀錄，包括沒有指名任何權重的紀錄）自成一列並附原因，
   不會遮蔽其他任何列；若列出的 ledger 中有指名某保存報告之 run 但無法讀取的紀錄，該報告會如實說明，
   而不是顯示「not registered」；stderr 會計數。篩選條件（`--family`、`--workspace`（找到該列的
-  workspace：列出其模型的 checkpoint，或持有其紀錄的 ledger；自 Stage 8b 起）、
+  workspace：列出其模型的 checkpoint，或持有其紀錄的 ledger；自 Stage 8b 起；它比對 workspace 的
+  名稱，在每個指定的 `--workspaces-root` 中都會比對，每一列的位置會寫出所在的根目錄）、
   `--protocol`、`--data-kind`、`--role`、`--environment-class`、`--device`、`--torch-version`、
-  `--cuda-version`、`--software-revision`）一律保留這些列。
+  `--cuda-version`、`--software-revision`）一律保留這些列；欄位沒有值的列不符合針對該欄位的任何篩選。
 - `--output` 必須是新檔案；既有檔案絕不會被覆寫。不給 `--output` 時匯出到標準輸出。
 
 ### 結束碼
@@ -2769,7 +2770,8 @@ M5 在 SPEC_4 的部署模式 **M1** 下執行：由 owner 或指定的技術人
 唯讀的瀏覽器在卡片上會看到 "not shown · reading the checkpoint is an operator control"，在 run 標題則看到
 "dataset not shown · operator control"。Research › Test（§4.14）對它的匯入（intake 清單、Preview 與
 Commit）、Start test、Cancel、Register this report、Add note 與模型清單使用同一個檢查，Research ›
-Models 的 checkpoint 清單與 Load（§4.14）也一樣。其餘一切保持開放：診斷、HPO 與疾病查詢、pipeline 狀態與儲存的 UI 路徑、訓練狀態與指標、
+Models 的 checkpoint 清單、Load 與 Results 分段（讀取、顯示、比較與匯出結果，自 research comparison
+Stage 8b 起；§4.14）也一樣。其餘一切保持開放：診斷、HPO 與疾病查詢、pipeline 狀態與儲存的 UI 路徑、訓練狀態與指標、
 workspace 與 cohort 清單、已記錄的結果，以及系統頁面。
 
 ### 什麼時候允許一個請求
@@ -3444,21 +3446,26 @@ Lineage 欄。沒有任何排列方式依測試分數為模型排名：依測試
 - **Results**（自 research comparison Stage 8b 起）：**This family**（選取模型的 family，在此
   workspace 內）或 **This workspace**（在其中找到的每個結果：列出其模型的 checkpoint，或持有其紀錄的
   ledger）的每個結果，由唯一的結果服務（即 `scripts/export_results.py` 匯出的那些列）在開啟此分段時
-  讀取，按 **↻ Read again** 再讀一次。**Protocol**、**Data kind**、**Role** 與 **Environment** 篩選
-  它們，各自提供此範圍內出現的值。每個協議一張表，依執行時間最新在前（即服務的列出順序，因此沒有任何
+  讀取，按 **↻ Read again** 再讀一次。不在任何列出之 workspace 中的結果（沒有任何列出的 ledger 登錄、
+  其權重目前也未被列出的保存報告：已搬移，或 `last.pt` 被覆寫）也列在 This workspace 之下，其模型讀作
+  「Unknown」並附原因；表格上方那一行在兩種範圍下都會計數這類結果，因此沒有任何結果被隱藏。
+  **Protocol**、**Data kind**、**Role** 與 **Environment** 篩選它們，各自提供此範圍內出現的值（沒有值的
+  欄位不提供選項）。每個協議一張表，依執行時間最新在前（即服務的列出順序，因此沒有任何
   排名；沒有依任何指標排序，任務紀錄的預設順序仍是擁有者未決的項目，BACKLOG 63）。每一列：執行時間與
-  報告、模型（指紋與種類）、資料（標籤、種類與 role）、依該協議紀錄的顯示方式呈現的指標（任務的兩個
-  指標，其他協議則列出每個指標的記錄原文）、狀態（報告已保留，或「Report not available (ledger record
+  報告、模型（指紋與種類；在 This workspace 下另列其 family）、資料（標籤、種類與 role）、依該協議紀錄
+  的顯示方式呈現的指標（任務的兩個指標，其條件群組的各次執行在某指標上不同時，該指標不四捨五入；其他
+  協議則列出每個指標的記錄原文）、狀態（報告已保留，或「Report not available (ledger record
   only)」；已登錄、未登錄或併入的紀錄；▲ 他處的報告位元組不同；其條件群組比較的情形）、紀錄中有的
   exposure（KG 邊集合的讀法，supplied cohort 的 R10 收在一次點擊之內；generated split 的關係是其分配
   方式的，不做比較）以及執行環境。每個無法讀取的項目都附原因列在表格下方，不受範圍與篩選影響。
-  **Compare (up to 5)** 將選取的結果並排，每個結果一欄，預設開啟 **Differences only**：結果、模型
-  （operation、parent、family、encoder、與參考配方的關係、每個 spec 值、能力）、記錄的與實際生效的
-  訓練設定、資料的識別與 role、量測、執行環境、exposure 與每個指標，皆依記錄原文。不計算任何差值，
-  每一列指標只屬於一個協議（其他協議的結果在該列讀作「another protocol」）；沒有來源的欄位讀作
-  「Unknown」並附原因。五個只是這個檢視的上限。**Export** 把選取的結果或所有顯示的列（包括其中無法讀取
-  的項目）不設上限地，以匯出唯一的序列化器（即 `scripts/export_results.py` 的欄位）寫成 CSV 或 JSON
-  檔供下載。讀取結果會開啟每個 workspace 的 checkpoint，因此這些都是操作者控制項（§4.13）：被拒絕的
+  **Compare** 將 **Chosen results** 中的前五個並排，每個結果一欄、欄首寫出其協議，預設開啟
+  **Differences only**：結果、模型（operation、parent、family、encoder、與參考配方的關係、每個 spec
+  值、能力）、記錄的與實際生效的訓練設定、資料的識別與 role、量測、執行環境、exposure 與每個指標，
+  皆依記錄原文，每一組只出現一次。不計算任何差值，每一列指標只屬於一個協議（其他協議的結果在該列讀作
+  「another protocol」）。每種缺值各有其字詞：沒有來源的欄位讀作「Unknown」並附原因，記錄為 null 的值
+  讀作「none」，結果的紀錄中完全沒有的欄位讀作「not recorded」。五個只是這個檢視的上限，選取本身不設
+  上限。**Export** 把每個選取的結果或所有顯示的列（包括其中無法讀取的項目）不設上限地，以匯出唯一的
+  序列化器（即 `scripts/export_results.py` 的欄位與位元組）寫成新的 CSV 或 JSON 檔供下載。讀取結果會開啟每個 workspace 的 checkpoint，因此這些都是操作者控制項（§4.13）：被拒絕的
   請求不讀取也不列出任何東西，並說明原因。在此頁面跨 workspace 比較結果尚未建置；在機器上，
   `scripts/export_results.py` 可合併多個 workspace。
 

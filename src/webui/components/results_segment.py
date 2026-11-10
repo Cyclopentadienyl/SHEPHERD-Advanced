@@ -14,12 +14,18 @@ without reading again:
 - **Scope**: this family (the selected model's family, in this workspace) or
   this workspace (every result found in it: a listed checkpoint of its model
   or a ledger holding its record), the service's own ``family`` and
-  ``workspace`` filters. Comparing across workspaces is not built in this
-  page this round: a capability gap, said in the empty and help text, not a
-  rule; the command line's export (`scripts/export_results.py`) joins
-  workspaces through the same service.
+  ``workspace`` filters. A result this server keeps that is found in no
+  listed workspace (a kept report no listed ledger registered, whose model's
+  weights are not listed now: moved, or a ``last.pt`` saved over) has no
+  workspace to be scoped by, so this workspace lists it too, its model
+  "Unknown" with why, and the status line counts it apart in either scope:
+  never hidden. Comparing across workspaces is not built in this page this
+  round: a capability gap, said in the empty and help text, not a rule; the
+  command line's export (`scripts/export_results.py`) joins workspaces
+  through the same service.
 - **Filters**: protocol, data kind, role and environment class, each offering
-  the values the scope's rows hold (the service's `filter_values`).
+  the values the scope's rows hold (the service's `filter_values`; a field
+  without a value offers none and matches no value).
 - **One table per protocol**, the tables in the order their protocols are
   first shown, each newest first by run time: the service's own listing order
   (runs by their run directory's time, then records merged before each run had
@@ -27,9 +33,11 @@ without reading again:
   ranked**. Nothing is ordered by a metric; a default order for task records
   and the figure each task is ordered by stay the owner's open item
   (`docs/working/BACKLOG.md` 63). Each row: its result (run time and report),
-  its model, its data (kind and role, never "test" for another role), its
-  metrics as Models shows a record of its protocol (a described task's two
-  figures, any other protocol's every metric as recorded), its state (report
+  its model (its family too in the workspace scope), its data (kind and
+  role, never "test" for another role), its metrics as Models shows a record
+  of its protocol (a described task's two figures, unrounded where its
+  condition group's runs differ on them, as Models' contest shows them; any
+  other protocol's every metric as recorded), its state (report
   kept or "report not available" for a ledger-only record; registered, not
   registered, merged, or a record naming it that cannot be read; bytes that
   differ elsewhere; how its condition group compares) and its exposure where
@@ -39,23 +47,27 @@ without reading again:
   reason after the tables, whatever the scope and filters (the service's
   filters never hide one).
 
-**Compare.** Up to five results chosen from those shown (`COMPARE_CAP`, a cap
-of this view only: a query and an export are never capped), in one table with
-the results as columns and **differences only** on by default: the rows of
+**Compare.** The first five of the results chosen from those shown
+(`COMPARE_CAP`, a cap of this view only: the choice, a query and an export
+are never capped), in one table with the results as columns (each headed by
+its protocol's words) and **differences only** on by default: the rows of
 model-side and run conditions (the operation, the parent and family, every
 value of the spec and its relation to the reference recipe, the recorded and
 effective training settings, the data's identity and role, the measurement's
-settings, the environment, the exposure) and each metric. **Values side by
-side, as recorded; no difference is computed.** Each metric row is one
-protocol's (its name with the protocol's words): a result of another protocol
-reads "another protocol" there, so two protocols' metrics are never one row as
-one scale. A field without a source reads "Unknown" with why (the row's
-``unknown``), never a number.
+settings, the environment, the exposure) and each metric, each group once,
+in that order. **Values side by side, as recorded; no difference is
+computed.** Each metric row is one protocol's (its name with the protocol's
+words): a result of another protocol reads "another protocol" there, so two
+protocols' metrics are never one row as one scale. Each missing value keeps
+its own words: a field without a source reads "Unknown" with why (the row's
+``unknown``), never a number; a value recorded as null reads "none"; a field
+the result's records do not hold at all reads "not recorded".
 
-**Export.** The chosen results or every row shown (the scope's and filters'
+**Export.** Every result chosen or every row shown (the scope's and filters'
 rows, the unreadable items among them), uncapped, through the service's one
-serializer (`results.to_csv`, `results.to_json`), as a file to download from
-the dashboard's one download directory (`src/webui/exports.py`).
+serializer (`results.to_csv`, `results.to_json`), as a new file to download
+from the dashboard's one download directory (`src/webui/exports.py`,
+`write_new`: its bytes are the serializer's text).
 
 **D8.** Listing results opens checkpoint files (the service lists every
 workspace's checkpoints, SPEC_4 C3), so every handler here, reading,
@@ -80,9 +92,11 @@ import gradio as gr
 
 from src.api.services import results as service
 from src.evaluation.caveats import (
+    DATA_KIND_WORDS,
     MEASUREMENT_NAMES,
     R10_LABEL_TEXT,
     TASK_NAMES,
+    label_words,
     metric_text,
     mode_label,
     mode_note,
@@ -94,7 +108,7 @@ from src.webui.components import model_list as ml
 from src.webui.components import models_page as mp
 from src.webui.components import renderers as r
 from src.webui.components.help import help_button
-from src.webui.exports import export_dir, file_slug
+from src.webui.exports import file_slug, write_new
 from src.webui.operator_access import operator_access
 from src.webui.shell import plain_html
 
@@ -116,10 +130,6 @@ SHOWN, SELECTED = "shown", "selected"
 EXPORT_ROWS = [("All shown", SHOWN), ("Selected", SELECTED)]
 EXPORT_FORMATS = [("CSV", "csv"), ("JSON", "json")]
 
-#: The words a data kind's option reads.
-KIND_WORDS = {"supplied": "Supplied cohort", "kg_edges": "KG edge set",
-              "generated": "Generated split"}
-
 #: Said where the scope holds nothing, and in the help: a gap, not a rule.
 CROSS_WORKSPACE_GAP = (
     "Comparing results across workspaces is not built in this page yet; on the machine, "
@@ -132,9 +142,9 @@ SEGMENT_HELP = {
         "Every kept report and readable ledger record of this family or this workspace, read "
         "by the one results service.\n"
         "• One table per protocol, newest first by run time; nothing is ordered by a metric.\n"
-        "• Compare shows up to five side by side, values as recorded, with no computed "
-        "difference.\n"
-        "• Export writes the chosen or every shown row as CSV or JSON, uncapped.\n"
+        "• Compare shows the first five chosen side by side, values as recorded, with no "
+        "computed difference.\n"
+        "• Export writes every chosen or every shown row as CSV or JSON, uncapped.\n"
         + CROSS_WORKSPACE_GAP,
     ),
 }
@@ -156,14 +166,13 @@ def protocol_words(protocol: Any) -> str:
 
 
 def _option_words(name: str, value: str) -> str:
-    """A filter value as its option reads: "Unknown" for a row whose field
-    has no value, the words of a protocol or a data kind, else as recorded."""
-    if value == "None":
-        return "Unknown"
+    """A filter value as its option reads: the words of a protocol or of a
+    data kind (`caveats.DATA_KIND_WORDS` as a label), else as recorded. A
+    field without a value offers no option (`results.filter_values`)."""
     if name == "protocol":
         return protocol_words(value)
-    if name == "data_kind":
-        return KIND_WORDS.get(value, value)
+    if name == "data_kind" and value in DATA_KIND_WORDS:
+        return label_words(DATA_KIND_WORDS[value])
     return value
 
 
@@ -237,15 +246,34 @@ def filter_choices(rows: Iterable[Mapping[str, Any]], name: str) -> List[Tuple[s
     return [("All", ALL), *((_option_words(name, value), value) for value in values)]
 
 
+def unplaced(row: Mapping[str, Any]) -> bool:
+    """Whether a result was found in no listed workspace: no listed
+    checkpoint is its model's and no listed ledger holds its record (a kept
+    report no listed ledger registered, whose weights are not listed now), so
+    the service's ``workspace`` filter has no value for it."""
+    return (row.get("result") != service.UNREADABLE
+            and not service.filter_values(row, "workspace"))
+
+
 def shown_results(rows: Sequence[Mapping[str, Any]], scope: Mapping[str, Any],
                   filters: Mapping[str, Any]) -> Dict[str, Any]:
     """The rows of `scope` (the service's ``workspace`` and ``family``
-    filters), each filter's options from them, and the rows the chosen filter
-    values keep (a value no longer offered reads as All): by index into
-    `rows`, in the service's order. Unreadable items are always kept."""
+    filters, and in this workspace also every result found in no listed
+    workspace, `unplaced`, which no workspace could hold otherwise), each
+    filter's options from them, and the rows the chosen filter values keep (a
+    value no longer offered reads as All): by index into `rows`, in the
+    service's order. Unreadable items are always kept. ``unplaced`` counts the
+    results found in no listed workspace, ``unplaced_in_scope`` those of them
+    in scope, so neither scope hides one without saying so."""
     indexed = list(enumerate(rows))
-    in_scope_ids = {id(row) for row in service.filtered([row for _i, row in indexed],
-                                                        _criteria(scope))}
+    criteria = _criteria(scope)
+    in_scope_ids = {id(row) for row in service.filtered([row for _i, row in indexed], criteria)}
+    # A result found in no listed workspace has no workspace to match: kept
+    # by its family alone (none is known today: its model is not listed).
+    homeless = [row for _i, row in indexed if unplaced(row)]
+    homeless_in_scope = service.filtered(
+        homeless, {name: values for name, values in criteria.items() if name != "workspace"})
+    in_scope_ids |= {id(row) for row in homeless_in_scope}
     in_scope = [(i, row) for i, row in indexed if id(row) in in_scope_ids]
     choices = {name: filter_choices((row for _i, row in in_scope), name) for name, _l in FILTERS}
     chosen = {}
@@ -257,7 +285,8 @@ def shown_results(rows: Sequence[Mapping[str, Any]], scope: Mapping[str, Any],
     kept_ids = {id(row) for row in service.filtered([row for _i, row in in_scope], criteria)}
     shown = [i for i, row in in_scope if id(row) in kept_ids]
     return {"choices": choices, "chosen": chosen, "shown": shown,
-            "in_scope": sum(1 for _i, row in in_scope if row.get("result") != service.UNREADABLE)}
+            "in_scope": sum(1 for _i, row in in_scope if row.get("result") != service.UNREADABLE),
+            "unplaced": len(homeless), "unplaced_in_scope": len(homeless_in_scope)}
 
 
 def _key(state: Mapping[str, Any], index: int) -> str:
@@ -306,7 +335,10 @@ def _digest_html(value: Any) -> str:
     return f'<code class="shep-fpv" title="{r.e(value)}">{r.e(r.short_hex(value))}</code>'
 
 
-def _model_cell(row: Mapping[str, Any]) -> str:
+def _model_cell(row: Mapping[str, Any], *, family: bool = True) -> str:
+    """The result's model: its fingerprint and what it is, and its family
+    where `family` (not in the family scope, whose status line names the one
+    family every row shares: one fact once)."""
     model = row.get("model") or {}
     unknown = row.get("unknown") or {}
     words = _model_words(model)
@@ -316,9 +348,9 @@ def _model_cell(row: Mapping[str, Any]) -> str:
                       f'{r.e(r.short_reason(why, 80))}</span>')
     else:
         words_html = r.e(words)
-    family = model.get("family_id")
-    sub = (f'<div class="shep-sub">family from {r.e(mp.run_words(family))}</div>'
-           if isinstance(family, str) else "")
+    family_id = model.get("family_id")
+    sub = (f'<div class="shep-sub">family from {r.e(mp.run_words(family_id))}</div>'
+           if family and isinstance(family_id, str) else "")
     return f'<div>{_digest_html(model.get("checkpoint_sha256"))} {words_html}</div>{sub}'
 
 
@@ -342,12 +374,25 @@ def _metric_value(metric: Mapping[str, Any]) -> str:
 
 
 def _metrics_cells(protocol: Any, row: Mapping[str, Any]) -> str:
+    """A described task's two figures, four decimals, as Models' columns show
+    them; a figure its condition group's runs differ on as recorded,
+    unrounded (`models_page.contested_value_text`, Models' contest), so two
+    runs that differ never read as equal beside "runs ... differ". Any other
+    protocol's every metric as recorded."""
     metrics = row.get("metrics") or []
     columns = mp.RECORD_COLUMNS.get(protocol)
     if columns:
         by_name = {m.get("name"): m.get("value") for m in metrics}
-        return "".join(f'<td class="shep-num">{r.e(mp.fmt_metric(name, by_name.get(name)))}</td>'
-                       for name in columns)
+        group = row.get("group") or {}
+        differing = (set(group.get("differing") or []) if group.get("state") == "contested"
+                     else set())
+        cells = []
+        for name in columns:
+            value = by_name.get(name)
+            text = (mp.contested_value_text(value) if name in differing
+                    else mp.fmt_metric(name, value))
+            cells.append(f'<td class="shep-num">{r.e(text)}</td>')
+        return "".join(cells)
     if not metrics:
         return '<td><span class="shep-muted">no metric recorded</span></td>'
     lines = "".join(f'<div><code>{r.e(m.get("name"))}</code> {r.e(_metric_value(m))}</div>'
@@ -424,12 +469,16 @@ def _metric_heads(protocol: Any) -> str:
     return '<th scope="col">Recorded metrics</th>'
 
 
-def protocol_table_html(protocol: Any, rows: Sequence[Mapping[str, Any]]) -> str:
+def protocol_table_html(protocol: Any, rows: Sequence[Mapping[str, Any]],
+                        scope: Optional[Mapping[str, Any]] = None) -> str:
     """One protocol's results as one table, in the order given (newest first,
-    the service's), each with its label, model, data, metrics, state,
-    exposure and environment; every value escaped."""
+    the service's), each with its label, model (its family unless `scope` is
+    a family's), data, metrics, state, exposure and environment; every value
+    escaped."""
+    family = (scope or {}).get("scope") != FAMILY
     body = "".join(
-        f'<tr><td class="shep-nowrap">{r.e(row_label(row))}</td><td>{_model_cell(row)}</td>'
+        f'<tr><td class="shep-nowrap">{r.e(row_label(row))}</td>'
+        f'<td>{_model_cell(row, family=family)}</td>'
         f'<td>{_data_cell(row)}</td>{_metrics_cells(protocol, row)}'
         f'<td>{_state_cell(row)}</td><td>{_exposure_cell(row)}</td>'
         f'<td>{_environment_cell(row)}</td></tr>' for row in rows)
@@ -486,19 +535,25 @@ def tables_html(state: Mapping[str, Any], scope: Mapping[str, Any],
     results = [row for row in listed if row.get("result") != service.UNREADABLE]
     unreadable = [row for row in listed if row.get("result") == service.UNREADABLE]
     parts = []
+    empty = (f'<p class="shep-mp-p">No result of {r.e(scope_words(scope))} yet: a Test run '
+             'that keeps a report, or a registered record, is listed here. '
+             f'{r.e(CROSS_WORKSPACE_GAP)}</p>')
     if not results:
         if shown.get("in_scope"):
             parts.append(f'<p class="shep-mp-p">No result of {r.e(scope_words(scope))} matches '
                          f'these filters; choose All to see its {shown["in_scope"]} '
                          'results.</p>')
         else:
-            parts.append(f'<p class="shep-mp-p">No result of {r.e(scope_words(scope))} yet: a '
-                         'Test run that keeps a report, or a registered record, is listed here. '
-                         f'{r.e(CROSS_WORKSPACE_GAP)}</p>')
+            parts.append(empty)
+    elif shown.get("in_scope", 0) == shown.get("unplaced_in_scope", 0):
+        # Only results found in no listed workspace (the status line says
+        # so): the scope itself holds none yet.
+        parts.append(empty)
     groups: Dict[Any, List[Mapping[str, Any]]] = {}
     for row in results:
         groups.setdefault(row.get("protocol"), []).append(row)
-    parts.extend(protocol_table_html(protocol, group) for protocol, group in groups.items())
+    parts.extend(protocol_table_html(protocol, group, scope)
+                 for protocol, group in groups.items())
     parts.append(unreadable_table_html(unreadable))
     return "".join(parts)
 
@@ -506,16 +561,36 @@ def tables_html(state: Mapping[str, Any], scope: Mapping[str, Any],
 def status_html(state: Mapping[str, Any], scope: Mapping[str, Any],
                 shown: Mapping[str, Any]) -> str:
     """One line over the tables: the scope, when the rows were read and how
-    many are in scope and shown (a note when the family scope fell back)."""
+    many are in scope and shown; under it, a note when the family scope fell
+    back, and the results found in no listed workspace (`unplaced_text`)."""
     if state.get("refused") or state.get("read_id") is None:
         return ""
     rows = state.get("rows") or []
     listed = [rows[i] for i in shown.get("shown") or []]
     n_shown = sum(1 for row in listed if row.get("result") != service.UNREADABLE)
-    note = (f'<div class="shep-sub">{r.e(scope["note"])}</div>' if scope.get("note") else "")
+    notes = [scope.get("note"), unplaced_text(scope, shown)]
+    note = "".join(f'<div class="shep-sub">{r.e(text)}</div>' for text in notes if text)
     return (f'<p class="shep-mp-p">Results of {r.e(scope_words(scope))}: {n_shown} shown of '
             f'{shown.get("in_scope", 0)} <span class="shep-muted">(read {r.e(state.get("read_at"))}'
             f')</span>{help_button("models-results", "Results")}</p>{note}')
+
+
+def unplaced_text(scope: Mapping[str, Any], shown: Mapping[str, Any]) -> Optional[str]:
+    """What the results found in no listed workspace (`unplaced`) are, and
+    where they are listed: among this workspace's, or, in the family scope,
+    under This workspace (no family is known for them). None when there are
+    none."""
+    count = shown.get("unplaced") or 0
+    if not count:
+        return None
+    one = count == 1
+    what = (f"{count} result{'' if one else 's'} found in no listed workspace (the weights "
+            f"{'it' if one else 'they'} measured are not listed now, and no listed ledger holds "
+            f"{'it' if one else 'them'})")
+    if shown.get("unplaced_in_scope"):
+        return f"Listed here too: {what}."
+    return (f"{what[:1].upper()}{what[1:]} {'has' if one else 'have'} no known family: "
+            f"This workspace lists {'it' if one else 'them'}.")
 
 
 # ---------------------------------------------------------------------------
@@ -523,6 +598,17 @@ def status_html(state: Mapping[str, Any], scope: Mapping[str, Any],
 # ---------------------------------------------------------------------------
 #: A value Compare shows for a metric row of another protocol's result.
 OTHER_PROTOCOL = object()
+#: A value Compare shows where a result's records do not hold the row's field
+#: at all ("not recorded"), apart from a value recorded as null ("none") and a
+#: field without a source ("Unknown" with why).
+ABSENT = object()
+#: Compare's groups of rows, in the order shown, each once.
+COMPARE_GROUPS = ("Result", "Model", "Training settings", "Data", "Measurement", "Environment",
+                  "Exposure", "Metrics", "References")
+#: Measurement settings Compare does not show as rows of their own: the mode
+#: is the result's protocol, which heads its column, and the score semantics
+#: has its own row (one fact once).
+_SHOWN_ELSEWHERE = ("mode", "score_semantics")
 #: How a result's condition group compares, in words (a description: it
 #: decides nothing).
 _GROUP_WORDS = {"uncontested": "agree", "contested": "differ",
@@ -539,12 +625,14 @@ def _flat(prefix: str, value: Any) -> List[Tuple[str, Any]]:
 
 def compare_fields(row: Mapping[str, Any]) -> List[Tuple[str, str, Any, Optional[str]]]:
     """A result's comparison rows, ``(group, label, value, unknown reason)``,
-    in the order Compare shows them: the result, the model (its operation,
-    parent, family, encoder, relation to the reference recipe, every value
-    of its spec, its capabilities), the training settings (rules, each
-    recorded learning setting and each effective one), the data (identity
-    and role), the measurement, the environment, the exposure and the
-    metrics (each named with its protocol). Values are the row's own."""
+    in the order Compare shows them (`COMPARE_GROUPS`): the result, the model
+    (its operation, parent, family, encoder, relation to the reference
+    recipe, every value of its spec, its capabilities), the training settings
+    (rules, each recorded learning setting and each effective one), the data
+    (identity and role), the measurement (each setting its record holds as a
+    value, and each it does not, Unknown with why), the environment, the
+    exposure and the metrics (each named with its protocol). The protocol is
+    not a row: it heads the result's column. Values are the row's own."""
     unknown = row.get("unknown") or {}
     model = row.get("model") or {}
     data = row.get("data") or {}
@@ -556,7 +644,6 @@ def compare_fields(row: Mapping[str, Any]) -> List[Tuple[str, str, Any, Optional
         return next((unknown[name] for name in names if name in unknown), None)
 
     out: List[Tuple[str, str, Any, Optional[str]]] = [
-        ("Result", "Protocol", row.get("protocol"), None),
         ("Result", "Run", row.get("run_id"), None),
         ("Result", "Report", row.get("report_sha256"), None),
         ("Result", "Report state", row.get("report"), why("report")),
@@ -591,8 +678,15 @@ def compare_fields(row: Mapping[str, Any]) -> List[Tuple[str, str, Any, Optional
     out.append(("Data", "Data counts", data.get("counts"), None))
     out.append(("Measurement", "Score semantics", row.get("semantics"), None))
     for name, value in measurement.items():
-        out.append(("Measurement", name.replace("_", " ").capitalize(), value,
-                    why(f"measurement.scoring.{name}", f"measurement.regime.{name}")))
+        if name not in _SHOWN_ELSEWHERE:
+            out.append(("Measurement", name.replace("_", " ").capitalize(), value, None))
+    # A setting its record does not hold as a value (the service's
+    # ``unknown``, "measurement.<block>.<field>"): Unknown, with why.
+    for path, reason in unknown.items():
+        block, _dot, name = path.partition(".")[2].partition(".")
+        if path.startswith("measurement.") and name and name not in _SHOWN_ELSEWHERE \
+                and block in ("scoring", "regime"):
+            out.append(("Measurement", name.replace("_", " ").capitalize(), None, reason))
     out.append(("Measurement", "Run counts", row.get("run_counts"), why("run_counts")))
     out += [("Environment", "Environment class", environment.get("class"), None),
             ("Environment", "GPU", environment.get("gpu"), None),
@@ -612,7 +706,7 @@ def compare_fields(row: Mapping[str, Any]) -> List[Tuple[str, str, Any, Optional
             evidence = (part.get("evidence") or {}).get("state")
             for label, words in labels.items():
                 out.append(("Exposure", f"R10 · {words['name']}",
-                            mp.r10_label_text(label, words["name"], part.get(label), evidence),
+                            r.r10_label_text(label, words["name"], part.get(label), evidence),
                             None))
     words = protocol_words(row.get("protocol"))
     for metric in row.get("metrics") or []:
@@ -635,16 +729,22 @@ def _compare_value(value: Any) -> str:
     recorded), so two values are equal exactly when they are recorded alike."""
     if value is OTHER_PROTOCOL:
         return "\x00other"
+    if value is ABSENT:
+        return "\x00absent"
     return json.dumps(value, sort_keys=True, ensure_ascii=True, default=str)
 
 
 def _cell_html(value: Any, why: Optional[str], *, full: bool) -> str:
-    """One Compare cell: "Unknown" with why for a field without a source;
-    "none" for a value recorded as null; a digest by its 12 hex digits (all of
-    them when its column's 12 do not tell it apart), the full value as its
-    title; an object as compact JSON; a number unrounded; text as recorded."""
+    """One Compare cell: "another protocol" on a metric row of another
+    protocol's result; "not recorded" for a field the result's records do not
+    hold at all; "Unknown" with why for a field without a source; "none" for
+    a value recorded as null; a digest by its 12 hex digits (all of them when
+    its column's 12 do not tell it apart), the full value as its title; an
+    object as compact JSON; a number unrounded; text as recorded."""
     if value is OTHER_PROTOCOL:
         return '<td class="shep-muted">another protocol</td>'
+    if value is ABSENT:
+        return '<td class="shep-muted">○ not recorded</td>'
     if value is None:
         if why:
             return (f'<td class="shep-muted" title="{r.e(why)}">○ Unknown: '
@@ -666,29 +766,40 @@ def compare_html(rows: Sequence[Mapping[str, Any]], differences_only: bool, *,
                  asked: int = 0) -> str:
     """The chosen results side by side (at most `COMPARE_CAP`, a cap of this
     view only), one column each, one row per field (`compare_fields`), the
-    rows grouped; with `differences_only`, only the rows whose values are not
+    rows grouped (`COMPARE_GROUPS`, each group once; within one, in the order
+    first found); with `differences_only`, only the rows whose values are not
     recorded alike in every column. Values as recorded: nothing is computed
-    from two of them. A metric row is one protocol's; another protocol's
-    result reads "another protocol" there. `asked` is how many were chosen
-    (more than the cap: the first five are shown, saying so)."""
+    from two of them. A metric row is one protocol's; a result of another
+    protocol reads "another protocol" there, and one of the same protocol
+    that does not record that metric reads "not recorded", as does any field
+    a result's records do not hold. `asked` is how many were chosen (more
+    than the cap: the first five are shown, saying so)."""
     if not rows:
-        return ('<p class="shep-mp-p shep-muted">Choose up to five results above to compare '
-                'them side by side.</p>')
+        return ('<p class="shep-mp-p shep-muted">Choose results above to compare them side by '
+                f'side ({COMPARE_CAP} at a time).</p>')
     columns = list(rows[:COMPARE_CAP])
     fields = [compare_fields(row) for row in columns]
     order: List[Tuple[str, str]] = []
     values: Dict[Tuple[str, str], List[Any]] = {}
     reasons: Dict[Tuple[str, str], List[Optional[str]]] = {}
     for index, found in enumerate(fields):
+        protocol = columns[index].get("protocol")
         for group, label, value, why in found:
             key = (group, label)
             if key not in values:
                 order.append(key)
-                fill = OTHER_PROTOCOL if group == "Metrics" else None
-                values[key] = [fill] * len(columns)
+                # A metric row is its protocol's (its label names it): a
+                # result of another protocol reads "another protocol", one of
+                # its protocol without the metric "not recorded".
+                values[key] = [OTHER_PROTOCOL if group == "Metrics"
+                               and column.get("protocol") != protocol else ABSENT
+                               for column in columns]
                 reasons[key] = [None] * len(columns)
             values[key][index] = value
             reasons[key][index] = why
+    # Each group once, in its place; within one, the order first found.
+    rank = {group: place for place, group in enumerate(COMPARE_GROUPS)}
+    order.sort(key=lambda key: rank.get(key[0], len(rank)))
     many = len(columns) > 1
     body, hidden, group_shown = [], 0, None
     for key in order:
@@ -742,18 +853,11 @@ def read_results(environ: Optional[Mapping[str, str]] = None) -> Dict[str, Any]:
 def export_file(rows: Sequence[Mapping[str, Any]], fmt: str, name: str) -> str:
     """`rows` through the service's one serializer, CSV or JSON, written as a
     new file of the dashboard's download directory named by `name` (no server
-    path) and the time; the file's path."""
+    path) and the time (`exports.write_new`: never replacing a file, its
+    bytes the serializer's text); the file's path."""
     text = service.to_json(rows) if fmt == "json" else service.to_csv(rows)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    directory = export_dir()
-    base = f"results_{file_slug(name, 'results')}_{stamp}"
-    path = directory / f"{base}.{fmt}"
-    counter = 2
-    while path.exists():
-        path = directory / f"{base}-{counter}.{fmt}"
-        counter += 1
-    path.write_text(text, encoding="utf-8")
-    return str(path)
+    return str(write_new(f"results_{file_slug(name, 'results')}_{stamp}", fmt, text))
 
 
 # ---------------------------------------------------------------------------
@@ -904,9 +1008,10 @@ def create_results_segment() -> Dict[str, Any]:
         parts["status"] = plain_html("", elem_id="shep-rs-status")
         parts["tables"] = plain_html(tables_html(EMPTY_STATE, {}, {}), elem_id="shep-rs-tables")
         with gr.Row(elem_classes=["shep-rs-row"]):
+            # No cap on the choice: Compare shows the first five and says
+            # so, and Export › Selected writes every one chosen (O6).
             parts["chosen"] = gr.Dropdown(choices=[], value=[], multiselect=True,
-                                          max_choices=COMPARE_CAP,
-                                          label=f"Compare (up to {COMPARE_CAP})",
+                                          label=f"Chosen results (Compare shows {COMPARE_CAP})",
                                           interactive=True, elem_id="shep-rs-chosen")
             parts["differences"] = gr.Checkbox(value=True, label="Differences only",
                                                elem_id="shep-rs-differences")
@@ -952,6 +1057,7 @@ def wire_results_segment(parts: Mapping[str, Any], *, seg: Any, listing: Any,
 __all__ = [
     "ALL",
     "COMPARE_CAP",
+    "COMPARE_GROUPS",
     "CROSS_WORKSPACE_GAP",
     "EMPTY_STATE",
     "FAMILY",
@@ -972,6 +1078,8 @@ __all__ = [
     "shown_results",
     "status_html",
     "tables_html",
+    "unplaced",
+    "unplaced_text",
     "unreadable_table_html",
     "wire_results_segment",
 ]

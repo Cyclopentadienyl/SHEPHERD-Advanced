@@ -5,9 +5,10 @@ Every file a page offers to download (the Diagnosis result's CSV and report,
 Models › Results' export) is written into one directory of this process,
 created on first use under the system's temporary directory, where Gradio
 serves a file a handler returns. Files are named by what they hold
-(`file_slug`), never by a server path. Moved here from the Diagnosis panel in
-research comparison Stage 8b, when Models › Results became its second page;
-periodic cleanup is future work, as it was.
+(`file_slug`), never by a server path; Models › Results writes each as a
+new file (`write_new`), never replacing one. Moved here from the Diagnosis
+panel in research comparison Stage 8b, when Models › Results became its
+second page; periodic cleanup is future work, as it was.
 
 Module: src/webui/exports.py
 """
@@ -37,4 +38,22 @@ def file_slug(value: Any, default: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value or "")).strip("_") or default
 
 
-__all__ = ["export_dir", "file_slug"]
+def write_new(name: str, extension: str, text: str) -> Path:
+    """`text` written as a new file of the download directory, named `name`
+    (already a `file_slug`) and `extension`, never replacing a file: a name
+    already taken becomes ``<name>-2``, ``<name>-3``, ... Each file is created
+    exclusively, so two writes at once never share one, and as UTF-8 with no
+    newline translation, so its bytes are the text's (as the command line's
+    export writes its file). Returns the file's path."""
+    directory = export_dir()
+    path, counter = directory / f"{name}.{extension}", 2
+    while True:
+        try:
+            with open(path, "x", encoding="utf-8", newline="") as handle:
+                handle.write(text)
+            return path
+        except FileExistsError:
+            path, counter = directory / f"{name}-{counter}.{extension}", counter + 1
+
+
+__all__ = ["export_dir", "file_slug", "write_new"]

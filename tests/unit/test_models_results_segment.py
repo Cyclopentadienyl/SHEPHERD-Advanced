@@ -10,11 +10,14 @@ own source and shown by scope and filters:
 - one table per protocol, newest first (the service's order), each row with
   its state (kept, registered, ledger-only "report not available") and its
   exposure where recorded; every unreadable item listed with its reason;
-- every value escaped;
+  every result found in no listed workspace listed in this workspace and
+  counted in either scope, never hidden;
+- every value escaped, in the tables, the status line and Compare;
 - Compare: at most five side by side, differences only by default, values as
-  recorded with no computed difference, each metric row one protocol's;
-- Export: the chosen or every shown row through the service's one
-  serializer, uncapped;
+  recorded with no computed difference, each metric row one protocol's, each
+  group once, each missing value in its own words;
+- Export: every chosen or shown row through the service's one serializer,
+  uncapped, its bytes the serializer's;
 - D8: every handler asks the one check first; a refused request reads and
   lists nothing and says why.
 
@@ -164,6 +167,8 @@ def test_the_family_scope_and_the_filters_narrow_and_never_hide_an_unreadable_it
         state["rows"][i]["result"] == service.UNREADABLE for i in everything["shown"])
     # The filters offer what the scope's rows hold; a value no longer offered reads All.
     assert ("Disease", "disease") in everything["choices"]["protocol"]
+    # A data kind's option in the caveats' one wording, as a label.
+    assert ("Supplied cohort version", "supplied") in everything["choices"]["data_kind"]
     assert ("KG edge set", "kg_edges") not in everything["choices"]["data_kind"]
     _s, _n, gone = _shown(state, protocol="kg_link_prediction")
     assert gone["chosen"]["protocol"] == rs.ALL
@@ -186,9 +191,87 @@ def test_an_empty_scope_says_what_appears_and_names_the_cross_workspace_gap(worl
     text = _text(rs.tables_html({**state, "shown": shown["shown"]}, scope, shown))
     assert "No result of workspace nowhere yet" in text
     assert rs.CROSS_WORKSPACE_GAP in text and "not built in this page yet" in text
+    # Only results found in no listed workspace are listed (the status line
+    # says what they are): the workspace itself holds none yet.
+    assert shown["in_scope"] == shown["unplaced_in_scope"] == 2
     assert "scripts/export_results.py" in rs.SEGMENT_HELP["models-results"][1]
     filtered, named, narrowed = _shown(state, role="no-such-role")
     assert narrowed["chosen"]["role"] == rs.ALL  # not offered: All
+
+
+def test_a_result_found_in_no_listed_workspace_is_listed_and_counted_never_hidden(
+        world, monkeypatch):
+    """Stage 8b review (O8; invariants 2 and 8): a kept report no listed ledger
+    registered, whose model's weights are not listed now (moved, or a
+    ``last.pt`` saved over), has no workspace to be scoped by. This workspace
+    lists it, its model Unknown with why, and the status line counts it; the
+    family scope, which cannot hold it (no family is known for it), says where
+    it is listed. The world's two such reports are of the checkpoint the
+    registry's store measured and no listed workspace holds."""
+    from src.webui.components import results_segment as rs
+
+    state = _state(world, monkeypatch)
+    homeless = [index for index, row in enumerate(state["rows"]) if rs.unplaced(row)]
+    assert len(homeless) == 2
+    assert all(state["rows"][i]["report"] == "kept" and not state["rows"][i]["ledgers"]
+               for i in homeless)
+    # This workspace: listed, Unknown with why, and counted apart.
+    named, scope, shown = _shown(state)
+    assert set(homeless) <= set(shown["shown"])
+    assert (shown["unplaced"], shown["unplaced_in_scope"]) == (2, 2)
+    tables = _text(rs.tables_html(named, scope, shown))
+    assert "Unknown: its checkpoint is not in a listed workspace" in tables
+    status = _text(rs.status_html(named, scope, shown))
+    assert f"{shown['in_scope']} shown of {shown['in_scope']}" in status
+    assert "Listed here too: 2 results found in no listed workspace" in status
+    # The family scope: not listed (no family is known), and said where they are.
+    named, scope, shown = _shown(state, scope="family")
+    assert not set(homeless) & set(shown["shown"])
+    assert (shown["unplaced"], shown["unplaced_in_scope"]) == (2, 0)
+    assert ("2 results found in no listed workspace (the weights they measured are not "
+            "listed now, and no listed ledger holds them) have no known family: This "
+            "workspace lists them.") in _text(rs.status_html(named, scope, shown))
+    # Compare and Export reach them like any shown result.
+    named, _scope, _shown_rows = _shown(state)
+    keys = [value for _label, value in rs.compare_choices(named)]
+    assert {f"{named['read_id']}:{i}" for i in homeless} <= set(keys)
+
+
+def test_the_family_is_said_once_in_the_family_scope(world, monkeypatch):
+    """Skill rule 1.2: the family scope's status line names the family every
+    row shares, so no row repeats it; the workspace scope, whose rows' families
+    differ, names each row's."""
+    from src.webui.components import results_segment as rs
+
+    state = _state(world, monkeypatch)
+    for scope_value, rows_say in ((rs.FAMILY, False), (rs.WORKSPACE, True)):
+        named, scope, shown = _shown(state, scope=scope_value)
+        text = _text(rs.tables_html(named, scope, shown))
+        assert ("family from" in text) is rows_say, scope_value
+
+
+def test_a_figure_the_group_differs_on_is_shown_unrounded(world, monkeypatch):
+    """Stage 8b review: beside "runs under these conditions differ", the
+    figures they differ on are shown as recorded, unrounded (Models' contest,
+    `contested_value_text`), so two runs that differ past the fourth decimal
+    never read as equal; a figure they agree on keeps four decimals."""
+    from src.webui.components import results_segment as rs
+
+    state, _scope, _shown_rows = _shown(_state(world, monkeypatch), protocol="disease")
+    row = copy.deepcopy(next(row for row in _results(state) if row["protocol"] == "disease"))
+    twin = copy.deepcopy(row)
+    for one, value in ((row, 0.30000001), (twin, 0.3)):
+        one["group"] = {"state": "contested", "differing": ["pooled_mrr"]}
+        one["measurement"]["deterministic_algorithms"] = True
+        for metric in one["metrics"]:
+            if metric["name"] == "pooled_mrr":
+                metric["value"] = value
+            if metric["name"] == "pooled_top10":
+                metric["value"] = 0.75
+    markup = rs.protocol_table_html("disease", [row, twin])
+    cells = re.findall(r'<td class="shep-num">([^<]*)</td>', markup)
+    assert cells == ["0.30000001", "0.7500", "0.3", "0.7500"]
+    assert "differ: pooled_mrr" in _text(markup)
 
 
 def test_every_value_in_the_tables_is_escaped(world, monkeypatch):
@@ -206,6 +289,35 @@ def test_every_value_in_the_tables_is_escaped(world, monkeypatch):
             metric["name"] = HOSTILE
     markup = rs.tables_html({**state, "rows": rows}, scope, shown)
     assert "<img" not in markup and html_lib.escape(HOSTILE) in markup
+
+
+def test_every_value_in_compare_and_the_status_line_is_escaped(world, monkeypatch):
+    """Task item 5 (Stage 8b review): Compare renders spec keys and values,
+    metric names, data labels, run ids, reasons and the protocol from rows a
+    hand-edited report controls, and the status line the workspace, the family
+    and the note; each is escaped, never markup."""
+    from src.webui.components import results_segment as rs
+
+    state, _scope, _shown_rows = _shown(_state(world, monkeypatch))
+    rows = copy.deepcopy(_results(state))[:2]
+    for row in rows:
+        row["model"]["spec"] = {HOSTILE: HOSTILE}
+        row["model"]["learning_settings"] = {HOSTILE: HOSTILE}
+        row["data"]["label"] = HOSTILE
+        row["run_id"] = HOSTILE
+        row["protocol"] = HOSTILE
+        row["unknown"] = {"model.operation": HOSTILE, "measurement.regime.device": HOSTILE}
+        row["model"]["operation"] = None
+        for metric in row["metrics"]:
+            metric["name"] = HOSTILE
+            metric["value"] = HOSTILE
+    for differences in (True, False):
+        markup = rs.compare_html(rows, differences)
+        assert "<img" not in markup and html_lib.escape(HOSTILE) in markup
+    scope = {"scope": rs.FAMILY, "workspace": HOSTILE, "family": HOSTILE, "note": HOSTILE}
+    status = rs.status_html({**state, "read_at": HOSTILE}, scope,
+                            {"shown": [], "in_scope": 0, "unplaced": 1, "unplaced_in_scope": 0})
+    assert "<img" not in status and html_lib.escape(HOSTILE) in status
 
 
 # ---------------------------------------------------------------------------
@@ -253,6 +365,18 @@ def test_compare_never_puts_two_protocols_metrics_on_one_row_and_caps_at_five(
     assert 'another protocol' in hits and "0.25" in hits
     mrr = re.search(r"<th scope=\"row\">pooled_mrr \(Disease\)</th>(.*?)</tr>", markup).group(1)
     assert "another protocol" in mrr
+    # Each group once, in its place: the second protocol's metrics are not
+    # split from the first's by References (Stage 8b review).
+    for every in (rs.compare_html([disease, odd], False), markup):
+        heads = re.findall(r'<th scope="colgroup"[^>]*>([^<]*)</th>', every)
+        assert len(heads) == len(set(heads))
+        assert heads == [group for group in rs.COMPARE_GROUPS if group in heads]
+    # The protocol is said once, in each column's head, in words: no
+    # "Protocol" row and no measurement "Mode" row (rule 1.2).
+    every = rs.compare_html([disease, odd], False)
+    assert '<th scope="row">Protocol</th>' not in every
+    assert '<th scope="row">Mode</th>' not in every
+    assert "Disease" in re.search(r"<thead>(.*?)</thead>", every).group(1)
     # Six chosen: five columns, saying so; a query and an export are never capped.
     six = (results * 6)[:6]
     capped = rs.compare_html(six, False, asked=6)
@@ -261,6 +385,39 @@ def test_compare_never_puts_two_protocols_metrics_on_one_row_and_caps_at_five(
     # A field without a source: Unknown with why, never a number.
     ledger_only = next(row for row in results if row["report"] == "report not available")
     assert "Unknown" in _text(rs.compare_html([ledger_only], False))
+
+
+def test_compare_says_each_missing_value_in_its_own_words(world, monkeypatch):
+    """Stage 8b review (skill §6): a result of the same protocol that does not
+    record a metric reads "not recorded" there, never "another protocol"; a
+    field a result's records do not hold at all (a spec key another spec has)
+    reads "not recorded", never "none", which is a value recorded as null; a
+    setting its record does not hold as a value reads Unknown with why."""
+    from src.webui.components import results_segment as rs
+
+    state, _scope, _shown_rows = _shown(_state(world, monkeypatch), protocol="disease")
+    listed = [row for row in _results(state) if "model.spec" not in row["unknown"]]
+    first, second = (copy.deepcopy(row) for row in listed[:2])
+    assert first["protocol"] == second["protocol"] == "disease"
+    first["metrics"].append({"name": "only_here", "value": 0.8, "status": "recorded",
+                             "unit": None, "denominator": None})
+    first["model"]["spec"] = {"chunk_size": 64, "hidden": 128, "dropout": None}
+    second["model"]["spec"] = {"hidden": 128, "dropout": 0.1}
+    second["measurement"].pop("device", None)
+    second["unknown"] = {**second["unknown"],
+                         "measurement.regime.device": "its record does not hold it as a value"}
+    first["measurement"]["device"] = "cuda:0"
+    markup = rs.compare_html([first, second], True)
+
+    def cells(label):
+        found = re.search(rf'<th scope="row">{re.escape(label)}</th>(.*?)</tr>', markup)
+        return [_text(cell) for cell in re.findall(r"<td[^>]*>.*?</td>", found.group(1))]
+
+    assert cells("only_here (Disease)") == ["0.8", "○ not recorded"]
+    assert cells("Spec · chunk_size") == ["64", "○ not recorded"]
+    assert cells("Spec · dropout") == ["none", "0.1"]
+    assert cells("Device") == ["cuda:0", "○ Unknown: its record does not hold it as a value"]
+    assert "another protocol" not in markup
 
 
 def test_compare_choices_are_unique_and_name_this_read_only(world, monkeypatch):
@@ -297,22 +454,28 @@ def test_export_writes_the_shown_or_chosen_rows_through_the_one_serializer(world
     path = Path(file_update["value"])
     shown = [state["rows"][i] for i in state["shown"]]
     assert path.parent == tmp_path / "downloads" and path.name.startswith("results_workspace-lab")
-    assert path.read_text(encoding="utf-8") == service.to_csv(shown)
+    # The file's bytes are the serializer's text, untranslated (as the
+    # command line writes its file).
+    assert path.read_bytes() == service.to_csv(shown).encode("utf-8")
     assert "unreadable item" in _text(note)
     # Uncapped: more rows than Compare's five, every one exported, shown or
-    # chosen (a choice of more than five comes only from a direct call).
+    # chosen (the choice itself is not capped: Compare shows the first five).
     many = {**state, "rows": _results(state) * 3}
     many["shown"] = list(range(len(many["rows"])))
     assert len(many["rows"]) > rs.COMPARE_CAP
     file_update, _note = rs._on_results_export(None, many, listing, selected, rs.WORKSPACE, [],
                                                rs.SHOWN, "json")
-    assert Path(file_update["value"]).read_text(encoding="utf-8") == service.to_json(
-        many["rows"])
+    assert Path(file_update["value"]).read_bytes() == service.to_json(
+        many["rows"]).encode("utf-8")
     keys = [f"{many['read_id']}:{index}" for index in many["shown"]][:rs.COMPARE_CAP + 2]
     file_update, _note = rs._on_results_export(None, many, listing, selected, rs.WORKSPACE,
                                                keys, rs.SELECTED, "json")
-    assert Path(file_update["value"]).read_text(encoding="utf-8") == service.to_json(
-        many["rows"][:rs.COMPARE_CAP + 2])
+    assert Path(file_update["value"]).read_bytes() == service.to_json(
+        many["rows"][:rs.COMPARE_CAP + 2]).encode("utf-8")
+    # Two exports of one name in one second: two files, neither replaced.
+    first = rs.export_file(shown, "csv", "same")
+    second = rs.export_file(shown, "csv", "same")
+    assert first != second and Path(first).read_bytes() == Path(second).read_bytes()
     # Nothing chosen: nothing written, the next step said.
     file_update, note = rs._on_results_export(None, state, listing, selected, rs.WORKSPACE, [],
                                               rs.SELECTED, "csv")
@@ -397,7 +560,9 @@ def test_the_segment_is_models_third_and_registers_every_i_it_draws(world, monke
         mp.create_models_page(standalone_context(demo, registry))
     by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
     assert {"shep-rs", "shep-rs-scope", "shep-rs-chosen", "shep-rs-export"} <= set(by_id)
-    assert by_id["shep-rs-chosen"].max_choices == rs.COMPARE_CAP
+    # The choice is not capped (Export › Selected takes every one chosen);
+    # Compare shows the first five and says so.
+    assert by_id["shep-rs-chosen"].max_choices is None
     assert by_id["shep-rs-differences"].value is True
     state, scope, shown = _shown(_state(world, monkeypatch))
     for key in registered_keys_in(rs.status_html(state, scope, shown)):

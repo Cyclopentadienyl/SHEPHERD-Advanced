@@ -112,8 +112,6 @@ from src.api.services.record_states import CohortVersions, key_text
 # Each mode's label and note, R10's and the relations' words: rendered, never reworded.
 from src.evaluation.caveats import (
     R10_LABEL_TEXT,
-    R10_STATE_TEXT,
-    R10_UNVERIFIABLE_REASON,
     RECORD_ABSENCE,
     RELATION_DISPLAY_NAMES,
     TASK_NAMES,
@@ -197,9 +195,6 @@ ORIGIN_MEANING = {
     "synthetic": "a generated stand-in, not a clinical knowledge graph",
     "files": "built from identified source files",
 }
-_R10_EVIDENCE = {"found": "found", "not_found": "not found", "unreadable": "found, not readable",
-                 "not_recorded": "not recorded by the checkpoint",
-                 "search_incomplete": "search incomplete"}
 _RELATION_SHORT = {"cohort_graph": "cohort↔graph"}
 
 #: The help texts this page's ⓘ name (registered through `ctx.help`).
@@ -326,7 +321,7 @@ def fmt_metric(name: str, value: Any) -> str:
     """A described measurement's value in its column or its words: four
     decimals. Every value is also shown unrounded, as recorded
     (`recorded_metric_html`), and a differing run's value only so
-    (`_contested_value`)."""
+    (`contested_value_text`)."""
     if not _number(value):
         return "not reported"
     return f"{value:.4f}"
@@ -606,10 +601,6 @@ def data_kind(view: Mapping[str, Any]) -> str:
     return kind if isinstance(kind, str) else "supplied"
 
 
-def _count_text(value: Any) -> str:
-    return str(value) if type(value) is int else "not reported"
-
-
 def role_text(view: Mapping[str, Any]) -> Optional[str]:
     """A version of another kind than a supplied cohort as the record's line
     names it, by its kind and role ("A KG edge set (test)", "A generated split
@@ -631,23 +622,24 @@ def coverage_html(view: Mapping[str, Any]) -> str:
     and diseases (each count's unit is in the record's counts, below)."""
     kind = data_kind(view)
     counts = view.get("counts") if isinstance(view.get("counts"), Mapping) else {}
+    count = r.recorded_count_text
     if kind == "kg_edges":
         run = _get(view, "measured", "counts")
         run = run if isinstance(run, Mapping) else {}
-        return (f'<div>{r.e(_count_text(run.get("pairs_scored")))} of '
-                f'{r.e(_count_text(counts.get("pairs")))} stored pairs scored</div>'
-                f'<div class="shep-sub">{r.e(_count_text(counts.get("positive_edges")))} '
-                f'positive edges; {r.e(_count_text(counts.get("edges_without_negative")))} '
+        return (f'<div>{r.e(count(run.get("pairs_scored")))} of '
+                f'{r.e(count(counts.get("pairs")))} stored pairs scored</div>'
+                f'<div class="shep-sub">{r.e(count(counts.get("positive_edges")))} '
+                f'positive edges; {r.e(count(counts.get("edges_without_negative")))} '
                 'without a negative to pair</div>')
     if kind == "generated":
-        ranked = (f"{_count_text(view.get('n_ranked'))} cases ranked by the model"
+        ranked = (f"{count(view.get('n_ranked'))} cases ranked by the model"
                   if record_mode(view) in TASK_NAMES else
-                  f"{_count_text(view.get('n_ranked'))} counted by the record; what they are is "
+                  f"{count(view.get('n_ranked'))} counted by the record; what they are is "
                   "not described for this mode")
         diseases = counts.get("diseases")
         return (f'<div>{r.e(ranked)}</div><div class="shep-sub">'
-                f'{r.e(_count_text(counts.get("samples")))} generated patients of '
-                f'{r.e(_count_text(diseases))} disease{"" if diseases == 1 else "s"}</div>')
+                f'{r.e(count(counts.get("samples")))} generated patients of '
+                f'{r.e(count(diseases))} disease{"" if diseases == 1 else "s"}</div>')
     excluded = counts.get("excluded") if isinstance(counts.get("excluded"), Mapping) else None
     if excluded is None:
         reasons = "not reported"
@@ -690,31 +682,14 @@ def relations_html(relations: Any) -> str:
             f'{r.e(" · ".join(short))}</span>')
 
 
-def r10_label_text(label: str, name: str, part: Any, evidence: Any) -> str:
-    """One R10 label in the caveats' words: a count with its denominator only
-    where the state has one; *unverifiable* is a reason, never a number."""
-    state = _get(part, "state")
-    words = R10_STATE_TEXT.get(state) if isinstance(state, str) else None
-    if state == "unverifiable" and isinstance(evidence, str):
-        words = R10_UNVERIFIABLE_REASON.get(evidence, words)
-    if words is None:
-        return f"{name}: not reported"
-    if state not in ("overlap", "none"):
-        return f"{name}: {words}"
-    unit = "distinct test diseases" if label == "disease_overlap" else "test cases"
-    text = f"{name}: {words} — {_get(part, 'k')} of {_get(part, 'n')} {unit}"
-    if label == "disease_overlap":
-        text += f"; {_get(part, 'cases')} test cases with one of them"
-    return text
-
-
 def _counts_fold(title: str, counts: Any, units: Any) -> str:
     """A version's or a run's counts, each with its unit as recorded, one
     click away: a closed disclosure, "<title> (N)"."""
     counts = counts if isinstance(counts, Mapping) else {}
     units = units if isinstance(units, Mapping) else {}
     lines = "".join(f'<span class="shep-mp-ln"><code>{r.e(name)}</code> '
-                    f'{r.e(_count_text(value))}: {r.e(units.get(name) or "unit not recorded")}'
+                    f'{r.e(r.recorded_count_text(value))}: '
+                    f'{r.e(units.get(name) or "unit not recorded")}'
                     '</span>' for name, value in counts.items())
     return (f'<details class="shep-mp-fold"><summary>{r.e(title)} ({len(counts)})</summary>'
             f'{lines}</details>')
@@ -743,19 +718,15 @@ def kind_html(view: Mapping[str, Any]) -> str:
 
 
 def r10_html(r10: Any) -> str:
-    lines = []
-    for scope, labels in R10_LABEL_TEXT.items():
-        part = _get(r10, scope)
-        evidence = _get(part, "evidence", "state")
-        found = _R10_EVIDENCE.get(evidence) if isinstance(evidence, str) else None
-        text = " · ".join(r10_label_text(label, words["name"], _get(part, label), evidence)
-                          for label, words in labels.items())
-        lines.append(f'<span class="shep-mp-ln"><b>R10, {r.e(scope)} inputs (evidence '
-                     f'{r.e(found or "not reported")}):</b> {r.e(text)}</span>')
-    return "".join(lines)
+    """A supplied cohort's R10, one line per scope, "R10, training inputs
+    (evidence found): …": the one rendering (`renderers.r10_rows`), its
+    scope's label in bold leading its row, as this page lays out a kind's
+    lines."""
+    return "".join(f'<span class="shep-mp-ln"><b>{r.e(label)}</b> {value}</span>'
+                   for label, value in r.r10_rows(r10))
 
 
-def _contested_value(value: Any) -> str:
+def contested_value_text(value: Any) -> str:
     """A differing run's value as `contest_html` shows it, whatever the mode:
     a finite number as recorded, unrounded (`caveats.recorded_value_text`), so
     two runs that differ never read as equal; null is "not reported"; a value
@@ -777,7 +748,7 @@ def contest_html(state: Optional[Mapping[str, Any]], *, mode: Optional[str],
                  deterministic: Optional[bool]) -> str:
     """How a record's condition group compares, beside it: "runs under these
     conditions differ" (with what differs, each metric named in the record's
-    `mode` and each run's value as recorded, `_contested_value`) or
+    `mode` and each run's value as recorded, `contested_value_text`) or
     "comparison incomplete"; nothing when the runs agree. Every
     caller gives the mode and whether the group records deterministic
     algorithms on (`deterministic`, from the record's regime: every run of the
@@ -795,7 +766,7 @@ def contest_html(state: Optional[Mapping[str, Any]], *, mode: Optional[str],
         values = []
         names = state.get("differing") or []
         for name in names:
-            per_run = [f"{_contested_value(run['values'][name])} (run "
+            per_run = [f"{contested_value_text(run['values'][name])} (run "
                        f"{run_time(run['run']) or run['run']})"
                        for run in state.get("runs") or [] if name in (run.get("values") or {})]
             if per_run:

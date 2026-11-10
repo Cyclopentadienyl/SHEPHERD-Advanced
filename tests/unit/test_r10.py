@@ -967,18 +967,19 @@ def test_the_four_states_are_the_ones_named():
 def test_every_reader_of_the_evidence_states_knows_each_one():
     """D6 (invariant). Every reader that enumerates the evidence states has
     each one: the caveats' unverifiable reasons (every state but "found"), the
-    API's `R10Evidence`, and the Test and Models pages' words. A state added
-    without its readers would read "not reported", or be refused as malformed."""
+    API's `R10Evidence`, and the dashboard's words (the one R10 rendering the
+    Test page, Models and Models › Results share, `renderers.r10_rows`). A
+    state added without its readers would read "not reported", or be refused
+    as malformed."""
     from typing import get_args
 
     from src.api.services.record_views import R10Evidence
     from src.evaluation.caveats import R10_UNVERIFIABLE_REASON
-    from src.webui.components import models_page, test_page
+    from src.webui.components import renderers
 
     assert set(R10_UNVERIFIABLE_REASON) == set(EVIDENCE_STATES) - {"found"}
     assert set(get_args(R10Evidence.model_fields["state"].annotation)) == set(EVIDENCE_STATES)
-    assert set(test_page._R10_EVIDENCE_WORDS) == set(EVIDENCE_STATES)
-    assert set(models_page._R10_EVIDENCE) == set(EVIDENCE_STATES)
+    assert set(renderers.R10_EVIDENCE_WORDS) == set(EVIDENCE_STATES)
 
 
 def test_an_empty_test_cohort_is_refused_before_any_read(workspace):

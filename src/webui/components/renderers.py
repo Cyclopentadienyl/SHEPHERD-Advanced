@@ -34,6 +34,9 @@ from typing import Any, Iterable, Mapping, NamedTuple, Optional, Sequence, Tuple
 from src.evaluation.caveats import (
     EXPOSURE_CAVEAT,
     GENERATED_EXPOSURE_NOTE,
+    R10_LABEL_TEXT,
+    R10_STATE_TEXT,
+    R10_UNVERIFIABLE_REASON,
     TASK_NAMES,
     exposure_text,
 )
@@ -818,8 +821,72 @@ def _kv(rows: Iterable[Tuple[str, str]], *, wide: Iterable[str] = ()) -> str:
     return f'<div class="shep-kv">{kv_cells(rows, wide=wide)}</div>'
 
 
-def _count_or_word(value: Any) -> str:
+def recorded_count_text(value: Any) -> str:
+    """A count as its record holds it (the integer as written, with no
+    separator), or "not reported" where the record holds no integer: the
+    words every result surface gives a recorded count in (Models' records, the
+    Test page's result, `data_kind_lines`, `r10_rows`)."""
     return str(value) if type(value) is int else "not reported"
+
+
+#: An R10 scope's evidence state in words (`record_views.R10Evidence`'s
+#: states): whether the inputs the checkpoint records were found.
+R10_EVIDENCE_WORDS = {
+    "found": "evidence found",
+    "not_found": "evidence not found",
+    "unreadable": "evidence found, not readable",
+    "not_recorded": "evidence not recorded by the checkpoint",
+    "search_incomplete": "evidence search incomplete",
+}
+
+
+def r10_label_text(label: str, name: str, part: Any, evidence: Any) -> str:
+    """One R10 label in the caveats' words, as text: a count with its
+    denominator only where the state has one; *unverifiable* is a reason
+    (by its scope's evidence state, `caveats.R10_UNVERIFIABLE_REASON`), never
+    a number. The text of `r10_rows` and of Models › Results' Compare."""
+    state = _get(part, "state")
+    words = R10_STATE_TEXT.get(state) if isinstance(state, str) else None
+    if state == "unverifiable" and isinstance(evidence, str):
+        words = R10_UNVERIFIABLE_REASON.get(evidence, words)
+    if words is None:
+        return f"{name}: not reported"
+    if state not in ("overlap", "none"):
+        return f"{name}: {words}"
+    unit = "distinct test diseases" if label == "disease_overlap" else "test cases"
+    text = (f"{name}: {words} — {recorded_count_text(_get(part, 'k'))} of "
+            f"{recorded_count_text(_get(part, 'n'))} {unit}")
+    if label == "disease_overlap":
+        text += f"; {recorded_count_text(_get(part, 'cases'))} test cases with one of them"
+    return text
+
+
+def r10_rows(r10: Any) -> list:
+    """**The one rendering of a supplied cohort's R10** (research comparison
+    Stage 8b), as ``(label, escaped HTML)`` rows, one per scope, from the one
+    reader's view of a record (its ``r10``: each scope's evidence state and its
+    disease and phenotype-set overlap): ``("R10, training", "inputs (evidence
+    found): Training disease overlap: … · Training phenotype-set overlap: …")``,
+    each label in `r10_label_text`'s words with *unverifiable* in bold. Models'
+    records and the Test page's result lay the rows out each their own way,
+    as they lay out `data_kind_lines`; the evidence's path is never read."""
+    rows = []
+    for scope, labels in R10_LABEL_TEXT.items():
+        part = _get(r10, scope)
+        evidence = _get(_get(part, "evidence"), "state")
+        found = R10_EVIDENCE_WORDS.get(evidence) if isinstance(evidence, str) else None
+        shown = []
+        for label, words in labels.items():
+            name = words["name"]
+            text = r10_label_text(label, name, _get(part, label), evidence)
+            lead = f"{name}: unverifiable"
+            shown.append(f"{e(name)}: <b>unverifiable</b>{e(text[len(lead):])}"
+                         if _get(_get(part, label), "state") == "unverifiable"
+                         and text.startswith(lead) else e(text))
+        rows.append((f"R10, {scope}",
+                     f'<span class="shep-muted">inputs ({e(found or "evidence not reported")}):'
+                     f'</span> {" · ".join(shown)}'))
+    return rows
 
 
 def data_kind_lines(view: Mapping[str, Any]) -> list:
@@ -877,8 +944,8 @@ def data_kind_lines(view: Mapping[str, Any]) -> list:
                                                           Mapping) else {}
     pairs = cohort.get("pairs") if isinstance(cohort.get("pairs"), Mapping) else {}
     graph = (f"Message passing over the split's {passing.get('part')} part, "
-             f"{_count_or_word(passing.get('edges'))} edges; pairs {pairs.get('rule')} with seed "
-             f"{pairs.get('seed')}, {_count_or_word(pairs.get('rows'))} rows")
+             f"{recorded_count_text(passing.get('edges'))} edges; pairs {pairs.get('rule')} "
+             f"with seed {pairs.get('seed')}, {recorded_count_text(pairs.get('rows'))} rows")
     measured = _get(view, "measured")
     statuses = measured.get("metrics") if isinstance(measured, Mapping) else None
     not_computed = [str(name) for name, status in (statuses or {}).items()
@@ -980,6 +1047,7 @@ __all__ = [
     "NOT_A_MEDICAL_DEVICE",
     "NO_READABLE_SPLIT_MANIFEST",
     "NO_SPLIT_MANIFEST",
+    "R10_EVIDENCE_WORDS",
     "RENDERER_HELP",
     "RecordedTests",
     "VALIDATION_LABELS",
@@ -1007,10 +1075,13 @@ __all__ = [
     "model_table_row_html",
     "not_trainable_short",
     "origin_of",
+    "r10_label_text",
+    "r10_rows",
     "record_chip",
     "record_kind_text",
     "record_read",
     "record_verified",
+    "recorded_count_text",
     "recorded_tests_cell",
     "recorded_tests_text",
     "run_label",
