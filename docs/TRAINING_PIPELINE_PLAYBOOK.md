@@ -150,7 +150,10 @@ here builds `shortest_paths.pt`, and the GB10 acceptance probe accepts a workspa
    SHA-256 of the downstream weights it started from, so two children of one
    base can be checked to start alike (with the recipe's seed they do). Both are
    ordinary task models, measured, registered, listed and exported like any
-   other, the freeze among their learning settings. It is set on the command
+   other, the freeze among their learning settings; Models › Results' Compare
+   and the export show each one's weight transfer and loss identity as recorded,
+   so the two downstream starts are compared there (an arm paused and resumed
+   keeps its stage's transfer in its record). It is set on the command
    line (`--frozen-parts graph_side`, below) or in the job runner's Fine-tune
    settings (`frozen_parts`, `POST /api/v1/training/finetune`); the Fine-tune
    page does not offer it in this round.
@@ -195,7 +198,9 @@ the continued run; its file is not changed. A parent
 with no rules recorded (K4's) or rules this version does not know is refused, and
 a continued or branched run never changes the freeze: a frozen run resumed or
 extended stays frozen, with the same optimizer groups restored, and a branch of
-it keeps its freeze (since Stage 9b).
+it keeps its freeze (since Stage 9b). A resumed or extended run records its
+stage's weight transfer, its parent's unchanged, so every checkpoint of a stage
+names the downstream weights the stage started from (since the Stage 9b fixes).
 
 The child is a new run in its own folder and records its parent by SHA-256. To
 train from a checkpoint with other settings, start a new run: changing settings

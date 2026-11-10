@@ -1770,7 +1770,11 @@ python scripts/export_results.py --workspaces-root lab=/data/lab/workspaces \
   server's lists find it (source, workspace, run and file), lineage, spec summary and structure
   (`spec`: every value of the model's spec as its record holds it), the training settings the
   checkpoint records (rules, learning settings, what took effect; a weights-only file records
-  none), the data's kind, label, role and digests, the measurement's protocol, settings and
+  none), its weight transfer and loss identity as its record holds them (`weight_transfer`: how
+  its stage's weights began, each part trainable or frozen and the SHA-256 of the downstream
+  weights training started from, where the record names them; `loss_identity`: the loss's terms
+  and coefficients and the terms without a trainable parameter), the data's kind, label, role
+  and digests, the measurement's protocol, settings and
   environment (class, regime, GPU, native build identity), a KG edge set's run counts
   (`run_counts`: pairs scored, pairs whose score was not finite), the data's relation to the
   model's training (a supplied cohort's R10 states and counts in `r10`; a KG edge set's exposure;
@@ -3135,7 +3139,9 @@ and trains only its patient encoder and task head, at the recipe's loss coeffici
 says the LP term has no trainable parameter, each part trainable or frozen, the frozen parts'
 forward mode and the SHA-256 of the downstream weights it started from (two children of one base
 and seed start alike). Resumed or extended it stays frozen, with the same optimizer groups
-restored. While
+restored, and its new checkpoints record their stage's weight transfer, their parent's
+unchanged, so an arm paused and resumed still names the downstream weights it started from (Models
+› Results shows it in Compare and the export). While
 the drawer is open the run bar shows Start (disabled: "close Continue… to start a new run"),
 **🔒 Continue Training** (disabled while the datasets differ, with the reason) and **Cancel**.
 A listed checkpoint is found again in the server's list. **The model fingerprint shown is the one
@@ -3480,7 +3486,9 @@ card, any warning, and three segments:
   **Chosen results** side by side, one column each headed by its protocol, **Differences only**
   on by default: the result, the model (operation, parent, family, encoder, relation to the
   reference recipe, every spec value, capabilities), the recorded and effective training
-  settings, the data's identity and role, the measurement, the environment, the exposure and
+  settings with the weight transfer and the loss identity (so two arms of one base are checked
+  to start from the same downstream weights here), the data's identity and role, the
+  measurement, the environment, the exposure and
   every metric, as recorded, each group once. No difference is computed, and each metric row is
   one protocol's (a result of another protocol reads "another protocol" there). Each missing
   value keeps its words: a field without a source reads "Unknown" with why, a value recorded as

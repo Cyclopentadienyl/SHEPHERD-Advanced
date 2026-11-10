@@ -41,6 +41,7 @@ Module: src/models/bundle/record.py
 """
 from __future__ import annotations
 
+import copy
 import math
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional, Tuple
@@ -171,10 +172,11 @@ PLAIN_DEPTH = 16
 PLAIN_VALUES = 10_000
 
 
-def _plain(name: str, value: Any) -> Any:
+def _plain(name: str, value: Any, consequence: str = "so it is not compared") -> Any:
     """A value the reader compares (the field `name`), as plain data that
     states its kind beside its content, or a `ModelRecordError` naming the
-    field.
+    field and saying `consequence` (what the caller does not do with it: a
+    compared claim is not compared, a part a list shows is not shown).
 
     A record is plain data, but the safe loader (`weights_only=True`) also
     accepts tensors, and Python's `==` gives no one answer for anything else
@@ -201,7 +203,7 @@ def _plain(name: str, value: Any) -> Any:
         walked[0] += 1
         if walked[0] > PLAIN_VALUES:
             raise ModelRecordError(f"the record's {name} holds more than {PLAIN_VALUES} values, "
-                                   "so it is not compared")
+                                   f"{consequence}")
         if part is None:
             return ("null",)
         if isinstance(part, bool):
@@ -209,32 +211,32 @@ def _plain(name: str, value: Any) -> Any:
         if isinstance(part, (int, float)):
             if isinstance(part, float) and not math.isfinite(part):
                 raise ModelRecordError(f"the record's {at} is {part!r}, not a finite number, "
-                                       "so it is not compared")
+                                       f"{consequence}")
             return ("number", part)
         if isinstance(part, str):
             why = text_problem(part)
             if why is not None:
-                raise ModelRecordError(f"the record's {at} {why}, so it is not compared")
+                raise ModelRecordError(f"the record's {at} {why}, {consequence}")
             return ("string", part)
         if not isinstance(part, (list, tuple, Mapping)):
             raise ModelRecordError(f"the record's {at} is a {type(part).__name__}, not plain "
-                                   "data, so it is not compared")
+                                   f"data, {consequence}")
         if id(part) in path:
             raise ModelRecordError(f"the record's {at} is a {type(part).__name__} that contains "
-                                   "itself, so it is not compared")
+                                   f"itself, {consequence}")
         if len(path) >= PLAIN_DEPTH:
             raise ModelRecordError(f"the record's {at} nests deeper than {PLAIN_DEPTH} levels, "
-                                   "so it is not compared")
+                                   f"{consequence}")
         path = path + (id(part),)
         if isinstance(part, Mapping):
             for key in part:
                 if not isinstance(key, str):
                     raise ModelRecordError(f"the record's {at} has a key that is not a string "
-                                           f"({type(key).__name__}), so it is not compared")
+                                           f"({type(key).__name__}), {consequence}")
                 why = text_problem(key)
                 if why is not None:
-                    raise ModelRecordError(f"the record's {at} has a key that {why}, so it is "
-                                           "not compared")
+                    raise ModelRecordError(f"the record's {at} has a key that {why}, "
+                                           f"{consequence}")
             return ("mapping", {k: read(f"{at}.{k}", v, path) for k, v in part.items()})
         return ("list", tuple(read(f"{at}[{i}]", v, path) for i, v in enumerate(part)))
 
@@ -489,7 +491,11 @@ def finetune_parent_problem(record: ModelRecord, payload: Mapping[str, Any]) -> 
 #: What a model list shows of a checkpoint's record (`listed_record`).
 LISTED_RECORD_FIELDS = ("record", "record_problem", "learning_stage", "task", "operation",
                         "family_id", "parent_sha256", "parent_run", "encoder", "reference",
-                        "differences", "capabilities", "spec")
+                        "differences", "capabilities", "spec", "weight_transfer",
+                        "loss_identity")
+#: The parts of a record a list shows as the record holds them (`listed_record`),
+#: each read as plain data first (`_plain`).
+_SHOWN_AS_RECORDED = ("weight_transfer", "loss_identity")
 
 
 def listed_record(payload: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
@@ -513,10 +519,21 @@ def listed_record(payload: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
     holds it, every value (`ModelSpec.to_dict`, without the reference
     recipe's provenance notes, `sources`): two variants that differ on one
     field differ here by value, whatever today's reference recipe is
-    (research comparison Stage 8, the results export)."""
+    (research comparison Stage 8, the results export). `weight_transfer` and
+    `loss_identity` are those parts of its record as it holds them (research
+    comparison Stage 9b fixes): how its stage's weights began (where the
+    record names them, each part trainable or frozen, the frozen parts'
+    forward mode and the SHA-256 of the downstream weights training started
+    from; none for a base, which loads nothing) and its loss (its terms and
+    coefficients, and the terms without a trainable parameter), so two arms
+    of one base are checked to start alike where they are listed and
+    compared. A part that is not plain data (`_plain`) refuses the summary as
+    a whole, with why, never half shown."""
     summary: Dict[str, Any] = dict.fromkeys(LISTED_RECORD_FIELDS)
     try:
         record = read_model_record(payload if payload is not None else {})
+        for name in _SHOWN_AS_RECORDED:
+            _plain(name, getattr(record, name), "so a list does not show the record")
     except ModelRecordError as exc:
         summary.update(record="refused", record_problem=str(exc))
         return summary
@@ -528,7 +545,8 @@ def listed_record(payload: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
                    encoder=record.model_spec.encoder.kind, reference=not differences,
                    differences=differences, capabilities=record.capabilities,
                    spec={name: value for name, value in record.model_spec.to_dict().items()
-                         if name != "sources"})
+                         if name != "sources"},
+                   **{name: copy.deepcopy(getattr(record, name)) for name in _SHOWN_AS_RECORDED})
     return summary
 
 

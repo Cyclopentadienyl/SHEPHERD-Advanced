@@ -442,7 +442,22 @@ def test_the_listed_record_states():
                      "task": "disease", "operation": "finetune", "family_id": BASE_RUN,
                      "parent_sha256": "a" * 64, "parent_run": BASE_RUN, "encoder": "gatv2",
                      "reference": False, "differences": SMALL_SPEC_DIFFERENCES,
-                     "capabilities": model_capabilities(spec), "spec": structure}
+                     "capabilities": model_capabilities(spec), "spec": structure,
+                     "weight_transfer": None,
+                     "loss_identity": {"terms": ["lp"], "lp_loss_weight": 1.0}}
+    # The weight transfer and the loss identity as the record holds them
+    # (research comparison Stage 9b fixes), copies; a part that is not plain
+    # data refuses the summary as a whole, with why, never half shown.
+    transfer = {"trainable": "all", "parts": {"input": "frozen"},
+                "downstream_initial_sha256": "d" * 64}
+    payload = {**_listed_form(_record_payload("disease")), "weight_transfer": transfer}
+    shown = listed_record(payload)
+    assert shown["weight_transfer"] == transfer and shown["weight_transfer"] is not transfer
+    payload["weight_transfer"] = {**transfer, "parts": {"input": torch.zeros(2)}}
+    unplain = listed_record(payload)
+    assert unplain["record"] == "refused" and unplain["weight_transfer"] is None
+    assert unplain["record_problem"] == ("the record's weight_transfer.parts.input is a Tensor, "
+                                         "not plain data, so a list does not show the record")
     base = listed_record(_listed_form(_record_payload()))
     assert (base["learning_stage"], base["task"], base["operation"], base["parent_sha256"]) == (
         "base", None, "new", None)

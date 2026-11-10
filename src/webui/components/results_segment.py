@@ -628,7 +628,9 @@ def compare_fields(row: Mapping[str, Any]) -> List[Tuple[str, str, Any, Optional
     in the order Compare shows them (`COMPARE_GROUPS`): the result, the model
     (its operation, parent, family, encoder, relation to the reference
     recipe, every value of its spec, its capabilities), the training settings
-    (rules, each recorded learning setting and each effective one), the data
+    (rules, each recorded learning setting and each effective one, then each
+    part of its weight transfer and of its loss identity as its record holds
+    them: how its stage's weights began and its loss's terms), the data
     (identity and role), the measurement (each setting its record holds as a
     value, and each it does not, Unknown with why), the environment, the
     exposure and the metrics (each named with its protocol). The protocol is
@@ -665,7 +667,8 @@ def compare_fields(row: Mapping[str, Any]) -> List[Tuple[str, str, Any, Optional
     out.append(("Training settings", "Training rules", model.get("training_rules"),
                 why("model.training_rules")))
     for prefix, name in (("Learning setting", "learning_settings"),
-                         ("Effective setting", "effective_settings")):
+                         ("Effective setting", "effective_settings"),
+                         ("Weight transfer", "weight_transfer"), ("Loss", "loss_identity")):
         for label, value in _flat(prefix, model.get(name)):
             out.append(("Training settings", label, value, why(f"model.{name}")))
     out += [("Data", "Data kind", data.get("kind"), None),

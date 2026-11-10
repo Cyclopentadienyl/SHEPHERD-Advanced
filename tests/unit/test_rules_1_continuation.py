@@ -23,7 +23,9 @@ scheduler state, mixed precision and scaler state, early stopping, validation
 preview says what the process logs, word for word: the same plan sentence for
 both forms, and the same decoded setting with its source, which the process
 logs in a sentence of its own. Every case is compatible: no rules-1
-continuation retires. The parents' files are never rewritten.
+continuation retires. A rules-2 finetune written before Stage 9b (its weight
+transfer without each part's freeze, `as_before_9b`) continues under its
+recorded freeze the same way. The parents' files are never rewritten.
 
 **Refused, with the reason, by the preview and the process in the same
 sentence:** a rules-1 record that names a freeze, a record of either rules
@@ -217,6 +219,13 @@ def test_a_rules_1_parent_continues_as_its_rules_2_form_does(runs, model, operat
     old_parent = _load(files[1])
     assert old_parent["training_rules"] == 1 and "frozen_parts" not in (
         old_parent["config"]["requested"])
+    if model != "base":
+        # The record shape the rules-1 build wrote: a transfer without each
+        # part's freeze, a loss identity without the untrained terms.
+        from tests.fixtures.trained_children import RELEASED_TRANSFER_KEYS
+
+        assert list(old_parent["weight_transfer"]) == list(RELEASED_TRANSFER_KEYS)
+        assert "terms_without_trainable_parameters" not in old_parent["loss_identity"]
 
     child_1, said_1, pairs_1, preview_1 = _continue(runs, model, operation, 1, tmp_path,
                                                     monkeypatch, caplog)
@@ -244,6 +253,10 @@ def test_a_rules_1_parent_continues_as_its_rules_2_form_does(runs, model, operat
     assert ("frozen_parts" in inherited_2) is (model != "base")
     assert recipe_1 == recipe_2
     assert {rules: _sha(path) for rules, path in files.items()} == before
+    if operation != "branch":
+        # A continuation records its stage's transfer as its parent holds it.
+        assert child_1["weight_transfer"] == old_parent["weight_transfer"]
+        assert child_2["weight_transfer"] == parent["weight_transfer"]
 
     # The one executor decided alike: optimizer groups, schedule, mixed
     # precision and its scaler, early stopping, validation, progress.
@@ -297,6 +310,51 @@ def test_a_rules_1_parent_continues_as_its_rules_2_form_does(runs, model, operat
         f"{name}={value!r}" for name, value in sorted(preview_1["inherited"].items()))) in said_1
     assert (preview_1["mode"], preview_1["start_epoch"], preview_1["end_epoch"]) == (
         preview_2["mode"], preview_2["start_epoch"], preview_2["end_epoch"])
+
+
+@pytest.mark.parametrize("operation", OPERATIONS)
+def test_a_rules_2_parent_written_before_9b_continues_with_nothing_frozen(
+        runs, operation, tmp_path, monkeypatch, caplog):
+    """A rules-2 finetune written before Stage 9b (Stage 9a, which applied no
+    freeze: `as_before_9b`) records `frozen_parts` "none" and a weight
+    transfer without each part's freeze (`parts`). The one transfer check
+    reads its "all" alone, so it continues under its recorded freeze, nothing
+    decoded, preview and process alike; a resume or an extension records that
+    transfer as its stage's, unchanged, and a branch makes its own. The
+    parent's file is not changed."""
+    from tests.fixtures.trained_children import RELEASED_TRANSFER_KEYS, as_before_9b
+
+    current = runs["files"][("disease", "paused" if operation == "resume" else "finished")][2]
+    parent = current.with_name(f"before9b-{tmp_path.name}.pt")
+    torch.save(as_before_9b(_load(current)), parent)
+    payload = _load(parent)
+    assert payload["training_rules"] == 2 and payload["config"]["requested"]["frozen_parts"] == (
+        "none")
+    assert list(payload["weight_transfer"]) == list(RELEASED_TRANSFER_KEYS)
+    assert "terms_without_trainable_parameters" not in payload["loss_identity"]
+    digest = _sha(parent)
+    fields = _fields(runs, "disease", operation, parent, tmp_path / "run")
+    preview = _preview(fields) if operation != "branch" else None
+    caplog.clear()
+    with caplog.at_level(logging.INFO):
+        _train(**fields)
+    said = [record.getMessage() for record in caplog.records]
+    child = _load(tmp_path / "run" / "checkpoints" / "last.pt")
+
+    assert child["config"]["requested"]["frozen_parts"] == "none"
+    recipe = child["config"]["effective"]["loaders"]["train"]["recipe"]
+    assert recipe["decoded_from_parent"] == {} and "frozen_parts" in recipe[
+        "inherited_from_parent"]
+    assert not any(s.startswith("Not in the parent's record") for s in said)
+    assert _sha(parent) == digest
+    if operation == "branch":
+        assert set(child["weight_transfer"]["parts"].values()) == {"trainable"}
+        assert child["weight_transfer"]["trainable"] == "all"
+        return
+    assert child["weight_transfer"] == payload["weight_transfer"]
+    assert preview["ok"], preview.get("reason")
+    assert f"{preview['action']}." in said
+    assert preview["inherited"]["frozen_parts"] == "none" and preview["decoded"] == {}
 
 
 # ---------------------------------------------------------------------------

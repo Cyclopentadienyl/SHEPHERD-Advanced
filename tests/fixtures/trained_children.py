@@ -67,18 +67,45 @@ RULES_1_RETIRED_SETTINGS = {
 }
 
 
-def as_rules_1(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """A checkpoint payload this build wrote, as the build of training rules 1
-    wrote the same run (research comparison Stage 9a: the branch at `cbd2e3f`,
-    the last commit of rules 1): `training_rules` 1, and the one setting rules
-    2 added, `frozen_parts`, nowhere in its record (not requested, not filled
-    from the recipe, not inherited, no setting decoded). Everything else is
-    the same bytes, the weights and the optimizer, scheduler and scaler state
-    included: rules 2 changed nothing else a checkpoint holds. A copy; the
-    payload given is not changed."""
+#: The keys of a weight transfer as every build before research comparison
+#: Stage 9b wrote one (rules 1 at `cbd2e3f`, and rules 2 at Stage 9a), every
+#: part trainable: the record shape without each part's freeze (`parts`), the
+#: frozen parts' forward mode and the downstream start's digest.
+RELEASED_TRANSFER_KEYS = ("loaded_from_parent", "initialised_new", "trainable", "optimizer")
+
+
+def as_before_9b(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """A checkpoint payload this build wrote with nothing frozen, as a build
+    of training rules 2 before research comparison Stage 9b (Stage 9a, which
+    had no freeze applied) wrote the same run: its weight transfer, where it
+    records one, with the released keys only (`RELEASED_TRANSFER_KEYS`), and
+    its loss identity without `terms_without_trainable_parameters`, the two
+    record parts Stage 9b added to. Everything else is the same bytes. A
+    copy; the payload given is not changed."""
     import copy
 
     old = copy.deepcopy(payload)
+    transfer = old.get("weight_transfer")
+    if isinstance(transfer, dict):
+        old["weight_transfer"] = {key: transfer[key] for key in RELEASED_TRANSFER_KEYS
+                                  if key in transfer}
+    if isinstance(old.get("loss_identity"), dict):
+        old["loss_identity"].pop("terms_without_trainable_parameters", None)
+    return old
+
+
+def as_rules_1(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """A checkpoint payload this build wrote with nothing frozen, as the build
+    of training rules 1 wrote the same run (research comparison Stage 9a: the
+    branch at `cbd2e3f`, the last commit of rules 1): its record as before
+    Stage 9b (`as_before_9b`: the released weight-transfer keys, the loss
+    identity without the terms without a trainable parameter), `training_rules`
+    1, and the one setting rules 2 added, `frozen_parts`, nowhere in its record
+    (not requested, not filled from the recipe, not inherited, no setting
+    decoded). Everything else is the same bytes, the weights and the
+    optimizer, scheduler and scaler state included: nothing else a checkpoint
+    holds changed since. A copy; the payload given is not changed."""
+    old = as_before_9b(payload)
     old["training_rules"] = 1
     config = old.get("config")
     if isinstance(config, dict):

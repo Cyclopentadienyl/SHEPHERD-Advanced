@@ -74,6 +74,7 @@ Version: 1.0.0
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import logging
 import os
@@ -1417,7 +1418,16 @@ def train(config: TrainConfig, explicit: Collection[str], *,
     # eval for the whole run, whatever calls `train()` (`ModelBundle.freeze`).
     # A resume restores the optimizer state of the same groups.
     bundle.freeze(FROZEN_PARTS[config.frozen_parts])
-    weight_transfer = None
+    # The stage's weight transfer: how the weights it trains began. A new
+    # base has none; a finetune and a branch make theirs here; a resume and an
+    # extension continue their parent's stage, whose freeze they keep (the
+    # settings decode checked that transfer against it), and record its
+    # transfer unchanged, so every checkpoint of a stage names the downstream
+    # weights it started from in its own record (research comparison Stage 9b
+    # fixes: two arms compared after a pause are checked where they are
+    # listed). A parent that records none passes none on.
+    weight_transfer = (copy.deepcopy(parent_record.weight_transfer)
+                       if parent_record is not None else None)
     if base_parent is not None:
         weight_transfer = _transfer_parent_weights(
             bundle, base_parent.checkpoint["state_dict"], new_parts=DOWNSTREAM_PARTS)

@@ -2057,7 +2057,10 @@ python scripts/export_results.py --workspaces-root lab=/data/lab/workspaces \
   的兩列，並列出相異的欄位。
 - **每列列出的內容**（以紀錄中有的為限）：checkpoint 的 SHA-256 與伺服器清單找到它的位置（來源、
   workspace、run 與檔案）、譜系、spec 摘要與結構（`spec`：紀錄中模型 spec 的每個值）、checkpoint
-  記錄的訓練設定（規則、學習設定、實際生效的設定；只有權重的檔案沒有記錄）、資料的種類、標籤、角色
+  記錄的訓練設定（規則、學習設定、實際生效的設定；只有權重的檔案沒有記錄）、紀錄中原樣的 weight
+  transfer 與 loss identity（`weight_transfer`：該階段權重如何開始，紀錄有寫明時包括每個部分可訓練
+  或凍結，以及開始訓練時下游權重的 SHA-256；`loss_identity`：損失的各項與係數，以及沒有可訓練參數
+  的項）、資料的種類、標籤、角色
   與 digest、量測的 protocol、設定與環境（類別、regime、GPU、原生建置身分）、KG 邊集合那次執行
   自己的計數（`run_counts`：評分的 pair 數、分數不是有限值的 pair 數）、資料與模型訓練的關係
   （supplied cohort 的 R10 狀態與計數在 `r10`；KG 邊集合的 exposure；generated split 的關係屬於它的
@@ -3205,7 +3208,8 @@ optimizer 參數群、整個 run 都以 evaluation 模式執行，所以 BatchNo
 dropout 關閉），只訓練 patient encoder 與 task head，損失係數沿用 recipe；它的紀錄寫明 LP 項沒有
 可訓練參數、每個部分可訓練或凍結、凍結部分的前向模式，以及開始訓練時下游權重的 SHA-256（同一
 base、同一 seed 的兩個子模型起點相同）。resume 或 extend 時仍維持凍結，並還原相同的 optimizer
-參數群。抽屜打開
+參數群；它新的 checkpoint 記錄所屬階段的 weight transfer（即 parent 的，原樣不變），所以暫停後再
+resume 的一組仍寫明它開始時的下游權重（Models › Results 的 Compare 與匯出會顯示）。抽屜打開
 期間，run bar 顯示 Start（停用：「close Continue… to start a new run」）、
 **🔒 Continue Training**（資料集不同時停用，並附原因）與 **Cancel**。從清單選的
 checkpoint 會在伺服器的清單中重新找到。**繼續訓練所用的就是所顯示的模型指紋**（於根因修正輪
@@ -3477,7 +3481,8 @@ Lineage 欄。沒有任何排列方式依測試分數為模型排名：依測試
   方式的，不做比較）以及執行環境。每個無法讀取的項目都附原因列在表格下方，不受範圍與篩選影響。
   **Compare** 將 **Chosen results** 中的前五個並排，每個結果一欄、欄首寫出其協議，預設開啟
   **Differences only**：結果、模型（operation、parent、family、encoder、與參考配方的關係、每個 spec
-  值、能力）、記錄的與實際生效的訓練設定、資料的識別與 role、量測、執行環境、exposure 與每個指標，
+  值、能力）、記錄的與實際生效的訓練設定以及 weight transfer 與 loss identity（同一 base 的兩組
+  可在此核對是否從相同的下游權重開始）、資料的識別與 role、量測、執行環境、exposure 與每個指標，
   皆依記錄原文，每一組只出現一次。不計算任何差值，每一列指標只屬於一個協議（其他協議的結果在該列讀作
   「another protocol」）。每種缺值各有其字詞：沒有來源的欄位讀作「Unknown」並附原因，記錄為 null 的值
   讀作「none」，結果的紀錄中完全沒有的欄位讀作「not recorded」。五個只是這個檢視的上限，選取本身不設

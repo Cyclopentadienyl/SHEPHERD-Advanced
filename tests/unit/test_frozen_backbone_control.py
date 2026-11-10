@@ -23,15 +23,20 @@ children trained by `scripts/train_model.py`'s own `train`):
   training started: equal for two arms of one base and seed, different when
   the downstream initialisation differs, and the digest of what the build
   starts from;
-- a resume and an extension keep the freeze with the same optimizer groups, a
-  branch keeps it too, and another freeze stated on a continuation is refused,
-  by the job runner's preview and the process in one sentence;
+- a resume and an extension keep the freeze with the same optimizer groups and
+  record their stage's weight transfer, their parent's unchanged; a branch
+  keeps the freeze too, and another freeze stated on a continuation is
+  refused, by the job runner's preview and the process in one sentence;
+- a loss that reaches no trainable parameter is skipped only in a model with a
+  frozen part; with nothing frozen it fails, as before;
 - the job runner's Fine-tune start and the CLI take the setting, and the run
   the runner starts trains as previewed;
 - both arms are ordinary disease children measured by the one disease
   evaluator, registered, and listed and exported by the results service with
-  their freeze among the recorded learning settings; a child continued from a
-  rules-1 parent shows the decoded freeze and its source there too.
+  their freeze among the recorded learning settings, and their weight transfer
+  and loss identity as recorded (the downstream start's digest equal for the
+  two arms, in Compare and in the export); a child continued from a rules-1
+  parent shows the decoded freeze and its source there too.
 
 Not claimed: that the control's numbers are better or worse (no accuracy
 condition), or identical weights across an interruption (never promised).
@@ -371,6 +376,34 @@ def test_a_step_whose_loss_reaches_no_trainable_parameter_is_skipped_and_counted
     assert not torch.equal(model.free.weight, before)
 
 
+def test_a_loss_without_a_gradient_still_fails_in_a_model_with_nothing_frozen():
+    """The skip is the freeze's alone: in a model every parameter of which
+    trains (the full arm, any run without a freeze), a loss that reaches no
+    trainable parameter is a fault (a forward run without gradients, a term
+    detached by mistake), and it fails at its backward as before Stage 9b,
+    never finishing a run with no update."""
+    from src.training.callbacks import Callback
+    from src.training.lp_task import StepResult
+    from src.training.trainer import Trainer, TrainerConfig
+
+    class _Quiet(Callback):
+        pass
+
+    class _Task:
+        selection_metric = "val_pooled_mrr"
+
+        def training_step(self, model, batch, device):
+            with torch.no_grad():
+                return StepResult(model(torch.ones(1, 2)).sum(), {"task": 2.0}, {})
+
+    trainer = Trainer(model=torch.nn.Linear(2, 1), train_dataloader=["detached"],
+                      config=TrainerConfig(device="cpu", max_grad_norm=0.0), task=_Task(),
+                      callbacks=[_Quiet()])
+    with pytest.raises(RuntimeError, match="does not require grad"):
+        trainer._train_epoch(0)
+    assert trainer.state.optimizer_updates == 0
+
+
 # ---------------------------------------------------------------------------
 # The record
 # ---------------------------------------------------------------------------
@@ -445,7 +478,8 @@ def _preview(fields):
 @pytest.mark.parametrize("operation", ["resume", "extend", "branch"])
 def test_a_continued_or_branched_frozen_run_keeps_its_freeze(world, tmp_path, operation, caplog):
     """A resume and an extension inherit the freeze, rebuild the same
-    optimizer groups and restore the parent's optimizer into them, and the
+    optimizer groups and restore the parent's optimizer into them, record
+    their stage's weight transfer (their parent's, unchanged), and the
     preview says what the process does; a branch keeps the freeze with a new
     optimizer, its record naming the downstream weights it starts from (its
     parent's). The graph side stays the base's throughout."""
@@ -487,7 +521,12 @@ def test_a_continued_or_branched_frozen_run_keeps_its_freeze(world, tmp_path, op
         assert [len(g["params"]) for g in _groups(child)] == [
             len(g["params"]) for g in _groups(parent)]
         return
-    assert record.weight_transfer is None, "a continuation transfers nothing"
+    # A continuation records its stage's transfer, its parent's unchanged, so
+    # the checkpoint a paused arm ends with names the downstream weights its
+    # stage started from, as the arm trained without a pause does.
+    assert record.weight_transfer == read_model_record(parent).weight_transfer
+    assert record.weight_transfer["downstream_initial_sha256"] == read_model_record(
+        _load(world["files"]["control"])).weight_transfer["downstream_initial_sha256"]
     groups, parents = _groups(child), _groups(parent)
     assert [g["params"] for g in groups] == [g["params"] for g in parents]
     assert [g["weight_decay"] for g in groups] == [g["weight_decay"] for g in parents]
@@ -661,6 +700,29 @@ def test_both_arms_are_measured_registered_listed_and_exported_with_their_freeze
     assert shown["full"][("Training settings", "Learning setting · frozen_parts")] == "none"
     assert "decoded from rules 1" in json.dumps(
         shown["decoded"][("Training settings", "Effective setting · loaders")])
+    # The weight transfer and the loss identity as each record holds them,
+    # through the same listing: the two arms start from one downstream digest,
+    # checked where they are compared; the control's parts frozen and its LP
+    # term without a trainable parameter; the child extended from the rules-1
+    # form records its stage's transfer as that form holds it (no parts), and
+    # its own loss identity, written by this build.
+    transfers = {name: row["model"]["weight_transfer"] for name, row in rows.items()}
+    for name, path in checkpoints.items():
+        assert transfers[name] == _load(path)["weight_transfer"], name
+        assert rows[name]["model"]["loss_identity"] == _load(path)["loss_identity"], name
+    digest = ("Training settings", "Weight transfer · downstream_initial_sha256")
+    assert shown["control"][digest] == shown["full"][digest] == (
+        transfers["control"]["downstream_initial_sha256"])
+    assert shown["control"][("Training settings", "Weight transfer · parts")] == {
+        **dict.fromkeys(GRAPH_SIDE, "frozen"), **dict.fromkeys(DOWNSTREAM, "trainable")}
+    assert shown["control"][("Training settings", "Weight transfer · frozen_forward")] == "eval"
+    untrained = ("Training settings", "Loss · terms_without_trainable_parameters")
+    assert (shown["control"][untrained], shown["full"][untrained]) == (["lp"], [])
+    assert transfers["decoded"] == {"loaded_from_parent": sorted(GRAPH_SIDE),
+                                    "initialised_new": list(DOWNSTREAM), "trainable": "all",
+                                    "optimizer": "new"}
+    assert shown["decoded"][untrained] == []
+    assert ("Training settings", "Weight transfer · parts") not in shown["decoded"]
     # The export: the same rows, the freeze in each one's learning settings.
     table = list(csv.DictReader(io.StringIO(results.to_csv(list(rows.values())))))
     by_model = {}
@@ -672,3 +734,8 @@ def test_both_arms_are_measured_registered_listed_and_exported_with_their_freeze
     assert "decoded from rules 1" in next(
         line["effective_settings"] for line in table
         if line["checkpoint_sha256"] == f"sha256:{_sha(checkpoints['decoded'])}")
+    exported = {line["checkpoint_sha256"]: (json.loads(line["weight_transfer"]),
+                                            json.loads(line["loss_identity"]))
+                for line in table}
+    assert {name: exported[f"sha256:{_sha(path)}"] for name, path in checkpoints.items()} == {
+        name: (transfers[name], rows[name]["model"]["loss_identity"]) for name in checkpoints}

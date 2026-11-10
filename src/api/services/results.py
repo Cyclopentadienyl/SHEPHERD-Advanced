@@ -67,7 +67,11 @@ source, workspace, run and file, never a path), lineage, spec summary and
 structure, every value of its spec (`listed_record`), its training settings as
 the checkpoint records them
 (`run_plan.recorded_training_settings`: rules, learning settings and what took
-effect, whether or not a freeze setting exists), its data identity and role,
+effect, whether or not a freeze setting exists), its weight transfer and loss
+identity as its record holds them (`listed_record`: how its stage's weights
+began, each part trainable or frozen and the downstream start's SHA-256 where
+the record names them, and its loss's terms and coefficients, the terms
+without a trainable parameter among them), its data identity and role,
 its measurement settings and protocol (`record_views.recorded_settings`), its
 metrics as recorded (each value as its record holds it, an integer as an
 integer) and a KG edge set's run counts, its environment (the class, the
@@ -470,16 +474,18 @@ def read_all(sources: Iterable[SourceContext]) -> _Read:
 # ---------------------------------------------------------------------------
 #: A model's fields read from its listed checkpoint's record (`listed_record`).
 _MODEL_FIELDS = ("learning_stage", "task", "operation", "family_id", "parent_sha256",
-                 "parent_run", "encoder", "reference", "differences", "spec", "capabilities")
+                 "parent_run", "encoder", "reference", "differences", "spec", "capabilities",
+                 "weight_transfer", "loss_identity")
 _SETTINGS_FIELDS = ("training_rules", "learning_settings", "effective_settings")
 
 
 def _model(read: _Read, checkpoint: Optional[str], unknown: Dict[str, str]) -> Dict[str, Any]:
     """A result's model as the server's lists find its checkpoint: its
     locations (source, workspace and listing key; never a path), its lineage,
-    its spec summary and structure and its recorded training settings, from
-    the first location whose file was read; a checkpoint listed only with a
-    problem, or not listed, has them unknown with why."""
+    its spec summary and structure, its weight transfer and loss identity as
+    its record holds them, and its recorded training settings, from the first
+    location whose file was read; a checkpoint listed only with a problem, or
+    not listed, has them unknown with why."""
     from src.api.services.record_views import item_was_read
 
     listed = read.models.get(checkpoint or "", [])
@@ -867,6 +873,8 @@ COLUMNS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     ("training_rules", ("model", "training_rules")),
     ("learning_settings", ("model", "learning_settings")),
     ("effective_settings", ("model", "effective_settings")),
+    ("weight_transfer", ("model", "weight_transfer")),
+    ("loss_identity", ("model", "loss_identity")),
     ("run_id", ("run_id",)),
     ("report_sha256", ("report_sha256",)),
     ("report", ("report",)),

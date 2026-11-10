@@ -204,7 +204,12 @@ class CheckpointItem:
     whether there are none (`reference`), its capability description
     (`capabilities`), from which every consumer judges a new measurement of it
     (`src.evaluation.protocols`), and its structure, every value of its spec
-    as its record holds it (`spec`, research comparison Stage 8). All `None`
+    as its record holds it (`spec`, research comparison Stage 8), and its
+    weight transfer and loss identity as its record holds them
+    (`weight_transfer`, `loss_identity`, research comparison Stage 9b fixes:
+    each part trainable or frozen, the frozen parts' forward mode and the
+    downstream start's SHA-256, where the record names them; the loss's terms
+    and coefficients and the terms without a trainable parameter). All `None`
     for a file that was not read.
 
     `training_settings` are the file's training settings as it records them
@@ -254,6 +259,8 @@ class CheckpointItem:
     run_key: Optional[str] = None
     training_settings: Optional[Dict[str, Any]] = None
     spec: Optional[Dict[str, Any]] = None
+    weight_transfer: Optional[Dict[str, Any]] = None
+    loss_identity: Optional[Dict[str, Any]] = None
 
     def __post_init__(self) -> None:
         from src.utils.checkpoint_paths import listing_key
