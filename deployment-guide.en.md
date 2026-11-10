@@ -1174,11 +1174,14 @@ why. Any reading S1 cannot take is recorded as a state with its reason, never as
 
 **S1 is informational.** It is in neither of the acceptance's required lists, has no threshold
 and judges nothing, so a slow or large reading never leaves the acceptance incomplete. It fails
-only when it could not read the child at all: the service did not start, or did not serve that
-child. Its readings are the demo child's, for one query and one cold start. They are not the real
-workspace's model, not concurrent load and not a capacity decision. What they do not cover is
-listed beside them in the report (`not_covered`), and their fields are in
-`docs/working/research-comparison/GB10_ACCEPTANCE.md` §2.1.
+only when it could not read the child at all: the service did not start, was not ready, or did
+not serve that child. It then sends no request, and its report entry keeps what it read before
+(the cold start, `/ready`'s answer) and says of every later reading that it was not taken. Even
+then it does not fail the run: the probe's exit status never counts S1, and the console prints
+its failure as an INFO line. Its readings are the demo child's, for one query and one cold
+start. They are not the real workspace's model, not concurrent load and not a capacity
+decision. What they do not cover is listed beside them in the report (`not_covered`), and their
+fields are in `docs/working/research-comparison/GB10_ACCEPTANCE.md` §2.1.
 
 ---
 

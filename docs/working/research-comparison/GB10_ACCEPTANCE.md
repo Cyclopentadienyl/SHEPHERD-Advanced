@@ -3,8 +3,8 @@
 **Status: prepared, not run on a GPU.** Stage 10a of this round (README §5 Stage 10, the owner's O9) added required
 probes to `scripts/probe_deployment.py --m2-acceptance`. This page is the contract the external closing check reads them
 by: the IDs, the report keys and what each must hold. It also records what the check's next revision has to do (TA-10).
-Stage 10b added one informational probe, S1, M1's minimal served readings (§2.1): it is in neither required list, and
-the check must never require it or judge its numbers.
+Stage 10b added one informational probe, S1, M1's minimal served readings (§2.1): it is in neither required list, the
+probe's exit status never counts it, and the check must never require it or judge its numbers.
 
 - **What was verified, and where.** The probes run, and pass, on the CPU in this container only:
   `tests/unit/test_probe_m2_phase.py` runs the demo phase end to end and checks the evidence against the disk, and
@@ -30,7 +30,11 @@ probe's own words and is never parsed.
 - `m2_acceptance.real_data.required`: the real-data part's list (`M2_REAL_REQUIRED`). Unchanged: 15 entries.
 - `m2_acceptance.demo.complete` and `m2_acceptance.complete` are false until every new probe has passed.
 - S1 (§2.1) is in neither list. `m2_acceptance` never reads it, so no reading of it, however slow or large, and not even
-  a failed S1, leaves the acceptance incomplete.
+  a failed S1, leaves `m2_acceptance` incomplete.
+- **The probe's exit status never counts S1 either** (`INFORMATIONAL_PROBES`, `run_exit_status`). The exit is 1 when any
+  other probe failed or raised, or the acceptance is not complete, and 0 otherwise. A failed or erroring S1 is printed as
+  an INFO line and leaves the exit at 0, so hardware variance in its start (a start slower than the probe's 300 s, say)
+  never fails the run the check reads. The report's `summary` still counts every probe, S1 included, by its status.
 
 **Unchanged.** No earlier ID was renamed, dropped or moved. Every key the current check reads keeps its name and
 meaning:
@@ -232,10 +236,12 @@ service does. It takes a minimal part of PLAN_B04 §7.3, the reviewed procedure 
 `scripts/measure_served_pipeline.py`, which stays that script's record. Its readings are recorded and never judged:
 there is no threshold, and no accuracy figure stands in for them.
 
-- **When it fails.** Only when no reading of the child could be taken: the service did not start, `/ready` did not
-  answer 200, or the status's served identity is not the one the probe read (`_assert_served_identity`). Then its
-  `facts` are empty. A request that fails afterwards is counted by class and leaves its phase incomplete; it does not
-  fail S1.
+- **When it fails.** Only when no reading of the child could be taken, and never on a reading's size: the service did
+  not answer `/health` (it exited first, or did not answer within 300 s), `/ready` did not answer 200, or the status's
+  served identity is not the one the probe read (`_assert_served_identity`). Then no request is sent. Its `facts` keep
+  what was read before (`readiness`, and `cold_start` once `/health` answered) and give every later reading as
+  `state` `"not_taken"` with its `reason`. A failed S1 never sets the exit status (§1). A request that fails afterwards
+  is counted by class and leaves its phase incomplete; it does not fail S1.
 - **Whose readings they are.** Every reading is the server process's: its answers, or its PID's `/proc` entries. None
   is taken in the probe's own process, which runs no part of a request.
 
@@ -243,15 +249,16 @@ there is no threshold, and no accuracy figure stands in for them.
 |---|---|
 | `required` | `false` |
 | `version` | `"served-readings/1"`, the definitions' version |
-| `subject` | `task` `"disease"`, `checkpoint_sha256` (D1's child), and `served_identity` as the status reported it at readiness |
+| `subject` | `task` `"disease"`, `checkpoint_sha256` (D1's child), and `served_identity` as the status reported it at readiness; `state` `"not_taken"` with its `reason` when the service was not shown ready |
 | `device` | the probe's device: `"cuda"` on the GB10 |
 | `query` | where the one query came from: `split` `"val"`, `case_position`, `phenotypes` (a count), `cases`, `cases_bound`. No identifier |
 | `request` | `fields_sent` `["phenotypes"]`, and `api_defaults`, the request model's own defaults (`top_k`, `include_explanations`, `include_paths`) |
-| `cold_start` | `seconds`: launch to the first `/health` answer, the startup's pipeline build included, polled every 0.5 s. `memory_at_ready`: a memory reading (below) |
-| `warm_up`, `steady_state` | one phase each: 5 and then 50 serial requests (`SERVED_WARM_UP_REQUESTS`, `SERVED_STEADY_REQUESTS`). Each has `state` `"read"`, `planned`, `sent`, `counted`, `failures` (by class), `ended` (`null`, `"no_response"` or `"server_exited"`), `complete`, `seconds` and `server_handler_seconds` (one per counted request, in order), `summary` and `server_handler_summary` (`median_seconds`, `min_seconds`, `max_seconds`), and `memory_after`. A steady state the warm-up ended is `state` `"not_taken"` with its `reason` |
-| `allocator` | `PYTORCH_ALLOC_CONF`, `PYTORCH_CUDA_ALLOC_CONF` and `SHEPHERD_ALLOC_SOURCE` as the server process was started with them, raw, `null` when absent |
+| `readiness` | `state` `"ready"` with `ready_status` `200`; or `"not_ready"` with `failed_at` (`"health"`, `"ready"` or `"served_identity"`), its `reason` (the probe's words, as in `detail`), and `ready_status` once `/ready` answered |
+| `cold_start` | `state` `"read"` with `seconds`: launch to the first `/health` answer, the startup's pipeline build included, polled every 0.5 s and rounded to 0.1 s (`wait_ready`; request times keep microseconds). `memory_at_ready`: a memory reading (below), `"not_taken"` when the service was not shown ready. When `/health` never answered, `state` `"not_obtainable"` with its `reason` |
+| `warm_up`, `steady_state` | one phase each: 5 and then 50 serial requests (`SERVED_WARM_UP_REQUESTS`, `SERVED_STEADY_REQUESTS`). Each has `state` `"read"`, `planned`, `sent`, `counted`, `failures` (by class), `ended` (`null`, `"no_response"` or `"server_exited"`), `complete`, `seconds` and `server_handler_seconds` (one per counted request, in order), `summary` and `server_handler_summary` (`median_seconds`, `min_seconds`, `max_seconds`), and `memory_after`. A steady state the warm-up ended is `state` `"not_taken"` with its `reason`. When the service was not shown ready, each is `state` `"not_taken"` with its `reason`, `planned` and `complete` `false` |
+| `allocator` | `state` `"read"` with `PYTORCH_ALLOC_CONF`, `PYTORCH_CUDA_ALLOC_CONF` and `SHEPHERD_ALLOC_SOURCE` as the server process was started with them, raw, `null` when absent; or `state` `"not_obtainable"` with its `reason` when that environment cannot be read or the process has exited. Read while the server runs, whether it was ready or not |
 | `cuda_allocator_peak` | on the GB10, `state` `"not_obtainable"` with its `reason`: torch keeps it inside the server's process and no route exposes it. On the CPU, `"not_applicable"` |
-| `complete` | `true` when both phases sent and counted every planned request |
+| `complete` | `true` when both phases sent and counted every planned request; `false` otherwise, and when the service was not shown ready |
 | `definitions`, `not_covered` | the readings' definitions and what they do not cover, as the probe states them |
 
 **A memory reading** is `state` `"read"` with `rss_bytes` (VmRSS) and `peak_rss_since_start_bytes` (VmHWM). VmHWM is
@@ -287,7 +294,9 @@ dry-run first (item 4).
      - L1's `taken_from_checkpoint_sha256` equals L2's and L3's `checkpoint_sha256` and every L7 `child.parent_sha256`;
      - L8's `runs` run ids equal those of L2, L3, L5 (both), L6 and L7.
    - Do not gate on a version, a route, a metric value or a raw-score difference (§2).
-   - Do not require S1, and do not judge its numbers (§2.1). The check may print its readings as INFO lines.
+   - Do not require S1, and do not judge its numbers (§2.1). The probe's exit status never counts it (§1); where the
+     check counts failed probes itself, from `summary` or from `probes`, leave S1 out too. The check may print its
+     readings, or its failure, as INFO lines.
 2. **Fix the two INFO lines that read nothing.** K8's record names them (`../k8-acceptance-2026-11-09/README.md` §3).
    - `W8 training_seconds None`: W8 trains nothing, since it measures W1's listed copy of M2's child. Drop the line.
      The demo's own training time is D1's `facts.training_seconds`, a mapping by stage (K8's report gives

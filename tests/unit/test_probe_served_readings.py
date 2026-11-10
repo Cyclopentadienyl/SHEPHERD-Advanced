@@ -15,15 +15,20 @@ Shown here:
   allocator peak is not applicable on CPU), the facts carry no path, and only
   the probe's own directory is written;
 - a service that is not ready (a checkpoint without a model spec, refused at
-  startup) fails S1 before any request: no reading of another pipeline;
+  startup) or serves another model fails S1 before any request: no reading of
+  another pipeline, and the facts keep what was read before (the readiness
+  record, the cold start) with every later reading not taken;
 - with a scripted server: the split by position, every failure class, a
   request with no whole answer ending the readings, a warm-up that ends
-  leaving the steady state not taken, and a server that has exited;
+  leaving the steady state not taken, a server that has exited, and a
+  service that never answers /health;
 - the server's memory and allocator variables read from a /proc tree, and the
-  states when they cannot be read; the CUDA allocator peak never read in the
-  probe's process;
-- S1 is in neither required list, so a failed S1 never leaves the acceptance
-  incomplete.
+  states when they cannot be read; the allocator names one list for the
+  probe's process and the server's;
+- S1 on "cuda" through a scripted service, with this process's torch.cuda
+  counters made to raise: the CUDA allocator peak is a state, never read here;
+- S1 is in neither required list and outside the exit status, so a failed S1
+  neither leaves the acceptance incomplete nor fails the run.
 
 Module: tests/unit/test_probe_served_readings.py
 """
@@ -120,9 +125,13 @@ def test_s1_reads_the_served_child_apart_by_phase_and_is_never_required(trained,
     assert facts["request"] == {"fields_sent": ["phenotypes"], "api_defaults": {
         "top_k": 10, "include_explanations": True, "include_paths": True}}
     assert facts["query"]["split"] == "val" and facts["query"]["phenotypes"] >= 1
-    # Cold start, warm-up and steady state, apart, with the fixed counts.
+    # Readiness first, then cold start, warm-up and steady state, apart, with
+    # the fixed counts. The cold start is wait_ready's, to 0.1 s.
+    assert facts["readiness"] == {"state": "ready", "ready_status": 200}
     cold = facts["cold_start"]
+    assert cold["state"] == "read"
     assert isinstance(cold["seconds"], float) and cold["seconds"] > 0
+    assert round(cold["seconds"], 1) == cold["seconds"]
     _phase_shape(facts["warm_up"], probe.SERVED_WARM_UP_REQUESTS)
     _phase_shape(facts["steady_state"], probe.SERVED_STEADY_REQUESTS)
     # The server process's own memory at each boundary; its peak since the
@@ -150,41 +159,84 @@ def test_s1_reads_the_served_child_apart_by_phase_and_is_never_required(trained,
     assert probe.SERVED_READINGS_PROBE not in probe.M2_REAL_REQUIRED
 
 
+def _no_request(monkeypatch, probe):
+    """`_served_reading`, which sends every request S1 times, made to fail the
+    test if it is called."""
+    def never(*args, **kwargs):
+        raise AssertionError("a request was sent to a service not shown ready")
+
+    monkeypatch.setattr(probe, "_served_reading", never)
+
+
+def _not_taken_after_readiness(probe, facts, failed_at, ready_status):
+    """The facts of an S1 that failed at readiness: what was read before it,
+    and every reading after it a state with its reason, never a number."""
+    assert facts["required"] is False and facts["complete"] is False
+    assert facts["version"] == probe.SERVED_READINGS_VERSION
+    readiness = facts["readiness"]
+    assert (readiness["state"], readiness["failed_at"]) == ("not_ready", failed_at)
+    assert readiness.get("ready_status") == ready_status and readiness["reason"]
+    not_taken = {"state": "not_taken",
+                 "reason": "the service was not shown ready (readiness): no request was sent"}
+    assert facts["warm_up"] == {**not_taken, "planned": probe.SERVED_WARM_UP_REQUESTS,
+                                "complete": False}
+    assert facts["steady_state"] == {**not_taken, "planned": probe.SERVED_STEADY_REQUESTS,
+                                     "complete": False}
+    assert facts["subject"]["served_identity"]["state"] == "not_taken"
+    assert set(facts["definitions"]) == set(probe.SERVED_READING_DEFINITIONS)
+    assert facts["not_covered"] == list(probe.SERVED_READINGS_NOT_COVERED)
+    json.dumps(facts, allow_nan=False)
+    return not_taken
+
+
 def test_s1_fails_before_any_request_when_the_service_is_not_ready(trained, tmp_path,
                                                                    monkeypatch):
     """A checkpoint without a model spec is refused at the service's startup:
     the service runs and answers /health but serves nothing, and S1 fails at
-    readiness, timing no request. (The query is the workspace's, asked of the
-    child's own view, since the stripped copy has no record to bind it.)"""
+    readiness, timing no request. Its facts keep the cold start and /ready's
+    answer. (The query is the workspace's, asked of the child's own view,
+    since the stripped copy has no record to bind it.)"""
     probe = _probe()
     sound, checkpoint = trained
     stripped = probe._without_model_spec(checkpoint, tmp_path / "no_model_spec.pt")
     query = probe._workspace_query
     monkeypatch.setattr(probe, "_workspace_query",
                         lambda _, workspace, digests: query(checkpoint, workspace, digests))
+    _no_request(monkeypatch, probe)
 
     s1 = _read(probe, tmp_path / "work", sound, stripped)
 
     assert s1.status == "failed"
     assert "answered /ready 503" in s1.detail and "serves no pipeline" in s1.detail
-    assert s1.facts == {}
+    not_taken = _not_taken_after_readiness(probe, s1.facts, "ready", 503)
+    assert s1.facts["readiness"]["reason"] == s1.detail
+    cold = s1.facts["cold_start"]
+    assert cold["state"] == "read" and cold["seconds"] > 0
+    assert cold["memory_at_ready"] == not_taken
+    # Read while the not-ready service ran: the environment it was started with.
+    assert s1.facts["allocator"]["state"] == "read"
+    assert s1.facts["cuda_allocator_peak"]["state"] == "not_applicable"
+    assert str(tmp_path) not in json.dumps(s1.facts)
 
 
 def test_s1_fails_before_any_request_when_the_service_serves_another_model(
         trained, tmp_path, monkeypatch):
     """Readiness holds the status's served identity to the probe's own read of
-    the child: a service reporting another checkpoint is never timed."""
+    the child: a service reporting another checkpoint is never timed, and the
+    facts say at which step it failed."""
     probe = _probe()
     sound, checkpoint = trained
     real = probe._read_run_checkpoint
     monkeypatch.setattr(probe, "_read_run_checkpoint",
                         lambda path: {**real(path), "sha256": "0" * 64})
+    _no_request(monkeypatch, probe)
 
     s1 = _read(probe, tmp_path, sound, checkpoint)
 
     assert s1.status == "failed"
     assert "not the checkpoint this probe read" in s1.detail
-    assert s1.facts == {}
+    _not_taken_after_readiness(probe, s1.facts, "served_identity", 200)
+    assert s1.facts["cold_start"]["state"] == "read"
 
 
 # ---------------------------------------------------------- a scripted server
@@ -220,10 +272,53 @@ class _Scripted:
         return answer
 
 
+class _ScriptedService(_Scripted):
+    """`_Scripted` as `_served_readings` starts it, in place of `_ProbeServer`:
+    /health answers after `health` seconds (or raises it), /ready answers
+    `ready`, the status reports IDENTITY, and the diagnose requests answer
+    from the script."""
+
+    def __init__(self, *answers, health=1.5, ready=200):
+        super().__init__(*answers)
+        self.health, self.ready_status, self.stopped = health, ready, False
+
+    def start(self):
+        pass
+
+    def wait_ready(self):
+        if isinstance(self.health, BaseException):
+            raise self.health
+        return self.health
+
+    def request(self, method, path, headers=None, body=None, timeout=120.0):
+        if path == "/ready":
+            return self.ready_status, {}, b""
+        return super().request(method, path, headers, body, timeout)
+
+    def json(self, path, headers=None):
+        assert path == "/api/v1/pipeline/status"
+        return {"served_identity": IDENTITY}
+
+    def stop(self):
+        self.stopped = True
+
+
+def _scripted_s1(probe, monkeypatch, trained, work, service, device):
+    """S1 itself (`_served_readings`) against `service`, its identity check
+    passing the scripted identity (the check is R6's and M5's to show)."""
+    sound, checkpoint = trained
+    monkeypatch.setattr(probe, "_ProbeServer", lambda name, directory, settings: service)
+    monkeypatch.setattr(probe, "_assert_served_identity", lambda identity, **_: identity)
+    report = probe.Report()
+    probe._served_readings(report, work, sound, checkpoint, device)
+    (only,) = report.probes
+    assert service.stopped
+    return only
+
+
 def _reading(probe, server):
-    return probe._served_reading(server, ["HP:0000001", "HP:0000002"], IDENTITY, "cpu", 1.5,
-                                 {"state": "read", "rss_bytes": 1,
-                                  "peak_rss_since_start_bytes": 1})
+    return probe._served_reading(server, ["HP:0000001", "HP:0000002"], IDENTITY,
+                                 {"state": "read", "seconds": 1.5})
 
 
 def test_the_first_requests_are_the_warm_up_and_the_rest_the_steady_state():
@@ -234,6 +329,7 @@ def test_the_first_requests_are_the_warm_up_and_the_rest_the_steady_state():
     reading = _reading(probe, server)
 
     assert reading["complete"] is True and reading["cold_start"]["seconds"] == 1.5
+    assert reading["cold_start"]["memory_at_ready"]["state"] in ("read", "not_obtainable")
     assert server.sent == [("POST", "/api/v1/diagnose",
                             {"phenotypes": ["HP:0000001", "HP:0000002"]})] * (warm + steady)
     # By position: the warm-up's answers are the first ones, the steady
@@ -304,6 +400,23 @@ def test_a_server_that_has_exited_is_sent_nothing_more():
     assert reading["steady_state"]["state"] == "not_taken"
 
 
+def test_a_service_that_never_answers_health_has_no_cold_start_figure(trained, tmp_path,
+                                                                     monkeypatch):
+    probe = _probe()
+    service = _ScriptedService(health=AssertionError(
+        "the S1 service did not answer /health within 300 s; its log is under the work "
+        "directory"))
+    _no_request(monkeypatch, probe)
+
+    s1 = _scripted_s1(probe, monkeypatch, trained, tmp_path, service, "cpu")
+
+    assert s1.status == "failed" and "did not answer /health" in s1.detail
+    _not_taken_after_readiness(probe, s1.facts, "health", None)
+    assert s1.facts["cold_start"] == {"state": "not_obtainable",
+                                      "reason": "the service never answered /health"}
+    assert service.sent == []
+
+
 def test_a_phase_with_nothing_counted_has_no_summary_figure():
     probe = _probe()
     assert probe._seconds_summary([]) == {"state": "not_obtainable",
@@ -369,33 +482,100 @@ def test_the_server_s_allocator_variables_are_read_raw_from_its_environment(tmp_
     assert probe._process_allocator(4243, proc)["state"] == "not_obtainable"
 
 
-def test_the_cuda_allocator_peak_is_never_read_in_the_probe_s_process(monkeypatch):
-    """On CUDA the figure is the server's and no route exposes it, so it is
-    a state, never this process's torch.cuda counter."""
+def test_an_exited_process_s_empty_environment_is_no_allocator_reading(tmp_path):
+    """Some kernels read an exited, unreaped process's environ as empty: that
+    is no environment, never one without the variables."""
+    probe = _probe()
+    proc = _proc(tmp_path, 4242, environ=b"")
+
+    assert probe._process_allocator(4242, proc) == {
+        "state": "not_obtainable",
+        "reason": "the server's process has exited: its environment reads empty"}
+
+
+def test_the_allocator_names_are_one_list_for_both_processes(tmp_path):
+    probe = _probe()
+    names = probe._allocator_variables()
+    proc = _proc(tmp_path, 4242, environ=b"PATH=/usr/bin\0")
+
+    assert set(names) <= set(probe._allocator_record(None))
+    assert set(probe._process_allocator(4242, proc)) == {"state", *names}
+
+
+def test_s1_on_cuda_never_reads_a_device_counter_in_the_probe_s_process(
+        trained, tmp_path, monkeypatch):
+    """S1 itself, on "cuda", through a scripted service: this process's
+    torch.cuda counters, peak resets and synchronise raise if anything calls
+    them. The CUDA allocator peak is the server's, and no route exposes it, so
+    it is a state with its reason; every phase is still read."""
     import torch
 
     probe = _probe()
 
     def never(*args, **kwargs):
-        raise AssertionError("torch.cuda's counter was read in the probe's process")
+        raise AssertionError("torch.cuda was read in the probe's process")
 
-    monkeypatch.setattr(torch.cuda, "max_memory_allocated", never)
-    reading = probe._cuda_allocator_peak("cuda")
-    assert reading["state"] == "not_obtainable"
-    assert "inside the server's process" in reading["reason"]
-    assert set(reading) == {"state", "reason"}
+    for name in ("max_memory_allocated", "memory_allocated", "max_memory_reserved",
+                 "memory_reserved", "memory_stats", "reset_peak_memory_stats", "synchronize"):
+        monkeypatch.setattr(torch.cuda, name, never)
+    warm, steady = probe.SERVED_WARM_UP_REQUESTS, probe.SERVED_STEADY_REQUESTS
+    service = _ScriptedService(*[_answer()] * (warm + steady))
+
+    s1 = _scripted_s1(probe, monkeypatch, trained, tmp_path, service, "cuda")
+
+    assert s1.status == "passed", s1.detail
+    facts = s1.facts
+    assert facts["device"] == "cuda" and facts["complete"] is True
+    assert facts["readiness"] == {"state": "ready", "ready_status": 200}
+    assert facts["cold_start"]["seconds"] == 1.5
+    assert (facts["warm_up"]["counted"], facts["steady_state"]["counted"]) == (warm, steady)
+    peak = facts["cuda_allocator_peak"]
+    assert peak["state"] == "not_obtainable" and set(peak) == {"state", "reason"}
+    assert "inside the server's process" in peak["reason"]
     assert probe._cuda_allocator_peak("cpu") == {"state": "not_applicable",
                                                  "reason": "the model is served on the cpu"}
 
 
-def test_a_failed_s1_never_leaves_the_acceptance_incomplete():
-    probe = _probe()
+def _all_required_passed(probe):
     report = probe.Report()
     for probe_id in (*probe.M2_DEMO_REQUIRED, *probe.M2_REAL_REQUIRED):
         report.probes.append(probe.Probe(probe_id, "m2", "x", status="passed"))
-    report.probes.append(probe.Probe(probe.SERVED_READINGS_PROBE, "m2", "x", status="failed"))
+    return report
+
+
+@pytest.mark.parametrize("status", ["failed", "error"])
+def test_a_failed_s1_neither_leaves_the_acceptance_incomplete_nor_fails_the_run(status):
+    """S1 is in neither required list, and the run's exit status, which the
+    external closing check reads, never counts it."""
+    probe = _probe()
+    report = _all_required_passed(probe)
+    report.probes.append(probe.Probe(probe.SERVED_READINGS_PROBE, "m2", "x", status=status))
 
     verdict = probe.m2_acceptance(report, True)
 
     assert verdict["complete"] is True
     assert "S1" in verdict["scope"] and "never required" in verdict["scope"]
+    assert probe.SERVED_READINGS_PROBE in probe.INFORMATIONAL_PROBES
+    assert probe.run_exit_status(report, verdict) == 0
+    # Its status stays in the report's summary as it is.
+    assert report.summary()[status] == 1
+
+
+def test_any_other_failure_or_an_incomplete_acceptance_still_fails_the_run():
+    probe = _probe()
+    report = _all_required_passed(probe)
+    assert probe.run_exit_status(report, probe.m2_acceptance(report, True)) == 0
+    assert probe.run_exit_status(report, None) == 0
+
+    report.probes.append(probe.Probe("Z9", "m2", "x", status="error"))
+    assert probe.run_exit_status(report, None) == 1
+
+    report = _all_required_passed(probe)
+    report.probes[0].status = "failed"
+    verdict = probe.m2_acceptance(report, True)
+    assert verdict["complete"] is False
+    assert probe.run_exit_status(report, verdict) == 1
+    # An incomplete acceptance alone (a required probe not run) fails it too.
+    report = _all_required_passed(probe)
+    report.probes.pop(0)
+    assert probe.run_exit_status(report, probe.m2_acceptance(report, True)) == 1
