@@ -411,19 +411,19 @@ class RecordedTests(NamedTuple):
 
 
 def recorded_tests_text(recorded: Optional[RecordedTests]) -> str:
-    """"Recorded tests: 3 · 1 not readable; runs differ for 1; comparison
+    """"Recorded results: 3 · 1 not readable; runs differ for 1; comparison
     incomplete for 1": states, never a number of a result; a record that
     cannot be read is never counted as one (K8-6e.1) and a record whose
     comparison is incomplete is never shown as agreeing. "none in ledger"
     only when the ledger holds neither. One " · " (the skill's §5)."""
     if recorded is None:
-        return "Recorded tests: not read"
+        return "Recorded results: not read"
     if recorded.state == "no_ledger":
-        return "Recorded tests: no ledger"
+        return "Recorded results: no ledger"
     if recorded.state == "not_read":
-        return "Recorded tests: ledger not readable"
+        return "Recorded results: ledger not readable"
     if recorded.state == "none" or (recorded.count == 0 and not recorded.unreadable):
-        return "Recorded tests: none in ledger"
+        return "Recorded results: none in ledger"
     contested = recorded.contested or 0
     unchecked = recorded.count if recorded.contested is None else recorded.unchecked
     notes = []
@@ -434,7 +434,7 @@ def recorded_tests_text(recorded: Optional[RecordedTests]) -> str:
     if unchecked:
         notes.append("comparison incomplete" if unchecked >= recorded.count
                      else f"comparison incomplete for {unchecked}")
-    return f"Recorded tests: {recorded.count}" + (f" · {'; '.join(notes)}" if notes else "")
+    return f"Recorded results: {recorded.count}" + (f" · {'; '.join(notes)}" if notes else "")
 
 
 #: Run layout keys whose name is not their upper case (a model bundle's
@@ -611,7 +611,7 @@ def model_row_html(item: Any, workspaces: Sequence[Any], *,
 def recorded_tests_cell(recorded: Optional[RecordedTests]) -> str:
     """The recorded tests' state for a table cell (`recorded_tests_text`
     without its label): never a number of a result."""
-    return recorded_tests_text(recorded).replace("Recorded tests: ", "", 1)
+    return recorded_tests_text(recorded).replace("Recorded results: ", "", 1)
 
 
 def validation_cell(validation: Any) -> str:
@@ -629,7 +629,7 @@ def validation_cell(validation: Any) -> str:
 #: The research table's fixed columns (Models): an extra column a page fills
 #: goes before the recorded tests.
 MODEL_TABLE_COLUMNS = ("Model", "Fingerprints: model · dataset trained on",
-                       "Validation (Trainer)", "Recorded tests")
+                       "Validation (Trainer)", "Recorded results")
 
 
 def model_table_row_html(item: Any, workspaces: Sequence[Any], *,

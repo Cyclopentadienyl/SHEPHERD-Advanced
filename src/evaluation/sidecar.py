@@ -57,12 +57,17 @@ and the writer's rules are the same for every kind.
   (`src/api/routes/evaluations.py`); `record_evaluation.py --show` prints the
   record as it is, on the operator's machine.
 - **No case ids.** The cohort block is aggregates only (`COHORT_VERSION_FIELDS`).
-- **No prose**, but for a KG edge set's exposure block. A wording change
+- **No prose**, but for a KG edge set's run's own words, kept as its report
+  wrote them so a reader holding only the ledger still has them: its exposure
+  block and the units and reasons in ``measured``. Elsewhere the surfaces
+  render the standing text from `src/evaluation/caveats.py`: a wording change
   between revisions would make two records of identical results read as
-  different, so the surfaces render the standing text from
-  `src/evaluation/caveats.py` instead. The exposure block is the run's own
-  interpretation of its evidence, kept as written (F4) with its definition
-  version, and stays outside the comparison (`RECORD_EXCLUDED_FIELDS`).
+  different. For the same reason a run's own words stay outside the
+  comparison: the exposure block, the run's own interpretation of its
+  evidence kept as written (F4) with its definition version, is not compared
+  (`RECORD_EXCLUDED_FIELDS`), and ``measured`` is compared by its facts only,
+  its counts and each metric's status and denominator count
+  (`differing_fields`).
 
 **Not a registry, and deliberately not becoming one.** No parent/child graph, no
 lineage walk, no cross-file joins. The registration sequence orders the records
@@ -425,7 +430,9 @@ MEASURED_FIELDS: Tuple[str, ...] = ("counts", "count_units", "metrics")
 
 #: Record fields compared between two runs of one condition group to describe how
 #: they differ (`differing_fields`): the report store's description of a group and
-#: the registration's group note. A difference decides nothing.
+#: the registration's group note. A difference decides nothing. ``measured`` is
+#: compared by its facts only (`_measured_facts`), never its units' and reasons'
+#: words, which the build that measured wrote and a later one may reword.
 RECORD_COMPARED_FIELDS: Tuple[str, ...] = (
     "scoring_semantics_digest",
     "scoring",
@@ -792,7 +799,9 @@ def build_record(report: Dict[str, Any], source_digest: str) -> Dict[str, Any]:
             + ("; it " if cv_missing and cv_unknown else "")
             + (f"names {', '.join(cv_unknown)}, which {what} report "
                "block does not carry" if cv_unknown else "")
-            + ", so it is not a cohort version this revision records"
+            + ", so it is not "
+            + ("a cohort version" if kind == SUPPLIED else DATA_KIND_WORDS[kind])
+            + " this revision records"
         )
     for field in (f for f in fields if f in _BLOCK_TEXT_FIELDS):
         if not isinstance(cohort_version[field], str) or not cohort_version[field]:
@@ -806,10 +815,10 @@ def build_record(report: Dict[str, Any], source_digest: str) -> Dict[str, Any]:
             f"version the role {cohort_version['role']!r}; a record is filed under "
             "one role, so the report contradicts itself and is not recorded"
         )
-    parts = _kind_parts(kind, manifest, report, cohort_version)
     digests = _mapping(manifest["artifact_digests"], "its artifact_digests")
     if not _is_digest(digests.get("checkpoint")):
         raise ValueError("its artifact_digests name no checkpoint SHA-256")
+    parts = _kind_parts(kind, manifest, report, cohort_version)
     dataset_record = _mapping(manifest["dataset_record"], "its dataset_record")
     for field in ("origin", "sha256"):
         if not isinstance(dataset_record.get(field), str):
@@ -858,9 +867,12 @@ def _kind_parts(kind: str, manifest: Dict[str, Any], report: Dict[str, Any],
       a generated split (its allocation's), and anything else is refused;
     - a KG edge set's run's counts with their units and each metric's status
       (``measured``, from ``sampler_evidence``: `MEASURED_FIELDS`) and its
-      exposure block as written (``exposure``, with its definition version).
+      exposure block as written (``exposure``, with its definition version),
+      whose sources, where it names them, must be the checkpoint and version
+      this report measured.
 
-    Raises ``ValueError`` naming the field, as `build_record` does."""
+    `build_record` has checked the checkpoint's digest before. Raises
+    ``ValueError`` naming the field, as `build_record` does."""
     relations = _mapping(manifest["relations"], "its relations")
     if relations != REGISTERED_RELATIONS:
         wrong = sorted(
@@ -902,6 +914,23 @@ def _kind_parts(kind: str, manifest: Dict[str, Any], report: Dict[str, Any],
         for field in ("definition_version", "state"):
             if not isinstance(exposure.get(field), str) or not exposure[field]:
                 raise ValueError(f"its exposure.{field} is not a non-empty string")
+        # **Its sources, where it names them, are this run's** (F4): the model
+        # record of the checkpoint measured and the version measured. One
+        # naming another is a report that contradicts itself, refused here as
+        # the one reader refuses such a record. Nothing else of the block is
+        # checked: the exposure is never a gate, and the reader shows a block
+        # it cannot read as "not recorded", beside the result.
+        sources = exposure.get("sources")
+        for source, field, own, what in (
+                ("model_record", "checkpoint_sha256", manifest["artifact_digests"]["checkpoint"],
+                 "the checkpoint its artifact_digests name"),
+                ("version", "manifest_sha256", cohort_version["manifest_sha256"],
+                 "its cohort_version's manifest_sha256")):
+            named = sources.get(source) if isinstance(sources, dict) else None
+            if isinstance(named, dict) and field in named and named[field] != own:
+                raise ValueError(
+                    f"its exposure.sources.{source}.{field} is not {what}, so the report "
+                    "contradicts itself and is not recorded")
         parts["exposure"] = copy.deepcopy(exposure)
     return parts
 
@@ -1465,12 +1494,40 @@ def differing_fields(existing: Dict[str, Any], record: Dict[str, Any]) -> List[s
     group note (`group_differences`) both use it, so "runs under these
     conditions differ" means the same everywhere. It refuses nothing. A field
     one record lacks and the other has differs; a field both lack does not.
+    A KG edge set's run's ``measured`` is compared by its facts only
+    (`_measured_facts`), so two runs whose results agree are never described
+    as differing because a later build reworded a unit or a reason.
     """
     missing = object()
+
+    def compared(field: str, held: Dict[str, Any]) -> Any:
+        value = held.get(field, missing)
+        return _measured_facts(value) if field == "measured" and value is not missing else value
+
     return [
         field for field in RECORD_COMPARED_FIELDS
-        if existing.get(field, missing) != record.get(field, missing)
+        if compared(field, existing) != compared(field, record)
     ]
+
+
+def _measured_facts(measured: Any) -> Any:
+    """What the comparison reads of a KG edge set's run's ``measured``: its
+    counts, and each metric's status and denominator count. Never the units'
+    and reasons' words, which the build that measured wrote and a later build
+    may reword under the same key (the reason's numbers are its counts). A
+    value of another shape, from a hand edit, is compared as written."""
+    if not isinstance(measured, dict):
+        return measured
+    metrics = measured.get("metrics")
+    if isinstance(metrics, dict):
+        metrics = {
+            name: ({"status": status.get("status"),
+                    "denominator": (status["denominator"].get("count")
+                                    if isinstance(status.get("denominator"), dict)
+                                    else status.get("denominator"))}
+                   if isinstance(status, dict) else status)
+            for name, status in metrics.items()}
+    return {"counts": measured.get("counts"), "metrics": metrics}
 
 
 def difference_names(

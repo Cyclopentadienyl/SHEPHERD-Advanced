@@ -285,9 +285,11 @@ def test_a_metric_that_could_not_be_computed_is_a_status_in_the_record():
 
 @pytest.mark.parametrize("kind, edit, says", [
     ("kg_edges", lambda r: r["manifest"]["cohort_version"].__setitem__("edges", [[0, 1, 2]]),
-     "names edges, which a KG edge set's report block does not carry"),
+     "names edges, which a KG edge set's report block does not carry, so it is not a KG edge "
+     "set this revision records"),
     ("generated", lambda r: r["manifest"]["cohort_version"].__setitem__("samples", [{"id": 1}]),
-     "names samples, which a generated split's report block does not carry"),
+     "names samples, which a generated split's report block does not carry, so it is not a "
+     "generated split this revision records"),
     ("kg_edges", lambda r: r["manifest"]["cohort_version"].pop("count_units"),
      "lacks count_units"),
     ("generated", lambda r: r["manifest"]["cohort_version"].__setitem__("generation", None),
@@ -307,23 +309,36 @@ def test_a_metric_that_could_not_be_computed_is_a_status_in_the_record():
      "its sampler_evidence.metrics is not an object"),
     ("generated", lambda r: r["manifest"].__setitem__("split", "test"),
      "names the cohort role 'test' and its cohort version the role 'val'"),
+    ("kg_edges", lambda r: r["exposure"]["sources"]["model_record"].__setitem__(
+        "checkpoint_sha256", "e" * 64),
+     "its exposure.sources.model_record.checkpoint_sha256 is not the checkpoint its "
+     "artifact_digests name, so the report contradicts itself"),
+    ("kg_edges", lambda r: r["exposure"]["sources"]["version"].__setitem__(
+        "manifest_sha256", "e" * 64),
+     "its exposure.sources.version.manifest_sha256 is not its cohort_version's "
+     "manifest_sha256, so the report contradicts itself"),
 ], ids=["kg-edges-listed", "generated-samples-listed", "kg-no-units", "generated-no-generation",
         "kind-and-block-disagree", "supplied-beside-kg-block", "kg-with-r10",
         "generated-with-r10", "kg-no-exposure", "kg-exposure-no-definition",
-        "kg-no-metric-statuses", "generated-role-said-test"])
+        "kg-no-metric-statuses", "generated-role-said-test", "kg-exposure-another-checkpoint",
+        "kg-exposure-another-version"])
 def test_a_record_that_cannot_be_valid_is_refused_by_name(kind, edit, says):
     """Aggregates only, and each kind's block exactly: an edge or a sample
     cannot ride into a record on a field nobody classified; a report whose
     kind, role or R10 contradicts its block, or a KG edge set's run without its
-    exposure or metric statuses, is refused naming what is wrong. Never a
-    refusal for the role itself: a generated split's role is recorded as it
-    is."""
+    exposure or metric statuses, is refused naming what is wrong, and so is a
+    KG edge set's exposure naming another checkpoint or version than the
+    report measured. A KG edge set or a generated split is never called a
+    cohort version in its refusal. Never a refusal for the role itself: a
+    generated split's role is recorded as it is."""
     from src.evaluation.sidecar import build_record
 
     report = REPORTS[kind]()
     edit(report)
-    with pytest.raises(ValueError, match=re.escape(says)):
+    with pytest.raises(ValueError, match=re.escape(says)) as refused:
         build_record(report, REPORT_A)
+    if kind != "supplied":
+        assert "cohort version this revision records" not in str(refused.value)
 
 
 # ---------------------------------------------------------------------------
@@ -385,6 +400,37 @@ def test_the_exposure_never_tells_two_runs_of_one_group_apart():
     assert differing_fields(one, not_finite) == ["metrics", "measured"]
 
 
+def test_measured_is_compared_by_its_facts_never_its_words():
+    """``measured`` keeps the run's units and reasons as its report wrote
+    them, for a reader holding only the ledger, but the comparison reads its
+    facts only (its counts and each metric's status and denominator count):
+    two runs whose results agree are never described as differing because a
+    later build reworded a unit or a reason (seen in review: a reworded pair
+    unit gave ``differing: ['measured']``), while two runs whose numbers of
+    pairs without a finite score differ, and whose metrics are both absent,
+    are still described as differing."""
+    from src.evaluation.sidecar import differing_fields, record_key
+
+    one = _record("kg_edges")
+    reworded = _record("kg_edges", REPORT_B)
+    reworded["measured"]["count_units"]["pairs"] = "another build's words for the pairs"
+    for status in reworded["measured"]["metrics"].values():
+        status["unit"] = "another build's unit"
+        status["denominator"]["unit"] = "another build's denominator"
+    assert record_key(one) == record_key(reworded)
+    assert reworded["measured"] != one["measured"]
+    assert differing_fields(one, reworded) == []
+
+    once = _record("kg_edges", REPORT_A, not_finite=1)
+    reasoned = copy.deepcopy(once)
+    for status in reasoned["measured"]["metrics"].values():
+        status["reason"] = "another build's reason"
+    assert differing_fields(once, reasoned) == []
+    twice = _record("kg_edges", REPORT_B, not_finite=2)
+    assert once["metrics"] == twice["metrics"] == {}
+    assert differing_fields(once, twice) == ["measured"]
+
+
 # ---------------------------------------------------------------------------
 # The one reader, by data kind
 # ---------------------------------------------------------------------------
@@ -430,6 +476,95 @@ def test_one_reader_reads_each_kind_and_lists_what_it_cannot_read_record_by_reco
     assert unreadable[1].reason == "cohort.kind: missing"
     assert unreadable[2].reason == "r10: Input should be None"
     assert "/srv/private" not in json.dumps([item.model_dump() for item in unreadable])
+
+
+def _another_definition(block):
+    """An exposure block of another definition (a later build's), in its own
+    shape: none of this definition's counts or split relation."""
+    return {"definition_version": "kg-lp-exposure/v2", "state": "held_out",
+            "reading": "held out relative to a later build's evidence",
+            "sources": {"model_record": {"checkpoint_sha256": CHECKPOINT}}}
+
+
+def _unhex_split_digest(block):
+    """A not_recorded block whose model record's split digest, as that record
+    wrote it, is not a digest (the measurement copies it as written)."""
+    block = exposure_block(state="not_recorded", reason="the record's split does not rebuild")
+    block["sources"]["model_record"]["split_digest"] = "not-a-digest"
+    block["split"] = None
+    return block
+
+
+@pytest.mark.parametrize("change, problem", [
+    (_another_definition, "exposure.split: missing; exposure.measured_edges: missing; "
+                          "exposure.measurement_message_passing: missing; 4 more"),
+    (_unhex_split_digest, "exposure.sources.model_record.split_digest: String should match "
+                          "pattern '^[0-9a-f]{64}$'"),
+    (lambda block: None, "exposure: missing"),
+], ids=["another-definition", "split-digest-not-a-digest", "no-exposure-in-the-ledger"])
+def test_an_exposure_this_build_cannot_read_never_hides_its_result(change, problem):
+    """F4 and §4.2: the exposure is never a gate. A KG edge set's run whose
+    exposure block this build cannot read as its view (another definition's
+    shape, a model record's split digest copied as written, a hand edit that
+    removed it) is registered (the writer checks only that its sources, where
+    named, are this run's) and read: its metrics and counts are shown, its
+    exposure reads "exposure not recorded", and the problem names fields,
+    never values. Seen in review: such a record was registered and then
+    listed unreadable by every reader."""
+    from scripts.record_evaluation import _run_lines
+    from src.api.routes.evaluations import KgEdgesRecordView, read_records
+    from src.webui.components import models_page as mp
+
+    block = change(exposure_block())
+    ledger = _ledger((_record("kg_edges", exposure=block), RUN_1))
+    if block is None:  # a hand edit of the ledger removed it
+        del ledger["records"][0]["exposure"]
+    else:
+        assert ledger["records"][0]["exposure"] == block
+    ((_held, view),), unreadable = read_records(ledger, CHECKPOINT)
+
+    assert unreadable == [] and isinstance(view, KgEdgesRecordView)
+    assert view.metrics == KG_METRICS and view.measured.counts["pairs_scored"] == 6
+    assert view.exposure is None and view.exposure_problem == problem
+    assert "not-a-digest" not in view.model_dump_json()
+    (line,) = _run_lines(ledger, CHECKPOINT)
+    assert line.endswith(f"; a KG edge set (test); exposure: exposure not recorded (its block "
+                         f"does not read: {problem})")
+    reading = __import__("src.api.routes.evaluations",
+                         fromlist=["record_reading"]).record_reading(ledger)
+    identity, overlaps = reading[id(ledger["records"][0])]
+    shown = _text(mp.records_table_html([mp.record_view(
+        ledger["records"][0], [identity.run_id, identity.historical, identity.problem,
+                               list(overlaps)])], {}))
+    assert "Exposure: exposure not recorded" in shown
+    assert f"Its block does not read: {problem}" in shown
+    assert "lp_roc_auc 0.625" in shown
+
+
+@pytest.mark.parametrize("path, own", [
+    (("sources", "model_record", "checkpoint_sha256"), "checkpoint_digest"),
+    (("sources", "version", "manifest_sha256"), "cohort_digest"),
+])
+def test_an_exposure_naming_another_checkpoint_or_version_makes_the_record_unreadable(path,
+                                                                                    own):
+    """A record whose exposure names another checkpoint or version than its
+    own contradicts itself: the one reader lists it unreadable, naming the
+    field and never its value, and the writer refuses such a report
+    (`test_a_record_that_cannot_be_valid_is_refused_by_name`), so the writer
+    never appends a record its reader refuses for it. Here a hand edit of the
+    ledger made it."""
+    from src.api.routes.evaluations import read_records
+
+    ledger = _ledger((_record("kg_edges"), RUN_1))
+    held = ledger["records"][0]["exposure"]
+    for key in path[:-1]:
+        held = held[key]
+    held[path[-1]] = "e" * 64
+    viewed, (item,) = read_records(ledger, CHECKPOINT)
+
+    assert viewed == []
+    assert item.reason == f"exposure.{'.'.join(path)}: not the record's {own}"
+    assert "e" * 64 not in item.reason
 
 
 def test_no_view_carries_a_case_id_a_server_path_or_an_r10_evidence_path():
@@ -556,6 +691,15 @@ def test_models_shows_each_kind_by_the_one_display_with_its_exposure():
     assert "5 generated patients of 1 disease" in generated
     assert "R10" not in generated and "Exposure:" not in generated
     assert "held out" not in generated and "held out" not in supplied
+
+    # A train or val result is never named a test result (F2): the table, the
+    # segment and the read-only title say "Recorded results" for every kind.
+    # Seen in review: a generated val record under "Recorded test results".
+    for view in views:
+        markup = mp.records_table_html([view], {})
+        assert 'aria-label="Recorded results, ' in markup
+        assert "test result" not in markup.lower()
+    assert mp.READONLY_TITLE == "Recorded results of the model in use"
 
     block = _text(mp.records_block_html(views[1:2], {}))
     assert "R10 labels" not in block

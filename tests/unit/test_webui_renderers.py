@@ -138,14 +138,14 @@ def test_the_row_shows_recorded_tests_as_a_state_never_a_number():
     html = r.model_row_html(checkpoint(validation=0.3180), [workspace()],
                             recorded=r.RecordedTests("records", 3, 1))
     plain = text_of(html)
-    assert "Recorded tests: 3 · runs differ for 1" in plain
+    assert "Recorded results: 3 · runs differ for 1" in plain
     assert "0.318" not in plain
-    assert r.recorded_tests_text(r.RecordedTests("none")) == "Recorded tests: none in ledger"
-    assert r.recorded_tests_text(r.RecordedTests("no_ledger")) == "Recorded tests: no ledger"
+    assert r.recorded_tests_text(r.RecordedTests("none")) == "Recorded results: none in ledger"
+    assert r.recorded_tests_text(r.RecordedTests("no_ledger")) == "Recorded results: no ledger"
     assert r.recorded_tests_text(r.RecordedTests("not_read")) == (
-        "Recorded tests: ledger not readable")
+        "Recorded results: ledger not readable")
     assert r.recorded_tests_text(r.RecordedTests("records", 2, None)) == (
-        "Recorded tests: 2 · comparison incomplete")
+        "Recorded results: 2 · comparison incomplete")
 
 
 def test_records_that_cannot_be_read_are_named_apart_from_the_results():
@@ -155,19 +155,19 @@ def test_records_that_cannot_be_read_are_named_apart_from_the_results():
     count of them, so 0 results and 1 unreadable read "none in ledger"."""
     text = r.recorded_tests_text
     assert text(r.RecordedTests("records", 3, 0, unreadable=1)) == (
-        "Recorded tests: 3 · 1 not readable")
+        "Recorded results: 3 · 1 not readable")
     assert text(r.RecordedTests("records", 0, 0, unreadable=1)) == (
-        "Recorded tests: 0 · 1 not readable")
+        "Recorded results: 0 · 1 not readable")
     assert text(r.RecordedTests("records", 0, None, unreadable=2)) == (
-        "Recorded tests: 0 · 2 not readable")
+        "Recorded results: 0 · 2 not readable")
     assert text(r.RecordedTests("records", 3, 1, unchecked=1, unreadable=2)) == (
-        "Recorded tests: 3 · 2 not readable; runs differ for 1; comparison incomplete for 1")
+        "Recorded results: 3 · 2 not readable; runs differ for 1; comparison incomplete for 1")
     assert text(r.RecordedTests("records", 3, 1, unreadable=2)).count(" · ") == 1
     assert r.recorded_tests_cell(r.RecordedTests("records", 3, 0, unreadable=1)) == (
         "3 · 1 not readable")
     html = r.model_row_html(checkpoint(), [workspace()],
                             recorded=r.RecordedTests("records", 0, 0, unreadable=1))
-    assert "Recorded tests: 0 · 1 not readable" in text_of(html)
+    assert "Recorded results: 0 · 1 not readable" in text_of(html)
     assert "none in ledger" not in text_of(html)
 
 
@@ -198,7 +198,7 @@ def test_model_facts_has_its_five_sections_and_warnings_always_open():
             "Synthetic workspaces are for testing only.") in plain
     assert ("Validation pooled MRR (Trainer) 0.3180 — selection metric on val, not an "
             "independent test") in plain
-    assert "Recorded tests: none in ledger" in plain
+    assert "Recorded results: none in ledger" in plain
     assert "SYNTHETIC WORKSPACE: not a clinical result." in plain
     assert "serving reads workspace demo: the same dataset" in plain
     assert "runs/gatv2/20261017-091500_run_3fa9c1/checkpoints/model-05-0.2410.pt" in plain

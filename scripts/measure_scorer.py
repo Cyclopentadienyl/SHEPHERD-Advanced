@@ -90,10 +90,11 @@ be imported today (the generator writes train and val), so none is measured.
 
     # A generated split. --split val is the checkpoint-selection split, not
     # held-out data. Its report and ranks are new files at --output, and are
-    # not registered: the ledger does not yet support a generated split's data
-    # identity (it has no registered cohort version). The same split kept as a
+    # not registered: a report from --split has no registered version, so no
+    # data identity the ledger records results by. The same split kept as a
     # version (scripts/import_cohort.py --kind generated) is measured with
-    # --cohort instead, its report kept in the version's report store.
+    # --cohort instead, its report kept in the version's report store and
+    # registered.
     python scripts/measure_scorer.py --mode disease \
         --checkpoint checkpoints/best.pt \
         --data-dir data/processed \
@@ -162,10 +163,11 @@ the check is not overwritten either: that run fails (`ReportNotWritten`), and
 of two runs on one new `--output` one publishes both files and the other none.
 A run whose report fails after its ranks leaves its own ranks with no report
 beside them, which the next run on that path is refused by, so they are never
-paired with another run's report. The report and ranks are not registered:
-the ledger does not yet support a generated split's data identity (it has no
-registered cohort version), not because such a result counts for less;
-extending the ledger to it is later work.
+paired with another run's report. The report and ranks are not registered: a
+report from `--split` has no registered version, so no data identity the
+ledger records results by, not because such a result counts for less; the
+same split kept as a version (`import_cohort.py --kind generated`) is measured
+with `--cohort` and registered.
 
 **Where the filesystem has no hard links** (`publish_bytes`' fallback), each
 file is claimed as a new empty file (`O_CREAT | O_EXCL`) and the staged file is
@@ -1295,9 +1297,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
                              "checkpoint, as scripts/record_evaluation.py --report "
                              "would. A refused registration exits 3; the report is kept "
                              "unless it is no longer the one the run published. --cohort "
-                             "only: a generated split's report is not registered, because the "
-                             "ledger does not yet support a generated split's data identity; "
-                             "its report and ranks stay at --output")
+                             "only, a registered version of any kind: a report from --split is "
+                             "not registered, because it has no registered version (the same "
+                             "split kept with scripts/import_cohort.py --kind generated is "
+                             "measured with --cohort and registered); its report and ranks "
+                             "stay at --output")
     parser.add_argument("--output", type=Path, default=None,
                         help="Where a generated split's measurement JSON is written: a new "
                              "file. The per-sample ranks go beside it, as <output "
@@ -1374,10 +1378,11 @@ def _refuse_mixed_arguments(parser: argparse.ArgumentParser, args: argparse.Name
                                           ("--outcome", args.outcome)) if value]
         if given:
             parser.error(
-                f"{', '.join(given)} apply to a registered cohort version (--cohort LABEL "
-                "--registry DIR) only: a generated split has no version, its report is not "
-                "registered (the ledger does not yet support a generated split's data "
-                "identity) and R10 is not computed for it. Nothing was read or written."
+                f"{', '.join(given)} apply to a registered version (--cohort LABEL "
+                "--registry DIR) only: a report from --split has no registered version, so it "
+                "is not registered (the same split kept with scripts/import_cohort.py --kind "
+                "generated is measured with --cohort and registered), and R10 is not computed "
+                "for it. Nothing was read or written."
             )
         if args.output is None:
             parser.error(

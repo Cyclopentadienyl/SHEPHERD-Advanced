@@ -2018,9 +2018,11 @@ Mode D（`--mode D`，Batch 3 對 Diagnosis 頁 2026 年 10 月所提供排名�
   `record_evaluation.py` 結束碼 1）。若 ledger 已寫入但使用紀錄沒有，會說「the usage history
   was not written」並附原因，紀錄照樣成立。不取鎖的修改（例如手動編輯）改過 ledger 時，仍會
   拒絕而不是覆蓋。
-- 只有**已登錄 cohort 版本**的報告會被登錄；`--split` 的報告不會，原因是 ledger 尚未支援產生的
-  split 這種資料身分（它沒有已登錄的 cohort 版本），而不是這樣的結果比較不重要（政策 rev 16）。
-  它的報告與排名檔留在 `--output`；把 ledger 擴充到它們是之後的工作。
+- 任何種類的**已登錄版本**的報告都會被登錄：supplied cohort、KG 邊集合，或以
+  `import_cohort.py --kind generated` 保存的 generated split（research comparison Stage 6）。
+  `--split` 的報告不會，原因是它沒有已登錄的版本，因此沒有 ledger 據以登錄結果的資料身分，
+  而不是這樣的結果比較不重要（政策 rev 16）。它的報告與排名檔留在 `--output`；同一個 split 保存
+  為版本後，以 `--cohort` 量測並登錄。
 
 ### 結束碼
 
@@ -2047,7 +2049,7 @@ Mode D（`--mode D`，Batch 3 對 Diagnosis 頁 2026 年 10 月所提供排名�
 ### Diagnosis 頁面顯示什麼
 
 **自 M5-2 起（2026-10-21），Diagnosis 頁面只以狀態顯示目前載入之 checkpoint 已登錄的測試**，
-位於「Model in use」卡片上："Recorded tests: 3 · runs differ for 1"、"3 · comparison incomplete"（未設定
+位於「Model in use」卡片上："Recorded results: 3 · runs differ for 1"、"3 · comparison incomplete"（未設定
 registry，或沒有任何一筆紀錄的 cohort 版本或其報告存放處能讀取；絕不顯示為一致）、"3 · runs differ
 for 1; comparison incomplete for 1"（分開計數）、"3 · 1 not readable"（自 K8-6e.1 起：3 筆結果，以及 1 筆
 共用檢查無法當作結果讀取的紀錄，分開計數，絕不算作結果；只有這一筆時為 "0 · 1 not readable"）、
@@ -2133,7 +2135,7 @@ digest 的紀錄不屬於任何模型，不會列出；整份無法讀取的 led
   exFAT 掛載都未測試。
 - **ledger schema 3（M4），自 K8-6r.2 起為 schema 4。** 既有的 schema 1 或 2 的 `evaluations.json`
   會被拒絕——`--record`、`record_evaluation.py`（`--report` 與 `--show`）以及讀取已登錄結果的程式
-  都會拒絕，後者會回報 ledger 未讀取（Diagnosis 卡片上為 "Recorded tests: ledger not readable"）。
+  都會拒絕，後者會回報 ledger 未讀取（Diagnosis 卡片上為 "Recorded results: ledger not readable"）。
   沒有任何東西會遷移它，其結果也不會被帶過來：**請手動封存**，例如
   `mv evaluations.json evaluations.v2.json`，以寫出它的版本讀取，並以這個版本重新量測需要的
   結果，再登錄新的報告（拒絕訊息也這麼說）。M4 之前寫出的報告同樣會被拒絕，並指示重新量測。
@@ -2921,7 +2923,7 @@ Matching phenotypes · Paths）。選取一列（點擊，或在聚焦的列上�
   直到頁面再次打開或按下 "read it"（每 5 秒的讀取絕不打開 checkpoint）；
 - 只在成立時出現的標籤：`synthetic data`（琥珀色）。`no trained model` 與 `unverified` 標籤
   已隨路徑推理狀態移除（K7），`no SP table` 與 `GNN not loaded` 已隨 mixture 移除（K8-4）；
-- "Recorded tests: <狀態>"（§4.9），它的 › 會打開 Details 的 Evidence；"Details ›"；
+- "Recorded results: <狀態>"（§4.9），它的 › 會打開 Details 的 Evidence；"Details ›"；
   "🔒 Change model…"。紀錄的測試與 workspace 名稱會在每次顯示 Diagnosis、每次診斷後、更換模型後
   以及按下 ↻ 時重新讀取（每 5 秒的讀取只讀目前服務的內容）：在 Research › Test 記錄的測試，回到
   Diagnosis 時就會出現。
@@ -2943,7 +2945,7 @@ support for a qualified clinician." 位於結果的底部。
 附完整 digest 與 Copy；Uses；Data；Evidence；Warnings，永遠展開），以及通往 Research › Models
 完整紀錄的連結（結構 fingerprint 那一行自 K8-4 起已移除：checkpoint 的紀錄以 digest 綁定它的圖，
 在載入時檢查）。"This result" 只顯示結果本身帶有的內容，每一項與目前使用中的對照。
-"Details ›" 與 "Recorded tests ›" 打開前者，標記打開後者；更換模型進行中（確認畫面打開，或正在
+"Details ›" 與 "Recorded results ›" 打開前者，標記打開後者；更換模型進行中（確認畫面打開，或正在
 重新載入）時，它們不會蓋掉 Change model 抽屜。
 
 **🔒 Change model…**（操作者控制項）會打開一個蓋住結果與細節的抽屜：workspace 選單（伺服器的
@@ -3313,7 +3315,7 @@ workspace 名稱，這些資訊也不會被遮住。所有 run 都會顯示，�
   都從檔案的 logs 讀取；logs 兩者皆無時為無，沒有 model spec 的檔案即是如此，它的 `val_mrr` 不會
   被讀取（自 K8-7b 起不再顯示歷史檔前 20 名的 MRR；其原始數值仍留在檔案中，明細寫「Validation
   (Trainer): not read (record not readable)」）。它從來不是測試結果，也從不與測試結果放在同一欄；
-- **Recorded tests**：checkpoint 旁的 ledger 所記錄的內容，以狀態顯示（「none in ledger」、「no
+- **Recorded results**：checkpoint 旁的 ledger 所記錄的內容，以狀態顯示（「none in ledger」、「no
   ledger」、「3 · runs differ for 1」……），從不顯示某個結果的數值。
 
 **列出清單會開啟該 workspace 的每一個 checkpoint**，因此清單是操作者控制項（§4.13）。
@@ -3321,7 +3323,7 @@ workspace 名稱，這些資訊也不會被遮住。所有 run 都會顯示，�
 變更時間判斷）才再讀，因此再次打開清單或 Load 之後的重新讀取不會開啟未改變的檔案；載入、開始
 訓練或量測時，仍會以所顯示的摘要檢查它所使用的位元組。唯讀的瀏覽器
 看不到清單：頁面會說明原因，並列出三個條件（部署模式 M1、請求經由本機的 loopback 抵達——在本機上或
-經由 SSH forward——且沒有轉發標頭），改為顯示 **Recorded test results of the model in use**：依模型指紋
+經由 SSH forward——且沒有轉發標頭），改為顯示 **Recorded results of the model in use**：依模型指紋
 從正在服務的 checkpoint 旁的 ledger 讀取，不開啟任何 checkpoint。每筆紀錄的 regime（裝置，deterministic
 開或關）就是紀錄本身所寫的，與操作者看到的相同（為此 `GET /api/v1/evaluations/loaded-model` 會為每筆
 紀錄附上 `deterministic_algorithms`；CPU 紀錄單憑 environment class 看不出來）。那裡沒有 Trainer 的
@@ -3335,7 +3337,9 @@ Lineage 欄。沒有任何排列方式依測試分數為模型排名：依測試
 **選取一列**會顯示完整的模型指紋與 Copy、它在什麼資料上訓練（以及那是否為此 workspace 目前的資料
 集）、自成一張卡片的 Trainer 驗證數值、任何警告，以及兩個分段：
 
-- **Recorded test results**：ledger 為這組權重記錄的每一筆紀錄，每種量測模式各一張表，依首次出現的
+- **Recorded results**（research comparison Stage 6 之前為 "Recorded test results"）：ledger 為這組
+  權重記錄的每一筆紀錄，不論資料種類與 role，各以其版本的種類與 role 命名（KG 邊集合的紀錄附其
+  exposure；其區塊無法讀取時為 "exposure not recorded" 並附原因），每種量測模式各一張表，依首次出現的
   順序排列，各自在該模式的標籤（任務另有說明）之下，由每種模式共用的同一種顯示呈現（自 K8-6e.2 起；
   在此之前先列 Mode C 的紀錄，再列 Mode D 的，各有自己的標籤）。每一列有 cohort version 與其角色；
   任務的 pooled MRR 與第二個指標（表頭寫出全名），或者對這個版本未描述的模式（包括已保存的 Mode C 或
@@ -3351,7 +3355,7 @@ Lineage 欄。沒有任何排列方式依測試分數為模型排名：依測試
   每一筆紀錄都會顯示，這些描述不會隱藏或排除任何紀錄。這組權重中無法當作結果讀取的紀錄（自
   K8-6e.1 起）絕不顯示為結果、也不算作結果：表格下方是 "▲ 1 record for these weights cannot be read
   as a result. The ledger keeps it as written." 與一張小表 Index · Registration · Report · Reason
-  （它未以可讀形式帶有的序號或報告 digest 顯示為 "not readable"）；此時分頁標籤為 "Recorded test
+  （它未以可讀形式帶有的序號或報告 digest 顯示為 "not readable"）；此時分頁標籤為 "Recorded
   results · 3 (1 not readable)"。唯讀檢視列出同樣的項目，取自該 route；
 - **Usage history**：每一個已列出的 cohort version 的使用紀錄中提及此 checkpoint 的項目，最新的在前：
   測試執行與登錄，以及 K8-6d 之前留下的模型載入，依其記錄內容顯示（「ordered by」加上它記錄的指標名稱，

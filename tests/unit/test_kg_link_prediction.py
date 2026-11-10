@@ -1373,6 +1373,27 @@ def test_without_record_the_report_is_kept_for_a_later_registration(cli, site, t
     assert json.loads(outcome.read_text())["registration"]["why"] == why
 
 
+def test_a_report_recording_another_version_is_refused_in_its_kinds_words(cli, site):
+    """A KG edge set's report whose block no longer matches the version whose
+    store keeps it is refused, the version named by its kind and role ("a KG
+    edge set (test)"), never as a cohort version (research comparison §5
+    Stage 4's words; seen in review: "is kept under cohort version"), and
+    nothing is written."""
+    from src.evaluation.registration import RegistrationRefused, register_report
+
+    assert cli.main(_argv(site, "kg-test")) == 0
+    run = _only_run(site, "kg-test")
+    report = _report(run)
+    report["manifest"]["cohort_version"]["label"] = "kg-other"
+    (run / "report.json").write_text(json.dumps(report))
+    with pytest.raises(RegistrationRefused) as refused:
+        register_report(run / "report.json", checkpoint=site.base)
+    said = str(refused.value)
+    assert "is kept under a KG edge set (test) 'kg-test'" in said
+    assert "differing in: label" in said and "cohort version" not in said
+    assert not (site.base.parent / LEDGER).exists()
+
+
 def test_a_failure_after_publishing_offers_the_register_later_command(cli, site):
     """A failure after a KG edge set's report was published says where the
     report is and gives the command that registers it, or says it already

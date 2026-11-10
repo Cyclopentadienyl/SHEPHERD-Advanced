@@ -206,7 +206,8 @@ _CAPABILITY_WORDS: dict[str, str] = {
 
 #: A data kind as a reason names it: `caveats.DATA_KIND_WORDS`, the one wording
 #: every reader and refusal uses, restated because this module imports the
-#: standard library only (pinned equal by tests/unit/test_protocols.py).
+#: standard library only (pinned equal by tests/unit/test_kg_link_prediction.py,
+#: `test_the_shared_vocabularies_are_one`).
 _KIND_WORDS: dict[str, str] = {GENERATED: "a generated split",
                                SUPPLIED: "a supplied cohort version",
                                KG_EDGES: "a KG edge set"}

@@ -509,9 +509,12 @@ Data versions and Keeping items keep, as of Stage 6.)*
   generated split's with its role and generation identity (split manifest and split files by
   digest, generation definition, allocation, the gene fixture it keeps) and its counts with their
   units, no R10. The key fields keep their names and meanings (`cohort_role` the version's role,
-  `cohort_digest` its manifest's digest); the exposure is outside the condition-group comparison.
-  A report measured with `--split` is still refused, with its sentence: it has no registered
-  version.
+  `cohort_digest` its manifest's digest); the exposure is outside the condition-group comparison,
+  and `measured` is compared by its facts only (its counts and each metric's status and
+  denominator count, never the words of its units and reasons). A report whose exposure names
+  another checkpoint or version than it measured contradicts itself and is refused; nothing else
+  of the exposure is checked, since it is never a gate. A report measured with `--split` is still
+  refused, with its sentence: it has no registered version.
 - **The ledger.** Schema 4 (`src/evaluation/sidecar.py`, `LEDGER_SCHEMA_VERSION`). Schemas 3 and 4
   are read as written, and reading never rewrites a file; schemas 1 and 2 are refused. The first
   registration into a schema 3 file writes schema 4. One registration at a time per ledger, and one
@@ -527,8 +530,13 @@ Data versions and Keeping items keep, as of Stage 6.)*
   field and never its value, and hides no other. Models shows results with their exposure (O8 ii),
   a KG edge set's through the one display for every mode; R10 is shown for a supplied cohort only,
   and a KG edge set's "held out" is scoped to the recorded graph use, never a patient cohort's
-  holdout. No view carries a case id, a server path or R10's evidence paths, and a KG edge set's
-  exposure reason and caveat stay in the ledger.
+  holdout. A KG edge set's exposure is read apart from its result: a block this build cannot
+  read as its view is shown as "exposure not recorded" with the reason (fields named, never
+  values) beside the result; only an exposure naming another checkpoint or version makes the
+  record unreadable. Models lists every kind and role under "Recorded results" ("Recorded test
+  results" before), never calling a train or val result a test. No view carries a case id, a
+  server path or R10's evidence paths, and a KG edge set's exposure reason and caveat stay in the
+  ledger.
 - **Kept reports of retired modes.** Kept Mode C and D reports are read by the shared readers,
   shown by the one display for every record and registered by the general rules under their own
   mode (rev 15; K8-6c, K8-6e.2). A record a reader cannot read is listed with its reason, never

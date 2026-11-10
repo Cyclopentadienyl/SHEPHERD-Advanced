@@ -1610,7 +1610,12 @@ def _kind_lines(record: Mapping[str, Any], kind: str) -> List[Tuple[str, str]]:
     supplied cohort's shows R10 (research comparison Stage 6): a KG edge set's
     exposure in this build's words (`caveats.exposure_text`) with its
     definition version; a generated split's generation identity and how it
-    stands to a model's training (`caveats.GENERATED_EXPOSURE_NOTE`)."""
+    stands to a model's training (`caveats.GENERATED_EXPOSURE_NOTE`).
+
+    Interim, until Stage 7 reworks this page: these lines read the record
+    built from a kept report directly, beside the one reader's views that
+    Models renders (`models_page.kind_html`); Stage 7 renders them from that
+    view, in Models' words, through one shared helper."""
     if kind == "kg_edges":
         exposure = record.get("exposure") if isinstance(record.get("exposure"), Mapping) else {}
         return [("Exposure", f"{e(exposure_text(exposure))} "

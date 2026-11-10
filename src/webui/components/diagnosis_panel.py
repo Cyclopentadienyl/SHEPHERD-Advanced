@@ -2541,7 +2541,7 @@ def select_candidate(result: Any, segment: Any, key: Any) -> Dict[str, Any]:
 
 def open_identity(state: Any, result: Any, seg: str = "model",
                   section: str = "identity", phase: Any = "idle") -> Dict[str, Any]:
-    """Details › (Model in use, at Identity), Recorded tests › (at Evidence) or
+    """Details › (Model in use, at Identity), Recorded results › (at Evidence) or
     the badge (This result): the identity drawer, in the details column's
     slot; the change-model drawer closes. While a model change is open (its
     confirmation, or a reload running: `phase` not idle) the change drawer
@@ -2902,7 +2902,7 @@ def create_diagnosis_tab(ctx: Any) -> None:
                             outputs=[card_loading, run_btn, run_cover, run_reason],
                             show_progress="hidden")
 
-    # --- the card's own links: dismiss, Retry / read it, Recorded tests ›
+    # --- the card's own links: dismiss, Retry / read it, Recorded results ›
     identity_names = ("identity_view", "identity_drawer", "change_drawer", "identity_seg",
                       "id_model", "id_result_md", "id_result_html")
 

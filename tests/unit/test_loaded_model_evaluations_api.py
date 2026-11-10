@@ -1610,7 +1610,7 @@ def test_a_mixed_ledger_lists_its_unreadable_record_the_same_way_in_every_reader
     and "n_ranked: missing"; the request leaves the ledger's bytes as they
     were. Models' operator details (through the shared listing) and its
     read-only view (through this route) list the same item and never point to
-    the server's log; the row and the Diagnosis card read "Recorded tests: 3 ·
+    the server's log; the row and the Diagnosis card read "Recorded results: 3 ·
     1 not readable". Registering a new disease, C and D report appends records
     5, 6 and 7, and the unreadable record stays as written at index 3. HEAD: no
     ``unreadable_records``, "the server's log says why", and the row counted
@@ -1665,9 +1665,9 @@ def test_a_mixed_ledger_lists_its_unreadable_record_the_same_way_in_every_reader
         assert str(tmp_path) not in shown
     # The row and the Diagnosis card count results only, and name the rest.
     assert (recorded.count, recorded.unreadable) == (3, 1)
-    assert r.recorded_tests_text(recorded).startswith("Recorded tests: 3 · 1 not readable")
+    assert r.recorded_tests_text(recorded).startswith("Recorded results: 3 · 1 not readable")
     card = _text(diagnosis_card._recorded_html({"recorded": recorded._asdict()}, grey=False))
-    assert card.startswith("Recorded tests: 3 · 1 not readable")
+    assert card.startswith("Recorded results: 3 · 1 not readable")
 
     # Appending goes on past it; the unreadable record stays as written.
     more = [_report_for(digest, batch_size=16), mode_c_report(artifact_digests=digests,

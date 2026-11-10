@@ -1724,10 +1724,12 @@ registration of another report.
   was not, it says "the usage history was not written" with the reason, and the record stands.
   A ledger changed by something that takes no lock, such as a hand edit, is still refused
   rather than overwritten.
-- Only a **registered cohort version's** report is recorded; a report from `--split` is not,
-  because the ledger does not yet support a generated split's data identity (it has no
-  registered cohort version), not because such a result counts for less (policy rev 16). Its
-  report and ranks stay at `--output`; extending the ledger to them is later work.
+- A report of a **registered version** of any kind is recorded: a supplied cohort's, a KG edge
+  set's, or a generated split's kept with `import_cohort.py --kind generated` (research
+  comparison Stage 6). A report from `--split` is not, because it has no registered version, so
+  no data identity the ledger records results by, not because such a result counts for less
+  (policy rev 16). Its report and ranks stay at `--output`; the same split kept as a version is
+  measured with `--cohort` and registered.
 
 ### Exit codes
 
@@ -1759,7 +1761,7 @@ checkpoint file it is given against the report, as before.
 ### What the Diagnosis page shows
 
 **Since M5-2 (2026-10-21) the Diagnosis page shows the loaded checkpoint's recorded tests as a
-state only**, on its "Model in use" card: "Recorded tests: 3 · runs differ for 1", "3 ·
+state only**, on its "Model in use" card: "Recorded results: 3 · runs differ for 1", "3 ·
 comparison incomplete" (no registry is set, or no record's cohort version or report store can be
 read; never shown as agreeing), "3 · runs differ for 1; comparison incomplete for 1" (counted
 apart), "3 · 1 not readable" (since K8-6e.1: 3 results and 1 record the shared check cannot read
@@ -1871,7 +1873,7 @@ Investigation notes are not shown (BACKLOG 40):
 - **Ledger schema 3 (M4), schema 4 since K8-6r.2.** An existing `evaluations.json` of schema
   1 or 2 is refused — by `--record`, by `record_evaluation.py` (`--report` and `--show`) and by
   the recorded-results readers, which report the ledger as not read (on the Diagnosis card:
-  "Recorded tests: ledger not readable"). Nothing migrates it and its results are not carried
+  "Recorded results: ledger not readable"). Nothing migrates it and its results are not carried
   over: **archive it by hand**, for example `mv evaluations.json evaluations.v2.json`, read it
   with the revision that wrote it, and re-measure what you need with this revision, then
   register the new reports (the refusal says the same). A report written before M4 is refused
@@ -2795,7 +2797,7 @@ it: both follow Options, and stay pinned at the panel's bottom when the inputs n
 - a chip, only when true: `synthetic data` (amber). The `no trained model` and `unverified`
   chips went with the path-reasoning state (K7), and `no SP table` and `GNN not loaded` with the
   mixture (K8-4);
-- "Recorded tests: <state>" (§4.9), whose › opens Details at Evidence; "Details ›"; "🔒 Change
+- "Recorded results: <state>" (§4.9), whose › opens Details at Evidence; "Details ›"; "🔒 Change
   model…". The recorded tests, and the workspace names, are read again each time Diagnosis is
   shown, after each diagnosis, after a model change and with ↻ (the 5-second read reads only what
   is served): a test recorded in Research › Test shows when you come back to Diagnosis.
@@ -2819,7 +2821,7 @@ served model's facts in five sections (Identity, with the full digests and Copy;
 Evidence; Warnings, always open) and a link to the full records in Research › Models (the
 structural-fingerprint line is gone since K8-4: the checkpoint's record binds its graph by
 digest, checked at load). "This result" shows only what the result carries, each part beside
-what is in use now. "Details ›" and "Recorded tests ›" open the first, the badge the second; while
+what is in use now. "Details ›" and "Recorded results ›" open the first, the badge the second; while
 a model change is open (its confirmation, or a reload running) they leave the Change model drawer
 in place.
 
@@ -3274,7 +3276,7 @@ its name (since K8-7b). Columns:
   top 20 is no longer shown; its raw values stay in the file, and the detail says "Validation
   (Trainer): not read (record not readable)"). It is never a test result and never shares a
   column with one;
-- **Recorded tests**: what the ledger beside the checkpoint holds, as a state ("none in
+- **Recorded results**: what the ledger beside the checkpoint holds, as a state ("none in
   ledger", "no ledger", "3 · runs differ for 1", …), never a number of a result.
 
 **Listing opens every checkpoint of the workspace**, so the list is an operator control (§4.13).
@@ -3284,7 +3286,7 @@ after a Load, opens no unchanged file; a load, a start or a measurement still ch
 uses against the digest shown.
 A read-only browser gets no list: the page says why, naming the three conditions (deployment
 mode M1, a request on this machine's loopback, here or through an SSH forward, and no forwarding
-header), and shows instead **Recorded test results of the model in use**, read from the ledger
+header), and shows instead **Recorded results of the model in use**, read from the ledger
 beside the served checkpoint by its model fingerprint, opening no checkpoint. Each record's
 regime (device, deterministic on or off) is the one the record holds, as an operator sees it
 (`GET /api/v1/evaluations/loaded-model` carries each record's `deterministic_algorithms` for
@@ -3301,8 +3303,10 @@ score.
 whether that is this workspace's current dataset), the Trainer's validation figure in its own
 card, any warning, and two segments:
 
-- **Recorded test results**: every record the ledger holds for these weights, one table per
-  measurement mode, in the order first shown, each under its mode's label (and a task's note),
+- **Recorded results** ("Recorded test results" until research comparison Stage 6): every
+  record the ledger holds for these weights, of any data kind and role, each named by its
+  version's kind and role (a KG edge set's with its exposure, "exposure not recorded" with the
+  reason when its block does not read), one table per measurement mode, in the order first shown, each under its mode's label (and a task's note),
   by one display for every mode (since K8-6e.2; before it, Mode C's records came first, then
   Mode D's, under labels of their own). Each row gives the cohort version and its role; a task's
   pooled MRR and its second figure named in full in the header, or, for a mode this version does
@@ -3323,7 +3327,7 @@ card, any warning, and two segments:
   read as a result (since K8-6e.1) is never shown or counted as one: under the tables, "▲ 1
   record for these weights cannot be read as a result. The ledger keeps it as written." and a
   small table, Index · Registration · Report · Reason (a sequence or report digest it does not
-  carry readably reads "not readable"); the segment then reads "Recorded test results · 3 (1 not
+  carry readably reads "not readable"); the segment then reads "Recorded results · 3 (1 not
   readable)". The read-only view lists the same items, from the route;
 - **Usage history**: the entries that name this checkpoint in every listed cohort version's
   usage history, newest first: test runs and registrations, and any model load kept from before

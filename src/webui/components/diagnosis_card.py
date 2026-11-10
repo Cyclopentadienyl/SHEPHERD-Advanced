@@ -50,7 +50,7 @@ it is shown, after each diagnosis, after a Load ("served model changed") and on
   served model per session (what it records is kept while the served
   identity is the same); the timer's read never opens a checkpoint;
 - the mode chip, only when true: amber "synthetic data";
-- "Recorded tests: <state>" from the ledger beside the checkpoint and the
+- "Recorded results: <state>" from the ledger beside the checkpoint and the
   cohort versions' report stores, by the shared model list's own reader
   (`model_list.recorded_tests_for`): a state, never a number of a result, the
   same words as the checkpoint's row in "Change model…". The recorded tests and
@@ -603,14 +603,14 @@ def _chips(status: Mapping[str, Any], *, grey: bool) -> List[str]:
 
 def _recorded_html(facts: Mapping[str, Any], *, grey: bool) -> str:
     if grey:
-        return f'<span class="shep-dx-tests">{r.e("Recorded tests: not read")}</span>'
+        return f'<span class="shep-dx-tests">{r.e("Recorded results: not read")}</span>'
     raw = facts.get("recorded")
     recorded = r.RecordedTests(**raw) if isinstance(raw, Mapping) else None
     text = r.recorded_tests_text(recorded)
     if recorded is None and facts.get("item_problem"):
         text += f" · {facts['item_problem']}"
     return (f'<span class="shep-dx-tests">{r.e(text)} <button type="button" class="shep-dx-link" '
-            'data-key="evidence" aria-label="Recorded tests: open Details at Evidence">›</button>'
+            'data-key="evidence" aria-label="Recorded results: open Details at Evidence">›</button>'
             '</span>')
 
 

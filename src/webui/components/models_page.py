@@ -2,8 +2,9 @@
 Research › Evaluate › Models: the research preset of the shared model list (M5-2, UI-D).
 ========================================================================================
 `docs/working/PLAN_TEST_RESULTS.md` §6, "M5's boundaries" (Model Management on
-the shared model list, Trainer validation and each cohort's recorded test results
-kept apart), D5 (every run's record, each with its run; runs under one condition
+the shared model list, Trainer validation and each version's recorded results
+kept apart; a result is named by its version's kind and role, never "test" for
+another role), D5 (every run's record, each with its run; runs under one condition
 group that differ are described) and D8 (the list is an operator control). D4's
 ordering by test score retired in K8-6d, with its role list, its Mode C rule and
 its one record per checkpoint: no order ranks a model by a test score.
@@ -42,7 +43,7 @@ it was trained on, what it is (kind, operation, parent, family, encoder and its
 relation to the paper, README §5 axis 2: "matches the reference recipe" or the
 fields that differ), the Trainer's validation figure in its own card (a selection
 metric on val, never beside a test result), Model Facts' warnings, and two
-in-page segments: "Recorded test results" (every record its ledger holds, one
+in-page segments: "Recorded results" (every record its ledger holds, one
 table per mode in the order first shown, as the API's record view shows a record
 by **one display for every mode** (R2, K8-6e.2): its mode's label, a described
 measurement's two columns in words with every metric as recorded one click away,
@@ -62,7 +63,7 @@ that name this checkpoint, newest first, each shown as it was recorded).
 
 **Read-only (D8).** Listing opens checkpoint files (SPEC_4 C3), so a request D8
 refuses gets no list: the page says why (the three conditions of an operator
-request) and shows "Recorded test results of the model in use", read by the
+request) and shows "Recorded results of the model in use", read by the
 API's own read-only route function (`get_loaded_model_evaluations`): the ledger
 beside the served checkpoint, filtered by the served digest, **opening no
 checkpoint**, with each record's run and group description as that route
@@ -172,7 +173,7 @@ REFERENCE_ANCHOR = ("The reference recipe is anchored on e95433a, with correctio
 LOAD_NOTE = ("Reloads the pipeline and asks once, from → to, as Change model does. Results "
              "already produced keep their own identity.")
 
-READONLY_TITLE = "Recorded test results of the model in use"
+READONLY_TITLE = "Recorded results of the model in use"
 READONLY_WHERE = "from the ledger beside the loaded checkpoint · opens no checkpoint"
 #: D8's three conditions, named together for a read-only request.
 D8_CONDITIONS = ("Operator controls need this deployment set to M1, a request on this "
@@ -748,14 +749,17 @@ def kind_html(view: Mapping[str, Any]) -> str:
                 f'{r.e(r.short_hex(_get(cohort, "split_manifest", "sha256")))}</code>; '
                 f'{r.e(kept)}</span>'
                 f'<span class="shep-mp-ln shep-sub">{r.e(GENERATED_EXPOSURE_NOTE)}</span>{counts}')
-    exposure = view.get("exposure") if isinstance(view.get("exposure"), Mapping) else {}
-    split = exposure.get("split")
+    exposure = view.get("exposure") if isinstance(view.get("exposure"), Mapping) else None
+    split = exposure.get("split") if exposure is not None else None
+    # An exposure block the one reader could not read is null with its
+    # problem (fields named, never values): the result stands beside it.
+    source = ("Definition " + str(exposure.get("definition_version")) + "; "
+              + (split if isinstance(split, str) else "the model record was not read")
+              if exposure is not None else
+              f"Its block does not read: {view.get('exposure_problem') or 'no reason given'}")
     said = (f'<span class="shep-mp-ln"><b>Exposure:</b> {r.e(exposure_text(exposure))}'
             f'{help_button("models-exposure", "Exposure (KG edge sets)")}</span>'
-            '<span class="shep-mp-ln shep-sub">Definition '
-            f'{r.e(exposure.get("definition_version"))}'
-            f'; {r.e(split if isinstance(split, str) else "the model record was not read")}'
-            '</span>')
+            f'<span class="shep-mp-ln shep-sub">{r.e(source)}</span>')
     passing = cohort.get("message_passing") or {}
     pairs = cohort.get("pairs") or {}
     graph = (f"Message passing over the split's {passing.get('part')} part, "
@@ -1020,7 +1024,7 @@ def _mode_table(mode: Optional[str], views: Sequence[Mapping[str, Any]],
              '<th scope="col" colspan="2">Recorded metrics</th>')
     # Each table named for its mode's label, so a screen reader tells them apart.
     return ('<div class="shep-tbl-wrap shep-mp-recwrap"><table class="shep-tbl shep-mp-rec" '
-            f'aria-label="{r.e("Recorded test results, " + mode_label(mode))}">'
+            f'aria-label="{r.e("Recorded results, " + mode_label(mode))}">'
             '<colgroup><col class="shep-mp-c1"><col '
             'class="shep-mp-c2"><col class="shep-mp-c3"><col class="shep-mp-c4"><col></colgroup>'
             f'<thead><tr><th scope="col">{_version_head(views)}</th>{heads}'
@@ -1401,7 +1405,7 @@ def detail_parts(listing: Mapping[str, Any], data: Mapping[str, Any], key: Any,
         return {"header": ('<div class="shep-panel-hd"><h2>Details</h2>'
                            f'<span class="shep-panel-right">{_served_line(listing)}</span></div>'),
                 "top": ('<p class="shep-muted shep-mp-p">Select a model to see its fingerprints, '
-                        'its validation figure and its recorded test results.</p>'),
+                        'its validation figure and its recorded results.</p>'),
                 "records": "", "usage": "", "seg": None}
     in_use = bool(listing.get("served_sha")) and item.get("sha256") == listing.get("served_sha")
     tag = r.chip("In use (Diagnosis)", "accent") if in_use else r.chip("not in use", "grey")
@@ -1449,7 +1453,7 @@ def detail_parts(listing: Mapping[str, Any], data: Mapping[str, Any], key: Any,
     notes = [f"{unreadable} not readable"] if unreadable else []
     if contested:
         notes.append(f"{contested} where runs differ")
-    seg_records = f"Recorded test results · {count}" + (
+    seg_records = f"Recorded results · {count}" + (
         f" ({'; '.join(notes)})" if notes else "")
     return {"header": header, "top": top, "records": records, "usage": usage,
             "seg": [(seg_records, RECORDS), (f"Usage history · {n_usage}", USAGE)]}
@@ -1581,7 +1585,7 @@ def usage_html(item: Mapping[str, Any], data: Mapping[str, Any]) -> Tuple[str, i
 
 
 def readonly_parts(data: Mapping[str, Any]) -> Dict[str, Any]:
-    """"Recorded test results of the model in use": the served digest (from
+    """"Recorded results of the model in use": the served digest (from
     the status), then the route's records for it, each with its run and its
     group's description. Nothing here opened a checkpoint."""
     header = (f'<div class="shep-panel-hd"><h2>{r.e(READONLY_TITLE)}</h2>'
@@ -1667,7 +1671,7 @@ def create_models_page(ctx: Any) -> None:
             with gr.Column(elem_id="shep-mp-detail-bd", elem_classes=["shep-mp-detail-bd"]):
                 parts["detail_top"] = plain_html(detail_parts({}, {}, None, {})["top"],
                                                  elem_id="shep-mp-detail-top")
-                parts["seg"] = gr.Radio(choices=[("Recorded test results", RECORDS),
+                parts["seg"] = gr.Radio(choices=[("Recorded results", RECORDS),
                                                  ("Usage history", USAGE)], value=RECORDS,
                                         show_label=False, label="Shown", visible=False,
                                         elem_id="shep-mp-seg", elem_classes=["shep-seg"],

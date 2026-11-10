@@ -31,7 +31,7 @@ registry's report store (`tests/fixtures/model_records.py`):
   names; *unverifiable* never a number; the usage history segment (this
   checkpoint's entries, newest first, read through the page's cohort version
   list: a guard); ledger states said, never a path;
-- **read-only (D8)**: no list, D8's three conditions named, and "Recorded test
+- **read-only (D8)**: no list, D8's three conditions named, and "Recorded
   results of the model in use" read by the API's read-only route function from
   the ledger beside the served checkpoint, by its digest, opening no
   checkpoint; no server path, even when a report store cannot be read; the
@@ -512,7 +512,7 @@ def _kept_c_and_d_records(*more):
 
 def _table(raw, mode_label_text):
     """The records table named for `mode_label_text` (its aria-label)."""
-    start = raw.index(f'aria-label="{e("Recorded test results, " + mode_label_text)}"')
+    start = raw.index(f'aria-label="{e("Recorded results, " + mode_label_text)}"')
     return raw[start:raw.index("</table>", start)]
 
 
@@ -793,7 +793,7 @@ def test_the_detail_keeps_validation_and_mode_c_apart(world, monkeypatch):
     # no role says anything about ordering
     assert "ordering" not in records
     # The heading names no mode: each record's table carries its own (PLAN_B05 §6).
-    assert detail["seg"][0] == ("Recorded test results · 3 (1 where runs differ)", mp.RECORDS)
+    assert detail["seg"][0] == ("Recorded results · 3 (1 where runs differ)", mp.RECORDS)
     # a role code is never broken inside its name in its narrow column: not
     # "research_selectio" / "n" (1440x900), nor "research_" / "selection" (M5-3);
     # it stays whole, in a titled ellipsis where it does not fit
@@ -805,7 +805,7 @@ def test_the_detail_keeps_validation_and_mode_c_apart(world, monkeypatch):
 def test_a_record_that_cannot_be_read_is_named_apart_from_the_results(world, monkeypatch):
     """K8-6e.1 (R3): model-05's ledger holds three records; one loses
     ``n_ranked`` by a hand edit. The segment counts the results and names the
-    rest with one " · " ("Recorded test results · 2 (1 not readable; 1 where
+    rest with one " · " ("Recorded results · 2 (1 not readable; 1 where
     runs differ)"); the detail lists it by index, registration, report and
     reason under the amber sentence, never as a result and never pointing to
     the server's log; the row reads "2 · 1 not readable; runs differ for 1".
@@ -822,7 +822,7 @@ def test_a_record_that_cannot_be_read_is_named_apart_from_the_results(world, mon
     detail = mp.detail_parts(listing, page, _key(world, "model-05.pt"), NEWEST_CTL)
 
     assert detail["seg"][0] == (
-        "Recorded test results · 2 (1 not readable; 1 where runs differ)", mp.RECORDS)
+        "Recorded results · 2 (1 not readable; 1 where runs differ)", mp.RECORDS)
     assert detail["seg"][0][0].count(" · ") == 1
     said = _words(detail["records"])
     assert ("▲ 1 record for these weights cannot be read as a result. The ledger keeps it as "
@@ -832,7 +832,7 @@ def test_a_record_that_cannot_be_read_is_named_apart_from_the_results(world, mon
     assert "registered #2" not in detail["records"]
     assert "server's log" not in said
     assert r.recorded_tests_text(ml._recorded(listing, _key(world, "model-05.pt"))) == (
-        "Recorded tests: 2 · 1 not readable; runs differ for 1")
+        "Recorded results: 2 · 1 not readable; runs differ for 1")
 
 
 def test_the_pages_amber_sentences_are_amber_and_the_note_after_the_list_stands_apart():
@@ -976,7 +976,7 @@ def test_the_usage_history_lists_every_listed_versions_entries_for_a_listed_chec
          (MYGENE, "model_load")])
     detail = mp.detail_parts(listing, data, _key(world, "model-05.pt"),
                              {"task": mp.ALL_TASKS, "order": mp.NEWEST})
-    assert detail["seg"] == [("Recorded test results · 3 (1 where runs differ)", mp.RECORDS),
+    assert detail["seg"] == [("Recorded results · 3 (1 where runs differ)", mp.RECORDS),
                              ("Usage history · 7", mp.USAGE)]
     usage = detail["usage"]
     assert usage.count(">Test run<") == 3 and usage.count(">Registered<") == 3
@@ -1042,7 +1042,7 @@ def test_no_record_is_dropped_or_set_apart_for_its_family_dataset_or_cohort(worl
         for key, (_sha, _path) in models.items():
             assert items[key] in shown, (order, key)
             detail = mp.detail_parts(listing, data, key, ctl)
-            assert detail["seg"] == [("Recorded test results · 2", mp.RECORDS),
+            assert detail["seg"] == [("Recorded results · 2", mp.RECORDS),
                                      ("Usage history · 2", mp.USAGE)], (order, key)
             for label in blocks:
                 assert detail["records"].count(f'<div class="shep-w600">{label}</div>') == 1

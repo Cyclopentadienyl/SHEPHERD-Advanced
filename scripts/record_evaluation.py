@@ -203,8 +203,9 @@ def _run_lines(ledger: dict, checkpoint_digest: str) -> list:
     before each run had its own record; then its possible overlaps
     (`possible_overlaps`), never confirmed; then, for a version of another kind
     than a supplied cohort, the version in its kind's words and, for a KG edge
-    set, its exposure, as the listing's view reads them. The two kinds of
-    record stay apart."""
+    set, its exposure, as the listing's view reads them ("exposure not
+    recorded" with the reason when its block does not read; the result is
+    listed all the same). The two kinds of record stay apart."""
     from src.api.routes.evaluations import read_records
 
     records = ledger.get("records") if isinstance(ledger.get("records"), list) else []
@@ -232,8 +233,11 @@ def _run_lines(ledger: dict, checkpoint_digest: str) -> list:
         view = views.get(id(record))
         if view is not None and view.cohort.kind != "supplied":
             line += f"; {version_words(view.cohort.kind, view.cohort.role)}"
-            if view.cohort.kind == "kg_edges":
+            if view.cohort.kind == "kg_edges" and view.exposure is not None:
                 line += f"; exposure: {exposure_text(view.exposure.model_dump(mode='json'))}"
+            elif view.cohort.kind == "kg_edges":
+                line += (f"; exposure: {exposure_text(None)} (its block does not read: "
+                         f"{view.exposure_problem})")
         lines.append(line)
     return lines
 

@@ -110,21 +110,30 @@ def test_the_split_caveat_names_two_distinct_limits(script):
         "where a supplied cohort goes instead"
     )
     assert "not registered" in help_text, "a generated split's report is not registered"
-    assert "does not yet support a generated split's data identity" in help_text, (
-        "the ledger's limit is the reason (policy rev 16, K8-6r.4), not a lesser result"
+    assert "it has no registered version" in help_text, (
+        "the missing version is the reason (policy rev 16, K8-6r.4; research comparison "
+        "Stage 6), not a lesser result"
     )
+    assert "import_cohort.py --kind generated is measured with --cohort and registered" in (
+        help_text), "where the same split is registered instead (Stage 6)"
+    assert "does not yet support" not in help_text, "Stage 6: the ledger records a kept split"
+
     assert "report and ranks stay at --output" in help_text, "where the result is kept"
 
 
 @pytest.mark.parametrize("script", ENTRY_POINTS)
 def test_the_record_and_output_help_give_the_ledgers_limit_and_the_new_file_rule(script):
-    """K8-6r.4: `--record` gives the ledger's limit as the reason a generated
-    split's report is not registered, and `--output` says it names a new file
-    that, with its ranks file, is never replaced (Decisions 9 and 12)."""
+    """K8-6r.4: `--record` gives the reason a generated split's report is not
+    registered (since research comparison Stage 6: it has no registered
+    version; the same split kept as a version is registered), and `--output`
+    says it names a new file that, with its ranks file, is never replaced
+    (Decisions 9 and 12)."""
     _, record_help = _option_help(script, "--record")
     _, output_help = _option_help(script, "--output")
 
-    assert "does not yet support a generated split's data identity" in record_help
+    assert "a registered version of any kind" in record_help
+    assert "because it has no registered version" in record_help
+    assert "does not yet support" not in record_help
     assert "stay at --output" in record_help
     assert "a new file" in output_help
     assert "neither it nor its ranks file may exist" in output_help

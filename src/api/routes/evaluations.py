@@ -78,7 +78,9 @@ registration, run and digests): a supplied cohort version's as `RecordView`,
 exactly as before (its cohort, counts and R10); a KG edge set's as
 `KgEdgesRecordView` (its view, split, message-passing graph and pairs by
 digest and rule, its counts with their units, no R10, the run's counts and
-each metric's status, and its exposure, `ExposureView`); a generated split's
+each metric's status, and its exposure, `ExposureView`, read apart from the
+result: a block this build cannot read is null with its problem, naming
+fields only, and the result is still shown); a generated split's
 as `GeneratedRecordView` (its role and generation identity, its counts with
 their units, no R10). A record whose kind this build does not read is listed
 in ``unreadable_records``, naming the field and never its value, and hides no
@@ -618,20 +620,33 @@ class KgEdgesRecordView(_RecordViewFields):
     """One recorded result on a KG edge set, as a person reads it: its
     version's identity and counts with their units, the run's counts and each
     metric's status, and its exposure; no R10 (a KG edge set's relation to the
-    model's training is its exposure)."""
+    model's training is its exposure).
+
+    **The exposure is read apart from the result** (F4: never a gate): a block
+    this build cannot read as its definition's view (another definition's
+    shape, a hand edit) leaves ``exposure`` null and says why in
+    ``exposure_problem``, naming fields and never their values, and the
+    result is shown with its exposure not recorded. Only an exposure naming
+    another checkpoint or version than the record's own makes the record
+    unreadable: it contradicts itself (`_kg_edges_parts`)."""
 
     cohort: KgEdgesRecordCohort
     counts: Dict[str, _Count]
     r10: None
     count_units: Dict[str, _Text]
     measured: KgEdgesMeasured
-    exposure: ExposureView
+    exposure: Optional[ExposureView] = Field(
+        ..., description="The run's exposure, as recorded; null when its block does not read "
+        "as this build's view of it (exposure_problem says why)")
+    exposure_problem: Optional[str] = Field(
+        ..., description="Why the exposure block does not read, naming its fields in the ledger "
+        "record and never their values; null when it reads")
 
     @model_validator(mode="after")
-    def _counts_units_and_sources_agree(self) -> "KgEdgesRecordView":
+    def _each_count_has_its_unit(self) -> "KgEdgesRecordView":
         _units_follow_the_counts(self.counts, self.count_units)
-        if self.exposure.sources.version.manifest_sha256 != self.cohort.version_manifest_sha256:
-            raise ValueError("its exposure names another version than its cohort digest")
+        if (self.exposure is None) == (self.exposure_problem is None):
+            raise ValueError("exposure_problem: says why exactly when there is no exposure")
         return self
 
 
@@ -1025,33 +1040,49 @@ def _versioned_parts(record: Dict[str, Any], cohort: Any) -> Dict[str, Any]:
 def _kg_edges_parts(record: Dict[str, Any], cohort: Any) -> Dict[str, Any]:
     """A KG edge set's own parts of its view: its view, split, message-passing
     graph and pairs (by digest and rule), its counts with their units, the
-    run's counts and each metric's status, and its exposure, whose model
-    record must be this record's checkpoint."""
+    run's counts and each metric's status, and its exposure.
+
+    **The exposure is read apart** (F4: it is never a gate): a block that
+    does not read as `ExposureView` (another definition's shape, a hand edit)
+    is null with its problem, naming fields and never values, and the result
+    still reads. Only sources naming another checkpoint or version than the
+    record's own refuse the record, as a self-contradiction; the writer
+    refuses such a report too (`sidecar._kind_parts`)."""
+    from pydantic import ValidationError
+
     if isinstance(cohort, dict):
         for name, model in (("graph_view", KgEdgesGraphView), ("split", KgEdgesSplit),
                             ("message_passing", KgEdgesMessagePassing),
                             ("pairs", KgEdgesPairs)):
             if name in cohort:
                 cohort[name] = _pick(cohort[name], model.model_fields)
-    exposure = _picked(_at(record, "exposure"), ExposureView, {
+    raw = _at(record, "exposure")
+    for path, own in ((("sources", "model_record", "checkpoint_sha256"), "checkpoint_digest"),
+                      (("sources", "version", "manifest_sha256"), "cohort_digest")):
+        named = _at(raw, *path)
+        if named is not _NOT_THERE and named != record.get(own):
+            raise ValueError(f"exposure.{'.'.join(path)}: not the record's {own}")
+    exposure = _picked(raw, ExposureView, {
         "measured_edges": ExposureEdges,
         "measurement_message_passing": ExposureMessagePassing,
         "sources": ExposureSources})
     sources = exposure.get("sources") if isinstance(exposure, dict) else None
     if isinstance(sources, dict):
-        sources = {name: _pick(sources[name], model.model_fields)
-                   for name, model in (("model_record", ExposureModelSource),
-                                       ("version", ExposureVersionSource)) if name in sources}
-        exposure["sources"] = sources
-        if _at(sources, "model_record", "checkpoint_sha256") != record.get("checkpoint_digest"):
-            raise ValueError("exposure.sources.model_record.checkpoint_sha256: not the record's "
-                             "checkpoint_digest")
+        exposure["sources"] = {name: _pick(sources[name], model.model_fields)
+                               for name, model in (("model_record", ExposureModelSource),
+                                                   ("version", ExposureVersionSource))
+                               if name in sources}
+    try:
+        exposure, problem = ExposureView.model_validate(exposure), None
+    except ValidationError as exc:
+        exposure, problem = None, unreadable_reason(exc, within=("exposure",))
     measured = _picked(_at(record, "measured"), KgEdgesMeasured, {})
     if isinstance(measured, dict) and isinstance(measured.get("metrics"), dict):
         measured["metrics"] = {
             name: _picked(status, LpMetricStatus, {"denominator": MetricDenominator})
             for name, status in measured["metrics"].items()}
-    return {**_versioned_parts(record, cohort), "measured": measured, "exposure": exposure}
+    return {**_versioned_parts(record, cohort), "measured": measured, "exposure": exposure,
+            "exposure_problem": problem}
 
 
 def _generated_parts(record: Dict[str, Any], cohort: Any) -> Dict[str, Any]:
@@ -1154,7 +1185,7 @@ def _recorded_results(read: "ReadIdentity") -> LoadedModelEvaluations:
     )
 
 
-def unreadable_reason(exc: ValueError) -> str:
+def unreadable_reason(exc: ValueError, within: Tuple[str, ...] = ()) -> str:
     """Why the shared check refused a record, as one bounded line that names
     the refused fields and never their values (K8-6e.1).
 
@@ -1171,7 +1202,9 @@ def unreadable_reason(exc: ValueError) -> str:
     `_record_view`'s and the shared checks' refusals name a field, never its
     value. Either way through `problem_line`: one line, each character that
     is not printable escaped (a field name is a key a hand edit may have
-    written), at most 300 characters."""
+    written), at most 300 characters. ``within`` is the record's path to the
+    part a refusal was for, when that part was validated on its own (a KG
+    edge set's exposure, `_kg_edges_parts`)."""
     from pydantic import ValidationError
 
     from src.utils.checkpoint_paths import problem_line
@@ -1180,8 +1213,8 @@ def unreadable_reason(exc: ValueError) -> str:
         errors = exc.errors(include_url=False)
         parts = []
         for error in errors[:3]:
-            where = ".".join(_printable(step) for step in _record_path(error.get("loc") or ())
-                             ) or "the record"
+            where = ".".join(_printable(step) for step in _record_path(
+                (*within, *(error.get("loc") or ())))) or "the record"
             if error.get("type") == "missing" or error.get("input") is _NOT_THERE:
                 parts.append(f"{where}: missing")
                 continue
