@@ -598,10 +598,12 @@ def read_measurement_inputs(
         # workspace or the checkpoint is read.
         data_kind = version.kind
         why = protocols.inputs_refusal(protocol, data_kind, version.manifest.get("counts"))
-        if why is None and training_evidence and data_kind != protocols.SUPPLIED:
-            relation = ("its run's exposure block, read from the model's own record"
-                        if data_kind == protocols.KG_EDGES
-                        else "the disease allocation that cut it, which the version records")
+        # **R10's evidence by the version's kind**: the one rule the job
+        # runner's evidence choice follows too (`protocols.takes_training_evidence`).
+        if (why is None and training_evidence
+                and not protocols.takes_training_evidence(data_kind)):
+            relation = protocols.TRAINING_RELATION.get(
+                data_kind, "not one this build records")
             why = (f"--training-evidence applies to a supplied cohort version only (R10: its "
                    f"cases' overlap with the training and validation inputs the checkpoint "
                    f"records); {cohort!r} is {_version_words(version)}, whose relation to the "

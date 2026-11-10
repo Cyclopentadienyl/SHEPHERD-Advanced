@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import html
 import json
 import re
 import shlex
@@ -673,10 +674,10 @@ def test_every_listing_shows_kind_role_and_counts_never_an_edge_or_a_case_id(bot
 
 def test_the_test_page_lists_a_kg_edge_set_and_its_start_says_why_it_is_not_measured(both):
     """The Test page's reader of the listing (its rows, options and summary)
-    takes a KG edge set without failing, by label, kind and role, never in a
-    supplied cohort's words; its listing by kind with each kind's counts is
-    research comparison Stage 7's. Start's check refuses it with the
-    protocol's own reason."""
+    takes a KG edge set without failing, by label, kind and role ("KG edge set
+    (test)", research comparison Stage 7), with its counts in its own units,
+    never in a supplied cohort's words, and then no KG edge sets' empty state.
+    A task protocol asked of it is refused with the protocol's own reason."""
     pytest.importorskip("gradio")
     from src.api.services import server_lists
     from src.config import server_settings as ss
@@ -689,10 +690,17 @@ def test_the_test_page_lists_a_kg_edge_set_and_its_start_says_why_it_is_not_meas
     listing = server_lists.list_cohort_versions(environ={ss.ENV_REGISTRY: str(registry)})
     page = {"versions": [version_row(item) for item in listing.items]}
     options = {value: label for label, value in tp.version_choices(page, None)}
-    assert options["kg-test"] == "kg-test · a KG edge set (test)"
+    assert options["kg-test"] == "kg-test · KG edge set (test)"
     shown = tp.version_html(page, "kg-test", None)
-    assert "A KG edge set (test)" in shown
+    assert "<div>KG edge set (test)</div>" in shown
+    counts = edges.manifest["counts"]
+    assert (f"{counts['pairs']} pairs from {counts['positive_edges']} positive edges; message "
+            f"passing over {counts['message_passing_edges']} edges") in shown
+    assert f"Counts and units ({len(counts)})" in shown
+    for name, unit in edges.manifest["count_units"].items():
+        assert f"<code>{name}</code> {counts[name]}: {html.escape(unit)}" in shown, name
     assert "source cases" not in shown and "ranked-eligible" not in shown
+    assert tp.kg_edges_empty_html(page) == "" and "No KG edge set" not in shown
     (row,) = [v for v in page["versions"] if v["label"] == "kg-test"]
     model = {"record": "model", "learning_stage": "finetune", "task": "disease",
              "capabilities": described("finetune", "disease")}

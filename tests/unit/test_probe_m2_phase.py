@@ -1626,3 +1626,69 @@ def test_a_real_skipped_update_through_the_trainer_passes_and_a_replay_fails(tmp
                                                     observe=[]))
         with pytest.raises(AssertionError, match="optimizer attempts"):
             probe._assert_only_the_remaining_epochs(before, probe._read_run_checkpoint(replayed))
+
+
+# ---------------------------------------------------------------------------
+# The probe's test-run inputs take R10's evidence by the version's kind
+# (research comparison Stage 7): the runner's one choice, not the probe's own.
+# ---------------------------------------------------------------------------
+@pytest.fixture
+def listed_kinds(trained_disease_child, tmp_path, monkeypatch):
+    """A workspaces root with the demo workspace holding the session's disease
+    child, and the deployment's registry holding a supplied cohort, a KG edge
+    set (the test part of the child's recorded split) and a generated split
+    (the workspace's val split), as the server lists them."""
+    import shutil
+
+    from src.evaluation.cohort_registry import (
+        commit_import,
+        prepare_generated_import,
+        prepare_kg_edges_import,
+    )
+    from tests.fixtures.registered_cohort import graph_source_cases, import_version, write_source
+    from tests.fixtures.trained_children import CHILD_RUNS
+
+    demo = tmp_path / "ws" / "demo"
+    shutil.copytree(trained_disease_child["data_dir"], demo)
+    child = demo / "runs" / "gatv2" / CHILD_RUNS["disease"] / "checkpoints" / "last.pt"
+    child.parent.mkdir(parents=True)
+    shutil.copy2(trained_disease_child["disease"], child)
+    registry = tmp_path / "registry"
+    registry.mkdir()
+    import_version(registry, demo, write_source(tmp_path / "cases.json",
+                                                graph_source_cases(demo)), label="cases-1")
+    for plan in (prepare_kg_edges_import(registry, demo, child, "kg-test", "test"),
+                 prepare_generated_import(registry, demo, "gen-val", "val")):
+        commit_import(plan, registry, plan.preview_id)
+    monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(tmp_path / "ws"))
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(registry))
+    evidence = tmp_path / "evidence"
+    evidence.mkdir()
+    return CHILD_RUNS["disease"], evidence.resolve()
+
+
+@pytest.mark.parametrize("setting", ["set", "refused"])
+def test_the_probe_s_test_inputs_take_the_evidence_by_the_version_s_kind(
+        listed_kinds, monkeypatch, setting):
+    """The probe builds a test run's inputs as the Test page does
+    (`_listed_test_inputs`), with the runner's one evidence choice by the
+    listed version's kind (`evidence_choice`), never by asserting the evidence
+    setting for every run. A KG edge set's and a generated split's inputs carry
+    no evidence directory and are built whether the setting is set or refused;
+    the runner takes them. A supplied cohort's carry the setting's directories,
+    and a refused setting stops the probe saying so."""
+    run, evidence = listed_kinds
+    monkeypatch.setenv("SHEPHERD_TRAINING_EVIDENCE_DIRS",
+                       str(evidence) if setting == "set" else "relative/evidence")
+    probe = _probe()
+    for label, protocol, kind in (("kg-test", "kg_link_prediction", "kg_edges"),
+                                  ("gen-val", "disease", "generated")):
+        inputs = probe._listed_test_inputs(label, "demo", run, "last.pt", protocol=protocol)
+        assert (inputs.version_kind, inputs.evidence_dirs) == (kind, ()), label
+        inputs.reports_dir()
+    if setting == "set":
+        inputs = probe._listed_test_inputs("cases-1", "demo", run, "last.pt", protocol="disease")
+        assert (inputs.version_kind, inputs.evidence_dirs) == ("supplied", (evidence,))
+    else:
+        with pytest.raises(AssertionError, match="the evidence setting is refused"):
+            probe._listed_test_inputs("cases-1", "demo", run, "last.pt", protocol="disease")

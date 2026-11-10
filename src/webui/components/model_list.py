@@ -226,8 +226,18 @@ PRESETS: Dict[str, Preset] = {
 # The listing (server side)
 # ---------------------------------------------------------------------------
 def item_key(item: Mapping[str, Any]) -> str:
-    """A listed checkpoint's key in this workspace: architecture/run/file."""
-    return f"{item.get('architecture')}/{item.get('run')}/{item.get('filename')}"
+    """A listed checkpoint's key in this workspace: the server's list's
+    identity (`CheckpointItem.key`: architecture/run/file for names that are
+    text, a form no text names give otherwise, BACKLOG 66), never its shown
+    names, so two entries shown alike are never one key; an item that carries
+    none (one built by hand) by its names, as the list keys them."""
+    key = item.get("key")
+    if isinstance(key, str) and key:
+        return key
+    from src.utils.checkpoint_paths import listing_key
+
+    return listing_key((str(item.get("architecture")), str(item.get("run")),
+                        str(item.get("filename"))))
 
 
 def ledger_records(workspace_dir: Path, items: Sequence[Mapping[str, Any]]

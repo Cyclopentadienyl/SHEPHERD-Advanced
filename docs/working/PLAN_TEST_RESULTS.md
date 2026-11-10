@@ -480,9 +480,11 @@ Data versions and Keeping items keep, as of Stage 6.)*
   samples, gene and patients-like-me over the fixture it keeps (refused, as a stated data gap,
   on a version that keeps none or whose fixture holds no row). Its manifest records `cohort_kind`
   `generated`, the version's block and its role as the split; no R10, and `--training-evidence`
-  is refused (its relation to training is its allocation's), so a Test-page run on one started
-  while R10 evidence directories are set is refused after it starts, as on a KG edge set, until
-  Stage 7 chooses the evidence by kind. Its report is kept in the version's report store and
+  is refused (its relation to training is its allocation's). The job runner chooses R10's
+  evidence once by the version's kind (Stage 7, `training_manager.evidence_choice`, the rule
+  `protocols.takes_training_evidence`): a supplied cohort's run takes the evidence setting's
+  directories, and a KG edge set's or a generated split's run takes none and does not need the
+  setting, so its Test-page run starts whatever the setting says. Its report is kept in the version's report store and
   registered as any kept report is (Stage 6). A generated test role cannot be imported today (the
   generator writes train and val).
   Reports measured with `--split` stay as they are, unregistrable, with no identity made up. Every
@@ -541,7 +543,9 @@ Data versions and Keeping items keep, as of Stage 6.)*
   shown by the one display for every record and registered by the general rules under their own
   mode (rev 15; K8-6c, K8-6e.2). A record a reader cannot read is listed with its reason, never
   counted as a result and never hidden (K8-6e.1).
-- **R10.** Every measurement records R10. An unverifiable cell never reads 0, and a scope found
+- **R10.** Every measurement of a supplied cohort version records R10; one of a KG edge set or a
+  generated split records none, and its run is given no evidence directory (the job runner's one
+  choice by kind, research comparison Stage 7). An unverifiable cell never reads 0, and a scope found
   nowhere while a place could not be looked in is `search_incomplete` (K8-6r.3, `082f90b`;
   extended to optional evidence directories in the K8-6 completion review, `af3a8a9`).
 - **Ordering and comparing.** Nothing is ordered by test score (By test score retired in K8-6d;
@@ -2650,6 +2654,13 @@ question are described apart.
 command is offered and `--record` registers it, its ledger record keeping the run's exposure block,
 counts and metric statuses; §4, "Current rules", Registering and Showing. The Test page's offer
 stays Stage 7's.)*
+
+*(2026-11-10: the Test page's offer and the run from it, research comparison Stage 7: the
+Measurement options are the protocols that take the model and measure the chosen version's kind,
+so a finetune on a supplied cohort is offered its task's measurement alone, chosen, and KG link
+prediction alone on a KG edge set; the job runner chooses R10's evidence once by the version's
+kind, so a run on a KG edge set started from the page with R10 evidence directories set is given
+none and runs.)*
 
 ### 8.2 The disease task
 

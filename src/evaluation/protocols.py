@@ -213,6 +213,45 @@ _KIND_WORDS: dict[str, str] = {GENERATED: "a generated split",
                                KG_EDGES: "a KG edge set"}
 
 
+#: How a registered version of each kind other than a supplied cohort stands to
+#: a model's training, where a supplied cohort's run computes R10 from the
+#: training evidence (research comparison Stage 7): a KG edge set by its run's
+#: exposure block, a generated split by the allocation that cut it. The
+#: command line's refusal of `--training-evidence`, the job runner's evidence
+#: choice and the Test page's R10 row say it in these words.
+TRAINING_RELATION: dict[str, str] = {
+    KG_EDGES: "its run's exposure block, read from the model's own record",
+    GENERATED: "the disease allocation that cut it, which the version records",
+}
+
+
+def takes_training_evidence(kind: Any) -> bool:
+    """Whether a measurement of data of the kind `kind` takes R10's training
+    evidence (the command line's `--training-evidence`, the job runner's
+    evidence directories): a supplied cohort version only, whose cases R10
+    compares with the training and validation inputs the checkpoint records.
+    **The one rule by data kind** that the command line, the job runner's
+    inputs (`TestRunInputs`, `evidence_choice`), the Test page and the probe
+    follow."""
+    return kind == SUPPLIED
+
+
+def training_evidence_refusal(kind: Any) -> str | None:
+    """None when a measurement of data of the kind `kind` takes R10's
+    training evidence (`takes_training_evidence`); else why it takes none,
+    with how that kind stands to a model's training (`TRAINING_RELATION`)."""
+    if takes_training_evidence(kind):
+        return None
+    lead = "R10 counts a supplied cohort's overlap with the checkpoint's recorded inputs."
+    relation = TRAINING_RELATION.get(kind) if isinstance(kind, str) else None
+    if relation is None:
+        said = (f"data of kind {kind!r}" if isinstance(kind, str)
+                else "data of no kind this build reads")
+        return f"{lead} This is {said}."
+    said = _KIND_WORDS[kind]
+    return f"{lead} {said[:1].upper()}{said[1:]}'s relation to the model's training is {relation}."
+
+
 def names() -> tuple[str, ...]:
     """The protocol names, in definition order."""
     return tuple(PROTOCOLS)
@@ -319,11 +358,30 @@ def _none_takes(model: Any) -> str | None:
     return None
 
 
-def available(model: Any) -> tuple[tuple[str, ...], str | None]:
+def available(model: Any, kind: Any = None) -> tuple[tuple[str, ...], str | None]:
     """The protocols that take the model whose capability description is
     `model` (None: no record read), in definition order, and None; or no
-    protocol and the reason none does."""
+    protocol and the reason none does. With `kind`, a data kind measured
+    (research comparison Stage 7: the Test page's options for the chosen
+    version), only those of them that measure it; when none does, no protocol
+    and the reason, naming the protocols that take the model and the kinds
+    they measure. A version's counts are never judged here: a protocol that
+    measures its kind is offered, and what the version lacks is its refusal's
+    (`inputs_refusal`)."""
     found = _found(model)
+    if found and kind is not None:
+        kept = tuple(name for name in found if kind in PROTOCOLS[name].data_kinds)
+        if kept:
+            return kept, None
+        said = (_KIND_WORDS.get(kind, f"data of kind {kind!r}") if isinstance(kind, str)
+                else "data of no kind this build reads")
+        kinds = []
+        for name in found:
+            kinds += [k for k in PROTOCOLS[name].data_kinds if k not in kinds]
+        return (), (f"no measurement that takes this checkpoint's model measures {said}: it can "
+                    f"be measured by {', '.join(found)}, which measure"
+                    f"{'s' if len(found) == 1 else ''} "
+                    f"{' or '.join(_KIND_WORDS.get(k, k) for k in kinds)}.")
     if found:
         return found, None
     reason = _none_takes(model)
@@ -420,5 +478,6 @@ def refusal(name: Any, model: Any, kind: Any, counts: Mapping[str, Any] | None) 
 
 
 __all__ = ["FULL_VIEW_INPUTS", "GENERATED", "GENERATED_FIXTURE_COUNT", "KG_EDGES", "LP_HEAD",
-           "NO_RECORD", "PROTOCOLS", "Protocol", "REGISTERED_KINDS", "SUPPLIED", "available",
-           "inputs_refusal", "model_refusal", "names", "refusal", "task_head"]
+           "NO_RECORD", "PROTOCOLS", "Protocol", "REGISTERED_KINDS", "SUPPLIED",
+           "TRAINING_RELATION", "available", "inputs_refusal", "model_refusal", "names",
+           "refusal", "takes_training_evidence", "task_head", "training_evidence_refusal"]

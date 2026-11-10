@@ -1346,8 +1346,10 @@ is the workspace's, bound by its four digests and the dataset record, which a me
 compares as it does a supplied version's.
 
 The server's lists (`GET /cohorts`) give a KG edge set with its kind, role and counts, never an
-edge; the Test page lists it by label, kind and role ("a KG edge set (test)"), never with a
-supplied cohort's counts. The KG link-prediction protocol measures it (below); a task protocol
+edge; the Test page lists it by label, kind and role ("kg-test · KG edge set (test)", after the
+supplied cohorts), with its counts in their own units, never with a supplied cohort's counts
+(since research comparison Stage 7). With no KG edge set in the registry, the Test page names the
+command that imports one (this section). The KG link-prediction protocol measures it (below); a task protocol
 naming one, from `measure_scorer.py --cohort` or the Test page's Start, is refused with that
 protocol's reason ("the disease measurement does not measure a KG edge set; ..."), and nothing is
 written.
@@ -1417,8 +1419,8 @@ python scripts/import_cohort.py --kind generated --registry /srv/shepherd/cohort
   patient id. A split with no sample cannot be committed.
 
 The server's lists (`GET /cohorts`) give a generated split with its kind, role and counts, never a
-sample; the Test page lists it by label, kind and role ("a generated split (val)"), never with a
-supplied cohort's counts. It is never presented as a supplied cohort, or
+sample; the Test page lists it by label, kind and role ("gen-val · Generated split (val)"), with
+its counts in their own units, never with a supplied cohort's counts. It is never presented as a supplied cohort, or
 as test unless its role is test: the Diagnosis route and `audit_split_overlap.py --cohort` refuse
 it with the registry's shared reason ("a generated split (val), not a supplied cohort version"),
 and the Diagnosis page's Reference cohort select lists it marked "generated split" and never
@@ -1445,9 +1447,10 @@ R10, and the role is never presented as test. Its report is registered like any 
 (`--record`, or the register-later command the run prints; research comparison Stage 6): its
 ledger record keeps the role and the generation identity. A generated test role cannot be
 imported today, so none is measured. The job
-runner passes the deployment's `--training-evidence` directories to every run; with
-`SHEPHERD_TRAINING_EVIDENCE_DIRS` set, a Test-page run on a generated split is refused after it starts,
-as one on a KG edge set is (Stage 7 chooses the evidence by data kind). Reports measured with
+runner chooses R10's evidence once, by the version's kind (since research comparison Stage 7): a
+supplied cohort's run is given the `SHEPHERD_TRAINING_EVIDENCE_DIRS` directories, and a refused
+setting refuses its start; a generated split's or a KG edge set's run is given none, whether the
+setting is set or refused, so a Test-page run on one starts and is measured. Reports measured with
 `--split` are untouched: they stay where they were written, no identity is made up for them, and
 `record_evaluation.py` still refuses to register them.
 
@@ -2429,8 +2432,14 @@ and a file, or a label, and the server finds that name in its own list again.
   A directory under `runs/` that cannot be listed is one item with its reason, and every other
   run is still listed; only `runs/` itself failing fails the list. A directory whose name is not
   valid text is such an item, its name written with backslash escapes (`runs/bad\xff`; since
-  the fix after K8-7b). A run or file whose own name is not valid text still makes this list and
-  the one below answer HTTP 500, as before K8 (BACKLOG 66); rename it.
+  the fix after K8-7b). So is a run directory or a checkpoint file whose own name is not valid
+  text (since research comparison Stage 7, BACKLOG 66): one item with its reason ("… is not
+  listed (its name is not valid text, …), so it is not read"), never opened, chosen or found by
+  name; every other file is listed, and this list and the one below answer. Each item carries
+  `key`, its identity apart from the names shown: `architecture/run/file` for names that are
+  text, and for a name that is not text a form no text name gives (its bytes in hexadecimal), so
+  a name shown with backslash escapes never takes the place of a file whose name really reads so.
+  Rename such a file to use it.
   Each item names the workspace as the list does: for
   `current -> builds/2026-10-20`, it says `current`. Listing opens every checkpoint, which SPEC_4
   classes as checkpoint inspection (C3), and D8 offers that only where the operator controls
@@ -2451,7 +2460,9 @@ and a file, or a label, and the server finds that name in its own list again.
   like the controls (§4.13).
 - **Cohort versions** (`GET /api/v1/cohorts`): each version in the registry, by label and the
   SHA-256 of its `cohort.json`, with its role. It also shows
-  its counts, the graph and dataset record it is bound to, and when it was imported. The list
+  its counts (a KG edge set's and a generated split's with the units its manifest records,
+  `count_units`, since research comparison Stage 7), the graph and dataset record it is bound
+  to, and when it was imported. The list
   never shows a case identifier or the exclusion list: D7 keeps those in the registry, on the
   machine. An interrupted import is listed with its reason. Each version's report store is
   listed by run id, and each run says whether its report is kept and whether it is registered
@@ -3126,13 +3137,22 @@ the state line gives only the run's state, and the parent list is not shown. The
 
 ### Research › Evaluate › Test
 
-The page for the flow of §4.9: import a cohort version, measure a model on it, keep its report
-and register it. Three panels:
+The page for the flow of §4.9: import a cohort version, measure a model on a data version of
+any kind (a supplied cohort, a KG edge set or a generated split), keep its report and register
+it. Three panels:
 
-- **Cohort.** The workspace (the server's list, shown by its dataset fingerprint as on Datasets)
-  and the cohort version (the registry's list, `SHEPHERD_REGISTRY`), with its role, its counts,
+- **Data** (since research comparison Stage 7; "Cohort" before). The workspace (the server's
+  list, shown by its dataset fingerprint as on Datasets) and the **Data version** (the registry's
+  list, `SHEPHERD_REGISTRY`), by kind and role: supplied cohorts first, as before ("label · role R
+  · n of N ranked-eligible"), then KG edge sets ("kg-test · KG edge set (test)"), then generated
+  splits ("gen-val · Generated split (val)"). The chosen version shows what it is, its counts (a
+  supplied cohort's cases; a KG edge set's pairs and edges; a generated split's patients,
+  diseases and fixture rows, each with the unit its manifest records under **Counts and units**),
   its version digest and whether it was mapped against this workspace's graph ("bound to this
-  graph", or "mapped against another graph", which a run would refuse). Below them, every run
+  graph", or "mapped against another graph", which a run would refuse). With no KG edge set in
+  the registry, a line under it names the command that imports one on the machine (the
+  importer's `--kind kg_edges` with `--from-checkpoint`, §4.9); the page's Import makes supplied
+  cohorts only. Below them, every run
   directory of the version's report store, newest first: when it ran, on which model, whether a
   report was kept, whether it is registered, and "runs under these conditions differ" when the
   runs of its group differ (in amber with "— investigate" only when the group records
@@ -3151,20 +3171,27 @@ and register it. Three panels:
   read-only browser is not shown it, and the page lists them once per workspace (↻ reads the
   list again). Then **Measurement** (since K8-6a), the protocol the run passes as
   `--mode <protocol>` (§4.9): the options are the protocols this build implements whose needs
-  the chosen model's listed capabilities meet, today one for each task head of a finetuned model
-  (Disease, Gene or Patients-like-me) and KG link prediction (`kg_link_prediction`) for a base
-  and every finetune, which measures a KG edge set (§4.9; run from this page with R10's evidence
-  directories set, it is refused for `--training-evidence` until the runner chooses the evidence
-  by kind, research comparison Stage 7; until then it is offered whatever the chosen version's
-  kind, so a finetune offers two options on a supplied cohort too). A single option is chosen
-  already; of
-  several, none is until you choose one; with none, Start says why. A file whose record cannot be read offers none either, and Start is off
+  the chosen model's listed capabilities meet and that measure the chosen version's kind (since
+  research comparison Stage 7): a task head's measurement of a finetuned model (Disease, Gene or
+  Patients-like-me) on a supplied cohort or a generated split, and KG link prediction for a base
+  and every finetune on a KG edge set. So a finetune on a supplied cohort is offered its task's
+  measurement alone, chosen already, and on a KG edge set KG link prediction alone; a base on a
+  supplied cohort is offered none, and Start says which measurements take it and what they
+  measure. With no version chosen, every measurement the model's capabilities meet is listed. A
+  single option is chosen already; of several, none is until you choose one; with none, Start
+  says why. One Start runs one measurement: measure the model by another protocol with another
+  Start, one GPU job at a time. A file whose record cannot be read offers none either, and Start is off
   with the record's own reason ("Record not readable (written before the model spec: not
   readable by this build; start a new run): not measured here. Choose a model with a readable
   record" for a file without a model spec; since K8-7b, 2026-11-08). Like the model, it is an
   operator control. Mode C and Mode D are not
-  protocols, so no page or command runs them. Then the R10 evidence the run will look in (the
-  measured workspace, and `SHEPHERD_TRAINING_EVIDENCE_DIRS`), **Register the result**,
+  protocols, so no page or command runs them. Then the **R10 evidence**, chosen by the runner once
+  by the chosen version's kind (since research comparison Stage 7): for a supplied cohort, the
+  directories the run will look in (the measured workspace, and
+  `SHEPHERD_TRAINING_EVIDENCE_DIRS`), and a refused setting in red with ✕ and "Refused:" and
+  its reason, which turns Start off; for a KG edge set or a generated split, "Not applicable"
+  in grey with ○ and why (R10 is a supplied cohort's), and the run is given no evidence
+  directory whatever the setting says. Then **Register the result**,
   **Deterministic execution**, and the batch size and device the server fixes (the measurement's
   default; `SHEPHERD_DEVICE`).
   **🔒 Start test** starts the real `measure_scorer.py` through the job runner (§4.11), with the
@@ -3199,8 +3226,8 @@ and register it. Three panels:
   operator, checked in the ledger beside the listed checkpoint holding the weights it
   measured). When a record names this run with other bytes (the report was replaced after it
   was registered), or that ledger cannot tell, the Result gives the registration's reason.
-  **🔒 Register this report** registers a kept report through the one registration
-  function (§4.9): the server finds the report in the version's store, checks that its bytes
+  **🔒 Register this report** registers a kept report of any kind (a supplied cohort's, a KG
+  edge set's or a generated split's) through the one registration function (§4.9): the server finds the report in the version's store, checks that its bytes
   are the ones shown, finds where its ledger goes from its own checkpoint list (the listed file
   holding the weights, by full digest, never the path the report records: the file the run read
   when it is listed with those weights, which is where the list looks, else another listed copy

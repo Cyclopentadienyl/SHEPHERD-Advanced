@@ -118,7 +118,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import (
-    Any, Callable, Deque, Dict, Iterator, List, Mapping, Optional, Sequence, Set, Tuple,
+    Any, Callable, Deque, Dict, Iterator, List, Mapping, NamedTuple, Optional, Sequence, Set,
+    Tuple,
 )
 
 import yaml
@@ -266,6 +267,52 @@ def _remove(path: Path) -> None:
         pass
 
 
+class EvidenceChoice(NamedTuple):
+    """The R10 evidence a test run is given, chosen once by its version's data
+    kind (`evidence_choice`). `dirs` are the evidence directories passed as
+    `--training-evidence`; `problem` is why the evidence setting refuses a
+    start and `note` its remark that turns nothing off (both a supplied
+    version's only); `not_applicable` is why no evidence applies, for a
+    version of another kind (`protocols.training_evidence_refusal`), None
+    for a supplied one."""
+
+    dirs: Tuple[Path, ...] = ()
+    problem: Optional[str] = None
+    note: Optional[str] = None
+    not_applicable: Optional[str] = None
+
+
+def evidence_choice(version_kind: Any, setting: Any = None, *,
+                    environ: Optional[Mapping[str, str]] = None) -> EvidenceChoice:
+    """**The one R10 evidence choice of a test run, by its version's data
+    kind** (research comparison Stage 7), which the Test page's Start and the
+    probe build their `TestRunInputs` with and the page's Start check and R10
+    row show. A supplied cohort version takes the evidence directories of the
+    evidence setting (`setting`, read now from `environ` when None:
+    `server_settings.training_evidence_dirs`), and a refused setting refuses
+    its start. A version of any other kind (a KG edge set, a generated split)
+    takes none: the setting is neither read nor required, and
+    `not_applicable` says why (`protocols.training_evidence_refusal`), as
+    the command line refuses `--training-evidence` for it.
+    `TestRunInputs.reports_dir` refuses inputs that carry directories for it.
+
+    Args:
+        version_kind: the listed version's kind (`CohortVersionItem.kind`).
+        setting: the evidence setting as read (a `server_settings.Setting`,
+            or any value with its `value`, `problem` and `note`).
+    """
+    from src.evaluation import protocols
+
+    why = protocols.training_evidence_refusal(version_kind)
+    if why is not None:
+        return EvidenceChoice(not_applicable=why)
+    if setting is None:
+        from src.config import server_settings
+
+        setting = server_settings.training_evidence_dirs(environ)
+    return EvidenceChoice(tuple(setting.value or ()), setting.problem, setting.note)
+
+
 @dataclass(frozen=True)
 class TestRunInputs:
     """A test run's inputs, every one taken from the server's lists and
@@ -279,12 +326,13 @@ class TestRunInputs:
     and `capabilities` from the same listing's model record (`task` is the
     model's task head, None for none; `capabilities` its capability
     description, which the protocol is judged by), the evidence directories
-    from their setting. `protocol`, `record` and `deterministic` are the
-    operator's choices: `protocol` is the evaluation protocol asked
-    (`--mode`), one `src.evaluation.protocols` admits for that model and
-    version, and it need not be the model's task. The run judges it again on
-    the bytes it reads. Nothing else is chosen: the batch size is the CLI's
-    default and the device the deployment's (D5).
+    by the one choice by the version's kind (`evidence_choice`: the
+    setting's for a supplied version, none for any other kind). `protocol`,
+    `record` and `deterministic` are the operator's choices: `protocol` is
+    the evaluation protocol asked (`--mode`), one `src.evaluation.protocols`
+    admits for that model and version, and it need not be the model's task.
+    The run judges it again on the bytes it reads. Nothing else is chosen:
+    the batch size is the CLI's default and the device the deployment's (D5).
     """
 
     __test__ = False  # a dataclass, not a pytest test class, whatever its name says
@@ -315,9 +363,12 @@ class TestRunInputs:
                 for the protocol asked on the listed model's capabilities and
                 the listed version (a name that is not a protocol, a model it
                 does not take, or a version of a kind it does not measure or
-                that lacks what it needs), a digest that is not a full SHA-256,
-                a path that is not absolute, or a registry or label the
-                registry's rules refuse.
+                that lacks what it needs), evidence directories for a version
+                of a kind that takes none (`evidence_choice`, the command
+                line's refusal of `--training-evidence`, said before a process
+                is started), a digest that is not a full SHA-256, a path that
+                is not absolute, or a registry or label the registry's rules
+                refuse.
         """
         from src.evaluation import cohort_registry, protocols
 
@@ -325,6 +376,10 @@ class TestRunInputs:
                                 self.version_counts)
         if why:
             raise ValueError(why)
+        if self.evidence_dirs:
+            why = protocols.training_evidence_refusal(self.version_kind)
+            if why:
+                raise ValueError(f"{why} A test run on it is given no evidence directory.")
         for name, digest in (("checkpoint", self.checkpoint_sha256),
                              ("cohort version", self.version_sha256)):
             if not (isinstance(digest, str) and _SHA256.fullmatch(digest)):
@@ -352,6 +407,7 @@ class TestRunInputs:
             "protocol": self.protocol,
             "learning_stage": self.learning_stage,
             "task": self.task,
+            "version_kind": self.version_kind,
             "evidence_dirs": [str(d) for d in self.evidence_dirs],
             "record": bool(self.record),
             "deterministic": bool(self.deterministic),
@@ -2397,7 +2453,7 @@ class TrainingManager:
             List of checkpoint info dicts.
         """
         from src.models.bundle.record import listed_record
-        from src.utils.checkpoint_paths import read_run_checkpoints, run_architecture
+        from src.utils.checkpoint_paths import read_run_checkpoints, shown_path
 
         if data_dir is None:
             if not self._config:
@@ -2412,19 +2468,21 @@ class TrainingManager:
             except OSError:
                 if entry.path != entry.run_dir:
                     continue  # removed since it was listed: there is nothing to show
-                # A directory under runs/ the listing could not list, which it
-                # names as shown when its name is not text: no path has that
-                # name, so it is listed with its reason and no size or time.
+                # A directory the listing could not list (one it may not
+                # enter): listed with its reason, and no size or time.
                 stat = None
+            # Text as every answer shows it, and the identity apart from it.
+            architecture, run_name, filename = entry.names
             info: Dict[str, Any] = {
-                "filename": entry.path.name,
-                "filepath": str(entry.path),
+                "filename": filename,
+                "filepath": shown_path(entry.path),
                 "size_mb": round(stat.st_size / (1024 * 1024), 2) if stat is not None else 0.0,
                 "modified": (datetime.fromtimestamp(stat.st_mtime).isoformat()
                              if stat is not None else ""),
-                "run": entry.run_dir.name,
-                "run_dir": str(entry.run_dir),
-                "architecture": run_architecture(entry.run_dir),
+                "run": run_name,
+                "run_dir": shown_path(entry.run_dir),
+                "architecture": architecture,
+                "key": entry.key,
                 "sha256": entry.sha256,
                 "validation": ({"metric": entry.validation[0], "value": entry.validation[1]}
                                if entry.validation else None),

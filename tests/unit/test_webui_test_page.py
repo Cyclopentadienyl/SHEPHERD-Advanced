@@ -1067,7 +1067,7 @@ def test_start_waits_for_every_choice_and_says_why(site, monkeypatch):
     state = lambda ws, label, key, gpu=("none", ""), protocol="disease": (  # noqa: E731
         tp.start_state(page, models, ws, label, key, binding, gpu, protocol=protocol))
     assert state(None, LABEL, child) == (False, "Disabled: choose a workspace.")
-    assert state("demo", None, child) == (False, "Disabled: choose a cohort version.")
+    assert state("demo", None, child) == (False, "Disabled: choose a data version.")
     assert state("demo", LABEL, None) == (False, "Disabled: choose a model.")
     # No measurement chosen (the radio's value None) is said, never filled in.
     assert state("demo", LABEL, child, protocol=None) == (
@@ -2524,7 +2524,7 @@ def test_a_direct_call_through_gradios_api_meets_the_same_check(site, monkeypatc
     event, refused = call("http://192.0.2.10", [None, None, None, None])
     assert event == "event: complete" and "Refused: " in refused
     event, loopback = call(OPERATOR_BASE_URL, [None, None, None, None])
-    assert event == "event: complete" and "Choose a cohort version the server lists" in loopback
+    assert event == "event: complete" and "Choose a data version the server lists" in loopback
     assert given and all(page == {} and models.get("items") == [] for page, models in given), \
         "the handler was given what the client posted"
     event, forged = call(OPERATOR_BASE_URL, ["demo", LABEL, site.key, None])
@@ -3186,8 +3186,16 @@ def test_measure_refusal_says_why_each_kind_is_not_measured():
         tp.CHOOSE_A_MEASUREMENT)
     # A base: the KG link-prediction protocol takes it (research comparison
     # Stage 5), on a KG edge set only; a task protocol says its own reason.
+    # With none chosen on a supplied cohort, none is offered (Stage 7: by the
+    # version's kind), and the reason is the definition's.
     base, supplied = _model(None, "base"), {"kind": SUPPLIED, "counts": NO_GENES}
-    assert refusal(base, supplied, None) == tp.CHOOSE_A_MEASUREMENT
+    assert refusal(base, supplied, None) == protocols.available(
+        described("base", None), SUPPLIED)[1] == (
+        "no measurement that takes this checkpoint's model measures a supplied cohort version: "
+        "it can be measured by kg_link_prediction, which measures a KG edge set.")
+    assert refusal(base, {"kind": "kg_edges", "counts": {"pairs": 4}}, None) == (
+        tp.CHOOSE_A_MEASUREMENT)
+    assert refusal(base, None, None) == tp.CHOOSE_A_MEASUREMENT
     assert refusal(base, supplied, "kg_link_prediction") == (
         "the kg_link_prediction measurement does not measure a supplied cohort version; it "
         "measures a KG edge set.")
@@ -3749,15 +3757,17 @@ def test_a_model_picked_after_another_answers_its_second_event_without_an_error(
         site, monkeypatch):
     """Through the page served by Gradio, for an operator: one pick of a Model
     option sends its input event twice, each with the values the browser held
-    when it was asked. The disease child chosen (the radio offers "disease"
-    and "kg_link_prediction", and the operator's pick is "disease"), then the
-    base: the first of the base's events writes the base's one choice,
-    "kg_link_prediction", and the second still carries "disease". Both
-    answer, the radio ends on the base's one choice and Start's reason is
-    that protocol's sentence for the supplied version. When the selection's
-    listeners took the radio itself, Gradio checked the second event's value
-    against the choices the first had written and answered with an error
-    before the page's own handling ran (`chosen_measurement`)."""
+    when it was asked. On the supplied version, the disease child chosen (the
+    radio offers its one measurement for that kind, "disease", chosen;
+    research comparison Stage 7), the operator's pick "disease", then the
+    base: the first of the base's events writes the base's choices for a
+    supplied cohort, none, and the second still carries "disease". Both
+    answer, the radio ends with no choice and Start's reason is the
+    definition's sentence for a model none of whose measurements measures a
+    supplied cohort. When the selection's listeners took the radio itself,
+    Gradio checked the second event's value against the choices the first had
+    written and answered with an error before the page's own handling ran
+    (`chosen_measurement`)."""
     import html as html_lib
 
     from src.evaluation import protocols
@@ -3781,8 +3791,8 @@ def test_a_model_picked_after_another_answers_its_second_event_without_an_error(
         chosen = browser.join(on_model, [None, None, None, "demo", LABEL, site.key, None])
         assert browser.wait(chosen)
         radio = browser.done[chosen]["output"]["data"][radio_at]
-        assert radio["value"] is None and len(radio["choices"]) == 2, radio
-        # The operator picks "disease" of the child's two.
+        assert radio["value"] == "disease" and len(radio["choices"]) == 1, radio
+        # The operator picks "disease", the child's one.
         picked = browser.join(on_pick, [None, None, None, "demo", LABEL, site.key, "disease"])
         assert browser.wait(picked)
         radio = browser.done[picked]["output"]["data"][0]
@@ -3792,11 +3802,11 @@ def test_a_model_picked_after_another_answers_its_second_event_without_an_error(
                   for _ in range(2)]
         assert browser.wait(*events)
         browser.close()
-    said = protocols.inputs_refusal("kg_link_prediction", SUPPLIED, None)
+    _names, said = protocols.available(described("base", None), SUPPLIED)
     for event in events:
         out = browser.done[event]["output"]["data"]
         assert ([list(c) for c in out[radio_at]["choices"]], out[radio_at]["value"]) == (
-            [["KG link prediction", "kg_link_prediction"]], "kg_link_prediction")
+            [], None)
         assert html_lib.escape(said) in out[reason_at], out[reason_at]
 
 
@@ -3816,3 +3826,257 @@ def test_a_gatv2_childs_report_is_registered_beside_its_own_file(site, monkeypat
     assert tp.item_key(place.item) == child and place.item["architecture"] == "gatv2"
     assert place.path.parent / "evaluations.json" == \
         site.demo / "runs" / "gatv2" / CHILD_RUN / "checkpoints" / "evaluations.json"
+
+
+# --------------------------------------------------------------------------- every data kind
+# Research comparison Stage 7: the page lists, measures and registers a KG edge
+# set and a generated split as it does a supplied cohort, through the one job
+# runner and the one registration, with R10's evidence chosen once by kind.
+KG_LABEL, GEN_LABEL = "kg-test", "gen-val"
+
+
+@pytest.fixture
+def kinds(site):
+    """The site's registry also holding a KG edge set (the test part of the
+    disease child's recorded edge split) and a generated split (the demo
+    workspace's own val split), each imported by the importer's two steps."""
+    from src.evaluation.cohort_registry import (
+        commit_import,
+        prepare_generated_import,
+        prepare_kg_edges_import,
+    )
+
+    edges = prepare_kg_edges_import(site.registry, site.demo, site.checkpoint, KG_LABEL, "test")
+    generated = prepare_generated_import(site.registry, site.demo, GEN_LABEL, "val")
+    return SimpleNamespace(
+        edges=commit_import(edges, site.registry, edges.preview_id),
+        generated=commit_import(generated, site.registry, generated.preview_id))
+
+
+def _visible(html: str) -> str:
+    """The text a renderer's markup shows, its entities read back."""
+    import html as html_lib
+
+    return " ".join(html_lib.unescape(re.sub(r"<[^>]+>", " ", html)).split())
+
+
+def test_the_data_panel_lists_every_kind_by_kind_and_role_with_its_counts(
+        site, kinds, monkeypatch):
+    """The version select lists the supplied cohort as it always read, then
+    the KG edge set and the generated split by kind and role, each option
+    short with one separator (skill §8); the chosen version's details give
+    its counts in its own units, each count beside the unit its manifest
+    records, never a supplied cohort's words; no KG edge sets' empty state
+    once one is listed. The panel and the select read "Data", not "Cohort"."""
+    page, _request = _page(monkeypatch)
+    binding = tp.workspace_binding(site.demo, tp.find(page["workspaces"], "name", "demo"))
+    choices = tp.version_choices(page, binding)
+    assert [value for _label, value in choices] == [LABEL, KG_LABEL, GEN_LABEL]
+    labels = dict((value, label) for label, value in choices)
+    assert labels[KG_LABEL] == "kg-test · KG edge set (test)"
+    assert labels[GEN_LABEL] == "gen-val · Generated split (val)"
+    for value in (KG_LABEL, GEN_LABEL):
+        assert len(labels[value]) <= 40 and labels[value].count(" · ") == 1
+    assert labels[LABEL].startswith(f"{LABEL} · role ")
+
+    for version, words in ((kinds.edges, "KG edge set (test)"),
+                           (kinds.generated, "Generated split (val)")):
+        label = version.manifest["label"]
+        shown = _visible(tp.version_html(page, label, binding))
+        assert shown.startswith(words), shown
+        counts, units = version.manifest["counts"], version.manifest["count_units"]
+        assert f"Counts and units ({len(counts)})" in shown
+        for name, unit in units.items():
+            assert f"{name} {counts[name]}: {unit}" in shown, name
+        for said in ("source cases", "ranked-eligible", "cohort", "No KG edge set"):
+            assert said not in shown, (label, said)
+    edges = kinds.edges.manifest["counts"]
+    assert (f"{edges['pairs']} pairs from {edges['positive_edges']} positive edges"
+            in _visible(tp.version_html(page, KG_LABEL, binding)))
+    assert "source cases" in tp.version_html(page, LABEL, binding)
+    assert "<h2>Data</h2>" in tp.cohort_header_html(page)
+    demo, _ctx, _registry = _page_component()
+    by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
+    assert by_id["shep-test-version"].label == "Data version"
+    assert tp.FIELD_HELP["shep-test-version"][0] == "Data version"
+
+
+def test_with_no_kg_edge_set_the_data_panel_names_the_import_command(site, monkeypatch):
+    """The KG edge sets' empty state (skill §9): with none in the registry,
+    one line under the chosen version, whatever it is, says what one is for
+    and names the command that imports one on the machine, escaped; none when
+    the registry is not available."""
+    page, _request = _page(monkeypatch)
+    empty = tp.kg_edges_empty_html(page)
+    assert empty and "No KG edge set in the registry yet" in empty
+    assert ("scripts/import_cohort.py --kind kg_edges --from-checkpoint &lt;checkpoint&gt;"
+            in empty and "<checkpoint>" not in empty)
+    assert tp.version_html(page, LABEL, None).endswith(empty)
+    assert tp.version_html(page, None, None).endswith(empty)
+    assert tp.version_html({**page, "versions": []}, None, None).startswith(
+        tp._reason_html("No data version is in the registry yet: import a cohort with "
+                        "“Import a new version…”."))
+    assert tp.kg_edges_empty_html({**page, "registry_problem": "unset"}) == ""
+    assert tp.version_html({**page, "registry_problem": "unset"}, LABEL, None) == ""
+
+
+def test_the_measurement_options_follow_the_model_and_the_chosen_versions_kind(
+        site, kinds, monkeypatch):
+    """Item 2 (and Stage 5's interim, fixed): the options are what the model's
+    capabilities meet that measure the chosen version's kind, in plain words
+    (skill §5), with the preselection rule kept. The disease child: its task's
+    measurement alone on the supplied cohort and the generated split, KG link
+    prediction alone on the KG edge set, each chosen; both, none chosen, with
+    no version chosen. The base: KG link prediction alone, chosen, on the KG
+    edge set; nothing on the others, and Start says why in the definition's
+    words."""
+    from src.evaluation import protocols
+
+    _put_bundle(site, BUNDLE_BASE_RUN, None)
+    base = f"gatv2/{BUNDLE_BASE_RUN}/last.pt"
+    page, request = _page(monkeypatch)
+    models = tp.read_models("demo", request)
+    binding = tp.workspace_binding(site.demo, tp.find(page["workspaces"], "name", "demo"))
+    child, based = tp.find_model(models, site.key), tp.find_model(models, base)
+    version = {label: tp.find(page["versions"], "label", label)
+               for label in (LABEL, KG_LABEL, GEN_LABEL)}
+    lp, disease = ("KG link prediction", "kg_link_prediction"), ("Disease", "disease")
+    for label, offered in ((LABEL, [disease]), (KG_LABEL, [lp]), (GEN_LABEL, [disease])):
+        choices = tp.measurement_choices(child, version[label])
+        assert choices == offered, label
+        assert tp.chosen_measurement(choices, None) == offered[0][1]
+    both = tp.measurement_choices(child)
+    assert both == [disease, lp] and tp.chosen_measurement(both, None) is None
+    assert all(code not in label for label, code in both)
+    assert tp.measurement_choices(based, version[KG_LABEL]) == [lp]
+    for label, kind in ((LABEL, protocols.SUPPLIED), (GEN_LABEL, protocols.GENERATED)):
+        assert tp.measurement_choices(based, version[label]) == []
+        said = protocols.available(based["capabilities"], kind)[1]
+        assert "it can be measured by kg_link_prediction, which measures a KG edge set" in said
+        assert tp.start_state(page, models, "demo", label, base, binding, ("none", ""),
+                              protocol=None) == (False, f"Disabled: {said}")
+    assert tp.start_state(page, models, "demo", KG_LABEL, base, binding, ("none", ""),
+                          protocol="kg_link_prediction") == (True, None)
+
+
+@pytest.mark.parametrize("setting", ["set", "refused"])
+def test_a_kg_or_generated_start_needs_no_evidence_setting_and_is_given_none(
+        site, kinds, monkeypatch, setting):
+    """Item 1, the page's part: Start's check and the start use the runner's
+    one choice by the version's kind. With the evidence setting set or
+    refused, a KG edge set's and a generated split's Start is enabled and the
+    start hands the runner no evidence directory; their R10 row reads "Not
+    applicable" with why. A supplied cohort takes the setting's directories,
+    and a refused setting disables its Start (a red ✕ with words) and refuses
+    its start."""
+    from src.evaluation import protocols
+
+    evidence = site.root / "evidence"
+    evidence.mkdir()
+    monkeypatch.setenv("SHEPHERD_TRAINING_EVIDENCE_DIRS",
+                       str(evidence) if setting == "set" else "relative/evidence")
+    page, request = _page(monkeypatch)
+    models = tp.read_models("demo", request)
+    binding = tp.workspace_binding(site.demo, tp.find(page["workspaces"], "name", "demo"))
+    manager = FakeManager()
+    for label, protocol, kind in ((KG_LABEL, "kg_link_prediction", protocols.KG_EDGES),
+                                  (GEN_LABEL, "disease", protocols.GENERATED)):
+        assert tp.start_state(page, models, "demo", label, site.key, binding, ("none", ""),
+                              protocol=protocol) == (True, None), label
+        result = tp.start_test_run(page, models, "demo", label, site.key, False, False,
+                                   request, protocol=protocol, manager=manager)
+        assert result["success"] is True, result
+        inputs = manager.started[-1]
+        assert (inputs.version_label, inputs.version_kind, inputs.evidence_dirs) == (
+            label, kind, ())
+        inputs.reports_dir()  # the runner's own judgment takes them
+        row = tp.evidence_html(page, "demo", tp.find(page["versions"], "label", label))
+        assert 'class="shep-test-na"' in row and tp.NOT_APPLICABLE_MARK in row
+        assert _visible(row) == (f"R10 evidence ○ Not applicable · "
+                                 f"{protocols.training_evidence_refusal(kind)}"), row
+        assert "Refused" not in row and "relative/evidence" not in row
+        card = tp.job_body_html({"status": "running", "inputs": inputs.summary(), "log": []},
+                                [], ("busy", ""))
+        assert "R10 evidence: not applicable" in card
+    supplied = tp.find(page["versions"], "label", LABEL)
+    allowed, why = tp.start_state(page, models, "demo", LABEL, site.key, binding, ("none", ""),
+                                  protocol="disease")
+    row = tp.evidence_html(page, "demo", supplied)
+    result = tp.start_test_run(page, models, "demo", LABEL, site.key, False, False, request,
+                               protocol="disease", manager=manager)
+    if setting == "set":
+        assert (allowed, why) == (True, None) and result["success"] is True
+        assert manager.started[-1].evidence_dirs == (evidence.resolve(),)
+        assert "<code>evidence</code> (the server's setting)" in row and "Not applicable" not in row
+    else:
+        assert allowed is False and why.startswith(
+            "Disabled: the evidence directories setting is refused: ")
+        assert result["success"] is False and result["error"].endswith("Nothing was started.")
+        assert f'<span class="shep-test-refused">{tp.REFUSED_MARK} Refused: ' in row
+        assert len(manager.started) == 2
+
+
+def test_the_r10_row_renders_each_state_escaped():
+    """The R10 row's renderer on its own (skill §6, §11): "Not applicable"
+    grey with a hollow ○ and the reason for a KG edge set and a generated
+    split; for a supplied cohort (and before a version is chosen) a refused
+    setting as a red ✕ with "Refused:" and its words, escaped and redacted;
+    the setting's directory names escaped. Never a colour without its mark
+    and word."""
+    from src.evaluation import protocols
+
+    hostile = {"evidence": {"dirs": [], "names": [], "problem": f"refused: {HOSTILE} at /srv/x",
+                            "note": None},
+               "roots": [("/srv", "<srv>")]}
+    for version in (None, {"kind": "supplied"}):
+        row = tp.evidence_html(hostile, "demo", version)
+        assert HOSTILE not in row and "&lt;img src=x onerror=alert(1)&gt;" in row
+        assert "/srv/x" not in row and "&lt;srv&gt;/x" in row
+        assert f'<span class="shep-test-refused">{tp.REFUSED_MARK} Refused: ' in row
+    for kind in (protocols.KG_EDGES, protocols.GENERATED):
+        row = tp.evidence_html(hostile, "demo", {"kind": kind})
+        assert "Refused" not in row and HOSTILE not in row and "onerror" not in row
+        assert f'<span class="shep-test-na">{tp.NOT_APPLICABLE_MARK} Not applicable</span>' in row
+    named = {"evidence": {"dirs": [f"/srv/{HOSTILE}"], "names": [HOSTILE], "problem": None,
+                          "note": None}}
+    row = tp.evidence_html(named, "demo", {"kind": "supplied"})
+    assert HOSTILE not in row and f"<code>{tp.e(HOSTILE)}</code>" in row
+    assert tp.run_evidence(named, {"kind": "supplied"}).dirs == (tp.Path(f"/srv/{HOSTILE}"),)
+    assert tp.run_evidence(named, {"kind": protocols.KG_EDGES}).dirs == ()
+    # A run's card says what its own inputs recorded, whatever is chosen now.
+    for kind, said in (("supplied", "R10 evidence: the workspace"),
+                       (protocols.KG_EDGES, "R10 evidence: not applicable"),
+                       (protocols.GENERATED, "R10 evidence: not applicable")):
+        card = tp.job_body_html({"status": "running", "inputs": {"version_kind": kind},
+                                 "log": []}, [], ("busy", ""))
+        assert said in card, kind
+
+
+def test_register_takes_a_kept_report_of_every_kind_through_the_one_registration(
+        site, kinds, monkeypatch):
+    """Register works for every kind through `register_report` (and the
+    record help's "it can be registered later from this page" holds for each):
+    a KG edge set's run and a generated split's run, each measured by the
+    real CLI on CPU and kept unregistered, are each registered from the page
+    beside the listed checkpoint that holds the weights; the ledger keeps
+    each record under its own kind, and the page then reads it registered."""
+    import scripts.measure_scorer as measure_scorer
+    from src.evaluation.sidecar import read_ledger
+
+    for label, mode in ((KG_LABEL, "kg_link_prediction"), (GEN_LABEL, "disease")):
+        assert measure_scorer.main(["--mode", mode, "--checkpoint", str(site.checkpoint),
+                                    "--data-dir", str(site.demo), "--cohort", label,
+                                    "--registry", str(site.registry), "--device", "cpu"]) == 0
+    page, request = _page(monkeypatch)
+    models = tp.read_models("demo", request)
+    for label, kind in ((KG_LABEL, "kg_edges"), (GEN_LABEL, "generated")):
+        reports = tp.read_reports(label)
+        (run,) = reports["runs"]
+        assert run["record"]["cohort"]["kind"] == kind
+        assert tp.register_state(page, reports, run["run_id"]) == (True, None)
+        done, said = tp.register_selected(page, reports, models, "demo", run["run_id"], request)
+        assert done is True, said
+        again = tp.read_reports(label)
+        assert tp.register_state(page, again, run["run_id"]) == (False, "Already registered.")
+    ledger, _ = read_ledger(site.checkpoint.parent / "evaluations.json")
+    assert [r["cohort"]["kind"] for r in ledger["records"]] == ["kg_edges", "generated"]

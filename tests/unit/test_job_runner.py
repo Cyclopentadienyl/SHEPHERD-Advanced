@@ -569,6 +569,103 @@ def test_every_test_run_writes_its_outcome_to_a_new_file_in_its_own_directory(po
     assert paths[0].parent != paths[1].parent
 
 
+#: A KG edge set's and a generated split's listed counts (their `cohort.json`'s):
+#: what the KG link-prediction and disease protocols need of each.
+KG_COUNTS = {"positive_edges": 6, "pairs": 5, "edges_without_negative": 1,
+             "message_passing_edges": 40}
+GENERATED_COUNTS = {"samples": 5, "diseases": 2}
+#: Each non-supplied kind, with a protocol that measures it and the listed counts.
+OTHER_KINDS = [(protocols.KG_EDGES, "kg_link_prediction", KG_COUNTS),
+               (protocols.GENERATED, "disease", GENERATED_COUNTS)]
+
+
+def _evidence_setting(monkeypatch, tmp_path, state: str):
+    """SHEPHERD_TRAINING_EVIDENCE_DIRS set to an existing directory ("set") or
+    to a relative path the setting refuses ("refused"); the directory."""
+    directory = tmp_path / "evidence"
+    directory.mkdir(exist_ok=True)
+    monkeypatch.setenv("SHEPHERD_TRAINING_EVIDENCE_DIRS",
+                       str(directory) if state == "set" else "relative/evidence")
+    return directory.resolve()
+
+
+@pytest.mark.parametrize("state", ["set", "refused"])
+def test_the_evidence_choice_is_made_once_by_the_version_s_kind(monkeypatch, tmp_path, state):
+    """Research comparison Stage 7, item 1: a supplied version takes the
+    evidence setting's directories, and a refused setting is its problem; a KG
+    edge set or a generated split takes none whatever the setting says, the
+    setting is never read for it, and the choice says why, in the words the
+    command line's refusal of `--training-evidence` uses."""
+    from src.config import server_settings
+
+    directory = _evidence_setting(monkeypatch, tmp_path, state)
+    supplied = tm.evidence_choice(protocols.SUPPLIED)
+    if state == "set":
+        assert supplied == tm.EvidenceChoice(dirs=(directory,))
+    else:
+        assert supplied.dirs == () and supplied.not_applicable is None
+        assert supplied.problem.startswith("SHEPHERD_TRAINING_EVIDENCE_DIRS is refused")
+    read = []
+    monkeypatch.setattr(server_settings, "training_evidence_dirs",
+                        lambda *a, **k: read.append(1))
+    for kind, _protocol, _counts in OTHER_KINDS:
+        choice = tm.evidence_choice(kind)
+        assert (choice.dirs, choice.problem, choice.note) == ((), None, None)
+        assert choice.not_applicable == protocols.training_evidence_refusal(kind)
+        assert protocols.TRAINING_RELATION[kind] in choice.not_applicable
+    assert read == [], "the evidence setting was read for a version that takes none"
+    assert protocols.training_evidence_refusal(protocols.SUPPLIED) is None
+
+
+@pytest.mark.parametrize("state", ["set", "refused"])
+@pytest.mark.parametrize("kind, protocol, counts", OTHER_KINDS, ids=["kg_edges", "generated"])
+def test_a_kg_or_generated_start_takes_no_evidence_whatever_the_setting(
+        popen, inputs, monkeypatch, tmp_path, state, kind, protocol, counts):
+    """A run on a KG edge set or a generated split built with the runner's
+    choice starts, with the evidence setting set or refused, and its command
+    line carries no `--training-evidence` (before Stage 7 every run was given
+    the setting's directories, so such a run was refused after it started).
+    Its status names its kind."""
+    from dataclasses import replace
+
+    _evidence_setting(monkeypatch, tmp_path, state)
+    asked = replace(inputs, protocol=protocol, version_kind=kind, version_counts=counts,
+                    evidence_dirs=tm.evidence_choice(kind).dirs)
+    process = FakeProcess(pid=7)
+    calls = popen(process)
+    manager = TrainingManager(report_state=Reader(True, False))
+    assert manager.start_test(asked)["success"]
+    (argv,) = calls.calls
+    assert "--training-evidence" not in argv and argv[argv.index("--mode") + 1] == protocol
+    shown = manager.get_test_status()["inputs"]
+    assert (shown["version_kind"], shown["evidence_dirs"]) == (kind, [])
+    process.finish(1)
+    ended(manager, "test")
+
+
+@pytest.mark.parametrize("kind, protocol, counts", OTHER_KINDS, ids=["kg_edges", "generated"])
+def test_evidence_directories_for_a_kind_that_takes_none_are_refused_before_a_start(
+        popen, inputs, kind, protocol, counts):
+    """Inputs that carry evidence directories for a KG edge set or a generated
+    split are refused by the runner's judgment (`reports_dir`), in the rule's
+    words, before a process is started: the command line would refuse them
+    after it started."""
+    from dataclasses import replace
+
+    asked = replace(inputs, protocol=protocol, version_kind=kind, version_counts=counts,
+                    evidence_dirs=(Path("/srv/evidence"),))
+    with pytest.raises(ValueError) as refused:
+        asked.reports_dir()
+    said = protocols.training_evidence_refusal(kind)
+    assert str(refused.value) == f"{said} A test run on it is given no evidence directory."
+    calls = popen()
+    result = TrainingManager().start_test(asked)
+    assert result["success"] is False and result["error"].startswith(said)
+    assert result["error"].endswith("Nothing was started.") and calls.calls == []
+    # The same inputs without the directories start (judged, not launched here).
+    assert replace(asked, evidence_dirs=()).reports_dir() == reports(inputs)
+
+
 def test_the_operators_choices_and_the_evidence_setting_reach_the_command_line(inputs):
     from dataclasses import replace
 

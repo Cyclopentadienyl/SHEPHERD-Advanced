@@ -2273,14 +2273,15 @@ def checkpoint_choices(parents: Mapping[str, Any], keys: Sequence[str]) -> List[
 
 def checkpoint_items(listing: Any) -> Tuple[Dict[str, Any], Optional[str]]:
     """A checkpoint listing (`server_lists.list_checkpoints`) as the session
-    keeps it: ``({"<architecture>/<run>/<file>": item}, problem)``, the
+    keeps it: ``({key: item}, problem)``, each item by the list's identity
+    (`CheckpointItem.key`: ``<architecture>/<run>/<file>`` for names that are
+    text; never its shown names, so no entry hides another, BACKLOG 66), the
     problem redacted (no absolute path)."""
     from dataclasses import asdict
 
     if not listing.available:
         return {}, redact(listing.problem, workspaces_root()[0])
-    return {f"{item.architecture}/{item.run}/{item.filename}": asdict(item)
-            for item in listing.items}, None
+    return {item.key: asdict(item) for item in listing.items}, None
 
 
 def _list_parents(ws: Mapping[str, Any]) -> Tuple[Dict[str, Any], Optional[str]]:

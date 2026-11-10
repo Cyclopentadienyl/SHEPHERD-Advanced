@@ -204,6 +204,14 @@ class CheckpointItem:
     whether there are none (`reference`) and its capability description
     (`capabilities`), from which every consumer judges a new measurement of it
     (`src.evaluation.protocols`). All `None` for a file that was not read.
+
+    `architecture`, `run` and `filename` are text as every answer shows them,
+    a name that is not text with backslash escapes; `key` is the entry's
+    identity, apart from those names (`checkpoint_paths.listing_key`, BACKLOG
+    66): ``architecture/run/filename`` for names that are text, a form no text
+    names give otherwise, so two entries shown alike never share a key and
+    selecting one never picks the other. An item built without one is keyed by
+    its names.
     """
 
     workspace: str
@@ -232,6 +240,14 @@ class CheckpointItem:
     reference: Optional[bool] = None
     differences: Optional[Tuple[str, ...]] = None
     capabilities: Optional[Dict[str, Any]] = None
+    key: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        if self.key is None:
+            from src.utils.checkpoint_paths import listing_key
+
+            object.__setattr__(self, "key", listing_key(
+                (self.architecture, self.run, self.filename)))
 
 
 @dataclass(frozen=True)
@@ -268,7 +284,11 @@ class CohortVersionItem:
     split (`kind` ``generated``): its role (the split it is), its counts
     (generated patients and diseases, and its functional gene fixture's rows
     when it keeps one, which a gene-field protocol is judged by), graph and
-    dataset record; no source, and never a sample."""
+    dataset record; no source, and never a sample. `count_units` are the
+    units its manifest records for its counts (a KG edge set's and a
+    generated split's; `None` for a supplied cohort, whose manifest records
+    none), so every count is shown in its own unit (research comparison
+    Stage 7)."""
 
     label: str
     manifest_sha256: Optional[str]
@@ -283,6 +303,7 @@ class CohortVersionItem:
     reports: Tuple[ReportItem, ...] = ()
     reports_problem: Optional[str] = None
     kind: Optional[str] = None
+    count_units: Optional[Dict[str, Any]] = None
 
 
 @dataclass(frozen=True)
@@ -598,7 +619,7 @@ def list_checkpoints(
     """
     from src.kg.artifacts import read_split_manifest
     from src.models.bundle.record import listed_record
-    from src.utils.checkpoint_paths import read_run_checkpoints, run_architecture
+    from src.utils.checkpoint_paths import read_run_checkpoints
 
     try:
         name, path = _find_workspace(workspace, environ)
@@ -621,11 +642,15 @@ def list_checkpoints(
         recorded = entry.dataset_fingerprint
         read = entry.sha256 is not None and entry.problem is None
         summary = listed_record(entry.model_record) if read else {}
+        # Text as every answer shows it, and the identity apart from it
+        # (BACKLOG 66): a name that is not text never reaches an answer.
+        architecture, run_name, filename = entry.names
         items.append(CheckpointItem(
             workspace=name,
-            architecture=run_architecture(entry.run_dir),
-            run=entry.run_dir.name,
-            filename=entry.path.name,
+            architecture=architecture,
+            run=run_name,
+            filename=filename,
+            key=entry.key,
             sha256=entry.sha256,
             size_bytes=entry.size_bytes,
             checkpoint_kind=entry.checkpoint_kind,
@@ -706,7 +731,9 @@ class FamilyRow:
 
 
 def _row_key(item: CheckpointItem) -> str:
-    return f"{item.architecture}/{item.run}/{item.filename}"
+    """A listed file's identity in the family view: the listing's own key
+    (`CheckpointItem.key`), never its shown names (BACKLOG 66)."""
+    return item.key
 
 
 def _not_held(run: str, sha256: str, workspace: Optional[str] = None) -> str:
@@ -1071,6 +1098,7 @@ def _version_item(listed: Any, report_state: Optional[ReportStateReader], *,
         reports=reports,
         reports_problem=reports_problem,
         kind=listed.version.kind,
+        count_units=_as_dict(manifest.get("count_units")),
     )
 
 

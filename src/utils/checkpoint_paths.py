@@ -17,7 +17,11 @@ prunes another's files. A new run is filed under its model spec's encoder kind
 by SHA-256, not by where it sits. **The listing reads every directory under
 ``runs/``**, whatever its name (`list_runs`): what a file is comes from its own
 record, never from the directory it sits in. One it cannot list, a name that is
-not valid text among them, is one entry saying why, and hides nothing else.
+not valid text among them, is one entry saying why, and hides nothing else; so
+is a run directory or a checkpoint file whose name is not valid text (BACKLOG
+66). **An entry's identity is apart from the name it is shown by**
+(`listing_key`): a name that is not text is shown with backslash escapes and
+identified by its bytes, so two different names never share an identity.
 
 No torch / PyG imports — safe to import from training scripts and API services.
 
@@ -367,10 +371,22 @@ def run_log_dir(run_dir: PathLike) -> Path:
     return Path(run_dir) / RUN_LOGS_DIRNAME
 
 
-def run_checkpoints(run_dir: PathLike) -> List[Path]:
-    """A run's checkpoint files, by name."""
+def _run_files(run_dir: PathLike) -> Tuple[List[Path], List[Path]]:
+    """A run's checkpoint files, by name, in two lists: those whose name is
+    text, and those whose name is not (`text_problem`), which no answer can
+    carry and no request can name."""
     directory = run_checkpoint_dir(run_dir)
-    return sorted(directory.glob("*.pt")) if directory.is_dir() else []
+    files = sorted(directory.glob("*.pt")) if directory.is_dir() else []
+    return ([p for p in files if text_problem(p.name) is None],
+            [p for p in files if text_problem(p.name) is not None])
+
+
+def run_checkpoints(run_dir: PathLike) -> List[Path]:
+    """A run's checkpoint files, by name: those whose name is text, the only
+    ones a list shows by name, a request names or a selection chooses. One
+    whose name is not text is the listing's entry with its reason
+    (`list_run_checkpoints`' `unlisted`), never read."""
+    return _run_files(run_dir)[0]
 
 
 def _mtime(path: Path) -> float:
@@ -389,27 +405,69 @@ def _run_recency(run_dir: Path) -> float:
     return max((_mtime(p) for p in run_checkpoints(run_dir)), default=0.0)
 
 
-#: Why `list_runs` cannot list a directory under ``runs/`` whose name is not
-#: valid text (`unlisted_problem` puts it in its sentence).
+#: Why a listing cannot list a directory under ``runs/``, a run directory or a
+#: checkpoint file whose name is not valid text (`unlisted_problem` puts it in
+#: its sentence).
 _NAME_NOT_TEXT = ("its name is not valid text, shown here with backslash escapes; "
                   "it cannot be opened by name")
+
+
+def _name_bytes(name: str) -> bytes:
+    """The bytes the file system holds for a listed name (`os.fsencode`)."""
+    try:
+        return os.fsencode(name)
+    except UnicodeEncodeError:  # a surrogate the system's decoding never gives
+        return name.encode("utf-8", "backslashreplace")
 
 
 def _shown_name(name: str) -> str:
     """A name the file system listed, as text every answer can carry: the
     name itself when it is text (`text_problem`), otherwise its bytes with
-    each one that is not UTF-8 written as a backslash escape (``bad\\xff``)."""
+    each one that is not UTF-8 written as a backslash escape (``bad\\xff``).
+    A display only: a name that is text may read the same (BACKLOG 66), so
+    an entry is identified by `listing_key`, never by this."""
     if text_problem(name) is None:
         return name
-    try:
-        raw = os.fsencode(name)
-    except UnicodeEncodeError:  # a surrogate the system's decoding never gives
-        raw = name.encode("utf-8", "backslashreplace")
-    return raw.decode("utf-8", "backslashreplace")
+    return _name_bytes(name).decode("utf-8", "backslashreplace")
+
+
+def name_key(name: str) -> str:
+    """A listed name's identity, apart from how it is shown: the name itself
+    when it is text; otherwise ``/`` and its bytes in lowercase hexadecimal.
+    No name the file system lists holds ``/``, so no text name has this form,
+    and two different names never share one (BACKLOG 66)."""
+    if text_problem(name) is None:
+        return name
+    return "/" + _name_bytes(name).hex()
+
+
+def listing_key(names: Tuple[str, ...]) -> str:
+    """**The one identity of a listed entry** (BACKLOG 66): its names (the
+    directory under ``runs/``, the run, the file), each by `name_key`, joined
+    by ``/``. For names that are text it is ``architecture/run/file``, as the
+    lists always keyed an entry; an entry with a name that is not text gets a
+    key no text names give, so selecting one never picks another."""
+    return "/".join(name_key(name) for name in names)
+
+
+def listed_names(run_dir: Path, path: Path) -> Tuple[str, str, str]:
+    """An entry's names as every answer shows them (`_shown_name`): the
+    directory its run sits in under ``runs/`` (`run_architecture`), the run's
+    and the file's. An entry for a directory the listing could not list has
+    that directory as its run and its file."""
+    return (_shown_name(Path(run_dir).parent.name), _shown_name(Path(run_dir).name),
+            _shown_name(Path(path).name))
+
+
+def shown_path(path: PathLike) -> str:
+    """A listed path as text every answer can carry: as it is when it is
+    text, otherwise with backslash escapes (`_shown_name`'s rule, over the
+    whole path)."""
+    return _shown_name(str(path))
 
 
 def list_runs(data_dir: PathLike, conv_type: Optional[str] = None, *,
-              unlisted: Optional[List[Tuple[Path, str]]] = None) -> List[Path]:
+              unlisted: Optional[List[Tuple[Path, Path, str]]] = None) -> List[Path]:
     """A workspace's run directories, most recently trained first.
 
     **Every directory under ``runs/``, found by listing it**, whatever its name
@@ -425,21 +483,23 @@ def list_runs(data_dir: PathLike, conv_type: Optional[str] = None, *,
 
     **Only ``runs/`` itself failing to list fails the list** (its `OSError`
     propagates). A directory under it that cannot be listed hides nothing
-    else: its runs are not read, and it is appended to `unlisted` with why
-    (the error's kind and the system's words, never a path) when the caller
-    gives one, by name, so their order never depends on the filesystem's
-    either. **A directory whose name is not valid text** (a byte that is not
-    UTF-8, which Python reads as a lone surrogate) is one this listing cannot
-    list: no answer can carry its name and no request can give it, so it is
-    appended to `unlisted` by its name as shown with backslash escapes
-    (`_shown_name`, ``bad\\xff``; no path has that name) and nothing in it
-    is read.
+    else: its runs are not read, and it is appended to `unlisted`, when the
+    caller gives one, as ``(directory, directory, problem)``: its path, and
+    why in the listing's sentence (`unlisted_problem`: the error's kind and
+    the system's words, never a path), by its shown name, so their order never
+    depends on the filesystem's either. **A directory under it, or a run
+    directory, whose name is not valid text** (a byte that is not UTF-8, which
+    Python reads as a lone surrogate) is one this listing cannot list: no
+    answer can carry its name and no request can give it, so it is appended to
+    `unlisted` the same way, shown with backslash escapes (`_shown_name`,
+    ``bad\\xff``) and identified by its bytes (`listing_key`), and nothing in
+    it is read (BACKLOG 66).
     """
     base = Path(data_dir) / RUNS_DIRNAME
     runs: List[Path] = []
     if not base.is_dir():
         return runs
-    refused: List[Tuple[Path, str]] = []
+    refused: List[Tuple[Path, Path, str]] = []
     for directory in base.iterdir():
         if conv_type is not None and directory.name != conv_type:
             continue
@@ -447,25 +507,41 @@ def list_runs(data_dir: PathLike, conv_type: Optional[str] = None, *,
             if not directory.is_dir():
                 continue
             if text_problem(directory.name) is not None:
-                refused.append((base / _shown_name(directory.name), _NAME_NOT_TEXT))
+                refused.append((directory, directory, unlisted_problem(
+                    directory.relative_to(base), _NAME_NOT_TEXT)))
                 continue
             found = [p for p in directory.iterdir() if p.is_dir()]
         except OSError as exc:  # a directory this account may not enter
             # Its kind and the system's words, never the path it names.
-            refused.append((directory, f"{type(exc).__name__}: {exc.strerror}"
-                            if exc.strerror else refusal_line(exc)))
+            refused.append((directory, directory, unlisted_problem(
+                directory.relative_to(base), f"{type(exc).__name__}: {exc.strerror}"
+                if exc.strerror else refusal_line(exc))))
             continue
-        runs.extend(found)
+        for run in found:
+            if text_problem(run.name) is None:
+                runs.append(run)
+            else:
+                refused.append((run, run, unlisted_problem(run.relative_to(base),
+                                                           _NAME_NOT_TEXT)))
     if unlisted is not None:
-        unlisted.extend(sorted(refused, key=lambda entry: entry[0].name))
+        unlisted.extend(sorted(refused, key=lambda entry: listed_names(entry[0], entry[1])))
     return sorted(runs, key=lambda r: (_run_recency(r), r.name, r.parent.name), reverse=True)
 
 
-def unlisted_problem(directory: Path, why: str) -> str:
-    """What every reader of the runs says of a directory under ``runs/`` it
-    cannot list (`list_runs`' `unlisted`): the listing's entry and automatic
-    selection's reason, in one sentence."""
-    return f"{RUNS_DIRNAME}/{directory.name} cannot be listed ({why}), so no run in it is read"
+def unlisted_problem(under: Path, why: str) -> str:
+    """What every reader of the runs says of an entry it cannot list
+    (`list_runs`' and `list_run_checkpoints`' `unlisted`): the listing's entry
+    and automatic selection's reason, in one sentence, naming it by `under`,
+    its path relative to ``runs/``, as shown (`_shown_name`). A directory
+    directly under ``runs/`` holds runs, a run directory its files; anything
+    deeper is a checkpoint file."""
+    parts = Path(under).parts
+    shown = "/".join(_shown_name(part) for part in (RUNS_DIRNAME, *parts))
+    if len(parts) == 1:
+        return f"{shown} cannot be listed ({why}), so no run in it is read"
+    if len(parts) == 2:
+        return f"{shown} cannot be listed ({why}), so no file in it is read"
+    return f"{shown} is not listed ({why}), so it is not read"
 
 
 def run_architecture(run_dir: PathLike) -> str:
@@ -476,7 +552,7 @@ def run_architecture(run_dir: PathLike) -> str:
 
 def list_run_checkpoints(
     data_dir: PathLike, conv_type: Optional[str] = None, *, run: Optional[str] = None,
-    unlisted: Optional[List[Tuple[Path, str]]] = None,
+    unlisted: Optional[List[Tuple[Path, Path, str]]] = None,
 ) -> List[Tuple[Path, Path]]:
     """Every checkpoint in a workspace's runs, as ``(run_dir, checkpoint)``:
     runs most recently trained first (`list_runs`, `conv_type` and `unlisted`
@@ -484,13 +560,28 @@ def list_run_checkpoints(
     listing the console, the training service and the API show; what a file
     is comes from its own record, read by the caller, never from where it
     sits. `run`, a run directory's name, lists that run alone (a parent looked
-    up by the run its child records)."""
+    up by the run its child records); a directory under ``runs/`` that could
+    not be listed may hold it, so it stays in `unlisted`, and a run directory
+    whose name is not text is not it.
+
+    **A checkpoint file whose name is not valid text** (BACKLOG 66) is not
+    listed by name: it is appended to `unlisted` as ``(run_dir, file,
+    problem)`` (`unlisted_problem`, shown with backslash escapes) and never
+    read, chosen or resolved; its run's other files are listed."""
+    base = Path(data_dir) / RUNS_DIRNAME
+    refused: List[Tuple[Path, Path, str]] = []
     entries: List[Tuple[Path, Path]] = []
-    for run_dir in list_runs(data_dir, conv_type, unlisted=unlisted):
+    for run_dir in list_runs(data_dir, conv_type, unlisted=refused):
         if run is not None and run_dir.name != run:
             continue
-        files = sorted(run_checkpoints(run_dir), key=lambda p: (_mtime(p), p.name), reverse=True)
+        named, unnamed = _run_files(run_dir)
+        files = sorted(named, key=lambda p: (_mtime(p), p.name), reverse=True)
         entries.extend((run_dir, path) for path in files)
+        refused.extend((run_dir, path, unlisted_problem(path.relative_to(base), _NAME_NOT_TEXT))
+                       for path in sorted(unnamed, key=lambda p: _shown_name(p.name)))
+    if unlisted is not None:
+        unlisted.extend(entry for entry in refused
+                        if run is None or entry[0] != entry[1] or entry[0].parent == base)
     return entries
 
 
@@ -516,9 +607,14 @@ class ListedCheckpoint(NamedTuple):
     that resolves outside the directory the caller bounds the listing by, or
     whose open lands outside it, is listed with `problem` and is not read at
     all (`read_run_checkpoints`' `within`). A directory under ``runs/`` that
-    cannot be listed is one entry, its `run_dir` and `path` that directory
-    as `list_runs` names it (by its name as shown, for a name that is not
-    text), with `problem` only.
+    cannot be listed, or a run directory whose name is not text, is one entry,
+    its `run_dir` and `path` that directory, with `problem` only; a checkpoint
+    file whose name is not text is one entry, its `run_dir` its run, with
+    `problem` only (`list_runs`, `list_run_checkpoints`: BACKLOG 66).
+
+    `names` and `key` are its shown names and its identity (BACKLOG 66): a
+    name that is not text is shown with backslash escapes and identified by
+    its bytes, so two entries never share a key.
 
     `size_bytes` is the file's size as listed (a `stat` beside the read,
     descriptive only); `None` for a file not read because it is outside, or one
@@ -553,6 +649,21 @@ class ListedCheckpoint(NamedTuple):
     completed_epochs: Optional[int] = None
     end: Optional[str] = None
     model_record: Optional[Dict[str, Any]] = None
+
+    @property
+    def names(self) -> Tuple[str, str, str]:
+        """The entry's names as every answer shows them, text whatever the
+        file system holds (`listed_names`): the directory its run sits in
+        under ``runs/``, the run's and the file's."""
+        return listed_names(self.run_dir, self.path)
+
+    @property
+    def key(self) -> str:
+        """The entry's identity in its workspace's listing, apart from its
+        shown names (`listing_key`, BACKLOG 66): ``architecture/run/file``
+        for names that are text."""
+        return listing_key((Path(self.run_dir).parent.name, Path(self.run_dir).name,
+                            Path(self.path).name))
 
 
 #: How much of a problem's text a reason keeps (`problem_line`): its first line,
@@ -920,14 +1031,17 @@ def read_run_checkpoints(
     files, as one entry** whose `run_dir` and `path` are that directory and
     whose `problem` says why (`list_runs`' `unlisted`, which names one whose
     name is not text by its name as shown): what it holds is not read, and
-    nothing else is hidden. Only ``runs/`` itself failing to list raises.
+    nothing else is hidden. So is a run directory or a checkpoint file whose
+    name is not text (BACKLOG 66), each shown with backslash escapes
+    (`ListedCheckpoint.names`) and identified by its bytes
+    (`ListedCheckpoint.key`). Only ``runs/`` itself failing to list raises.
 
     torch is imported only here, when a file is read, so this module stays
     importable without it.
     """
     bound = Path(within).resolve() if within is not None else None
     entries: List[ListedCheckpoint] = []
-    unlisted: List[Tuple[Path, str]] = []
+    unlisted: List[Tuple[Path, Path, str]] = []
     for run_dir, path in list_run_checkpoints(data_dir, conv_type, run=run, unlisted=unlisted):
         problem = checkpoint_not_read(run_dir, path, bound) if bound is not None else None
         if problem is not None:
@@ -942,8 +1056,8 @@ def read_run_checkpoints(
         entry, opened = _read_one(run_dir, path, bound)
         _remember(path, bound, identity, opened, started_ns, entry)
         entries.append(entry)
-    entries.extend(ListedCheckpoint(directory, directory, problem=unlisted_problem(directory, why))
-                   for directory, why in unlisted)
+    entries.extend(ListedCheckpoint(run_dir, path, problem=problem)
+                   for run_dir, path, problem in unlisted)
     return entries
 
 
@@ -959,12 +1073,18 @@ def _first_run_holding(runs: List[Path], accept: Optional[AcceptFn], within: Pat
     outside: List[str] = []
     for run in runs:
         inside = []
-        for path in run_checkpoints(run):
+        named, unnamed = _run_files(run)
+        for path in named:
             problem = checkpoint_not_read(run, path, within)
             if problem is None:
                 inside.append(path)
             else:
                 outside.append(problem)
+        # A file whose name is not text is no candidate (BACKLOG 66): named
+        # as the listing names it, never silently passed over.
+        outside.extend(unlisted_problem(Path(run.parent.name, run.name, path.parent.name,
+                                             path.name), _NAME_NOT_TEXT)
+                       for path in sorted(unnamed, key=lambda p: _shown_name(p.name)))
         candidates = [path for path in inside if _accepted(accept, path)]
         if candidates:
             return run, candidates, outside
@@ -1012,10 +1132,10 @@ def select_auto_run_checkpoint(
     **With ``accept``, the record decides, never the directory** (provenance
     §9.3, hazard 3): a run counts only when it holds a file ``accept`` takes
     (the reload's rule: a model bundle finetuned for the task asked for)."""
-    unlisted: List[Tuple[Path, str]] = []
+    unlisted: List[Tuple[Path, Path, str]] = []
     runs = list_runs(data_dir, unlisted=unlisted)
     run, candidates, outside = _first_run_holding(runs, accept, Path(data_dir).resolve())
-    outside = [unlisted_problem(directory, why) for directory, why in unlisted] + outside
+    outside = [problem for _run, _path, problem in unlisted] + outside
     if not_read is not None:
         not_read.extend(outside)
     if run is None:
@@ -1042,6 +1162,9 @@ __all__ = [
     "claim_run_dir",
     "list_run_checkpoints",
     "list_runs",
+    "listed_names",
+    "listing_key",
+    "name_key",
     "propose_run_dir",
     "read_run_checkpoints",
     "problem_line",
@@ -1054,6 +1177,7 @@ __all__ = [
     "run_log_dir",
     "runs_root",
     "select_auto_run_checkpoint",
+    "shown_path",
     "slugify_run_name",
     "ranking_score_detail",
     "text_problem",

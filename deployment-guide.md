@@ -1711,7 +1711,9 @@ int64 列（head、relation、tail、negative tail）依產生順序存放。man
 workspace 的圖，由其四個 digest 與 dataset record 綁定，量測時與 supplied 版本一樣比對。
 
 伺服器的清單（`GET /cohorts`）會列出 KG 邊集合，附其 kind、role 與計數，絕不列出邊；Test 頁以
-label、kind 與 role 列出它（"a KG edge set (test)"），絕不使用 supplied cohort 的計數。這個
+label、kind 與 role 列出它（"kg-test · KG edge set (test)"，排在 supplied cohort 之後），附上以其自身單位
+表示的計數，絕不使用 supplied cohort 的計數（自 research comparison Stage 7 起）。registry 中沒有 KG 邊集合時，
+Test 頁會指出匯入它的命令（本節）。這個
 KG link-prediction 協定會量測它（見下文）；指名它的任務協定，不論來自 `measure_scorer.py
 --cohort` 或 Test 頁的 Start，都會以該協定的理由被拒絕（"the disease measurement does not
 measure a KG edge set; ..."），不寫出任何東西。讀取 supplied cohort 案例的每個讀取者都以同一個共用理由拒絕它（"a KG edge set (test), not a
@@ -1770,8 +1772,8 @@ python scripts/import_cohort.py --kind generated --registry /srv/shepherd/cohort
   印出任何樣本或病人 id。沒有樣本的 split 無法提交。
 
 伺服器的清單（`GET /cohorts`）會列出 generated split，附其 kind、role 與計數，絕不列出樣本；
-Test 頁以 label、kind 與 role 列出它（"a generated split (val)"），絕不使用 supplied cohort 的
-計數。它絕不會被呈現為 supplied cohort，除非 role 是 test 也不會被呈現為 test：Diagnosis 路由
+Test 頁以 label、kind 與 role 列出它（"gen-val · Generated split (val)"），附上以其自身單位表示的
+計數，絕不使用 supplied cohort 的計數。它絕不會被呈現為 supplied cohort，除非 role 是 test 也不會被呈現為 test：Diagnosis 路由
 與 `audit_split_overlap.py --cohort` 以 registry 的共用理由拒絕它
 （"a generated split (val), not a supplied cohort version"），Diagnosis 頁的 Reference cohort
 選單會列出它並標上 "generated split"，但絕不預設選它。
@@ -1791,9 +1793,10 @@ patients-like-me 讀取版本保存的 fixture；每個檔案只讀取一次，�
 區塊（其記錄的 role，目前為 train 或 val、其產生身分，以及它保存的 fixture），並以 role 作為
 `split`；沒有 R10，role 也絕不被呈現為 test。它的報告與任何保存的報告一樣可以登錄（`--record`，
 或執行印出的之後登錄指令；research comparison Stage 6）：其 ledger 紀錄保留 role 與產生身分。目前
-無法匯入 generated test role，因此不會量測任何 test role。job runner 會把部署的 `--training-evidence` 目錄
-傳給每次執行；設定了 `SHEPHERD_TRAINING_EVIDENCE_DIRS` 時，Test 頁在 generated split 上的執行會在
-開始後被拒絕，與 KG 邊集合相同（Stage 7 會依資料種類選擇證據）。以 `--split` 量測的報告維持原狀：
+無法匯入 generated test role，因此不會量測任何 test role。job runner 依版本的種類只做一次 R10 證據的
+選擇（自 research comparison Stage 7 起）：supplied cohort 的執行會取得 `SHEPHERD_TRAINING_EVIDENCE_DIRS`
+的目錄，該設定被拒絕時其啟動也被拒絕；generated split 或 KG 邊集合的執行不取得任何證據目錄，不論該設定
+已設定或被拒絕，因此 Test 頁在它們上的執行會啟動並完成量測。以 `--split` 量測的報告維持原狀：
 它們留在寫出的位置，不會為它們捏造任何身分，`record_evaluation.py` 也仍然拒絕登錄它們。
 
 **搬移 registry。**沒有任何版本記錄路徑：每個版本都以內容指名它所依賴的東西（圖的四個
@@ -2605,8 +2608,12 @@ export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
 
   `runs/` 之下無法列出的目錄會成為一個附原因的項目，其他 run 仍照常列出；只有 `runs/` 本身失敗時
   整份清單才失敗。名稱不是有效文字的目錄也是這樣的項目，其名稱以反斜線跳脫寫出（`runs/bad\xff`；
-  自 K8-7b 之後的修正起）。run 或檔案本身的名稱不是有效文字時，這份清單與下面那份仍會回應
-  HTTP 500，與 K8 之前相同（BACKLOG 66）；請將它改名。每個項目都以清單中的名稱指稱 workspace：對
+  自 K8-7b 之後的修正起）。名稱不是有效文字的 run 目錄或 checkpoint 檔案也是如此（自 research
+  comparison Stage 7 起，BACKLOG 66）：一個附原因的項目（「… is not listed (its name is not valid
+  text, …), so it is not read」），絕不會被開啟、選取或以名稱找到；其他檔案照常列出，這份清單與
+  下面那份都會回應。每個項目都帶有 `key`，即與顯示名稱分開的識別：名稱都是文字時為
+  `architecture/run/file`，名稱不是文字時則是任何文字名稱都不會產生的形式（其位元組的十六進位），
+  因此以反斜線跳脫顯示的名稱絕不會取代名稱真的寫成那樣的檔案。若要使用這樣的檔案，請將它改名。每個項目都以清單中的名稱指稱 workspace：對
   `current -> builds/2026-10-20` 而言，它寫的是 `current`。列出時會開啟每個 checkpoint，SPEC_4
   將此歸類為 checkpoint 檢視（C3），而 D8 只在操作者控制項所在之處提供它：它以
   `GET /api/v1/workspaces/{name}/checkpoints` 提供（`?architecture=<目錄>` 只列 `runs/` 之下某一個
@@ -2622,8 +2629,8 @@ export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
   附上原因；其大小與時間是該目錄本身的，名稱不是有效文字時則大小為 0.0、沒有時間（沒有任何路徑
   叫所顯示的名稱）。自 M5-1 起，D8 像檢查控制項一樣檢查它（§4.13）。
 - **Cohort 版本**（`GET /api/v1/cohorts`）：registry 中的每個版本，以 label 及其 `cohort.json`
-  的 SHA-256 識別，附上它的角色。它也顯示版本的計數、所綁定的圖與
-  資料集紀錄，以及匯入時間。清單絕不顯示病例識別碼或排除清單：D7 把它們留在這台機器上的
+  的 SHA-256 識別，附上它的角色。它也顯示版本的計數（KG 邊集合與 generated split 附上其 manifest
+  記錄的單位 `count_units`，自 research comparison Stage 7 起）、所綁定的圖與資料集紀錄，以及匯入時間。清單絕不顯示病例識別碼或排除清單：D7 把它們留在這台機器上的
   registry 中。中斷的匯入會附原因列出。每個版本的報告庫以 run id 列出，每個 run 都會說明它的
   報告是否保留、是否已登錄（`kept`、`registered`，各附原因，以及報告的 digest 與紀錄的序號），
   來自登錄流程本身對報告庫的讀取，以及對報告所記錄、它量測的 checkpoint 旁邊那份 ledger 的讀取。
@@ -3199,12 +3206,19 @@ checkpoint：run 標題的標籤顯示「dataset not shown · operator control�
 
 ### Research › Evaluate › Test
 
-§4.9 流程的頁面：匯入 cohort 版本、在其上量測模型、保留報告並登錄它。共有三個面板：
+§4.9 流程的頁面：匯入 cohort 版本、在任何種類的資料版本（supplied cohort、KG 邊集合或 generated
+split）上量測模型、保留報告並登錄它。共有三個面板：
 
-- **Cohort。** workspace（伺服器的清單，與 Datasets 相同以資料集指紋顯示）與 cohort 版本
-  （registry 的清單，`SHEPHERD_REGISTRY`），附上它的 role、各項數量、版本 digest，以及它是否
-  對照這個 workspace 的圖譜映射（「bound to this graph」，或「mapped against another graph」，
-  執行時會被拒絕）。其下是該版本 report store 的每一個執行目錄，最新的在前：何時執行、用哪個
+- **Data**（自 research comparison Stage 7 起；之前為「Cohort」）。workspace（伺服器的清單，與
+  Datasets 相同以資料集指紋顯示）與 **Data version**（registry 的清單，`SHEPHERD_REGISTRY`），依種類
+  與 role 列出：先是 supplied cohort，與以前相同（「label · role R · n of N ranked-eligible」），接著是
+  KG 邊集合（「kg-test · KG edge set (test)」），然後是 generated split（「gen-val · Generated split
+  (val)」）。所選版本顯示它是什麼、它的計數（supplied cohort 的案例；KG 邊集合的 pair 與邊；generated
+  split 的病人、疾病與 fixture 列，每一項在 **Counts and units** 之下附上其 manifest 記錄的單位）、
+  版本 digest，以及它是否對照這個 workspace 的圖譜映射（「bound to this graph」，或「mapped against
+  another graph」，執行時會被拒絕）。registry 中沒有 KG 邊集合時，其下會有一行指出在機器上匯入它的
+  命令（匯入程式的 `--kind kg_edges` 加上 `--from-checkpoint`，§4.9）；本頁的 Import 只建立 supplied
+  cohort。其下是該版本 report store 的每一個執行目錄，最新的在前：何時執行、用哪個
   模型、是否保留了報告、是否已登錄；當同一群組的執行結果不同時顯示「runs under these conditions
   differ」（只有當該群組記錄 deterministic algorithms 開啟時，才以琥珀色加上「— investigate」），
   比較不完整時顯示「comparison incomplete」。沒有保留報告的執行會說明這一點；目前正在執行的測試位於最上方一列，而這台
@@ -3217,18 +3231,22 @@ checkpoint：run 標題的標籤顯示「dataset not shown · operator control�
 - **Run。** 模型：伺服器清單中該 workspace 的 checkpoint，依執行、epoch、檔案與模型指紋列出。
   列出它們會開啟每一個 checkpoint，因此這是操作者控制項：唯讀的瀏覽器不會看到它，而且頁面對
   每個 workspace 只列出一次（↻ 會重新讀取清單）。接著是 **Measurement**（自 K8-6a 起），即執行
-  以 `--mode <protocol>` 傳入的協定（§4.9）：選項是這個 build 所實作、且所選模型列出的能力符合其
-  需求的協定，目前 finetune 模型的每個 task head 各一種（Disease、Gene 或 Patients-like-me），
-  以及 base 與每個 finetune 的 KG link prediction（`kg_link_prediction`），它量測 KG 邊集合（§4.9；
-  在設定了 R10 證據目錄時從本頁執行，會因 `--training-evidence` 被拒絕，直到執行器依種類選擇證據為止，
-  research comparison Stage 7；在那之前不論所選版本的種類都會提供它，因此 finetune 在 supplied
-  cohort 上也有兩個選項）。只有一個選項時它已被選取；有多個時，在你選擇之前都不選取；沒有任何
-  選項時，Start 會說明原因。紀錄無法讀取的檔案同樣沒有任何選項，
+  以 `--mode <protocol>` 傳入的協定（§4.9）：選項是這個 build 所實作、所選模型列出的能力符合其
+  需求、且量測所選版本種類的協定（自 research comparison Stage 7 起）：finetune 模型 task head 的量測
+  （Disease、Gene 或 Patients-like-me）用於 supplied cohort 或 generated split，base 與每個 finetune 的
+  KG link prediction 用於 KG 邊集合。因此 finetune 在 supplied cohort 上只提供其任務的量測，且已被選取，
+  在 KG 邊集合上只提供 KG link prediction；base 在 supplied cohort 上沒有任何選項，Start 會說明哪些
+  量測接受它以及它們量測什麼。尚未選擇版本時，列出模型能力符合的每一種量測。只有一個選項時它已被
+  選取；有多個時，在你選擇之前都不選取；沒有任何選項時，Start 會說明原因。每次 Start 執行一種量測：
+  以另一個協定量測模型時再按一次 Start，一次一個 GPU 工作。紀錄無法讀取的檔案同樣沒有任何選項，
   Start 為停用，並附上紀錄自己的原因（沒有 model spec 的檔案為「Record not readable (written
   before the model spec: not readable by this build; start a new run): not measured here. Choose
   a model with a readable record」；自 K8-7b，2026-11-08 起）。它和模型一樣是操作者控制項。Mode C 與
-  Mode D 都不是協定，因此沒有任何頁面或命令會執行它們。接著是執行時會尋找的 R10 證據（被量測的
-  workspace，以及 `SHEPHERD_TRAINING_EVIDENCE_DIRS`）、**Register the result**、
+  Mode D 都不是協定，因此沒有任何頁面或命令會執行它們。接著是 **R10 證據**，由執行器依所選版本的
+  種類只選擇一次（自 research comparison Stage 7 起）：supplied cohort 顯示執行時會尋找的目錄（被量測的
+  workspace，以及 `SHEPHERD_TRAINING_EVIDENCE_DIRS`），設定被拒絕時以紅色 ✕ 與「Refused:」加上原因
+  顯示，並停用 Start；KG 邊集合或 generated split 以灰色 ○ 顯示「Not applicable」與原因（R10 屬於
+  supplied cohort），不論該設定如何，執行都不會取得任何證據目錄。接著是 **Register the result**、
   **Deterministic execution**，以及由伺服器固定的 batch size 與裝置（量測程式的預設值；
   `SHEPHERD_DEVICE`）。**🔒 Start test** 透過 job runner（§4.11）啟動真正的
   `measure_scorer.py`，使用伺服器在自己的清單中重新找到的 workspace、版本與 checkpoint，並以
@@ -3255,7 +3273,8 @@ checkpoint：run 標題的標籤顯示「dataset not shown · operator control�
   以及是否已登錄（對操作者而言，是在清單中持有它所量測權重的 checkpoint 旁的帳本中檢查）。
   有紀錄以其他位元組寫明這次執行（報告在登錄之後被替換），或那份帳本無法判斷時，Result 會列出
   登錄給的原因。
-  **🔒 Register this report** 透過唯一的登錄函式（§4.9）登錄一份已保留的報告：伺服器在版本的
+  **🔒 Register this report** 透過唯一的登錄函式（§4.9）登錄一份任何種類（supplied cohort、KG 邊集合
+  或 generated split）的已保留報告：伺服器在版本的
   store 中找到報告、確認其位元組就是顯示過的那些、從它自己的 checkpoint 清單找出帳本應在的
   位置（以完整 digest 找到持有該權重的已列出檔案，從不使用報告記錄的路徑：若執行讀取的那個
   檔案以這些權重列出，就用它，這也是清單查看的地方；否則用執行所量測的 workspace 中另一個已

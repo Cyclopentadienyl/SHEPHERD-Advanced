@@ -211,6 +211,10 @@ class CheckpointInfo(BaseModel):
     run: Optional[str] = None
     run_dir: Optional[str] = None
     architecture: Optional[str] = None
+    # The entry's identity in the listing, apart from the names shown above
+    # (BACKLOG 66: a name that is not text is shown with backslash escapes and
+    # identified by its bytes): architecture/run/file for names that are text.
+    key: Optional[str] = None
     checkpoint_kind: Optional[str] = None
     # From the same one read as the metadata (M5-1, BACKLOG 19.3): the SHA-256
     # of the bytes read, the Trainer's validation figure, the dataset

@@ -813,8 +813,10 @@ class TestCheckpointsInAndOut:
             return json.loads(json.dumps(value, ensure_ascii=False).encode("utf-8"))
 
         entries = read_run_checkpoints(ws, within=ws)
-        assert [(e.run_dir.name, e.path.name, e.problem) for e in entries] == [
+        assert [(e.names[1], e.names[2], e.problem) for e in entries] == [
             (run.parent.name, "last.pt", None), (r"bad\xff", r"bad\xff", problem)]
+        # Its identity is its bytes, apart from its shown name (BACKLOG 66).
+        assert entries[1].key == "runs//626164ff//626164ff"
         not_read = []
         path, _key, reason = select_auto_run_checkpoint(ws, not_read=not_read)
         assert path == run / "last.pt" and not_read == [problem]
@@ -841,7 +843,186 @@ class TestCheckpointsInAndOut:
         assert answers(listing_ui["family"])
         assert r"bad\xff" in ml.list_html(listing_ui, None, ml.PRESETS["research"])
         assert list(answers(tc.checkpoint_items(listing)[0])) == [
-            f"gatv2/{run.parent.name}/last.pt", r"runs/bad\xff/bad\xff"]
+            f"gatv2/{run.parent.name}/last.pt", "runs//626164ff//626164ff"]
+
+    def test_a_run_or_file_whose_name_is_not_text_is_listed_and_every_list_answers(
+            self, demo_workspace, tmp_path, monkeypatch):
+        """BACKLOG 66 (the run and file cases; the directory case above): a
+        run directory or a checkpoint file whose name is not valid text made
+        ``GET /workspaces/<ws>/checkpoints`` and ``GET /training/checkpoints``
+        answer HTTP 500 (UnicodeEncodeError), every other file with it. At the
+        list root each is one entry with its state, shown with backslash
+        escapes, identified by its bytes, never opened, chosen or resolved;
+        every other file is listed and read; the server's list, its family
+        view, the training service's list, their routes and the WebUI lists
+        answer."""
+        import json
+        import os
+
+        import src.utils.checkpoint_io as checkpoint_io
+        from fastapi.testclient import TestClient
+
+        from src.api.main import app
+        from src.api.routes import training as training_routes
+        from src.api.services.training_manager import TrainingManager
+        from src.utils.checkpoint_io import write_checkpoint
+        from src.utils.checkpoint_paths import read_run_checkpoints, select_auto_run_checkpoint
+        from src.webui.components import model_list as ml
+        from src.webui.components import test_page as tp
+        from src.webui.components import training_console as tc
+        from tests.fixtures.operator_access import (
+            OPERATOR_BASE_URL,
+            operator_mode,
+            operator_request,
+        )
+
+        root = tmp_path / "root"
+        ws = _copy(demo_workspace, root / "demo")
+        older = _run(ws, "gatv2", "20261019-000000_x_aaaaaa")
+        write_checkpoint({"epoch": 1}, older / "last.pt")
+        os.utime(older / "last.pt", (1_700_000_000, 1_700_000_000))
+        newer = _run(ws, "gatv2", "20261020-000000_z_cccccc")
+        write_checkpoint({"epoch": 2}, newer / "last.pt")
+        os.utime(newer / "last.pt", (1_700_000_100, 1_700_000_100))
+        bad_file = newer / os.fsdecode(b"bad\xff.pt")
+        write_checkpoint({"epoch": 9}, bad_file)  # the newest file, were it read
+        bad_run = _run(ws, "gatv2", os.fsdecode(b"20261021-000000_y_\xff"))
+        write_checkpoint({"epoch": 3}, bad_run / "last.pt")
+        why = "its name is not valid text, shown here with backslash escapes; it cannot be " \
+              "opened by name"
+        run_problem = (rf"runs/gatv2/20261021-000000_y_\xff cannot be listed ({why}), so no "
+                       "file in it is read")
+        file_problem = (rf"runs/gatv2/{newer.parent.name}/checkpoints/bad\xff.pt is not listed "
+                        f"({why}), so it is not read")
+
+        original, reads = checkpoint_io.read_checkpoint, []
+
+        def counting(path, **kwargs):
+            reads.append(Path(path).name)
+            return original(path, **kwargs)
+
+        monkeypatch.setattr(checkpoint_io, "read_checkpoint", counting)
+
+        def answers(value):  # what a JSON answer does with it: UTF-8 text
+            return json.loads(json.dumps(value, ensure_ascii=False).encode("utf-8"))
+
+        entries = read_run_checkpoints(ws, within=ws)
+        assert [(e.names, e.problem) for e in entries] == [
+            (("gatv2", newer.parent.name, "last.pt"), None),
+            (("gatv2", older.parent.name, "last.pt"), None),
+            (("gatv2", r"20261021-000000_y_\xff", r"20261021-000000_y_\xff"), run_problem),
+            (("gatv2", newer.parent.name, r"bad\xff.pt"), file_problem)]
+        assert reads == ["last.pt", "last.pt"], "a name that is not text was opened"
+        assert [e.key for e in entries][2:] == [
+            "gatv2//" + b"20261021-000000_y_\xff".hex() + "//"
+            + b"20261021-000000_y_\xff".hex(),
+            f"gatv2/{newer.parent.name}//" + b"bad\xff.pt".hex()]
+        assert all(e.sha256 is None for e in entries[2:])
+
+        not_read = []
+        path, _key, reason = select_auto_run_checkpoint(ws, not_read=not_read)
+        assert path == newer / "last.pt" and not_read == [run_problem, file_problem]
+        assert answers(reason) == (f"auto: latest run 'gatv2/{newer.parent.name}'; not read: "
+                                   f"{run_problem}; {file_problem}")
+        assert tc._latest_run(ws) == f"gatv2/{newer.parent.name}"
+        for run, filename in ((r"20261021-000000_y_\xff", "last.pt"),
+                              (newer.parent.name, r"bad\xff.pt")):
+            with pytest.raises(sl.ServerListRefused, match="is listed"):
+                sl.resolve_checkpoint("demo", "gatv2", run, filename, environ=_roots(root))
+
+        operator_mode(monkeypatch)
+        monkeypatch.setenv(ss.ENV_WORKSPACES_ROOT, str(root))
+        monkeypatch.setattr(training_routes.training_manager, "_config", {"data_dir": str(ws)})
+        client = TestClient(app, base_url=OPERATOR_BASE_URL, raise_server_exceptions=False)
+        for route, rows in (("/api/v1/workspaces/demo/checkpoints", "checkpoints"),
+                            ("/api/v1/workspaces/demo/family", "rows"),
+                            ("/api/v1/training/checkpoints", None)):
+            response = client.get(route)  # HTTP 500 for the first and the last, before
+            assert response.status_code == 200, (route, response.text[:300])
+            listed = response.json() if rows is None else response.json()[rows]
+            listed = [row.get("item", row) for row in listed]
+            assert len(listed) == 4, (route, listed)
+            assert sorted(row["key"] for row in listed) == sorted(e.key for e in entries)
+            for row, problem in ((listed[2], run_problem), (listed[3], file_problem)):
+                assert problem in row.values(), (route, row)
+
+        training = answers(TrainingManager().get_checkpoints(str(ws)))
+        assert [(t["run"], t["filename"], t["metadata_problem"]) for t in training][2:] == [
+            (r"20261021-000000_y_\xff", r"20261021-000000_y_\xff", run_problem),
+            (newer.parent.name, r"bad\xff.pt", file_problem)]
+        assert training[3]["filepath"].endswith(r"/checkpoints/bad\xff.pt")
+
+        monkeypatch.setattr(ml, "read_status", lambda: (None, "not read"))
+        listing_ui = ml.list_models("demo", operator_request(monkeypatch), family=True)
+        items = answers(listing_ui["items"])
+        assert [ml.item_key(i) for i in items] == [e.key for e in entries]
+        html = ml.list_html(listing_ui, None, ml.PRESETS["research"])
+        assert r"20261021-000000_y_\xff" in html and r"bad\xff.pt" in html
+        assert answers(listing_ui["family"])
+        assert len(answers(tc.checkpoint_items(sl.list_checkpoints("demo"))[0])) == 4
+        assert len({value for _label, value in answers(tp.model_choices(listing_ui))}) == 4
+
+    def test_names_shown_alike_keep_their_own_identity_and_selection(
+            self, demo_workspace, tmp_path, monkeypatch):
+        """BACKLOG 66, the collision: a run and a file whose names are text
+        and read ``bad\\xff`` literally (a backslash, "x", "f", "f"), beside a
+        run and a file whose names are the byte ``\\xff``, shown the same way.
+        Each keeps its own identity (`CheckpointItem.key`), so each list holds
+        all four and none hides another; selecting a key finds that entry and
+        never the other (the WebUI's shared list, the Test page's model select,
+        the console's items, the family view); a request by the shown names
+        resolves the text-named file only."""
+        import json
+        import os
+
+        from src.utils.checkpoint_io import write_checkpoint
+        from src.utils.fingerprint import file_sha256
+        from src.webui.components import model_list as ml
+        from src.webui.components import test_page as tp
+        from src.webui.components import training_console as tc
+        from tests.fixtures.operator_access import operator_request
+
+        root = tmp_path / "root"
+        ws = _copy(demo_workspace, root / "demo")
+        literal = _run(ws, "gatv2", r"bad\xff")
+        write_checkpoint({"epoch": 1}, literal / "last.pt")
+        write_checkpoint({"epoch": 2}, literal / r"bad\xff.pt")
+        write_checkpoint({"epoch": 3}, literal / os.fsdecode(b"bad\xff.pt"))
+        write_checkpoint({"epoch": 4}, _run(ws, "gatv2", os.fsdecode(b"bad\xff")) / "last.pt")
+
+        listing = sl.list_checkpoints("demo", environ=_roots(root))
+        items = json.loads(json.dumps(listing.as_dict("checkpoints"),
+                                      ensure_ascii=False).encode("utf-8"))["checkpoints"]
+        shown = [(i["architecture"], i["run"], i["filename"]) for i in items]
+        assert sorted(shown) == sorted([
+            ("gatv2", r"bad\xff", "last.pt"), ("gatv2", r"bad\xff", r"bad\xff.pt"),
+            ("gatv2", r"bad\xff", r"bad\xff.pt"), ("gatv2", r"bad\xff", r"bad\xff")])
+        keys = [i["key"] for i in items]
+        assert len(set(keys)) == 4, keys
+        text_file = next(i for i in items if i["key"] == r"gatv2/bad\xff/bad\xff.pt")
+        other_file = next(i for i in items if i["key"] == "gatv2/bad\\xff//"
+                          + b"bad\xff.pt".hex())
+        assert text_file["sha256"] == file_sha256(literal / r"bad\xff.pt")
+        assert text_file["problem"] is None
+        assert other_file["sha256"] is None and "not valid text" in other_file["problem"]
+        assert (text_file["filename"], other_file["filename"]) == (r"bad\xff.pt", r"bad\xff.pt")
+
+        # Selecting one never picks the other, wherever a key selects.
+        monkeypatch.setattr(ml, "read_status", lambda: (None, "not read"))
+        listing_ui = ml.list_models("demo", operator_request(monkeypatch), family=True,
+                                    environ=_roots(root))
+        assert sorted(ml.item_key(i) for i in listing_ui["items"]) == sorted(keys)
+        for item in items:
+            assert ml.find_item(listing_ui, item["key"])["sha256"] == item["sha256"]
+            assert tp.find_model(listing_ui, item["key"])["problem"] == item["problem"]
+        assert len({value for _label, value in tp.model_choices(listing_ui)}) == 4
+        console = tc.checkpoint_items(listing)[0]
+        assert sorted(console) == sorted(keys)
+        assert console[text_file["key"]]["sha256"] == text_file["sha256"]
+        family = [row["key"] for view in listing_ui["family"].values() for row in view]
+        assert sorted(set(family)) == sorted(keys)
+        assert sl.resolve_checkpoint("demo", "gatv2", r"bad\xff", r"bad\xff.pt",
+                                     environ=_roots(root)) == literal / r"bad\xff.pt"
 
     def test_the_latest_run_is_one_inside_the_workspace(self, tmp_path):
         """The review of C3 (listing nit): the Training page's latest run is

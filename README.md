@@ -124,8 +124,10 @@ read them through `GET /api/v1/evaluations/loaded-model`. The Test page measures
 does, by a protocol this build implements, chosen among those its listed capabilities admit:
 today one for each task head of a finetuned model, and the KG link-prediction measurement for a
 base and every finetune, which measures a KG edge set (research comparison Stage 5; its report is
-registered like any kept report since Stage 6, its record keeping the run's exposure; its run from
-the Test page, with R10's evidence chosen by kind, is Stage 7). A record it registers names the
+registered like any kept report since Stage 6, its record keeping the run's exposure; since Stage
+7 the Test page offers the measurements that take the model and measure the chosen version's kind,
+and the job runner chooses R10's evidence by that kind, so a KG edge set's run is given none). A
+record it registers names the
 mode of its report: the protocol of a new run (Disease, Gene, Patients-like-me or KG link
 prediction), or a kept report's own mode, and is read by the kind of data it measured. A Mode C record, the model's own disease
 ranking from before the tasks, is historical: kept Mode C reports and records are read by the

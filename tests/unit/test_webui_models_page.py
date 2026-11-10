@@ -1232,7 +1232,8 @@ def test_by_family_draws_each_family_parent_first_with_its_lineage(world, monkey
     # A record this build refused and a file never read: two groups, each
     # titled with its own word (skill §6: missing states are never merged).
     broken = ml.find_item(listing, _key(world, "broken.pt"))
-    refused = {**broken, "filename": "refused.pt", "record": "refused",
+    # Another file: its own identity (keyed by its names), never the copy's.
+    refused = {**broken, "filename": "refused.pt", "key": None, "record": "refused",
                "record_problem": "an unknown field"}
     row = {**mp.family_row(listing, _key(world, "broken.pt")), "key": ml.item_key(refused)}
     both = {**listing, "items": [*listing["items"], refused],

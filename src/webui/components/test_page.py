@@ -1,16 +1,24 @@
 """
 Research › Evaluate › Test: import a cohort version, run a test, keep and register its report (M5-2, UI-D).
 ==========================================================================================================
+Every data kind of the registry (research comparison Stage 7): a supplied
+cohort, a KG edge set and a generated split are listed, measured and
+registered here.
 `docs/working/PLAN_TEST_RESULTS.md` §6 ("M5's boundaries": the Test tab on
 M4's flow), D5, D7 and D8; the page contract is `src/webui/shell.py`'s
 docstring. Three panels, as the mockup draws them (``test-wide.png``,
 ``test-import.png``):
 
-- **Cohort**: the workspace (the server's list, the shared dataset renderer),
-  the cohort version (the registry's list, with whether it is mapped against
-  this workspace's graph), "🔒 Import a new version…", and the version's report
-  store: every run directory, newest first (the newest `ROWS_SHOWN` and the
-  selected one shown, "Show all N reports" for the rest), with what it kept
+- **Data**: the workspace (the server's list, the shared dataset renderer),
+  the data version (the registry's list by kind and role: a supplied cohort
+  by its role and case counts, "KG edge set (test)", "Generated split (val)",
+  each with its counts in its own units, `version_choices`, `version_html`;
+  with whether it is mapped against this workspace's graph; when the registry
+  holds no KG edge set, the command that imports one on the machine,
+  `kg_edges_empty_html`), "🔒 Import a new version…" (a supplied cohort),
+  and the version's report store: every run directory, newest first (the
+  newest `ROWS_SHOWN` and the selected one shown, "Show all N reports" for
+  the rest), with what it kept
   and whether its report is registered (the registration's one helper,
   `server_lists.stored_report_state`, asked again for an operator beside the
   listed checkpoint Register would use: `refine_rows`, `ledger_checkpoint`)
@@ -23,9 +31,14 @@ docstring. Three panels, as the mockup draws them (``test-wide.png``,
   `renderers.record_kind_text`: listing opens every checkpoint, so it is an
   operator control and a read-only request is not shown it), the measurement
   (a radio of the protocols this build implements that the chosen model's
-  listed capabilities admit, `protocols.available`: the only one is chosen, of
-  several none is until the operator picks one, and with none Start says why),
-  the R10 evidence the server's setting names, "Register the result" and
+  listed capabilities admit and that measure the chosen version's kind,
+  `protocols.available`: the only one is chosen, of several none is until the
+  operator picks one, and with none Start says why; one Start runs one
+  measurement), the R10 evidence by the runner's one choice by the version's
+  kind (`run_evidence`, `training_manager.evidence_choice`: the server's
+  setting for a supplied cohort, a refused setting a red ✕ with its words;
+  "Not applicable" with why for a KG edge set or a generated split, which is
+  given none and does not need the setting), "Register the result" and
   "Deterministic execution", the batch size and device the server fixes (D5),
   "🔒 Start test" through the job runner (`TrainingManager.start_test`, given
   the measurement chosen, the model's learning stage, task and capability
@@ -246,15 +259,17 @@ FIELD_HELP = {
     "shep-test-workspace": (
         "Workspace",
         "The workspace the server lists under SHEPHERD_WORKSPACES_ROOT: its graph is what a "
-        "cohort version is imported against and what a test run measures on; its checkpoints "
+        "data version is imported against and what a test run measures on; its checkpoints "
         "are the models offered. Shown by its dataset fingerprint, as on Datasets.",
     ),
     "shep-test-version": (
-        "Cohort version",
-        "A cohort version in the server's registry (SHEPHERD_REGISTRY): a source case set "
-        "mapped to one graph's node indices, immutable, identified by the digest of its "
-        "cohort.json. It can be measured only on a workspace whose graph it was mapped "
-        "against; the run checks that again on the bytes it reads.",
+        "Data version",
+        "A version in the server's registry (SHEPHERD_REGISTRY), listed by kind and role.\n"
+        "• A supplied cohort: source cases mapped to one graph's nodes (Import).\n"
+        "• A KG edge set: one part of a model's edge split, with fixed pairs.\n"
+        "• A generated split: the workspace's own patients.\n"
+        "Immutable, identified by its cohort.json's digest. Measured only on the workspace "
+        "whose graph it was mapped against; the run checks the bytes again.",
     ),
     "shep-test-model": (
         "Model",
@@ -270,10 +285,11 @@ FIELD_HELP = {
         "Measurement",
         "What the run measures: one of the measurements this build implements for the chosen "
         "model.\n"
-        "• Each needs what a model offers, such as its task head; the options are those the "
-        "chosen model's capabilities meet.\n"
-        "• A single option is chosen already; of several, choose one.\n"
-        "• A base is offered KG link prediction only, which measures a KG edge set.\n"
+        "• The options are those the model's capabilities meet that measure the chosen "
+        "version's kind: a task's on a cohort or generated split, KG link prediction on a KG "
+        "edge set.\n"
+        "• A base is offered KG link prediction only.\n"
+        "• A single option is chosen already; of several, choose one. Each Start runs one.\n"
         "• The report records the measurement as its mode.",
     ),
     "shep-test-record": (
@@ -281,7 +297,7 @@ FIELD_HELP = {
         "Checked: when the run completes, its report is registered in the ledger beside the "
         "checkpoint automatically. Unchecked: the report is kept in the registry's report "
         "store and not registered; it can be registered later from this page, as a whole "
-        "report. Every run keeps its report either way (D5).",
+        "report, whatever the version's kind. Every run keeps its report either way (D5).",
     ),
     "shep-test-deterministic": (
         "Deterministic execution",
@@ -349,10 +365,13 @@ TOPIC_HELP = {
     ),
     "test-evidence": (
         "R10 evidence",
-        "Where the run looks for the training and validation inputs the checkpoint records, "
-        "to count their overlap with the cohort (R10): the measured workspace always, and the "
-        "directories the server's SHEPHERD_TRAINING_EVIDENCE_DIRS names. Only bytes whose "
-        "digest the checkpoint records count; otherwise a label is unverifiable, never 0.",
+        "Where a run on a supplied cohort looks for the inputs the checkpoint records (R10).\n"
+        "• It counts their overlap with the cohort's cases: the measured workspace always, and "
+        "the directories SHEPHERD_TRAINING_EVIDENCE_DIRS names.\n"
+        "• Only bytes whose digest the checkpoint records count; otherwise a label is "
+        "unverifiable, never 0.\n"
+        "• A KG edge set or a generated split has no R10: its run is given no directory, and "
+        "the setting is not needed.",
     ),
 }
 
@@ -566,7 +585,11 @@ def read_page(request: Any, *, environ: Optional[Mapping[str, str]] = None) -> D
         "registry_problem": None if registry.available else registry.problem,
         "versions": [version_row(item) for item in versions.items] if versions else [],
         "versions_problem": versions.problem if versions is not None else None,
-        "evidence": {"names": [Path(d).name for d in (evidence.value or ())],
+        # The setting as read, which the runner's one choice by the chosen
+        # version's kind is drawn from (`run_evidence`); its directories stay
+        # in the session's server-side state and are shown by name only.
+        "evidence": {"dirs": [str(d) for d in (evidence.value or ())],
+                     "names": [Path(d).name for d in (evidence.value or ())],
                      "problem": evidence.problem, "note": evidence.note},
         "device": device,
     }
@@ -928,24 +951,47 @@ def model_choices(models: Mapping[str, Any]) -> List[Tuple[str, str]]:
 
 
 def _kind_words(version: Mapping[str, Any]) -> Optional[str]:
-    """A version of another kind than a supplied cohort in the registry's
-    words, by its kind and role ("a generated split (val)", "a KG edge set
-    (test)", `cohort_registry.version_words`), or None for a supplied cohort.
-    Such a version has no source cases or ranked-eligible count, so it is
-    never described in a supplied cohort's words; listing every kind with its
-    own counts is research comparison Stage 7's."""
-    from src.evaluation.cohort_registry import version_words
-
+    """A version of another kind than a supplied cohort by its kind and role,
+    as an option and the version's details lead with it: "KG edge set
+    (test)", "Generated split (val)" (`caveats.version_words` without its
+    article), or None for a supplied cohort. Such a version has no source
+    cases or ranked-eligible count, so it is never described in a supplied
+    cohort's words."""
     kind = version.get("kind")
     if kind in (None, protocols.SUPPLIED):
         return None
-    return version_words(kind, version.get("role"))
+    words = version_words(kind, version.get("role"))
+    words = words[2:] if words.startswith("a ") else words
+    return words[:1].upper() + words[1:]
+
+
+#: The order the version select lists the kinds in: supplied cohorts, then KG
+#: edge sets, then generated splits, then any other kind; each kind's versions
+#: in the registry's order.
+_KIND_ORDER = (protocols.SUPPLIED, protocols.KG_EDGES, protocols.GENERATED)
+
+
+def _by_kind(versions: Sequence[Mapping[str, Any]]) -> List[Mapping[str, Any]]:
+    """`versions` in `_KIND_ORDER`, each kind's in the order given (a stable
+    sort); a version whose kind was not read stays with the supplied ones,
+    as it always listed."""
+    order = {kind: n for n, kind in enumerate(_KIND_ORDER)}
+    return sorted(versions, key=lambda version: order.get(
+        version.get("kind") if version.get("kind") is not None else protocols.SUPPLIED,
+        len(order)))
 
 
 def version_choices(page: Mapping[str, Any], binding: Optional[Mapping[str, Any]]
                     ) -> List[Tuple[str, str]]:
+    """The version select's options, by kind (`_KIND_ORDER`) and role: a
+    supplied cohort as it always read ("label · role R · n of N
+    ranked-eligible"); a KG edge set or a generated split by its kind and
+    role ("kg-test · KG edge set (test)", "gen-val · Generated split (val)"),
+    its counts in its own units in the chosen version's details
+    (`version_html`); one that cannot be read says so. The values are the
+    labels, whatever the words."""
     choices = []
-    for version in page.get("versions") or []:
+    for version in _by_kind(page.get("versions") or []):
         label = str(version.get("label"))
         if version.get("problem"):
             choices.append((f"{label} · cannot be read", label))
@@ -996,7 +1042,7 @@ def default_version(page: Mapping[str, Any], binding: Optional[Mapping[str, Any]
 def cohort_header_html(page: Mapping[str, Any]) -> str:
     right = ("registry: server setting" if not page.get("registry_problem")
              else "registry: not available")
-    head = (f'<div class="shep-panel-hd"><h2>Cohort</h2><span class="shep-panel-right">'
+    head = (f'<div class="shep-panel-hd"><h2>Data</h2><span class="shep-panel-right">'
             f'{e(right)}</span></div>')
     problem = page.get("registry_problem")
     if problem:
@@ -1018,22 +1064,74 @@ def workspace_html(page: Mapping[str, Any], workspace: Optional[str]) -> str:
             f'{note}</div>')
 
 
+#: The import command a page names when the registry holds no KG edge set:
+#: a KG edge set is made on the machine, from a checkpoint's recorded split
+#: (`scripts/import_cohort.py --kind kg_edges`; the deployment guide §4.9),
+#: never from the browser. Its role is the part asked, train, val or test.
+KG_EDGES_IMPORT = "scripts/import_cohort.py --kind kg_edges --from-checkpoint <checkpoint>"
+
+
+def kg_edges_empty_html(page: Mapping[str, Any]) -> str:
+    """The empty state of the KG edge sets (the skill's §9): when the registry
+    lists none, one line saying what a KG edge set is for and the command
+    that makes one on the machine (`KG_EDGES_IMPORT`); "" when it lists one,
+    or the registry is not available."""
+    if page.get("registry_problem") or any(
+            v.get("kind") == protocols.KG_EDGES for v in page.get("versions") or []):
+        return ""
+    return ('<div class="shep-sub">No KG edge set in the registry yet: KG link prediction '
+            f"measures one. Import one on the machine with <code>{e(KG_EDGES_IMPORT)}</code> "
+            "(deployment guide §4.9).</div>")
+
+
+def _version_counts(version: Mapping[str, Any]) -> str:
+    """A KG edge set's or a generated split's counts, each in its own unit:
+    the counts that say what it holds first, in words, then every count with
+    the unit its manifest records, one click away ("Counts and units (N)")."""
+    counts = version.get("counts") if isinstance(version.get("counts"), Mapping) else {}
+    units = version.get("count_units") if isinstance(version.get("count_units"), Mapping) else {}
+    if version.get("kind") == protocols.KG_EDGES:
+        lead = (f"{_count(counts.get('pairs'))} pairs from {_count(counts.get('positive_edges'))} "
+                f"positive edges; message passing over "
+                f"{_count(counts.get('message_passing_edges'))} edges")
+    elif version.get("kind") == protocols.GENERATED:
+        diseases = counts.get("diseases")
+        fixture = counts.get(protocols.GENERATED_FIXTURE_COUNT)
+        lead = (f"{_count(counts.get('samples'))} generated patients of {_count(diseases)} "
+                f"disease{'' if diseases == 1 else 's'}; "
+                + (f"{_count(fixture)} gene fixture rows" if protocols.GENERATED_FIXTURE_COUNT
+                   in counts else "no gene fixture kept"))
+    else:
+        lead = ", ".join(f"{name} {_count(value)}" for name, value in counts.items())
+    rows = "".join(f"<div><code>{e(name)}</code> {e(_count(value))}: "
+                   f"{e(units.get(name) or 'unit not recorded')}</div>"
+                   for name, value in counts.items())
+    return (f"<div>{e(lead)}</div>"
+            f'<details class="shep-test-units"><summary>Counts and units ({len(counts)})'
+            f"</summary>{rows}</details>")
+
+
 def version_html(page: Mapping[str, Any], label: Optional[str],
                  binding: Optional[Mapping[str, Any]]) -> str:
-    """The chosen version: role, counts, its digest, and whether it was mapped
-    against this workspace's graph. A version of another kind is named by its
-    kind and role instead of a supplied cohort's counts (`_kind_words`)."""
+    """The chosen version: what it is, its counts, its digest, and whether it
+    was mapped against this workspace's graph. A supplied cohort by its role
+    and its case counts; a KG edge set or a generated split by its kind and
+    role (`_kind_words`) and its counts in its own units (`_version_counts`),
+    never in a supplied cohort's words. Under it, the KG edge sets' empty
+    state when the registry holds none (`kg_edges_empty_html`)."""
     if page.get("registry_problem"):
         return ""
+    empty = kg_edges_empty_html(page)
     version = find(page.get("versions") or [], "label", label)
     if version is None:
         why = page.get("versions_problem") or (
-            "No cohort version is in the registry yet: import one with “Import a new version…”."
-            if not page.get("versions") else "No cohort version is chosen.")
-        return _reason_html(redact(why, page.get("roots") or []))
+            "No data version is in the registry yet: import a cohort with “Import a new "
+            "version…”." if not page.get("versions") else "No data version is chosen.")
+        return _reason_html(redact(why, page.get("roots") or [])) + empty
     roots = page.get("roots") or []
     if version.get("problem"):
-        return _reason_html(f"This version cannot be read: {redact(version['problem'], roots)}")
+        return _reason_html("This version cannot be read: "
+                            + redact(version["problem"], roots)) + empty
     counts = version.get("counts") or {}
     state, words = binding_state(version, binding)
     kind = {"bound": "ok", "another": "amber", "unknown": "grey"}[state]
@@ -1044,18 +1142,19 @@ def version_html(page: Mapping[str, Any], label: Optional[str],
     imported = str(version.get("imported_at") or "").replace("T", " ").replace("Z", " UTC")
     kind_words = _kind_words(version)
     if kind_words:
-        what = e(kind_words[:1].upper() + kind_words[1:])
+        what = f"<div>{e(kind_words)}</div>{_version_counts(version)}"
     else:
-        what = (f'role {r.ident_html(version.get("role"))} · {_count(counts.get("source_cases"))} '
-                f'source cases · {_count(counts.get("ranked_eligible"))} ranked-eligible'
-                f'{" (" + e(reasons) + " excluded)" if reasons else ""}')
+        what = (f'<div>role {r.ident_html(version.get("role"))} · '
+                f'{_count(counts.get("source_cases"))} source cases · '
+                f'{_count(counts.get("ranked_eligible"))} ranked-eligible'
+                f'{" (" + e(reasons) + " excluded)" if reasons else ""}</div>')
     source_format = version.get("source_format")
     return (
         '<div class="shep-test-vd">'
-        f'<div>{what}</div>'
+        f'{what}'
         f'<div>{r.fingerprint_html("version", version.get("manifest_sha256"))} {chip}</div>'
         f'<div class="shep-sub">Imported {e(imported or "—")}'
-        f'{" · " + e(source_format) if source_format else ""}</div></div>')
+        f'{" · " + e(source_format) if source_format else ""}</div></div>{empty}')
 
 
 def _row_chip(run: Mapping[str, Any]) -> str:
@@ -1310,29 +1409,76 @@ def model_html(page: Mapping[str, Any], models: Mapping[str, Any], key: Optional
         f' · {r.trained_on_html(item.get("dataset_fingerprint"), workspaces)}</div></div>')
 
 
-def evidence_html(page: Mapping[str, Any], workspace: Optional[str]) -> str:
-    """The R10 evidence row: the measured workspace, then the setting's
-    directories, or why the setting is refused. A directory the server cannot
-    check stays in the list and does not block Start: the setting's note says
-    which and why on a line of its own, in amber with ▲ (needs attention, does
-    not block), redacted as the problem is."""
+def run_evidence(page: Mapping[str, Any], version: Optional[Mapping[str, Any]]) -> Any:
+    """The R10 evidence a run on the listed version `version` is given, by the
+    job runner's one choice by its data kind
+    (`training_manager.evidence_choice`), over the evidence setting this page
+    read (`read_page`): a supplied cohort version takes the setting's
+    directories and a refused setting refuses its Start; a KG edge set or a
+    generated split takes none, the setting not required, and says why. Start's
+    check (`start_state`) and the R10 evidence row (`evidence_html`) read it;
+    the start itself asks the same choice of the setting read again
+    (`start_test_run`). With no version chosen, or one whose kind was not
+    read (a version that cannot be read, which Start refuses first), the
+    supplied case: the row shows the setting and claims no kind."""
+    from src.api.services.training_manager import evidence_choice
+    from src.config.server_settings import ENV_TRAINING_EVIDENCE_DIRS, Setting
+
+    read = page.get("evidence") or {}
+    setting = Setting(ENV_TRAINING_EVIDENCE_DIRS,
+                      None if read.get("problem") else tuple(
+                          Path(d) for d in read.get("dirs") or read.get("names") or ()),
+                      read.get("problem"), read.get("note"))
+    kind = (version or {}).get("kind")
+    return evidence_choice(protocols.SUPPLIED if kind is None else kind, setting)
+
+
+#: The mark of a refusal (the skill's §6): ✕ before its words, in the status
+#: error colour, so the colour never carries the meaning alone.
+REFUSED_MARK = '<span aria-hidden="true">✕</span>'
+#: The mark of "not applicable" (the skill's §6): a hollow ○ in grey, its word beside it.
+NOT_APPLICABLE_MARK = '<span aria-hidden="true">○</span>'
+
+
+def evidence_html(page: Mapping[str, Any], workspace: Optional[str],
+                  version: Optional[Mapping[str, Any]] = None) -> str:
+    """The R10 evidence row for a run on the chosen version (`run_evidence`,
+    the runner's one choice by its data kind; research comparison Stage 7).
+
+    For a KG edge set or a generated split: "Not applicable" in grey with a
+    hollow ○, then why (R10 is a supplied cohort's; how that kind stands to
+    a model's training), whatever the setting says, since a run on it is
+    given no evidence directory. For a supplied cohort version (and before a
+    version is chosen): the measured workspace, then the setting's
+    directories, or, when the setting is refused, which turns Start off, a red
+    ✕ with "Refused:" and why (BACKLOG 68's R10 row; the skill's §6). A
+    directory the server cannot check stays in the list and does not block
+    Start: the setting's note says which and why on a line of its own, in
+    amber with ▲ (needs attention, does not block), redacted as the problem
+    is."""
+    choice = run_evidence(page, version)
+    key = (f'<span class="shep-k">R10 evidence'
+           f'{help_button("test-evidence", "R10 evidence")}</span>')
+    if choice.not_applicable:
+        return (f'<div class="shep-test-kv">{key}<span><span class="shep-test-na">'
+                f'{NOT_APPLICABLE_MARK} Not applicable</span> · '
+                f'{e(choice.not_applicable)}</span></div>')
     evidence = page.get("evidence") or {}
     names = evidence.get("names") or []
     roots = page.get("roots") or []
     measured = f"{e(workspace)} (measured, always)" if workspace else "the measured workspace (always)"
     note = ""
-    if evidence.get("problem"):
-        extra = f' · <span class="shep-amber-t">{e(redact(evidence["problem"], roots))}</span>'
+    if choice.problem:
+        extra = (f' · <span class="shep-test-refused">{REFUSED_MARK} Refused: '
+                 f'{e(redact(choice.problem, roots))}</span>')
     elif names:
         extra = " · " + ", ".join(f"<code>{e(n)}</code>" for n in names) + " (the server's setting)"
-        if evidence.get("note"):
+        if choice.note:
             note = (f'<span></span><span class="shep-amber-t">{r.WARN_MARK} '
-                    f'{e(redact(evidence["note"], roots))}</span>')
+                    f'{e(redact(choice.note, roots))}</span>')
     else:
         extra = " · no other evidence directory is set on the server"
-    return (f'<div class="shep-test-kv"><span class="shep-k">R10 evidence'
-            f'{help_button("test-evidence", "R10 evidence")}</span><span>{measured}{extra}</span>'
-            f'{note}</div>')
+    return f'<div class="shep-test-kv">{key}<span>{measured}{extra}</span>{note}</div>'
 
 
 def fixed_html(page: Mapping[str, Any]) -> str:
@@ -1358,15 +1504,27 @@ def measurement_label(name: Any) -> str:
     return MEASUREMENT_NAMES.get(name, str(name)) if isinstance(name, str) else str(name)
 
 
-def measurement_choices(item: Optional[Mapping[str, Any]]) -> List[Tuple[str, str]]:
+def _kind(version: Optional[Mapping[str, Any]]) -> Any:
+    """The listed version's data kind, which the measurements offered for it
+    are judged by; None for no version chosen (the model's offer alone)."""
+    return version.get("kind") if version is not None else None
+
+
+def measurement_choices(item: Optional[Mapping[str, Any]],
+                        version: Optional[Mapping[str, Any]] = None) -> List[Tuple[str, str]]:
     """The Measurement radio's options for the chosen listing entry `item`
-    (None: no model chosen): the protocols this build implements whose needs
-    its listed capability description meets (`protocols.available`, in their
-    order), each labelled by `measurement_label`, its value the protocol's
-    name. Empty when none does; Start then says why (`measure_refusal`)."""
+    (None: no model chosen) on the chosen listed version `version` (None: none
+    chosen): the protocols this build implements whose needs its listed
+    capability description meets and that measure the version's data kind
+    (`protocols.available`, in their order; research comparison Stage 7),
+    each labelled by `measurement_label` (plain words, never the protocol's
+    code), its value the protocol's name. A finetune on a supplied cohort is
+    offered its task's measurement alone, so it is chosen; on a KG edge set,
+    KG link prediction alone. Empty when none does; Start then says why
+    (`measure_refusal`)."""
     if not item:
         return []
-    names, _reason = protocols.available(item.get("capabilities"))
+    names, _reason = protocols.available(item.get("capabilities"), _kind(version))
     return [(measurement_label(name), name) for name in names]
 
 
@@ -1399,7 +1557,8 @@ def measure_refusal(item: Mapping[str, Any], version: Optional[Mapping[str, Any]
     spec among them) or not read is said in the word the Model option leads
     with (`renderers.record_kind_text`), then this page's reason
     (`NOT_MEASURED_HERE`). Otherwise, with no protocol chosen, the reason no
-    protocol takes the model (`protocols.available`) or `CHOOSE_A_MEASUREMENT`;
+    protocol takes the model and measures the version's kind
+    (`protocols.available`, as the options are drawn) or `CHOOSE_A_MEASUREMENT`;
     with one, the protocol definition's reason (`protocols.refusal`: the listed
     capability description, then the version's listed kind and counts, which
     the importer writes for genes only for a source that lists them). A
@@ -1412,7 +1571,7 @@ def measure_refusal(item: Mapping[str, Any], version: Optional[Mapping[str, Any]
         return f"{r.record_kind_text(item)}{why}: {NOT_MEASURED_HERE}"
     model = item.get("capabilities")
     if protocol is None:
-        names, reason = protocols.available(model)
+        names, reason = protocols.available(model, _kind(version))
         return reason if not names else CHOOSE_A_MEASUREMENT
     return protocols.refusal(protocol, model, (version or {}).get("kind"),
                              (version or {}).get("counts"))
@@ -1432,7 +1591,7 @@ def start_state(page: Mapping[str, Any], models: Mapping[str, Any], workspace: O
     if not access.get("allowed"):
         return False, operator_only(access)
     if page.get("registry_problem"):
-        return False, "Disabled: no cohort registry is available (see Cohort)."
+        return False, "Disabled: no registry is available (see Data)."
     kind, words = gpu
     if kind == "busy":
         return False, (f"Disabled: {words}. One managed GPU job at a time (training or "
@@ -1444,11 +1603,11 @@ def start_state(page: Mapping[str, Any], models: Mapping[str, Any], workspace: O
         return False, "Disabled: choose a workspace."
     version = find(page.get("versions") or [], "label", label)
     if version is None:
-        return False, "Disabled: choose a cohort version."
+        return False, "Disabled: choose a data version."
     if version.get("problem"):
-        return False, "Disabled: this cohort version cannot be read."
+        return False, "Disabled: this data version cannot be read."
     if binding_state(version, binding)[0] == "another":
-        return False, ("Disabled: this cohort version was mapped against another graph than "
+        return False, ("Disabled: this data version was mapped against another graph than "
                        "this workspace's; the run would refuse it. Choose a workspace with its "
                        "graph, or import the source again against this workspace.")
     item = find_model(models, key)
@@ -1459,9 +1618,12 @@ def start_state(page: Mapping[str, Any], models: Mapping[str, Any], workspace: O
     refusal = measure_refusal(item, version, protocol)
     if refusal:
         return False, "Disabled: " + said(redact(refusal, roots), "")
-    if (page.get("evidence") or {}).get("problem"):
+    # The runner's one evidence choice by the version's kind: the setting is
+    # required only where it is given (a supplied cohort version).
+    evidence = run_evidence(page, version)
+    if evidence.problem:
         return False, ("Disabled: the evidence directories setting is refused: "
-                       + redact(page["evidence"]["problem"], roots))
+                       + redact(evidence.problem, roots))
     if (page.get("device") or {}).get("problem"):
         return False, f"Disabled: {page['device']['problem']}"
     return True, None
@@ -1501,9 +1663,13 @@ def job_body_html(job: Mapping[str, Any], roots: Sequence[Tuple[str, str]],
              f"register {'on' if inputs.get('record') else 'off'}",
              f"deterministic {'on' if inputs.get('deterministic') else 'off'}",
              f"device {e(inputs.get('device') or 'auto')}",
-             "R10 evidence: the workspace"
-             + (f" + {len(evidence)} director{'ies' if len(evidence) != 1 else 'y'}" if evidence
-                else "")]
+             # The run's own kind, as its inputs recorded it (the runner's
+             # choice): no R10 evidence for a KG edge set or a generated split.
+             ("R10 evidence: the workspace"
+              + (f" + {len(evidence)} director{'ies' if len(evidence) != 1 else 'y'}"
+                 if evidence else "")
+              if protocols.takes_training_evidence(inputs.get("version_kind", protocols.SUPPLIED))
+              else "R10 evidence: not applicable")]
     if started:
         parts.append(f"started {e(started)}")
     body = [f'<div class="shep-sub">{" · ".join(parts)}</div>']
@@ -1612,10 +1778,14 @@ def _kind_lines(record: Mapping[str, Any], kind: str) -> List[Tuple[str, str]]:
     definition version; a generated split's generation identity and how it
     stands to a model's training (`caveats.GENERATED_EXPOSURE_NOTE`).
 
-    Interim, until Stage 7 reworks this page: these lines read the record
-    built from a kept report directly, beside the one reader's views that
-    Models renders (`models_page.kind_html`); Stage 7 renders them from that
-    view, in Models' words, through one shared helper."""
+    These lines read the record built from a kept report (`build_record`),
+    beside the one reader's views that Models renders
+    (`models_page.kind_html`), because a report this page shows need not be
+    registered and the API's record view is a registered record's (it requires
+    the registration's fields). One view of a kept report, registered or not,
+    is the one results service's (research comparison Stage 8), which these
+    lines and Models' then share; until then both read the same record fields
+    in the same words (`caveats.exposure_text`, `GENERATED_EXPOSURE_NOTE`)."""
     if kind == "kg_edges":
         exposure = record.get("exposure") if isinstance(record.get("exposure"), Mapping) else {}
         return [("Exposure", f"{e(exposure_text(exposure))} "
@@ -2261,7 +2431,7 @@ def start_test_run(page: Mapping[str, Any], models: Mapping[str, Any], workspace
         resolve_checkpoint,
         resolve_workspace,
     )
-    from src.api.services.training_manager import TestRunInputs
+    from src.api.services.training_manager import TestRunInputs, evidence_choice
     from src.config import server_settings
 
     access = operator_access(request)
@@ -2272,7 +2442,8 @@ def start_test_run(page: Mapping[str, Any], models: Mapping[str, Any], workspace
     version = find(page.get("versions") or [], "label", label)
     item = find_model(models, key)
     if version is None or version.get("problem") or not r.is_digest(version.get("manifest_sha256")):
-        return {"success": False, "error": "Choose a cohort version the server lists. Nothing was started."}
+        return {"success": False,
+                "error": "Choose a data version the server lists. Nothing was started."}
     if (item is None or models.get("workspace") != workspace or item.get("problem")
             or not r.is_digest(item.get("sha256"))):
         return {"success": False, "error": "Choose a model the server lists in this workspace. "
@@ -2282,10 +2453,13 @@ def start_test_run(page: Mapping[str, Any], models: Mapping[str, Any], workspace
         return {"success": False, "error": said(refusal[:1].upper() + refusal[1:],
                                                 "Nothing was started.")}
     registry = server_settings.cohort_registry(environ)
-    evidence = server_settings.training_evidence_dirs(environ)
+    # The runner's one evidence choice by the version's kind, of the setting
+    # read now: a supplied version's directories (a refused setting refuses
+    # the start), none for a KG edge set or a generated split.
+    evidence = evidence_choice(version.get("kind"), environ=environ)
     if not registry.available:
         return {"success": False, "error": said(registry.problem, "Nothing was started.")}
-    if not evidence.available:
+    if evidence.problem:
         return {"success": False, "error": said(evidence.problem, "Nothing was started.")}
     try:
         data_dir = resolve_workspace(workspace, environ=environ)
@@ -2299,7 +2473,7 @@ def start_test_run(page: Mapping[str, Any], models: Mapping[str, Any], workspace
         checkpoint_sha256=item["sha256"], protocol=protocol,
         learning_stage=item["learning_stage"], task=item["task"],
         capabilities=item["capabilities"], version_kind=version["kind"],
-        version_counts=version["counts"], evidence_dirs=tuple(evidence.value),
+        version_counts=version["counts"], evidence_dirs=evidence.dirs,
         record=bool(record), deterministic=bool(deterministic))
     return manager.start_test(inputs)
 
@@ -2595,7 +2769,7 @@ def create_test_page(ctx: Any) -> None:
                                         elem_id="shep-test-workspace", interactive=True,
                                         elem_classes=["shep-test-select"])
                 workspace_info = plain_html("", elem_id="shep-test-workspace-info")
-                version = gr.Dropdown(label="Cohort version", choices=[], value=None,
+                version = gr.Dropdown(label="Data version", choices=[], value=None,
                                       elem_id="shep-test-version", interactive=True,
                                       elem_classes=["shep-test-select"])
                 version_info = plain_html("", elem_id="shep-test-version-info")
@@ -2752,12 +2926,15 @@ def create_test_page(ctx: Any) -> None:
         return [gr.update(interactive=can_start),
                 _reason_html(why, kind="lock" if not allowed else "")]
 
-    def _measurement_outputs(page, models, key, protocol):
-        """The Measurement radio for the chosen model, and the value it shows
-        (`chosen_measurement`), which Start's state is then drawn from. Like
-        the Model select, it is interactive for an operator only."""
+    def _measurement_outputs(page, models, label, key, protocol):
+        """The Measurement radio for the chosen model on the chosen version
+        (`measurement_choices`: what its capabilities meet that measures the
+        version's kind), and the value it shows (`chosen_measurement`), which
+        Start's state is then drawn from. Like the Model select, it is
+        interactive for an operator only."""
         allowed = bool((page.get("access") or {}).get("allowed"))
-        choices = measurement_choices(find_model(models, key))
+        choices = measurement_choices(find_model(models, key),
+                                      find(page.get("versions") or [], "label", label))
         protocol = chosen_measurement(choices, protocol)
         return gr.update(choices=choices, value=protocol,
                          interactive=allowed and bool(choices)), protocol
@@ -2775,14 +2952,14 @@ def create_test_page(ctx: Any) -> None:
 
     def _run_outputs(page, models, binding, ws, label, key, protocol, job, gpu):
         allowed = bool((page.get("access") or {}).get("allowed"))
-        radio, protocol = _measurement_outputs(page, models, key, protocol)
+        radio, protocol = _measurement_outputs(page, models, label, key, protocol)
         return [
             run_header_html(ws, label),
             _dd(model_choices(models), key, interactive=allowed and bool(models.get("items"))),
             gr.update(interactive=allowed and bool(ws)),
             model_html(page, models, key),
             radio,
-            evidence_html(page, ws),
+            evidence_html(page, ws, find(page.get("versions") or [], "label", label)),
             fixed_html(page),
             *_start_outputs(page, models, binding, ws, label, key, protocol, gpu),
             *_card_outputs(page, job, gpu),
@@ -2988,7 +3165,7 @@ def create_test_page(ctx: Any) -> None:
         the radio itself; Start takes it too, as the operator saw it."""
         if not page:
             return [gr.update()] * (2 + len(start_outputs))
-        radio, protocol = _measurement_outputs(page, models, key, protocol)
+        radio, protocol = _measurement_outputs(page, models, label, key, protocol)
         return [radio, *_start_outputs(page, models, binding, ws, label, key, protocol,
                                        _gpu(page)), protocol]
 
@@ -3312,6 +3489,11 @@ PAGE_CSS = f"""
 {_PAGE} .shep-test-job-ft {{ display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 8px 14px 0; }}
 {_PAGE} .shep-test-log {{ margin: 0; padding: 8px 10px; background: #fff; border: 1px solid var(--shep-border); border-radius: 6px; font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--shep-mono); }}
 {_PAGE} .shep-test-fail {{ color: var(--shep-red-700); font-size: 15px; }}
+{_PAGE} .shep-test-refused {{ color: var(--shep-status-error); font-weight: 600; }}
+{_PAGE} .shep-test-na {{ color: var(--shep-status-neutral); font-weight: 600; white-space: nowrap; }}
+{_PAGE} .shep-test-units {{ font-size: 14px; color: var(--shep-text-2); }}
+{_PAGE} .shep-test-units > summary {{ cursor: pointer; min-height: 24px; line-height: 24px; width: max-content; max-width: 100%; }}
+{_PAGE} .shep-test-units > summary:focus-visible {{ outline: 2px solid var(--shep-accent); outline-offset: 2px; }}
 {_PAGE} .shep-test-fold summary {{ cursor: pointer; }}
 {_PAGE} .shep-test-fold[open] summary {{ margin-bottom: 6px; }}
 {_PAGE} .shep-test-recm {{ margin-top: 12px; font-size: 15px; overflow-wrap: anywhere; }}

@@ -4220,15 +4220,18 @@ def _listed_test_inputs(label: str, workspace: str, run: str, filename: str, *,
     found in the server's lists again by name, the digests those lists show
     passed as the expected ones, the evaluation `protocol` asked apart from the
     learning stage, task and capability description the listing's model
-    record gives, the listed version's kind and counts, and the registry and
-    evidence directories from their settings. `protocol` and `choices`
+    record gives, the listed version's kind and counts, the registry from its
+    setting and the evidence directories by the runner's one choice by the
+    version's kind (`evidence_choice`: the setting's, which must not be
+    refused, for a supplied version; none, the setting unread, for a KG edge
+    set or a generated split). `protocol` and `choices`
     (`record`, `deterministic`) are the operator's. As the page's Start does,
     the protocol is first judged on that description and that version
     (`src.evaluation.protocols.refusal`); the runner judges it again before it
     starts, and the run on the bytes it reads. M5's test runs ask for the
     disease protocol on the probe's own disease children."""
     from src.api.services import server_lists
-    from src.api.services.training_manager import TestRunInputs
+    from src.api.services.training_manager import TestRunInputs, evidence_choice
     from src.config import server_settings
     from src.evaluation import protocols
 
@@ -4243,9 +4246,9 @@ def _listed_test_inputs(label: str, workspace: str, run: str, filename: str, *,
     why = protocols.refusal(protocol, listed.capabilities, version.kind, version.counts)
     assert why is None, (
         f"the {protocol} measurement is refused for the listed checkpoint {run}/{filename}: {why}")
-    registry, evidence = (server_settings.cohort_registry(),
-                          server_settings.training_evidence_dirs())
-    assert registry.available and evidence.available, "the registry or evidence setting is refused"
+    registry, evidence = server_settings.cohort_registry(), evidence_choice(version.kind)
+    assert registry.available, "the registry setting is refused"
+    assert evidence.problem is None, "the evidence setting is refused"
     return TestRunInputs(
         registry=registry.value, version_label=label, version_sha256=version.manifest_sha256,
         workspace=server_lists.resolve_workspace(workspace),
@@ -4254,7 +4257,7 @@ def _listed_test_inputs(label: str, workspace: str, run: str, filename: str, *,
         checkpoint_sha256=listed.sha256, protocol=protocol,
         learning_stage=listed.learning_stage, task=listed.task,
         capabilities=listed.capabilities, version_kind=version.kind,
-        version_counts=version.counts, evidence_dirs=tuple(evidence.value), **choices)
+        version_counts=version.counts, evidence_dirs=evidence.dirs, **choices)
 
 
 def _first_line(process: Any, timeout: float) -> str:
