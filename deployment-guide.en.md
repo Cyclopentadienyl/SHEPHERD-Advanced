@@ -3272,12 +3272,13 @@ it. Three panels:
   list, shown by its dataset fingerprint as on Datasets) and the **Data version** (the registry's
   list, `SHEPHERD_REGISTRY`), by kind and role: supplied cohorts first, as before ("label · role R
   · n of N ranked-eligible"), then KG edge sets ("kg-test · KG edge set (test)"), then generated
-  splits ("gen-val · Generated split (val)"). The chosen version shows what it is, its counts (a
-  supplied cohort's cases; a KG edge set's pairs and edges; a generated split's patients,
-  diseases and fixture rows, each with the unit its manifest records under **Counts and units**),
-  its version digest and whether it was mapped against this workspace's graph ("bound to this
-  graph", or "mapped against another graph", which a run would refuse). With no KG edge set in
-  the registry, a line under it names the command that imports one on the machine (the
+  splits ("gen-val · Generated split (val)"). The chosen version shows its counts (a supplied
+  cohort's role and cases; a KG edge set's pairs and edges; a generated split's patients,
+  diseases and fixture rows, each with the unit its manifest records under **Counts and units**;
+  a KG edge set's or a generated split's kind and role are its option's, not repeated), its
+  version digest and whether it was mapped against this workspace's graph ("bound to this graph",
+  or "mapped against another graph", which a run would refuse; never in the option). With no KG
+  edge set in the registry, a line under it names the command that imports one on the machine (the
   importer's `--kind kg_edges` with `--from-checkpoint`, §4.9); the page's Import makes supplied
   cohorts only. Below them, every run
   directory of the version's report store, newest first: when it ran, on which model, whether a

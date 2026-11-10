@@ -3316,10 +3316,11 @@ split）上量測模型、保留報告並登錄它。共有三個面板：
   Datasets 相同以資料集指紋顯示）與 **Data version**（registry 的清單，`SHEPHERD_REGISTRY`），依種類
   與 role 列出：先是 supplied cohort，與以前相同（「label · role R · n of N ranked-eligible」），接著是
   KG 邊集合（「kg-test · KG edge set (test)」），然後是 generated split（「gen-val · Generated split
-  (val)」）。所選版本顯示它是什麼、它的計數（supplied cohort 的案例；KG 邊集合的 pair 與邊；generated
-  split 的病人、疾病與 fixture 列，每一項在 **Counts and units** 之下附上其 manifest 記錄的單位）、
-  版本 digest，以及它是否對照這個 workspace 的圖譜映射（「bound to this graph」，或「mapped against
-  another graph」，執行時會被拒絕）。registry 中沒有 KG 邊集合時，其下會有一行指出在機器上匯入它的
+  (val)」）。所選版本顯示它的計數（supplied cohort 的 role 與案例；KG 邊集合的 pair 與邊；generated
+  split 的病人、疾病與 fixture 列，每一項在 **Counts and units** 之下附上其 manifest 記錄的單位；KG
+  邊集合或 generated split 的種類與 role 由選項本身說明，不再重複）、版本 digest，以及它是否對照這個
+  workspace 的圖譜映射（「bound to this graph」，或「mapped against another graph」，執行時會被拒絕；
+  不寫在選項中）。registry 中沒有 KG 邊集合時，其下會有一行指出在機器上匯入它的
   命令（匯入程式的 `--kind kg_edges` 加上 `--from-checkpoint`，§4.9）；本頁的 Import 只建立 supplied
   cohort。其下是該版本 report store 的每一個執行目錄，最新的在前：何時執行、用哪個
   模型、是否保留了報告、是否已登錄；當同一群組的執行結果不同時顯示「runs under these conditions

@@ -234,11 +234,22 @@ _TILES = {
 #: row (its k values in order), and its single figures shown as a row each.
 _TASK_FAMILIES = ("pooled_top", "macro_recall@", "macro_precision@")
 _TASK_ROWS = ("macro_mrr", "best_positive_mrr")
-#: The ⓘ beside a described measurement's label.
-_MODE_HELP = {task: f"test-mode-{task}" for task in TASK_NAMES}
-#: Each report row's mode, first in its state line: a plain label, the code
-#: beside it. A report of another mode, or one whose mode cannot be read, says so.
-_MODE_ROW_WORDS = {task: f"{name.lower()} task" for task, name in TASK_NAMES.items()}
+#: Each measurement this build describes, as this page names its result: from
+#: the one vocabulary (`caveats.MEASUREMENT_NAMES`), a task's measurement by
+#: its task's name and "task" ("Disease task"), the KG link-prediction
+#: measurement by its own words ("KG link prediction").
+_RESULT_WORDS = {mode: f"{name} task" if mode in TASK_NAMES else name
+                 for mode, name in MEASUREMENT_NAMES.items()}
+#: The ⓘ beside a described measurement's label, holding its note
+#: (`caveats.mode_note`).
+_MODE_HELP = {mode: f"test-mode-{mode}" for mode in _RESULT_WORDS}
+#: Each report row's mode, first in its state line, in plain words: a task's
+#: in lower case ("gene task"), the KG link-prediction measurement's as written
+#: ("KG link prediction"). A report of another mode is named by its recorded
+#: code as one this version does not describe; one whose mode cannot be read
+#: says so.
+_MODE_ROW_WORDS = {mode: words.lower() if mode in TASK_NAMES else words
+                   for mode, words in _RESULT_WORDS.items()}
 #: The job's statuses, as its pill shows them: never green for failed,
 #: stopped or cancelled.
 _PILLS = {
@@ -343,8 +354,8 @@ TOPIC_HELP = {
         "the policy and every count. Commit prepares again from the same inputs and refuses "
         "unless it gives the same id, so what is committed is what was previewed.",
     ),
-    **{f"test-mode-{task}": (f"{name} task result", mode_note(task))
-       for task, name in TASK_NAMES.items()},
+    **{_MODE_HELP[mode]: (f"{words} result", mode_note(mode))
+       for mode, words in _RESULT_WORDS.items()},
     "test-r10": (
         "R10 labels",
         " · ".join(f"{text['name']}: {text['definition']}"
@@ -946,11 +957,10 @@ def model_choices(models: Mapping[str, Any]) -> List[Tuple[str, str]]:
 
 def _kind_words(version: Mapping[str, Any]) -> Optional[str]:
     """A version of another kind than a supplied cohort by its kind and role,
-    as an option and the version's details lead with it: "KG edge set
-    (test)", "Generated split (val)" (`caveats.version_words` as a label,
-    `caveats.label_words`), or None for a supplied cohort. Such a version has
-    no source cases or ranked-eligible count, so it is never described in a
-    supplied cohort's words."""
+    as its option names it: "KG edge set (test)", "Generated split (val)"
+    (`caveats.version_words` as a label, `caveats.label_words`), or None for
+    a supplied cohort. Such a version has no source cases or ranked-eligible
+    count, so it is never described in a supplied cohort's words."""
     kind = version.get("kind")
     if kind in (None, protocols.SUPPLIED):
         return None
@@ -973,15 +983,16 @@ def _by_kind(versions: Sequence[Mapping[str, Any]]) -> List[Mapping[str, Any]]:
         len(order)))
 
 
-def version_choices(page: Mapping[str, Any], binding: Optional[Mapping[str, Any]]
-                    ) -> List[Tuple[str, str]]:
+def version_choices(page: Mapping[str, Any]) -> List[Tuple[str, str]]:
     """The version select's options, by kind (`_KIND_ORDER`) and role: a
     supplied cohort as it always read ("label · role R · n of N
     ranked-eligible"); a KG edge set or a generated split by its kind and
     role ("kg-test · KG edge set (test)", "gen-val · Generated split (val)"),
     its counts in its own units in the chosen version's details
-    (`version_html`); one that cannot be read says so. The values are the
-    labels, whatever the words."""
+    (`version_html`); one that cannot be read says so. Whether a version was
+    mapped against this workspace's graph is the chosen version's detail
+    (its tag in `version_html`, and Start's reason), never its option's
+    text (skill §8). The values are the labels, whatever the words."""
     choices = []
     for version in _by_kind(page.get("versions") or []):
         label = str(version.get("label"))
@@ -990,13 +1001,10 @@ def version_choices(page: Mapping[str, Any], binding: Optional[Mapping[str, Any]
             continue
         counts = version.get("counts") or {}
         kind_words = _kind_words(version)
-        text = (f"{label} · {kind_words}" if kind_words else
-                f"{label} · role {version.get('role')} · {_count(counts.get('ranked_eligible'))} "
-                f"of {_count(counts.get('source_cases'))} ranked-eligible")
-        state, _words = binding_state(version, binding)
-        if state == "another":
-            text += " · another graph"
-        choices.append((text, label))
+        choices.append((f"{label} · {kind_words}" if kind_words else
+                        f"{label} · role {version.get('role')} · "
+                        f"{_count(counts.get('ranked_eligible'))} of "
+                        f"{_count(counts.get('source_cases'))} ranked-eligible", label))
     return choices
 
 
@@ -1115,12 +1123,13 @@ def _version_counts(version: Mapping[str, Any]) -> str:
 
 def version_html(page: Mapping[str, Any], label: Optional[str],
                  binding: Optional[Mapping[str, Any]]) -> str:
-    """The chosen version: what it is, its counts, its digest, and whether it
-    was mapped against this workspace's graph. A supplied cohort by its role
-    and its case counts; a KG edge set or a generated split by its kind and
-    role (`_kind_words`) and its counts in its own units (`_version_counts`),
-    never in a supplied cohort's words. Under it, the KG edge sets' empty
-    state when the registry holds none (`kg_edges_empty_html`)."""
+    """The chosen version: its counts, its digest, and whether it was mapped
+    against this workspace's graph. A supplied cohort by its role and its
+    case counts; a KG edge set or a generated split by its counts in its own
+    units (`_version_counts`), never in a supplied cohort's words: its kind
+    and role are its option's (`version_choices`), not repeated under it
+    (skill §1.2). Under it, the KG edge sets' empty state when the registry
+    holds none (`kg_edges_empty_html`)."""
     if page.get("registry_problem"):
         return ""
     empty = kg_edges_empty_html(page)
@@ -1142,9 +1151,8 @@ def version_html(page: Mapping[str, Any], label: Optional[str],
     excluded = counts.get("excluded") if isinstance(counts.get("excluded"), Mapping) else {}
     reasons = " · ".join(f"{str(k).replace('_', ' ')} {_count(v)}" for k, v in excluded.items())
     imported = str(version.get("imported_at") or "").replace("T", " ").replace("Z", " UTC")
-    kind_words = _kind_words(version)
-    if kind_words:
-        what = f"<div>{e(kind_words)}</div>{_version_counts(version)}"
+    if _kind_words(version):
+        what = _version_counts(version)
     else:
         what = (f'<div>role {r.ident_html(version.get("role"))} · '
                 f'{_count(counts.get("source_cases"))} source cases · '
@@ -2977,7 +2985,7 @@ def create_test_page(ctx: Any) -> None:
             cohort_header_html(page),
             _dd(r.workspace_choices(page.get("workspaces") or []), ws),
             workspace_html(page, ws),
-            _dd(version_choices(page, binding), label, interactive=registry_ok),
+            _dd(version_choices(page), label, interactive=registry_ok),
             version_html(page, label, binding),
             gr.update(interactive=allowed and registry_ok and bool(ws)),
             _reason_html(import_why, kind="lock" if not allowed else ""),
@@ -3086,7 +3094,7 @@ def create_test_page(ctx: Any) -> None:
         # The select too: an event asked before this one (a workspace's, a
         # page open) may have set it to the version it was asked with.
         return [reports, run_id,
-                _dd(version_choices(page, binding), label,
+                _dd(version_choices(page), label,
                     interactive=not page.get("registry_problem")),
                 version_html(page, label, binding),
                 *_run_outputs(page, models, binding, ws, label, key, protocol, job, _gpu(page)),

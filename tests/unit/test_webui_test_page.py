@@ -3587,12 +3587,14 @@ def test_a_task_record_keeps_its_tiles_and_shows_every_metric_one_click_away():
 
 def test_only_the_described_measurements_have_help_topics():
     """No help topic exists only for a mode this build does not describe: the
-    Mode C and Mode D topics retired (R2); each task's topic stays."""
-    from src.evaluation.caveats import TASK_NAMES
+    Mode C and Mode D topics retired (R2); each measurement this build
+    describes has its topic (`caveats.MEASUREMENT_NAMES`), each task's as it
+    was and, since the browser check of 7e1d09e, KG link prediction's."""
+    from src.evaluation.caveats import MEASUREMENT_NAMES
 
     assert "test-mode-c" not in tp.TOPIC_HELP and "test-mode-d" not in tp.TOPIC_HELP
     assert sorted(k for k in tp.TOPIC_HELP if k.startswith("test-mode-")) == sorted(
-        f"test-mode-{task}" for task in TASK_NAMES)
+        f"test-mode-{mode}" for mode in MEASUREMENT_NAMES)
 
 
 def test_a_hostile_metric_name_and_score_semantics_are_literal_text_on_test():
@@ -3617,6 +3619,84 @@ def test_a_task_report_row_names_its_task_first():
     assert tp._row_state(run, []).startswith("gene task: report kept · not registered")
     plm = dict(run, record=_task_record("patients_like_me"))
     assert tp._row_state(plm, []).startswith("patients-like-me task: report kept")
+
+
+def _kind_record(kind, **report):
+    """A kept report's record of a KG edge set or a generated split
+    (`build_record`, as the store's scan builds it)."""
+    from tests.unit.test_ledger_by_data_kind import generated_report, kg_edges_report
+
+    return _kept_record({"kg_edges": kg_edges_report, "generated": generated_report}[kind](
+        **report))
+
+
+def test_a_kg_link_prediction_report_row_names_its_measurement_first():
+    """The browser check of 7e1d09e: every kept KG link-prediction row read
+    "mode kg_link_prediction, not described by this version", on a page that
+    offers that measurement as "KG link prediction". The row's words come
+    from the one measurement vocabulary (`caveats.MEASUREMENT_NAMES`), so a
+    measurement this build describes is never named by its code as one it
+    does not; a mode it does not describe still is."""
+    record = _kind_record("kg_edges")
+    assert record["scoring"]["mode"] == "kg_link_prediction"
+    run = {"run_id": "r", "record": record, "state": {"kept": "kept", "registered": "registered",
+                                                      "sequence": 2}}
+    row = tp._row_state(run, [])
+    assert row.startswith("KG link prediction: report kept · registered #2"), row
+    assert "kg_link_prediction" not in row and "not described" not in row
+    unknown = dict(run, record={**record, "scoring": {**record["scoring"], "mode": "zz_new"}})
+    assert tp._row_state(unknown, []).startswith("mode zz_new, not described by this version: ")
+    hostile = dict(run, record={**record, "scoring": {**record["scoring"], "mode": HOSTILE}})
+    assert HOSTILE not in tp._row_state(hostile, [])
+
+
+def test_a_kg_link_prediction_result_has_its_measurement_note():
+    """The browser check of 7e1d09e: an LP result showed no note, where every
+    task result has one; the note is the measurement's own
+    (`caveats.MODE_RESULT_NOTES`, the one Models prints above its LP table),
+    behind the ⓘ beside the result's label ("KG link prediction result").
+    Its metrics stay as recorded, as Models shows them."""
+    from src.evaluation.caveats import KG_LINK_PREDICTION_NOTE, mode_label
+
+    raw = tp._record_html(_kind_record("kg_edges"), {}, {})
+    label = raw[raw.index('class="shep-test-label"'):]
+    label = label[:label.index("</div>")]
+    assert 'data-help="test-mode-kg_link_prediction"' in label
+    assert tp.TOPIC_HELP["test-mode-kg_link_prediction"] == ("KG link prediction result",
+                                                             KG_LINK_PREDICTION_NOTE)
+    assert mode_label("kg_link_prediction") in _result_text(raw)
+    assert '<span class="shep-k">Recorded metrics</span>' in raw
+    assert "shep-test-tile-l" not in raw
+
+
+@pytest.mark.parametrize("kind, mode", [("kg_edges", "kg_link_prediction"),
+                                        ("generated", "disease"),
+                                        ("generated", "patients_like_me")])
+def test_a_kg_edge_set_or_generated_split_result_never_says_cohort(kind, mode):
+    """The browser check of 7e1d09e: a KG edge set's and a generated split's
+    results read "cohort version mapped against this graph" (Relations) and
+    a patients-like-me result "every other patient of the cohort". The
+    caveats' words every kind shares fit each kind (research comparison §5
+    Stage 4: never "cohort" for these kinds), so the Test page and Models say
+    them alike: "data version bound to this graph", "every other patient
+    measured"; a supplied cohort's result still names its cohort (R10)."""
+    from src.evaluation.caveats import RELATION_DISPLAY_NAMES, mode_label
+    from src.webui.components import models_page as mp
+    from tests.unit.test_evaluation_sidecar import registered_report
+
+    record = _kind_record(kind, **({} if kind == "kg_edges" else {"mode": mode}))
+    assert (record["scoring"]["mode"], record["cohort"]["kind"]) == (mode, kind)
+    raw = tp._record_html(record, {}, {})
+    text = _result_text(raw)
+    assert "cohort" not in text.lower(), text
+    assert mode_label(mode) in text
+    bound = f"{RELATION_DISPLAY_NAMES['cohort_graph']} {tp.OK_MARK}"
+    assert bound in raw and RELATION_DISPLAY_NAMES["cohort_graph"] == (
+        "data version bound to this graph")
+    relations = mp.relations_html(record["relations"])
+    assert "cohort" not in relations and "version↔graph ✓" in relations
+    supplied = tp._record_html(_kept_record(registered_report()), {}, {})
+    assert "R10, training" in _result_text(supplied) and bound in supplied
 
 
 def test_the_measurement_options_are_the_protocols_the_record_admits():
@@ -3933,13 +4013,16 @@ def test_the_data_panel_lists_every_kind_by_kind_and_role_with_its_counts(
         site, kinds, monkeypatch):
     """The version select lists the supplied cohort as it always read, then
     the KG edge set and the generated split by kind and role, each option
-    short with one separator (skill §8); the chosen version's details give
-    its counts in its own units, each count beside the unit its manifest
-    records, never a supplied cohort's words; no KG edge sets' empty state
-    once one is listed. The panel and the select read "Data", not "Cohort"."""
+    short with one separator (skill §8), also for a version mapped against
+    another graph, whose state is its details' tag; the chosen version's
+    details give its counts in its own units, each count beside the unit its
+    manifest records, never a supplied cohort's words, and never its kind and
+    role again (skill §1.2; the browser check of 7e1d09e: "KG edge set (test)"
+    under "kg-test · KG edge set (test)"); no KG edge sets' empty state once
+    one is listed. The panel and the select read "Data", not "Cohort"."""
     page, _request = _page(monkeypatch)
     binding = tp.workspace_binding(site.demo, tp.find(page["workspaces"], "name", "demo"))
-    choices = tp.version_choices(page, binding)
+    choices = tp.version_choices(page)
     assert [value for _label, value in choices] == [LABEL, KG_LABEL, GEN_LABEL]
     labels = dict((value, label) for label, value in choices)
     assert labels[KG_LABEL] == "kg-test · KG edge set (test)"
@@ -3953,13 +4036,18 @@ def test_the_data_panel_lists_every_kind_by_kind_and_role_with_its_counts(
         shuffled = {**page, "versions": versions}
         for bound in (binding, None):
             assert tp.default_version(shuffled, bound, None) == (
-                tp.version_choices(shuffled, bound)[0][1]), [v["label"] for v in versions]
+                tp.version_choices(shuffled)[0][1]), [v["label"] for v in versions]
+    # A version mapped against another graph: its option is the same (one
+    # separator, no " · another graph"), its details say so in their tag.
+    another = dict(binding, graph={**binding["graph"], "kg": "0" * 64})
 
     for version, words in ((kinds.edges, "KG edge set (test)"),
                            (kinds.generated, "Generated split (val)")):
         label = version.manifest["label"]
         shown = _visible(tp.version_html(page, label, binding))
-        assert shown.startswith(words), shown
+        assert words not in shown and words in labels[label], shown
+        assert "mapped against another graph (kg differ)" in _visible(
+            tp.version_html(page, label, another))
         counts, units = version.manifest["counts"], version.manifest["count_units"]
         assert f"Counts and units ({len(counts)})" in shown
         # Each count's unit by name; its value only where the words above do

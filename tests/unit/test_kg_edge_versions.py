@@ -674,10 +674,12 @@ def test_every_listing_shows_kind_role_and_counts_never_an_edge_or_a_case_id(bot
 
 def test_the_test_page_lists_a_kg_edge_set_and_its_start_says_why_it_is_not_measured(both):
     """The Test page's reader of the listing (its rows, options and summary)
-    takes a KG edge set without failing, by label, kind and role ("KG edge set
-    (test)", research comparison Stage 7), with its counts in its own units,
-    never in a supplied cohort's words, and then no KG edge sets' empty state.
-    A task protocol asked of it is refused with the protocol's own reason."""
+    takes a KG edge set without failing, its option by label, kind and role
+    ("KG edge set (test)", research comparison Stage 7), its summary by its
+    counts in its own units, never in a supplied cohort's words and without
+    the option's kind and role again (the browser check of 7e1d09e), and then
+    no KG edge sets' empty state. A task protocol asked of it is refused with
+    the protocol's own reason."""
     pytest.importorskip("gradio")
     from src.api.services import server_lists
     from src.config import server_settings as ss
@@ -689,10 +691,10 @@ def test_the_test_page_lists_a_kg_edge_set_and_its_start_says_why_it_is_not_meas
     registry, _, edges = both
     listing = server_lists.list_cohort_versions(environ={ss.ENV_REGISTRY: str(registry)})
     page = {"versions": [version_row(item) for item in listing.items]}
-    options = {value: label for label, value in tp.version_choices(page, None)}
+    options = {value: label for label, value in tp.version_choices(page)}
     assert options["kg-test"] == "kg-test · KG edge set (test)"
     shown = tp.version_html(page, "kg-test", None)
-    assert "<div>KG edge set (test)</div>" in shown
+    assert "KG edge set" not in shown
     counts = edges.manifest["counts"]
     assert (f"{counts['pairs']} pairs from {counts['positive_edges']} positive edges; message "
             f"passing over {counts['message_passing_edges']} edges") in shown

@@ -195,7 +195,10 @@ ORIGIN_MEANING = {
     "synthetic": "a generated stand-in, not a clinical knowledge graph",
     "files": "built from identified source files",
 }
-_RELATION_SHORT = {"cohort_graph": "cohort↔graph"}
+#: A relation's short name in a record's Relations line, its full words
+#: (`caveats.RELATION_DISPLAY_NAMES`) in the tooltip: `cohort_graph` binds a
+#: data version of any kind, so it is the version's, never "cohort".
+_RELATION_SHORT = {"cohort_graph": "version↔graph"}
 
 #: The help texts this page's ⓘ name (registered through `ctx.help`).
 PAGE_HELP = {

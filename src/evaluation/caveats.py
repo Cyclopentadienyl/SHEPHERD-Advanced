@@ -28,7 +28,9 @@ the kind of data it measured: a supplied cohort version's by its role and R10;
 a KG edge set's and a generated split's by their own words (`version_words`,
 never "cohort"), a KG edge set's run with its exposure (`EXPOSURE_READINGS`,
 `exposure_text`), a generated split's with its generation identity
-(`GENERATED_EXPOSURE_NOTE`). The KG edges' "held out" is scoped to the recorded
+(`GENERATED_EXPOSURE_NOTE`). Words every kind's record is shown with (a
+relation's, `RELATION_DISPLAY_NAMES`; a measurement's label) fit each kind
+they are shown for. The KG edges' "held out" is scoped to the recorded
 graph use and is never a patient cohort's holdout: no supplied cohort's or
 generated split's words say it.
 
@@ -150,7 +152,8 @@ COHORT_ARGUMENT_HELP = (
 TASK_NAMES = {"disease": "Disease", "gene": "Gene", "patients_like_me": "Patients-like-me"}
 
 #: **Each measurement's name where a page offers or names one** (the Test
-#: page's Measurement options and its job line), keyed by protocol name
+#: page's Measurement options, its job line, its report rows and the ⓘ beside
+#: a result's label), keyed by protocol name
 #: (`src.evaluation.protocols.names`, pinned equal by
 #: `tests/unit/test_kg_link_prediction.py`): a task's measurement by its task's
 #: name (`TASK_NAMES`), and the common KG link-prediction measurement by its
@@ -185,8 +188,11 @@ GENE_TASK_NOTE = ("A score mixing the finetuned model's gene head with shortest-
                   "similarity, uncalibrated. Every causal gene is a positive; a rank depends on "
                   "the list's length, which the report gives.")
 
+#: One label for every data kind it measures (a supplied cohort, a generated
+#: split), so its words fit each: never "cohort" (research comparison §5
+#: Stage 4).
 PATIENTS_LIKE_ME_RESULT_LABEL = ("Patients-like-me (model bundle): each patient against every "
-                                 "other patient of the cohort, average ranks")
+                                 "other patient measured, average ranks")
 PATIENTS_LIKE_ME_NOTE = ("A similarity from the finetuned model's patient tower, uncalibrated. A "
                          "pair is relevant when the two patients share a causal gene; a patient "
                          "with no other relevant patient has no recall, not a recall of 0.")
@@ -530,10 +536,15 @@ RECORD_ABSENCE = (
 #: How each relation a report records (`RELATION_NAMES` in
 #: `src/evaluation/measurement.py`) is named where a person reads it. Keyed by
 #: those names; `tests/unit/test_registration.py` fails if the two differ.
+#: **Words that fit every data kind a relation is recorded for:**
+#: `cohort_graph` binds a registered version of any kind (a supplied cohort, a
+#: KG edge set, a generated split) to the graph read, so it is said as the
+#: data version's, never "cohort" (research comparison §5 Stage 4); its key
+#: is the manifest's and keeps its name.
 RELATION_DISPLAY_NAMES = {
     "R1": "graph files match the workspace manifest",
     "R2": "generated split's samples match the workspace manifest",
     "R3": "model trained on this graph",
     "R5": "dataset record bound to this graph",
-    "cohort_graph": "cohort version mapped against this graph",
+    "cohort_graph": "data version bound to this graph",
 }

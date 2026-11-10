@@ -537,9 +537,10 @@ def test_every_listing_shows_kind_role_and_counts_never_a_sample(listed):
 
 
 def test_the_test_page_names_it_by_kind_and_role_never_in_a_cohort_s_words(listed):
-    """The Test page's options and summary name a generated split by its kind
-    and role (research comparison Stage 7: "Generated split (val)"), with its
-    counts in its own units, never with a supplied cohort's source cases or
+    """The Test page's option names a generated split by its kind and role
+    (research comparison Stage 7: "Generated split (val)"), its summary by its
+    counts in its own units, without the option's kind and role again (the
+    browser check of 7e1d09e), never with a supplied cohort's source cases or
     ranked-eligible counts; a supplied cohort reads as before."""
     pytest.importorskip("gradio")
     from html import unescape
@@ -552,7 +553,7 @@ def test_the_test_page_names_it_by_kind_and_role_never_in_a_cohort_s_words(liste
     registry, supplied, generated = listed
     listing = server_lists.list_cohort_versions(environ={ss.ENV_REGISTRY: str(registry)})
     page = {"versions": [version_row(item) for item in listing.items]}
-    options = {value: label for label, value in tp.version_choices(page, None)}
+    options = {value: label for label, value in tp.version_choices(page)}
     assert options["gen-val"] == "gen-val · Generated split (val)"
     counts = supplied.manifest["counts"]
     assert options["cases-1"] == (f"cases-1 · role {supplied.manifest['role']} · "
@@ -563,7 +564,7 @@ def test_the_test_page_names_it_by_kind_and_role_never_in_a_cohort_s_words(liste
     html = tp.version_html(page, "gen-val", None)
     assert html.endswith(tp.kg_edges_empty_html(page)) and tp.kg_edges_empty_html(page)
     shown = unescape(re.sub(r"<[^>]+>", " ", html[:-len(tp.kg_edges_empty_html(page))]))
-    assert "Generated split (val)" in shown
+    assert "Generated split" not in shown
     counts = generated.manifest["counts"]
     disease = "disease" if counts["diseases"] == 1 else "diseases"
     assert f"{counts['samples']} generated patients of {counts['diseases']} {disease}" in shown
