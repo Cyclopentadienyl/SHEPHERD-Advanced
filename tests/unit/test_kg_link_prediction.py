@@ -38,8 +38,12 @@ What is pinned here:
   are not its role's edges; and a model of another split is measured, not
   refused;
 - **a cancelled or failed run** leaves no successful report, and its true
-  state; `--record` on a KG edge set keeps the report and says this
-  revision's ledger does not record it yet.
+  state (a failure among the scores' chunks, or the report's publication
+  failing after the scores); `--record` on a KG edge set keeps the report and
+  says this revision's ledger does not record it yet, and no run on a KG edge
+  set is offered a register-later command that ledger would refuse;
+- **the shared words**: the vocabularies restated across modules pinned
+  equal, and the result's own label and note.
 
 Module: tests/unit/test_kg_link_prediction.py
 """
@@ -548,6 +552,53 @@ def test_a_chunked_publication_is_whole_or_absent(tmp_path):
 # ---------------------------------------------------------------------------
 # The recorded graph exposure, in its writer's words
 # ---------------------------------------------------------------------------
+def test_the_shared_vocabularies_are_one():
+    """The words restated across modules that cannot import each other are
+    pinned equal: the edge split's parts a full-view word puts in graph use
+    (`record.EXPOSURE_ALL_PARTS`, restated: the model record imports no graph
+    code) are the split's parts, in the split's order (`exposure` orders by
+    one and compares with the other); the data kind the evaluator and the
+    ledger's record builder name is the protocols' word; and each protocol has
+    the words a page offers it under."""
+    from src.evaluation import protocols, sidecar, task_measurement
+    from src.evaluation.caveats import MEASUREMENT_NAMES, TASK_NAMES
+    from src.kg.graph_view import SPLIT_NAMES
+    from src.models.bundle.record import EXPOSURE_ALL_PARTS
+
+    assert EXPOSURE_ALL_PARTS == SPLIT_NAMES
+    assert task_measurement.KG_EDGES is protocols.KG_EDGES
+    assert sidecar.LEDGER_KINDS == (protocols.SUPPLIED,)
+    assert set(sidecar.LEDGER_KINDS) < set(protocols.REGISTERED_KINDS)
+    assert set(MEASUREMENT_NAMES) == set(protocols.names())
+    assert {k: MEASUREMENT_NAMES[k] for k in TASK_NAMES} == TASK_NAMES
+    assert MEASUREMENT_NAMES[LP] == "KG link prediction"
+
+
+def test_a_kg_link_prediction_result_is_named_by_its_own_words():
+    """The read-side words a `kg_link_prediction` result is shown under, added
+    with the protocol (research comparison Stage 5a): its own label and note
+    (`caveats.MODE_RESULT_LABELS`, `MODE_RESULT_NOTES`), never "a measurement
+    mode this version does not describe". Its metrics keep their recorded
+    names under the mode ("Mode kg_link_prediction lp_accuracy"): words for
+    them come with the one reader by data kind (research comparison Stage 6),
+    since no ledger record of this mode exists before it."""
+    from src.evaluation.caveats import (
+        KG_LINK_PREDICTION_NOTE,
+        KG_LINK_PREDICTION_RESULT_LABEL,
+        metric_text,
+        mode_label,
+        mode_note,
+    )
+
+    assert mode_label(LP) == KG_LINK_PREDICTION_RESULT_LABEL
+    assert KG_LINK_PREDICTION_RESULT_LABEL.startswith("KG link prediction (model bundle): ")
+    assert "does not describe" not in mode_label(LP)
+    assert mode_note(LP) == KG_LINK_PREDICTION_NOTE
+    assert "rule-generated, never proven non-relations" in KG_LINK_PREDICTION_NOTE
+    assert "never called held out" in KG_LINK_PREDICTION_NOTE
+    assert metric_text(LP, "lp_accuracy") == "Mode kg_link_prediction lp_accuracy"
+
+
 def test_the_writer_and_the_reader_share_the_graph_exposure_words(built):
     """`scripts/train_model.py` writes `graph_exposure` only through the names
     `src.models.bundle.record` defines (no literal of those words in the
@@ -656,6 +707,7 @@ def test_a_base_is_measured_on_each_role_and_its_report_says_what_was_measured(
     train part (the measured edges in it exactly for role train, as the
     version says), and the exposure scoped to the base's record. The run
     directory holds the scores file and then the report."""
+    from src.evaluation.caveats import KG_LINK_PREDICTION_RESULT_LABEL
     from src.evaluation.exposure import (
         EXPOSURE_CAVEAT,
         EXPOSURE_DEFINITION_VERSION,
@@ -731,7 +783,15 @@ def test_a_base_is_measured_on_each_role_and_its_report_says_what_was_measured(
 
     out = capsys.readouterr().out
     assert f"Exposure ({EXPOSURE_DEFINITION_VERSION}): {exposure['reading']}" in out
-    assert "lp_accuracy" in out and "Not registered (no --record)" in out
+    # The console's result header is the protocol's own label.
+    assert f"\n{KG_LINK_PREDICTION_RESULT_LABEL}\n  {counts['pairs']} pairs scored\n" in out
+    assert "lp_accuracy" in out
+    # No register-later command: this revision's ledger does not record a KG
+    # edge set's run yet, so the command would be refused for certain.
+    assert (f"Not registered (no --record): this revision's ledger does not record a run on "
+            f"a KG edge set ({role}) yet, so no registration is offered; the report is kept "
+            "in its version's report store as written.") in out
+    assert "record_evaluation.py" not in out and "Register it with" not in out
     _check_scores_against_pairs_and_summary(site, run, site.base, label)
 
 
@@ -774,18 +834,40 @@ def test_the_same_weights_measured_twice_give_identical_outputs_both_kept(cli, s
     twice gives byte-identical scores and equal metrics, and both runs are
     kept, each in its own run directory, both in the version's usage history.
     The evaluator draws from no torch random generator (nor NumPy's global
-    one): the generators' states are the same after it as before."""
+    one): the generators' states are the same after it as before. NumPy's
+    state is compared whole, its position and cached Gaussian included: a
+    draw short of a twist boundary moves the position and leaves the keys."""
     from src.evaluation import task_measurement
     from src.evaluation.report_store import read_usage_history
 
     original = task_measurement.TASK_RUNS[LP]
     drawn = []
 
+    def numpy_state():
+        name, keys, *rest = np.random.get_state()
+        return name, keys.copy(), tuple(rest)
+
+    def same_numpy_state(one, two):
+        return one[0] == two[0] and np.array_equal(one[1], two[1]) and one[2] == two[2]
+
+    # The comparison sees a draw that leaves the keys as they were (past the
+    # first twist after seeding); the global state is put back as it was.
+    saved = np.random.get_state()
+    try:
+        np.random.seed(0)
+        np.random.rand()
+        probe = numpy_state()
+        np.random.rand()
+        assert np.array_equal(probe[1], np.random.get_state()[1])
+        assert not same_numpy_state(probe, numpy_state())
+    finally:
+        np.random.set_state(saved)
+
     def watched(**kwargs):
-        before = (torch.get_rng_state(), np.random.get_state()[1].copy())
+        before = (torch.get_rng_state(), numpy_state())
         result = original(**kwargs)
         drawn.append(not (torch.equal(before[0], torch.get_rng_state())
-                          and np.array_equal(before[1], np.random.get_state()[1])))
+                          and same_numpy_state(before[1], numpy_state())))
         return result
 
     monkeypatch.setitem(task_measurement.TASK_RUNS, LP, watched)
@@ -873,10 +955,17 @@ def test_a_record_whose_exposure_no_build_wrote_is_measured_and_reads_not_record
     assert exposure["sources"]["model_record"]["checkpoint_sha256"] == _sha(edited.read_bytes())
 
 
-def test_a_record_whose_split_does_not_rebuild_reads_not_recorded():
+@pytest.mark.parametrize("changed", [{"digest": "0" * 64}, {"seed": -1}, {"seed": 2**32},
+                                     {"seed": 10**30}, {"seed": "x"}, {"seed": True}],
+                         ids=["digest", "seed-negative", "seed-2**32", "seed-huge", "seed-text",
+                              "seed-bool"])
+def test_a_record_whose_split_does_not_rebuild_reads_not_recorded(changed):
     """The model's recorded split, rebuilt from the view, is what the counts
     are taken from; one that does not rebuild gives exposure not recorded,
-    with the reason, and the block still names its sources."""
+    with the reason, and the block still names its sources. A recorded seed
+    NumPy's `RandomState` does not take (below 0, 2**32 or above) is one that
+    does not rebuild, said by name: exposure never raises for what a record
+    says, and is never a gate."""
     from src.evaluation.exposure import (
         EXPOSURE_DEFINITION_VERSION,
         NOT_RECORDED,
@@ -886,7 +975,7 @@ def test_a_record_whose_split_does_not_rebuild_reads_not_recorded():
 
     view, split, pairs = _toy("test")
     record = _toy_record(split)
-    record.data_roles["split"] = {**record.data_roles["split"], "digest": "0" * 64}
+    record.data_roles["split"] = {**record.data_roles["split"], **changed}
     block = kg_edges_exposure(record=record, checkpoint_sha256="a" * 64,
                               version={**_toy_block(view, split, pairs, "test"),
                                        "manifest_sha256": "b" * 64},
@@ -896,7 +985,10 @@ def test_a_record_whose_split_does_not_rebuild_reads_not_recorded():
         EXPOSURE_DEFINITION_VERSION, NOT_RECORDED, "exposure not recorded")
     assert block["reason"].startswith("the model record's edge split does not rebuild from "
                                       "this view")
-    assert block["sources"]["model_record"]["split_digest"] == "0" * 64
+    field = next(iter(changed))
+    assert f"the split's recorded {field} " in block["reason"]
+    assert block["sources"]["model_record"]["split_digest"] == record.data_roles["split"][
+        "digest"]
     assert block["split"] is None
 
 
@@ -959,7 +1051,37 @@ def test_a_record_that_contradicts_its_pairs_is_refused(cli, site, capsys):
     (directory / "cohort.json").write_text(json.dumps(manifest, indent=2, sort_keys=True))
     message = _refused(cli, site, _argv(site, "kg-test"), ValueError, "parses to pairs",
                        unopened=(site.base,), capsys=capsys)
-    assert "own record contradicts its bytes" in message
+    assert re.search(r"pairs\.bin parses to pairs [0-9a-f]{12}\.\.\., not the [0-9a-f]{12}\.\.\. "
+                     r"\S+cohort\.json records\. Nothing was written\.$", message), message
+
+
+def test_a_pairs_refusal_names_its_own_cause_and_that_nothing_was_written(cli, site,
+                                                                          monkeypatch):
+    """A refusal of the pairs file is `read_kg_edge_pairs`' own sentence,
+    which names its cause, and says nothing was written; it never claims a
+    contradiction that is not there (a missing file, a layout this revision
+    does not read)."""
+    from src.evaluation import cohort_registry
+    from src.evaluation.cohort_registry import CohortVersionRefused
+
+    version = _version(site, "kg-test")
+    (site.registry / "versions" / "kg-test" / "pairs.bin").unlink()
+    with pytest.raises(CohortVersionRefused) as refused:
+        cli._read_version_pairs(version)
+    assert str(refused.value).endswith(
+        "binds it: the KG edge set cannot be read. Nothing was written.")
+    assert "contradicts" not in str(refused.value)
+
+    def unread_layout(_version):
+        raise CohortVersionRefused("x/cohort.json lays its pairs out as 'other'; this revision "
+                                   "reads 'lp-pairs/v1' only. Nothing was read.")
+
+    monkeypatch.setattr(cohort_registry, "read_kg_edge_pairs", unread_layout)
+    with pytest.raises(CohortVersionRefused) as refused:
+        cli._read_version_pairs(version)
+    assert str(refused.value) == ("x/cohort.json lays its pairs out as 'other'; this revision "
+                                  "reads 'lp-pairs/v1' only. Nothing was read. Nothing was "
+                                  "written.")
 
 
 def test_a_version_of_another_graph_view_is_refused_as_a_capability_gap(cli, site, capsys):
@@ -1102,20 +1224,121 @@ def test_a_run_whose_scores_fail_midway_leaves_no_successful_report(cli, site, m
     assert list(run.iterdir()) == []
 
 
+def test_a_run_whose_report_fails_after_its_scores_leaves_an_interrupted_write(
+        cli, site, monkeypatch):
+    """The other half of the commit point: the scores file is published and
+    the report's publication then fails. The run directory holds exactly
+    `scores.bin` and no report: an interrupted write, which the store's
+    listing names by its run and its scan never reads as a report; the
+    failure names what may be there; nothing is in the usage history or a
+    ledger; and the next run is kept beside it."""
+    import errno
+
+    import src.utils.file_modes as file_modes
+    from src.evaluation.cohort_registry import list_report_runs
+    from src.evaluation.report_store import read_usage_history, scan_report_store
+
+    real = file_modes.publish_bytes
+
+    def publish(target, data, **kwargs):
+        if Path(target).name == "report.json":
+            raise OSError(errno.ENOSPC, "No space left on device", str(target))
+        return real(target, data, **kwargs)
+
+    monkeypatch.setattr(file_modes, "publish_bytes", publish)
+    with pytest.raises(cli.ReportNotWritten) as info:
+        cli.main(_argv(site, "kg-test"))
+    said = str(info.value)
+    assert "No report.json was published" in said
+    assert "may exist, empty or holding only scores.bin: an interrupted write" in said
+    run = _only_run(site, "kg-test")
+    assert [p.name for p in run.iterdir()] == ["scores.bin"]
+    (listed,) = list_report_runs(_version(site, "kg-test"))
+    assert (listed.directory, listed.problem) == (run, None)
+    # Read as no report: the store's scan passes it over, as it passes over
+    # every run directory without a report.json.
+    scan = scan_report_store(_version(site, "kg-test"))
+    assert (scan.reports, scan.unplaced, scan.digests) == ({}, (), {})
+    entries, _problems = read_usage_history(_version(site, "kg-test"))
+    assert [e for e in entries if e.get("kind") == "test_run"] == []
+    assert not (site.base.parent / LEDGER).exists()
+
+    monkeypatch.setattr(file_modes, "publish_bytes", real)
+    assert cli.main(_argv(site, "kg-test")) == 0
+    kept = _only_run(site, "kg-test", run)
+    assert sorted(p.name for p in kept.iterdir()) == ["report.json", "scores.bin"]
+    assert [p.name for p in run.iterdir()] == ["scores.bin"]
+
+
 def test_record_keeps_the_report_and_says_the_ledger_does_not_record_it_yet(cli, site,
-                                                                            capsys):
+                                                                            tmp_path, capsys):
     """`--record` on a KG edge set: the run is measured and its report kept;
     this revision's ledger records runs on a supplied cohort version only, so
     the registration is refused saying so (exit 3), never as a report that
-    contradicts itself, and no ledger is written."""
-    assert cli.main(_argv(site, "kg-test", None, "--record")) == cli.EXIT_NOT_REGISTERED
+    contradicts itself, no ledger is written, and no register-later command
+    is offered (it would be refused the same way). The `--outcome` file says
+    the same."""
+    outcome = tmp_path / "outcome.json"
+    assert cli.main(_argv(site, "kg-test", None, "--record", "--outcome",
+                          str(outcome))) == cli.EXIT_NOT_REGISTERED
     err = capsys.readouterr().err
     assert ("this report measured a registered version of kind 'kg_edges', and this "
             "revision's ledger records runs on a supplied cohort version only") in err
     assert "contradicts itself" not in err
+    assert ("This revision's ledger does not record a run on a KG edge set (test) yet, so no "
+            "registration is offered.") in err
+    assert "Register it later" not in err and "record_evaluation.py" not in err
     run = _only_run(site, "kg-test")
     assert sorted(p.name for p in run.iterdir()) == ["report.json", "scores.bin"]
     assert not (site.base.parent / LEDGER).exists()
+    registration = json.loads(outcome.read_text())["registration"]
+    assert (registration["requested"], registration["registered"], registration["outcome"]) == (
+        True, False, "refused")
+
+
+def test_without_record_the_outcome_says_why_no_registration_is_offered(cli, site, tmp_path,
+                                                                        monkeypatch):
+    """Without `--record`, a KG edge set's run is not offered for a later
+    registration: both writes of the `--outcome` file say why (the first, at
+    publication, is what a run ended before its end leaves), never "kept for
+    a later registration"; a supplied cohort's run keeps that wording."""
+    from src.evaluation.sidecar import LEDGER_KINDS
+
+    assert LEDGER_KINDS == ("supplied",)
+    written = []
+    original = cli._write_outcome
+
+    def watched(path, **kwargs):
+        written.append((kwargs["complete"], kwargs["registration"]))
+        return original(path, **kwargs)
+
+    monkeypatch.setattr(cli, "_write_outcome", watched)
+    outcome = tmp_path / "outcome.json"
+    assert cli.main(_argv(site, "kg-test", None, "--outcome", str(outcome))) == 0
+    why = ("--record was not given; this revision's ledger does not record a run on a KG edge "
+           "set (test) yet, so no registration is offered; the report is kept in its version's "
+           "report store as written")
+    assert [complete for complete, _ in written] == [False, True]
+    for _complete, registration in written:
+        assert registration == {"requested": False, "registered": False,
+                                "outcome": "not_requested", "sequence": None, "ledger": None,
+                                "why": why}
+    assert json.loads(outcome.read_text())["registration"]["why"] == why
+
+
+def test_a_failure_after_publishing_offers_no_command_for_a_kg_edge_set(cli, site):
+    """A failure after a KG edge set's report was published says where the
+    report is and why no registration is offered, never a command that this
+    revision's ledger would refuse for certain."""
+    version = _version(site, "kg-test")
+    inputs = SimpleNamespace(version=version, data_kind="kg_edges",
+                             checkpoint=SimpleNamespace(identity=SimpleNamespace(
+                                 path=str(site.base))))
+    report = version.directory / "reports" / "run" / "report.json"
+    said = str(cli._failure_after_publishing(OSError(5, "Input/output error"), inputs, report))
+    assert said == (f"[Errno 5] Input/output error. The report was written: {report}. This "
+                    "revision's ledger does not record a run on a KG edge set (test) yet, so no "
+                    "registration is offered.")
 
 
 # ---------------------------------------------------------------------------

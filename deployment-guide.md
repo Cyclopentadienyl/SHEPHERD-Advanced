@@ -1603,7 +1603,7 @@ run 目錄）在寫入任何東西、或從中讀取版本之前，都會再解�
   versions/<label>/samples.json          對應後的樣本（generated split 則為 workspace 的檔案），由 cohort.json 的 digest 綁定
   versions/<label>/pairs.bin             KG 邊集合以此取代樣本（見下文），以同樣方式綁定
   versions/<label>/split_manifest.json   generated split 保存的 workspace split manifest 副本（見下文），以同樣方式綁定
-  versions/<label>/reports/<run id>/     每次量測一個目錄：先 ranks.json，再 report.json
+  versions/<label>/reports/<run id>/     每次量測一個目錄：先 ranks.json（KG 邊集合的執行為 scores.bin），再 report.json
 ```
 
 **版本永不改變。** 一個 label 只能用一次。沒有 `cohort.json` 的 `versions/<label>/` 是中斷的
@@ -1937,7 +1937,9 @@ Mode D（`--mode D`，Batch 3 對 Diagnosis 頁 2026 年 10 月所提供排名�
 
   checkpoint 是這次執行讀取的檔案，取其解析後路徑，所以不論檔名為何，這個指令都能用。每個路徑
   都加上雙引號，因此含空白的路徑在 POSIX shell、cmd 或 PowerShell 中都維持為一個參數。含有
-  `"`、`$`、反引號、`%` 或 `!` 的路徑會被某個 shell 展開，必須自行加引號。
+  `"`、`$`、反引號、`%` 或 `!` 的路徑會被某個 shell 展開，必須自行加引號。KG 邊集合的執行不印出
+  指令：這個版本的 ledger 尚未記錄這類執行（research comparison Stage 6），所以執行會說明這一點，
+  它的報告保留在版本的報告存放處。
 - **`record_evaluation.py` 以兩個參數之一、且恰好一個，指明 checkpoint**（兩個都沒給或都給，
   命令列會被拒絕）：
   - `--checkpoint FILE`：這一個檔案，不論名稱為何，必須具有報告所量測的位元組；
@@ -2010,8 +2012,9 @@ Mode D（`--mode D`，Batch 3 對 Diagnosis 頁 2026 年 10 月所提供排名�
 檔案的連結——就不登錄任何東西，以結束碼 3 結束，並說明該路徑上的檔案不是它發佈的報告（或已不存在），
 因此這次執行自己的報告可能已不存在：請重新量測以登錄這次量測。只有在讀回的報告確實是發佈的那份、而是
 其他環節（例如 ledger）拒絕時，才會印出之後登錄用的指令。不加 `--record` 時一律印出這行指令：其他
-執行的報告或結果都不能拒絕一次登錄。之後用 `record_evaluation.py` 登錄時，仍照舊以指定的
-checkpoint 檔核對報告。
+執行的報告或結果都不能拒絕一次登錄。唯一的例外是 KG 邊集合的執行：這個版本的 ledger 尚未記錄這類執行
+（research comparison Stage 6），所以不印出指令，而是說明這一點；它的報告保留在版本的報告存放處。之後用
+`record_evaluation.py` 登錄時，仍照舊以指定的 checkpoint 檔核對報告。
 
 ### Diagnosis 頁面顯示什麼
 
@@ -2156,7 +2159,8 @@ Test 頁、Models 與 API 把這樣的群組描述為「runs under these conditi
 帶有不同報告的執行。未開啟 deterministic algorithms 時，執行結果本來就可能不同：這段描述是中性的，
 每一個結果照記錄都是有效的。只有當該群組記錄 deterministic algorithms 開啟時，它的執行才本應一致，
 頁面才以琥珀色加上「— investigate」標出差異。API 對它保留 `contested` 這個值，但意義已改為上述描述。
-不加 `--record` 時，執行一律印出之後登錄用的指令。調查的方式：
+不加 `--record` 時，執行一律印出之後登錄用的指令（KG 邊集合的執行除外，這個版本的 ledger 尚未記錄它）。
+調查的方式：
 
 - 比較各報告的環境資訊（每份 `report.json` 的 `manifest.environment`）；
 - 以 `--deterministic` 重跑，這是自己的一組條件。確定性執行本應一致，所以說明與頁面會把它們之間的
@@ -3185,13 +3189,14 @@ checkpoint：run 標題的標籤顯示「dataset not shown · operator control�
   每個 workspace 只列出一次（↻ 會重新讀取清單）。接著是 **Measurement**（自 K8-6a 起），即執行
   以 `--mode <protocol>` 傳入的協定（§4.9）：選項是這個 build 所實作、且所選模型列出的能力符合其
   需求的協定，目前 finetune 模型的每個 task head 各一種（Disease、Gene 或 Patients-like-me），
-  以及 base 與每個 finetune 的 `kg_link_prediction`，它量測 KG 邊集合（§4.9；在設定了 R10 證據目錄
-  時從本頁執行，會因 `--training-evidence` 被拒絕，直到執行器依種類選擇證據為止，research
-  comparison Stage 7）。只有一個選項時它已被選取；有多個時，在你選擇之前都不選取；沒有任何
+  以及 base 與每個 finetune 的 KG link prediction（`kg_link_prediction`），它量測 KG 邊集合（§4.9；
+  在設定了 R10 證據目錄時從本頁執行，會因 `--training-evidence` 被拒絕，直到執行器依種類選擇證據為止，
+  research comparison Stage 7；在那之前不論所選版本的種類都會提供它，因此 finetune 在 supplied
+  cohort 上也有兩個選項）。只有一個選項時它已被選取；有多個時，在你選擇之前都不選取；沒有任何
   選項時，Start 會說明原因。紀錄無法讀取的檔案同樣沒有任何選項，
   Start 為停用，並附上紀錄自己的原因（沒有 model spec 的檔案為「Record not readable (written
   before the model spec: not readable by this build; start a new run): not measured here. Choose
-  a model finetuned for a task」；自 K8-7b，2026-11-08 起）。它和模型一樣是操作者控制項。Mode C 與
+  a model with a readable record」；自 K8-7b，2026-11-08 起）。它和模型一樣是操作者控制項。Mode C 與
   Mode D 都不是協定，因此沒有任何頁面或命令會執行它們。接著是執行時會尋找的 R10 證據（被量測的
   workspace，以及 `SHEPHERD_TRAINING_EVIDENCE_DIRS`）、**Register the result**、
   **Deterministic execution**，以及由伺服器固定的 batch size 與裝置（量測程式的預設值；

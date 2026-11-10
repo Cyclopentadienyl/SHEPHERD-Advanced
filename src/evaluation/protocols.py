@@ -29,8 +29,9 @@ by its task's protocol.
 (`scripts/measure_scorer.py`), the job runner (`TestRunInputs`, `start_test`),
 the Test page's Start and the deployment probe ask this module whether a
 measurement can run now and say its reason when it cannot. No reader,
-registration, query, display or export uses it: a kept report is read under
-the mode it records, whether or not that mode is a protocol here.
+registration, query, display or export uses its judgment (the manifest and
+the ledger share only its data-kind words): a kept report is read under the
+mode it records, whether or not that mode is a protocol here.
 
 The judgment is computed from a model's capability description, the data
 kind measured (`generated` for a generated split, a registered version's

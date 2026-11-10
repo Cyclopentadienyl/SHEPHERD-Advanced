@@ -125,13 +125,22 @@ COHORT_ARGUMENT_HELP = (
 # ---------------------------------------------------------------------------
 
 #: **Each finetuned task's name, the one every surface shows** (K6 decision 6):
-#: the Test page's measurement, the Models page's filter and records, the
-#: Fine-tune page's options and the Diagnosis card's name line read it, and
-#: `src.webui.components.renderers.record_kind_text` builds on it. Keyed by
-#: the model spec's tasks (`src.models.bundle.spec.TASKS`, which this
-#: standard-library-only module does not import;
+#: the Test page's measurement (through `MEASUREMENT_NAMES`), the Models page's
+#: filter and records, the Fine-tune page's options and the Diagnosis card's
+#: name line read it, and `src.webui.components.renderers.record_kind_text`
+#: builds on it. Keyed by the model spec's tasks (`src.models.bundle.spec.TASKS`,
+#: which this standard-library-only module does not import;
 #: `tests/unit/test_webui_renderers.py` pins the two equal).
 TASK_NAMES = {"disease": "Disease", "gene": "Gene", "patients_like_me": "Patients-like-me"}
+
+#: **Each measurement's name where a page offers or names one** (the Test
+#: page's Measurement options and its job line), keyed by protocol name
+#: (`src.evaluation.protocols.names`, pinned equal by
+#: `tests/unit/test_kg_link_prediction.py`): a task's measurement by its task's
+#: name (`TASK_NAMES`), and the common KG link-prediction measurement by its
+#: own words (research comparison Stage 5). Never a task name: no task filter
+#: or option reads it.
+MEASUREMENT_NAMES = {**TASK_NAMES, "kg_link_prediction": "KG link prediction"}
 
 
 def task_list_text(names: Iterable[str]) -> str:

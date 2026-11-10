@@ -7,7 +7,9 @@ is its ``reports/`` directory
 (`src.evaluation.cohort_registry.report_store_directory`):
 
     <registry>/versions/<label>/reports/
-        <run id>/ranks.json, <run id>/report.json   one measurement each
+        <run id>/ranks.json, <run id>/report.json   one measurement each (a KG
+                                                    edge set's run: scores.bin,
+                                                    then report.json)
         usage.jsonl                                 the version's usage history
         notes.jsonl                                 investigation notes
         usage.jsonl.lock, notes.jsonl.lock          their locks (K8-6r.1)

@@ -483,8 +483,9 @@ as stamped.)*
   run (K8-6r.2): the same run with the same bytes answers `already_registered` and writes nothing;
   the same run with other bytes is refused; any other run gets its own record. Differences between
   runs are described, never used to refuse (rev 16). A KG edge set's report is not recorded yet:
-  `build_record` refuses it as a kind this revision's ledger does not record (research comparison
-  Stage 6), and the report stays kept.
+  `build_record` refuses it as a kind this revision's ledger does not record (`LEDGER_KINDS`;
+  research comparison Stage 6), and the report stays kept; `measure_scorer.py` offers no
+  register-later command for such a run, saying why instead.
 - **The ledger.** Schema 4 (`src/evaluation/sidecar.py`, `LEDGER_SCHEMA_VERSION`). Schemas 3 and 4
   are read as written, and reading never rewrites a file; schemas 1 and 2 are refused. The first
   registration into a schema 3 file writes schema 4. One registration at a time per ledger, and one
@@ -2591,8 +2592,12 @@ question are described apart.
   capability gap, not a research rule); a file without a model spec; a protocol and data kind
   that do not match, `--split` included; `--training-evidence`; a version with no pair. A model of
   another split of the same view is measured, not refused.
-- **Not yet:** registering its report (research comparison Stage 6); its run from the Test page
-  with R10's evidence chosen by kind (Stage 7).
+- **Not yet:** registering its report (research comparison Stage 6: until then the run offers no
+  register-later command and says why); its run from the Test page with R10's evidence chosen by
+  kind (Stage 7). Until Stage 7 the Test page offers KG link prediction whatever the chosen
+  version's kind: a finetune on a supplied cohort has two options, so neither is preselected, and
+  a run on a KG edge set started while R10 evidence directories are set is refused for
+  `--training-evidence` after it starts.
 
 ### 8.2 The disease task
 

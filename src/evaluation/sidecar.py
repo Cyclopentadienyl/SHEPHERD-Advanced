@@ -91,6 +91,7 @@ from pathlib import Path
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
 from src.evaluation.measurement import expected_relations
+from src.evaluation.protocols import REGISTERED_KINDS, SUPPLIED
 from src.utils.file_lock import exclusive_lock
 from src.utils.file_modes import create_staging_file
 
@@ -135,6 +136,14 @@ RUN_ID_PATTERN = re.compile(r"[0-9]{8}T[0-9]{6}Z-([0-9a-f]{12})-[0-9a-f]{8}")
 
 #: The conventional file name, beside the checkpoints it describes.
 LEDGER_FILENAME = "evaluations.json"
+
+#: The data kinds whose runs this revision's ledger records (`build_record`):
+#: a supplied cohort version's only. A run on another registered kind (a KG
+#: edge set's link-prediction run) is kept in its version's report store and
+#: not recorded yet; making the record per kind is research comparison §5
+#: Stage 6. `scripts/measure_scorer.py` reads it so that it never offers a
+#: registration this revision would refuse for certain.
+LEDGER_KINDS: Tuple[str, ...] = (SUPPLIED,)
 
 #: The ledger's lock file is the ledger's name with this added, beside it
 #: (`ledger_lock_path`); it is never removed.
@@ -614,10 +623,10 @@ def build_record(report: Dict[str, Any], source_digest: str) -> Dict[str, Any]:
     result by role *and version*), and a generated split has none. That is a
     limit of the ledger, not a judgement that such a result counts for less
     (policy rev 16): its report and ranks stay at `--output`, and extending the
-    ledger to them is later work. A run on a registered version of another kind
-    (a KG edge set's link-prediction run, research comparison Stage 5) is
-    refused as one this revision's ledger does not record yet; its report stays
-    in its version's report store. A report whose relation states are not a registered result's is refused too;
+    ledger to them is later work. A run on a registered version of a kind
+    outside `LEDGER_KINDS` (a KG edge set's link-prediction run, research
+    comparison Stage 5) is refused as one this revision's ledger does not
+    record yet; its report stays in its version's report store. A report whose relation states are not a registered result's is refused too;
     the measurement cannot write one, so such a file was edited or is not a
     report. Every refusal is a ``ValueError`` naming what is wrong — never a
     ``KeyError`` or ``TypeError`` from a file of the wrong shape.
@@ -675,7 +684,7 @@ def build_record(report: Dict[str, Any], source_digest: str) -> Dict[str, Any]:
             "measure a registered version (--cohort LABEL --registry DIR)."
         )
     kind = manifest["cohort_kind"]
-    if (kind in ("kg_edges", "generated") and isinstance(cohort_version, dict)
+    if (kind in REGISTERED_KINDS and kind not in LEDGER_KINDS and isinstance(cohort_version, dict)
             and cohort_version.get("kind") == kind):
         # A run on a registered version of another kind than a supplied
         # cohort (research comparison Stage 5): kept in its version's report
@@ -687,7 +696,7 @@ def build_record(report: Dict[str, Any], source_digest: str) -> Dict[str, Any]:
             "of another kind has fields it does not yet carry), so it is not recorded; "
             "the report is kept in its version's report store as written"
         )
-    if kind != "supplied":
+    if kind != SUPPLIED:
         raise ValueError(
             f"this report records cohort_kind {manifest['cohort_kind']!r} beside a "
             "cohort version; a registered cohort version is a supplied cohort, so "
@@ -1567,6 +1576,7 @@ __all__ = [
     "HistoricalNote",
     "KEY_FIELDS",
     "LEDGER_FILENAME",
+    "LEDGER_KINDS",
     "LEDGER_LOCK_GRACE_SECONDS",
     "LEDGER_LOCK_SUFFIX",
     "LEDGER_SCHEMA_VERSION",

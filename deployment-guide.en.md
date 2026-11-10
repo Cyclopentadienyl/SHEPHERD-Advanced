@@ -1220,7 +1220,7 @@ renamed into place, with the directory's permission policy.
   versions/<label>/samples.json          the mapped samples (a generated split's: the workspace's file), bound by cohort.json's digest
   versions/<label>/pairs.bin             a KG edge set's pairs instead of samples (below), bound the same way
   versions/<label>/split_manifest.json   a generated split's copy of the workspace's split manifest (below), bound the same way
-  versions/<label>/reports/<run id>/     one directory per measurement: ranks.json, then report.json
+  versions/<label>/reports/<run id>/     one directory per measurement: ranks.json (a KG edge set's run: scores.bin), then report.json
 ```
 
 **A version never changes.** A label is used once. A `versions/<label>/` without `cohort.json`
@@ -1619,7 +1619,9 @@ registration of another report.
   The checkpoint is the file the run read, at its resolved path, so the command works whatever
   the file is named. Each path is double-quoted, so a path with a space stays one argument in a
   POSIX shell, cmd or PowerShell. A path holding `"`, `$`, a backtick, `%` or `!` is expanded by
-  one shell or another and has to be quoted by hand.
+  one shell or another and has to be quoted by hand. A KG edge set's run prints no command: this
+  revision's ledger does not record such a run yet (research comparison Stage 6), so the run says
+  that, and its report stays in its version's report store.
 - **`record_evaluation.py` names the checkpoint with exactly one of two arguments** (neither or
   both is a rejected command line):
   - `--checkpoint FILE`: that one file, under any name, must hold the bytes the report measured;
@@ -1712,9 +1714,11 @@ registered, the run exits 3, and it says the report at that path is not the one 
 is gone), so the run's own report may not exist any more: measure again to register this
 measurement. The command for a later registration is printed only when the report read back is
 the one published and something else refused it, such as the ledger. Without `--record` the
-command is always printed: no other run's report or result can refuse a registration. A later
-registration with `record_evaluation.py` checks the checkpoint file it is given against the
-report, as before.
+command is always printed: no other run's report or result can refuse a registration. The one
+exception is a run on a KG edge set: this revision's ledger does not record such a run yet
+(research comparison Stage 6), so no command is printed, and the run says so instead; its report
+stays in its version's report store. A later registration with `record_evaluation.py` checks the
+checkpoint file it is given against the report, as before.
 
 ### What the Diagnosis page shows
 
@@ -1895,7 +1899,8 @@ differing report. Without deterministic algorithms, runs can differ: the descrip
 neutral, and every result is valid as recorded. Only when the group records deterministic
 algorithms on were its runs expected to agree, so the pages mark the difference in amber with
 "— investigate". The API keeps the value `contested` for it, with this new meaning. Without
-`--record` the run always prints the register-later command. To investigate:
+`--record` the run always prints the register-later command (a KG edge set's run excepted, which
+this revision's ledger does not record yet). To investigate:
 
 - compare the reports' environment facts (each `report.json`'s `manifest.environment`);
 - re-run with `--deterministic`, which is its own set of conditions. Deterministic runs are
@@ -3110,14 +3115,16 @@ and register it. Three panels:
   list again). Then **Measurement** (since K8-6a), the protocol the run passes as
   `--mode <protocol>` (§4.9): the options are the protocols this build implements whose needs
   the chosen model's listed capabilities meet, today one for each task head of a finetuned model
-  (Disease, Gene or Patients-like-me) and `kg_link_prediction` for a base and every finetune,
-  which measures a KG edge set (§4.9; run from this page with R10's evidence directories set, it
-  is refused for `--training-evidence` until the runner chooses the evidence by kind, research
-  comparison Stage 7). A single option is chosen already; of
+  (Disease, Gene or Patients-like-me) and KG link prediction (`kg_link_prediction`) for a base
+  and every finetune, which measures a KG edge set (§4.9; run from this page with R10's evidence
+  directories set, it is refused for `--training-evidence` until the runner chooses the evidence
+  by kind, research comparison Stage 7; until then it is offered whatever the chosen version's
+  kind, so a finetune offers two options on a supplied cohort too). A single option is chosen
+  already; of
   several, none is until you choose one; with none, Start says why. A file whose record cannot be read offers none either, and Start is off
   with the record's own reason ("Record not readable (written before the model spec: not
-  readable by this build; start a new run): not measured here. Choose a model finetuned for a
-  task" for a file without a model spec; since K8-7b, 2026-11-08). Like the model, it is an
+  readable by this build; start a new run): not measured here. Choose a model with a readable
+  record" for a file without a model spec; since K8-7b, 2026-11-08). Like the model, it is an
   operator control. Mode C and Mode D are not
   protocols, so no page or command runs them. Then the R10 evidence the run will look in (the
   measured workspace, and `SHEPHERD_TRAINING_EVIDENCE_DIRS`), **Register the result**,

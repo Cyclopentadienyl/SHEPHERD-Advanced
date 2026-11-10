@@ -138,6 +138,7 @@ import gradio as gr
 
 from src.evaluation import protocols
 from src.evaluation.caveats import (
+    MEASUREMENT_NAMES,
     R10_LABEL_TEXT,
     R10_STATE_TEXT,
     R10_UNVERIFIABLE_REASON,
@@ -1348,9 +1349,10 @@ def fixed_html(page: Mapping[str, Any]) -> str:
 
 
 def measurement_label(name: Any) -> str:
-    """A protocol's words on this page: the words the pages already use for
-    that mode value (`caveats.TASK_NAMES`), or the name as it is."""
-    return TASK_NAMES.get(name, str(name)) if isinstance(name, str) else str(name)
+    """A protocol's words on this page (`caveats.MEASUREMENT_NAMES`: a task's
+    measurement by its task's name, "KG link prediction"), or the name as it
+    is for one with no words there."""
+    return MEASUREMENT_NAMES.get(name, str(name)) if isinstance(name, str) else str(name)
 
 
 def measurement_choices(item: Optional[Mapping[str, Any]]) -> List[Tuple[str, str]]:
@@ -1375,8 +1377,9 @@ def chosen_measurement(choices: Sequence[Tuple[str, str]], value: Any) -> Option
     return values[0] if len(values) == 1 else None
 
 
-#: This page's own reason beside a record's state (`measure_refusal`).
-NOT_MEASURED_HERE = "not measured here. Choose a model finetuned for a task"
+#: This page's own reason beside a record's state (`measure_refusal`): a
+#: record that is refused or not read offers no measurement.
+NOT_MEASURED_HERE = "not measured here. Choose a model with a readable record"
 #: Start's reason while the chosen model offers several measurements and none is chosen.
 CHOOSE_A_MEASUREMENT = "choose a measurement"
 
@@ -1393,11 +1396,11 @@ def measure_refusal(item: Mapping[str, Any], version: Optional[Mapping[str, Any]
     spec among them) or not read is said in the word the Model option leads
     with (`renderers.record_kind_text`), then this page's reason
     (`NOT_MEASURED_HERE`). Otherwise, with no protocol chosen, the reason no
-    protocol takes the model (`protocols.available`: a base's is the base
-    message) or `CHOOSE_A_MEASUREMENT`; with one, the protocol definition's
-    reason (`protocols.refusal`: the listed capability description, then the
-    version's listed kind and counts, which the importer writes for genes only
-    for a source that lists them). A version whose causal genes are all
+    protocol takes the model (`protocols.available`) or `CHOOSE_A_MEASUREMENT`;
+    with one, the protocol definition's reason (`protocols.refusal`: the listed
+    capability description, then the version's listed kind and counts, which
+    the importer writes for genes only for a source that lists them). A
+    version whose causal genes are all
     unmapped passes here and the run refuses it."""
     record = item.get("record")
     if record in ("refused", None):

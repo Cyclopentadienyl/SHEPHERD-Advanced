@@ -51,6 +51,7 @@ from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 
 import torch
 
+from src.evaluation.protocols import KG_EDGES
 from src.models.bundle.metrics import ranking_report
 
 #: The ranking report's schema for task measurements (E1–E5), apart from the
@@ -257,9 +258,6 @@ def run_patients_like_me_measurement(*, bundle: Any, view: Any, samples: Sequenc
 #: each with its unit and denominator, and a status where one cannot be
 #: computed; another schema than task ranking's (`TASK_METRIC_SCHEMA_VERSION`).
 LP_METRIC_SCHEMA_VERSION = 3
-
-#: The data kind it measures (`protocols.KG_EDGES`).
-KG_EDGES = "kg_edges"
 
 #: Metric schema 3's metrics, in the report's order: each one's unit and its
 #: denominator's unit (`lp_metric_statuses` counts it).

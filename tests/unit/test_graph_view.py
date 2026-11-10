@@ -288,10 +288,15 @@ def test_a_seed_is_named_when_the_caller_s_differs_or_it_is_not_a_seed():
             refused.value.mismatch.rebuilt, refused.value.mismatch.requested) == (
         "seed", 1, 2, True)
     assert str(refused.value) == "the split's recorded seed 1 is not the requested seed 2"
-    for seed in ("1", True, None, 1.0):
+    # Not a seed: no integer, or one NumPy's `RandomState` does not take (it
+    # would raise its own ValueError, never a refusal naming the field).
+    for seed in ("1", True, None, 1.0, -1, 2**32, 10**30):
         with pytest.raises(SplitMismatchError, match="cannot be rebuilt") as refused:
             rebuild_split(view, {**record, "seed": seed})
         assert (refused.value.mismatch.field, refused.value.mismatch.recorded) == ("seed", seed)
+    # The largest seed `RandomState` takes is rebuilt.
+    largest = split_facts(view, seed=2**32 - 1).record()
+    assert rebuild_split(view, largest).record() == largest
 
 
 def test_a_seed_that_is_not_its_digest_s_is_named_by_the_digest():

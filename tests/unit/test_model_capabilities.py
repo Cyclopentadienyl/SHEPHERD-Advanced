@@ -264,7 +264,7 @@ def test_a_test_only_double_passes_the_shared_checks_without_a_gatv2_rule(double
     assert item["record"] == "model" and item["capabilities"] == described
     assert protocols.available(item["capabilities"]) == (("disease", "kg_link_prediction"), None)
     assert tp.measurement_choices(item) == [("Disease", "disease"),
-                                            ("kg_link_prediction", "kg_link_prediction")]
+                                            ("KG link prediction", "kg_link_prediction")]
     version = {"kind": protocols.SUPPLIED, "counts": GENES}
     assert tp.measure_refusal(item, version, "disease") is None
     for name in ("gene", "patients_like_me"):

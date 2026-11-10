@@ -96,7 +96,7 @@ def test_a_run_started_from_the_page_is_kept_shown_and_registered(site, monkeypa
     # link-prediction one (research comparison Stage 5); none is chosen until
     # the operator picks one, and the operator picks Disease.
     choices = tp.measurement_choices(tp.find_model(models, key))
-    assert choices == [("Disease", "disease"), ("kg_link_prediction", "kg_link_prediction")]
+    assert choices == [("Disease", "disease"), ("KG link prediction", "kg_link_prediction")]
     assert tp.chosen_measurement(choices, None) is None
     protocol = tp.chosen_measurement(choices, "disease")
     assert tp.start_state(page, models, "demo", LABEL, key, binding, ("none", ""),
@@ -188,7 +188,8 @@ def test_a_base_and_a_file_without_a_model_spec_are_listed_and_never_started(sit
 
     lp = "kg_link_prediction"
     for key, protocol, offered, says in (
-            (base, lp, [(lp, lp)], protocols.inputs_refusal(lp, protocols.SUPPLIED, None)),
+            (base, lp, [("KG link prediction", lp)],
+             protocols.inputs_refusal(lp, protocols.SUPPLIED, None)),
             (history, None, [], f"Record not readable ({WRITTEN_BEFORE_SPEC})")):
         assert tp.measurement_choices(tp.find_model(models, key)) == offered
         allowed, why = tp.start_state(page, models, "demo", LABEL, key, binding, ("none", ""),
@@ -200,4 +201,4 @@ def test_a_base_and_a_file_without_a_model_spec_are_listed_and_never_started(sit
         assert result["error"].startswith(says[:1].upper() + says[1:])
     # The fixture version lists no genes; the disease measurement needs none.
     assert tp.measurement_choices(tp.find_model(models, child)) == [
-        ("Disease", "disease"), ("kg_link_prediction", "kg_link_prediction")]
+        ("Disease", "disease"), ("KG link prediction", "kg_link_prediction")]

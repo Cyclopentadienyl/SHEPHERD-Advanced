@@ -667,16 +667,16 @@ def _read_version_pairs(version: CohortVersionRead) -> Any:
     """A KG edge set's pairs: one read of its `pairs.bin`, refused before it is
     parsed unless it is the bytes the version binds, then unless it parses to
     the rows and pairs digest the version records (`read_kg_edge_pairs`,
-    M2.1). Each refusal says the registry was altered and that nothing was
-    written."""
+    M2.1). Each refusal is `read_kg_edge_pairs`' own sentence, which names its
+    cause (bytes that are not the ones bound, pairs that are not the ones
+    recorded, a missing file, a layout this revision does not read), and says
+    that nothing was written."""
     from src.evaluation.cohort_registry import CohortVersionRefused, read_kg_edge_pairs
 
     try:
         return read_kg_edge_pairs(version)
     except CohortVersionRefused as exc:
-        raise CohortVersionRefused(
-            f"{_sentence(exc)} The KG edge set's own record contradicts its bytes, so it is "
-            "not measured. Nothing was written.") from None
+        raise CohortVersionRefused(f"{_sentence(exc)} Nothing was written.") from None
 
 
 def _refuse_another_view(version: CohortVersionRead, model_view: str) -> None:
@@ -1538,13 +1538,39 @@ def _failure_after_publishing(
     For a registered version, whether `--record` got as far as the ledger is
     not known here, so the message gives the command that registers the report
     later: run for a report already registered, it says so and writes nothing.
+    A run on a data kind this revision's ledger does not record yet is given
+    no command (`_not_recorded_yet`).
     """
     said = f"{_sentence(exc)} The report was written: {report_path}."
     if inputs.version is not None:
-        measured = Path(inputs.checkpoint.identity.path)
-        said += (" To register it, or to see that it already is: "
-                 f"{register_later_command(report_path, measured)}")
+        not_yet = _not_recorded_yet(inputs)
+        if not_yet is not None:
+            said += f" {not_yet[:1].upper()}{not_yet[1:]}."
+        else:
+            measured = Path(inputs.checkpoint.identity.path)
+            said += (" To register it, or to see that it already is: "
+                     f"{register_later_command(report_path, measured)}")
     return FailedAfterPublishing(said)
+
+
+def _not_recorded_yet(inputs: MeasurementInputs) -> Optional[str]:
+    """Why no command that registers this run's report later is offered, or
+    None when one is: the run measured a registered version of a data kind
+    this revision's ledger does not record yet (`sidecar.LEDGER_KINDS`: a KG
+    edge set's run, until research comparison §5 Stage 6 makes the record per
+    kind). That command would be refused for certain, so it is never printed;
+    the report stays in its version's report store as written (`_KEPT_UNRECORDED`)."""
+    from src.evaluation.sidecar import LEDGER_KINDS
+
+    if inputs.version is None or inputs.data_kind in LEDGER_KINDS:
+        return None
+    return (f"this revision's ledger does not record a run on {_version_words(inputs.version)} "
+            "yet, so no registration is offered")
+
+
+#: Where the report of a run `_not_recorded_yet` names is, said beside it
+#: where the line does not already give the report's path.
+_KEPT_UNRECORDED = "the report is kept in its version's report store as written"
 
 
 def register_later_command(report_path: Path, checkpoint: Path) -> str:
@@ -1571,7 +1597,7 @@ def _registration_outcome(requested: bool, **fields: Any) -> Dict[str, Any]:
     """The ``registration`` block of the `--outcome` file. Before an attempt it
     says so (``registered`` is `None`: not yet established); without
     `--record` it says the report was not registered because none was asked
-    (`_offer_later_registration`)."""
+    (`_not_requested`, `_offer_later_registration`)."""
     if not requested:
         return {"requested": False, "registered": False, "outcome": "not_requested",
                 "sequence": None, "ledger": None,
@@ -1656,11 +1682,13 @@ def _register(
         return EXIT_NOT_REGISTERED, _registration_outcome(
             True, registered=False, outcome="refused", why=str(exc))
     except RegistrationRefused as exc:
+        not_yet = _not_recorded_yet(inputs)
+        later = (f"{not_yet[:1].upper()}{not_yet[1:]}." if not_yet is not None
+                 else f"Register it later with:\n  {register_later_command(report_path, measured)}")
         print(
             f"\nNOT REGISTERED. {exc}\n"
             f"The measurement succeeded and its report is kept at {report_path}.\n"
-            "Register it later with:\n"
-            f"  {register_later_command(report_path, measured)}",
+            f"{later}",
             file=sys.stderr,
         )
         return EXIT_NOT_REGISTERED, _registration_outcome(
@@ -1688,13 +1716,32 @@ def _offer_later_registration(inputs: MeasurementInputs, report_path: Path) -> D
     command that registers it later. Returns what the `--outcome` file says
     about the registration.
 
-    **The command is always printed** (policy rev 16, K8-6r.2): a registration
-    reads only the run it registers, so no other run's report or result can
-    refuse it, and nothing is checked here.
+    **The command is printed for every run the ledger records** (policy rev
+    16, K8-6r.2): a registration reads only the run it registers, so no other
+    run's report or result can refuse it, and nothing is checked here. A run
+    on a data kind this revision's ledger does not record yet (a KG edge
+    set's) is given no command, which would be refused for certain: the
+    console and the `--outcome` file say why instead (`_not_recorded_yet`).
     """
-    command = register_later_command(report_path, Path(inputs.checkpoint.identity.path))
-    print(f"\nNot registered (no --record). Register it with:\n  {command}\n")
-    return _registration_outcome(False)
+    not_yet = _not_recorded_yet(inputs)
+    if not_yet is not None:
+        print(f"\nNot registered (no --record): {not_yet}; {_KEPT_UNRECORDED}.\n")
+    else:
+        command = register_later_command(report_path, Path(inputs.checkpoint.identity.path))
+        print(f"\nNot registered (no --record). Register it with:\n  {command}\n")
+    return _not_requested(inputs)
+
+
+def _not_requested(inputs: MeasurementInputs) -> Dict[str, Any]:
+    """The `--outcome` file's registration block of a run without `--record`:
+    kept for a later registration, or, on a data kind this revision's ledger
+    does not record yet, why none is offered (`_not_recorded_yet`). Both
+    outcome writes give the same block."""
+    not_yet = _not_recorded_yet(inputs)
+    if not_yet is None:
+        return _registration_outcome(False)
+    return _registration_outcome(False,
+                                 why=f"--record was not given; {not_yet}; {_KEPT_UNRECORDED}")
 
 
 def _check_outcome_target(path: Optional[Path]) -> None:
@@ -2008,7 +2055,8 @@ def _run(args: argparse.Namespace, *, registry: Optional[Path]) -> int:
                                        run_id=run_id, report_path=report_path,
                                        report_sha256=report_sha256,
                                        deterministic=deterministic,
-                                       registration=_registration_outcome(args.record),
+                                       registration=(_registration_outcome(True)
+                                                     if args.record else _not_requested(inputs)),
                                        mode=result.manifest.mode)
                     except (ValueError, OSError) as exc:
                         raise ValueError(

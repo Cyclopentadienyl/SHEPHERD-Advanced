@@ -483,8 +483,15 @@ class SplitMismatchError(GraphViewError):
         self.mismatch = mismatch
 
 
+#: The seeds `split_facts` rebuilds a split from: those NumPy's legacy
+#: `RandomState` takes, 0 to 2**32 - 1. Any other recorded seed was never
+#: written by a split this build made, and is refused by name, never passed on.
+_SPLIT_SEED_LIMIT = 2**32
+
+
 def _is_seed(value: Any) -> bool:
-    return isinstance(value, int) and not isinstance(value, bool)
+    return (isinstance(value, int) and not isinstance(value, bool)
+            and 0 <= value < _SPLIT_SEED_LIMIT)
 
 
 def rebuild_split(view: GraphView, record: Mapping[str, Any], *,
@@ -495,8 +502,9 @@ def rebuild_split(view: GraphView, record: Mapping[str, Any], *,
 
     - `rule`: `SPLIT_RULE`, the one rule this build rebuilds; a split recorded
       by another rule is not rebuilt, never guessed;
-    - `seed`: an integer, the split is rebuilt from it; a caller that names the
-      seed it will use (`seed`) gets the recorded split only when they are one;
+    - `seed`: an integer `split_facts` takes (0 to 2**32 - 1), the split is
+      rebuilt from it; a caller that names the seed it will use (`seed`) gets
+      the recorded split only when they are one;
     - `view_digest`: the view's digest;
     - `digest` and `edges` (each part's edge count): the rebuilt split's.
 

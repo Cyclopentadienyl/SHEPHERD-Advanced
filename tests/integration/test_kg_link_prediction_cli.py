@@ -128,4 +128,8 @@ def test_the_exposure_is_kept_with_each_result_and_said_on_the_console(measured)
         out = run["stdout"]
         assert f"Exposure ({exposure['definition_version']}): {exposure['reading']}" in out
         assert re.search(r"^  lp_roc_auc\s+\d", out, re.MULTILINE), out
-        assert "Not registered (no --record)" in out
+        # No register-later command: this revision's ledger does not record a
+        # KG edge set's run yet, and the console says so instead.
+        assert ("Not registered (no --record): this revision's ledger does not record a run "
+                "on a KG edge set (test) yet") in out
+        assert "record_evaluation.py" not in out

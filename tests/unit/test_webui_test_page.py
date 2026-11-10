@@ -1083,7 +1083,7 @@ def test_start_waits_for_every_choice_and_says_why(site, monkeypatch):
     # the record reader's one phrase (N2).
     assert state("demo", LABEL, site.history_key) == (
         False, f"Disabled: Record not readable ({WRITTEN_BEFORE_SPEC}): not measured here. "
-               "Choose a model finetuned for a task.")
+               "Choose a model with a readable record.")
 
 
 # --------------------------------------------------------------------------- the operator controls
@@ -3241,7 +3241,7 @@ def test_a_listed_base_is_offered_the_kg_link_prediction_measurement(site, monke
     models = tp.read_models("demo", request)
     binding = tp.workspace_binding(site.demo, tp.find(page["workspaces"], "name", "demo"))
     choices = tp.measurement_choices(tp.find_model(models, base))
-    assert choices == [("kg_link_prediction", "kg_link_prediction")]
+    assert choices == [("KG link prediction", "kg_link_prediction")]
     assert tp.chosen_measurement(choices, None) == "kg_link_prediction"
     message = protocols.inputs_refusal("kg_link_prediction", SUPPLIED, None)
     assert message == ("the kg_link_prediction measurement does not measure a supplied cohort "
@@ -3544,12 +3544,13 @@ def test_a_task_report_row_names_its_task_first():
 
 def test_the_measurement_options_are_the_protocols_the_record_admits():
     """§5.3: the Measurement radio's options are `protocols.available` of the
-    chosen model's listed record, each labelled with the words the pages use
-    for that mode value (`caveats.TASK_NAMES`) and valued by the protocol's
-    name, short and unique (skill §8). The only option is chosen; of several,
-    none is until the operator picks one, and a pick no longer offered goes.
-    What the server fixes names no measurement."""
-    lp = ("kg_link_prediction", "kg_link_prediction")
+    chosen model's listed record, each labelled with the measurement's words
+    (`caveats.MEASUREMENT_NAMES`: a task's by its task's name, "KG link
+    prediction"; never a protocol's code as the label, skill §5) and valued by
+    the protocol's name, short and unique (skill §8). The only option is
+    chosen; of several, none is until the operator picks one, and a pick no
+    longer offered goes. What the server fixes names no measurement."""
+    lp = ("KG link prediction", "kg_link_prediction")
     for task, words in (("disease", "Disease"), ("gene", "Gene"),
                         ("patients_like_me", "Patients-like-me")):
         # A finetune is taken by its task's protocol and by the KG
@@ -3795,7 +3796,7 @@ def test_a_model_picked_after_another_answers_its_second_event_without_an_error(
     for event in events:
         out = browser.done[event]["output"]["data"]
         assert ([list(c) for c in out[radio_at]["choices"]], out[radio_at]["value"]) == (
-            [["kg_link_prediction", "kg_link_prediction"]], "kg_link_prediction")
+            [["KG link prediction", "kg_link_prediction"]], "kg_link_prediction")
         assert html_lib.escape(said) in out[reason_at], out[reason_at]
 
 
