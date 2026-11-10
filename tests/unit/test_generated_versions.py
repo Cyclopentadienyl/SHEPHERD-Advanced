@@ -30,9 +30,12 @@ on a base and disease child trained for real on it (`trained_disease_child`):
   file named by a path among them;
 - **every listing** shows its kind, role and counts, never a sample; it is
   never presented as a supplied cohort (the Diagnosis route and card, the
-  overlap audit, the Test page's words) or as test; a measurement of it is refused before anything is
-  read with the stated gap (measurement is Stage 5), the CLI, the runner and
-  the Test page alike, while the workspace's own split is measured as before;
+  overlap audit, the Test page's words) or as test; on a version that keeps no
+  functional gene fixture, gene and patients-like-me are refused before
+  anything is read with the stated data gap (Stage 5b measures a generated
+  version: tests/unit/test_generated_measurement.py), the CLI, the runner
+  and the Test page alike, while the workspace's own split is measured as
+  before;
 - **no identity is made up**: a report measured with ``--split`` stays as it
   is and is still refused for registration, with a version of its very split
   in the registry;
@@ -622,11 +625,15 @@ def test_it_is_never_presented_as_a_supplied_cohort(listed, workspace, monkeypat
     assert not output.exists()
 
 
-def test_a_measurement_of_it_is_refused_before_anything_is_read(listed, tmp_path):
-    """Measuring a registered generated split is the round's Stage 5: the CLI,
-    the runner and the Test page say the one stated gap before anything is
-    read (the checkpoint here does not even exist), and the workspace's own
-    split is judged as before."""
+def test_a_version_without_a_gene_fixture_is_refused_gene_and_plm_as_a_data_gap(listed,
+                                                                                tmp_path):
+    """Measuring a registered generated split is Stage 5b's: disease is
+    judged measurable (the gap Stage 4b stated is closed), and gene and
+    patients-like-me are refused on a version that keeps no functional gene
+    fixture (the demo workspace holds none), with the one stated data gap,
+    never for its role, before anything is read (the checkpoint here does not
+    even exist): the CLI, the runner and the Test page alike. The
+    workspace's own split is judged as before."""
     pytest.importorskip("gradio")
     from scripts import measure_scorer
     from src.api.services.training_manager import TestRunInputs
@@ -635,31 +642,41 @@ def test_a_measurement_of_it_is_refused_before_anything_is_read(listed, tmp_path
     from tests.fixtures.capabilities import described
 
     registry, _, generated = listed
+    counts = generated.manifest["counts"]
+    assert "task_fixture" not in generated.manifest
+    assert cr.GENERATED_FIXTURE_COUNT not in counts
+    assert protocols.inputs_refusal("disease", "generated", counts) is None
     before = _tree(registry)
     absent = tmp_path / "absent.pt"
-    with pytest.raises(ValueError) as refused:
-        measure_scorer.read_measurement_inputs(
-            absent, tmp_path / "no-workspace", torch.device("cpu"), cohort="gen-val",
-            registry=registry, protocol="disease")
-    assert str(refused.value) == f"{protocols.GENERATED_VERSION_GAP} Nothing was written."
+    row = {"label": "gen-val", "kind": "generated", "counts": counts}
+    for protocol in ("gene", "patients_like_me"):
+        gap = protocols.inputs_refusal(protocol, "generated", counts)
+        assert gap.startswith("this generated split version keeps no functional gene fixture, "
+                              f"which the {protocol} measurement scores")
+        assert "not a judgment of its role" in gap and "test" not in gap
+        with pytest.raises(ValueError) as refused:
+            measure_scorer.read_measurement_inputs(
+                absent, tmp_path / "no-workspace", torch.device("cpu"), cohort="gen-val",
+                registry=registry, protocol=protocol)
+        assert str(refused.value) == f"{gap} Nothing was written."
+        model = {"record": "model", "learning_stage": "finetune", "task": protocol,
+                 "capabilities": described("finetune", protocol)}
+        assert tp.measure_refusal(model, row, protocol) == gap
+        inputs = TestRunInputs(
+            registry=registry, version_label="gen-val",
+            version_sha256=generated.identity.sha256, workspace=tmp_path, checkpoint=absent,
+            checkpoint_sha256="c" * 64, protocol=protocol, learning_stage="finetune",
+            task=protocol, capabilities=described("finetune", protocol),
+            version_kind="generated", version_counts=counts)
+        with pytest.raises(ValueError, match=re.escape(gap)):
+            inputs.reports_dir()
     assert _tree(registry) == before
-
     model = {"record": "model", "learning_stage": "finetune", "task": "disease",
              "capabilities": described("finetune", "disease")}
-    row = {"label": "gen-val", "kind": "generated", "counts": generated.manifest["counts"]}
-    for protocol in ("disease", "gene", "patients_like_me"):
-        model = {**model, "capabilities": described("finetune", protocol)}
-        assert tp.measure_refusal(model, row, protocol) == protocols.GENERATED_VERSION_GAP
-    inputs = TestRunInputs(
-        registry=registry, version_label="gen-val", version_sha256=generated.identity.sha256,
-        workspace=tmp_path, checkpoint=absent, checkpoint_sha256="c" * 64, protocol="disease",
-        learning_stage="finetune", task="disease",
-        capabilities=described("finetune", "disease"), version_kind="generated",
-        version_counts=generated.manifest["counts"])
-    with pytest.raises(ValueError, match=re.escape(protocols.GENERATED_VERSION_GAP)):
-        inputs.reports_dir()
+    assert tp.measure_refusal(model, row, "disease") is None
     # The workspace's own generated split: no counts, judged as before.
-    assert protocols.inputs_refusal("disease", "generated", None) is None
+    for protocol in ("disease", "gene", "patients_like_me"):
+        assert protocols.inputs_refusal(protocol, "generated", None) is None
 
 
 def test_no_identity_is_made_up_for_a_report_measured_with_split(trained_disease_child,

@@ -15,9 +15,11 @@ keeps outside the repository (`src/evaluation/cohort_registry.py`):
 - ``generated`` (research comparison §3 (A)): one of the workspace's own
   generated patient splits (``--role train|val|test``, the split it is),
   verified against the workspace's split manifest as ``measure_scorer --split``
-  verifies it, its samples and that split manifest kept as written. Its role
-  is recorded as given; the generator writes ``train`` and ``val``, so
-  ``test`` is refused where the workspace holds no generated test split.
+  verifies it, its samples and that split manifest kept as written, and the
+  workspace's functional gene fixture of that split with them when it holds
+  one of its build (research comparison Stage 5b). Its role is recorded as
+  given; the generator writes ``train`` and ``val``, so ``test`` is refused
+  where the workspace holds no generated test split.
 
 **Two steps, and the second repeats the first.** Without ``--commit`` this
 prints what the import would produce -- for a supplied cohort every exclusion
@@ -25,8 +27,8 @@ with its case id and reasons, the terms that did not map, the graph and
 dataset record it binds, the policy; for a KG edge set the view, the split,
 the pairs and their counts, the message-passing graph and what it binds; for a
 generated split the generation definition, the split manifest, the split's
-files and the samples by digest, and their counts -- and a preview id, and
-writes nothing.
+files and the samples by digest, their counts, and the functional gene
+fixture kept or why none is -- and a preview id, and writes nothing.
 ``--commit PREVIEW_ID`` with the same arguments reads every input again and
 publishes only if they still give that id, so what is committed is what the
 operator saw.
@@ -75,6 +77,7 @@ from src.evaluation.cohort_registry import (  # noqa: E402
     DEFAULT_PARTIAL_PHENOTYPES,
     EXCLUSION_CATEGORIES,
     GENERATED,
+    GENERATED_FIXTURE_COUNT,
     GENERATED_ROLES,
     KG_EDGES,
     KG_EDGES_ROLES,
@@ -365,9 +368,32 @@ def format_generated_preview(plan: ImportPlan) -> List[str]:
         f"sha256 {manifest['samples']['sha256']} (the workspace's file, as written)",
         f"  verified          {' and '.join(verified['splits'])} against the split manifest"
         + ("; disjoint diseases measured" if verified["disjointness_measured"] else ""),
+        *_fixture_lines(plan),
         *_graph_lines(manifest),
     ]
     return lines + _record_lines(manifest["dataset_record"])
+
+
+def _fixture_lines(plan: ImportPlan) -> List[str]:
+    """A generated split's functional gene fixture in its preview: kept, its
+    rule, seed and derivation counts and the two files kept by digest; or not
+    kept, why (the plan's note), and what that leaves unmeasured. Aggregates
+    only."""
+    fixture = plan.manifest.get("task_fixture")
+    if fixture is None:
+        return [f"  gene fixture      none kept ({plan.task_fixture_note}); the gene and "
+                "patients-like-me measurements are refused on this version for that data gap"]
+    derivation = ", ".join(f"{key} {value}" for key, value in
+                           sorted((fixture["derivation"] or {}).items()))
+    return [
+        f"  gene fixture      the workspace's {fixture['label']}, rule {fixture['rule']}, seed "
+        f"{fixture['seed']}, {fixture['distractors']} distractors"
+        + (f" ({derivation})" if derivation else ""),
+        f"    record kept     {fixture['record']['file']}, sha256 {fixture['record']['sha256']} "
+        "(the workspace's file, as written)",
+        f"    rows kept       {fixture['samples']['file']}, {fixture['samples']['n']} rows, "
+        f"sha256 {fixture['samples']['sha256']} (the workspace's {plan.role} file, as written)",
+    ]
 
 
 def _nothing_to_commit(plan: ImportPlan) -> Optional[str]:
@@ -436,8 +462,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     elif version.kind == GENERATED:
         counts = version.manifest["counts"]
         diseases = f"{counts['diseases']} disease{'s' if counts['diseases'] != 1 else ''}"
+        fixture = counts.get(GENERATED_FIXTURE_COUNT)
+        kept = ("no functional gene fixture" if fixture is None
+                else f"its functional gene fixture ({fixture} rows)")
         print(f"Committed generated split {plan.label} ({plan.role}): {counts['samples']} "
-              f"generated patients over {diseases}")
+              f"generated patients over {diseases}, with {kept}")
     else:
         print(f"Committed cohort version {plan.label} (role {plan.role}): "
               f"{version.manifest['samples']['n']} ranked of "

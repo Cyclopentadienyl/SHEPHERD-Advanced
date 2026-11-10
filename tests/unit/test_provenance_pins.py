@@ -87,7 +87,10 @@ ALLOWED = {
     ("src/utils/fingerprint.py", "DigestingFile.__init__", "hashlib.sha256"):
         (1, _IN_MEMORY.format(what="every byte a writer writes, as it is written (contract "
                                    "M3b)")),
-    ("src/kg/task_fixture.py", "read_fixture_record", "json.loads"): (1, _READER),
+    # The fixture record's one parse (research comparison Stage 5b): the bytes
+    # of the caller's one read_once, the workspace's record here and a
+    # generated split version's kept copy in the registry.
+    ("src/kg/task_fixture.py", "parse_fixture_record", "json.loads"): (1, _READER),
     ("src/kg/task_fixture.py", "read_fixture_record", "read_once"): (1, _READER),
     ("src/kg/graph.py", "KnowledgeGraph.read_json", "json.loads"): (1, _READER),
     ("src/kg/graph.py", "KnowledgeGraph.read_json", "read_once"): (1, _READER),
@@ -141,16 +144,26 @@ ALLOWED = {
     # Research comparison Stage 4: a KG edge set's pairs file, compared with the
     # digest its version binds before the same bytes are parsed.
     ("src/evaluation/cohort_registry.py", "read_kg_edge_pairs", "read_once"): (1, _READER),
+    # Research comparison Stage 5b: a generated split version's kept fixture
+    # record, compared with the digest its version binds before the same
+    # bytes are parsed (parse_fixture_record); its rows go through
+    # read_samples_file against their bound digest.
+    ("src/evaluation/cohort_registry.py", "read_generated_task_fixture", "read_once"):
+        (1, _READER),
     # Research comparison Stage 4b: a generated split's samples and split
     # manifest, kept from the workspace. read_samples and read_split_manifest
     # parsed the files and verify_cohort_reads compared those reads; this read
     # (one site, once per file) takes the bytes to keep and is refused unless
     # they hash to the digest of the read that was parsed, so the bytes kept
-    # are the bytes verified. Nothing is parsed from it.
+    # are the bytes verified. Nothing is parsed from it. Since Stage 5b the
+    # same site takes the workspace's functional gene fixture record and the
+    # role's rows when a version keeps them, each against the digest
+    # read_fixture_record or read_samples_file parsed.
     ("src/evaluation/cohort_registry.py", "prepare_generated_import", "read_once"):
-        (1, "Stage 4b: the generated split's samples file and split manifest read for the "
-            "bytes a version keeps, each refused unless its digest is the one read_samples "
-            "or read_split_manifest parsed; nothing is parsed from it"),
+        (1, "Stage 4b: the generated split's samples file and split manifest (and, since "
+            "Stage 5b, its functional gene fixture's record and rows) read for the bytes a "
+            "version keeps, each refused unless its digest is the one its reader parsed; "
+            "nothing is parsed from it"),
     # Research comparison Stage 4b (E3): a reference's state, the digest of the
     # file found at a location the caller gives compared with the digest the
     # version records. A state shown, never an input: nothing is parsed,
@@ -164,9 +177,10 @@ ALLOWED = {
     # and its blocks compared with the version's copies of them. Owner: the
     # results service (Stage 8).
     ("src/evaluation/cohort_registry.py", "check_references", "read_once"):
-        (1, _NOT_INPUT.format(what="a generated split's kept split manifest, read once for a "
-                                   "reference's state: its digest against the recorded one, "
-                                   "and its blocks against the version's copies")),
+        (1, _NOT_INPUT.format(what="a generated split's kept split manifest or kept fixture "
+                                   "record (Stage 5b), read once for a reference's state: its "
+                                   "digest against the recorded one, and its blocks against "
+                                   "the version's copies")),
     ("src/evaluation/cohort_registry.py", "_split_manifest_copies_differ", "json.loads"):
         (1, _NOT_INPUT.format(what="the kept split manifest's blocks, parsed from the bytes of "
                                    "check_references' one read_once, against the version's "

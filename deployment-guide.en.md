@@ -1220,6 +1220,8 @@ renamed into place, with the directory's permission policy.
   versions/<label>/samples.json          the mapped samples (a generated split's: the workspace's file), bound by cohort.json's digest
   versions/<label>/pairs.bin             a KG edge set's pairs instead of samples (below), bound the same way
   versions/<label>/split_manifest.json   a generated split's copy of the workspace's split manifest (below), bound the same way
+  versions/<label>/task_fixture.json     a generated split's copy of the workspace's gene fixture record, when it keeps one (below), bound the same way
+  versions/<label>/task_fixture_samples.json   that fixture's rows of the split, bound the same way
   versions/<label>/reports/<run id>/     one directory per measurement: ranks.json (a KG edge set's run: scores.bin), then report.json
 ```
 
@@ -1399,9 +1401,20 @@ python scripts/import_cohort.py --kind generated --registry /srv/shepherd/cohort
   sample), bound by its own digest, so it stays readable and verifiable after the workspace is
   rebuilt or re-sampled, its generation definition included; whether the workspace still holds
   that split is then a reference's state, not a condition of reading the version.
+- **The functional gene fixture travels with it** (since research comparison Stage 5b). When the
+  workspace holds the gene task's functional fixture of its build (`derived/gene_fixture/`,
+  `scripts/derive_task_fixture.py`) and its record describes the split kept (the same split
+  manifest, graph and samples), the version keeps the record as `task_fixture.json` and the
+  role's rows as `task_fixture_samples.json`, each byte for byte and bound by digest, under a
+  `task_fixture` block (its rule, seed, distractors and what the derivation did to the split)
+  and a counted `task_fixture_samples`. A fixture that is absent, of another build or unreadable
+  is not kept and refuses nothing: the preview says why, and the version holds the split for the
+  disease measurement only. To keep the fixture, derive it, then import the split again under a
+  new label.
 - **The preview** prints the counts, the generation definition and allocation, the split manifest
-  and the split's files by digest, the samples kept, what was verified, and the graph and dataset
-  record it binds, never a sample or a patient id. A split with no sample cannot be committed.
+  and the split's files by digest, the samples kept, what was verified, the functional gene
+  fixture kept (or why none is), and the graph and dataset record it binds, never a sample or a
+  patient id. A split with no sample cannot be committed.
 
 The server's lists (`GET /cohorts`) give a generated split with its kind, role and counts, never a
 sample; the Test page lists it by label, kind and role ("a generated split (val)"), never with a
@@ -1409,17 +1422,38 @@ supplied cohort's counts. It is never presented as a supplied cohort, or
 as test unless its role is test: the Diagnosis route and `audit_split_overlap.py --cohort` refuse
 it with the registry's shared reason ("a generated split (val), not a supplied cohort version"),
 and the Diagnosis page's Reference cohort select lists it marked "generated split" and never
-chooses it by default. **This build lists and reads a registered generated split but does not
-measure one yet** (research comparison Stage 5): `measure_scorer.py --cohort`, the job runner and
-the Test page's Start naming one are refused with that sentence before anything is read, and the
-workspace's own split is measured with `--split` as before. Reports measured with `--split` are
-untouched: they stay where they were written, no identity is made up for them, and
+chooses it by default.
+
+**Measuring it** (since research comparison Stage 5b): `measure_scorer.py --mode <protocol>
+--cohort <label> --registry <registry>` measures a registered generated split by each task
+protocol the model's capabilities admit (disease, gene, patients_like_me), through the same
+evaluator `--split` uses, so the same model on the same split gives the same figures either way.
+Disease reads the version's `samples.json`; gene and patients-like-me read the fixture the version
+keeps; each file is read once and refused before it is parsed unless it is the bytes the version
+binds. A version that keeps no fixture, or whose fixture holds no row of its split, is refused
+for gene and patients-like-me with that stated data gap before anything is read, never for its
+role; the job runner and the Test page's Start say the same. The run is refused, with nothing
+written, where it cannot be valid: a version file that is not the bytes the version binds, or a
+`cohort.json` that contradicts them; a version of another graph than the workspace and the
+model; a protocol the model's capabilities or the data kind do not take; and
+`--training-evidence` (R10 is a supplied cohort's; a generated split's relation to training is
+its disease allocation's). Its report is kept in the version's report store like any version's,
+each run in a new run directory (`ranks.json`, then `report.json`), never overwriting one. The
+manifest records `cohort_kind` `generated`, the version's block (its role as recorded, train or
+val today, its generation identity and the fixture it keeps) and the role as `split`; there is no
+R10, and the role is never presented as test. This revision's ledger does not record such a run
+yet (research comparison Stage 6): no registration is offered, and `--record` keeps the report and
+exits 3 saying so. A generated test role cannot be imported today, so none is measured. The job
+runner passes the deployment's `--training-evidence` directories to every run; with
+`SHEPHERD_TRAINING_EVIDENCE_DIRS` set, a Test-page run on a generated split is refused after it starts,
+as one on a KG edge set is (Stage 7 chooses the evidence by data kind). Reports measured with
+`--split` are untouched: they stay where they were written, no identity is made up for them, and
 `record_evaluation.py` still refuses to register them.
 
 **Moving a registry.** No version records a path: each names what it depends on by content (the
 graph's four digests, the dataset record and each source it names by role, and by kind the view,
-split, pairs and checkpoint of a KG edge set, or the split manifest, split files and samples of a
-generated split). A registry copied or moved to another directory that `--registry` or
+split, pairs and checkpoint of a KG edge set, or the split manifest, split files, samples and
+any functional gene fixture of a generated split). A registry copied or moved to another directory that `--registry` or
 `SHEPHERD_REGISTRY` then names reads the same versions under the same digests; which directory is
 allowed is that setting's rule, apart from the content check. No command or page shows whether
 a version's dependencies are present yet: the registry's library check (`check_references`)

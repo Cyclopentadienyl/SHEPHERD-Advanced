@@ -1603,6 +1603,8 @@ run 目錄）在寫入任何東西、或從中讀取版本之前，都會再解�
   versions/<label>/samples.json          對應後的樣本（generated split 則為 workspace 的檔案），由 cohort.json 的 digest 綁定
   versions/<label>/pairs.bin             KG 邊集合以此取代樣本（見下文），以同樣方式綁定
   versions/<label>/split_manifest.json   generated split 保存的 workspace split manifest 副本（見下文），以同樣方式綁定
+  versions/<label>/task_fixture.json     generated split 保存的 workspace gene fixture record 副本（若有保存，見下文），以同樣方式綁定
+  versions/<label>/task_fixture_samples.json   該 fixture 在此 split 上的列，以同樣方式綁定
   versions/<label>/reports/<run id>/     每次量測一個目錄：先 ranks.json（KG 邊集合的執行為 scores.bin），再 report.json
 ```
 
@@ -1755,24 +1757,49 @@ python scripts/import_cohort.py --kind generated --registry /srv/shepherd/cohort
   `split_manifest.json`（只有 digest 與計數，沒有樣本），由它自己的 digest 綁定，因此
   workspace 重建或重新抽樣之後它仍可讀取、可驗證，產生定義也包括在內；workspace 是否仍持有該
   split，則成為一個參照的狀態，而不是讀取版本的條件。
+- **功能性 gene fixture 隨版本一起保存**（自 research comparison Stage 5b 起）。當 workspace 持有
+  其 build 的 gene 任務功能性 fixture（`derived/gene_fixture/`，`scripts/derive_task_fixture.py`），
+  且其 record 描述的正是所保存的 split（相同的 split manifest、圖與樣本）時，版本會把 record 保存為
+  `task_fixture.json`、把該 role 的列保存為 `task_fixture_samples.json`，兩者都逐位元組保存並以
+  digest 綁定，附一個 `task_fixture` 區塊（其規則、seed、distractors，以及推導對該 split 做了什麼）
+  與一個計數出的 `task_fixture_samples`。缺少、屬於另一個 build 或無法讀取的 fixture 不會被保存，
+  也不會拒絕匯入：預覽會說明原因，該版本只供 disease 量測使用。要保存 fixture，請先推導它，再以新的
+  label 重新匯入該 split。
 - **預覽**會印出計數、產生定義與分配、split manifest 與各 split 檔的 digest、保存的樣本、驗證
-  了什麼，以及所綁定的圖與 dataset record，絕不印出任何樣本或病人 id。沒有樣本的 split 無法
-  提交。
+  了什麼、所保存的功能性 gene fixture（或未保存的原因），以及所綁定的圖與 dataset record，絕不
+  印出任何樣本或病人 id。沒有樣本的 split 無法提交。
 
 伺服器的清單（`GET /cohorts`）會列出 generated split，附其 kind、role 與計數，絕不列出樣本；
 Test 頁以 label、kind 與 role 列出它（"a generated split (val)"），絕不使用 supplied cohort 的
 計數。它絕不會被呈現為 supplied cohort，除非 role 是 test 也不會被呈現為 test：Diagnosis 路由
 與 `audit_split_overlap.py --cohort` 以 registry 的共用理由拒絕它
 （"a generated split (val), not a supplied cohort version"），Diagnosis 頁的 Reference cohort
-選單會列出它並標上 "generated split"，但絕不預設選它。**這個 build 會列出並讀取已登錄的
-generated split，但還不會量測它**（research comparison Stage 5）：指名它的
-`measure_scorer.py --cohort`、job runner 與 Test 頁的 Start，都會在讀取任何東西之前以該句話被
-拒絕；workspace 自己的 split 仍照舊以 `--split` 量測。以 `--split` 量測的報告維持原狀：它們留在
-寫出的位置，不會為它們捏造任何身分，`record_evaluation.py` 也仍然拒絕登錄它們。
+選單會列出它並標上 "generated split"，但絕不預設選它。
+
+**量測它**（自 research comparison Stage 5b 起）：`measure_scorer.py --mode <protocol> --cohort
+<label> --registry <registry>` 以模型能力所允許的每個任務 protocol（disease、gene、
+patients_like_me）量測已登錄的 generated split，使用的是 `--split` 所用的同一個 evaluator，因此
+同一個模型在同一個 split 上，兩種方式得到相同的數字。disease 讀取版本的 `samples.json`；gene 與
+patients-like-me 讀取版本保存的 fixture；每個檔案只讀取一次，且除非它正是版本所綁定的位元組，否則
+在解析之前就被拒絕。沒有保存 fixture、或其 fixture 在該 split 上沒有任何列的版本，在讀取任何東西
+之前就以這個已說明的資料缺口拒絕 gene 與 patients-like-me，絕不是因為它的 role；job runner 與 Test
+頁的 Start 也說同一句話。只在執行不可能有效時拒絕，且不寫入任何東西：版本檔案不是版本所綁定的
+位元組，或 `cohort.json` 與其矛盾；版本屬於與 workspace 及模型不同的圖；模型能力或資料種類不接受
+的 protocol；以及 `--training-evidence`（R10 屬於 supplied cohort；generated split 與訓練的關係是其
+疾病分配）。它的報告與任何版本一樣保存在該版本的 report store，每次執行一個新的 run 目錄
+（`ranks.json`，然後 `report.json`），絕不覆寫。manifest 記錄 `cohort_kind` `generated`、版本的
+區塊（其記錄的 role，目前為 train 或 val、其產生身分，以及它保存的 fixture），並以 role 作為
+`split`；沒有 R10，role 也絕不被呈現為 test。本修訂版的 ledger 還不記錄這樣的執行（research
+comparison Stage 6）：不提供登錄，`--record` 會保存報告並以 3 結束並說明原因。目前無法匯入
+generated test role，因此不會量測任何 test role。job runner 會把部署的 `--training-evidence` 目錄
+傳給每次執行；設定了 `SHEPHERD_TRAINING_EVIDENCE_DIRS` 時，Test 頁在 generated split 上的執行會在
+開始後被拒絕，與 KG 邊集合相同（Stage 7 會依資料種類選擇證據）。以 `--split` 量測的報告維持原狀：
+它們留在寫出的位置，不會為它們捏造任何身分，`record_evaluation.py` 也仍然拒絕登錄它們。
 
 **搬移 registry。**沒有任何版本記錄路徑：每個版本都以內容指名它所依賴的東西（圖的四個
 digest、dataset record 與它依角色列出的每個來源，以及依 kind 而定的：KG 邊集合的 view、
-split、配對與 checkpoint，或 generated split 的 split manifest、split 檔與樣本）。複製或搬移到
+split、配對與 checkpoint，或 generated split 的 split manifest、split 檔、樣本與其保存的功能性
+gene fixture）。複製或搬移到
 另一個目錄、並由 `--registry` 或 `SHEPHERD_REGISTRY` 指名的 registry，會以相同的 digest 讀到
 相同的版本；哪個目錄被允許是該設定的規則，與內容檢查分開。目前還沒有任何指令或頁面顯示版本的
 依賴是否存在：registry 的函式庫檢查（`check_references`）把每個依賴給成一個狀態（verified、

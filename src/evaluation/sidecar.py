@@ -139,7 +139,8 @@ LEDGER_FILENAME = "evaluations.json"
 
 #: The data kinds whose runs this revision's ledger records (`build_record`):
 #: a supplied cohort version's only. A run on another registered kind (a KG
-#: edge set's link-prediction run) is kept in its version's report store and
+#: edge set's link-prediction run; a registered generated split's task run,
+#: research comparison Stage 5b) is kept in its version's report store and
 #: not recorded yet; making the record per kind is research comparison §5
 #: Stage 6. `scripts/measure_scorer.py` reads it so that it never offers a
 #: registration this revision would refuse for certain.
@@ -625,8 +626,9 @@ def build_record(report: Dict[str, Any], source_digest: str) -> Dict[str, Any]:
     (policy rev 16): its report and ranks stay at `--output`, and extending the
     ledger to them is later work. A run on a registered version of a kind
     outside `LEDGER_KINDS` (a KG edge set's link-prediction run, research
-    comparison Stage 5) is refused as one this revision's ledger does not
-    record yet; its report stays in its version's report store. A report whose relation states are not a registered result's is refused too;
+    comparison Stage 5; a registered generated split's task run, Stage 5b) is
+    refused as one this revision's ledger does not record yet; its report
+    stays in its version's report store. A report whose relation states are not a registered result's is refused too;
     the measurement cannot write one, so such a file was edited or is not a
     report. Every refusal is a ``ValueError`` naming what is wrong — never a
     ``KeyError`` or ``TypeError`` from a file of the wrong shape.

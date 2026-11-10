@@ -108,13 +108,14 @@ SPLIT_ARGUMENT_HELP = (
 
 #: The full `--cohort` help text: a registered test cohort version (contract M4).
 COHORT_ARGUMENT_HELP = (
-    "The label of a registered test cohort version to measure "
-    "(scripts/import_cohort.py), with --registry. Its samples are read once and "
-    "must be the bytes its cohort.json binds, and the version must have been mapped "
-    "against this workspace's graph and dataset record, or the run is refused "
-    "before the checkpoint is read. The report is kept in the registry's report "
-    "store, <registry>/versions/<label>/reports/<run id>/, so --output does not "
-    "apply. "
+    "The label of a registered data version to measure (scripts/import_cohort.py), "
+    "with --registry: a supplied test cohort version, a KG edge set, or a generated "
+    "split kept from a workspace, measured under its role as recorded. Its data are "
+    "read once and must be the bytes its cohort.json binds, and the version must "
+    "have been made against this workspace's graph and dataset record, or the run "
+    "is refused before the checkpoint is read. The report is kept in the "
+    "registry's report store, <registry>/versions/<label>/reports/<run id>/, so "
+    "--output does not apply. "
     + SUPPLIED_COHORT_OVERLAP
 )
 

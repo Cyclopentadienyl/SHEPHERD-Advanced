@@ -143,11 +143,21 @@ registered generated version, its generation definition included, is as
 immutable and verifiable as a supplied one, and the workspace's split is
 still named by content: whether the workspace still holds it is a
 reference's state (`check_references`), not a condition of reading the
-version. Archived reports measured with
+version. **The functional gene fixture** (`src.kg.task_fixture`) is kept the
+same way when the workspace holds the fixture of its build for the role's
+split (research comparison Stage 5b): its record as written
+(``task_fixture.json``) and the role's rows (``task_fixture_samples.json``),
+each bound by digest, under a ``task_fixture`` block and a counted
+``task_fixture_samples``, so the gene and patients-like-me measurements read
+the split through the registry (`read_generated_task_fixture`). A workspace
+without one (absent, of another build, unreadable) still gives a version, one
+that keeps no fixture: those two measurements are then refused for that data
+gap, never for the role. ``measure_scorer --cohort`` measures a registered
+generated split (Stage 5b) by the protocols the model's capabilities admit,
+its report kept in the version's report store. Archived reports measured with
 ``--split`` are untouched: no identity is made up for them, and registering
-them stays refused (`src.evaluation.sidecar.build_record`). Measuring a
-registered generated split and registering that result are the research
-comparison's Stages 5 and 6.
+them stays refused (`src.evaluation.sidecar.build_record`). Registering a
+result on a registered generated split is the research comparison's Stage 6.
 
 **Content references** (E3). Every version records what it depends on by
 content identity, never by path: `version_references` names each reference
@@ -260,6 +270,12 @@ VERSION_PAIRS = "pairs.bin"
 #: generation definition, allocation and realised sets were copied from, bound
 #: by its manifest.
 VERSION_SPLIT_MANIFEST = "split_manifest.json"
+#: A generated split's copy of the workspace's functional gene fixture
+#: (`src.kg.task_fixture`), kept when the workspace holds the fixture of its
+#: build: the record as written, and the role's rows as written, each bound by
+#: its manifest (research comparison Stage 5b).
+VERSION_TASK_FIXTURE = "task_fixture.json"
+VERSION_TASK_FIXTURE_SAMPLES = "task_fixture_samples.json"
 SOURCES_DIR = "sources"
 VERSIONS_DIR = "versions"
 REPORTS_DIR = "reports"
@@ -360,12 +376,25 @@ GENERATED_COUNT_UNITS: Dict[str, str] = {
     "diseases": "distinct diseases among those patients (the split's realised disease set)",
 }
 
+#: The count a generated split's counts hold beside `GENERATED_COUNT_UNITS`
+#: when, and only when, the version keeps the functional gene fixture
+#: (``task_fixture``), with its unit: the fixture's rows of the role's split,
+#: what the gene and patients-like-me measurements score. Named once here and
+#: in `src.evaluation.protocols` (pinned equal), which judges a version by it.
+GENERATED_FIXTURE_COUNT = "task_fixture_samples"
+GENERATED_FIXTURE_COUNT_UNIT = (
+    "functional gene fixture rows of the role's split: its patients whose disease has a gene "
+    "in the graph, each given one causal gene drawn from that disease's genes and distractor "
+    "candidates by the fixture's rule; the cases the gene and patients-like-me measurements "
+    "score")
+
 #: What `cohort_version_block` gives for a generated split, exactly:
-#: aggregates and digests, never a sample.
+#: aggregates and digests, never a sample. ``task_fixture`` is the version's
+#: fixture block, or None for a version that keeps none.
 GENERATED_BLOCK_FIELDS: Tuple[str, ...] = (
     "label", "role", "kind", "manifest_sha256", "graph", "dataset_record_sha256",
     "samples_sha256", "split_manifest", "split_artifacts", "generation", "allocation",
-    "counts", "count_units",
+    "counts", "count_units", "task_fixture",
 )
 
 
@@ -497,7 +526,11 @@ class ImportPlan(NamedTuple):
     workspace's samples file, the bytes its split manifest binds, and
     `split_manifest_bytes` that split manifest (`VERSION_SPLIT_MANIFEST`), the
     bytes the version's generation definition, allocation and realised sets
-    were copied from.
+    were copied from. When the workspace holds the functional gene fixture of
+    its build, `task_fixture_bytes` are its record and
+    `task_fixture_samples_bytes` the role's rows (`VERSION_TASK_FIXTURE`,
+    `VERSION_TASK_FIXTURE_SAMPLES`); when it does not, both are None and
+    `task_fixture_note` says why none is kept, for the preview.
     """
 
     label: str
@@ -509,6 +542,9 @@ class ImportPlan(NamedTuple):
     samples_bytes: Optional[bytes]
     pairs_bytes: Optional[bytes] = None
     split_manifest_bytes: Optional[bytes] = None
+    task_fixture_bytes: Optional[bytes] = None
+    task_fixture_samples_bytes: Optional[bytes] = None
+    task_fixture_note: Optional[str] = None
 
     @property
     def kind(self) -> Optional[str]:
@@ -1544,6 +1580,7 @@ def build_generated_manifest(
     verified: Any,
     samples_sha256: str,
     n_samples: int,
+    task_fixture: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     """A generated split's manifest (schema 2) without its ``imported`` block.
 
@@ -1564,7 +1601,21 @@ def build_generated_manifest(
     as it is, and the reader refuses a version whose count is not it
     (`_generated_shape_problems`). Aggregates and digests only: no sample,
     and no path.
+
+    **The functional gene fixture, when kept** (`task_fixture`, the block
+    `_task_fixture_block` built from the workspace's fixture record): the
+    block, and the count of its rows (`GENERATED_FIXTURE_COUNT`, with its
+    unit) beside the two counts above. Without one the manifest has neither,
+    the shape every generated version had before (research comparison
+    Stage 5b).
     """
+    counts = {"samples": int(n_samples), "diseases": len(verified.disease_sets[role])}
+    units = dict(GENERATED_COUNT_UNITS)
+    kept: Dict[str, Any] = {}
+    if task_fixture is not None:
+        kept["task_fixture"] = copy.deepcopy(dict(task_fixture))
+        counts[GENERATED_FIXTURE_COUNT] = int(task_fixture["samples"]["n"])
+        units[GENERATED_FIXTURE_COUNT] = GENERATED_FIXTURE_COUNT_UNIT
     return {
         "schema_version": KINDED_SCHEMA_VERSION,
         "kind": GENERATED,
@@ -1580,9 +1631,65 @@ def build_generated_manifest(
         "verified": {"splits": list(verified.verified),
                      "disjointness_measured": bool(verified.disjointness_measured)},
         "samples": {"file": VERSION_SAMPLES, "sha256": samples_sha256, "n": int(n_samples)},
-        "counts": {"samples": int(n_samples), "diseases": len(verified.disease_sets[role])},
-        "count_units": dict(GENERATED_COUNT_UNITS),
+        **kept,
+        "counts": counts,
+        "count_units": units,
     }
+
+
+def _task_fixture_block(record: Mapping[str, Any], record_sha256: str,
+                        role: str) -> Dict[str, Any]:
+    """A generated split version's ``task_fixture`` block, taken from the
+    fixture record (`src.kg.task_fixture.parse_fixture_record`'s parse) whose
+    bytes have `record_sha256`: what the fixture is (its kind, label, rule,
+    seed and distractors, as recorded), what it did to the role's split (its
+    derivation counts), the record kept as ``task_fixture.json`` by its digest
+    and schema, and the role's rows kept as ``task_fixture_samples.json`` by
+    the digest and row count the record names. Values the record does not hold
+    are None, which the reader refuses (`_task_fixture_shape_problems`).
+    Aggregates and digests only: no row and no path."""
+    files = record.get("files") if isinstance(record.get("files"), Mapping) else {}
+    entry = files.get(role) if isinstance(files.get(role), Mapping) else {}
+    counts = record.get("counts") if isinstance(record.get("counts"), Mapping) else {}
+    return {
+        "kind": record.get("kind"),
+        "label": record.get("label"),
+        "rule": record.get("rule"),
+        "seed": record.get("seed"),
+        "distractors": record.get("distractors"),
+        "derivation": copy.deepcopy(counts.get(role)),
+        "record": {"file": VERSION_TASK_FIXTURE, "sha256": record_sha256,
+                   "schema_version": record.get("schema_version")},
+        "samples": {"file": VERSION_TASK_FIXTURE_SAMPLES, "sha256": entry.get("sha256"),
+                    "n": entry.get("rows")},
+    }
+
+
+def _task_fixture_unbound(record: Mapping[str, Any], *, role: str, kg: Any,
+                          split_manifest_sha256: Any, samples_sha256: Any) -> List[str]:
+    """How the fixture record does not describe the split a generated version
+    keeps, or nothing: the record must name the version's split manifest, its
+    graph (``kg``) and the role's samples as the samples it derived from, and
+    the role's rows by the file name the derivation writes
+    (``<role>_samples.json``, `src.kg.task_fixture.publish_gene_fixture`), a
+    SHA-256 and a row count. The import keeps a fixture only when nothing is
+    listed; the version's reader refuses a kept record that lists anything."""
+    workspace = record.get("workspace") if isinstance(record.get("workspace"), Mapping) else {}
+    samples = workspace.get("samples") if isinstance(workspace.get("samples"), Mapping) else {}
+    files = record.get("files") if isinstance(record.get("files"), Mapping) else {}
+    entry = files.get(role) if isinstance(files.get(role), Mapping) else {}
+    problems = []
+    if workspace.get("split_manifest") != split_manifest_sha256:
+        problems.append("it was derived from another split manifest")
+    if workspace.get("kg") != kg:
+        problems.append("it names another graph (kg)")
+    if samples.get(role) != samples_sha256:
+        problems.append(f"it was derived from other {role} samples than the version keeps")
+    if not (entry.get("name") == f"{role}_samples.json" and _is_sha(entry.get("sha256"))
+            and _is_count(entry.get("rows"))):
+        problems.append(f"its {role} file is not named {role}_samples.json with a sha256 and a "
+                        "row count")
+    return problems
 
 
 def prepare_generated_import(
@@ -1608,10 +1715,17 @@ def prepare_generated_import(
     4. the generator's splits, one read each (`read_samples`), against that
        one manifest reading (`verify_cohort_reads`: their digests, disease
        sets and disjointness);
-    5. the role's file and the split manifest read once more for their bytes,
-       each of which must hash to the digest just verified (the samples
-       `read_samples` parsed, the split manifest `read_split_manifest`
-       parsed), so the bytes kept are the bytes verified;
+    4a. the workspace's functional gene fixture of the role's split, when it
+       holds one of this build that describes the split
+       (`_workspace_task_fixture`): kept with the version, so the gene and
+       patients-like-me measurements read the split through the registry.
+       A fixture that is absent, of another build or unreadable is not kept
+       and refuses nothing (the plan's ``task_fixture_note`` says why);
+    5. the role's file, the split manifest and the fixture's two files, when
+       kept, read once more for their bytes, each of which must hash to the
+       digest just verified (the samples `read_samples` parsed, the split
+       manifest `read_split_manifest` parsed, the fixture's record and rows
+       their readers parsed), so the bytes kept are the bytes verified;
     6. the version as the reader reads it (`_generated_shape_problems`): a
        split manifest that names a split file by anything but a split's name,
        states no generation definition, or counts the role's realised
@@ -1673,12 +1787,15 @@ def prepare_generated_import(
     verified_sha256 = reads[role].identity.sha256
     n_samples = len(reads[role].samples)
     del reads
+    fixture, fixture_files, fixture_note = _workspace_task_fixture(
+        data_dir, manifest.identity.sha256, bound["kg"], role, verified_sha256)
 
     # The bytes kept are the bytes verified: each file is read once more and
     # kept only when it hashes to the digest of the read that was parsed.
     kept = {}
     for name, verified_digest in ((f"{role}_samples.json", verified_sha256),
-                                  (MANIFEST_FILENAME, manifest.identity.sha256)):
+                                  (MANIFEST_FILENAME, manifest.identity.sha256),
+                                  *fixture_files):
         read = read_once(data_dir / name)
         if read.sha256 != verified_digest:
             raise CohortVersionRefused(
@@ -1693,6 +1810,7 @@ def prepare_generated_import(
         label=label, role=role, bound=bound, dataset_record=dataset_record,
         split_manifest=manifest.manifest, split_manifest_sha256=manifest.identity.sha256,
         verified=verified, samples_sha256=samples.sha256, n_samples=n_samples,
+        task_fixture=fixture,
     )
     # The reader's rules, before anything is written: a split manifest the
     # verifiers passed but which names a split file by a path, states no
@@ -1705,8 +1823,81 @@ def prepare_generated_import(
             f"the workspace {data_dir}'s {MANIFEST_FILENAME} does not describe its {role} split "
             f"as a generated split version records it: {'; '.join(problems)}."
         )
+    # The fixture's record and the role's rows, as kept (none without a fixture).
+    record_bytes, rows_bytes = ([kept[name].data for name, _digest in fixture_files]
+                                or [None, None])
     return ImportPlan(label, role, version, preview_id(version), None, None, samples.data,
-                      split_manifest_bytes=kept[MANIFEST_FILENAME].data)
+                      split_manifest_bytes=kept[MANIFEST_FILENAME].data,
+                      task_fixture_bytes=record_bytes, task_fixture_samples_bytes=rows_bytes,
+                      task_fixture_note=fixture_note)
+
+
+def _workspace_task_fixture(
+    data_dir: Path, split_manifest_sha256: str, kg: str, role: str, samples_sha256: str,
+) -> Tuple[Optional[Dict[str, Any]], List[Tuple[str, str]], Optional[str]]:
+    """The workspace's functional gene fixture of the role's split, as a
+    generated split version keeps it (research comparison Stage 5b): its
+    ``task_fixture`` block (`_task_fixture_block`), the two files to keep
+    (the record and the role's rows, each by its path in the workspace and
+    the digest of the read that was parsed), and None; or no block, no file,
+    and why none is kept.
+
+    Read as a measurement of the workspace's split reads it: the record
+    through `read_fixture_record`, against this run's split manifest reading;
+    it must then describe the split the version keeps (`_task_fixture_unbound`:
+    the graph, the role's samples, the role's file by name, digest and rows);
+    the role's rows are read once against the digest the record names
+    (`read_samples_file`, with the gene fields) and must be as many as it
+    names. **A fixture that is absent, of another build or unreadable is not
+    kept, and never refuses the import**: the version still holds the role's
+    split, which the disease measurement reads; it then keeps no fixture, and
+    a measurement that needs one is refused with that data gap
+    (`src.evaluation.protocols`). The reason is the preview's to show."""
+    from src.kg.storage.file_storage import (
+        SamplesDigestMismatch,
+        UnparseableFile,
+        read_samples_file,
+    )
+    from src.kg.task_fixture import (
+        FIXTURE_DIR,
+        FIXTURE_RECORD,
+        TaskFixtureError,
+        fixture_dir,
+        read_fixture_record,
+    )
+
+    try:
+        record, identity = read_fixture_record(data_dir, manifest_sha256=split_manifest_sha256)
+    except TaskFixtureError as exc:
+        return None, [], f"{exc.state.replace('_', ' ')}: {exc}"
+    unbound = _task_fixture_unbound(record, role=role, kg=kg,
+                                    split_manifest_sha256=split_manifest_sha256,
+                                    samples_sha256=samples_sha256)
+    if unbound:
+        return None, [], (f"the workspace's fixture record does not describe the {role} split "
+                          f"this version keeps: {'; '.join(unbound)}")
+    entry = record["files"][role]
+    name = f"{FIXTURE_DIR.as_posix()}/{entry['name']}"
+    try:
+        rows = read_samples_file(fixture_dir(data_dir) / entry["name"], gene_fields=True,
+                                 expected_sha256=entry["sha256"])
+    except SamplesDigestMismatch as exc:
+        return None, [], f"the fixture's {role} file is not the one its record names: {exc}"
+    except (UnparseableFile, OSError) as exc:
+        return None, [], f"the fixture's {role} file cannot be read: {exc}"
+    if len(rows.samples) != entry["rows"]:
+        return None, [], (f"the fixture's {role} file holds {len(rows.samples)} rows, and its "
+                          f"record names {entry['rows']}")
+    block = _task_fixture_block(record, identity.sha256, role)
+    # The reader's rules for the block, so a record the version could not
+    # record as it is (a seed that is no whole number, no derivation counts)
+    # is not kept, rather than refusing the whole import.
+    problems = _task_fixture_shape_problems(block, None)
+    if problems:
+        return None, [], (f"the workspace's fixture record does not state what a version records "
+                          f"of it: {'; '.join(problems)}")
+    return (block, [(f"{FIXTURE_DIR.as_posix()}/{FIXTURE_RECORD}", identity.sha256),
+                    (name, rows.identity.sha256)], None)
 
 
 def _utc(now: datetime, pattern: str) -> str:
@@ -1763,8 +1954,10 @@ def commit_import(
     order: a supplied version's source is kept (no-clobber), the version
     directory is claimed with ``mkdir(exist_ok=False)``, its data files are
     published (``samples.json``, a supplied cohort's mapped samples; a KG edge
-    set's ``pairs.bin``; a generated split's ``split_manifest.json`` and
-    ``samples.json``, as the workspace held them), and
+    set's ``pairs.bin``; a generated split's ``split_manifest.json``, its
+    functional gene fixture's ``task_fixture.json`` and
+    ``task_fixture_samples.json`` when it keeps one, and ``samples.json``, as
+    the workspace held them), and
     ``cohort.json`` -- the commit point -- last, with the ``imported`` block
     (when, and `code_revision(REPO_ROOT)`, both taken before the first write).
     ``sources/``, ``versions/`` and, after the claim, the version directory are
@@ -1855,8 +2048,9 @@ def _plan_data_files(plan: ImportPlan, label: str) -> List[Tuple[str, bytes]]:
     A supplied version: its label, source and samples, and at least one case
     eligible for ranking. A KG edge set: its label and pairs, and at least one
     pair (a part none of whose edges has a negative would measure nothing). A
-    generated split: its label, split manifest and samples, and at least one
-    sample."""
+    generated split: its label, split manifest and samples, its functional
+    gene fixture's record and rows exactly when its manifest keeps one, and
+    at least one sample."""
     manifest = plan.manifest
     kind = plan.kind
     if kind == SUPPLIED:
@@ -1907,7 +2101,21 @@ def _plan_data_files(plan: ImportPlan, label: str) -> List[Tuple[str, bytes]]:
                 f"the workspace's generated {manifest['role']} split holds no sample, so the "
                 f"version {label!r} would measure nobody."
             )
-        return [(VERSION_SPLIT_MANIFEST, plan.split_manifest_bytes),
+        fixture = manifest.get("task_fixture")
+        fixture_bytes = (plan.task_fixture_bytes, plan.task_fixture_samples_bytes)
+        if (fixture is None and fixture_bytes != (None, None)) or (fixture is not None and (
+                None in fixture_bytes
+                or _sha256(plan.task_fixture_bytes) != fixture["record"]["sha256"]
+                or _sha256(plan.task_fixture_samples_bytes) != fixture["samples"]["sha256"])):
+            raise CohortVersionRefused(
+                f"the plan for {label!r} carries a functional gene fixture its manifest does not "
+                "bind, so it is not one prepare_generated_import made from one read of each "
+                "input."
+            )
+        kept_fixture = ([] if fixture is None else
+                        [(VERSION_TASK_FIXTURE, plan.task_fixture_bytes),
+                         (VERSION_TASK_FIXTURE_SAMPLES, plan.task_fixture_samples_bytes)])
+        return [(VERSION_SPLIT_MANIFEST, plan.split_manifest_bytes), *kept_fixture,
                 (VERSION_SAMPLES, plan.samples_bytes)]
     raise CohortVersionRefused(f"the plan for {label!r} is of kind {kind!r}, which this "
                                f"revision does not write ({', '.join(VERSION_KINDS)}).")
@@ -2270,7 +2478,11 @@ def _generated_shape_problems(manifest: Dict[str, Any]) -> List[str]:
     algorithm and its version) and the allocation, each an object; what each
     split realised, holding the role's disease count, which ``counts.diseases``
     is; what was verified; the samples (``samples.json``, a SHA-256 and a
-    count, which ``counts.samples`` is); and counts with their units."""
+    count, which ``counts.samples`` is); and counts with their units. The
+    functional gene fixture is optional (``task_fixture``, research comparison
+    Stage 5b): kept, its block is checked (`_task_fixture_shape_problems`) and
+    the counts and units hold its rows (`GENERATED_FIXTURE_COUNT`); not kept,
+    neither does."""
     problems = [f"missing {name}" for name in GENERATED_REQUIRED_FIELDS
                 if name not in manifest]
     if problems:
@@ -2325,7 +2537,12 @@ def _generated_shape_problems(manifest: Dict[str, Any]) -> List[str]:
         problems.append(f"samples.sha256 is not split_artifacts.{role}_samples: the samples are "
                         "the file the workspace's split manifest binds")
 
-    keys = list(GENERATED_COUNT_UNITS)
+    # The fixture's count is there exactly when the version keeps the fixture
+    # (a version without one has the shape every generated version had
+    # before research comparison Stage 5b).
+    fixture = manifest.get("task_fixture")
+    keys = list(GENERATED_COUNT_UNITS) + ([GENERATED_FIXTURE_COUNT] if fixture is not None
+                                          else [])
     units = manifest["count_units"]
     if not (isinstance(units, dict) and set(units) == set(keys)
             and all(isinstance(u, str) and u for u in units.values())):
@@ -2334,6 +2551,7 @@ def _generated_shape_problems(manifest: Dict[str, Any]) -> List[str]:
     if not (isinstance(counts, dict) and set(counts) == set(keys)
             and all(_is_count(counts[key]) for key in keys)):
         problems.append(f"counts must hold a whole number of at least 0 for exactly {keys}")
+        counts = None
     else:
         if _is_count(n) and counts["samples"] != n:
             problems.append(f"counts.samples ({counts['samples']}) is not samples.n ({n})")
@@ -2341,8 +2559,50 @@ def _generated_shape_problems(manifest: Dict[str, Any]) -> List[str]:
             problems.append(f"counts.diseases ({counts['diseases']}, the distinct diseases "
                             f"among the samples) is not realised.{role}_diseases "
                             f"({realised.get(f'{role}_diseases')!r})")
+    if "task_fixture" in manifest:
+        problems += _task_fixture_shape_problems(fixture, counts)
     if not isinstance(manifest["imported"], dict):
         problems.append("imported must be an object")
+    return problems
+
+
+def _task_fixture_shape_problems(fixture: Any, counts: Optional[Dict[str, Any]]) -> List[str]:
+    """What a reader relies on in a generated split's ``task_fixture`` block
+    (`_task_fixture_block`), each problem naming its field: the fixture's
+    kind, label and rule as text, its seed and distractors as whole numbers,
+    its derivation as an object, the record kept as ``task_fixture.json``
+    with a SHA-256 and its schema, and the role's rows kept as
+    ``task_fixture_samples.json`` with a SHA-256 and a count n, which
+    ``counts.task_fixture_samples`` is."""
+    from src.kg.task_fixture import FIXTURE_KIND
+
+    if not isinstance(fixture, dict):
+        return ["task_fixture must be an object"]
+    problems = []
+    if fixture.get("kind") != FIXTURE_KIND:
+        problems.append(f"task_fixture.kind must be {FIXTURE_KIND!r}")
+    for field in ("label", "rule"):
+        if not (isinstance(fixture.get(field), str) and fixture[field]):
+            problems.append(f"task_fixture.{field} must be text")
+    for field in ("seed", "distractors"):
+        if not _is_whole(fixture.get(field)):
+            problems.append(f"task_fixture.{field} must be a whole number")
+    if not isinstance(fixture.get("derivation"), dict):
+        problems.append("task_fixture.derivation must be an object")
+    record = fixture.get("record")
+    if not (isinstance(record, dict) and record.get("file") == VERSION_TASK_FIXTURE
+            and _is_sha(record.get("sha256")) and _is_whole(record.get("schema_version"))):
+        problems.append(f"task_fixture.record must hold the file {VERSION_TASK_FIXTURE}, a "
+                        "sha256 and its schema_version")
+    rows = fixture.get("samples")
+    n = rows.get("n") if isinstance(rows, dict) else None
+    if not (isinstance(rows, dict) and rows.get("file") == VERSION_TASK_FIXTURE_SAMPLES
+            and _is_sha(rows.get("sha256")) and _is_count(n)):
+        problems.append(f"task_fixture.samples must hold the file {VERSION_TASK_FIXTURE_SAMPLES}, "
+                        "a sha256 and a count n")
+    elif counts is not None and counts[GENERATED_FIXTURE_COUNT] != n:
+        problems.append(f"counts.{GENERATED_FIXTURE_COUNT} ({counts[GENERATED_FIXTURE_COUNT]}) "
+                        f"is not task_fixture.samples.n ({n})")
     return problems
 
 
@@ -2544,6 +2804,127 @@ def read_kg_edge_pairs(version: CohortVersionRead) -> KgEdgePairsRead:
     return KgEdgePairsRead(pairs, identity)
 
 
+def read_generated_task_fixture(version: CohortVersionRead) -> Any:
+    """A generated split version's functional gene fixture, read through the
+    registry (research comparison Stage 5b): what the gene and
+    patients-like-me measurements score on it, as they score the workspace's
+    fixture of a ``--split`` run (`src.kg.task_fixture.read_gene_fixture`).
+
+    **Each digest is of the bytes parsed, compared before they are**: the
+    kept record (``task_fixture.json``) is read once, its digest compared with
+    the one the version binds, and only then parsed by the record's one parser
+    (`parse_fixture_record`), against the split manifest the version keeps;
+    the version's copies of it must be the record's, and the record must
+    describe the split the version keeps (`_task_fixture_differs`). The role's
+    rows (``task_fixture_samples.json``) are read once against the digest the
+    version binds (`read_samples_file`, with the gene fields), and must be as
+    many as it records. Nothing is rebuilt or read from a workspace.
+
+    Returns:
+        A `GeneFixtureRead`: the role's rows by its role, the record, and the
+        identity of the record's bytes (the workspace record's own digest, as
+        the version kept it byte for byte).
+
+    Raises:
+        CohortVersionRefused: the version is not a generated split keeping a
+            fixture, or a kept file is missing, is not the bytes it binds,
+            does not parse, or is not what the version records of it.
+        RegistryRefused: the version directory resolves into the repository.
+    """
+    from src.kg.storage.file_storage import SamplesDigestMismatch, read_samples_file
+    from src.kg.task_fixture import GeneFixtureRead, TaskFixtureError, parse_fixture_record
+    from src.utils.fingerprint import read_once
+
+    manifest = version.manifest
+    block = manifest.get("task_fixture") if version.kind == GENERATED else None
+    if not isinstance(block, dict):
+        raise CohortVersionRefused(
+            f"{version.identity.path} is {version_words(version.kind, manifest.get('role'))} "
+            "that keeps no functional gene fixture."
+        )
+    directory = _registry_directory(version.directory, within=None, done="Nothing was read.")
+    path = directory / VERSION_TASK_FIXTURE
+    try:
+        read = read_once(path)
+    except FileNotFoundError:
+        raise CohortVersionRefused(
+            f"{path} is missing, though {version.identity.path} binds it: the version's "
+            "functional gene fixture cannot be read."
+        ) from None
+    identity = read.identity
+    if identity.sha256 != block["record"]["sha256"]:
+        del read
+        raise CohortVersionRefused(
+            f"{path} is not the fixture record {version.identity.path} binds (its bytes are "
+            f"{identity.sha256[:12]}..., the version binds {block['record']['sha256'][:12]}...): "
+            "it was changed after the import, so it is not read."
+        )
+    try:
+        record = parse_fixture_record(read.data, path,
+                                      manifest_sha256=manifest["split_manifest"]["sha256"])
+    except TaskFixtureError as exc:
+        raise CohortVersionRefused(
+            f"{path} is not a fixture record of the split manifest {version.identity.path} "
+            f"keeps ({exc.state.replace('_', ' ')}): {exc}"
+        ) from None
+    finally:
+        del read
+    differ = _task_fixture_differs(manifest, record)
+    if differ:
+        raise CohortVersionRefused(
+            f"{version.identity.path} does not record the functional gene fixture it keeps: "
+            f"{'; '.join(differ)}. The version was edited after the import."
+        )
+    rows_path = directory / VERSION_TASK_FIXTURE_SAMPLES
+    try:
+        rows = read_samples_file(rows_path, gene_fields=True,
+                                 expected_sha256=block["samples"]["sha256"])
+    except SamplesDigestMismatch as exc:
+        raise CohortVersionRefused(
+            f"{rows_path} is not the fixture rows {version.identity.path} binds (its bytes are "
+            f"{exc.sha256[:12]}..., the version binds {block['samples']['sha256'][:12]}...): it "
+            "was changed after the import, and its bytes were not parsed."
+        ) from None
+    except FileNotFoundError:
+        raise CohortVersionRefused(
+            f"{rows_path} is missing, though {version.identity.path} binds it: the version's "
+            "functional gene fixture cannot be read."
+        ) from None
+    if len(rows.samples) != block["samples"]["n"]:
+        raise CohortVersionRefused(
+            f"{rows_path} holds {len(rows.samples)} rows, and {version.identity.path} records "
+            f"{block['samples']['n']}: the version was edited after the import."
+        )
+    return GeneFixtureRead({manifest["role"]: rows}, record, identity)
+
+
+def _task_fixture_differs(manifest: Mapping[str, Any], record: Mapping[str, Any]) -> List[str]:
+    """How a generated version's ``task_fixture`` block is not its kept
+    record's (`record`, already parsed from bytes compared with the digest the
+    block binds), each said as a phrase, or nothing: each of the block's
+    fields against the same block built from the record
+    (`_task_fixture_block`), and whether the record still describes the split
+    the version keeps (`_task_fixture_unbound`). None differ for a version as
+    `prepare_generated_import` made it, which built the block from that
+    record's parse; one that differs was edited after the import."""
+    block = manifest.get("task_fixture")
+    block = block if isinstance(block, Mapping) else {}
+    role = manifest.get("role")
+    kept = block.get("record") if isinstance(block.get("record"), Mapping) else {}
+    rebuilt = _task_fixture_block(record, kept.get("sha256"), role)
+    differ = [f"its task_fixture.{key} is not the kept record's" for key in rebuilt
+              if rebuilt[key] != block.get(key)]
+
+    def field(name: str) -> Any:
+        value = manifest.get(name)
+        return value.get("sha256") if isinstance(value, Mapping) else None
+
+    graph = manifest.get("graph") if isinstance(manifest.get("graph"), Mapping) else {}
+    return differ + [f"the kept record: {problem}" for problem in _task_fixture_unbound(
+        record, role=role, kg=graph.get("kg"), split_manifest_sha256=field("split_manifest"),
+        samples_sha256=field("samples"))]
+
+
 # ---------------------------------------------------------------------------
 # Listing the registry (M5-1)
 # ---------------------------------------------------------------------------
@@ -2740,9 +3121,10 @@ def cohort_version_block(version: CohortVersionRead) -> Dict[str, Any]:
     split's (`GENERATED_BLOCK_FIELDS`) names its kind and role, the manifest
     digest, the graph and dataset record digests, the samples' digest, the
     split manifest and the split's files by digest, the generation definition
-    and allocation, and the counts with their units: never a sample. What a
-    measurement of either records, and what a registration compares, is
-    Stage 5's and 6's (research comparison §5).
+    and allocation, the counts with their units, and the functional gene
+    fixture it keeps (its block; None when it keeps none): never a sample. A
+    measurement of either records it in its manifest (research comparison §5
+    Stage 5); what a registration compares by kind is Stage 6's.
 
     Raises:
         CohortVersionRefused: the manifest does not state its source format,
@@ -2774,6 +3156,9 @@ def cohort_version_block(version: CohortVersionRead) -> Dict[str, Any]:
             **{key: copy.deepcopy(manifest[key]) for key in (
                 "split_manifest", "split_artifacts", "generation", "allocation", "counts",
                 "count_units")},
+            # The functional gene fixture it keeps, or None (research
+            # comparison Stage 5b): a version without one reads as it did.
+            "task_fixture": copy.deepcopy(manifest.get("task_fixture")),
         }
     source_format = manifest["source"].get("format")
     if not isinstance(source_format, str) or not source_format:
@@ -2881,8 +3266,10 @@ def version_references(version: Any) -> Tuple[ContentReference, ...]:
     - a generated split: the split manifest the version keeps
       (``split_manifest.json``, the workspace's, whose blocks the version
       copies), each split's samples file it binds (``split.<name>``, in the
-      workspace), and the samples the version keeps (``samples.json``, which
-      is the role's file of the workspace);
+      workspace), the samples the version keeps (``samples.json``, which
+      is the role's file of the workspace), and, when it keeps one, the
+      functional gene fixture's record and the role's rows
+      (``task_fixture.json``, ``task_fixture_samples.json``);
     - a supplied cohort: its case source, which the registry keeps
       (``sources/<sha256>.json``), and its mapped samples (``samples.json``).
     """
@@ -2933,6 +3320,18 @@ def version_references(version: Any) -> Tuple[ContentReference, ...]:
         refs.append(ContentReference("samples", f"the {manifest['role']} split's samples, kept "
                                      "in the version", manifest["samples"]["sha256"],
                                      IN_VERSION, VERSION_SAMPLES))
+        fixture = manifest.get("task_fixture")
+        if isinstance(fixture, Mapping):
+            refs += [
+                ContentReference("task_fixture", "the workspace's functional gene fixture "
+                                 "record, kept in the version: its rule, seed and derivation, "
+                                 "and the split manifest and samples it was derived from",
+                                 fixture["record"]["sha256"], IN_VERSION, VERSION_TASK_FIXTURE),
+                ContentReference("task_fixture.samples", f"the functional gene fixture's "
+                                 f"{manifest['role']} rows, kept in the version",
+                                 fixture["samples"]["sha256"], IN_VERSION,
+                                 VERSION_TASK_FIXTURE_SAMPLES),
+            ]
     else:
         sha = manifest["source"]["sha256"]
         refs += [
@@ -2966,7 +3365,10 @@ def check_references(
     blocks with the version's copies of them (`_split_manifest_copies_differ`:
     the generation definition, the allocation, the realised sets, the split's
     files and the schema), so the generation definition the version records
-    is checked against bytes it keeps, whatever became of the workspace.
+    is checked against bytes it keeps, whatever became of the workspace. **Its
+    kept fixture record** likewise (`_kept_fixture_differs`: the version's
+    ``task_fixture`` block against the record's one parse, and the record
+    against the split the version keeps).
 
     **A missing dependency is a state**, never an exception: a file that is
     not there is `MISSING`, one that cannot be read (a directory, a file this
@@ -3007,7 +3409,8 @@ def check_references(
         if path is None:
             states.append(ReferenceState(ref, NOT_CHECKED, None, unlocated))
             continue
-        copies = ref.kept == IN_VERSION and ref.file == VERSION_SPLIT_MANIFEST
+        # The kept files a version copies blocks from, compared twice.
+        copies = ref.kept == IN_VERSION and ref.file in _KEPT_COPIES
         data: Optional[bytes] = None
         try:
             if copies:
@@ -3024,12 +3427,15 @@ def check_references(
                 f"{exc.strerror or 'no reason given'})"), path))
             continue
         differ = ([] if data is None or found != ref.sha256
-                  else _split_manifest_copies_differ(version.manifest, data))
+                  else _KEPT_COPIES[ref.file](version.manifest, data))
         if found is None:
             states.append(ReferenceState(ref, MISSING, None, f"{where} is not there", path))
         elif found != ref.sha256:
             states.append(ReferenceState(ref, DIFFERS, found, (
                 f"{where} holds {found[:12]}..., not the {ref.sha256[:12]}... recorded"), path))
+        elif differ and ref.file == VERSION_TASK_FIXTURE:
+            states.append(ReferenceState(ref, DIFFERS, found, (
+                f"{where} holds the bytes recorded, but {'; '.join(differ)}"), path))
         elif differ:
             states.append(ReferenceState(ref, DIFFERS, found, (
                 f"{where} holds the bytes recorded, but the version's {', '.join(differ)} "
@@ -3069,6 +3475,33 @@ def _split_manifest_copies_differ(manifest: Mapping[str, Any], data: bytes) -> L
             "schema_version"),
     }
     return [name for name in copies if copies[name] != recorded[name] or not kept]
+
+
+def _kept_fixture_differs(manifest: Mapping[str, Any], data: bytes) -> List[str]:
+    """How a generated version's kept fixture record (`data`, its bytes,
+    already compared with their recorded digest) is not what the version
+    records of it, each said as a phrase, or nothing: bytes the record's one
+    parser (`parse_fixture_record`) refuses against the split manifest the
+    version keeps, or a ``task_fixture`` block that is not that parse's
+    (`_task_fixture_differs`). None for a version as
+    `prepare_generated_import` made it."""
+    from src.kg.task_fixture import TaskFixtureError, parse_fixture_record
+
+    split_manifest = manifest.get("split_manifest")
+    try:
+        record = parse_fixture_record(
+            data, VERSION_TASK_FIXTURE, manifest_sha256=(
+                split_manifest.get("sha256") if isinstance(split_manifest, Mapping) else None))
+    except TaskFixtureError as exc:
+        return [f"they are not a fixture record of the split manifest the version keeps "
+                f"({exc.state.replace('_', ' ')})"]
+    return _task_fixture_differs(manifest, record)
+
+
+#: The files a generated version keeps whose blocks it copies, and how each
+#: kept copy is compared with the version's (`check_references`).
+_KEPT_COPIES = {VERSION_SPLIT_MANIFEST: _split_manifest_copies_differ,
+                VERSION_TASK_FIXTURE: _kept_fixture_differs}
 
 
 def is_run_id(name: Any) -> bool:
@@ -3159,6 +3592,8 @@ __all__ = [
     "GENERATED",
     "GENERATED_BLOCK_FIELDS",
     "GENERATED_COUNT_UNITS",
+    "GENERATED_FIXTURE_COUNT",
+    "GENERATED_FIXTURE_COUNT_UNIT",
     "GENERATED_REQUIRED_FIELDS",
     "GENERATED_ROLES",
     "GENERATED_WHAT_THIS_IS",
@@ -3211,6 +3646,9 @@ __all__ = [
     "VERSION_SAMPLES",
     "VERSION_SCHEMAS",
     "VERSION_SCHEMA_VERSION",
+    "VERSION_SPLIT_MANIFEST",
+    "VERSION_TASK_FIXTURE",
+    "VERSION_TASK_FIXTURE_SAMPLES",
     "WHAT_THIS_IS",
     "WorkspaceGraph",
     "build_generated_manifest",
@@ -3231,6 +3669,7 @@ __all__ = [
     "prepare_import",
     "prepare_kg_edges_import",
     "preview_id",
+    "read_generated_task_fixture",
     "read_kg_edge_pairs",
     "read_workspace_graph",
     "report_run_directory",

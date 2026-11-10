@@ -266,8 +266,9 @@ class CohortVersionItem:
     split's part), its counts (edges and pairs, the units in its manifest),
     graph and dataset record; no source, and never an edge. So is a generated
     split (`kind` ``generated``): its role (the split it is), its counts
-    (generated patients and diseases), graph and dataset record; no source,
-    and never a sample."""
+    (generated patients and diseases, and its functional gene fixture's rows
+    when it keeps one, which a gene-field protocol is judged by), graph and
+    dataset record; no source, and never a sample."""
 
     label: str
     manifest_sha256: Optional[str]

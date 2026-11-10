@@ -72,14 +72,30 @@ KG_EDGES = "kg_edges"
 #: pinned equal): a measurement of one records its version block.
 REGISTERED_KINDS = (SUPPLIED, KG_EDGES, GENERATED)
 
-#: The reason a registered generated split is not measured yet: the registry
-#: keeps and lists one (research comparison §5 Stage 4), and measuring it is
-#: the round's Stage 5. A stated capability gap, said before anything is read,
-#: never a judgment of its role; the workspace's own split is measured as
-#: before.
-GENERATED_VERSION_GAP = ("this build lists and reads a registered generated split but does not "
-                         "measure one yet; the workspace's own generated split is measured by "
-                         "the command line's --split.")
+#: The count a registered generated split's counts hold when it keeps the
+#: functional gene fixture of its split (`cohort_registry.GENERATED_FIXTURE_COUNT`,
+#: pinned equal): its rows, what a protocol with gene fields scores on it.
+GENERATED_FIXTURE_COUNT = "task_fixture_samples"
+
+
+def _fixture_gap(protocol: "Protocol", counts: Mapping[str, Any]) -> str:
+    """The data gap of a registered generated split that a protocol with gene
+    fields cannot measure (research comparison Stage 5b): it keeps no
+    functional gene fixture, or its fixture holds no row of its split. A gap
+    in that version's data, said before anything is read, never a judgment of
+    its role."""
+    if GENERATED_FIXTURE_COUNT not in counts:
+        return (f"this generated split version keeps no functional gene fixture, which the "
+                f"{protocol.name} measurement scores: a generated split's patients carry no genes "
+                "of their own, and the fixture gives each a causal gene drawn from its disease "
+                "and distractor candidates. That is a gap in this version's data, not a judgment "
+                "of its role: derive the fixture in its workspace "
+                "(scripts/derive_task_fixture.py), then keep the split again under a new label "
+                "(scripts/import_cohort.py --kind generated), which keeps the fixture with it.")
+    return (f"this generated split version's functional gene fixture holds no row of its split "
+            f"(none of its patients' diseases has a gene in the graph), so the {protocol.name} "
+            "measurement has no case to score. That is a gap in this version's data, not a "
+            "judgment of its role.")
 
 #: The task heads' scoring semantics, by task, as
 #: `src.models.bundle.capabilities.TASK_HEAD_SEMANTICS` states them.
@@ -127,12 +143,16 @@ class Protocol:
     #: The data kinds it measures.
     data_kinds: tuple[str, ...] = (GENERATED, SUPPLIED)
     #: Cases are read with their gene fields, and a generated split is measured
-    #: through the workspace's functional fixture.
+    #: through its functional fixture: the workspace's for its own split, the
+    #: one the version keeps for a registered generated split
+    #: (`GENERATED_FIXTURE_COUNT` above 0).
     gene_fields: bool = False
-    #: The counts a registered version must have above 0: a supplied cohort's
-    #: `counts["genes"]` entries (the importer writes them only for a source
-    #: that lists genes), a KG edge set's `counts["pairs"]` (`_NEED_COUNTS`).
-    #: A generated split has no counts; the run checks its fixture.
+    #: The counts a supplied cohort or a KG edge set must have above 0: a
+    #: supplied cohort's `counts["genes"]` entries (the importer writes them
+    #: only for a source that lists genes), a KG edge set's `counts["pairs"]`
+    #: (`_NEED_COUNTS`). A generated split is judged by its fixture instead
+    #: (`gene_fields`): the workspace's own split has no counts and the run
+    #: checks its fixture; a registered one counts its fixture's rows.
     needs: tuple[str, ...] = ()
 
 
@@ -340,12 +360,14 @@ def inputs_refusal(name: Any, kind: Any, counts: Mapping[str, Any] | None) -> st
     registered version's recorded kind otherwise) whose counts are `counts`
     (a registered version's `cohort.json` counts; None for a workspace's own
     generated split, which has none) cannot be measured by the protocol
-    `name`, or None: a kind the protocol does not measure; a registered
-    generated split, which this build does not measure yet
-    (`GENERATED_VERSION_GAP`); then, for a registered version, the first of
-    its needs its counts do not have above 0 (a supplied cohort's
-    `counts["genes"]` entries, a KG edge set's `counts["pairs"]`). A name
-    that is not a protocol gets the same reason as from `model_refusal`."""
+    `name`, or None: a kind the protocol does not measure; for a registered
+    generated split and a protocol with gene fields, a version that keeps no
+    functional gene fixture or whose fixture holds no row (`_fixture_gap`, a
+    stated data gap; research comparison Stage 5b); then, for another
+    registered version, the first of its needs its counts do not have above 0
+    (a supplied cohort's `counts["genes"]` entries, a KG edge set's
+    `counts["pairs"]`). A name that is not a protocol gets the same reason as
+    from `model_refusal`."""
     protocol = _protocol(name)
     if protocol is None:
         return _unknown(name)
@@ -355,7 +377,12 @@ def inputs_refusal(name: Any, kind: Any, counts: Mapping[str, Any] | None) -> st
         takes = " or ".join(_KIND_WORDS.get(k, k) for k in protocol.data_kinds)
         return f"the {protocol.name} measurement does not measure {said}; it measures {takes}."
     if kind == GENERATED:
-        return None if counts is None else GENERATED_VERSION_GAP
+        if counts is None or not protocol.gene_fields:
+            return None
+        rows = _counted(counts, (GENERATED_FIXTURE_COUNT,))
+        if isinstance(rows, int) and not isinstance(rows, bool) and rows > 0:
+            return None
+        return _fixture_gap(protocol, counts if isinstance(counts, Mapping) else {})
     for need in protocol.needs:
         value = _counted(counts, _NEED_COUNTS.get(need, ("genes", need)))
         if isinstance(value, int) and not isinstance(value, bool) and value > 0:
@@ -389,6 +416,6 @@ def refusal(name: Any, model: Any, kind: Any, counts: Mapping[str, Any] | None) 
     return model_refusal(name, model) or inputs_refusal(name, kind, counts)
 
 
-__all__ = ["FULL_VIEW_INPUTS", "GENERATED", "GENERATED_VERSION_GAP", "KG_EDGES", "LP_HEAD",
+__all__ = ["FULL_VIEW_INPUTS", "GENERATED", "GENERATED_FIXTURE_COUNT", "KG_EDGES", "LP_HEAD",
            "NO_RECORD", "PROTOCOLS", "Protocol", "REGISTERED_KINDS", "SUPPLIED", "available",
            "inputs_refusal", "model_refusal", "names", "refusal", "task_head"]

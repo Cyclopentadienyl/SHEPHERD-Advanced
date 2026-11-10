@@ -245,3 +245,43 @@ def test_listed_fields_the_files_do_not_bear_out_are_refused_by_the_run(
     assert says in log, log
     assert status["outcome"]["kept"] is False and asked == []
     assert _stored(cohort) == before, "the refused run left a report"
+
+
+def test_a_test_run_on_a_kept_generated_split_keeps_its_report_unrecorded(cohort, monkeypatch):
+    """Research comparison Stage 5b: the runner starts a run on a registered
+    generated split as on any version, from the listing's kind and counts;
+    the real CLI measures it by the disease protocol and keeps its report in
+    that version's report store, under its role (val), with no R10; the
+    ledger does not record such a run yet, and the run's outcome says why.
+    The workspace holds no functional gene fixture, so the version keeps
+    none: the runner refuses gene on it before a job starts, with the stated
+    data gap."""
+    from src.evaluation import protocols
+    from src.evaluation.cohort_registry import commit_import, prepare_generated_import
+
+    label = "gen-val-runner"
+    plan = prepare_generated_import(cohort.registry, cohort.data_dir, label, "val")
+    version = commit_import(plan, cohort.registry, plan.preview_id)
+    listed = {"version_label": label, "version_sha256": version.identity.sha256,
+              "version_kind": version.kind, "version_counts": version.manifest["counts"]}
+    reports = version.directory / "reports"
+    manager, asked = _run(cohort, monkeypatch, **listed)
+    status = manager.get_test_status()
+    log = "\n".join(manager.get_log("test")["lines"])
+    assert status["status"] == "completed" and status["exit_code"] == 0, log
+    (run_dir,) = [p for p in reports.iterdir() if is_run_id(p.name)]
+    manifest = json.loads((run_dir / "report.json").read_text())["manifest"]
+    assert (manifest["mode"], manifest["cohort_kind"], manifest["split"]) == (
+        "disease", "generated", "val")
+    assert manifest["cohort_version"]["label"] == label and manifest["r10"] is None
+    assert status["outcome"]["kept"] is True and status["outcome"]["registered"] is False
+    assert ("this revision's ledger does not record a run on a generated split (val) yet"
+            in status["outcome"]["summary"])
+
+    manager = TrainingManager()
+    started = manager.start_test(TestRunInputs(**{
+        **_fields(cohort), **listed, "protocol": "gene", "task": "gene",
+        "capabilities": described("finetune", "gene")}))
+    gap = protocols.inputs_refusal("gene", "generated", version.manifest["counts"])
+    assert gap.startswith("this generated split version keeps no functional gene fixture")
+    assert started["success"] is False and started["error"] == f"{gap} Nothing was started."

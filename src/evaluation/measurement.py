@@ -197,7 +197,10 @@ class MeasurementManifest:
     that was never cut from this disease universe, so its overlap with training
     is an open measurement (R10) rather than a contract; `kg_edges` is a
     registered KG edge set (research comparison Stage 5), whose relation to the
-    model's training is the report's exposure block.
+    model's training is the report's exposure block; and `generated` with a
+    version is a generated split kept in the registry (Stage 5b), measured
+    under its role as recorded, its relation to training its allocation's, with
+    no R10.
 
     **Stated on the manifest rather than inferred downstream from whether a
     `split_manifest` digest is present.** Absence of a role could mean several

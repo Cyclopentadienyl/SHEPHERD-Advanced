@@ -468,21 +468,34 @@ as stamped.)*
   cohort's role is still never `train` or `val`. A KG edge set is measured by
   `kg_link_prediction` only, and a task protocol refuses it; `--training-evidence` is refused for
   it (R10 is a supplied version's; its run records its exposure instead). A
-  generated split is never presented as a supplied cohort; it is listed and read, and not
-  measured yet (Stage 5).
+  generated split is never presented as a supplied cohort, nor as test unless its role is test.
+  Since Stage 5b it keeps the workspace's functional gene fixture of its split (record and rows,
+  byte for byte and digest-bound, with a counted `task_fixture_samples`) when the workspace
+  holds one of its build, and is measured with `measure_scorer.py --cohort` by the task protocols
+  the model's capabilities admit, through the same evaluators as `--split`: disease over its
+  samples, gene and patients-like-me over the fixture it keeps (refused, as a stated data gap,
+  on a version that keeps none or whose fixture holds no row). Its manifest records `cohort_kind`
+  `generated`, the version's block and its role as the split; no R10, and `--training-evidence`
+  is refused (its relation to training is its allocation's), so a Test-page run on one started
+  while R10 evidence directories are set is refused after it starts, as on a KG edge set, until
+  Stage 7 chooses the evidence by kind. Its report is kept in the version's report store; the
+  ledger does not record it yet (Stage 6). A generated test role cannot be imported today (the
+  generator writes train and val).
   Reports measured with `--split` stay as they are, unregistrable, with no identity made up. Every
   version names its dependencies by content (`version_references`), never by path, and a missing
   one is a state (`check_references`).
 - **Keeping.** Every valid result of every real execution is kept as its own report (policy
   rev 16), a run that repeats another's conditions included; a generated split's report never
-  replaces an earlier run's (K8-6r.4). A KG edge set's run keeps its actual outputs beside its
-  report (research comparison F4): `scores.bin`, each pair's raw scores and state keyed to the
+  replaces an earlier run's (K8-6r.4), at `--output` or, for a registered generated split, in a
+  new run directory of its version's report store. A KG edge set's run keeps its actual outputs
+  beside its report (research comparison F4): `scores.bin`, each pair's raw scores and state keyed to the
   pairs file's rows, written before `report.json`, which names it by digest and row count and
   carries the run's exposure block.
 - **Registering.** One writer, `register_report` (`src/evaluation/registration.py`), by the verified
   run (K8-6r.2): the same run with the same bytes answers `already_registered` and writes nothing;
   the same run with other bytes is refused; any other run gets its own record. Differences between
-  runs are described, never used to refuse (rev 16). A KG edge set's report is not recorded yet:
+  runs are described, never used to refuse (rev 16). A KG edge set's report, and a registered
+  generated split's (Stage 5b), is not recorded yet:
   `build_record` refuses it as a kind this revision's ledger does not record (`LEDGER_KINDS`;
   research comparison Stage 6), and the report stays kept; `measure_scorer.py` offers no
   register-later command for such a run, saying why instead.
@@ -2661,7 +2674,9 @@ question are described apart.
 - **Measurement:** `measure_scorer.py --mode gene` ranks each case's own list;
   `--mode patients_like_me` ranks each patient of the measured cohort against all the others. A
   generated split is measured through the workspace's functional fixture of that split (recorded as
-  `task_fixture`). A registered version's cases carry genes when its source listed
+  `task_fixture`), and, since research comparison Stage 5b, a registered generated split through
+  the copy of that fixture it keeps (the same record digest; a version that keeps none is refused
+  as a stated data gap). A supplied version's cases carry genes when its source listed
   `causal_genes`/`candidate_genes` (the optional import fields). The manifests name η, the SP
   bounds and the augmentation (gene task), and the self-exclusion rule (patients-like-me).
 - **Serving:** the reference cohort version is resolved by the API in `SHEPHERD_REGISTRY` and
