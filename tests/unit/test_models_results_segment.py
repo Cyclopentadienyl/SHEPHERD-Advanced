@@ -393,7 +393,9 @@ def test_compare_never_puts_two_protocols_metrics_on_one_row_and_caps_at_five(
     # Each group once, in its place: the second protocol's metrics are not
     # split from the first's by References (Stage 8b review).
     for every in (rs.compare_html([disease, odd], False), markup):
-        heads = re.findall(r'<th scope="colgroup"[^>]*>([^<]*)</th>', every)
+        heads = [_text(head) for head in
+                 re.findall(r'<th scope="colgroup"[^>]*>(.*?)</th>', every)]
+        assert heads
         assert len(heads) == len(set(heads))
         assert heads == [group for group in rs.COMPARE_GROUPS if group in heads]
     # The protocol is said once, in each column's head, in words: no
@@ -433,15 +435,11 @@ def test_compare_says_each_missing_value_in_its_own_words(world, monkeypatch):
                          "measurement.regime.device": "its record does not hold it as a value"}
     first["measurement"]["device"] = "cuda:0"
     markup = rs.compare_html([first, second], True)
-
-    def cells(label):
-        found = re.search(rf'<th scope="row"[^>]*>{re.escape(label)}</th>(.*?)</tr>', markup)
-        return [_text(cell) for cell in re.findall(r"<td[^>]*>.*?</td>", found.group(1))]
-
-    assert cells("Disease only_here") == ["0.8", "○ not recorded"]
-    assert cells("Spec · Chunk size") == ["64", "○ not recorded"]
-    assert cells("Spec · Dropout") == ["none", "0.1"]
-    assert cells("Device") == ["cuda:0", "○ Unknown: its record does not hold it as a value"]
+    assert _cells(markup, "Disease only_here") == ["0.8", "○ not recorded"]
+    assert _cells(markup, "Spec · Chunk size") == ["64", "○ not recorded"]
+    assert _cells(markup, "Spec · Dropout") == ["none", "0.1"]
+    assert _cells(markup, "Device") == [
+        "cuda:0", "○ Unknown: its record does not hold it as a value"]
     assert "another protocol" not in markup
 
 
@@ -464,17 +462,26 @@ def test_compare_choices_are_unique_and_name_this_read_only(world, monkeypatch):
 # The research comparison browser check (WebUI skill §12): Models › Results
 # and Compare as the screens read
 # ---------------------------------------------------------------------------
+def _named(markup):
+    """Compare's rows as ``(whole name, cells' markup)``: a field's own row is
+    named by its words; a nested entry's row shows its own words under the
+    sub-heading that says its path, its whole name ("Weight transfer · Parts
+    › Encoder") its accessible name."""
+    for attrs, words, cells in re.findall(r'<th scope="row"([^>]*)>(.*?)</th>(.*?)</tr>',
+                                          markup):
+        name = re.search(r'aria-label="([^"]*)"', attrs)
+        yield html_lib.unescape(name.group(1) if name else words), cells
+
+
 def _cells(markup, label):
-    """A Compare row's cells as text, by the row's words (None: no such row)."""
-    found = re.search(rf'<th scope="row"[^>]*>{re.escape(html_lib.escape(label))}</th>(.*?)</tr>',
-                      markup)
+    """A Compare row's cells as text, by the row's whole name (None: no such row)."""
+    found = next((cells for name, cells in _named(markup) if name == label), None)
     return None if found is None else [
-        _text(cell) for cell in re.findall(r"<td[^>]*>.*?</td>", found.group(1))]
+        _text(cell) for cell in re.findall(r"<td[^>]*>.*?</td>", found)]
 
 
 def _labels(markup):
-    return [html_lib.unescape(label) for label in
-            re.findall(r'<th scope="row"[^>]*>(.*?)</th>', markup)]
+    return [name for name, _cells in _named(markup)]
 
 
 def _twins(world, monkeypatch):
@@ -827,8 +834,8 @@ def test_compare_rows_are_named_in_the_segments_words(world, monkeypatch):
     # Every row in words but the content references' items, named as recorded.
     assert not [label for label in labels if "_" in label
                 and not label.startswith("Content references")]
-    assert 'title="model.learning_settings.save_top_k">Learning setting · Top-k saves kept' \
-        in markup
+    assert ('title="model.learning_settings.save_top_k" aria-label="Learning setting · Top-k '
+            'saves kept">Top-k saves kept</th>') in markup
     assert 'title="metrics.pooled_mrr">Disease pooled MRR</th>' in markup
     assert rs.field_words("cudnn_benchmark") == "cuDNN benchmark"
     assert rs.field_words("cuda_version") == "CUDA version"
@@ -844,7 +851,8 @@ def test_compare_rows_are_named_in_the_segments_words(world, monkeypatch):
                   "Effective setting · Loaders › Validation › Validation edges without a "
                   "negative", "Data counts · Excluded"):
         assert label in labels, label
-    assert 'title="data.counts.n_excluded">Data counts · Excluded</th>' in markup
+    assert 'title="data.counts.n_excluded" aria-label="Data counts · Excluded">Excluded</th>' \
+        in markup
     assert (rs.field_words("distance_normalisation_eps"), rs.field_words("augmentation_k"),
             rs.field_words("sp_lower"), rs.field_words("dim")) == (
         "Distance normalisation epsilon", "Augmentation neighbours (K)",
@@ -894,7 +902,7 @@ def test_compare_says_a_columns_unknown_reason_once_per_field(world, monkeypatch
         # Once per field: of each model field's rows, the column says why on
         # its first only.
         said: dict = {}
-        for ref, cells in re.findall(r'<th scope="row" title="([^"]*)">.*?</th>(.*?)</tr>',
+        for ref, cells in re.findall(r'<th scope="row" title="([^"]*)"[^>]*>.*?</th>(.*?)</tr>',
                                      markup):
             cell = re.findall(r"<td[^>]*>.*?</td>", cells)[1]
             if f'title="{html_lib.escape(why)}"' in cell:
@@ -930,6 +938,148 @@ def test_compare_says_each_columns_report_once(world, monkeypatch):
     second["report_sha256"] = "ab" * 6 + "2" * 52
     markup = rs.compare_html([first, second], True)
     assert _cells(markup, "Report") == [first["report_sha256"], second["report_sha256"]]
+
+
+def _css_rule(selector):
+    """The declarations of Models' CSS rule for `selector` (its exact text)."""
+    from src.webui.components import models_page as mp
+
+    found = re.search(re.escape(selector) + r" \{\{?([^}]*)\}", mp.PAGE_CSS)
+    return found and found.group(1)
+
+
+def test_compare_keeps_numbers_and_run_ids_whole_and_scrolls_inside_its_wrapper(
+        world, monkeypatch):
+    """Browser re-look relook-1 (plan §4 invariant 5, raw values; skill §5):
+    a raw number never breaks inside (its cell does not wrap; split mid-digit,
+    "0.2916666666666" over "6663" read as two numbers in a right-aligned
+    column), and a run id breaks only after one of its own hyphens (an
+    explicit ``<wbr>``: no break is allowed between a hyphen and a digit);
+    prose, JSON and reasons still break anywhere, so long values never set the
+    columns' widths. Five columns of raw values can be wider than the panel:
+    the table scrolls sideways inside its own wrapper, never the page, its
+    Field column pinned and its group and sub-heading words kept in view.
+    The geometry is measured in headless Chromium with the app's CSS by the
+    author's scripted check; here, the markup and the rules it relies on."""
+    from src.webui.components import results_segment as rs
+
+    finetune, base, _supplied, _kg = _finetune_base_supplied_kg(world, monkeypatch)
+    finetune["run_id"] = "20261110T110716Z-31ab26b3b0fe-45ad9e27"
+    base["run_id"] = "20261110T110549Z-eea723a97e5d-9364843b"
+    finetune["model"].update(parent_run="20261110-110512_probe-base_d4e3e7",
+                             family_id="20261110-110512_probe-base_d4e3e7")
+    base["model"].update(parent_run=None, family_id="20261017-152412_other_0a1b2c")
+    finetune["metrics"][0]["value"] = 0.29166666666666663
+    base["metrics"][0]["value"] = 0.125
+    markup = rs.compare_html([finetune, base], True)
+    # A number: its own cell, marked as one, unrounded; the cell never wraps.
+    assert '<td class="shep-num">0.29166666666666663</td>' in markup
+    number = _css_rule("#shep-page-models .shep-rs-cmp td.shep-num")
+    assert "white-space: nowrap" in number and "overflow-wrap: normal" in number
+    # A run id: each part to and with its hyphen kept whole, a break allowed
+    # only between them; the parent's and the family's training runs alike.
+    run = re.search(r'title="run_id">Run</th>(.*?)</tr>', markup).group(1)
+    assert run.startswith(
+        '<td><span class="shep-nowrap">20261110T110716Z-</span><wbr>'
+        '<span class="shep-nowrap">31ab26b3b0fe-</span><wbr>'
+        '<span class="shep-nowrap">45ad9e27</span></td>')
+
+    def whole(cells):  # a cell's text, its parts joined as the line reads them
+        return [html_lib.unescape(re.sub(r"<[^>]+>", "", cell))
+                for cell in re.findall(r"<td[^>]*>.*?</td>", cells)]
+
+    assert whole(run) == [finetune["run_id"], base["run_id"]]
+    for ref, value in (("model.parent_run", "20261110-110512_probe-base_d4e3e7"),
+                       ("model.family_id", "20261110-110512_probe-base_d4e3e7")):
+        cells = re.search(rf'title="{re.escape(ref)}">[^<]*</th>(.*?)</tr>', markup).group(1)
+        assert cells.startswith('<td><span class="shep-nowrap">20261110-</span><wbr>'
+                                '<span class="shep-nowrap">110512_probe-</span><wbr>'
+                                '<span class="shep-nowrap">base_d4e3e7</span></td>'), ref
+        assert whole(cells)[0] == value
+    # A run id's missing value keeps its own word ("none", recorded as null).
+    assert _cells(markup, "Parent run")[1] == "none"
+    assert "<img" not in rs._run_id_html(f"{HOSTILE}-{HOSTILE}")
+    assert rs._run_id_html("a-b-") == ('<span class="shep-nowrap">a-</span><wbr>'
+                                       '<span class="shep-nowrap">b-</span>')
+    # Prose, JSON and reasons still break anywhere (relook-1: break-word on
+    # every cell made a five-column Compare 2,699 px wide).
+    assert "overflow-wrap: anywhere" in _css_rule(
+        "#shep-page-models .shep-rs-cmp td, #shep-page-models .shep-rs-unread td")
+    # Wider than the panel: the wrapper scrolls sideways, the Field column
+    # (its head and every row's name) pinned at the left over an opaque
+    # background, and the group and sub-heading words kept in view.
+    assert "overflow-x: auto" in _css_rule("#shep-page-models .shep-rs-wrap")
+    pinned = _css_rule('#shep-page-models .shep-rs-cmp tbody th[scope="row"], '
+                       '#shep-page-models .shep-rs-cmp thead th:first-child')
+    assert "position: sticky" in pinned and "left: 0" in pinned
+    assert "background: var(--shep-panel)" in _css_rule(
+        '#shep-page-models .shep-rs-cmp th[scope="row"]')
+    assert "position: sticky" in _css_rule("#shep-page-models .shep-rs-cmp .shep-rs-pin")
+    assert '<tr class="shep-rs-grp"><th scope="colgroup" colspan="3"><span class="shep-rs-pin">' \
+           'Result</span></th></tr>' in markup
+
+
+def test_compare_names_a_nested_entry_by_its_own_words_under_its_path(world, monkeypatch):
+    """Browser re-look relook-2 (skill §5: front-load): a nested entry's row
+    is named by its own words, first; the path above it is said once, as a
+    sub-heading row under its group, shown where one of its entries is shown
+    (differences only hides a path whose entries are all alike) and not again
+    while the rows shown next share it. The row's whole name is its
+    accessible name and its record key its title; `compare_fields` keeps the
+    whole name. (Up to 63 characters of shared path came first and wrapped
+    a label to 4-5 lines in the Field column, its meaning on the last.)"""
+    from src.webui.components import results_segment as rs
+
+    state, _scope, _shown_rows = _shown(_state(world, monkeypatch), protocol="disease")
+    first, second = (copy.deepcopy(row) for row in _read_in_full(state)[:2])
+    for row, rate in ((first, "1e-5 (README U3)"), (second, "5e-5 (README U3)")):
+        row["model"]["effective_settings"] = {"loaders": {"train": {
+            "batch_size": 8, "kind": "FinetuneSampler",
+            "recipe": {"reference_filled": {"learning_rate": rate,
+                                            "scheduler": f"none ({rate})",
+                                            "gradient_clip": "1.0"}}}}}
+    path = "Effective setting · Loaders › Train › Recipe › Reference filled"
+    markup = rs.compare_html([first, second], True)
+    sub = re.findall(r'<tr class="shep-rs-sub"><th scope="rowgroup" colspan="3">'
+                     r'<span class="shep-rs-pin">([^<]*)</span></th></tr>', markup)
+    # Said once, above its two differing entries; the alike gradient clip and
+    # the train loader's alike entries are hidden, and so is their path.
+    assert [html_lib.unescape(words) for words in sub].count(path) == 1
+    assert "Effective setting · Loaders › Train" not in [html_lib.unescape(w) for w in sub]
+    ref = "model.effective_settings.loaders.train.recipe.reference_filled"
+    opening = re.escape(f'<span class="shep-rs-pin">{html_lib.escape(path)}</span></th></tr>')
+    block = re.search(opening + r'(.*?)(?:<tr class="shep-rs-(?:sub|grp)"|</tbody>)',
+                      markup).group(1)
+    assert re.findall(r'<tr class="shep-rs-entry"><th scope="row" title="([^"]*)" '
+                      r'aria-label="([^"]*)">([^<]*)</th>', block) == [
+        (f"{ref}.learning_rate", html_lib.escape(f"{path} › Learning rate"), "Learning rate"),
+        (f"{ref}.scheduler", html_lib.escape(f"{path} › Scheduler"), "Scheduler")]
+    assert _cells(markup, f"{path} › Learning rate") == ["1e-5 (README U3)", "5e-5 (README U3)"]
+    # Every row's words, every view: an entry's row says its own words (no
+    # path in them), under the sub-heading of its path; a field's own row
+    # says its words and has no sub-heading of its own.
+    for differences in (True, False):
+        markup = rs.compare_html([first, second], differences)
+        heading = None
+        for kind, words, attrs, name in re.findall(
+                r'<tr class="shep-rs-(sub|grp)"><th[^>]*><span class="shep-rs-pin">([^<]*)'
+                r'</span></th></tr>|<tr(?: class="shep-rs-entry")?><th scope="row"([^>]*)>'
+                r'([^<]*)</th>', markup):
+            if kind:
+                heading = html_lib.unescape(words) if kind == "sub" else None
+                continue
+            whole = re.search(r'aria-label="([^"]*)"', attrs)
+            name = html_lib.unescape(name)
+            if whole is None:
+                assert " › " not in name, name
+                continue
+            assert heading is not None and " › " not in name and " · " not in name, name
+            assert html_lib.unescape(whole.group(1)) in (f"{heading} › {name}",
+                                                          f"{heading} · {name}"), name
+    # The whole name stays the row's label for every other reader.
+    fields = {label: value for _group, label, value, _why in rs.compare_fields(first)}
+    assert fields[f"{path} › Learning rate"] == "1e-5 (README U3)"
+    assert fields["Effective setting · Loaders › Train › Batch size"] == 8
 
 
 # ---------------------------------------------------------------------------

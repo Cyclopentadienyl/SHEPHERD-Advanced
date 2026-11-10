@@ -60,8 +60,12 @@ recorded and effective training settings, the data's identity and role, the
 measurement's settings, the environment, the exposure) and each metric, each
 group once, in that order, each row named in words (`field_words`; its record
 key is its title). A nested value is one row per entry, so a difference
-inside a nested setting is its own row (`_tree`). **Values side by side, as
-recorded; no difference is computed.** Each metric row is one protocol's (in
+inside a nested setting is its own row (`_tree`), named by the entry's own
+words under a sub-heading row that says its path once. **Values side by
+side, as recorded; no difference is computed;** a number and a run id are
+never broken inside (a run id only after one of its hyphens), and five
+columns wider than the panel scroll sideways in the table's own wrapper, its
+Field column pinned. Each metric row is one protocol's (in
 the protocol tables' words, `caveats.metric_text`): a result of another
 protocol reads "another protocol" there, so two protocols' metrics are never
 one row as one scale. Each missing value keeps its own words: a field
@@ -943,7 +947,18 @@ def _branch(value: Any) -> Optional[Tuple[Dict[str, Any], bool]]:
     return None
 
 
-_Row = Tuple[str, str, Optional[str], List[Any], List[Optional[str]]]
+#: One Compare row: its group, its path's words (the field's, then each
+#: entry's: `_label` joins them), its record key, and each column's value and
+#: reason.
+_Row = Tuple[str, Tuple[str, ...], Optional[str], List[Any], List[Optional[str]]]
+
+
+def _label(parts: Sequence[str]) -> str:
+    """A row's whole name from its path's words: the field's words, then each
+    entry's, "Label · Entry" and deeper "Label · Entry › Entry" ("Weight
+    transfer · Parts › Encoder"); a field's own row is its words alone."""
+    head, *entries = parts
+    return f"{head} · {' › '.join(entries)}" if entries else head
 
 
 class _SaidAbove(str):
@@ -952,13 +967,13 @@ class _SaidAbove(str):
     fact once, rule 1.2)."""
 
 
-def _tree(group: str, label: str, ref: Optional[str], values: Sequence[Any],
-          whys: Sequence[Optional[str]], depth: int = 0,
-          kinds: Optional[Sequence[Any]] = None) -> List[_Row]:
+def _tree(group: str, parts: Tuple[str, ...], ref: Optional[str], values: Sequence[Any],
+          whys: Sequence[Optional[str]], kinds: Optional[Sequence[Any]] = None) -> List[_Row]:
     """One field's rows across the columns: where a column holds a mapping
     (or named items) and no column holds a plain value there, one row per
-    entry, "Label · Entry" and deeper "Label · Entry › Entry", so a difference
-    inside a nested setting is its own row; a column holding no mapping there
+    entry, its path the field's words and then each entry's (`_label`: "Label
+    · Entry", deeper "Label · Entry › Entry"), so a difference inside a nested
+    setting is its own row; a column holding no mapping there
     passes its value down to every entry's row (a value recorded as null
     reads "none" on each, "not recorded" or "not applicable" alike, and one
     without a source "Unknown" with why on the field's first row, the why
@@ -972,7 +987,7 @@ def _tree(group: str, label: str, ref: Optional[str], values: Sequence[Any],
         branch is not None or value is None or any(value is gap for gap in _GAPS)
         for branch, value in zip(branches, values))
     if not deeper:
-        return [(group, label, ref, list(values), list(whys))]
+        return [(group, tuple(parts), ref, list(values), list(whys))]
     keys: Dict[str, bool] = {}
     for branch in branches:
         if branch:
@@ -994,9 +1009,8 @@ def _tree(group: str, label: str, ref: Optional[str], values: Sequence[Any],
             else:
                 child.append(ABSENT)
         words = key if named else field_words(key)
-        out.extend(_tree(group, f"{label} · {words}" if depth == 0 else f"{label} › {words}",
-                         f"{ref}.{key}" if ref else key, child,
-                         whys if place == 0 else said, depth + 1))
+        out.extend(_tree(group, (*parts, words), f"{ref}.{key}" if ref else key, child,
+                         whys if place == 0 else said))
     return out
 
 
@@ -1025,7 +1039,7 @@ def _rows(columns: Sequence[Mapping[str, Any]]) -> List[_Row]:
     kinds = [(column.get("data") or {}).get("kind") for column in columns]
     out: List[_Row] = []
     for key in order:
-        out.extend(_tree(key[0], key[1], key[2], values[key], reasons[key],
+        out.extend(_tree(key[0], (key[1],), key[2], values[key], reasons[key],
                          kinds=kinds if by_kind[key] else None))
     return out
 
@@ -1046,12 +1060,14 @@ def compare_fields(row: Mapping[str, Any]) -> List[Tuple[str, str, Any, Optional
     environment, the exposure (a KG edge set's definition and counts for a KG
     edge set's result, R10 for a supplied cohort's) and the metrics (each in
     the protocol tables' words, its protocol's). A nested value is one row
-    per entry, its words after the field's ("Weight transfer · Parts ›
-    Encoder"); a list of named items (the content references) one per item.
-    The protocol is not a row: it heads the result's column. Values are the
-    row's own."""
-    return [(group, label, values[0], whys[0])
-            for group, label, _ref, values, whys in _rows([row])]
+    per entry, its label the whole path, its words after the field's
+    ("Weight transfer · Parts › Encoder", `_label`; Compare's table says the
+    path above the entry once, as a sub-heading row, and names the row by its
+    entry's own words, `compare_html`); a list of named items (the content
+    references) one per item. The protocol is not a row: it heads the
+    result's column. Values are the row's own."""
+    return [(group, _label(parts), values[0], whys[0])
+            for group, parts, _ref, values, whys in _rows([row])]
 
 
 def _compare_value(value: Any) -> str:
@@ -1066,15 +1082,33 @@ def _compare_value(value: Any) -> str:
     return json.dumps(value, sort_keys=True, ensure_ascii=True, default=str)
 
 
-def _cell_html(value: Any, why: Optional[str], *, full: bool) -> str:
+#: The rows whose values are run ids (the report store's run, the parent's
+#: and the family's training runs): each shown whole between its own hyphens
+#: (`_run_id_html`).
+_RUN_IDS = ("run_id", "model.parent_run", "model.family_id")
+
+
+def _run_id_html(value: str) -> str:
+    """A run id as its Compare cell shows it: each part up to and with its
+    hyphen kept whole, a line breaking only after a hyphen (an explicit
+    ``<wbr>``: the line-break rules give no break between a hyphen and a
+    digit), so a run id never reads as two values; escaped."""
+    pieces = value.split("-")
+    parts = [f"{piece}-" for piece in pieces[:-1]] + ([pieces[-1]] if pieces[-1] else [])
+    return "<wbr>".join(f'<span class="shep-nowrap">{r.e(part)}</span>' for part in parts)
+
+
+def _cell_html(value: Any, why: Optional[str], *, full: bool, run: bool = False) -> str:
     """One Compare cell: "another protocol" on a metric row of another
     protocol's result; "not applicable" for a field that does not apply to
     the result's data kind; "not recorded" for a field the result's records
     do not hold at all; "Unknown" with why for a field without a source (its
     why only as the title where its field's first row says it,
-    `_SaidAbove`); "none" for a value recorded as null; a digest by its 12
-    hex digits (all of them when its row's 12 do not tell it apart), the full
-    value as its title; a list as compact JSON; a number unrounded; text as
+    `_SaidAbove`); "none" for a value recorded as null; a run id (`run`)
+    whole between its hyphens (`_run_id_html`); a digest by its 12 hex digits
+    (all of them when its row's 12 do not tell it apart), the full value as
+    its title; a list as compact JSON; a number unrounded, never broken
+    (``shep-num``: its cell does not wrap, Models' Results CSS); text as
     recorded."""
     if value is OTHER_PROTOCOL:
         return '<td class="shep-muted">another protocol</td>'
@@ -1089,6 +1123,8 @@ def _cell_html(value: Any, why: Optional[str], *, full: bool) -> str:
             return (f'<td class="shep-muted" title="{r.e(why)}">○ Unknown: '
                     f'{r.e(r.short_reason(why, 120))}</td>')
         return '<td class="shep-muted">none</td>'
+    if run and isinstance(value, str):
+        return f"<td>{_run_id_html(value)}</td>"
     if r.is_digest(value):
         shown = value if full else r.short_hex(value)
         return f'<td><code class="shep-fpv" title="{r.e(value)}">{r.e(shown)}</code></td>'
@@ -1108,7 +1144,12 @@ def compare_html(rows: Sequence[Mapping[str, Any]], differences_only: bool, *,
     `row_names`, which its table row and its option say; without them, the
     rows' names among themselves) and its protocol's words, one row per field
     (`_rows`, each nested value one row per entry); with `differences_only`,
-    only the rows whose values are not recorded alike in every column. Values
+    only the rows whose values are not recorded alike in every column. A
+    nested entry's row is named by its own words, first (skill §5:
+    front-load): the path above it is said once, as a sub-heading row under
+    its group, shown where one of its entries is shown and not again while
+    the rows shown next share it; the row's whole name (`_label`) is its
+    accessible name and its record key its title. Values
     as recorded: nothing is computed from two of them. A metric row is one
     protocol's; a result of another protocol reads "another protocol" there,
     and one of the same protocol that does not record that metric reads "not
@@ -1124,8 +1165,9 @@ def compare_html(rows: Sequence[Mapping[str, Any]], differences_only: bool, *,
     heads_said = [str(name) for name in (names if names is not None
                                          else row_names(columns))[:COMPARE_CAP]]
     many = len(columns) > 1
-    body, hidden, group_shown = [], 0, None
-    for group, label, ref, values, whys in _rows(columns):
+    span = len(columns) + 1
+    body, hidden, group_shown, path_shown = [], 0, None, None
+    for group, parts, ref, values, whys in _rows(columns):
         digests = {value for value in values if r.is_digest(value)}
         full = len({r.short_hex(value) for value in digests}) < len(digests)
         if ref == "report_sha256" and not full and all(
@@ -1137,12 +1179,23 @@ def compare_html(rows: Sequence[Mapping[str, Any]], differences_only: bool, *,
             hidden += 1
             continue
         if group != group_shown:
-            body.append(f'<tr class="shep-rs-grp"><th scope="colgroup" '
-                        f'colspan="{len(columns) + 1}">{r.e(group)}</th></tr>')
-            group_shown = group
-        cells = "".join(_cell_html(v, w, full=full) for v, w in zip(values, whys))
+            # Its words stay in view when the table scrolls sideways (`shep-rs-pin`).
+            body.append(f'<tr class="shep-rs-grp"><th scope="colgroup" colspan="{span}">'
+                        f'<span class="shep-rs-pin">{r.e(group)}</span></th></tr>')
+            group_shown, path_shown = group, None
+        path = parts[:-1]
+        if path and path != path_shown:
+            body.append(f'<tr class="shep-rs-sub"><th scope="rowgroup" colspan="{span}">'
+                        f'<span class="shep-rs-pin">{r.e(_label(path))}</span></th></tr>')
+        path_shown = path or None
+        run = ref in _RUN_IDS
+        cells = "".join(_cell_html(v, w, full=full, run=run) for v, w in zip(values, whys))
         title = f' title="{r.e(ref)}"' if ref else ""
-        body.append(f'<tr><th scope="row"{title}>{r.e(label)}</th>{cells}</tr>')
+        if path:
+            body.append(f'<tr class="shep-rs-entry"><th scope="row"{title} '
+                        f'aria-label="{r.e(_label(parts))}">{r.e(parts[-1])}</th>{cells}</tr>')
+        else:
+            body.append(f'<tr><th scope="row"{title}>{r.e(parts[0])}</th>{cells}</tr>')
     heads = "".join(f'<th scope="col">{_name_html(name)}<div class="shep-sub">'
                     f'{r.e(protocol_words(row.get("protocol")))}</div></th>'
                     for row, name in zip(columns, heads_said))
@@ -1159,7 +1212,7 @@ def compare_html(rows: Sequence[Mapping[str, Any]], differences_only: bool, *,
                  "metric row is one protocol's.")
     note_html = "".join(f'<p class="shep-mp-p shep-sub">{r.e(n)}</p>' for n in notes)
     if not body:
-        body.append(f'<tr><td colspan="{len(columns) + 1}" class="shep-muted">Every row is '
+        body.append(f'<tr><td colspan="{span}" class="shep-muted">Every row is '
                     'recorded alike in every column.</td></tr>')
     return (f'{note_html}<div class="shep-tbl-wrap shep-rs-wrap"><table class="shep-tbl '
             f'shep-rs-cmp" aria-label="Compare results"><thead><tr><th scope="col">Field</th>'

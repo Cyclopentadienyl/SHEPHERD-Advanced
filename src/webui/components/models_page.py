@@ -1864,16 +1864,31 @@ PAGE_CSS = f"""
    word, a 12-hex fingerprint or a raw value stays whole (with `anywhere`
    every character was a break point when the columns were sized, and the
    other columns were squeezed around the one-line result name); a result's
-   name wraps only after its " · " (`results_segment._name_html`). */
+   name wraps only after its " · " (`results_segment._name_html`).
+   Compare's prose, JSON and reasons may break anywhere, so its long values
+   never set its columns' widths; a number never breaks (a raw value split
+   mid-digit read as two numbers), nor does a run id between its hyphens
+   (`results_segment._run_id_html`). Five columns of raw values can be wider
+   than the panel: the table then scrolls sideways inside its own wrapper,
+   never the page, its Field column pinned at the left with the words of its
+   group and sub-heading rows (`shep-rs-pin`). A nested entry's row, named by
+   its own words, sits one step in under the sub-heading that says its path. */
 {_PAGE} .shep-rs {{ gap: 12px !important; }}
 {_PAGE} .shep-rs-row {{ align-items: flex-end !important; gap: 8px !important; flex-wrap: wrap !important; }}
 {_PAGE} .shep-rs-wrap {{ margin: 0 !important; overflow-x: auto; }}
 {_PAGE} .shep-rs-wrap + .shep-mp-p {{ margin-top: 16px; }}
 {_PAGE} .shep-rs-tbl td {{ overflow-wrap: break-word; vertical-align: top; }}
 {_PAGE} .shep-rs-cmp td, {_PAGE} .shep-rs-unread td {{ overflow-wrap: anywhere; vertical-align: top; }}
+{_PAGE} .shep-rs-cmp td.shep-num {{ white-space: nowrap; overflow-wrap: normal; }}
 {_PAGE} .shep-rs-cmp tbody th {{ position: static; }}
-{_PAGE} .shep-rs-cmp th[scope="row"] {{ text-align: left; font-weight: 400; color: var(--shep-text-2); background: none; }}
+{_PAGE} .shep-rs-cmp tbody th[scope="row"], {_PAGE} .shep-rs-cmp thead th:first-child {{ position: sticky; left: 0; box-shadow: inset -1px 0 0 var(--shep-border); }}
+{_PAGE} .shep-rs-cmp tbody th[scope="row"] {{ top: auto; z-index: 1; }}
+{_PAGE} .shep-rs-cmp thead th:first-child {{ z-index: 2; }}
+{_PAGE} .shep-rs-cmp th[scope="row"] {{ text-align: left; font-weight: 400; color: var(--shep-text-2); background: var(--shep-panel); }}
+{_PAGE} .shep-rs-cmp tr.shep-rs-entry th[scope="row"] {{ padding-left: 22px; }}
 {_PAGE} .shep-rs-cmp tr.shep-rs-grp th {{ text-align: left; font-weight: 600; background: var(--shep-panel-2); }}
+{_PAGE} .shep-rs-cmp tr.shep-rs-sub th {{ text-align: left; font-weight: 600; background: var(--shep-panel); padding-top: 12px; padding-bottom: 4px; border-bottom: 0; }}
+{_PAGE} .shep-rs-cmp .shep-rs-pin {{ position: sticky; left: 10px; display: inline-block; }}
 /* Every metric as recorded (R2): a closed native disclosure, its summary a 24 px
    target that shows the keyboard focus (skill §10). */
 {_PAGE} .shep-mp-fold > summary {{ cursor: pointer; min-height: 24px; line-height: 24px; width: max-content; max-width: 100%; }}
