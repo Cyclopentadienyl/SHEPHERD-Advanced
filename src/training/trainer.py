@@ -652,12 +652,16 @@ class Trainer:
 
             with autocast(self.device.type, dtype=self.amp_dtype, enabled=self.use_amp):
                 step = self.task.training_step(self.model, batch_data, self.device)
-            if step.loss is None:
-                # Nothing to learn from: no backward, no update, counted
-                # (README §3.1, no empty mean and no invented loss).
+            if step.loss is None or not step.loss.requires_grad:
+                # Nothing to learn from: no loss (README §3.1, no empty mean
+                # and no invented loss), or one that reaches no trainable
+                # parameter (research comparison Stage 9: a gene step without
+                # a task term, whose LP term reads only a frozen graph side).
+                # No backward, no update, counted, its terms logged as given.
                 skipped_steps += 1
                 self.callbacks.on_batch_end(self, batch_idx, {
-                    "batch_skipped": 1, **{f"count_{k}": v for k, v in step.counts.items()}})
+                    "batch_skipped": 1, **{f"loss_{k}": v for k, v in step.terms.items()},
+                    **{f"count_{k}": v for k, v in step.counts.items()}})
                 continue
             loss = step.loss / accumulation
             if self.scaler is not None:

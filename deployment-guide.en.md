@@ -3055,7 +3055,10 @@ a run.
   so the recipe fills it. A finetune stage, a ShepherdGNN setting (`conv_type`, `hidden_dim`, …)
   or any field it does not define is refused with 422, and continuing a checkpoint that is not a
   base with 409, before a GPU slot or a run directory is taken. Task models are started with
-  `POST /api/v1/training/finetune`, as the Fine-tune page starts them.
+  `POST /api/v1/training/finetune`, as the Fine-tune page starts them; its `settings` take the
+  finetune recipe's settings, `frozen_parts` among them since research comparison Stage 9b
+  (`graph_side`: the frozen-backbone control, below; the Fine-tune page does not offer it this
+  round). The command line's `--frozen-parts graph_side` is the same setting.
 - A failed run's **error banner** spans the page. Under its headline ("Training failed: Process
   exited with code 1") is the last error line the run printed ("Last error printed:
   TrainingDeviceUnavailable: --device auto requires CUDA, …"), redacted for a read-only browser
@@ -3125,7 +3128,14 @@ no freeze and trained every part"), as the training log says it on a line of its
 records that source on the continued run's checkpoints; the parent's file is not changed. A
 parent that records no rules (K4's) or rules this version does not know is refused, and so is
 any other missing, contradictory or unknown setting. A continued run never changes the freeze; a
-branch keeps it too. While
+branch keeps it too. Since Stage 9b (2026-11-10) `graph_side` trains: a finetune with it keeps its
+base's input module, encoder and LP head as they are (no gradient, no optimizer group, evaluation
+mode for the whole run, so BatchNorm's statistics are used and never updated and dropout is off)
+and trains only its patient encoder and task head, at the recipe's loss coefficients; its record
+says the LP term has no trainable parameter, each part trainable or frozen, the frozen parts'
+forward mode and the SHA-256 of the downstream weights it started from (two children of one base
+and seed start alike). Resumed or extended it stays frozen, with the same optimizer groups
+restored. While
 the drawer is open the run bar shows Start (disabled: "close Continue… to start a new run"),
 **🔒 Continue Training** (disabled while the datasets differ, with the reason) and **Cancel**.
 A listed checkpoint is found again in the server's list. **The model fingerprint shown is the one

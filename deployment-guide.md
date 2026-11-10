@@ -3142,7 +3142,9 @@ Training Console 現在是分成三部分的一個頁面：上方橫跨整頁的
   `resume_from`、`extend_epochs`）與參考配方的 base 設定，各項預設不設定，由配方補上。finetune
   stage、ShepherdGNN 設定（`conv_type`、`hidden_dim` 等）或任何它未定義的欄位以 422 拒絕，續接
   一個不是 base 的 checkpoint 以 409 拒絕，都在佔用 GPU 名額或建立 run 目錄之前。任務模型以
-  `POST /api/v1/training/finetune` 啟動，與 Fine-tune 頁相同。
+  `POST /api/v1/training/finetune` 啟動，與 Fine-tune 頁相同；它的 `settings` 接受 finetune
+  recipe 的設定，自 research comparison Stage 9b 起包括 `frozen_parts`（`graph_side`：凍結主幹的
+  對照，見下文；本輪 Fine-tune 頁不提供）。命令列的 `--frozen-parts graph_side` 是同一個設定。
 - 失敗的 run 的**錯誤橫幅**橫跨整頁。標題（"Training failed: Process exited with code 1"）
   之下是 run 印出的最後一行錯誤（"Last error printed: TrainingDeviceUnavailable: --device auto
   requires CUDA, …"），對唯讀瀏覽器與輸出一樣經過遮蔽。run 旁邊只在有日誌時說明日誌在哪裡（它的
@@ -3197,7 +3199,13 @@ parent 可以繼續：Check checkpoint 與訓練行程共用的同一個設定�
 rules 1 had no freeze and trained every part」），訓練記錄也以獨立的一行說明，並把這個來源記錄在
 續接執行的 checkpoint 上；parent 的檔案不會被改寫。沒有記錄
 rules 的 parent（K4 的）或本版不認得的 rules 會被拒絕，任何其他缺少、矛盾或未知的設定也一樣。
-續接的執行絕不改變凍結設定；branch 也保留它。抽屜打開
+續接的執行絕不改變凍結設定；branch 也保留它。自 Stage 9b（2026-11-10）起 `graph_side` 會實際
+生效：使用它的 finetune 讓 base 的 input module、encoder 與 LP head 保持原樣（沒有梯度、不在任何
+optimizer 參數群、整個 run 都以 evaluation 模式執行，所以 BatchNorm 只使用、從不更新其統計值，
+dropout 關閉），只訓練 patient encoder 與 task head，損失係數沿用 recipe；它的紀錄寫明 LP 項沒有
+可訓練參數、每個部分可訓練或凍結、凍結部分的前向模式，以及開始訓練時下游權重的 SHA-256（同一
+base、同一 seed 的兩個子模型起點相同）。resume 或 extend 時仍維持凍結，並還原相同的 optimizer
+參數群。抽屜打開
 期間，run bar 顯示 Start（停用：「close Continue… to start a new run」）、
 **🔒 Continue Training**（資料集不同時停用，並附原因）與 **Cancel**。從清單選的
 checkpoint 會在伺服器的清單中重新找到。**繼續訓練所用的就是所顯示的模型指紋**（於根因修正輪

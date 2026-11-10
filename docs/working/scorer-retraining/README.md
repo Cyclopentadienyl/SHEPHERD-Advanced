@@ -532,6 +532,13 @@ weights-only base **with a model spec** may be a finetune parent; strict resume 
   continued run; its file is not changed. A parent of no recorded rules (K4's, as above) or of rules
   this build does not know is still refused, with its reason
   ([`../research-comparison/README.md`](../research-comparison/README.md) §5, Stage 9).
+- *As built at research comparison Stage 9b (2026-11-10; owner's O2 and O4a):* `frozen_parts`
+  `graph_side` trains. The bundle's freeze (`ModelBundle.freeze`) turns the input module's,
+  encoder's and LP head's gradients off before the Trainer builds its optimizer and keeps them in
+  evaluation mode whoever calls `train()`, so a finetune trains only its patient encoder and task
+  head. The weight transfer adds each part trainable or frozen, the frozen parts' forward mode and
+  the SHA-256 of the downstream weights as training starts; the loss identity keeps the recipe's
+  coefficients and names the terms without a trainable parameter (the LP term under that freeze).
 
 **One switch (R2).**
 - When the work is delivered, active training, inference and evaluation accept only the new

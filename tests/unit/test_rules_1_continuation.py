@@ -30,8 +30,9 @@ sentence:** a rules-1 record that names a freeze, a record of either rules
 whose weight transfer contradicts its freeze (one check: "all" exactly when
 nothing is frozen), a rules-1 record missing another current setting (nothing
 is filled for it), a rules-2 record with an unknown freeze, a base recorded
-with a freeze, a freeze this build does not apply yet, a resume that states another
-freeze (a plain continuation never swaps it; a branch keeps it too), rules
+with a freeze, a frozen run whose transfer records every part trainable, a
+resume that states another freeze (a plain continuation never swaps it; a
+branch keeps it too), rules
 this build does not know, and K4's records (no rules). Mixed precision on,
 which the CPU cannot run, is shown at the plan: decided for a rules-1 parent
 as for its rules-2 form.
@@ -338,8 +339,8 @@ def _set_requested(name, value):
      "cannot be continued with its recorded freeze: frozen_parts 'graph_side' freezes the input "
      "module, the encoder and the LP head, every part a base run has, so nothing would train."),
     ("gene", 2, _set_requested("frozen_parts", "graph_side"),
-     "cannot be continued with its recorded freeze: frozen_parts 'graph_side' is not applied by "
-     "this build's training yet"),
+     "records a weight transfer with trainable 'all' beside frozen_parts 'graph_side', which "
+     "keeps some parts from training, so its record contradicts itself."),
     ("disease", 1, lambda p: p.__setitem__("training_rules", 3),
      "was trained under other training rules (rules 3), which this build does not know (it "
      "continues rules 1, 2), so what its settings mean is not guessed."),
@@ -348,7 +349,7 @@ def _set_requested(name, value):
      "stopping on exactly when a patience is in effect"),
 ], ids=["r1-names-a-freeze", "r1-transfer-not-all", "r2-none-transfer-not-all",
         "r1-missing-setting", "r1-base-missing",
-        "r2-unknown-freeze", "r2-missing-freeze", "r2-base-frozen", "r2-not-applied-yet",
+        "r2-unknown-freeze", "r2-missing-freeze", "r2-base-frozen", "r2-frozen-transfer-all",
         "unknown-rules", "k4-no-rules"])
 def test_what_the_decode_cannot_run_is_refused_alike(runs, tmp_path, model, rules, edit, said):
     """Each refusal comes from the one decode, before anything is written, in
@@ -437,19 +438,18 @@ def test_mixed_precision_is_decided_for_a_rules_1_parent_as_for_its_rules_2_form
 def test_a_new_run_is_checked_for_its_freeze_by_the_process_and_the_job_runner(
         runs, tmp_path, monkeypatch):
     """A new run's freeze, by the one check (`frozen_parts_problem`), first
-    in both: a base with a freeze is refused (nothing would train), and so, in
-    this build, is a finetune asked to freeze its graph side, by the training
-    process and the job runner's start (`start_training` for a base, the
-    Fine-tune start for a child) in the same words; nothing is written or
-    started. A base given the freeze's "none" is refused as a setting a base
-    does not read, by the process in words true of it."""
+    in both: a base with a freeze is refused (nothing would train), by the
+    training process and the job runner's base start (`start_training`) in
+    the same words; nothing is written or started. A base given the freeze's
+    "none" is refused as a setting a base does not read, by the process in
+    words true of it. (A finetune's freeze trains: Stage 9b,
+    tests/unit/test_frozen_backbone_control.py.)"""
     import subprocess
 
-    from src.api.services.training_manager import FinetuneInputs, TrainingManager
+    from src.api.services.training_manager import TrainingManager
     from src.config.recipe import frozen_parts_problem
 
     monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: pytest.fail("a run was started"))
-    base = runs["files"][("base", "finished")][2]
     with pytest.raises(ValueError) as base_refused:
         _train(data_dir=str(runs["workspace"]), run_dir=str(tmp_path / "base"),
                learning_stage="base", device="cpu", frozen_parts="graph_side",
@@ -465,17 +465,8 @@ def test_a_new_run_is_checked_for_its_freeze_by_the_process_and_the_job_runner(
                                          r"does not read\. Remove them\.$"):
         _train(data_dir=str(runs["workspace"]), run_dir=str(tmp_path / "base"),
                learning_stage="base", device="cpu", frozen_parts="none")
-    with pytest.raises(ValueError) as child_refused:
-        _train(data_dir=str(runs["workspace"]), run_dir=str(tmp_path / "child"),
-               learning_stage="finetune", task="disease", finetune_from=str(base), device="cpu",
-               frozen_parts="graph_side")
-    said = frozen_parts_problem("finetune", "graph_side")
-    assert str(child_refused.value) == said and "not applied by this build" in said
-    started = TrainingManager().start_finetune(FinetuneInputs(
-        data_dir=str(runs["workspace"]), finetune_from=str(base), tasks=("disease",),
-        device="cpu", run_name="", settings={"frozen_parts": "graph_side"}))
-    assert started["success"] is False and started["error"] == f"{said} Nothing was started."
-    assert not (tmp_path / "base").exists() and not (tmp_path / "child").exists()
+    assert frozen_parts_problem("finetune", "graph_side") is None
+    assert not (tmp_path / "base").exists()
 
 
 def test_the_continue_drawer_says_the_plan_and_lists_the_decoded_freeze_once(runs, tmp_path):

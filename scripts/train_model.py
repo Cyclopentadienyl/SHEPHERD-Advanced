@@ -203,9 +203,10 @@ class TrainConfig:
     candidate_upsample_size: Optional[int] = None
     # The parts of a finetune that do not train (research comparison Stage 9,
     # owner's O4a; `src.config.recipe.FROZEN_PARTS`): "none", or "graph_side"
-    # (the input module, the encoder and the LP head). A base with any freeze
-    # is refused (`frozen_parts_problem`); a continued or branched run keeps
-    # its parent's.
+    # (the input module, the encoder and the LP head, frozen before the
+    # optimizer is built and run in eval: `ModelBundle.freeze`). A base with
+    # any freeze is refused (`frozen_parts_problem`); a continued or branched
+    # run keeps its parent's.
     frozen_parts: str = "none"
 
     # Training configuration
@@ -370,6 +371,16 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=None,
         help="With --stage: the edge split's seed",
+    )
+    parser.add_argument(
+        "--frozen-parts",
+        type=str,
+        choices=["none", "graph_side"],
+        default=None,
+        help="With --stage finetune: the parts that do not train. 'graph_side' keeps the "
+             "base's input module, encoder and LP head as they are (in eval mode), so only "
+             "the patient encoder and task head train: the frozen-backbone control. A "
+             "continued or branched run keeps its parent's",
     )
 
     # Training
@@ -569,6 +580,8 @@ def load_config_with_explicit(args: argparse.Namespace) -> Tuple[TrainConfig, Se
         config.finetune_from = args.finetune_from
     if getattr(args, "branch_from", None) is not None:
         config.branch_from = args.branch_from
+    if getattr(args, "frozen_parts", None) is not None:
+        config.frozen_parts = args.frozen_parts
 
     for name, value in vars(args).items():
         if name in ("config", "debug", "expect_dataset_sha256", "expect_resume_sha256",
@@ -1198,7 +1211,8 @@ def train(config: TrainConfig, explicit: Collection[str], *,
         EXPOSURE_TRAIN_EDGES_DRAWN_PAIRS_REMOVED, EXPOSURE_VAL_CASES, EXPOSURE_VAL_EDGES,
         MODEL_RECORD_VERSION, ModelRecord, ModelRecordError, read_model_record,
     )
-    from src.config.recipe import BASE_FIXED, frozen_parts_problem, unread_settings
+    from src.config.recipe import BASE_FIXED, FROZEN_PARTS, frozen_parts_problem, unread_settings
+    from src.models.bundle.builder import DOWNSTREAM_PARTS, GRAPH_SIDE_PARTS
     from src.training.lp_task import BASE_SELECTION_METRIC, BaseLPSampler, BaseLPTask
     from src.utils.checkpoint_paths import (
         check_run_dir_free, claim_run_dir, propose_run_dir, run_checkpoint_dir, run_log_dir,
@@ -1396,10 +1410,17 @@ def train(config: TrainConfig, explicit: Collection[str], *,
     if config.seed is not None:
         apply_seed(config.seed)
     bundle = build_bundle(spec, view)
+    # The freeze (`frozen_parts`, its value final here: a new run's checked
+    # above, a continued or branched run's its parent's, through the settings
+    # decode), before any weight is loaded and before the Trainer builds its
+    # optimizer, which then holds no frozen parameter; a frozen part runs in
+    # eval for the whole run, whatever calls `train()` (`ModelBundle.freeze`).
+    # A resume restores the optimizer state of the same groups.
+    bundle.freeze(FROZEN_PARTS[config.frozen_parts])
     weight_transfer = None
     if base_parent is not None:
         weight_transfer = _transfer_parent_weights(
-            bundle, base_parent.checkpoint["state_dict"], new_parts=("patient_encoder", "task_head"))
+            bundle, base_parent.checkpoint["state_dict"], new_parts=DOWNSTREAM_PARTS)
     if branch_parent is not None:
         weight_transfer = _transfer_parent_weights(
             bundle, branch_parent.checkpoint["state_dict"], new_parts=())
@@ -1563,10 +1584,17 @@ def train(config: TrainConfig, explicit: Collection[str], *,
             "training": {"message_passing": EXPOSURE_TRAIN_EDGES_DRAWN_PAIRS_REMOVED,
                          "lp_supervision": EXPOSURE_TRAIN_EDGES, "task": EXPOSURE_TRAIN_CASES},
             "validation": {"message_passing": EXPOSURE_FULL_VIEW, "task": EXPOSURE_VAL_CASES}}}
+        # Both terms at the recipe's coefficients, frozen or not (owner's O4a);
+        # a term every part of whose parameters is frozen trains nothing, said
+        # so here, never dropped: the LP term reads the graph side alone, the
+        # task term every part.
+        untrained = [term for term, reads in (("task", bundle.parts), ("lp", GRAPH_SIDE_PARTS))
+                     if set(reads) <= set(bundle.frozen)]
         loss_identity = {"terms": ["task", "lp"], "task_loss": "nca",
                          "task_loss_weight": float(config.task_loss_weight),
                          "lp_loss_weight": float(config.lp_loss_weight),
-                         "lp_head": spec.lp_head.kind, "margin": spec.lp_head.margin}
+                         "lp_head": spec.lp_head.kind, "margin": spec.lp_head.margin,
+                         "terms_without_trainable_parameters": untrained}
         scoring = {"task": config.task, "score": "-||z_d - z_P||^2 on L2-normalised vectors",
                    "candidates": "every disease of the graph view", "ties": "average rank",
                    "version": 1}
@@ -1663,7 +1691,20 @@ def _transfer_parent_weights(bundle: Any, parent_state: Mapping[str, Any], *,
     exist with the same shape, and only `new_parts` may be absent from the
     parent: a finetune's patient encoder and task head over its base's graph
     side (README A10), nothing for a branch, whose load is strict and complete.
-    Returns the weight-transfer record; the optimizer is always new."""
+
+    Returns the weight-transfer record (the model record's `weight_transfer`)
+    of the bundle as it will train, its freeze already applied
+    (`ModelBundle.freeze`): what was loaded and what initialised new; `trainable`, "all" when no part is frozen
+    (as training rules 1 recorded every transfer) or else the parts that
+    train; the optimizer, always new; each part, trainable or frozen
+    (`parts`), and the frozen parts' forward mode (`frozen_forward`, None when
+    none is frozen); and the SHA-256 of the downstream parts' weights as
+    training starts (`downstream_initial_sha256`, by `downstream_digest_rule`;
+    None for a base's branch, which has none), so two runs from one base can
+    be checked to start from the same downstream weights, not inferred from a
+    seed (research comparison Stage 9, owner's O4a)."""
+    from src.models.bundle.builder import DOWNSTREAM_PARTS, FROZEN_FORWARD, PARTS_DIGEST_RULE
+
     own = bundle.state_dict()
     foreign = sorted(k for k in parent_state if k not in own)
     mismatched = sorted(k for k in parent_state
@@ -1677,8 +1718,15 @@ def _transfer_parent_weights(bundle: Any, parent_state: Mapping[str, Any], *,
         raise ValueError(f"the parent lacks weights of {absent}")
     bundle.load_state_dict(dict(parent_state), strict=not new_parts)
     loaded = sorted({k.split(".")[0] for k in parent_state})
-    return {"loaded_from_parent": loaded, "initialised_new": absent, "trainable": "all",
-            "optimizer": "new"}
+    frozen = bundle.frozen
+    downstream = [part for part in DOWNSTREAM_PARTS if part in bundle.parts]
+    return {"loaded_from_parent": loaded, "initialised_new": absent,
+            "trainable": [part for part in bundle.parts if part not in frozen] if frozen else "all",
+            "optimizer": "new",
+            "parts": {part: "frozen" if part in frozen else "trainable" for part in bundle.parts},
+            "frozen_forward": FROZEN_FORWARD if frozen else None,
+            "downstream_initial_sha256": bundle.parts_sha256(downstream) if downstream else None,
+            "downstream_digest_rule": PARTS_DIGEST_RULE if downstream else None}
 
 
 # =============================================================================

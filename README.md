@@ -85,7 +85,7 @@ Two steps, in order. Full walkthrough with data sources and expected artifacts:
 | Step | Command | Produces |
 |---|---|---|
 | 1. Knowledge graph | `scripts/build_knowledge_graph.py` | `kg.json`, `node_features.pt`, `edge_indices.pt` |
-| 2. Train | a base on the dashboard's Research › Prepare › Training, then its task models on Research › Prepare › Fine-tune; or `scripts/train_model.py --data-dir <workspace> --stage base` in a shell given the service's `SHEPHERD_WORKSPACES_ROOT` (deployment guide §4.11), then `--stage finetune` with `--task` and `--finetune-from` the base's checkpoint | `runs/<arch>/<run>/checkpoints/*.pt` |
+| 2. Train | a base on the dashboard's Research › Prepare › Training, then its task models on Research › Prepare › Fine-tune; or `scripts/train_model.py --data-dir <workspace> --stage base` in a shell given the service's `SHEPHERD_WORKSPACES_ROOT` (deployment guide §4.11), then `--stage finetune` with `--task` and `--finetune-from` the base's checkpoint, adding `--frozen-parts graph_side` for the frozen-backbone control: the base's input module, encoder and LP head kept as they are, only the patient encoder and task head trained (research comparison Stage 9b; the Fine-tune page does not offer it yet) | `runs/<arch>/<run>/checkpoints/*.pt` |
 
 There is no shortest-path step: no task model reads `shortest_paths.pt`, and neither does the
 GB10 acceptance probe (`scripts/probe_deployment.py`, its `--m2-acceptance` run), which trains,

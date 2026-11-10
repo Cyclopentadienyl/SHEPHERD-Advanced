@@ -422,9 +422,9 @@ def decode_learning_settings(parent: Mapping[str, Any], where: str) -> DecodedSe
     - **Anything else is refused** with its reason: rules this build cannot
       run (`_check_training_rules`), no recorded settings, a rules-1 record
       that names a freeze, a freeze value outside the setting's closed
-      values, one that contradicts the record's stage, or one this build's
-      training does not apply (`frozen_parts_problem`), and, under either
-      rules, a weight transfer that contradicts the freeze (one check,
+      values or one that contradicts the record's stage
+      (`frozen_parts_problem`), and, under either rules, a weight transfer
+      that contradicts the freeze (one check,
       `_check_transfer_matches_freeze`).
 
     The parent's record is read, never changed; what the decode gave is
@@ -468,15 +468,25 @@ def _check_transfer_matches_freeze(transfer: Any, frozen_parts: str, decoded: bo
     every rules** (`decode_learning_settings`): a transfer, where the record
     holds one (a finetune, a branch), records every part trainable ("all")
     exactly when the freeze keeps nothing from training
-    (`FROZEN_PARTS[frozen_parts]` empty), on today's transfer shape. A record
-    that says otherwise contradicts itself or, its freeze decoded from rules 1
-    (`decoded`), the rules it records, which trained every part."""
+    (`FROZEN_PARTS[frozen_parts]` empty), and, where it names each part
+    trainable or frozen (`parts`, the shape since research comparison Stage
+    9b), exactly the freeze's parts frozen. A record that says otherwise
+    contradicts itself or, its freeze decoded from rules 1 (`decoded`), the
+    rules it records, which trained every part."""
     if transfer is None:
         return
     trainable = transfer.get("trainable") if isinstance(transfer, Mapping) else transfer
+    parts = transfer.get("parts") if isinstance(transfer, Mapping) else None
     frozen = FROZEN_PARTS[frozen_parts]
-    if (trainable == "all") == (not frozen):
+    recorded_frozen = (sorted(part for part, state in parts.items() if state == "frozen")
+                       if isinstance(parts, Mapping) else None)
+    if (trainable == "all") == (not frozen) and recorded_frozen in (None, sorted(frozen)):
         return
+    if (trainable == "all") == (not frozen):
+        raise RunPlanRefused(
+            f"{where} records a weight transfer with frozen parts {recorded_frozen} beside "
+            f"frozen_parts {frozen_parts!r}, which freezes {sorted(frozen)}, so its record "
+            "contradicts itself.")
     if decoded:
         raise RunPlanRefused(
             f"{where} records a weight transfer with trainable {trainable!r} under training "

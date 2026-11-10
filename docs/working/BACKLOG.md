@@ -19,7 +19,13 @@ not restate their decisions.
   - **The engineering main line is (b): comparing results within a model family** (a base, its
     variants and its finetunes) as the first use case. The capability is general: nothing restricts
     comparisons across families, datasets or environments. It reuses the existing evaluation,
-    reports, ledger and pages; no separate experiment platform is built.
+    reports, ledger and pages; no separate experiment platform is built. *(2026-11-10: the
+    frozen-backbone disease control, the owner's O2 and O4a, is built in research comparison Stage
+    9b on `claude/research-comparison`, not merged: a finetune with `frozen_parts` `graph_side`
+    keeps its base's graph side as it is and trains only its patient encoder and task head, from
+    the command line or the job runner's Fine-tune settings (not the Fine-tune page); both arms
+    are ordinary task models through the one disease evaluator, registration and results service,
+    and their records say each part's freeze and the downstream weights they started from.)*
   - **(a) In parallel:** preparing the data and the formal reference baseline (package C, research).
   - **(c) Later:** comparing GATv2 with HGT, after HGT's minimal port behind `GraphEncoder` (the
     multi-architecture milestone, README §3.3).

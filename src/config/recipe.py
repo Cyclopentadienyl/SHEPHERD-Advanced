@@ -157,22 +157,19 @@ BRANCH_COMPANIONS = ("min_lr_ratio", "amp_dtype", "gradient_accumulation_steps")
 BRANCH_KEPT = ("early_stopping_patience", "frozen_parts")
 
 #: What each value of the learning setting `frozen_parts` keeps from training,
-#: by the model bundle's part names (`src.models.bundle.builder.ModelBundle`;
+#: by the model bundle's part names (`src.models.bundle.builder.PARTS`;
 #: research comparison Stage 9, owner's O4a): ``graph_side`` is the input
-#: module, the encoder and the LP head, so a finetune trains only its patient
-#: encoder and task head (the frozen-backbone control); ``none`` keeps nothing
-#: from training, as the source's finetune (README A10, U8) and every run of
-#: training rules 1, which had no freeze.
+#: module, the encoder and the LP head (the bundle's `GRAPH_SIDE_PARTS`, pinned
+#: equal), so a finetune trains only its patient encoder and task head (the
+#: frozen-backbone control); ``none`` keeps nothing from training, as the
+#: source's finetune (README A10, U8) and every run of training rules 1, which
+#: had no freeze. The training process applies each value as it reads
+#: (`ModelBundle.freeze` of its parts, before the optimizer is built).
 FROZEN_PARTS: Dict[str, Tuple[str, ...]] = {
     "none": (),
     "graph_side": ("input", "encoder", "lp_head"),
 }
 _PART_WORDS = {"input": "the input module", "encoder": "the encoder", "lp_head": "the LP head"}
-#: The values of `frozen_parts` this build's training process applies. A value
-#: the field spec declares and the process does not apply is refused by the
-#: one check below, never trained as another value under a record that names
-#: it.
-FROZEN_PARTS_APPLIED: Tuple[str, ...] = ("none",)
 
 
 def frozen_parts_problem(learning_stage: Any, frozen_parts: Any) -> Optional[str]:
@@ -186,8 +183,7 @@ def frozen_parts_problem(learning_stage: Any, frozen_parts: Any) -> Optional[str
     - a value outside the field spec's closed values (`value_problem`);
     - **a freeze that leaves nothing to train**: a base is its graph side
       alone, so a base with any freeze is refused (a freeze applies to a
-      finetune, whose patient encoder and task head train);
-    - a value this build's training does not apply (`FROZEN_PARTS_APPLIED`).
+      finetune, whose patient encoder and task head train).
     """
     from src.config.training_fields import value_problem
 
@@ -201,10 +197,6 @@ def frozen_parts_problem(learning_stage: Any, frozen_parts: Any) -> Optional[str
         return (f"frozen_parts {frozen_parts!r} freezes {parts}, every part a "
                 f"{learning_stage} run has, so nothing would train. A freeze applies to a "
                 "finetune, whose patient encoder and task head train.")
-    if frozen_parts not in FROZEN_PARTS_APPLIED:
-        return (f"frozen_parts {frozen_parts!r} is not applied by this build's training yet "
-                f"(it applies {', '.join(repr(v) for v in FROZEN_PARTS_APPLIED)}), so a run "
-                "of it would not be what its record says.")
     return None
 
 
@@ -244,5 +236,5 @@ def branch_settings(learning_stage: str, task: Optional[str] = None) -> FrozenSe
 
 __all__ = ["BASE", "BASE_FIXED", "BASE_SOURCES", "BRANCH_COMPANIONS", "BRANCH_KEPT", "FINETUNE",
            "FINETUNE_FIXED", "FINETUNE_SOURCES", "FINETUNE_TASKS", "FINETUNE_TASK_SOURCES",
-           "FROZEN_PARTS", "FROZEN_PARTS_APPLIED", "branch_settings", "frozen_parts_problem",
+           "FROZEN_PARTS", "branch_settings", "frozen_parts_problem",
            "reference_settings", "unread_settings"]
