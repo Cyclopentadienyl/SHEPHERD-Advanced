@@ -13,7 +13,7 @@ used for LP accuracy is the raw score > 0, i.e. `sigmoid(raw) > 0.5`
 **The one LP core (README §3.2, F3, F4).** Fixed pairs (`fixed_lp_pairs`: every
 edge once, against one negative drawn once by U5's rule) and their scoring
 (`score_lp_pairs`: the head's raw scores over full-view node vectors, and the
-whole-set metrics) live here, beside the negative rule, so base validation and
+whole-set metrics, `lp_set_metrics`) live here, beside the negative rule, so base validation and
 any LP measurement share one pair rule and one scoring. So do the two byte
 encodings of their results: a pairs table (`lp_pairs_table`, a KG edge set's
 ``pairs.bin``) and a scores table (`lp_scores_table`: each pair's actual raw
@@ -225,9 +225,21 @@ class LPScores:
 
     positive: Tensor
     negative: Tensor
-    #: `lp_metrics`' (accuracy at raw > 0, ROC-AUC, AP, the positives' and
-    #: negatives' counts) and `lp_loss`, the head's hinge over the tanh scores.
+    #: `lp_set_metrics`' over them.
     metrics: Dict[str, Any]
+
+
+@torch.no_grad()
+def lp_set_metrics(lp_head: DistMultHead, positive: Tensor, negative: Tensor) -> Dict[str, Any]:
+    """The whole-set metrics of an LP pair set's raw (pre-tanh) scores, aligned
+    by pair: `lp_metrics`' (accuracy at raw > 0, ROC-AUC, AP, the positives'
+    and negatives' counts) and `lp_loss`, `lp_head`'s hinge over the tanh
+    scores, computed where the scores are. The one statement of a set's
+    summary: `score_lp_pairs` gives it, and a reader that re-derives a kept
+    run's summary from its scores file calls it on the stored scores."""
+    metrics = lp_metrics(positive.cpu().tolist(), negative.cpu().tolist())
+    metrics["lp_loss"] = float(lp_head.hinge(torch.tanh(positive), torch.tanh(negative)))
+    return metrics
 
 
 @torch.no_grad()
@@ -265,9 +277,8 @@ def score_lp_pairs(bundle: Any, pairs: LPPairs, edges: Tensor, relations: Tensor
                                                   z[pairs.negative_tail[rows].to(device)]))
     positive = positives[0] if len(positives) == 1 else torch.cat(positives)
     negative = negatives[0] if len(negatives) == 1 else torch.cat(negatives)
-    metrics = lp_metrics(positive.cpu().tolist(), negative.cpu().tolist())
-    metrics["lp_loss"] = float(bundle.lp_head.hinge(torch.tanh(positive), torch.tanh(negative)))
-    return LPScores(positive.cpu(), negative.cpu(), metrics)
+    return LPScores(positive.cpu(), negative.cpu(),
+                    lp_set_metrics(bundle.lp_head, positive, negative))
 
 
 #: A scores table's columns (`lp_scores_table`), in each row's order: the row
@@ -376,4 +387,4 @@ __all__ = ["DistMultHead", "LPPairs", "LPScores", "LP_PAIRS_LAYOUT", "LP_PAIR_CO
            "LP_PAIR_RULE", "LP_SCORE_COLUMNS", "LP_SCORE_STATES", "corrupt_tails",
            "fixed_lp_pairs", "lp_pairs_digest", "lp_pairs_from_table", "lp_pairs_table",
            "lp_score_states", "lp_scores_chunks", "lp_scores_from_table", "lp_scores_layout",
-           "lp_scores_table", "score_lp_pairs"]
+           "lp_scores_table", "lp_set_metrics", "score_lp_pairs"]

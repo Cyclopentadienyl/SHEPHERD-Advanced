@@ -8,7 +8,8 @@ by: the IDs, the report keys and what each must hold. It also records what the c
   `tests/unit/test_probe_m2_phase.py` runs the demo phase end to end and checks the evidence against the disk, and
   `tests/unit/test_probe_research_comparison.py` shows that their own checks fire.
 - **What was not verified.** Nothing here ran on CUDA or on the GB10. The values below that say "on the GB10" are what
-  the probes require when the acceptance runs there with `--device cuda`. They have not been observed.
+  the probes require when the acceptance runs there with `--device cuda`, each checked by the probe that records it
+  (§2). They have not been observed.
 - **When it runs.** As O9 says: after integration and the external review, in an isolated new clone, with the new
   probes required. Each of the two deploy routes is recorded as it was actually verified.
 
@@ -34,6 +35,11 @@ meaning:
 - A5's facts, and `m2_acceptance.environment`;
 - the facts of R1–R4, R8, M2 and M9, `R8`'s `history_file` among them.
 
+**One value changed.** R3's `training_rules` keeps its name and meaning: the training rules the base records, which R3
+requires to be the tested build's `TRAINING_RULES_VERSION` (`src/utils/checkpoint_io.py`). That constant is now 2
+(Stage 9a), so a run of this round records 2. K8's tested commit `f2c2012` had 1, and its report records 1. The check
+must not pin either number (§3, item 3).
+
 `m2_acceptance.scope` gained a sentence about the new probes. It is prose, and nothing here needs the check to read it.
 
 ## 2. The probes and their facts
@@ -49,8 +55,14 @@ runs on the probe's own deployment under `<work>/rc`:
   `probe-kg-split-record-1`, `probe-rc-supplied-1` and `probe-gen-val-1`.
 
 **What the check must not require.** No metric value, no threshold and no comparison between two models' figures: they
-are functional checks, not results (README §1, "Not pass conditions"). The probes never compare versions or routes
-either. On CUDA, two runs of one model need not give equal bytes or numbers; that they are both kept is what counts.
+are functional checks, not results (README §1, "Not pass conditions"). The probes never compare a version or a route
+with an expected one, or one run's with another's. L8 checks only that the export shows each run's native identity as
+that run's own report recorded it. On CUDA, two runs of one model need not give equal bytes or numbers; that they are
+both kept is what counts.
+
+**Where each run ran.** Every kept run's report is checked when the probe reads it (`_ran_on`, in L2, L3, L5, L6 and
+L7). Its `cuda_executed` must be true exactly when the probe's device is CUDA. The measurement command records true
+only for a run that executed there, and it refuses `--device cuda` without CUDA.
 
 ### A6 — each component's native identity and route (phase `environment`)
 
@@ -65,10 +77,17 @@ recorded one outside that shape. It is never a gate on versions.
 | `routes` | by component name: the deploy route, where the source receipt matched what is installed, else `"not recorded"` |
 | `line` | the same identity in the one wording the console and Models use |
 
-What a GB10 run must show depends on the route actually deployed, and the check states it rather than assuming one. A
-`pull` or `compile` route that wrote a receipt matching the install gives `routes` the receipt's route; anything else
-gives `"not recorded"`. Either way the probe passes. That is why each route is recorded as verified only by its own
-run (O9).
+What a GB10 run must show depends on the route actually deployed, and the check states it rather than assuming one.
+`routes[name]` is the route the source receipt names, and only three values occur. They are the receipt's routes
+(`src/utils/pyg_native_check.py`, `ROUTE_PREBUILT_RELEASE` and `ROUTE_LOCAL_BUILD`), never `deploy.sh`'s strategy
+names `pull` and `compile`:
+
+- `"prebuilt release"`: a verified pull. The release's wheels were installed, checked and their receipt written.
+- `"local build"`: a compile. It is also what a pull records when it failed and fell back to a source build
+  (`PYG_ARM_ON_PULL_FAILURE=build`). The check must not count that as a verified pull.
+- `"not recorded"`: anything else. There is no receipt, or it does not match what is installed.
+
+Either way the probe passes. That is why each route is recorded as verified only by its own run (O9).
 
 ### L1 — a KG edge set imported from D1's base
 
@@ -99,18 +118,20 @@ listed base on L1's set, so they have the same keys:
 | `n_ranked` | the pairs scored (L1's `pairs.rows`) |
 | `metrics` | `lp_accuracy`, `lp_roc_auc`, `lp_average_precision`, `lp_loss`, raw as recorded |
 | `scores` | `rows`, `scores_sha256`, `pairs_sha256` (L1's `pairs.sha256`), `lp_pairs_digest`, `pairs_not_finite`, `metrics_recomputed_from_the_scores`, `metrics_defined`, `raw_scores_recomputed`, `largest_raw_score_difference` |
-| `cuda_executed` | `true` on the GB10 |
+| `cuda_executed` | `true` on the GB10, `false` on the CPU: required to match the device |
 | `record` | `sequence` (L2 `1`, L3 `2`, in the one ledger beside the base), `run_id` (equal to `run_id`), `mode` `"kg_link_prediction"`, `view` `"KgEdgesRecordView"`, `ledger_sha256` |
 
 L3 adds:
 
+- `inputs`, prose;
 - `status` `"completed"`, `exit_code` `0`;
 - `outcome_file_names_the_kept_report`, `kept` and `registered`, each `true`;
 - `report_state` (`kept` `"kept"`, `registered` `"registered"`).
 
 **The scores check** (`_lp_scores_verified`). The scores file, the version's pairs and the report's summary verify each
 other: the bytes, the rows and their order, each row's state, the raw scores recomputed through the LP core over the
-version's message-passing graph, and the metrics recomputed from the scores file alone. On the CPU the recomputed raw
+version's message-passing graph, and the metrics recomputed from the scores file alone by the LP core's one summary
+rule (`src/models/bundle/lp_head.lp_set_metrics`, which the measurement itself uses). On the CPU the recomputed raw
 scores are exact, so `largest_raw_score_difference` is `0.0`. On CUDA, message passing sums in an order CUDA does not
 promise. The probe therefore requires the recomputation within `RC_SCORE_TOLERANCE` (rtol 1e-4, atol 1e-5) and
 records the largest difference. The check reads that difference and does not require 0.
@@ -136,7 +157,7 @@ The subject is `probe-rc-d1-disease`, a copy of D1's disease child.
 |---|---|
 | `measured` | `run` `"probe-rc-d1-disease"`, `checkpoint_sha256` |
 | `disease` | `run_id`, `report_sha256`, `protocol` `"disease"`, `n_ranked`, `metrics`, `cuda_executed`, `version` (`label` `"probe-rc-supplied-1"`, `kind` `"supplied"`, `manifest_sha256`), `record` (`sequence` `1`, `view` `"RecordView"`) |
-| `kg_link_prediction` | L2's keys, with `exposure.state` `"after_full_view_exposure"` (the reading `"after full-view exposure"`) and `record` (`sequence` `2`, `view` `"KgEdgesRecordView"`) |
+| `kg_link_prediction` | L2's keys except `measured`, for the child: `checkpoint_sha256` the child's, `version` L1's, `exposure.state` `"after_full_view_exposure"` (the reading `"after full-view exposure"`) and `record` (`sequence` `2`, `view` `"KgEdgesRecordView"`) |
 | `records` | the two records the one reader (`read_records`) reads beside the child, `[{mode, view, sequence}]`, sorted by mode: `disease` then `kg_link_prediction` |
 
 ### L6 — a generated split imported, measured and registered
@@ -162,12 +183,12 @@ regression cases, not studies.
 | Key | Holds |
 |---|---|
 | `task`, `protocol` | the task, and the same protocol |
-| `device` | `"cuda"` on the GB10 |
-| `trained_on_cuda` | `true` on the GB10: the child's environment names its GPU |
-| `cuda_executed` | `true` on the GB10 |
+| `device` | the probe's device: `"cuda"` on the GB10 |
+| `trained_on_cuda` | `true` on the GB10, `false` on the CPU: required to match the device (the child's environment names its GPU) |
+| `cuda_executed` | `true` on the GB10, `false` on the CPU: required to match the device |
 | `training_seconds` | a number: this child's training, in seconds |
 | `epochs`, `sizes` | `1`, and the words naming the demo's sizes |
-| `child` | `run`, `sha256`, `parent_sha256` (L1's `taken_from_checkpoint_sha256`), `training_rules` `2` |
+| `child` | `run`, `sha256`, `parent_sha256` (L1's `taken_from_checkpoint_sha256`), `training_rules` as the child records it (the tested build's `TRAINING_RULES_VERSION`: `2` in this round) |
 | `version` | `label`, `kind` (`"supplied"` for disease, `"generated"` for the others), `manifest_sha256` |
 | `run_id`, `report_sha256`, `n_ranked`, `metrics` | the kept run |
 | `record` | `sequence` `1`, `mode` the task, `view` `"RecordView"` (disease) or `"GeneratedRecordView"` |
@@ -193,32 +214,40 @@ Before passing, the probe checks every exported row:
 - kept and registered;
 - the recorded training settings, rules, learning and effective settings, and loss identity, with a finetune's weight
   transfer listing `parts`, `frozen_forward` and `downstream_initial_sha256`;
-- the environment class and the native identity this process records (A6's);
+- the environment class, and the native identity that run's own report recorded, as the record views show it (never
+  the probe's own process: L3's run was measured in the job runner's);
 - units for a KG edge set's metrics, and the absence said for the others;
 - the exposure: a KG edge set's state and reading, a supplied cohort's R10, a generated split's allocation note.
 
 ## 3. TA-10: the external closing check's next revision
 
 The check lives outside this repository, in the owner's session. Its next revision must do three things, and be
-dry-run first.
+dry-run first (item 4).
 
 1. **Read the new probes.**
    - Take the required lists from the report (§1), not from a copy in the script. Require the 14 new IDs to have
      passed.
    - Read their facts by the keys above. These cross-checks hold by construction:
-     - L1's `manifest_sha256` equals L2's, L3's and L5's `version.manifest_sha256`;
+     - L1's `manifest_sha256` equals L2's and L3's `version.manifest_sha256`, and L5's
+       `kg_link_prediction.version.manifest_sha256`;
      - L1's `taken_from_checkpoint_sha256` equals L2's and L3's `checkpoint_sha256` and every L7 `child.parent_sha256`;
      - L8's `runs` run ids equal those of L2, L3, L5 (both), L6 and L7.
    - Do not gate on a version, a route, a metric value or a raw-score difference (§2).
 2. **Fix the two INFO lines that read nothing.** K8's record names them (`../k8-acceptance-2026-11-09/README.md` §3).
    - `W8 training_seconds None`: W8 trains nothing, since it measures W1's listed copy of M2's child. Drop the line.
-     The demo's own training time is D1's `facts.training_seconds`, and each new child's is L7's
-     `facts.training_seconds`.
+     The demo's own training time is D1's `facts.training_seconds`, a mapping by stage (K8's report gives
+     `{"base": 1.0, "disease": 0.6}`). Each new child's is L7's `facts.training_seconds`, a number.
    - `RW2 training_seconds None`: RW2 records its child's time under `facts.measured.training_seconds`, a mapping by
      stage. K8's report gives `{"disease": 1191.9}`.
-3. **Dry-run first on the kept `../k8-acceptance-2026-11-09/k8_report.json`, before the GB10 run.** That report
+3. **Read R3's expected training rules from the tested commit.** K8's check requires R3 to be a base under training
+   rules 1 (`R3: a GATv2 base under training rules 1 (Q19 (a))`). The expected value is the tested commit's
+   `TRAINING_RULES_VERSION`, read from `src/utils/checkpoint_io.py` at the report's `tested_commit.commit`, as the
+   required lists are the tested commit's. It is never a pinned number: 1 at `f2c2012`, and 2 from Stage 9a on. A
+   pinned 1 would fail R3 on this round's GB10 run, and a dry run on K8's report could not show it.
+4. **Dry-run first on the kept `../k8-acceptance-2026-11-09/k8_report.json`, before the GB10 run.** That report
    predates the new probes: its demo list has 52 entries and holds no A6 or L probe. The dry run passes when:
    - every check that passed at K8 passes again;
+   - the R3 line expects `f2c2012`'s rules, 1, read from that commit, and passes;
    - the new checks report the new probes as absent, and nothing else;
    - the RW2 line reads 1191.9 s, and no W8 training line is printed.
 

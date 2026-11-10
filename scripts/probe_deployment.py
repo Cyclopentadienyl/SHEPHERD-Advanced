@@ -5656,6 +5656,30 @@ def _one_new_run(reports: Path, before: Sequence[str]) -> str:
     return created[0]
 
 
+def _ran_on(manifest: Mapping[str, Any], device: str) -> None:
+    """A kept report's measurement ran on the probe's `device`: its manifest
+    records `cuda_executed` true exactly when that device is CUDA, the value
+    the measurement command gives only to a run that executed there (it
+    refuses `--device cuda` without CUDA)."""
+    on_cuda = device.startswith("cuda")
+    assert manifest.get("cuda_executed") is on_cuda, (
+        f"the report records cuda_executed {manifest.get('cuda_executed')} for a run on {device}")
+
+
+def _recorded_native_identity(report: Mapping[str, Any]) -> Dict[str, Any]:
+    """The native identity a kept report's run recorded (its manifest's
+    environment components), as every reader shows it: the record views' one
+    projection (`native_identity`) through their model (`RecordComponent`),
+    which is how an export row serialises it. What that run's own process
+    recorded, never this one's."""
+    from src.api.services.record_views import RecordComponent
+    from src.utils.run_environment import native_identity
+
+    components = report["manifest"]["environment"]["facts"]["components"]
+    return {name: RecordComponent.model_validate(entry).model_dump(mode="json")
+            for name, entry in native_identity(components).items()}
+
+
 def _lp_scores_verified(run: Path, report: Mapping[str, Any], version: Any, checkpoint: Path,
                         workspace: Path, device: str) -> Dict[str, Any]:
     """**The scores file, the pairs file and the summary verify each other**
@@ -5671,9 +5695,10 @@ def _lp_scores_verified(run: Path, report: Mapping[str, Any], version: Any, chec
       (its recorded split's train part, rebuilt from the model's own view),
       within `RC_SCORE_TOLERANCE`;
     - the report's metrics are recomputed from the scores file alone, by the
-      LP core's metrics (`lp_metrics`) and the evaluator's status rule
-      (`lp_metric_statuses`): the ranking metrics exactly, lp_loss (the
-      head's hinge, computed on the run's device) within float rounding.
+      LP core's whole-set summary (`lp_set_metrics`) and the evaluator's status
+      rule (`lp_metric_statuses`): the ranking metrics exactly, lp_loss (the
+      head's hinge, which the run computed on its device) within float
+      rounding.
 
     The pairs are read through the digest-checking reader
     (`read_kg_edge_pairs`). Returns the evidence: counts, digests and the
@@ -5687,8 +5712,12 @@ def _lp_scores_verified(run: Path, report: Mapping[str, Any], version: Any, chec
     from src.evaluation.cohort_registry import read_kg_edge_pairs
     from src.evaluation.task_measurement import LP_METRICS, lp_metric_statuses
     from src.kg.graph_view import rebuild_split
-    from src.models.bundle.lp_head import lp_score_states, lp_scores_from_table, score_lp_pairs
-    from src.models.bundle.metrics import lp_metrics
+    from src.models.bundle.lp_head import (
+        lp_score_states,
+        lp_scores_from_table,
+        lp_set_metrics,
+        score_lp_pairs,
+    )
     from src.models.bundle.record import load_bundle
     from src.utils.checkpoint_io import read_checkpoint
 
@@ -5736,10 +5765,8 @@ def _lp_scores_verified(run: Path, report: Mapping[str, Any], version: Any, chec
     assert close, (f"the raw scores in the scores file are not the model's scores of the pairs "
                    f"(largest difference {max(differences):.3g})")
 
-    # The summary, from the scores file alone.
-    recomputed = lp_metrics(table["positive_raw"].tolist(), table["negative_raw"].tolist())
-    recomputed["lp_loss"] = float(bundle.lp_head.hinge(torch.tanh(positive),
-                                                       torch.tanh(negative)))
+    # The summary, from the scores file alone, by the LP core's one rule.
+    recomputed = lp_set_metrics(bundle.lp_head, positive, negative)
     values, _statuses = lp_metric_statuses(recomputed, pairs=n, not_finite=int(states.sum()))
     stated = report["authoritative_metrics"]
     assert set(stated) == set(values), (
@@ -5760,15 +5787,16 @@ def _lp_scores_verified(run: Path, report: Mapping[str, Any], version: Any, chec
 
 def _lp_run_facts(run: Path, version: Any, checkpoint: Path, checkpoint_sha256: str,
                   workspace: Path, device: str, *, stage: str,
-                  exposure_state: str) -> Dict[str, Any]:
+                  exposure_state: str) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """A kept KG link-prediction run of the model `checkpoint` on the KG edge
     set `version`: its report parsed and identified from one read, measured by
-    the protocol on that version's part, with no R10; its exposure block
-    scoped to the model's own record (its definition version, its sources:
-    the model record by the checkpoint's digest and stage, the version by its
-    label, kind, role, digest and split) and reading `exposure_state`'s words;
-    and its scores file, pairs and summary verified against each other
-    (`_lp_scores_verified`). Returns the evidence."""
+    the protocol on that version's part, with no R10, on the probe's `device`
+    (`_ran_on`); its exposure block scoped to the model's own record (its
+    definition version, its sources: the model record by the checkpoint's
+    digest and stage, the version by its label, kind, role, digest and split)
+    and reading `exposure_state`'s words; and its scores file, pairs and
+    summary verified against each other (`_lp_scores_verified`). Returns the
+    evidence, and the report as parsed."""
     from src.evaluation.caveats import EXPOSURE_DEFINITION_VERSION, EXPOSURE_READINGS
     from src.evaluation.cohort_registry import REPORT_FILE
     from src.kg.storage.file_storage import _read_json
@@ -5785,6 +5813,7 @@ def _lp_run_facts(run: Path, version: Any, checkpoint: Path, checkpoint_sha256: 
     assert manifest["artifact_digests"]["checkpoint"] == checkpoint_sha256, (
         "the report does not name the checkpoint it was given")
     assert manifest["r10"] is None, "a KG edge set's report records R10"
+    _ran_on(manifest, device)
     exposure = report["exposure"]
     sources = exposure.get("sources") or {}
     model_source = sources.get("model_record") or {}
@@ -5810,8 +5839,8 @@ def _lp_run_facts(run: Path, version: Any, checkpoint: Path, checkpoint_sha256: 
                      "measured_edges": (exposure.get("measured_edges") or {}).get("n")},
         "n_ranked": report["n_ranked"], "metrics": report["authoritative_metrics"],
         "scores": _lp_scores_verified(run, report, version, checkpoint, workspace, device),
-        "cuda_executed": manifest.get("cuda_executed"),
-    }
+        "cuda_executed": manifest["cuda_executed"],
+    }, report
 
 
 def _registered_record(checkpoint: Path, report_sha256: str, run_id: str, version: Any,
@@ -5838,6 +5867,61 @@ def _registered_record(checkpoint: Path, report_sha256: str, run_id: str, versio
         "the run's record was not built from the kept report's bytes, or names another version")
     return {"sequence": record["registration"]["sequence"], "run_id": record["run_id"],
             "mode": view.mode, "view": type(view).__name__, "ledger_sha256": ledger_sha256}
+
+
+def _export_row_verified(row: Mapping[str, Any], entry: Mapping[str, Any]) -> None:
+    """One row of the results export (L8) holds what the flow kept for its run
+    (`entry`: the report's, the measured checkpoint's and the version's
+    digests, the data kind and role, and the native identity the run's report
+    recorded, `_recorded_native_identity`):
+
+    - those identities, and the run kept and registered;
+    - the recorded training settings, rules, learning and effective settings
+      and loss identity, the environment class, the metric and its status; a
+      finetune's weight transfer listing its parts, the frozen parts' forward
+      mode and the downstream start (Stage 9b);
+    - the native identity its run recorded, as the record views show it;
+    - a KG edge set's units and denominators, and the absence said for
+      another kind's;
+    - the exposure by kind: a KG edge set's state and reading, a supplied
+      cohort's R10, a generated split's allocation note."""
+    from src.api.services import results
+    from src.evaluation.caveats import AFTER_FULL_VIEW_EXPOSURE, HELD_OUT
+
+    probe_id = entry["probe"]
+    said = (row["report_sha256"], row["checkpoint_sha256"], row["data_version_sha256"],
+            row["data_kind"], row["role"])
+    assert said == (entry["report_sha256"], entry["checkpoint_sha256"],
+                    entry["version_sha256"], entry["kind"], entry["role"]), (
+        f"{probe_id}'s run is exported with other identities")
+    assert (row["report"], row["registered"]) == (results.REPORT_KEPT, results.REGISTERED), (
+        f"{probe_id}'s run is exported as {row['report']}, {row['registered']}")
+    for column in ("training_rules", "learning_settings", "effective_settings",
+                   "loss_identity", "environment_class", "metric_name", "value_status"):
+        assert row[column] is not None, f"{probe_id}'s run is exported without its {column}"
+    # A KG edge set's run records each metric's unit and denominator; another
+    # kind's says it records none.
+    assert (row["unit"] is not None and row["denominator"] is not None
+            if entry["kind"] == "kg_edges" else
+            row["unit"] is None and "metric.unit" in (row["unknown"] or {})), (
+        f"{probe_id}'s run is exported with its units unsaid")
+    transfer = row["weight_transfer"]
+    assert row["learning_stage"] != "finetune" or (
+        isinstance(transfer, dict) and transfer.get("parts") and "frozen_forward" in transfer
+        and transfer.get("downstream_initial_sha256")), (
+        f"{probe_id}'s finetune is exported without its weight transfer")
+    assert row["native_identity"] == entry["native_identity"], (
+        f"{probe_id}'s run is exported with another native identity than its report records")
+    exposure = row["exposure_state"]
+    if entry["kind"] == "kg_edges":
+        assert exposure in (HELD_OUT, AFTER_FULL_VIEW_EXPOSURE) and (
+            row["exposure_reading"] and row["exposure_definition"]), (
+            f"{probe_id}'s KG edge set run is exported without its exposure")
+    elif entry["kind"] == "supplied":
+        assert row["r10"] is not None, f"{probe_id}'s run is exported without its R10"
+    else:
+        assert exposure == results.EXPOSURE_BY_ALLOCATION, (
+            f"{probe_id}'s generated split run reads exposure {exposure!r}")
 
 
 def _rc_demo(report: Report, work: Path, sound: Path, base: Path, child: Path, device: str,
@@ -5878,7 +5962,8 @@ def _rc_demo(report: Report, work: Path, sound: Path, base: Path, child: Path, d
                 "SHEPHERD_DEVICE": device}
     state: Dict[str, Any] = {}
     #: Each run the flow kept and registered, for L8: by run id, the report's
-    #: digest, the measured checkpoint's, the version's and the probe's id.
+    #: digest, the measured checkpoint's, the version's, the probe's id and
+    #: the native identity the run's report recorded.
     kept: List[Dict[str, Any]] = []
 
     def _need(*keys: str) -> None:
@@ -5892,11 +5977,12 @@ def _rc_demo(report: Report, work: Path, sound: Path, base: Path, child: Path, d
         return registry / "versions" / label / "reports"
 
     def _keep(probe_id: str, run_id: str, report_sha256: str, checkpoint_sha256: str,
-              version: Any, record: Mapping[str, Any]) -> None:
+              version: Any, record: Mapping[str, Any], kept_report: Mapping[str, Any]) -> None:
         kept.append({"probe": probe_id, "run_id": run_id, "report_sha256": report_sha256,
                      "checkpoint_sha256": checkpoint_sha256,
                      "version_sha256": version.identity.sha256, "kind": version.kind,
-                     "role": version.manifest["role"], "sequence": record["sequence"]})
+                     "role": version.manifest["role"], "sequence": record["sequence"],
+                     "native_identity": _recorded_native_identity(kept_report)})
 
     def _measured_and_registered(probe_id: str, checkpoint: Path, checkpoint_sha256: str,
                                  label: str, version: Any, protocol: str
@@ -5904,7 +5990,8 @@ def _rc_demo(report: Report, work: Path, sound: Path, base: Path, child: Path, d
         """`checkpoint` measured by `protocol` on `version` through the
         measurement command with --record: one run kept in the version's
         store, its report naming the checkpoint, the version and the protocol,
-        and one record of it beside the checkpoint, read as its kind's view."""
+        run on the probe's device (`_ran_on`), and one record of it beside the
+        checkpoint, read as its kind's view."""
         from src.kg.storage.file_storage import _read_json
 
         reports = _reports(label)
@@ -5922,13 +6009,14 @@ def _rc_demo(report: Report, work: Path, sound: Path, base: Path, child: Path, d
             "the report names another version")
         assert manifest["artifact_digests"]["checkpoint"] == checkpoint_sha256, (
             "the report does not name the checkpoint it was given")
+        _ran_on(manifest, device)
         record = _registered_record(checkpoint, identity.sha256, run_id, version,
                                     checkpoint_sha256)
-        _keep(probe_id, run_id, identity.sha256, checkpoint_sha256, version, record)
+        _keep(probe_id, run_id, identity.sha256, checkpoint_sha256, version, record, kept_report)
         return run_id, {"run_id": run_id, "report_sha256": identity.sha256,
                         "protocol": protocol, "n_ranked": kept_report.get("n_ranked"),
                         "metrics": kept_report.get("authoritative_metrics"),
-                        "cuda_executed": manifest.get("cuda_executed"), "record": record}
+                        "cuda_executed": manifest["cuda_executed"], "record": record}
 
     # ---- L1: the flow's deployment and a KG edge set imported from the base
     def _kg_edge_set() -> Tuple[str, Dict[str, Any]]:
@@ -5991,12 +6079,13 @@ def _rc_demo(report: Report, work: Path, sound: Path, base: Path, child: Path, d
                                "--record", protocol=LP_PROTOCOL)
         assert code == 0, f"the measurement with --record exited {code}"
         run_id = _one_new_run(reports, before)
-        facts = _lp_run_facts(reports / run_id, version, checkpoint, checkpoint_sha256,
-                              state["workspace"], device, stage=stage,
-                              exposure_state=exposure_state)
+        facts, kept_report = _lp_run_facts(reports / run_id, version, checkpoint,
+                                           checkpoint_sha256, state["workspace"], device,
+                                           stage=stage, exposure_state=exposure_state)
         record = _registered_record(checkpoint, facts["report_sha256"], run_id, version,
                                     checkpoint_sha256)
-        _keep(probe_id, run_id, facts["report_sha256"], checkpoint_sha256, version, record)
+        _keep(probe_id, run_id, facts["report_sha256"], checkpoint_sha256, version, record,
+              kept_report)
         return {**facts, "record": record}
 
     def _lp_measured() -> Tuple[str, Dict[str, Any]]:
@@ -6041,8 +6130,9 @@ def _rc_demo(report: Report, work: Path, sound: Path, base: Path, child: Path, d
         # inferred from the exit status: the run was asked to record.
         assert (outcome.get("kept"), outcome.get("registered")) == (True, True), (
             f"the outcome says kept {outcome.get('kept')}, registered {outcome.get('registered')}")
-        facts = _lp_run_facts(reports / run_id, version, state["base"], state["base_sha"],
-                              state["workspace"], device, stage="base", exposure_state=HELD_OUT)
+        facts, kept_report = _lp_run_facts(reports / run_id, version, state["base"],
+                                           state["base_sha"], state["workspace"], device,
+                                           stage="base", exposure_state=HELD_OUT)
         assert facts["report_sha256"] == published, (
             "the outcome file's digest is not the kept report's bytes")
         record = _registered_record(state["base"], published, run_id, version,
@@ -6051,7 +6141,7 @@ def _rc_demo(report: Report, work: Path, sound: Path, base: Path, child: Path, d
                              expected_sha256=published)
         assert (after.kept, after.registered) == ("kept", "registered"), (
             f"the report reads {after.kept}, {after.registered}")
-        _keep("L3", run_id, published, state["base_sha"], version, record)
+        _keep("L3", run_id, published, state["base_sha"], version, record, kept_report)
         return "a test run from the server's lists: kept and registered, its outputs verified", {
             "inputs": "the version, workspace and checkpoint found in the server's lists again, "
                       "their digests passed as the expected ones",
@@ -6279,9 +6369,6 @@ def _rc_demo(report: Report, work: Path, sound: Path, base: Path, child: Path, d
                               else (RC_GENERATED_LABEL, state["generated"]))
             _, measured = _measured_and_registered(f"L7.{task}", trained, sha, label, version,
                                                    task)
-            assert measured["cuda_executed"] is on_cuda, (
-                f"the measurement records cuda_executed {measured['cuda_executed']} for a run "
-                f"on {device}")
             assert measured["record"]["sequence"] == 1, "the child's ledger held a record before"
             return f"a {task} child trained on {device}, measured by its protocol and registered", {
                 "task": task, "device": device, "trained_on_cuda": gpu is not None,
@@ -6304,7 +6391,6 @@ def _rc_demo(report: Report, work: Path, sound: Path, base: Path, child: Path, d
 
         import scripts.export_results as export_results
         from src.api.services import results
-        from src.utils.run_environment import collect_components, native_identity
         # Models › Results' side-by-side cap: that view's only; a query and an
         # export are never capped (owner's O6), so the flow keeps more runs.
         from src.webui.components.results_segment import COMPARE_CAP
@@ -6339,55 +6425,9 @@ def _rc_demo(report: Report, work: Path, sound: Path, base: Path, child: Path, d
         assert len(by_run) > COMPARE_CAP, (
             f"the flow kept {len(by_run)} runs, too few to show the export is not capped at "
             f"{COMPARE_CAP}")
-        identity = {name: {"kind": entry.get("kind"), "version": entry.get("version"),
-                           "native": entry.get("native"),
-                           "source": {"state": (entry.get("source") or {}).get("state"),
-                                      "route": (entry.get("source") or {}).get("route")}}
-                    for name, entry in (native_identity(collect_components()) or {}).items()}
         for run_id, group in by_run.items():
-            entry = expected[run_id]
             for row in group:
-                said = (row["report_sha256"], row["checkpoint_sha256"],
-                        row["data_version_sha256"], row["data_kind"], row["role"])
-                assert said == (entry["report_sha256"], entry["checkpoint_sha256"],
-                                entry["version_sha256"], entry["kind"], entry["role"]), (
-                    f"{entry['probe']}'s run is exported with other identities")
-                assert (row["report"], row["registered"]) == (results.REPORT_KEPT,
-                                                              results.REGISTERED), (
-                    f"{entry['probe']}'s run is exported as {row['report']}, {row['registered']}")
-                for column in ("training_rules", "learning_settings", "effective_settings",
-                               "loss_identity", "environment_class", "metric_name",
-                               "value_status"):
-                    assert row[column] is not None, (
-                        f"{entry['probe']}'s run is exported without its {column}")
-                # A KG edge set's run records each metric's unit and
-                # denominator; another kind's says it records none.
-                assert (row["unit"] is not None and row["denominator"] is not None
-                        if entry["kind"] == "kg_edges" else
-                        row["unit"] is None and "metric.unit" in (row["unknown"] or {})), (
-                    f"{entry['probe']}'s run is exported with its units unsaid")
-                # A finetune's weight transfer lists each part, the frozen
-                # parts' forward mode and the downstream start (Stage 9b).
-                transfer = row["weight_transfer"]
-                assert row["learning_stage"] != "finetune" or (
-                    isinstance(transfer, dict) and transfer.get("parts")
-                    and "frozen_forward" in transfer
-                    and transfer.get("downstream_initial_sha256")), (
-                    f"{entry['probe']}'s finetune is exported without its weight transfer")
-                assert row["native_identity"] == identity, (
-                    f"{entry['probe']}'s run is exported with another native identity than "
-                    "this process records")
-                exposure = row["exposure_state"]
-                if entry["kind"] == "kg_edges":
-                    assert exposure in (HELD_OUT, AFTER_FULL_VIEW_EXPOSURE) and (
-                        row["exposure_reading"] and row["exposure_definition"]), (
-                        f"{entry['probe']}'s KG edge set run is exported without its exposure")
-                elif entry["kind"] == "supplied":
-                    assert row["r10"] is not None, (
-                        f"{entry['probe']}'s run is exported without its R10")
-                else:
-                    assert exposure == results.EXPOSURE_BY_ALLOCATION, (
-                        f"{entry['probe']}'s generated split run reads exposure {exposure!r}")
+                _export_row_verified(row, expected[run_id])
         return "every run of the flow exported with its identities, settings, environment and " \
                "exposure; none capped, none unreadable", {
                    "format": exported["format"], "export_sha256": hashlib.sha256(

@@ -17,9 +17,18 @@ catch:
   tell), rows out of the pairs file's order, and a summary its scores file
   does not give each fail, naming what disagrees;
 - **an LP run's report** (`_lp_run_facts`) must read the exposure the model's
-  record gives, so a base's figure claimed after full-view exposure fails;
+  record gives, so a base's figure claimed after full-view exposure fails, and
+  must have run on the probe's device (`_ran_on`), so a run recorded off CUDA
+  never passes for a CUDA one;
+- **the LP core's one summary rule** (`lp_set_metrics`) is the one a run's
+  report and the probe's recomputation both give;
 - **a record is found by its run** (`_registered_record`): two runs whose
-  reports are equal bytes are two records, each found as its own.
+  reports are equal bytes are two records, each found as its own;
+- **an exported row holds what its run kept** (`_export_row_verified`, L8):
+  real rows of a disease child's supplied and KG edge set runs pass against
+  their reports on disk, native identity included; a finetune's weight
+  transfer without its parts, a KG edge set's row without its exposure and a
+  supplied cohort's without its R10 each fail.
 
 Module: tests/unit/test_probe_research_comparison.py
 """
@@ -280,15 +289,58 @@ def test_a_report_must_read_the_exposure_its_model_s_record_gives(probe, measure
 
     run = measured["runs"][0]
     sha = _sha(measured["base"].read_bytes())
-    facts = probe._lp_run_facts(run, measured["version"], measured["base"], sha,
-                                measured["workspace"], "cpu", stage="base",
-                                exposure_state=HELD_OUT)
+    facts, report = probe._lp_run_facts(run, measured["version"], measured["base"], sha,
+                                        measured["workspace"], "cpu", stage="base",
+                                        exposure_state=HELD_OUT)
     assert facts["exposure"]["state"] == HELD_OUT and facts["run_id"] == run.name
+    assert report == json.loads((run / "report.json").read_text())
+    assert facts["cuda_executed"] is False
     with pytest.raises(AssertionError, match="the exposure reads 'held_out', not "
                                              "'after_full_view_exposure'"):
         probe._lp_run_facts(run, measured["version"], measured["base"], sha,
                             measured["workspace"], "cpu", stage="base",
                             exposure_state=AFTER_FULL_VIEW_EXPOSURE)
+
+
+def test_a_run_recorded_off_cuda_never_passes_for_the_probe_s_cuda_device(probe, measured):
+    """`cuda_executed` is checked where every kept run's report is read
+    (`_ran_on`, in `_lp_run_facts` and the flow's measurement helper), before
+    anything else is recomputed: a CPU run read as one of a CUDA flow fails,
+    and so does a report claiming CUDA on the CPU."""
+    from src.evaluation.caveats import HELD_OUT
+
+    run = measured["runs"][0]
+    sha = _sha(measured["base"].read_bytes())
+    with pytest.raises(AssertionError, match="the report records cuda_executed False for a "
+                                             "run on cuda"):
+        probe._lp_run_facts(run, measured["version"], measured["base"], sha,
+                            measured["workspace"], "cuda", stage="base",
+                            exposure_state=HELD_OUT)
+    manifest = json.loads((run / "report.json").read_text())["manifest"]
+    probe._ran_on(manifest, "cpu")
+    with pytest.raises(AssertionError, match="records cuda_executed True for a run on cpu"):
+        probe._ran_on({**manifest, "cuda_executed": True}, "cpu")
+
+
+def test_a_run_s_summary_is_the_lp_core_s_one_rule_over_its_kept_scores(probe, measured,
+                                                                          run_copy):
+    """The report's summary is `lp_set_metrics` over the scores the run kept,
+    the rule `score_lp_pairs` gives and the probe recomputes by."""
+    from src.evaluation.task_measurement import lp_metric_statuses
+    from src.models.bundle.lp_head import lp_set_metrics
+    from src.models.bundle.record import load_bundle
+    from src.utils.checkpoint_io import read_checkpoint
+
+    run, report = run_copy
+    table = _scores_table(run, report)
+    view = probe._child_view(measured["base"], measured["workspace"])
+    payload = read_checkpoint(measured["base"], map_location="cpu",
+                              weights_only=True).checkpoint
+    bundle, _record = load_bundle(payload, view_digest=view.digest)
+    summary = lp_set_metrics(bundle.lp_head, torch.from_numpy(table["positive_raw"].copy()),
+                             torch.from_numpy(table["negative_raw"].copy()))
+    values, _statuses = lp_metric_statuses(summary, pairs=len(table), not_finite=0)
+    assert report["authoritative_metrics"] == values
 
 
 def test_two_runs_with_equal_report_bytes_are_two_records_each_found_by_its_run(probe,
@@ -307,3 +359,120 @@ def test_two_runs_with_equal_report_bytes_are_two_records_each_found_by_its_run(
     with pytest.raises(AssertionError, match="the ledger holds 0 records of the kept run"):
         probe._registered_record(measured["base"], report_sha, "20260101T000000Z-x-y",
                                  measured["version"], sha)
+
+
+# --------------------------------------------------------------------------- L8 rows
+@pytest.fixture(scope="module")
+def exported(trained_disease_child, tmp_path_factory, probe):
+    """A deployment laid out as L8's (a workspaces root holding one workspace
+    that lists the session's base and disease child, and a registry): a KG
+    edge set of the base's test part and a supplied cohort imported, the child
+    measured on each with --record, and the results export over it. Returns
+    the export's rows by kind, and each run's entry as the flow keeps it
+    (`_rc_demo`'s `_keep`), built from what is on disk."""
+    import scripts.export_results as export_results
+    from src.evaluation.cohort_registry import (
+        commit_import,
+        prepare_kg_edges_import,
+        resolve_version,
+    )
+
+    root = tmp_path_factory.mktemp("rc_export").resolve()
+    workspace = Path(shutil.copytree(trained_disease_child["data_dir"],
+                                     root / "workspaces" / "workspace",
+                                     ignore=shutil.ignore_patterns("runs")))
+    listed = {}
+    for run, source in (("listed-base", "base"), ("listed-child", "disease")):
+        target = workspace / "runs" / "gatv2" / run / "checkpoints" / "last.pt"
+        target.parent.mkdir(parents=True)
+        shutil.copyfile(trained_disease_child[source], target)
+        listed[source] = target
+    registry = root / "registry"
+    registry.mkdir()
+    plan = prepare_kg_edges_import(registry, workspace, listed["base"], LABEL, "test")
+    commit_import(plan, registry, plan.preview_id)
+    cases = probe._write_cohort_source(root / "cases.json", probe._m4_demo_cases(workspace))
+    supplied, _ = probe._import_version(registry, workspace, cases, "supplied-1")
+    child, child_sha = listed["disease"], _sha(listed["disease"].read_bytes())
+    entries = {}
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("SHEPHERD_REGISTRY", str(registry))
+        patch.setenv("SHEPHERD_WORKSPACES_ROOT", str(root / "workspaces"))
+        for label, protocol in ((LABEL, LP), ("supplied-1", "disease")):
+            assert probe._measure_cohort(child, workspace, registry, label, "cpu", "--record",
+                                         protocol=protocol) == 0
+            version = resolve_version(registry, label)
+            [path] = (registry / "versions" / label / "reports").glob("*/report.json")
+            report = json.loads(path.read_text())
+            entries[path.parent.name] = {
+                "probe": label, "run_id": path.parent.name,
+                "report_sha256": _sha(path.read_bytes()), "checkpoint_sha256": child_sha,
+                "version_sha256": version.identity.sha256, "kind": version.kind,
+                "role": version.manifest["role"],
+                "native_identity": probe._recorded_native_identity(report)}
+        output = root / "export.json"
+        assert export_results.main(["--workspaces-root", f"workspaces={root / 'workspaces'}",
+                                    "--registry", f"registry={registry}", "--format", "json",
+                                    "--output", str(output)]) == 0
+    rows = json.loads(output.read_text())["rows"]
+    assert {row["run_id"] for row in rows} == set(entries)
+    by_kind = {}
+    for row in rows:
+        by_kind.setdefault(row["data_kind"], []).append(row)
+    assert set(by_kind) == {"kg_edges", "supplied"}
+    assert supplied.kind == "supplied"
+    return {"rows": rows, "by_kind": by_kind, "entries": entries}
+
+
+def test_every_real_exported_row_holds_what_its_run_kept(probe, exported, monkeypatch):
+    """Both runs' rows pass, each held to the native identity its own report
+    recorded, as the record views show it: never this process's, so another
+    process's components (the job runner's, L3) change nothing."""
+    import src.utils.run_environment as run_environment
+
+    monkeypatch.setattr(run_environment, "collect_components", lambda: {})
+    for row in exported["rows"]:
+        entry = exported["entries"][row["run_id"]]
+        assert entry["native_identity"], "the run's report records no component"
+        probe._export_row_verified(row, entry)
+        assert row["learning_stage"] == "finetune"
+
+
+def _case(exported, kind):
+    row = copy.deepcopy(exported["by_kind"][kind][0])
+    return row, exported["entries"][row["run_id"]]
+
+
+def test_a_finetune_row_whose_weight_transfer_lists_no_parts_fails(probe, exported):
+    row, entry = _case(exported, "supplied")
+    assert row["weight_transfer"]["parts"]
+    del row["weight_transfer"]["parts"]
+    with pytest.raises(AssertionError, match="finetune is exported without its weight "
+                                             "transfer"):
+        probe._export_row_verified(row, entry)
+
+
+def test_a_kg_edge_set_row_without_its_exposure_fails(probe, exported):
+    row, entry = _case(exported, "kg_edges")
+    assert row["exposure_state"] == "after_full_view_exposure"
+    row["exposure_state"] = None
+    with pytest.raises(AssertionError, match="KG edge set run is exported without its "
+                                             "exposure"):
+        probe._export_row_verified(row, entry)
+
+
+def test_a_supplied_row_without_its_r10_fails(probe, exported):
+    row, entry = _case(exported, "supplied")
+    assert row["r10"] is not None
+    row["r10"] = None
+    with pytest.raises(AssertionError, match="run is exported without its R10"):
+        probe._export_row_verified(row, entry)
+
+
+def test_a_row_whose_native_identity_is_not_its_report_s_fails(probe, exported):
+    row, entry = _case(exported, "kg_edges")
+    name = sorted(row["native_identity"])[0]
+    row["native_identity"][name]["version"] = "0.0.0-another"
+    with pytest.raises(AssertionError, match="another native identity than its report "
+                                             "records"):
+        probe._export_row_verified(row, entry)
