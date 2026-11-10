@@ -353,13 +353,14 @@ def _utc_text(raw: Any) -> str:
     return moment.strftime("%Y-%m-%d %H:%M UTC")
 
 
-def run_time(run_id: Any) -> Optional[str]:
-    """"2026-10-17 13:40 UTC" from a report store run id, else None."""
+def run_time(run_id: Any, *, seconds: bool = False) -> Optional[str]:
+    """"2026-10-17 13:40 UTC" (with `seconds`, "2026-10-17 13:40:07 UTC")
+    from a report store run id, else None."""
     match = _RUN_ID_TIME.match(str(run_id or ""))
     if not match:
         return None
-    y, mo, d, h, mi, _s = match.groups()
-    return f"{y}-{mo}-{d} {h}:{mi} UTC"
+    y, mo, d, h, mi, s = match.groups()
+    return f"{y}-{mo}-{d} {h}:{mi}{':' + s if seconds else ''} UTC"
 
 
 def listing_key(listing: Mapping[str, Any]) -> str:
@@ -1867,12 +1868,18 @@ PAGE_CSS = f"""
 {_PAGE} .shep-mp-ln {{ display: block; line-height: 1.45; }}
 /* Models › Results (Stage 8b): its controls in rows that wrap, its tables
    scrolling sideways inside their own wrapper, Compare's groups as row
-   headers; the browser look at the owner's window is Stage 10's. */
+   headers. A protocol table's words break only where they must: with
+   `break-word` a column is never sized narrower than its longest word, so a
+   word, a 12-hex fingerprint or a raw value stays whole (with `anywhere`
+   every character was a break point when the columns were sized, and the
+   other columns were squeezed around the one-line result name); a result's
+   name wraps only after its " · " (`results_segment._name_html`). */
 {_PAGE} .shep-rs {{ gap: 12px !important; }}
 {_PAGE} .shep-rs-row {{ align-items: flex-end !important; gap: 8px !important; flex-wrap: wrap !important; }}
 {_PAGE} .shep-rs-wrap {{ margin: 0 !important; overflow-x: auto; }}
 {_PAGE} .shep-rs-wrap + .shep-mp-p {{ margin-top: 16px; }}
-{_PAGE} .shep-rs-tbl td, {_PAGE} .shep-rs-cmp td, {_PAGE} .shep-rs-unread td {{ overflow-wrap: anywhere; vertical-align: top; }}
+{_PAGE} .shep-rs-tbl td {{ overflow-wrap: break-word; vertical-align: top; }}
+{_PAGE} .shep-rs-cmp td, {_PAGE} .shep-rs-unread td {{ overflow-wrap: anywhere; vertical-align: top; }}
 {_PAGE} .shep-rs-cmp tbody th {{ position: static; }}
 {_PAGE} .shep-rs-cmp th[scope="row"] {{ text-align: left; font-weight: 400; color: var(--shep-text-2); background: none; }}
 {_PAGE} .shep-rs-cmp tr.shep-rs-grp th {{ text-align: left; font-weight: 600; background: var(--shep-panel-2); }}

@@ -3505,8 +3505,11 @@ card, any warning, and three segments:
   **Environment** filter them, each offering the values the scope holds (a field without a
   value offers none). One table per protocol, newest first by run time
   (the service's listing order, so nothing is ranked; nothing is ordered by a metric, and a
-  default order for task records stays the owner's open item, BACKLOG 63). Each row: the run's
-  time and report, the model (fingerprint and kind; its family under This workspace), the data
+  default order for task records stays the owner's open item, BACKLOG 63). Each row: the
+  result's name (its run's time and its report's 12 hex digits; where two would read alike, as
+  two runs of one model in a minute with byte-equal reports do, the time to the second and then
+  the run id's own last part; its Compare option and column head say the same name), the
+  model (fingerprint and kind; its family under This workspace), the data
   (label, kind and role), the metrics as a record of that protocol shows them (a task's two
   figures, unrounded where its condition group's runs differ on them; any other protocol's every
   metric as recorded), the state (report kept, or "Report not available (ledger record
@@ -3515,16 +3518,20 @@ card, any warning, and three segments:
   a supplied cohort's R10 one click away; a generated split's is its allocation's, not
   compared) and the environment. Every item that could not be read is listed under the tables
   with its reason, whatever the scope and filters. **Compare** puts the first five of the
-  **Chosen results** side by side, one column each headed by its protocol, **Differences only**
-  on by default: the result, the model (operation, parent, family, encoder, relation to the
-  reference recipe, every spec value, capabilities), the recorded and effective training
-  settings with the weight transfer and the loss identity (so two arms of one base are checked
-  to start from the same downstream weights here), the data's identity and role, the
-  measurement, the environment, the exposure and
-  every metric, as recorded, each group once. No difference is computed, and each metric row is
-  one protocol's (a result of another protocol reads "another protocol" there). Each missing
-  value keeps its words: a field without a source reads "Unknown" with why, a value recorded as
-  null "none", and a field the result's records do not hold "not recorded". Five is this view's
+  **Chosen results** side by side, one column each headed by its name and protocol,
+  **Differences only** on by default: the result, the model (operation, parent, family, encoder,
+  relation to the reference recipe, every spec value, capabilities), the recorded and effective
+  training settings (the spec, stage and task once, in the model's rows) with the weight
+  transfer and the loss identity (so two arms of one base are checked to start from the same
+  downstream weights here), the data's identity and role, the measurement, the environment, the
+  exposure and every metric, as recorded, each group once. Each row is named in words (a metric
+  as the tables name it, a learning setting as the Training page does; its record key in the
+  row's title), and a nested setting is one row per entry, so a difference inside it is a row of
+  its own. No difference is computed, and each metric row is one protocol's (a result of another
+  protocol reads "another protocol" there). Each missing value keeps its words: a field without
+  a source reads "Unknown" with why, a value recorded as null "none", a field the result's
+  records do not hold "not recorded", and a field that does not apply to the result's data kind
+  (a KG edge set's exposure counts, R10) "not applicable". Five is this view's
   cap only: the choice is not capped. **Export** writes every chosen result or every shown row
   (the unreadable items among them), uncapped, as CSV or JSON through the export's one
   serializer (the columns and bytes of `scripts/export_results.py`), as a new file to

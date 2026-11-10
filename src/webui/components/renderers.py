@@ -840,25 +840,33 @@ R10_EVIDENCE_WORDS = {
 }
 
 
-def r10_label_text(label: str, name: str, part: Any, evidence: Any) -> str:
-    """One R10 label in the caveats' words, as text: a count with its
+def r10_state_text(label: str, part: Any, evidence: Any) -> str:
+    """One R10 label's state in the caveats' words, as text: a count with its
     denominator only where the state has one; *unverifiable* is a reason
     (by its scope's evidence state, `caveats.R10_UNVERIFIABLE_REASON`), never
-    a number. The text of `r10_rows` and of Models › Results' Compare."""
+    a number; "not reported" where the state does not read. Models ›
+    Results' Compare shows it beside the label's name (its row's), and
+    `r10_label_text` after it."""
     state = _get(part, "state")
     words = R10_STATE_TEXT.get(state) if isinstance(state, str) else None
     if state == "unverifiable" and isinstance(evidence, str):
         words = R10_UNVERIFIABLE_REASON.get(evidence, words)
     if words is None:
-        return f"{name}: not reported"
+        return "not reported"
     if state not in ("overlap", "none"):
-        return f"{name}: {words}"
+        return words
     unit = "distinct test diseases" if label == "disease_overlap" else "test cases"
-    text = (f"{name}: {words} — {recorded_count_text(_get(part, 'k'))} of "
+    text = (f"{words} — {recorded_count_text(_get(part, 'k'))} of "
             f"{recorded_count_text(_get(part, 'n'))} {unit}")
     if label == "disease_overlap":
         text += f"; {recorded_count_text(_get(part, 'cases'))} test cases with one of them"
     return text
+
+
+def r10_label_text(label: str, name: str, part: Any, evidence: Any) -> str:
+    """One R10 label in the caveats' words, as text: its name, then its state
+    (`r10_state_text`). The text of `r10_rows`."""
+    return f"{name}: {r10_state_text(label, part, evidence)}"
 
 
 def r10_rows(r10: Any) -> list:
@@ -1077,6 +1085,7 @@ __all__ = [
     "origin_of",
     "r10_label_text",
     "r10_rows",
+    "r10_state_text",
     "record_chip",
     "record_kind_text",
     "record_read",

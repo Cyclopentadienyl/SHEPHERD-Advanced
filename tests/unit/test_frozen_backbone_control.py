@@ -692,14 +692,16 @@ def test_both_arms_are_measured_registered_listed_and_exported_with_their_freeze
         "none, decoded from rules 1: rules 1 had no freeze and trained every part (its weight "
         "transfer records trainable 'all')")}
     # Compare shows the freeze as a learning setting of its own row, and the
-    # decode's source in the effective settings it was recorded with.
+    # decode's source in the effective settings it was recorded with, as the
+    # row of that one entry (a nested setting is one row per entry).
     shown = {name: {(group, label): value for group, label, value, _why in compare_fields(row)}
              for name, row in rows.items()}
-    assert shown["control"][("Training settings", "Learning setting · frozen_parts")] == (
+    assert shown["control"][("Training settings", "Learning setting · Frozen parts")] == (
         "graph_side")
-    assert shown["full"][("Training settings", "Learning setting · frozen_parts")] == "none"
-    assert "decoded from rules 1" in json.dumps(
-        shown["decoded"][("Training settings", "Effective setting · loaders")])
+    assert shown["full"][("Training settings", "Learning setting · Frozen parts")] == "none"
+    assert shown["decoded"][(
+        "Training settings", "Effective setting · Loaders › Train › Recipe › Decoded from parent "
+        "› Frozen parts")] == recipe["decoded_from_parent"]["frozen_parts"]
     # The weight transfer and the loss identity as each record holds them,
     # through the same listing: the two arms start from one downstream digest,
     # checked where they are compared; the control's parts frozen and its LP
@@ -710,19 +712,25 @@ def test_both_arms_are_measured_registered_listed_and_exported_with_their_freeze
     for name, path in checkpoints.items():
         assert transfers[name] == _load(path)["weight_transfer"], name
         assert rows[name]["model"]["loss_identity"] == _load(path)["loss_identity"], name
-    digest = ("Training settings", "Weight transfer · downstream_initial_sha256")
+    digest = ("Training settings", "Weight transfer · Downstream initial SHA-256")
     assert shown["control"][digest] == shown["full"][digest] == (
         transfers["control"]["downstream_initial_sha256"])
-    assert shown["control"][("Training settings", "Weight transfer · parts")] == {
+    from src.webui.components.results_segment import field_words
+
+    assert {part: shown["control"][("Training settings",
+                                    f"Weight transfer · Parts › {field_words(part)}")]
+            for part in GRAPH_SIDE + DOWNSTREAM} == {
         **dict.fromkeys(GRAPH_SIDE, "frozen"), **dict.fromkeys(DOWNSTREAM, "trainable")}
-    assert shown["control"][("Training settings", "Weight transfer · frozen_forward")] == "eval"
-    untrained = ("Training settings", "Loss · terms_without_trainable_parameters")
+    assert shown["control"][("Training settings",
+                             "Weight transfer · Frozen parts' forward mode")] == "eval"
+    untrained = ("Training settings", "Loss · Terms without a trainable parameter")
     assert (shown["control"][untrained], shown["full"][untrained]) == (["lp"], [])
     assert transfers["decoded"] == {"loaded_from_parent": sorted(GRAPH_SIDE),
                                     "initialised_new": list(DOWNSTREAM), "trainable": "all",
                                     "optimizer": "new"}
     assert shown["decoded"][untrained] == []
-    assert ("Training settings", "Weight transfer · parts") not in shown["decoded"]
+    assert not any(label.startswith("Weight transfer · Parts")
+                   for _group, label in shown["decoded"])
     # The export: the same rows, the freeze in each one's learning settings.
     table = list(csv.DictReader(io.StringIO(results.to_csv(list(rows.values())))))
     by_model = {}
