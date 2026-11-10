@@ -1756,7 +1756,9 @@ python scripts/export_results.py --workspaces-root lab=/data/lab/workspaces \
   `--registry [NAME=]DIR`. Each is read with the rule the service reads its own setting by
   (absolute, existing; a registry outside the repository), as a source of its own; this shell's
   `SHEPHERD_*` settings are neither read nor changed for them. `NAME` is what rows show for the
-  source, never its path; by default the directory's name, and two sources may not share one.
+  source, never its path or the directory's own name (which may say more than an export should); by
+  default `workspaces-root-1`, `workspaces-root-2`, ... and `registry-1`, ... in the order given,
+  and two sources may not share one.
 - **One row per result.** A kept report and a ledger record are one row only when the record names
   that report's run and holds its bytes; copies of one run in several sources are one row with each
   place. A ledger record whose report no named store keeps reads "report not available"; a kept
@@ -1765,20 +1767,28 @@ python scripts/export_results.py --workspaces-root lab=/data/lab/workspaces \
   reports it holds say they may overlap it. Two runs of one condition group, with equal or
   different numbers, are two rows of one `condition_group`, with the fields they differ on.
 - **What a row lists**, where its records hold it: the checkpoint's SHA-256 and where the
-  server's lists find it (source, workspace, run and file), lineage and spec summary, the training
-  settings the checkpoint records (rules, learning settings, what took effect; a weights-only file
-  records none), the data's kind, label, role and digests, the measurement's protocol, settings
-  and environment (class, regime, GPU, native build identity), a KG edge set's exposure, the
-  kept / registered / group states and the version's content references. `unknown` names each
-  field without a source, with why; nothing is filled from today's recipe.
+  server's lists find it (source, workspace, run and file), lineage, spec summary and structure
+  (`spec`: every value of the model's spec as its record holds it), the training settings the
+  checkpoint records (rules, learning settings, what took effect; a weights-only file records
+  none), the data's kind, label, role and digests, the measurement's protocol, settings and
+  environment (class, regime, GPU, native build identity), a KG edge set's run counts
+  (`run_counts`: pairs scored, pairs whose score was not finite), the data's relation to the
+  model's training (a supplied cohort's R10 states and counts in `r10`; a KG edge set's exposure;
+  a generated split's is its allocation's and is not compared), the kept / registered / group
+  states and the version's content references. Every ledger of every listed workspace is read,
+  whatever became of the weights it names: a record whose checkpoint file was removed or is
+  listed with a problem is still a row, its model unknown with why. `unknown` names each field
+  without a source, with why; nothing is filled from today's recipe.
 - **The long form**: one row per result and metric, with `protocol`, `metric_name`, `value` (the
-  recorded number, or a status such as `not_computable`), `unit`, `role` and `semantics`, so two
+  number as recorded, an integer as an integer, or a status such as `not_computable`), `unit`, `role` and `semantics`, so two
   protocols never share a metric column. CSV cells follow the Diagnosis CSV's rules (a digest as
   `sha256:<hex>`, a text a spreadsheet would run defused, numbers unrounded); JSON keeps the same
   rows typed. No case id, rank or server path; a report's `checkpoint_path` and `data_dir` are never
   opened. Nothing is capped or ordered by a metric (newest first).
-- **An item that cannot be read** (a refused root, a version, a store, a damaged report, a
-  checkpoint file, a ledger, a hand-edited record) is a row with its reason, and hides nothing;
+- **An item that cannot be read** (a refused root, a workspace entry outside its root, a version,
+  a store, a damaged report, a checkpoint file, a ledger, a hand-edited record, one naming no
+  weights among them) is a row with its reason, and hides nothing; a kept report whose run a
+  listed ledger names in a record that cannot be read says so rather than "not registered";
   stderr counts them. Filters (`--family`, `--protocol`, `--data-kind`, `--role`,
   `--environment-class`, `--device`, `--torch-version`, `--cuda-version`, `--software-revision`)
   always keep such rows.

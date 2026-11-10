@@ -2046,8 +2046,9 @@ python scripts/export_results.py --workspaces-root lab=/data/lab/workspaces \
 - **來源一律明確指定**，數量不限：`--workspaces-root [NAME=]DIR`（子目錄為 workspace 的目錄，如
   `SHEPHERD_WORKSPACES_ROOT` 所指）與 `--registry [NAME=]DIR`。每個來源都以服務讀取自身設定的同一
   規則讀取（絕對路徑、必須存在；registry 須在 repository 之外），各自是獨立的來源；不會為它們讀取或
-  修改這個 shell 的 `SHEPHERD_*` 設定。`NAME` 是各列顯示的來源名稱，絕不是路徑；預設為目錄名稱，
-  兩個來源不得同名。
+  修改這個 shell 的 `SHEPHERD_*` 設定。`NAME` 是各列顯示的來源名稱，絕不是路徑，也不是目錄本身的名稱
+  （它可能透露超過匯出檔應有的資訊）；預設依給定順序為 `workspaces-root-1`、`workspaces-root-2`……
+  與 `registry-1`……，兩個來源不得同名。
 - **每個結果一列。** 保存的報告與 ledger 紀錄只有在紀錄指名該報告的 run 並持有其位元組時才合為一列；
   同一個 run 在數個來源中的副本是一列，列出每個位置。報告不在任何指定報告存放處的 ledger 紀錄顯示
   「report not available」；沒有任何指定 ledger 登錄的保存報告顯示「not registered in a listed
@@ -2055,17 +2056,24 @@ python scripts/export_results.py --workspaces-root lab=/data/lab/workspaces \
   報告會說明可能與它重疊。同一實驗條件組的兩次執行，不論數值相同或不同，都是同一個 `condition_group`
   的兩列，並列出相異的欄位。
 - **每列列出的內容**（以紀錄中有的為限）：checkpoint 的 SHA-256 與伺服器清單找到它的位置（來源、
-  workspace、run 與檔案）、譜系與 spec 摘要、checkpoint 記錄的訓練設定（規則、學習設定、實際生效
-  的設定；只有權重的檔案沒有記錄）、資料的種類、標籤、角色與 digest、量測的 protocol、設定與環境
-  （類別、regime、GPU、原生建置身分）、KG 邊集合的 exposure、保存／登錄／條件組狀態，以及版本的
-  內容參照。`unknown` 列出每個沒有來源的欄位與原因；不會用今天的 recipe 回填任何東西。
-- **長格式**：每個結果的每個指標一列，含 `protocol`、`metric_name`、`value`（記錄的數值，或
-  `not_computable` 之類的狀態）、`unit`、`role` 與 `semantics`，因此不同 protocol 絕不共用同一個
+  workspace、run 與檔案）、譜系、spec 摘要與結構（`spec`：紀錄中模型 spec 的每個值）、checkpoint
+  記錄的訓練設定（規則、學習設定、實際生效的設定；只有權重的檔案沒有記錄）、資料的種類、標籤、角色
+  與 digest、量測的 protocol、設定與環境（類別、regime、GPU、原生建置身分）、KG 邊集合那次執行
+  自己的計數（`run_counts`：評分的 pair 數、分數不是有限值的 pair 數）、資料與模型訓練的關係
+  （supplied cohort 的 R10 狀態與計數在 `r10`；KG 邊集合的 exposure；generated split 的關係屬於它的
+  分配方式，不做比較）、保存／登錄／條件組狀態，以及版本的內容參照。每個列出的 workspace 的每個
+  ledger 都會被讀取，不論其所指的權重後來如何：checkpoint 檔已被移除或列出時帶有問題的紀錄仍是一列，
+  其模型欄位為 unknown 並附原因。`unknown` 列出每個沒有來源的欄位與原因；不會用今天的 recipe 回填
+  任何東西。
+- **長格式**：每個結果的每個指標一列，含 `protocol`、`metric_name`、`value`（照紀錄的數值，整數仍是
+  整數，或 `not_computable` 之類的狀態）、`unit`、`role` 與 `semantics`，因此不同 protocol 絕不共用同一個
   指標欄位。CSV 儲存格沿用 Diagnosis CSV 的規則（digest 寫成 `sha256:<hex>`、試算表會當公式執行的
   文字會被化解、數字不四捨五入）；JSON 以相同的列保留原本的型別。沒有案例 id、排名或伺服器路徑；
   報告中的 `checkpoint_path` 與 `data_dir` 絕不會被開啟。不設上限，也不依指標排序（由新到舊）。
-- **無法讀取的項目**（被拒絕的根目錄、版本、報告存放處、損壞的報告、checkpoint 檔、ledger、被手動
-  編輯的紀錄）自成一列並附原因，不會遮蔽其他任何列；stderr 會計數。篩選條件（`--family`、
+- **無法讀取的項目**（被拒絕的根目錄、解析到根目錄之外的 workspace 項目、版本、報告存放處、損壞的
+  報告、checkpoint 檔、ledger、被手動編輯的紀錄，包括沒有指名任何權重的紀錄）自成一列並附原因，
+  不會遮蔽其他任何列；若列出的 ledger 中有指名某保存報告之 run 但無法讀取的紀錄，該報告會如實說明，
+  而不是顯示「not registered」；stderr 會計數。篩選條件（`--family`、
   `--protocol`、`--data-kind`、`--role`、`--environment-class`、`--device`、`--torch-version`、
   `--cuda-version`、`--software-revision`）一律保留這些列。
 - `--output` 必須是新檔案；既有檔案絕不會被覆寫。不給 `--output` 時匯出到標準輸出。

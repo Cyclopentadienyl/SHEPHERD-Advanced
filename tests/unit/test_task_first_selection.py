@@ -434,12 +434,15 @@ def test_the_listed_record_states():
 
     child = listed_record(_listed_form(_record_payload("disease")))
     assert set(child) == set(LISTED_RECORD_FIELDS)
+    spec = finetune_spec_from_parent(_base_spec(), "disease")
+    # The structure, every value of the spec as the record holds it, without
+    # the reference recipe's provenance notes (research comparison Stage 8).
+    structure = {name: value for name, value in spec.to_dict().items() if name != "sources"}
     assert child == {"record": "model", "record_problem": None, "learning_stage": "finetune",
                      "task": "disease", "operation": "finetune", "family_id": BASE_RUN,
                      "parent_sha256": "a" * 64, "parent_run": BASE_RUN, "encoder": "gatv2",
                      "reference": False, "differences": SMALL_SPEC_DIFFERENCES,
-                     "capabilities": model_capabilities(
-                         finetune_spec_from_parent(_base_spec(), "disease"))}
+                     "capabilities": model_capabilities(spec), "spec": structure}
     base = listed_record(_listed_form(_record_payload()))
     assert (base["learning_stage"], base["task"], base["operation"], base["parent_sha256"]) == (
         "base", None, "new", None)
@@ -454,6 +457,7 @@ def test_the_listed_record_states():
     assert refused["task"] is None, "a refused record states nothing it could not read"
     assert refused["differences"] is None and refused["reference"] is None
     assert refused["capabilities"] is None, "a refused record offers nothing to judge"
+    assert refused["spec"] is None
 
 
 #: The fields `_base_spec` changes from the reference recipe (README §5, axis 2).

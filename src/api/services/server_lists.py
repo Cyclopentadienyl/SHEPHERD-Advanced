@@ -201,9 +201,11 @@ class CheckpointItem:
     family, parent (`parent_sha256`, the exact parent file, and `parent_run`),
     encoder kind, the names of its spec's fields that differ from the
     reference recipe (`differences`, sorted; empty for the reference),
-    whether there are none (`reference`) and its capability description
+    whether there are none (`reference`), its capability description
     (`capabilities`), from which every consumer judges a new measurement of it
-    (`src.evaluation.protocols`). All `None` for a file that was not read.
+    (`src.evaluation.protocols`), and its structure, every value of its spec
+    as its record holds it (`spec`, research comparison Stage 8). All `None`
+    for a file that was not read.
 
     `training_settings` are the file's training settings as it records them
     (`run_plan.recorded_training_settings`: its training rules, its learning
@@ -251,6 +253,7 @@ class CheckpointItem:
     key: Optional[str] = None
     run_key: Optional[str] = None
     training_settings: Optional[Dict[str, Any]] = None
+    spec: Optional[Dict[str, Any]] = None
 
     def __post_init__(self) -> None:
         from src.utils.checkpoint_paths import listing_key
@@ -501,19 +504,30 @@ def _find_workspace(name: Any, environ: Optional[Mapping[str, str]]) -> Tuple[st
     root = _workspace_root(environ)
     for entry in _workspace_entries(root):
         if entry.name == name:
-            try:
-                resolved = entry.resolve()
-            except (OSError, RuntimeError) as exc:
-                raise ServerListRefused(
-                    f"the workspace {entry.name!r} cannot be resolved "
-                    f"({type(exc).__name__}: {exc})") from None
-            if not _inside(resolved, root):
-                raise ServerListRefused(
-                    f"the workspace {entry.name!r} resolves outside the workspaces root "
-                    f"{root}, so it is not in the server's one workspace namespace")
-            return entry.name, resolved
+            return entry.name, _resolved_workspace(entry, root)
     raise ServerListRefused(
         f"{_echo(name)} is not a workspace the server lists under {root}")
+
+
+def _resolved_workspace(entry: Path, root: Path) -> Path:
+    """A listed entry's resolved directory, or why it is not one of the
+    server's workspaces: it cannot be resolved (a link loop), or it resolves
+    outside the root. The one judgement of an entry, for one name
+    (`_find_workspace`) and for all (`resolve_workspaces`).
+
+    Raises:
+        ServerListRefused: the entry is not a workspace the server can use."""
+    try:
+        resolved = entry.resolve()
+    except (OSError, RuntimeError) as exc:
+        raise ServerListRefused(
+            f"the workspace {entry.name!r} cannot be resolved "
+            f"({type(exc).__name__}: {exc})") from None
+    if not _inside(resolved, root):
+        raise ServerListRefused(
+            f"the workspace {entry.name!r} resolves outside the workspaces root "
+            f"{root}, so it is not in the server's one workspace namespace")
+    return resolved
 
 
 def resolve_workspace(name: Any, *, environ: Optional[Mapping[str, str]] = None) -> Path:
@@ -529,12 +543,16 @@ def resolve_workspace(name: Any, *, environ: Optional[Mapping[str, str]] = None)
     return _find_workspace(name, environ)[1]
 
 
-def resolve_workspaces(*, environ: Optional[Mapping[str, str]] = None) -> Dict[str, Path]:
+def resolve_workspaces(*, environ: Optional[Mapping[str, str]] = None,
+                       refused: Optional[Dict[str, str]] = None) -> Dict[str, Path]:
     """Every listed workspace's resolved directory, by its listed name, from one
     listing of the root (M5-2): what `resolve_workspace` answers for each name,
     for a caller that needs many names at once (one listing, not one per name).
     A name that cannot be resolved, or resolves outside the root, is left out,
-    as `resolve_workspace` refuses it.
+    as `resolve_workspace` refuses it; when the caller gives `refused`, each
+    such name is put there with `resolve_workspace`'s reason (which names the
+    root: a caller that shows it redacts it), so a caller that must account for
+    every entry (the results service) loses none.
 
     Raises:
         ServerListRefused: no workspace root, or the root cannot be listed.
@@ -543,11 +561,10 @@ def resolve_workspaces(*, environ: Optional[Mapping[str, str]] = None) -> Dict[s
     resolved: Dict[str, Path] = {}
     for entry in _workspace_entries(root):
         try:
-            path = entry.resolve()
-        except (OSError, RuntimeError):
-            continue
-        if _inside(path, root):
-            resolved[entry.name] = path
+            resolved[entry.name] = _resolved_workspace(entry, root)
+        except ServerListRefused as exc:
+            if refused is not None:
+                refused[entry.name] = str(exc)
     return resolved
 
 

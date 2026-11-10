@@ -37,7 +37,10 @@ from datetime import datetime
 from typing import Annotated, Any, Dict, List, Literal, Optional, Tuple, Union
 
 from fastapi import APIRouter, HTTPException, status, Depends
-from pydantic import BaseModel, ConfigDict, Field, RootModel, field_validator, model_validator
+from pydantic import BaseModel, Field, RootModel, field_validator, model_validator
+
+from src.api.services.response_models import SHA256_PATTERN as _SHA256
+from src.api.services.response_models import StrictModel as _Strict
 
 logger = logging.getLogger(__name__)
 
@@ -190,14 +193,9 @@ class DiagnoseRequest(BaseModel):
 # `tests/unit/test_served_identity.py` pins the two to one shape and one set of
 # states. Every key is required, and its value may be null where the
 # state says there is nothing to identify; an unknown key is refused, so the two
-# definitions cannot drift apart unnoticed.
-_SHA256 = r"^[0-9a-f]{64}$"
-
-
-class _Strict(BaseModel):
-    """An unknown key is refused: the shape is the contract."""
-
-    model_config = ConfigDict(extra="forbid")
+# definitions cannot drift apart unnoticed. Its base (`_Strict`) and digest
+# pattern (`_SHA256`) are the service layer's (`src.api.services.response_models`),
+# which the one reader of recorded results builds on too.
 
 
 class ServedCheckpoint(_Strict):

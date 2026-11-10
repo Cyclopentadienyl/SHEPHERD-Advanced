@@ -14,15 +14,18 @@ report gives:
 - a registry (``SHEPHERD_REGISTRY``'s rule, `server_settings.cohort_registry`):
   every version it lists (`list_versions`) and, for each, one scan of its report
   store (`record_states.read_report_store`, `scan_report_store`): every kept
-  report of every kind, built into the record a ledger would hold
-  (`build_record`), kept Mode C and Mode D reports among them, each read by the
-  one reader as its kind's result view (`record_views.result_view`);
+  report of every kind and every mode, built into the record a ledger would
+  hold (`build_record`), a kept report of a retired mode among them, each read
+  by the one reader as its kind's result view (`record_views.result_view`);
 - a workspaces root (``SHEPHERD_WORKSPACES_ROOT``'s rule,
-  `server_settings.workspaces_root`): every workspace it lists
-  (`server_lists.resolve_workspaces`), every checkpoint of each
-  (`server_lists.list_checkpoints`, one read of each file), and the ledger beside
-  each (`record_views.checkpoint_ledgers`) read by the readers' one listing
-  (`record_views.read_records`).
+  `server_settings.workspaces_root`): every entry it lists
+  (`server_lists.resolve_workspaces`; an entry that is not a workspace the
+  server can use, one resolving outside the root or not at all, is a row with
+  its reason), every checkpoint of each workspace
+  (`server_lists.list_checkpoints`, one read of each file), and every ledger of
+  each workspace (`record_views.workspace_ledgers`: each run's, whether its
+  weights are listed, listed with a problem or gone), every record of each read
+  by the readers' one listing (`record_views.ledger_results`, `read_records`).
 
 The server's own context is its settings (`deployment_sources`); the command
 line passes explicit roots, each a context of its own (`explicit_sources`),
@@ -34,33 +37,43 @@ one row exactly when the record names that run (``run_id``) of that version
 (``cohort_digest``) and holds that report's bytes (``source_artifact_digest``);
 copies of one run in several listed stores or ledgers are one row with each
 location. A ledger record whose report no listed store keeps is its own row,
-with the fields it has and the state "report not available". A report no
-listed ledger registered is its own row too. A record merged before each run
+with the fields it has and the state "report not available"; one whose weights
+no listed workspace holds readably keeps its row, its model unknown with why. A
+report no listed ledger registered is its own row too, and says so only when no
+listed ledger holds a record naming its run that cannot be read. A record merged before each run
 had its own record (historical, ``run_id`` null) is a row of its own, never
 joined to a report and never counted as a run. Two runs of one condition group,
 with equal or different numbers, are two rows of one group (``condition_group``),
-with the group's description (`StoreScan.status`: the fields they differ on). A
+with the group's description in each listed store of its version
+(`record_states.group_state`, the one turning of a scan into a group's state:
+the fields they differ on). A
 run whose report bytes differ between two listed places (a store and a ledger,
 or two stores) keeps a row for each, each saying so (``conflict``); nothing is
 chosen between them.
 
 **One unreadable item never hides another.** A registry, a version, a store, a
-kept report, a workspace's listing, a checkpoint file, a ledger or a ledger
-record that cannot be read is a row of its own with its reason (built from
+kept report, a workspace entry or its listing, a checkpoint file, a ledger or a
+ledger record (one naming no weights among them) that cannot be read is a row
+of its own with its reason (built from
 fixed words, field names and the item's own names; any problem text passes the
 one redaction first, `path_redaction.redact_paths`), and every other row is
 read as before.
 
 **Each row lists what its records say, and nothing else** (F3): its model's
 identity (the checkpoint's SHA-256, and where the server's lists find it:
-source, workspace, run and file, never a path), lineage and spec summary
-(`listed_record`), its training settings as the checkpoint records them
+source, workspace, run and file, never a path), lineage, spec summary and
+structure, every value of its spec (`listed_record`), its training settings as
+the checkpoint records them
 (`run_plan.recorded_training_settings`: rules, learning settings and what took
 effect, whether or not a freeze setting exists), its data identity and role,
 its measurement settings and protocol (`record_views.recorded_settings`), its
-environment (the class, the regime and the native build identity), its
-exposure where it was recorded, its kept / registered / group states and its
-content references (`cohort_registry.version_references` and their states).
+metrics as recorded (each value as its record holds it, an integer as an
+integer) and a KG edge set's run counts, its environment (the class, the
+regime and the native build identity), its relation to the model's training
+where it was recorded (a supplied cohort's R10 states and counts, a KG edge
+set's exposure; a generated split's is its allocation's, not compared), its
+kept / registered / group states and its content references
+(`cohort_registry.version_references` and their states).
 Anything without a source is null and named in ``unknown`` with why; nothing is
 filled from this build's recipe. A report's ``checkpoint_path`` and
 ``data_dir`` are never opened: the record leaves them in the report.
@@ -114,6 +127,21 @@ NOT_REGISTERED = "not registered in a listed ledger"
 POSSIBLY_MERGED = ("not registered as its own run; a record merged before each run had its "
                    "own record holds its bytes (a possible overlap, not confirmed)")
 MERGED = "registered, merged before each run had its own record"
+#: A kept report no listed ledger registered readably, while a listed ledger
+#: holds a record naming its run that cannot be read (a hand edit): never
+#: "not registered", which would say no record exists.
+RECORD_UNREADABLE = ("a listed ledger holds a record naming this run that cannot be read "
+                     "(see its unreadable row)")
+
+#: How a result's data stands to the model's training, by its kind: a KG edge
+#: set's run records its exposure (its own state); a supplied cohort's records
+#: R10 (``r10``: its disease and phenotype-set overlap with the training and
+#: validation inputs the checkpoint records); a generated split's is its
+#: allocation's, which is never compared with the model's record
+#: (`caveats.GENERATED_EXPOSURE_NOTE`).
+EXPOSURE_AS_R10 = "recorded as R10 (see r10)"
+EXPOSURE_BY_ALLOCATION = ("not compared: a generated split's relation to a model's training is "
+                          "its allocation's (see data_identity)")
 
 
 # ---------------------------------------------------------------------------
@@ -187,6 +215,19 @@ class _Registered:
 
 
 @dataclass
+class _Store:
+    """A listed version's report store, as one scan read it (`StoreRead`),
+    with the source and label it was listed under and the roots its problems'
+    words are redacted by."""
+
+    source: str
+    label: str
+    version: Any
+    read: Any
+    roots: Tuple[Tuple[str, str], ...]
+
+
+@dataclass
 class _Run:
     """One result: a run's kept reports and ledger records with one report's
     bytes, or one historical record."""
@@ -204,11 +245,13 @@ class _Read:
     runs: Dict[Tuple[str, str], Dict[str, _Run]] = field(default_factory=dict)
     historical: Dict[str, _Run] = field(default_factory=dict)
     unreadable: List[Dict[str, Any]] = field(default_factory=list)
-    #: By version manifest digest: each listed store's scan of it, and its
-    #: version read, by source and label.
-    stores: Dict[str, List[Tuple[str, str, Any, Any]]] = field(default_factory=dict)
-    #: By checkpoint digest: every listed location of it, and its item.
+    #: By version manifest digest: each listed store of it (`_Store`).
+    stores: Dict[str, List[_Store]] = field(default_factory=dict)
+    #: By checkpoint digest: every listed location of it, and its item (one
+    #: listed with a problem whose digest is known among them).
     models: Dict[str, List[Tuple[str, Mapping[str, Any]]]] = field(default_factory=dict)
+    #: The run of each ledger record that names one and cannot be read.
+    unreadable_runs: set = field(default_factory=set)
     #: Each listed data version's content references and their states, by
     #: its manifest digest, read once per query (`_references`).
     references: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)
@@ -247,6 +290,14 @@ def _redacted(text: Any, roots: Sequence[Tuple[str, str]]) -> str:
     return problem_line(redact_paths(text, roots, other="a server path")) or "no reason given"
 
 
+def _root_word(source: SourceContext) -> str:
+    """What a problem's words show in place of a source's directory: its
+    name, marked as a name (``<lab>``), so a message that already says "the
+    workspaces root" or "the registry" before the directory reads once, and a
+    path under it reads ``<lab>/...``."""
+    return f"<{source.name}>"
+
+
 def _read_registry(read: _Read, source: SourceContext) -> None:
     """Every version a source's registry lists and every kept report of each,
     each read by the one reader as its kind's result view."""
@@ -261,7 +312,7 @@ def _read_registry(read: _Read, source: SourceContext) -> None:
     if not setting.available:
         _unreadable(read, source.name, "registry", _redacted(setting.problem, ()))
         return
-    roots = ((str(setting.value), f"the registry {source.name}"),)
+    roots = ((str(setting.value), _root_word(source)),)
     try:
         listed = list_versions(setting.value)
     except (RegistryRefused, OSError) as exc:
@@ -275,7 +326,7 @@ def _read_registry(read: _Read, source: SourceContext) -> None:
         version = entry.version
         store = read_report_store(version)
         read.stores.setdefault(version.identity.sha256, []).append(
-            (source.name, entry.label, version, store.scan))
+            _Store(source.name, entry.label, version, store, roots))
         if store.scan is None:
             _unreadable(read, source.name, "report store", _redacted(store.problem, roots),
                         label=entry.label)
@@ -307,10 +358,11 @@ def _read_registry(read: _Read, source: SourceContext) -> None:
 
 
 def _read_workspaces(read: _Read, source: SourceContext) -> None:
-    """Every checkpoint a source's workspaces root lists and the ledger beside
-    each, its records read by the readers' one listing."""
+    """Every entry a source's workspaces root lists, every checkpoint of each
+    workspace, and every ledger of each (`workspace_ledgers`), its records
+    read by the readers' one listing (`ledger_results`)."""
     from src.api.services import server_lists
-    from src.api.services.record_views import checkpoint_ledgers
+    from src.api.services.record_views import item_was_read, workspace_ledgers
     from src.config import server_settings
 
     setting = server_settings.workspaces_root(source.environ)
@@ -319,54 +371,50 @@ def _read_workspaces(read: _Read, source: SourceContext) -> None:
     if not setting.available:
         _unreadable(read, source.name, "workspaces root", _redacted(setting.problem, ()))
         return
-    roots = ((str(setting.value), f"the workspaces root {source.name}"),)
+    roots = ((str(setting.value), _root_word(source)),)
+    refused: Dict[str, str] = {}
     try:
-        workspaces = server_lists.resolve_workspaces(environ=source.environ)
+        workspaces = server_lists.resolve_workspaces(environ=source.environ, refused=refused)
     except server_lists.ServerListRefused as exc:
         _unreadable(read, source.name, "workspaces root", _redacted(exc, roots))
         return
-    seen: Dict[Tuple[str, str], bool] = {}
+    for name, problem in sorted(refused.items()):
+        _unreadable(read, source.name, "workspace", _redacted(problem, roots), workspace=name)
     for name, directory in sorted(workspaces.items()):
         listing = server_lists.list_checkpoints(name, environ=source.environ)
         if not listing.available:
             _unreadable(read, source.name, "workspace", _redacted(listing.problem, roots),
                         workspace=name)
             continue
-        items: Dict[str, Dict[str, Any]] = {}
-        for checkpoint in listing.items:
-            item = asdict(checkpoint)
-            if checkpoint.problem is not None or checkpoint.sha256 is None:
+        items = [asdict(checkpoint) for checkpoint in listing.items]
+        for item in items:
+            if not item_was_read(item):
                 _unreadable(read, source.name, "checkpoint",
-                            "the checkpoint is listed with a problem, so the ledger beside it is "
-                            "not read for it: " + _redacted(checkpoint.problem, roots),
-                            workspace=name, checkpoint=checkpoint.key)
-                continue
-            items[item["key"]] = item
-            read.models.setdefault(checkpoint.sha256, []).append((source.name, item))
-        for key, found in checkpoint_ledgers(directory, list(items.values())).items():
-            item = items[key]
-            where = {"source": source.name, "workspace": name, "checkpoint": key}
+                            "the checkpoint is listed with a problem: "
+                            + _redacted(item["problem"], roots),
+                            workspace=name, checkpoint=item["key"],
+                            checkpoint_sha256=item["sha256"])
+            if item["sha256"] is not None:
+                read.models.setdefault(item["sha256"], []).append((source.name, item))
+        for where, found in workspace_ledgers(directory, items):
             if found.problem is not None:
                 _unreadable(read, source.name, "ledger", _redacted(found.problem, roots),
-                            workspace=name, checkpoint=key, checkpoint_sha256=item["sha256"])
-                continue
-            if found.ledger is None:
-                continue
-            # One ledger's records for one set of weights are read once, however
-            # many listed files hold those weights beside it.
-            once = (str(found.path), item["sha256"])
-            if once in seen:
-                continue
-            seen[once] = True
-            _read_ledger_records(read, source.name, where, found.ledger, item["sha256"])
+                            workspace=name, ledger=where)
+            elif found.ledger is not None:
+                _read_ledger_records(read, source.name,
+                                     {"source": source.name, "workspace": name, "ledger": where},
+                                     found.ledger)
 
 
 def _read_ledger_records(read: _Read, source: str, where: Dict[str, Any],
-                         ledger: Dict[str, Any], checkpoint: str) -> None:
-    from src.api.services.record_views import read_records
+                         ledger: Dict[str, Any]) -> None:
+    """Every record of one ledger (`ledger_results`): each read as a result
+    joins its run, or is a historical record; each other is a row with its
+    reason, and its run, where it names one, is remembered."""
+    from src.api.services.record_views import ledger_results
 
-    viewed, unreadable = read_records(ledger, checkpoint)
-    for record, view in viewed:
+    viewed, unreadable = ledger_results(ledger)
+    for _checkpoint, record, view in viewed:
         location = {**where, "sequence": view.registration.sequence,
                     "registered_at": view.registration.registered_at}
         if view.run_id is None:
@@ -380,9 +428,11 @@ def _read_ledger_records(read: _Read, source: str, where: Dict[str, Any],
         run = read.runs.setdefault(key, {}).setdefault(record["source_artifact_digest"],
                                                         _Run(RUN))
         run.registered.append(_Registered(location, record, view))
-    for item in unreadable:
+    for checkpoint, item in unreadable:
+        if item.run_id is not None:
+            read.unreadable_runs.add(item.run_id)
         _unreadable(read, source, "ledger record", item.reason,
-                    workspace=where["workspace"], checkpoint=where["checkpoint"],
+                    workspace=where["workspace"], ledger=where["ledger"],
                     checkpoint_sha256=checkpoint, ledger_index=item.index,
                     sequence=item.sequence, run_id=item.run_id,
                     report_sha256=item.source_artifact_digest)
@@ -416,33 +466,42 @@ def read_all(sources: Iterable[SourceContext]) -> _Read:
 # ---------------------------------------------------------------------------
 # Rows
 # ---------------------------------------------------------------------------
+#: A model's fields read from its listed checkpoint's record (`listed_record`).
+_MODEL_FIELDS = ("learning_stage", "task", "operation", "family_id", "parent_sha256",
+                 "parent_run", "encoder", "reference", "differences", "spec", "capabilities")
+_SETTINGS_FIELDS = ("training_rules", "learning_settings", "effective_settings")
+
+
 def _model(read: _Read, checkpoint: Optional[str], unknown: Dict[str, str]) -> Dict[str, Any]:
     """A result's model as the server's lists find its checkpoint: its
     locations (source, workspace and listing key; never a path), its lineage,
-    its spec summary and its recorded training settings."""
+    its spec summary and structure and its recorded training settings, from
+    the first location whose file was read; a checkpoint listed only with a
+    problem, or not listed, has them unknown with why."""
+    from src.api.services.record_views import item_was_read
+
     listed = read.models.get(checkpoint or "", [])
     model: Dict[str, Any] = {
         "checkpoint_sha256": checkpoint,
         "locations": [{"source": source, "workspace": item["workspace"], "checkpoint": item["key"]}
                       for source, item in listed],
     }
-    names = ("learning_stage", "task", "operation", "family_id", "parent_sha256",
-             "parent_run", "encoder", "reference", "differences", "capabilities")
-    if not listed:
-        model.update(dict.fromkeys(names), training_rules=None, learning_settings=None,
-                     effective_settings=None)
-        why = "its checkpoint is not in a listed workspace"
-        for name in (*names, "training_rules", "learning_settings", "effective_settings"):
+    item = next((item for _source, item in listed if item_was_read(item)), None)
+    if item is None:
+        model.update(dict.fromkeys((*_MODEL_FIELDS, *_SETTINGS_FIELDS)))
+        why = ("its checkpoint is listed only with a problem, so its record is not read (see its "
+               "unreadable row)" if listed else
+               "its checkpoint is not in a listed workspace")
+        for name in (*_MODEL_FIELDS, *_SETTINGS_FIELDS):
             unknown[f"model.{name}"] = why
         return model
-    item = listed[0][1]
-    for name in names:
+    for name in _MODEL_FIELDS:
         value = item.get(name)
         model[name] = list(value) if isinstance(value, tuple) else value
     if item.get("record") != "model":
         why = ("its checkpoint's model record is not read by this build"
                if item.get("record") == "refused" else "its checkpoint has no model record read")
-        for name in names:
+        for name in _MODEL_FIELDS:
             unknown[f"model.{name}"] = why
     settings = item.get("training_settings") or {}
     model["training_rules"] = settings.get("rules")
@@ -460,32 +519,37 @@ def _model(read: _Read, checkpoint: Optional[str], unknown: Dict[str, str]) -> D
 
 def _group(read: _Read, record: Mapping[str, Any]) -> Dict[str, Any]:
     """A record's condition group (its key) and how its runs compare in each
-    listed store of its version (`StoreScan.status`), which decides nothing."""
-    from src.api.services.record_states import key_text
+    listed store of its version (`record_states.group_state`, the one turning
+    of a scan into a group's state), which decides nothing. Listed stores that
+    describe it differently leave it ``cannot_be_checked``, saying so."""
+    from src.api.services.record_states import group_state, key_text
     from src.evaluation.sidecar import record_key
 
     key = record_key(dict(record))
     group = {"condition_group": key_text(key), "state": "cannot_be_checked", "differing": [],
              "why": None}
-    stores = [scan for _s, _l, _v, scan in read.stores.get(key[2], []) if scan is not None]
+    stores = read.stores.get(key[2], [])
     if not stores:
-        group["why"] = "its data version is not in a listed registry's readable store"
+        group["why"] = "its data version is not in a listed registry"
         return group
-    states = [scan.status(key) for scan in stores]
-    found = {(s.state, tuple(s.differing)) for s in states}
-    if len(found) == 1:
-        group["state"], differing = next(iter(found))
-        group["differing"] = list(differing)
-        if group["state"] == "cannot_be_checked":
-            group["why"] = "a report of its group could not be compared"
-    else:
+    described = [(store, group_state(store.read, key, operator=True)) for store in stores]
+    found = {(state["state"], tuple(state["differing"])) for _store, state in described}
+    if len(found) > 1:
         group["why"] = "the listed stores of its version describe its group differently"
+        return group
+    group["state"], differing = next(iter(found))
+    group["differing"] = list(differing)
+    if group["state"] == "cannot_be_checked":
+        problems = [_redacted(problem, store.roots) for store, state in described
+                    for problem in state["problems"]]
+        group["why"] = ("; ".join(dict.fromkeys(problems))
+                        or "the comparison of its group is incomplete")
     return group
 
 
 def _version(read: _Read, digest: str) -> Optional[Any]:
     listed = read.stores.get(digest) or []
-    return listed[0][2] if listed else None
+    return listed[0].version if listed else None
 
 
 def _references(read: _Read, digest: str, unknown: Dict[str, str]) -> Optional[List[Any]]:
@@ -520,16 +584,19 @@ def _data(view: Any, record: Mapping[str, Any]) -> Dict[str, Any]:
             "count_units": getattr(view, "count_units", None)}
 
 
-def _metrics(view: Any, unknown: Dict[str, str]) -> List[Dict[str, Any]]:
+def _metrics(view: Any, record: Mapping[str, Any], unknown: Dict[str, str]
+             ) -> List[Dict[str, Any]]:
     """Each metric as recorded, with its status, unit and denominator where its
     record holds them (a KG edge set's run: `measured.metrics`); a metric that
-    could not be computed is its status, never a number."""
+    could not be computed is its status, never a number. Each value is the
+    record's own (``record["metrics"]``, which the view validated): an integer
+    stays an integer, never the view's float."""
     measured = getattr(view, "measured", None)
     statuses = measured.metrics if measured is not None else {}
     out = []
-    for name, value in view.metrics.items():
+    for name in view.metrics:
         status = statuses.get(name)
-        out.append({"name": name, "value": value,
+        out.append({"name": name, "value": record["metrics"][name],
                     "status": status.status if status is not None else "recorded",
                     "unit": status.unit if status is not None else None,
                     "denominator": (f"{status.denominator.count} {status.denominator.unit}"
@@ -545,22 +612,42 @@ def _metrics(view: Any, unknown: Dict[str, str]) -> List[Dict[str, Any]]:
     return out
 
 
+def _run_counts(view: Any, unknown: Dict[str, str]) -> Optional[Dict[str, Any]]:
+    """A KG edge set's run's own counts, each with its unit (its pairs scored
+    and the pairs whose score was not finite among them), as recorded
+    (`measured`); another kind's run records none beyond ``n_ranked``."""
+    measured = getattr(view, "measured", None)
+    if measured is None:
+        unknown["run_counts"] = ("its record holds no run counts beyond n_ranked (only a KG "
+                                 "edge set's run records its own counts, each with its unit)")
+        return None
+    return {"counts": dict(measured.counts), "units": dict(measured.count_units)}
+
+
 def _exposure(view: Any) -> Dict[str, Any]:
+    """How the result's data stands to the model's training, as its record
+    says it, by kind: a KG edge set's exposure (its state, reading, definition
+    and counts, or why its block does not read); a supplied cohort's R10
+    (``r10``: each scope's evidence state and disease and phenotype-set
+    overlap, states and counts only, as the one reader's view holds them); a
+    generated split's is its allocation's, not compared."""
     from src.evaluation.caveats import exposure_text
 
-    if view.cohort.kind != "kg_edges":
-        return {"state": "not applicable", "reading": None, "definition_version": None,
-                "measured_edges": None, "in_recorded_graph_use": None, "problem": None}
+    out = {"state": None, "reading": None, "definition_version": None,
+           "measured_edges": None, "in_recorded_graph_use": None, "problem": None, "r10": None}
+    kind = view.cohort.kind
+    if kind == "supplied":
+        return {**out, "state": EXPOSURE_AS_R10, "r10": view.r10.model_dump(mode="json")}
+    if kind != "kg_edges":
+        return {**out, "state": EXPOSURE_BY_ALLOCATION}
     if view.exposure is None:
-        return {"state": "not recorded", "reading": None, "definition_version": None,
-                "measured_edges": None, "in_recorded_graph_use": None,
-                "problem": view.exposure_problem}
+        return {**out, "state": "not recorded", "problem": view.exposure_problem}
     exposure = view.exposure
-    return {"state": exposure.state, "reading": exposure_text(exposure.model_dump(mode="json")),
+    return {**out, "state": exposure.state,
+            "reading": exposure_text(exposure.model_dump(mode="json")),
             "definition_version": exposure.definition_version,
             "measured_edges": exposure.measured_edges.n,
-            "in_recorded_graph_use": exposure.measured_edges.in_recorded_graph_use,
-            "problem": None}
+            "in_recorded_graph_use": exposure.measured_edges.in_recorded_graph_use}
 
 
 def _result(read: _Read, run: _Run, merged_digests: frozenset = frozenset()) -> Dict[str, Any]:
@@ -576,15 +663,17 @@ def _result(read: _Read, run: _Run, merged_digests: frozenset = frozenset()) -> 
         unknown[f"measurement.{path}"] = "its record does not hold it as a value"
     registered = sorted(run.registered, key=lambda r: (r.location["source"],
                                                        r.location["workspace"],
-                                                       r.location["checkpoint"]))
+                                                       r.location["ledger"]))
     merged = view.source_artifact_digest in merged_digests
+    run_id = getattr(first, "run_id", None) or getattr(view, "run_id", None)
     result: Dict[str, Any] = {
         "result": run.kind,
-        "run_id": getattr(first, "run_id", None) or getattr(view, "run_id", None),
+        "run_id": run_id,
         "report_sha256": view.source_artifact_digest,
         "report": REPORT_KEPT if run.kept else REPORT_NOT_AVAILABLE,
         "registered": (MERGED if run.kind == HISTORICAL
                        else REGISTERED if run.registered
+                       else RECORD_UNREADABLE if run_id in read.unreadable_runs
                        else POSSIBLY_MERGED if merged else NOT_REGISTERED),
         "stores": [{"source": k.source, "label": k.label} for k in run.kept],
         "ledgers": [r.location for r in registered],
@@ -619,7 +708,8 @@ def _result(read: _Read, run: _Run, merged_digests: frozenset = frozenset()) -> 
                              "a record merged before each run had its own record names no run")
     result["model"] = _model(read, record.get("checkpoint_digest"), unknown)
     result["references"] = _references(read, record["cohort_digest"], unknown)
-    result["metrics"] = _metrics(view, unknown)
+    result["run_counts"] = _run_counts(view, unknown)
+    result["metrics"] = _metrics(view, record, unknown)
     result["unknown"] = unknown
     return result
 
@@ -735,6 +825,7 @@ COLUMNS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     ("encoder", ("model", "encoder")),
     ("spec_reference", ("model", "reference")),
     ("spec_differences", ("model", "differences")),
+    ("spec", ("model", "spec")),
     ("capabilities", ("model", "capabilities")),
     ("training_rules", ("model", "training_rules")),
     ("learning_settings", ("model", "learning_settings")),
@@ -758,6 +849,7 @@ COLUMNS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     ("metric_schema_version", ("measurement", "metric_schema_version")),
     ("batch_size", ("measurement", "batch_size")),
     ("n_ranked", ("measurement", "n_ranked")),
+    ("run_counts", ("run_counts",)),
     ("scoring_semantics_sha256", ("measurement", "scoring_semantics_digest")),
     ("measurement_semantics_sha256", ("measurement", "measurement_semantics_digest")),
     ("environment_class", ("environment", "class")),
@@ -780,6 +872,7 @@ COLUMNS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     ("exposure_measured_edges", ("exposure", "measured_edges")),
     ("exposure_in_recorded_graph_use", ("exposure", "in_recorded_graph_use")),
     ("exposure_problem", ("exposure", "problem")),
+    ("r10", ("exposure", "r10")),
     ("references", ("references",)),
     ("unreadable_item", ("item",)),
     ("unreadable_where", ("where",)),
@@ -795,6 +888,7 @@ _UNKNOWN_COLUMNS: Dict[str, Tuple[str, ...]] = {
     "denominator": ("metric.unit",),
     "native_identity": ("environment.native_identity",),
     "references": ("references",),
+    "run_counts": ("run_counts",),
 }
 for _name, _path in COLUMNS:
     if _path[0] == "model" and _path[1] not in ("checkpoint_sha256", "locations"):

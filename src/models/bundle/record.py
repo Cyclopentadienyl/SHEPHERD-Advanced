@@ -489,7 +489,7 @@ def finetune_parent_problem(record: ModelRecord, payload: Mapping[str, Any]) -> 
 #: What a model list shows of a checkpoint's record (`listed_record`).
 LISTED_RECORD_FIELDS = ("record", "record_problem", "learning_stage", "task", "operation",
                         "family_id", "parent_sha256", "parent_run", "encoder", "reference",
-                        "differences", "capabilities")
+                        "differences", "capabilities", "spec")
 
 
 def listed_record(payload: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
@@ -509,7 +509,11 @@ def listed_record(payload: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
     (`ModelRecord.capabilities`), from which the Test page, the job runner,
     the command line and the probe judge a new measurement of it
     (`src.evaluation.protocols`). Reading, comparing and exporting what is
-    kept never consult it."""
+    kept never consult it. `spec` is the model's structure as its record
+    holds it, every value (`ModelSpec.to_dict`, without the reference
+    recipe's provenance notes, `sources`): two variants that differ on one
+    field differ here by value, whatever today's reference recipe is
+    (research comparison Stage 8, the results export)."""
     summary: Dict[str, Any] = dict.fromkeys(LISTED_RECORD_FIELDS)
     try:
         record = read_model_record(payload if payload is not None else {})
@@ -522,7 +526,9 @@ def listed_record(payload: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
                    operation=record.operation, family_id=record.family_id,
                    parent_sha256=parent.get("sha256"), parent_run=parent.get("run"),
                    encoder=record.model_spec.encoder.kind, reference=not differences,
-                   differences=differences, capabilities=record.capabilities)
+                   differences=differences, capabilities=record.capabilities,
+                   spec={name: value for name, value in record.model_spec.to_dict().items()
+                         if name != "sources"})
     return summary
 
 

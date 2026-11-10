@@ -15,8 +15,9 @@ source explicitly:
 
 - ``--workspaces-root [NAME=]DIR``, as many as needed: a directory whose
   subdirectories are workspaces (what ``SHEPHERD_WORKSPACES_ROOT`` names for the
-  service). Every checkpoint of every workspace is listed and the ledger beside
-  each read;
+  service). Every checkpoint of every workspace is listed, and every ledger of
+  every workspace read, whatever became of the weights it names (an entry
+  that is not a workspace the server can use is a row with its reason);
 - ``--registry [NAME=]DIR``, as many as needed: a cohort registry (what
   ``SHEPHERD_REGISTRY`` names). Every version is listed and every report its
   store keeps read.
@@ -24,18 +25,22 @@ source explicitly:
 Each is read with the rule the service reads its own setting by (absolute,
 existing; a registry outside the repository), as a source of its own; this
 process's ``SHEPHERD_*`` settings are not read or changed for them. ``NAME``
-is what rows show for the source (never its path); by default the directory's
-own name, and two sources may not share one.
+is what rows show for the source (never its path or the directory's own name,
+which may say more than an export should); by default a fixed word and the
+source's place among its kind (``workspaces-root-1``, ``registry-1``, ...), and
+two sources may not share one.
 
 **What it holds.** Every result: a kept report and a ledger record are one row
 only when the record names that report's run and bytes; a ledger record whose
 report is in no named store reads "report not available"; a record merged
 before each run had its own record is its own row, never counted as a run; an
 item that cannot be read is a row with its reason, and hides nothing. Each
-row lists what its records say (the model's identity, lineage, spec summary and
-training settings, the data's identity and role, the measurement's settings
-and protocol, the environment, the exposure, the states and content
-references), and ``unknown`` names what has no source, with why. Measurement
+row lists what its records say (the model's identity, lineage, spec summary,
+structure and training settings, the data's identity and role, the
+measurement's settings and protocol, the environment, the data's relation to
+the model's training: a supplied cohort's R10, a KG edge set's exposure, the
+states and content references), and ``unknown`` names what has no source,
+with why. Measurement
 aggregates only: no case id, no ranks, no server path. No row is capped and
 none is ordered by a metric; filters keep the rows that match (an unreadable
 item is always kept).
@@ -69,16 +74,21 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.api.services import results  # noqa: E402
 
 #: ``NAME=DIR``: a name that is no path (letters, digits, ``_ . -``), then the
-#: directory. A directory alone is named by its own name.
+#: directory.
 _NAMED = re.compile(r"([A-Za-z0-9][A-Za-z0-9_.-]*)=(.+)")
 
 
-def _named(text: str) -> Tuple[str, str]:
-    """``(name, directory)`` from ``[NAME=]DIR``."""
-    found = _NAMED.fullmatch(text)
-    if found is not None:
-        return found.group(1), found.group(2)
-    return Path(text).name or "root", text
+def _named(texts: Sequence[str], word: str) -> List[Tuple[str, str]]:
+    """``(name, directory)`` for each ``[NAME=]DIR`` of one kind. A directory
+    given alone is named by `word` and its place among them (``registry-2``),
+    never by its own name: a directory's name may say more than an export
+    passed around should (D7)."""
+    out = []
+    for place, text in enumerate(texts, start=1):
+        found = _NAMED.fullmatch(text)
+        out.append((found.group(1), found.group(2)) if found is not None
+                   else (f"{word}-{place}", text))
+    return out
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -94,10 +104,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--workspaces-root", action="append", default=[], metavar="[NAME=]DIR",
                         help="a directory whose subdirectories are workspaces, as "
                              "SHEPHERD_WORKSPACES_ROOT names one for the service (repeatable); "
-                             "NAME is what rows show for it, by default the directory's name")
+                             "NAME is what rows show for it, never its path; by default "
+                             "workspaces-root-1, workspaces-root-2, ... in the order given")
     parser.add_argument("--registry", action="append", default=[], metavar="[NAME=]DIR",
                         help="a cohort registry, as SHEPHERD_REGISTRY names one for the service "
-                             "(repeatable); NAME as above")
+                             "(repeatable); NAME as above, by default registry-1, registry-2, ...")
     for name in results.FILTERS:
         parser.add_argument(f"--{name.replace('_', '-')}", action="append", default=[],
                             dest=name, metavar="VALUE",
@@ -118,8 +129,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         parser.error("name at least one --workspaces-root or --registry")
     try:
         sources = results.explicit_sources(
-            workspaces_roots=[_named(text) for text in args.workspaces_root],
-            registries=[_named(text) for text in args.registry])
+            workspaces_roots=_named(args.workspaces_root, "workspaces-root"),
+            registries=_named(args.registry, "registry"))
     except ValueError as exc:
         parser.error(f"{exc}; give each a NAME= of its own")
     found = results.filtered(results.query(sources),

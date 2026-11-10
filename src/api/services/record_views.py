@@ -31,7 +31,8 @@ builds each kept report into the record a ledger would hold
 (its registration, its run, its merged reports). `result_view` reads such a
 record by the same discrimination, parts and checks (`_kind_view`) into its
 kind's result view (`RESULT_VIEWS`); each record view is its kind's result view
-with the registration's fields after it (`_RegistrationFields`). So a report no
+with the registration's fields (`_RegistrationFields`), in the order the API's
+views have always had. So a report no
 listed ledger registered and a registered one are read alike, and neither is
 made up from the other. What a record holds beyond its view, the measurement
 settings an export lists (its scoring semantics and regime), is read here too,
@@ -61,7 +62,10 @@ in the ledger record, never their values (`unreadable_reason`).
 `ledger_records`, moved here from the shared model list in Stage 8): each
 listed checkpoint's ledger is the file beside it, found through the run layout
 from the server's listing, read once per directory by the one ledger reader;
-the checkpoint is never opened.
+the checkpoint is never opened. The results service reads every ledger of a
+workspace (`workspace_ledgers`: each run's, whatever became of its weights)
+and every record of each (`ledger_results`: the one listing for each set of
+weights a record names, and a record that names none with its reason).
 
 No write, no `find_checkpoint`, no `torch.load`.
 
@@ -88,7 +92,8 @@ from typing import (
 
 from pydantic import Discriminator, Field, Tag, field_validator, model_validator
 
-from src.api.routes.diagnose import _SHA256, _Strict
+from src.api.services.response_models import SHA256_PATTERN as _SHA256
+from src.api.services.response_models import StrictModel as _Strict
 from src.evaluation.sidecar import (
     LEDGER_FILENAME,
     REGIME_FIELDS,
@@ -284,13 +289,13 @@ class RecordRegistration(_Strict):
     registered_at: _Text
 
 
-class _ResultViewFields(_Strict):
-    """The fields every kind's result holds, whether a report store keeps its
-    report or a ledger registered it (research comparison Stage 8): each
-    kind's result view (`SuppliedResultView`, `KgEdgesResultView`,
-    `GeneratedResultView`) states its own ``cohort``, ``counts`` and ``r10``
-    in their places and adds what only its kind holds. Never shown as
-    itself."""
+class _CommonFields(_Strict):
+    """The fields every kind's result and every kind's record hold first
+    (research comparison Stage 8): each kind's view states its own
+    ``cohort``, ``counts`` and ``r10`` in their places. The report's digest
+    follows them in a result (`_ResultViewFields`); a record's registration
+    comes between (`_RegistrationFields`), the order the API's views have
+    always had. Never shown as itself."""
 
     cohort: Any
     counts: Any
@@ -338,8 +343,6 @@ class _ResultViewFields(_Strict):
     dataset_origin: Literal["files", "synthetic"]
     scoring_semantics_digest: _Digest
     measurement_semantics_digest: _Digest
-    source_artifact_digest: _Digest = Field(
-        ..., description="SHA-256 of the report the record was built from")
 
     @field_validator("relations")
     @classmethod
@@ -351,12 +354,27 @@ class _ResultViewFields(_Strict):
         return value
 
 
-class _RegistrationFields(_Strict):
+class _ResultViewFields(_CommonFields):
+    """The fields every kind's result holds, whether a report store keeps its
+    report or a ledger registered it (research comparison Stage 8): the common
+    fields and the report's digest. Each kind's result view
+    (`SuppliedResultView`, `KgEdgesResultView`, `GeneratedResultView`) adds
+    what only its kind holds after them. Never shown as itself."""
+
+    source_artifact_digest: _Digest = Field(
+        ..., description="SHA-256 of the report the record was built from")
+
+
+class _RegistrationFields(_CommonFields):
     """What a ledger record adds to its result: its registration, its run as
     its ledger's boundary reads it, the records it may overlap and the reports
     merged into it. A kept report that no listed ledger registered has none
-    of them (its result view, `RESULT_VIEWS`). Never shown as itself; each
-    kind's record view puts these after its result's fields."""
+    of them (its result view, `RESULT_VIEWS`). Never shown as itself. Each
+    kind's record view is its result view and these (``class
+    RecordView(SuppliedResultView, _RegistrationFields)``): by that order of
+    bases, these come after the common fields and before the report's digest
+    and the kind's own fields, the order the API's views had before the
+    result views were split out, so the JSON a client reads is unchanged."""
 
     registration: RecordRegistration
     run_id: Optional[_RunId] = Field(
@@ -385,7 +403,7 @@ class SuppliedResultView(_ResultViewFields):
     r10: R10View
 
 
-class RecordView(_RegistrationFields, SuppliedResultView):
+class RecordView(SuppliedResultView, _RegistrationFields):
     """One recorded result on a supplied cohort version, as a person reads it:
     aggregates and digests only, with its registration."""
 
@@ -584,7 +602,7 @@ class KgEdgesResultView(_ResultViewFields):
         return self
 
 
-class KgEdgesRecordView(_RegistrationFields, KgEdgesResultView):
+class KgEdgesRecordView(KgEdgesResultView, _RegistrationFields):
     """One recorded result on a KG edge set, as a person reads it: its
     result (`KgEdgesResultView`) with its registration."""
 
@@ -657,7 +675,7 @@ class GeneratedResultView(_ResultViewFields):
         return self
 
 
-class GeneratedRecordView(_RegistrationFields, GeneratedResultView):
+class GeneratedRecordView(GeneratedResultView, _RegistrationFields):
     """One recorded result on a generated split, as a person reads it: its
     result (`GeneratedResultView`) with its registration."""
 
@@ -1178,7 +1196,29 @@ class LedgerRead(NamedTuple):
     problem: Optional[str]
 
 
-def checkpoint_ledgers(workspace_dir: Path, items: Iterable[Mapping[str, Any]]
+def _ledger_in(directory: Path, read: Dict[Path, LedgerRead]) -> LedgerRead:
+    """The ledger in `directory` (resolved), read through the one ledger
+    reader (`read_ledger`) once per directory: `read` keeps each read."""
+    # The one ledger reader, looked up when called, as the shared model list
+    # always did.
+    from src.evaluation.sidecar import read_ledger
+
+    if directory not in read:
+        ledger_path = directory / LEDGER_FILENAME
+        try:
+            ledger, digest = read_ledger(ledger_path)
+            read[directory] = LedgerRead(ledger_path, ledger if digest else None, digest, None)
+        except (OSError, ValueError) as exc:
+            read[directory] = LedgerRead(ledger_path, None, None, ledger_problem(exc, ledger_path))
+    return read[directory]
+
+
+def _within(directory: Path, workspace_dir: Path) -> bool:
+    return directory == workspace_dir or workspace_dir in directory.parents
+
+
+def checkpoint_ledgers(workspace_dir: Path, items: Iterable[Mapping[str, Any]], *,
+                       _read: Optional[Dict[Path, LedgerRead]] = None
                        ) -> Dict[str, LedgerRead]:
     """For each listed checkpoint that was read (`item_was_read`), by its key
     (`item_key`), the ledger beside it, read through the one ledger reader
@@ -1186,13 +1226,10 @@ def checkpoint_ledgers(workspace_dir: Path, items: Iterable[Mapping[str, Any]]
     its path is the run layout's, resolved to find the directory its ledger is
     in, as registration writes it; one that resolves outside the workspace is
     not read, and says so."""
-    # The one ledger reader, looked up when called, as the shared model list
-    # always did.
-    from src.evaluation.sidecar import read_ledger
     from src.utils.checkpoint_paths import RUN_CHECKPOINTS_DIRNAME, RUNS_DIRNAME
 
     workspace_dir = Path(workspace_dir).resolve()
-    read: Dict[Path, LedgerRead] = {}
+    read: Dict[Path, LedgerRead] = {} if _read is None else _read
     out: Dict[str, LedgerRead] = {}
     for item in items:
         if not item_was_read(item):
@@ -1206,20 +1243,104 @@ def checkpoint_ledgers(workspace_dir: Path, items: Iterable[Mapping[str, Any]]
             out[key] = LedgerRead(None, None, None,
                                   "the checkpoint's directory cannot be resolved")
             continue
-        if directory != workspace_dir and workspace_dir not in directory.parents:
+        if not _within(directory, workspace_dir):
             out[key] = LedgerRead(None, None, None, "the checkpoint resolves outside the workspace")
             continue
-        if directory not in read:
-            ledger_path = directory / LEDGER_FILENAME
-            try:
-                ledger, digest = read_ledger(ledger_path)
-                read[directory] = LedgerRead(ledger_path, ledger if digest else None, digest,
-                                             None)
-            except (OSError, ValueError) as exc:
-                read[directory] = LedgerRead(ledger_path, None, None,
-                                             ledger_problem(exc, ledger_path))
-        out[key] = read[directory]
+        out[key] = _ledger_in(directory, read)
     return out
+
+
+def workspace_ledgers(workspace_dir: Path, items: Iterable[Mapping[str, Any]]
+                      ) -> List[Tuple[str, LedgerRead]]:
+    """**Every ledger of a listed workspace**, each read once (research
+    comparison Stage 8: every readable ledger record, whatever became of the
+    weights it names), as ``(where, LedgerRead)``: the ledger in each run's
+    checkpoints directory, for every run the runs listing finds (`list_runs`,
+    the listing the checkpoint list is made from), whether its checkpoints are
+    listed, listed with a problem, or gone (an ordinary cleanup), named by the
+    run's listing key (``architecture/run``); then the ledger beside each
+    listed checkpoint that was read (`checkpoint_ledgers`) that no run's
+    directory holds (a checkpoint that is a link elsewhere in the workspace),
+    named by the checkpoint's key. A run's directory that cannot be resolved,
+    or resolves outside the workspace, is not read and says so. No checkpoint
+    is opened. Directories under ``runs/`` the listing cannot list are the
+    checkpoint list's items, with their reasons; ``runs/`` itself failing to
+    list is that list's problem, and none is read here either."""
+    from src.utils.checkpoint_paths import list_runs, listing_key, run_checkpoint_dir
+
+    workspace_dir = Path(workspace_dir).resolve()
+    read: Dict[Path, LedgerRead] = {}
+    out: List[Tuple[str, LedgerRead]] = []
+    try:
+        runs = list_runs(workspace_dir)
+    except OSError:
+        runs = []
+    for run in runs:
+        where = listing_key((run.parent.name, run.name))
+        try:
+            directory = Path(run_checkpoint_dir(run)).resolve()
+        except (OSError, RuntimeError):
+            out.append((where, LedgerRead(None, None, None,
+                                          "the run's checkpoints directory cannot be resolved")))
+            continue
+        if not _within(directory, workspace_dir):
+            out.append((where, LedgerRead(
+                None, None, None, "the run's checkpoints directory resolves outside the workspace")))
+            continue
+        if directory not in read:
+            out.append((where, _ledger_in(directory, read)))
+    held = set(read)
+    for key, found in checkpoint_ledgers(workspace_dir, items, _read=read).items():
+        directory = found.path.parent if found.path is not None else None
+        if directory is None or directory not in held:
+            held.add(directory)
+            out.append((key, found))
+    return out
+
+
+def ledger_results(ledger: Mapping[str, Any]
+                   ) -> Tuple[List[Tuple[str, Dict[str, Any], Any]],
+                              List[Tuple[Optional[str], UnreadableRecord]]]:
+    """**Every record of a ledger**, by the readers' one listing
+    (`read_records`) for each set of weights its records name (research
+    comparison Stage 8): the records read as results, each as ``(checkpoint
+    digest, record, view)``, and every other record as ``(checkpoint digest or
+    None, UnreadableRecord)``, in ledger order. A record that names no weights
+    (not an object, or a ``checkpoint_digest`` missing or not a SHA-256: a hand
+    edit) is listed too, with that reason and nothing more, so no record of a
+    ledger is passed over. Reads nothing but the ledger already parsed."""
+    from src.evaluation.sidecar import _is_digest, _readable_sequence
+
+    ledger = dict(ledger)
+    records = ledger.get("records") if isinstance(ledger.get("records"), list) else []
+    read_as = record_reading(ledger)
+    digests: List[str] = []
+    unreadable: List[Tuple[Optional[str], UnreadableRecord]] = []
+    for index, record in enumerate(records):
+        digest = record.get("checkpoint_digest") if isinstance(record, dict) else None
+        if _is_digest(digest):
+            if digest not in digests:
+                digests.append(digest)
+            continue
+        identity = read_as[id(record)][0]
+        if identity.problem is not None and not isinstance(record, dict):
+            reason = identity.problem
+        else:
+            reason = ("checkpoint_digest: missing, so it names no weights"
+                      if not isinstance(record, dict) or "checkpoint_digest" not in record
+                      else "checkpoint_digest: not a SHA-256, so it names no weights")
+        source = record.get("source_artifact_digest") if isinstance(record, dict) else None
+        unreadable.append((None, UnreadableRecord(
+            index=index, sequence=_readable_sequence(record),
+            source_artifact_digest=source if _is_digest(source) else None,
+            run_id=identity.run_id, reason=reason)))
+    viewed: List[Tuple[str, Dict[str, Any], Any]] = []
+    for digest in digests:
+        results, refused = read_records(ledger, digest)
+        viewed.extend((digest, record, view) for record, view in results)
+        unreadable.extend((digest, item) for item in refused)
+    unreadable.sort(key=lambda pair: pair[1].index)
+    return viewed, unreadable
 
 
 def ledger_records(workspace_dir: Path, items: Sequence[Mapping[str, Any]]
@@ -1290,10 +1411,12 @@ __all__ = [
     "item_was_read",
     "ledger_entry",
     "ledger_problem",
+    "ledger_results",
     "ledger_records",
     "read_records",
     "record_reading",
     "recorded_settings",
     "result_view",
     "unreadable_reason",
+    "workspace_ledgers",
 ]

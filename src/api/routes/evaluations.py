@@ -120,7 +120,6 @@ from fastapi import APIRouter
 from pydantic import Discriminator, Field, Tag, model_validator
 from starlette.concurrency import run_in_threadpool
 
-from src.api.routes.diagnose import _Strict
 from src.api.services.record_views import (
     GeneratedRecordView,
     KgEdgesRecordView,
@@ -134,6 +133,7 @@ from src.api.services.record_views import (
     ledger_problem,
     read_records,
 )
+from src.api.services.response_models import StrictModel as _Strict
 from src.evaluation.sidecar import LEDGER_FILENAME, read_ledger
 
 if TYPE_CHECKING:
