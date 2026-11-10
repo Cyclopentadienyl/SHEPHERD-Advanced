@@ -1015,8 +1015,10 @@ def _tree(group: str, parts: Tuple[str, ...], ref: Optional[str], values: Sequen
 
 
 def _rows(columns: Sequence[Mapping[str, Any]]) -> List[_Row]:
-    """**The one merge of results into Compare's rows**, ``(group, label,
-    key, values, reasons)``, one value and reason per column: each field once
+    """**The one merge of results into Compare's rows**, ``(group, parts,
+    key, values, reasons)``, its parts the path's words (the field's, then
+    each entry's; `_label` joins them into the row's whole name), one value
+    and reason per column: each field once
     (a field another column does not hold reads `_missing` there), the groups
     in their order (`COMPARE_GROUPS`, each once; within one, the order first
     found), each nested value one row per entry (`_tree`)."""
@@ -1149,7 +1151,11 @@ def compare_html(rows: Sequence[Mapping[str, Any]], differences_only: bool, *,
     front-load): the path above it is said once, as a sub-heading row under
     its group, shown where one of its entries is shown and not again while
     the rows shown next share it; the row's whole name (`_label`) is its
-    accessible name and its record key its title. Values
+    accessible name and its record key its title. The sub-heading is a plain
+    cell, not a header: every row is in the table's one row group, where a
+    row-group header would head every later cell of the table, under later
+    paths and groups too (HTML's table model), and each entry's accessible
+    name already says its whole path. Values
     as recorded: nothing is computed from two of them. A metric row is one
     protocol's; a result of another protocol reads "another protocol" there,
     and one of the same protocol that does not record that metric reads "not
@@ -1185,8 +1191,9 @@ def compare_html(rows: Sequence[Mapping[str, Any]], differences_only: bool, *,
             group_shown, path_shown = group, None
         path = parts[:-1]
         if path and path != path_shown:
-            body.append(f'<tr class="shep-rs-sub"><th scope="rowgroup" colspan="{span}">'
-                        f'<span class="shep-rs-pin">{r.e(_label(path))}</span></th></tr>')
+            # A plain cell, not a header (`compare_html`'s docstring says why).
+            body.append(f'<tr class="shep-rs-sub"><td colspan="{span}">'
+                        f'<span class="shep-rs-pin">{r.e(_label(path))}</span></td></tr>')
         path_shown = path or None
         run = ref in _RUN_IDS
         cells = "".join(_cell_html(v, w, full=full, run=run) for v, w in zip(values, whys))

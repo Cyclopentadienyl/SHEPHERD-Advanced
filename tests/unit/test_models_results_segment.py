@@ -1019,6 +1019,54 @@ def test_compare_keeps_numbers_and_run_ids_whole_and_scrolls_inside_its_wrapper(
            'Result</span></th></tr>' in markup
 
 
+def _layers(declarations):
+    """A rule's ``background`` layers, top first (split at its top-level commas)."""
+    value = re.search(r"background: ([^;]*);", declarations).group(1)
+    layers, depth, start = [], 0, 0
+    for at, char in enumerate(value):
+        depth += {"(": 1, ")": -1}.get(char, 0)
+        if char == "," and depth == 0:
+            layers.append(value[start:at])
+            start = at + 1
+    return [" ".join(layer.split()) for layer in layers + [value[start:]]]
+
+
+def test_a_results_table_wider_than_its_panel_shades_its_right_edge():
+    """Review of the re-look fix: five columns of raw values (1,057 px) scroll
+    inside a 937 or 892 px wrapper, and nothing on screen said a column lay
+    beyond the edge but the wrapper's scrollbar, at the bottom of a table
+    about 19,000 px tall; the cut column read as partial tokens. The
+    wrapper's right edge is shaded while it is not scrolled to its end: a
+    shade fixed at the edge (``scroll``) under a cover in the panel's colour
+    that moves with the table (``local``), at its end covering the shade
+    whole, as at a table that fits. Compare's value cells and sub-heading
+    rows have no background of their own, so the shade shows through them.
+    Measured by the author's scripted check in headless Chromium (the edge's
+    pixels: shaded at the start of a five-column Compare, the panel's white
+    at its end and on a table that fits); here, the rule it relies on."""
+    cover, shade, base = _layers(_css_rule("#shep-page-models .shep-rs-wrap"))
+    found = re.fullmatch(r"linear-gradient\(to left, var\(--shep-panel\) (\d+)px, transparent\) "
+                         r"right / (\d+)px 100% no-repeat local", cover)
+    assert found, cover
+    opaque, wide = (int(n) for n in found.groups())
+    edge = re.fullmatch(r"linear-gradient\(to left, rgba\(20, 24, 40, (\.\d+)\), transparent\) "
+                        r"right / (\d+)px 100% no-repeat scroll", shade)
+    assert edge, shade
+    assert opaque >= int(edge.group(2)) and wide > opaque
+    assert base == "var(--shep-panel)"  # the cover's colour, the panel's
+    assert "background" not in _css_rule("#shep-page-models .shep-rs-cmp tr.shep-rs-sub td")
+    # The lightest words in a value cell (a state word, ``shep-muted``) keep
+    # 4.5:1 over the shade's darkest pixel (skill §10).
+    from src.webui import style
+    from tests.unit.test_webui_button_contrast import contrast
+
+    tokens = dict(re.findall(r"(--shep-[a-z0-9-]+): (#[0-9a-f]{6})", style.SHELL_CSS))
+    assert tokens["--shep-panel"] == "#ffffff"
+    alpha = float(edge.group(1))
+    darkest = "#" + "".join(f"{round(255 * (1 - alpha) + c * alpha):02x}" for c in (20, 24, 40))
+    assert 0 < alpha and contrast(tokens["--shep-muted"], darkest) >= 4.5
+
+
 def test_compare_names_a_nested_entry_by_its_own_words_under_its_path(world, monkeypatch):
     """Browser re-look relook-2 (skill §5: front-load): a nested entry's row
     is named by its own words, first; the path above it is said once, as a
@@ -1027,7 +1075,12 @@ def test_compare_names_a_nested_entry_by_its_own_words_under_its_path(world, mon
     while the rows shown next share it. The row's whole name is its
     accessible name and its record key its title; `compare_fields` keeps the
     whole name. (Up to 63 characters of shared path came first and wrapped
-    a label to 4-5 lines in the Field column, its meaning on the last.)"""
+    a label to 4-5 lines in the Field column, its meaning on the last.)
+    The sub-heading is a plain cell, not a header (review of the re-look
+    fix): every row is in the table's one row group, where a row-group
+    header heads every later cell of the table (HTML's table model), so a
+    path headed the entries of later paths and groups too, and each entry
+    said its path twice; the entry's accessible name already says it."""
     from src.webui.components import results_segment as rs
 
     state, _scope, _shown_rows = _shown(_state(world, monkeypatch), protocol="disease")
@@ -1040,14 +1093,14 @@ def test_compare_names_a_nested_entry_by_its_own_words_under_its_path(world, mon
                                             "gradient_clip": "1.0"}}}}}
     path = "Effective setting · Loaders › Train › Recipe › Reference filled"
     markup = rs.compare_html([first, second], True)
-    sub = re.findall(r'<tr class="shep-rs-sub"><th scope="rowgroup" colspan="3">'
-                     r'<span class="shep-rs-pin">([^<]*)</span></th></tr>', markup)
+    sub = re.findall(r'<tr class="shep-rs-sub"><td colspan="3">'
+                     r'<span class="shep-rs-pin">([^<]*)</span></td></tr>', markup)
     # Said once, above its two differing entries; the alike gradient clip and
     # the train loader's alike entries are hidden, and so is their path.
     assert [html_lib.unescape(words) for words in sub].count(path) == 1
     assert "Effective setting · Loaders › Train" not in [html_lib.unescape(w) for w in sub]
     ref = "model.effective_settings.loaders.train.recipe.reference_filled"
-    opening = re.escape(f'<span class="shep-rs-pin">{html_lib.escape(path)}</span></th></tr>')
+    opening = re.escape(f'<span class="shep-rs-pin">{html_lib.escape(path)}</span></td></tr>')
     block = re.search(opening + r'(.*?)(?:<tr class="shep-rs-(?:sub|grp)"|</tbody>)',
                       markup).group(1)
     assert re.findall(r'<tr class="shep-rs-entry"><th scope="row" title="([^"]*)" '
@@ -1060,10 +1113,22 @@ def test_compare_names_a_nested_entry_by_its_own_words_under_its_path(world, mon
     # says its words and has no sub-heading of its own.
     for differences in (True, False):
         markup = rs.compare_html([first, second], differences)
+        # The sub-heading heads nothing: no row-group header (in the table's
+        # one row group it would head every later cell), no sub-heading as a
+        # header cell, and no header cell without a scope (HTML's auto scope
+        # makes one alone in its row a column header over the rows below).
+        body = re.search(r"<tbody>(.*)</tbody>", markup).group(1)
+        assert 'scope="rowgroup"' not in markup and "<tbody" not in body
+        assert '<tr class="shep-rs-sub"><th' not in markup
+        assert set(re.findall(r'<th(?=[ >])( scope="[a-z]+")?', body)) == {
+            ' scope="row"', ' scope="colgroup"'}
+        assert len(re.findall(r'<tr class="shep-rs-sub">', markup)) == len(
+            re.findall(r'<tr class="shep-rs-sub"><td colspan="3"><span class="shep-rs-pin">'
+                       r'[^<]*</span></td></tr>', markup)) > 0
         heading = None
         for kind, words, attrs, name in re.findall(
-                r'<tr class="shep-rs-(sub|grp)"><th[^>]*><span class="shep-rs-pin">([^<]*)'
-                r'</span></th></tr>|<tr(?: class="shep-rs-entry")?><th scope="row"([^>]*)>'
+                r'<tr class="shep-rs-(sub|grp)"><t[hd][^>]*><span class="shep-rs-pin">([^<]*)'
+                r'</span></t[hd]></tr>|<tr(?: class="shep-rs-entry")?><th scope="row"([^>]*)>'
                 r'([^<]*)</th>', markup):
             if kind:
                 heading = html_lib.unescape(words) if kind == "sub" else None

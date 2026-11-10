@@ -1859,7 +1859,12 @@ PAGE_CSS = f"""
 {_PAGE} .shep-mp-ln {{ display: block; line-height: 1.45; }}
 /* Models › Results (Stage 8b): its controls in rows that wrap, its tables
    scrolling sideways inside their own wrapper, Compare's groups as row
-   headers. A protocol table's words break only where they must: with
+   headers. A wrapper not scrolled to its end shades its right edge, so a
+   column cut there reads as more to the right: a shade fixed at the edge
+   (`scroll`) under a cover that moves with the table (`local`) and covers it
+   at the table's end (a table that fits is at its end); it shows through
+   every cell without a background of its own. A protocol table's words
+   break only where they must: with
    `break-word` a column is never sized narrower than its longest word, so a
    word, a 12-hex fingerprint or a raw value stays whole (with `anywhere`
    every character was a break point when the columns were sized, and the
@@ -1872,10 +1877,14 @@ PAGE_CSS = f"""
    than the panel: the table then scrolls sideways inside its own wrapper,
    never the page, its Field column pinned at the left with the words of its
    group and sub-heading rows (`shep-rs-pin`). A nested entry's row, named by
-   its own words, sits one step in under the sub-heading that says its path. */
+   its own words, sits one step in under the sub-heading that says its path
+   (a plain cell styled as a heading, `results_segment.compare_html`). */
 {_PAGE} .shep-rs {{ gap: 12px !important; }}
 {_PAGE} .shep-rs-row {{ align-items: flex-end !important; gap: 8px !important; flex-wrap: wrap !important; }}
-{_PAGE} .shep-rs-wrap {{ margin: 0 !important; overflow-x: auto; }}
+{_PAGE} .shep-rs-wrap {{ margin: 0 !important; overflow-x: auto;
+  background: linear-gradient(to left, var(--shep-panel) 14px, transparent) right / 28px 100% no-repeat local,
+    linear-gradient(to left, rgba(20, 24, 40, .12), transparent) right / 14px 100% no-repeat scroll,
+    var(--shep-panel); }}
 {_PAGE} .shep-rs-wrap + .shep-mp-p {{ margin-top: 16px; }}
 {_PAGE} .shep-rs-tbl td {{ overflow-wrap: break-word; vertical-align: top; }}
 {_PAGE} .shep-rs-cmp td, {_PAGE} .shep-rs-unread td {{ overflow-wrap: anywhere; vertical-align: top; }}
@@ -1887,7 +1896,7 @@ PAGE_CSS = f"""
 {_PAGE} .shep-rs-cmp th[scope="row"] {{ text-align: left; font-weight: 400; color: var(--shep-text-2); background: var(--shep-panel); }}
 {_PAGE} .shep-rs-cmp tr.shep-rs-entry th[scope="row"] {{ padding-left: 22px; }}
 {_PAGE} .shep-rs-cmp tr.shep-rs-grp th {{ text-align: left; font-weight: 600; background: var(--shep-panel-2); }}
-{_PAGE} .shep-rs-cmp tr.shep-rs-sub th {{ text-align: left; font-weight: 600; background: var(--shep-panel); padding-top: 12px; padding-bottom: 4px; border-bottom: 0; }}
+{_PAGE} .shep-rs-cmp tr.shep-rs-sub td {{ text-align: left; font-size: 14px; font-weight: 600; color: var(--shep-text-2); line-height: inherit; padding: 12px 10px 4px; border-bottom: 0; }}
 {_PAGE} .shep-rs-cmp .shep-rs-pin {{ position: sticky; left: 10px; display: inline-block; }}
 /* Every metric as recorded (R2): a closed native disclosure, its summary a 24 px
    target that shows the keyboard focus (skill §10). */
