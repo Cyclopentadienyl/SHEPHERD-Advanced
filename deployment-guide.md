@@ -2027,6 +2027,49 @@ Mode D（`--mode D`，Batch 3 對 Diagnosis 頁 2026 年 10 月所提供排名�
   而不是這樣的結果比較不重要（政策 rev 16）。它的報告與排名檔留在 `--output`；同一個 split 保存
   為版本後，以 `--cohort` 量測並登錄。
 
+### 匯出所有結果：`scripts/export_results.py`（自 research comparison Stage 8 起）
+
+一個唯讀的結果查詢服務（`src/api/services/results.py`）讀取所有保存的報告與所有可讀的 ledger
+紀錄，這個指令把它們匯出為 CSV 或 JSON。**它以 operator 身分在這台機器上執行**：用這個帳號的權限讀取
+你指定的目錄，不經過伺服器，所以沒有任何東西經網路提供，除了匯出檔之外不寫入任何東西。
+
+```bash
+python scripts/export_results.py --workspaces-root /srv/shepherd/workspaces \
+    --registry /srv/shepherd/cohorts --format csv --output results.csv
+
+# 多個來源，各自命名；篩選條件只保留相符的列
+python scripts/export_results.py --workspaces-root lab=/data/lab/workspaces \
+    --workspaces-root archive=/mnt/archive/workspaces --registry /srv/shepherd/cohorts \
+    --protocol kg_link_prediction --role test --format json --output kg.json
+```
+
+- **來源一律明確指定**，數量不限：`--workspaces-root [NAME=]DIR`（子目錄為 workspace 的目錄，如
+  `SHEPHERD_WORKSPACES_ROOT` 所指）與 `--registry [NAME=]DIR`。每個來源都以服務讀取自身設定的同一
+  規則讀取（絕對路徑、必須存在；registry 須在 repository 之外），各自是獨立的來源；不會為它們讀取或
+  修改這個 shell 的 `SHEPHERD_*` 設定。`NAME` 是各列顯示的來源名稱，絕不是路徑；預設為目錄名稱，
+  兩個來源不得同名。
+- **每個結果一列。** 保存的報告與 ledger 紀錄只有在紀錄指名該報告的 run 並持有其位元組時才合為一列；
+  同一個 run 在數個來源中的副本是一列，列出每個位置。報告不在任何指定報告存放處的 ledger 紀錄顯示
+  「report not available」；沒有任何指定 ledger 登錄的保存報告顯示「not registered in a listed
+  ledger」；在每次執行有自己的紀錄之前合併的紀錄自成一列、沒有 run，絕不被算作一次執行，它持有的
+  報告會說明可能與它重疊。同一實驗條件組的兩次執行，不論數值相同或不同，都是同一個 `condition_group`
+  的兩列，並列出相異的欄位。
+- **每列列出的內容**（以紀錄中有的為限）：checkpoint 的 SHA-256 與伺服器清單找到它的位置（來源、
+  workspace、run 與檔案）、譜系與 spec 摘要、checkpoint 記錄的訓練設定（規則、學習設定、實際生效
+  的設定；只有權重的檔案沒有記錄）、資料的種類、標籤、角色與 digest、量測的 protocol、設定與環境
+  （類別、regime、GPU、原生建置身分）、KG 邊集合的 exposure、保存／登錄／條件組狀態，以及版本的
+  內容參照。`unknown` 列出每個沒有來源的欄位與原因；不會用今天的 recipe 回填任何東西。
+- **長格式**：每個結果的每個指標一列，含 `protocol`、`metric_name`、`value`（記錄的數值，或
+  `not_computable` 之類的狀態）、`unit`、`role` 與 `semantics`，因此不同 protocol 絕不共用同一個
+  指標欄位。CSV 儲存格沿用 Diagnosis CSV 的規則（digest 寫成 `sha256:<hex>`、試算表會當公式執行的
+  文字會被化解、數字不四捨五入）；JSON 以相同的列保留原本的型別。沒有案例 id、排名或伺服器路徑；
+  報告中的 `checkpoint_path` 與 `data_dir` 絕不會被開啟。不設上限，也不依指標排序（由新到舊）。
+- **無法讀取的項目**（被拒絕的根目錄、版本、報告存放處、損壞的報告、checkpoint 檔、ledger、被手動
+  編輯的紀錄）自成一列並附原因，不會遮蔽其他任何列；stderr 會計數。篩選條件（`--family`、
+  `--protocol`、`--data-kind`、`--role`、`--environment-class`、`--device`、`--torch-version`、
+  `--cuda-version`、`--software-revision`）一律保留這些列。
+- `--output` 必須是新檔案；既有檔案絕不會被覆寫。不給 `--output` 時匯出到標準輸出。
+
 ### 結束碼
 
 | 指令 | 0 | 1 | 2 | 3 |
@@ -2034,6 +2077,7 @@ Mode D（`--mode D`，Batch 3 對 Diagnosis 頁 2026 年 10 月所提供排名�
 | `import_cohort.py` | 已印出預覽，或已提交版本 | 拒絕，一則以 "Nothing was written." 結尾的訊息（沒有東西可提交的預覽也是：沒有任何案例可排名、該部分沒有任何邊有負樣本 tail，或該 generated split 沒有任何樣本） | 命令列被拒絕 | — |
 | `measure_scorer.py` | 已量測（加 `--record` 時：已登錄或已存在） | 某項檢查拒絕了這次執行：一則訊息，不寫入任何東西（在沒有 CUDA 的主機上給 `--device auto` 或 `cuda` 也是，在讀取任何東西之前）；或**已量測，但報告沒有寫出**（例如磁碟已滿或唯讀）：一則訊息說明可能留下了什麼，而那絕不會是可登錄的報告——`--output` 旁這次執行沒有報告的排名檔，或它在 `--output` 或排名檔位置佔用的空檔案（自 K8-6r.4 起，兩者都會讓同一路徑上的下一次執行被拒絕），或報告存放處中沒有 `report.json` 的執行目錄（寫出報告之後才失敗的執行，例如主控台被關閉，會說明報告在哪裡） | 命令列被拒絕，包括屬於另一種 cohort 的參數 | **已量測，但登錄被拒絕**：訊息會指出報告與之後登錄用的 `record_evaluation.py` 指令；若報告檔已不是這次執行發佈的位元組，則如實說明，並要求重新量測（那份報告可能已不存在） |
 | `record_evaluation.py` | 已登錄、已存在，或已顯示 | 拒絕，一則訊息；不寫入任何東西 | 命令列被拒絕，包括 `--checkpoint` 與 `--checkpoint-dir` 都沒給或都給 | — |
+| `export_results.py` | 已寫出匯出檔（無法讀取的項目是其中的列，並在 stderr 計數） | — | 命令列被拒絕（沒有來源、來源名稱重複），或 `--output` 已存在：不寫入任何東西 | — |
 | `audit_split_overlap.py` | 已寫出報告 | 拒絕，一則訊息；不寫入任何東西 | 命令列被拒絕（例如已移除的 `--evaluation-cohort-kind`、只給 `--registry` 不給 `--cohort` 或反之，或與 `--cohort` 一起給出 `--splits`），並印出 usage 行 | — |
 
 若 checkpoint 目錄對你而言是唯讀的，量測會以結束碼 3 結束：報告會保留，由可以寫入該目錄的人

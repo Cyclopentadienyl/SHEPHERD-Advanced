@@ -1466,7 +1466,7 @@ def test_a_route_records_own_determinism_setting_is_read_for_a_cpu_run():
 
 
 def test_the_api_record_view_carries_the_records_own_determinism():
-    from src.api.routes.evaluations import _recorded_determinism
+    from src.api.services.record_views import _recorded_determinism
 
     assert _recorded_determinism({"regime": {"deterministic_algorithms": True}}) is True
     assert _recorded_determinism({"regime": {"deterministic_algorithms": False}}) is False
@@ -1961,6 +1961,8 @@ def test_a_merged_record_and_a_named_run_show_their_possible_overlap(world):
     result. HEAD: no run, no overlap, "1 corroborating report"."""
     import copy as _copy
 
+    from src.api.services.record_views import ledger_entry
+
     named = _copy.deepcopy(dict(world["det"]))
     named["registration"] = {"sequence": 2, "registered_at": "2026-11-07T10:00:00Z"}
     merged = _copy.deepcopy(named)
@@ -1973,7 +1975,7 @@ def test_a_merged_record_and_a_named_run_show_their_possible_overlap(world):
     lost["registration"] = {"sequence": 3, "registered_at": "2026-11-07T11:00:00Z"}
     ledger = {"schema_version": 4, "run_identity_from_sequence": 2,
               "records": [merged, named, lost]}
-    entry = ml.ledger_entry(ledger, named["checkpoint_digest"])
+    entry = ledger_entry(ledger, named["checkpoint_digest"])
 
     html, count, _contested, unreadable = mp._records_for_item(entry, {"contest": {}})
 
@@ -1998,13 +2000,15 @@ def test_records_whose_run_cannot_be_told_are_listed_with_the_boundary_reason(wo
     "(the server's log says why)"."""
     import copy as _copy
 
+    from src.api.services.record_views import ledger_entry
+
     named = _copy.deepcopy(dict(world["det"]))
     named["registration"] = {"sequence": 2, "registered_at": "2026-11-07T10:00:00Z"}
     unnamed = _copy.deepcopy(named)
     unnamed.pop("run_id")
     unnamed["registration"] = {"sequence": 1, "registered_at": "2026-10-01T10:00:00Z"}
     ledger = {"schema_version": 4, "records": [unnamed, named]}   # no boundary
-    entry = ml.ledger_entry(ledger, named["checkpoint_digest"], "/srv/x/evaluations.json")
+    entry = ledger_entry(ledger, named["checkpoint_digest"], "/srv/x/evaluations.json")
 
     html, count, _contested, unreadable = mp._records_for_item(entry, {"contest": {}})
 

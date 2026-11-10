@@ -538,15 +538,15 @@ def record_view(record: Mapping[str, Any], reading: Optional[Sequence[Any]] = No
     the page needs beside it: the condition group, the device and whether
     deterministic algorithms were on. `reading` is the record's
     ``[run_id, historical, problem, overlaps]`` as its ledger's boundary reads it
-    (`model_list.ledger_records`). The listing gives this only the records the
-    shared check already read as results (`evaluations.read_records`, which
+    (`record_views.ledger_records`). The listing gives this only the records the
+    shared check already read as results (`record_views.read_records`, which
     lists every other one with its reason), so None, for a record that does
     not have the shape registration writes or whose run identity cannot be
     read (never shown half-read, never shown as historical), is a defensive
     case here; the server's log then says why in the listing's one bounded
     line (`unreadable_reason`, never an input value), naming `ledger` (the
     file it was read from) when given."""
-    from src.api.routes.evaluations import _record_view, unreadable_reason
+    from src.api.services.record_views import _record_view, unreadable_reason
     from src.evaluation.sidecar import RecordIdentity, record_key
 
     identity, overlaps = None, ()
@@ -1114,7 +1114,7 @@ def records_block_html(views: Sequence[Mapping[str, Any]], contest: Mapping[str,
 
 def unreadable_html(items: Sequence[Mapping[str, Any]]) -> str:
     """The records for these weights that cannot be read as results, as the
-    readers' one listing gives them (`evaluations.read_records`; the API's
+    readers' one listing gives them (`record_views.read_records`; the API's
     ``unreadable_records``, K8-6e.1): one sentence in amber with ▲ (needs
     attention, blocks nothing; skill §6), then a small table, Index ·
     Registration · Report · Reason, every value escaped. A sequence or report
@@ -1463,7 +1463,7 @@ def _records_for_item(ledger: Optional[Mapping[str, Any]], data: Mapping[str, An
                       ) -> Tuple[str, int, int, int]:
     """The ledger entry's block, how many records read as results, how many of
     them are in a group whose runs differ, and how many records cannot be read
-    as results: the listing classified them once (`ml.ledger_records`, the
+    as results: the listing classified them once (`record_views.ledger_records`, the
     readers' one listing), so a record is never counted as both."""
     from src.evaluation.sidecar import LEDGER_FILENAME
 

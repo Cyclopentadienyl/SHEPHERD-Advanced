@@ -205,6 +205,12 @@ class CheckpointItem:
     (`capabilities`), from which every consumer judges a new measurement of it
     (`src.evaluation.protocols`). All `None` for a file that was not read.
 
+    `training_settings` are the file's training settings as it records them
+    (`run_plan.recorded_training_settings`: its training rules, its learning
+    settings and what took effect, each `None` where the file records none,
+    as a weights-only file does), never filled from this build's recipe;
+    `None` for a file that was not read (research comparison Stage 8).
+
     `architecture`, `run` and `filename` are text as every answer shows them,
     a name that is not text with backslash escapes; `key` is the entry's
     identity, apart from those names (`checkpoint_paths.listing_key`, BACKLOG
@@ -244,6 +250,7 @@ class CheckpointItem:
     capabilities: Optional[Dict[str, Any]] = None
     key: Optional[str] = None
     run_key: Optional[str] = None
+    training_settings: Optional[Dict[str, Any]] = None
 
     def __post_init__(self) -> None:
         from src.utils.checkpoint_paths import listing_key
@@ -625,6 +632,7 @@ def list_checkpoints(
     from src.kg.artifacts import read_split_manifest
     from src.models.bundle.record import listed_record
     from src.utils.checkpoint_paths import read_run_checkpoints
+    from src.utils.run_plan import recorded_training_settings
 
     try:
         name, path = _find_workspace(workspace, environ)
@@ -670,6 +678,8 @@ def list_checkpoints(
             problem=entry.problem,
             completed_epochs=_count(entry.completed_epochs),
             end=entry.end,
+            training_settings=(recorded_training_settings(entry.training)
+                               if read and entry.training is not None else None),
             **summary,
         ))
     return Listing(tuple(item for item in items if record_matches(item, task, learning_stage)))

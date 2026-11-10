@@ -88,6 +88,7 @@ from src.core.types import (
     result_label,
 )
 from src.evaluation.caveats import TASK_NAMES
+from src.utils import csv_cells
 from src.utils.server_address import ServerAddressUnknownError, api_base_url
 from src.webui.components import diagnosis_card as card
 from src.webui.components.chips import D8_SHORT
@@ -657,20 +658,17 @@ def _field(part: Any, key: str) -> Any:
     return part.get(key, _MISSING) if isinstance(part, dict) else _MISSING
 
 
-def _is_sha256(value: Any) -> bool:
-    return isinstance(value, str) and _SHA256_RE.fullmatch(value) is not None
+#: Whether a value is a SHA-256 (the shared CSV cells' rule, `csv_cells.is_sha256`).
+_is_sha256 = csv_cells.is_sha256
 
 
 def _is_synthetic(identity: Dict[str, Any]) -> bool:
     return _field(_field(identity, "dataset_record"), "origin") == "synthetic"
 
 
-def _plain_value(value: Any) -> str:
-    """A JSON scalar as text: ``true``/``false`` for booleans, floats as Python
-    prints them (``0.7``, ``1.0``)."""
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    return str(value)
+#: A JSON scalar as text (`csv_cells.plain_text`): ``true``/``false`` for
+#: booleans, floats as Python prints them (``0.7``, ``1.0``).
+_plain_value = csv_cells.plain_text
 
 
 # ----------------------------------------------------------------- Markdown form
@@ -986,34 +984,25 @@ def _fmt_num(value: Any) -> str:
             else "")
 
 
-#: A cell a spreadsheet would run as a formula starts with one of these (OWASP,
-#: "CSV Injection").
-_CSV_FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
-
-
-def _csv_text(value: Any) -> str:
-    """A free-text cell, defused: one that a spreadsheet would run as a formula
-    gets a leading apostrophe. Numeric columns are written by `_fmt_num` and
-    never pass through here, so a negative number stays a number."""
-    text = "" if value is None else str(value)
-    return "'" + text if text.startswith(_CSV_FORMULA_START) else text
+#: A free-text cell, defused by the one rule every CSV here follows
+#: (`csv_cells.text_cell`): one a spreadsheet would run as a formula gets a
+#: leading apostrophe. Numeric columns are written by `_fmt_num` and never
+#: pass through it, so a negative number stays a number.
+_csv_text = csv_cells.text_cell
 
 
 def _csv_value(value: Any, null_word: str) -> str:
-    """One identity value as a CSV cell, never empty."""
+    """One identity value as a CSV cell, never empty (`csv_cells.value_cell`):
+    a key the response did not carry, or an empty text, is ``not_reported``."""
     if value is _MISSING:
         return IDENTITY_NOT_REPORTED
-    if value is None:
-        return null_word
-    if isinstance(value, str):
-        return _csv_text(value) if value else IDENTITY_NOT_REPORTED
-    return _plain_value(value)
+    return csv_cells.value_cell(value, null_word=null_word, empty_word=IDENTITY_NOT_REPORTED)
 
 
 def _csv_digest(value: Any, null_word: str) -> str:
-    if _is_sha256(value):
-        return f"sha256:{value}"
-    return _csv_value(value, null_word)
+    """A digest as ``sha256:<hex>`` (`csv_cells.digest_cell`), anything else
+    as `_csv_value`."""
+    return csv_cells.digest_cell(value) or _csv_value(value, null_word)
 
 
 def _served_csv_values(result: Dict[str, Any]) -> Dict[str, str]:

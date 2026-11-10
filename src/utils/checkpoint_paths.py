@@ -645,6 +645,14 @@ class ListedCheckpoint(NamedTuple):
     the weights. It is not checked here: a caller reads it through
     `src.models.bundle.record`, the one reader of records, which this layer
     cannot import, and judges the file as a load of it does.
+
+    `training` is the same read's training record, as the file holds it
+    (research comparison Stage 8): ``rules``, the training rules it was
+    written under (`training_rules`), and its configuration's ``requested``
+    and ``effective`` settings (`config.requested`, `config.effective`), each
+    `None` where the file records none (a weights-only file has no
+    configuration). `None` for a file whose metadata was not read. A caller
+    reads it through `run_plan.recorded_training_settings`.
     """
 
     run_dir: Path
@@ -661,6 +669,7 @@ class ListedCheckpoint(NamedTuple):
     end: Optional[str] = None
     model_record: Optional[Dict[str, Any]] = None
     under: Optional[Tuple[str, ...]] = None
+    training: Optional[Dict[str, Any]] = None
 
     @property
     def names(self) -> Tuple[str, str, str]:
@@ -909,7 +918,8 @@ def _recalled(path: Path, identity: Optional[Tuple[int, ...]],
         _READS.move_to_end(key)
         fields = kept[1]
     return {**fields, "logs": copy.deepcopy(fields["logs"]),
-            "model_record": copy.deepcopy(fields["model_record"])}
+            "model_record": copy.deepcopy(fields["model_record"]),
+            "training": copy.deepcopy(fields["training"])}
 
 
 def _remember(path: Path, within: Optional[Path], before: Optional[Tuple[int, ...]],
@@ -934,10 +944,12 @@ def _remember(path: Path, within: Optional[Path], before: Optional[Tuple[int, ..
         return
     fields = entry._asdict()
     del fields["run_dir"], fields["path"]
-    if not _nests_within((fields["logs"], fields["model_record"]), KEPT_DEPTH):
+    if not _nests_within((fields["logs"], fields["model_record"], fields["training"]),
+                         KEPT_DEPTH):
         return
     fields["logs"] = copy.deepcopy(fields["logs"])
     fields["model_record"] = copy.deepcopy(fields["model_record"])
+    fields["training"] = copy.deepcopy(fields["training"])
     key = _kept_as(path, within)
     with _READS_LOCK:
         _READS[key] = (before, fields)
@@ -992,6 +1004,9 @@ def _read_one(run: Path, path: Path, within: Optional[Path]
     record = ({"record_version": meta.get("record_version"),
                **{k: meta[k] for k in MODEL_RECORD_READ_KEYS if k in meta}}
               if meta.get("model_spec") is not None else None)
+    config = meta.get("config") if isinstance(meta.get("config"), dict) else {}
+    training = {"rules": meta.get("training_rules"), "requested": config.get("requested"),
+                "effective": config.get("effective")}
     return ListedCheckpoint(
         run, path, sha256=read.identity.sha256,
         checkpoint_kind=meta.get("checkpoint_kind"),
@@ -1003,6 +1018,7 @@ def _read_one(run: Path, path: Path, within: Optional[Path]
         completed_epochs=progress.get("completed_epochs"),
         end=progress.get("end"),
         model_record=record,
+        training=training,
     ), opened
 
 

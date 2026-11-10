@@ -1305,7 +1305,7 @@ def test_record_registers_the_run_by_its_kind_with_its_exposure(cli, site, tmp_p
     `--outcome` file says registered. The one reader shows it as a KG edge
     set's view; the same run's same bytes again write nothing, and its bytes
     replaced are refused."""
-    from src.api.routes.evaluations import KgEdgesRecordView, read_records
+    from src.api.services.record_views import KgEdgesRecordView, read_records
     from src.evaluation.registration import RegistrationRefused, register_report
     from src.evaluation.sidecar import read_ledger
 

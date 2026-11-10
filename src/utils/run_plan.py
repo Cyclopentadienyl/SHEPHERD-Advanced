@@ -145,6 +145,38 @@ def _same(a: Any, b: Any) -> bool:
     return a == b
 
 
+def recorded_training_settings(training: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
+    """A checkpoint's training settings as it records them, for a list or an
+    export (research comparison Stage 8), from the run listing's one read of
+    the file (`ListedCheckpoint.training`):
+
+    - ``rules``: the training rules it was written under (`training_rules`),
+      as recorded;
+    - ``learning``: its learning settings, every requested setting
+      (`config.requested`) outside `OPERATIONAL_FIELDS`, the same split a
+      continued run inherits by (`_inherit_settings`), whether or not a
+      setting exists in this build (a freeze setting among them);
+    - ``effective``: what took effect, as recorded (`config.effective`: the
+      device, AMP, compile, the loaders and the schedule).
+
+    Each is `None` where the file records none (a weights-only file has no
+    configuration), and ``unrecorded`` names each such part, so what has no
+    source says so. Read as recorded; nothing is filled from this build's
+    recipe or from another file of the run."""
+    training = training if isinstance(training, Mapping) else {}
+    requested = training.get("requested")
+    effective = training.get("effective")
+    out: Dict[str, Any] = {
+        "rules": training.get("rules"),
+        "learning": ({name: value for name, value in requested.items()
+                      if name not in OPERATIONAL_FIELDS}
+                     if isinstance(requested, Mapping) else None),
+        "effective": dict(effective) if isinstance(effective, Mapping) else None,
+    }
+    out["unrecorded"] = [name for name, value in out.items() if value is None]
+    return out
+
+
 def _progress_text(completed: int, start: int, target: int) -> str:
     done = completed - start
     return f"{done}/{target} done, {target - done} left"
@@ -550,5 +582,6 @@ __all__ = [
     "RunPlanRefused",
     "plan_branch",
     "plan_continuation",
+    "recorded_training_settings",
     "resolve_recorded_file",
 ]

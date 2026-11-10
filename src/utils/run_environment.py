@@ -274,7 +274,7 @@ UNKNOWN = "unknown"
 #:   ``toolchain`` and ``flags``) or ``{"state": "not recorded", "reason"}``.
 #:
 #: `component_facts` holds every component to this shape, which is what the
-#: record view reads (`src.api.routes.evaluations.RecordComponent`): a fact
+#: record view reads (`src.api.services.record_views.RecordComponent`): a fact
 #: the view would refuse is refused when it is collected, and becomes the
 #: component's status, so a record is never hidden for its environment.
 COMPONENT_FIELDS: Tuple[str, ...] = (
@@ -642,7 +642,7 @@ def collect_components() -> Dict[str, Dict[str, Any]]:
 
 def native_identity(components: Any) -> Any:
     """Each named component's native identity and route, as the record views
-    show them (`src.api.routes.evaluations.RecordView.native_identity`, the
+    show them (`src.api.services.record_views.RecordView.native_identity`, the
     Test page, the deployment probe's verdict): its ``kind`` and ``version``,
     its ``native`` ``state``, ``count`` and ``aggregate_sha256``, and its
     ``source`` ``state``, with the ``route`` only where the source receipt

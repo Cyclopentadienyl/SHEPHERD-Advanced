@@ -93,7 +93,7 @@ def p0_1_values(scratch: Path) -> tuple[dict[str, Any], dict[str, Any]]:
 
     The registry is read from a copy under `scratch`, since a registry inside
     the repository is refused; the ledgers are read where they are."""
-    from src.api.routes.evaluations import read_records
+    from src.api.services.record_views import read_records
     from src.evaluation.cohort_registry import resolve_version
     from src.evaluation.report_store import read_report, scan_report_store
     from src.evaluation.sidecar import (

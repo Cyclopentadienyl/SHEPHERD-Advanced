@@ -98,7 +98,7 @@ from src.webui.components.served_status import (
     served_checkpoint_sha,
     served_key,
 )
-from src.webui.components.workspaces import redact_paths
+from src.utils.path_redaction import redact_paths
 
 logger = logging.getLogger(__name__)
 
@@ -234,7 +234,7 @@ NOT_A_COHORT = "not_a_cohort"
 
 
 def redacted(text: Any, environ: Optional[Mapping[str, str]] = None) -> str:
-    """`text` with no absolute server path left (`workspaces.redact_paths`, the
+    """`text` with no absolute server path left (`path_redaction.redact_paths`, the
     dashboard's one redaction): a path in the cohort registry reads
     ``<registry>/…`` (the Test page's name for it), any other "a server path".
     For the registry's and the reference cohort's refusals, which name the

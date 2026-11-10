@@ -1734,6 +1734,57 @@ registration of another report.
   (policy rev 16). Its report and ranks stay at `--output`; the same split kept as a version is
   measured with `--cohort` and registered.
 
+### Export every result: `scripts/export_results.py` (since research comparison Stage 8)
+
+One read-only results service (`src/api/services/results.py`) reads every kept report and every
+readable ledger record, and this command exports them as CSV or JSON. **It runs as the operator on
+this machine**: it reads the directories you name with this account's rights, never through the
+server, so nothing is offered over the network, and it writes nothing but the export.
+
+```bash
+python scripts/export_results.py --workspaces-root /srv/shepherd/workspaces \
+    --registry /srv/shepherd/cohorts --format csv --output results.csv
+
+# several sources, each named; filters keep the rows that match
+python scripts/export_results.py --workspaces-root lab=/data/lab/workspaces \
+    --workspaces-root archive=/mnt/archive/workspaces --registry /srv/shepherd/cohorts \
+    --protocol kg_link_prediction --role test --format json --output kg.json
+```
+
+- **Sources are named explicitly**, as many as needed: `--workspaces-root [NAME=]DIR` (a directory
+  whose subdirectories are workspaces, as `SHEPHERD_WORKSPACES_ROOT` names one) and
+  `--registry [NAME=]DIR`. Each is read with the rule the service reads its own setting by
+  (absolute, existing; a registry outside the repository), as a source of its own; this shell's
+  `SHEPHERD_*` settings are neither read nor changed for them. `NAME` is what rows show for the
+  source, never its path; by default the directory's name, and two sources may not share one.
+- **One row per result.** A kept report and a ledger record are one row only when the record names
+  that report's run and holds its bytes; copies of one run in several sources are one row with each
+  place. A ledger record whose report no named store keeps reads "report not available"; a kept
+  report no named ledger registered reads "not registered in a listed ledger"; a record merged
+  before each run had its own record is its own row with no run, never counted as a run, and the
+  reports it holds say they may overlap it. Two runs of one condition group, with equal or
+  different numbers, are two rows of one `condition_group`, with the fields they differ on.
+- **What a row lists**, where its records hold it: the checkpoint's SHA-256 and where the
+  server's lists find it (source, workspace, run and file), lineage and spec summary, the training
+  settings the checkpoint records (rules, learning settings, what took effect; a weights-only file
+  records none), the data's kind, label, role and digests, the measurement's protocol, settings
+  and environment (class, regime, GPU, native build identity), a KG edge set's exposure, the
+  kept / registered / group states and the version's content references. `unknown` names each
+  field without a source, with why; nothing is filled from today's recipe.
+- **The long form**: one row per result and metric, with `protocol`, `metric_name`, `value` (the
+  recorded number, or a status such as `not_computable`), `unit`, `role` and `semantics`, so two
+  protocols never share a metric column. CSV cells follow the Diagnosis CSV's rules (a digest as
+  `sha256:<hex>`, a text a spreadsheet would run defused, numbers unrounded); JSON keeps the same
+  rows typed. No case id, rank or server path; a report's `checkpoint_path` and `data_dir` are never
+  opened. Nothing is capped or ordered by a metric (newest first).
+- **An item that cannot be read** (a refused root, a version, a store, a damaged report, a
+  checkpoint file, a ledger, a hand-edited record) is a row with its reason, and hides nothing;
+  stderr counts them. Filters (`--family`, `--protocol`, `--data-kind`, `--role`,
+  `--environment-class`, `--device`, `--torch-version`, `--cuda-version`, `--software-revision`)
+  always keep such rows.
+- `--output` must name a new file; an existing one is never overwritten. Without it the export goes
+  to standard output.
+
 ### Exit codes
 
 | Command | 0 | 1 | 2 | 3 |
@@ -1741,6 +1792,7 @@ registration of another report.
 | `import_cohort.py` | preview printed, or version committed | refused, with one message ending "Nothing was written." (also a preview with nothing to commit: no case can be ranked, no edge of the part has a negative tail, or the generated split holds no sample) | the command line was rejected | — |
 | `measure_scorer.py` | measured (with `--record`: registered or already held) | a check refused the run: one message, nothing written (so does `--device auto` or `cuda` on a host without CUDA, before anything is read); or **measured, but the report was not written** (a full or read-only disk, for example): one message saying what may be left, which is never a report that can be registered -- this run's ranks beside `--output` with no report, or an empty file it claimed at `--output` or at the ranks (since K8-6r.4 each refuses the next run on that path), or a run directory without `report.json` in the report store (a run that fails after writing its report, its console closed for example, says where the report is) | the command line was rejected, including an argument of the other kind of cohort | **measured, but the registration refused**: the message names the report and the `record_evaluation.py` command to register it later; or, when the report file no longer holds the bytes the run published, says so and asks for a re-measurement instead (that report may be gone) |
 | `record_evaluation.py` | registered, already held, or shown | refused, with one message; nothing written | the command line was rejected, including neither or both of `--checkpoint` and `--checkpoint-dir` | — |
+| `export_results.py` | export written (an item that could not be read is a row of it, counted on stderr) | — | the command line was rejected (no source, a source name given twice), or `--output` already exists: nothing written | — |
 | `audit_split_overlap.py` | report written | refused, with one message; nothing written | the command line was rejected (for example the removed `--evaluation-cohort-kind`, `--registry` without `--cohort` or the reverse, or `--splits` beside `--cohort`), with the usage line | — |
 
 A measurement whose checkpoint directory is read-only to you ends with exit 3: the report is kept,

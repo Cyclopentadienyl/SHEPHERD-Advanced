@@ -170,9 +170,9 @@ from src.webui.components import renderers as r
 from src.webui.components.chips import D8_SHORT, chips_on_change
 from src.webui.components.help import help_button
 from src.webui.components.model_list import item_key
+from src.utils.path_redaction import redact_paths
 from src.webui.components.workspaces import (
     binding_state,
-    redact_paths,
     version_row,
     workspace_binding,
 )

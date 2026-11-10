@@ -73,7 +73,7 @@ and a KG edge set's exposure (on the log). A record the shared check cannot
 read as a result (its run identity cannot be read, it does not have the shape
 registration writes, or its kind is one this build does not read) is said
 instead by its index in the ledger with its reason, through the readers' one
-listing (`src.api.routes.evaluations.read_records`, as the API and Models
+listing (`src.api.services.record_views.read_records`, as the API and Models
 list it); the JSON still shows it as written.
 
 Every refusal exits non-zero with one message that says nothing was written.
@@ -206,7 +206,7 @@ def _run_lines(ledger: dict, checkpoint_digest: str) -> list:
     set, its exposure, as the listing's view reads them ("exposure not
     recorded" with the reason when its block does not read; the result is
     listed all the same). The two kinds of record stay apart."""
-    from src.api.routes.evaluations import read_records
+    from src.api.services.record_views import read_records
 
     records = ledger.get("records") if isinstance(ledger.get("records"), list) else []
     by_record = {id(record): (identity, overlaps) for record, identity, overlaps in

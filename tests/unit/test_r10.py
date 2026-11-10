@@ -971,7 +971,7 @@ def test_every_reader_of_the_evidence_states_knows_each_one():
     without its readers would read "not reported", or be refused as malformed."""
     from typing import get_args
 
-    from src.api.routes.evaluations import R10Evidence
+    from src.api.services.record_views import R10Evidence
     from src.evaluation.caveats import R10_UNVERIFIABLE_REASON
     from src.webui.components import models_page, test_page
 

@@ -285,7 +285,7 @@ def test_every_component_the_collector_accepts_the_record_view_reads(facts):
     """One shape on both sides of the record (E1): whatever `component_facts`
     accepts, the record view validates (`RecordComponent`), so no record is
     hidden for the environment it was measured in (§4.2)."""
-    from src.api.routes.evaluations import RecordComponent
+    from src.api.services.record_views import RecordComponent
 
     collected = component_facts("attention kernel", **facts)
 
@@ -298,7 +298,7 @@ def test_a_reader_giving_what_the_view_would_refuse_becomes_a_readable_status(
     """A second reader that gives a recorded source without its route (or any
     other refused fact) is recorded as that component's status, which the
     record view reads; the reader's other components are kept."""
-    from src.api.routes.evaluations import RecordComponent
+    from src.api.services.record_views import RecordComponent
 
     reader = ComponentReader("attention kernel", ("test_attention", "test_kernel"),
                              lambda names: {
@@ -532,7 +532,7 @@ def test_an_extra_components_facts_reach_the_checkpoint_the_manifest_and_the_led
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts"))
     import measure_scorer
 
-    from src.api.routes.evaluations import read_records
+    from src.api.services.record_views import read_records
     from src.evaluation.sidecar import read_ledger
     from tests.fixtures.registered_cohort import (
         LABEL,
@@ -695,7 +695,8 @@ def test_the_readers_project_records_and_never_collect():
     collecting = {"collect_components", "collect_environment", "read_pyg_native",
                   "installed_identity", "installed_native_facts", "read_receipt"}
     repo = Path(__file__).resolve().parents[2]
-    for module in ("src/api/routes/evaluations.py", "src/webui/components/test_page.py",
+    for module in ("src/api/routes/evaluations.py", "src/api/services/record_views.py",
+                   "src/webui/components/test_page.py",
                    "src/webui/components/models_page.py"):
         tree = ast.parse((repo / module).read_text(encoding="utf-8"))
         named = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}

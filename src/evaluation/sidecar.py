@@ -52,9 +52,9 @@ and the writer's rules are the same for every kind.
   has it (`src/evaluation/r10.py`), so each scope's `evidence.path` -- the file
   on the measuring machine whose bytes the checkpoint records, when one was
   found -- is in the record, and so, for a search left incomplete, are the
-  places that could not be read, in its `evidence.problem`. The read-only view
-  strips both
-  (`src/api/routes/evaluations.py`); `record_evaluation.py --show` prints the
+  places that could not be read, in its `evidence.problem`. The read-only views
+  strip both (`src/api/services/record_views.py`, behind the API's route and the
+  export); `record_evaluation.py --show` prints the
   record as it is, on the operator's machine.
 - **No case ids.** The cohort block is aggregates only (`COHORT_VERSION_FIELDS`).
 - **No prose**, but for a KG edge set's run's own words, kept as its report
@@ -1640,7 +1640,7 @@ def records_for(ledger: Dict[str, Any], checkpoint_digest: str) -> List[Dict[str
     record that lost its digest or is not an object is simply not one of this
     checkpoint's; it does not make the lookup raise. Whether a matching record is
     whole is the reader's to check before showing it (the readers' one listing,
-    `src.api.routes.evaluations.read_records`, lists one that is not with its
+    `src.api.services.record_views.read_records`, lists one that is not with its
     index and reason).
     """
     return [record for _index, record in indexed_records_for(ledger, checkpoint_digest)]

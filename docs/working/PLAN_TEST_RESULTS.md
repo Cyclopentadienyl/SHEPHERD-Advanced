@@ -524,8 +524,9 @@ Data versions and Keeping items keep, as of Stage 6.)*
   the record's own `cohort.kind` tells them apart (research comparison Stage 6). A reader older
   than Stage 6 lists a KG edge set's or a generated split's record as unreadable, record by
   record, and its writer still appends other runs beside them (checked against `2da28cf`).
-- **Showing.** One reader, discriminated by data kind (`src/api/routes/evaluations.py`,
-  `read_records`), behind the API's loaded-model route, Models and `record_evaluation.py --show`:
+- **Showing.** One reader, discriminated by data kind (`src/api/services/record_views.py`,
+  `read_records`; in the route until research comparison Stage 8), behind the API's
+  loaded-model route, Models, `record_evaluation.py --show` and the results service:
   each record as its kind's view (`RecordView` for a supplied cohort, unchanged;
   `KgEdgesRecordView` with its exposure view; `GeneratedRecordView` with its generation
   identity). A record of a kind this build does not read is listed with its reason, naming the
@@ -553,7 +554,11 @@ Data versions and Keeping items keep, as of Stage 6.)*
   results (`.import-linter.ini`, `selection-ignores-test-results`). The owner set the direction on
   2026-11-09: comparing, querying and exporting results (`BACKLOG.md` 63, N3), for any models,
   datasets or environments, with a default order or the figure per task proposed when needed.
-  Different tasks' metrics are never read as one scale.
+  Different tasks' metrics are never read as one scale. Since research comparison Stage 8 (on
+  `claude/research-comparison`, not merged), one read-only results service
+  (`src/api/services/results.py`) reads every kept report and every readable ledger record, and
+  `scripts/export_results.py` exports them as CSV or JSON, one row per result and metric, each
+  protocol's metrics under their own names, never ordered by a metric.
 - **Who may act.** D8's one check governs every operator operation (`src/utils/operator_access.py`).
 
 ### 4.0 One path per concern

@@ -3084,13 +3084,16 @@ def test_the_words_after_a_path_stay_and_two_paths_are_two():
 
 def test_the_test_page_and_datasets_share_one_redaction():
     """M5-3 review ARCH-7: one pattern and one implementation for "no absolute
-    server path is shown" (they had already drifted apart)."""
+    server path is shown" (they had already drifted apart); since research
+    comparison Stage 8 in `src.utils.path_redaction`, which the results service
+    uses too."""
+    from src.utils import path_redaction
     from src.webui.components import workspaces
 
-    assert not hasattr(tp, "_ABSOLUTE")
+    assert not hasattr(tp, "_ABSOLUTE") and not hasattr(workspaces, "_ABSOLUTE")
     text = "x /mnt/a b/c d"
-    assert tp.redact(text, []) == workspaces.redact_paths(text, [], other=tp.SERVER_PATH)
-    assert workspaces.redact(text, None) == workspaces.redact_paths(
+    assert tp.redact(text, []) == path_redaction.redact_paths(text, [], other=tp.SERVER_PATH)
+    assert workspaces.redact(text, None) == path_redaction.redact_paths(
         text, [], other=workspaces.OUTSIDE_PATH)
 
 

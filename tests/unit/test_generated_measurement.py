@@ -663,7 +663,7 @@ def test_two_runs_are_both_kept_and_each_registered_as_its_own_record(cli, site,
     shows both as a generated split's view, never as test or a cohort; the
     store scan groups both runs. The same run's same bytes again write
     nothing."""
-    from src.api.routes.evaluations import GeneratedRecordView, read_records
+    from src.api.services.record_views import GeneratedRecordView, read_records
     from src.evaluation.registration import register_report
     from src.evaluation.report_store import scan_report_store
     from src.evaluation.sidecar import read_ledger

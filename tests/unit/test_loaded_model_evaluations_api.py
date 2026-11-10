@@ -922,7 +922,7 @@ def _computed_r10(tmp_path, situation):
 def test_every_block_r10_computes_is_shown_as_computed(tmp_path, situation):
     """The view's R10 rules are R10's own: a block `compute_r10` writes is never
     refused as malformed, and is shown as computed, less its paths."""
-    from src.api.routes.evaluations import _record_view
+    from src.api.services.record_views import _record_view
     from src.evaluation.sidecar import append_record, build_record, empty_ledger
 
     block = _computed_r10(tmp_path, situation)
@@ -1293,12 +1293,15 @@ def test_the_route_opens_the_ledger_the_manifests_and_the_shown_versions_reports
     assert ledger.read_bytes() == ledger_bytes
 
 
-def test_the_route_module_names_no_checkpoint_reader_or_writer():
+@pytest.mark.parametrize("module", ["src.api.routes.evaluations",
+                                    "src.api.services.record_views"])
+def test_the_route_module_names_no_checkpoint_reader_or_writer(module):
     """The static half of the test above: a call reached only on a path that
-    test does not take is still found."""
-    from src.api.routes import evaluations
+    test does not take is still found, in the route and in the one reader it
+    reads records by (moved out of the route in research comparison Stage 8)."""
+    import importlib
 
-    tree = ast.parse(Path(evaluations.__file__).read_text(encoding="utf-8"))
+    tree = ast.parse(Path(importlib.import_module(module).__file__).read_text(encoding="utf-8"))
     names = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
     names |= {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
     names |= {alias.name.split(".")[0] for node in ast.walk(tree)
@@ -1534,7 +1537,8 @@ def test_the_state_descriptions_say_their_meaning_changed_and_decide_nothing():
     descriptions say they changed meaning and decide nothing; `run_id` and
     `historical_overlap` are described. HEAD: "the record stays, marked", no
     run field."""
-    from src.api.routes.evaluations import RecordContest, RecordView
+    from src.api.routes.evaluations import RecordContest
+    from src.api.services.record_views import RecordView
 
     state = RecordContest.model_fields["state"]
     assert set(state.annotation.__args__) == {"uncontested", "contested", "cannot_be_checked"}
@@ -1761,7 +1765,7 @@ def test_the_record_path_helpers_annotations_resolve():
     import typing
     from collections.abc import Sequence
 
-    from src.api.routes import evaluations
+    from src.api.services import record_views
 
-    hints = typing.get_type_hints(evaluations._record_path)
+    hints = typing.get_type_hints(record_views._record_path)
     assert typing.get_origin(hints["loc"]) is Sequence

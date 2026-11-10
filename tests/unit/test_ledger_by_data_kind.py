@@ -5,7 +5,7 @@ Research comparison §5 Stage 6 (owner's O8; the plan review's F2, F4 and its
 §5 items 3-4 and 10). A ledger record is built per data kind through one
 function (`sidecar.build_record`, `_kind_parts`), in the same schema 4 file,
 under the same writer's rules, and read back by one reader discriminated by
-the record's own ``cohort.kind`` (`evaluations.read_records`). What is pinned
+the record's own ``cohort.kind`` (`record_views.read_records`). What is pinned
 here, on reports built in memory (each kind's real runs are measured and
 registered by the command line in `test_kg_link_prediction.py`,
 `test_generated_measurement.py` and the integration tests):
@@ -455,7 +455,7 @@ def test_one_reader_reads_each_kind_and_lists_what_it_cannot_read_record_by_reco
     whose fields are not its kind's, is listed unreadable with its index,
     sequence and run, the reason naming the field and never its value, and
     never hides another record (mixed-ledger acceptance (a))."""
-    from src.api.routes.evaluations import (
+    from src.api.services.record_views import (
         GeneratedRecordView,
         KgEdgesRecordView,
         RecordView,
@@ -512,7 +512,7 @@ def test_an_exposure_this_build_cannot_read_never_hides_its_result(change, probl
     never values. Seen in review: such a record was registered and then
     listed unreadable by every reader."""
     from scripts.record_evaluation import _run_lines
-    from src.api.routes.evaluations import KgEdgesRecordView, read_records
+    from src.api.services.record_views import KgEdgesRecordView, read_records
     from src.webui.components import models_page as mp
 
     block = change(exposure_block())
@@ -530,7 +530,7 @@ def test_an_exposure_this_build_cannot_read_never_hides_its_result(change, probl
     (line,) = _run_lines(ledger, CHECKPOINT)
     assert line.endswith(f"; a KG edge set (test); exposure: exposure not recorded (its block "
                          f"does not read: {problem})")
-    reading = __import__("src.api.routes.evaluations",
+    reading = __import__("src.api.services.record_views",
                          fromlist=["record_reading"]).record_reading(ledger)
     identity, overlaps = reading[id(ledger["records"][0])]
     shown = _text(mp.records_table_html([mp.record_view(
@@ -553,7 +553,7 @@ def test_an_exposure_naming_another_checkpoint_or_version_makes_the_record_unrea
     (`test_a_record_that_cannot_be_valid_is_refused_by_name`), so the writer
     never appends a record its reader refuses for it. Here a hand edit of the
     ledger made it."""
-    from src.api.routes.evaluations import read_records
+    from src.api.services.record_views import read_records
 
     ledger = _ledger((_record("kg_edges"), RUN_1))
     held = ledger["records"][0]["exposure"]
@@ -573,7 +573,7 @@ def test_no_view_carries_a_case_id_a_server_path_or_an_r10_evidence_path():
     record) stay in the ledger; no view of any kind carries a path-like string
     or a case id, and a KG edge set's exposure view carries no reason or
     caveat text."""
-    from src.api.routes.evaluations import read_records
+    from src.api.services.record_views import read_records
     from src.evaluation.sidecar import append_record
 
     supplied = _record("supplied", r10=r10_block(training_state="overlap"))
@@ -663,7 +663,7 @@ def test_models_shows_each_kind_by_the_one_display_with_its_exposure():
     stands to training. Neither shows R10 or a cohort's words; a table of
     supplied cohorts' records reads as it always did. Every value is
     escaped."""
-    from src.api.routes.evaluations import record_reading
+    from src.api.services.record_views import record_reading
     from src.webui.components import models_page as mp
 
     ledger = _ledger((_record("supplied"), RUN_1), (_record("kg_edges", REPORT_B), RUN_2),
