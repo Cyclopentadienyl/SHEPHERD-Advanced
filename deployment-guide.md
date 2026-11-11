@@ -2087,7 +2087,9 @@ python scripts/export_results.py --workspaces-root lab=/data/lab/workspaces \
   的項）、資料的種類、標籤、角色
   與 digest、量測的 protocol、設定與環境（類別、regime、GPU、原生建置身分，以及 `components`：
   每個具名元件的紀錄中所有的事實，包括 requested、installed、available、selected 與 in effect 狀態、
-  fallback 原因、版本、原生身分與來源事實；紀錄中沒有的事實不列出，文字中的伺服器路徑會被取代）、KG 邊集合那次執行
+  fallback 原因、版本、原生身分與來源事實；紀錄中沒有的事實不列出，文字中自成一個詞的絕對路徑會被取代；
+  與其他文字相連的路徑，例如編譯旗標的 `-I/…` 或 `file:` URL，不會被攔下，因此元件的讀取器不記錄任何
+  路徑）、KG 邊集合那次執行
   自己的計數（`run_counts`：評分的 pair 數、分數不是有限值的 pair 數）、資料與模型訓練的關係
   （supplied cohort 的 R10 狀態與計數在 `r10`；KG 邊集合的 exposure；generated split 的關係屬於它的
   分配方式，不做比較）、保存／登錄／條件組狀態，以及版本的內容參照。每個列出的 workspace 的每個
@@ -3516,7 +3518,8 @@ Lineage 欄。沒有任何排列方式依測試分數為模型排名：依測試
   每一組只出現一次。每一列以字詞命名（指標依表格的名稱，學習設定依 Training 頁的標籤；紀錄中的鍵放在該列的 title），巢狀設定的每個項目各成一列，
   因此其中的差異自成一列。不計算任何差值，每一列指標只屬於一個協議（其他協議的結果在該列讀作
   「another protocol」）。每種缺值各有其字詞：沒有來源的欄位讀作「Unknown」並附原因（每個欄位只寫一次
-  原因：其餘各列讀作「Unknown」，原因放在其提示中），記錄為 null 的值讀作「none」，結果的紀錄中完全沒有的
+  原因：其餘各列讀作「Unknown」，原因放在其提示中；除非其他欄在該列不同，**Differences only** 會隱藏
+  這樣的列），記錄為 null 的值讀作「none」，結果的紀錄中完全沒有的
   欄位讀作「not recorded」，不適用於該結果資料種類的欄位讀作「not applicable」（KG 邊集合的 exposure 定義
   與計數、R10，以及只有另一種資料種類才記錄的資料識別、計數或內容參照項目）。五個只是這個檢視的上限，
   選取本身不設上限。**Export** 把每個選取的結果或所有顯示的列（包括其中無法讀取的項目）不設上限地，以匯出唯一的

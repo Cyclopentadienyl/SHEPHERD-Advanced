@@ -83,7 +83,11 @@ other record.
 
 **Aggregates only** (D7). A record is shown as its view holds it (counts,
 metrics, relation states, R10 states and counts, environment class, GPU and
-native build identity, dataset origin, registration, its run and digests) and
+native build identity, every recorded fact of each named component
+(``components``, each text through the one D7 redaction, which replaces an
+absolute path that starts its own word: `run_environment.recorded_components`;
+a component's reader records no path, `ComponentReader`), dataset origin,
+registration, its run and digests) and
 its group description (field names, run ids and values; never a problem's
 words, which may name a server path). No path (a record's R10 evidence paths
 among them), no case id, no rank; a ledger problem names the file, never its

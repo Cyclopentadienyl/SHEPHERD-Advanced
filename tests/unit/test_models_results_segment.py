@@ -452,16 +452,23 @@ def test_compare_shows_what_was_in_effect_why_and_each_source_fact_as_its_own_ro
         world, monkeypatch):
     """Review fix RC-P2-1: two runs of one build (one component, version and
     native digest) that differ only in whether it was in effect, why it fell
-    back and one source fact. With Differences only, the environment shows
-    those rows alone, each in the segment's words under the component's name
-    as recorded, its record key the row's title; the Native build line is
-    alike for both, so hidden, and shown with every row. A result whose
-    record names no components reads Unknown there, with why."""
+    back and two source facts (a commit and a build flag). With Differences
+    only, the environment shows those rows alone, each in the segment's words
+    under the component's name as recorded, its record key the row's title; a
+    build flag's environment variable and a tool keep their names as
+    recorded, the VCS its abbreviation (review of the fix); the Native build
+    line is alike for both, so hidden, and shown with every row. A result
+    whose record names no components reads Unknown there, with why, once
+    under Differences only (review of the fix) and on every row with all
+    rows shown."""
     from src.webui.components import results_segment as rs
     from tests.unit.test_results_export import FELL_BACK, attention, registered_with
 
-    used = registered_with(world, {"test_attention": attention(True)})
-    fell = registered_with(world, {"test_attention": attention(False, commit="b" * 40)})
+    requested = {"kind": "vcs", "vcs": "git", "url": "https://example.org/attn", "ref": "v2"}
+    used = registered_with(world, {"test_attention": attention(
+        True, requested=requested, flags={"MAX_JOBS": "8", "FORCE_CUDA": "1"})})
+    fell = registered_with(world, {"test_attention": attention(
+        False, commit="b" * 40, requested=requested, flags={"MAX_JOBS": "4", "FORCE_CUDA": "1"})})
     state, _scope, _shown_rows = _shown(_state(world, monkeypatch))
     rows = {row["run_id"]: row for row in _results(state)}
     first, second = rows[used], rows[fell]
@@ -471,27 +478,111 @@ def test_compare_shows_what_was_in_effect_why_and_each_source_fact_as_its_own_ro
                    if label.startswith(("Component", "Native build", "GPU", "Environment"))]
     assert environment == ["Component · test_attention › In effect",
                            "Component · test_attention › Fallback reason",
-                           "Component · test_attention › Source › Commit"]
+                           "Component · test_attention › Source › Commit",
+                           "Component · test_attention › Source › Flags › MAX_JOBS"]
     assert _cells(markup, "Component · test_attention › In effect") == ["true", "false"]
     assert _cells(markup, "Component · test_attention › Fallback reason") == ["none", FELL_BACK]
     assert _cells(markup, "Component · test_attention › Source › Commit") == ["a" * 40, "b" * 40]
+    assert _cells(markup, "Component · test_attention › Source › Flags › MAX_JOBS") == ["8", "4"]
     assert 'title="environment.components.test_attention.in_effect"' in markup
     assert 'title="environment.components.test_attention.source.commit"' in markup
+    assert 'title="environment.components.test_attention.source.flags.MAX_JOBS"' in markup
 
     every = rs.compare_html([first, second], False)
     native = _cells(every, "Native build")
     assert native[0] == native[1] and "test_attention 2.0" in native[0]
     for label, value in (("Kind", "attention kernel"), ("Version", "2.0"),
                          ("Requested", "true"), ("Source › Compiler", "audit-compiler 1.0"),
-                         ("Source › Route", "local build")):
+                         ("Source › Route", "local build"), ("Source › Requested › VCS", "git"),
+                         ("Source › Flags › FORCE_CUDA", "1")):
         assert _cells(every, f"Component · test_attention › {label}") == [value, value]
+    assert rs.field_words("TORCH_CUDA_ARCH_LIST") == "TORCH_CUDA_ARCH_LIST"
 
     before = next(row for row in _results(state)
                   if row["run_id"] == world["registered"].parent.name)
     older = rs.compare_html([before, first], True)
+    assert [label for label in _labels(older) if label.startswith("Component")] == [
+        "Component · test_attention › Kind"]
     assert _cells(older, "Component · test_attention › Kind") == [
         "○ Unknown: its record names no environment components", "attention kernel"]
-    assert _cells(older, "Component · test_attention › In effect") == ["○ Unknown", "true"]
+    assert _cells(rs.compare_html([before, first], False),
+                  "Component · test_attention › In effect") == ["○ Unknown", "true"]
+
+
+def _local_build(name, version, digest, **changes):
+    """A PyG extension as a local build's source receipt records it
+    (`scripts/validate_pyg_ext.py`: the requested and resolved source, the
+    wheel, the build's basis, toolchain and flags)."""
+    from src.utils.run_environment import PYG_NATIVE_KIND, component_facts
+
+    facts = component_facts(
+        PYG_NATIVE_KIND, installed=True, available=True, version=version,
+        native={"state": "recorded", "count": 2, "aggregate_sha256": digest * 64},
+        source={"state": "recorded", "route": "local build",
+                "requested": {"kind": "registry", "name": name, "specifier": f"=={version}"},
+                "resolved": {"version": version}, "wheel_sha256": "b" * 64,
+                "compiled_against": {"torch": "2.10.0+cu130", "cuda": "13.0",
+                                     "basis": "the build's target environment"},
+                "toolchain": {"nvcc": "13.0.48", "gcc": "13.3.0", "g++": "13.3.0"},
+                "flags": {"TORCH_CUDA_ARCH_LIST": "12.1", "FORCE_CUDA": "1", "MAX_JOBS": "8"}})
+    facts.update(changes)
+    return facts
+
+
+def test_differences_only_says_an_older_records_unknown_once_not_per_component_fact(
+        world, monkeypatch):
+    """Review of RC-P2-1 (skill §1.2: each fact once): a result whose record
+    names no components (every record written before them, the kept corpus
+    among them) beside one recording four local builds. Under Differences
+    only, the components show one row, the first, Unknown with why; the
+    other 27 facts per component read "Unknown" only because of that why,
+    so they are not differences and are hidden, the note saying so. With
+    every row shown, each is there, "Unknown" with the why its title. A fact
+    the newer columns record differently is still a difference, the older
+    one's Unknown beside it. The rows of other fields are as before."""
+    from src.webui.components import results_segment as rs
+    from tests.unit.test_results_export import registered_with
+
+    builds = (("pyg_lib", "0.8.0", "a"), ("torch_scatter", "2.1.2", "c"),
+              ("torch_sparse", "0.6.18", "d"), ("torch_cluster", "1.6.3", "e"))
+    four = registered_with(world, {name: _local_build(name, version, digest)
+                                   for name, version, digest in builds})
+    other = registered_with(world, {name: _local_build(name, version, digest, **(
+        {"in_effect": False, "fallback_reason": "no kernel for this device"}
+        if name == "torch_sparse" else {})) for name, version, digest in builds})
+    state, _scope, _shown_rows = _shown(_state(world, monkeypatch))
+    rows = {row["run_id"]: row for row in _results(state)}
+    before = rows[world["registered"].parent.name]
+    assert before["environment"]["components"] is None
+    assert "environment.components" in before["unknown"]
+
+    markup = rs.compare_html([before, rows[four]], True)
+    components = [label for label in _labels(markup) if label.startswith("Component")]
+    assert components == ["Component · pyg_lib › Kind"]
+    assert _cells(markup, components[0]) == [
+        "○ Unknown: its record names no environment components", "PyG native extension"]
+    every = rs.compare_html([before, rows[four]], False)
+    entries = [label for label in _labels(every) if label.startswith("Component")]
+    assert len(entries) > 4 * 20
+    assert _cells(every, "Component · torch_cluster › Source › Flags › MAX_JOBS") == [
+        "○ Unknown", "8"]
+    # Only the components' later rows are hidden for this reason, and said apart.
+    hidden = len(entries) - 1
+    assert (f"and {hidden} that differ only by an Unknown explained above."
+            in _text(markup))
+    without = copy.deepcopy(rows[four])
+    without["environment"]["components"] = None
+    without["unknown"]["environment.components"] = before["unknown"]["environment.components"]
+    assert ([label for label in _labels(markup) if not label.startswith("Component")]
+            == _labels(rs.compare_html([before, without], True)))
+
+    # A real difference among the columns that record the facts is still shown.
+    three = rs.compare_html([before, rows[four], rows[other]], True)
+    assert [label for label in _labels(three) if label.startswith("Component")] == [
+        "Component · pyg_lib › Kind", "Component · torch_sparse › In effect",
+        "Component · torch_sparse › Fallback reason"]
+    assert _cells(three, "Component · torch_sparse › In effect") == [
+        "○ Unknown", "unknown", "false"]
 
 
 def test_compare_choices_are_unique_and_name_this_read_only(world, monkeypatch):
@@ -933,7 +1024,10 @@ def test_compare_says_a_columns_unknown_reason_once_per_field(world, monkeypatch
     are kept whatever became of the weights they name; a disease result's run
     counts) says why once, on the field's first row; its later entry rows
     read "Unknown", the why their title, so differences only does not repeat
-    one reason on every row of the other column's nested value."""
+    one reason on every row of the other column's nested value. Nor does it
+    list those rows (review of RC-P2-1): their only difference is the
+    Unknown its first row explains, so differences only shows each such
+    field's first row alone, and every row shows them all."""
     from src.api.services import results as service
     from src.webui.components import results_segment as rs
 
@@ -946,10 +1040,10 @@ def test_compare_says_a_columns_unknown_reason_once_per_field(world, monkeypatch
     for differences in (True, False):
         markup = rs.compare_html([finetune, gone], differences)
         transfer = [label for label in _labels(markup) if label.startswith("Weight transfer")]
-        assert len(transfer) >= 6
+        assert (len(transfer) == 1) if differences else (len(transfer) >= 6)
         assert [_cells(markup, label)[1] for label in transfer] == (
             [f"○ Unknown: {why}"] + ["○ Unknown"] * (len(transfer) - 1))
-        assert f'title="{html_lib.escape(why)}">○ Unknown</td>' in markup
+        assert (f'title="{html_lib.escape(why)}">○ Unknown</td>' in markup) is not differences
         # Once per field: of each model field's rows, the column says why on
         # its first only.
         said: dict = {}
@@ -962,12 +1056,13 @@ def test_compare_says_a_columns_unknown_reason_once_per_field(world, monkeypatch
         for field, texts in said.items():
             assert texts == [f"○ Unknown: {why}"] + ["○ Unknown"] * (len(texts) - 1), field
         assert _text(markup).count(f"Unknown: {why}") == len(said)
-    markup = rs.compare_html([kg, supplied], True)
-    counts = [label for label in _labels(markup) if label.startswith("Run counts · ")]
-    assert len(counts) == 4
-    assert [_cells(markup, label)[1].split(":")[0] for label in counts] == (
-        ["○ Unknown"] * 4)
-    assert _text(markup).count("its record holds no run counts") == 1
+    for differences, shown in ((True, 1), (False, 4)):
+        markup = rs.compare_html([kg, supplied], differences)
+        counts = [label for label in _labels(markup) if label.startswith("Run counts · ")]
+        assert len(counts) == shown
+        assert [_cells(markup, label)[1].split(":")[0] for label in counts] == (
+            ["○ Unknown"] * shown)
+        assert _text(markup).count("its record holds no run counts") == 1
 
 
 def test_compare_says_each_columns_report_once(world, monkeypatch):

@@ -43,10 +43,11 @@ states and counts, environment class, GPU and native build identity (each
 component's version, native libraries' count and aggregate digest, and source
 route; never a file name), every recorded fact of each component (its states,
 fallback reason, version, native identity and source facts as its record
-holds them, each text with any server path replaced:
-`run_environment.recorded_components`), dataset origin, registration, run and
-digests; never a problem's words, which may name a server path: an unreadable record's
-reason is built from field names and fixed words only. No path (a record's R10
+holds them, each text through the one D7 redaction, which replaces an
+absolute path that starts its own word: `run_environment.recorded_components`;
+a component's reader records no path, `ComponentReader`), dataset origin,
+registration, run and digests; never a problem's words, which may name a server
+path: an unreadable record's reason is built from field names and fixed words only. No path (a record's R10
 evidence paths among them), no case id, no rank; a ledger problem names the
 file, never its directory (`ledger_problem`). A KG edge set's exposure is held
 by its definition version, state, reading, counts and sources' identities; its
@@ -452,8 +453,9 @@ class _CommonFields(_Strict):
         "and why not); and its source, every fact the record holds (state, route and why "
         "not, the source receipt's requested and resolved source, wheel SHA-256, build "
         "compiled against, toolchain and flags, or another reader's own build facts). A "
-        "field the record does not hold is left out (a state left out reads unknown); a "
-        "server path in a text is shown as \"a server path\". null for a record whose "
+        "field the record does not hold is left out (a state left out reads unknown); an "
+        "absolute path that starts its own word in a text is shown as \"a server path\" "
+        "(a component's reader records no other path). null for a record whose "
         "environment names no components. Recorded, never compared or enforced (R11)")
     dataset_origin: Literal["files", "synthetic"]
     scoring_semantics_digest: _Digest

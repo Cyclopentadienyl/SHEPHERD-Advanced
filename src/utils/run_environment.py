@@ -436,9 +436,12 @@ class ComponentReader:
     flags), goes into each checkpoint and manifest and every ledger record,
     and from there to the record views, the results query, Compare and the
     export (`recorded_components`). So a reader records nothing secret: no
-    credential, token or private value, and no file name or path (a text
-    holding a path is shown with that path replaced, but its other words are
-    shown as they are).
+    credential, token or private value, and no file name or path. The one D7
+    redaction each text passes on its way out (`redact_paths`) replaces an
+    absolute path that starts its own word (``build dir=/home/…``), its other
+    words shown as they are; a path joined to other text, a compiler flag's
+    (``-I/opt/…``, ``-L/srv/…``) or a ``file:`` URL's, is not caught and is
+    shown as written, so a reader never records one.
     """
 
     kind: str
@@ -719,12 +722,14 @@ def recorded_components(components: Any) -> Any:
     left out**, never filled in (a reader reads it as unknown: a record
     written before ``requested`` was recorded has none). **Every text**, a
     key inside a fact or a component's name included, **passes the one D7
-    redaction** (`path_redaction.redact_paths`): a server path is shown as
-    "a server path". Nothing else is checked here, so the reader decides
-    what to refuse, as for `native_identity`: a value that is not an object
-    is returned as it is, and a value that is not plain data is passed on
-    for the record view to refuse, which lists the record as unreadable,
-    naming the field and never its value."""
+    redaction** (`path_redaction.redact_paths`): an absolute path that
+    starts its own word is shown as "a server path"; one joined to other
+    text (a flag's ``-I/…``, a ``file:`` URL) is not caught, so a reader
+    records none (`ComponentReader`). Nothing else is checked here, so the
+    reader decides what to refuse, as for `native_identity`: a value that is
+    not an object is returned as it is, and a value that is not plain data
+    is passed on for the record view to refuse, which lists the record as
+    unreadable, naming the field and never its value."""
     if not isinstance(components, Mapping):
         return components
     return {_redacted(name): _facts_of(entry) for name, entry in components.items()}

@@ -731,10 +731,14 @@ def test_every_recorded_fact_is_passed_on_and_nothing_filled_in():
 
 
 def test_every_text_passes_the_one_redaction_and_a_request_is_shown_as_recorded():
-    """D7: a server path in any text (a reason, a source fact, a key inside
-    one, a component's name) is shown as "a server path", its other words
-    kept; a requested source reads as a record keeps one, whatever an older
-    record holds (no file name, its URL without credentials)."""
+    """D7: an absolute path that starts its own word in any text (a reason, a
+    source fact, a key inside one, a component's name) is shown as "a server
+    path", its other words kept; a requested source reads as a record keeps
+    one, whatever an older record holds (no file name, its URL without
+    credentials). A path joined to other text (a compiler flag's ``-I/…``, a
+    ``file:`` URL) is not caught by the one redaction and is shown as
+    written: what `ComponentReader`'s contract (a reader records no path)
+    and the docs say (review of RC-P2-1)."""
     facts = component_facts(
         "attention kernel", in_effect=False, available=True,
         fallback_reason="no kernel at /srv/lab/kernels/attn.so; used default",
@@ -756,6 +760,12 @@ def test_every_text_passes_the_one_redaction_and_a_request_is_shown_as_recorded(
     assert shown["source"]["route"] == "local build"
     for secret in ("/srv/lab", "C:\\lab", "/opt/cc", "/home/u", "/tmp/x", "token", ".whl"):
         assert secret not in json.dumps(shown)
+
+    joined = {"CFLAGS": "-I/opt/lab/cuda/include -O2", "LDFLAGS": "-L/srv/lib",
+              "repository": "file:///srv/lab/src/attn", "where": "build dir=/home/u/b"}
+    facts["source"]["flags"] = joined
+    shown = recorded_components({"attention": facts})["attention"]
+    assert shown["source"]["flags"] == {**joined, "where": "build dir=a server path"}
 
 
 @pytest.mark.parametrize("change, field", [

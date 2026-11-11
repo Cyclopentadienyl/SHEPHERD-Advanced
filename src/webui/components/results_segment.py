@@ -73,8 +73,9 @@ protocol reads "another protocol" there, so two protocols' metrics are never
 one row as one scale. Each missing value keeps its own words: a field
 without a source reads "Unknown" with why (the row's ``unknown``), never a
 number, its why said once per field (its later entry rows read "Unknown",
-the why their title); a value recorded as null reads "none" (on each row its
-entries make for the others); a field the result's records do not hold at
+the why their title, and differences only does not count such a row as a
+difference, `compare_html`); a value recorded as null reads "none" (on each
+row its entries make for the others); a field the result's records do not hold at
 all reads "not recorded"; a field that does not apply to the result's data
 kind reads "not applicable": a KG edge set's exposure definition and counts,
 R10, and an entry of the data's identity, counts or content references that
@@ -741,7 +742,7 @@ _FIELD_WORDS = {
 #: Abbreviations a key's words keep as they are written.
 _ABBREVIATIONS = {"amp": "AMP", "auc": "AUC", "cuda": "CUDA", "cudnn": "cuDNN", "gpu": "GPU",
                   "id": "ID", "kg": "KG", "lp": "LP", "mrr": "MRR", "roc": "ROC",
-                  "sha256": "SHA-256", "url": "URL",
+                  "sha256": "SHA-256", "url": "URL", "vcs": "VCS",
                   # A source's toolchain names its tools as they are written.
                   "gcc": "gcc", "g++": "g++", "nvcc": "nvcc"}
 #: Short forms a key's words write out in full (skill §5: full words).
@@ -757,13 +758,17 @@ def field_words(key: Any) -> str:
     rate"), a few other keys by Compare's words ("Top-k saves kept"), any
     other by its own words, its abbreviations as written and its short forms
     in full ("downstream_initial_sha256" → "Downstream initial SHA-256",
-    "base_lr" → "Base learning rate"). The key itself is the row's title
-    (`compare_html`)."""
+    "base_lr" → "Base learning rate"). A key with a capital letter is a name
+    as recorded, as a build flag's environment variable is ("MAX_JOBS"), and
+    reads as written, as a tool's name does. The key itself is the row's
+    title (`compare_html`)."""
     text = str(key)
     if text in SETTING_LABELS:
         return SETTING_LABELS[text]
     if text in _FIELD_WORDS:
         return _FIELD_WORDS[text]
+    if text != text.lower():
+        return text
     words = [_ABBREVIATIONS.get(word) or _SHORT_FORMS.get(word, word)
              for word in text.split("_") if word]
     if not words:
@@ -986,8 +991,18 @@ def _label(parts: Sequence[str]) -> str:
 
 class _SaidAbove(str):
     """Why a column's field has no source, already said on the field's first
-    row: its later rows read "Unknown" with the why as their title only (one
-    fact once, rule 1.2)."""
+    row: its later rows read "Unknown" with the why as their title only, and
+    Differences only does not count such a cell as a difference
+    (`_said_above`; one fact once, rule 1.2)."""
+
+
+def _said_above(value: Any, why: Optional[str]) -> bool:
+    """Whether a cell is an "Unknown" whose why its field's first row says
+    (`_SaidAbove`, `_cell_html`): under Differences only, a row is a
+    difference by its other cells alone (`compare_html`), so a field one
+    column holds no source for shows its first row, with why, and the rows
+    where the columns that hold it differ, never every entry row again."""
+    return value is None and isinstance(why, _SaidAbove)
 
 
 def _tree(group: str, parts: Tuple[str, ...], ref: Optional[str], values: Sequence[Any],
@@ -1162,6 +1177,21 @@ def _cell_html(value: Any, why: Optional[str], *, full: bool, run: bool = False)
     return f"<td>{r.e(value)}</td>"
 
 
+def _hidden_note(alike: int, unknown: int) -> str:
+    """What Differences only hid, in words: the rows recorded alike in every
+    column, and those whose only difference is an "Unknown" explained above
+    (`_said_above`)."""
+    if alike and unknown:
+        return (f"Differences only: {alike} rows recorded alike in every column are hidden, "
+                f"and {unknown} that differ only by an Unknown explained above.")
+    if alike:
+        return f"Differences only: {alike} rows recorded alike in every column are hidden."
+    if unknown:
+        return (f"Differences only: {unknown} rows that differ only by an Unknown explained "
+                "above are hidden.")
+    return "Differences only: every row differs."
+
+
 def compare_html(rows: Sequence[Mapping[str, Any]], differences_only: bool, *,
                  asked: int = 0, names: Optional[Sequence[Any]] = None) -> str:
     """The chosen results side by side (at most `COMPARE_CAP`, a cap of this
@@ -1169,8 +1199,10 @@ def compare_html(rows: Sequence[Mapping[str, Any]], differences_only: bool, *,
     `row_names`, which its table row and its option say; without them, the
     rows' names among themselves) and its protocol's words, one row per field
     (`_rows`, each nested value one row per entry); with `differences_only`,
-    only the rows whose values are not recorded alike in every column. A
-    nested entry's row is named by its own words, first (skill §5:
+    only the rows whose values are not recorded alike in every column, an
+    "Unknown" its field's first row explains not counted (`_said_above`: the
+    first row is shown, with why; a later one only where the other columns
+    differ). A nested entry's row is named by its own words, first (skill §5:
     front-load): the path above it is said once, as a sub-heading row under
     its group, shown where one of its entries is shown and not again while
     the rows shown next share it; the row's whole name (`_label`) is its
@@ -1195,7 +1227,7 @@ def compare_html(rows: Sequence[Mapping[str, Any]], differences_only: bool, *,
                                          else row_names(columns))[:COMPARE_CAP]]
     many = len(columns) > 1
     span = len(columns) + 1
-    body, hidden, group_shown, path_shown = [], 0, None, None
+    body, hidden, unknown_hidden, group_shown, path_shown = [], 0, 0, None, None
     for group, parts, ref, values, whys in _rows(columns):
         digests = {value for value in values if r.is_digest(value)}
         full = len({r.short_hex(value) for value in digests}) < len(digests)
@@ -1203,9 +1235,13 @@ def compare_html(rows: Sequence[Mapping[str, Any]], differences_only: bool, *,
                 name.endswith(f" · {r.short_hex(row.get('report_sha256'))}")
                 for row, name in zip(columns, heads_said)):
             continue  # each column's head says it (rule 1.2)
-        texts = {_compare_value(v) + "\x01" + str(w) for v, w in zip(values, whys)}
-        if differences_only and many and len(texts) == 1:
-            hidden += 1
+        texts = {_compare_value(v) + "\x01" + str(w) for v, w in zip(values, whys)
+                 if not _said_above(v, w)}
+        if differences_only and many and len(texts) <= 1:
+            if any(_said_above(v, w) for v, w in zip(values, whys)):
+                unknown_hidden += 1
+            else:
+                hidden += 1
             continue
         if group != group_shown:
             # Its words stay in view when the table scrolls sideways (`shep-rs-pin`).
@@ -1234,8 +1270,7 @@ def compare_html(rows: Sequence[Mapping[str, Any]], differences_only: bool, *,
         notes.append(f"{asked} were chosen; Compare shows {COMPARE_CAP} at a time, the first "
                      f"{COMPARE_CAP} chosen (Export takes them all).")
     if differences_only and many:
-        notes.append(f"Differences only: {hidden} rows recorded alike in every column are "
-                     "hidden." if hidden else "Differences only: every row differs.")
+        notes.append(_hidden_note(hidden, unknown_hidden))
     elif differences_only:
         notes.append("One result: every row is shown; choose another to see differences.")
     notes.append("Values as recorded, side by side; no difference is computed, and each "

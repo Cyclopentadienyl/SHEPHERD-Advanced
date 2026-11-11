@@ -1810,7 +1810,9 @@ python scripts/export_results.py --workspaces-root lab=/data/lab/workspaces \
   environment (class, regime, GPU, native build identity, and `components`: every fact each named
   component's record holds, its requested, installed, available, selected and in-effect states,
   fallback reason, version, native identity and source facts, a fact the record does not hold left
-  out and any server path in a text replaced), a KG edge set's run counts
+  out and an absolute path that starts its own word in a text replaced; a path joined to other
+  text, such as a compiler flag's `-I/…` or a `file:` URL, is not caught, so a component's reader
+  records no path), a KG edge set's run counts
   (`run_counts`: pairs scored, pairs whose score was not finite), the data's relation to the
   model's training (a supplied cohort's R10 states and counts in `r10`; a KG edge set's exposure;
   a generated split's is its allocation's and is not compared), the kept / registered / group
@@ -3535,7 +3537,8 @@ card, any warning, and three segments:
   inside it is a row of its own. No difference is computed, and each metric row is one
   protocol's (a result of another protocol reads "another protocol" there). Each missing value
   keeps its words: a field without a source reads "Unknown" with why (the why once per field:
-  its other rows read "Unknown", the why in their tooltip), a value recorded as null "none", a
+  its other rows read "Unknown", the why in their tooltip, and **Differences only** hides such a
+  row unless the other columns differ there), a value recorded as null "none", a
   field the result's records do not hold "not recorded", and a field that does not apply to the
   result's data kind "not applicable" (a KG edge set's exposure definition and counts, R10, and
   an entry of the data's identity, counts or content references that only another data kind
