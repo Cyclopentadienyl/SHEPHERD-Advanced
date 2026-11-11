@@ -1206,7 +1206,7 @@ def test_a_collected_component_is_held_to_the_depth_its_report_can_be_registered
     """RC-R1 advice (1): the one depth the collector holds a component to is
     evaluated, not carried: as deep as its run's report can hold it and still
     be registered (`run_environment.COMPONENT_DEPTH`, pinned here against the
-    registration's own bound, `sidecar.MAX_REPORT_DEPTH`). The deepest the
+    registration's own bound, `MAX_REPORT_DEPTH`). The deepest the
     collector records registers and reads as a result; one level deeper it
     refuses, naming where and why, as a report holding it would be refused."""
     from src.evaluation.sidecar import MAX_REPORT_DEPTH, ReportNestsTooDeeply, build_record
@@ -1217,7 +1217,7 @@ def test_a_collected_component_is_held_to_the_depth_its_report_can_be_registered
             "state": "recorded", "route": "local build", "nested": _nested_list(levels)})
 
     deepest = COMPONENT_DEPTH - 2  # below the facts' own object and their source
-    assert MAX_REPORT_DEPTH == 64 and COMPONENT_DEPTH == MAX_REPORT_DEPTH - 6
+    assert COMPONENT_DEPTH == MAX_REPORT_DEPTH - 6
     run = registered_with(world, {"test_attention": collected(deepest)})
     assert [row["result"] for row in _query(world) if row.get("run_id") == run] == ["run"]
     with pytest.raises(ValueError) as refused:

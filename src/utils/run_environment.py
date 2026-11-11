@@ -60,7 +60,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 from src.utils import pyg_native_check as _native
-from src.utils.checkpoint_paths import plain_data
+from src.utils.checkpoint_paths import MAX_REPORT_DEPTH, plain_data
 
 #: Untracked paths that are a run's own products, not code, so they do not make
 #: a checkout dirty. **Untracked only:** a change to a tracked file counts
@@ -291,9 +291,9 @@ _STATE_FIELDS = ("requested", "installed", "available", "selected", "in_effect")
 #: How deep a component's facts may nest when collected (`component_facts`;
 #: lists and mappings, the facts' own object the first): as deep as its
 #: measuring run's report can hold them and still be registered. A
-#: registration refuses a report nesting deeper than 64 levels
-#: (`src.evaluation.sidecar.MAX_REPORT_DEPTH`, which a measurement never comes
-#: near; this layer cannot import it), and a component's facts lie five levels
+#: registration refuses a report nesting deeper than
+#: `checkpoint_paths.MAX_REPORT_DEPTH` levels (which a measurement never comes
+#: near), and a component's facts lie five levels
 #: down in a report (``manifest.environment.facts.components.<name>``), their
 #: values one level below their deepest list or mapping. Deeper, the component
 #: is recorded as "its facts could not be read", so its run's report is still
@@ -301,7 +301,7 @@ _STATE_FIELDS = ("requested", "installed", "available", "selected", "in_effect")
 #: from the interpreter's recursion limit. No count bound: a reader may observe
 #: any number of build facts (review fix RC-R1). Pinned against the
 #: registration by a test.
-COMPONENT_DEPTH = 64 - 5 - 1
+COMPONENT_DEPTH = MAX_REPORT_DEPTH - 5 - 1
 
 #: A native identity's states: its libraries' count and aggregate digest
 #: recorded; no distribution installed; installed, and its file list or a

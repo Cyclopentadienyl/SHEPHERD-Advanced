@@ -117,6 +117,7 @@ from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 from src.evaluation.caveats import DATA_KIND_WORDS
 from src.evaluation.measurement import expected_relations
 from src.evaluation.protocols import GENERATED, KG_EDGES, REGISTERED_KINDS, SUPPLIED
+from src.utils.checkpoint_paths import MAX_REPORT_DEPTH
 from src.utils.file_lock import exclusive_lock
 from src.utils.file_modes import create_staging_file
 
@@ -665,13 +666,6 @@ def _is_digest(value: Any) -> bool:
         isinstance(value, str) and len(value) == 64
         and all(c in "0123456789abcdef" for c in value)
     )
-
-
-#: How deep a report may nest, counting each object and list as a level. The
-#: measurement writes 7 or 8; anything near this is a hand edit. Counted, not
-#: recursed, so the refusal never depends on the interpreter's recursion limit
-#: or on how deep the caller's stack already is.
-MAX_REPORT_DEPTH = 64
 
 
 class ReportNestsTooDeeply(RecursionError):

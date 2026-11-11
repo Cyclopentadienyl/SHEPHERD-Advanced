@@ -763,6 +763,17 @@ def text_problem(value: Any) -> Optional[str]:
 PLAIN_DEPTH = 16
 PLAIN_VALUES = 10_000
 
+#: How deep a measuring run's report may nest, counting each object and list as
+#: a level. The measurement writes 7 or 8; anything near this is a hand edit.
+#: Counted, not recursed, so a refusal never depends on the interpreter's
+#: recursion limit or on how deep the caller's stack already is. Stated once
+#: here, the lowest layer that needs it: the registration refuses a report
+#: deeper than it (`src.evaluation.sidecar`), a record view holds a record's
+#: components to it (`src.api.services.record_views`), and the collector holds
+#: a component's facts to what such a report can carry
+#: (`run_environment.COMPONENT_DEPTH`).
+MAX_REPORT_DEPTH = 64
+
 
 class NotPlainData(ValueError):
     """Why a value is not plain data an answer can carry (`plain_data`):
@@ -1377,6 +1388,7 @@ __all__ = [
     "RUN_CHECKPOINTS_DIRNAME",
     "RUN_LOGS_DIRNAME",
     "ListedCheckpoint",
+    "MAX_REPORT_DEPTH",
     "NOT_READ_NAMED",
     "NotPlainData",
     "PLAIN_DEPTH",
