@@ -435,7 +435,7 @@ def test_a_version_whose_record_contradicts_the_view_is_refused_before_scoring()
 
 def test_pairs_that_break_their_rule_are_refused_before_the_exposure_and_the_scoring(
         monkeypatch):
-    """The evaluator's third check, after the positive edges' (RC-P2-2): the
+    """The evaluator's second check, before the positive edges' (RC-P2-2): the
     pairs must hold what the version declares (`lp_pairs_problem`). A
     negative equal to its own pair's tail, which fixed-lp-pairs/v1 never
     draws, and a negative id of -1, which torch would read as the last node,
@@ -494,6 +494,42 @@ def test_pairs_that_break_their_rule_are_refused_before_the_exposure_and_the_sco
                                     device=torch.device("cpu"), batch_size=8)
     assert len(bundle.seen) == 1 and len(read) == 1
     assert result.n_ranked == n and result.sampler_evidence["pairs"]["rule"] == "another-rule/v1"
+
+
+def test_a_positive_id_outside_the_view_is_refused_by_the_content_check_first(monkeypatch):
+    """The content check comes before the positive edges' (RC-P2-2): that one
+    keys each edge by its ids, ``(head * relations + relation) * nodes +
+    tail``, so a tail past the view's nodes can compose the key of another,
+    real edge. Here the first positive's tail is moved past the end by exactly
+    the node count, which composes the key of the edge with the same head and
+    tail under the next relation; it is refused by its id, in the content
+    check's words, before any edge is keyed, the exposure is read or anything
+    is scored."""
+    from src.evaluation import exposure as exposure_module
+    from src.evaluation.task_measurement import run_kg_link_prediction
+    from src.models.bundle.lp_head import LPPairs, lp_pairs_digest
+
+    view, split, pairs = _toy("test")
+    keyed = []
+    original = exposure_module.measured_in_parts
+    monkeypatch.setattr(exposure_module, "measured_in_parts",
+                        lambda *a, **kw: keyed.append(a) or original(*a, **kw))
+    tail = pairs.tail.clone()
+    tail[0] = tail[0] + int(view.num_nodes)
+    columns = (pairs.head, pairs.relation, tail, pairs.negative_tail)
+    moved = LPPairs(*columns, counts=dict(pairs.counts), digest=lp_pairs_digest(*columns),
+                    batch_pairs=pairs.batch_pairs)
+    bundle = _ToyBundle(view)
+    block = _toy_block(view, split, moved, "test")
+    with pytest.raises(ValueError) as info:
+        run_kg_link_prediction(bundle=bundle, view=view, pairs=moved, record=_toy_record(split),
+                               manifest=_toy_manifest(block), device=torch.device("cpu"),
+                               batch_size=8)
+    n = pairs.counts["pairs"]
+    assert (f"1 of the {n} pairs hold a tail id outside [0, {view.num_nodes}) (row 0: "
+            f"{int(tail[0])})") in str(info.value), str(info.value)
+    assert str(info.value).endswith("Nothing was written.")
+    assert keyed == [] and bundle.seen == []
 
 
 def test_a_metric_that_cannot_be_computed_is_a_status_never_a_number():

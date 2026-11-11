@@ -416,14 +416,16 @@ def run_kg_link_prediction(*, bundle: Any, view: Any, pairs: Any, record: Any, m
 
     The version is the manifest's (`cohort_version`, its report block). In
     order, before anything is scored: its recorded split must rebuild from
-    `view` (`rebuild_split`); every positive of its pairs must be an edge of
-    that split's part of its role; and the pairs must hold what their record
-    declares (`lp_pairs_problem`: every id within the view's nodes and
-    relations, and the invariants of the pair rule the version names,
-    ``pairs.rule``). Each refusal says the version's record contradicts its
-    bytes and that nothing was written: a pairs file whose digests match its
-    record (`read_kg_edge_pairs`) is only the bytes recorded, not yet pairs of
-    their rule. Then the exposure block, from the model's record `record`
+    `view` (`rebuild_split`); the pairs must hold what their record declares
+    (`lp_pairs_problem`: every id within the view's nodes and relations, and
+    the invariants of the pair rule the version names, ``pairs.rule``); and
+    every positive of its pairs must be an edge of that split's part of its
+    role (a check that keys each edge by its ids, so it comes after the ids
+    are known to be the view's). Each refusal says the version's record
+    contradicts its bytes and that nothing was written: a pairs file whose
+    digests match its record (`read_kg_edge_pairs`) is only the bytes
+    recorded, not yet pairs of their rule. Then the exposure block, from the
+    model's record `record`
     (`src.evaluation.exposure`); the regime check; and the scoring,
     `batch_size` pairs at a time, over the version's message-passing graph
     (the split's train part) with the view's node types. Draws from no random
@@ -451,13 +453,8 @@ def run_kg_link_prediction(*, bundle: Any, view: Any, pairs: Any, record: Any, m
             f"graph's view ({exc}): its record contradicts the graph it binds, so it is not "
             "measured. Nothing was written.") from None
     n = int(pairs.head.numel())
-    in_version = measured_in_parts(view, split, pairs)
-    outside = int((~in_version[role]).sum())
-    if outside:
-        raise ValueError(
-            f"{outside} of the {n} positive edges in the KG edge set {label!r}'s pairs file are "
-            f"not edges of its split's {role} part: the pairs contradict the version's record, "
-            "so they are not measured. Nothing was written.")
+    # The content check first: `measured_in_parts` composes each edge's key
+    # from its ids and so takes them to be within the view.
     rule = version["pairs"]["rule"]
     problem = lp_pairs_problem(pairs, nodes=int(view.num_nodes), relations=len(view.relations),
                                rule=rule)
@@ -466,6 +463,13 @@ def run_kg_link_prediction(*, bundle: Any, view: Any, pairs: Any, record: Any, m
             f"the KG edge set {label!r}'s pairs file does not hold pairs of its pair rule "
             f"{rule!r} over this graph's view: {problem}; the pairs contradict the version's "
             "record, so they are not measured. Nothing was written.")
+    in_version = measured_in_parts(view, split, pairs)
+    outside = int((~in_version[role]).sum())
+    if outside:
+        raise ValueError(
+            f"{outside} of the {n} positive edges in the KG edge set {label!r}'s pairs file are "
+            f"not edges of its split's {role} part: the pairs contradict the version's record, "
+            "so they are not measured. Nothing was written.")
     exposure = kg_edges_exposure(
         record=record, checkpoint_sha256=manifest.artifact_digests["checkpoint"],
         version=version, view=view, version_split=split, pairs=pairs, in_version=in_version)
