@@ -1132,6 +1132,191 @@ def test_a_component_nested_deeper_than_a_report_may_is_unreadable_not_a_crash(w
     results.to_json(found).encode("utf-8")
 
 
+def _nested_facts(levels, leaf):
+    """`leaf` under `levels` nested objects, each named by its level."""
+    for level in range(levels):
+        leaf = {f"level_{level}": leaf}
+    return leaf
+
+
+def _record_views_of(world, run):
+    """The run's ledger record as the one reader's view (`read_records`) and the
+    reader's unreadable items naming the run."""
+    from src.api.services.record_views import read_records
+    from src.evaluation.sidecar import read_ledger
+
+    ledger, _ = read_ledger(world["child_path"].parent / "evaluations.json")
+    viewed, unreadable = read_records(ledger, world["child"])
+    return ([view for _, view in viewed if view.run_id == run],
+            [item for item in unreadable if item.run_id == run])
+
+
+def test_a_record_holding_many_and_deep_component_facts_is_read_queried_and_exported(
+        world, tmp_path):
+    """RC-R1 advice (1), the reviewer's case: a component recording 10,001
+    legitimate build facts, and one nested deeper than 16 levels, which the
+    shared view returned whole before. The rule's walk carried the
+    checkpoint reader's bounds (more than 10,000 values; 16 levels, 17 with
+    the component's name) over to the facts the collector records and to
+    the whole record, so the collector refused the component and the reader
+    the record. A value parsed from JSON is now held to no count and no depth
+    of the rule's: the collector records it, its kept report and its ledger
+    record are one result, and the query, both formats, the command line and
+    the record views' JSON answer carry every fact as recorded."""
+    from starlette.responses import JSONResponse
+
+    from src.api.services import results
+
+    build = {f"fact_{index:05d}": f"flag {index}" for index in range(10_001)}
+    facts = attention(False, build=build, nested=_nested_facts(20, "the deepest fact"))
+    run = registered_with(world, {"test_attention": facts})
+    found = _query(world)
+    assert [row["result"] for row in found if row.get("run_id") == run] == ["run"]
+    row = _by_run(found)[run]
+    assert (row["report"], row["registered"]) == (results.REPORT_KEPT, results.REGISTERED)
+    assert row["environment"]["components"] == {"test_attention": facts}
+
+    exported = json.loads(results.to_json(found))["rows"]
+    (cell,) = [r for r in exported if r["run_id"] == run and r["metric_name"] == "pooled_mrr"]
+    assert cell["components"] == {"test_attention": facts}
+    limit = csv.field_size_limit(1 << 24)  # this reader's own limit: the cell is ~230 KB
+    try:
+        (line,) = [r for r in csv.DictReader(io.StringIO(results.to_csv(found)))
+                   if r["run_id"] == run and r["metric_name"] == "pooled_mrr"]
+    finally:
+        csv.field_size_limit(limit)
+    assert json.loads(line["components"]) == {"test_attention": facts}
+    for fmt, render in (("csv", results.to_csv), ("json", results.to_json)):
+        code, out = _command_line(world, tmp_path, fmt)
+        assert code == 0 and out.read_bytes() == render(found).encode("utf-8")
+
+    (view,), unreadable = _record_views_of(world, run)
+    assert unreadable == []
+    answer = json.loads(JSONResponse(view.model_dump(mode="json")).body)
+    assert answer["components"] == {"test_attention": facts}
+
+
+def _nested_list(levels, leaf="kept"):
+    for _ in range(levels):
+        leaf = [leaf]
+    return leaf
+
+
+def test_a_collected_component_is_held_to_the_depth_its_report_can_be_registered_with(world):
+    """RC-R1 advice (1): the one depth the collector holds a component to is
+    evaluated, not carried: as deep as its run's report can hold it and still
+    be registered (`run_environment.COMPONENT_DEPTH`, pinned here against the
+    registration's own bound, `sidecar.MAX_REPORT_DEPTH`). The deepest the
+    collector records registers and reads as a result; one level deeper it
+    refuses, naming where and why, as a report holding it would be refused."""
+    from src.evaluation.sidecar import MAX_REPORT_DEPTH, ReportNestsTooDeeply, build_record
+    from src.utils.run_environment import COMPONENT_DEPTH, component_facts
+
+    def collected(levels):
+        return component_facts("attention kernel", installed=True, source={
+            "state": "recorded", "route": "local build", "nested": _nested_list(levels)})
+
+    deepest = COMPONENT_DEPTH - 2  # below the facts' own object and their source
+    assert MAX_REPORT_DEPTH == 64 and COMPONENT_DEPTH == MAX_REPORT_DEPTH - 6
+    run = registered_with(world, {"test_attention": collected(deepest)})
+    assert [row["result"] for row in _query(world) if row.get("run_id") == run] == ["run"]
+    with pytest.raises(ValueError) as refused:
+        collected(deepest + 1)
+    assert str(refused.value) == (f"component.source.nested{'[0]' * deepest} nests deeper than "
+                                  f"{COMPONENT_DEPTH} levels")
+    held = collected(deepest)
+    held["source"]["nested"] = [held["source"]["nested"]]  # one level more, by hand
+    report = report_for(world["child"], version_block(LABEL, "research_selection"),
+                        metrics=_metrics(0.5))
+    report["manifest"]["environment"]["facts"]["components"] = {"test_attention": held}
+    with pytest.raises(ReportNestsTooDeeply):
+        build_record(report, "0" * 64)
+
+
+def test_an_annotation_no_view_shows_leaves_its_record_read_exactly_as_before(world, tmp_path):
+    """RC-R1 advice (2): the rule reads what is used and published, never
+    unused extra content. A record whose only text no answer can carry lies
+    in an annotation no view shows (an extra fact of its environment, a value
+    and a key holding a lone surrogate), in its kept report and its ledger
+    record alike, reads exactly as it reads without it: one result, the same
+    views, nothing of the annotation in any output, both formats, the command
+    line and the record views' JSON answer encoded."""
+    from starlette.responses import JSONResponse
+
+    from src.api.services import results
+    from src.api.services.record_views import read_records, result_view
+    from src.evaluation.sidecar import build_record, read_ledger
+
+    report = report_for(world["child"], version_block(LABEL, "research_selection"),
+                        metrics=_metrics(0.5))
+    report["manifest"]["environment"]["facts"]["operator_note"] = {
+        "text": "annotated " + LONE, "seen" + LONE: True}
+    path, _ = register(world["registry"], world["child_path"], report)
+    run = path.parent.name
+    found = _query(world)
+    assert [row["result"] for row in found if row.get("run_id") == run] == ["run"]
+    row = _by_run(found)[run]
+    assert (row["report"], row["registered"]) == (results.REPORT_KEPT, results.REGISTERED)
+
+    def without_note(record):
+        plain = copy.deepcopy(record)
+        del plain["environment"]["facts"]["operator_note"]
+        return plain
+
+    data = path.read_bytes()
+    kept = build_record(json.loads(data), hashlib.sha256(data).hexdigest())
+    assert "operator_note" in kept["environment"]["facts"]
+    assert result_view(kept) == result_view(without_note(kept))
+    ledger, _ = read_ledger(world["child_path"].parent / "evaluations.json")
+    plain_ledger = copy.deepcopy(ledger)
+    plain_ledger["records"] = [without_note(record) if record.get("run_id") == run else record
+                               for record in ledger["records"]]
+    annotated, unread = read_records(ledger, world["child"])
+    plain, unread_plain = read_records(plain_ledger, world["child"])
+    assert [view for _, view in annotated] == [view for _, view in plain]
+    assert unread == unread_plain
+    (view,), unreadable = _record_views_of(world, run)
+    assert unreadable == []
+    JSONResponse(view.model_dump(mode="json"))
+
+    for fmt, render in (("csv", results.to_csv), ("json", results.to_json)):
+        encoded = render(found).encode("utf-8")
+        assert b"operator_note" not in encoded and b"annotated" not in encoded
+        code, out = _command_line(world, tmp_path, fmt)
+        assert code == 0 and out.read_bytes() == encoded
+
+
+class _ReadingFails(dict):
+    """A part whose reading fails as a programming error or the machine would,
+    never as the rule's refusal."""
+
+    def __init__(self, error):
+        super().__init__()
+        self.error = error
+
+    def __iter__(self):
+        raise self.error
+
+
+@pytest.mark.parametrize("error", [RuntimeError("a programming error"), MemoryError()],
+                         ids=["programming-error", "memory-error"])
+def test_the_rows_guard_makes_only_the_rules_refusal_an_unreadable_item(world, monkeypatch,
+                                                                         error):
+    """RC-R1 advice (3): the results service's last-line guard (`_carried`)
+    reads a row by the one rule and makes only the rule's own refusal
+    (`NotPlainData`) the existing unreadable item; an unexpected exception
+    met while reading a row (a programming error, `MemoryError`) propagates
+    and is never reported as a damaged record."""
+    from src.api.services import results
+
+    real = results._exposure
+    monkeypatch.setattr(results, "_exposure",
+                        lambda view: {**real(view), "reading": _ReadingFails(error)})
+    with pytest.raises(type(error)) as raised:
+        _query(world)
+    assert raised.value is error
+
+
 def test_what_the_service_itself_reads_is_shown_only_as_an_answer_can_carry_it(
         world, monkeypatch):
     """RC-R1, the service's own readers: a version's content references (read

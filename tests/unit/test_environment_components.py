@@ -363,6 +363,49 @@ def test_a_reader_giving_text_no_answer_can_carry_becomes_that_components_status
     json.dumps(components, ensure_ascii=False).encode("utf-8")
 
 
+def _nested(levels, leaf="kept"):
+    for level in range(levels):
+        leaf = {f"level_{level}": leaf}
+    return leaf
+
+
+def test_a_reader_may_give_any_number_of_facts_and_the_depth_its_report_can_hold(
+        stack, monkeypatch):
+    """RC-R1 advice (1): the collector held each component to the checkpoint
+    reader's bounds (10,000 values, 16 levels), so a reader's 10,001
+    legitimate build facts, or one nested deeper than 16 levels, became
+    "its facts could not be read". Now no count is held against a component,
+    and only the depth its run's report can hold it at and still be
+    registered (`run_environment.COMPONENT_DEPTH`): such a component is
+    recorded as observed; one nesting deeper (or past the interpreter's
+    recursion limit, which the collector's own copy would meet) is its status,
+    and nothing raises."""
+    build = {f"fact_{index:05d}": f"flag {index}" for index in range(10_001)}
+    many = {"installed": True, "source": {**_SOURCE, "build": build,
+                                          "nested": _nested(20, "the deepest fact")}}
+    reader = ComponentReader("attention kernel",
+                             ("test_many", "test_too_deep", "test_past_the_stack"),
+                             lambda names: {
+                                 "test_many": many,
+                                 "test_too_deep": {"installed": True, "source": {
+                                     **_SOURCE, "nested": _nested(
+                                         run_environment.COMPONENT_DEPTH)}},
+                                 "test_past_the_stack": {"installed": True, "source": {
+                                     **_SOURCE, "nested": _nested(700)}}})
+    monkeypatch.setattr(run_environment, "COMPONENT_READERS",
+                        (*run_environment.COMPONENT_READERS, reader))
+
+    components = stack.fresh()
+
+    assert components["test_many"] == component_facts("attention kernel", **many)
+    assert components["test_many"]["source"]["build"] == build
+    for name in ("test_too_deep", "test_past_the_stack"):
+        assert components[name]["source"] == {"state": "not recorded",
+                                              "reason": "its facts could not be read"}
+    assert collect_components() == components
+    json.dumps(components, ensure_ascii=False).encode("utf-8")
+
+
 def test_component_facts_reads_what_is_not_observed_as_not_observed():
     facts = component_facts("attention kernel", installed=True)
 

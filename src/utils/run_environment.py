@@ -288,6 +288,21 @@ COMPONENT_FIELDS: Tuple[str, ...] = (
 )
 _STATE_FIELDS = ("requested", "installed", "available", "selected", "in_effect")
 
+#: How deep a component's facts may nest when collected (`component_facts`;
+#: lists and mappings, the facts' own object the first): as deep as its
+#: measuring run's report can hold them and still be registered. A
+#: registration refuses a report nesting deeper than 64 levels
+#: (`src.evaluation.sidecar.MAX_REPORT_DEPTH`, which a measurement never comes
+#: near; this layer cannot import it), and a component's facts lie five levels
+#: down in a report (``manifest.environment.facts.components.<name>``), their
+#: values one level below their deepest list or mapping. Deeper, the component
+#: is recorded as "its facts could not be read", so its run's report is still
+#: registered and the collector's own copies (`collect_components`) stay far
+#: from the interpreter's recursion limit. No count bound: a reader may observe
+#: any number of build facts (review fix RC-R1). Pinned against the
+#: registration by a test.
+COMPONENT_DEPTH = 64 - 5 - 1
+
 #: A native identity's states: its libraries' count and aggregate digest
 #: recorded; no distribution installed; installed, and its file list or a
 #: library cannot be read (the count is set where the list was read); or no
@@ -337,9 +352,10 @@ def component_facts(kind: str, **observed: Any) -> Dict[str, Any]:
     (`checkpoint_paths.plain_data`, the one rule every reader of the record
     holds it to again: a string or a key that is not text, such as a lone
     surrogate, or a number that is not finite, which the records' JSON
-    encoding refuses). Valid Unicode of every script is text.
-    `collect_components` records such a refusal as the component's status
-    and never raises it.
+    encoding refuses), or nesting deeper than its report can hold it
+    (`COMPONENT_DEPTH`). Valid Unicode of every script is text, and any
+    number of facts is read. `collect_components` records such a refusal as
+    the component's status and never raises it.
     """
     if not isinstance(kind, str) or not kind:
         raise ValueError("a component's kind is text")
@@ -370,8 +386,9 @@ def component_facts(kind: str, **observed: Any) -> Dict[str, Any]:
     # What every reader of the record carries (review fix RC-R1): JSON's
     # escapes write a lone surrogate, and every answer that shows it, a CSV
     # or JSON export, an API response, would then fail on it; the encoding
-    # every record is written with refuses NaN and infinity.
-    plain_data(facts, "component")
+    # every record is written with refuses NaN and infinity. Held to the depth
+    # its report can be registered with, and to no count (`COMPONENT_DEPTH`).
+    plain_data(facts, "component", depth=COMPONENT_DEPTH)
     return facts
 
 
@@ -914,6 +931,7 @@ def assert_primitive(value: Any, where: str = "value") -> None:
 
 __all__: List[str] = [
     "AutocastRegime",
+    "COMPONENT_DEPTH",
     "COMPONENT_FIELDS",
     "COMPONENT_READERS",
     "ComponentReader",

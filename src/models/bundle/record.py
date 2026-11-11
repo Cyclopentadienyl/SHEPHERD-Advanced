@@ -193,9 +193,11 @@ def _plain(name: str, value: Any, consequence: str = "so it is not compared") ->
     walk recurse until `RecursionError`, and the whole model list answered
     HTTP 500): a list or mapping holding itself, nested past `PLAIN_DEPTH`
     levels or walked past `PLAIN_VALUES` values is refused, naming the path
-    where the walk stopped."""
+    where the walk stopped. These bounds are the safe loader's, which reads
+    any depth and shares values freely, so this reader passes them; the rule
+    holds no value parsed from JSON to them (review fix RC-R1)."""
     try:
-        return plain_data(value, name)
+        return plain_data(value, name, depth=PLAIN_DEPTH, values=PLAIN_VALUES)
     except NotPlainData as exc:
         raise ModelRecordError(f"the record's {exc}, {consequence}") from None
 

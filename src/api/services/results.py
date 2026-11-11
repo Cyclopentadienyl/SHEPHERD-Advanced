@@ -307,7 +307,7 @@ def _unreadable(read: _Read, source: str, what: str, reason: str, **names: Any) 
 
     kept: Dict[str, Any] = {}
     for key, value in names.items():
-        problem = plain_data_problem(value, key, values=None)
+        problem = plain_data_problem(value, key)
         if problem is not None:
             reason += f" (its {problem}, so it is not shown)"
         elif value is not None:
@@ -586,7 +586,7 @@ def _group(read: _Read, record: Mapping[str, Any]) -> Dict[str, Any]:
     # The fields it differs on are named by the store's records (a metric's
     # name), read here apart from this row's: shown only as plain data an
     # answer can carry (`plain_data`, review fix RC-R1).
-    problem = plain_data_problem(group["differing"], "differing", values=None)
+    problem = plain_data_problem(group["differing"], "differing")
     if problem is not None:
         group.update(state="cannot_be_checked", differing=[], why=(
             f"the listed stores of its version name what no answer can carry ({problem})"))
@@ -616,7 +616,7 @@ def _references(read: _Read, digest: str, unknown: Dict[str, str]) -> Optional[L
             for state in check_references(version)]
         # Read from the version's manifest: shown only as plain data an answer
         # can carry (`plain_data`, review fix RC-R1), never cleaned.
-        problem = plain_data_problem(states, "references", values=None)
+        problem = plain_data_problem(states, "references")
         read.references[digest] = (states, None) if problem is None else (
             None, f"its data version's manifest gives what no answer can carry ({problem}), so "
                   "its content references are not shown")
@@ -805,8 +805,11 @@ def _carried(read: _Read, result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     never its value. Nothing is dropped or altered silently."""
     from src.utils.checkpoint_paths import plain_data_problem
 
-    # Each part was bounded by its reader, so the row is read whole.
-    problem = plain_data_problem(result, depth=None, values=None)
+    # Read whole, with no count or depth of its own (review fix RC-R1): each
+    # part's reader bounded it where its source needs a bound. Only the rule's
+    # own refusal (`NotPlainData`) makes the row an unreadable item; any other
+    # exception is no damaged record and propagates.
+    problem = plain_data_problem(result)
     if problem is None:
         return result
     places = [*(result.get("stores") or []), *(result.get("ledgers") or [])]

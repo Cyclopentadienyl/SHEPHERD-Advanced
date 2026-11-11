@@ -74,7 +74,7 @@ from typing import Any, Collection, Dict, List, Mapping, Optional
 
 from src.config.model_types import WRITTEN_BEFORE_SPEC
 from src.config.recipe import FROZEN_PARTS, branch_settings, frozen_parts_problem
-from src.utils.checkpoint_paths import plain_data_problem
+from src.utils.checkpoint_paths import PLAIN_DEPTH, PLAIN_VALUES, plain_data_problem
 
 #: Fields that say where a run reads and writes, how it is run on this host, or
 #: how this run is continued: never inherited, free to differ from the parent.
@@ -195,7 +195,9 @@ def recorded_training_settings(training: Optional[Mapping[str, Any]]) -> Dict[st
     **Each part is shown only as plain data an answer can carry**, by the
     one rule for a value read from a file (`checkpoint_paths.plain_data`,
     review fix RC-R1: text, no value holding itself, within the safe loader's
-    bounds). A part that is not (a setting or a setting's name that is not
+    bounds, `PLAIN_DEPTH` and `PLAIN_VALUES`: the listing reads a checkpoint
+    with `weights_only=True`, which reads any depth and shares values
+    freely). A part that is not (a setting or a setting's name that is not
     text, such as a lone surrogate an argument decoded from bytes carries) is
     `None` and ``unshown`` says why by its name, naming the file's field and
     never the value, so one setting never makes the whole list fail and the
@@ -217,7 +219,8 @@ def recorded_training_settings(training: Optional[Mapping[str, Any]]) -> Dict[st
     }
     unshown: Dict[str, str] = {}
     for part, recorded_as in _TRAINING_PARTS_RECORDED_AS.items():
-        problem = plain_data_problem(out[part], recorded_as, finite=False)
+        problem = plain_data_problem(out[part], recorded_as, depth=PLAIN_DEPTH,
+                                     values=PLAIN_VALUES, finite=False)
         if problem is not None:
             out[part] = None
             unshown[part] = f"its {problem}, so it is not shown"

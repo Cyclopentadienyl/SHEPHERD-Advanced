@@ -371,6 +371,41 @@ def test_the_record_reader_walks_by_the_one_rule_every_reader_shares():
             "finite", "")
 
 
+def test_the_rules_bounds_are_the_safe_loaders_and_only_its_readers_pass_them():
+    """RC-R1 advice (1): the rule carried the checkpoint reader's bounds to
+    every value, a JSON-read one too (a record holding 10,001 legitimate
+    facts was refused). By default it now holds a value to no count and no
+    depth, and walks with its own stack: 10,001 values and a value nested
+    50,000 levels deep (past any recursion limit) are read, a lone surrogate
+    at its bottom refused naming its whole path, never a `RecursionError`; a
+    value holding itself is refused whatever the bounds. The safe loader's
+    bounds refuse past them where a checkpoint's reader passes them, as the
+    record's reader does (`_plain`)."""
+    from src.models.bundle import record as record_module
+    from src.utils import checkpoint_paths
+
+    many = {f"fact_{index}": index for index in range(10_001)}
+    assert checkpoint_paths.plain_data_problem(many) is None
+    assert str(checkpoint_paths.plain_data_problem(many, "m", depth=PLAIN_DEPTH,
+                                                   values=PLAIN_VALUES)) == (
+        f"m holds more than {PLAIN_VALUES} values")
+    with pytest.raises(ModelRecordError, match=f"holds more than {PLAIN_VALUES} values"):
+        record_module._plain("loss_identity", many)
+
+    assert checkpoint_paths.plain_data_problem(_nested(50_000)) is None
+    bottom = "x\udc80"
+    for _ in range(50_000):
+        bottom = [bottom]
+    refused = checkpoint_paths.plain_data_problem(bottom, "d")
+    assert (refused.steps, refused.why) == ((0,) * 50_000,
+                                            "is not text: character 1 is a lone surrogate")
+    assert str(checkpoint_paths.plain_data_problem(_nested(50_000), "d", depth=PLAIN_DEPTH)) == (
+        "d" + "[0]" * PLAIN_DEPTH + f" nests deeper than {PLAIN_DEPTH} levels")
+    for kind in ("list", "mapping"):
+        assert "contains itself" in str(checkpoint_paths.plain_data_problem(
+            _holding_itself(kind)))
+
+
 def test_the_rule_reads_a_number_that_is_not_finite_only_for_a_reader_that_shows_its_text():
     """RC-R1 review: ``finite=False`` is for a reader that gives such a number
     its text itself (a checkpoint's training settings,

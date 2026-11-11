@@ -141,7 +141,7 @@ from src.evaluation.sidecar import (
 # How long an unreadable record's reason may be: `problem_line`'s own bound,
 # so the line it gives always fits the field.
 from src.utils.checkpoint_paths import _PROBLEM_LIMIT as _REASON_LIMIT
-from src.utils.checkpoint_paths import PLAIN_DEPTH, plain_data_problem
+from src.utils.checkpoint_paths import plain_data_problem
 from src.utils.run_environment import (
     UNKNOWN,
     native_identity,
@@ -349,7 +349,9 @@ def _plain_fact(value: Any) -> Any:
     """A source fact passed on only as plain data an answer can carry, by the
     one rule its collector held it to (`checkpoint_paths.plain_data`: text, a
     finite number, a boolean, null, or a list or an object of those); refused
-    naming where in the fact and why, never its value."""
+    naming where in the fact and why, never its value. Of any size: no count
+    or depth is held against it here (review fix RC-R1), the components block
+    it lies in being held to a report's own depth first (`_kind_view`)."""
     problem = plain_data_problem(value)
     if problem is not None:
         raise ValueError(str(problem))
@@ -1008,17 +1010,22 @@ def _kind_view(record: Dict[str, Any], views: Dict[str, type],
     # collector's rule, and named by the projection's own keys, so a refusal
     # never names a path the view itself shows as "a server path", and what no
     # view shows (a field outside the shape, a path the redaction replaces)
-    # never hides the result (review fix RC-R1). The projection walks the
-    # record as written, so the block is first held to a report's own depth
-    # (`MAX_REPORT_DEPTH`, counted, not recursed: a hand edit can nest deeper
-    # than the interpreter's stack).
+    # never hides the result (review fix RC-R1). **The one bound on what it
+    # shows is a report's own depth** (`MAX_REPORT_DEPTH`, 64 levels, counted,
+    # not recursed): every record is built from a report its registration
+    # held to it, a measurement writing 7 or 8 levels, so no record it wrote
+    # holds a deeper block; and the projection, the view's validation and
+    # every answer's encoder recurse, so a hand edit nesting deeper than the
+    # interpreter's stack is one unreadable record, never a `RecursionError`
+    # of the whole listing. No count, and no other depth: the rule walks any
+    # number of facts at any depth (the reviewer's case, 10,001 build facts).
     components = _at(record, *_COMPONENTS_PATH)
     if components is not _NOT_THERE and _nests_deeper_than(components, MAX_REPORT_DEPTH):
         raise ValueError(f"{_path_words(_COMPONENTS_PATH)} nests deeper than "
                          f"{MAX_REPORT_DEPTH} levels, which no measurement writes")
     shown = None if components is _NOT_THERE else recorded_components(components)
     if isinstance(shown, Mapping):
-        problem = plain_data_problem(shown, depth=PLAIN_DEPTH + 1, values=None)
+        problem = plain_data_problem(shown)
         if problem is not None:
             raise ValueError(f"{_path_words(_COMPONENTS_PATH + problem.steps)} {problem.why}")
     common = {
@@ -1038,9 +1045,9 @@ def _kind_view(record: Dict[str, Any], views: Dict[str, type],
         "source_artifact_digest": _at(record, "source_artifact_digest"),
     }
     built = view(cohort=cohort, **_KIND_PARTS[kind](record, cohort), **common, **registration)
-    # The view's own shape bounds what it holds (each free-form fact by
-    # `_plain_fact`), so it is read whole, by the record's paths.
-    problem = plain_data_problem(built.model_dump(mode="python"), depth=None, values=None)
+    # Read whole, by the record's paths: what the view holds is bounded by its
+    # shape and, for the components' free-form facts, by the depth above.
+    problem = plain_data_problem(built.model_dump(mode="python"))
     if problem is not None:
         raise ValueError(f"{_path_words(_record_path(problem.steps)) or 'the record'} "
                          f"{problem.why}")
@@ -1122,8 +1129,10 @@ def _kg_edges_parts(record: Dict[str, Any], cohort: Any) -> Dict[str, Any]:
                                                    ("version", ExposureVersionSource))
                                if name in sources}
     # Read by the one rule first (`plain_data`), so a block an answer cannot
-    # carry is null with its problem, as any other block this build cannot read.
-    unplain = plain_data_problem(exposure, values=None) if isinstance(exposure, dict) else None
+    # carry is null with its problem, as any other block this build cannot read;
+    # only the fields its view shows (picked above), at any size: a value the
+    # view's shape refuses, however deep, is refused by its validation next.
+    unplain = plain_data_problem(exposure) if isinstance(exposure, dict) else None
     if unplain is not None:
         exposure, problem = None, unreadable_reason(ValueError(
             f"{_path_words(('exposure', *unplain.steps))} {unplain.why}"))

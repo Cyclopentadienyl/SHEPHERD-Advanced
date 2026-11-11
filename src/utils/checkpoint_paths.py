@@ -754,7 +754,12 @@ def text_problem(value: Any) -> Optional[str]:
 #: compares, a graph view rule, is a mapping holding a list of names. Past
 #: either, the value is refused naming where the walk stopped, so the walk is
 #: bounded however the file was written (the safe loader reads any depth and
-#: shares values freely).
+#: shares values freely: one list held many times over at each level is a few
+#: objects in the file and more values than any walk can read). **The safe
+#: loader's bounds only**: the checkpoint readers pass them (the model record's,
+#: `src.models.bundle.record`; the listing's training settings,
+#: `run_plan.recorded_training_settings`); a value parsed from JSON is never
+#: held to them (review fix RC-R1).
 PLAIN_DEPTH = 16
 PLAIN_VALUES = 10_000
 
@@ -779,8 +784,8 @@ class NotPlainData(ValueError):
         return text
 
 
-def plain_data(value: Any, name: str = "", *, depth: Optional[int] = PLAIN_DEPTH,
-               values: Optional[int] = PLAIN_VALUES, finite: bool = True) -> Any:
+def plain_data(value: Any, name: str = "", *, depth: Optional[int] = None,
+               values: Optional[int] = None, finite: bool = True) -> Any:
     """**The one rule for a value read from a file that an answer must carry**
     (review fix RC-R1): `value` (named `name`) as plain data that states its
     kind beside its content, or a `NotPlainData` naming the path to the first
@@ -796,17 +801,29 @@ def plain_data(value: Any, name: str = "", *, depth: Optional[int] = PLAIN_DEPTH
     and a value with no one answer to ``==`` (a tensor the safe loader also
     accepts) is refused, never compared.
 
-    **The walk ends for every value it is given** (the reviewer's K8-4r2
-    recheck: a list holding itself made a recursive walk run until
-    `RecursionError`). A scalar is judged where it stands; a list or mapping
-    is walked only while it is not already on the path walked (a value holding
-    itself), lies at most `depth` levels down, and the walk has read at most
-    `values` values (one value held many times over counts each time);
-    otherwise it is refused, naming the path where it stopped. The bounds are
-    for what the safe loader reads, which may nest any depth and share values
-    freely (the defaults). A value parsed from JSON cannot hold itself or share
-    a part, so a caller reading one passes ``values=None``; ``depth=None`` only
-    where the value's own shape already bounds it (a view a model validated).
+    **The walk ends for every value it is given, at any depth** (the
+    reviewer's K8-4r2 recheck: a list holding itself made a recursive walk run
+    until `RecursionError`). It keeps its own path, never the interpreter's
+    stack, so a value nested deeper than the interpreter can recurse (JSON
+    parses one thousands of levels deep) is read to its end or refused, never
+    a `RecursionError`. A scalar is judged where it stands; a list or mapping
+    already on the path walked (a value holding itself) is refused, for every
+    value. **Bounds only where the safe loader reads**: `depth` (how many lists
+    and mappings may lie above a part) and `values` (how many values the walk
+    may read in all, one held many times over counting each time) refuse what
+    lies past them, naming where the walk stopped. A checkpoint's readers pass
+    the loader's (`PLAIN_DEPTH`, `PLAIN_VALUES`: the safe loader reads any
+    depth and shares values freely, so a few objects in a file can be more
+    values than any walk can read): the model record's
+    (`src.models.bundle.record`) and the listing's training settings
+    (`run_plan.recorded_training_settings`). A value parsed from JSON (a
+    report, a ledger record, a manifest) is read with none, the default
+    (review fix RC-R1, the reviewer's case: a record holding 10,001 legitimate
+    build facts): it cannot hold itself or share a part, so the walk is as
+    long as the file; where what a reader shows of it must be bounded, its
+    format's own bound does it (a record's components by a report's
+    `MAX_REPORT_DEPTH`, `src.api.services.record_views`; a collected
+    component by the depth its report can hold, `run_environment`).
     ``finite=False`` only where the reader itself gives each number that is
     not finite a form every answer carries before any answer gets it (a
     checkpoint's training settings, which may record one, are shown with it as
@@ -820,11 +837,24 @@ def plain_data(value: Any, name: str = "", *, depth: Optional[int] = PLAIN_DEPTH
     record view and measurement setting (`src.api.services.record_views`), a
     checkpoint's training settings (`run_plan.recorded_training_settings`) and
     each row of the results service (`src.api.services.results`)."""
-    walked = [0]
+    root, opened_now = object(), object()
+    walked = 0
+    # The lists and mappings open on the path walked, outermost first, each as
+    # [itself, the step it was reached by, its parts not yet read, the forms of
+    # those read], and their ids, which find a value holding itself.
+    opened: List[List[Any]] = []
+    on_path: set = set()
 
-    def read(part: Any, steps: Tuple[Union[str, int], ...], path: Tuple[int, ...]) -> Any:
-        walked[0] += 1
-        if values is not None and walked[0] > values:
+    def where(step: Any) -> Tuple[Union[str, int], ...]:
+        steps = tuple(frame[1] for frame in opened[1:])
+        return steps if step is root else steps + (step,)
+
+    def read(part: Any, step: Any) -> Any:
+        """`part`'s form when it is a scalar; `opened_now` once a list or a
+        mapping is opened for its parts to be read; or its refusal."""
+        nonlocal walked
+        walked += 1
+        if values is not None and walked > values:
             raise NotPlainData(name, (), f"holds more than {values} values")
         if part is None:
             return ("null",)
@@ -832,33 +862,55 @@ def plain_data(value: Any, name: str = "", *, depth: Optional[int] = PLAIN_DEPTH
             return ("boolean", part)
         if isinstance(part, (int, float)):
             if finite and isinstance(part, float) and not math.isfinite(part):
-                raise NotPlainData(name, steps, "is not a finite number")
+                raise NotPlainData(name, where(step), "is not a finite number")
             return ("number", part)
         if isinstance(part, str):
             why = text_problem(part)
             if why is not None:
-                raise NotPlainData(name, steps, why)
+                raise NotPlainData(name, where(step), why)
             return ("string", part)
         if not isinstance(part, (list, tuple, Mapping)):
-            raise NotPlainData(name, steps, f"is a {type(part).__name__}, not plain data")
-        if id(part) in path:
-            raise NotPlainData(name, steps,
+            raise NotPlainData(name, where(step), f"is a {type(part).__name__}, not plain data")
+        if id(part) in on_path:
+            raise NotPlainData(name, where(step),
                                f"is a {type(part).__name__} that contains itself")
-        if depth is not None and len(path) >= depth:
-            raise NotPlainData(name, steps, f"nests deeper than {depth} levels")
-        path = path + (id(part),)
+        if depth is not None and len(opened) >= depth:
+            raise NotPlainData(name, where(step), f"nests deeper than {depth} levels")
         if isinstance(part, Mapping):
             for key in part:
                 if not isinstance(key, str):
-                    raise NotPlainData(name, steps, f"has a key that is not a string "
-                                                    f"({type(key).__name__})")
+                    raise NotPlainData(name, where(step), f"has a key that is not a string "
+                                                          f"({type(key).__name__})")
                 why = text_problem(key)
                 if why is not None:
-                    raise NotPlainData(name, steps, f"has a key that {why}")
-            return ("mapping", {k: read(v, steps + (k,), path) for k, v in part.items()})
-        return ("list", tuple(read(v, steps + (i,), path) for i, v in enumerate(part)))
+                    raise NotPlainData(name, where(step), f"has a key that {why}")
+            opened.append([part, step, iter(part.items()), {}])
+        else:
+            opened.append([part, step, iter(enumerate(part)), []])
+        on_path.add(id(part))
+        return opened_now
 
-    return read(value, (), ())
+    def keep(forms: Any, step: Any, form: Any) -> None:
+        if isinstance(forms, dict):
+            forms[step] = form
+        else:
+            forms.append(form)
+
+    form = read(value, root)
+    while opened:
+        part, step, parts, forms = opened[-1]
+        for inner, child in parts:
+            read_form = read(child, inner)
+            if read_form is opened_now:
+                break  # its parts are read first, then this one's others
+            keep(forms, inner, read_form)
+        else:
+            opened.pop()
+            on_path.discard(id(part))
+            form = ("mapping", forms) if isinstance(forms, dict) else ("list", tuple(forms))
+            if opened:
+                keep(opened[-1][3], step, form)
+    return form
 
 
 def plain_data_problem(value: Any, name: str = "", **bounds: Any
