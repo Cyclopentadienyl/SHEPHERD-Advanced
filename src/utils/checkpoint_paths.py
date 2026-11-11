@@ -780,7 +780,7 @@ class NotPlainData(ValueError):
 
 
 def plain_data(value: Any, name: str = "", *, depth: Optional[int] = PLAIN_DEPTH,
-               values: Optional[int] = PLAIN_VALUES) -> Any:
+               values: Optional[int] = PLAIN_VALUES, finite: bool = True) -> Any:
     """**The one rule for a value read from a file that an answer must carry**
     (review fix RC-R1): `value` (named `name`) as plain data that states its
     kind beside its content, or a `NotPlainData` naming the path to the first
@@ -807,6 +807,11 @@ def plain_data(value: Any, name: str = "", *, depth: Optional[int] = PLAIN_DEPTH
     freely (the defaults). A value parsed from JSON cannot hold itself or share
     a part, so a caller reading one passes ``values=None``; ``depth=None`` only
     where the value's own shape already bounds it (a view a model validated).
+    ``finite=False`` only where the reader itself gives each number that is
+    not finite a form every answer carries before any answer gets it (a
+    checkpoint's training settings, which may record one, are shown with it as
+    its text: `run_plan.recorded_training_settings`); every other part is
+    judged as above.
 
     Every reader that shows what a file holds reads it by this rule: a model
     record's compared and shown parts (`src.models.bundle.record`), a
@@ -826,7 +831,7 @@ def plain_data(value: Any, name: str = "", *, depth: Optional[int] = PLAIN_DEPTH
         if isinstance(part, bool):
             return ("boolean", part)
         if isinstance(part, (int, float)):
-            if isinstance(part, float) and not math.isfinite(part):
+            if finite and isinstance(part, float) and not math.isfinite(part):
                 raise NotPlainData(name, steps, "is not a finite number")
             return ("number", part)
         if isinstance(part, str):
@@ -856,10 +861,10 @@ def plain_data(value: Any, name: str = "", *, depth: Optional[int] = PLAIN_DEPTH
     return read(value, (), ())
 
 
-def plain_data_problem(value: Any, name: str = "", **bounds: Optional[int]
+def plain_data_problem(value: Any, name: str = "", **bounds: Any
                        ) -> Optional[NotPlainData]:
     """Why `value` is not plain data an answer can carry (`plain_data`, its
-    `bounds` as there), or None: for a reader that only asks."""
+    `bounds` and ``finite`` as there), or None: for a reader that only asks."""
     try:
         plain_data(value, name, **bounds)
     except NotPlainData as exc:

@@ -733,12 +733,12 @@ def recorded_components(components: Any) -> Any:
     text (a flag's ``-I/…``, a ``file:`` URL) is not caught, so a reader
     records none (`ComponentReader`). Nothing else is checked here, so the
     reader decides what to refuse, as for `native_identity`: a value that is
-    not an object is returned as it is. The record views hold each component
-    to the collector's own rule before projecting it
-    (`checkpoint_paths.plain_data`: text, finite numbers, no value holding
-    itself; review fix RC-R1), so what this passes on is plain data an
-    answer can carry; a record holding anything else is listed as
-    unreadable, naming the field and never its value."""
+    not an object is returned as it is. The record views hold what this
+    gives to the collector's own rule (`checkpoint_paths.plain_data`: text,
+    finite numbers; review fix RC-R1), so what they pass on is plain data an
+    answer can carry; a record whose projection holds anything else is
+    listed as unreadable, naming the field by this projection's keys and
+    never its value, and what this leaves out or redacts never hides it."""
     if not isinstance(components, Mapping):
         return components
     return {_redacted(name): _facts_of(entry) for name, entry in components.items()}

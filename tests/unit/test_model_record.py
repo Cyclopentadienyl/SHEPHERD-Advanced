@@ -371,6 +371,28 @@ def test_the_record_reader_walks_by_the_one_rule_every_reader_shares():
             "finite", "")
 
 
+def test_the_rule_reads_a_number_that_is_not_finite_only_for_a_reader_that_shows_its_text():
+    """RC-R1 review: ``finite=False`` is for a reader that gives such a number
+    its text itself (a checkpoint's training settings,
+    `run_plan.recorded_training_settings`): the number is read, and every
+    other part is judged as always (text, keys, kinds, bounds); by default it
+    is refused, as the record's reader refuses it."""
+    from src.utils import checkpoint_paths
+    from src.utils.run_plan import recorded_training_settings
+
+    value = {"max_grad_norm": float("inf"), "schedule": [float("-inf"), float("nan"), 1.0]}
+    assert checkpoint_paths.plain_data_problem(value, "s", finite=False) is None
+    assert str(checkpoint_paths.plain_data_problem(value, "s")) == (
+        "s.max_grad_norm is not a finite number")
+    for bad, words in (({"x": "\udc80", "y": float("inf")}, "s.x is not text: character 0"),
+                       ({"\udc80": float("inf")}, "s has a key that is not text"),
+                       ({"y": float("inf"), "x": b"b"}, "s.x is a bytes, not plain data")):
+        assert words in str(checkpoint_paths.plain_data_problem(bad, "s", finite=False))
+    settings = recorded_training_settings({"requested": value})
+    assert settings["learning"] == {"max_grad_norm": "inf", "schedule": ["-inf", "nan", 1.0]}
+    assert checkpoint_paths.plain_data_problem(settings["learning"]) is None
+
+
 @pytest.mark.parametrize("field, make, refused", [
     ("family_id", lambda old: "\udc80run", "family_id is not text: character 0"),
     ("parent.run", lambda old: "run-\ud800", "parent.run is not text: character 4"),

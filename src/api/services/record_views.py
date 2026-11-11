@@ -69,11 +69,13 @@ or a key that is not text (a lone surrogate, which JSON's escapes let a file
 hold and no answer can encode) or a number that is not finite, anywhere a
 view would show it, makes the record unreadable as above (`_kind_view`), so
 the API's JSON answer, Models, the Test page, the results query, Compare and
-both exports carry every other record; each component is read as its
-collector holds it (`component_facts`); a measurement setting no answer can
-carry is not read, saying why (`recorded_settings`). Valid Unicode is kept
-exactly, and what no view shows (R10's evidence paths) is not read, so it
-never hides a result.
+both exports carry every other record; what the one projection shows of
+each component (`run_environment.recorded_components`, after the D7
+redaction) is read by its collector's rule (`component_facts`), naming the
+projection's keys; a measurement setting no answer can carry is not read,
+saying why (`recorded_settings`). Valid Unicode is kept exactly, and what no
+view shows (R10's evidence paths, a component field outside the shape, a
+path the redaction replaces) is not read, so it never hides a result.
 
 **The ledgers beside listed checkpoints** (`checkpoint_ledgers`,
 `ledger_records`, moved here from the shared model list in Stage 8): each
@@ -123,11 +125,13 @@ from src.api.services.response_models import SHA256_PATTERN as _SHA256
 from src.api.services.response_models import StrictModel as _Strict
 from src.evaluation.sidecar import (
     LEDGER_FILENAME,
+    MAX_REPORT_DEPTH,
     REGIME_FIELDS,
     REGISTERED_RELATIONS,
     RUN_ID_PATTERN,
     SCORING_SEMANTICS_FIELDS,
     RecordIdentity,
+    _nests_deeper_than,
     environment_class,
     indexed_records_for,
     possible_overlaps,
@@ -974,12 +978,15 @@ def _kind_view(record: Dict[str, Any], views: Dict[str, type],
     anywhere in what the view shows, refuses the record as unreadable, by
     `ValueError` naming the record's path and why, never the value, so every
     reader (the API, Models, the Test page, the results query, Compare and
-    the export) lists it apart and reads the others. Each named component is
-    read as its collector holds it (`component_facts`) before either
-    projection reads it; a KG edge set's exposure is read apart
-    (`_kg_edges_parts`); then the view built is read once more before it is
-    returned. What no view shows stays in the ledger unread (R10's evidence
-    paths, the run's own exposure reason), so it never hides a result."""
+    the export) lists it apart and reads the others. What the one projection
+    shows of each named component (`recorded_components`: its shape's fields,
+    every text and key through the one D7 redaction) is read by its
+    collector's rule (`component_facts`) and named by the projection's own
+    keys, never a path the redaction replaced; a KG edge set's exposure is
+    read apart (`_kg_edges_parts`); then the view built is read once more
+    before it is returned. What no view shows stays in the ledger unread (R10's
+    evidence paths, the run's own exposure reason, a component field outside
+    the shape, a path the redaction replaces), so it never hides a result."""
     if record.get("cohort_role") != _at(record, "cohort", "role"):
         raise ValueError("its cohort_role is not its cohort's role")
     kind = _at(record, "cohort", "kind")
@@ -996,11 +1003,22 @@ def _kind_view(record: Dict[str, Any], views: Dict[str, type],
     if isinstance(cohort, dict):
         cohort = {**cohort, "version_manifest_sha256": _at(record, "cohort_digest")}
     # The run environment's one projection; a record written before its
-    # environment named components has none. Each component is read as its
-    # collector holds it, before a projection walks it.
+    # environment named components has none. What it shows of each component
+    # (its fields, every text through the one D7 redaction) is read by its
+    # collector's rule, and named by the projection's own keys, so a refusal
+    # never names a path the view itself shows as "a server path", and what no
+    # view shows (a field outside the shape, a path the redaction replaces)
+    # never hides the result (review fix RC-R1). The projection walks the
+    # record as written, so the block is first held to a report's own depth
+    # (`MAX_REPORT_DEPTH`, counted, not recursed: a hand edit can nest deeper
+    # than the interpreter's stack).
     components = _at(record, *_COMPONENTS_PATH)
-    if isinstance(components, Mapping):
-        problem = plain_data_problem(components, depth=PLAIN_DEPTH + 1, values=None)
+    if components is not _NOT_THERE and _nests_deeper_than(components, MAX_REPORT_DEPTH):
+        raise ValueError(f"{_path_words(_COMPONENTS_PATH)} nests deeper than "
+                         f"{MAX_REPORT_DEPTH} levels, which no measurement writes")
+    shown = None if components is _NOT_THERE else recorded_components(components)
+    if isinstance(shown, Mapping):
+        problem = plain_data_problem(shown, depth=PLAIN_DEPTH + 1, values=None)
         if problem is not None:
             raise ValueError(f"{_path_words(_COMPONENTS_PATH + problem.steps)} {problem.why}")
     common = {
@@ -1013,7 +1031,7 @@ def _kind_view(record: Dict[str, Any], views: Dict[str, type],
         "deterministic_algorithms": _recorded_determinism(record),
         "gpu": _pick(_at(record, "environment", "facts", "gpu"), RecordGpu.model_fields),
         "native_identity": None if components is _NOT_THERE else native_identity(components),
-        "components": None if components is _NOT_THERE else recorded_components(components),
+        "components": shown,
         "dataset_origin": _at(record, "dataset_record", "origin"),
         "scoring_semantics_digest": _at(record, "scoring_semantics_digest"),
         "measurement_semantics_digest": _at(record, "measurement_semantics_digest"),

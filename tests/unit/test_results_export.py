@@ -852,16 +852,16 @@ def test_a_measurement_setting_no_answer_can_carry_is_unknown_with_why_and_the_r
     ({"note" + LONE: 1},
      "its config.requested has a key that is not text: character 4 is a lone surrogate, so it "
      "is not shown"),
-    ({"max_grad_norm": float("inf")},
-     "its config.requested.max_grad_norm is not a finite number, so it is not shown"),
-], ids=["setting-text", "setting-key", "setting-not-finite"])
+], ids=["setting-text", "setting-key"])
 def test_a_training_setting_no_answer_can_carry_is_not_shown_says_why_and_the_list_answers(
         world, setting, words):
     """RC-R1: the checkpoint listing's training settings were never checked,
-    so one setting holding a lone surrogate (or infinity) made the listing's
-    JSON answer, the query's rows and the export fail. Now that part is not
-    shown and says why, by its field and never its value; the file's other
-    parts, its record and its results are listed and exported."""
+    so one setting holding a lone surrogate made the listing's JSON answer,
+    the query's rows and the export fail. Now that part is not shown and says
+    why, by its field and never its value; the file's other parts, its record
+    and its results are listed and exported. (A number that is not finite is
+    a value a setting may record, and is shown:
+    `test_a_training_setting_that_is_not_finite_is_shown_as_its_text_everywhere`.)"""
     from starlette.responses import JSONResponse
 
     from src.api.services import results, server_lists
@@ -892,6 +892,63 @@ def test_a_training_setting_no_answer_can_carry_is_not_shown_says_why_and_the_li
         f"its checkpoint records it, but {words}")
     results.to_csv(found).encode("utf-8")
     results.to_json(found).encode("utf-8")
+
+
+@pytest.mark.parametrize("number, text", [
+    (float("inf"), "inf"), (float("-inf"), "-inf"), (float("nan"), "nan"),
+], ids=["inf", "minus-inf", "nan"])
+def test_a_training_setting_that_is_not_finite_is_shown_as_its_text_everywhere(
+        world, tmp_path, number, text):
+    """RC-R1 review: a number that is not finite is a value a training setting
+    may record (``max_grad_norm: inf``, which `training_fields.value_problem`
+    accepts), and the JSON export always showed it, as its text. The first
+    RC-R1 fix hid the checkpoint's whole learning part for it (in the list,
+    the rows, Compare and both exports). Now the one listing reader gives it
+    its text, so the list's JSON answer, the query's row, the CSV and the JSON
+    all carry it, beside every other setting of its part; a nested one (the
+    schedule's rate) too. The JSON export shows what it showed before
+    (``"inf"``); the CSV cell, compact JSON, now holds the same text where it
+    held ``Infinity``, which is not JSON."""
+    from starlette.responses import JSONResponse
+
+    from src.api.services import results, server_lists
+    from src.config.training_fields import value_problem
+    from tests.unit import test_task_first_selection as bundles
+
+    assert value_problem("max_grad_norm", float("inf")) is None  # a value a run is given
+    payload = _training_state(bundles._record_payload(family_id="not-finite"))
+    payload["config"]["requested"]["max_grad_norm"] = number
+    payload["config"]["effective"]["schedule"] = {"type": "cosine", "base_lr": number}
+    checkpoint, digest = _put(world["root_a"] / "lab", "20261005-000000_base_eeeeee",
+                              "last.pt", payload)
+    listing = server_lists.list_checkpoints(
+        "lab", environ={"SHEPHERD_WORKSPACES_ROOT": str(world["root_a"])})
+    (item,) = [item for item in listing.items if item.sha256 == digest]
+    learning = {"learning_rate": 0.001, "seed": 7, "batch_size": 16, "max_grad_norm": text}
+    assert item.training_settings["learning"] == learning
+    assert item.training_settings["effective"]["schedule"] == {"type": "cosine",
+                                                               "base_lr": text}
+    assert item.training_settings["unshown"] == {} and item.training_settings["unrecorded"] == []
+    JSONResponse(listing.as_dict("checkpoints"))  # the list answers
+
+    report = report_for(digest, version_block(LABEL, "research_selection"),
+                        metrics=_metrics(0.5))
+    path, _ = register(world["registry"], checkpoint, report)
+    found = _query(world)
+    row = _by_run(found)[path.parent.name]
+    assert row["model"]["learning_settings"] == learning
+    assert row["model"]["effective_settings"]["schedule"]["base_lr"] == text
+    assert "model.learning_settings" not in row["unknown"]
+    csv_text, json_text = results.to_csv(found), results.to_json(found)
+    (exported,) = [r for r in json.loads(json_text)["rows"]
+                   if r["run_id"] == path.parent.name and r["metric_name"] == "pooled_mrr"]
+    assert exported["learning_settings"] == learning
+    (cell,) = [r for r in csv.DictReader(io.StringIO(csv_text))
+               if r["run_id"] == path.parent.name and r["metric_name"] == "pooled_mrr"]
+    assert json.loads(cell["learning_settings"]) == learning
+    for fmt, exported_text in (("csv", csv_text), ("json", json_text)):
+        code, out = _command_line(world, tmp_path, fmt)
+        assert code == 0 and out.read_bytes() == exported_text.encode("utf-8")
 
 
 def test_valid_unicode_is_kept_exactly_through_the_query_the_csv_and_the_json(world, tmp_path):
@@ -959,6 +1016,120 @@ def test_a_path_no_view_shows_never_hides_its_result_whatever_it_holds(world):
     for text in (results.to_csv(found), results.to_json(found)):
         text.encode("utf-8")
         assert "/srv/lab-" not in text
+
+
+def _redacted_compiler(facts):
+    """A compiler path the one D7 redaction replaces, under a directory whose
+    name is not valid UTF-8 (``os.fsdecode`` gives such a byte as a lone
+    surrogate)."""
+    facts["source"]["compiler"] = "/opt/lab-" + chr(0xdcff) + "/bin/cc"
+
+
+def _out_of_shape(facts):
+    """A fact outside the component's shape (a newer writer's), which the one
+    projection leaves out."""
+    facts["future_note"] = "x" + LONE
+
+
+@pytest.mark.parametrize("edit, compiler", [
+    (_redacted_compiler, "a server path"), (_out_of_shape, "audit-compiler 1.0"),
+], ids=["redacted-path", "out-of-shape-fact"])
+def test_a_component_text_no_view_shows_never_hides_its_result_whatever_it_holds(
+        world, tmp_path, edit, compiler):
+    """RC-R1 review: the record reader held each component as written to the
+    rule, so a lone surrogate in text no view shows (a path the D7 redaction
+    replaces, a field outside the shape) made its kept report and its ledger
+    record unreadable, where they were read and exported before. The rule now
+    reads what the one projection shows (`recorded_components`): the run is
+    one result, both formats and the command line encode, and the surrogate
+    is in no output."""
+    from src.api.services import results
+
+    facts = attention(False)
+    edit(facts)
+    run = registered_with(world, {"test_attention": facts})
+    found = _query(world)
+    assert [row["result"] for row in found if row.get("run_id") == run] == ["run"]
+    shown = _by_run(found)[run]["environment"]["components"]["test_attention"]
+    assert shown["source"]["compiler"] == compiler and "future_note" not in shown
+    for fmt, render in (("csv", results.to_csv), ("json", results.to_json)):
+        data = render(found).encode("utf-8")
+        assert b"\\udcff" not in data and b"\\ud800" not in data and b"/opt/lab-" not in data
+        code, out = _command_line(world, tmp_path, fmt)
+        assert code == 0 and out.read_bytes() == data
+
+
+def _ledger_records_hold(world, edit):
+    """A hand edit of the child's ledger, the sanctioned correction path: each
+    record naming components has `edit` applied to its ``test_attention``."""
+    ledger_path = world["child_path"].parent / "evaluations.json"
+    ledger = json.loads(ledger_path.read_text())
+    for record in ledger["records"]:
+        components = record.get("environment", {}).get("facts", {}).get("components")
+        if components:
+            edit(components["test_attention"])
+    ledger_path.write_text(json.dumps(ledger))
+
+
+def test_a_refusal_names_a_fact_by_what_the_view_shows_never_a_server_path(world):
+    """RC-R1 review: a refused component fact was named from the record as
+    written, so a key the view shows as "a server path" (an absolute path) was
+    written out in the reason, and the CSV and JSON ``reason`` carried it. Now
+    the refusal names the projection's own keys: for a lone surrogate (kept
+    report and ledger record) and a number that is not finite (a hand edit of
+    the ledger) under such a key, the reason says "a server path", and no
+    output holds the path."""
+    from src.api.services import results
+
+    secret = "/home/secret-user/build"
+    facts = attention(False)
+    facts["source"]["flags"] = {secret: "x" + LONE}
+    surrogate = registered_with(world, {"test_attention": facts})
+    found = _query(world)
+    unread = [row for row in found
+              if row["result"] == "unreadable" and row.get("run_id") == surrogate]
+    assert sorted(row["item"] for row in unread) == ["kept report", "ledger record"]
+    for row in unread:
+        assert ("environment.facts.components.test_attention.source.flags.a server path is "
+                "not text: character 1 is a lone surrogate") in row["reason"], row["reason"]
+
+    not_finite = registered_with(world, {"test_attention": attention(False)})
+    _ledger_records_hold(world, lambda entry: entry["source"].update(
+        flags={secret: float("nan")}))
+    found = _query(world)
+    (row,) = [row for row in found if row["result"] == "unreadable"
+              and row.get("run_id") == not_finite]
+    assert row["item"] == "ledger record"
+    assert row["reason"] == ("environment.facts.components.test_attention.source.flags."
+                             "a server path is not a finite number")
+    for text in (results.to_csv(found), results.to_json(found)):
+        text.encode("utf-8")
+        assert "/home/secret-user" not in text and "secret-user" not in text
+
+
+def test_a_component_nested_deeper_than_a_report_may_is_unreadable_not_a_crash(world):
+    """The one projection walks a component as written, so the reader first
+    holds the block to a report's own depth (`MAX_REPORT_DEPTH`, counted, not
+    recursed): a hand-edited ledger record whose component fact nests deeper
+    than the interpreter's stack is one unreadable record, never a
+    `RecursionError` of the whole query; every other result is read."""
+    from src.api.services import results
+
+    before = set(_by_run(_query(world)))
+    run = registered_with(world, {"test_attention": attention(False)})
+    deep: list = []
+    node = deep
+    for _ in range(2000):
+        node.append([])
+        node = node[0]
+    _ledger_records_hold(world, lambda entry: entry["source"].update(flags=deep))
+    found = _query(world)
+    assert set(_by_run(found)) >= before
+    (row,) = [row for row in found if row["result"] == "unreadable" and row.get("run_id") == run]
+    assert row["reason"] == ("environment.facts.components nests deeper than 64 levels, which "
+                             "no measurement writes")
+    results.to_csv(found).encode("utf-8")
+    results.to_json(found).encode("utf-8")
 
 
 def test_what_the_service_itself_reads_is_shown_only_as_an_answer_can_carry_it(

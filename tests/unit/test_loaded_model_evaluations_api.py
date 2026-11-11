@@ -1068,6 +1068,19 @@ NATIVE_MALFORMED = {
     "a GPU name that is not text": (
         _set(("environment", "facts", "gpu"), {"name": "GB10 " + chr(0xd800), "driver": "580"}),
         "environment.facts.gpu.name is not text: character 5 is a lone surrogate"),
+    # Review fix RC-R1 (its review): a refused fact is named by what the view
+    # shows of it, after the one D7 redaction, never by a server path the
+    # record holds as a key.
+    "a fact under a server path that is not plain data": (
+        _set(("environment", "facts", "components", "pyg_lib", "source", "flags"),
+             {"/home/secret-user/build": float("nan")}),
+        "environment.facts.components.pyg_lib.source.flags.a server path is not a finite "
+        "number"),
+    "a fact under a server path that is not text": (
+        _set(("environment", "facts", "components", "pyg_lib", "source", "flags"),
+             {"/home/secret-user/build": "x" + chr(0xd800)}),
+        "environment.facts.components.pyg_lib.source.flags.a server path is not text: "
+        "character 1 is a lone surrogate"),
 }
 
 
@@ -1086,6 +1099,33 @@ def test_a_malformed_native_identity_is_listed_with_its_reason(app, served, tmp_
     assert body["unreadable_records"][0]["reason"] == reason
     # The answer holds no surrogate: JSON's ASCII form would write one as \\ud8..
     assert "\\ud8" not in json.dumps(body)
+    assert "secret-user" not in json.dumps(body)
+
+
+@pytest.mark.parametrize("edit, compiler", [
+    (_set(("environment", "facts", "components", "pyg_lib", "source", "compiler"),
+          "/opt/lab-" + chr(0xdcff) + "/bin/cc"), "a server path"),
+    (_set(("environment", "facts", "components", "pyg_lib", "future_note"), "x" + chr(0xd800)),
+     None),
+], ids=["a path the redaction replaces", "a fact outside the shape"])
+def test_text_no_view_shows_never_hides_a_record_whatever_it_holds(app, served, tmp_path,
+                                                                   edit, compiler):
+    """Review fix RC-R1 (its review): a lone surrogate in a component's text
+    that no view shows (a path the one D7 redaction replaces, a newer writer's
+    fact outside the shape) leaves the record shown, as it was before RC-R1,
+    and the answer, which is JSON, holds no surrogate."""
+    _, _, checkpoint = served
+    _register(_report_with_components(_sha(checkpoint)), checkpoint.parent,
+              tmp_path / "reports")
+    _edit_ledger(checkpoint.parent / "evaluations.json",
+                 lambda ledger: edit(ledger["records"][0]))
+
+    body = _get(app)
+
+    assert body["records_not_shown"] == 0 and len(body["records"]) == 1
+    shown = body["records"][0]["components"]["pyg_lib"]
+    assert shown["source"].get("compiler") == compiler and "future_note" not in shown
+    assert "\\ud8" not in json.dumps(body) and "\\udc" not in json.dumps(body)
 
 
 # ---------------------------------------------------------------------------

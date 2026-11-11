@@ -66,6 +66,7 @@ Module: src/utils/run_plan.py
 """
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -193,13 +194,17 @@ def recorded_training_settings(training: Optional[Mapping[str, Any]]) -> Dict[st
 
     **Each part is shown only as plain data an answer can carry**, by the
     one rule for a value read from a file (`checkpoint_paths.plain_data`,
-    review fix RC-R1: text, finite numbers, no value holding itself, within
-    the safe loader's bounds). A part that is not (a setting or a setting's
-    name that is not text, such as a lone surrogate an argument decoded from
-    bytes carries; a number that is not finite) is `None` and ``unshown``
-    says why by its name, naming the file's field and never the value, so
-    one setting never makes the whole list fail and the other parts are
-    shown. Valid Unicode is kept exactly."""
+    review fix RC-R1: text, no value holding itself, within the safe loader's
+    bounds). A part that is not (a setting or a setting's name that is not
+    text, such as a lone surrogate an argument decoded from bytes carries) is
+    `None` and ``unshown`` says why by its name, naming the file's field and
+    never the value, so one setting never makes the whole list fail and the
+    other parts are shown. Valid Unicode is kept exactly. **A number that is
+    not finite is a value a setting may record** (``max_grad_norm: inf``,
+    which `training_fields.value_problem` accepts), so it is shown, as its
+    text (``"inf"``, ``"-inf"``, ``"nan"``: `_as_shown`), the form the export
+    has always given it, in every answer alike: the list's, the results
+    query's, Compare's and both export formats'."""
     training = training if isinstance(training, Mapping) else {}
     requested = training.get("requested")
     effective = training.get("effective")
@@ -212,10 +217,12 @@ def recorded_training_settings(training: Optional[Mapping[str, Any]]) -> Dict[st
     }
     unshown: Dict[str, str] = {}
     for part, recorded_as in _TRAINING_PARTS_RECORDED_AS.items():
-        problem = plain_data_problem(out[part], recorded_as)
+        problem = plain_data_problem(out[part], recorded_as, finite=False)
         if problem is not None:
             out[part] = None
             unshown[part] = f"its {problem}, so it is not shown"
+        else:
+            out[part] = _as_shown(out[part])
     out["unrecorded"] = [name for name in _TRAINING_PARTS_RECORDED_AS
                          if out[name] is None and name not in unshown]
     out["unshown"] = unshown
@@ -226,6 +233,23 @@ def recorded_training_settings(training: Optional[Mapping[str, Any]]) -> Dict[st
 #: `recorded_training_settings` gives it.
 _TRAINING_PARTS_RECORDED_AS = {"rules": "training_rules", "learning": "config.requested",
                                "effective": "config.effective"}
+
+
+def _as_shown(value: Any) -> Any:
+    """A part of a checkpoint's training settings as every answer carries it
+    (`recorded_training_settings`): each number that is not finite as its
+    text (``str``: ``"inf"``, ``"-inf"``, ``"nan"``), everything else as
+    recorded. Walked only once the one rule has read the part
+    (`plain_data`), so it is bounded and holds no value on its own path."""
+    if isinstance(value, float) and not math.isfinite(value):
+        return str(value)
+    if isinstance(value, Mapping):
+        return {key: _as_shown(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_as_shown(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_as_shown(item) for item in value)
+    return value
 
 
 def _progress_text(completed: int, start: int, target: int) -> str:
