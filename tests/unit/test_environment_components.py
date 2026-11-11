@@ -250,8 +250,17 @@ REFUSED = [
     ({"source": {"state": "not recorded", "route": "pip install"}},
      "route, as text, exactly when it is recorded"),
     ({"source": {"state": "not recorded", "reason": 5}}, "source reason is text"),
-    ({"source": {**_SOURCE, "flags": {"MAX_JOBS": float("inf")}}}, "Out of range float"),
-    ({"source": {**_SOURCE, "flags": {"MAX_JOBS": float("nan")}}}, "Out of range float"),
+    ({"source": {**_SOURCE, "flags": {"MAX_JOBS": float("inf")}}},
+     "component.source.flags.MAX_JOBS is not a finite number"),
+    ({"source": {**_SOURCE, "flags": {"MAX_JOBS": float("nan")}}},
+     "component.source.flags.MAX_JOBS is not a finite number"),
+    # Review fix RC-R1: text no answer can carry, a lone surrogate (JSON's
+    # escapes let a record hold one), in a fact or in a fact's key.
+    ({"source": {**_SOURCE, "compiler": "cc " + chr(0xd800)}},
+     "component.source.compiler is not text: character 3 is a lone surrogate"),
+    ({"source": {**_SOURCE, "flags": {"MAX" + chr(0xdc80): "8"}}},
+     "component.source.flags has a key that is not text: character 3 is a lone surrogate"),
+    ({"version": "2.0" + chr(0xd800)}, "component.version is not text: character 3"),
     ({"speed": "fast"}, "outside a component's shape"),
 ]
 
@@ -278,6 +287,9 @@ ACCEPTED = [
                 "reason": "a library cannot be read"}},
     {"native": {"state": "not installed", "count": None, "aggregate_sha256": None},
      "source": {"state": "not recorded", "reason": "it is not installed"}},
+    # Valid Unicode of every script is text, kept exactly (review fix RC-R1).
+    {"available": True, "in_effect": False, "fallback_reason": "回退：dtype — é 🧬",
+     "source": {**_SOURCE, "compiler": "編譯器 ✓ café", "flags": {"選項": "ü"}}},
 ]
 
 
@@ -320,6 +332,35 @@ def test_a_reader_giving_what_the_view_would_refuse_becomes_a_readable_status(
     assert components["test_kernel"]["source"] == _SOURCE
     for shown in native_identity(components).values():
         RecordComponent.model_validate(shown)
+
+
+def test_a_reader_giving_text_no_answer_can_carry_becomes_that_components_status(
+        stack, monkeypatch):
+    """Review fix RC-R1: a reader whose facts hold a lone surrogate (in a
+    source fact or a fact's key) is recorded as that component's status, its
+    facts could not be read, as the collector records any fact no observation
+    can say; the run's other components are kept and nothing raises, so the
+    run and its other facts are recorded."""
+    reader = ComponentReader("attention kernel",
+                             ("test_attention", "test_keyed", "test_kernel"),
+                             lambda names: {
+                                 "test_attention": {"installed": True, "source": {
+                                     **_SOURCE, "compiler": "cc " + chr(0xd800)}},
+                                 "test_keyed": {"installed": True, "source": {
+                                     **_SOURCE, "flags": {"MAX" + chr(0xdc80): "8"}}},
+                                 "test_kernel": {"installed": True, "source": {
+                                     **_SOURCE, "compiler": "編譯器 ✓"}}})
+    monkeypatch.setattr(run_environment, "COMPONENT_READERS",
+                        (*run_environment.COMPONENT_READERS, reader))
+
+    components = stack.fresh()
+
+    for name in ("test_attention", "test_keyed"):
+        assert components[name]["installed"] == UNKNOWN
+        assert components[name]["source"] == {"state": "not recorded",
+                                              "reason": "its facts could not be read"}
+    assert components["test_kernel"]["source"]["compiler"] == "編譯器 ✓"
+    json.dumps(components, ensure_ascii=False).encode("utf-8")
 
 
 def test_component_facts_reads_what_is_not_observed_as_not_observed():
@@ -773,6 +814,8 @@ def test_every_text_passes_the_one_redaction_and_a_request_is_shown_as_recorded(
     (lambda facts: facts["source"].update(flags={"MAX_JOBS": float("nan")}), "source.flags"),
     (lambda facts: facts["source"].update(commit=b"bytes"), "source.commit"),
     (lambda facts: facts.update(fallback_reason=""), "fallback_reason"),
+    (lambda facts: facts["source"].update(compiler="cc " + chr(0xd800)), "source.compiler"),
+    (lambda facts: facts["source"].update(flags={"MAX" + chr(0xdc80): "8"}), "source.flags"),
 ])
 def test_the_facts_view_refuses_what_the_collector_never_records(change, field):
     """A fact edited out of the shape (a state, or a value that is not plain
@@ -789,7 +832,9 @@ def test_the_facts_view_refuses_what_the_collector_never_records(change, field):
     with pytest.raises(ValidationError) as refused:
         RecordComponentFacts.model_validate(recorded_components({"x": facts})["x"])
     assert [".".join(map(str, error["loc"])) for error in refused.value.errors()] == [field]
-    assert "nan" not in str(refused.value.errors()[0]["msg"]).lower()
+    words = str(refused.value.errors()[0]["msg"])
+    assert "nan" not in words.lower()
+    words.encode("utf-8")  # no lone surrogate: the words never carry the value
 
 
 def test_the_readers_project_records_and_never_collect():

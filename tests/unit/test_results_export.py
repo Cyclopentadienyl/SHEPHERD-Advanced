@@ -736,6 +736,333 @@ def test_the_exports_columns_keep_their_names_and_order_with_components_added():
     assert names.index("components") == names.index("native_identity") + 1
 
 
+# ---------------------------------------------------------------------------
+# Review fix RC-R1: one plain-data rule for every value read from a file and shown
+# ---------------------------------------------------------------------------
+#: A lone surrogate: JSON's escapes let a file hold one (``\\ud800``), and no
+#: answer can encode it.
+LONE = chr(0xd800)
+#: Valid text of several scripts, which every answer carries exactly.
+SCRIPTS = "編譯器 ✓ café 🧬"
+
+
+def _command_line(world, tmp_path, fmt):
+    """The command line's export of the world's sources, as `_sources` names
+    them, to a new file: its exit status and the file."""
+    from scripts import export_results
+
+    out = tmp_path / f"export-{fmt}.{fmt}"
+    code = export_results.main(["--workspaces-root", f"a={world['root_a']}",
+                                "--workspaces-root", f"b={world['root_b']}",
+                                "--registry", f"main={world['registry']}", "--format", fmt,
+                                "--output", str(out)])
+    return code, out
+
+
+def _reviewers_case(report):
+    """The reviewer's case (RC-R1): a component's source text, as a record read
+    from a file holds it."""
+    facts = attention(False)
+    facts["source"]["compiler"] = "cc " + LONE
+    report["manifest"]["environment"]["facts"]["components"] = {"test_attention": facts}
+
+
+def _nested_key(report):
+    facts = attention(False)
+    facts["source"]["flags"] = {"MAX" + LONE: "8"}
+    report["manifest"]["environment"]["facts"]["components"] = {"test_attention": facts}
+
+
+def _gpu_name(report):
+    report["manifest"]["environment"]["facts"]["gpu"] = {"name": "GB10 " + LONE,
+                                                         "driver": "580"}
+
+
+@pytest.mark.parametrize("edit, refused", [
+    (_reviewers_case, "environment.facts.components.test_attention.source.compiler is not "
+                      "text: character 3 is a lone surrogate"),
+    (_nested_key, "environment.facts.components.test_attention.source.flags has a key that is "
+                  "not text: character 3 is a lone surrogate"),
+    (_gpu_name, "environment.facts.gpu.name is not text: character 5 is a lone surrogate"),
+], ids=["component-source-text", "component-nested-key", "gpu-name"])
+def test_text_no_answer_can_carry_is_an_unreadable_item_and_every_other_result_exports(
+        world, tmp_path, edit, refused):
+    """RC-R1: a lone surrogate in a value a view shows made the reader list the
+    run as a result, and then the whole CSV and JSON export, the command line
+    (leaving empty files) and the record view's JSON answer failed. Now its
+    kept report and its ledger record are each an item that could not be read,
+    with a reason naming the field and why, never the value; every other
+    result is read and exported; both formats encode, and the command line
+    exits 0 with complete files."""
+    from src.api.services import results
+
+    before = set(_by_run(_query(world)))
+    report = report_for(world["child"], version_block(LABEL, "research_selection"),
+                        metrics=_metrics(0.5))
+    edit(report)
+    path, _ = register(world["registry"], world["child_path"], report)
+    run = path.parent.name
+
+    found = _query(world)
+    assert set(_by_run(found)) == before
+    unread = [row for row in found if row["result"] == "unreadable" and row.get("run_id") == run]
+    assert sorted(row["item"] for row in unread) == ["kept report", "ledger record"]
+    for row in unread:
+        assert refused in row["reason"], row["reason"]
+    csv_text, json_text = results.to_csv(found), results.to_json(found)
+    for text in (csv_text, json_text):
+        text.encode("utf-8")
+        assert LONE not in text and "\\ud800" not in text
+    assert {row["run_id"] for row in json.loads(json_text)["rows"]} >= before | {run}
+    for fmt, text in (("csv", csv_text), ("json", json_text)):
+        code, out = _command_line(world, tmp_path, fmt)
+        assert code == 0
+        assert out.read_bytes() == text.encode("utf-8")
+
+
+def test_a_measurement_setting_no_answer_can_carry_is_unknown_with_why_and_the_result_kept(
+        world):
+    """RC-R1: a software revision holding a lone surrogate is a measurement
+    setting the record holds as no answer can carry it: that setting reads
+    unknown, saying why without the value, and the result is kept and
+    exported (each reader keeps its own granularity: a setting is read field
+    by field, `recorded_settings`)."""
+    from src.api.services import results
+
+    report = report_for(world["child"], version_block(LABEL, "research_selection"),
+                        metrics=_metrics(0.5))
+    report["manifest"]["software_revision"] = "rev " + LONE
+    path, _ = register(world["registry"], world["child_path"], report)
+    found = _query(world)
+    row = _by_run(found)[path.parent.name]
+    assert "software_revision" not in row["measurement"]
+    assert row["unknown"]["measurement.regime.software_revision"] == (
+        "its record holds it as a value no answer can carry: it is not text: character 4 is a "
+        "lone surrogate")
+    (cell,) = [r for r in csv.DictReader(io.StringIO(results.to_csv(found)))
+               if r["run_id"] == path.parent.name and r["metric_name"] == "pooled_mrr"]
+    assert cell["software_revision"] == results.UNKNOWN
+    results.to_json(found).encode("utf-8")
+
+
+@pytest.mark.parametrize("setting, words", [
+    ({"optimizer_note": "adam " + LONE},
+     "its config.requested.optimizer_note is not text: character 5 is a lone surrogate, so it "
+     "is not shown"),
+    ({"note" + LONE: 1},
+     "its config.requested has a key that is not text: character 4 is a lone surrogate, so it "
+     "is not shown"),
+    ({"max_grad_norm": float("inf")},
+     "its config.requested.max_grad_norm is not a finite number, so it is not shown"),
+], ids=["setting-text", "setting-key", "setting-not-finite"])
+def test_a_training_setting_no_answer_can_carry_is_not_shown_says_why_and_the_list_answers(
+        world, setting, words):
+    """RC-R1: the checkpoint listing's training settings were never checked,
+    so one setting holding a lone surrogate (or infinity) made the listing's
+    JSON answer, the query's rows and the export fail. Now that part is not
+    shown and says why, by its field and never its value; the file's other
+    parts, its record and its results are listed and exported."""
+    from starlette.responses import JSONResponse
+
+    from src.api.services import results, server_lists
+    from tests.unit import test_task_first_selection as bundles
+
+    payload = _training_state(bundles._record_payload(family_id="odd-settings"))
+    payload["config"]["requested"].update(setting)
+    checkpoint, digest = _put(world["root_a"] / "lab", "20261005-000000_base_eeeeee",
+                              "last.pt", payload)
+    listing = server_lists.list_checkpoints(
+        "lab", environ={"SHEPHERD_WORKSPACES_ROOT": str(world["root_a"])})
+    (item,) = [item for item in listing.items if item.sha256 == digest]
+    assert item.problem is None and item.record == "model" and item.family_id == "odd-settings"
+    assert item.training_settings["learning"] is None
+    assert item.training_settings["unshown"] == {"learning": words}
+    assert item.training_settings["unrecorded"] == []
+    assert item.training_settings["effective"]["device"]["effective"] == "cpu"
+    JSONResponse(listing.as_dict("checkpoints"))  # the list answers
+
+    report = report_for(digest, version_block(LABEL, "research_selection"),
+                        metrics=_metrics(0.5))
+    path, _ = register(world["registry"], checkpoint, report)
+    found = _query(world)
+    model = _by_run(found)[path.parent.name]["model"]
+    assert model["learning_settings"] is None and model["family_id"] == "odd-settings"
+    assert model["effective_settings"]["device"]["effective"] == "cpu"
+    assert _by_run(found)[path.parent.name]["unknown"]["model.learning_settings"] == (
+        f"its checkpoint records it, but {words}")
+    results.to_csv(found).encode("utf-8")
+    results.to_json(found).encode("utf-8")
+
+
+def test_valid_unicode_is_kept_exactly_through_the_query_the_csv_and_the_json(world, tmp_path):
+    """RC-R1 keeps valid text: Chinese, symbols, accents and emoji in a
+    component's source and fallback reason, the GPU's name, the software
+    revision and a training setting are kept byte for byte through the query,
+    the CSV and the JSON (and the command line's files); no ASCII-only rule."""
+    from src.api.services import results
+    from tests.unit import test_task_first_selection as bundles
+
+    texts = {"compiler": SCRIPTS, "fallback": "回退：dtype — é", "gpu": "GB10 測試 🚀",
+             "revision": "修訂-ü", "setting": "学习率 ✓"}
+    facts = attention(False)
+    facts["source"]["compiler"] = texts["compiler"]
+    facts["fallback_reason"] = texts["fallback"]
+    payload = _training_state(bundles._record_payload(family_id="unicode-settings"))
+    payload["config"]["requested"]["optimizer_note"] = texts["setting"]
+    checkpoint, digest = _put(world["root_a"] / "lab", "20261006-000000_base_ffffff",
+                              "last.pt", payload)
+    report = report_for(digest, version_block(LABEL, "research_selection"),
+                        metrics=_metrics(0.5))
+    report["manifest"]["environment"]["facts"]["components"] = {"test_attention": facts}
+    report["manifest"]["environment"]["facts"]["gpu"] = {"name": texts["gpu"], "driver": "580"}
+    report["manifest"]["software_revision"] = texts["revision"]
+    path, _ = register(world["registry"], checkpoint, report)
+
+    found = _query(world)
+    row = _by_run(found)[path.parent.name]
+    shown = row["environment"]["components"]["test_attention"]
+    assert (shown["source"]["compiler"], shown["fallback_reason"]) == (texts["compiler"],
+                                                                     texts["fallback"])
+    assert row["environment"]["gpu"]["name"] == texts["gpu"]
+    assert row["measurement"]["software_revision"] == texts["revision"]
+    assert row["model"]["learning_settings"]["optimizer_note"] == texts["setting"]
+    csv_text, json_text = results.to_csv(found), results.to_json(found)
+    (exported,) = [r for r in json.loads(json_text)["rows"]
+                   if r["run_id"] == path.parent.name and r["metric_name"] == "pooled_mrr"]
+    assert exported["components"]["test_attention"]["source"]["compiler"] == texts["compiler"]
+    assert exported["gpu"]["name"] == texts["gpu"]
+    for fmt, text in (("csv", csv_text), ("json", json_text)):
+        data = text.encode("utf-8")
+        for value in texts.values():
+            assert value.encode("utf-8") in data, (fmt, value)
+        code, out = _command_line(world, tmp_path, fmt)
+        assert code == 0 and out.read_bytes() == data
+
+
+def test_a_path_no_view_shows_never_hides_its_result_whatever_it_holds(world):
+    """The rule reads what a reader shows, not what stays in the ledger: an
+    R10 evidence path (a server path no view or export shows) holding a lone
+    surrogate, as a workspace whose directory name is not valid UTF-8 gives
+    one, leaves the result read and exported, and its path out of every
+    output."""
+    from src.api.services import results
+    from tests.unit.test_evaluation_sidecar import r10_block
+
+    r10 = r10_block("none")
+    r10["training"]["evidence"]["path"] = "/srv/lab-" + chr(0xdcff) + "/train_samples.json"
+    report = report_for(world["child"], version_block(LABEL, "research_selection"),
+                        metrics=_metrics(0.5), r10=r10)
+    path, _ = register(world["registry"], world["child_path"], report)
+    found = _query(world)
+    row = _by_run(found)[path.parent.name]
+    assert row["exposure"]["r10"]["training"]["evidence"] == {"state": "found"}
+    for text in (results.to_csv(found), results.to_json(found)):
+        text.encode("utf-8")
+        assert "/srv/lab-" not in text
+
+
+def test_what_the_service_itself_reads_is_shown_only_as_an_answer_can_carry_it(
+        world, monkeypatch):
+    """RC-R1, the service's own readers: a version's content references (read
+    from its manifest) and a group's description (named by the store's other
+    records) holding a lone surrogate are not shown, each saying why; the
+    results are kept and exported."""
+    from src.api.services import record_states, results
+    from src.evaluation import cohort_registry
+
+    real_check, real_group = cohort_registry.check_references, record_states.group_state
+
+    def check(version, **where):
+        states = list(real_check(version, **where))
+        reference = states[0].reference._replace(sha256="a" * 63 + LONE)
+        return (states[0]._replace(reference=reference), *states[1:])
+
+    def group(store, key, *, operator):
+        return {**real_group(store, key, operator=operator), "state": "contested",
+                "differing": ["pooled_mrr" + LONE]}
+
+    monkeypatch.setattr(cohort_registry, "check_references", check)
+    monkeypatch.setattr(record_states, "group_state", group)
+    found = _query(world)
+    row = _by_run(found)[world["registered"].parent.name]
+    assert row["references"] is None
+    assert row["unknown"]["references"] == (
+        "its data version's manifest gives what no answer can carry (references[0].sha256 is "
+        "not text: character 63 is a lone surrogate), so its content references are not shown")
+    assert (row["group"]["state"], row["group"]["differing"]) == ("cannot_be_checked", [])
+    assert row["group"]["why"] == (
+        "the listed stores of its version name what no answer can carry (differing[0] is not "
+        "text: character 10 is a lone surrogate)")
+    for text in (results.to_csv(found), results.to_json(found)):
+        text.encode("utf-8")
+
+
+def test_an_items_name_that_is_not_text_is_left_out_saying_so(world):
+    """RC-R1: a directory the registry lists whose name is not valid UTF-8 (a
+    lone surrogate once read) is an item that could not be read, as before,
+    and its name, which no answer can carry, is left out of it, saying so;
+    every result is still read and exported."""
+    from src.api.services import results
+
+    versions = os.fsencode(str(world["registry"] / "versions"))
+    os.mkdir(versions + b"/odd-\xff")
+    found = _query(world)
+    (item,) = [row for row in found if row["result"] == "unreadable"
+               and row["item"] == "data version" and "label" not in row["where"]]
+    assert item["reason"].endswith(
+        "(its label is not text: character 4 is a lone surrogate, so it is not shown)")
+    assert world["registered"].parent.name in _by_run(found)
+    for text in (results.to_csv(found), results.to_json(found)):
+        text.encode("utf-8")
+
+
+def test_a_row_an_answer_cannot_carry_is_an_unreadable_item_never_cleaned(world, monkeypatch):
+    """RC-R1, the service's own contract: a row it would list that still holds
+    what no answer can carry (here a part made by hand) is an item that could
+    not be read, by where its result was found and why, naming the field and
+    never the value; every other row is listed, and nothing is altered."""
+    from src.api.services import results
+
+    run = world["registered"].parent.name
+    real = results._exposure
+
+    def exposure(view):
+        shown = real(view)
+        if view.source_artifact_digest == _digest(world["registered"]):
+            shown = {**shown, "reading": "held " + LONE}
+        return shown
+
+    monkeypatch.setattr(results, "_exposure", exposure)
+    found = _query(world)
+    assert run not in _by_run(found)
+    (item,) = [row for row in found if row["result"] == "unreadable" and row["item"] == "result"]
+    assert item["run_id"] == run and item["report_sha256"] == _digest(world["registered"])
+    assert item["where"] == {"source": "main", "label": LABEL, "run_id": run,
+                             "report_sha256": _digest(world["registered"])}
+    assert item["reason"] == ("its row holds what no answer can carry (exposure.reading is not "
+                              "text: character 5 is a lone surrogate), so it is not shown as a "
+                              "result")
+    for text in (results.to_csv(found), results.to_json(found)):
+        text.encode("utf-8")
+
+
+def test_a_failing_export_leaves_no_file(world, tmp_path, monkeypatch):
+    """RC-R1: the command line opened its file before the export was encoded,
+    so a failure left an empty file that the never-overwrite rule then
+    refused. The whole export is encoded first and the file published whole:
+    a failure leaves none, and the next export writes it."""
+    from src.api.services import results
+
+    monkeypatch.setattr(results, "to_csv", lambda rows: "a" + LONE)
+    out = tmp_path / "export-csv.csv"
+    with pytest.raises(UnicodeEncodeError):
+        _command_line(world, tmp_path, "csv")
+    assert not out.exists() and list(tmp_path.glob("export-csv.csv*")) == []
+    monkeypatch.undo()
+    code, out = _command_line(world, tmp_path, "csv")
+    assert code == 0 and out.read_text(encoding="utf-8").startswith("result,")
+
+
 def test_several_sources_are_read_through_the_servers_own_readers_and_settings(world,
                                                                             monkeypatch):
     """Each root and registry is read by the setting's own rule with its own

@@ -42,14 +42,19 @@ Module: src/models/bundle/record.py
 from __future__ import annotations
 
 import copy
-import math
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from src.config.model_types import MODEL_RECORD_KEYS, WRITTEN_BEFORE_SPEC
 from src.models.bundle.capabilities import model_capabilities
 from src.models.bundle.spec import LEARNING_STAGES, TASKS, ModelSpec, SpecError, ViewShape, _shown
-from src.utils.checkpoint_paths import text_problem
+from src.utils.checkpoint_paths import (
+    PLAIN_DEPTH,
+    PLAIN_VALUES,
+    NotPlainData,
+    plain_data,
+    text_problem,
+)
 
 #: The checkpoint `record_version` the bundle path writes (M3a's was 1).
 MODEL_RECORD_VERSION = 2
@@ -163,24 +168,18 @@ def has_model_spec(payload: Mapping[str, Any]) -> bool:
     return isinstance(payload, Mapping) and payload.get("model_spec") is not None
 
 
-#: How deep a value the reader compares may nest, and how many values it may
-#: hold in all, to be walked: the deepest part a record compares, a graph view
-#: rule, is a mapping holding a list of names. Past either, the value is
-#: refused naming its field (`_plain`), so the walk is bounded however the
-#: file was written (the safe loader reads any depth and shares values freely).
-PLAIN_DEPTH = 16
-PLAIN_VALUES = 10_000
-
-
 def _plain(name: str, value: Any, consequence: str = "so it is not compared") -> Any:
     """A value the reader compares (the field `name`), as plain data that
     states its kind beside its content, or a `ModelRecordError` naming the
     field and saying `consequence` (what the caller does not do with it: a
     compared claim is not compared, a part a list shows is not shown).
 
-    A record is plain data, but the safe loader (`weights_only=True`) also
-    accepts tensors, and Python's `==` gives no one answer for anything else
-    (a tensor of several values has no truth value; one of a single value
+    Read by the project's one rule for a value read from a file that an
+    answer carries (`checkpoint_paths.plain_data`, lifted from here in review
+    fix RC-R1, its bounds `PLAIN_DEPTH` and `PLAIN_VALUES` with it). A record
+    is plain data, but the safe loader (`weights_only=True`) also accepts
+    tensors, and Python's `==` gives no one answer for anything else (a
+    tensor of several values has no truth value; one of a single value
     answers as that value) nor across kinds (`True == 1`). So each value is
     read as the kinds a record holds: null, a boolean, a finite number, a
     string that is text (`text_problem`: a lone surrogate is not, and no
@@ -192,55 +191,13 @@ def _plain(name: str, value: Any, consequence: str = "so it is not compared") ->
     **The walk ends for every value the safe loader reads** (the reviewer's
     K8-4r2 recheck: a rule field holding a list that holds itself made this
     walk recurse until `RecursionError`, and the whole model list answered
-    HTTP 500). A scalar is judged where it stands; a list or mapping is
-    walked only while it is not already on the path walked (a value holding
-    itself), lies at most `PLAIN_DEPTH` levels down, and the walk has read
-    at most `PLAIN_VALUES` values (one value held many times over counts
-    each time); otherwise it is refused, naming the path where it stopped."""
-    walked = [0]
-
-    def read(at: str, part: Any, path: Tuple[int, ...]) -> Any:
-        walked[0] += 1
-        if walked[0] > PLAIN_VALUES:
-            raise ModelRecordError(f"the record's {name} holds more than {PLAIN_VALUES} values, "
-                                   f"{consequence}")
-        if part is None:
-            return ("null",)
-        if isinstance(part, bool):
-            return ("boolean", part)
-        if isinstance(part, (int, float)):
-            if isinstance(part, float) and not math.isfinite(part):
-                raise ModelRecordError(f"the record's {at} is {part!r}, not a finite number, "
-                                       f"{consequence}")
-            return ("number", part)
-        if isinstance(part, str):
-            why = text_problem(part)
-            if why is not None:
-                raise ModelRecordError(f"the record's {at} {why}, {consequence}")
-            return ("string", part)
-        if not isinstance(part, (list, tuple, Mapping)):
-            raise ModelRecordError(f"the record's {at} is a {type(part).__name__}, not plain "
-                                   f"data, {consequence}")
-        if id(part) in path:
-            raise ModelRecordError(f"the record's {at} is a {type(part).__name__} that contains "
-                                   f"itself, {consequence}")
-        if len(path) >= PLAIN_DEPTH:
-            raise ModelRecordError(f"the record's {at} nests deeper than {PLAIN_DEPTH} levels, "
-                                   f"{consequence}")
-        path = path + (id(part),)
-        if isinstance(part, Mapping):
-            for key in part:
-                if not isinstance(key, str):
-                    raise ModelRecordError(f"the record's {at} has a key that is not a string "
-                                           f"({type(key).__name__}), {consequence}")
-                why = text_problem(key)
-                if why is not None:
-                    raise ModelRecordError(f"the record's {at} has a key that {why}, "
-                                           f"{consequence}")
-            return ("mapping", {k: read(f"{at}.{k}", v, path) for k, v in part.items()})
-        return ("list", tuple(read(f"{at}[{i}]", v, path) for i, v in enumerate(part)))
-
-    return read(name, value, ())
+    HTTP 500): a list or mapping holding itself, nested past `PLAIN_DEPTH`
+    levels or walked past `PLAIN_VALUES` values is refused, naming the path
+    where the walk stopped."""
+    try:
+        return plain_data(value, name)
+    except NotPlainData as exc:
+        raise ModelRecordError(f"the record's {exc}, {consequence}") from None
 
 
 def _differs(name: str, value: Any, expected: Any) -> bool:
@@ -585,6 +542,8 @@ __all__ = [
     "ModelRecord",
     "ModelRecordError",
     "OPERATIONS",
+    "PLAIN_DEPTH",
+    "PLAIN_VALUES",
     "RECORD_KEYS",
     "check_model_record",
     "finetune_parent_problem",

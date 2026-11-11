@@ -62,6 +62,19 @@ report digest and run where it still carries them readably, and the reason in
 one line of at most 300 characters that names the refused fields by their path
 in the ledger record, never their values (`unreadable_reason`).
 
+**What a view shows is plain data an answer can carry** (review fix RC-R1),
+by the project's one rule for a value read from a file
+(`checkpoint_paths.plain_data`, the model record's reader's walk): a string
+or a key that is not text (a lone surrogate, which JSON's escapes let a file
+hold and no answer can encode) or a number that is not finite, anywhere a
+view would show it, makes the record unreadable as above (`_kind_view`), so
+the API's JSON answer, Models, the Test page, the results query, Compare and
+both exports carry every other record; each component is read as its
+collector holds it (`component_facts`); a measurement setting no answer can
+carry is not read, saying why (`recorded_settings`). Valid Unicode is kept
+exactly, and what no view shows (R10's evidence paths) is not read, so it
+never hides a result.
+
 **The ledgers beside listed checkpoints** (`checkpoint_ledgers`,
 `ledger_records`, moved here from the shared model list in Stage 8): each
 listed checkpoint's ledger is the file beside it, found through the run layout
@@ -124,9 +137,9 @@ from src.evaluation.sidecar import (
 # How long an unreadable record's reason may be: `problem_line`'s own bound,
 # so the line it gives always fits the field.
 from src.utils.checkpoint_paths import _PROBLEM_LIMIT as _REASON_LIMIT
+from src.utils.checkpoint_paths import PLAIN_DEPTH, plain_data_problem
 from src.utils.run_environment import (
     UNKNOWN,
-    is_plain_data,
     native_identity,
     recorded_components,
 )
@@ -329,11 +342,13 @@ def _component_state(value: Any) -> Any:
 
 
 def _plain_fact(value: Any) -> Any:
-    """A source fact passed on only as plain data
-    (`run_environment.is_plain_data`); refused naming no value."""
-    if not is_plain_data(value):
-        raise ValueError("not plain data (text, a number, a boolean, null, or a list or an "
-                         "object of those)")
+    """A source fact passed on only as plain data an answer can carry, by the
+    one rule its collector held it to (`checkpoint_paths.plain_data`: text, a
+    finite number, a boolean, null, or a list or an object of those); refused
+    naming where in the fact and why, never its value."""
+    problem = plain_data_problem(value)
+    if problem is not None:
+        raise ValueError(str(problem))
     return value
 
 
@@ -936,11 +951,35 @@ def result_view(record: Dict[str, Any]) -> Any:
     return _kind_view(record, RESULT_VIEWS, {})
 
 
+def _path_words(steps: Sequence[Any]) -> str:
+    """A path in a record as a refusal names it, each step as written and
+    printable (`_printable`), as `unreadable_reason` names pydantic's."""
+    return ".".join(_printable(step) for step in steps)
+
+
+#: Where a record keeps its environment's components.
+_COMPONENTS_PATH = ("environment", "facts", "components")
+
+
 def _kind_view(record: Dict[str, Any], views: Dict[str, type],
                registration: Dict[str, Any]) -> Any:
     """`record` as its kind's view among `views`, with `registration` (a
     ledger record's own fields, `_RegistrationFields`; none for a kept
-    report's record). The one body of `_record_view` and `result_view`."""
+    report's record). The one body of `_record_view` and `result_view`.
+
+    **Everything a view carries is plain data an answer can carry**, by the
+    project's one rule (`checkpoint_paths.plain_data`; review fix RC-R1): a
+    string or a key that is not text (a lone surrogate, which JSON's escapes
+    let a file hold and no answer can encode) or a number that is not finite,
+    anywhere in what the view shows, refuses the record as unreadable, by
+    `ValueError` naming the record's path and why, never the value, so every
+    reader (the API, Models, the Test page, the results query, Compare and
+    the export) lists it apart and reads the others. Each named component is
+    read as its collector holds it (`component_facts`) before either
+    projection reads it; a KG edge set's exposure is read apart
+    (`_kg_edges_parts`); then the view built is read once more before it is
+    returned. What no view shows stays in the ledger unread (R10's evidence
+    paths, the run's own exposure reason), so it never hides a result."""
     if record.get("cohort_role") != _at(record, "cohort", "role"):
         raise ValueError("its cohort_role is not its cohort's role")
     kind = _at(record, "cohort", "kind")
@@ -957,8 +996,13 @@ def _kind_view(record: Dict[str, Any], views: Dict[str, type],
     if isinstance(cohort, dict):
         cohort = {**cohort, "version_manifest_sha256": _at(record, "cohort_digest")}
     # The run environment's one projection; a record written before its
-    # environment named components has none.
-    components = _at(record, "environment", "facts", "components")
+    # environment named components has none. Each component is read as its
+    # collector holds it, before a projection walks it.
+    components = _at(record, *_COMPONENTS_PATH)
+    if isinstance(components, Mapping):
+        problem = plain_data_problem(components, depth=PLAIN_DEPTH + 1, values=None)
+        if problem is not None:
+            raise ValueError(f"{_path_words(_COMPONENTS_PATH + problem.steps)} {problem.why}")
     common = {
         "mode": _at(record, "scoring", "mode"),
         "score_semantics": _at(record, "scoring", "score_semantics"),
@@ -975,7 +1019,14 @@ def _kind_view(record: Dict[str, Any], views: Dict[str, type],
         "measurement_semantics_digest": _at(record, "measurement_semantics_digest"),
         "source_artifact_digest": _at(record, "source_artifact_digest"),
     }
-    return view(cohort=cohort, **_KIND_PARTS[kind](record, cohort), **common, **registration)
+    built = view(cohort=cohort, **_KIND_PARTS[kind](record, cohort), **common, **registration)
+    # The view's own shape bounds what it holds (each free-form fact by
+    # `_plain_fact`), so it is read whole, by the record's paths.
+    problem = plain_data_problem(built.model_dump(mode="python"), depth=None, values=None)
+    if problem is not None:
+        raise ValueError(f"{_path_words(_record_path(problem.steps)) or 'the record'} "
+                         f"{problem.why}")
+    return built
 
 
 def _supplied_parts(record: Dict[str, Any], cohort: Any) -> Dict[str, Any]:
@@ -1052,10 +1103,17 @@ def _kg_edges_parts(record: Dict[str, Any], cohort: Any) -> Dict[str, Any]:
                                for name, model in (("model_record", ExposureModelSource),
                                                    ("version", ExposureVersionSource))
                                if name in sources}
-    try:
-        exposure, problem = ExposureView.model_validate(exposure), None
-    except ValidationError as exc:
-        exposure, problem = None, unreadable_reason(exc, within=("exposure",))
+    # Read by the one rule first (`plain_data`), so a block an answer cannot
+    # carry is null with its problem, as any other block this build cannot read.
+    unplain = plain_data_problem(exposure, values=None) if isinstance(exposure, dict) else None
+    if unplain is not None:
+        exposure, problem = None, unreadable_reason(ValueError(
+            f"{_path_words(('exposure', *unplain.steps))} {unplain.why}"))
+    else:
+        try:
+            exposure, problem = ExposureView.model_validate(exposure), None
+        except ValidationError as exc:
+            exposure, problem = None, unreadable_reason(exc, within=("exposure",))
     measured = _picked(_at(record, "measured"), KgEdgesMeasured, {})
     if isinstance(measured, dict) and isinstance(measured.get("metrics"), dict):
         measured["metrics"] = {
@@ -1269,17 +1327,24 @@ def recorded_settings(record: Mapping[str, Any]) -> Dict[str, Any]:
     determinism flags), each value a JSON scalar exactly as the record holds
     it, and ``unread``: the path of each field that is missing or is not a
     JSON scalar (a hand edit), never its value, so what has no value says why.
-    Read from a record the one reader has read (a ledger record's or a kept
-    report's, `build_record` copies both blocks from the manifest); nothing is
-    filled from this build's recipe."""
-    out: Dict[str, Any] = {"scoring": {}, "regime": {}, "unread": []}
+    A scalar no answer can carry (a string that is not text, such as a lone
+    surrogate, or a number that is not finite: `checkpoint_paths.plain_data`,
+    review fix RC-R1) is ``unread`` too, with why in ``why`` by its path, never
+    its value; valid Unicode is kept exactly. Read from a record the one reader
+    has read (a ledger record's or a kept report's, `build_record` copies both
+    blocks from the manifest); nothing is filled from this build's recipe."""
+    out: Dict[str, Any] = {"scoring": {}, "regime": {}, "unread": [], "why": {}}
     for block, fields in (("scoring", SCORING_SEMANTICS_FIELDS), ("regime", REGIME_FIELDS)):
         held = record.get(block)
         for field in fields:
-            if isinstance(held, Mapping) and field in held and isinstance(held[field], _SCALARS):
-                out[block][field] = held[field]
-            else:
-                out["unread"].append(f"{block}.{field}")
+            value = held[field] if isinstance(held, Mapping) and field in held else _NOT_THERE
+            problem = plain_data_problem(value) if isinstance(value, _SCALARS) else None
+            if isinstance(value, _SCALARS) and problem is None:
+                out[block][field] = value
+                continue
+            out["unread"].append(f"{block}.{field}")
+            if problem is not None:
+                out["why"][f"{block}.{field}"] = f"it {problem.why}"
     return out
 
 

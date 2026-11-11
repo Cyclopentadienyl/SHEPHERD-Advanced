@@ -41,16 +41,20 @@ def file_slug(value: Any, default: str) -> str:
 def write_new(name: str, extension: str, text: str) -> Path:
     """`text` written as a new file of the download directory, named `name`
     (already a `file_slug`) and `extension`, never replacing a file: a name
-    already taken becomes ``<name>-2``, ``<name>-3``, ... Each file is created
-    exclusively, so two writes at once never share one, and as UTF-8 with no
-    newline translation, so its bytes are the text's (as the command line's
-    export writes its file). Returns the file's path."""
+    already taken becomes ``<name>-2``, ``<name>-3``, ... The whole text is
+    encoded as UTF-8 first, with no newline translation, so its bytes are the
+    text's, and published whole (`publish_bytes`, never replacing a file), as
+    the command line's export writes its file: two writes at once never share
+    one, and a text that cannot be encoded leaves no file (review fix RC-R1).
+    Returns the file's path."""
+    from src.utils.file_modes import publish_bytes
+
+    data = text.encode("utf-8")
     directory = export_dir()
     path, counter = directory / f"{name}.{extension}", 2
     while True:
         try:
-            with open(path, "x", encoding="utf-8", newline="") as handle:
-                handle.write(text)
+            publish_bytes(path, data, replace=False)
             return path
         except FileExistsError:
             path, counter = directory / f"{name}-{counter}.{extension}", counter + 1

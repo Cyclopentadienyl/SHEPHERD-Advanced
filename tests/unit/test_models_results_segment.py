@@ -1334,6 +1334,14 @@ def test_export_writes_the_shown_or_chosen_rows_through_the_one_serializer(world
     first = rs.export_file(shown, "csv", "same")
     second = rs.export_file(shown, "csv", "same")
     assert first != second and Path(first).read_bytes() == Path(second).read_bytes()
+    # A text that cannot be encoded leaves no file, never an empty one (review
+    # fix RC-R1): the whole export is encoded before it is published.
+    from src.webui.exports import export_dir, write_new
+
+    before = sorted(export_dir().iterdir())
+    with pytest.raises(UnicodeEncodeError):
+        write_new("unencodable", "csv", "a" + chr(0xd800))
+    assert sorted(export_dir().iterdir()) == before
     # Nothing chosen: nothing written, the next step said.
     file_update, note = rs._on_results_export(None, state, listing, selected, rs.WORKSPACE, [],
                                               rs.SELECTED, "csv")

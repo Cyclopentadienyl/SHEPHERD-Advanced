@@ -52,7 +52,6 @@ Module: src/utils/run_environment.py
 from __future__ import annotations
 
 import copy
-import json
 import platform
 import re
 import subprocess
@@ -61,6 +60,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 from src.utils import pyg_native_check as _native
+from src.utils.checkpoint_paths import plain_data
 
 #: Untracked paths that are a run's own products, not code, so they do not make
 #: a checkout dirty. **Untracked only:** a change to a tracked file counts
@@ -333,9 +333,13 @@ def component_facts(kind: str, **observed: Any) -> Dict[str, Any]:
     aggregate is not one of the shape's (`_check_native`); a source whose state
     is not ``recorded`` or ``not recorded``, or with a route that is not text
     exactly when it is recorded (`_check_source`); a value that is not plain
-    data (`assert_primitive`), or a number the records' JSON encoding refuses
-    (NaN or infinity). `collect_components` records such a refusal as the
-    component's status and never raises it.
+    data (`assert_primitive`); or a value no answer can carry
+    (`checkpoint_paths.plain_data`, the one rule every reader of the record
+    holds it to again: a string or a key that is not text, such as a lone
+    surrogate, or a number that is not finite, which the records' JSON
+    encoding refuses). Valid Unicode of every script is text.
+    `collect_components` records such a refusal as the component's status
+    and never raises it.
     """
     if not isinstance(kind, str) or not kind:
         raise ValueError("a component's kind is text")
@@ -363,9 +367,11 @@ def component_facts(kind: str, **observed: Any) -> Dict[str, Any]:
     _check_native(facts["native"])
     _check_source(facts["source"])
     assert_primitive(facts, "component")
-    # The encoding every record is written with (the report, the ledger)
-    # refuses NaN and infinity; a fact carrying one would stop the record.
-    json.dumps(facts, allow_nan=False)
+    # What every reader of the record carries (review fix RC-R1): JSON's
+    # escapes write a lone surrogate, and every answer that shows it, a CSV
+    # or JSON export, an API response, would then fail on it; the encoding
+    # every record is written with refuses NaN and infinity.
+    plain_data(facts, "component")
     return facts
 
 
@@ -727,8 +733,11 @@ def recorded_components(components: Any) -> Any:
     text (a flag's ``-I/…``, a ``file:`` URL) is not caught, so a reader
     records none (`ComponentReader`). Nothing else is checked here, so the
     reader decides what to refuse, as for `native_identity`: a value that is
-    not an object is returned as it is, and a value that is not plain data
-    is passed on for the record view to refuse, which lists the record as
+    not an object is returned as it is. The record views hold each component
+    to the collector's own rule before projecting it
+    (`checkpoint_paths.plain_data`: text, finite numbers, no value holding
+    itself; review fix RC-R1), so what this passes on is plain data an
+    answer can carry; a record holding anything else is listed as
     unreadable, naming the field and never its value."""
     if not isinstance(components, Mapping):
         return components
@@ -769,20 +778,6 @@ def _redacted(value: Any) -> Any:
     if isinstance(value, list):
         return [_redacted(item) for item in value]
     return value
-
-
-def is_plain_data(value: Any) -> bool:
-    """Whether `value` is plain data as a record holds it: built only of the
-    types `assert_primitive` accepts, with no number the records' JSON
-    encoding refuses (NaN or infinity): the two checks `component_facts`
-    holds every component to. What the record views check a recorded fact
-    by before passing it on (`recorded_components`)."""
-    try:
-        assert_primitive(value)
-        json.dumps(value, allow_nan=False)
-    except (TypeError, ValueError):
-        return False
-    return True
 
 
 def _identity_items(identity: Any) -> Tuple[Optional[str], List[Tuple[str, Optional[str]]]]:
@@ -931,7 +926,6 @@ __all__: List[str] = [
     "collect_components",
     "collect_environment",
     "component_facts",
-    "is_plain_data",
     "native_identity",
     "native_identity_lines",
     "native_identity_text",

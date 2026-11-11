@@ -47,7 +47,7 @@ import time
 from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Mapping, NamedTuple, Optional, Tuple, Union
 
 ScoreFn = Callable[[Path], Optional[float]]
 #: Whether a candidate file may be selected (automatic selection's record rule).
@@ -749,6 +749,124 @@ def text_problem(value: Any) -> Optional[str]:
     return None
 
 
+#: How deep a value read from a checkpoint may nest, and how many values it may
+#: hold in all, for `plain_data` to walk it: the deepest part a model record
+#: compares, a graph view rule, is a mapping holding a list of names. Past
+#: either, the value is refused naming where the walk stopped, so the walk is
+#: bounded however the file was written (the safe loader reads any depth and
+#: shares values freely).
+PLAIN_DEPTH = 16
+PLAIN_VALUES = 10_000
+
+
+class NotPlainData(ValueError):
+    """Why a value is not plain data an answer can carry (`plain_data`):
+    `steps`, the path from the value's root to the part refused (a mapping's
+    keys and a list's indices), `where`, that path as words (`name`, then
+    ``.key`` and ``[index]``), and `why`, the words a reason goes on from.
+    Never the value itself."""
+
+    def __init__(self, name: str, steps: Tuple[Union[str, int], ...], why: str) -> None:
+        self.name, self.steps, self.why = name, tuple(steps), why
+        where = self.where
+        super().__init__(f"{where} {why}" if where else why)
+
+    @property
+    def where(self) -> str:
+        text = self.name
+        for step in self.steps:
+            text += f"[{step}]" if isinstance(step, int) else (f".{step}" if text else step)
+        return text
+
+
+def plain_data(value: Any, name: str = "", *, depth: Optional[int] = PLAIN_DEPTH,
+               values: Optional[int] = PLAIN_VALUES) -> Any:
+    """**The one rule for a value read from a file that an answer must carry**
+    (review fix RC-R1): `value` (named `name`) as plain data that states its
+    kind beside its content, or a `NotPlainData` naming the path to the first
+    part that is not, and why, never the value.
+
+    Plain data is what every answer can carry and compare: null, a boolean, a
+    finite number, a string that is text (`text_problem`: a lone surrogate is
+    not, and no answer can encode one; valid Unicode of every script is), a
+    list (or tuple), and a mapping keyed by such strings. Anything else, a
+    number that is not finite among it (no JSON answer holds one), is refused.
+    Two values are the same exactly when their returned forms are: by kind as
+    well as content, so a boolean is never a number (Python's ``True == 1``),
+    and a value with no one answer to ``==`` (a tensor the safe loader also
+    accepts) is refused, never compared.
+
+    **The walk ends for every value it is given** (the reviewer's K8-4r2
+    recheck: a list holding itself made a recursive walk run until
+    `RecursionError`). A scalar is judged where it stands; a list or mapping
+    is walked only while it is not already on the path walked (a value holding
+    itself), lies at most `depth` levels down, and the walk has read at most
+    `values` values (one value held many times over counts each time);
+    otherwise it is refused, naming the path where it stopped. The bounds are
+    for what the safe loader reads, which may nest any depth and share values
+    freely (the defaults). A value parsed from JSON cannot hold itself or share
+    a part, so a caller reading one passes ``values=None``; ``depth=None`` only
+    where the value's own shape already bounds it (a view a model validated).
+
+    Every reader that shows what a file holds reads it by this rule: a model
+    record's compared and shown parts (`src.models.bundle.record`), a
+    component's facts when collected and when read
+    (`src.utils.run_environment.component_facts`, the record views), each
+    record view and measurement setting (`src.api.services.record_views`), a
+    checkpoint's training settings (`run_plan.recorded_training_settings`) and
+    each row of the results service (`src.api.services.results`)."""
+    walked = [0]
+
+    def read(part: Any, steps: Tuple[Union[str, int], ...], path: Tuple[int, ...]) -> Any:
+        walked[0] += 1
+        if values is not None and walked[0] > values:
+            raise NotPlainData(name, (), f"holds more than {values} values")
+        if part is None:
+            return ("null",)
+        if isinstance(part, bool):
+            return ("boolean", part)
+        if isinstance(part, (int, float)):
+            if isinstance(part, float) and not math.isfinite(part):
+                raise NotPlainData(name, steps, "is not a finite number")
+            return ("number", part)
+        if isinstance(part, str):
+            why = text_problem(part)
+            if why is not None:
+                raise NotPlainData(name, steps, why)
+            return ("string", part)
+        if not isinstance(part, (list, tuple, Mapping)):
+            raise NotPlainData(name, steps, f"is a {type(part).__name__}, not plain data")
+        if id(part) in path:
+            raise NotPlainData(name, steps,
+                               f"is a {type(part).__name__} that contains itself")
+        if depth is not None and len(path) >= depth:
+            raise NotPlainData(name, steps, f"nests deeper than {depth} levels")
+        path = path + (id(part),)
+        if isinstance(part, Mapping):
+            for key in part:
+                if not isinstance(key, str):
+                    raise NotPlainData(name, steps, f"has a key that is not a string "
+                                                    f"({type(key).__name__})")
+                why = text_problem(key)
+                if why is not None:
+                    raise NotPlainData(name, steps, f"has a key that {why}")
+            return ("mapping", {k: read(v, steps + (k,), path) for k, v in part.items()})
+        return ("list", tuple(read(v, steps + (i,), path) for i, v in enumerate(part)))
+
+    return read(value, (), ())
+
+
+def plain_data_problem(value: Any, name: str = "", **bounds: Optional[int]
+                       ) -> Optional[NotPlainData]:
+    """Why `value` is not plain data an answer can carry (`plain_data`, its
+    `bounds` as there), or None: for a reader that only asks."""
+    try:
+        plain_data(value, name, **bounds)
+    except NotPlainData as exc:
+        return exc
+    return None
+
+
 def whole_number_problem(value: Any) -> Optional[str]:
     """Why `value`, an epoch count read from a checkpoint, is not a whole
     number (a boolean is not one), as the words a reason goes on from, or
@@ -1203,6 +1321,9 @@ __all__ = [
     "RUN_LOGS_DIRNAME",
     "ListedCheckpoint",
     "NOT_READ_NAMED",
+    "NotPlainData",
+    "PLAIN_DEPTH",
+    "PLAIN_VALUES",
     "RunDirectoryTaken",
     "check_run_dir_free",
     "checkpoint_not_read",
@@ -1212,6 +1333,8 @@ __all__ = [
     "listed_names",
     "listing_key",
     "name_key",
+    "plain_data",
+    "plain_data_problem",
     "propose_run_dir",
     "read_run_checkpoints",
     "problem_line",

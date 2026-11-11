@@ -55,7 +55,9 @@ Usage:
 
 Exit status: 0 when the export is written (an item that could not be read is a
 row of it, and is counted on stderr); 2 for a usage error, a source name given
-twice, or an output file that already exists (it is never overwritten).
+twice, or an output file that already exists (it is never overwritten). The
+file is written only once the whole export is encoded, and appears whole or
+not at all.
 
 Module: scripts/export_results.py
 """
@@ -147,12 +149,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     found = results.filtered(results.query(sources),
                              {name: getattr(args, name) for name in results.FILTERS})
     text = results.to_csv(found) if args.format == "csv" else results.to_json(found)
+    # The whole export is encoded before anything is written, and the file is
+    # published whole (`publish_bytes`, never replacing one): a failure leaves
+    # no file, never a part of one (review fix RC-R1).
+    data = text.encode("utf-8")
     if args.output is None:
         sys.stdout.write(text)
     else:
+        from src.utils.file_modes import publish_bytes
+
         try:
-            with open(args.output, "x", encoding="utf-8", newline="") as handle:
-                handle.write(text)
+            publish_bytes(args.output, data, replace=False)
         except FileExistsError:
             print(f"{args.output} exists; it is never overwritten. Nothing was written.",
                   file=sys.stderr)

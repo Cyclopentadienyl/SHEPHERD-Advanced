@@ -1046,11 +1046,28 @@ NATIVE_MALFORMED = {
     "a state that is not one": (
         _set(("environment", "facts", "components", "test_attention", "in_effect"), "yes"),
         "environment.facts.components.test_attention.in_effect: true, false or 'unknown'"),
+    # Each component is read by the rule its collector holds it to
+    # (`plain_data`, review fix RC-R1), which names the fact itself.
     "a source fact that is not plain data": (
         _set(("environment", "facts", "components", "pyg_lib", "source", "flags"),
              {"MAX_JOBS": float("nan")}),
-        "environment.facts.components.pyg_lib.source.flags: not plain data (text, a number, a "
-        "boolean, null, or a list or an object of those)"),
+        "environment.facts.components.pyg_lib.source.flags.MAX_JOBS is not a finite number"),
+    # Review fix RC-R1: a lone surrogate, which JSON's escapes let a ledger
+    # hold and no answer can encode, anywhere a view shows it; the record is
+    # listed apart, and the answer, which is JSON, is still given.
+    "a source fact that is not text": (
+        _set(("environment", "facts", "components", "pyg_lib", "source", "toolchain"),
+             {"gcc": "cc " + chr(0xd800)}),
+        "environment.facts.components.pyg_lib.source.toolchain.gcc is not text: character 3 "
+        "is a lone surrogate"),
+    "a fact's key that is not text": (
+        _set(("environment", "facts", "components", "pyg_lib", "source", "flags"),
+             {"MAX" + chr(0xd800): "8"}),
+        "environment.facts.components.pyg_lib.source.flags has a key that is not text: "
+        "character 3 is a lone surrogate"),
+    "a GPU name that is not text": (
+        _set(("environment", "facts", "gpu"), {"name": "GB10 " + chr(0xd800), "driver": "580"}),
+        "environment.facts.gpu.name is not text: character 5 is a lone surrogate"),
 }
 
 
@@ -1067,6 +1084,8 @@ def test_a_malformed_native_identity_is_listed_with_its_reason(app, served, tmp_
 
     assert body["records"] == [] and body["records_not_shown"] == 1
     assert body["unreadable_records"][0]["reason"] == reason
+    # The answer holds no surrogate: JSON's ASCII form would write one as \\ud8..
+    assert "\\ud8" not in json.dumps(body)
 
 
 # ---------------------------------------------------------------------------

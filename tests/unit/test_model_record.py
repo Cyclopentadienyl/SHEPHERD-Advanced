@@ -344,6 +344,33 @@ def test_a_compared_value_the_walk_cannot_finish_is_refused_naming_where_it_stop
     assert f"the record's {expected}" in str(caught.value), str(caught.value)
 
 
+def test_the_record_reader_walks_by_the_one_rule_every_reader_shares():
+    """Review fix RC-R1: the walk that reads a compared or shown part was
+    lifted into `checkpoint_paths.plain_data`, the one rule every reader of a
+    value read from a file uses (component facts, record views, training
+    settings, the results rows): the record's reader gives its form and its
+    refusal words, prefixed with the field and followed by what it does not
+    do, and a number that is not finite is named without its value."""
+    from src.models.bundle import record as record_module
+    from src.utils import checkpoint_paths
+
+    assert (record_module.PLAIN_DEPTH, record_module.PLAIN_VALUES) == (
+        checkpoint_paths.PLAIN_DEPTH, checkpoint_paths.PLAIN_VALUES)
+    value = {"terms": ["lp", "編譯器 ✓"], "weight": 1.0, "on": True, "none": None}
+    assert record_module._plain("loss_identity", value) == checkpoint_paths.plain_data(value)
+    for bad, words in (({"x": float("inf")}, "loss_identity.x is not a finite number"),
+                       ({"x\udc80": 1}, "loss_identity has a key that is not text: character 1"),
+                       ([b"bytes"], "loss_identity[0] is a bytes, not plain data")):
+        with pytest.raises(checkpoint_paths.NotPlainData) as shared:
+            checkpoint_paths.plain_data(bad, "loss_identity")
+        with pytest.raises(ModelRecordError) as caught:
+            record_module._plain("loss_identity", bad, "so a list does not show the record")
+        assert str(caught.value) == (f"the record's {shared.value}, so a list does not show "
+                                     "the record")
+        assert words in str(caught.value) and "inf" not in str(caught.value).replace(
+            "finite", "")
+
+
 @pytest.mark.parametrize("field, make, refused", [
     ("family_id", lambda old: "\udc80run", "family_id is not text: character 0"),
     ("parent.run", lambda old: "run-\ud800", "parent.run is not text: character 4"),

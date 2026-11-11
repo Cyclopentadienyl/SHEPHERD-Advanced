@@ -1476,6 +1476,30 @@ def test_the_api_record_view_carries_the_records_own_determinism():
     assert _recorded_determinism({"regime": None}) is None and _recorded_determinism({}) is None
 
 
+def test_a_record_is_shown_only_with_what_an_answer_can_carry(world, monkeypatch):
+    """Review fix RC-R1: the page read its record's device straight from the
+    record, beside the view, and a GPU name holding a lone surrogate reached
+    the view as text no answer can encode. The device now comes through the
+    one reader of the record's settings (`recorded_settings`), which does not
+    read such a value; a value the view shows is refused by the one reader,
+    so the record is not shown and the listing says why; valid Unicode is
+    shown exactly."""
+    import json
+
+    _listing, data = _read(world, monkeypatch)
+    raw = next(r for entry in data["ledgers"].values() for r in entry.get("records") or [])
+    odd_device = {**raw, "regime": {**raw["regime"], "device": "cuda:0" + chr(0xd800)}}
+    view = mp.record_view(odd_device)
+    assert view is not None and view["device"] is None
+    json.dumps(view, ensure_ascii=False).encode("utf-8")
+    facts = {**raw["environment"]["facts"], "gpu": {"name": "GB10 " + chr(0xd800),
+                                                    "driver": "580"}}
+    assert mp.record_view({**raw, "environment": {**raw["environment"], "facts": facts}}) is None
+    facts = {**raw["environment"]["facts"], "gpu": {"name": "GB10 測試 🚀", "driver": "580"}}
+    shown = mp.record_view({**raw, "environment": {**raw["environment"], "facts": facts}})
+    assert shown["gpu"]["name"] == "GB10 測試 🚀"
+
+
 def _served_read_only(world, monkeypatch, name="model-05.pt"):
     import src.api.main as api_main
     from src.utils.fingerprint import ReadIdentity

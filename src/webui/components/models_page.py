@@ -533,7 +533,7 @@ def record_view(record: Mapping[str, Any], reading: Optional[Sequence[Any]] = No
     case here; the server's log then says why in the listing's one bounded
     line (`unreadable_reason`, never an input value), naming `ledger` (the
     file it was read from) when given."""
-    from src.api.services.record_views import _record_view, unreadable_reason
+    from src.api.services.record_views import _record_view, recorded_settings, unreadable_reason
     from src.evaluation.sidecar import RecordIdentity, record_key
 
     identity, overlaps = None, ()
@@ -547,7 +547,9 @@ def record_view(record: Mapping[str, Any], reading: Optional[Sequence[Any]] = No
         logger.warning("A ledger record%s is not shown: %s",
                        f" in {ledger}" if ledger else "", unreadable_reason(exc))
         return None
-    regime = record.get("regime") if isinstance(record.get("regime"), Mapping) else {}
+    # The record's settings as the one reader reads them (`recorded_settings`:
+    # a value no answer can carry is not read, review fix RC-R1).
+    regime = recorded_settings(record)["regime"]
     flag = regime.get("deterministic_algorithms")
     view["key"] = list(key)
     view["deterministic"] = flag if type(flag) is bool else None

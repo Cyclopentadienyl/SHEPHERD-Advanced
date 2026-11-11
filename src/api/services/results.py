@@ -61,6 +61,18 @@ fixed words, field names and the item's own names; any problem text passes the
 one redaction first, `path_redaction.redact_paths`), and every other row is
 read as before.
 
+**Every row is plain data an answer can carry** (review fix RC-R1), by the
+project's one rule for a value read from a file (`checkpoint_paths.plain_data`:
+text, finite numbers; a lone surrogate is not text), which each reader holds
+its part to: the one reader each record's view and settings, the listing each
+checkpoint's training settings (a part that is not is unknown, with why), and
+this service the content references and a group's description it reads. A row
+still holding anything else is an item that could not be read, naming the
+field and why, never the value (`query`), and an item's name that is not text
+is left out of it, saying so; nothing is dropped or altered silently. So the
+query, Compare and both formats carry every row, and valid Unicode is kept
+exactly.
+
 **Each row lists what its records say, and nothing else** (F3): its model's
 identity (the checkpoint's SHA-256, and where the server's lists find it:
 source, workspace, run and file, never a path), lineage, spec summary and
@@ -102,7 +114,6 @@ from __future__ import annotations
 import csv
 import io
 import json
-import math
 import os
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
@@ -262,8 +273,10 @@ class _Read:
     #: The run of each ledger record that names one and cannot be read.
     unreadable_runs: set = field(default_factory=set)
     #: Each listed data version's content references and their states, by
-    #: its manifest digest, read once per query (`_references`).
-    references: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)
+    #: its manifest digest, read once per query (`_references`), or why they
+    #: are not shown.
+    references: Dict[str, Tuple[Optional[List[Dict[str, Any]]], Optional[str]]] = field(
+        default_factory=dict)
 
     def merged_digests(self) -> frozenset:
         """Every report digest a listed historical record holds (its source
@@ -286,9 +299,20 @@ def _content(value: Any) -> str:
 
 
 def _unreadable(read: _Read, source: str, what: str, reason: str, **names: Any) -> None:
-    """One item that could not be read, as a row of its own."""
-    read.unreadable.append({"source": source, "item": what, "reason": reason,
-                            **{key: value for key, value in names.items() if value is not None}})
+    """One item that could not be read, as a row of its own. Each name it is
+    known by is plain data an answer can carry (`plain_data`: a directory's
+    name that is not valid text is not), or is left out with why, never its
+    value, in its reason."""
+    from src.utils.checkpoint_paths import plain_data_problem
+
+    kept: Dict[str, Any] = {}
+    for key, value in names.items():
+        problem = plain_data_problem(value, key, values=None)
+        if problem is not None:
+            reason += f" (its {problem}, so it is not shown)"
+        elif value is not None:
+            kept[key] = value
+    read.unreadable.append({"source": source, "item": what, "reason": reason, **kept})
 
 
 def _redacted(text: Any, roots: Sequence[Tuple[str, str]]) -> str:
@@ -520,7 +544,10 @@ def _model(read: _Read, checkpoint: Optional[str], unknown: Dict[str, str]) -> D
     model["effective_settings"] = settings.get("effective")
     for part, name in (("rules", "training_rules"), ("learning", "learning_settings"),
                        ("effective", "effective_settings")):
-        if not settings or part in (settings.get("unrecorded") or []):
+        unshown = (settings.get("unshown") or {}).get(part)
+        if unshown is not None:
+            unknown[f"model.{name}"] = f"its checkpoint records it, but {unshown}"
+        elif not settings or part in (settings.get("unrecorded") or []):
             unknown[f"model.{name}"] = (
                 "a weights-only file records no training settings"
                 if item.get("checkpoint_kind") == "weights" and part != "rules"
@@ -535,6 +562,7 @@ def _group(read: _Read, record: Mapping[str, Any]) -> Dict[str, Any]:
     describe it differently leave it ``cannot_be_checked``, saying so."""
     from src.api.services.record_states import group_state, key_text
     from src.evaluation.sidecar import record_key
+    from src.utils.checkpoint_paths import plain_data_problem
 
     key = record_key(dict(record))
     group = {"condition_group": key_text(key), "state": "cannot_be_checked", "differing": [],
@@ -555,6 +583,13 @@ def _group(read: _Read, record: Mapping[str, Any]) -> Dict[str, Any]:
                     for problem in state["problems"]]
         group["why"] = ("; ".join(dict.fromkeys(problems))
                         or "the comparison of its group is incomplete")
+    # The fields it differs on are named by the store's records (a metric's
+    # name), read here apart from this row's: shown only as plain data an
+    # answer can carry (`plain_data`, review fix RC-R1).
+    problem = plain_data_problem(group["differing"], "differing", values=None)
+    if problem is not None:
+        group.update(state="cannot_be_checked", differing=[], why=(
+            f"the listed stores of its version name what no answer can carry ({problem})"))
     return group
 
 
@@ -568,17 +603,27 @@ def _references(read: _Read, digest: str, unknown: Dict[str, str]) -> Optional[L
     (`check_references`, the version's own files and the registry's only), by
     name, digest and where each is kept; never a path."""
     from src.evaluation.cohort_registry import check_references
+    from src.utils.checkpoint_paths import plain_data_problem
 
     version = _version(read, digest)
     if version is None:
         unknown["references"] = "its data version is not in a listed registry"
         return None
     if digest not in read.references:
-        read.references[digest] = [
+        states = [
             {"name": state.reference.name, "sha256": state.reference.sha256,
              "kept": state.reference.kept, "state": state.state, "reason": state.reason}
             for state in check_references(version)]
-    return read.references[digest]
+        # Read from the version's manifest: shown only as plain data an answer
+        # can carry (`plain_data`, review fix RC-R1), never cleaned.
+        problem = plain_data_problem(states, "references", values=None)
+        read.references[digest] = (states, None) if problem is None else (
+            None, f"its data version's manifest gives what no answer can carry ({problem}), so "
+                  "its content references are not shown")
+    states, why = read.references[digest]
+    if why is not None:
+        unknown["references"] = why
+    return states
 
 
 def _data(view: Any, record: Mapping[str, Any]) -> Dict[str, Any]:
@@ -671,7 +716,10 @@ def _result(read: _Read, run: _Run, merged_digests: frozenset = frozenset()) -> 
     unknown: Dict[str, str] = {}
     settings = recorded_settings(record)
     for path in settings["unread"]:
-        unknown[f"measurement.{path}"] = "its record does not hold it as a value"
+        why = settings["why"].get(path)
+        unknown[f"measurement.{path}"] = (
+            "its record does not hold it as a value" if why is None else
+            f"its record holds it as a value no answer can carry: {why}")
     registered = sorted(run.registered, key=lambda r: (r.location["source"],
                                                        r.location["workspace"],
                                                        r.location["ledger"]))
@@ -748,16 +796,41 @@ def _newest_first(result: Mapping[str, Any]) -> Tuple[int, str]:
     return (1, max(times, default=""))
 
 
+def _carried(read: _Read, result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """`result` when it is plain data an answer can carry (`plain_data`, the
+    one rule its readers hold each part to; review fix RC-R1), so every
+    surface (the query, Compare, the CSV and the JSON) carries every row;
+    otherwise None, and the result is an item that could not be read
+    (`_unreadable`), by where it was found and why, naming the field and
+    never its value. Nothing is dropped or altered silently."""
+    from src.utils.checkpoint_paths import plain_data_problem
+
+    # Each part was bounded by its reader, so the row is read whole.
+    problem = plain_data_problem(result, depth=None, values=None)
+    if problem is None:
+        return result
+    places = [*(result.get("stores") or []), *(result.get("ledgers") or [])]
+    place = places[0] if places else {}
+    _unreadable(read, place.get("source", "unknown"), "result",
+                f"its row holds what no answer can carry ({problem}), so it is not shown as "
+                "a result", **{key: value for key, value in place.items() if key != "source"},
+                run_id=result.get("run_id"), report_sha256=result.get("report_sha256"))
+    return None
+
+
 def query(sources: Iterable[SourceContext]) -> List[Dict[str, Any]]:
     """Every result the sources hold, one row each (module docstring): the
     runs newest first (by their run directory's time), then the historical
     records newest first (by their registration time), then each item that
-    could not be read. Never capped, never ordered by a metric."""
+    could not be read. Never capped, never ordered by a metric. **Every row is
+    plain data an answer can carry** (`_carried`): one that is not is an item
+    that could not be read, with why, and hides no other."""
     read = read_all(sources)
     merged = read.merged_digests()
-    results = [_result(read, run, merged) for by_digest in read.runs.values()
-               for run in by_digest.values()]
-    results += [_result(read, run) for run in read.historical.values()]
+    made = [_result(read, run, merged) for by_digest in read.runs.values()
+            for run in by_digest.values()]
+    made += [_result(read, run) for run in read.historical.values()]
+    results = [row for row in (_carried(read, result) for result in made) if row is not None]
     results.sort(key=_newest_first, reverse=True)
     return results + [_unreadable_result(item) for item in read.unreadable]
 
@@ -997,24 +1070,14 @@ def to_csv(results: Iterable[Mapping[str, Any]]) -> str:
     return buffer.getvalue()
 
 
-def _json_value(value: Any) -> Any:
-    """A value as JSON holds it: a number that is not finite (a training
-    setting may record one) as its text, which JSON has no number for."""
-    if isinstance(value, float) and not math.isfinite(value):
-        return str(value)
-    if isinstance(value, dict):
-        return {key: _json_value(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_json_value(item) for item in value]
-    return value
-
-
 def to_json(results: Iterable[Mapping[str, Any]]) -> str:
     """The long form as JSON text: the format's name, the columns and the
     rows, each with every column (null where a field holds nothing; ``unknown``
-    says why for a field without a source)."""
+    says why for a field without a source). The rows are the query's, each
+    plain data an answer can carry (`query`), so nothing is converted here:
+    a value no answer can carry was never a row's."""
     return json.dumps({"format": EXPORT_FORMAT, "columns": list(COLUMN_NAMES),
-                       "rows": _json_value(long_rows(results))},
+                       "rows": long_rows(results)},
                       indent=1, sort_keys=False, ensure_ascii=False, allow_nan=False) + "\n"
 
 

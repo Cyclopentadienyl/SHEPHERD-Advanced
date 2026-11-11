@@ -73,6 +73,7 @@ from typing import Any, Collection, Dict, List, Mapping, Optional
 
 from src.config.model_types import WRITTEN_BEFORE_SPEC
 from src.config.recipe import FROZEN_PARTS, branch_settings, frozen_parts_problem
+from src.utils.checkpoint_paths import plain_data_problem
 
 #: Fields that say where a run reads and writes, how it is run on this host, or
 #: how this run is continued: never inherited, free to differ from the parent.
@@ -188,7 +189,17 @@ def recorded_training_settings(training: Optional[Mapping[str, Any]]) -> Dict[st
     Each is `None` where the file records none (a weights-only file has no
     configuration), and ``unrecorded`` names each such part, so what has no
     source says so. Read as recorded; nothing is filled from this build's
-    recipe or from another file of the run."""
+    recipe or from another file of the run.
+
+    **Each part is shown only as plain data an answer can carry**, by the
+    one rule for a value read from a file (`checkpoint_paths.plain_data`,
+    review fix RC-R1: text, finite numbers, no value holding itself, within
+    the safe loader's bounds). A part that is not (a setting or a setting's
+    name that is not text, such as a lone surrogate an argument decoded from
+    bytes carries; a number that is not finite) is `None` and ``unshown``
+    says why by its name, naming the file's field and never the value, so
+    one setting never makes the whole list fail and the other parts are
+    shown. Valid Unicode is kept exactly."""
     training = training if isinstance(training, Mapping) else {}
     requested = training.get("requested")
     effective = training.get("effective")
@@ -199,8 +210,22 @@ def recorded_training_settings(training: Optional[Mapping[str, Any]]) -> Dict[st
                      if isinstance(requested, Mapping) else None),
         "effective": dict(effective) if isinstance(effective, Mapping) else None,
     }
-    out["unrecorded"] = [name for name, value in out.items() if value is None]
+    unshown: Dict[str, str] = {}
+    for part, recorded_as in _TRAINING_PARTS_RECORDED_AS.items():
+        problem = plain_data_problem(out[part], recorded_as)
+        if problem is not None:
+            out[part] = None
+            unshown[part] = f"its {problem}, so it is not shown"
+    out["unrecorded"] = [name for name in _TRAINING_PARTS_RECORDED_AS
+                         if out[name] is None and name not in unshown]
+    out["unshown"] = unshown
     return out
+
+
+#: Where a checkpoint keeps each part of its training settings, by the name
+#: `recorded_training_settings` gives it.
+_TRAINING_PARTS_RECORDED_AS = {"rules": "training_rules", "learning": "config.requested",
+                               "effective": "config.effective"}
 
 
 def _progress_text(completed: int, start: int, target: int) -> str:

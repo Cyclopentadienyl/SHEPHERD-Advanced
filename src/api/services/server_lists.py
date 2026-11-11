@@ -215,8 +215,10 @@ class CheckpointItem:
     `training_settings` are the file's training settings as it records them
     (`run_plan.recorded_training_settings`: its training rules, its learning
     settings and what took effect, each `None` where the file records none,
-    as a weights-only file does), never filled from this build's recipe;
-    `None` for a file that was not read (research comparison Stage 8).
+    as a weights-only file does, or where it is not plain data an answer can
+    carry, its ``unshown`` reason saying why: review fix RC-R1), never filled
+    from this build's recipe; `None` for a file that was not read (research
+    comparison Stage 8).
 
     `architecture`, `run` and `filename` are text as every answer shows them,
     a name that is not text with backslash escapes; `key` is the entry's
