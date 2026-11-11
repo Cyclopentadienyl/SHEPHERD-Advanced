@@ -415,17 +415,27 @@ def run_kg_link_prediction(*, bundle: Any, view: Any, pairs: Any, record: Any, m
 
     The version is the manifest's (`cohort_version`, its report block). In
     order, before anything is scored: its recorded split must rebuild from
-    `view` (`rebuild_split`), and every positive of its pairs must be an edge
-    of that split's part of its role; either refusal says the version's record
-    contradicts its bytes and that nothing was written. Then the exposure
-    block, from the model's record `record` (`src.evaluation.exposure`); the
-    regime check; and the scoring, `batch_size` pairs at a time, over the
-    version's message-passing graph (the split's train part) with the view's
-    node types. Draws from no random generator.
+    `view` (`rebuild_split`); every positive of its pairs must be an edge of
+    that split's part of its role; and the pairs must hold what their record
+    declares (`lp_pairs_problem`: every id within the view's nodes and
+    relations, and the invariants of the pair rule the version names,
+    ``pairs.rule``). Each refusal says the version's record contradicts its
+    bytes and that nothing was written: a pairs file whose digests match its
+    record (`read_kg_edge_pairs`) is only the bytes recorded, not yet pairs of
+    their rule. Then the exposure block, from the model's record `record`
+    (`src.evaluation.exposure`); the regime check; and the scoring,
+    `batch_size` pairs at a time, over the version's message-passing graph
+    (the split's train part) with the view's node types. Draws from no random
+    generator.
     """
     from src.evaluation.exposure import kg_edges_exposure, measured_in_parts
     from src.kg.graph_view import GraphViewError, rebuild_split
-    from src.models.bundle.lp_head import lp_score_states, lp_scores_layout, score_lp_pairs
+    from src.models.bundle.lp_head import (
+        lp_pairs_problem,
+        lp_score_states,
+        lp_scores_layout,
+        score_lp_pairs,
+    )
 
     version = manifest.cohort_version
     if manifest.cohort_kind != KG_EDGES or not isinstance(version, dict):
@@ -447,6 +457,14 @@ def run_kg_link_prediction(*, bundle: Any, view: Any, pairs: Any, record: Any, m
             f"{outside} of the {n} positive edges in the KG edge set {label!r}'s pairs file are "
             f"not edges of its split's {role} part: the pairs contradict the version's record, "
             "so they are not measured. Nothing was written.")
+    rule = version["pairs"]["rule"]
+    problem = lp_pairs_problem(pairs, nodes=int(view.num_nodes), relations=len(view.relations),
+                               rule=rule)
+    if problem is not None:
+        raise ValueError(
+            f"the KG edge set {label!r}'s pairs file does not hold pairs of its pair rule "
+            f"{rule!r} over this graph's view: {problem}; the pairs contradict the version's "
+            "record, so they are not measured. Nothing was written.")
     exposure = kg_edges_exposure(
         record=record, checkpoint_sha256=manifest.artifact_digests["checkpoint"],
         version=version, view=view, version_split=split, pairs=pairs, in_version=in_version)

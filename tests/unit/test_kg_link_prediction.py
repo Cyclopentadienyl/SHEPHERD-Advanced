@@ -35,8 +35,11 @@ What is pinned here:
   a file without a model spec, a protocol and a data kind that do not match,
   `--split` with the LP protocol, `--training-evidence` with a KG edge set, a
   version with no pair, a version whose split does not rebuild or whose pairs
-  are not its role's edges; and a model of another split is measured, not
-  refused;
+  are not its role's edges, and pairs whose digests match their record but
+  whose content breaks their pair rule (the reviewer's RC-P2-2: every
+  negative -1, or each its own pair's tail; refused through `--record` with
+  no report and no ledger record, the valid control measured and
+  registered); and a model of another split is measured, not refused;
 - **a cancelled or failed run** leaves no successful report, and its true
   state (a failure among the scores' chunks, or the report's publication
   failing after the scores);
@@ -428,6 +431,69 @@ def test_a_version_whose_record_contradicts_the_view_is_refused_before_scoring()
                                device=torch.device("cpu"), batch_size=8)
     assert str(info.value).endswith("Nothing was written.")
     assert bundle.seen == []
+
+
+def test_pairs_that_break_their_rule_are_refused_before_the_exposure_and_the_scoring(
+        monkeypatch):
+    """The evaluator's third check, after the positive edges' (RC-P2-2): the
+    pairs must hold what the version declares (`lp_pairs_problem`). A
+    negative equal to its own pair's tail, which fixed-lp-pairs/v1 never
+    draws, and a negative id of -1, which torch would read as the last node,
+    are refused before the exposure is read and before anything is scored,
+    saying the pairs contradict the version's record and that nothing was
+    written. Declaring another rule, whose semantics are its own, the first
+    pairs are in range and measured; the -1 is refused whatever the rule."""
+    from src.evaluation import exposure as exposure_module
+    from src.evaluation.task_measurement import run_kg_link_prediction
+    from src.models.bundle.lp_head import LPPairs, lp_pairs_digest
+
+    view, split, pairs = _toy("test")
+    read = []
+    original = exposure_module.kg_edges_exposure
+    monkeypatch.setattr(exposure_module, "kg_edges_exposure",
+                        lambda **kw: read.append(kw) or original(**kw))
+
+    def changed(negative):
+        columns = (pairs.head, pairs.relation, pairs.tail, negative)
+        return LPPairs(*columns, counts=dict(pairs.counts), digest=lp_pairs_digest(*columns),
+                       batch_pairs=pairs.batch_pairs)
+
+    own = pairs.negative_tail.clone()
+    own[0] = pairs.tail[0]
+    minus_one = pairs.negative_tail.clone()
+    minus_one[-1] = -1
+    n = pairs.counts["pairs"]
+    for tampered, rule, says in (
+            (own, "fixed-lp-pairs/v1",
+             f"1 of the {n} pairs have a negative_tail equal to their own tail (row 0: "
+             f"{int(pairs.tail[0])}), which fixed-lp-pairs/v1 never draws"),
+            (minus_one, "fixed-lp-pairs/v1",
+             f"1 of the {n} pairs hold a negative_tail id outside [0, {view.num_nodes}) "
+             f"(row {n - 1}: -1)"),
+            (minus_one, "another-rule/v1",
+             f"1 of the {n} pairs hold a negative_tail id outside [0, {view.num_nodes}) "
+             f"(row {n - 1}: -1)")):
+        bundle = _ToyBundle(view)
+        block = _toy_block(view, split, changed(tampered), "test")
+        block["pairs"]["rule"] = rule
+        with pytest.raises(ValueError) as info:
+            run_kg_link_prediction(bundle=bundle, view=view, pairs=changed(tampered),
+                                   record=_toy_record(split), manifest=_toy_manifest(block),
+                                   device=torch.device("cpu"), batch_size=8)
+        assert str(info.value) == (
+            f"the KG edge set 'toy''s pairs file does not hold pairs of its pair rule {rule!r} "
+            f"over this graph's view: {says}; the pairs contradict the version's record, so "
+            "they are not measured. Nothing was written."), str(info.value)
+        assert bundle.seen == [] and read == []
+
+    bundle = _ToyBundle(view)
+    block = _toy_block(view, split, changed(own), "test")
+    block["pairs"]["rule"] = "another-rule/v1"
+    result = run_kg_link_prediction(bundle=bundle, view=view, pairs=changed(own),
+                                    record=_toy_record(split), manifest=_toy_manifest(block),
+                                    device=torch.device("cpu"), batch_size=8)
+    assert len(bundle.seen) == 1 and len(read) == 1
+    assert result.n_ranked == n and result.sampler_evidence["pairs"]["rule"] == "another-rule/v1"
 
 
 def test_a_metric_that_cannot_be_computed_is_a_status_never_a_number():
@@ -1107,6 +1173,64 @@ def test_a_pairs_refusal_names_its_own_cause_and_that_nothing_was_written(cli, s
     assert str(refused.value) == ("x/cohort.json lays its pairs out as 'other'; this revision "
                                   "reads 'lp-pairs/v1' only. Nothing was read. Nothing was "
                                   "written.")
+
+
+def _rewrite_negatives(site: Site, label: str, negatives) -> None:
+    """Rewrite the KG edge set `label`'s pairs file with `negatives(pairs)` as
+    its negative tails and rebind both its digests in its cohort.json, as the
+    reviewer's RC-P2-2 reproduction does: the file is then the bytes the
+    version binds and parses to the pairs it records, but its content is not
+    what the version's pair rule makes."""
+    from src.evaluation.cohort_registry import encode_json, read_kg_edge_pairs
+    from src.models.bundle.lp_head import lp_pairs_digest, lp_pairs_table
+
+    version = _version(site, label)
+    pairs = read_kg_edge_pairs(version).pairs
+    columns = (pairs.head, pairs.relation, pairs.tail, negatives(pairs))
+    table = lp_pairs_table(*columns)
+    (version.directory / "pairs.bin").write_bytes(table)
+    manifest = version.manifest
+    manifest["pairs"]["sha256"] = _sha(table)
+    manifest["pairs"]["lp_pairs_digest"] = lp_pairs_digest(*columns)
+    (version.directory / "cohort.json").write_bytes(encode_json(manifest))
+    reread = read_kg_edge_pairs(_version(site, label)).pairs
+    assert reread.negative_tail.tolist() == columns[3].tolist()
+
+
+@pytest.mark.parametrize("negatives, says", [
+    (lambda pairs: torch.full_like(pairs.negative_tail, -1),
+     "pairs hold a negative_tail id outside [0, "),
+    (lambda pairs: pairs.tail.clone(), "pairs have a negative_tail equal to their own tail"),
+], ids=["every_negative_minus_one", "negative_is_its_own_tail"])
+def test_pairs_whose_digests_match_but_whose_content_breaks_their_rule_are_refused(
+        cli, site, capsys, negatives, says):
+    """The reviewer's RC-P2-2, through `measure_scorer --record`: a KG edge
+    set whose pairs file and record agree by every digest (the digest reader
+    accepts it, its checks unchanged), but whose negatives are all -1 (which
+    torch read as the last node, measured and registered before) or each its
+    own pair's tail (scored ROC-AUC 0.5 and registered as a result of
+    fixed-lp-pairs/v1). Each is refused with exit 1 and nothing written: no
+    report directory, no ledger record. The control, the same version with its
+    own bytes back, is measured and registered."""
+    directory = site.registry / "versions" / "kg-test"
+    kept = {name: (directory / name).read_bytes() for name in ("pairs.bin", "cohort.json")}
+    _rewrite_negatives(site, "kg-test", negatives)
+    message = _refused(cli, site, _argv(site, "kg-test", None, "--record"), ValueError, says,
+                       capsys=capsys)
+    assert ("pairs file does not hold pairs of its pair rule 'fixed-lp-pairs/v1' over this "
+            "graph's view: ") in message
+    assert message.endswith("the pairs contradict the version's record, so they are not "
+                            "measured. Nothing was written."), message
+    assert not (directory / "reports").exists() or _runs(site, "kg-test") == []
+
+    for name, data in kept.items():
+        (directory / name).write_bytes(data)
+    assert cli._run_as_program(_argv(site, "kg-test", None, "--record")) == 0
+    from src.evaluation.sidecar import read_ledger
+
+    run = _only_run(site, "kg-test")
+    ledger, _ = read_ledger(site.base.parent / LEDGER)
+    assert [record["run_id"] for record in ledger["records"]] == [run.name]
 
 
 def test_a_version_of_another_graph_view_is_refused_as_a_capability_gap(cli, site, capsys):

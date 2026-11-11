@@ -14,7 +14,9 @@ used for LP accuracy is the raw score > 0, i.e. `sigmoid(raw) > 0.5`
 edge once, against one negative drawn once by U5's rule) and their scoring
 (`score_lp_pairs`: the head's raw scores over full-view node vectors, and the
 whole-set metrics, `lp_set_metrics`) live here, beside the negative rule, so base validation and
-any LP measurement share one pair rule and one scoring. So do the two byte
+any LP measurement share one pair rule and one scoring; so does the one statement
+of what pairs must hold before they are scored (`lp_pairs_problem`: ids in range
+for any rule, and the rule's own invariants for pairs declaring it). So do the two byte
 encodings of their results: a pairs table (`lp_pairs_table`, a KG edge set's
 ``pairs.bin``) and a scores table (`lp_scores_table`: each pair's actual raw
 scores keyed to its row of the pairs table, with the row's state; a KG
@@ -26,6 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import numbers
 from dataclasses import dataclass
 from typing import Any, Dict, Iterator, Optional, Tuple
 
@@ -218,6 +221,103 @@ def fixed_lp_pairs(edges: Tensor, relations: Tensor, *, seed: int, batch_size: i
                    lp_pairs_digest(head, relation, tail, negative_tail), tuple(batch_pairs))
 
 
+def lp_pairs_problem(pairs: LPPairs, *, nodes: int, relations: int,
+                     rule: Optional[str]) -> Optional[str]:
+    """Why `pairs` are not pairs a scoring may index, or not pairs of the
+    rule `rule` they declare; None when they are. The one statement of the
+    pairs' content rules (the reviewer's RC-P2-2): a digest proves only that
+    the bytes read are the bytes recorded, never what they hold.
+
+    For any rule: each of the four columns holds one integer id per pair,
+    every node id (head, tail, negative tail) in ``[0, nodes)`` and every
+    relation id in ``[0, relations)``, so no id ever reaches an index as
+    torch's negative-index semantics or past the end.
+
+    For pairs declaring `LP_PAIR_RULE`, also what `fixed_lp_pairs` makes of
+    every kept pair, through `corrupt_tails`: `batch_pairs` are counts of at
+    least 0 that sum to the rows (the batch boundaries); each negative tail
+    differs from its own pair's tail by value; and each is the tail of a kept
+    pair of the same relation in the same batch (the rule draws among the
+    tails of the relation's edges in the batch, and a relation keeps either
+    all of its edges in a batch or none: none when their tails are all equal,
+    so its kept pairs hold every tail it may draw). Nothing more: a negative
+    is never required to be a non-relation of the graph, which the rule does
+    not promise. Another rule's semantics are its own, so its pairs are
+    checked for their ranges only; `rule` None checks the ranges alone.
+
+    Vectorised, with no loop over the pairs, and no id composed into a key
+    (the membership is found by stable sorts), so nothing can overflow.
+    """
+    columns = dict(zip(LP_PAIR_COLUMNS, (pairs.head, pairs.relation, pairs.tail,
+                                         pairs.negative_tail), strict=True))
+    n = int(pairs.head.numel())
+    for name, column in columns.items():
+        if column.dim() != 1 or int(column.numel()) != n:
+            return (f"the {name} column has shape {tuple(column.shape)}, not one id for each of "
+                    f"the {n} pairs")
+        if column.dtype.is_floating_point or column.dtype.is_complex or column.dtype == torch.bool:
+            return f"the {name} column holds {column.dtype} values, not integer ids"
+    for name, column in columns.items():
+        bound = int(relations) if name == "relation" else int(nodes)
+        outside = (column < 0) | (column >= bound)
+        if bool(outside.any()):
+            row = int(outside.nonzero()[0, 0])
+            return (f"{int(outside.sum())} of the {n} pairs hold a {name} id outside "
+                    f"[0, {bound}) (row {row}: {int(column[row])})")
+    if rule != LP_PAIR_RULE:
+        return None
+    return _fixed_lp_pairs_problem(pairs, n)
+
+
+def _fixed_lp_pairs_problem(pairs: LPPairs, n: int) -> Optional[str]:
+    """`lp_pairs_problem`'s `LP_PAIR_RULE` part, for `n` pairs whose ids are
+    in range: the batch boundaries, a negative never its own pair's tail, and
+    each negative a tail of a kept pair of its relation in its batch."""
+    sizes = list(pairs.batch_pairs)
+    wrong = next((k for k, size in enumerate(sizes)
+                  if isinstance(size, bool) or not isinstance(size, numbers.Integral)
+                  or size < 0), None)
+    if wrong is not None:
+        return (f"batch_pairs[{wrong}] is {sizes[wrong]!r}, not a count of the pairs a batch "
+                "kept (a whole number of at least 0)")
+    if sum(sizes) != n:
+        return f"batch_pairs sum to {sum(sizes)}, not the {n} pairs"
+    own = pairs.negative_tail == pairs.tail
+    if bool(own.any()):
+        row = int(own.nonzero()[0, 0])
+        return (f"{int(own.sum())} of the {n} pairs have a negative_tail equal to their own tail "
+                f"(row {row}: {int(pairs.tail[row])}), which {LP_PAIR_RULE} never draws")
+    if n == 0:
+        return None
+    # Every pair's (batch, relation, tail), then every pair's (batch,
+    # relation, negative tail): a negative is found when an entry of the
+    # first n has its triple. Stable sorts by tail, then relation, then batch
+    # put equal triples together in their original order, so a group holding
+    # a kept tail starts with one (an index below n).
+    batch = torch.repeat_interleave(torch.arange(len(sizes)),
+                                    torch.tensor(sizes, dtype=torch.long))
+    relation = pairs.relation.to(torch.int64)
+    b, r = torch.cat([batch, batch]), torch.cat([relation, relation])
+    v = torch.cat([pairs.tail.to(torch.int64), pairs.negative_tail.to(torch.int64)])
+    order = torch.argsort(v, stable=True)
+    order = order[torch.argsort(r[order], stable=True)]
+    order = order[torch.argsort(b[order], stable=True)]
+    bs, rs, vs = b[order], r[order], v[order]
+    starts = torch.ones(2 * n, dtype=torch.bool)
+    starts[1:] = (bs[1:] != bs[:-1]) | (rs[1:] != rs[:-1]) | (vs[1:] != vs[:-1])
+    group = torch.cumsum(starts, 0) - 1
+    found = torch.empty(2 * n, dtype=torch.bool)
+    found[order] = (order[starts] < n)[group]
+    missing = ~found[n:]
+    if bool(missing.any()):
+        row = int(missing.nonzero()[0, 0])
+        return (f"{int(missing.sum())} of the {n} pairs have a negative_tail that is not the tail "
+                f"of a kept pair of the same relation in the same batch (row {row}: "
+                f"{int(pairs.negative_tail[row])}, relation {int(pairs.relation[row])}, batch "
+                f"{int(batch[row])}), the only tails {LP_PAIR_RULE} draws from")
+    return None
+
+
 @dataclass
 class LPScores:
     """Each pair's positive and negative raw (pre-tanh) score, in pair order, on
@@ -261,10 +361,23 @@ def score_lp_pairs(bundle: Any, pairs: LPPairs, edges: Tensor, relations: Tensor
     scores them all in one pass, as base validation does; a measurement
     records the chunk it used. Every positive is scored before every
     negative, each side in pair order, and the metrics are the whole set's.
+
+    Before any pair indexes a vector or a relation weight, every id must be
+    one of the vectors' nodes and the head's relations (`lp_pairs_problem`,
+    ranges only: the scoring declares no pair rule), so an id is never read
+    as torch's negative index or past the end.
+
+    Raises:
+        ValueError: `pair_chunk` is not positive, or a pair holds an id out
+            of range (naming it).
     """
     if pair_chunk is not None and int(pair_chunk) <= 0:
         raise ValueError(f"pair_chunk must be positive, not {pair_chunk}")
     z = full_view_vectors(bundle, edges, relations, device, chunk_size, node_type=node_type)
+    problem = lp_pairs_problem(pairs, nodes=int(z.size(0)),
+                               relations=int(bundle.lp_head.relation_weights.size(0)), rule=None)
+    if problem is not None:
+        raise ValueError(f"the LP pairs cannot be scored: {problem}")
     n = int(pairs.head.numel())
     step = max(n, 1) if pair_chunk is None else int(pair_chunk)
     positives, negatives = [], []
@@ -385,6 +498,6 @@ def lp_scores_from_table(data: bytes, layout: Dict[str, Any]) -> np.ndarray:
 
 __all__ = ["DistMultHead", "LPPairs", "LPScores", "LP_PAIRS_LAYOUT", "LP_PAIR_COLUMNS",
            "LP_PAIR_RULE", "LP_SCORE_COLUMNS", "LP_SCORE_STATES", "corrupt_tails",
-           "fixed_lp_pairs", "lp_pairs_digest", "lp_pairs_from_table", "lp_pairs_table",
-           "lp_score_states", "lp_scores_chunks", "lp_scores_from_table", "lp_scores_layout",
-           "lp_scores_table", "lp_set_metrics", "score_lp_pairs"]
+           "fixed_lp_pairs", "lp_pairs_digest", "lp_pairs_from_table", "lp_pairs_problem",
+           "lp_pairs_table", "lp_score_states", "lp_scores_chunks", "lp_scores_from_table",
+           "lp_scores_layout", "lp_scores_table", "lp_set_metrics", "score_lp_pairs"]

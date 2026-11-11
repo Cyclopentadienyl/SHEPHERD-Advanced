@@ -1943,7 +1943,9 @@ python scripts/measure_scorer.py --mode kg_link_prediction \
   被拒絕）、workspace 的圖與 dataset record、版本對照 workspace、checkpoint 對照圖，以及
   `--expect-*` digest。另外會被拒絕的有：graph view 與模型不同的版本（這個 build 沒有 view 之間的
   節點對應：這是能力上的缺口，不是研究規則）、沒有 model spec 的檔案、沒有任何配對的版本、無法從
-  view 重建的已記錄切分、不是該角色之邊的配對，以及這個協定搭配 `--split`。**不會被拒絕：** 同一
+  view 重建的已記錄切分、不是該角色之邊的配對、digest 相符但內容不符合其紀錄宣告的配對（節點或
+  relation 編號超出 view 的範圍；或對 `fixed-lp-pairs/v1` 而言，負例 tail 等於本列的 tail，或不是同一
+  批次中同一 relation 的 tail），以及這個協定搭配 `--split`。**不會被拒絕：** 同一
   view 上另一個切分的模型、另一個家族、另一個環境，或另一個結果。
 - **暴露（exposure）** 是報告最上層的一個區塊（定義 `kg-lp-exposure/v1`，附其來源：checkpoint 與
   版本）。它說明被量測的邊與模型紀錄所述的圖使用之間的關係：「held out relative to the recorded

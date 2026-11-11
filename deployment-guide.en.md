@@ -1630,9 +1630,11 @@ python scripts/measure_scorer.py --mode kg_link_prediction \
   against the graph, and `--expect-*` digests. Also refused: a version of another graph view than
   the model's (there is no node mapping between views in this build: a capability gap, not a
   research rule), a file without a model spec, a version with no pair, a recorded split that does
-  not rebuild from the view, pairs that are not the role's edges, and `--split` with this
-  protocol. **Not refused:** a model of another split of the same view, another family, another
-  environment, or another result.
+  not rebuild from the view, pairs that are not the role's edges, pairs that are not what their
+  record declares though their digests match (a node or relation id outside the view, or, for
+  `fixed-lp-pairs/v1`, a negative tail equal to its own pair's tail or not a tail of its relation
+  in its batch), and `--split` with this protocol. **Not refused:** a model of another split of
+  the same view, another family, another environment, or another result.
 - **The exposure** is a top-level block of the report (definition `kg-lp-exposure/v1`, with its
   sources: the checkpoint and the version). It says how the measured edges stand to what the
   model's record says it used of the graph: "held out relative to the recorded training and
