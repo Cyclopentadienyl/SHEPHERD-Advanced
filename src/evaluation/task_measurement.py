@@ -31,8 +31,9 @@ against its one rule-generated negative, are scored by the LP head through the
 one LP core (`src.models.bundle.lp_head.score_lp_pairs`), over the full-view
 vectors of the version's message-passing graph (its split's train part, with
 the view's node types) for every model; there is no full-view variant. Before
-anything is scored, the version's split must rebuild from the view and its
-pairs' positives must be edges of its role's part: a version whose record
+anything is scored, the version's split must rebuild from the view, its
+pairs' positives must be edges of its role's part, and its pairs must hold
+what their rule declares (`lp_pairs_problem`): a version whose record
 contradicts its bytes is refused. It reports metric schema 3
 (`LP_METRIC_SCHEMA_VERSION`): lp_accuracy (raw > 0 a positive's decision, raw
 <= 0 a negative's), ROC-AUC (average ranks), AP and lp_loss over the whole set,

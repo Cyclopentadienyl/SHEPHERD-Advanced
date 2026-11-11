@@ -331,6 +331,22 @@ def test_ids_near_the_int64_limit_are_checked_without_overflow():
     assert problem is not None and f"(row 1: {big + 5}, relation 1, batch 0)" in problem
 
 
+def test_a_negative_whose_composed_key_would_alias_a_kept_tail_is_refused():
+    """The case a composed key gets wrong (the review of RC-P2-2's fix): with
+    ``nodes = 2**63 - 1`` the key of (batch 0, relation 2, id 7) is
+    ``2 * nodes + 7``, which wraps in int64 to 5, the key of (batch 0,
+    relation 0, id 5), a kept tail; a composed-key membership would accept
+    row 2's negative. Relation 2's only kept tail in the batch is 8."""
+    rows = [(0, 0, 5, 6), (1, 0, 6, 5), (2, 2, 8, 7)]
+    nodes = 2**63 - 1
+    assert (2 * nodes + 7) - 2**64 == 5, "the triple no longer aliases under an int64 key"
+    problem = lp_pairs_problem(_pairs(rows, (3,)), nodes=nodes, relations=2**40,
+                               rule=LP_PAIR_RULE)
+    assert problem is not None and "(row 2: 7, relation 2, batch 0)" in problem
+    assert lp_pairs_problem(_pairs(rows[:2], (2,)), nodes=nodes, relations=2**40,
+                            rule=LP_PAIR_RULE) is None
+
+
 # --------------------------------------------------------------------------- score_lp_pairs
 
 

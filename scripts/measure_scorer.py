@@ -46,7 +46,10 @@ match (the LP protocol on a supplied or generated version or with `--split`; a
 task protocol on a KG edge set), `--training-evidence` (R10 is a supplied
 version's; a KG edge set's relation to the model's training is its exposure),
 a version with no pair, and, in the evaluator, a version whose recorded split
-does not rebuild from the view or whose pairs are not its part's edges. A
+does not rebuild from the view or whose pairs are not its part's edges, or do
+not hold what their pair rule declares though their digests match (an id
+outside the view; for fixed-lp-pairs/v1, a negative equal to its own tail or
+not a tail of its relation in its batch). A
 model whose recorded split differs from the version's, on the same view, is
 measured: its exposure says how many of the measured edges were in that
 model's recorded graph use. Its run keeps, in its run directory, `scores.bin`
