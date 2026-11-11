@@ -570,6 +570,172 @@ def test_a_text_cell_a_spreadsheet_would_run_is_defused(world):
     assert any(r["semantics"] == "'=HYPERLINK(\"x\")" for r in table)
 
 
+# ---------------------------------------------------------------------------
+# Every recorded component fact (review fix RC-P2-1; §6 E1)
+# ---------------------------------------------------------------------------
+#: The export's columns before the component facts joined them, in order:
+#: each keeps its name and place among the others.
+COLUMNS_BEFORE_COMPONENTS = (
+    'result', 'protocol', 'metric_name', 'value', 'value_status', 'unit', 'denominator', 'role',
+    'semantics', 'data_kind', 'data_label', 'data_version_sha256', 'dataset_origin',
+    'data_identity', 'data_counts', 'data_count_units', 'checkpoint_sha256', 'model_locations',
+    'learning_stage', 'task', 'operation', 'family_id', 'parent_sha256', 'parent_run', 'encoder',
+    'spec_reference', 'spec_differences', 'spec', 'capabilities', 'training_rules',
+    'learning_settings', 'effective_settings', 'weight_transfer', 'loss_identity', 'run_id',
+    'report_sha256', 'report', 'registered', 'stores', 'ledgers', 'n_corroborating',
+    'historical_overlap', 'conflict', 'condition_group', 'group_state', 'group_differing',
+    'group_why', 'candidate_construction', 'model_construction', 'tie_policy',
+    'metric_schema_version', 'batch_size', 'n_ranked', 'run_counts', 'scoring_semantics_sha256',
+    'measurement_semantics_sha256', 'environment_class', 'device', 'dtype', 'amp_enabled',
+    'amp_dtype', 'torch_compile_wrapped', 'deterministic_algorithms', 'cudnn_deterministic',
+    'cudnn_benchmark', 'torch_version', 'cuda_version', 'software_revision', 'gpu',
+    'native_identity', 'exposure_state', 'exposure_reading', 'exposure_definition',
+    'exposure_measured_edges', 'exposure_in_recorded_graph_use', 'exposure_problem', 'r10',
+    'references', 'unreadable_item', 'unreadable_where', 'reason', 'unknown')
+#: A fallback reason as a run records it.
+FELL_BACK = "dtype unsupported; used default"
+
+
+def attention(in_effect, **source):
+    """A component no part of the stack has (a test double, E6), as the
+    collector records it: one version and one native digest, requested,
+    installed, available and selected; in effect, or fallen back with its
+    reason; its source's own build facts (a commit and a compiler) beside its
+    route, as a generic reader's are."""
+    from src.utils.run_environment import component_facts
+
+    return component_facts(
+        "attention kernel", requested=True, installed=True, available=True, selected=True,
+        in_effect=in_effect, version="2.0", fallback_reason=None if in_effect else FELL_BACK,
+        native={"state": "recorded", "count": 1, "aggregate_sha256": "e" * 64},
+        source={"state": "recorded", "route": "local build", "commit": "a" * 40,
+                "compiler": "audit-compiler 1.0", **source})
+
+
+def registered_with(world, components, registry="registry", mrr=0.5):
+    """A run of the child on the listed version whose environment records
+    `components`, kept in `registry` and registered beside the child, through
+    the production writers; its run id."""
+    report = report_for(world["child"], version_block(LABEL, "research_selection"),
+                        metrics=_metrics(mrr))
+    report["manifest"]["environment"]["facts"]["components"] = components
+    path, _ = register(world[registry], world["child_path"], report)
+    return path.parent.name
+
+
+def test_two_runs_of_one_build_are_told_apart_by_what_was_in_effect_and_why(world):
+    """RC-P2-1: two kept and registered runs of one component, version and
+    native digest, one in effect and one fallen back with its reason, read
+    through the query, the JSON and the CSV: each carries its five states,
+    its reason and its source's build facts as recorded, so the two are told
+    apart; the native build summary (`native_identity`) is unchanged, and
+    equal for both."""
+    from src.api.services import results
+    from src.utils.run_environment import native_identity
+
+    used = registered_with(world, {"test_attention": attention(True)})
+    fell = registered_with(world, {"test_attention": attention(False)})
+    found = _query(world)
+    rows = _by_run(found)
+    for run, in_effect in ((used, True), (fell, False)):
+        environment = rows[run]["environment"]
+        assert environment["components"] == {"test_attention": attention(in_effect)}
+        # The summary is what it was: one identity for both runs.
+        assert environment["native_identity"] == native_identity(
+            {"test_attention": attention(in_effect)}) == {"test_attention": {
+                "kind": "attention kernel", "version": "2.0",
+                "native": {"state": "recorded", "count": 1, "aggregate_sha256": "e" * 64},
+                "source": {"state": "recorded", "route": "local build"}}}
+        assert "environment.components" not in rows[run]["unknown"]
+    assert rows[used]["environment"] != rows[fell]["environment"]
+    shown = rows[fell]["environment"]["components"]["test_attention"]
+    assert (shown["requested"], shown["installed"], shown["available"], shown["selected"],
+            shown["in_effect"], shown["fallback_reason"]) == (True, True, True, True, False,
+                                                             FELL_BACK)
+    assert (shown["source"]["commit"], shown["source"]["compiler"]) == ("a" * 40,
+                                                                      "audit-compiler 1.0")
+
+    exported = json.loads(results.to_json(found))["rows"]
+    table = list(csv.DictReader(io.StringIO(results.to_csv(found))))
+    for run, in_effect in ((used, True), (fell, False)):
+        (row,) = [r for r in exported if r["run_id"] == run and r["metric_name"] == "pooled_mrr"]
+        assert row["components"] == {"test_attention": attention(in_effect)}
+        (cell,) = [r for r in table if r["run_id"] == run and r["metric_name"] == "pooled_mrr"]
+        assert json.loads(cell["components"]) == row["components"]
+        assert json.loads(cell["native_identity"]) == row["native_identity"]
+    text = results.to_json(found) + results.to_csv(found)
+    for fact in (FELL_BACK, "audit-compiler 1.0", "a" * 40, '"in_effect"'):
+        assert fact in text
+
+
+def test_a_ledger_only_row_carries_its_components_facts(world):
+    """A run registered from a store the export does not list: its row reads
+    "report not available" and carries every component fact its ledger
+    record holds."""
+    run = registered_with(world, {"test_attention": attention(False)}, registry="unlisted")
+    row = _by_run(_query(world))[run]
+    assert row["report"] == "report not available"
+    assert row["environment"]["components"] == {"test_attention": attention(False)}
+
+
+def test_an_older_record_reads_with_its_components_unknown_and_nothing_refused(world):
+    """A record whose environment names no components (written before they
+    were recorded) reads, its components null and named in ``unknown``, the
+    CSV cell "unknown" as the native identity's is; a component written
+    before ``requested`` was recorded reads too, that state left out (read as
+    unknown), never filled in. Nothing is refused or rewritten."""
+    from src.api.services import results
+
+    older = attention(False)
+    del older["requested"]
+    run = registered_with(world, {"test_attention": older})
+    ledger_before = (world["child_path"].parent / "evaluations.json").read_bytes()
+    found = _query(world)
+    assert (world["child_path"].parent / "evaluations.json").read_bytes() == ledger_before
+    rows = _by_run(found)
+    shown = rows[run]["environment"]["components"]["test_attention"]
+    assert "requested" not in shown and shown == older
+    assert not [row for row in found if row["result"] == "unreadable"
+                and row.get("run_id") == run]
+
+    before = rows[world["registered"].parent.name]
+    assert before["environment"]["components"] is None
+    assert before["unknown"]["environment.components"] == (
+        "its record names no environment components")
+    (cell,) = [r for r in csv.DictReader(io.StringIO(results.to_csv(found)))
+               if r["run_id"] == world["registered"].parent.name
+               and r["metric_name"] == "pooled_mrr"]
+    assert cell["components"] == cell["native_identity"] == results.UNKNOWN
+
+
+def test_a_path_in_a_components_reason_or_source_fact_is_never_exported(world):
+    """D7: a server path in a recorded fallback reason, a source's build
+    fact or a key of one is replaced by the one redaction before any surface
+    gets it; the facts' other words are kept."""
+    from src.api.services import results
+
+    facts = attention(False, compiler="/opt/toolchains/lab-7/bin/cc 13.3",
+                      flags={"/srv/lab-7/build": "-O2"})
+    facts["fallback_reason"] = "no kernel at /srv/lab-7/kernels/attn.so; used default"
+    run = registered_with(world, {"test_attention": facts})
+    found = _query(world)
+    shown = _by_run(found)[run]["environment"]["components"]["test_attention"]
+    assert shown["fallback_reason"] == "no kernel at a server path; used default"
+    assert shown["source"]["compiler"] == "a server path 13.3"
+    assert shown["source"]["flags"] == {"a server path": "-O2"}
+    text = results.to_json(found) + results.to_csv(found)
+    assert "/srv/lab-7" not in text and "/opt/toolchains" not in text
+
+
+def test_the_exports_columns_keep_their_names_and_order_with_components_added():
+    from src.api.services import results
+
+    assert tuple(name for name in results.COLUMN_NAMES if name != "components") == (
+        COLUMNS_BEFORE_COMPONENTS)
+    names = list(results.COLUMN_NAMES)
+    assert names.index("components") == names.index("native_identity") + 1
+
+
 def test_several_sources_are_read_through_the_servers_own_readers_and_settings(world,
                                                                             monkeypatch):
     """Each root and registry is read by the setting's own rule with its own
@@ -688,7 +854,9 @@ def test_the_record_views_keep_the_field_order_the_api_has_always_had():
 
     common = ["cohort", "counts", "mode", "score_semantics", "metrics", "n_ranked",
               "relations", "r10", "environment_class", "deterministic_algorithms", "gpu",
-              "native_identity", "dataset_origin", "scoring_semantics_digest",
+              # Review fix RC-P2-1: every recorded component fact, beside the
+              # summary (a named addition).
+              "native_identity", "components", "dataset_origin", "scoring_semantics_digest",
               "measurement_semantics_digest", "registration", "run_id", "historical_overlap",
               "n_corroborating", "source_artifact_digest"]
     assert list(rv.RecordView.model_fields) == common

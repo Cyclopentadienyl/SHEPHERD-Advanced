@@ -80,7 +80,7 @@ RESPONSE_KEYS = {"state", "checkpoint_sha256", "ledger", "records", "records_not
 RECORD_VIEW_KEYS = {
     "cohort", "counts", "mode", "score_semantics", "metrics", "n_ranked", "relations", "r10",
     "environment_class",
-    "deterministic_algorithms", "gpu", "native_identity", "dataset_origin", "scoring_semantics_digest", "measurement_semantics_digest",
+    "deterministic_algorithms", "gpu", "native_identity", "components", "dataset_origin", "scoring_semantics_digest", "measurement_semantics_digest",
     "registration", "run_id", "historical_overlap", "n_corroborating", "source_artifact_digest",
     "contest",
 }
@@ -993,7 +993,9 @@ def _report_with_components(checkpoint_sha):
 def test_a_records_native_build_identity_is_shown_by_component(app, served, tmp_path):
     """Each component the record's environment names is shown by its identity:
     kind, version, native libraries and route. Its states, fallback and source
-    details stay in the ledger record; no file name is anywhere."""
+    details are not in the identity, the display summary: they are in
+    ``components``, every fact as the record holds it (review fix RC-P2-1). No
+    file name is anywhere."""
     _, _, checkpoint = served
     _register(_report_with_components(_sha(checkpoint)), checkpoint.parent,
               tmp_path / "reports")
@@ -1012,6 +1014,13 @@ def test_a_records_native_build_identity_is_shown_by_component(app, served, tmp_
     shown = json.dumps(view["native_identity"])
     for detail in ("in_effect", "fallback", "requested", "toolchain", "MAX_JOBS", "b" * 64):
         assert detail not in shown
+    # Every recorded fact, as the record holds it: the states, the fallback
+    # and its reason, and every source fact.
+    assert view["components"] == _components()
+    every = json.dumps(view["components"])
+    for detail in ("in_effect", "fallback", "requested", "toolchain", "MAX_JOBS", "b" * 64):
+        assert detail in every
+    assert ".whl" not in every
 
 
 #: The native identity edited out of the collector's shape: each is listed
@@ -1032,6 +1041,16 @@ NATIVE_MALFORMED = {
         _delete("environment", "facts", "components", "pyg_lib", "source", "route"),
         "environment.facts.components.pyg_lib.source: a route is given exactly when the source "
         "is recorded"),
+    # Facts only the component's every-fact view reads (review fix RC-P2-1):
+    # named by their path, never their value.
+    "a state that is not one": (
+        _set(("environment", "facts", "components", "test_attention", "in_effect"), "yes"),
+        "environment.facts.components.test_attention.in_effect: true, false or 'unknown'"),
+    "a source fact that is not plain data": (
+        _set(("environment", "facts", "components", "pyg_lib", "source", "flags"),
+             {"MAX_JOBS": float("nan")}),
+        "environment.facts.components.pyg_lib.source.flags: not plain data (text, a number, a "
+        "boolean, null, or a list or an object of those)"),
 }
 
 

@@ -38,6 +38,10 @@ recorded, never compared or enforced. Records written before Stage 2b carry
 are read as they are.
 
 The deployment probe's A1 reads the components from here (`collect_components`).
+A record's components are read by two projections, each taking only what the
+record holds: `native_identity`, the display summary every page shows, and
+`recorded_components`, every recorded fact, which the record views, the
+results query, Compare and the export carry (review fix RC-P2-1).
 Today's other collectors (the measurement manifest's fields, the deployment
 probe's commit check, `src/utils/version_checker.py`) stay as they are until
 their entry points are next changed; this is the one later entry points use
@@ -274,9 +278,10 @@ UNKNOWN = "unknown"
 #:   ``toolchain`` and ``flags``) or ``{"state": "not recorded", "reason"}``.
 #:
 #: `component_facts` holds every component to this shape, which is what the
-#: record view reads (`src.api.services.record_views.RecordComponent`): a fact
-#: the view would refuse is refused when it is collected, and becomes the
-#: component's status, so a record is never hidden for its environment.
+#: record view reads (`src.api.services.record_views.RecordComponent`, the
+#: identity, and `RecordComponentFacts`, every fact): a fact the view would
+#: refuse is refused when it is collected, and becomes the component's
+#: status, so a record is never hidden for its environment.
 COMPONENT_FIELDS: Tuple[str, ...] = (
     "kind", "requested", "installed", "available", "selected", "in_effect",
     "fallback_reason", "version", "native", "source",
@@ -425,6 +430,15 @@ class ComponentReader:
     observation can say (`component_facts` refuses them) are recorded as that
     component's status: every state unknown, its native identity and source
     not read, and why.
+
+    **What a reader gives is recorded, shown and exported.** Every fact it
+    observes, its source's own build facts among them (a commit, a compiler,
+    flags), goes into each checkpoint and manifest and every ledger record,
+    and from there to the record views, the results query, Compare and the
+    export (`recorded_components`). So a reader records nothing secret: no
+    credential, token or private value, and no file name or path (a text
+    holding a path is shown with that path replaced, but its other words are
+    shown as they are).
     """
 
     kind: str
@@ -671,6 +685,101 @@ def _identity_of(entry: Any) -> Any:
     return picked
 
 
+#: A native identity's facts a record holds (`COMPONENT_FIELDS`), its reason
+#: among them.
+_NATIVE_FACTS = ("state", "count", "aggregate_sha256", "reason")
+#: What a path in a recorded text is shown as (`recorded_components`): the
+#: words every surface uses for a server path it does not name.
+_SERVER_PATH = "a server path"
+
+
+def recorded_components(components: Any) -> Any:
+    """**Every recorded fact of each named component**, as every reader
+    passes them on: the record views' ``components``
+    (`src.api.services.record_views.RecordComponentFacts`) and through them
+    the results service's rows, Compare and the export (research comparison
+    §6 E1; review fix RC-P2-1). `native_identity` stays the display summary.
+
+    By name, as `native_identity` keys them, each component's facts in the
+    shape's order (`COMPONENT_FIELDS`): its ``kind``; its ``requested``,
+    ``installed``, ``available``, ``selected`` and ``in_effect`` states as
+    recorded; its ``fallback_reason`` and ``version``; its ``native``
+    identity's ``state``, ``count``, ``aggregate_sha256`` and ``reason``;
+    and its ``source``, every fact the record holds (its ``state``,
+    ``route`` and ``reason``, the source receipt's ``requested``,
+    ``resolved``, ``wheel_sha256``, ``compiled_against``, ``toolchain`` and
+    ``flags``, or another reader's own build facts, such as a commit or a
+    compiler), the same for every component and every reader. A requested
+    source is shown as a record keeps one (`_requested_source`: no file
+    name, its URL without credentials), whatever an older record holds.
+
+    Taken only from ``components``, the environment record a report or a
+    ledger record already read holds (``environment.facts.components``):
+    no path is opened and nothing is collected. **A field an entry lacks is
+    left out**, never filled in (a reader reads it as unknown: a record
+    written before ``requested`` was recorded has none). **Every text**, a
+    key inside a fact or a component's name included, **passes the one D7
+    redaction** (`path_redaction.redact_paths`): a server path is shown as
+    "a server path". Nothing else is checked here, so the reader decides
+    what to refuse, as for `native_identity`: a value that is not an object
+    is returned as it is, and a value that is not plain data is passed on
+    for the record view to refuse, which lists the record as unreadable,
+    naming the field and never its value."""
+    if not isinstance(components, Mapping):
+        return components
+    return {_redacted(name): _facts_of(entry) for name, entry in components.items()}
+
+
+def _facts_of(entry: Any) -> Any:
+    if not isinstance(entry, Mapping):
+        return entry
+    picked = {field: entry[field] for field in COMPONENT_FIELDS if field in entry}
+    native = picked.get("native")
+    if isinstance(native, Mapping):
+        picked["native"] = {field: native[field] for field in _NATIVE_FACTS if field in native}
+    source = picked.get("source")
+    if isinstance(source, Mapping):
+        source = dict(source)
+        requested = source.get("requested")
+        if isinstance(requested, Mapping):
+            try:
+                source["requested"] = _requested_source(requested)
+            except ValueError:  # a URL that does not parse: shown without it
+                source["requested"] = {key: value for key, value in requested.items()
+                                       if key not in (*_REQUESTED_LEFT_OUT, "url")}
+        picked["source"] = source
+    return _redacted(picked)
+
+
+def _redacted(value: Any) -> Any:
+    """`value` with every text in it, an object's keys included, through the
+    one D7 redaction (`redact_paths`, no root named: any absolute path is
+    replaced); every other value as it is."""
+    from src.utils.path_redaction import redact_paths
+
+    if isinstance(value, str):
+        return redact_paths(value, (), other=_SERVER_PATH)
+    if isinstance(value, Mapping):
+        return {_redacted(key): _redacted(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_redacted(item) for item in value]
+    return value
+
+
+def is_plain_data(value: Any) -> bool:
+    """Whether `value` is plain data as a record holds it: built only of the
+    types `assert_primitive` accepts, with no number the records' JSON
+    encoding refuses (NaN or infinity): the two checks `component_facts`
+    holds every component to. What the record views check a recorded fact
+    by before passing it on (`recorded_components`)."""
+    try:
+        assert_primitive(value)
+        json.dumps(value, allow_nan=False)
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
 def _identity_items(identity: Any) -> Tuple[Optional[str], List[Tuple[str, Optional[str]]]]:
     """The words of `native_identity`, for its line and its lines: the state
     that stands in for the whole identity (``"not recorded"`` when there is
@@ -817,9 +926,11 @@ __all__: List[str] = [
     "collect_components",
     "collect_environment",
     "component_facts",
+    "is_plain_data",
     "native_identity",
     "native_identity_lines",
     "native_identity_text",
     "observe_autocast_regime",
     "read_pyg_native",
+    "recorded_components",
 ]

@@ -57,7 +57,9 @@ its name and its protocol's words) and **differences only** on by default:
 the rows of model-side and run conditions (the operation, the parent and
 family, every value of the spec and its relation to the reference recipe, the
 recorded and effective training settings, the data's identity and role, the
-measurement's settings, the environment, the exposure) and each metric, each
+measurement's settings, the environment (its native build line, and every
+recorded fact of each component under its name as recorded), the exposure)
+and each metric, each
 group once, in that order, each row named in words (`field_words`; its record
 key is its title). A nested value is one row per entry, so a difference
 inside a nested setting is its own row (`_tree`), named by the entry's own
@@ -739,7 +741,9 @@ _FIELD_WORDS = {
 #: Abbreviations a key's words keep as they are written.
 _ABBREVIATIONS = {"amp": "AMP", "auc": "AUC", "cuda": "CUDA", "cudnn": "cuDNN", "gpu": "GPU",
                   "id": "ID", "kg": "KG", "lp": "LP", "mrr": "MRR", "roc": "ROC",
-                  "sha256": "SHA-256"}
+                  "sha256": "SHA-256", "url": "URL",
+                  # A source's toolchain names its tools as they are written.
+                  "gcc": "gcc", "g++": "g++", "nvcc": "nvcc"}
 #: Short forms a key's words write out in full (skill §5: full words).
 _SHORT_FORMS = {"concat": "concatenate", "dim": "dimension", "eps": "epsilon",
                 "grad": "gradient", "init": "initialisation", "lr": "learning rate",
@@ -809,6 +813,19 @@ def _without(value: Any, paths: Sequence[str]) -> Any:
     return out
 
 
+def _named_items(value: Any) -> Any:
+    """A mapping by recorded names (each named component's facts) as named
+    items in code-point order of the names, so each entry's row says its
+    name as recorded, never in a key's words (`_branch`), and a record read
+    from its report and from a ledger, which orders keys, read alike. Any
+    other value as it is."""
+    if not isinstance(value, Mapping) or not value or not all(
+            isinstance(entry, Mapping) for entry in value.values()):
+        return value
+    return [{**entry, "name": str(name)}
+            for name, entry in sorted(value.items(), key=lambda item: str(item[0]))]
+
+
 def _fields(row: Mapping[str, Any]) -> List[_Field]:
     """A result's fields, in the order Compare shows them (`compare_fields`)."""
     unknown = row.get("unknown") or {}
@@ -874,7 +891,13 @@ def _fields(row: Mapping[str, Any]) -> List[_Field]:
             _Field("Environment", "Native build",
                    (native_identity_text(environment.get("native_identity"))
                     if environment.get("native_identity") is not None else None),
-                   why("environment.native_identity"), ref="environment.native_identity")]
+                   why("environment.native_identity"), ref="environment.native_identity"),
+            # Every recorded fact of each component, one row per fact under
+            # its name as recorded (named items, `_branch`), so two runs of
+            # one build that differ only in what was in effect, why it fell
+            # back or a source fact differ on those rows alone.
+            _Field("Environment", "Component", _named_items(environment.get("components")),
+                   why("environment.components"), ref="environment.components")]
     out.append(_Field("Exposure", "Exposure", exposure.get("reading") or exposure.get("state"),
                       ref="exposure.state"))
     # A KG edge set's exposure definition and counts, for a KG edge set's

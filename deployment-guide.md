@@ -2085,7 +2085,9 @@ python scripts/export_results.py --workspaces-root lab=/data/lab/workspaces \
   transfer 與 loss identity（`weight_transfer`：該階段權重如何開始，紀錄有寫明時包括每個部分可訓練
   或凍結，以及開始訓練時下游權重的 SHA-256；`loss_identity`：損失的各項與係數，以及沒有可訓練參數
   的項）、資料的種類、標籤、角色
-  與 digest、量測的 protocol、設定與環境（類別、regime、GPU、原生建置身分）、KG 邊集合那次執行
+  與 digest、量測的 protocol、設定與環境（類別、regime、GPU、原生建置身分，以及 `components`：
+  每個具名元件的紀錄中所有的事實，包括 requested、installed、available、selected 與 in effect 狀態、
+  fallback 原因、版本、原生身分與來源事實；紀錄中沒有的事實不列出，文字中的伺服器路徑會被取代）、KG 邊集合那次執行
   自己的計數（`run_counts`：評分的 pair 數、分數不是有限值的 pair 數）、資料與模型訓練的關係
   （supplied cohort 的 R10 狀態與計數在 `r10`；KG 邊集合的 exposure；generated split 的關係屬於它的
   分配方式，不做比較）、保存／登錄／條件組狀態，以及版本的內容參照。每個列出的 workspace 的每個
@@ -3604,7 +3606,9 @@ data.pyg.org 沒有 aarch64 wheel，所以由選單或 `PYG_ARM_STRATEGY` 在預
   PyG 在某個運算是否實際使用了某個擴充並未被觀測，記為未知。不記錄本機上的任何路徑，也不記錄
   wheel、函式庫或發行版資產（release asset）的檔名（由它們的 SHA-256 識別）；所要求來源的 URL
   會去除使用者名稱、密碼、查詢字串與片段後保留。Models 與 Test 頁面以「Native build」顯示這個身分：
-  Models 為一行，Test 頁面每個元件一行；在此之前寫入的紀錄顯示「not recorded」。這適用於
+  Models 為一行，Test 頁面每個元件一行；在此之前寫入的紀錄顯示「not recorded」。每個元件紀錄中的
+  所有事實（包括各狀態、fallback 原因與來源事實）也會出現在 API 的紀錄檢視（`components`）、結果查詢、
+  Models › Results 的 Compare（每個事實一列）與匯出中（自審查修正 RC-P2-1 起）。這適用於
   每一條安裝路徑，包括 Linux 索引路徑與 `deploy.cmd`；只有收據是兩條 ARM 路徑才有的。
 - **已驗證的範圍**：這些路徑在測試中以替身取代 ARM 主機、GitHub、pip 與編譯器執行
   （`tests/unit/test_deploy_pyg_route.py`），屬於軟體模擬。Stage 2a 之後兩條路徑都尚未在 GB10 上

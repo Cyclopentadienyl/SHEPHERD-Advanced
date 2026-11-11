@@ -5720,6 +5720,20 @@ def _recorded_native_identity(report: Mapping[str, Any]) -> Dict[str, Any]:
             for name, entry in native_identity(components).items()}
 
 
+def _recorded_components(report: Mapping[str, Any]) -> Dict[str, Any]:
+    """Every fact of each component a kept report's run recorded (its
+    manifest's environment components), as every reader passes them on: the
+    record views' one projection (`recorded_components`) through their model
+    (`RecordComponentFacts`), which is how an export row serialises them.
+    What that run's own process recorded, never this one's."""
+    from src.api.services.record_views import RecordComponentFacts
+    from src.utils.run_environment import recorded_components
+
+    components = report["manifest"]["environment"]["facts"]["components"]
+    return {name: RecordComponentFacts.model_validate(entry).model_dump(mode="json")
+            for name, entry in recorded_components(components).items()}
+
+
 def _lp_scores_verified(run: Path, report: Mapping[str, Any], version: Any, checkpoint: Path,
                         workspace: Path, device: str) -> Dict[str, Any]:
     """**The scores file, the pairs file and the summary verify each other**
@@ -5918,15 +5932,18 @@ def _registered_record(checkpoint: Path, report_sha256: str, run_id: str, versio
 def _export_row_verified(row: Mapping[str, Any], entry: Mapping[str, Any]) -> None:
     """One row of the results export (L8) holds what the flow kept for its run
     (`entry`: the report's, the measured checkpoint's and the version's
-    digests, the data kind and role, and the native identity the run's report
-    recorded, `_recorded_native_identity`):
+    digests, the data kind and role, and the native identity and every
+    component fact the run's report recorded, `_recorded_native_identity`,
+    `_recorded_components`):
 
     - those identities, and the run kept and registered;
     - the recorded training settings, rules, learning and effective settings
       and loss identity, the environment class, the metric and its status; a
       finetune's weight transfer listing its parts, the frozen parts' forward
       mode and the downstream start (Stage 9b);
-    - the native identity its run recorded, as the record views show it;
+    - the native identity and every component fact its run recorded (each
+      state, the fallback reason and the source's facts), as the record
+      views show them;
     - a KG edge set's units and denominators, and the absence said for
       another kind's;
     - the exposure by kind: a KG edge set's state and reading, a supplied
@@ -5958,6 +5975,8 @@ def _export_row_verified(row: Mapping[str, Any], entry: Mapping[str, Any]) -> No
         f"{probe_id}'s finetune is exported without its weight transfer")
     assert row["native_identity"] == entry["native_identity"], (
         f"{probe_id}'s run is exported with another native identity than its report records")
+    assert row["components"] == entry["components"], (
+        f"{probe_id}'s run is exported with other component facts than its report records")
     exposure = row["exposure_state"]
     if entry["kind"] == "kg_edges":
         assert exposure in (HELD_OUT, AFTER_FULL_VIEW_EXPOSURE) and (
@@ -6008,8 +6027,8 @@ def _rc_demo(report: Report, work: Path, sound: Path, base: Path, child: Path, d
                 "SHEPHERD_DEVICE": device}
     state: Dict[str, Any] = {}
     #: Each run the flow kept and registered, for L8: by run id, the report's
-    #: digest, the measured checkpoint's, the version's, the probe's id and
-    #: the native identity the run's report recorded.
+    #: digest, the measured checkpoint's, the version's, the probe's id, and
+    #: the native identity and component facts the run's report recorded.
     kept: List[Dict[str, Any]] = []
 
     def _need(*keys: str) -> None:
@@ -6028,7 +6047,8 @@ def _rc_demo(report: Report, work: Path, sound: Path, base: Path, child: Path, d
                      "checkpoint_sha256": checkpoint_sha256,
                      "version_sha256": version.identity.sha256, "kind": version.kind,
                      "role": version.manifest["role"], "sequence": record["sequence"],
-                     "native_identity": _recorded_native_identity(kept_report)})
+                     "native_identity": _recorded_native_identity(kept_report),
+                     "components": _recorded_components(kept_report)})
 
     def _measured_and_registered(probe_id: str, checkpoint: Path, checkpoint_sha256: str,
                                  label: str, version: Any, protocol: str

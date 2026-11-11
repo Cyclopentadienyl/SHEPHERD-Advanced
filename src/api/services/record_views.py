@@ -41,8 +41,11 @@ as recorded (`recorded_settings`).
 **Aggregates only** (D7). A view holds counts, metrics, relation states, R10
 states and counts, environment class, GPU and native build identity (each
 component's version, native libraries' count and aggregate digest, and source
-route; never a file name), dataset origin, registration, run and digests;
-never a problem's words, which may name a server path: an unreadable record's
+route; never a file name), every recorded fact of each component (its states,
+fallback reason, version, native identity and source facts as its record
+holds them, each text with any server path replaced:
+`run_environment.recorded_components`), dataset origin, registration, run and
+digests; never a problem's words, which may name a server path: an unreadable record's
 reason is built from field names and fixed words only. No path (a record's R10
 evidence paths among them), no case id, no rank; a ledger problem names the
 file, never its directory (`ledger_problem`). A KG edge set's exposure is held
@@ -90,7 +93,17 @@ from typing import (
     Union,
 )
 
-from pydantic import Discriminator, Field, Tag, field_validator, model_validator
+from pydantic import (
+    AfterValidator,
+    ConfigDict,
+    Discriminator,
+    Field,
+    PlainValidator,
+    Tag,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from src.api.services.response_models import SHA256_PATTERN as _SHA256
 from src.api.services.response_models import StrictModel as _Strict
@@ -110,7 +123,12 @@ from src.evaluation.sidecar import (
 # How long an unreadable record's reason may be: `problem_line`'s own bound,
 # so the line it gives always fits the field.
 from src.utils.checkpoint_paths import _PROBLEM_LIMIT as _REASON_LIMIT
-from src.utils.run_environment import native_identity
+from src.utils.run_environment import (
+    UNKNOWN,
+    is_plain_data,
+    native_identity,
+    recorded_components,
+)
 
 #: R10 states that carry a count (spec §3.2); every other state carries none.
 _COUNTED_R10_STATES = ("overlap", "none")
@@ -273,15 +291,100 @@ class RecordComponentSource(_Strict):
 class RecordComponent(_Strict):
     """One named component of the measuring run's environment (E1), by its
     identity: what it is, its distribution version, its native libraries and
-    its source's route. What was requested, installed, available, selected or
-    in effect stays in the ledger record. The collector holds every component
-    to this shape (`src.utils.run_environment.component_facts`), so a record
-    it wrote is never refused here."""
+    its source's route (`native_identity`, the display summary). What was
+    requested, installed, available, selected or in effect, why it fell back
+    and its source's other facts are its facts' (`RecordComponentFacts`, the
+    view's ``components``). The collector holds every component to this
+    shape (`src.utils.run_environment.component_facts`), so a record it wrote
+    is never refused here."""
 
     kind: _Text
     version: Optional[str]
     native: RecordNativeLibraries
     source: RecordComponentSource
+
+
+class _AsRecorded(_Strict):
+    """Facts as a record holds them: a field the record does not hold is left
+    out when shown, never shown as null or as a default, so what a client
+    reads is what was recorded (a reader takes a state left out as unknown).
+    Never shown as itself."""
+
+    # No return annotation: the shown shape (its JSON schema) stays the
+    # model's own.
+    @model_serializer(mode="wrap")
+    def _only_what_is_recorded(self, handler):
+        shown = handler(self)
+        held = self.model_fields_set
+        return {key: value for key, value in shown.items() if key in held}
+
+
+def _component_state(value: Any) -> Any:
+    """A component's state as the collector records it
+    (`run_environment.component_facts`): true, false or ``"unknown"``."""
+    if type(value) is bool or value == UNKNOWN:
+        return value
+    raise ValueError(f"true, false or {UNKNOWN!r}")
+
+
+def _plain_fact(value: Any) -> Any:
+    """A source fact passed on only as plain data
+    (`run_environment.is_plain_data`); refused naming no value."""
+    if not is_plain_data(value):
+        raise ValueError("not plain data (text, a number, a boolean, null, or a list or an "
+                         "object of those)")
+    return value
+
+
+_ComponentState = Annotated[
+    Union[bool, Literal["unknown"]],
+    PlainValidator(_component_state, json_schema_input_type=Union[bool, Literal["unknown"]])]
+_PlainFact = Annotated[Any, AfterValidator(_plain_fact)]
+
+
+class RecordComponentNativeFacts(RecordNativeLibraries, _AsRecorded):
+    """A component's native identity as its record holds it: the identity's
+    state, count and aggregate SHA-256, and why, where the state is not
+    recorded."""
+
+    reason: Optional[_Text] = None
+
+
+class RecordComponentSourceFacts(RecordComponentSource, _AsRecorded):
+    """Where a component came from, every fact its record holds: its state,
+    route and reason, and each other fact as recorded (the source receipt's
+    requested and resolved source, wheel SHA-256, torch and CUDA build
+    compiled against, toolchain and flags, or another reader's own build
+    facts, such as a commit or a compiler), each plain data."""
+
+    model_config = ConfigDict(extra="allow")
+    __pydantic_extra__: Dict[str, _PlainFact]
+
+    reason: Optional[_Text] = None
+
+
+class RecordComponentFacts(_AsRecorded):
+    """**Every recorded fact of one named component** of the measuring run's
+    environment (E1; review fix RC-P2-1), in the collector's shape
+    (`src.utils.run_environment.COMPONENT_FIELDS`), as its record holds them
+    (`run_environment.recorded_components`): its kind; whether it was
+    requested, installed, available, selected and observed in effect, each
+    true, false or ``"unknown"``; why it fell back; its version; its native
+    identity; and its source. A field the record does not hold is left out
+    (a record written before ``requested`` was recorded has none), and a
+    state left out reads ``"unknown"``. Every text has passed the one D7
+    redaction. The same for every component and every reader."""
+
+    kind: _Text
+    requested: _ComponentState = UNKNOWN
+    installed: _ComponentState = UNKNOWN
+    available: _ComponentState = UNKNOWN
+    selected: _ComponentState = UNKNOWN
+    in_effect: _ComponentState = UNKNOWN
+    fallback_reason: Optional[_Text] = None
+    version: Optional[str] = None
+    native: Optional[RecordComponentNativeFacts] = None
+    source: Optional[RecordComponentSourceFacts] = None
 
 
 class RecordRegistration(_Strict):
@@ -339,7 +442,19 @@ class _CommonFields(_Strict):
         "deploy route where the source receipt matched what was installed. Two builds of one "
         "version differ in the digest. null for a record whose environment names no "
         "components (written before; shown as not recorded). Recorded, never compared or "
-        "enforced (R11)")
+        "enforced (R11). The display summary: every recorded fact is in `components`")
+    components: Optional[Dict[str, RecordComponentFacts]] = Field(
+        ..., description="Every recorded fact of each named component of the measuring run's "
+        "environment (`environment.facts.components`; review fix RC-P2-1), by name as in "
+        "`native_identity`: its kind; whether it was requested, installed, available, "
+        "selected and observed in effect, each true, false or \"unknown\" as recorded; its "
+        "fallback reason; its version; its native identity (state, count, aggregate SHA-256 "
+        "and why not); and its source, every fact the record holds (state, route and why "
+        "not, the source receipt's requested and resolved source, wheel SHA-256, build "
+        "compiled against, toolchain and flags, or another reader's own build facts). A "
+        "field the record does not hold is left out (a state left out reads unknown); a "
+        "server path in a text is shown as \"a server path\". null for a record whose "
+        "environment names no components. Recorded, never compared or enforced (R11)")
     dataset_origin: Literal["files", "synthetic"]
     scoring_semantics_digest: _Digest
     measurement_semantics_digest: _Digest
@@ -852,6 +967,7 @@ def _kind_view(record: Dict[str, Any], views: Dict[str, type],
         "deterministic_algorithms": _recorded_determinism(record),
         "gpu": _pick(_at(record, "environment", "facts", "gpu"), RecordGpu.model_fields),
         "native_identity": None if components is _NOT_THERE else native_identity(components),
+        "components": None if components is _NOT_THERE else recorded_components(components),
         "dataset_origin": _at(record, "dataset_record", "origin"),
         "scoring_semantics_digest": _at(record, "scoring_semantics_digest"),
         "measurement_semantics_digest": _at(record, "measurement_semantics_digest"),
@@ -1007,10 +1123,12 @@ def unreadable_reason(exc: ValueError, within: Tuple[str, ...] = ()) -> str:
     """Why the shared check refused a record, as one bounded line that names
     the refused fields and never their values (K8-6e.1).
 
-    For pydantic's refusal, at most three of its errors, each "<field path>:
-    missing" (a field the record lacks, `_NOT_THERE`) or "<field path>: <what
-    is wrong>" (pydantic's words, its "Value error, " prefix left out), then
-    how many more; the input it was given is never written (pydantic's own
+    For pydantic's refusal, at most three of the record's fields it refused,
+    each once (a field two of the view's fields read, the components, is
+    named by the first's refusal), each "<field path>: missing" (a field the
+    record lacks, `_NOT_THERE`) or "<field path>: <what is wrong>"
+    (pydantic's words, its "Value error, " prefix left out), then how many
+    more; the input it was given is never written (pydantic's own
     text carries it, with a documentation link, over several lines). **The
     field path is the ledger record's** (`_record_path`), not the API view's
     name for it: the key a hand edit of the ledger corrects. A key the record
@@ -1028,20 +1146,25 @@ def unreadable_reason(exc: ValueError, within: Tuple[str, ...] = ()) -> str:
     from src.utils.checkpoint_paths import problem_line
 
     if isinstance(exc, ValidationError):
-        errors = exc.errors(include_url=False)
-        parts = []
-        for error in errors[:3]:
+        # By the record's own path, each field once: two fields of the view
+        # read one field of the record (the components, `native_identity` and
+        # `components`), so its refusal is named once, in the first's words.
+        named: Dict[str, str] = {}
+        for error in exc.errors(include_url=False):
             where = ".".join(_printable(step) for step in _record_path(
                 (*within, *(error.get("loc") or ())))) or "the record"
+            if where in named:
+                continue
             if error.get("type") == "missing" or error.get("input") is _NOT_THERE:
-                parts.append(f"{where}: missing")
+                named[where] = "missing"
                 continue
             words = str(error.get("msg") or "is not valid")
             if words.startswith("Value error, "):
                 words = words[len("Value error, "):]
-            parts.append(f"{where}: {words}")
-        if len(errors) > 3:
-            parts.append(f"{len(errors) - 3} more")
+            named[where] = words
+        parts = [f"{where}: {words}" for where, words in list(named.items())[:3]]
+        if len(named) > 3:
+            parts.append(f"{len(named) - 3} more")
         text = "; ".join(parts)
     else:
         text = str(exc)
@@ -1059,6 +1182,7 @@ _RECORD_PATHS: Dict[Tuple[str, ...], Tuple[str, ...]] = {
     ("score_semantics",): ("scoring", "score_semantics"),
     ("gpu",): ("environment", "facts", "gpu"),
     ("native_identity",): ("environment", "facts", "components"),
+    ("components",): ("environment", "facts", "components"),
     ("dataset_origin",): ("dataset_record", "origin"),
 }
 
@@ -1403,6 +1527,7 @@ __all__ = [
     "RECORD_VIEWS",
     "RESULT_VIEWS",
     "RecordComponent",
+    "RecordComponentFacts",
     "RecordView",
     "SuppliedResultView",
     "UnreadableRecord",

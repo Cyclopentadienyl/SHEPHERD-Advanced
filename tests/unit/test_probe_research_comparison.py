@@ -409,7 +409,8 @@ def exported(trained_disease_child, tmp_path_factory, probe):
                 "report_sha256": _sha(path.read_bytes()), "checkpoint_sha256": child_sha,
                 "version_sha256": version.identity.sha256, "kind": version.kind,
                 "role": version.manifest["role"],
-                "native_identity": probe._recorded_native_identity(report)}
+                "native_identity": probe._recorded_native_identity(report),
+                "components": probe._recorded_components(report)}
         output = root / "export.json"
         assert export_results.main(["--workspaces-root", f"workspaces={root / 'workspaces'}",
                                     "--registry", f"registry={registry}", "--format", "json",
@@ -434,6 +435,7 @@ def test_every_real_exported_row_holds_what_its_run_kept(probe, exported, monkey
     for row in exported["rows"]:
         entry = exported["entries"][row["run_id"]]
         assert entry["native_identity"], "the run's report records no component"
+        assert set(entry["components"]) == set(entry["native_identity"])
         probe._export_row_verified(row, entry)
         assert row["learning_stage"] == "finetune"
 
@@ -475,4 +477,17 @@ def test_a_row_whose_native_identity_is_not_its_report_s_fails(probe, exported):
     row["native_identity"][name]["version"] = "0.0.0-another"
     with pytest.raises(AssertionError, match="another native identity than its report "
                                              "records"):
+        probe._export_row_verified(row, entry)
+
+
+def test_a_row_whose_component_facts_are_not_its_report_s_fails(probe, exported):
+    """Review fix RC-P2-1: a row whose component facts differ from what its
+    run recorded (here only what was in effect: the native identity is the
+    same) fails L8."""
+    row, entry = _case(exported, "supplied")
+    name = sorted(row["components"])[0]
+    assert row["components"][name]["in_effect"] != "yes"
+    row["components"][name]["in_effect"] = "yes"
+    assert row["native_identity"] == entry["native_identity"]
+    with pytest.raises(AssertionError, match="other component facts than its report records"):
         probe._export_row_verified(row, entry)

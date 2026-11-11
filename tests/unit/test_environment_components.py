@@ -61,6 +61,7 @@ from src.utils.run_environment import (
     native_identity,
     native_identity_lines,
     native_identity_text,
+    recorded_components,
 )
 from tests.unit.test_pyg_install_identity import _install, _wheel
 
@@ -284,13 +285,16 @@ ACCEPTED = [
 def test_every_component_the_collector_accepts_the_record_view_reads(facts):
     """One shape on both sides of the record (E1): whatever `component_facts`
     accepts, the record view validates (`RecordComponent`), so no record is
-    hidden for the environment it was measured in (§4.2)."""
-    from src.api.services.record_views import RecordComponent
+    hidden for the environment it was measured in (§4.2). Its every fact,
+    too (`RecordComponentFacts`), shown exactly as recorded."""
+    from src.api.services.record_views import RecordComponent, RecordComponentFacts
 
     collected = component_facts("attention kernel", **facts)
 
     (shown,) = native_identity({"test_attention": collected}).values()
     RecordComponent.model_validate(shown)
+    (every,) = recorded_components({"test_attention": collected}).values()
+    assert RecordComponentFacts.model_validate(every).model_dump(mode="json") == collected
 
 
 def test_a_reader_giving_what_the_view_would_refuse_becomes_a_readable_status(
@@ -583,6 +587,9 @@ def test_an_extra_components_facts_reach_the_checkpoint_the_manifest_and_the_led
         "kind": "attention kernel", "version": "2.0",
         "native": {"state": "not recorded", "count": None, "aggregate_sha256": None},
         "source": {"state": "not recorded", "route": None}}
+    # Every fact the collector gave reaches the record view as recorded
+    # (review fix RC-P2-1): its states, its fallback and its reason.
+    assert view.model_dump(mode="json")["components"] == expected
 
 
 def test_no_component_enters_a_semantic_digest_or_a_condition_group():
@@ -684,6 +691,95 @@ def test_the_projection_picks_the_identity_and_passes_anything_else_on():
         "source": {"state": "recorded", "route": "local build"}}}
     assert native_identity(["not", "an", "object"]) == ["not", "an", "object"]
     assert native_identity({"pyg_lib": {"version": "1"}}) == {"pyg_lib": {"version": "1"}}
+
+
+# --- Every recorded fact (review fix RC-P2-1) ---------------------------------------
+
+def test_every_recorded_fact_is_passed_on_and_nothing_filled_in():
+    """The one projection of every fact (`recorded_components`): each
+    component's facts in the shape, its native identity's reason and every
+    fact its source holds (the receipt's, or another reader's own: a commit,
+    a compiler) as recorded; a fact the record lacks left out, never filled
+    in; a key outside the shape left behind; a value that is not an object
+    passed on for the reader to refuse. Generic: any name, any kind."""
+    receipt = _entry("0.8.0", "a" * 64, "local build")
+    receipt["source"].update(
+        requested={"kind": "registry", "name": "pyg-lib", "specifier": "==0.8.0"},
+        resolved={"version": "0.8.0"}, wheel_sha256="b" * 64,
+        compiled_against={"torch": "2.10.0+cu130", "cuda": "13.0"},
+        toolchain={"gcc": "13.3.0"}, flags={"MAX_JOBS": "8"})
+    other = component_facts("vector index", installed=True, available=True, selected=False,
+                            in_effect=False, fallback_reason="the run asked for exact search",
+                            native={"state": "not recorded", "count": None,
+                                    "aggregate_sha256": None, "reason": "not native"},
+                            source={"state": "recorded", "route": "conda",
+                                    "commit": "c" * 40, "compiler": "clang 18"})
+    older = dict(other)
+    del older["requested"], older["fallback_reason"]
+    older["speed"] = "fast"
+
+    shown = recorded_components({"pyg_lib": receipt, "any name": other, "older": older,
+                                 "broken": "not an object"})
+
+    assert shown["pyg_lib"] == receipt and shown["any name"] == other
+    assert list(shown["any name"]) == list(COMPONENT_FIELDS)
+    assert shown["older"] == {key: other[key] for key in COMPONENT_FIELDS
+                              if key not in ("requested", "fallback_reason")}
+    assert shown["broken"] == "not an object"
+    assert recorded_components(["not", "an", "object"]) == ["not", "an", "object"]
+    assert recorded_components({}) == {}
+
+
+def test_every_text_passes_the_one_redaction_and_a_request_is_shown_as_recorded():
+    """D7: a server path in any text (a reason, a source fact, a key inside
+    one, a component's name) is shown as "a server path", its other words
+    kept; a requested source reads as a record keeps one, whatever an older
+    record holds (no file name, its URL without credentials)."""
+    facts = component_facts(
+        "attention kernel", in_effect=False, available=True,
+        fallback_reason="no kernel at /srv/lab/kernels/attn.so; used default",
+        native={"state": "cannot be read", "count": None, "aggregate_sha256": None,
+                "reason": "C:\\lab\\kernels cannot be read"},
+        source={"state": "recorded", "route": "local build",
+                "compiler": "/opt/cc/bin/gcc 13", "flags": {"/home/u/src": ["/tmp/x", 1]},
+                "requested": {"kind": "url", "url": "https://user:token@example.org/w?t=1",
+                              "asset": "attn-2.0-cp312-linux_aarch64.whl"}})
+
+    (name, shown), = recorded_components({"/srv/lab/attention": facts}).items()
+
+    assert name == "a server path"
+    assert shown["fallback_reason"] == "no kernel at a server path; used default"
+    assert shown["native"]["reason"] == "a server path cannot be read"
+    assert shown["source"]["compiler"] == "a server path 13"
+    assert shown["source"]["flags"] == {"a server path": ["a server path", 1]}
+    assert shown["source"]["requested"] == {"kind": "url", "url": "https://example.org/w"}
+    assert shown["source"]["route"] == "local build"
+    for secret in ("/srv/lab", "C:\\lab", "/opt/cc", "/home/u", "/tmp/x", "token", ".whl"):
+        assert secret not in json.dumps(shown)
+
+
+@pytest.mark.parametrize("change, field", [
+    (lambda facts: facts.update(in_effect="yes"), "in_effect"),
+    (lambda facts: facts["source"].update(flags={"MAX_JOBS": float("nan")}), "source.flags"),
+    (lambda facts: facts["source"].update(commit=b"bytes"), "source.commit"),
+    (lambda facts: facts.update(fallback_reason=""), "fallback_reason"),
+])
+def test_the_facts_view_refuses_what_the_collector_never_records(change, field):
+    """A fact edited out of the shape (a state, or a value that is not plain
+    data) is refused by the facts view, naming the field and never its
+    value: the record is listed unreadable, as for a bad identity."""
+    from pydantic import ValidationError
+
+    from src.api.services.record_views import RecordComponentFacts
+
+    facts = component_facts("attention kernel", available=True, in_effect=False,
+                            fallback_reason="dtype", source={"state": "recorded",
+                                                             "route": "local build"})
+    change(facts)
+    with pytest.raises(ValidationError) as refused:
+        RecordComponentFacts.model_validate(recorded_components({"x": facts})["x"])
+    assert [".".join(map(str, error["loc"])) for error in refused.value.errors()] == [field]
+    assert "nan" not in str(refused.value.errors()[0]["msg"]).lower()
 
 
 def test_the_readers_project_records_and_never_collect():

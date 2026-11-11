@@ -65,9 +65,9 @@ runs on the probe's own deployment under `<work>/rc`:
 
 **What the check must not require.** No metric value, no threshold and no comparison between two models' figures: they
 are functional checks, not results (README §1, "Not pass conditions"). The probes never compare a version or a route
-with an expected one, or one run's with another's. L8 checks only that the export shows each run's native identity as
-that run's own report recorded it. On CUDA, two runs of one model need not give equal bytes or numbers; that they are
-both kept is what counts.
+with an expected one, or one run's with another's. L8 checks only that the export shows each run's native identity and
+every component fact as that run's own report recorded them. On CUDA, two runs of one model need not give equal bytes or
+numbers; that they are both kept is what counts.
 
 **Where each run ran.** Every kept run's report is checked when the probe reads it (`_ran_on`, in L2, L3, L5, L6 and
 L7). Its `cuda_executed` must be true exactly when the probe's device is CUDA. The measurement command records true
@@ -223,8 +223,9 @@ Before passing, the probe checks every exported row:
 - kept and registered;
 - the recorded training settings, rules, learning and effective settings, and loss identity, with a finetune's weight
   transfer listing `parts`, `frozen_forward` and `downstream_initial_sha256`;
-- the environment class, and the native identity that run's own report recorded, as the record views show it (never
-  the probe's own process: L3's run was measured in the job runner's);
+- the environment class, and the native identity and every component fact (`components`: each state, the fallback
+  reason, the version, the native identity and the source's facts) that run's own report recorded, as the record views
+  show them (never the probe's own process: L3's run was measured in the job runner's);
 - units for a KG edge set's metrics, and the absence said for the others;
 - the exposure: a KG edge set's state and reading, a supplied cohort's R10, a generated split's allocation note.
 

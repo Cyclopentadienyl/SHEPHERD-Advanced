@@ -492,7 +492,9 @@ record and A1, also records each extension as a named component: requested, inst
 selected and in effect told apart (what was not observed reads unknown), its native libraries' count
 and aggregate SHA-256 (two builds of one version differ there; no file name is recorded), and the source receipt's
 facts where the receipt matches what is installed. The record views show that identity in one wording,
-on one line on Models and a component per line on the Test page. Recorded, never a gate. The launcher's optional accelerators stay out of the lock, and every install of one is
+on one line on Models and a component per line on the Test page, and carry every recorded fact of each
+component (`components`: its states, fallback reason and source facts too), which the results query,
+Compare and the export pass on. Recorded, never a gate. The launcher's optional accelerators stay out of the lock, and every install of one is
 constrained to it (deployment guide §4.15). M5's GB10 acceptances (`b14c4de`, and the WebUI rounds of 2026-10-25) ran torch 2.10.0+cu130 with
 `torch_geometric` 2.8.1, the current baseline, which `deploy.sh` installs from the lock since Batch 1
 (its GB10 deploy and environment check at `0bc5178` passed, 2026-10-26; Windows not run); M4's ran

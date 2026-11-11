@@ -309,6 +309,9 @@ def test_every_value_in_compare_and_the_status_line_is_escaped(world, monkeypatc
         # Nested entries, named items and measurement keys are row words and titles.
         row["model"]["effective_settings"] = {HOSTILE: {HOSTILE: HOSTILE}}
         row["references"] = [{"name": HOSTILE, "sha256": HOSTILE}]
+        # A component's name and its facts, as a hand-edited record holds them.
+        row["environment"]["components"] = {HOSTILE: {"kind": HOSTILE, "source": {
+            "state": "recorded", "route": HOSTILE, HOSTILE: HOSTILE}}}
         row["measurement"][HOSTILE] = HOSTILE
         row["data"]["label"] = HOSTILE
         row["run_id"] = HOSTILE
@@ -328,12 +331,14 @@ def test_every_value_in_compare_and_the_status_line_is_escaped(world, monkeypatc
         row["model"]["effective_settings"] = {quote: {quote: f"{quote}{index}"}}
         row["measurement"][quote] = f"{quote}{index}"
         row["references"] = [{"name": quote, "sha256": f"{quote}{index}"}]
+        row["environment"]["components"] = {quote: {"kind": f"{quote}{index}"}}
         row["unknown"]["model.operation"] = f"{quote}{index}"
     for differences in (True, False):
         markup = rs.compare_html(rows, differences)
         assert 'onmouseover="' not in markup and "&quot; onmouseover=&quot;x" in markup
         assert f'title="model.effective_settings.{html_lib.escape(quote)}.' in markup
         assert f'title="measurement.{html_lib.escape(quote)}"' in markup
+        assert f'title="environment.components.{html_lib.escape(quote)}.kind"' in markup
     scope = {"scope": rs.FAMILY, "workspace": HOSTILE, "family": HOSTILE, "note": HOSTILE}
     status = rs.status_html({**state, "read_at": HOSTILE}, scope,
                             {"shown": [], "in_scope": 0, "unplaced": 1, "unplaced_in_scope": 0})
@@ -441,6 +446,52 @@ def test_compare_says_each_missing_value_in_its_own_words(world, monkeypatch):
     assert _cells(markup, "Device") == [
         "cuda:0", "○ Unknown: its record does not hold it as a value"]
     assert "another protocol" not in markup
+
+
+def test_compare_shows_what_was_in_effect_why_and_each_source_fact_as_its_own_row(
+        world, monkeypatch):
+    """Review fix RC-P2-1: two runs of one build (one component, version and
+    native digest) that differ only in whether it was in effect, why it fell
+    back and one source fact. With Differences only, the environment shows
+    those rows alone, each in the segment's words under the component's name
+    as recorded, its record key the row's title; the Native build line is
+    alike for both, so hidden, and shown with every row. A result whose
+    record names no components reads Unknown there, with why."""
+    from src.webui.components import results_segment as rs
+    from tests.unit.test_results_export import FELL_BACK, attention, registered_with
+
+    used = registered_with(world, {"test_attention": attention(True)})
+    fell = registered_with(world, {"test_attention": attention(False, commit="b" * 40)})
+    state, _scope, _shown_rows = _shown(_state(world, monkeypatch))
+    rows = {row["run_id"]: row for row in _results(state)}
+    first, second = rows[used], rows[fell]
+
+    markup = rs.compare_html([first, second], True)
+    environment = [label for label in _labels(markup)
+                   if label.startswith(("Component", "Native build", "GPU", "Environment"))]
+    assert environment == ["Component · test_attention › In effect",
+                           "Component · test_attention › Fallback reason",
+                           "Component · test_attention › Source › Commit"]
+    assert _cells(markup, "Component · test_attention › In effect") == ["true", "false"]
+    assert _cells(markup, "Component · test_attention › Fallback reason") == ["none", FELL_BACK]
+    assert _cells(markup, "Component · test_attention › Source › Commit") == ["a" * 40, "b" * 40]
+    assert 'title="environment.components.test_attention.in_effect"' in markup
+    assert 'title="environment.components.test_attention.source.commit"' in markup
+
+    every = rs.compare_html([first, second], False)
+    native = _cells(every, "Native build")
+    assert native[0] == native[1] and "test_attention 2.0" in native[0]
+    for label, value in (("Kind", "attention kernel"), ("Version", "2.0"),
+                         ("Requested", "true"), ("Source › Compiler", "audit-compiler 1.0"),
+                         ("Source › Route", "local build")):
+        assert _cells(every, f"Component · test_attention › {label}") == [value, value]
+
+    before = next(row for row in _results(state)
+                  if row["run_id"] == world["registered"].parent.name)
+    older = rs.compare_html([before, first], True)
+    assert _cells(older, "Component · test_attention › Kind") == [
+        "○ Unknown: its record names no environment components", "attention kernel"]
+    assert _cells(older, "Component · test_attention › In effect") == ["○ Unknown", "true"]
 
 
 def test_compare_choices_are_unique_and_name_this_read_only(world, monkeypatch):

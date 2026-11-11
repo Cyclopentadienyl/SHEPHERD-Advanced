@@ -75,7 +75,10 @@ without a trainable parameter among them), its data identity and role,
 its measurement settings and protocol (`record_views.recorded_settings`), its
 metrics as recorded (each value as its record holds it, an integer as an
 integer) and a KG edge set's run counts, its environment (the class, the
-regime and the native build identity), its relation to the model's training
+regime, the native build identity and every recorded fact of each named
+component, `run_environment.recorded_components`: its states, fallback reason,
+version, native identity and source facts, a field its record does not hold
+left out), its relation to the model's training
 where it was recorded (a supplied cohort's R10 states and counts, a KG edge
 set's exposure; a generated split's is its allocation's, not compared), its
 kept / registered / group states and its content references
@@ -704,12 +707,19 @@ def _result(read: _Read, run: _Run, merged_digests: frozenset = frozenset()) -> 
             "native_identity": ({name: component.model_dump(mode="json")
                                  for name, component in view.native_identity.items()}
                                 if view.native_identity is not None else None),
+            # Every recorded fact of each component, as the one reader shows
+            # them (`RecordComponentFacts`): what the summary above leaves out.
+            "components": ({name: component.model_dump(mode="json")
+                            for name, component in view.components.items()}
+                           if view.components is not None else None),
         },
         "exposure": _exposure(view),
         "reason": None,
     }
     if view.native_identity is None:
         unknown["environment.native_identity"] = "its record names no environment components"
+    if view.components is None:
+        unknown["environment.components"] = "its record names no environment components"
     if not run.kept:
         unknown["report"] = ("no listed store keeps this run's report"
                              if run.kind == RUN else
@@ -911,6 +921,7 @@ COLUMNS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     ("software_revision", ("measurement", "software_revision")),
     ("gpu", ("environment", "gpu")),
     ("native_identity", ("environment", "native_identity")),
+    ("components", ("environment", "components")),
     ("exposure_state", ("exposure", "state")),
     ("exposure_reading", ("exposure", "reading")),
     ("exposure_definition", ("exposure", "definition_version")),
@@ -932,6 +943,7 @@ _UNKNOWN_COLUMNS: Dict[str, Tuple[str, ...]] = {
     "unit": ("metric.unit",),
     "denominator": ("metric.unit",),
     "native_identity": ("environment.native_identity",),
+    "components": ("environment.components",),
     "references": ("references",),
     "run_counts": ("run_counts",),
 }
