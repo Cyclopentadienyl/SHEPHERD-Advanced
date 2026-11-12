@@ -169,3 +169,33 @@ def test_the_job_runner_refuses_what_the_process_refuses_before_any_start(
         assert resp.status_code == 409 and resp.json()["detail"] == started, resp.text
     popen.assert_not_called()
     assert manager.active_job() is None and manager.run_dir is None
+
+
+def test_a_preview_resolves_its_device_as_the_start_does(no_cuda, trained_disease_child,
+                                                         tmp_path):
+    """Review of AF1: the previews mapped `auto` to CUDA themselves, so on a
+    host without CUDA the console's Check (which previews with the device as
+    asked) said a continuation would run and Start then refused it. Both
+    previews resolve the device by the start's rule first, before the parent
+    is read, so Check and Start say the same; an explicit cpu previews as
+    before."""
+    pytest.importorskip("gradio")
+    from src.api.services.training_manager import TrainingManager
+    from src.utils.training_device import TrainingDeviceUnavailable, resolve_training_device
+    from src.webui.components import training_console
+
+    with pytest.raises(TrainingDeviceUnavailable) as raised:
+        resolve_training_device("auto")
+    said = f"{raised.value} Nothing was started."
+    manager = TrainingManager()
+    child = str(trained_disease_child["disease"])
+    for preview in (manager.preview_continuation(child, device="auto", extend_epochs=1),
+                    manager.preview_branch(child, device="auto"),
+                    training_console._preview_for(child, "auto", 1),
+                    manager.preview_continuation(str(tmp_path / "missing.pt"), device="auto")):
+        assert preview == {"ok": False, "reason": said}, preview
+    started = manager.start_training({"data_dir": str(trained_disease_child["data_dir"]),
+                                      "resume_from": child, "extend_epochs": 1})
+    assert started["success"] is False and started["error"] == said
+    assert manager.preview_continuation(child, device="cpu", extend_epochs=1)["ok"] is True
+    assert manager.preview_branch(child, device="cpu")["ok"] is True

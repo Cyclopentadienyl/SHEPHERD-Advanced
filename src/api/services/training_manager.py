@@ -2602,6 +2602,12 @@ class TrainingManager:
         from the parent's are refused here, as the training process would
         refuse them (`plan_continuation`).
 
+        **The device first**, by the rule the training process and every
+        start resolve it by (`_training_device`): a device this host cannot
+        give (`auto` without CUDA) is refused in the process's sentence
+        before the parent is read, so the console's Check says what Start
+        would, and the plan judges the run on the device it would have.
+
         `extend_if_finished` is the console's: its Extra epochs field belongs to
         a finished parent, so for any other parent the value is not sent
         (`training_console._preview_for`). Every other caller leaves it off, and
@@ -2617,6 +2623,9 @@ class TrainingManager:
         from src.models.bundle.record import MODEL_RECORD_VERSION
         from src.utils.run_plan import RunPlanRefused, SettingsRefused, plan_continuation
 
+        effective_device, refusal = _training_device(device)
+        if refusal:
+            return {"ok": False, "reason": refusal}
         read, _record, facts = self._read_parent(parent_path, expected_sha256, "The parent")
         if read is None:
             return facts
@@ -2628,7 +2637,6 @@ class TrainingManager:
         request = self._plan_request(record, explicit, resume_from=str(path),
                                      extend_epochs=extend_epochs,
                                      extend_lr=explicit.get("extend_lr"), device=device)
-        effective_device = "cuda" if device == "auto" else device
         try:
             plan = plan_continuation(record, path, request, set(explicit),
                                      device=effective_device,
@@ -2662,8 +2670,10 @@ class TrainingManager:
         the functions the training process judges it by, in the order the
         process judges a branch this runner starts (its stage and task the
         parent's), so a request with one refusal is refused in the process's
-        words: two parents named (`parents_problem`); a stated stage or task
-        other than the parent's, then a parent without weights
+        words: two parents named (`parents_problem`); the device, by the rule
+        the process and every start resolve it by (`_training_device`), before
+        the parent is read, the plan then judging the run on it; a stated
+        stage or task other than the parent's, then a parent without weights
         (`branch_parent_problem`, whose stage and task check is the plans'
         one, `run_plan.parent_identity_problem`; a request that states
         neither branches the parent's); **the plan** (`run_plan.plan_branch`:
@@ -2698,6 +2708,9 @@ class TrainingManager:
         problem = parents_problem({**explicit, "branch_from": parent_path})
         if problem:
             return {"ok": False, "invalid_settings": True, "reason": problem}
+        effective_device, refusal = _training_device(device)
+        if refusal:
+            return {"ok": False, "reason": refusal}
         read, model_record, facts = self._read_parent(parent_path, expected_sha256,
                                                       "The branch parent")
         if read is None:
@@ -2712,7 +2725,6 @@ class TrainingManager:
         request = self._plan_request(record, explicit, branch_from=str(path),
                                      extend_epochs=explicit.get("extend_epochs"),
                                      extend_lr=explicit.get("extend_lr"), device=device)
-        effective_device = "cuda" if device == "auto" else device
         try:
             plan = plan_branch(record, path, request, set(explicit), device=effective_device,
                                record_version=MODEL_RECORD_VERSION)
