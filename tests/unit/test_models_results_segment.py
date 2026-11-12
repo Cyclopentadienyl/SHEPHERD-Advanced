@@ -813,6 +813,40 @@ def _finetune_base_supplied_kg(world, monkeypatch):
     return finetune, base, row, kg
 
 
+def test_compare_says_what_a_branch_changed_from_its_parent(world, monkeypatch):
+    """Decision B4: what a branch changed from its parent is a Model row of
+    Compare and of a result's details, "Settings changed", as on the Models
+    page: a same-settings branch in the Models page's words, never "not
+    recorded" beside a branch that changed settings (decision B1: none
+    changed is not not recorded); each setting changed with its parent's
+    value and its own; "none" for a result of any other operation, which
+    records none."""
+    from src.webui.components import models_page as mp
+    from src.webui.components import results_segment as rs
+
+    _finetune, base, _supplied, _kg = _finetune_base_supplied_kg(world, monkeypatch)
+    assert base["model"]["parent_changes"] is None
+    same, changed = (copy.deepcopy(base) for _ in range(2))
+    same["model"].update(operation="branch", parent_changes={})
+    same["report_sha256"] = "d" * 64
+    changed["model"].update(operation="branch",
+                            parent_changes={"learning_rate": {"parent": 1e-4, "new": 1e-3}})
+    changed["report_sha256"] = "e" * 64
+    labels = [label for _group, label, _value, _why in rs.compare_fields(same)]
+    assert labels.index("Settings changed") == labels.index("Parent run") + 1
+    shown = {label: value for _group, label, value, _why in rs.compare_fields(same)}
+    assert shown["Settings changed"] == mp.SAME_SETTINGS
+    assert {label: value for _group, label, value, _why in rs.compare_fields(base)}[
+        "Settings changed"] is None
+    markup = rs.compare_html([same, changed], False)
+    cells = _cells(markup, "Settings changed")
+    assert cells[0] == mp.SAME_SETTINGS and "learning_rate" in cells[1]
+    assert not [label for label in _labels(markup) if label.startswith("Settings changed ·")]
+    markup = rs.compare_html([changed, base], False)
+    assert _cells(markup, "Settings changed · Learning rate › Parent") == ["0.0001", "none"]
+    assert _cells(markup, "Settings changed · Learning rate › New") == ["0.001", "none"]
+
+
 def test_compare_keeps_not_applicable_not_recorded_and_none_apart(world, monkeypatch):
     """Browser check models-3 (skill §6: missing states keep their own words):
     a base's weight transfer recorded as null reads "none" on every row of
