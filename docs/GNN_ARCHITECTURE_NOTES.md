@@ -28,6 +28,26 @@
 >   and the DistMult link-prediction head (`src/models/bundle/lp_head.py`), not a linear head.
 > - **The conv-type choice is gone** with the ShepherdGNN path: its form in K6, its selection in K8-4
 >   and its `--conv-type` flag in K8-7. An encoder is the model spec's, not a form field.
+>
+> **Note (2026-11-12, `main` `30e8ae1`): this file is a survey of 2026-05, not a list of what this
+> build supports and not a current ranking of architectures.** Its tiers, roadmap and cross-check
+> table are leads to examine. What the note of 2026-11-09 above says is built still holds; read it,
+> and the notes in the body, with these:
+> - **"Declared" there means named in `ENCODER_KINDS`.** What a kind can do is its declaration,
+>   `src/models/bundle/spec.py` `ENCODER_DECLARATIONS` (`gatv2` only), and the capability description
+>   derived from it (`src/models/bundle/capabilities.py`). `hetero_gat`, `hgt` and `sage` have no
+>   declaration: a run of one is refused at its start, and the builder refuses it. None is supported.
+> - **"The multi-architecture milestone" is replaced** by a fit assessment of one second architecture
+>   (C0, [`working/ops-wiring-and-ui-ux/README.md`](working/ops-wiring-and-ui-ux/README.md) §10); only
+>   the one the owner then chooses is ported (C1). HGT, whose layers `HeteroGNNLayer` keeps, is one
+>   candidate, not presumed the newest; the HGT items here, BACKLOG 20's Edit 2 among them, wait for
+>   that choice.
+> - **HGT's dtype.** "Float32 only" (the table under "Current Architecture", "HGT 的 AMP 不相容問題"
+>   and 方案 3) does not hold for the installed build: observed on the CPU with PyG 2.8.1 and
+>   `pyg-lib` 0.8.0, `HGTConv`, `segment_matmul` and `grouped_matmul` ran in bfloat16 under both
+>   kernel policies (`torch_geometric.backend.use_segment_matmul` on and off; float16 was not tried).
+>   The GB10 is unobserved; its two deploy routes carry `pyg-lib` 0.6.0 and 0.8.0. `hgt-lite`
+>   (float16 without `segment_matmul`) stays unverified.
 
 ---
 

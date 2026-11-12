@@ -82,11 +82,16 @@ PyTorch, `torch_geometric` (PyG's core) and the rest of the locked set in `pypro
 **Graph layers**: a model bundle's encoder is its model spec's, behind the `GraphEncoder` contract
 (`src/models/bundle/encoders.py`). The builder builds one kind today, `gatv2`, the reference: the
 paper's homogeneous GATv2 over a learned node table (`working/scorer-retraining/README.md` §2–§3).
-`hetero_gat`, `hgt` and `sage` are declared (`src/config/model_types.py` `ENCODER_KINDS`) and refused
-at build (`src/models/bundle/builder.py` `_build_encoder`) until the multi-architecture milestone, a
-later one, brings `HeteroGNNLayer` (`src/models/gnn/layers.py`, kept for it) behind the contract
-(that README §3.3). *(The ShepherdGNN path's GAT, HGT and SAGE, `--conv-type`, left with its
-training path in K8-7 and its wrapper in K8-10, 2026-11-08.)*
+What a kind offers is its declaration (`src/models/bundle/spec.py` `ENCODER_DECLARATIONS`: `gatv2`
+only) and the capability description derived from it (`src/models/bundle/capabilities.py`).
+`hetero_gat`, `hgt` and `sage` are names the spec reads (`src/config/model_types.py` `ENCODER_KINDS`)
+with no declaration: a run of one is refused at its start, and the builder refuses it
+(`src/models/bundle/builder.py` `_build_encoder`). None of them is supported. A second architecture
+is chosen by a fit assessment before any is ported (C0, then C1 for the one the owner chooses:
+`working/ops-wiring-and-ui-ux/README.md` §10, where HGT is one candidate, not presumed the newest);
+`HeteroGNNLayer` (`src/models/gnn/layers.py`, reached only by tests) is kept and reused where it fits.
+*(The ShepherdGNN path's GAT, HGT and SAGE, `--conv-type`, left with its training path in K8-7 and
+its wrapper in K8-10, 2026-11-08.)*
 **Extension (not implemented)**: fuzzy input, free text to HPO/MONDO (`src/nlp/`).
 
 ---
@@ -360,7 +365,7 @@ Layer 8 (Interface):   src/api/           FastAPI REST endpoints; src/api/servic
 | Component | File | Key Responsibility |
 |-----------|------|-------------------|
 | Model bundle | `src/models/bundle/` (`spec.py`, `builder.py`, `encoders.py`, `capabilities.py`, `record.py`) | The model spec and its encoder declarations, the one builder, the input module and the `GraphEncoder` contract with its reference `GATv2Encoder`; a model's capability description, which the protocols read; the model record and the one way to read it (the ShepherdGNN wrapper, `src/models/gnn/shepherd_gnn.py`, was removed in K8-10) |
-| GNN Layers | `src/models/gnn/layers.py` | `HeteroGNNLayer`, kept for the multi-architecture port and not yet behind the `GraphEncoder` contract (`OrthologGate` was removed in K8-10) |
+| GNN Layers | `src/models/gnn/layers.py` | `HeteroGNNLayer`, kept and not behind the `GraphEncoder` contract, reached only by tests; reused if a chosen second architecture fits it (§1) (`OrthologGate` was removed in K8-10) |
 | Task heads | `src/models/tasks/heads.py` | The patient encoder and the disease, gene and patients-like-me heads of a model bundle (the unwired `src/models/decoders/` heads were deleted in K7) |
 | Stage tasks | `src/training/lp_task.py`, `src/training/finetune_task.py` | Each stage's sampler, loss and validation (the multi-task loss, `src/training/loss_functions.py`, was removed in K8-7) |
 | Trainer | `src/training/trainer.py` | Training loop with mixed precision, driven by its stage's task |

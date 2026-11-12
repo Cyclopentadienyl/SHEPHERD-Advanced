@@ -450,14 +450,25 @@ model spec (versioned, self-describing)
 - **A swap is not automatically one variable.** Width, head capacity, type information, sampling and
   initialisation that change with the encoder are listed as differences.
 - **Inheritance.** A finetune child uses its parent's encoder spec.
-- **The multi-architecture milestone (after K8, not yet built).** The existing encoders (the
-  heterogeneous GAT, HGT and SAGE, kept as `HeteroGNNLayer` in `src/models/gnn/layers.py`) come
-  behind the same contract as non-reference options with the same input module and LP head. They
-  get the minimal build, forward, gradient and save/reload checks; no effect study. HGT carries
-  BACKLOG 20 (Edit 2 waits for the GB10), and `segment_matmul` has no fp16 or bf16. Until then only
-  GATv2 is behind the contract: `src.config.model_types.ENCODER_KINDS` declares `hetero_gat`, `hgt`
-  and `sage`, and the builder refuses them ("declared but not yet behind the GraphEncoder
-  contract", `src/models/bundle/builder.py` `_build_encoder`).
+- **Other architectures (after K8, not built).** What a kind offers is its declaration
+  (`src/models/bundle/spec.py` `EncoderDeclaration`, `ENCODER_DECLARATIONS`: `gatv2` only) and the
+  capability description derived from it (`src/models/bundle/capabilities.py`;
+  `../research-comparison/README.md` §6, E2); the builder builds only a declared kind it implements.
+  `src.config.model_types.ENCODER_KINDS` also names `hetero_gat`, `hgt` and `sage`, with no
+  declaration: they are refused at a run's start and at build ("declared but not yet behind the
+  GraphEncoder contract", `src/models/bundle/builder.py` `_build_encoder`), and none is supported.
+  One architecture is ported at a time, once the owner chooses it on a fit assessment (C0, then C1:
+  [`../ops-wiring-and-ui-ux/README.md`](../ops-wiring-and-ui-ux/README.md) §10, where HGT is one
+  candidate, not presumed the newest). It comes behind the same contract with its own width, heads,
+  norm, sampling and dtype rules in its declaration, reuses the input module, LP head, task heads,
+  Trainer and records where their semantics fit, and gets the build, forward, gradient, typed-order,
+  save/reload, continuation and actual-dtype checks; no effect study. HGT's layers are kept as
+  `HeteroGNNLayer` (`src/models/gnn/layers.py`) and its PyG problems are BACKLOG 20 (Edit 2 waits
+  for the GB10). *(2026-11-12: this bullet described the milestone as porting the heterogeneous GAT,
+  HGT and SAGE together, and said `segment_matmul` had no fp16 or bf16. Observed on the CPU with PyG
+  2.8.1 and `pyg-lib` 0.8.0, `HGTConv`, `segment_matmul` and `grouped_matmul` ran in bfloat16 under
+  both kernel policies; the GB10 is unobserved, and its two deploy routes carry `pyg-lib` 0.6.0 and
+  0.8.0.)*
 
 **Cross-species reasoning replaces OrthologGate** (the reviewer's review of the proposal, accepted).
 The requirement stays; the faulty module goes.
@@ -479,8 +490,8 @@ The requirement stays; the faulty module goes.
   loss and the "X% influenced" claim.
 - **Not claimed:** an excluded relation does not keep other-species nodes out of graph-norm
   statistics; "no cross-species information at all" needs those nodes out of the view.
-- **Later:** the multi-architecture port above, with its cross-species checks (§8, regression 11);
-  real cross-species KG data and HP↔MP mappings, effect studies, attention views.
+- **Later:** the port of a chosen architecture (above), with its cross-species checks (§8,
+  regression 11); real cross-species KG data and HP↔MP mappings, effect studies, attention views.
 
 ### 3.4 Five boundaries and their candidate acceleration routes
 
@@ -735,8 +746,9 @@ reviewer's audit and the owner's authorisation; the K7 record in §8).
 
 **Kept:** PathReasoner evidence (`find_paths`, `score_paths`); the KG builder's cross-species
 option; build_index (retrieval stays for planned natural-language work), which since K7 reads
-exported embeddings only (`--embeddings`) and builds no model; the heterogeneous GAT/HGT/SAGE
-encoders behind the contract; every historical artifact. *(2026-11-08: the ShepherdGNN encoders
+exported embeddings only (`--embeddings`) and builds no model; the heterogeneous GAT, HGT and SAGE
+layers (`HeteroGNNLayer`, `src/models/gnn/layers.py`), not behind the contract (§3.3); every
+historical artifact. *(2026-11-08: the ShepherdGNN encoders
 package went in K8-10, `822452b`; the GAT, HGT and SAGE layers are kept as `HeteroGNNLayer`
 (`src/models/gnn/layers.py`) and come behind the `GraphEncoder` contract in the
 multi-architecture milestone, not yet built.)*
