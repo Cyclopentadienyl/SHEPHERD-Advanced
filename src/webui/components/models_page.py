@@ -169,6 +169,9 @@ FAMILY_NOT_READ = "the family view was not read with this list"
 #: A model record's operation (`record.OPERATIONS`) as the lineage says it.
 OPERATION_WORDS = {"new": "New run", "resume": "Resumed run", "extend": "Extended run",
                    "branch": "Branch", "finetune": "Finetune"}
+#: A branch that changed no setting of its parent (`parent_changes` `{}`;
+#: ops-wiring round, decisions B1, B4): a new run from its parent's weights.
+SAME_SETTINGS = "Same settings as its parent"
 #: The reference recipe as README §5 axis 2 has it read, never "identical to upstream".
 REFERENCE_ANCHOR = ("The reference recipe is anchored on e95433a, with corrections "
                     "(Ref: README §2.4).")
@@ -1127,12 +1130,33 @@ def parent_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]]) -> st
     return where
 
 
+def changes_html(changes: Any, *, values: bool = True) -> str:
+    """What a branch changed from its parent, from its listed record
+    (`parent_changes`, decision B4): `SAME_SETTINGS` for ``{}``; else each
+    setting changed, with its parent's value and its own as recorded
+    (`values`), or by name alone; "not read" when the list holds none."""
+    if not isinstance(changes, Mapping):
+        return '<span class="shep-muted">not read</span>'
+    if not changes:
+        return r.e(SAME_SETTINGS)
+    names = sorted(str(name) for name in changes)
+    if not values:
+        return "Changed: " + r.e(", ".join(names))
+    shown = []
+    for name in names:
+        change = changes[name] if isinstance(changes[name], Mapping) else {}
+        shown.append(f'{r.e(name)} <code>{r.e(repr(change.get("parent")))}</code> → '
+                     f'<code>{r.e(repr(change.get("new")))}</code>')
+    return "; ".join(shown)
+
+
 def lineage_cell_html(item: Mapping[str, Any], row: Mapping[str, Any]) -> str:
     """A row's Lineage cell in By family: its operation and the exact parent
     file (or that the parent is not available, in amber, or that it is only a
-    context row), indented by its depth in the family; "—" for a file with no
-    lineage (a record not readable or not read). Its kind is the row's own line (the
-    shared list's Model cell)."""
+    context row), and for a branch what it changed, by name, or that it kept
+    its parent's settings (`changes_html`), indented by its depth in the
+    family; "—" for a file with no lineage (a record not readable or not
+    read). Its kind is the row's own line (the shared list's Model cell)."""
     depth = min(int(row.get("depth") or 0), 3)
     lines = []
     operation = item.get("operation")
@@ -1145,6 +1169,9 @@ def lineage_cell_html(item: Mapping[str, Any], row: Mapping[str, Any]) -> str:
     elif operation:
         lines.append(f'<div class="shep-sub">{r.e(OPERATION_WORDS.get(operation, operation))}'
                      '</div>')
+    if operation == "branch":
+        lines.append(f'<div class="shep-sub">'
+                     f'{changes_html(item.get("parent_changes"), values=False)}</div>')
     if row.get("parent_state") == "unavailable":
         lines.append('<div class="shep-sub">' + warn_mark_html(
             "parent unavailable: " + r.short_reason(row.get("parent_problem") or "not found"))
@@ -1301,7 +1328,9 @@ def _served_line(listing: Mapping[str, Any]) -> str:
 def identity_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]]) -> str:
     """What the selected checkpoint is, as one key-value list (README §5):
     its kind; for a model record its operation, the exact parent file and
-    where it is (`parent_html`), its family, its encoder and its relation to
+    where it is (`parent_html`), for a branch the settings it changed from
+    its parent, each with both values, or that it kept them all
+    (`changes_html`), its family, its encoder and its relation to
     the paper (axis 2: "matches the reference recipe" with what that recipe
     is, or the fields that differ). Model Facts' Task and Configuration rows
     say the kind and axis 1 elsewhere; neither is repeated here."""
@@ -1318,6 +1347,8 @@ def identity_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]]) -> 
             relation = '<span class="shep-muted">not read</span>'
         rows += [("Operation", r.e(OPERATION_WORDS.get(operation, operation or "not read"))),
                  ("Parent", parent_html(item, row)),
+                 *([("Settings changed", changes_html(item.get("parent_changes")))]
+                   if operation == "branch" else []),
                  ("Family", r.e(run_words(item.get("family_id")))),
                  ("Encoder", r.e(r.architecture_label(item.get("encoder")))),
                  ("Relation to the paper", relation)]

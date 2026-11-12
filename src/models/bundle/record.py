@@ -172,7 +172,8 @@ def has_model_spec(payload: Mapping[str, Any]) -> bool:
     return isinstance(payload, Mapping) and payload.get("model_spec") is not None
 
 
-def _plain(name: str, value: Any, consequence: str = "so it is not compared") -> Any:
+def _plain(name: str, value: Any, consequence: str = "so it is not compared", *,
+           finite: bool = True) -> Any:
     """A value the reader compares (the field `name`), as plain data that
     states its kind beside its content, or a `ModelRecordError` naming the
     field and saying `consequence` (what the caller does not do with it: a
@@ -199,9 +200,11 @@ def _plain(name: str, value: Any, consequence: str = "so it is not compared") ->
     levels or walked past `PLAIN_VALUES` values is refused, naming the path
     where the walk stopped. These bounds are the safe loader's, which reads
     any depth and shares values freely, so this reader passes them; the rule
-    holds no value parsed from JSON to them (review fix RC-R1)."""
+    holds no value parsed from JSON to them (review fix RC-R1). `finite`
+    False admits a number that is not finite, for a part a caller shows in
+    the one form every answer carries (`run_plan.shown_value`)."""
     try:
-        return plain_data(value, name, depth=PLAIN_DEPTH, values=PLAIN_VALUES)
+        return plain_data(value, name, depth=PLAIN_DEPTH, values=PLAIN_VALUES, finite=finite)
     except NotPlainData as exc:
         raise ModelRecordError(f"the record's {exc}, {consequence}") from None
 
@@ -467,7 +470,8 @@ def branch_parent_problem(record: ModelRecord, learning_stage: Any,
 
 #: What a model list shows of a checkpoint's record (`listed_record`).
 LISTED_RECORD_FIELDS = ("record", "record_problem", "learning_stage", "task", "operation",
-                        "family_id", "parent_sha256", "parent_run", "encoder", "reference",
+                        "family_id", "parent_sha256", "parent_run", "parent_changes",
+                        "encoder", "reference",
                         "differences", "capabilities", "spec", "weight_transfer",
                         "loss_identity")
 #: The parts of a record a list shows as the record holds them (`listed_record`),
@@ -484,7 +488,12 @@ def listed_record(payload: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
     model spec, or a read that is no record, says `WRITTEN_BEFORE_SPEC`, as a
     load of it does). A model adds its learning stage,
     task, operation, family (the root run), parent (the SHA-256 of the exact
-    parent file and the parent run), encoder kind, and how its spec stands to
+    parent file and the parent run), `parent_changes` (a branch's
+    ``parent.changes`` as recorded, ``{}`` for a same-settings branch,
+    ops-wiring round decision B4; None for every other operation, which
+    records none; each number that is not finite as its text, as the
+    training settings show it, `run_plan.shown_value`), encoder kind, and how
+    its spec stands to
     the reference recipe (README §5, axis 2): `differences`, the sorted names
     (``section.field``) of the spec's fields that differ from it
     (`ModelSpec.differences_from_reference`), and `reference`, true exactly
@@ -506,11 +515,15 @@ def listed_record(payload: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
     of one base are checked to start alike where they are listed and
     compared. A part that is not plain data (`_plain`) refuses the summary as
     a whole, with why, never half shown."""
+    from src.utils.run_plan import shown_value
+
     summary: Dict[str, Any] = dict.fromkeys(LISTED_RECORD_FIELDS)
     try:
         record = read_model_record(payload if payload is not None else {})
         for name in _SHOWN_AS_RECORDED:
             _plain(name, getattr(record, name), "so a list does not show the record")
+        changes = (record.parent or {}).get("changes") if record.operation == "branch" else None
+        _plain("parent.changes", changes, "so a list does not show the record", finite=False)
     except ModelRecordError as exc:
         summary.update(record="refused", record_problem=str(exc))
         return summary
@@ -519,6 +532,7 @@ def listed_record(payload: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
     summary.update(record="model", learning_stage=record.learning_stage, task=record.task,
                    operation=record.operation, family_id=record.family_id,
                    parent_sha256=parent.get("sha256"), parent_run=parent.get("run"),
+                   parent_changes=shown_value(copy.deepcopy(changes)),
                    encoder=record.model_spec.encoder.kind, reference=not differences,
                    differences=differences, capabilities=record.capabilities,
                    spec={name: value for name, value in record.model_spec.to_dict().items()

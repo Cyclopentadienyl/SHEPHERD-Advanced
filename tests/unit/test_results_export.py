@@ -574,7 +574,10 @@ def test_a_text_cell_a_spreadsheet_would_run_is_defused(world):
 # Every recorded component fact (review fix RC-P2-1; §6 E1)
 # ---------------------------------------------------------------------------
 #: The export's columns before the component facts joined them, in order:
-#: each keeps its name and place among the others.
+#: each keeps its name and place among the others. Two columns joined them
+#: since, each a named addition: `components` (review fix RC-P2-1) and
+#: `parent_changes`, what a branch changed from its parent (ops-wiring round,
+#: decision B4).
 COLUMNS_BEFORE_COMPONENTS = (
     'result', 'protocol', 'metric_name', 'value', 'value_status', 'unit', 'denominator', 'role',
     'semantics', 'data_kind', 'data_label', 'data_version_sha256', 'dataset_origin',
@@ -730,10 +733,12 @@ def test_a_path_in_a_components_reason_or_source_fact_is_never_exported(world):
 def test_the_exports_columns_keep_their_names_and_order_with_components_added():
     from src.api.services import results
 
-    assert tuple(name for name in results.COLUMN_NAMES if name != "components") == (
+    added = ("components", "parent_changes")
+    assert tuple(name for name in results.COLUMN_NAMES if name not in added) == (
         COLUMNS_BEFORE_COMPONENTS)
     names = list(results.COLUMN_NAMES)
     assert names.index("components") == names.index("native_identity") + 1
+    assert names.index("parent_changes") == names.index("parent_run") + 1
 
 
 # ---------------------------------------------------------------------------

@@ -1325,6 +1325,25 @@ def test_the_detail_says_what_the_model_is_and_its_relation_to_the_paper(world, 
     html = mp.identity_html(item, {"parent_state": "unavailable", "parent_problem": EVIL})
     assert "▲</span> parent unavailable: &lt;img" in html and EVIL not in html
     assert "none: a new run" in mp.identity_html({**item, "parent_sha256": None}, None)
+    # A branch says what it changed from its parent, or that it changed
+    # nothing (decision B4): every value in the details, the names in By
+    # family's Lineage; text from a record is escaped.
+    branch = {**item, "operation": "branch", "parent_changes": {}}
+    html = mp.identity_html(branch, None)
+    keys = re.findall(r'<span class="shep-k">([^<]*)</span>', html)
+    assert keys == ["Kind", "Operation", "Parent", "Settings changed", "Family", "Encoder",
+                    "Relation to the paper"]
+    assert mp.SAME_SETTINGS in _text(html)
+    row = {"depth": 1, "parent_state": "listed"}
+    assert mp.SAME_SETTINGS in _text(mp.lineage_cell_html(branch, row))
+    changed = {**branch, "parent_changes": {"seed": {"parent": 1, "new": 5},
+                                            EVIL: {"parent": EVIL, "new": 2}}}
+    html = mp.identity_html(changed, None)
+    assert "seed 1 → 5" in _text(html) and EVIL not in html
+    lineage = mp.lineage_cell_html(changed, row)
+    assert "Changed: " in _text(lineage) and "seed" in _text(lineage) and EVIL not in lineage
+    assert "Settings changed" not in mp.identity_html(item, None)
+    assert "Changed" not in mp.lineage_cell_html(item, row)
     # Load is off for the base, with its reason (the shared list's).
     assert ml.load_refusal(ml.find_item(listing, bundle_key("base"))) == ml.BASE_REFUSAL
 

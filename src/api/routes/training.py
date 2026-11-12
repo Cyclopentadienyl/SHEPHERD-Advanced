@@ -386,8 +386,9 @@ class CheckpointInfo(BaseModel):
     metadata_problem: Optional[str] = None
     # The model record's summary (`src.models.bundle.record.listed_record`):
     # model or refused (with why); a model's stage, task, operation, family and
-    # parent, encoder kind, the spec fields that differ from the reference
-    # recipe, whether there are none, and its capability description.
+    # parent, what a branch changed from its parent ({} when nothing), encoder
+    # kind, the spec fields that differ from the reference recipe, whether
+    # there are none, and its capability description.
     record: Optional[str] = None
     record_problem: Optional[str] = None
     learning_stage: Optional[str] = None
@@ -396,6 +397,7 @@ class CheckpointInfo(BaseModel):
     family_id: Optional[str] = None
     parent_sha256: Optional[str] = None
     parent_run: Optional[str] = None
+    parent_changes: Optional[Dict[str, Any]] = None
     encoder: Optional[str] = None
     reference: Optional[bool] = None
     differences: Optional[List[str]] = None

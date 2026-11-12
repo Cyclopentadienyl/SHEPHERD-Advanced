@@ -199,7 +199,8 @@ class CheckpointItem:
     "model" or "refused" (with `record_problem`; a file without a model spec
     among them, with the record reader's one phrase); a model adds its learning stage, task, operation,
     family, parent (`parent_sha256`, the exact parent file, and `parent_run`),
-    encoder kind, the names of its spec's fields that differ from the
+    what a branch changed from its parent (`parent_changes`, as recorded: ``{}``
+    for a same-settings branch, None for every other operation), encoder kind, the names of its spec's fields that differ from the
     reference recipe (`differences`, sorted; empty for the reference),
     whether there are none (`reference`), its capability description
     (`capabilities`), from which every consumer judges a new measurement of it
@@ -254,6 +255,7 @@ class CheckpointItem:
     family_id: Optional[str] = None
     parent_sha256: Optional[str] = None
     parent_run: Optional[str] = None
+    parent_changes: Optional[Dict[str, Any]] = None
     encoder: Optional[str] = None
     reference: Optional[bool] = None
     differences: Optional[Tuple[str, ...]] = None

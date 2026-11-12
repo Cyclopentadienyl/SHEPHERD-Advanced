@@ -440,7 +440,8 @@ def test_the_listed_record_states():
     structure = {name: value for name, value in spec.to_dict().items() if name != "sources"}
     assert child == {"record": "model", "record_problem": None, "learning_stage": "finetune",
                      "task": "disease", "operation": "finetune", "family_id": BASE_RUN,
-                     "parent_sha256": "a" * 64, "parent_run": BASE_RUN, "encoder": "gatv2",
+                     "parent_sha256": "a" * 64, "parent_run": BASE_RUN,
+                     "parent_changes": None, "encoder": "gatv2",
                      "reference": False, "differences": SMALL_SPEC_DIFFERENCES,
                      "capabilities": model_capabilities(spec), "spec": structure,
                      "weight_transfer": None,
@@ -473,6 +474,38 @@ def test_the_listed_record_states():
     assert refused["differences"] is None and refused["reference"] is None
     assert refused["capabilities"] is None, "a refused record offers nothing to judge"
     assert refused["spec"] is None
+
+
+def test_the_listed_record_says_what_a_branch_changed():
+    """Decision B4: a branch's ``parent.changes`` as recorded, ``{}`` for a
+    same-settings branch, through the one plain-data rule; a number that is
+    not finite shown as its text, as the training settings show it; a value
+    that is not plain data refuses the summary as a whole; None for every
+    other operation."""
+    payload = _listed_form(_record_payload())
+    transfer = {"loaded_from_parent": ["encoder"], "initialised_new": [], "trainable": "all",
+                "optimizer": "new"}
+    parent = {"sha256": "a" * 64, "run": BASE_RUN}
+    for changes in ({}, {"learning_rate": {"parent": 1e-4, "new": 1e-3}}):
+        branch = {**payload, "operation": "branch", "weight_transfer": transfer,
+                  "parent": {**parent, "changes": changes}}
+        shown = listed_record(branch)
+        assert (shown["record"], shown["operation"], shown["parent_changes"]) == (
+            "model", "branch", changes)
+        assert shown["parent_changes"] is not changes, "a copy, never the record's own"
+    unbounded = {**payload, "operation": "branch", "weight_transfer": transfer,
+                 "parent": {**parent, "changes": {"max_grad_norm": {"parent": 1.0,
+                                                                    "new": float("inf")}}}}
+    assert listed_record(unbounded)["parent_changes"] == {
+        "max_grad_norm": {"parent": 1.0, "new": "inf"}}
+    tensor = {**payload, "operation": "branch", "weight_transfer": transfer,
+              "parent": {**parent, "changes": {"seed": {"parent": 1, "new": torch.ones(1)}}}}
+    refused = listed_record(tensor)
+    assert refused["record"] == "refused" and refused["parent_changes"] is None
+    assert refused["record_problem"] == ("the record's parent.changes.seed.new is a Tensor, not "
+                                         "plain data, so a list does not show the record")
+    assert listed_record(payload)["parent_changes"] is None
+    assert listed_record(_listed_form(_record_payload("disease")))["parent_changes"] is None
 
 
 #: The fields `_base_spec` changes from the reference recipe (README §5, axis 2).

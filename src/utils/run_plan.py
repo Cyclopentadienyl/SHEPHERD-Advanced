@@ -383,7 +383,7 @@ def recorded_training_settings(training: Optional[Mapping[str, Any]]) -> Dict[st
     other parts are shown. Valid Unicode is kept exactly. **A number that is
     not finite is a value a setting may record** (``max_grad_norm: inf``,
     which `training_fields.value_problem` accepts), so it is shown, as its
-    text (``"inf"``, ``"-inf"``, ``"nan"``: `_as_shown`), the form the export
+    text (``"inf"``, ``"-inf"``, ``"nan"``: `shown_value`), the form the export
     has always given it, in every answer alike: the list's, the results
     query's, Compare's and both export formats'."""
     training = training if isinstance(training, Mapping) else {}
@@ -404,7 +404,7 @@ def recorded_training_settings(training: Optional[Mapping[str, Any]]) -> Dict[st
             out[part] = None
             unshown[part] = f"its {problem}, so it is not shown"
         else:
-            out[part] = _as_shown(out[part])
+            out[part] = shown_value(out[part])
     out["unrecorded"] = [name for name in _TRAINING_PARTS_RECORDED_AS
                          if out[name] is None and name not in unshown]
     out["unshown"] = unshown
@@ -417,20 +417,22 @@ _TRAINING_PARTS_RECORDED_AS = {"rules": "training_rules", "learning": "config.re
                                "effective": "config.effective"}
 
 
-def _as_shown(value: Any) -> Any:
-    """A part of a checkpoint's training settings as every answer carries it
-    (`recorded_training_settings`): each number that is not finite as its
-    text (``str``: ``"inf"``, ``"-inf"``, ``"nan"``), everything else as
-    recorded. Walked only once the one rule has read the part
-    (`plain_data`), so it is bounded and holds no value on its own path."""
+def shown_value(value: Any) -> Any:
+    """A recorded setting value as every answer carries it: a part of a
+    checkpoint's training settings (`recorded_training_settings`), or a
+    branch's recorded changes (`record.listed_record`, ops-wiring round,
+    decision B4): each number that is not finite as its text (``str``:
+    ``"inf"``, ``"-inf"``, ``"nan"``), everything else as recorded. Walked
+    only once the one rule has read the value (`plain_data`, with
+    ``finite=False``), so it is bounded and holds no value on its own path."""
     if isinstance(value, float) and not math.isfinite(value):
         return str(value)
     if isinstance(value, Mapping):
-        return {key: _as_shown(item) for key, item in value.items()}
+        return {key: shown_value(item) for key, item in value.items()}
     if isinstance(value, list):
-        return [_as_shown(item) for item in value]
+        return [shown_value(item) for item in value]
     if isinstance(value, tuple):
-        return tuple(_as_shown(item) for item in value)
+        return tuple(shown_value(item) for item in value)
     return value
 
 
@@ -1049,6 +1051,7 @@ __all__ = [
     "plan_continuation",
     "recorded_training_settings",
     "resolve_recorded_file",
+    "shown_value",
     "stated_values_problem",
     "unread_problem",
     "zero_rate_groups",

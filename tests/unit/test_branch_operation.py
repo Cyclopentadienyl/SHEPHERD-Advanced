@@ -188,6 +188,8 @@ def test_a_branch_with_its_parents_settings_is_a_new_run(tmp_path, monkeypatch, 
     listed = last_of[branch_run.name]
     assert (listed.record, listed.operation, listed.parent_sha256, listed.parent_run) == (
         "model", "branch", parent_sha256, parent_run.name)
+    # What it changed, as recorded (decision B4): nothing.
+    assert listed.parent_changes == {} and last_of[parent_run.name].parent_changes is None
     (row,) = [row for row in server_lists.family_rows(listing.items)
               if row.item.key == listed.key]
     assert (row.parent, row.parent_state, row.depth) == (

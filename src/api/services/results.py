@@ -75,7 +75,9 @@ exactly.
 
 **Each row lists what its records say, and nothing else** (F3): its model's
 identity (the checkpoint's SHA-256, and where the server's lists find it:
-source, workspace, run and file, never a path), lineage, spec summary and
+source, workspace, run and file, never a path), lineage (a branch's recorded
+changes from its parent among it, ``{}`` for a same-settings branch), spec
+summary and
 structure, every value of its spec (`listed_record`), its training settings as
 the checkpoint records them
 (`run_plan.recorded_training_settings`: rules, learning settings and what took
@@ -501,8 +503,8 @@ def read_all(sources: Iterable[SourceContext]) -> _Read:
 # ---------------------------------------------------------------------------
 #: A model's fields read from its listed checkpoint's record (`listed_record`).
 _MODEL_FIELDS = ("learning_stage", "task", "operation", "family_id", "parent_sha256",
-                 "parent_run", "encoder", "reference", "differences", "spec", "capabilities",
-                 "weight_transfer", "loss_identity")
+                 "parent_run", "parent_changes", "encoder", "reference", "differences", "spec",
+                 "capabilities", "weight_transfer", "loss_identity")
 _SETTINGS_FIELDS = ("training_rules", "learning_settings", "effective_settings")
 
 
@@ -951,6 +953,7 @@ COLUMNS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     ("family_id", ("model", "family_id")),
     ("parent_sha256", ("model", "parent_sha256")),
     ("parent_run", ("model", "parent_run")),
+    ("parent_changes", ("model", "parent_changes")),
     ("encoder", ("model", "encoder")),
     ("spec_reference", ("model", "reference")),
     ("spec_differences", ("model", "differences")),
