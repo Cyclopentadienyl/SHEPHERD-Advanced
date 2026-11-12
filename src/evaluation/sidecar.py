@@ -29,6 +29,22 @@ anything at case level stay there. Since schema 4 a record also names its run
 (``run_id``): the run directory in the version's report store that keeps the
 report. The report's bytes do not carry it, so the ledger records it.
 
+**Per data kind, in one schema** (research comparison §5 Stage 6). A record is
+built from a report of a registered version of any kind the registry holds
+(`build_record`, through one per-kind function, `_kind_parts`): a supplied
+cohort version's exactly as before (its cohort block, R10); a KG edge set's
+with its own cohort block (its view, split, message-passing graph, pairs and
+counts with their units), no R10, the run's counts with their units and each
+metric's status (``measured``) and the run's exposure block as written
+(``exposure``, F4: its definition version and sources travel with the result, so
+a reader holding only the ledger still has them); a generated split's with its
+own cohort block (its role and generation identity: the split manifest and
+split files by digest, the generation definition and allocation, its counts
+with their units and the gene fixture it keeps) and no R10. The record's
+``cohort.kind`` tells them apart; the key fields keep their names and meanings
+(``cohort_role`` the version's role, ``cohort_digest`` its manifest's digest),
+and the writer's rules are the same for every kind.
+
 - **No run paths.** The manifest's `checkpoint_path` and `data_dir` stay in the
   report: they say where one run happened to find its files, and a checkpoint
   measured again from another place is the same measurement.
@@ -36,14 +52,22 @@ report. The report's bytes do not carry it, so the ledger records it.
   has it (`src/evaluation/r10.py`), so each scope's `evidence.path` -- the file
   on the measuring machine whose bytes the checkpoint records, when one was
   found -- is in the record, and so, for a search left incomplete, are the
-  places that could not be read, in its `evidence.problem`. The read-only view
-  strips both
-  (`src/api/routes/evaluations.py`); `record_evaluation.py --show` prints the
+  places that could not be read, in its `evidence.problem`. The read-only views
+  strip both (`src/api/services/record_views.py`, behind the API's route and the
+  export); `record_evaluation.py --show` prints the
   record as it is, on the operator's machine.
 - **No case ids.** The cohort block is aggregates only (`COHORT_VERSION_FIELDS`).
-- **No prose.** A wording change between revisions would make two records of
-  identical results read as different, so the surfaces render the standing
-  text from `src/evaluation/caveats.py` instead.
+- **No prose**, but for a KG edge set's run's own words, kept as its report
+  wrote them so a reader holding only the ledger still has them: its exposure
+  block and the units and reasons in ``measured``. Elsewhere the surfaces
+  render the standing text from `src/evaluation/caveats.py`: a wording change
+  between revisions would make two records of identical results read as
+  different. For the same reason a run's own words stay outside the
+  comparison: the exposure block, the run's own interpretation of its
+  evidence kept as written (F4) with its definition version, is not compared
+  (`RECORD_EXCLUDED_FIELDS`), and ``measured`` is compared by its facts only,
+  its counts and each metric's status and denominator count
+  (`differing_fields`).
 
 **Not a registry, and deliberately not becoming one.** No parent/child graph, no
 lineage walk, no cross-file joins. The registration sequence orders the records
@@ -90,7 +114,10 @@ from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
+from src.evaluation.caveats import DATA_KIND_WORDS
 from src.evaluation.measurement import expected_relations
+from src.evaluation.protocols import GENERATED, KG_EDGES, REGISTERED_KINDS, SUPPLIED
+from src.utils.checkpoint_paths import MAX_REPORT_DEPTH
 from src.utils.file_lock import exclusive_lock
 from src.utils.file_modes import create_staging_file
 
@@ -267,7 +294,8 @@ NON_SEMANTIC_FIELDS: Dict[str, str] = {
     ),
     "r10": (
         "the cohort's overlap with the training and validation inputs, from the "
-        "evidence files found. A re-run may find evidence the first did not, so "
+        "evidence files found (a supplied cohort version's only; null for any other "
+        "kind). A re-run may find evidence the first did not, so "
         "keying it would split one measurement in two; it is recorded with each "
         "result and true of its own report"
     ),
@@ -307,9 +335,9 @@ KEY_FIELDS: Tuple[str, ...] = (
 #: applicable. Taken from `src/evaluation/measurement.py`, which states them once.
 REGISTERED_RELATIONS: Dict[str, str] = expected_relations(registered=True)
 
-#: What a registered report's ``cohort_version`` block holds, exactly. Aggregates
-#: only: a block naming anything else is refused, so a case id cannot ride into a
-#: record on a field nobody classified.
+#: What a registered supplied cohort version's report ``cohort_version`` block
+#: holds, exactly. Aggregates only: a block naming anything else is refused, so a
+#: case id cannot ride into a record on a field nobody classified.
 COHORT_VERSION_FIELDS: Tuple[str, ...] = (
     "label",
     "role",
@@ -323,9 +351,37 @@ COHORT_VERSION_FIELDS: Tuple[str, ...] = (
     "counts",
 )
 
-#: The parts of the cohort version a record copies into its ``cohort`` block,
-#: beside the cohort kind. The manifest digest is the key's ``cohort_digest``, and
-#: the dataset record's digest is the record's own ``dataset_record``.
+#: **What a registered report's ``cohort_version`` block holds, exactly, by the
+#: kind it states** (a supplied cohort's states none; research comparison §5
+#: Stage 6): the fields `cohort_registry.cohort_version_block` writes for each
+#: kind, which that module takes from here (its ``KG_EDGES_BLOCK_FIELDS`` and
+#: ``GENERATED_BLOCK_FIELDS``). Aggregates and digests only, never an edge or a
+#: sample: a block naming anything else is refused, as a supplied cohort's is.
+VERSION_BLOCK_FIELDS: Dict[str, Tuple[str, ...]] = {
+    SUPPLIED: COHORT_VERSION_FIELDS,
+    KG_EDGES: (
+        "label", "role", "kind", "manifest_sha256", "graph", "dataset_record_sha256",
+        "graph_view", "split", "message_passing", "pairs", "counts", "count_units",
+    ),
+    GENERATED: (
+        "label", "role", "kind", "manifest_sha256", "graph", "dataset_record_sha256",
+        "samples_sha256", "split_manifest", "split_artifacts", "generation", "allocation",
+        "counts", "count_units", "task_fixture",
+    ),
+}
+
+#: The block fields that are text (every other one is an object; a generated
+#: split's ``task_fixture`` is an object or null, `_OPTIONAL_BLOCK_FIELDS`).
+_BLOCK_TEXT_FIELDS = frozenset({
+    "label", "role", "kind", "manifest_sha256", "source_sha256", "source_format",
+    "samples_sha256", "dataset_record_sha256",
+})
+_OPTIONAL_BLOCK_FIELDS = frozenset({"task_fixture"})
+
+#: The parts of a supplied cohort version a record copies into its ``cohort``
+#: block, beside the cohort kind. The manifest digest is the key's
+#: ``cohort_digest``, and the dataset record's digest is the record's own
+#: ``dataset_record``.
 _RECORD_COHORT_FIELDS: Tuple[str, ...] = (
     "label",
     "role",
@@ -337,9 +393,47 @@ _RECORD_COHORT_FIELDS: Tuple[str, ...] = (
     "counts",
 )
 
+#: **The parts of a version a record copies into its ``cohort`` block, beside
+#: its kind, by kind**: a supplied cohort's as it always was; a KG edge set's
+#: view, split, message-passing graph, pairs and counts with their units; a
+#: generated split's role and generation identity (its samples, its split
+#: manifest and split files by digest, the generation definition and
+#: allocation) with its counts and their units and the gene fixture it keeps.
+#: For every kind the manifest digest is the key's ``cohort_digest`` and the
+#: dataset record's digest the record's own ``dataset_record``.
+RECORD_COHORT_FIELDS: Dict[str, Tuple[str, ...]] = {
+    SUPPLIED: _RECORD_COHORT_FIELDS,
+    KG_EDGES: ("label", "role", "graph", "graph_view", "split", "message_passing", "pairs",
+               "counts", "count_units"),
+    GENERATED: ("label", "role", "samples_sha256", "graph", "split_manifest",
+                "split_artifacts", "generation", "allocation", "counts", "count_units",
+                "task_fixture"),
+}
+
+#: The fields a record holds by kind beyond the ones every record holds: a KG
+#: edge set's run keeps its counts with their units and each metric's status
+#: (``measured``) and its exposure block (``exposure``). A supplied cohort's
+#: record and a generated split's hold none.
+KIND_RECORD_FIELDS: Dict[str, Tuple[str, ...]] = {
+    SUPPLIED: (),
+    KG_EDGES: ("measured", "exposure"),
+    GENERATED: (),
+}
+
+#: The fields only some kinds' records hold.
+_KIND_ONLY_FIELDS = frozenset(f for fields in KIND_RECORD_FIELDS.values() for f in fields)
+
+#: What a KG edge set's record keeps of its report's ``sampler_evidence`` as
+#: ``measured``: the run's counts, each count's unit, and each metric's status,
+#: unit and denominator, so a metric that could not be computed reads as a
+#: status from the ledger alone.
+MEASURED_FIELDS: Tuple[str, ...] = ("counts", "count_units", "metrics")
+
 #: Record fields compared between two runs of one condition group to describe how
 #: they differ (`differing_fields`): the report store's description of a group and
-#: the registration's group note. A difference decides nothing.
+#: the registration's group note. A difference decides nothing. ``measured`` is
+#: compared by its facts only (`_measured_facts`), never its units' and reasons'
+#: words, which the build that measured wrote and a later one may reword.
 RECORD_COMPARED_FIELDS: Tuple[str, ...] = (
     "scoring_semantics_digest",
     "scoring",
@@ -349,6 +443,7 @@ RECORD_COMPARED_FIELDS: Tuple[str, ...] = (
     "n_ranked",
     "relations",
     "dataset_record",
+    "measured",
 )
 
 #: Record fields outside the comparison, each for a stated reason. With
@@ -381,6 +476,12 @@ RECORD_EXCLUDED_FIELDS: Dict[str, str] = {
         "record registered since"
     ),
     "registration": "when and in what order this ledger registered the record",
+    "exposure": (
+        "a KG edge set's run's exposure block, as its report wrote it (its definition "
+        "version, state, counts and sources): a function of the keyed checkpoint and "
+        "version under its definition, so it never tells two runs of one group apart; "
+        "kept with the result so a reader holding only the ledger still has it (F4)"
+    ),
 }
 
 #: What ``append_record`` can do with a record, by name. (``corroborated``, the
@@ -567,13 +668,6 @@ def _is_digest(value: Any) -> bool:
     )
 
 
-#: How deep a report may nest, counting each object and list as a level. The
-#: measurement writes 7 or 8; anything near this is a hand edit. Counted, not
-#: recursed, so the refusal never depends on the interpreter's recursion limit
-#: or on how deep the caller's stack already is.
-MAX_REPORT_DEPTH = 64
-
-
 class ReportNestsTooDeeply(RecursionError):
     """A report nested deeper than `MAX_REPORT_DEPTH`. A `RecursionError`, so the
     callers that refuse one (`register_report`, the report store's scan) read it
@@ -600,7 +694,7 @@ def _mapping(value: Any, what: str) -> Dict[str, Any]:
 
 
 def build_record(report: Dict[str, Any], source_digest: str) -> Dict[str, Any]:
-    """One record from one measurement report of a registered cohort version.
+    """One record from one measurement report of a registered data version.
 
     Reads the manifest rather than taking the fields as arguments, so a record
     cannot describe a run different from the one whose report it came from.
@@ -608,15 +702,20 @@ def build_record(report: Dict[str, Any], source_digest: str) -> Dict[str, Any]:
     parsed from, taken by the same read (`register_report`), and the record names
     the report by it.
 
-    **Only a registered cohort version's report is recorded.** A generated split
-    is refused because the ledger does not yet support a generated split's data
-    identity: it records results by registered cohort version (D3 labels a
-    result by role *and version*), and a generated split has none. That is a
-    limit of the ledger, not a judgement that such a result counts for less
-    (policy rev 16): its report and ranks stay at `--output`, and extending the
-    ledger to them is later work. A report whose relation states are not a registered result's is refused too;
-    the measurement cannot write one, so such a file was edited or is not a
-    report. Every refusal is a ``ValueError`` naming what is wrong — never a
+    **A report of a registered version of any kind is recorded** (research
+    comparison §5 Stage 6): a supplied cohort version's, a KG edge set's and a
+    registered generated split's, each by its kind's rules (`_kind_parts`: its
+    cohort block, R10, its relation states and its counts; a KG edge set's run
+    also its exposure block). A supplied cohort's record is exactly what it
+    always was. A generated split measured with ``--split`` is refused because
+    it has no registered version, so no data identity the ledger records results
+    by (D3 labels a result by role *and version*). That is a limit of what the
+    run recorded, not a judgement that such a result counts for less (policy
+    rev 16): its report and ranks stay at `--output`, and the same split kept
+    in the registry is measured and recorded with ``--cohort``. A report whose
+    relation states are not a registered result's is refused too; the
+    measurement cannot write one, so such a file was edited or is not a report.
+    Every refusal is a ``ValueError`` naming what is wrong — never a
     ``KeyError`` or ``TypeError`` from a file of the wrong shape.
 
     Returned without ``corroborating_reports`` and ``registration``, which are
@@ -671,57 +770,53 @@ def build_record(report: Dict[str, Any], source_digest: str) -> Dict[str, Any]:
             "its report and ranks stay at --output. To record a result in the ledger, "
             "measure a registered version (--cohort LABEL --registry DIR)."
         )
-    if manifest["cohort_kind"] != "supplied":
-        raise ValueError(
-            f"this report records cohort_kind {manifest['cohort_kind']!r} beside a "
-            "cohort version; a registered cohort version is a supplied cohort, so "
-            "the report contradicts itself and is not recorded"
-        )
     cohort_version = _mapping(cohort_version, "its cohort_version")
-    cv_missing = [f for f in COHORT_VERSION_FIELDS if f not in cohort_version]
-    cv_unknown = sorted(set(cohort_version) - set(COHORT_VERSION_FIELDS))
+    kind = manifest["cohort_kind"]
+    # A supplied version's block states no kind (schema 1); every other kind's
+    # states its own, as the manifest's rules require (`MeasurementManifest`).
+    stated = cohort_version.get("kind", SUPPLIED)
+    if kind not in REGISTERED_KINDS or stated != kind:
+        raise ValueError(
+            f"this report records cohort_kind {kind!r} beside a cohort version of kind "
+            f"{stated!r}; a registered version's kind is one of the registry's "
+            f"({', '.join(REGISTERED_KINDS)}) and the one its block states, so the report "
+            "contradicts itself and is not recorded"
+        )
+    fields = VERSION_BLOCK_FIELDS[kind]
+    cv_missing = [f for f in fields if f not in cohort_version]
+    cv_unknown = sorted(set(cohort_version) - set(fields))
     if cv_missing or cv_unknown:
+        what = "a cohort version's" if kind == SUPPLIED else f"{DATA_KIND_WORDS[kind]}'s"
         raise ValueError(
             "its cohort_version "
             + (f"lacks {', '.join(cv_missing)}" if cv_missing else "")
             + ("; it " if cv_missing and cv_unknown else "")
-            + (f"names {', '.join(cv_unknown)}, which a cohort version's report "
+            + (f"names {', '.join(cv_unknown)}, which {what} report "
                "block does not carry" if cv_unknown else "")
-            + ", so it is not a cohort version this revision records"
+            + ", so it is not "
+            + ("a cohort version" if kind == SUPPLIED else DATA_KIND_WORDS[kind])
+            + " this revision records"
         )
-    for field in ("label", "role", "manifest_sha256", "source_sha256", "source_format",
-                  "samples_sha256", "dataset_record_sha256"):
+    for field in (f for f in fields if f in _BLOCK_TEXT_FIELDS):
         if not isinstance(cohort_version[field], str) or not cohort_version[field]:
             raise ValueError(f"its cohort_version.{field} is not a non-empty string")
-    for field in ("graph", "mapping", "counts"):
-        _mapping(cohort_version[field], f"its cohort_version.{field}")
+    for field in (f for f in fields if f not in _BLOCK_TEXT_FIELDS):
+        if not (field in _OPTIONAL_BLOCK_FIELDS and cohort_version[field] is None):
+            _mapping(cohort_version[field], f"its cohort_version.{field}")
     if manifest["split"] != cohort_version["role"]:
         raise ValueError(
             f"its manifest names the cohort role {manifest['split']!r} and its cohort "
             f"version the role {cohort_version['role']!r}; a record is filed under "
             "one role, so the report contradicts itself and is not recorded"
         )
-    relations = _mapping(manifest["relations"], "its relations")
-    if relations != REGISTERED_RELATIONS:
-        wrong = sorted(
-            f"{name} {relations.get(name, 'absent')!r}"
-            for name in set(relations) | set(REGISTERED_RELATIONS)
-            if relations.get(name) != REGISTERED_RELATIONS.get(name)
-        )
-        raise ValueError(
-            f"its relation states are not a registered result's ({', '.join(wrong)}): "
-            "R1, R3, R5 and cohort_graph are verified and R2 does not apply on every "
-            "report the measurement writes for a cohort version, so this one is not "
-            "recorded"
-        )
     digests = _mapping(manifest["artifact_digests"], "its artifact_digests")
     if not _is_digest(digests.get("checkpoint")):
         raise ValueError("its artifact_digests name no checkpoint SHA-256")
+    parts = _kind_parts(kind, manifest, report, cohort_version)
     dataset_record = _mapping(manifest["dataset_record"], "its dataset_record")
     for field in ("origin", "sha256"):
         if not isinstance(dataset_record.get(field), str):
             raise ValueError(f"its dataset_record.{field} is not a string")
-    r10 = _mapping(manifest["r10"], "its r10 block")
     environment = _mapping(manifest["environment"], "its environment")
     metrics = _mapping(report.get("authoritative_metrics"), "its authoritative_metrics")
     n_ranked = report.get("n_ranked")
@@ -736,21 +831,102 @@ def build_record(report: Dict[str, Any], source_digest: str) -> Dict[str, Any]:
         "scoring_semantics_digest": scoring_semantics_digest(manifest),
         "scoring": {field: manifest[field] for field in SCORING_SEMANTICS_FIELDS},
         "regime": {field: manifest[field] for field in REGIME_FIELDS},
-        "cohort": {
-            "kind": manifest["cohort_kind"],
-            **{field: copy.deepcopy(cohort_version[field])
-               for field in _RECORD_COHORT_FIELDS},
-        },
+        "cohort": parts["cohort"],
         "metrics": copy.deepcopy(metrics),
         "n_ranked": n_ranked,
-        "relations": dict(relations),
+        "relations": parts["relations"],
         "dataset_record": {
             "origin": dataset_record["origin"], "sha256": dataset_record["sha256"],
         },
-        "r10": copy.deepcopy(r10),
+        "r10": parts["r10"],
         "environment": copy.deepcopy(environment),
         "source_artifact_digest": source_digest,
+        **{field: parts[field] for field in KIND_RECORD_FIELDS[kind]},
     }
+
+
+def _kind_parts(kind: str, manifest: Dict[str, Any], report: Dict[str, Any],
+                cohort_version: Dict[str, Any]) -> Dict[str, Any]:
+    """**The parts of a record its data kind decides, in one place** (research
+    comparison §5 Stage 6), from a report whose block `build_record` has
+    checked against its kind's field list:
+
+    - ``cohort``: the kind and the block's `RECORD_COHORT_FIELDS` (copies, so
+      the record cannot alias the report);
+    - ``relations``: the states a registered result carries
+      (`REGISTERED_RELATIONS`), the same for every kind the registry holds, and
+      anything else is refused;
+    - ``r10``: a supplied cohort version's block, an object; null for a KG
+      edge set (its relation to the model's training is its exposure) and for
+      a generated split (its allocation's), and anything else is refused;
+    - a KG edge set's run's counts with their units and each metric's status
+      (``measured``, from ``sampler_evidence``: `MEASURED_FIELDS`) and its
+      exposure block as written (``exposure``, with its definition version),
+      whose sources, where it names them, must be the checkpoint and version
+      this report measured.
+
+    `build_record` has checked the checkpoint's digest before. Raises
+    ``ValueError`` naming the field, as `build_record` does."""
+    relations = _mapping(manifest["relations"], "its relations")
+    if relations != REGISTERED_RELATIONS:
+        wrong = sorted(
+            f"{name} {relations.get(name, 'absent')!r}"
+            for name in set(relations) | set(REGISTERED_RELATIONS)
+            if relations.get(name) != REGISTERED_RELATIONS.get(name)
+        )
+        raise ValueError(
+            f"its relation states are not a registered result's ({', '.join(wrong)}): "
+            "R1, R3, R5 and cohort_graph are verified and R2 does not apply on every "
+            "report the measurement writes for a cohort version, so this one is not "
+            "recorded"
+        )
+    if kind == SUPPLIED:
+        r10: Optional[Dict[str, Any]] = copy.deepcopy(_mapping(manifest["r10"],
+                                                               "its r10 block"))
+    elif manifest["r10"] is not None:
+        raise ValueError(
+            f"its r10 block is set, and R10 is a supplied cohort version's only: "
+            f"{DATA_KIND_WORDS[kind]}'s relation to the model's training is recorded otherwise"
+        )
+    else:
+        r10 = None
+    parts: Dict[str, Any] = {
+        "cohort": {
+            "kind": kind,
+            **{field: copy.deepcopy(cohort_version[field])
+               for field in RECORD_COHORT_FIELDS[kind]},
+        },
+        "relations": dict(relations),
+        "r10": r10,
+    }
+    if kind == KG_EDGES:
+        evidence = _mapping(report.get("sampler_evidence"), "its sampler_evidence")
+        parts["measured"] = {
+            field: copy.deepcopy(_mapping(evidence.get(field), f"its sampler_evidence.{field}"))
+            for field in MEASURED_FIELDS}
+        exposure = _mapping(report.get("exposure"), "its exposure block")
+        for field in ("definition_version", "state"):
+            if not isinstance(exposure.get(field), str) or not exposure[field]:
+                raise ValueError(f"its exposure.{field} is not a non-empty string")
+        # **Its sources, where it names them, are this run's** (F4): the model
+        # record of the checkpoint measured and the version measured. One
+        # naming another is a report that contradicts itself, refused here as
+        # the one reader refuses such a record. Nothing else of the block is
+        # checked: the exposure is never a gate, and the reader shows a block
+        # it cannot read as "not recorded", beside the result.
+        sources = exposure.get("sources")
+        for source, field, own, what in (
+                ("model_record", "checkpoint_sha256", manifest["artifact_digests"]["checkpoint"],
+                 "the checkpoint its artifact_digests name"),
+                ("version", "manifest_sha256", cohort_version["manifest_sha256"],
+                 "its cohort_version's manifest_sha256")):
+            named = sources.get(source) if isinstance(sources, dict) else None
+            if isinstance(named, dict) and field in named and named[field] != own:
+                raise ValueError(
+                    f"its exposure.sources.{source}.{field} is not {what}, so the report "
+                    "contradicts itself and is not recorded")
+        parts["exposure"] = copy.deepcopy(exposure)
+    return parts
 
 
 def _readable_sequence(record: Any) -> Optional[int]:
@@ -1073,8 +1249,15 @@ def append_record(
             raise ValueError(
                 f"the record already carries {field}, which only the ledger assigns"
             )
-    built = (*KEY_FIELDS, *RECORD_COMPARED_FIELDS, "r10", "environment",
-             "source_artifact_digest")
+    cohort = record.get("cohort")
+    kind = cohort.get("kind") if isinstance(cohort, dict) else None
+    if kind not in KIND_RECORD_FIELDS:
+        raise ValueError(
+            "the record's cohort.kind is not one of the registry's kinds; only a record "
+            "build_record made is appended"
+        )
+    built = (*KEY_FIELDS, *(f for f in RECORD_COMPARED_FIELDS if f not in _KIND_ONLY_FIELDS),
+             "r10", "environment", "source_artifact_digest", *KIND_RECORD_FIELDS[kind])
     absent = [field for field in built if field not in record]
     if absent:
         raise ValueError(
@@ -1305,12 +1488,40 @@ def differing_fields(existing: Dict[str, Any], record: Dict[str, Any]) -> List[s
     group note (`group_differences`) both use it, so "runs under these
     conditions differ" means the same everywhere. It refuses nothing. A field
     one record lacks and the other has differs; a field both lack does not.
+    A KG edge set's run's ``measured`` is compared by its facts only
+    (`_measured_facts`), so two runs whose results agree are never described
+    as differing because a later build reworded a unit or a reason.
     """
     missing = object()
+
+    def compared(field: str, held: Dict[str, Any]) -> Any:
+        value = held.get(field, missing)
+        return _measured_facts(value) if field == "measured" and value is not missing else value
+
     return [
         field for field in RECORD_COMPARED_FIELDS
-        if existing.get(field, missing) != record.get(field, missing)
+        if compared(field, existing) != compared(field, record)
     ]
+
+
+def _measured_facts(measured: Any) -> Any:
+    """What the comparison reads of a KG edge set's run's ``measured``: its
+    counts, and each metric's status and denominator count. Never the units'
+    and reasons' words, which the build that measured wrote and a later build
+    may reword under the same key (the reason's numbers are its counts). A
+    value of another shape, from a hand edit, is compared as written."""
+    if not isinstance(measured, dict):
+        return measured
+    metrics = measured.get("metrics")
+    if isinstance(metrics, dict):
+        metrics = {
+            name: ({"status": status.get("status"),
+                    "denominator": (status["denominator"].get("count")
+                                    if isinstance(status.get("denominator"), dict)
+                                    else status.get("denominator"))}
+                   if isinstance(status, dict) else status)
+            for name, status in metrics.items()}
+    return {"counts": measured.get("counts"), "metrics": metrics}
 
 
 def difference_names(
@@ -1423,7 +1634,7 @@ def records_for(ledger: Dict[str, Any], checkpoint_digest: str) -> List[Dict[str
     record that lost its digest or is not an object is simply not one of this
     checkpoint's; it does not make the lookup raise. Whether a matching record is
     whole is the reader's to check before showing it (the readers' one listing,
-    `src.api.routes.evaluations.read_records`, lists one that is not with its
+    `src.api.services.record_views.read_records`, lists one that is not with its
     index and reason).
     """
     return [record for _index, record in indexed_records_for(ledger, checkpoint_digest)]
@@ -1550,13 +1761,16 @@ __all__ = [
     "GroupDifference",
     "HistoricalNote",
     "KEY_FIELDS",
+    "KIND_RECORD_FIELDS",
     "LEDGER_FILENAME",
     "LEDGER_LOCK_GRACE_SECONDS",
     "LEDGER_LOCK_SUFFIX",
     "LEDGER_SCHEMA_VERSION",
     "MAX_REPORT_DEPTH",
+    "MEASURED_FIELDS",
     "NON_SEMANTIC_FIELDS",
     "READABLE_LEDGER_SCHEMAS",
+    "RECORD_COHORT_FIELDS",
     "RECORD_COMPARED_FIELDS",
     "RECORD_EXCLUDED_FIELDS",
     "REGIME_FIELDS",
@@ -1570,6 +1784,7 @@ __all__ = [
     "SCORING_SEMANTICS_FIELDS",
     "SEMANTIC_ARTIFACT_ROLES",
     "SEMANTIC_MANIFEST_FIELDS",
+    "VERSION_BLOCK_FIELDS",
     "append_record",
     "build_record",
     "checkpoint_matches",

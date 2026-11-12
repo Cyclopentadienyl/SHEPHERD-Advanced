@@ -33,8 +33,11 @@ themselves must not be writable by accounts that are not trusted.
 
 ``publish_bytes`` is the whole publish sequence for bytes already in memory --
 stage, write, flush, fsync, rename, and remove the staged file on any failure --
-returning the digest of exactly the bytes written. Each writer that predates it
-repeats that sequence itself; they are not migrated here.
+returning the digest of exactly the bytes written. ``publish_chunks`` is the
+same sequence for bytes produced chunk by chunk (a file too large to hold as
+one bytes object), and ``publish_bytes`` is that sequence with one chunk. Each
+writer that predates them repeats that sequence itself; they are not migrated
+here.
 
 **Publishing without replacing** (``publish_bytes(..., replace=False)``, since
 K8-6r.4): the staged file is hard-linked to the target, so the check that
@@ -53,7 +56,7 @@ import os
 import secrets
 import stat
 from pathlib import Path
-from typing import IO
+from typing import IO, Iterable, Tuple
 
 #: Only permission bits are carried over: a setuid, setgid or sticky bit on a
 #: data file is not something a rewrite should reproduce.
@@ -199,12 +202,37 @@ def publish_bytes(
             f"publish_bytes takes bytes, got {type(data).__name__}; nothing was written to "
             f"{target}"
         )
-    digest = hashlib.sha256(data).hexdigest()
+    return publish_chunks(target, (data,), replace=replace)[0]
+
+
+def publish_chunks(
+    target: str | os.PathLike[str], chunks: Iterable[bytes], *, replace: bool = True
+) -> Tuple[str, int]:
+    """Write the bytes `chunks` yields, in order, to `target` whole, and return
+    the SHA-256 of exactly those bytes and their length.
+
+    `publish_bytes`' sequence (its docstring states it, ``replace`` included)
+    for bytes made one chunk at a time, so a large file is never held as one
+    bytes object: each chunk is hashed and written to the staging file as it
+    comes, then the whole file is flushed to disk and placed at `target` in one
+    step. A failure at any point, a chunk that is not `bytes` or an interrupt
+    while the chunks are made among them, removes the staged file and leaves
+    `target` as it was (but for the empty claim of the ``replace=False``
+    fallback, as there), so a reader never sees part of the file.
+    """
     target = Path(target)
+    digest = hashlib.sha256()
+    size = 0
     handle, staged = create_staging_file(target, binary=True)
     try:
         with handle:
-            handle.write(data)
+            for chunk in chunks:
+                if not isinstance(chunk, bytes):
+                    raise TypeError(f"publish_chunks takes chunks of bytes, got "
+                                    f"{type(chunk).__name__}; nothing was written to {target}")
+                digest.update(chunk)
+                handle.write(chunk)
+                size += len(chunk)
             handle.flush()
             os.fsync(handle.fileno())
         if replace:
@@ -214,7 +242,7 @@ def publish_bytes(
     except BaseException:
         Path(staged).unlink(missing_ok=True)
         raise
-    return digest
+    return digest.hexdigest(), size
 
 
 def _taken(target: Path) -> FileExistsError:
@@ -249,4 +277,4 @@ def _place_new(staged: str, target: Path) -> None:
         pass
 
 
-__all__ = ["create_staging_file", "publish_bytes"]
+__all__ = ["create_staging_file", "publish_bytes", "publish_chunks"]

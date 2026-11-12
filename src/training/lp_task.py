@@ -29,11 +29,23 @@ what an uninterrupted one would.
 the training edges only; supervision comes from the training edges in
 training and from the validation edges in validation.
 
+**Node types and relations (`docs/working/research-comparison/README.md` §3,
+F6).** Both graph inputs carry what the view says of each node and edge: a
+step's subgraph (`LPBatch`) its nodes' view types in the order of its node
+ids and each message-passing edge's relation in edge order, and validation
+every view node's type in the view's order with the training edges'
+relations. The types are the view's own table (`GraphView.node_type`), given
+to the sampler and the task once; a model whose input adds a type embedding
+reads them, the reference one does not.
+
 **Validation (F3, F4, A5).** Every validation edge once, in a seeded fixed
 order and fixed batches, against negatives drawn once by the same rule under
 the recorded seed; node vectors by full-view chunked inference (§2.8) over the
 training edges; whole-set LP accuracy (the selection metric), ROC-AUC and AP.
-Two evaluations of the same weights give identical numbers.
+Two evaluations of the same weights give identical numbers. The pair rule and
+the scoring are the one LP core's (`src.models.bundle.lp_head`
+`fixed_lp_pairs` and `score_lp_pairs`, README §3.2); this task gives them the
+split's val edges, the split's seed and the training edges.
 
 Module: src/training/lp_task.py
 """
@@ -45,8 +57,7 @@ from typing import Any, Dict, Iterator, List, Optional, Sequence
 import torch
 from torch import Tensor
 
-from src.models.bundle.lp_head import corrupt_tails
-from src.models.bundle.metrics import lp_metrics
+from src.models.bundle.lp_head import LPPairs, corrupt_tails, fixed_lp_pairs, score_lp_pairs
 
 #: The selection metric of the base stage (A5), as the Trainer logs it.
 BASE_SELECTION_METRIC = "val_lp_accuracy"
@@ -54,10 +65,20 @@ BASE_SELECTION_METRIC = "val_lp_accuracy"
 
 @dataclass
 class LPBatch:
-    """One base training step's sampled subgraph and supervision."""
+    """One training step's sampled subgraph and supervision, base or finetune.
+
+    The subgraph is the step's graph input (`docs/working/research-comparison/
+    README.md` §3, F6): its nodes' view ids and view types, its edges and their
+    relations, each list in the order the encoder reads it. The supervision
+    (the positives and their negatives) is kept beside it and never reaches
+    message passing: `node_vectors` hands the model the subgraph only."""
 
     #: View node ids of the subgraph, hop-ordered, seeds first.
     node_ids: Tensor
+    #: The view type id of each node of `node_ids`, in that order
+    #: (`GraphView.node_type` at those ids); None when the sampler was given
+    #: no type table.
+    node_type: Optional[Tensor]
     #: `[2, E]` message-passing edges in local ids (row = source), hop-ordered.
     edge_index: Tensor
     #: The view relation of each message-passing edge.
@@ -86,10 +107,22 @@ class LPBatch:
         return index
 
     def to(self, device: torch.device) -> "LPBatch":
-        return LPBatch(self.node_ids.to(device), self.edge_index.to(device),
-                       self.edge_type.to(device), self.nodes_per_hop, self.edges_per_hop,
-                       self.head.to(device), self.relation.to(device), self.tail.to(device),
+        return LPBatch(self.node_ids.to(device),
+                       self.node_type.to(device) if self.node_type is not None else None,
+                       self.edge_index.to(device), self.edge_type.to(device),
+                       self.nodes_per_hop, self.edges_per_hop, self.head.to(device),
+                       self.relation.to(device), self.tail.to(device),
                        self.negative.to(device), dict(self.counts))
+
+    def node_vectors(self, model: Any) -> Tensor:
+        """The seeds' vectors by the model's sampled rule (README §2.8): this
+        subgraph's nodes, their types, its edges and their relations, and
+        nothing of the supervision. Every training step, the base's and each
+        finetune's, takes its vectors here, so the one sampled forward always
+        gets the whole graph input."""
+        return model.node_vectors_sampled(self.node_ids, self.edge_index, self.nodes_per_hop,
+                                          self.edges_per_hop, edge_type=self.edge_type,
+                                          node_type=self.node_type)
 
 
 @dataclass
@@ -128,12 +161,28 @@ class _EdgeTable:
         return torch.repeat_interleave(lo, counts) + offsets, pair
 
 
+def _node_type_table(node_type: Optional[Tensor], num_nodes: int) -> Optional[Tensor]:
+    """A view's type table (`GraphView.node_type`: view node id -> type id),
+    checked to hold one type per view node, as a CPU tensor; None stays None."""
+    if node_type is None:
+        return None
+    node_type = torch.as_tensor(node_type)
+    if node_type.dtype != torch.long or node_type.shape != (num_nodes,):
+        raise ValueError(f"the node type table holds {tuple(node_type.shape)} {node_type.dtype} "
+                         f"values, not one type id (int64) for each of the {num_nodes} view nodes")
+    return node_type.cpu()
+
+
 class BaseLPSampler:
-    """Source-visit batches for the base stage (C4, F5, F6)."""
+    """Source-visit batches for the base stage (C4, F5, F6).
+
+    `node_type` is the view's type table (`GraphView.node_type`): every batch
+    carries its sampled nodes' types read from it, in their order, so a model
+    whose input adds a type embedding gets the view's types, never a guess."""
 
     def __init__(self, num_nodes: int, message_passing: Tensor, message_relations: Tensor,
                  supervision: Tensor, supervision_relations: Tensor, *, sizes: Sequence[int],
-                 batch_size: int, seed: int):
+                 batch_size: int, seed: int, node_type: Optional[Tensor] = None):
         from torch_geometric.data import Data
         from torch_geometric.sampler import NeighborSampler
 
@@ -143,6 +192,7 @@ class BaseLPSampler:
         self.sizes = [int(s) for s in sizes]
         self.batch_size = int(batch_size)
         self.seed = int(seed)
+        self.node_type = _node_type_table(node_type, self.num_nodes)
         self.mp_relations = message_relations
         self._sampler = NeighborSampler(
             Data(edge_index=message_passing.contiguous(), num_nodes=self.num_nodes),
@@ -225,7 +275,9 @@ class BaseLPSampler:
             "edges_filtered": int((~keep).sum()),
         }
         return LPBatch(
-            node_ids=node, edge_index=torch.stack([row[keep], col[keep]]),
+            node_ids=node,
+            node_type=self.node_type[node] if self.node_type is not None else None,
+            edge_index=torch.stack([row[keep], col[keep]]),
             edge_type=self.mp_relations[edge[keep]],
             nodes_per_hop=list(out.num_sampled_nodes), edges_per_hop=edges_per_hop,
             head=local[pos_head], relation=pos_rel, tail=local[pos_tail], negative=negative,
@@ -233,20 +285,30 @@ class BaseLPSampler:
 
 
 class BaseLPTask:
-    """The base stage's step and validation, delegated to by the Trainer."""
+    """The base stage's step and validation, delegated to by the Trainer.
+
+    Validation's graph input is the training edges with their relations and
+    `node_type`, the view's type table (`GraphView.node_type`), every view
+    node's type in the view's node order."""
 
     selection_metric = BASE_SELECTION_METRIC
 
     def __init__(self, *, num_nodes: int, train_edges: Tensor, train_relations: Tensor,
                  val_edges: Tensor, val_relations: Tensor, seed: int,
-                 val_batch_size: int = 512, chunk_size: int = 65536):
+                 val_batch_size: int = 512, chunk_size: int = 65536,
+                 node_type: Optional[Tensor] = None):
         self.num_nodes = int(num_nodes)
         self.train_edges = train_edges
         self.train_relations = train_relations
+        self.node_type = _node_type_table(node_type, self.num_nodes)
         self.seed = int(seed)
         self.chunk_size = int(chunk_size)
-        self.val_head, self.val_rel, self.val_tail, self.val_neg_tail, self.val_counts = \
-            self._fixed_validation(val_edges, val_relations, int(val_batch_size))
+        #: The fixed validation pairs (F3): the split's val edges by the one
+        #: pair rule, under the split's seed.
+        self.val_pairs: LPPairs = fixed_lp_pairs(val_edges, val_relations, seed=self.seed,
+                                                 batch_size=int(val_batch_size))
+        self.val_counts = {"val_edges": self.val_pairs.counts["edges"],
+                           "val_without_negative": self.val_pairs.counts["without_negative"]}
         if self.val_head.numel() == 0:
             # Refused before the job starts, not at the first validation.
             raise ValueError(
@@ -254,27 +316,21 @@ class BaseLPTask:
                 "(no other tail of its relation in its batch), so the base stage cannot be "
                 "validated on this split")
 
-    def _fixed_validation(self, edges: Tensor, relations: Tensor, batch_size: int):
-        """Every validation edge once, in a seeded order and fixed batches, with
-        one negative drawn once per edge by U5's rule (F3)."""
-        generator = torch.Generator().manual_seed(self.seed + 7919)
-        order = torch.randperm(edges.size(1), generator=generator)
-        heads, tails, rels = edges[0][order], edges[1][order], relations[order]
-        keep_h, keep_r, keep_t, neg = [], [], [], []
-        without = 0
-        for start in range(0, heads.numel(), batch_size):
-            h = heads[start:start + batch_size]
-            t = tails[start:start + batch_size]
-            r = rels[start:start + batch_size]
-            chosen, ok = corrupt_tails(r, t, generator)
-            without += int((~ok).sum())
-            keep_h.append(h[ok])
-            keep_r.append(r[ok])
-            keep_t.append(t[ok])
-            neg.append(t[chosen[ok]])
-        cat = (lambda xs: torch.cat(xs) if xs else torch.empty(0, dtype=torch.long))
-        counts = {"val_edges": int(heads.numel()), "val_without_negative": without}
-        return cat(keep_h), cat(keep_r), cat(keep_t), cat(neg), counts
+    @property
+    def val_head(self) -> Tensor:
+        return self.val_pairs.head
+
+    @property
+    def val_rel(self) -> Tensor:
+        return self.val_pairs.relation
+
+    @property
+    def val_tail(self) -> Tensor:
+        return self.val_pairs.tail
+
+    @property
+    def val_neg_tail(self) -> Tensor:
+        return self.val_pairs.negative_tail
 
     def training_step(self, model: Any, batch: LPBatch, device: torch.device) -> StepResult:
         counts = dict(batch.counts)
@@ -283,8 +339,7 @@ class BaseLPTask:
         if pairs == 0:
             return StepResult(None, {}, counts)
         batch = batch.to(device)
-        z = model.node_vectors_sampled(batch.node_ids, batch.edge_index, batch.nodes_per_hop,
-                                       batch.edges_per_hop, edge_type=batch.edge_type)
+        z = batch.node_vectors(model)
         ok = batch.negative >= 0
         head, rel, tail = batch.head[ok], batch.relation[ok], batch.tail[ok]
         neg_tail = batch.tail[batch.negative[ok]]
@@ -295,17 +350,11 @@ class BaseLPTask:
 
     @torch.no_grad()
     def validate(self, model: Any, device: torch.device) -> Dict[str, Any]:
-        model.eval()
-        z = model.node_vectors_full(self.train_edges.to(device),
-                                    edge_type=self.train_relations.to(device),
-                                    chunk_size=self.chunk_size)
-        h = z[self.val_head.to(device)]
-        r = self.val_rel.to(device)
-        pos = model.lp_head.raw_score(h, r, z[self.val_tail.to(device)])
-        neg = model.lp_head.raw_score(h, r, z[self.val_neg_tail.to(device)])
-        metrics = lp_metrics(pos.cpu().tolist(), neg.cpu().tolist())
-        hinge = model.lp_head.hinge(torch.tanh(pos), torch.tanh(neg))
-        metrics["lp_loss"] = float(hinge)
+        """The fixed pairs scored over the training edges' full view: the LP
+        core's metrics, then `val_counts`."""
+        metrics = score_lp_pairs(model, self.val_pairs, self.train_edges, self.train_relations,
+                                 device, chunk_size=self.chunk_size,
+                                 node_type=self.node_type).metrics
         metrics.update(self.val_counts)
         return metrics
 

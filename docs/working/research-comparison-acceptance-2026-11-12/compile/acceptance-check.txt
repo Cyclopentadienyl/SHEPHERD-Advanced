@@ -1,0 +1,194 @@
+PASS  the probe exited 0: 0
+PASS  probe list shape: 
+PASS  probe IDs unique: 
+PASS  summary agrees with actual probes: 
+PASS  probe status vocabulary: 
+PASS  no probe failed: {'error': 0, 'failed': 0, 'passed': 116, 'skipped': 0}
+PASS  no probe errored: {'error': 0, 'failed': 0, 'passed': 116, 'skipped': 0}
+PASS  demo: requested: True
+PASS  demo: the required list is the tested commit's: 66
+PASS  demo: A2 passed: passed
+PASS  demo: B1 passed: passed
+PASS  demo: C1 passed: passed
+PASS  demo: D1 passed: passed
+PASS  demo: D2 passed: passed
+PASS  demo: E1 passed: passed
+PASS  demo: E7 passed: passed
+PASS  demo: E8 passed: passed
+PASS  demo: M1 passed: passed
+PASS  demo: M2 passed: passed
+PASS  demo: M3 passed: passed
+PASS  demo: M4 passed: passed
+PASS  demo: M5.pre_contract passed: passed
+PASS  demo: M5.other_graph passed: passed
+PASS  demo: M5.other_samples passed: passed
+PASS  demo: M5.validated_parent passed: passed
+PASS  demo: M5.missing passed: passed
+PASS  demo: M5.no_model_spec passed: passed
+PASS  demo: M6 passed: passed
+PASS  demo: M7 passed: passed
+PASS  demo: M8 passed: passed
+PASS  demo: M9 passed: passed
+PASS  demo: M10 passed: passed
+PASS  demo: C5.missing passed: passed
+PASS  demo: C5.replaced passed: passed
+PASS  demo: C5.other_graph passed: passed
+PASS  demo: C5.unbound passed: passed
+PASS  demo: C5.unreadable passed: passed
+PASS  demo: C5.unidentified passed: passed
+PASS  demo: B22 passed: passed
+PASS  demo: B23 passed: passed
+PASS  demo: M11.training passed: passed
+PASS  demo: M11.serving passed: passed
+PASS  demo: M11.measurement passed: passed
+PASS  demo: T1 passed: passed
+PASS  demo: T2 passed: passed
+PASS  demo: T3 passed: passed
+PASS  demo: T4 passed: passed
+PASS  demo: T5 passed: passed
+PASS  demo: T6 passed: passed
+PASS  demo: A5 passed: passed
+PASS  demo: W1 passed: passed
+PASS  demo: W2 passed: passed
+PASS  demo: W3 passed: passed
+PASS  demo: W4 passed: passed
+PASS  demo: W5 passed: passed
+PASS  demo: W6 passed: passed
+PASS  demo: W7 passed: passed
+PASS  demo: W8 passed: passed
+PASS  demo: W9 passed: passed
+PASS  demo: W10 passed: passed
+PASS  demo: W11 passed: passed
+PASS  demo: A6 passed: passed
+PASS  demo: L1 passed: passed
+PASS  demo: L2 passed: passed
+PASS  demo: L3 passed: passed
+PASS  demo: L4.other_graph passed: passed
+PASS  demo: L4.tampered_pairs passed: passed
+PASS  demo: L4.other_view passed: passed
+PASS  demo: L4.split_record passed: passed
+PASS  demo: L5 passed: passed
+PASS  demo: L6 passed: passed
+PASS  demo: L7.disease passed: passed
+PASS  demo: L7.gene passed: passed
+PASS  demo: L7.patients_like_me passed: passed
+PASS  demo: L8 passed: passed
+PASS  demo: complete, nothing not passed: {}
+PASS  real_data: requested: True
+PASS  real_data: the required list is the tested commit's: 15
+PASS  real_data: R1 passed: passed
+PASS  real_data: R2 passed: passed
+PASS  real_data: R3 passed: passed
+PASS  real_data: R4 passed: passed
+PASS  real_data: R4.finetune passed: passed
+PASS  real_data: R5 passed: passed
+PASS  real_data: R6 passed: passed
+PASS  real_data: R7 passed: passed
+PASS  real_data: R8 passed: passed
+PASS  real_data: RT1 passed: passed
+PASS  real_data: RT2 passed: passed
+PASS  real_data: RT3 passed: passed
+PASS  real_data: RW1 passed: passed
+PASS  real_data: RW2 passed: passed
+PASS  real_data: RW3 passed: passed
+PASS  real_data: complete, nothing not passed: {}
+PASS  the acceptance is complete: True
+PASS  tested commit: e60f23ee0314c33d7785d13656a146e0ca0022d8
+PASS  no tracked file modified during the run: False
+PASS  allocator backend cudaMallocAsync: cudaMallocAsync
+PASS  allocator from the saved preset: saved preset
+PASS  PYTORCH_ALLOC_CONF backend:cudaMallocAsync: backend:cudaMallocAsync
+PASS  torch not imported before the allocator was set: False
+PASS  environment device_name = NVIDIA GB10: NVIDIA GB10
+PASS  environment capability = 12.1: 12.1
+PASS  environment cuda_available = True: True
+PASS  environment resolved_device = cuda: cuda
+PASS  environment platform = Linux aarch64: Linux aarch64
+PASS  environment torch_version = 2.10.0+cu130: 2.10.0+cu130
+PASS  environment torch_cuda_build = 13.0: 13.0
+PASS  environment allocator_backend = cudaMallocAsync: cudaMallocAsync
+PASS  environment python 3.12: 3.12.3
+PASS  environment: all four PyG native extensions present: ['pyg_lib', 'torch_cluster', 'torch_scatter', 'torch_sparse']
+PASS  settings: device cuda: cuda
+PASS  settings: M2 acceptance requested: True
+PASS  settings: real data requested: True
+PASS  A5 passed: passed
+PASS  A5: the lock is the one committed at the tested commit: True
+PASS  A5: installed versions match the lock: []
+PASS  A5 read this checkout's uv.lock: 0f92a5ecff12170bb26127c9d7098ab4301ffac8c7c3bcbd4b7dc9723815c356
+PASS  R1: the graph digest is M4's: 6cae2d1a58690eec9aa9c5e3ca9182c2fc942db0f468a5123983251bd4c51e43
+PASS  R2: the stripped copy is refused by finetune, resume and serving: {'finetune': 'refused before anything was written', 'resume': 'refused before anything was written', 'serving': 'refused at load before any model was built'}
+PASS  R2: the deployment's file without a model spec is refused by finetune and resume: {'finetune': 'refused before anything was written', 'resume': 'refused before anything was written'}
+PASS  M2: float16 in effect on CUDA with a gradient scaler (Q13 (b)): (True, 'float16', True)
+PASS  M2: the scaler restored from the parent before the first update: verified at restore: equal to the parent's before the first update
+PASS  M9: float16 in effect on CUDA with a gradient scaler (Q13 (b)): (True, 'float16', True)
+PASS  M9: the scaler restored from the parent before the first update: verified at restore: equal to the parent's before the first update
+PASS  R3: a GATv2 base under tested training rules 2: ('base', 'gatv2', 2)
+PASS  R4: the reference recipe's fp32, no gradient scaler: no gradient scaler (fp32 recipe)
+PASS  R8: 19 entries unchanged, the deployment's file without a model spec unchanged: (19, 'unchanged')
+PASS  explicit deployment route: 
+PASS  L1: preview, graph and test-kind identity: 
+PASS  L1: manifest_sha256: 
+PASS  L1: taken_from_checkpoint_sha256: 
+PASS  L1: graph_view_digest: 
+PASS  L1: split_digest: 
+PASS  L1: pairs.sha256: 
+PASS  L1: pairs.lp_pairs_digest: 
+PASS  L1: count binds pairs: 
+PASS  A6: component identities and routes are present: 
+PASS  deployment: pyg_lib is local build: local build
+PASS  deployment: torch_scatter is local build: local build
+PASS  deployment: torch_sparse is local build: local build
+PASS  deployment: torch_cluster is local build: local build
+PASS  L2: checkpoint and KG version bind: 
+PASS  L2: exposure is recorded: 
+PASS  L2: scores bind pairs and count: 
+PASS  L2: core recomputed metrics and scores: 
+PASS  L2: CUDA, report and own run registered: 
+PASS  L2: LP requested: 
+PASS  L3: checkpoint and KG version bind: 
+PASS  L3: exposure is recorded: 
+PASS  L3: scores bind pairs and count: 
+PASS  L3: core recomputed metrics and scores: 
+PASS  L3: CUDA, report and own run registered: 
+PASS  L3: LP requested: 
+PASS  L3: runner kept and registered: 
+PASS  L4.other_graph: refusal before publication: 
+PASS  L4.tampered_pairs: refusal before publication: 
+PASS  L4.other_view: refusal before publication: 
+PASS  L4.split_record: refusal before publication: 
+PASS  L4.other_graph: KG mismatch identified: 
+PASS  L5.disease: CUDA, report and own run registered: 
+PASS  L5.disease: supplied disease protocol: 
+PASS  L5.kg_link_prediction: checkpoint and KG version bind: 
+PASS  L5.kg_link_prediction: exposure is recorded: 
+PASS  L5.kg_link_prediction: scores bind pairs and count: 
+PASS  L5.kg_link_prediction: core recomputed metrics and scores: 
+PASS  L5.kg_link_prediction: CUDA, report and own run registered: 
+PASS  L5: both protocols through same reader: 
+PASS  L6: CUDA, report and own run registered: 
+PASS  L6: generated val on same child, preview read-only: 
+PASS  L7.disease: CUDA, report and own run registered: 
+PASS  L7.disease: child trained on CUDA from listed base under tested rules: 
+PASS  L7.disease: same declared data version: 
+PASS  L7.gene: CUDA, report and own run registered: 
+PASS  L7.gene: child trained on CUDA from listed base under tested rules: 
+PASS  L7.gene: same declared data version: 
+PASS  L7.patients_like_me: CUDA, report and own run registered: 
+PASS  L7.patients_like_me: child trained on CUDA from listed base under tested rules: 
+PASS  L7.patients_like_me: same declared data version: 
+PASS  L8: complete uncapped export: 
+PASS  L8: every run and report is its own, in flow order: 
+PASS  L8: metric rows accounted for: 
+INFO  torch_geometric 2.8.1 (A5 checks the tested lock)
+INFO  RW2 training_seconds {'disease': 1100.6}
+INFO  R4.finetune training_seconds {'disease': 1125.1}
+INFO  disk: 173 samples; peak 14857318251 B; least free 3069811531776 B (recorded, not judged)
+INFO  L2 largest_raw_score_difference 2.384185791015625e-07 (probe already checked tolerance; not required to be zero)
+INFO  L3 largest_raw_score_difference 5.960464477539063e-08 (probe already checked tolerance; not required to be zero)
+INFO  L5.kg_link_prediction largest_raw_score_difference 2.9802322387695312e-08 (probe already checked tolerance; not required to be zero)
+INFO  L7.disease training_seconds 0.2
+INFO  L7.gene training_seconds 0.4
+INFO  L7.patients_like_me training_seconds 0.4
+INFO  S1 (informational only): passed
+182 passed, 0 failed

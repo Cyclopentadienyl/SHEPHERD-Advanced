@@ -1,16 +1,24 @@
 """
 Research › Evaluate › Test: import a cohort version, run a test, keep and register its report (M5-2, UI-D).
 ==========================================================================================================
+Every data kind of the registry (research comparison Stage 7): a supplied
+cohort, a KG edge set and a generated split are listed, measured and
+registered here.
 `docs/working/PLAN_TEST_RESULTS.md` §6 ("M5's boundaries": the Test tab on
 M4's flow), D5, D7 and D8; the page contract is `src/webui/shell.py`'s
 docstring. Three panels, as the mockup draws them (``test-wide.png``,
 ``test-import.png``):
 
-- **Cohort**: the workspace (the server's list, the shared dataset renderer),
-  the cohort version (the registry's list, with whether it is mapped against
-  this workspace's graph), "🔒 Import a new version…", and the version's report
-  store: every run directory, newest first (the newest `ROWS_SHOWN` and the
-  selected one shown, "Show all N reports" for the rest), with what it kept
+- **Data**: the workspace (the server's list, the shared dataset renderer),
+  the data version (the registry's list by kind and role: a supplied cohort
+  by its role and case counts, "KG edge set (test)", "Generated split (val)",
+  each with its counts in its own units, `version_choices`, `version_html`;
+  with whether it is mapped against this workspace's graph; when the registry
+  holds no KG edge set, the command that imports one on the machine,
+  `kg_edges_empty_html`), "🔒 Import a new version…" (a supplied cohort),
+  and the version's report store: every run directory, newest first (the
+  newest `ROWS_SHOWN` and the selected one shown, "Show all N reports" for
+  the rest), with what it kept
   and whether its report is registered (the registration's one helper,
   `server_lists.stored_report_state`, asked again for an operator beside the
   listed checkpoint Register would use: `refine_rows`, `ledger_checkpoint`)
@@ -23,28 +31,38 @@ docstring. Three panels, as the mockup draws them (``test-wide.png``,
   `renderers.record_kind_text`: listing opens every checkpoint, so it is an
   operator control and a read-only request is not shown it), the measurement
   (a radio of the protocols this build implements that the chosen model's
-  listed record admits, `protocols.available`: the only one is chosen, of
-  several none is until the operator picks one, and with none Start says why),
-  the R10 evidence the server's setting names, "Register the result" and
+  listed capabilities admit and that measure the chosen version's kind,
+  `protocols.available`: the only one is chosen, of several none is until the
+  operator picks one, and with none Start says why; one Start runs one
+  measurement), the R10 evidence by the runner's one choice by the version's
+  kind (`run_evidence`, `training_manager.evidence_choice`: the server's
+  setting for a supplied cohort, a refused setting a red ✕ with its words;
+  "Not applicable" with why for a KG edge set or a generated split, which is
+  given none and does not need the setting), "Register the result" and
   "Deterministic execution", the batch size and device the server fixes (D5),
   "🔒 Start test" through the job runner (`TrainingManager.start_test`, given
-  the measurement chosen and the model's learning stage and task from the
-  session's listing) with the **full digests shown** as the expected ones, so
+  the measurement chosen, the model's learning stage, task and capability
+  description and the version's kind from the session's listings) with the
+  **full digests shown** as the expected ones, so
   the run refuses before measuring when the file or the version it reads is
   not the one chosen. **A run starts only for a measurement this build
   implements that takes the model's record and the version's inputs**
   (`measure_refusal`, one rule for Start's reason and for the start itself,
   which asks `protocols.refusal` after the page's own record states): a
-  record refused (a file without a model spec among them) or not read, a base (its
-  formal test is not implemented yet), a measurement the model's stage or task
-  head does not meet, and a measurement needing genes the version does not
-  list are refused with their reason; then the job: its state, elapsed time,
+  record refused (a file without a model spec among them) or not read, a measurement
+  that does not measure the version's data kind, a measurement whose needs the model's
+  capabilities do not meet (its task head among them), and a measurement
+  needing genes the version does not list are refused with their reason; then the job: its state, elapsed time,
   inputs, output tail, "🔒 Cancel" (the runner's stop for test runs only), and
   once it has ended, **what it left, from the runner** (its outcome file, kept
   and registered read from disk by WP4's helper; "no report was published"
   when there is no outcome file; a cancel says what was left);
 - **Result**: the selected report as the record the ledger would hold
-  (`build_record`, through the store's scan), by **one display for every
+  (`build_record`, through the store's scan), read by the one reader as its
+  data kind's result view (`record_views.result_view`, the results service's
+  reading of a kept report, registered or not; a record it cannot read is
+  shown with its reason, not as a result), its kind's lines in the rendering
+  Models shares (`renderers.data_kind_lines`), by **one display for every
   mode** (R2, K8-6e.2): a measurement this build describes in its tiles and
   words (`caveats.metric_text`) with every metric as recorded one click away;
   any other mode's metrics, a kept report's included, as recorded
@@ -127,7 +145,6 @@ from __future__ import annotations
 import logging
 import re
 import time
-from collections import Counter
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
@@ -137,23 +154,25 @@ import gradio as gr
 
 from src.evaluation import protocols
 from src.evaluation.caveats import (
+    MEASUREMENT_NAMES,
     R10_LABEL_TEXT,
-    R10_STATE_TEXT,
-    R10_UNVERIFIABLE_REASON,
     RELATION_DISPLAY_NAMES,
     TASK_NAMES,
+    label_words,
     metric_text,
     mode_label,
     mode_note,
     recorded_metric_lines,
+    version_words,
 )
+from src.utils.run_environment import native_identity_lines
 from src.webui.components import renderers as r
 from src.webui.components.chips import D8_SHORT, chips_on_change
 from src.webui.components.help import help_button
 from src.webui.components.model_list import item_key
+from src.utils.path_redaction import redact_paths
 from src.webui.components.workspaces import (
     binding_state,
-    redact_paths,
     version_row,
     workspace_binding,
 )
@@ -199,13 +218,6 @@ _ORIGIN_MEANING = {
     "synthetic": "a generated stand-in, not a clinical knowledge graph",
     "files": "built from identified source files",
 }
-_R10_EVIDENCE_WORDS = {
-    "found": "evidence found",
-    "not_found": "evidence not found",
-    "unreadable": "evidence found, not readable",
-    "not_recorded": "evidence not recorded by the checkpoint",
-    "search_incomplete": "evidence search incomplete",
-}
 #: The metrics shown as tiles, in order, by the record's mode (`scoring.mode`),
 #: for a measurement this build describes; each is named by
 #: `caveats.metric_text`. A task's (`src.evaluation.task_measurement`) are
@@ -221,11 +233,22 @@ _TILES = {
 #: row (its k values in order), and its single figures shown as a row each.
 _TASK_FAMILIES = ("pooled_top", "macro_recall@", "macro_precision@")
 _TASK_ROWS = ("macro_mrr", "best_positive_mrr")
-#: The ⓘ beside a described measurement's label.
-_MODE_HELP = {task: f"test-mode-{task}" for task in TASK_NAMES}
-#: Each report row's mode, first in its state line: a plain label, the code
-#: beside it. A report of another mode, or one whose mode cannot be read, says so.
-_MODE_ROW_WORDS = {task: f"{name.lower()} task" for task, name in TASK_NAMES.items()}
+#: Each measurement this build describes, as this page names its result: from
+#: the one vocabulary (`caveats.MEASUREMENT_NAMES`), a task's measurement by
+#: its task's name and "task" ("Disease task"), the KG link-prediction
+#: measurement by its own words ("KG link prediction").
+_RESULT_WORDS = {mode: f"{name} task" if mode in TASK_NAMES else name
+                 for mode, name in MEASUREMENT_NAMES.items()}
+#: The ⓘ beside a described measurement's label, holding its note
+#: (`caveats.mode_note`).
+_MODE_HELP = {mode: f"test-mode-{mode}" for mode in _RESULT_WORDS}
+#: Each report row's mode, first in its state line, in plain words: a task's
+#: in lower case ("gene task"), the KG link-prediction measurement's as written
+#: ("KG link prediction"). A report of another mode is named by its recorded
+#: code as one this version does not describe; one whose mode cannot be read
+#: says so.
+_MODE_ROW_WORDS = {mode: words.lower() if mode in TASK_NAMES else words
+                   for mode, words in _RESULT_WORDS.items()}
 #: The job's statuses, as its pill shows them: never green for failed,
 #: stopped or cancelled.
 _PILLS = {
@@ -240,23 +263,24 @@ FIELD_HELP = {
     "shep-test-workspace": (
         "Workspace",
         "The workspace the server lists under SHEPHERD_WORKSPACES_ROOT: its graph is what a "
-        "cohort version is imported against and what a test run measures on; its checkpoints "
+        "data version is imported against and what a test run measures on; its checkpoints "
         "are the models offered. Shown by its dataset fingerprint, as on Datasets.",
     ),
     "shep-test-version": (
-        "Cohort version",
-        "A cohort version in the server's registry (SHEPHERD_REGISTRY): a source case set "
-        "mapped to one graph's node indices, immutable, identified by the digest of its "
-        "cohort.json. It can be measured only on a workspace whose graph it was mapped "
-        "against; the run checks that again on the bytes it reads.",
+        "Data version",
+        "A version in the server's registry (SHEPHERD_REGISTRY), listed by kind and role.\n"
+        "• A supplied cohort: source cases mapped to one graph's nodes (Import).\n"
+        "• A KG edge set: one part of a model's edge split, with fixed pairs.\n"
+        "• A generated split: the workspace's own patients.\n"
+        "Immutable, identified by its cohort.json's digest. Measured only on the workspace "
+        "whose graph it was mapped against; the run checks the bytes again.",
     ),
     "shep-test-model": (
         "Model",
         "The workspace's checkpoints from the server's list, each led by what its record "
         "says it is.\n"
-        "• A model is measured by a measurement this build implements for its stage and task "
-        "head (Measurement); a base, or a file without a model spec, is listed but not "
-        "measured here.\n"
+        "• A model is measured by what its capabilities meet: its task head, or its LP head "
+        "on a KG edge set (Measurement); a file without a model spec is listed only.\n"
         "• Listing opens every checkpoint, so it is an operator control.\n"
         "• The run is given the model fingerprint shown here and refuses before measuring if "
         "the file it reads holds other bytes.",
@@ -265,10 +289,11 @@ FIELD_HELP = {
         "Measurement",
         "What the run measures: one of the measurements this build implements for the chosen "
         "model.\n"
-        "• Each takes a model of one learning stage and task head; the options are those the "
-        "chosen model's record meets.\n"
-        "• A single option is chosen already; of several, choose one.\n"
-        "• A base is listed but not measured yet: its formal test is not implemented.\n"
+        "• The options are those the model's capabilities meet that measure the chosen "
+        "version's kind: a task's on a cohort or generated split, KG link prediction on a KG "
+        "edge set.\n"
+        "• A base is offered KG link prediction only.\n"
+        "• A single option is chosen already; of several, choose one. Each Start runs one.\n"
         "• The report records the measurement as its mode.",
     ),
     "shep-test-record": (
@@ -276,7 +301,7 @@ FIELD_HELP = {
         "Checked: when the run completes, its report is registered in the ledger beside the "
         "checkpoint automatically. Unchecked: the report is kept in the registry's report "
         "store and not registered; it can be registered later from this page, as a whole "
-        "report. Every run keeps its report either way (D5).",
+        "report, whatever the version's kind. Every run keeps its report either way (D5).",
     ),
     "shep-test-deterministic": (
         "Deterministic execution",
@@ -328,8 +353,8 @@ TOPIC_HELP = {
         "the policy and every count. Commit prepares again from the same inputs and refuses "
         "unless it gives the same id, so what is committed is what was previewed.",
     ),
-    **{f"test-mode-{task}": (f"{name} task result", mode_note(task))
-       for task, name in TASK_NAMES.items()},
+    **{_MODE_HELP[mode]: (f"{words} result", mode_note(mode))
+       for mode, words in _RESULT_WORDS.items()},
     "test-r10": (
         "R10 labels",
         " · ".join(f"{text['name']}: {text['definition']}"
@@ -344,10 +369,13 @@ TOPIC_HELP = {
     ),
     "test-evidence": (
         "R10 evidence",
-        "Where the run looks for the training and validation inputs the checkpoint records, "
-        "to count their overlap with the cohort (R10): the measured workspace always, and the "
-        "directories the server's SHEPHERD_TRAINING_EVIDENCE_DIRS names. Only bytes whose "
-        "digest the checkpoint records count; otherwise a label is unverifiable, never 0.",
+        "Where a run on a supplied cohort looks for the inputs the checkpoint records (R10).\n"
+        "• It counts their overlap with the cohort's cases: the measured workspace always, and "
+        "the directories SHEPHERD_TRAINING_EVIDENCE_DIRS names.\n"
+        "• Only bytes whose digest the checkpoint records count; otherwise a label is "
+        "unverifiable, never 0.\n"
+        "• A KG edge set or a generated split has no R10: its run is given no directory, and "
+        "the setting is not needed.",
     ),
 }
 
@@ -356,7 +384,12 @@ TOPIC_HELP = {
 # Small pieces
 # ---------------------------------------------------------------------------
 e = r.e
+#: A report row's time from its run id: the one `renderers.run_time` every
+#: page names a run by.
+run_time = r.run_time
 
+#: A report store run id, read here only for its checkpoint's 12 hex digits
+#: (`run_sha12`).
 _RUN_ID = re.compile(r"^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z-([0-9a-f]{12})-[0-9a-f]{8}$")
 
 
@@ -463,16 +496,6 @@ def _reason_html(text: Optional[str], *, kind: str = "") -> str:
     return f'<div class="shep-reason shep-test-reason">{lock}<span>{e(text)}</span></div>'
 
 
-def run_time(run_id: Any, *, seconds: bool = False) -> Optional[str]:
-    """"2026-10-17 15:24 UTC" (with `seconds`, "2026-10-17 15:24:12 UTC") from
-    a run id (`create_report_dir` names it by its UTC time), else None."""
-    match = _RUN_ID.match(str(run_id or ""))
-    if not match:
-        return None
-    y, mo, d, h, mi, sec, _sha = match.groups()
-    return f"{y}-{mo}-{d} {h}:{mi}{':' + sec if seconds else ''} UTC"
-
-
 def run_sha12(run_id: Any) -> Optional[str]:
     match = _RUN_ID.match(str(run_id or ""))
     return match.group(7) if match else None
@@ -561,7 +584,11 @@ def read_page(request: Any, *, environ: Optional[Mapping[str, str]] = None) -> D
         "registry_problem": None if registry.available else registry.problem,
         "versions": [version_row(item) for item in versions.items] if versions else [],
         "versions_problem": versions.problem if versions is not None else None,
-        "evidence": {"names": [Path(d).name for d in (evidence.value or ())],
+        # The setting as read, which the runner's one choice by the chosen
+        # version's kind is drawn from (`run_evidence`); its directories stay
+        # in the session's server-side state and are shown by name only.
+        "evidence": {"dirs": [str(d) for d in (evidence.value or ())],
+                     "names": [Path(d).name for d in (evidence.value or ())],
                      "problem": evidence.problem, "note": evidence.note},
         "device": device,
     }
@@ -922,21 +949,56 @@ def model_choices(models: Mapping[str, Any]) -> List[Tuple[str, str]]:
     return choices
 
 
-def version_choices(page: Mapping[str, Any], binding: Optional[Mapping[str, Any]]
-                    ) -> List[Tuple[str, str]]:
+def _kind_words(version: Mapping[str, Any]) -> Optional[str]:
+    """A version of another kind than a supplied cohort by its kind and role,
+    as its option names it: "KG edge set (test)", "Generated split (val)"
+    (`caveats.version_words` as a label, `caveats.label_words`), or None for
+    a supplied cohort. Such a version has no source cases or ranked-eligible
+    count, so it is never described in a supplied cohort's words."""
+    kind = version.get("kind")
+    if kind in (None, protocols.SUPPLIED):
+        return None
+    return label_words(version_words(kind, version.get("role")))
+
+
+#: The order the version select lists the kinds in: supplied cohorts, then KG
+#: edge sets, then generated splits, then any other kind; each kind's versions
+#: in the registry's order.
+_KIND_ORDER = (protocols.SUPPLIED, protocols.KG_EDGES, protocols.GENERATED)
+
+
+def _by_kind(versions: Sequence[Mapping[str, Any]]) -> List[Mapping[str, Any]]:
+    """`versions` in `_KIND_ORDER`, each kind's in the order given (a stable
+    sort); a version whose kind was not read stays with the supplied ones,
+    as it always listed."""
+    order = {kind: n for n, kind in enumerate(_KIND_ORDER)}
+    return sorted(versions, key=lambda version: order.get(
+        version.get("kind") if version.get("kind") is not None else protocols.SUPPLIED,
+        len(order)))
+
+
+def version_choices(page: Mapping[str, Any]) -> List[Tuple[str, str]]:
+    """The version select's options, by kind (`_KIND_ORDER`) and role: a
+    supplied cohort as it always read ("label · role R · n of N
+    ranked-eligible"); a KG edge set or a generated split by its kind and
+    role ("kg-test · KG edge set (test)", "gen-val · Generated split (val)"),
+    its counts in its own units in the chosen version's details
+    (`version_html`); one that cannot be read says so. Whether a version was
+    mapped against this workspace's graph is the chosen version's detail
+    (its tag in `version_html`, and Start's reason), never its option's
+    text (skill §8). The values are the labels, whatever the words."""
     choices = []
-    for version in page.get("versions") or []:
+    for version in _by_kind(page.get("versions") or []):
         label = str(version.get("label"))
         if version.get("problem"):
             choices.append((f"{label} · cannot be read", label))
             continue
         counts = version.get("counts") or {}
-        text = (f"{label} · role {version.get('role')} · {_count(counts.get('ranked_eligible'))} "
-                f"of {_count(counts.get('source_cases'))} ranked-eligible")
-        state, _words = binding_state(version, binding)
-        if state == "another":
-            text += " · another graph"
-        choices.append((text, label))
+        kind_words = _kind_words(version)
+        choices.append((f"{label} · {kind_words}" if kind_words else
+                        f"{label} · role {version.get('role')} · "
+                        f"{_count(counts.get('ranked_eligible'))} of "
+                        f"{_count(counts.get('source_cases'))} ranked-eligible", label))
     return choices
 
 
@@ -960,11 +1022,15 @@ def default_workspace(page: Mapping[str, Any], current: Any) -> Optional[str]:
 
 def default_version(page: Mapping[str, Any], binding: Optional[Mapping[str, Any]],
                     current: Any) -> Optional[str]:
-    labels = [v["label"] for v in page.get("versions") or []]
+    """The version chosen: `current` while it is listed; otherwise the first
+    one mapped against this workspace's graph, else the first listed, in the
+    order the select shows them (`_by_kind`), so the version chosen is the
+    first option of its kind."""
+    versions = _by_kind(page.get("versions") or [])
+    labels = [v["label"] for v in versions]
     if current in labels:
         return current
-    bound = [v["label"] for v in page.get("versions") or []
-             if binding_state(v, binding)[0] == "bound"]
+    bound = [v["label"] for v in versions if binding_state(v, binding)[0] == "bound"]
     return (bound or labels or [None])[0]
 
 
@@ -974,7 +1040,7 @@ def default_version(page: Mapping[str, Any], binding: Optional[Mapping[str, Any]
 def cohort_header_html(page: Mapping[str, Any]) -> str:
     right = ("registry: server setting" if not page.get("registry_problem")
              else "registry: not available")
-    head = (f'<div class="shep-panel-hd"><h2>Cohort</h2><span class="shep-panel-right">'
+    head = (f'<div class="shep-panel-hd"><h2>Data</h2><span class="shep-panel-right">'
             f'{e(right)}</span></div>')
     problem = page.get("registry_problem")
     if problem:
@@ -996,21 +1062,81 @@ def workspace_html(page: Mapping[str, Any], workspace: Optional[str]) -> str:
             f'{note}</div>')
 
 
+#: The import command a page names when the registry holds no KG edge set:
+#: a KG edge set is made on the machine, from a checkpoint's recorded split
+#: (`scripts/import_cohort.py --kind kg_edges`; the deployment guide §4.9),
+#: never from the browser. Its role is the part asked, train, val or test.
+KG_EDGES_IMPORT = "scripts/import_cohort.py --kind kg_edges --from-checkpoint <checkpoint>"
+
+
+def kg_edges_empty_html(page: Mapping[str, Any]) -> str:
+    """The empty state of the KG edge sets (the skill's §9): when the registry
+    lists none, one line saying what a KG edge set is for and the command
+    that makes one on the machine (`KG_EDGES_IMPORT`); "" when it lists one,
+    or the registry is not available."""
+    if page.get("registry_problem") or any(
+            v.get("kind") == protocols.KG_EDGES for v in page.get("versions") or []):
+        return ""
+    return ('<div class="shep-sub">No KG edge set in the registry yet: KG link prediction '
+            f"measures one. Import one on the machine with <code>{e(KG_EDGES_IMPORT)}</code> "
+            "(deployment guide §4.9).</div>")
+
+
+def _version_counts(version: Mapping[str, Any]) -> str:
+    """A KG edge set's or a generated split's counts, each in its own unit:
+    the counts that say what it holds first, in words, then the unit its
+    manifest records for every count, one click away ("Counts and units
+    (N)"), with the value of each count the words above do not give, so no
+    count is shown twice (skill §1.2)."""
+    counts = version.get("counts") if isinstance(version.get("counts"), Mapping) else {}
+    units = version.get("count_units") if isinstance(version.get("count_units"), Mapping) else {}
+    if version.get("kind") == protocols.KG_EDGES:
+        said: Tuple[str, ...] = ("pairs", "positive_edges", "message_passing_edges")
+        lead = (f"{_count(counts.get('pairs'))} pairs from {_count(counts.get('positive_edges'))} "
+                f"positive edges; message passing over "
+                f"{_count(counts.get('message_passing_edges'))} edges")
+    elif version.get("kind") == protocols.GENERATED:
+        said = ("samples", "diseases", protocols.GENERATED_FIXTURE_COUNT)
+        diseases = counts.get("diseases")
+        fixture = counts.get(protocols.GENERATED_FIXTURE_COUNT)
+        lead = (f"{_count(counts.get('samples'))} generated patients of {_count(diseases)} "
+                f"disease{'' if diseases == 1 else 's'}; "
+                + (f"{_count(fixture)} gene fixture rows" if protocols.GENERATED_FIXTURE_COUNT
+                   in counts else "no gene fixture kept"))
+    else:
+        said = tuple(counts)
+        lead = ", ".join(f"{name} {_count(value)}" for name, value in counts.items())
+    rows = "".join(f"<div><code>{e(name)}</code>"
+                   f"{'' if name in said else ' ' + e(_count(value))}: "
+                   f"{e(units.get(name) or 'unit not recorded')}</div>"
+                   for name, value in counts.items())
+    return (f"<div>{e(lead)}</div>"
+            f'<details class="shep-test-units"><summary>Counts and units ({len(counts)})'
+            f"</summary>{rows}</details>")
+
+
 def version_html(page: Mapping[str, Any], label: Optional[str],
                  binding: Optional[Mapping[str, Any]]) -> str:
-    """The chosen version: role, counts, its digest, and whether it was mapped
-    against this workspace's graph."""
+    """The chosen version: its counts, its digest, and whether it was mapped
+    against this workspace's graph. A supplied cohort by its role and its
+    case counts; a KG edge set or a generated split by its counts in its own
+    units (`_version_counts`), never in a supplied cohort's words: its kind
+    and role are its option's (`version_choices`), not repeated under it
+    (skill §1.2). Under it, the KG edge sets' empty state when the registry
+    holds none (`kg_edges_empty_html`)."""
     if page.get("registry_problem"):
         return ""
+    empty = kg_edges_empty_html(page)
     version = find(page.get("versions") or [], "label", label)
     if version is None:
         why = page.get("versions_problem") or (
-            "No cohort version is in the registry yet: import one with “Import a new version…”."
-            if not page.get("versions") else "No cohort version is chosen.")
-        return _reason_html(redact(why, page.get("roots") or []))
+            "No data version is in the registry yet: import a cohort with “Import a new "
+            "version…”." if not page.get("versions") else "No data version is chosen.")
+        return _reason_html(redact(why, page.get("roots") or [])) + empty
     roots = page.get("roots") or []
     if version.get("problem"):
-        return _reason_html(f"This version cannot be read: {redact(version['problem'], roots)}")
+        return _reason_html("This version cannot be read: "
+                            + redact(version["problem"], roots)) + empty
     counts = version.get("counts") or {}
     state, words = binding_state(version, binding)
     kind = {"bound": "ok", "another": "amber", "unknown": "grey"}[state]
@@ -1019,14 +1145,20 @@ def version_html(page: Mapping[str, Any], label: Optional[str],
     excluded = counts.get("excluded") if isinstance(counts.get("excluded"), Mapping) else {}
     reasons = " · ".join(f"{str(k).replace('_', ' ')} {_count(v)}" for k, v in excluded.items())
     imported = str(version.get("imported_at") or "").replace("T", " ").replace("Z", " UTC")
+    if _kind_words(version):
+        what = _version_counts(version)
+    else:
+        what = (f'<div>role {r.ident_html(version.get("role"))} · '
+                f'{_count(counts.get("source_cases"))} source cases · '
+                f'{_count(counts.get("ranked_eligible"))} ranked-eligible'
+                f'{" (" + e(reasons) + " excluded)" if reasons else ""}</div>')
+    source_format = version.get("source_format")
     return (
         '<div class="shep-test-vd">'
-        f'<div>role {r.ident_html(version.get("role"))} · {_count(counts.get("source_cases"))} '
-        f'source cases · {_count(counts.get("ranked_eligible"))} ranked-eligible'
-        f'{" (" + e(reasons) + " excluded)" if reasons else ""}</div>'
+        f'{what}'
         f'<div>{r.fingerprint_html("version", version.get("manifest_sha256"))} {chip}</div>'
-        f'<div class="shep-sub">Imported {e(imported or "—")} · '
-        f'{e(version.get("source_format") or "")}</div></div>')
+        f'<div class="shep-sub">Imported {e(imported or "—")}'
+        f'{" · " + e(source_format) if source_format else ""}</div></div>{empty}')
 
 
 def _row_chip(run: Mapping[str, Any]) -> str:
@@ -1125,25 +1257,16 @@ def _model_words(sha12: Optional[str], models: Mapping[str, Any]) -> str:
 def _row_names(runs: Sequence[Mapping[str, Any]], models: Mapping[str, Any]) -> Dict[str, str]:
     """Each report row's visible name, by run id: its time and model. Rows that
     would read the same (one model run twice in a minute) get the seconds, and
-    if those match too, the run id's own last part. A row still selects and
-    registers by its full run id (``data-key``)."""
+    if those match too, the run id's own last part (`renderers.distinct_names`,
+    as Models › Results names its rows). A row still selects and registers by
+    its full run id (``data-key``)."""
     def name(run: Mapping[str, Any], level: int) -> str:
         run_id = str(run["run_id"])
         when = (run_time(run_id, seconds=True) if level else None) or run.get("when") or run_id
         tail = f" · run …{run_id[-8:]}" if level > 1 else ""
         return f"{e(when)} · {_model_words(run.get('sha12'), models)}{e(tail)}"
 
-    by_id = {str(run["run_id"]): run for run in runs}
-    levels = dict.fromkeys(by_id, 0)
-    while True:
-        names = {run_id: name(run, levels[run_id]) for run_id, run in by_id.items()}
-        seen = Counter(names.values())
-        clashing = [run_id for run_id, text in names.items()
-                    if seen[text] > 1 and levels[run_id] < 2]
-        if not clashing:
-            return names
-        for run_id in clashing:
-            levels[run_id] += 1
+    return r.distinct_names({str(run["run_id"]): run for run in runs}, name)
 
 
 def _ended_row(job: Mapping[str, Any], label: Any, run_ids: Sequence[str],
@@ -1281,29 +1404,76 @@ def model_html(page: Mapping[str, Any], models: Mapping[str, Any], key: Optional
         f' · {r.trained_on_html(item.get("dataset_fingerprint"), workspaces)}</div></div>')
 
 
-def evidence_html(page: Mapping[str, Any], workspace: Optional[str]) -> str:
-    """The R10 evidence row: the measured workspace, then the setting's
-    directories, or why the setting is refused. A directory the server cannot
-    check stays in the list and does not block Start: the setting's note says
-    which and why on a line of its own, in amber with ▲ (needs attention, does
-    not block), redacted as the problem is."""
+def run_evidence(page: Mapping[str, Any], version: Optional[Mapping[str, Any]]) -> Any:
+    """The R10 evidence a run on the listed version `version` is given, by the
+    job runner's one choice by its data kind
+    (`training_manager.evidence_choice`), over the evidence setting this page
+    read (`read_page`): a supplied cohort version takes the setting's
+    directories and a refused setting refuses its Start; a KG edge set or a
+    generated split takes none, the setting not required, and says why. Start's
+    check (`start_state`) and the R10 evidence row (`evidence_html`) read it;
+    the start itself asks the same choice of the setting read again
+    (`start_test_run`). With no version chosen, or one whose kind was not
+    read (a version that cannot be read, which Start refuses first), the
+    supplied case: the row shows the setting and claims no kind."""
+    from src.api.services.training_manager import evidence_choice
+    from src.config.server_settings import ENV_TRAINING_EVIDENCE_DIRS, Setting
+
+    read = page.get("evidence") or {}
+    setting = Setting(ENV_TRAINING_EVIDENCE_DIRS,
+                      None if read.get("problem") else tuple(
+                          Path(d) for d in read.get("dirs") or read.get("names") or ()),
+                      read.get("problem"), read.get("note"))
+    kind = (version or {}).get("kind")
+    return evidence_choice(protocols.SUPPLIED if kind is None else kind, setting)
+
+
+#: The mark of a refusal (the skill's §6): ✕ before its words, in the status
+#: error colour, so the colour never carries the meaning alone.
+REFUSED_MARK = '<span aria-hidden="true">✕</span>'
+#: The mark of "not applicable" (the skill's §6): a hollow ○ in grey, its word beside it.
+NOT_APPLICABLE_MARK = '<span aria-hidden="true">○</span>'
+
+
+def evidence_html(page: Mapping[str, Any], workspace: Optional[str],
+                  version: Optional[Mapping[str, Any]] = None) -> str:
+    """The R10 evidence row for a run on the chosen version (`run_evidence`,
+    the runner's one choice by its data kind; research comparison Stage 7).
+
+    For a KG edge set or a generated split: "Not applicable" in grey with a
+    hollow ○, then why (R10 is a supplied cohort's; how that kind stands to
+    a model's training), whatever the setting says, since a run on it is
+    given no evidence directory. For a supplied cohort version (and before a
+    version is chosen): the measured workspace, then the setting's
+    directories, or, when the setting is refused, which turns Start off, a red
+    ✕ with "Refused:" and why (BACKLOG 68's R10 row; the skill's §6). A
+    directory the server cannot check stays in the list and does not block
+    Start: the setting's note says which and why on a line of its own, in
+    amber with ▲ (needs attention, does not block), redacted as the problem
+    is."""
+    choice = run_evidence(page, version)
+    key = (f'<span class="shep-k">R10 evidence'
+           f'{help_button("test-evidence", "R10 evidence")}</span>')
+    if choice.not_applicable:
+        return (f'<div class="shep-test-kv">{key}<span><span class="shep-test-na">'
+                f'{NOT_APPLICABLE_MARK} Not applicable</span> · '
+                f'{e(choice.not_applicable)}</span></div>')
     evidence = page.get("evidence") or {}
     names = evidence.get("names") or []
     roots = page.get("roots") or []
     measured = f"{e(workspace)} (measured, always)" if workspace else "the measured workspace (always)"
     note = ""
-    if evidence.get("problem"):
-        extra = f' · <span class="shep-amber-t">{e(redact(evidence["problem"], roots))}</span>'
+    if choice.problem:
+        extra = (f' · <span class="shep-test-refused">{REFUSED_MARK} Refused: '
+                 f'{e(redact(choice.problem, roots))}</span>')
     elif names:
         extra = " · " + ", ".join(f"<code>{e(n)}</code>" for n in names) + " (the server's setting)"
-        if evidence.get("note"):
+        if choice.note:
             note = (f'<span></span><span class="shep-amber-t">{r.WARN_MARK} '
-                    f'{e(redact(evidence["note"], roots))}</span>')
+                    f'{e(redact(choice.note, roots))}</span>')
     else:
         extra = " · no other evidence directory is set on the server"
-    return (f'<div class="shep-test-kv"><span class="shep-k">R10 evidence'
-            f'{help_button("test-evidence", "R10 evidence")}</span><span>{measured}{extra}</span>'
-            f'{note}</div>')
+    return f'<div class="shep-test-kv">{key}<span>{measured}{extra}</span>{note}</div>'
 
 
 def fixed_html(page: Mapping[str, Any]) -> str:
@@ -1323,20 +1493,33 @@ def fixed_html(page: Mapping[str, Any]) -> str:
 
 
 def measurement_label(name: Any) -> str:
-    """A protocol's words on this page: the words the pages already use for
-    that mode value (`caveats.TASK_NAMES`), or the name as it is."""
-    return TASK_NAMES.get(name, str(name)) if isinstance(name, str) else str(name)
+    """A protocol's words on this page (`caveats.MEASUREMENT_NAMES`: a task's
+    measurement by its task's name, "KG link prediction"), or the name as it
+    is for one with no words there."""
+    return MEASUREMENT_NAMES.get(name, str(name)) if isinstance(name, str) else str(name)
 
 
-def measurement_choices(item: Optional[Mapping[str, Any]]) -> List[Tuple[str, str]]:
+def _kind(version: Optional[Mapping[str, Any]]) -> Any:
+    """The listed version's data kind, which the measurements offered for it
+    are judged by; None for no version chosen (the model's offer alone)."""
+    return version.get("kind") if version is not None else None
+
+
+def measurement_choices(item: Optional[Mapping[str, Any]],
+                        version: Optional[Mapping[str, Any]] = None) -> List[Tuple[str, str]]:
     """The Measurement radio's options for the chosen listing entry `item`
-    (None: no model chosen): the protocols this build implements whose model
-    requirement its listed record meets (`protocols.available`, in their
-    order), each labelled by `measurement_label`, its value the protocol's
-    name. Empty when none does; Start then says why (`measure_refusal`)."""
+    (None: no model chosen) on the chosen listed version `version` (None: none
+    chosen): the protocols this build implements whose needs its listed
+    capability description meets and that measure the version's data kind
+    (`protocols.available`, in their order; research comparison Stage 7),
+    each labelled by `measurement_label` (plain words, never the protocol's
+    code), its value the protocol's name. A finetune on a supplied cohort is
+    offered its task's measurement alone, so it is chosen; on a KG edge set,
+    KG link prediction alone. Empty when none does; Start then says why
+    (`measure_refusal`)."""
     if not item:
         return []
-    names, _reason = protocols.available(item.get("learning_stage"), item.get("task"))
+    names, _reason = protocols.available(item.get("capabilities"), _kind(version))
     return [(measurement_label(name), name) for name in names]
 
 
@@ -1350,8 +1533,9 @@ def chosen_measurement(choices: Sequence[Tuple[str, str]], value: Any) -> Option
     return values[0] if len(values) == 1 else None
 
 
-#: This page's own reason beside a record's state (`measure_refusal`).
-NOT_MEASURED_HERE = "not measured here. Choose a model finetuned for a task"
+#: This page's own reason beside a record's state (`measure_refusal`): a
+#: record that is refused or not read offers no measurement.
+NOT_MEASURED_HERE = "not measured here. Choose a model with a readable record"
 #: Start's reason while the chosen model offers several measurements and none is chosen.
 CHOOSE_A_MEASUREMENT = "choose a measurement"
 
@@ -1368,22 +1552,24 @@ def measure_refusal(item: Mapping[str, Any], version: Optional[Mapping[str, Any]
     spec among them) or not read is said in the word the Model option leads
     with (`renderers.record_kind_text`), then this page's reason
     (`NOT_MEASURED_HERE`). Otherwise, with no protocol chosen, the reason no
-    protocol takes the record (`protocols.available`: a base's is the base
-    message) or `CHOOSE_A_MEASUREMENT`; with one, the protocol definition's
-    reason (`protocols.refusal`: the record's stage and task head, then the
-    version's counts, which the importer writes for genes only for a source
-    that lists them). A version whose causal genes are all unmapped passes here
-    and the run refuses it."""
+    protocol takes the model and measures the version's kind
+    (`protocols.available`, as the options are drawn) or `CHOOSE_A_MEASUREMENT`;
+    with one, the protocol definition's reason (`protocols.refusal`: the listed
+    capability description, then the version's listed kind and counts, which
+    the importer writes for genes only for a source that lists them). A
+    version whose causal genes are all
+    unmapped passes here and the run refuses it."""
     record = item.get("record")
     if record in ("refused", None):
         why = (f" ({item.get('record_problem') or 'no reason was given'})"
                if record == "refused" else "")
         return f"{r.record_kind_text(item)}{why}: {NOT_MEASURED_HERE}"
-    stage, task = item.get("learning_stage"), item.get("task")
+    model = item.get("capabilities")
     if protocol is None:
-        names, reason = protocols.available(stage, task)
+        names, reason = protocols.available(model, _kind(version))
         return reason if not names else CHOOSE_A_MEASUREMENT
-    return protocols.refusal(protocol, stage, task, (version or {}).get("counts"))
+    return protocols.refusal(protocol, model, (version or {}).get("kind"),
+                             (version or {}).get("counts"))
 
 
 def start_state(page: Mapping[str, Any], models: Mapping[str, Any], workspace: Optional[str],
@@ -1400,7 +1586,7 @@ def start_state(page: Mapping[str, Any], models: Mapping[str, Any], workspace: O
     if not access.get("allowed"):
         return False, operator_only(access)
     if page.get("registry_problem"):
-        return False, "Disabled: no cohort registry is available (see Cohort)."
+        return False, "Disabled: no registry is available (see Data)."
     kind, words = gpu
     if kind == "busy":
         return False, (f"Disabled: {words}. One managed GPU job at a time (training or "
@@ -1412,11 +1598,11 @@ def start_state(page: Mapping[str, Any], models: Mapping[str, Any], workspace: O
         return False, "Disabled: choose a workspace."
     version = find(page.get("versions") or [], "label", label)
     if version is None:
-        return False, "Disabled: choose a cohort version."
+        return False, "Disabled: choose a data version."
     if version.get("problem"):
-        return False, "Disabled: this cohort version cannot be read."
+        return False, "Disabled: this data version cannot be read."
     if binding_state(version, binding)[0] == "another":
-        return False, ("Disabled: this cohort version was mapped against another graph than "
+        return False, ("Disabled: this data version was mapped against another graph than "
                        "this workspace's; the run would refuse it. Choose a workspace with its "
                        "graph, or import the source again against this workspace.")
     item = find_model(models, key)
@@ -1427,9 +1613,12 @@ def start_state(page: Mapping[str, Any], models: Mapping[str, Any], workspace: O
     refusal = measure_refusal(item, version, protocol)
     if refusal:
         return False, "Disabled: " + said(redact(refusal, roots), "")
-    if (page.get("evidence") or {}).get("problem"):
+    # The runner's one evidence choice by the version's kind: the setting is
+    # required only where it is given (a supplied cohort version).
+    evidence = run_evidence(page, version)
+    if evidence.problem:
         return False, ("Disabled: the evidence directories setting is refused: "
-                       + redact(page["evidence"]["problem"], roots))
+                       + redact(evidence.problem, roots))
     if (page.get("device") or {}).get("problem"):
         return False, f"Disabled: {page['device']['problem']}"
     return True, None
@@ -1469,9 +1658,13 @@ def job_body_html(job: Mapping[str, Any], roots: Sequence[Tuple[str, str]],
              f"register {'on' if inputs.get('record') else 'off'}",
              f"deterministic {'on' if inputs.get('deterministic') else 'off'}",
              f"device {e(inputs.get('device') or 'auto')}",
-             "R10 evidence: the workspace"
-             + (f" + {len(evidence)} director{'ies' if len(evidence) != 1 else 'y'}" if evidence
-                else "")]
+             # The run's own kind, as its inputs recorded it (the runner's
+             # choice): no R10 evidence for a KG edge set or a generated split.
+             ("R10 evidence: the workspace"
+              + (f" + {len(evidence)} director{'ies' if len(evidence) != 1 else 'y'}"
+                 if evidence else "")
+              if protocols.takes_training_evidence(inputs.get("version_kind", protocols.SUPPLIED))
+              else "R10 evidence: not applicable")]
     if started:
         parts.append(f"started {e(started)}")
     body = [f'<div class="shep-sub">{" · ".join(parts)}</div>']
@@ -1538,41 +1731,6 @@ def outcome_html(outcome: Mapping[str, Any], roots: Sequence[Tuple[str, str]]) -
 # ---------------------------------------------------------------------------
 # Rendering: Result
 # ---------------------------------------------------------------------------
-def _r10_label(label: str, name: str, part: Any, evidence: Any) -> str:
-    """One R10 label in the caveats' words: a count with its denominator only
-    where the state has one; *unverifiable* is a reason, never a 0."""
-    state = part.get("state") if isinstance(part, Mapping) else None
-    words = R10_STATE_TEXT.get(state) if isinstance(state, str) else None
-    if state == "unverifiable" and isinstance(evidence, str):
-        words = R10_UNVERIFIABLE_REASON.get(evidence, words)
-    if words is None:
-        return f"{e(name)}: not reported"
-    if state not in ("overlap", "none"):
-        if state == "unverifiable":
-            reason = words.split(":", 1)
-            return f"{e(name)}: <b>{e(reason[0])}</b>{e(':' + reason[1]) if len(reason) > 1 else ''}"
-        return f"{e(name)}: {e(words)}"
-    unit = "distinct test diseases" if label == "disease_overlap" else "test cases"
-    count = f"{_count(part.get('k'))} of {_count(part.get('n'))} {unit}"
-    if label == "disease_overlap":
-        count += f"; {_count(part.get('cases'))} test cases with one of them"
-    return f"{e(name)}: {e(words)} — {e(count)}"
-
-
-def _r10_lines(r10: Any) -> List[Tuple[str, str]]:
-    lines = []
-    for scope, labels in R10_LABEL_TEXT.items():
-        part = r10.get(scope) if isinstance(r10, Mapping) else None
-        part = part if isinstance(part, Mapping) else {}
-        evidence = (part.get("evidence") or {}).get("state") if isinstance(part.get("evidence"), Mapping) else None
-        found = _R10_EVIDENCE_WORDS.get(evidence, "evidence not reported")
-        text = (f'<span class="shep-muted">inputs ({e(found)}):</span> '
-                + " · ".join(_r10_label(label, t["name"], part.get(label), evidence)
-                             for label, t in labels.items()))
-        lines.append((f"R10, {scope}", text))
-    return lines
-
-
 def _relations(relations: Any) -> str:
     if not isinstance(relations, Mapping):
         return "not reported"
@@ -1589,19 +1747,26 @@ def _relations(relations: Any) -> str:
     return " · ".join(parts)
 
 
-def _environment(record: Mapping[str, Any]) -> str:
-    from src.evaluation.sidecar import environment_class
-
-    try:
-        text = environment_class(record)
-    except ValueError:
-        text = "not classified"
-    facts = (record.get("environment") or {}).get("facts") if isinstance(record.get("environment"), Mapping) else None
-    gpu = facts.get("gpu") if isinstance(facts, Mapping) else None
+def _environment(view: Mapping[str, Any]) -> str:
+    """The view's environment class (`sidecar.environment_class`, as the one
+    reader classified it) and, for a run on CUDA, its GPU and driver."""
+    text = str(view["environment_class"])
+    gpu = view["gpu"]
     if isinstance(gpu, Mapping):
         text += (f" · GPU {gpu.get('name') or 'name not read'}, driver "
                  f"{gpu.get('driver') or 'not read'}")
     return e(text)
+
+
+def _native_build(view: Mapping[str, Any]) -> str:
+    """The view's native build identity (the run environment's one
+    projection, `native_identity`, as the API's record view and Models show
+    it) in its one wording: a lead with the route and the count, then one line
+    per component (`native_identity_lines`), since the one line runs to four in
+    this column (the skill's §4: past two lines, structure); "not recorded"
+    for a run recorded before its environment named components."""
+    return "".join(f"<div>{e(line)}</div>"
+                   for line in native_identity_lines(view["native_identity"]))
 
 
 def result_html(reports: Mapping[str, Any], run_id: Optional[str],
@@ -1681,13 +1846,15 @@ def _registration_reason_html(state: Mapping[str, Any], roots: Sequence[Tuple[st
     return ""
 
 
-def _tile_note(name: str) -> str:
+def _tile_note(name: str, kind: str = "supplied") -> str:
     """What a described measurement's tile figure is over: its positive pairs
     (pooled), its ranked cases (macro) or the share of the import-eligible cases
-    ranked (coverage), with no count, since the record's Coverage row says "n of
-    M" once (skill rule 1.2)."""
+    ranked (coverage; a generated split's cases are not imported, so its share
+    is of the cases measured), with no count, since the record's Coverage row
+    says "n of M" once (skill rule 1.2)."""
     if name == "coverage":
-        return "share of import-eligible cases ranked"
+        return ("share of import-eligible cases ranked" if kind == "supplied"
+                else "share of the cases measured that were ranked")
     if name.startswith("pooled_"):
         return "pooled over positive pairs"
     if name.startswith("macro_"):
@@ -1744,10 +1911,10 @@ def recorded_metrics_html(metrics: Mapping[str, Any]) -> str:
     return "".join(f"<div><code>{e(name)}</code> {e(value)}</div>" for name, value in lines)
 
 
-def _semantics_text(scoring: Mapping[str, Any]) -> str:
-    """The record's `scoring.score_semantics` exactly as recorded, a code, or
-    "not recorded": never split, interpreted or rebuilt."""
-    raw = scoring.get("score_semantics")
+def _semantics_text(raw: Any) -> str:
+    """The record's `scoring.score_semantics` exactly as recorded (the view's
+    ``score_semantics``), a code, or "not recorded": never split, interpreted
+    or rebuilt."""
     if isinstance(raw, str) and raw.strip():
         return f"<code>{e(raw)}</code>"
     return '<span class="shep-muted">not recorded</span>'
@@ -1755,29 +1922,60 @@ def _semantics_text(scoring: Mapping[str, Any]) -> str:
 
 def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
                  state: Mapping[str, Any]) -> str:
-    cohort = record.get("cohort") if isinstance(record.get("cohort"), Mapping) else {}
-    regime = record.get("regime") if isinstance(record.get("regime"), Mapping) else {}
-    metrics = record.get("metrics") if isinstance(record.get("metrics"), Mapping) else {}
-    n_ranked = record.get("n_ranked")
-    counts = cohort.get("counts") if isinstance(cohort.get("counts"), Mapping) else {}
+    """The selected report's record (`build_record`'s, through the store's
+    scan) as the one reader reads it (research comparison Stage 8b): its data
+    kind's result view (`record_views.result_view`, the one the results
+    service reads every kept report by, registered or not). Every field shown
+    is the view's: its mode, data (label, role, version, kind and counts),
+    the run's counts, score semantics, relations, R10 or the kind's lines (the
+    shared renderings, `renderers.r10_rows` and `renderers.data_kind_lines`,
+    as Models shows a registered record's), environment, native build and
+    dataset origin; the measurement's device is the record's recorded
+    setting (`record_views.recorded_settings`, as the service reads it), and
+    the model is the record's key field. Only the metric values are the
+    record's own, by the names the view read (an integer stays an integer,
+    as the service keeps them, `results._metrics`). A record the reader
+    cannot read is not shown as a result: its reason, naming fields and
+    never values, as Models and the results service list it."""
+    from src.api.services.record_views import (
+        recorded_settings,
+        result_view,
+        unreadable_reason,
+    )
+
+    try:
+        view = result_view(dict(record)).model_dump(mode="json")
+    except ValueError as exc:
+        return _reason_html("This report's record cannot be read as a result, so it is not "
+                            "shown as one (Models › Results lists it with this reason): "
+                            + unreadable_reason(exc))
+    cohort, counts, n_ranked = view["cohort"], view["counts"], view["n_ranked"]
+    metrics = {name: record["metrics"][name] for name in view["metrics"]}
     # Labelled by the record's own mode, as recorded, never by another's.
-    scoring = record.get("scoring") if isinstance(record.get("scoring"), Mapping) else {}
-    mode = scoring.get("mode") if isinstance(scoring.get("mode"), str) and \
-        scoring.get("mode").strip() else None
+    mode = view["mode"]
     label = mode_label(mode)
     tile_names = _TILES.get(mode, ())
     task = mode in TASK_NAMES
     eligible = _count(counts.get("ranked_eligible"))
-    deterministic = regime.get("deterministic_algorithms")
-    line = (f'{e(cohort.get("label"))} (version <code>{e(str(record.get("cohort_digest") or "")[:12])}</code>, '
-            f'role {r.ident_html(record.get("cohort_role"))}) · model '
+    deterministic = view["deterministic_algorithms"]
+    device = recorded_settings(record)["regime"].get("device")
+    # The record's data kind, as the one reader read it (research comparison
+    # Stage 6): a version of another kind than a supplied cohort is named by
+    # its kind and role, and read by its own counts and exposure, never a
+    # cohort's or R10's words.
+    kind = cohort["kind"]
+    role = (f'role {r.ident_html(cohort["role"])}' if kind == "supplied"
+            else e(version_words(kind, cohort["role"])))
+    determinism = ("on" if deterministic is True else "off" if deterministic is False
+                   else "not recorded")
+    line = (f'{e(cohort["label"])} (version '
+            f'<code>{e(cohort["version_manifest_sha256"][:12])}</code>, {role}) · model '
             f'<code>{e(str(record.get("checkpoint_digest") or "")[:12])}</code> · '
-            f'deterministic {"on" if deterministic is True else "off" if deterministic is False else "not recorded"}'
-            f' · device <code>{e(regime.get("device"))}</code>')
+            f'deterministic {determinism} · device <code>{e(device)}</code>')
     tiles = "".join(
         f'<div class="shep-test-tile"><div class="shep-test-tile-l">{e(metric_text(mode, name))}</div>'
         f'<div class="shep-test-tile-v">{e(_number(metrics.get(name)))}</div>'
-        f'<div class="shep-test-tile-n">{e(_tile_note(name))}</div>'
+        f'<div class="shep-test-tile-n">{e(_tile_note(name, kind))}</div>'
         '</div>'
         for name in tile_names)
     excluded = counts.get("excluded") if isinstance(counts.get("excluded"), Mapping) else {}
@@ -1785,7 +1983,19 @@ def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
     excluded_text = (f"{e(_count(counts.get('n_excluded')))} excluded"
                      f"{' at import' if task else ''}"
                      f"{': ' + e(reasons) if reasons else ''}")
-    if task:
+    if kind == "kg_edges":
+        run = view["measured"]["counts"]
+        coverage = (f"<b>{e(_count(run.get('pairs_scored')))} of {e(_count(counts.get('pairs')))}"
+                    f"</b> stored pairs scored · {e(_count(counts.get('positive_edges')))} "
+                    f"positive edges; {e(_count(counts.get('edges_without_negative')))} without a "
+                    "negative to pair")
+    elif kind == "generated":
+        diseases = counts.get("diseases")
+        coverage = (f"<b>{e(_count(n_ranked))}</b> "
+                    + ("cases ranked by the model" if task else "counted by the record")
+                    + f" · {e(_count(counts.get('samples')))} generated patients of "
+                    f"{e(_count(diseases))} disease{'' if diseases == 1 else 's'}")
+    elif task:
         coverage = (f"<b>{e(_count(n_ranked))} of {e(eligible)}</b> import-eligible cases ranked "
                     f"by the model · {e(_count(counts.get('source_cases')))} source cases; "
                     f"{excluded_text}")
@@ -1802,12 +2012,13 @@ def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
     lines = [
         ("Coverage", coverage),
         *figures,
-        ("Score semantics", _semantics_text(scoring)),
-        ("Relations", _relations(record.get("relations"))),
-        *_r10_lines(record.get("r10")),
-        ("Environment", _environment(record)),
+        ("Score semantics", _semantics_text(view["score_semantics"])),
+        ("Relations", _relations(view["relations"])),
+        *(r.r10_rows(view["r10"]) if kind == "supplied" else r.data_kind_lines(view)),
+        ("Environment", _environment(view)),
+        ("Native build", _native_build(view)),
     ]
-    origin = (record.get("dataset_record") or {}).get("origin") if isinstance(record.get("dataset_record"), Mapping) else None
+    origin = view["dataset_origin"]
     meaning = _ORIGIN_MEANING.get(origin)
     lines.append(("Dataset", (f'<b class="shep-amber-t">{e(origin)}</b>' if origin == "synthetic"
                               else e(origin or "not reported"))
@@ -2021,11 +2232,15 @@ def role_line(role: Any) -> str:
 
 
 def role_choices(page: Mapping[str, Any]) -> List[str]:
-    """The import form's Role choices: the listed versions' own roles, then
-    mygene2 and institutional_acceptance, each once (a role may also be typed)."""
+    """The import form's Role choices: the listed supplied cohorts' own roles,
+    then mygene2 and institutional_acceptance, each once (a role may also be
+    typed). A KG edge set's role (``train``, ``val``, ``test``) is a part of an
+    edge split, and a generated split's the split it is; a supplied import
+    refuses ``train`` and ``val``, so neither is offered."""
     roles: List[str] = []
-    for role in [*(v.get("role") for v in page.get("versions") or []), "mygene2",
-                 "institutional_acceptance"]:
+    supplied = (v.get("role") for v in page.get("versions") or []
+                if v.get("kind") == protocols.SUPPLIED)
+    for role in [*supplied, "mygene2", "institutional_acceptance"]:
         if isinstance(role, str) and role and role not in roles:
             roles.append(role)
     return roles
@@ -2152,18 +2367,18 @@ def start_test_run(page: Mapping[str, Any], models: Mapping[str, Any], workspace
     measurement `protocol` (the Measurement radio's value) this page does not
     start for that checkpoint and version refused (`measure_refusal`, the rule
     Start's reason shows); the **digests shown to the operator** passed as the
-    expected ones, with the protocol apart from the model's learning stage and
-    task from the session's listing and the listed version's counts, so the
-    runner judges again before it starts and the run refuses before measuring
-    when the checkpoint or the version it reads is not the one chosen, or its
-    record is not one the protocol takes; the runner's one start for test
-    runs."""
+    expected ones, with the protocol apart from the model's learning stage,
+    task and capability description from the session's listing and the listed
+    version's kind and counts, so the runner judges again before it starts and
+    the run refuses before measuring when the checkpoint or the version it
+    reads is not the one chosen, or its model is not one the protocol takes;
+    the runner's one start for test runs."""
     from src.api.services.server_lists import (
         ServerListRefused,
         resolve_checkpoint,
         resolve_workspace,
     )
-    from src.api.services.training_manager import TestRunInputs
+    from src.api.services.training_manager import TestRunInputs, evidence_choice
     from src.config import server_settings
 
     access = operator_access(request)
@@ -2174,7 +2389,8 @@ def start_test_run(page: Mapping[str, Any], models: Mapping[str, Any], workspace
     version = find(page.get("versions") or [], "label", label)
     item = find_model(models, key)
     if version is None or version.get("problem") or not r.is_digest(version.get("manifest_sha256")):
-        return {"success": False, "error": "Choose a cohort version the server lists. Nothing was started."}
+        return {"success": False,
+                "error": "Choose a data version the server lists. Nothing was started."}
     if (item is None or models.get("workspace") != workspace or item.get("problem")
             or not r.is_digest(item.get("sha256"))):
         return {"success": False, "error": "Choose a model the server lists in this workspace. "
@@ -2184,10 +2400,13 @@ def start_test_run(page: Mapping[str, Any], models: Mapping[str, Any], workspace
         return {"success": False, "error": said(refusal[:1].upper() + refusal[1:],
                                                 "Nothing was started.")}
     registry = server_settings.cohort_registry(environ)
-    evidence = server_settings.training_evidence_dirs(environ)
+    # The runner's one evidence choice by the version's kind, of the setting
+    # read now: a supplied version's directories (a refused setting refuses
+    # the start), none for a KG edge set or a generated split.
+    evidence = evidence_choice(version.get("kind"), environ=environ)
     if not registry.available:
         return {"success": False, "error": said(registry.problem, "Nothing was started.")}
-    if not evidence.available:
+    if evidence.problem:
         return {"success": False, "error": said(evidence.problem, "Nothing was started.")}
     try:
         data_dir = resolve_workspace(workspace, environ=environ)
@@ -2200,7 +2419,8 @@ def start_test_run(page: Mapping[str, Any], models: Mapping[str, Any], workspace
         version_sha256=version["manifest_sha256"], workspace=data_dir, checkpoint=checkpoint,
         checkpoint_sha256=item["sha256"], protocol=protocol,
         learning_stage=item["learning_stage"], task=item["task"],
-        version_counts=version["counts"], evidence_dirs=tuple(evidence.value),
+        capabilities=item["capabilities"], version_kind=version["kind"],
+        version_counts=version["counts"], evidence_dirs=evidence.dirs,
         record=bool(record), deterministic=bool(deterministic))
     return manager.start_test(inputs)
 
@@ -2496,7 +2716,7 @@ def create_test_page(ctx: Any) -> None:
                                         elem_id="shep-test-workspace", interactive=True,
                                         elem_classes=["shep-test-select"])
                 workspace_info = plain_html("", elem_id="shep-test-workspace-info")
-                version = gr.Dropdown(label="Cohort version", choices=[], value=None,
+                version = gr.Dropdown(label="Data version", choices=[], value=None,
                                       elem_id="shep-test-version", interactive=True,
                                       elem_classes=["shep-test-select"])
                 version_info = plain_html("", elem_id="shep-test-version-info")
@@ -2554,7 +2774,7 @@ def create_test_page(ctx: Any) -> None:
                                              elem_id="shep-test-model-reload",
                                              interactive=False)
                 model_info = plain_html("", elem_id="shep-test-model-info")
-                # The protocols the chosen model's record admits (`measurement_choices`).
+                # The protocols the chosen model's listed capabilities admit (`measurement_choices`).
                 measurement = gr.Radio(label="Measurement", choices=[], value=None,
                                        elem_id="shep-test-measurement", interactive=False)
                 evidence = plain_html("", elem_id="shep-test-evidence")
@@ -2653,12 +2873,15 @@ def create_test_page(ctx: Any) -> None:
         return [gr.update(interactive=can_start),
                 _reason_html(why, kind="lock" if not allowed else "")]
 
-    def _measurement_outputs(page, models, key, protocol):
-        """The Measurement radio for the chosen model, and the value it shows
-        (`chosen_measurement`), which Start's state is then drawn from. Like
-        the Model select, it is interactive for an operator only."""
+    def _measurement_outputs(page, models, label, key, protocol):
+        """The Measurement radio for the chosen model on the chosen version
+        (`measurement_choices`: what its capabilities meet that measures the
+        version's kind), and the value it shows (`chosen_measurement`), which
+        Start's state is then drawn from. Like the Model select, it is
+        interactive for an operator only."""
         allowed = bool((page.get("access") or {}).get("allowed"))
-        choices = measurement_choices(find_model(models, key))
+        choices = measurement_choices(find_model(models, key),
+                                      find(page.get("versions") or [], "label", label))
         protocol = chosen_measurement(choices, protocol)
         return gr.update(choices=choices, value=protocol,
                          interactive=allowed and bool(choices)), protocol
@@ -2676,14 +2899,14 @@ def create_test_page(ctx: Any) -> None:
 
     def _run_outputs(page, models, binding, ws, label, key, protocol, job, gpu):
         allowed = bool((page.get("access") or {}).get("allowed"))
-        radio, protocol = _measurement_outputs(page, models, key, protocol)
+        radio, protocol = _measurement_outputs(page, models, label, key, protocol)
         return [
             run_header_html(ws, label),
             _dd(model_choices(models), key, interactive=allowed and bool(models.get("items"))),
             gr.update(interactive=allowed and bool(ws)),
             model_html(page, models, key),
             radio,
-            evidence_html(page, ws),
+            evidence_html(page, ws, find(page.get("versions") or [], "label", label)),
             fixed_html(page),
             *_start_outputs(page, models, binding, ws, label, key, protocol, gpu),
             *_card_outputs(page, job, gpu),
@@ -2747,7 +2970,7 @@ def create_test_page(ctx: Any) -> None:
             cohort_header_html(page),
             _dd(r.workspace_choices(page.get("workspaces") or []), ws),
             workspace_html(page, ws),
-            _dd(version_choices(page, binding), label, interactive=registry_ok),
+            _dd(version_choices(page), label, interactive=registry_ok),
             version_html(page, label, binding),
             gr.update(interactive=allowed and registry_ok and bool(ws)),
             _reason_html(import_why, kind="lock" if not allowed else ""),
@@ -2856,7 +3079,7 @@ def create_test_page(ctx: Any) -> None:
         # The select too: an event asked before this one (a workspace's, a
         # page open) may have set it to the version it was asked with.
         return [reports, run_id,
-                _dd(version_choices(page, binding), label,
+                _dd(version_choices(page), label,
                     interactive=not page.get("registry_problem")),
                 version_html(page, label, binding),
                 *_run_outputs(page, models, binding, ws, label, key, protocol, job, _gpu(page)),
@@ -2889,7 +3112,7 @@ def create_test_page(ctx: Any) -> None:
         the radio itself; Start takes it too, as the operator saw it."""
         if not page:
             return [gr.update()] * (2 + len(start_outputs))
-        radio, protocol = _measurement_outputs(page, models, key, protocol)
+        radio, protocol = _measurement_outputs(page, models, label, key, protocol)
         return [radio, *_start_outputs(page, models, binding, ws, label, key, protocol,
                                        _gpu(page)), protocol]
 
@@ -3213,6 +3436,11 @@ PAGE_CSS = f"""
 {_PAGE} .shep-test-job-ft {{ display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 8px 14px 0; }}
 {_PAGE} .shep-test-log {{ margin: 0; padding: 8px 10px; background: #fff; border: 1px solid var(--shep-border); border-radius: 6px; font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--shep-mono); }}
 {_PAGE} .shep-test-fail {{ color: var(--shep-red-700); font-size: 15px; }}
+{_PAGE} .shep-test-refused {{ color: var(--shep-status-error); font-weight: 600; }}
+{_PAGE} .shep-test-na {{ color: var(--shep-status-neutral); font-weight: 600; white-space: nowrap; }}
+{_PAGE} .shep-test-units {{ font-size: 14px; color: var(--shep-text-2); }}
+{_PAGE} .shep-test-units > summary {{ cursor: pointer; min-height: 24px; line-height: 24px; width: max-content; max-width: 100%; }}
+{_PAGE} .shep-test-units > summary:focus-visible {{ outline: 2px solid var(--shep-accent); outline-offset: 2px; }}
 {_PAGE} .shep-test-fold summary {{ cursor: pointer; }}
 {_PAGE} .shep-test-fold[open] summary {{ margin-bottom: 6px; }}
 {_PAGE} .shep-test-recm {{ margin-top: 12px; font-size: 15px; overflow-wrap: anywhere; }}

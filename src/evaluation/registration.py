@@ -584,7 +584,12 @@ def register_report(
     # measurement writes from a version (`cohort_version_block`), compared with
     # that block of the version the store holds it under. A report moved into
     # another version's store, or whose block was edited, is refused here.
-    from src.evaluation.cohort_registry import RUN_ID_PATTERN, cohort_version_block
+    from src.evaluation.cohort_registry import (
+        RUN_ID_PATTERN,
+        SUPPLIED,
+        cohort_version_block,
+        version_words,
+    )
 
     try:
         expected_block = cohort_version_block(stored.version)
@@ -594,8 +599,12 @@ def register_report(
     if block != expected_block:
         fields = sorted(f for f in set(block) | set(expected_block)
                         if block.get(f) != expected_block.get(f))
+        # Named by its kind: a KG edge set or a generated split is never a
+        # "cohort version" where a person reads it.
+        kept_under = ("cohort version" if stored.version.kind == SUPPLIED else
+                      version_words(stored.version.kind, stored.version.manifest.get("role")))
         raise refused(
-            f"{report_path} is kept under cohort version {stored.label!r} "
+            f"{report_path} is kept under {kept_under} {stored.label!r} "
             f"({expected_block['manifest_sha256'][:12]}...), but it records another version, "
             f"differing in: {', '.join(fields)}. A report is registered only under the "
             "version it measured."

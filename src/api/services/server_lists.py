@@ -200,9 +200,36 @@ class CheckpointItem:
     among them, with the record reader's one phrase); a model adds its learning stage, task, operation,
     family, parent (`parent_sha256`, the exact parent file, and `parent_run`),
     encoder kind, the names of its spec's fields that differ from the
-    reference recipe (`differences`, sorted; empty for the reference) and
-    whether there are none (`reference`). All `None` for a file that was not
-    read.
+    reference recipe (`differences`, sorted; empty for the reference),
+    whether there are none (`reference`), its capability description
+    (`capabilities`), from which every consumer judges a new measurement of it
+    (`src.evaluation.protocols`), and its structure, every value of its spec
+    as its record holds it (`spec`, research comparison Stage 8), and its
+    weight transfer and loss identity as its record holds them
+    (`weight_transfer`, `loss_identity`, research comparison Stage 9b fixes:
+    each part trainable or frozen, the frozen parts' forward mode and the
+    downstream start's SHA-256, where the record names them; the loss's terms
+    and coefficients and the terms without a trainable parameter). All `None`
+    for a file that was not read.
+
+    `training_settings` are the file's training settings as it records them
+    (`run_plan.recorded_training_settings`: its training rules, its learning
+    settings and what took effect, each `None` where the file records none,
+    as a weights-only file does, or where it is not plain data an answer can
+    carry, its ``unshown`` reason saying why: review fix RC-R1; a number that
+    is not finite, which a setting may record, is shown as its text), never
+    filled from this build's recipe; `None` for a file that was not read
+    (research comparison Stage 8).
+
+    `architecture`, `run` and `filename` are text as every answer shows them,
+    a name that is not text with backslash escapes; `key` is the entry's
+    identity, apart from those names (`checkpoint_paths.listing_key`, BACKLOG
+    66): ``architecture/run/filename`` for names that are text, a form no text
+    names give otherwise, so two entries shown alike never share a key and
+    selecting one never picks the other. `run_key` is its run's identity the
+    same way (``architecture/run`` for names that are text), by which a list
+    groups its entries, so two runs shown alike are never one group. An item
+    built without them is keyed by its names.
     """
 
     workspace: str
@@ -230,6 +257,22 @@ class CheckpointItem:
     encoder: Optional[str] = None
     reference: Optional[bool] = None
     differences: Optional[Tuple[str, ...]] = None
+    capabilities: Optional[Dict[str, Any]] = None
+    key: Optional[str] = None
+    run_key: Optional[str] = None
+    training_settings: Optional[Dict[str, Any]] = None
+    spec: Optional[Dict[str, Any]] = None
+    weight_transfer: Optional[Dict[str, Any]] = None
+    loss_identity: Optional[Dict[str, Any]] = None
+
+    def __post_init__(self) -> None:
+        from src.utils.checkpoint_paths import listing_key
+
+        if self.key is None:
+            object.__setattr__(self, "key", listing_key(
+                (self.architecture, self.run, self.filename)))
+        if self.run_key is None:
+            object.__setattr__(self, "run_key", listing_key((self.architecture, self.run)))
 
 
 @dataclass(frozen=True)
@@ -253,11 +296,24 @@ class ReportItem:
 
 @dataclass(frozen=True)
 class CohortVersionItem:
-    """One cohort version in the registry: its label and the digest of its
+    """One version in the registry: its label and the digest of its
     `cohort.json` (the version's identity), its role, and the aggregates its
     manifest records. Never its exclusions by case: D7 keeps
     case identifiers on the machine. A version that cannot be read is listed
-    with `problem`."""
+    with `problem`. `kind` is its data kind as the version read says it
+    (`CohortVersionRead.kind`), which a new measurement of it is judged by
+    (`src.evaluation.protocols.inputs_refusal`); `None` when it was not read.
+    A KG edge set (`kind` ``kg_edges``) is listed the same way: its role (the
+    split's part), its counts (edges and pairs, the units in its manifest),
+    graph and dataset record; no source, and never an edge. So is a generated
+    split (`kind` ``generated``): its role (the split it is), its counts
+    (generated patients and diseases, and its functional gene fixture's rows
+    when it keeps one, which a gene-field protocol is judged by), graph and
+    dataset record; no source, and never a sample. `count_units` are the
+    units its manifest records for its counts (a KG edge set's and a
+    generated split's; `None` for a supplied cohort, whose manifest records
+    none), so every count is shown in its own unit (research comparison
+    Stage 7)."""
 
     label: str
     manifest_sha256: Optional[str]
@@ -271,6 +327,8 @@ class CohortVersionItem:
     problem: Optional[str]
     reports: Tuple[ReportItem, ...] = ()
     reports_problem: Optional[str] = None
+    kind: Optional[str] = None
+    count_units: Optional[Dict[str, Any]] = None
 
 
 @dataclass(frozen=True)
@@ -456,19 +514,30 @@ def _find_workspace(name: Any, environ: Optional[Mapping[str, str]]) -> Tuple[st
     root = _workspace_root(environ)
     for entry in _workspace_entries(root):
         if entry.name == name:
-            try:
-                resolved = entry.resolve()
-            except (OSError, RuntimeError) as exc:
-                raise ServerListRefused(
-                    f"the workspace {entry.name!r} cannot be resolved "
-                    f"({type(exc).__name__}: {exc})") from None
-            if not _inside(resolved, root):
-                raise ServerListRefused(
-                    f"the workspace {entry.name!r} resolves outside the workspaces root "
-                    f"{root}, so it is not in the server's one workspace namespace")
-            return entry.name, resolved
+            return entry.name, _resolved_workspace(entry, root)
     raise ServerListRefused(
         f"{_echo(name)} is not a workspace the server lists under {root}")
+
+
+def _resolved_workspace(entry: Path, root: Path) -> Path:
+    """A listed entry's resolved directory, or why it is not one of the
+    server's workspaces: it cannot be resolved (a link loop), or it resolves
+    outside the root. The one judgement of an entry, for one name
+    (`_find_workspace`) and for all (`resolve_workspaces`).
+
+    Raises:
+        ServerListRefused: the entry is not a workspace the server can use."""
+    try:
+        resolved = entry.resolve()
+    except (OSError, RuntimeError) as exc:
+        raise ServerListRefused(
+            f"the workspace {entry.name!r} cannot be resolved "
+            f"({type(exc).__name__}: {exc})") from None
+    if not _inside(resolved, root):
+        raise ServerListRefused(
+            f"the workspace {entry.name!r} resolves outside the workspaces root "
+            f"{root}, so it is not in the server's one workspace namespace")
+    return resolved
 
 
 def resolve_workspace(name: Any, *, environ: Optional[Mapping[str, str]] = None) -> Path:
@@ -484,12 +553,16 @@ def resolve_workspace(name: Any, *, environ: Optional[Mapping[str, str]] = None)
     return _find_workspace(name, environ)[1]
 
 
-def resolve_workspaces(*, environ: Optional[Mapping[str, str]] = None) -> Dict[str, Path]:
+def resolve_workspaces(*, environ: Optional[Mapping[str, str]] = None,
+                       refused: Optional[Dict[str, str]] = None) -> Dict[str, Path]:
     """Every listed workspace's resolved directory, by its listed name, from one
     listing of the root (M5-2): what `resolve_workspace` answers for each name,
     for a caller that needs many names at once (one listing, not one per name).
     A name that cannot be resolved, or resolves outside the root, is left out,
-    as `resolve_workspace` refuses it.
+    as `resolve_workspace` refuses it; when the caller gives `refused`, each
+    such name is put there with `resolve_workspace`'s reason (which names the
+    root: a caller that shows it redacts it), so a caller that must account for
+    every entry (the results service) loses none.
 
     Raises:
         ServerListRefused: no workspace root, or the root cannot be listed.
@@ -498,11 +571,10 @@ def resolve_workspaces(*, environ: Optional[Mapping[str, str]] = None) -> Dict[s
     resolved: Dict[str, Path] = {}
     for entry in _workspace_entries(root):
         try:
-            path = entry.resolve()
-        except (OSError, RuntimeError):
-            continue
-        if _inside(path, root):
-            resolved[entry.name] = path
+            resolved[entry.name] = _resolved_workspace(entry, root)
+        except ServerListRefused as exc:
+            if refused is not None:
+                refused[entry.name] = str(exc)
     return resolved
 
 
@@ -586,7 +658,8 @@ def list_checkpoints(
     """
     from src.kg.artifacts import read_split_manifest
     from src.models.bundle.record import listed_record
-    from src.utils.checkpoint_paths import read_run_checkpoints, run_architecture
+    from src.utils.checkpoint_paths import read_run_checkpoints
+    from src.utils.run_plan import recorded_training_settings
 
     try:
         name, path = _find_workspace(workspace, environ)
@@ -609,11 +682,16 @@ def list_checkpoints(
         recorded = entry.dataset_fingerprint
         read = entry.sha256 is not None and entry.problem is None
         summary = listed_record(entry.model_record) if read else {}
+        # Text as every answer shows it, and the identity apart from it
+        # (BACKLOG 66): a name that is not text never reaches an answer.
+        architecture, run_name, filename = entry.names
         items.append(CheckpointItem(
             workspace=name,
-            architecture=run_architecture(entry.run_dir),
-            run=entry.run_dir.name,
-            filename=entry.path.name,
+            architecture=architecture,
+            run=run_name,
+            filename=filename,
+            key=entry.key,
+            run_key=entry.run_key,
             sha256=entry.sha256,
             size_bytes=entry.size_bytes,
             checkpoint_kind=entry.checkpoint_kind,
@@ -627,6 +705,8 @@ def list_checkpoints(
             problem=entry.problem,
             completed_epochs=_count(entry.completed_epochs),
             end=entry.end,
+            training_settings=(recorded_training_settings(entry.training)
+                               if read and entry.training is not None else None),
             **summary,
         ))
     return Listing(tuple(item for item in items if record_matches(item, task, learning_stage)))
@@ -694,7 +774,9 @@ class FamilyRow:
 
 
 def _row_key(item: CheckpointItem) -> str:
-    return f"{item.architecture}/{item.run}/{item.filename}"
+    """A listed file's identity in the family view: the listing's own key
+    (`CheckpointItem.key`), never its shown names (BACKLOG 66)."""
+    return item.key
 
 
 def _not_held(run: str, sha256: str, workspace: Optional[str] = None) -> str:
@@ -1058,6 +1140,8 @@ def _version_item(listed: Any, report_state: Optional[ReportStateReader], *,
         problem=None,
         reports=reports,
         reports_problem=reports_problem,
+        kind=listed.version.kind,
+        count_units=_as_dict(manifest.get("count_units")),
     )
 
 

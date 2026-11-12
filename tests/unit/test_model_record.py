@@ -344,6 +344,90 @@ def test_a_compared_value_the_walk_cannot_finish_is_refused_naming_where_it_stop
     assert f"the record's {expected}" in str(caught.value), str(caught.value)
 
 
+def test_the_record_reader_walks_by_the_one_rule_every_reader_shares():
+    """Review fix RC-R1: the walk that reads a compared or shown part was
+    lifted into `checkpoint_paths.plain_data`, the one rule every reader of a
+    value read from a file uses (component facts, record views, training
+    settings, the results rows): the record's reader gives its form and its
+    refusal words, prefixed with the field and followed by what it does not
+    do, and a number that is not finite is named without its value."""
+    from src.models.bundle import record as record_module
+    from src.utils import checkpoint_paths
+
+    assert (record_module.PLAIN_DEPTH, record_module.PLAIN_VALUES) == (
+        checkpoint_paths.PLAIN_DEPTH, checkpoint_paths.PLAIN_VALUES)
+    value = {"terms": ["lp", "編譯器 ✓"], "weight": 1.0, "on": True, "none": None}
+    assert record_module._plain("loss_identity", value) == checkpoint_paths.plain_data(value)
+    for bad, words in (({"x": float("inf")}, "loss_identity.x is not a finite number"),
+                       ({"x\udc80": 1}, "loss_identity has a key that is not text: character 1"),
+                       ([b"bytes"], "loss_identity[0] is a bytes, not plain data")):
+        with pytest.raises(checkpoint_paths.NotPlainData) as shared:
+            checkpoint_paths.plain_data(bad, "loss_identity")
+        with pytest.raises(ModelRecordError) as caught:
+            record_module._plain("loss_identity", bad, "so a list does not show the record")
+        assert str(caught.value) == (f"the record's {shared.value}, so a list does not show "
+                                     "the record")
+        assert words in str(caught.value) and "inf" not in str(caught.value).replace(
+            "finite", "")
+
+
+def test_the_rules_bounds_are_the_safe_loaders_and_only_its_readers_pass_them():
+    """RC-R1 advice (1): the rule carried the checkpoint reader's bounds to
+    every value, a JSON-read one too (a record holding 10,001 legitimate
+    facts was refused). By default it now holds a value to no count and no
+    depth, and walks with its own stack: 10,001 values and a value nested
+    50,000 levels deep (past any recursion limit) are read, a lone surrogate
+    at its bottom refused naming its whole path, never a `RecursionError`; a
+    value holding itself is refused whatever the bounds. The safe loader's
+    bounds refuse past them where a checkpoint's reader passes them, as the
+    record's reader does (`_plain`)."""
+    from src.models.bundle import record as record_module
+    from src.utils import checkpoint_paths
+
+    many = {f"fact_{index}": index for index in range(10_001)}
+    assert checkpoint_paths.plain_data_problem(many) is None
+    assert str(checkpoint_paths.plain_data_problem(many, "m", depth=PLAIN_DEPTH,
+                                                   values=PLAIN_VALUES)) == (
+        f"m holds more than {PLAIN_VALUES} values")
+    with pytest.raises(ModelRecordError, match=f"holds more than {PLAIN_VALUES} values"):
+        record_module._plain("loss_identity", many)
+
+    assert checkpoint_paths.plain_data_problem(_nested(50_000)) is None
+    bottom = "x\udc80"
+    for _ in range(50_000):
+        bottom = [bottom]
+    refused = checkpoint_paths.plain_data_problem(bottom, "d")
+    assert (refused.steps, refused.why) == ((0,) * 50_000,
+                                            "is not text: character 1 is a lone surrogate")
+    assert str(checkpoint_paths.plain_data_problem(_nested(50_000), "d", depth=PLAIN_DEPTH)) == (
+        "d" + "[0]" * PLAIN_DEPTH + f" nests deeper than {PLAIN_DEPTH} levels")
+    for kind in ("list", "mapping"):
+        assert "contains itself" in str(checkpoint_paths.plain_data_problem(
+            _holding_itself(kind)))
+
+
+def test_the_rule_reads_a_number_that_is_not_finite_only_for_a_reader_that_shows_its_text():
+    """RC-R1 review: ``finite=False`` is for a reader that gives such a number
+    its text itself (a checkpoint's training settings,
+    `run_plan.recorded_training_settings`): the number is read, and every
+    other part is judged as always (text, keys, kinds, bounds); by default it
+    is refused, as the record's reader refuses it."""
+    from src.utils import checkpoint_paths
+    from src.utils.run_plan import recorded_training_settings
+
+    value = {"max_grad_norm": float("inf"), "schedule": [float("-inf"), float("nan"), 1.0]}
+    assert checkpoint_paths.plain_data_problem(value, "s", finite=False) is None
+    assert str(checkpoint_paths.plain_data_problem(value, "s")) == (
+        "s.max_grad_norm is not a finite number")
+    for bad, words in (({"x": "\udc80", "y": float("inf")}, "s.x is not text: character 0"),
+                       ({"\udc80": float("inf")}, "s has a key that is not text"),
+                       ({"y": float("inf"), "x": b"b"}, "s.x is a bytes, not plain data")):
+        assert words in str(checkpoint_paths.plain_data_problem(bad, "s", finite=False))
+    settings = recorded_training_settings({"requested": value})
+    assert settings["learning"] == {"max_grad_norm": "inf", "schedule": ["-inf", "nan", 1.0]}
+    assert checkpoint_paths.plain_data_problem(settings["learning"]) is None
+
+
 @pytest.mark.parametrize("field, make, refused", [
     ("family_id", lambda old: "\udc80run", "family_id is not text: character 0"),
     ("parent.run", lambda old: "run-\ud800", "parent.run is not text: character 4"),

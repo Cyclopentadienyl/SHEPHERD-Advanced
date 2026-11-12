@@ -35,7 +35,6 @@ pytest.importorskip("torch")
 pytest.importorskip("fastapi")
 
 from src.api.services.training_manager import TestRunInputs, TrainingManager  # noqa: E402
-from src.evaluation import protocols  # noqa: E402
 from src.evaluation.cohort_registry import is_run_id, resolve_version  # noqa: E402
 from src.evaluation.report_store import read_usage_history  # noqa: E402
 from src.utils.gpu_lock import (  # noqa: E402
@@ -43,6 +42,7 @@ from src.utils.gpu_lock import (  # noqa: E402
     WORKSPACES_ROOT_ENV,
     probe,
 )
+from tests.fixtures.capabilities import described  # noqa: E402
 from tests.fixtures.registered_cohort import LABEL, build_registered_cohort  # noqa: E402
 
 
@@ -71,27 +71,39 @@ pytestmark = pytest.mark.skipif(
 @pytest.fixture(scope="module")
 def cohort(tmp_path_factory):
     """The registered fixture cohort, its workspace holding a base and a
-    disease child trained for one epoch (`child`, its digest `child_sha256`)."""
+    disease child trained for one epoch (`child`, its digest `child_sha256`),
+    each file's capability description as the one listing reader gives it
+    (`listed_record`)."""
     from types import SimpleNamespace
 
+    from src.models.bundle.record import listed_record
+    from src.utils.checkpoint_io import read_checkpoint
     from src.utils.fingerprint import file_sha256
     from tests.fixtures.trained_children import train_children
+
+    def listed(path):
+        payload = read_checkpoint(path, map_location="cpu", weights_only=True).checkpoint
+        return listed_record(payload)["capabilities"]
 
     built = build_registered_cohort(tmp_path_factory.mktemp("runner") / "c")
     trained = train_children(built.data_dir, ("disease",))
     return SimpleNamespace(registry=built.registry, version=built.version,
                            data_dir=built.data_dir, base=trained["base"],
                            child=trained["disease"],
-                           child_sha256=file_sha256(trained["disease"]))
+                           child_sha256=file_sha256(trained["disease"]),
+                           base_capabilities=listed(trained["base"]),
+                           child_capabilities=listed(trained["disease"]))
 
 
 def _fields(cohort):
     """The inputs as the server's lists give them for the disease child: the
-    protocol asked, the listed record's stage and task, the version's counts."""
+    protocol asked, the listed record's stage, task and capability
+    description, the version's kind and counts."""
     return {"registry": cohort.registry, "version_label": LABEL,
             "version_sha256": cohort.version.identity.sha256, "workspace": cohort.data_dir,
             "checkpoint": cohort.child, "checkpoint_sha256": cohort.child_sha256,
             "protocol": "disease", "learning_stage": "finetune", "task": "disease",
+            "capabilities": cohort.child_capabilities, "version_kind": cohort.version.kind,
             "version_counts": cohort.version.manifest["counts"]}
 
 
@@ -169,9 +181,13 @@ def _stored(cohort):
     # The disease child asked as gene: its listed record has the disease head.
     ({"protocol": "gene"},
      "the gene measurement takes a finetune model with the gene head; this checkpoint is a "
-     "finetune model with the disease head. It can be measured by disease."),
-    # The base asked as disease: its listed record is a base's.
-    ({"base": True}, protocols.BASE_MESSAGE),
+     "finetune model with the disease head. It can be measured by disease, "
+     "kg_link_prediction."),
+    # The base asked as disease: its listed record is a base's, which the KG
+    # link-prediction protocol takes (research comparison Stage 5).
+    ({"base": True},
+     "the disease measurement takes a finetune model with the disease head; this checkpoint "
+     "is a base model with no task head. It can be measured by kg_link_prediction."),
 ])
 def test_a_listed_record_the_protocol_does_not_take_is_refused_before_a_job_starts(
         cohort, monkeypatch, change, says):
@@ -182,7 +198,7 @@ def test_a_listed_record_the_protocol_does_not_take_is_refused_before_a_job_star
     fields, change = _fields(cohort), dict(change)
     if change.pop("base", False):
         fields.update(checkpoint=cohort.base, checkpoint_sha256=file_sha256(cohort.base),
-                      learning_stage="base", task=None)
+                      learning_stage="base", task=None, capabilities=cohort.base_capabilities)
     fields.update(change)
     before = _stored(cohort)
     spawned = []
@@ -199,13 +215,16 @@ def test_a_listed_record_the_protocol_does_not_take_is_refused_before_a_job_star
     # Listed as a gene child on a version that lists genes; the files are the
     # disease child and a version that lists none. The run reads the version
     # first and refuses before it opens the checkpoint.
-    ({"protocol": "gene", "task": "gene",
+    ({"protocol": "gene", "task": "gene", "capabilities": described("finetune", "gene"),
       "version_counts": {"genes": {"cases_with_causal_genes": 1,
                                    "cases_with_candidate_genes": 1}}},
      "this cohort version lists no causal genes, which the gene measurement needs. Import a "
      "source that lists causal_genes. Nothing was written."),
     # Listed as a finetuned disease child; the file is the base.
-    ({"base_file": True}, f"{protocols.BASE_MESSAGE} Nothing was written."),
+    ({"base_file": True},
+     "the disease measurement takes a finetune model with the disease head; this checkpoint "
+     "is a base model with no task head. It can be measured by kg_link_prediction. Nothing "
+     "was written."),
 ])
 def test_listed_fields_the_files_do_not_bear_out_are_refused_by_the_run(
         cohort, monkeypatch, listed, says):
@@ -226,3 +245,46 @@ def test_listed_fields_the_files_do_not_bear_out_are_refused_by_the_run(
     assert says in log, log
     assert status["outcome"]["kept"] is False and asked == []
     assert _stored(cohort) == before, "the refused run left a report"
+
+
+def test_a_test_run_on_a_kept_generated_split_keeps_its_report_for_registration(
+        cohort, monkeypatch):
+    """Research comparison Stage 5b: the runner starts a run on a registered
+    generated split as on any version, from the listing's kind and counts;
+    the real CLI measures it by the disease protocol and keeps its report in
+    that version's report store, under its role (val), with no R10; without
+    registration asked, the report is kept for a later registration, as any
+    kept report is (Stage 6: the ledger records a generated split's run).
+    The workspace holds no functional gene fixture, so the version keeps
+    none: the runner refuses gene on it before a job starts, with the stated
+    data gap."""
+    from src.evaluation import protocols
+    from src.evaluation.cohort_registry import commit_import, prepare_generated_import
+
+    label = "gen-val-runner"
+    plan = prepare_generated_import(cohort.registry, cohort.data_dir, label, "val")
+    version = commit_import(plan, cohort.registry, plan.preview_id)
+    listed = {"version_label": label, "version_sha256": version.identity.sha256,
+              "version_kind": version.kind, "version_counts": version.manifest["counts"]}
+    reports = version.directory / "reports"
+    manager, asked = _run(cohort, monkeypatch, **listed)
+    status = manager.get_test_status()
+    log = "\n".join(manager.get_log("test")["lines"])
+    assert status["status"] == "completed" and status["exit_code"] == 0, log
+    (run_dir,) = [p for p in reports.iterdir() if is_run_id(p.name)]
+    manifest = json.loads((run_dir / "report.json").read_text())["manifest"]
+    assert (manifest["mode"], manifest["cohort_kind"], manifest["split"]) == (
+        "disease", "generated", "val")
+    assert manifest["cohort_version"]["label"] == label and manifest["r10"] is None
+    assert status["outcome"]["kept"] is True and status["outcome"]["registered"] is False
+    assert ("--record was not given; the report is kept for a later registration"
+            in status["outcome"]["summary"])
+    assert "does not record" not in status["outcome"]["summary"]
+
+    manager = TrainingManager()
+    started = manager.start_test(TestRunInputs(**{
+        **_fields(cohort), **listed, "protocol": "gene", "task": "gene",
+        "capabilities": described("finetune", "gene")}))
+    gap = protocols.inputs_refusal("gene", "generated", version.manifest["counts"])
+    assert gap.startswith("this generated split version keeps no functional gene fixture")
+    assert started["success"] is False and started["error"] == f"{gap} Nothing was started."

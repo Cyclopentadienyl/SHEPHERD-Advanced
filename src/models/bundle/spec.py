@@ -278,13 +278,20 @@ class InputSpec:
 class EncoderSpec:
     """The GraphEncoder (README C1, C2, U1, U3, U4, §2.8).
 
-    For `gatv2` the layer widths follow the source: the first layer's hidden
-    size is `hidden * first_hidden_multiplier`, the middle ones `hidden`, the
-    last `output`; every layer has `heads` heads, concatenated, so the encoder's
-    output width is `output * heads`. The other kinds are non-reference
-    encoders behind the same contract: `hidden` is their width per layer and
-    `output * heads` their output width too, so the LP head and task heads read
-    one number.
+    The fields are read by every encoder kind; **what a kind makes of them is
+    its own declaration's** (`EncoderDeclaration`, `encoder_declaration`): the
+    rules a spec of that kind obeys beyond the shared field checks below, its
+    output width (`width`, which the LP head and the task heads read), the
+    computations it offers and the sampler hops it needs (`hops_problem`). No
+    shared check reads one kind's rule.
+
+    For `gatv2`, the one kind this build declares and builds, the layer widths
+    follow the source: the first layer's hidden size is
+    `hidden * first_hidden_multiplier`, the middle ones `hidden`, the last
+    `output`; every layer has `heads` heads, concatenated, so the encoder's
+    output width is `output * heads`, and the sampler takes one hop per layer.
+    A kind `ENCODER_KINDS` names without a declaration here is read, and
+    refused when a run of it starts (`hops_problem`) and when it is built.
     """
 
     kind: str = "gatv2"
@@ -306,7 +313,10 @@ class EncoderSpec:
 
     @property
     def width(self) -> int:
-        return self.output * self.heads
+        """The encoder's output width, as its kind's declaration states it
+        (`EncoderDeclaration.width`; GATv2: `output * heads`). A kind this
+        build declares no encoder for has none: refused as its build is."""
+        return require_encoder_declaration(self.kind).width(self)
 
     def validate(self) -> None:
         if self.kind not in ENCODER_KINDS:
@@ -318,12 +328,133 @@ class EncoderSpec:
                 raise SpecError(f"encoder.{name} must be a number in [0, 1)")
         if self.norm != "graph_layer_norm+batch_norm":
             raise SpecError(f"unknown encoder norm {self.norm!r}")
-        if not self.concat:
-            raise SpecError("encoder.concat must be true: widths are output x heads (README C1)")
+        # The kind's own rules (GATv2's: its widths are output x heads), from
+        # its declaration; a kind this build does not declare is refused at build.
+        declaration = encoder_declaration(self.kind)
+        if declaration is not None:
+            declaration.validate(self)
         if self.relation_edge_dim is not None:
             _positive_int("encoder.relation_edge_dim", self.relation_edge_dim)
-            if self.kind != "gatv2":
-                raise SpecError("encoder.relation_edge_dim applies to gatv2 only (README §3.3 S3)")
+            if declaration is None or not declaration.takes_relation_edge_dim:
+                takes = [kind for kind, declared in ENCODER_DECLARATIONS.items()
+                         if declared.takes_relation_edge_dim]
+                raise SpecError(f"encoder.relation_edge_dim applies to "
+                                f"{' and '.join(takes) or 'no encoder of this build'} only "
+                                "(README §3.3 S3)")
+
+
+#: The two computations an encoder can offer (README §2.8): `sampled`, a
+#: sampled subgraph's seeds computed hop by hop (training's steps), and
+#: `full_view`, every view node (validation, measurement and serving, through
+#: `src.models.tasks.scoring.full_view_vectors`).
+SAMPLED = "sampled"
+FULL_VIEW = "full_view"
+
+
+class EncoderDeclaration:
+    """What one encoder kind's implementation declares, read without torch
+    (README §3.3; research comparison §6 E2).
+
+    **An encoder's own rules live in its declaration**, never in a shared
+    path: the rules a spec of its kind obeys beyond the shared field checks
+    (`validate`, called by `EncoderSpec.validate`), its output width
+    (`width`), the computations it offers (`computation`), the sampler hops
+    its sampled computation needs (`sampled_hops`, which `hops_problem` asks)
+    and the inputs it reads besides each node's row (`reads_node_types`,
+    `reads_edge_relations`). The capability description
+    (`src.models.bundle.capabilities.model_capabilities`) and the start,
+    training and page checks ask these and nothing else of a kind; how an
+    encoder runs (GATv2's destination chunks, `chunk_size`) stays its
+    implementation's execution parameter.
+
+    `ENCODER_DECLARATIONS` holds a declaration for each kind this build
+    implements; the one builder (`src.models.bundle.builder`) builds only a
+    kind declared here that it has an implementation of, and refuses any
+    other. A declaration is never a claim that a kind trains: only what is
+    implemented and tested is declared.
+    """
+
+    #: The kind (`EncoderSpec.kind`) this declares.
+    kind: str = ""
+    #: The computations its implementation offers (`SAMPLED`, `FULL_VIEW`).
+    computation: Tuple[str, ...] = ()
+    #: What a sampler's hops are for, in the words `hops_problem` says.
+    hops_words: str = ""
+    #: Whether a spec of this kind may set `encoder.relation_edge_dim`.
+    takes_relation_edge_dim: bool = False
+
+    def validate(self, spec: "EncoderSpec") -> None:
+        """Refuse a spec of this kind that breaks one of its own rules."""
+
+    def width(self, spec: "EncoderSpec") -> int:
+        """The output width of a spec of this kind: one vector of it per node."""
+        raise NotImplementedError
+
+    def sampled_hops(self, spec: "EncoderSpec") -> Optional[int]:
+        """The hops its sampled computation needs (`num_neighbors` has one
+        number per hop), or None when it offers no sampled computation."""
+        raise NotImplementedError
+
+    def reads_node_types(self, spec: "EncoderSpec") -> bool:
+        """Whether a spec of this kind reads each node's type id."""
+        return False
+
+    def reads_edge_relations(self, spec: "EncoderSpec") -> bool:
+        """Whether a spec of this kind reads each message-passing edge's relation id."""
+        return False
+
+
+class GATv2Declaration(EncoderDeclaration):
+    """The reference encoder's declaration (README C1, C2, U1, U4, §2.8,
+    §3.3 S3): homogeneous GATv2, every layer's heads concatenated, so its
+    output width is `output * heads`; its sampled computation takes one hop
+    per layer, its full-view computation runs layer by layer in destination
+    chunks; it reads each message-passing edge's relation id when
+    `relation_edge_dim` is set, and no node type."""
+
+    kind = "gatv2"
+    computation = (FULL_VIEW, SAMPLED)
+    hops_words = "one hop per encoder layer"
+    takes_relation_edge_dim = True
+
+    def validate(self, spec: "EncoderSpec") -> None:
+        if not spec.concat:
+            raise SpecError("encoder.concat must be true: widths are output x heads (README C1)")
+
+    def width(self, spec: "EncoderSpec") -> int:
+        return spec.output * spec.heads
+
+    def sampled_hops(self, spec: "EncoderSpec") -> Optional[int]:
+        return spec.layers
+
+    def reads_edge_relations(self, spec: "EncoderSpec") -> bool:
+        return spec.relation_edge_dim is not None
+
+
+#: The encoder kinds this build implements, each by its declaration. Read when
+#: a judgment is made, never copied at import.
+ENCODER_DECLARATIONS: Dict[str, EncoderDeclaration] = {"gatv2": GATv2Declaration()}
+
+
+def encoder_declaration(kind: Any) -> Optional[EncoderDeclaration]:
+    """The declaration of the encoder kind `kind`, or None when this build
+    implements no encoder of that kind."""
+    return ENCODER_DECLARATIONS.get(kind) if isinstance(kind, str) else None
+
+
+def encoder_not_built(kind: Any) -> str:
+    """Why an encoder of `kind` is not built: the one sentence of the builder
+    and of every question asked of an encoder this build does not implement."""
+    return (f"encoder kind {kind!r} is declared but not yet behind the GraphEncoder contract "
+            "in this build")
+
+
+def require_encoder_declaration(kind: Any) -> EncoderDeclaration:
+    """The declaration of `kind`, or a `SpecError` saying it is not built."""
+    declaration = encoder_declaration(kind)
+    if declaration is None:
+        raise SpecError(encoder_not_built(kind))
+    return declaration
 
 
 @dataclass(frozen=True)
@@ -609,14 +740,27 @@ def reference_spec(learning_stage: str = "base", task: Optional[str] = None) -> 
 
 def hops_problem(num_neighbors: Sequence[Any], encoder: EncoderSpec) -> Optional[str]:
     """Why a sampler's hop list (`num_neighbors`) does not fit `encoder`, or
-    None: the sampler takes one hop per message-passing layer, so the list
-    has `encoder.layers` numbers. **The one statement of this rule**: the
-    start's check of a new base run (`training_manager._new_bundle_run`), the
-    Training page's base form (`training_console.setting_problem`) and the
-    training process (`scripts/train_model.py`) all ask it."""
-    if len(num_neighbors) == encoder.layers:
+    None: the list has one number per hop the encoder's sampled computation
+    needs, **as its kind's declaration states it**
+    (`EncoderDeclaration.sampled_hops`; GATv2: one hop per layer). **The one
+    statement of this check**: the start's check of a new base run
+    (`training_manager._new_bundle_run`), the Training page's base form
+    (`training_console.setting_problem`) and the training process
+    (`scripts/train_model.py`) all ask it. No hop list fits an encoder a run
+    cannot sample, so the run is refused before it starts: one whose kind this
+    build does not implement, in the builder's own sentence
+    (`encoder_not_built`), and one whose declaration offers no sampled
+    computation."""
+    declaration = encoder_declaration(encoder.kind)
+    if declaration is None:
+        return f"{encoder_not_built(encoder.kind)}."
+    hops = declaration.sampled_hops(encoder) if SAMPLED in declaration.computation else None
+    if hops is None:
+        return (f"encoder kind {encoder.kind!r} offers no sampled computation in this build, "
+                "which training's sampler needs.")
+    if len(num_neighbors) == hops:
         return None
-    return (f"num_neighbors needs {encoder.layers} numbers, one hop per encoder layer, "
+    return (f"num_neighbors needs {hops} numbers, {declaration.hops_words}, "
             f"not {len(num_neighbors)}.")
 
 
@@ -631,8 +775,12 @@ def finetune_spec_from_parent(parent: ModelSpec, task: str) -> ModelSpec:
 
 
 __all__ = [
+    "ENCODER_DECLARATIONS",
     "ENCODER_KINDS",
+    "EncoderDeclaration",
     "EncoderSpec",
+    "FULL_VIEW",
+    "GATv2Declaration",
     "GeneScoringSpec",
     "GraphViewSpec",
     "InputSpec",
@@ -641,13 +789,17 @@ __all__ = [
     "ModelSpec",
     "PatientEncoderSpec",
     "REFERENCE_SOURCES",
+    "SAMPLED",
     "SPEC_VERSION",
     "SpecError",
     "TASKS",
     "TaskHeadSpec",
     "ViewShape",
+    "encoder_declaration",
+    "encoder_not_built",
     "finetune_head",
     "finetune_spec_from_parent",
     "hops_problem",
     "reference_spec",
+    "require_encoder_declaration",
 ]

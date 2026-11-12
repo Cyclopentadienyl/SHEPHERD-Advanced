@@ -41,6 +41,7 @@ import pytest
 pytest.importorskip("fastapi")
 
 import src.api.services.training_manager as tm  # noqa: E402
+from tests.fixtures.capabilities import described  # noqa: E402
 from tests.fixtures.job_processes import FakeProcess  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
@@ -48,13 +49,28 @@ POSIX = pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
 
 #: A real job that ends on SIGINT, as training does.
 SLEEPER = "import time\ntry:\n    time.sleep(600)\nexcept KeyboardInterrupt:\n    pass\n"
+#: A real test run as measure_scorer is one: started with SIGINT held, as the
+#: runner starts every test run (`_started_with_sigint_held`); it takes the
+#: signal once its handler is in place and ends itself by SIGINT on a cancel
+#: (`_exit_as_program`). So a stop that lands while its interpreter still
+#: starts reads as the cancel it is, however loaded the machine (a sleeper
+#: that exits 0 on SIGINT read "cancelled" only when the stop landed early).
+TEST_RUN = ("import os, signal, time\n"
+            "try:\n"
+            "    signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGINT})\n"
+            "    time.sleep(600)\n"
+            "except KeyboardInterrupt:\n"
+            "    signal.signal(signal.SIGINT, signal.SIG_DFL)\n"
+            "    os.kill(os.getpid(), signal.SIGINT)\n")
 
 
 def _real_job(manager: tm.TrainingManager, job_type: str = "training"):
+    program = TEST_RUN if job_type == "test" else SLEEPER
     with manager._lock:
         job, error = manager._spawn_locked(tm.JOB_TYPES[job_type],
-                                           [sys.executable, "-c", SLEEPER],
-                                           inputs={"checkpoint_sha256": "c" * 64})
+                                           [sys.executable, "-c", program],
+                                           inputs={"checkpoint_sha256": "c" * 64},
+                                           sigint_held=job_type == "test")
     assert job is not None, error
     return job
 
@@ -135,6 +151,7 @@ def test_inputs(tmp_path):
         registry=registry, version_label="mygene2-2026-10", version_sha256="e" * 64,
         workspace=workspace, checkpoint=workspace / "runs" / "gatv2" / "r" / "checkpoints" / "b.pt",
         checkpoint_sha256="c" * 64, protocol="disease", learning_stage="finetune", task="disease",
+        capabilities=described("finetune", "disease"), version_kind="supplied",
         version_counts={"source_cases": 3, "ranked_eligible": 3})
 
 

@@ -140,6 +140,23 @@ here builds `shortest_paths.pt`, and the GB10 acceptance probe accepts a workspa
    Start trains one child run per task, in order. The job card shows each
    child's status and, once it has ended, its best save by the Trainer's pooled
    MRR; **Stop** there names the queued children it cancels.
+7. **The frozen-backbone control** (since research comparison Stage 9b,
+   2026-11-10): a child with `frozen_parts` `graph_side` keeps its base's input
+   module, encoder and LP head exactly as they are (no gradient, no optimizer
+   group, evaluation mode for the whole run: BatchNorm's statistics are used and
+   never updated, dropout is off) and trains only its patient encoder and task
+   head. Its loss keeps the recipe's coefficients; its record says the LP term
+   has no trainable parameter, which parts were frozen and how they ran, and the
+   SHA-256 of the downstream weights it started from, so two children of one
+   base can be checked to start alike (with the recipe's seed they do). Both are
+   ordinary task models, measured, registered, listed and exported like any
+   other, the freeze among their learning settings; Models › Results' Compare
+   and the export show each one's weight transfer and loss identity as recorded,
+   so the two downstream starts are compared there (an arm paused and resumed
+   keeps its stage's transfer in its record). It is set on the command
+   line (`--frozen-parts graph_side`, below) or in the job runner's Fine-tune
+   settings (`frozen_parts`, `POST /api/v1/training/finetune`); the Fine-tune
+   page does not offer it in this round.
 
 **Every run writes into a new folder of its own** (contract M3a-2):
 `$WS/runs/<encoder kind>/<date-time>_<run name>_<id>/` (`gatv2` for the
@@ -171,7 +188,19 @@ Only the current settings are inherited (since K8-7, 2026-11-08): a setting the
 parent recorded that this version no longer has (`num_workers`, the old model
 settings such as `conv_type`) is neither inherited nor a reason to refuse, and a
 parent missing a current setting is refused. Check checkpoint and the run decide
-alike.
+alike. Since research comparison Stage 9a (2026-11-10) checkpoints record training
+rules 2, which add `frozen_parts` (which parts of a finetune do not train). A
+rules-1 parent still continues: one settings decode reads it with `frozen_parts`
+none, from what its record shows (rules 1 had no freeze), lists it with that
+source beside the inherited settings (the drawer's "Settings taken from this
+checkpoint", a line of its own in the training log) and records that source on
+the continued run; its file is not changed. A parent
+with no rules recorded (K4's) or rules this version does not know is refused, and
+a continued or branched run never changes the freeze: a frozen run resumed or
+extended stays frozen, with the same optimizer groups restored, and a branch of
+it keeps its freeze (since Stage 9b). A resumed or extended run records its
+stage's weight transfer, its parent's unchanged, so every checkpoint of a stage
+names the downstream weights the stage started from (since the Stage 9b fixes).
 
 The child is a new run in its own folder and records its parent by SHA-256. To
 train from a checkpoint with other settings, start a new run: changing settings
@@ -184,7 +213,10 @@ from a parent (a branch) is not available from the dashboard yet.
 > GPU lock's one name; [deployment guide](../deployment-guide.en.md) §4.11):
 > `scripts/train_model.py --data-dir "$WS" --stage base [--run-name NAME]`, or
 > `--config <yaml>`; then each task model with
-> `--stage finetune --task <task> --finetune-from <the base's checkpoint>`.
+> `--stage finetune --task <task> --finetune-from <the base's checkpoint>`,
+> adding `--frozen-parts graph_side` (or `frozen_parts: graph_side` in the
+> configuration) for the frozen-backbone control (item 7 above); a base given a
+> freeze is refused, since nothing would train.
 > Every run names its `--stage`, a continued one included (a run without it is
 > refused, naming `--stage`): `--resume <checkpoint>`, with that run's
 > `--stage`, continues a parent as above,

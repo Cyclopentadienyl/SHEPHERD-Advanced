@@ -166,7 +166,7 @@ def _samples_removed(cohort):
 
 def _unknown_label(cohort):
     return {"argv": _registered(cohort, label="no-such-version"),
-            "says": "holds no cohort version 'no-such-version'"}
+            "says": "holds no version 'no-such-version'"}
 
 
 def _evidence_missing(cohort):
@@ -593,7 +593,7 @@ def test_build_manifest_takes_the_mode_from_the_protocol(cli):
     device = torch.device("cpu")
     graph = {"num_nodes_dict": {"disease": 1}}
     common = {"digests": {"checkpoint": "a" * 64}, "dataset_record": {"origin": "synthetic"},
-              "regime": AutocastRegime(enabled=False, dtype=None)}
+              "regime": AutocastRegime(enabled=False, dtype=None), "cohort_kind": "generated"}
     semantics = disease_semantics(4)
     assert "mode" not in semantics and set(semantics) == set(cli.SEMANTIC_FIELDS)
 

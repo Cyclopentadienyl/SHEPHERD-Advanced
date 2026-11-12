@@ -237,6 +237,12 @@ class Trainer:
 
         # Model
         self.model = model.to(self.device)
+        # Whether some parameter does not train (a frozen part, frozen before
+        # the Trainer is built: `ModelBundle.freeze`), so the optimizer below
+        # holds none of it. Only then may a step's loss reach no trainable
+        # parameter (`_train_epoch`); without one, such a loss is a fault and
+        # fails at its backward, as it always did.
+        self._has_frozen_parameters = any(not p.requires_grad for p in self.model.parameters())
 
         # Data
         self.train_dataloader = train_dataloader
@@ -652,12 +658,21 @@ class Trainer:
 
             with autocast(self.device.type, dtype=self.amp_dtype, enabled=self.use_amp):
                 step = self.task.training_step(self.model, batch_data, self.device)
-            if step.loss is None:
-                # Nothing to learn from: no backward, no update, counted
-                # (README §3.1, no empty mean and no invented loss).
+            if step.loss is None or (not step.loss.requires_grad
+                                     and self._has_frozen_parameters):
+                # Nothing to learn from: no loss (README §3.1, no empty mean
+                # and no invented loss), or, in a model with a frozen part,
+                # one that reaches no trainable parameter (research comparison
+                # Stage 9: a gene step without a task term, whose LP term
+                # reads only a frozen graph side). No backward, no update,
+                # counted, its terms logged as given. A model without a frozen
+                # part has every term reach a trainable parameter, so there a
+                # loss without a gradient is a fault: it fails at its
+                # backward below, never skipped.
                 skipped_steps += 1
                 self.callbacks.on_batch_end(self, batch_idx, {
-                    "batch_skipped": 1, **{f"count_{k}": v for k, v in step.counts.items()}})
+                    "batch_skipped": 1, **{f"loss_{k}": v for k, v in step.terms.items()},
+                    **{f"count_{k}": v for k, v in step.counts.items()}})
                 continue
             loss = step.loss / accumulation
             if self.scaler is not None:

@@ -19,7 +19,8 @@ Research › Evaluate › Test (M5-2, UI-D): import, run, keep and register.
 - **the measurement** (K2, R1): the Measurement radio offers the protocols the
   chosen model's listed record admits (`protocols.available`), Start's reason
   and the start take the chosen protocol and say the protocol definition's
-  reasons (the base message for a base), and the runner is given the protocol
+  reasons (a base is offered the KG link-prediction protocol, research
+  comparison Stage 5), and the runner is given the protocol
   apart from the model's stage and task; under test-only protocols p1 and p2 a
   disease child offers both and starts p2 with its task still disease;
 - **D5** (policy rev 16): a group whose runs differ is described in neutral
@@ -66,7 +67,9 @@ gr = pytest.importorskip("gradio")
 pytest.importorskip("torch")
 
 from src.config.model_types import WRITTEN_BEFORE_SPEC  # noqa: E402
+from src.webui.components import renderers  # noqa: E402
 from src.webui.components import test_page as tp  # noqa: E402
+from tests.fixtures.capabilities import described  # noqa: E402
 from tests.fixtures.operator_access import (  # noqa: E402
     OPERATOR_BASE_URL,
     gradio_request,
@@ -307,10 +310,15 @@ def test_the_job_card_shows_the_tail_redacted_and_the_failure():
 def test_the_import_form_offers_the_versions_own_roles_and_asks_for_one():
     """Guard (K8-6d): the cohort-import form's Role select and its note belong
     to the form, not to the retired ordering. The select offers the listed
-    versions' own roles, then mygene2 and institutional_acceptance, each once;
-    with no role chosen the note asks for one."""
-    page = {"versions": [{"role": "research_selection"}, {"role": "mygene2"}, {"role": None},
-                         {"role": "exploration"}, {}]}
+    supplied versions' own roles, then mygene2 and institutional_acceptance,
+    each once; a KG edge set's role (a part of an edge split, which a supplied
+    import refuses for train and val) is not offered (research comparison
+    Stage 4). With no role chosen the note asks for one."""
+    page = {"versions": [{"role": "research_selection", "kind": "supplied"},
+                         {"role": "mygene2", "kind": "supplied"}, {"role": None, "kind": None},
+                         {"role": "train", "kind": "kg_edges"},
+                         {"role": "val", "kind": "kg_edges"},
+                         {"role": "exploration", "kind": "supplied"}, {}]}
     assert tp.role_choices(page) == ["research_selection", "mygene2", "exploration",
                                      "institutional_acceptance"]
     assert tp.role_choices({}) == ["mygene2", "institutional_acceptance"]
@@ -348,7 +356,7 @@ def test_unverifiable_is_a_word_never_a_count():
                           "disease_overlap": {"state": "unverifiable", "k": None, "n": 5,
                                               "cases": None},
                           "phenotype_set_overlap": {"state": "unverifiable", "k": None, "n": 10}}}
-    lines = dict(tp._r10_lines(r10))
+    lines = dict(renderers.r10_rows(r10))  # the one R10 rendering the page shows
     validation = lines["R10, validation"]
     assert "<b>unverifiable</b>" in validation and " of " not in validation
     assert "3 of 5 distinct test diseases; 7 test cases" in lines["R10, training"]
@@ -397,7 +405,7 @@ def test_a_kept_reports_r10_reads_in_its_states_words_never_a_count(
 
     html = tp.result_html(reports, run_id, [], notes=[])
 
-    line = dict(tp._r10_lines(record["r10"]))["R10, training"]
+    line = dict(renderers.r10_rows(record["r10"]))["R10, training"]
     assert line.startswith(f'<span class="shep-muted">inputs ({evidence_words}):</span> ')
     for name in ("Training disease overlap", "Training phenotype-set overlap"):
         assert f"{name}: <b>unverifiable</b>: {reason}" in line
@@ -903,29 +911,140 @@ def test_the_result_shows_aggregates_and_states_never_a_case_or_a_path(site):
     assert "R1 graph files match the workspace manifest" in html
 
 
+def _native_row(html):
+    """The value of the result's one "Native build" row."""
+    assert html.count('<span class="shep-k">Native build</span>') == 1
+    match = re.search(r'<span class="shep-k">Native build</span><span class="shep-v">(.*?)</span>',
+                      html)
+    return match.group(1)
+
+
+def _native_lines(html):
+    return [_plain(line) for line in re.findall(r"<div>(.*?)</div>", _native_row(html))]
+
+
+def test_the_result_names_its_native_build_as_a_lead_and_one_line_per_component(site):
+    """research-comparison Stage 2b: the record's native build identity in the
+    run environment's one projection and wording, as Models shows it, here as
+    a lead (the route once, and the count) and one line per component: in
+    this column the one line ran to four (the webui-design skill's §4, seen
+    at 1850 x 960 in the 2b review). A record whose environment names no
+    components (recorded before) reads "not recorded"; what it shows is
+    escaped."""
+    from src.utils.run_environment import (
+        PYG_NATIVE_KIND,
+        component_facts,
+        native_identity,
+        native_identity_lines,
+        native_identity_text,
+    )
+
+    reports = tp.read_reports(LABEL)
+    run = tp.find(reports["runs"], "run_id", site.run_id)
+    record = run["record"]
+    components = record["environment"]["facts"]["components"]
+    assert components, "the measured run's environment names its components"
+
+    lines = _native_lines(tp._record_html(record, run, {}))
+    identity = native_identity(components)
+    assert lines == native_identity_lines(identity)
+    assert len(lines) == len(components) + 1
+    assert lines[0].endswith(f" · {len(components)} components")
+    # The same words as the one line Models shows, with the route said once.
+    assert native_identity_text(identity) == f"{lines[0].split(' · ')[0]} — " + ", ".join(
+        lines[1:])
+    assert [line.split(" ")[0] for line in lines[1:]] == sorted(components)
+
+    facts = {key: value for key, value in record["environment"]["facts"].items()
+             if key != "components"}
+    older = {**record, "environment": {**record["environment"], "facts": facts}}
+    assert _native_lines(tp._record_html(older, run, {})) == ["not recorded"]
+    hostile = {**record, "environment": {**record["environment"], "facts": {
+        **facts, "components": {"<img src=x onerror=alert(1)>": component_facts(
+            PYG_NATIVE_KIND, version="<b>1</b>")}}}}
+    row = _native_row(tp._record_html(hostile, run, {}))
+    assert "<img" not in row and "<b>" not in row and "&lt;img src=x" in row
+
+
+def test_the_result_shows_the_one_readers_view_of_its_record(site, monkeypatch):
+    """Stage 8b review (one reader of a result for every surface): every field
+    the Result shows but the metric values is the one reader's view of the
+    record (`record_views.result_view`, what the results service and Models
+    read by) and its R10 the one rendering (`renderers.r10_rows`), never the
+    page's own read of the raw record: a view that says otherwise than the
+    record is what is shown."""
+    import html as html_lib
+
+    from src.api.services import record_views
+
+    reports = tp.read_reports(LABEL)
+    run = tp.find(reports["runs"], "run_id", site.run_id)
+    record = run["record"]
+    assert record["cohort"]["kind"] == "supplied"
+    real = record_views.result_view
+
+    class Said:
+        def __init__(self, view):
+            self.view = view
+
+        def model_dump(self, mode="json"):
+            dump = self.view.model_dump(mode=mode)
+            dump["cohort"]["label"] = "label-from-the-view"
+            dump["environment_class"] = "class-from-the-view"
+            dump["score_semantics"] = "semantics-from-the-view"
+            dump["dataset_origin"] = "files"
+            dump["deterministic_algorithms"] = None
+            dump["native_identity"] = None
+            dump["r10"]["training"]["evidence"]["state"] = "not_recorded"
+            return dump
+
+    monkeypatch.setattr(record_views, "result_view", lambda value: Said(real(value)))
+    raw = tp._record_html(record, run, {})
+    text = html_lib.unescape(re.sub(r"<[^>]+>", " ", raw))
+    assert "label-from-the-view (version" in text
+    assert f"{record['cohort']['label']} (version" not in text
+    assert "class-from-the-view" in text and "semantics-from-the-view" in text
+    assert "deterministic not recorded" in text
+    assert record["dataset_record"]["origin"] != "files" and "files — built from" in text
+    assert _native_lines(raw) == ["not recorded"]
+    training = dict(renderers.r10_rows(
+        {**record["r10"], "training": {**record["r10"]["training"],
+                                       "evidence": {"state": "not_recorded"}}}))
+    assert training["R10, training"] in raw
+    assert "inputs (evidence not recorded by the checkpoint):" in text
+
+
 def test_a_result_of_another_or_no_mode_is_shown_as_recorded(site):
     """A record whose mode this version does not describe, or whose mode cannot
     be read, is named for what it is by the one display for every mode (R2):
     its own label, no tiles and no claim of what its cases are, its metrics as
-    recorded in one "Recorded metrics" row; never another mode's words. Each
-    report row names its mode first (ui_api-5), a kept Mode C report's as "mode
-    C, not described by this version", and what the Run panel fixes names no
-    measurement: the Measurement radio offers the protocols."""
+    recorded in one "Recorded metrics" row; never another mode's words. A
+    record whose mode cannot be read is one the one reader does not read as a
+    result (research comparison Stage 8b: the result view the results service
+    and Models read by): it says so with the field named, never another mode's
+    words. Each report row names its mode first (ui_api-5), a kept Mode C
+    report's as "mode C, not described by this version", and what the Run
+    panel fixes names no measurement: the Measurement radio offers the
+    protocols."""
     import html as html_lib
 
     c_run = _keep_mode_c_report(site)
     reports = tp.read_reports(LABEL)
     run = {r["run_id"]: r for r in reports["runs"]}[c_run]
     record = run["record"]
-    for mode, label in (("E", "Mode E (a measurement mode this version does not describe)"),
-                        (None, "Measurement mode not recorded")):
-        changed = {**record, "scoring": {**record["scoring"], "mode": mode}}
-        raw = tp._record_html(changed, run, {})
-        text = html_lib.unescape(re.sub(r"<[^>]+>", "", raw))
-        assert label in text and "Mode C" not in text and "shep-test-tile-l" not in raw
-        assert "source cases ranked" not in text and "not described for this mode" in text
-        assert '<span class="shep-k">Recorded metrics</span>' in raw
-        assert "<div><code>untruncated_mrr</code> 0.5</div>" in raw
+    changed = {**record, "scoring": {**record["scoring"], "mode": "E"}}
+    raw = tp._record_html(changed, run, {})
+    text = html_lib.unescape(re.sub(r"<[^>]+>", "", raw))
+    assert "Mode E (a measurement mode this version does not describe)" in text
+    assert "Mode C" not in text and "shep-test-tile-l" not in raw
+    assert "source cases ranked" not in text and "not described for this mode" in text
+    assert '<span class="shep-k">Recorded metrics</span>' in raw
+    assert "<div><code>untruncated_mrr</code> 0.5</div>" in raw
+    unread = {**record, "scoring": {**record["scoring"], "mode": None}}
+    text = html_lib.unescape(re.sub(r"<[^>]+>", "", tp._record_html(unread, run, {})))
+    assert text.startswith("This report's record cannot be read as a result") and \
+        "scoring.mode" in text
+    assert "Mode C" not in text and "Recorded metrics" not in text
     assert "mode C, not described by this version: report kept" in tp.reports_html(reports, None)
     fixed = tp.fixed_html({})
     assert "Mode C" not in fixed and "Mode D" not in fixed and "Measurement" not in fixed
@@ -1005,7 +1124,7 @@ def test_start_waits_for_every_choice_and_says_why(site, monkeypatch):
     state = lambda ws, label, key, gpu=("none", ""), protocol="disease": (  # noqa: E731
         tp.start_state(page, models, ws, label, key, binding, gpu, protocol=protocol))
     assert state(None, LABEL, child) == (False, "Disabled: choose a workspace.")
-    assert state("demo", None, child) == (False, "Disabled: choose a cohort version.")
+    assert state("demo", None, child) == (False, "Disabled: choose a data version.")
     assert state("demo", LABEL, None) == (False, "Disabled: choose a model.")
     # No measurement chosen (the radio's value None) is said, never filled in.
     assert state("demo", LABEL, child, protocol=None) == (
@@ -1021,7 +1140,7 @@ def test_start_waits_for_every_choice_and_says_why(site, monkeypatch):
     # the record reader's one phrase (N2).
     assert state("demo", LABEL, site.history_key) == (
         False, f"Disabled: Record not readable ({WRITTEN_BEFORE_SPEC}): not measured here. "
-               "Choose a model finetuned for a task.")
+               "Choose a model with a readable record.")
 
 
 # --------------------------------------------------------------------------- the operator controls
@@ -2462,7 +2581,7 @@ def test_a_direct_call_through_gradios_api_meets_the_same_check(site, monkeypatc
     event, refused = call("http://192.0.2.10", [None, None, None, None])
     assert event == "event: complete" and "Refused: " in refused
     event, loopback = call(OPERATOR_BASE_URL, [None, None, None, None])
-    assert event == "event: complete" and "Choose a cohort version the server lists" in loopback
+    assert event == "event: complete" and "Choose a data version the server lists" in loopback
     assert given and all(page == {} and models.get("items") == [] for page, models in given), \
         "the handler was given what the client posted"
     event, forged = call(OPERATOR_BASE_URL, ["demo", LABEL, site.key, None])
@@ -2750,6 +2869,31 @@ def test_report_rows_that_would_read_the_same_are_told_apart_by_their_run_id():
     assert tp.run_time(ids[0], seconds=True) == "2026-10-24 11:10:47 UTC"
 
 
+def test_report_rows_are_named_by_the_shared_run_time_and_distinct_names(monkeypatch):
+    """Review of the browser-check fixes (AGENTS.md: no second implementation):
+    the Test page names its report rows by the one `renderers.run_time` and
+    tells alike names apart by the one `renderers.distinct_names`, as Models ›
+    Results does, not by copies of its own."""
+    from src.webui.components import renderers as r
+
+    assert tp.run_time is r.run_time
+    calls = []
+    shared = r.distinct_names
+
+    def spy(items, name_at, **kwargs):
+        calls.append(list(items))
+        return shared(items, name_at, **kwargs)
+
+    monkeypatch.setattr(r, "distinct_names", spy)
+    sha = "f6f7e5cab280"
+    ids = [f"20261024T111012Z-{sha}-0c0ffee0", f"20261024T111012Z-{sha}-7a7a7a7a"]
+    runs = [{"run_id": x, "when": tp.run_time(x), "sha12": sha,
+             "state": {"kept": "kept", "registered": "not_registered"}} for x in ids]
+    html = tp.reports_html({"label": LABEL, "runs": runs}, ids[0])
+    assert calls == [ids]
+    assert f"2026-10-24 11:10:12 UTC · model <code>{sha}</code> · run …7a7a7a7a" in html
+
+
 def test_a_long_report_list_shows_the_newest_and_keeps_the_selected():
     runs = _runs(20)
     reports = {"label": LABEL, "runs": runs}
@@ -3022,13 +3166,16 @@ def test_the_words_after_a_path_stay_and_two_paths_are_two():
 
 def test_the_test_page_and_datasets_share_one_redaction():
     """M5-3 review ARCH-7: one pattern and one implementation for "no absolute
-    server path is shown" (they had already drifted apart)."""
+    server path is shown" (they had already drifted apart); since research
+    comparison Stage 8 in `src.utils.path_redaction`, which the results service
+    uses too."""
+    from src.utils import path_redaction
     from src.webui.components import workspaces
 
-    assert not hasattr(tp, "_ABSOLUTE")
+    assert not hasattr(tp, "_ABSOLUTE") and not hasattr(workspaces, "_ABSOLUTE")
     text = "x /mnt/a b/c d"
-    assert tp.redact(text, []) == workspaces.redact_paths(text, [], other=tp.SERVER_PATH)
-    assert workspaces.redact(text, None) == workspaces.redact_paths(
+    assert tp.redact(text, []) == path_redaction.redact_paths(text, [], other=tp.SERVER_PATH)
+    assert workspaces.redact(text, None) == path_redaction.redact_paths(
         text, [], other=workspaces.OUTSIDE_PATH)
 
 
@@ -3096,7 +3243,15 @@ NO_CAUSAL = {**NO_GENES, "genes": {"cases_with_causal_genes": 0,
 
 
 def _model(task="disease", stage="finetune", record="model", **extra):
-    return {"record": record, "learning_stage": stage, "task": task, **extra}
+    """A listed model as the server's list gives it: its record's stage and
+    task, and the capability description the protocols judge (none for a
+    record not read as a model)."""
+    return {"record": record, "learning_stage": stage, "task": task,
+            "capabilities": described(stage, task) if record == "model" else None, **extra}
+
+
+#: A listed supplied cohort version's kind, as the server's list gives it.
+SUPPLIED = "supplied"
 
 
 def test_measure_refusal_says_why_each_kind_is_not_measured():
@@ -3104,19 +3259,38 @@ def test_measure_refusal_says_why_each_kind_is_not_measured():
     (`renderers.record_kind_text`, K6 decision 6; the closing review found the
     page's own copies), then the page's own reason. Past it every reason is
     the protocol definition's (`protocols`, K2): with no measurement chosen,
-    why none takes the record (a base's is the base message) or "choose a
-    measurement"; with one chosen, its refusal. The page words none itself."""
+    why none takes the record or "choose a measurement"; with one chosen, its
+    refusal. The page words none itself."""
     from src.evaluation import protocols
     from src.webui.components import renderers as r
 
     refusal = tp.measure_refusal
-    assert refusal(_model("disease"), {"counts": NO_GENES}, "disease") is None
+    assert refusal(_model("disease"), {"kind": SUPPLIED, "counts": NO_GENES}, "disease") is None
     # No measurement chosen while the record admits one is said, never filled in.
-    assert refusal(_model("disease"), {"counts": NO_GENES}, None) == tp.CHOOSE_A_MEASUREMENT
-    # A base: the base message, whatever is asked of it (§5.4).
-    for protocol in (None, "disease", "gene"):
-        assert refusal(_model(None, "base"), {"counts": NO_GENES}, protocol) == (
-            protocols.BASE_MESSAGE)
+    assert refusal(_model("disease"), {"kind": SUPPLIED, "counts": NO_GENES}, None) == (
+        tp.CHOOSE_A_MEASUREMENT)
+    # A base: the KG link-prediction protocol takes it (research comparison
+    # Stage 5), on a KG edge set only; a task protocol says its own reason.
+    # With none chosen on a supplied cohort, none is offered (Stage 7: by the
+    # version's kind), and the reason is the definition's.
+    base, supplied = _model(None, "base"), {"kind": SUPPLIED, "counts": NO_GENES}
+    assert refusal(base, supplied, None) == protocols.available(
+        described("base", None), SUPPLIED)[1] == (
+        "no measurement that takes this checkpoint's model measures a supplied cohort version: "
+        "it can be measured by KG link prediction (kg_link_prediction), which measures a KG "
+        "edge set.")
+    assert refusal(base, {"kind": "kg_edges", "counts": {"pairs": 4}}, None) == (
+        tp.CHOOSE_A_MEASUREMENT)
+    assert refusal(base, None, None) == tp.CHOOSE_A_MEASUREMENT
+    assert refusal(base, supplied, "kg_link_prediction") == (
+        "the kg_link_prediction measurement does not measure a supplied cohort version; it "
+        "measures a KG edge set.")
+    assert refusal(base, {"kind": "kg_edges", "counts": {"pairs": 4}}, "kg_link_prediction") is None
+    for protocol in ("disease", "gene"):
+        assert refusal(base, supplied, protocol) == protocols.model_refusal(
+            protocol, described("base", None))
+        assert refusal(base, supplied, protocol).endswith(
+            "It can be measured by kg_link_prediction.")
     specless, refused, unread = ({"record": "refused", "record_problem": WRITTEN_BEFORE_SPEC},
                                  {"record": "refused", "record_problem": "record version 9"},
                                  {"record": None})
@@ -3132,38 +3306,48 @@ def test_measure_refusal_says_why_each_kind_is_not_measured():
     assert refusal(unread, None, None) == "Record not read: " + tp.NOT_MEASURED_HERE
     # A record no protocol takes, a protocol the record does not meet, and a
     # name that is no protocol: the definition's sentences, by its ordinary rules.
-    assert refusal(_model("C"), None, None) == protocols.available("finetune", "C")[1]
+    from tests.fixtures.capabilities import LP_HEAD_UNSTATED
+
+    assert refusal(_model(LP_HEAD_UNSTATED, "base"), None, None) == protocols.available(
+        described("base", LP_HEAD_UNSTATED))[1]
+    assert refusal(_model("C"), None, None) == tp.CHOOSE_A_MEASUREMENT
     assert refusal(_model("gene"), None, "disease") == (
-        protocols.model_refusal("disease", "finetune", "gene"))
-    assert "It can be measured by gene." in refusal(_model("gene"), None, "disease")
+        protocols.model_refusal("disease", described("finetune", "gene")))
+    assert "It can be measured by gene, kg_link_prediction." in refusal(_model("gene"), None,
+                                                                       "disease")
     for name in ("C", "D", "Disease"):
         assert refusal(_model("disease"), None, name) == (
-            protocols.model_refusal(name, "finetune", "disease"))
+            protocols.model_refusal(name, described("finetune", "disease")))
         assert "is not a measurement this build implements" in refusal(_model("disease"), None,
                                                                         name)
 
 
-def test_the_base_message_names_the_formal_test_as_not_implemented(site, monkeypatch):
-    """§5.4, the page's half: Start's reason for a listed base, and the start's
-    refusal, are the base message, which names the formal test as not
-    implemented and says neither "no task to measure" nor "nothing to test";
-    the Measurement radio offers nothing for it."""
+def test_a_listed_base_is_offered_the_kg_link_prediction_measurement(site, monkeypatch):
+    """§5.4, the page's half, since research comparison Stage 5: the
+    Measurement radio offers a listed base the KG link-prediction protocol, the
+    one that takes it; on a supplied cohort version Start's reason and the
+    start's refusal are that protocol's sentence for the data kind, and no
+    runner is asked."""
     from src.evaluation import protocols
 
     _path, base = _put_bundle(site, BUNDLE_BASE_RUN, None)
     page, request = _page(monkeypatch)
     models = tp.read_models("demo", request)
     binding = tp.workspace_binding(site.demo, tp.find(page["workspaces"], "name", "demo"))
-    assert tp.measurement_choices(tp.find_model(models, base)) == []
-    message = protocols.BASE_MESSAGE
-    assert "formal test" in message and "not implemented" in message
-    assert "no task to measure" not in message and "nothing to test" not in message
-    allowed, why = tp.start_state(page, models, "demo", LABEL, base, binding, ("none", ""))
+    choices = tp.measurement_choices(tp.find_model(models, base))
+    assert choices == [("KG link prediction", "kg_link_prediction")]
+    assert tp.chosen_measurement(choices, None) == "kg_link_prediction"
+    message = protocols.inputs_refusal("kg_link_prediction", SUPPLIED, None)
+    assert message == ("the kg_link_prediction measurement does not measure a supplied cohort "
+                       "version; it measures a KG edge set.")
+    allowed, why = tp.start_state(page, models, "demo", LABEL, base, binding, ("none", ""),
+                                  protocol="kg_link_prediction")
     assert (allowed, why) == (False, f"Disabled: {message}")
     manager = FakeManager()
     result = tp.start_test_run(page, models, "demo", LABEL, base, False, False, request,
-                               manager=manager)
-    assert result == {"success": False, "error": f"{message} Nothing was started."}
+                               protocol="kg_link_prediction", manager=manager)
+    assert result == {"success": False,
+                      "error": f"{message[:1].upper()}{message[1:]} Nothing was started."}
     assert manager.started == []
 
 
@@ -3181,9 +3365,9 @@ def test_a_measurement_needs_a_version_that_lists_its_genes(protocol, counts, mi
     source field that lists them."""
     from src.evaluation import protocols
 
-    model = _model(protocols.PROTOCOLS[protocol].task)
-    got = tp.measure_refusal(model, {"counts": counts}, protocol)
-    assert got == protocols.inputs_refusal(protocol, counts)
+    model = _model(protocols.PROTOCOLS[protocol].head[1])
+    got = tp.measure_refusal(model, {"kind": SUPPLIED, "counts": counts}, protocol)
+    assert got == protocols.inputs_refusal(protocol, SUPPLIED, counts)
     if missing is None:
         assert got is None
     else:
@@ -3208,13 +3392,17 @@ def test_start_and_its_reason_refuse_what_is_not_measured_with_one_rule(site, mo
     binding = tp.workspace_binding(site.demo, tp.find(page["workspaces"], "name", "demo"))
     manager = FakeManager()
     gene = "gatv2/20261022-000000_gene_dddddd/last.pt"
-    counts = tp.find(page["versions"], "label", LABEL)["counts"]
+    version = tp.find(page["versions"], "label", LABEL)
+    counts = version["counts"]
+    assert version["kind"] == SUPPLIED
     cases = {
-        f"gatv2/{BUNDLE_BASE_RUN}/last.pt": (None, protocols.BASE_MESSAGE),
+        f"gatv2/{BUNDLE_BASE_RUN}/last.pt": (
+            "kg_link_prediction", protocols.inputs_refusal("kg_link_prediction", SUPPLIED,
+                                                           counts)),
         "gatv2/20261021-000000_refused_cccccc/last.pt":
             (None, "Record not readable (checkpoint record version 999"),
         site.history_key: (None, f"Record not readable ({WRITTEN_BEFORE_SPEC})"),
-        gene: ("gene", protocols.inputs_refusal("gene", counts)),
+        gene: ("gene", protocols.inputs_refusal("gene", SUPPLIED, counts)),
     }
     assert cases[gene][1].startswith("this cohort version lists no causal genes")
     for key, (protocol, says) in cases.items():
@@ -3276,14 +3464,22 @@ def test_every_checkpoint_is_listed_led_by_what_it_is(site, monkeypatch):
 
 
 def _task_record(mode, **metrics):
+    """A kept task report's record (`build_record`, as the store's scan builds
+    it, so the one reader reads it, research comparison Stage 8b) with these
+    metrics and a small cohort's counts."""
+    from tests.unit.test_evaluation_sidecar import registered_report
+
     base = {"pooled_mrr": 0.3125, "pooled_top1": 0.25, "pooled_top3": 0.5, "pooled_top10": 0.75,
             "macro_recall@1": 0.2, "macro_recall@5": 0.4, "macro_recall@10": 0.6,
             "macro_precision@1": 0.25, "macro_mrr": 0.33, "best_positive_mrr": 0.4,
             "conservative_pooled_mrr": 0.21, "coverage": 0.8}
-    return {"scoring": {"mode": mode}, "metrics": {**base, **metrics}, "n_ranked": 8,
-            "cohort": {"label": "v", "counts": {"source_cases": 13, "ranked_eligible": 10,
-                                                "n_excluded": 3,
-                                                "excluded": {"ground_truth_absent": 3}}}}
+    record = _kept_record(registered_report(mode=mode))
+    record["metrics"] = {**base, **metrics}
+    record["n_ranked"] = 8
+    record["cohort"]["label"] = "v"
+    record["cohort"]["counts"] = {"source_cases": 13, "ranked_eligible": 10, "n_excluded": 3,
+                                  "excluded": {"ground_truth_absent": 3}}
+    return record
 
 
 @pytest.mark.parametrize("mode", ["disease", "gene", "patients_like_me"])
@@ -3376,14 +3572,14 @@ MODE_C_SEMANTICS_TEXT = "raw cosine, no eta mixture and no shortest-path term"
 
 
 def test_a_record_of_a_mode_no_build_has_words_for_is_shown_as_recorded():
-    """A "kg_link_prediction" record (no such test is implemented, N1) and a
+    """A "kg_lp_reader_only" record (a mode this build has no words for) and a
     record whose mode no build has ever named: the recorded metrics are the
     main result, with no tiles, no "Mean rank" row and no list of modes that
     decides what is shown (the three tasks are not a read whitelist)."""
     from src.evaluation.caveats import mode_label
     from tests.unit.test_evaluation_sidecar import registered_report
 
-    for mode in ("kg_link_prediction", "zz_protocol_never_seen"):
+    for mode in ("kg_lp_reader_only", "zz_protocol_never_seen"):
         record = _kept_record(registered_report(mode=mode))
         raw = tp._record_html(record, {}, {})
         text = _result_text(raw)
@@ -3416,12 +3612,14 @@ def test_a_task_record_keeps_its_tiles_and_shows_every_metric_one_click_away():
 
 def test_only_the_described_measurements_have_help_topics():
     """No help topic exists only for a mode this build does not describe: the
-    Mode C and Mode D topics retired (R2); each task's topic stays."""
-    from src.evaluation.caveats import TASK_NAMES
+    Mode C and Mode D topics retired (R2); each measurement this build
+    describes has its topic (`caveats.MEASUREMENT_NAMES`), each task's as it
+    was and, since the browser check of 7e1d09e, KG link prediction's."""
+    from src.evaluation.caveats import MEASUREMENT_NAMES
 
     assert "test-mode-c" not in tp.TOPIC_HELP and "test-mode-d" not in tp.TOPIC_HELP
     assert sorted(k for k in tp.TOPIC_HELP if k.startswith("test-mode-")) == sorted(
-        f"test-mode-{task}" for task in TASK_NAMES)
+        f"test-mode-{mode}" for mode in MEASUREMENT_NAMES)
 
 
 def test_a_hostile_metric_name_and_score_semantics_are_literal_text_on_test():
@@ -3448,21 +3646,108 @@ def test_a_task_report_row_names_its_task_first():
     assert tp._row_state(plm, []).startswith("patients-like-me task: report kept")
 
 
+def _kind_record(kind, **report):
+    """A kept report's record of a KG edge set or a generated split
+    (`build_record`, as the store's scan builds it)."""
+    from tests.unit.test_ledger_by_data_kind import generated_report, kg_edges_report
+
+    return _kept_record({"kg_edges": kg_edges_report, "generated": generated_report}[kind](
+        **report))
+
+
+def test_a_kg_link_prediction_report_row_names_its_measurement_first():
+    """The browser check of 7e1d09e: every kept KG link-prediction row read
+    "mode kg_link_prediction, not described by this version", on a page that
+    offers that measurement as "KG link prediction". The row's words come
+    from the one measurement vocabulary (`caveats.MEASUREMENT_NAMES`), so a
+    measurement this build describes is never named by its code as one it
+    does not; a mode it does not describe still is."""
+    record = _kind_record("kg_edges")
+    assert record["scoring"]["mode"] == "kg_link_prediction"
+    run = {"run_id": "r", "record": record, "state": {"kept": "kept", "registered": "registered",
+                                                      "sequence": 2}}
+    row = tp._row_state(run, [])
+    assert row.startswith("KG link prediction: report kept · registered #2"), row
+    assert "kg_link_prediction" not in row and "not described" not in row
+    unknown = dict(run, record={**record, "scoring": {**record["scoring"], "mode": "zz_new"}})
+    assert tp._row_state(unknown, []).startswith("mode zz_new, not described by this version: ")
+    hostile = dict(run, record={**record, "scoring": {**record["scoring"], "mode": HOSTILE}})
+    assert HOSTILE not in tp._row_state(hostile, [])
+
+
+def test_a_kg_link_prediction_result_has_its_measurement_note():
+    """The browser check of 7e1d09e: an LP result showed no note, where every
+    task result has one; the note is the measurement's own
+    (`caveats.MODE_RESULT_NOTES`, the one Models prints above its LP table),
+    behind the ⓘ beside the result's label ("KG link prediction result").
+    Its metrics stay as recorded, as Models shows them."""
+    from src.evaluation.caveats import KG_LINK_PREDICTION_NOTE, mode_label
+
+    raw = tp._record_html(_kind_record("kg_edges"), {}, {})
+    label = raw[raw.index('class="shep-test-label"'):]
+    label = label[:label.index("</div>")]
+    assert 'data-help="test-mode-kg_link_prediction"' in label
+    assert tp.TOPIC_HELP["test-mode-kg_link_prediction"] == ("KG link prediction result",
+                                                             KG_LINK_PREDICTION_NOTE)
+    assert mode_label("kg_link_prediction") in _result_text(raw)
+    assert '<span class="shep-k">Recorded metrics</span>' in raw
+    assert "shep-test-tile-l" not in raw
+
+
+@pytest.mark.parametrize("kind, mode", [("kg_edges", "kg_link_prediction"),
+                                        ("generated", "disease"),
+                                        ("generated", "patients_like_me")])
+def test_a_kg_edge_set_or_generated_split_result_never_says_cohort(kind, mode):
+    """The browser check of 7e1d09e: a KG edge set's and a generated split's
+    results read "cohort version mapped against this graph" (Relations) and
+    a patients-like-me result "every other patient of the cohort". The
+    caveats' words every kind shares fit each kind (research comparison §5
+    Stage 4: never "cohort" for these kinds), so the Test page and Models say
+    them alike: "data version bound to this graph", "every other patient
+    measured"; a supplied cohort's result still names its cohort (R10)."""
+    from src.evaluation.caveats import RELATION_DISPLAY_NAMES, mode_label
+    from src.webui.components import models_page as mp
+    from tests.unit.test_evaluation_sidecar import registered_report
+
+    record = _kind_record(kind, **({} if kind == "kg_edges" else {"mode": mode}))
+    assert (record["scoring"]["mode"], record["cohort"]["kind"]) == (mode, kind)
+    raw = tp._record_html(record, {}, {})
+    text = _result_text(raw)
+    assert "cohort" not in text.lower(), text
+    assert mode_label(mode) in text
+    bound = f"{RELATION_DISPLAY_NAMES['cohort_graph']} {tp.OK_MARK}"
+    assert bound in raw and RELATION_DISPLAY_NAMES["cohort_graph"] == (
+        "data version bound to this graph")
+    relations = mp.relations_html(record["relations"])
+    assert "cohort" not in relations and "version↔graph ✓" in relations
+    supplied = tp._record_html(_kept_record(registered_report()), {}, {})
+    assert "R10, training" in _result_text(supplied) and bound in supplied
+
+
 def test_the_measurement_options_are_the_protocols_the_record_admits():
     """§5.3: the Measurement radio's options are `protocols.available` of the
-    chosen model's listed record, each labelled with the words the pages use
-    for that mode value (`caveats.TASK_NAMES`) and valued by the protocol's
-    name, short and unique (skill §8). The only option is chosen; of several,
-    none is until the operator picks one, and a pick no longer offered goes.
-    What the server fixes names no measurement."""
+    chosen model's listed record, each labelled with the measurement's words
+    (`caveats.MEASUREMENT_NAMES`: a task's by its task's name, "KG link
+    prediction"; never a protocol's code as the label, skill §5) and valued by
+    the protocol's name, short and unique (skill §8). The only option is
+    chosen; of several, none is until the operator picks one, and a pick no
+    longer offered goes. What the server fixes names no measurement."""
+    lp = ("KG link prediction", "kg_link_prediction")
     for task, words in (("disease", "Disease"), ("gene", "Gene"),
                         ("patients_like_me", "Patients-like-me")):
+        # A finetune is taken by its task's protocol and by the KG
+        # link-prediction protocol (research comparison Stage 5).
         choices = tp.measurement_choices(_model(task))
-        assert choices == [(words, task)]
-        assert tp.chosen_measurement(choices, None) == task
-        assert tp.chosen_measurement(choices, "another") == task
-    for item in (None, _model(None, "base"), _model("C"),
-                 {"record": "refused", "record_problem": WRITTEN_BEFORE_SPEC},
+        assert choices == [(words, task), lp]
+        assert tp.chosen_measurement(choices, None) is None
+        assert tp.chosen_measurement(choices, task) == task
+        assert tp.chosen_measurement(choices, "another") is None
+    for item in (_model(None, "base"), _model("C")):
+        choices = tp.measurement_choices(item)
+        assert choices == [lp]
+        assert tp.chosen_measurement(choices, None) == "kg_link_prediction"
+        assert tp.chosen_measurement(choices, "another") == "kg_link_prediction"
+    for item in (None, {"record": "refused", "record_problem": WRITTEN_BEFORE_SPEC},
                  {"record": None}, {"record": "refused", "record_problem": "x"}):
         assert tp.measurement_choices(item) == []
     assert tp.chosen_measurement([], "disease") is None
@@ -3544,11 +3829,18 @@ def test_the_help_says_what_the_measurement_options_are():
     lead = text.split("\n")[0]
     assert title == "Measurement" and len(lead) <= 100 and len(text.split()) <= 80
     assert "measurements this build implements" in lead
-    assert "formal test is not implemented" in text and "Mode C" not in text
+    # A base is offered the KG link-prediction measurement (research comparison
+    # Stage 5), never told its test is not implemented.
+    assert "A base is offered KG link prediction only" in text and "Mode C" not in text
+    assert "not implemented" not in text
+    # Offered by what the model offers (Stage 3), not by a stage list.
+    assert "capabilities meet" in text and "learning stage" not in text
     title, text = tp.FIELD_HELP["shep-test-model"]
     assert title == "Model" and len(text.split("\n")[0]) <= 100
-    assert "a base, or a file without a model spec, is listed but not measured here" in text
-    assert "measured by that task" not in text
+    assert "a file without a model spec is listed only" in text
+    assert "its LP head on a KG edge set" in text and "a base" not in text
+    assert "measured by that task" not in text and "capabilities meet" in text
+    assert len(text.split()) <= 85
 
 
 @pytest.fixture
@@ -3556,10 +3848,11 @@ def test_only_protocols(monkeypatch):
     """§5.5's test-only protocols, the product table untouched: p1 and p2 both
     take a finetuned model with the disease head and run the disease
     evaluator, so neither name is a task."""
+    from dataclasses import replace
+
     from src.evaluation import protocols
 
-    table = {name: protocols.Protocol(name, "finetune", "disease", "disease")
-             for name in ("p1", "p2")}
+    table = {name: replace(protocols.PROTOCOLS["disease"], name=name) for name in ("p1", "p2")}
     monkeypatch.setattr(protocols, "PROTOCOLS", table)
     return table
 
@@ -3573,7 +3866,8 @@ def test_a_listed_disease_child_offers_the_test_only_protocols_and_starts_one(
     hands the runner protocol p2 apart from the model's task disease, and the
     job card names p2. "disease" is no protocol here: the definition's
     ordinary sentence. The base asked as p1 gets the definition's one reason
-    (the base message) from Start and from the start, which asks no runner."""
+    (no head p1 scores with, and nothing in this table takes it) from Start
+    and from the start, which asks no runner."""
     from src.evaluation import protocols
 
     _path, child = _put_bundle(site)
@@ -3620,14 +3914,16 @@ def test_a_listed_disease_child_offers_the_test_only_protocols_and_starts_one(
                             ("busy", ""))
     assert "p2 measurement" in card
 
-    counts = tp.find(page["versions"], "label", LABEL)["counts"]
-    reason = protocols.refusal("p1", "base", None, counts)
-    assert reason == protocols.BASE_MESSAGE and tp.measurement_choices(
-        tp.find_model(models, base)) == []
+    version = tp.find(page["versions"], "label", LABEL)
+    reason = protocols.refusal("p1", tp.find_model(models, base)["capabilities"],
+                               version["kind"], version["counts"])
+    assert reason == ("the p1 measurement takes a finetune model with the disease head; this "
+                      "checkpoint is a base model with no task head.")
+    assert tp.measurement_choices(tp.find_model(models, base)) == []
     assert state(base, "p1") == (False, f"Disabled: {reason}")
     assert tp.start_test_run(page, models, "demo", LABEL, base, False, False, request,
                              protocol="p1", manager=manager) == {
-        "success": False, "error": f"{reason} Nothing was started."}
+        "success": False, "error": f"{reason[:1].upper()}{reason[1:]} Nothing was started."}
     assert len(manager.started) == 1
 
 
@@ -3635,13 +3931,17 @@ def test_a_model_picked_after_another_answers_its_second_event_without_an_error(
         site, monkeypatch):
     """Through the page served by Gradio, for an operator: one pick of a Model
     option sends its input event twice, each with the values the browser held
-    when it was asked. The disease child chosen (the radio offers and shows
-    "disease"), then the base: the first of the base's events empties the
-    radio, and the second still carries "disease". Both answer, the radio
-    ends empty and Start's reason is the base message. When the selection's
-    listeners took the radio itself, Gradio checked the second event's value
-    against the choices the first had written and answered with an error
-    before the page's own handling ran (`chosen_measurement`)."""
+    when it was asked. On the supplied version, the disease child chosen (the
+    radio offers its one measurement for that kind, "disease", chosen;
+    research comparison Stage 7), the operator's pick "disease", then the
+    base: the first of the base's events writes the base's choices for a
+    supplied cohort, none, and the second still carries "disease". Both
+    answer, the radio ends with no choice and Start's reason is the
+    definition's sentence for a model none of whose measurements measures a
+    supplied cohort. When the selection's listeners took the radio itself,
+    Gradio checked the second event's value against the choices the first had
+    written and answered with an error before the page's own handling ran
+    (`chosen_measurement`)."""
     import html as html_lib
 
     from src.evaluation import protocols
@@ -3654,6 +3954,7 @@ def test_a_model_picked_after_another_answers_its_second_event_without_an_error(
     monkeypatch.setattr(tp, "gpu_line", lambda **k: ("none", "GPU jobs: none"))
     demo, _ctx, _registry = _page_component()
     refresh, on_model = _named(demo, "_refresh"), _named(demo, "_on_model")
+    on_pick = _named(demo, "_on_measurement")
     by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
     radio_at = on_model.outputs.index(by_id["shep-test-measurement"])
     reason_at = on_model.outputs.index(by_id["shep-test-start-reason"])
@@ -3661,19 +3962,26 @@ def test_a_model_picked_after_another_answers_its_second_event_without_an_error(
     with served(demo) as url:
         browser = ServedSession(url, demo)
         assert browser.wait(browser.join(refresh, [None] * 6))
-        picked = browser.join(on_model, [None, None, None, "demo", LABEL, site.key, None])
+        chosen = browser.join(on_model, [None, None, None, "demo", LABEL, site.key, None])
+        assert browser.wait(chosen)
+        radio = browser.done[chosen]["output"]["data"][radio_at]
+        assert radio["value"] == "disease" and len(radio["choices"]) == 1, radio
+        # The operator picks "disease", the child's one.
+        picked = browser.join(on_pick, [None, None, None, "demo", LABEL, site.key, "disease"])
         assert browser.wait(picked)
-        radio = browser.done[picked]["output"]["data"][radio_at]
+        radio = browser.done[picked]["output"]["data"][0]
         assert radio["value"] == "disease", radio
         # The base picked once: two events, each asked with the radio's "disease".
         events = [browser.join(on_model, [None, None, None, "demo", LABEL, base, "disease"])
                   for _ in range(2)]
         assert browser.wait(*events)
         browser.close()
+    _names, said = protocols.available(described("base", None), SUPPLIED)
     for event in events:
         out = browser.done[event]["output"]["data"]
-        assert (out[radio_at]["choices"], out[radio_at]["value"]) == ([], None)
-        assert html_lib.escape(protocols.BASE_MESSAGE) in out[reason_at], out[reason_at]
+        assert ([list(c) for c in out[radio_at]["choices"]], out[radio_at]["value"]) == (
+            [], None)
+        assert html_lib.escape(said) in out[reason_at], out[reason_at]
 
 
 def test_a_gatv2_childs_report_is_registered_beside_its_own_file(site, monkeypatch):
@@ -3692,3 +4000,283 @@ def test_a_gatv2_childs_report_is_registered_beside_its_own_file(site, monkeypat
     assert tp.item_key(place.item) == child and place.item["architecture"] == "gatv2"
     assert place.path.parent / "evaluations.json" == \
         site.demo / "runs" / "gatv2" / CHILD_RUN / "checkpoints" / "evaluations.json"
+
+
+# --------------------------------------------------------------------------- every data kind
+# Research comparison Stage 7: the page lists, measures and registers a KG edge
+# set and a generated split as it does a supplied cohort, through the one job
+# runner and the one registration, with R10's evidence chosen once by kind.
+KG_LABEL, GEN_LABEL = "kg-test", "gen-val"
+
+
+@pytest.fixture
+def kinds(site):
+    """The site's registry also holding a KG edge set (the test part of the
+    disease child's recorded edge split) and a generated split (the demo
+    workspace's own val split), each imported by the importer's two steps."""
+    from src.evaluation.cohort_registry import (
+        commit_import,
+        prepare_generated_import,
+        prepare_kg_edges_import,
+    )
+
+    edges = prepare_kg_edges_import(site.registry, site.demo, site.checkpoint, KG_LABEL, "test")
+    generated = prepare_generated_import(site.registry, site.demo, GEN_LABEL, "val")
+    return SimpleNamespace(
+        edges=commit_import(edges, site.registry, edges.preview_id),
+        generated=commit_import(generated, site.registry, generated.preview_id))
+
+
+def _visible(html: str) -> str:
+    """The text a renderer's markup shows, its entities read back."""
+    import html as html_lib
+
+    return " ".join(html_lib.unescape(re.sub(r"<[^>]+>", " ", html)).split())
+
+
+def test_the_data_panel_lists_every_kind_by_kind_and_role_with_its_counts(
+        site, kinds, monkeypatch):
+    """The version select lists the supplied cohort as it always read, then
+    the KG edge set and the generated split by kind and role, each option
+    short with one separator (skill §8), also for a version mapped against
+    another graph, whose state is its details' tag; the chosen version's
+    details give its counts in its own units, each count beside the unit its
+    manifest records, never a supplied cohort's words, and never its kind and
+    role again (skill §1.2; the browser check of 7e1d09e: "KG edge set (test)"
+    under "kg-test · KG edge set (test)"); no KG edge sets' empty state once
+    one is listed. The panel and the select read "Data", not "Cohort"."""
+    page, _request = _page(monkeypatch)
+    binding = tp.workspace_binding(site.demo, tp.find(page["workspaces"], "name", "demo"))
+    choices = tp.version_choices(page)
+    assert [value for _label, value in choices] == [LABEL, KG_LABEL, GEN_LABEL]
+    labels = dict((value, label) for label, value in choices)
+    assert labels[KG_LABEL] == "kg-test · KG edge set (test)"
+    assert labels[GEN_LABEL] == "gen-val · Generated split (val)"
+    for value in (KG_LABEL, GEN_LABEL):
+        assert len(labels[value]) <= 40 and labels[value].count(" · ") == 1
+    assert labels[LABEL].startswith(f"{LABEL} · role ")
+    # The version chosen is the first option, whatever order the registry
+    # lists versions in (the review of Stage 7: it was the registry's first).
+    for versions in (page["versions"], list(reversed(page["versions"]))):
+        shuffled = {**page, "versions": versions}
+        for bound in (binding, None):
+            assert tp.default_version(shuffled, bound, None) == (
+                tp.version_choices(shuffled)[0][1]), [v["label"] for v in versions]
+    # A version mapped against another graph: its option is the same (one
+    # separator, no " · another graph"), its details say so in their tag.
+    another = dict(binding, graph={**binding["graph"], "kg": "0" * 64})
+
+    for version, words in ((kinds.edges, "KG edge set (test)"),
+                           (kinds.generated, "Generated split (val)")):
+        label = version.manifest["label"]
+        shown = _visible(tp.version_html(page, label, binding))
+        assert words not in shown and words in labels[label], shown
+        assert "mapped against another graph (kg differ)" in _visible(
+            tp.version_html(page, label, another))
+        counts, units = version.manifest["counts"], version.manifest["count_units"]
+        assert f"Counts and units ({len(counts)})" in shown
+        # Each count's unit by name; its value only where the words above do
+        # not give it, so no count is shown twice (skill §1.2; the review of
+        # Stage 7).
+        said = {"kg_edges": ("pairs", "positive_edges", "message_passing_edges"),
+                "generated": ("samples", "diseases", "task_fixture_samples")}[
+            version.manifest["kind"]]
+        read = shown.replace(" :", ":")  # `_visible` puts a space where </code> was
+        for name, unit in units.items():
+            assert (f"{name}: {unit}" if name in said else f"{name} {counts[name]}: {unit}"
+                    ) in read, name
+            assert f"{name} {counts[name]}:" not in read or name not in said, name
+        assert any(name not in said for name in units) or version is kinds.generated
+        for said in ("source cases", "ranked-eligible", "cohort", "No KG edge set"):
+            assert said not in shown, (label, said)
+    edges = kinds.edges.manifest["counts"]
+    assert (f"{edges['pairs']} pairs from {edges['positive_edges']} positive edges"
+            in _visible(tp.version_html(page, KG_LABEL, binding)))
+    assert "source cases" in tp.version_html(page, LABEL, binding)
+    assert "<h2>Data</h2>" in tp.cohort_header_html(page)
+    demo, _ctx, _registry = _page_component()
+    by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
+    assert by_id["shep-test-version"].label == "Data version"
+    assert tp.FIELD_HELP["shep-test-version"][0] == "Data version"
+
+
+def test_with_no_kg_edge_set_the_data_panel_names_the_import_command(site, monkeypatch):
+    """The KG edge sets' empty state (skill §9): with none in the registry,
+    one line under the chosen version, whatever it is, says what one is for
+    and names the command that imports one on the machine, escaped; none when
+    the registry is not available."""
+    page, _request = _page(monkeypatch)
+    empty = tp.kg_edges_empty_html(page)
+    assert empty and "No KG edge set in the registry yet" in empty
+    assert ("scripts/import_cohort.py --kind kg_edges --from-checkpoint &lt;checkpoint&gt;"
+            in empty and "<checkpoint>" not in empty)
+    assert tp.version_html(page, LABEL, None).endswith(empty)
+    assert tp.version_html(page, None, None).endswith(empty)
+    assert tp.version_html({**page, "versions": []}, None, None).startswith(
+        tp._reason_html("No data version is in the registry yet: import a cohort with "
+                        "“Import a new version…”."))
+    assert tp.kg_edges_empty_html({**page, "registry_problem": "unset"}) == ""
+    assert tp.version_html({**page, "registry_problem": "unset"}, LABEL, None) == ""
+
+
+def test_the_measurement_options_follow_the_model_and_the_chosen_versions_kind(
+        site, kinds, monkeypatch):
+    """Item 2 (and Stage 5's interim, fixed): the options are what the model's
+    capabilities meet that measure the chosen version's kind, in plain words
+    (skill §5), with the preselection rule kept. The disease child: its task's
+    measurement alone on the supplied cohort and the generated split, KG link
+    prediction alone on the KG edge set, each chosen; both, none chosen, with
+    no version chosen. The base: KG link prediction alone, chosen, on the KG
+    edge set; nothing on the others, and Start says why in the definition's
+    words."""
+    from src.evaluation import protocols
+
+    _put_bundle(site, BUNDLE_BASE_RUN, None)
+    base = f"gatv2/{BUNDLE_BASE_RUN}/last.pt"
+    page, request = _page(monkeypatch)
+    models = tp.read_models("demo", request)
+    binding = tp.workspace_binding(site.demo, tp.find(page["workspaces"], "name", "demo"))
+    child, based = tp.find_model(models, site.key), tp.find_model(models, base)
+    version = {label: tp.find(page["versions"], "label", label)
+               for label in (LABEL, KG_LABEL, GEN_LABEL)}
+    lp, disease = ("KG link prediction", "kg_link_prediction"), ("Disease", "disease")
+    for label, offered in ((LABEL, [disease]), (KG_LABEL, [lp]), (GEN_LABEL, [disease])):
+        choices = tp.measurement_choices(child, version[label])
+        assert choices == offered, label
+        assert tp.chosen_measurement(choices, None) == offered[0][1]
+    both = tp.measurement_choices(child)
+    assert both == [disease, lp] and tp.chosen_measurement(both, None) is None
+    assert all(code not in label for label, code in both)
+    assert tp.measurement_choices(based, version[KG_LABEL]) == [lp]
+    for label, kind in ((LABEL, protocols.SUPPLIED), (GEN_LABEL, protocols.GENERATED)):
+        assert tp.measurement_choices(based, version[label]) == []
+        said = protocols.available(based["capabilities"], kind)[1]
+        assert ("it can be measured by KG link prediction (kg_link_prediction), which measures "
+                "a KG edge set") in said
+        assert tp.start_state(page, models, "demo", label, base, binding, ("none", ""),
+                              protocol=None) == (False, f"Disabled: {said}")
+    assert tp.start_state(page, models, "demo", KG_LABEL, base, binding, ("none", ""),
+                          protocol="kg_link_prediction") == (True, None)
+
+
+@pytest.mark.parametrize("setting", ["set", "refused"])
+def test_a_kg_or_generated_start_needs_no_evidence_setting_and_is_given_none(
+        site, kinds, monkeypatch, setting):
+    """Item 1, the page's part: Start's check and the start use the runner's
+    one choice by the version's kind. With the evidence setting set or
+    refused, a KG edge set's and a generated split's Start is enabled and the
+    start hands the runner no evidence directory; their R10 row reads "Not
+    applicable" with why. A supplied cohort takes the setting's directories,
+    and a refused setting disables its Start (a red ✕ with words) and refuses
+    its start."""
+    from src.evaluation import protocols
+
+    evidence = site.root / "evidence"
+    evidence.mkdir()
+    monkeypatch.setenv("SHEPHERD_TRAINING_EVIDENCE_DIRS",
+                       str(evidence) if setting == "set" else "relative/evidence")
+    page, request = _page(monkeypatch)
+    models = tp.read_models("demo", request)
+    binding = tp.workspace_binding(site.demo, tp.find(page["workspaces"], "name", "demo"))
+    manager = FakeManager()
+    for label, protocol, kind in ((KG_LABEL, "kg_link_prediction", protocols.KG_EDGES),
+                                  (GEN_LABEL, "disease", protocols.GENERATED)):
+        assert tp.start_state(page, models, "demo", label, site.key, binding, ("none", ""),
+                              protocol=protocol) == (True, None), label
+        result = tp.start_test_run(page, models, "demo", label, site.key, False, False,
+                                   request, protocol=protocol, manager=manager)
+        assert result["success"] is True, result
+        inputs = manager.started[-1]
+        assert (inputs.version_label, inputs.version_kind, inputs.evidence_dirs) == (
+            label, kind, ())
+        inputs.reports_dir()  # the runner's own judgment takes them
+        row = tp.evidence_html(page, "demo", tp.find(page["versions"], "label", label))
+        assert 'class="shep-test-na"' in row and tp.NOT_APPLICABLE_MARK in row
+        assert _visible(row) == (f"R10 evidence ○ Not applicable · "
+                                 f"{protocols.training_evidence_refusal(kind)}"), row
+        assert "Refused" not in row and "relative/evidence" not in row
+        card = tp.job_body_html({"status": "running", "inputs": inputs.summary(), "log": []},
+                                [], ("busy", ""))
+        assert "R10 evidence: not applicable" in card
+    supplied = tp.find(page["versions"], "label", LABEL)
+    allowed, why = tp.start_state(page, models, "demo", LABEL, site.key, binding, ("none", ""),
+                                  protocol="disease")
+    row = tp.evidence_html(page, "demo", supplied)
+    result = tp.start_test_run(page, models, "demo", LABEL, site.key, False, False, request,
+                               protocol="disease", manager=manager)
+    if setting == "set":
+        assert (allowed, why) == (True, None) and result["success"] is True
+        assert manager.started[-1].evidence_dirs == (evidence.resolve(),)
+        assert "<code>evidence</code> (the server's setting)" in row and "Not applicable" not in row
+    else:
+        assert allowed is False and why.startswith(
+            "Disabled: the evidence directories setting is refused: ")
+        assert result["success"] is False and result["error"].endswith("Nothing was started.")
+        assert f'<span class="shep-test-refused">{tp.REFUSED_MARK} Refused: ' in row
+        assert len(manager.started) == 2
+
+
+def test_the_r10_row_renders_each_state_escaped():
+    """The R10 row's renderer on its own (skill §6, §11): "Not applicable"
+    grey with a hollow ○ and the reason for a KG edge set and a generated
+    split; for a supplied cohort (and before a version is chosen) a refused
+    setting as a red ✕ with "Refused:" and its words, escaped and redacted;
+    the setting's directory names escaped. Never a colour without its mark
+    and word."""
+    from src.evaluation import protocols
+
+    hostile = {"evidence": {"dirs": [], "names": [], "problem": f"refused: {HOSTILE} at /srv/x",
+                            "note": None},
+               "roots": [("/srv", "<srv>")]}
+    for version in (None, {"kind": "supplied"}):
+        row = tp.evidence_html(hostile, "demo", version)
+        assert HOSTILE not in row and "&lt;img src=x onerror=alert(1)&gt;" in row
+        assert "/srv/x" not in row and "&lt;srv&gt;/x" in row
+        assert f'<span class="shep-test-refused">{tp.REFUSED_MARK} Refused: ' in row
+    for kind in (protocols.KG_EDGES, protocols.GENERATED):
+        row = tp.evidence_html(hostile, "demo", {"kind": kind})
+        assert "Refused" not in row and HOSTILE not in row and "onerror" not in row
+        assert f'<span class="shep-test-na">{tp.NOT_APPLICABLE_MARK} Not applicable</span>' in row
+    named = {"evidence": {"dirs": [f"/srv/{HOSTILE}"], "names": [HOSTILE], "problem": None,
+                          "note": None}}
+    row = tp.evidence_html(named, "demo", {"kind": "supplied"})
+    assert HOSTILE not in row and f"<code>{tp.e(HOSTILE)}</code>" in row
+    assert tp.run_evidence(named, {"kind": "supplied"}).dirs == (tp.Path(f"/srv/{HOSTILE}"),)
+    assert tp.run_evidence(named, {"kind": protocols.KG_EDGES}).dirs == ()
+    # A run's card says what its own inputs recorded, whatever is chosen now.
+    for kind, said in (("supplied", "R10 evidence: the workspace"),
+                       (protocols.KG_EDGES, "R10 evidence: not applicable"),
+                       (protocols.GENERATED, "R10 evidence: not applicable")):
+        card = tp.job_body_html({"status": "running", "inputs": {"version_kind": kind},
+                                 "log": []}, [], ("busy", ""))
+        assert said in card, kind
+
+
+def test_register_takes_a_kept_report_of_every_kind_through_the_one_registration(
+        site, kinds, monkeypatch):
+    """Register works for every kind through `register_report` (and the
+    record help's "it can be registered later from this page" holds for each):
+    a KG edge set's run and a generated split's run, each measured by the
+    real CLI on CPU and kept unregistered, are each registered from the page
+    beside the listed checkpoint that holds the weights; the ledger keeps
+    each record under its own kind, and the page then reads it registered."""
+    import scripts.measure_scorer as measure_scorer
+    from src.evaluation.sidecar import read_ledger
+
+    for label, mode in ((KG_LABEL, "kg_link_prediction"), (GEN_LABEL, "disease")):
+        assert measure_scorer.main(["--mode", mode, "--checkpoint", str(site.checkpoint),
+                                    "--data-dir", str(site.demo), "--cohort", label,
+                                    "--registry", str(site.registry), "--device", "cpu"]) == 0
+    page, request = _page(monkeypatch)
+    models = tp.read_models("demo", request)
+    for label, kind in ((KG_LABEL, "kg_edges"), (GEN_LABEL, "generated")):
+        reports = tp.read_reports(label)
+        (run,) = reports["runs"]
+        assert run["record"]["cohort"]["kind"] == kind
+        assert tp.register_state(page, reports, run["run_id"]) == (True, None)
+        done, said = tp.register_selected(page, reports, models, "demo", run["run_id"], request)
+        assert done is True, said
+        again = tp.read_reports(label)
+        assert tp.register_state(page, again, run["run_id"]) == (False, "Already registered.")
+    ledger, _ = read_ledger(site.checkpoint.parent / "evaluations.json")
+    assert [r["cohort"]["kind"] for r in ledger["records"]] == ["kg_edges", "generated"]

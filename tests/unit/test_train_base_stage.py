@@ -395,13 +395,14 @@ def test_a_parent_trained_under_other_rules_is_never_continued(workspace, tmp_pa
     beside the parent's restored best value and history."""
     import train_model
     from src.api.services.training_manager import TrainingManager
+    from src.utils.checkpoint_io import TRAINING_RULES_VERSION
     from src.utils.run_plan import RunPlanRefused
 
     config, explicit = _config(workspace, tmp_path / "p", num_epochs=3, pause_after_epoch=1)
     train_model.train(config, explicit)
     payload = torch.load(tmp_path / "p" / "checkpoints" / "last.pt", map_location="cpu",
                          weights_only=True)
-    assert payload["training_rules"] == 1
+    assert payload["training_rules"] == TRAINING_RULES_VERSION
     old = tmp_path / "old" / "checkpoints" / "last.pt"
     old.parent.mkdir(parents=True)
     torch.save(_with_earlier_rules(payload), old)
@@ -430,6 +431,8 @@ def test_a_parent_of_these_rules_resumes_with_its_early_stopping_and_validation(
     early stopping on or off as it was and validating on the same pairs."""
     import train_model
 
+    from src.utils.checkpoint_io import TRAINING_RULES_VERSION
+
     extra = {} if patience is None else {"early_stopping_patience": patience}
     config, explicit = _config(workspace, tmp_path / "a", num_epochs=3, pause_after_epoch=1,
                                **extra)
@@ -443,7 +446,7 @@ def test_a_parent_of_these_rules_resumes_with_its_early_stopping_and_validation(
     train_model.train(resumed, {"learning_stage", "resume_from", "device"})
     child = torch.load(tmp_path / "b" / "checkpoints" / "last.pt", map_location="cpu",
                        weights_only=True)
-    assert child["training_rules"] == parent["training_rules"] == 1
+    assert child["training_rules"] == parent["training_rules"] == TRAINING_RULES_VERSION
     assert child["config"]["early_stopping"] is parent["config"]["early_stopping"] is (
         patience is not None)
     assert child["config"]["effective"]["loaders"]["val"] == (

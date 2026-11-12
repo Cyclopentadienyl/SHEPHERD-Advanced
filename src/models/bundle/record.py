@@ -27,6 +27,13 @@ holds itself, or one nested or sized past what a record holds, is refused
 naming its field, and a value compared with the reader's own (a version, a
 stage) is judged by that value's kind without being walked (`_differs`).
 
+**What `graph_exposure` says is read in its writer's words**
+(`recorded_graph_use`): the strings `scripts/train_model.py` records there are
+named here once (`EXPOSURE_TRAIN_EDGES` and the rest), the writer writes them
+through these names, and a reader takes each for the parts of the edge split
+it puts in graph use. A string no build wrote is never read as one: the
+record's exposure is then not recorded, never "unseen".
+
 Plain data only, so the payload still loads with `weights_only=True`.
 Reading and checking a record needs no torch; only `load_bundle` builds.
 
@@ -34,13 +41,20 @@ Module: src/models/bundle/record.py
 """
 from __future__ import annotations
 
-import math
+import copy
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from src.config.model_types import MODEL_RECORD_KEYS, WRITTEN_BEFORE_SPEC
+from src.models.bundle.capabilities import model_capabilities
 from src.models.bundle.spec import LEARNING_STAGES, TASKS, ModelSpec, SpecError, ViewShape, _shown
-from src.utils.checkpoint_paths import text_problem
+from src.utils.checkpoint_paths import (
+    PLAIN_DEPTH,
+    PLAIN_VALUES,
+    NotPlainData,
+    plain_data,
+    text_problem,
+)
 
 #: The checkpoint `record_version` the bundle path writes (M3a's was 1).
 MODEL_RECORD_VERSION = 2
@@ -76,6 +90,14 @@ class ModelRecord:
     @property
     def task(self) -> Optional[str]:
         return self.model_spec.task
+
+    @property
+    def capabilities(self) -> Dict[str, Any]:
+        """What this model offers a measurement and what it needs, read from its
+        spec (`src.models.bundle.capabilities.model_capabilities`): the one
+        description every list carries (`listed_record`) and every new
+        measurement is judged by (`src.evaluation.protocols`)."""
+        return model_capabilities(self.model_spec)
 
     def validate(self) -> "ModelRecord":
         self.model_spec.validate()
@@ -146,23 +168,18 @@ def has_model_spec(payload: Mapping[str, Any]) -> bool:
     return isinstance(payload, Mapping) and payload.get("model_spec") is not None
 
 
-#: How deep a value the reader compares may nest, and how many values it may
-#: hold in all, to be walked: the deepest part a record compares, a graph view
-#: rule, is a mapping holding a list of names. Past either, the value is
-#: refused naming its field (`_plain`), so the walk is bounded however the
-#: file was written (the safe loader reads any depth and shares values freely).
-PLAIN_DEPTH = 16
-PLAIN_VALUES = 10_000
-
-
-def _plain(name: str, value: Any) -> Any:
+def _plain(name: str, value: Any, consequence: str = "so it is not compared") -> Any:
     """A value the reader compares (the field `name`), as plain data that
     states its kind beside its content, or a `ModelRecordError` naming the
-    field.
+    field and saying `consequence` (what the caller does not do with it: a
+    compared claim is not compared, a part a list shows is not shown).
 
-    A record is plain data, but the safe loader (`weights_only=True`) also
-    accepts tensors, and Python's `==` gives no one answer for anything else
-    (a tensor of several values has no truth value; one of a single value
+    Read by the project's one rule for a value read from a file that an
+    answer carries (`checkpoint_paths.plain_data`, lifted from here in review
+    fix RC-R1, its bounds `PLAIN_DEPTH` and `PLAIN_VALUES` with it). A record
+    is plain data, but the safe loader (`weights_only=True`) also accepts
+    tensors, and Python's `==` gives no one answer for anything else (a
+    tensor of several values has no truth value; one of a single value
     answers as that value) nor across kinds (`True == 1`). So each value is
     read as the kinds a record holds: null, a boolean, a finite number, a
     string that is text (`text_problem`: a lone surrogate is not, and no
@@ -174,55 +191,15 @@ def _plain(name: str, value: Any) -> Any:
     **The walk ends for every value the safe loader reads** (the reviewer's
     K8-4r2 recheck: a rule field holding a list that holds itself made this
     walk recurse until `RecursionError`, and the whole model list answered
-    HTTP 500). A scalar is judged where it stands; a list or mapping is
-    walked only while it is not already on the path walked (a value holding
-    itself), lies at most `PLAIN_DEPTH` levels down, and the walk has read
-    at most `PLAIN_VALUES` values (one value held many times over counts
-    each time); otherwise it is refused, naming the path where it stopped."""
-    walked = [0]
-
-    def read(at: str, part: Any, path: Tuple[int, ...]) -> Any:
-        walked[0] += 1
-        if walked[0] > PLAIN_VALUES:
-            raise ModelRecordError(f"the record's {name} holds more than {PLAIN_VALUES} values, "
-                                   "so it is not compared")
-        if part is None:
-            return ("null",)
-        if isinstance(part, bool):
-            return ("boolean", part)
-        if isinstance(part, (int, float)):
-            if isinstance(part, float) and not math.isfinite(part):
-                raise ModelRecordError(f"the record's {at} is {part!r}, not a finite number, "
-                                       "so it is not compared")
-            return ("number", part)
-        if isinstance(part, str):
-            why = text_problem(part)
-            if why is not None:
-                raise ModelRecordError(f"the record's {at} {why}, so it is not compared")
-            return ("string", part)
-        if not isinstance(part, (list, tuple, Mapping)):
-            raise ModelRecordError(f"the record's {at} is a {type(part).__name__}, not plain "
-                                   "data, so it is not compared")
-        if id(part) in path:
-            raise ModelRecordError(f"the record's {at} is a {type(part).__name__} that contains "
-                                   "itself, so it is not compared")
-        if len(path) >= PLAIN_DEPTH:
-            raise ModelRecordError(f"the record's {at} nests deeper than {PLAIN_DEPTH} levels, "
-                                   "so it is not compared")
-        path = path + (id(part),)
-        if isinstance(part, Mapping):
-            for key in part:
-                if not isinstance(key, str):
-                    raise ModelRecordError(f"the record's {at} has a key that is not a string "
-                                           f"({type(key).__name__}), so it is not compared")
-                why = text_problem(key)
-                if why is not None:
-                    raise ModelRecordError(f"the record's {at} has a key that {why}, so it is "
-                                           "not compared")
-            return ("mapping", {k: read(f"{at}.{k}", v, path) for k, v in part.items()})
-        return ("list", tuple(read(f"{at}[{i}]", v, path) for i, v in enumerate(part)))
-
-    return read(name, value, ())
+    HTTP 500): a list or mapping holding itself, nested past `PLAIN_DEPTH`
+    levels or walked past `PLAIN_VALUES` values is refused, naming the path
+    where the walk stopped. These bounds are the safe loader's, which reads
+    any depth and shares values freely, so this reader passes them; the rule
+    holds no value parsed from JSON to them (review fix RC-R1)."""
+    try:
+        return plain_data(value, name, depth=PLAIN_DEPTH, values=PLAIN_VALUES)
+    except NotPlainData as exc:
+        raise ModelRecordError(f"the record's {exc}, {consequence}") from None
 
 
 def _differs(name: str, value: Any, expected: Any) -> bool:
@@ -376,6 +353,87 @@ def check_model_record(record: ModelRecord, *, learning_stage: Optional[str] = N
                                f"{view_digest[:12]}")
 
 
+# ---------------------------------------------------------------------------
+# A record's graph exposure, in its writer's words
+# ---------------------------------------------------------------------------
+#: The words `scripts/train_model.py`, their one writer, records in a model
+#: record's ``graph_exposure`` (contract §9.1): what each phase of a run passed
+#: messages over and supervised with. The writer writes them through these
+#: names and a reader reads them through `recorded_graph_use`, so the two
+#: cannot drift apart.
+EXPOSURE_TRAIN_EDGES = "train edges"
+EXPOSURE_TRAIN_EDGES_DRAWN_PAIRS_REMOVED = "train edges, the step's drawn pairs removed (F5)"
+EXPOSURE_VAL_EDGES = "val edges"
+EXPOSURE_FULL_VIEW = "the full view"
+EXPOSURE_FULL_VIEW_SP = "the full view (README G4, §6)"
+EXPOSURE_TRAIN_CASES = "train cases"
+EXPOSURE_VAL_CASES = "val cases"
+
+#: Every part of an edge split (`src.kg.graph_view.SPLIT_NAMES`, restated:
+#: this module imports no graph code): what a word naming the full view puts
+#: in graph use.
+EXPOSURE_ALL_PARTS: Tuple[str, ...] = ("train", "val", "test")
+
+#: The parts of the edge split each word puts in graph use: a word naming
+#: edges, the part it names; a word naming the full view, every part; a word
+#: naming patient cases, no edge.
+EXPOSURE_EDGE_PARTS: Dict[str, Tuple[str, ...]] = {
+    EXPOSURE_TRAIN_EDGES: ("train",),
+    EXPOSURE_TRAIN_EDGES_DRAWN_PAIRS_REMOVED: ("train",),
+    EXPOSURE_VAL_EDGES: ("val",),
+    EXPOSURE_FULL_VIEW: EXPOSURE_ALL_PARTS,
+    EXPOSURE_FULL_VIEW_SP: EXPOSURE_ALL_PARTS,
+    EXPOSURE_TRAIN_CASES: (),
+    EXPOSURE_VAL_CASES: (),
+}
+
+#: The words that name the full view: a use by one of them is full-view
+#: exposure, whatever part an edge is in.
+EXPOSURE_FULL_VIEW_WORDS: Tuple[str, ...] = (EXPOSURE_FULL_VIEW, EXPOSURE_FULL_VIEW_SP)
+
+
+def recorded_graph_use(graph_exposure: Any) -> Dict[str, Tuple[str, ...]]:
+    """What a record's ``graph_exposure`` says each use of the graph covered,
+    read in its writer's words: ``{"<stage>.<phase>.<use>": parts}`` for every
+    string the record holds (`EXPOSURE_EDGE_PARTS`), in the record's order.
+
+    The record is one learning stage's block (``base`` or ``finetune``), a
+    mapping of phases (and, for a gene finetune, ``sp``) whose every value is
+    a mapping or one of the writer's words.
+
+    Raises:
+        ValueError: the record says something this build's writer never wrote,
+            the reason naming where: no stage block, a stage this build does
+            not know, a value that is neither a mapping nor a word, or a word
+            no build wrote. Its exposure is then not recorded.
+    """
+    if not isinstance(graph_exposure, Mapping) or len(graph_exposure) != 1:
+        raise ValueError("the record's graph_exposure is not one learning stage's block")
+    (stage, block), = graph_exposure.items()
+    if not isinstance(stage, str) or stage not in LEARNING_STAGES:
+        raise ValueError(f"the record's graph_exposure names the stage {_shown(stage)}, which "
+                         "this build does not write")
+    uses: Dict[str, Tuple[str, ...]] = {}
+
+    def walk(at: str, value: Any, depth: int) -> None:
+        if isinstance(value, str):
+            if value not in EXPOSURE_EDGE_PARTS:
+                raise ValueError(f"the record's graph_exposure.{at} says {_shown(value)}, which "
+                                 "no build's writer wrote")
+            uses[at] = EXPOSURE_EDGE_PARTS[value]
+            return
+        if not isinstance(value, Mapping) or not value or depth > 2:
+            raise ValueError(f"the record's graph_exposure.{at} is not a use this build's "
+                             "writer wrote")
+        for key, part in value.items():
+            walk(f"{at}.{key}", part, depth + 1)
+
+    if not isinstance(block, Mapping):
+        raise ValueError(f"the record's graph_exposure.{stage} is not a mapping of phases")
+    walk(stage, block, 0)
+    return uses
+
+
 def finetune_parent_problem(record: ModelRecord, payload: Mapping[str, Any]) -> Optional[str]:
     """Why a read checkpoint cannot be a finetune's parent (contract §9.2), as
     the rest of a sentence naming it, or None: a base with weights; children
@@ -392,7 +450,11 @@ def finetune_parent_problem(record: ModelRecord, payload: Mapping[str, Any]) -> 
 #: What a model list shows of a checkpoint's record (`listed_record`).
 LISTED_RECORD_FIELDS = ("record", "record_problem", "learning_stage", "task", "operation",
                         "family_id", "parent_sha256", "parent_run", "encoder", "reference",
-                        "differences")
+                        "differences", "capabilities", "spec", "weight_transfer",
+                        "loss_identity")
+#: The parts of a record a list shows as the record holds them (`listed_record`),
+#: each read as plain data first (`_plain`).
+_SHOWN_AS_RECORDED = ("weight_transfer", "loss_identity")
 
 
 def listed_record(payload: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
@@ -408,10 +470,29 @@ def listed_record(payload: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
     the reference recipe (README §5, axis 2): `differences`, the sorted names
     (``section.field``) of the spec's fields that differ from it
     (`ModelSpec.differences_from_reference`), and `reference`, true exactly
-    when there are none."""
+    when there are none; and `capabilities`, its capability description
+    (`ModelRecord.capabilities`), from which the Test page, the job runner,
+    the command line and the probe judge a new measurement of it
+    (`src.evaluation.protocols`). Reading, comparing and exporting what is
+    kept never consult it. `spec` is the model's structure as its record
+    holds it, every value (`ModelSpec.to_dict`, without the reference
+    recipe's provenance notes, `sources`): two variants that differ on one
+    field differ here by value, whatever today's reference recipe is
+    (research comparison Stage 8, the results export). `weight_transfer` and
+    `loss_identity` are those parts of its record as it holds them (research
+    comparison Stage 9b fixes): how its stage's weights began (where the
+    record names them, each part trainable or frozen, the frozen parts'
+    forward mode and the SHA-256 of the downstream weights training started
+    from; none for a base, which loads nothing) and its loss (its terms and
+    coefficients, and the terms without a trainable parameter), so two arms
+    of one base are checked to start alike where they are listed and
+    compared. A part that is not plain data (`_plain`) refuses the summary as
+    a whole, with why, never half shown."""
     summary: Dict[str, Any] = dict.fromkeys(LISTED_RECORD_FIELDS)
     try:
         record = read_model_record(payload if payload is not None else {})
+        for name in _SHOWN_AS_RECORDED:
+            _plain(name, getattr(record, name), "so a list does not show the record")
     except ModelRecordError as exc:
         summary.update(record="refused", record_problem=str(exc))
         return summary
@@ -421,7 +502,10 @@ def listed_record(payload: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
                    operation=record.operation, family_id=record.family_id,
                    parent_sha256=parent.get("sha256"), parent_run=parent.get("run"),
                    encoder=record.model_spec.encoder.kind, reference=not differences,
-                   differences=differences)
+                   differences=differences, capabilities=record.capabilities,
+                   spec={name: value for name, value in record.model_spec.to_dict().items()
+                         if name != "sources"},
+                   **{name: copy.deepcopy(getattr(record, name)) for name in _SHOWN_AS_RECORDED})
     return summary
 
 
@@ -445,11 +529,23 @@ def load_bundle(payload: Mapping[str, Any], *, learning_stage: Optional[str] = N
 
 
 __all__ = [
+    "EXPOSURE_ALL_PARTS",
+    "EXPOSURE_EDGE_PARTS",
+    "EXPOSURE_FULL_VIEW",
+    "EXPOSURE_FULL_VIEW_SP",
+    "EXPOSURE_FULL_VIEW_WORDS",
+    "EXPOSURE_TRAIN_CASES",
+    "EXPOSURE_TRAIN_EDGES",
+    "EXPOSURE_TRAIN_EDGES_DRAWN_PAIRS_REMOVED",
+    "EXPOSURE_VAL_CASES",
+    "EXPOSURE_VAL_EDGES",
     "LISTED_RECORD_FIELDS",
     "MODEL_RECORD_VERSION",
     "ModelRecord",
     "ModelRecordError",
     "OPERATIONS",
+    "PLAIN_DEPTH",
+    "PLAIN_VALUES",
     "RECORD_KEYS",
     "check_model_record",
     "finetune_parent_problem",
@@ -457,4 +553,5 @@ __all__ = [
     "listed_record",
     "load_bundle",
     "read_model_record",
+    "recorded_graph_use",
 ]

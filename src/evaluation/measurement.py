@@ -5,23 +5,28 @@ Module: src/evaluation/measurement.py
 
 The format a measurement report is written in: `MeasurementManifest` (what a
 number needs recorded to mean anything later, with the relation states a run
-earns, `RELATION_NAMES` and `expected_relations`), `ModeResult` (one run: the
-report and its per-case ranks) and the ranks rule its ranks rows are held to
-(`check_ranks_rows`). The task evaluators (`src/evaluation/task_measurement.py`)
-fill them; `observe_torch_compile_wrapper` is an execution fact the manifest
-records.
+earns, `RELATION_NAMES` and `expected_relations`), `ModeResult` (one run on a
+patient cohort: the report and its per-case ranks) and the ranks rule its
+ranks rows are held to (`check_ranks_rows`). The evaluators
+(`src/evaluation/task_measurement.py`) fill them; a KG edge set's run fills
+the same manifest (its result, with its scores, is that module's
+`LinkPredictionResult`). `observe_torch_compile_wrapper` is an execution fact
+the manifest records.
 
 Mode C's executor, which ranked a ShepherdGNN rebuild by raw cosine against
 every disease, retired in K8-6b: only the old pipeline built its model. A kept
 Mode C report keeps this format.
 
-Dependencies: the standard library; torch only where
-`observe_torch_compile_wrapper` looks up its wrapper class.
+Dependencies: the standard library and `src.evaluation.protocols` (standard
+library only), whose data-kind words the manifest's rules read; torch only
+where `observe_torch_compile_wrapper` looks up its wrapper class.
 """
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Optional, Sequence
+
+from src.evaluation.protocols import GENERATED, REGISTERED_KINDS, SUPPLIED
 
 __all__ = [
     "MeasurementManifest",
@@ -145,10 +150,15 @@ RELATION_STATES = ("verified", "not_applicable")
 def expected_relations(*, registered: bool) -> Dict[str, str]:
     """The relation states a run earns, by the kind of cohort it measured.
 
-    A generated split is bound to the workspace manifest by its sample digests
-    (R2) and has no cohort version to bind; a registered cohort version is bound
-    to the graph by its own manifest (`cohort_graph`) and was cut by no allocation
-    of this workspace, so R2 does not apply. R1, R3 and R5 apply to both.
+    A workspace's generated split (``--split``) is bound to the workspace
+    manifest by its sample digests (R2) and has no cohort version to bind. A
+    registered version of any kind is bound to the graph by its own manifest
+    (`cohort_graph`), and its data are checked against the bytes it binds,
+    never against the workspace's split manifest, which may be of another
+    build: a supplied cohort or a KG edge set was cut by no allocation of the
+    workspace, and a generated split version names the allocation that cut it
+    by its own block (its kept split manifest and generation definition), so
+    R2 does not apply to either. R1, R3 and R5 apply to every run.
 
     A fresh dict each call, so a caller that keeps or edits it cannot change what
     the next manifest is checked against.
@@ -183,20 +193,27 @@ class MeasurementManifest:
     what a number means while leaving the tie policy untouched. Bump this whenever
     any of those changes; two records under one version must be comparable."""
     cohort_kind: str
-    """Whether this cohort came from this project's generator or from outside.
+    """The kind of data measured (`src.evaluation.cohort.COHORT_KINDS`).
 
-    `generated` is one of the generator's own splits (`train`, `val`),
-    disease-disjoint by construction, and carries a `split_manifest` digest
-    below; `supplied` is a registered cohort version (`cohort_version` below),
-    an institutional or external patient set that was never cut from this
-    disease universe, so its overlap with training is an open measurement (R10)
-    rather than a contract.
+    `generated` with no version is one of the generator's own splits (`train`,
+    `val`), measured with `--split`, disease-disjoint by construction, and
+    carries a `split_manifest` digest below; `supplied` is a registered cohort
+    version (`cohort_version` below), an institutional or external patient set
+    that was never cut from this disease universe, so its overlap with training
+    is an open measurement (R10) rather than a contract; `kg_edges` is a
+    registered KG edge set (research comparison Stage 5), whose relation to the
+    model's training is the report's exposure block; and `generated` with a
+    version is a generated split kept in the registry (Stage 5b), measured
+    under its role as recorded, its relation to training its allocation's, with
+    no R10.
 
     **Stated on the manifest rather than inferred downstream from whether a
     `split_manifest` digest is present.** Absence of a role could mean several
     things later; this field means one, and `__post_init__` refuses it unless it
     agrees with `cohort_version`."""
     n_samples: int
+    """The data's measured units: a patient cohort's samples, a KG edge set's
+    positive edges (its ``counts.positive_edges``)."""
     # what was ranked, and in what chunks
     candidate_construction: str
     batch_size: int
@@ -284,14 +301,16 @@ class MeasurementManifest:
     cudnn_benchmark: Optional[bool]
     # which cohort version, the relations checked, R10, and the environment (M4)
     cohort_version: Optional[Dict[str, Any]]
-    """The registered cohort version this run scored, or `None` for a generated
-    split.
+    """The registered version this run scored, or `None` for a generated
+    split measured with `--split`.
 
-    For a version: its label and role, the digest of its manifest as this run
-    read it (`manifest_sha256`, the ledger's cohort identity), the source, samples
-    and dataset record digests and the graph digests it was mapped against, and
-    its mapping policy and counts with their denominators. **Aggregates only:**
-    no case id, which stays in the version on the operator's machine (D7)."""
+    For a supplied cohort version: its label and role, the digest of its
+    manifest as this run read it (`manifest_sha256`, the ledger's cohort
+    identity), the source, samples and dataset record digests and the graph
+    digests it was mapped against, and its mapping policy and counts with their
+    denominators. A version of another kind records its kind and its own block
+    (`cohort_registry.cohort_version_block`). **Aggregates only:** no case id
+    or edge, which stays in the version on the operator's machine (D7)."""
     relations: Dict[str, str]
     """Each relation in `RELATION_NAMES` and its state on this run's bytes, one of
     `RELATION_STATES`. Fixed by the kind of cohort (`expected_relations`); any
@@ -299,8 +318,10 @@ class MeasurementManifest:
     r10: Optional[Dict[str, Any]]
     """How the cohort relates to the training and validation inputs the
     checkpoint records (contract §5.4): two scopes, two labels each, with the
-    evidence that decided each scope. `None` for a generated split, whose
-    relation to training is the allocation's."""
+    evidence that decided each scope. A supplied cohort version's only: `None`
+    for a generated split, whose relation to training is the allocation's,
+    and for a KG edge set, whose relation to the model's training is the
+    report's exposure block."""
     environment: Dict[str, Any]
     """The facts a run was produced under (contract §5.3), from the one collector
     training uses: `facts` is `collect_environment` for the device in effect,
@@ -314,19 +335,35 @@ class MeasurementManifest:
         """Refuse a manifest whose relation states are not the ones its run earned.
 
         **So a report cannot carry a state no check produced.** The states are
-        decided by the kind of cohort, not passed through from whatever a caller
-        assembled: a generated split with no cohort version, or a supplied cohort
-        with one. A supplied cohort without a version is refused here because
-        nothing binds its samples to the graph scored, so its report could not
-        state that relation at all.
+        decided by the kind of data, not passed through from whatever a caller
+        assembled, one rule per kind:
+
+        - a version is recorded exactly for a registered version, of any kind a
+          registry holds (`protocols.REGISTERED_KINDS`), and its kind is the
+          one its block states (a supplied version's block, schema 1, states
+          none and is supplied); with no version the data is a generated split
+          (`--split`). A supplied cohort without a version is refused here
+          because nothing binds its samples to the graph scored, so its report
+          could not state that relation at all;
+        - the relations are a registered version's or a generated split's
+          (`expected_relations`);
+        - R10 is recorded for a supplied cohort version and only for one.
+
+        What a supplied version's or a generated split's report requires is
+        what it always was.
         """
         registered = self.cohort_version is not None
-        if registered and self.cohort_kind != "supplied":
-            raise ValueError(
-                f"a registered cohort version is a supplied cohort; this manifest "
-                f"records cohort_kind {self.cohort_kind!r} beside one"
-            )
-        if not registered and self.cohort_kind != "generated":
+        if registered:
+            stated = (self.cohort_version.get("kind", SUPPLIED)
+                      if isinstance(self.cohort_version, dict) else None)
+            if self.cohort_kind not in REGISTERED_KINDS or self.cohort_kind != stated:
+                raise ValueError(
+                    f"a cohort version states its kind, and one that states none is a "
+                    f"supplied cohort (schema 1); this manifest records cohort_kind "
+                    f"{self.cohort_kind!r} beside one of kind {stated!r}, and a version's "
+                    f"kind is one of the registry's ({', '.join(REGISTERED_KINDS)})"
+                )
+        if not registered and self.cohort_kind != GENERATED:
             raise ValueError(
                 f"a {self.cohort_kind!r} cohort with no registered cohort version: "
                 "nothing binds its samples to the graph scored, so no report can "
@@ -341,11 +378,13 @@ class MeasurementManifest:
                 f"run earns ({expected}); a relation that does not hold refuses the "
                 "run, so no other state is written"
             )
-        if registered != (self.r10 is not None):
+        supplied = registered and self.cohort_kind == SUPPLIED
+        if supplied != (self.r10 is not None):
             raise ValueError(
-                "R10 is recorded for a registered cohort version and only for one; "
-                f"this manifest has cohort_version {'set' if registered else 'None'} "
-                f"and r10 {'None' if self.r10 is None else 'set'}"
+                "R10 is recorded for a registered cohort version of kind supplied and only "
+                f"for one; this manifest has cohort_kind {self.cohort_kind!r}, cohort_version "
+                f"{'set' if registered else 'None'} and r10 "
+                f"{'None' if self.r10 is None else 'set'}"
             )
 
 

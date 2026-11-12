@@ -254,7 +254,8 @@ def test_another_tasks_setting_is_refused_never_ignored(trained, tmp_path):
     assert not (tmp_path / "child").exists()
     base = train_model.TrainConfig(data_dir=str(trained["data_dir"]), run_dir=str(tmp_path / "b"),
                                    learning_stage="base", task_loss_weight=0.5, device="cpu")
-    with pytest.raises(ValueError, match="task_loss_weight configure another task"):
+    with pytest.raises(ValueError, match="task_loss_weight configure a finetune, which a base "
+                                         "run does not read"):
         train_model.train(base, {"learning_stage", "task_loss_weight", "device"})
 
 
@@ -267,7 +268,6 @@ def test_the_stage_and_task_are_checked_before_the_fixture_is_read(trained, tmp_
 
     import measure_scorer
     import train_model
-    from src.evaluation import protocols
     from src.models.bundle.record import ModelRecordError
     from src.utils.run_plan import RunPlanRefused
 
@@ -279,7 +279,9 @@ def test_the_stage_and_task_are_checked_before_the_fixture_is_read(trained, tmp_
     config, explicit = _gene_config(dict(trained, data_dir=bare, base=child), tmp_path / "again")
     with pytest.raises(RunPlanRefused, match="children never chain"):
         train_model.train(config, explicit)
-    with pytest.raises(ModelRecordError, match=re.escape(protocols.BASE_MESSAGE)):
+    said = ("the gene measurement takes a finetune model with the gene head; this checkpoint "
+            "is a base model with no task head. It can be measured by kg_link_prediction.")
+    with pytest.raises(ModelRecordError, match=re.escape(said)):
         measure_scorer.main(["--mode", "gene", "--checkpoint", str(trained["base"]),
                              "--data-dir", str(bare), "--split", "val",
                              "--output", str(tmp_path / "r.json"), "--device", "cpu"])

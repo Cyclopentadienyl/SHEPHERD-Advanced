@@ -168,6 +168,49 @@ def test_every_command_parses_with_its_script_s_own_parser(document, script, arg
                     f"parser (exit {exc.code})")
 
 
+#: The deployment guides, whose importer commands are parsed too: §4.9 gives
+#: every kind of import (research comparison §5 Stage 4).
+GUIDES = ("deployment-guide.en.md", "deployment-guide.md")
+
+GUIDE_IMPORTS = [(document, argv)
+                 for document in GUIDES
+                 for _heading, body in _sections(_text(document))
+                 for script, argv in _script_commands(body) if script == "import_cohort"]
+
+
+def _readings(argv: List[str]) -> List[List[str]]:
+    """Each reading of a command whose optional part offers alternatives
+    (``keep|exclude``): one argument list per alternative, every such token
+    expanded."""
+    for i, token in enumerate(argv):
+        if "|" in token and not token.startswith("<"):
+            return [reading for choice in token.split("|")
+                    for reading in _readings([*argv[:i], choice, *argv[i + 1:]])]
+    return [argv]
+
+
+def test_the_guides_give_every_kind_of_import():
+    from src.evaluation.cohort_registry import VERSION_KINDS
+
+    for document in GUIDES:
+        kinds = {argv[argv.index("--kind") + 1] if "--kind" in argv else "supplied"
+                 for given, argv in GUIDE_IMPORTS if given == document}
+        assert kinds == set(VERSION_KINDS) == {"supplied", "kg_edges", "generated"}, (
+            document, kinds)
+
+
+@pytest.mark.parametrize("document, argv", GUIDE_IMPORTS,
+                         ids=[f"{d}:{' '.join(a)}" for d, a in GUIDE_IMPORTS])
+def test_every_import_command_in_the_guides_parses_with_the_importer_s_parser(
+        document, argv, monkeypatch):
+    for reading in _readings(argv):
+        try:
+            _parse("import_cohort", reading, monkeypatch)
+        except SystemExit as exc:
+            pytest.fail(f"{document}: scripts/import_cohort.py {' '.join(reading)} is refused "
+                        f"by its parser (exit {exc.code})")
+
+
 # ---------------------------------------------------------------------------
 # The pages and fields they name
 # ---------------------------------------------------------------------------
@@ -382,7 +425,7 @@ def test_the_guides_say_the_state_names_changed_meaning_and_no_run_blocks_anothe
 
 @pytest.mark.parametrize("guide, says, withdrawn", [
     ("deployment-guide.en.md",
-     ("because the ledger does not yet support a generated split's data identity",
+     ("A report from `--split` is not, because it has no registered version",
       "not because such a result counts for less",
       "*Superseded by K8-6r.4 (2026-11-07):* neither file ever\n  replaces one",
       "a claimed place whose publication failed, not a report",
@@ -391,9 +434,10 @@ def test_the_guides_say_the_state_names_changed_meaning_and_no_run_blocks_anothe
       "That\n  rename is itself an overwriting call: it overwrites no other run's file only while "
       "the target is\n  still the empty file this run has just claimed"),
      ("A generated split's report is not registrable",
-      "That rename replaces\n  only the empty file this run has just claimed")),
+      "That rename replaces\n  only the empty file this run has just claimed",
+      "Only a **registered cohort version's** report is recorded")),
     ("deployment-guide.md",
-     ("原因是 ledger 尚未支援產生的\n  split 這種資料身分",
+     ("`--split` 的報告不會，原因是它沒有已登錄的版本",
       "而不是這樣的結果比較不重要",
       "*已由 K8-6r.4（2026-11-07）取代：* 兩個檔案都絕不取代既有檔案",
       "發佈失敗的已佔用位置，不是報告",
@@ -401,12 +445,16 @@ def test_the_guides_say_the_state_names_changed_meaning_and_no_run_blocks_anothe
       "`--output` 上的報告會更早被拒絕，\n  因為沒有任何 registry 的報告存放處持有它",
       "這次改名本身就是會覆寫的呼叫：只有在目標仍是這次執行剛佔用的那個空檔案\n  時，它才不會覆寫"
       "其他執行的檔案"),
-     ("產生的 split 的報告不可登錄", "這次改名只取代這次執行剛佔用的那個空檔案")),
+     ("產生的 split 的報告不可登錄", "這次改名只取代這次執行剛佔用的那個空檔案",
+      "只有**已登錄 cohort 版本**的報告會被登錄")),
 ])
 def test_the_guides_say_why_a_generated_report_is_not_registered_and_that_it_is_kept(
         guide, says, withdrawn):
-    """K8-6r.4 (Decisions 9 and 12): both guides give the ledger's limit as the
-    reason a generated split's report is not registered, not a lesser result,
+    """K8-6r.4 (Decisions 9 and 12): both guides give the reason a generated
+    split's report is not registered, not a lesser result (since research
+    comparison Stage 6: it has no registered version, and a report of a
+    registered version of any kind is recorded; HEAD of Stage 6: "Only a
+    registered cohort version's report is recorded"),
     and say that a report at `--output` meets the report store's refusal first;
     mark "an existing `--output` is still replaced" as superseded; name an
     empty claimed file and ranks with no report as failed publications; and

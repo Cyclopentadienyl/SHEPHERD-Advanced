@@ -181,6 +181,27 @@ def test_validation_is_fixed_and_passes_messages_over_training_edges():
     assert bool((task.val_neg_tail != task.val_tail).all())
 
 
+def test_validation_takes_its_pairs_and_scores_from_the_one_lp_core():
+    """Base validation is the LP core's (README §3.2): its pairs are
+    `fixed_lp_pairs` of the val edges under the split's seed in its batches,
+    and its dict is `score_lp_pairs`' metrics over the training edges, then
+    its counts, which name the edges dropped for having no negative."""
+    from src.models.bundle.lp_head import fixed_lp_pairs, score_lp_pairs
+
+    view, split = _toy_view()
+    task, _ = _task_and_sampler(view, split, seed=2)
+    train, val = split.mask("train"), split.mask("val")
+    pairs = fixed_lp_pairs(view.edge_index(val), view.rel[val], seed=2, batch_size=4)
+    assert task.val_pairs.digest == pairs.digest
+    assert task.val_counts == {"val_edges": pairs.counts["edges"],
+                               "val_without_negative": pairs.counts["without_negative"]}
+    torch.manual_seed(0)
+    bundle = build_bundle(_spec(), view)
+    scored = score_lp_pairs(bundle, pairs, view.edge_index(train), view.rel[train],
+                            torch.device("cpu"))
+    assert task.validate(bundle, torch.device("cpu")) == {**scored.metrics, **task.val_counts}
+
+
 def test_a_split_whose_validation_has_no_negative_is_refused():
     edges = _ei([(0, 1), (1, 0)])
     with pytest.raises(ValueError, match="cannot be validated"):

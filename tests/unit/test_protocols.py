@@ -22,8 +22,11 @@ the rows after the first; §5.6):
   for a base asked as p1, and for a cohort version that lacks the genes the
   gene measurement needs (the command line then refuses before it opens the
   checkpoint);
-- the base message, and a name that is no protocol answered by the ordinary
-  sentence (the runner's cases are in tests/unit/test_job_runner.py,
+- a base, taken by the common KG link-prediction protocol (research
+  comparison Stage 5; the base message retired with it), a head judged by its
+  scoring semantics, never its name, and a name that is no protocol answered
+  by the ordinary sentence (the runner's cases are in
+  tests/unit/test_job_runner.py,
   `test_inputs_of_the_wrong_shape_are_refused_before_launch`);
 - the standing guard: reports whose modes are no protocol here are built,
   kept, registered where registration allows it at this revision, listed and
@@ -51,6 +54,7 @@ from types import SimpleNamespace
 import pytest
 
 from src.evaluation import protocols
+from tests.fixtures.capabilities import described
 
 #: The version the cohort fixture imports (`tests/fixtures/registered_cohort.LABEL`).
 LABEL = "demo-test-1"
@@ -58,28 +62,60 @@ LABEL = "demo-test-1"
 #: no candidate genes.
 CAUSAL_ONLY = "demo-causal-1"
 #: The products' sentence for a name that is not one of them.
-NOT_IMPLEMENTED = "{!r} is not a measurement this build implements (disease, gene, patients_like_me)."
+NOT_IMPLEMENTED = ("{!r} is not a measurement this build implements (disease, gene, "
+                   "patients_like_me, kg_link_prediction).")
 
 
-def test_the_product_protocols_are_disease_gene_and_patients_like_me():
-    assert protocols.names() == ("disease", "gene", "patients_like_me")
+def test_the_product_protocols_are_the_three_tasks_and_kg_link_prediction():
+    assert protocols.names() == ("disease", "gene", "patients_like_me", "kg_link_prediction")
     # Each row is keyed by its own name, the name `--mode` and `manifest.mode` carry.
     assert all(name == row.name for name, row in protocols.PROTOCOLS.items())
 
 
-def test_each_protocol_names_an_evaluator_and_a_model_the_spec_can_write():
+def test_each_protocol_names_an_evaluator_and_needs_what_a_writable_model_offers():
+    """Each row names an evaluator the scorer dispatch has, needs a head,
+    representations and a computation that some model the spec can write
+    offers (its capability description, `model_capabilities`), supplies only
+    inputs of the description's vocabulary and measures data kinds of
+    `cohort.COHORT_KINDS`. The words this stdlib-only module reads are the
+    capability module's."""
+    from src.evaluation.cohort import COHORT_KINDS
     from src.evaluation.task_measurement import TASK_RUNS
-    from src.models.bundle.spec import LEARNING_STAGES, TASKS
+    from src.models.bundle import capabilities as cap
+    from src.models.bundle.spec import TASKS
 
+    writable = [described("base", None)] + [described("finetune", task) for task in TASKS]
+    inputs = {cap.NODE_IDS, cap.NODE_TYPES, cap.RELATION_IDS, cap.EDGE_RELATION_IDS}
     for row in protocols.PROTOCOLS.values():
         assert row.evaluator in TASK_RUNS, row
-        assert row.learning_stage in LEARNING_STAGES, row
-        assert row.task is None or row.task in TASKS, row
+        assert any(row.head in model["heads"]
+                   and set(row.representations) <= set(model["representations"])
+                   and row.computation in model["computation"] for model in writable), row
+        assert set(row.supplies) <= inputs, row
+        assert set(row.data_kinds) <= set(COHORT_KINDS), row
+    assert (protocols.TASK, protocols.LINK_PREDICTION) == (cap.TASK, cap.LINK_PREDICTION)
+    assert (protocols.NODE_VECTORS, protocols.PATIENT_REPRESENTATION, protocols.FULL_VIEW) == (
+        cap.NODE_VECTORS, cap.PATIENT_REPRESENTATION, cap.FULL_VIEW)
+    assert set(protocols.FULL_VIEW_INPUTS) == inputs
+    assert (protocols.GENERATED, protocols.SUPPLIED, protocols.KG_EDGES) == COHORT_KINDS
+    assert {task: protocols.task_head(task) for task in TASKS} == {
+        task: (cap.TASK, task, cap.TASK_HEAD_SEMANTICS[task]) for task in TASKS}
+    assert protocols.LP_HEAD == (cap.LINK_PREDICTION, "distmult_tanh",
+                                 cap.LP_HEAD_SEMANTICS["distmult_tanh"])
+
+
+def test_the_registered_kinds_are_the_registrys():
+    from src.evaluation.cohort_registry import VERSION_KINDS
+
+    assert set(protocols.REGISTERED_KINDS) == set(VERSION_KINDS)
 
 
 def test_a_protocol_that_needs_genes_reads_the_gene_fields():
+    genes = {"cases_with_causal_genes", "cases_with_candidate_genes"}
     for row in protocols.PROTOCOLS.values():
-        assert not row.needs or row.gene_fields, row
+        assert not set(row.needs) & genes or row.gene_fields, row
+    assert protocols.PROTOCOLS["kg_link_prediction"].needs == ("pairs",)
+    assert not protocols.PROTOCOLS["kg_link_prediction"].gene_fields
 
 
 def test_the_module_imports_only_the_standard_library():
@@ -101,11 +137,11 @@ def test_the_module_imports_only_the_standard_library():
 @pytest.fixture
 def test_only_protocols(monkeypatch):
     """§5.5's test-only protocols, the product table untouched: p1 and p2 both
-    take a finetuned model with the disease head and run the disease
-    evaluator, so neither name is a task. Every consumer reads the table
-    through the module when it judges, so this reaches them all."""
-    table = {name: protocols.Protocol(name, "finetune", "disease", "disease")
-             for name in ("p1", "p2")}
+    need what the disease protocol needs (a model carrying the disease head)
+    and run the disease evaluator, so neither name is a task. Every consumer
+    reads the table through the module when it judges, so this reaches them
+    all."""
+    table = {name: replace(protocols.PROTOCOLS["disease"], name=name) for name in ("p1", "p2")}
     monkeypatch.setattr(protocols, "PROTOCOLS", table)
     return table
 
@@ -249,6 +285,7 @@ def listed(site, monkeypatch):
             checkpoint=site.demo / "runs" / key.replace("/last.pt", "/checkpoints/last.pt"),
             checkpoint_sha256=item["sha256"], protocol=protocol,
             learning_stage=item["learning_stage"], task=item["task"],
+            capabilities=item["capabilities"], version_kind=version["kind"],
             version_counts=version["counts"])
 
     def start_state(key, label, protocol):
@@ -304,7 +341,8 @@ def test_the_runner_launches_a_protocol_whose_name_is_no_task(runner, test_only_
         registry=registry, version_label=LABEL, version_sha256="e" * 64, workspace=workspace,
         checkpoint=workspace / "runs" / "gatv2" / "r1" / "checkpoints" / "last.pt",
         checkpoint_sha256="c" * 64, protocol="disease", learning_stage="finetune",
-        task="disease", version_counts={"source_cases": 3})
+        task="disease", capabilities=described("finetune", "disease"),
+        version_kind=protocols.SUPPLIED, version_counts={"source_cases": 3})
 
     refused = runner.manager.start_test(asked)
     assert refused["success"] is False
@@ -333,22 +371,28 @@ def test_a_base_asked_as_p1_gets_one_reason_everywhere_and_nothing_starts(
     """The listed base of the session's trained pair, asked as p1: Start's
     reason, the Test page's start, the runner called directly with the
     listing's values and the command line on that file's bytes all say
-    `protocols.refusal("p1", "base", None, counts)`, the base message. No
-    process is spawned, no job directory made, no `--output` written."""
+    `protocols.refusal("p1", <the base's listed capabilities>, "supplied",
+    counts)`, the definition's sentence for a model without the head p1
+    scores with (only p1 and p2 are in the table here, so nothing takes the
+    base). No process is spawned, no job directory made, no `--output`
+    written."""
     cli = _cli()
     from src.models.bundle.record import ModelRecordError
 
     tp, site = listed.tp, listed.site
     item = tp.find_model(listed.models, site.base_key)
     assert (item["record"], item["learning_stage"], item["task"]) == ("model", "base", None)
-    counts = tp.find(listed.page["versions"], "label", LABEL)["counts"]
-    reason = protocols.refusal("p1", "base", None, counts)
-    assert reason == protocols.BASE_MESSAGE
+    version = tp.find(listed.page["versions"], "label", LABEL)
+    assert version["kind"] == protocols.SUPPLIED
+    reason = protocols.refusal("p1", item["capabilities"], version["kind"], version["counts"])
+    assert reason == ("the p1 measurement takes a finetune model with the disease head; this "
+                      "checkpoint is a base model with no task head.")
 
     assert listed.start_state(site.base_key, LABEL, "p1") == (False, f"Disabled: {reason}")
+    # The page's start says the reason as a sentence, capitalised.
     assert tp.start_test_run(listed.page, listed.models, "demo", LABEL, site.base_key, False,
                              False, listed.request, protocol="p1", manager=runner.manager) == {
-        "success": False, "error": f"{reason} Nothing was started."}
+        "success": False, "error": f"{reason[:1].upper()}{reason[1:]} Nothing was started."}
     result = runner.manager.start_test(listed.inputs(runner, site.base_key, LABEL, "p1"))
     assert (result["success"], result["error"]) == (False, f"{reason} Nothing was started.")
 
@@ -375,11 +419,12 @@ def test_a_version_without_the_genes_asked_for_is_refused_before_the_checkpoint(
     tp, site = listed.tp, listed.site
     item = tp.find_model(listed.models, site.gene_key)
     assert (item["record"], item["learning_stage"], item["task"]) == ("model", "finetune", "gene")
-    counts = tp.find(listed.page["versions"], "label", CAUSAL_ONLY)["counts"]
+    version = tp.find(listed.page["versions"], "label", CAUSAL_ONLY)
+    counts = version["counts"]
     assert counts["genes"]["cases_with_causal_genes"] > 0
     assert counts["genes"]["cases_with_candidate_genes"] == 0
-    reason = protocols.refusal("gene", "finetune", "gene", counts)
-    assert reason == protocols.inputs_refusal("gene", counts) == (
+    reason = protocols.refusal("gene", item["capabilities"], version["kind"], counts)
+    assert reason == protocols.inputs_refusal("gene", version["kind"], counts) == (
         "this cohort version lists no candidate genes, which the gene measurement needs. "
         "Import a source that lists candidate_genes.")
 
@@ -400,28 +445,158 @@ def test_a_version_without_the_genes_asked_for_is_refused_before_the_checkpoint(
 
 
 # ---------------------------------------------------------------------------
-# The base message (§5.4) and names that are no protocol
+# Stage 3: the three rows, judged by capabilities, through every consumer
 # ---------------------------------------------------------------------------
-def test_the_base_message_names_the_formal_test_as_not_implemented(monkeypatch):
-    """§5.4: the reason for a base while no protocol takes one, whatever is
-    asked of it. It names the formal test as not implemented and never says
-    that a base has nothing to test; once a protocol takes a base (a
-    test-only row here), a base is measured by it and the message is gone."""
-    message = protocols.BASE_MESSAGE
-    assert "formal test" in message and "not implemented" in message
-    assert "no task to measure" not in message and "nothing to test" not in message
-    assert protocols.available("base", None) == ((), message)
-    for name in protocols.names():
-        assert protocols.model_refusal(name, "base", None) == message
-        assert protocols.refusal(name, "base", None, {}) == message
+def _probe_module():
+    """`scripts/probe_deployment.py`, loaded as its tests load it."""
+    import importlib.util
 
-    takes_a_base = protocols.Protocol("p_base", "base", None, "disease")
-    monkeypatch.setattr(protocols, "PROTOCOLS", {**protocols.PROTOCOLS, "p_base": takes_a_base})
-    assert protocols.available("base", None) == (("p_base",), None)
-    assert protocols.model_refusal("p_base", "base", None) is None
-    assert protocols.model_refusal("disease", "base", None) == (
-        "the disease measurement takes a finetune model with the disease head; this checkpoint "
-        "is a base model with no task head. It can be measured by p_base.")
+    path = Path(__file__).resolve().parents[2] / "scripts" / "probe_deployment.py"
+    spec = importlib.util.spec_from_file_location("probe_deployment", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.modules.pop(spec.name, None)
+    return module
+
+
+@pytest.mark.parametrize("protocol", ["disease", "gene", "patients_like_me"])
+def test_the_three_rows_say_the_golden_sentences_through_every_consumer(listed, runner,
+                                                                        protocol):
+    """Research comparison Stage 3: the three rows, judged by the listed
+    capability description, accept what they accepted and say what P0-2's
+    golden says (`tests/fixtures/goldens/p0_2_protocols.json`), whichever
+    consumer asks. For the listed base, disease child and gene child on the
+    version whose source lists no genes (P0-2's counts case without a genes
+    block): Start's reason on the Test page, the runner's judgment
+    (`TestRunInputs.reports_dir`, of the inputs the page builds) and the
+    probe's (`_listed_test_inputs`) say the golden's model sentence, else its
+    inputs sentence, else nothing; the command line (`read_measurement_inputs`,
+    on the two trained files) says the same, the version's counts first, as it
+    reads them first."""
+    cli = _cli()
+    import torch
+
+    from tests.fixtures.goldens import golden
+
+    expected = golden("p0_2_protocols.json")
+    by_model = {(e["name"], e["learning_stage"], e["task"]): e["refusal"]
+                for e in expected["model_refusal"]}
+    by_counts = {(e["name"], e["counts"]): e["refusal"] for e in expected["inputs_refusal"]}
+    tp, site = listed.tp, listed.site
+    version = tp.find(listed.page["versions"], "label", LABEL)
+    assert version["kind"] == protocols.SUPPLIED and "genes" not in version["counts"]
+    inputs_says = by_counts[protocol, "no_genes_block"]
+    probe = _probe_module()
+    child_key = f"gatv2/{site.child.parent.parent.name}/last.pt"
+    for key, path, record in ((site.base_key, site.base, ("base", None)),
+                              (child_key, site.child, ("finetune", "disease")),
+                              (site.gene_key, None, ("finetune", "gene"))):
+        item = tp.find_model(listed.models, key)
+        assert (item["learning_stage"], item["task"]) == record
+        model_says = by_model[(protocol, *record)]
+        says = model_says or inputs_says
+
+        assert listed.start_state(key, LABEL, protocol) == (
+            (True, None) if says is None else (False, f"Disabled: {says}")), key
+        asked = listed.inputs(runner, key, LABEL, protocol)
+        if says is None:
+            asked.reports_dir()
+        else:
+            with pytest.raises(ValueError) as refused:
+                asked.reports_dir()
+            assert str(refused.value) == says, key
+        _arch, run, filename = key.split("/")
+        if says is None:
+            given = probe._listed_test_inputs(LABEL, "demo", run, filename, protocol=protocol)
+            assert (given.capabilities, given.version_kind) == (item["capabilities"],
+                                                                 version["kind"])
+        else:
+            with pytest.raises(AssertionError) as refused:
+                probe._listed_test_inputs(LABEL, "demo", run, filename, protocol=protocol)
+            assert str(refused.value).endswith(f": {says}"), key
+        if path is not None:
+            first = inputs_says or model_says
+            def read(checkpoint=path):
+                return cli.read_measurement_inputs(
+                    checkpoint, site.demo, torch.device("cpu"), cohort=LABEL,
+                    registry=site.registry, protocol=protocol)
+
+            if first is None:
+                assert read().checkpoint.identity.path == path.resolve()
+            else:
+                with pytest.raises(ValueError) as refused:
+                    read()
+                assert str(refused.value) == f"{first} Nothing was written.", key
+    assert _nothing_started(runner)
+
+
+# ---------------------------------------------------------------------------
+# A base and the KG link-prediction protocol (§5.4; research comparison
+# Stage 5), and names that are no protocol
+# ---------------------------------------------------------------------------
+def test_a_base_and_each_finetune_are_taken_by_the_kg_link_prediction_protocol():
+    """Stage 5: the common KG link-prediction protocol takes every model whose
+    LP head declares DistMult's scoring semantics, a base and each finetune
+    alike, so a base has a protocol and the base message retired with its last
+    caller. A task protocol asked of a base says its own reason and names the
+    protocol that does take it; the LP protocol measures a KG edge set only."""
+    from src.models.bundle.spec import TASKS
+
+    base = described("base", None)
+    assert protocols.available(base) == (("kg_link_prediction",), None)
+    assert protocols.model_refusal("kg_link_prediction", base) is None
+    for task in TASKS:
+        assert protocols.model_refusal(task, base) == (
+            f"the {task} measurement takes a finetune model with the {task} head; this "
+            "checkpoint is a base model with no task head. It can be measured by "
+            "kg_link_prediction.")
+        assert protocols.available(described("finetune", task)) == (
+            (task, "kg_link_prediction"), None)
+        assert protocols.model_refusal("kg_link_prediction", described("finetune", task)) is None
+    assert not hasattr(protocols, "BASE_MESSAGE")
+    assert protocols.inputs_refusal("kg_link_prediction", protocols.KG_EDGES, {"pairs": 4}) is None
+    for kind, words in ((protocols.SUPPLIED, "a supplied cohort version"),
+                        (protocols.GENERATED, "a generated split")):
+        assert protocols.inputs_refusal("kg_link_prediction", kind, None) == (
+            f"the kg_link_prediction measurement does not measure {words}; it measures a KG "
+            "edge set.")
+    assert protocols.inputs_refusal("disease", protocols.KG_EDGES, {"pairs": 4}) == (
+        "the disease measurement does not measure a KG edge set; it measures a generated split "
+        "or a supplied cohort version.")
+
+
+@pytest.mark.parametrize("pairs", [0, None, True, "4", -1])
+def test_a_kg_edge_set_with_no_pair_is_refused_by_its_counts(pairs):
+    """A KG edge set whose counts hold no pair (or no count of them) is refused
+    by the protocol's need, before anything is read: nothing could be scored."""
+    counts = {"positive_edges": 2, "edges_without_negative": 2}
+    if pairs is not None:
+        counts["pairs"] = pairs
+    assert protocols.inputs_refusal("kg_link_prediction", protocols.KG_EDGES, counts) == (
+        "this KG edge set holds no (positive, negative) pair, which the kg_link_prediction "
+        "measurement scores: no positive edge of its part had another tail of its relation in "
+        "its batch to draw a negative from.")
+
+
+def test_a_head_is_judged_by_its_scoring_semantics_never_its_name():
+    """The LP protocol takes an LP head of any name that declares DistMult's
+    semantics, and none whose semantics this build does not state; the base
+    of the latter has no protocol, and says so."""
+    from tests.fixtures.capabilities import LP_HEAD_UNSTATED
+
+    base = described("base", None)
+    renamed = {**base, "heads": tuple((kind, "another_name", semantics)
+                                      for kind, name, semantics in base["heads"])}
+    assert protocols.available(renamed) == (("kg_link_prediction",), None)
+    unstated = described("base", LP_HEAD_UNSTATED)
+    assert protocols.available(unstated) == (
+        (), "no measurement this build implements takes a base model with no task head.")
+    assert protocols.model_refusal("kg_link_prediction", unstated) == (
+        "the kg_link_prediction measurement takes a model with a link-prediction head scoring "
+        "distmult_raw_score/tanh_hinge/v1; this checkpoint is a base model with no task head.")
 
 
 @pytest.mark.parametrize("name", ["C", "D", None, "Disease"])
@@ -439,10 +614,13 @@ def test_a_name_that_is_no_protocol_gets_the_ordinary_sentence(name, capsys):
 
     said = NOT_IMPLEMENTED.format(name)
     for stage, task in (("finetune", "disease"), ("base", None), (None, None)):
-        assert protocols.model_refusal(name, stage, task) == said
-        assert protocols.refusal(name, stage, task, {}) == said
-    assert protocols.inputs_refusal(name, {"genes": {"cases_with_causal_genes": 3}}) == said
-    assert protocols.available("finetune", "disease") == (("disease",), None)
+        assert protocols.model_refusal(name, described(stage, task)) == said
+        assert protocols.refusal(name, described(stage, task), protocols.SUPPLIED, {}) == said
+    for kind in (protocols.SUPPLIED, protocols.GENERATED, None):
+        assert protocols.inputs_refusal(name, kind,
+                                        {"genes": {"cases_with_causal_genes": 3}}) == said
+    assert protocols.available(described("finetune", "disease")) == (
+        ("disease", "kg_link_prediction"), None)
 
     def read():
         cli.read_measurement_inputs(Path("/nowhere/last.pt"), Path("/nowhere"),
@@ -495,8 +673,8 @@ def test_reports_whose_modes_are_no_protocol_are_read_as_recorded(tmp_path, monk
     """§5.6: the protocol definition judges whether a new measurement can run,
     and nothing else. Kept reports whose modes are not protocols here -- a
     Mode C and a Mode D report (`mode_c_report`, `mode_d_report`), the disease
-    report with its mode set to "kg_link_prediction" (a reader-only label: no
-    such test is implemented, N1) and one with mode "p1" -- are built into
+    report with its mode set to "kg_lp_reader_only" (a reader-only label, no
+    protocol of this build) and one with mode "p1" -- are built into
     records, kept in a version's report store, listed by the store's scan and
     the Test page, registered, read from the ledger and shown by the API, the
     Models page and the Test page, each under its own mode, with the
@@ -530,7 +708,7 @@ def test_reports_whose_modes_are_no_protocol_are_read_as_recorded(tmp_path, monk
     registry = tmp_path / "registry"
     monkeypatch.setenv("SHEPHERD_REGISTRY", str(registry))
     subjects = {"C": mode_c_report(), "D": mode_d_report(),
-                "kg_link_prediction": registered_report(mode="kg_link_prediction"),
+                "kg_lp_reader_only": registered_report(mode="kg_lp_reader_only"),
                 "p1": registered_report(mode="p1")}
     assert not set(subjects) & set(protocols.names())
     _readers_never_judge(monkeypatch)
@@ -558,7 +736,7 @@ def test_reports_whose_modes_are_no_protocol_are_read_as_recorded(tmp_path, monk
                                   registered_at="2026-11-06T00:00:00Z").outcome
         assert outcome == "registered", (mode, outcome)
     ledger, _sha = read_ledger(weights.parent / "evaluations.json")
-    registered = ["C", "D", "kg_link_prediction", "p1"]
+    registered = ["C", "D", "kg_lp_reader_only", "p1"]
     assert [r["scoring"]["mode"] for r in records_for(ledger, digest)] == registered
 
     # Shown: the API's view of the ledger beside the weights and the Models

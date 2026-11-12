@@ -3,17 +3,20 @@ r"""
 Measure a model on a cohort by an evaluation protocol.
 ======================================================
 **`--mode` names the protocol, and is required** (`src/evaluation/protocols.py`):
-a measurement this build implements for a model's learning stage and task
-head, today disease, gene and patients_like_me, one for each task head. A
-protocol states the model record it takes and the evaluator that runs it
-(`src/evaluation/task_measurement.py`, `docs/working/PLAN_TEST_RESULTS.md` §8),
-and the report's `mode` is its name. A registered version's counts are judged
-against what the protocol needs right after its `cohort.json` is read, before
-the workspace or the checkpoint is; the checkpoint's model record is judged
-against the model the protocol takes right after the checkpoint is read. A
-refusal writes nothing. **The Test page runs these**: the job runner passes
-`--mode <protocol>`, the protocol the operator chose among those the listed
-model's record admits.
+a measurement this build implements, today disease, gene and patients_like_me,
+each taking a model that carries its task head and measuring a patient cohort,
+and kg_link_prediction, taking any model whose LP head scores by DistMult (a
+base and each of its finetunes) and measuring a KG edge set. A protocol states what it needs
+of a model's capabilities, the data kinds it measures and the evaluator that
+runs it (`src/evaluation/task_measurement.py`,
+`docs/working/PLAN_TEST_RESULTS.md` §8), and the report's `mode` is its name.
+The data's kind (and a registered version's counts) is judged against what the
+protocol needs right after the split is resolved or the version's `cohort.json`
+is read, before the workspace or the checkpoint is; the checkpoint's capability
+description is judged against what the protocol needs right after the
+checkpoint is read. A refusal writes nothing. **The Test page runs these**: the
+job runner passes `--mode <protocol>`, the protocol the operator chose among
+those the listed model's capabilities admit.
 
 **Mode D** (Batch 3's measurement of the served ranking) was removed in K7: it
 no longer runs, and its kept reports and records are read by the shared
@@ -28,6 +31,56 @@ stays testable without a subprocess.
 **Two kinds of cohort, named by the argument that names them** (contract M4,
 decision 8): exactly one of `--split` and `--cohort`.
 
+**By data kind** (research comparison §5 Stage 5). A registered version is
+measured by its recorded kind. A supplied cohort version is read and checked
+as below. A **KG edge set** (`--mode kg_link_prediction --cohort <label>`)
+reads no patient samples: its `pairs.bin` is read once and refused before it
+is parsed unless it is the bytes the version binds, and then unless it parses
+to the rows and pairs digest the version records (`read_kg_edge_pairs`); R1,
+R3, R5, the version's graph binding and the expected digests are checked as
+for a supplied version. Refused before anything is written, besides those: the
+version's graph view other than the model's (measuring across views needs a
+node mapping this build does not have: a stated capability gap, not a research
+rule), a file without a model spec, a protocol and a data kind that do not
+match (the LP protocol on a supplied or generated version or with `--split`; a
+task protocol on a KG edge set), `--training-evidence` (R10 is a supplied
+version's; a KG edge set's relation to the model's training is its exposure),
+a version with no pair, and, in the evaluator, a version whose recorded split
+does not rebuild from the view or whose pairs are not its part's edges, or do
+not hold what their pair rule declares though their digests match (an id
+outside the view; for fixed-lp-pairs/v1, a negative equal to its own tail or
+not a tail of its relation in its batch). A
+model whose recorded split differs from the version's, on the same view, is
+measured: its exposure says how many of the measured edges were in that
+model's recorded graph use. Its run keeps, in its run directory, `scores.bin`
+(each pair's actual raw scores and state, keyed to the pairs file's rows,
+streamed in chunks, never replacing a file) and then `report.json`, which
+names it by digest and row count and carries the run's `exposure` block. It
+is registered as any kept report is (`--record`, or the register-later command
+printed), its ledger record a KG edge set's: its own cohort block, no R10, the
+run's counts and metric statuses, and its exposure block (research comparison
+Stage 6).
+
+A **generated split kept as a version** (`--cohort <label>` of kind
+`generated`; research comparison Stage 5b) is measured by the task protocol
+the model's capabilities admit (disease, gene, patients_like_me) through the
+same evaluator as `--split`. For disease its `samples.json` is read once and
+refused before it is parsed unless it is the bytes the version binds; for gene
+and patients_like_me the functional gene fixture the version keeps is read
+instead, its record and its split's rows each compared with the digest the
+version binds before they are parsed (`read_generated_task_fixture`). A
+version that keeps no fixture, or whose fixture holds no row, is refused for
+gene and patients_like_me with that stated data gap, before anything is read
+(`protocols.inputs_refusal`). Its graph binding is checked as a supplied
+version's; it has no R10 (its relation to training is its allocation's) and
+takes no `--training-evidence`. Its manifest records `cohort_kind` `generated`,
+the version's block (its role as recorded, train or val today, and its
+generation identity) and `split` the role, never test unless the role is. Its
+report is kept in its version's report store like any version's, and
+registered as any kept report is, its ledger record a generated split's (its
+role and generation identity, no R10; Stage 6). A generated `test` role cannot
+be imported today (the generator writes train and val), so none is measured.
+
     # A registered test cohort version: the formal measurement. The report is
     # kept in the registry's report store; --record registers it in the ledger
     # beside the checkpoint.
@@ -40,8 +93,11 @@ decision 8): exactly one of `--split` and `--cohort`.
 
     # A generated split. --split val is the checkpoint-selection split, not
     # held-out data. Its report and ranks are new files at --output, and are
-    # not registered: the ledger does not yet support a generated split's data
-    # identity (it has no registered cohort version).
+    # not registered: a report from --split has no registered version, so no
+    # data identity the ledger records results by. The same split kept as a
+    # version (scripts/import_cohort.py --kind generated) is measured with
+    # --cohort instead, its report kept in the version's report store and
+    # registered.
     python scripts/measure_scorer.py --mode disease \
         --checkpoint checkpoints/best.pt \
         --data-dir data/processed \
@@ -110,10 +166,11 @@ the check is not overwritten either: that run fails (`ReportNotWritten`), and
 of two runs on one new `--output` one publishes both files and the other none.
 A run whose report fails after its ranks leaves its own ranks with no report
 beside them, which the next run on that path is refused by, so they are never
-paired with another run's report. The report and ranks are not registered:
-the ledger does not yet support a generated split's data identity (it has no
-registered cohort version), not because such a result counts for less;
-extending the ledger to it is later work.
+paired with another run's report. The report and ranks are not registered: a
+report from `--split` has no registered version, so no data identity the
+ledger records results by, not because such a result counts for less; the
+same split kept as a version (`import_cohort.py --kind generated`) is measured
+with `--cohort` and registered.
 
 **Where the filesystem has no hard links** (`publish_bytes`' fallback), each
 file is claimed as a new empty file (`O_CREAT | O_EXCL`) and the staged file is
@@ -323,9 +380,9 @@ class FailedAfterPublishing(Exception):
 
 
 class MeasurementInputs(NamedTuple):
-    """What a run read once each: the workspace files it checked, the cohort, and
-    the checkpoint, whose recorded graph roles were compared with `bound`
-    (contract M2.1, S7; M2.4).
+    """What a run read once each: the workspace files it checked, the cohort (or
+    a KG edge set's pairs), and the checkpoint, whose recorded graph roles were
+    compared with `bound` (contract M2.1, S7; M2.4).
 
     Carried whole from `read_measurement_inputs` to `measurement_input_digests`
     and the manifest, so the tensors and samples a measurement scores, the
@@ -349,7 +406,8 @@ class MeasurementInputs(NamedTuple):
     cohort_version: Optional[Dict[str, Any]]
     manifest: ManifestRead
     graph: GraphArtifactsRead
-    samples: SamplesRead
+    #: The samples measured; None for a KG edge set, which has none.
+    samples: Optional[SamplesRead]
     checkpoint: CheckpointRead
     #: The digest the run's one manifest reading binds for each of the four
     #: graph roles, `kg` included, as `verify_graph_reads` returned it after
@@ -362,12 +420,24 @@ class MeasurementInputs(NamedTuple):
     #: cohort. Its summary goes on the manifest, so a number measured over a
     #: synthetic workspace says so.
     dataset_record: DatasetRecord
-    #: The R10 block (contract §5.4) for a registered version; `None` for a
-    #: generated split, whose relation to training is the allocation's.
+    #: The R10 block (contract §5.4) for a supplied cohort version; `None` for
+    #: a generated split, whose relation to training is the allocation's, and
+    #: for a KG edge set, whose relation to the model's training is its
+    #: run's exposure block.
     r10: Optional[Dict[str, Any]]
+    #: The kind of data measured, as the protocol judged it
+    #: (`protocols.inputs_refusal`): `generated` for a generated split, the
+    #: registered version's recorded kind (`CohortVersionRead.kind`) otherwise.
+    #: The manifest records this same kind (`build_manifest(cohort_kind=)`).
+    data_kind: str
     #: A protocol with gene fields over a generated split: the workspace's
-    #: functional fixture read against this manifest reading; `samples` is its split.
+    #: functional fixture read against this manifest reading, or the one a
+    #: registered generated split keeps, read through the registry; `samples`
+    #: is its split.
     task_data: Optional[Any] = None
+    #: A KG edge set's pairs, one read of its `pairs.bin` checked against the
+    #: version (`read_kg_edge_pairs`); None for every other kind.
+    pairs: Optional[Any] = None
 
 
 def read_measurement_inputs(
@@ -389,23 +459,32 @@ def read_measurement_inputs(
     **`protocol`** names the measurement asked for (`--mode`;
     `src.evaluation.protocols`), and the inputs are judged by it, never by
     taking its name for the model's task. A name that is not a protocol is
-    refused before anything is read. A registered version's counts are judged
-    against what the protocol needs (`protocols.inputs_refusal`) right after
-    its `cohort.json` is read, before the workspace and the checkpoint are.
-    The checkpoint's model record is judged against the stage and head the
-    protocol takes (`protocols.model_refusal`, raised as `ModelRecordError`)
-    right after the checkpoint is read and its graph roles compared, before
-    anything protocol-specific (README §8 regression 7: the model filter runs
-    first). For a protocol with `gene_fields`, a registered version's samples
-    are read with their gene fields, and a generated split, once verified as
-    always, is measured through the workspace's functional fixture of that
-    split, read after the model check: its record against this manifest reading
-    and its file against the digest the record names (`read_gene_fixture`).
-    Each of these refusals ends "Nothing was written."
+    refused before anything is read. The data's kind is judged against the
+    kinds the protocol measures (`protocols.inputs_refusal`): a generated
+    split's (`generated`) right after it is resolved, a registered version's
+    recorded kind (`CohortVersionRead.kind`) with its counts, against what the
+    protocol needs, right after its `cohort.json` is read; both before the
+    workspace and the checkpoint are. The checkpoint's model is judged by its
+    capability description (`ModelRecord.capabilities`, the description the
+    lists carry) against what the protocol needs (`protocols.model_refusal`,
+    raised as `ModelRecordError`) right after the checkpoint is read and its
+    graph roles compared, before anything protocol-specific (README §8
+    regression 7: the model filter runs first). For a protocol with
+    `gene_fields`, a supplied version's samples are read with their gene
+    fields, and a generated split, once verified as always, is measured
+    through the workspace's functional fixture of that split, read after the
+    model check: its record against this manifest reading and its files
+    against the digests and row counts the record names (`read_gene_fixture`,
+    the one reader of a workspace's fixture, by whose rules a generated split's
+    import keeps it). A registered generated split is measured through the
+    fixture it keeps, read where a version's samples are read
+    (`_read_version_fixture`), its record and rows each against the digest
+    the version binds; its counts said before anything was read whether it
+    keeps one with rows. Each of these refusals ends "Nothing was written."
 
     Exactly one of `split` (a generated split) and `cohort` (a registered
     version's label, with `registry`) is given; `training_evidence` applies to a
-    registered version only (R10).
+    supplied cohort version only (R10).
 
     **What the run was started for** (M5's job runner): with
     `expect_version_sha256`, the version's `cohort.json` read must have that
@@ -428,6 +507,13 @@ def read_measurement_inputs(
     split too, with the default fields, so `verify_cohort_reads` checks both
     splits' bindings (R2), the disease sets, and the manifest's disjointness
     claim and the measured disjointness.
+
+    **A KG edge set** is read like a supplied version but for its data: no
+    samples (its `pairs.bin` instead, `read_kg_edge_pairs`, where the
+    samples are read), no `--training-evidence` (refused right after its
+    `cohort.json` is judged: R10 is a supplied version's) and no R10, and its
+    graph view must be the checkpoint's model's (refused right after the model
+    is judged: there is no node mapping between views in this build).
 
     **A registered version, in this order** (M4 §6): the evidence directories
     are checked (listed, nothing read); `resolve_version` reads `cohort.json`
@@ -496,28 +582,57 @@ def read_measurement_inputs(
     if asked is None:
         # `model_refusal` names a protocol it does not know before it looks at
         # any record: the same sentence the runner and the Test page give.
-        raise ValueError(f"{protocols.model_refusal(protocol, None, None)} Nothing was written.")
+        raise ValueError(f"{protocols.model_refusal(protocol, None)} Nothing was written.")
 
     if split is not None:
         resolved, siblings = _resolve_generated(data_dir, split)
         version = cohort_version = candidates = None
+        # **The data's kind**: a generated split, which the protocol must measure.
+        data_kind = protocols.GENERATED
+        why = protocols.inputs_refusal(protocol, data_kind, None)
     else:
         resolved, siblings = None, ()
         version, cohort_version, candidates = _resolve_registered(
             data_dir, cohort, registry, training_evidence,
             expected_sha256=expect_version_sha256,
         )
-        # **What the protocol needs from the version**, judged on this one read
-        # of its `cohort.json`, before the workspace or the checkpoint is read.
-        why = protocols.inputs_refusal(protocol, version.manifest.get("counts"))
-        if why is not None:
-            raise ValueError(f"{why} Nothing was written.")
+        # **What the protocol needs from the version**, its recorded kind and
+        # its counts, judged on this one read of its `cohort.json`, before the
+        # workspace or the checkpoint is read.
+        data_kind = version.kind
+        why = protocols.inputs_refusal(protocol, data_kind, version.manifest.get("counts"))
+        # **R10's evidence by the version's kind**: the one rule the job
+        # runner's evidence choice follows too (`protocols.takes_training_evidence`).
+        if (why is None and training_evidence
+                and not protocols.takes_training_evidence(data_kind)):
+            relation = protocols.TRAINING_RELATION.get(
+                data_kind, "not one this build records")
+            why = (f"--training-evidence applies to a supplied cohort version only (R10: its "
+                   f"cases' overlap with the training and validation inputs the checkpoint "
+                   f"records); {cohort!r} is {_version_words(version)}, whose relation to the "
+                   f"model's training is {relation}.")
+    if why is not None:
+        raise ValueError(f"{why} Nothing was written.")
 
     manifest = read_split_manifest(data_dir)
     graph = read_graph_artifacts(data_dir, map_location="cpu")
     gene_fields = asked.gene_fields
+    pairs = task_data = None
     if version is None:
         samples, checked = _read_generated(data_dir, split, siblings)
+    elif data_kind == protocols.KG_EDGES:
+        # **No patient samples**: a KG edge set's pairs, one read, the digest
+        # compared before the bytes are parsed (M2.1).
+        samples, checked = None, {}
+        pairs = _read_version_pairs(version)
+    elif data_kind == protocols.GENERATED and gene_fields:
+        # **A registered generated split's functional gene fixture**, the one
+        # the version keeps, read through the registry: its record and its
+        # split's rows, each digest compared before the bytes are parsed. The
+        # rows are what the protocol scores, as the workspace's fixture is
+        # for `--split` (research comparison Stage 5b).
+        task_data = _read_version_fixture(version)
+        samples, checked = task_data.samples[version.manifest["role"]], {}
     else:
         samples, checked = _read_version_samples(version, gene_fields=gene_fields), {}
 
@@ -550,14 +665,16 @@ def read_measurement_inputs(
         recorded_by=f"checkpoint {checkpoint}",
         compared_with=f"the workspace {data_dir}",
     )
-    # **The model the protocol takes**: the record's stage and head against the
-    # protocol's requirement, never its name. A file without a model spec is
-    # refused by the record reader itself (not readable by this build).
+    # **The model the protocol takes**: the record's capability description
+    # (the one the lists carry) against what the protocol needs, never its
+    # name. A file without a model spec is refused by the record reader itself
+    # (not readable by this build).
     record = read_model_record(read.checkpoint)
-    why = protocols.model_refusal(protocol, record.learning_stage, record.task)
+    why = protocols.model_refusal(protocol, record.capabilities)
     if why is not None:
         raise ModelRecordError(f"{why} Nothing was written.")
-    task_data = None
+    if pairs is not None:
+        _refuse_another_view(version, record.graph_view.digest)
     if gene_fields and version is None:
         from src.kg.task_fixture import read_gene_fixture
 
@@ -566,13 +683,15 @@ def read_measurement_inputs(
             raise ValueError(f"the functional fixture has no {split!r} split")
         samples = task_data.samples[split]
     # R3 has passed, so the checkpoint is a mapping that records its inputs.
-    r10 = (None if version is None
-           else _r10(read.checkpoint.get("training_input_digests"), samples, candidates))
+    # R10 is a supplied cohort version's only.
+    r10 = (_r10(read.checkpoint.get("training_input_digests"), samples, candidates)
+           if data_kind == protocols.SUPPLIED and version is not None else None)
 
     logger.info(
-        "Read %d samples of %s; checkpoint %s (sha256 %s)",
-        len(samples.samples),
-        split if version is None else f"cohort version {cohort_version['label']}",
+        "Read %s of %s; checkpoint %s (sha256 %s)",
+        (f"{int(pairs.pairs.head.numel())} pairs" if pairs is not None
+         else f"{len(samples.samples)} samples"),
+        split if version is None else f"version {cohort_version['label']}",
         read.identity.path, read.identity.sha256[:12],
     )
     logger.info(
@@ -581,7 +700,50 @@ def read_measurement_inputs(
         dataset_record.identity.sha256[:12],
     )
     return MeasurementInputs(resolved, version, cohort_version, manifest, graph, samples, read,
-                             bound, dataset_record, r10, task_data)
+                             bound, dataset_record, r10, data_kind, task_data, pairs)
+
+
+def _version_words(version: CohortVersionRead) -> str:
+    """A registered version in the registry's words, by its kind and role ("a
+    KG edge set (test)", `cohort_registry.version_words`)."""
+    from src.evaluation.cohort_registry import version_words
+
+    return version_words(version.kind, version.manifest.get("role"))
+
+
+def _read_version_pairs(version: CohortVersionRead) -> Any:
+    """A KG edge set's pairs: one read of its `pairs.bin`, refused before it is
+    parsed unless it is the bytes the version binds, then unless it parses to
+    the rows and pairs digest the version records (`read_kg_edge_pairs`,
+    M2.1). Each refusal is `read_kg_edge_pairs`' own sentence, which names its
+    cause (bytes that are not the ones bound, pairs that are not the ones
+    recorded, a missing file, a layout this revision does not read), and says
+    that nothing was written."""
+    from src.evaluation.cohort_registry import CohortVersionRefused, read_kg_edge_pairs
+
+    try:
+        return read_kg_edge_pairs(version)
+    except CohortVersionRefused as exc:
+        raise CohortVersionRefused(f"{_sentence(exc)} Nothing was written.") from None
+
+
+def _refuse_another_view(version: CohortVersionRead, model_view: str) -> None:
+    """Refuse a KG edge set of another graph view than the checkpoint's model
+    reads, before anything is built or written. Its edges are view node and
+    relation ids of its own view; scoring them in another view needs a node
+    mapping, which this build does not have: a capability gap, stated as one,
+    never a rule about which model may be measured on which data."""
+    recorded = version.manifest["graph_view"]["digest"]
+    if recorded == model_view:
+        return
+    raise ValueError(
+        f"the KG edge set {version.manifest['label']!r} is a part of graph view "
+        f"{recorded[:12]}..., and this checkpoint's model reads graph view {model_view[:12]}...: "
+        "its edges are named by another view's node and relation ids, and this build has no "
+        "node mapping between graph views, so it cannot score them in this model's view. That "
+        "is a capability this build lacks, not a research rule: a KG edge set taken from a "
+        "model of this view (scripts/import_cohort.py --kind kg_edges --from-checkpoint) is "
+        "measured, whatever split, family or result that model has. Nothing was written.")
 
 
 def _changed_since_chosen(what: str, found: Optional[str],
@@ -659,10 +821,12 @@ def _read_version_samples(version: CohortVersionRead, *,
     refused naming both files.
 
     **The samples read are the count the version records.** `cohort.json`'s
-    `samples.n` and `counts.ranked_eligible` become the report's and the ledger's
-    denominators, so they must be the number of samples this run read and will
-    rank; a `cohort.json` edited after the import, whose samples digest still
-    matches, is otherwise recorded with counts that describe no run.
+    `samples.n` and its count of the samples measured (a supplied cohort's
+    `counts.ranked_eligible`, a generated split's `counts.samples`) become the
+    report's and the ledger's denominators, so they must be the number of
+    samples this run read and will rank; a `cohort.json` edited after the
+    import, whose samples digest still matches, is otherwise recorded with
+    counts that describe no run.
     """
     from src.evaluation.cohort_registry import CohortVersionRefused
     from src.kg.storage.file_storage import SamplesDigestMismatch, read_samples_file
@@ -685,15 +849,33 @@ def _read_version_samples(version: CohortVersionRead, *,
         ) from None
     n_read = len(samples.samples)
     recorded_n = version.manifest["samples"]["n"]
-    ranked_eligible = version.manifest["counts"]["ranked_eligible"]
-    if not n_read == recorded_n == ranked_eligible:
+    measured = "samples" if version.kind == protocols.GENERATED else "ranked_eligible"
+    counted = version.manifest["counts"][measured]
+    if not n_read == recorded_n == counted:
         raise CohortVersionRefused(
             f"{version.samples_path} holds {n_read} samples, and {version.identity.path} "
-            f"records samples.n {recorded_n!r} and counts.ranked_eligible "
-            f"{ranked_eligible!r}: the registry was altered after the import, and its "
+            f"records samples.n {recorded_n!r} and counts.{measured} "
+            f"{counted!r}: the registry was altered after the import, and its "
             "counts would be recorded as this run's denominators. Nothing was written."
         )
     return samples
+
+
+def _read_version_fixture(version: CohortVersionRead) -> Any:
+    """A registered generated split's functional gene fixture, the one the
+    version keeps (`read_generated_task_fixture`): its record and its split's
+    rows, each read once and refused before it is parsed unless it is the
+    bytes the version binds, then unless it is what the version records of
+    it. Each refusal is the reader's own sentence, which names its cause, and
+    says that nothing was written. The protocol judged the version's counts
+    first, so a version that keeps none was refused for that data gap before
+    anything was read."""
+    from src.evaluation.cohort_registry import CohortVersionRefused, read_generated_task_fixture
+
+    try:
+        return read_generated_task_fixture(version)
+    except CohortVersionRefused as exc:
+        raise CohortVersionRefused(f"{_sentence(exc)} Nothing was written.") from None
 
 
 def _verify_generated(
@@ -791,7 +973,8 @@ def measurement_input_digests(inputs: MeasurementInputs) -> Dict[str, str]:
     bytes a reader parsed: the checkpoint the model was built from, the cohort
     scored (a generated split's file or a version's `samples.json`), the three
     graph tensors encoded, and, for a generated split, the manifest those were
-    verified against. Nothing here hashes a path, so a file replaced after its
+    verified against; a KG edge set's run records its pairs file as `pairs`
+    in place of `samples`. Nothing here hashes a path, so a file replaced after its
     read cannot change what is recorded, and a digest that was never taken
     cannot be recorded as `None`.
 
@@ -801,10 +984,14 @@ def measurement_input_digests(inputs: MeasurementInputs) -> Dict[str, str]:
     The identification check compared `kg.json` on disk with that digest at the
     start of the run; it records nothing itself.
 
-    `split_manifest` is recorded for a generated split only. A registered
-    version's run reads the manifest too, for the graph binding, but no
-    allocation cut its cohort, so the manifest says nothing about how it was
-    made; the version's own manifest is identified by `cohort_version`.
+    `split_manifest` is recorded for a ``--split`` run only, the manifest its
+    samples were verified against. A registered version's run reads the
+    workspace's manifest too, for the graph binding, but its data are checked
+    against the bytes the version binds, not against that manifest: a
+    supplied cohort or a KG edge set was cut by no allocation, and a generated
+    split version names the allocation that cut it by its own block (its kept
+    split manifest and generation definition). The version's own manifest,
+    those blocks included, is identified by `cohort_version`.
 
     Nothing globs the directory, so an unrelated file beside these does not
     change the record of a run that never read it.
@@ -812,9 +999,12 @@ def measurement_input_digests(inputs: MeasurementInputs) -> Dict[str, str]:
     from src.kg.artifacts import GRAPH_TENSOR_ROLES
 
     tensors = {role: inputs.graph.reads.get(role) for role in GRAPH_TENSOR_ROLES}
+    # The data measured: a cohort's samples, or a KG edge set's pairs file.
+    data = (("pairs", inputs.pairs.identity) if inputs.pairs is not None
+            else ("samples", inputs.samples.identity))
     reads: Dict[str, Any] = {
         "checkpoint": inputs.checkpoint.identity,
-        "samples": inputs.samples.identity,
+        data[0]: data[1],
         **tensors,
     }
     if inputs.version is None:
@@ -954,6 +1144,7 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
                    digests: Mapping[str, str],
                    dataset_record: Mapping[str, Any],
                    regime: Any,
+                   cohort_kind: str,
                    cohort_version: Optional[Mapping[str, Any]] = None,
                    r10: Optional[Mapping[str, Any]] = None,
                    cuda_executed: Optional[bool] = None,
@@ -985,12 +1176,19 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
     `git rev-parse HEAD` names, so taking it from there changes no semantics
     digest. Recorded, never enforced (contract §5.3).
 
-    **The kind of cohort follows from `cohort_version`, never from an argument
-    that states it.** With a version (`cohort_version_block`) the manifest is a
-    registered cohort's: `split` is the version's role, `cohort_kind` is
-    `supplied`, the relations are a registered cohort's and `r10` is required.
+    **The kind of cohort is the kind the protocol judged**
+    (`MeasurementInputs.data_kind`: `generated`, or the registered version's
+    recorded kind), so the run is judged and recorded by one kind. With a
+    version (`cohort_version_block`) the manifest is a registered version's:
+    `split` is the version's role and the relations are a registered
+    version's; `r10` is given for a supplied cohort version and only for one.
     Without one it is the generated split `args.split`, with no R10. The
-    manifest refuses any other combination when it is built.
+    manifest refuses, when it is built, a kind that is not the version's (or,
+    with no version, not `generated`) and an R10 that is not a supplied
+    version's (`MeasurementManifest.__post_init__`).
+
+    `n_samples` is the data's measured units: a cohort's samples, a KG edge
+    set's positive edges.
 
     **The mode is the protocol asked, set here once** (`args.mode`, the
     `--mode` the run was started with), never by the evaluator. **The
@@ -1025,7 +1223,7 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
         mode=args.mode,
         split=cohort_version["role"] if registered else args.split,
         metric_schema_version=semantics["metric_schema_version"],
-        cohort_kind="supplied" if registered else "generated",
+        cohort_kind=cohort_kind,
         n_samples=n_samples,
         candidate_construction=semantics["candidate_construction"],
         batch_size=semantics["batch_size"],
@@ -1064,16 +1262,17 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Measure a model on a cohort by an evaluation protocol this build "
-                    "implements for the model's learning stage and task head (what the Test "
-                    "page runs)"
+                    "implements that the model's capabilities admit (what the Test page "
+                    "runs)"
     )
     # The protocol names are read now, from the one definition, not copied at import.
     parser.add_argument("--mode", choices=protocols.names(), required=True,
-                        help="The evaluation protocol: a measurement this build implements "
-                             "for a model's learning stage and task head "
-                             "(src/evaluation/protocols.py), average ranks "
-                             "(docs/working/PLAN_TEST_RESULTS.md §8). The checkpoint's model "
-                             "record must be one the protocol takes; the report's mode is the "
+                        help="The evaluation protocol: a measurement this build implements, "
+                             "judged by what the model offers (its capability description: "
+                             "heads and their scoring semantics, representations, "
+                             "computation, inputs; src/evaluation/protocols.py), average "
+                             "ranks (docs/working/PLAN_TEST_RESULTS.md §8). The checkpoint's "
+                             "model must be one the protocol takes; the report's mode is the "
                              "protocol's name")
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--data-dir", type=Path, required=True)
@@ -1094,15 +1293,20 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
                              "zero. A path that is not a directory is refused; one that "
                              "cannot be checked or listed is not looked in, and R10 "
                              "names it for a scope found nowhere else. Repeatable; "
-                             "--cohort only")
+                             "--cohort only, and a supplied cohort version's: refused "
+                             "for a KG edge set, whose run records its exposure instead, "
+                             "and for a generated split, whose relation to training is "
+                             "its disease allocation's")
     parser.add_argument("--record", action="store_true",
                         help="Register the kept report in evaluations.json beside the "
                              "checkpoint, as scripts/record_evaluation.py --report "
                              "would. A refused registration exits 3; the report is kept "
                              "unless it is no longer the one the run published. --cohort "
-                             "only: a generated split's report is not registered, because the "
-                             "ledger does not yet support a generated split's data identity; "
-                             "its report and ranks stay at --output")
+                             "only, a registered version of any kind: a report from --split is "
+                             "not registered, because it has no registered version (the same "
+                             "split kept with scripts/import_cohort.py --kind generated is "
+                             "measured with --cohort and registered); its report and ranks "
+                             "stay at --output")
     parser.add_argument("--output", type=Path, default=None,
                         help="Where a generated split's measurement JSON is written: a new "
                              "file. The per-sample ranks go beside it, as <output "
@@ -1110,8 +1314,10 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
                              "neither is ever replaced. Required with --split; refused with "
                              "--cohort, whose report the registry's report store keeps")
     parser.add_argument("--batch-size", type=_positive_int, default=32,
-                        help="Patients scored per chunk (a positive integer). Recorded on "
-                             "the manifest: it can move the numbers at floating-point level")
+                        help="What is scored per chunk (a positive integer): patients for a "
+                             "task protocol, (positive, negative) pairs for "
+                             "kg_link_prediction. Recorded on the manifest: it can move the "
+                             "numbers at floating-point level")
     parser.add_argument("--device", default="auto", choices=["auto", "cuda", "cpu"],
                         help="auto requires CUDA and fails without it. Explicit cpu "
                              "is permitted for development and records "
@@ -1177,10 +1383,11 @@ def _refuse_mixed_arguments(parser: argparse.ArgumentParser, args: argparse.Name
                                           ("--outcome", args.outcome)) if value]
         if given:
             parser.error(
-                f"{', '.join(given)} apply to a registered cohort version (--cohort LABEL "
-                "--registry DIR) only: a generated split has no version, its report is not "
-                "registered (the ledger does not yet support a generated split's data "
-                "identity) and R10 is not computed for it. Nothing was read or written."
+                f"{', '.join(given)} apply to a registered version (--cohort LABEL "
+                "--registry DIR) only: a report from --split has no registered version, so it "
+                "is not registered (the same split kept with scripts/import_cohort.py --kind "
+                "generated is measured with --cohort and registered), and R10 is not computed "
+                "for it. Nothing was read or written."
             )
         if args.output is None:
             parser.error(
@@ -1291,14 +1498,19 @@ def _publish_generated(result: ModeResult, output: Path) -> Tuple[Path, Path]:
 
 
 def _publish_to_store(
-    result: ModeResult, inputs: MeasurementInputs
+    result: Any, inputs: MeasurementInputs
 ) -> Tuple[str, Path, str]:
     """A registered version's report in a new run directory of its report store.
 
     Encoded as every registry file is (`encode_json`) and checked to encode
-    before the run directory exists. Then `ranks.json` is published, and
-    `report.json` last, carrying ``"ranks": {"file", "sha256"}`` with the digest
-    `publish_bytes` returned for the bytes it wrote: the report is the commit
+    before the run directory exists. Then the run's kept output is published
+    -- a patient cohort's `ranks.json`, or a KG edge set's `scores.bin`
+    (`SCORES_FILE`: each pair's raw scores and state, streamed into the run
+    directory in chunks and placed whole, never replacing a file,
+    `publish_chunks(replace=False)`) -- and `report.json` last, carrying
+    ``"ranks": {"file", "sha256"}`` or ``"scores": {"file", "sha256", "rows",
+    ...}`` (`LinkPredictionResult.scores_block`) with the digest the
+    publication returned for the bytes it wrote: the report is the commit
     point, and a run directory without one is an interrupted write that nothing
     registers. Returns the run id, the report's path, and the digest
     `publish_bytes` returned for the report bytes it wrote: `--record` registers
@@ -1306,17 +1518,23 @@ def _publish_to_store(
     """
     from datetime import datetime, timezone
 
-    from src.evaluation.cohort_registry import create_report_dir, encode_json
-    from src.utils.file_modes import publish_bytes
+    from src.evaluation.cohort_registry import SCORES_FILE, create_report_dir, encode_json
+    from src.utils.file_modes import publish_bytes, publish_chunks
 
     report = result.to_dict()
-    ranks_bytes = encode_json(result.to_ranks())
+    scored_pairs = inputs.data_kind == protocols.KG_EDGES
+    ranks_bytes = None if scored_pairs else encode_json(result.to_ranks())
     encode_json(report)  # refuses a value JSON cannot hold before anything exists
     run_id, run_dir = create_report_dir(
         inputs.version, inputs.checkpoint.identity.sha256, datetime.now(timezone.utc)
     )
-    ranks_sha256 = publish_bytes(run_dir / RANKS_FILE, ranks_bytes)
-    report["ranks"] = {"file": RANKS_FILE, "sha256": ranks_sha256}
+    if scored_pairs:
+        scores_sha256, size = publish_chunks(run_dir / SCORES_FILE, result.scores_chunks(),
+                                             replace=False)
+        report["scores"] = result.scores_block(SCORES_FILE, scores_sha256, size)
+    else:
+        ranks_sha256 = publish_bytes(run_dir / RANKS_FILE, ranks_bytes)
+        report["ranks"] = {"file": RANKS_FILE, "sha256": ranks_sha256}
     report_path = run_dir / REPORT_FILE
     report_sha256 = publish_bytes(report_path, encode_json(report))
     return run_id, report_path, report_sha256
@@ -1341,7 +1559,8 @@ def _publication_failure(
     no hard links, an empty file this run claimed at `output` or at the ranks;
     for a registered version, a new run directory, empty or holding only
     `RANKS_FILE`, with no report to commit it. Which of those happened depends
-    on the step that failed, so the message says "may". A generated split's
+    on the step that failed, so the message says "may" (a KG edge set's run
+    keeps `scores.bin` where a cohort's keeps `ranks.json`). A generated split's
     file that is already taken (`FileExistsError` naming it, raised only when
     something appeared there after `_check_generated_targets`) is said exactly:
     a taken ranks file means this run wrote no file at all; a taken report
@@ -1376,11 +1595,14 @@ def _publication_failure(
             f"report beside it, an interrupted write, and {output} may be an empty file this "
             "run claimed. Measure again to a new --output."
         )
+    from src.evaluation.cohort_registry import SCORES_FILE
+
+    kept = SCORES_FILE if inputs.data_kind == protocols.KG_EDGES else RANKS_FILE
     return ReportNotWritten(
         f"{_sentence(exc)} No {REPORT_FILE} was published, so this run kept no report and "
         f"nothing can register it. A new run directory in "
         f"{inputs.version.directory / REPORTS_DIR} may exist, empty or holding only "
-        f"{RANKS_FILE}: an interrupted write, which nothing registers. Measure again to "
+        f"{kept}: an interrupted write, which nothing registers. Measure again to "
         "keep a report."
     )
 
@@ -1390,9 +1612,10 @@ def _failure_after_publishing(
 ) -> FailedAfterPublishing:
     """A failure after the report was published, saying where it is.
 
-    For a registered version, whether `--record` got as far as the ledger is
-    not known here, so the message gives the command that registers the report
-    later: run for a report already registered, it says so and writes nothing.
+    For a registered version of any kind, whether `--record` got as far as
+    the ledger is not known here, so the message gives the command that
+    registers the report later: run for a report already registered, it says
+    so and writes nothing.
     """
     said = f"{_sentence(exc)} The report was written: {report_path}."
     if inputs.version is not None:
@@ -1543,9 +1766,10 @@ def _offer_later_registration(inputs: MeasurementInputs, report_path: Path) -> D
     command that registers it later. Returns what the `--outcome` file says
     about the registration.
 
-    **The command is always printed** (policy rev 16, K8-6r.2): a registration
-    reads only the run it registers, so no other run's report or result can
-    refuse it, and nothing is checked here.
+    **The command is always printed** (policy rev 16, K8-6r.2), for a run on
+    a registered version of any kind (research comparison Stage 6): a
+    registration reads only the run it registers, so no other run's report or
+    result can refuse it, and nothing is checked here.
     """
     command = register_later_command(report_path, Path(inputs.checkpoint.identity.path))
     print(f"\nNot registered (no --record). Register it with:\n  {command}\n")
@@ -1677,9 +1901,54 @@ def _r10_label_text(label: str, value: Mapping[str, Any], evidence_state: str) -
     return f"{words} — {value['k']} of {value['n']} test cases"
 
 
+def _print_kg_edges_summary(inputs: MeasurementInputs, result: Any) -> None:
+    """A KG edge set's run: which version, its counts with their units, the
+    exposure's reading and the scores kept. Aggregates only; no edge."""
+    block = inputs.cohort_version
+    evidence = result.sampler_evidence
+    print(f"\nKG edge set {block['label']} (role {block['role']}), manifest sha256 "
+          f"{block['manifest_sha256'][:12]}...")
+    for name, value in evidence["counts"].items():
+        print(f"  {name}: {value} ({evidence['count_units'][name]})")
+    exposure = result.exposure
+    print(f"\nExposure ({exposure['definition_version']}): {exposure['reading']}")
+    if exposure["reason"]:
+        print(f"  {exposure['reason']}")
+    passing = exposure["measurement_message_passing"]
+    print(f"  message passing: {passing['graph']}; measured edges in it: "
+          f"{passing['measured_edges_in_it']}")
+    print(f"  {exposure['caveat']}")
+
+
+def _print_generated_summary(inputs: MeasurementInputs, result: Any) -> None:
+    """A registered generated split's run: which version, under its role as
+    recorded (train or val, never presented as test or as a supplied
+    cohort), its counts with their units, its generation identity, and, for a
+    protocol that scores its functional gene fixture, the fixture's rows
+    scored. Aggregates only; no sample. There is no R10: a generated split's
+    relation to training is its allocation's."""
+    from src.evaluation.cohort_registry import version_words
+
+    block = inputs.cohort_version
+    generation, split_manifest = block["generation"], block["split_manifest"]
+    words = version_words(block["kind"], block["role"])
+    print(f"\n{words[:1].upper()}{words[1:]}: {block['label']}, manifest sha256 "
+          f"{block['manifest_sha256'][:12]}...")
+    for name, value in block["counts"].items():
+        print(f"  {name}: {value} ({block['count_units'][name]})")
+    print(f"  generation: {generation.get('algorithm')} v{generation.get('algorithm_version')}, "
+          f"split manifest sha256 {split_manifest['sha256'][:12]}...")
+    if inputs.task_data is not None:
+        fixture = block["task_fixture"]
+        print(f"  scored: its {fixture['label']} ({fixture['rule']}, seed {fixture['seed']}), "
+              f"{result.n_ranked} ranked of {fixture['samples']['n']} rows")
+
+
 def _print_registered_summary(inputs: MeasurementInputs, result: ModeResult, run_id: str,
                               report_path: Path) -> None:
-    """Which version, its coverage with every denominator, and R10's labels.
+    """Which version, its coverage with every denominator, and R10's labels
+    (a KG edge set's run: `_print_kg_edges_summary`; a generated split's:
+    `_print_generated_summary`).
 
     Each R10 label is shown in the caveats' words (`_r10_label_text`), then the
     four label definitions once, as the Diagnosis panel shows them: the operator
@@ -1690,6 +1959,11 @@ def _print_registered_summary(inputs: MeasurementInputs, result: ModeResult, run
     from src.evaluation.caveats import R10_LABEL_TEXT, R10_STATE_TEXT
     from src.evaluation.r10 import R10_LABELS, R10_SCOPES
 
+    if inputs.data_kind in (protocols.KG_EDGES, protocols.GENERATED):
+        (_print_kg_edges_summary if inputs.data_kind == protocols.KG_EDGES
+         else _print_generated_summary)(inputs, result)
+        print(f"\nReport: {report_path}\nRun id: {run_id}")
+        return
     block = inputs.cohort_version
     counts = block["counts"]
     excluded = ", ".join(f"{name} {n}" for name, n in counts["excluded"].items())
@@ -1906,12 +2180,12 @@ def _measure_task(args: argparse.Namespace, registry: Optional[Path], device: to
     (`src.evaluation.protocols`, `src.evaluation.task_measurement`).
 
     Every input read once and verified before anything is built or written,
-    the model record judged against the stage and head the protocol takes
-    right after the checkpoint read (provenance §9.3 hazard 3;
-    `read_measurement_inputs(protocol=)`); then the graph view rebuilt from the
-    graph read by the spec's rule and compared with the record, and the bundle
-    built and strictly loaded with the protocol's stage and task, never its
-    name. The semantics and the run are the protocol's evaluator's, and the
+    the model judged by what the protocol needs right after the checkpoint
+    read (provenance §9.3 hazard 3; `read_measurement_inputs(protocol=)`: the
+    record's capability description, never the protocol's name); then the
+    graph view rebuilt from the graph read by the spec's rule and compared
+    with the record, and the bundle built from that same record and strictly
+    loaded. The semantics and the run are the protocol's evaluator's, and the
     manifest's mode is the protocol's name (`build_manifest`). A checkpoint
     without a model spec is refused: it was written before the switch and is
     history.
@@ -1931,44 +2205,70 @@ def _measure_task(args: argparse.Namespace, registry: Optional[Path], device: to
         protocol=args.mode,
     )
     asked = protocols.PROTOCOLS[args.mode]
-    graph_data, samples = inputs.graph.graph_data, inputs.samples.samples
+    graph_data = inputs.graph.graph_data
+    samples = inputs.samples.samples if inputs.samples is not None else None
     record = read_model_record(inputs.checkpoint.checkpoint)
     rule = _asdict(record.model_spec.graph_view)
     rule["exclude_relations"] = list(rule["exclude_relations"])
     view = build_graph_view(graph_data, rule=rule)
-    bundle, record = load_bundle(inputs.checkpoint.checkpoint,
-                                 learning_stage=asked.learning_stage, task=asked.task,
-                                 view_digest=view.digest)
+    # The record the protocol judged (`read_measurement_inputs`), read from the
+    # same payload: what the model offers decided, so the load checks the view.
+    bundle, record = load_bundle(inputs.checkpoint.checkpoint, view_digest=view.digest)
     bundle.to(device)
+    # The measured units (`n_samples`): a cohort's samples, a KG edge set's
+    # positive edges.
+    units = (int(inputs.cohort_version["counts"]["positive_edges"]) if samples is None
+             else len(samples))
     manifest = build_manifest(
-        args, graph_data, len(samples), device, digests=measurement_input_digests(inputs),
-        dataset_record=inputs.dataset_record.summary(), cohort_version=inputs.cohort_version,
-        r10=inputs.r10, cuda_executed=cuda_executed, model=bundle,
-        regime=observe_autocast_regime(device),
+        args, graph_data, units, device, digests=measurement_input_digests(inputs),
+        dataset_record=inputs.dataset_record.summary(), cohort_kind=inputs.data_kind,
+        cohort_version=inputs.cohort_version, r10=inputs.r10, cuda_executed=cuda_executed,
+        model=bundle, regime=observe_autocast_regime(device),
         semantics=task_semantics(asked.evaluator, args.batch_size, bundle),
     )
+    # **Dispatch by the data kind**, into the one evaluator the protocol
+    # names: a KG edge set's pairs, with the model's record for the exposure;
+    # a cohort's samples.
+    if inputs.pairs is not None:
+        result = TASK_RUNS[asked.evaluator](bundle=bundle, view=view, pairs=inputs.pairs.pairs,
+                                            record=record, manifest=manifest, device=device,
+                                            batch_size=args.batch_size)
+        return inputs, result
     result = TASK_RUNS[asked.evaluator](bundle=bundle, view=view, samples=samples,
                                         manifest=manifest, device=device,
                                         batch_size=args.batch_size)
     if inputs.task_data is not None:
         # The split's samples are the fixture's, bound by its record (not by the
-        # workspace manifest, which binds the disease split R2 checked): say
-        # so, with the cases the derivation left out.
+        # workspace manifest, which binds the disease split R2 checked, nor by
+        # a generated version's samples digest): say so, with the cases the
+        # derivation left out. The split is the one measured: `--split`, or a
+        # registered generated split's role.
         record = inputs.task_data.record
+        split = result.manifest.split
         result.sampler_evidence["task_fixture"] = {
             "record_sha256": inputs.task_data.identity.sha256,
             "label": record.get("label"), "rule": record.get("rule"),
-            "seed": record.get("seed"), "split": args.split,
-            "derivation": (record.get("counts") or {}).get(args.split)}
+            "seed": record.get("seed"), "split": split,
+            "derivation": (record.get("counts") or {}).get(split)}
     return inputs, result
 
 
 def _print_result(result: Any) -> None:
     """The run's figures on the console, under its mode's label, and its
-    candidates as its manifest describes them (`candidate_construction`)."""
+    candidates as its manifest describes them (`candidate_construction`). A
+    KG edge set's run gives every metric of its schema, a value or the status
+    that says why none was computed."""
     from src.evaluation.caveats import mode_label
 
     print(f"\n{mode_label(result.manifest.mode)}")
+    if result.manifest.cohort_kind == protocols.KG_EDGES:
+        print(f"  {result.n_ranked} pairs scored")
+        for name, status in result.sampler_evidence["metrics"].items():
+            value = result.authoritative_metrics.get(name)
+            shown = f"{value:.6f}" if value is not None else f"not computed: {status['reason']}"
+            print(f"  {name:38s} {shown}")
+        print(f"  candidates: {result.manifest.candidate_construction}")
+        return
     print(f"  {result.n_ranked} ranked, {result.n_ground_truth_absent} absent")
     for name, value in result.authoritative_metrics.items():
         print(f"  {name:38s} {value:.6f}")

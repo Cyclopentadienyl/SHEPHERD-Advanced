@@ -1151,6 +1151,38 @@ device the model's parameters are on (`cuda:0`, not just `cuda`). The status's
 > disease child it trained (a base, then one disease child, since K7), with the
 > device they were trained on.
 
+### What the acceptance reads of serving: S1 (since research comparison Stage 10b)
+
+The GB10 acceptance (`scripts/probe_deployment.py --m2-acceptance`) ends its demo part with
+**S1**, a minimal reading of what serving a task model takes (BACKLOG 64). It starts the
+service as the launcher does, with the demo's disease child configured at startup, checks that
+the service is ready and serves that child, and then reads:
+
+- the **cold start**: from the launch to the first `/health` answer, which includes building
+  the pipeline;
+- the **warm-up** (the first 5 diagnose requests) and the **steady state** (the next 50), sent
+  one at a time: each request's time to its whole answer, and the service's own
+  `inference_time_ms`, with their median, smallest and largest;
+- the **service process's memory**: its resident size (VmRSS) at readiness and after each phase,
+  and its peak since it started (VmHWM), from `/proc/<pid>/status`; and the allocator variables
+  it was started with.
+
+On CUDA a request's time already includes the device's work: the service copies the scores to
+the host before it answers. torch's own allocator counters (`max_memory_allocated`) live inside
+the service's process, and no route exposes them, so S1 records them as not obtainable, with
+why. Any reading S1 cannot take is recorded as a state with its reason, never as a number.
+
+**S1 is informational.** It is in neither of the acceptance's required lists, has no threshold
+and judges nothing, so a slow or large reading never leaves the acceptance incomplete. It fails
+only when it could not read the child at all: the service did not start, was not ready, or did
+not serve that child. It then sends no request, and its report entry keeps what it read before
+(the cold start, `/ready`'s answer) and says of every later reading that it was not taken. Even
+then it does not fail the run: the probe's exit status never counts S1, and the console prints
+its failure as an INFO line. Its readings are the demo child's, for one query and one cold
+start. They are not the real workspace's model, not concurrent load and not a capacity
+decision. What they do not cover is listed beside them in the report (`not_covered`), and their
+fields are in `docs/working/research-comparison/GB10_ACCEPTANCE.md` §2.1.
+
 ---
 
 ## 4.9 Test cohorts: import, measure, record (since contract M4)
@@ -1162,8 +1194,8 @@ acceptance — and its result is recorded beside the checkpoint. The flow is:
 1. `scripts/import_cohort.py` previews, then commits, a cohort version mapped to one workspace's
    graph;
 2. `scripts/measure_scorer.py --mode PROTOCOL --cohort LABEL --registry DIR` measures the
-   checkpoint on it by a protocol this build implements for the model's learning stage and task
-   head, and keeps the full report;
+   checkpoint on it by a protocol this build implements that the model's capabilities admit,
+   and keeps the full report;
 3. `--record`, or later `scripts/record_evaluation.py --report`, registers the report in
    `evaluations.json` beside the checkpoint;
 4. the Diagnosis page's "Model in use" card shows the loaded checkpoint's recorded tests as a
@@ -1217,8 +1249,12 @@ renamed into place, with the directory's permission policy.
 <registry>/
   sources/<sha256>.json                  the source file's bytes, verbatim, named by their digest
   versions/<label>/cohort.json           the version manifest, written last: it makes the version exist
-  versions/<label>/samples.json          the mapped samples, bound by cohort.json's digest
-  versions/<label>/reports/<run id>/     one directory per measurement: ranks.json, then report.json
+  versions/<label>/samples.json          the mapped samples (a generated split's: the workspace's file), bound by cohort.json's digest
+  versions/<label>/pairs.bin             a KG edge set's pairs instead of samples (below), bound the same way
+  versions/<label>/split_manifest.json   a generated split's copy of the workspace's split manifest (below), bound the same way
+  versions/<label>/task_fixture.json     a generated split's copy of the workspace's gene fixture record, when it keeps one (below), bound the same way
+  versions/<label>/task_fixture_samples.json   that fixture's rows of the split, bound the same way
+  versions/<label>/reports/<run id>/     one directory per measurement: ranks.json (a KG edge set's run: scores.bin), then report.json
 ```
 
 **A version never changes.** A label is used once. A `versions/<label>/` without `cohort.json`
@@ -1263,7 +1299,8 @@ python scripts/import_cohort.py --registry /srv/shepherd/cohorts \
 ```
 
 Labels and roles are lowercase identifiers (letters, digits, `_`, `-`, `.`; at most 64
-characters); a role may not be `train` or `val`.
+characters); a supplied cohort's role may not be `train` or `val` (a KG edge set's role is its
+part of the split, and a generated split's the split it is, below).
 
 **The preview writes nothing.** It maps every case against the graph the workspace manifest
 binds, through the same readers and checks as training and serving, and prints:
@@ -1291,6 +1328,177 @@ refuses ("inputs changed since the preview"). It prints the version's directory 
 SHA-256. A source in which no case can be ranked is refused at commit, since there would be nothing
 to measure.
 
+### A KG edge set: `--kind kg_edges` (since research comparison Stage 4)
+
+A **KG edge set** is a version of another kind: one part of the edge split a model was trained
+on, kept as fixed link-prediction pairs, for the KG link-prediction measurement (`--mode
+kg_link_prediction`, research comparison Stage 5; "The KG link-prediction measurement" below).
+The same preview and commit import it:
+
+```bash
+python scripts/import_cohort.py --kind kg_edges --registry /srv/shepherd/cohorts \
+    --data-dir data/workspaces/<ws> \
+    --from-checkpoint data/workspaces/<ws>/runs/gatv2/<run>/checkpoints/best.pt \
+    --label kg-test-2026-11 --role test
+```
+
+- **The role is the part, recorded as given:** `train`, `val` or `test`. None is refused for not
+  being test. Measuring the train part is a fitting diagnostic and the val part a development
+  measurement; neither is ever relabelled as test.
+- **Where the split comes from.** The checkpoint's model record names its graph view rule and
+  edge split (`data_roles`); a finetune's are its base's. The importer reads the workspace's
+  graph through the same readers as measurement and checks that the checkpoint was trained on
+  it. It rebuilds the view by the recorded rule, refusing a digest that differs, and rebuilds the
+  split, checking it field by field (rule, seed, view digest, digest, edges per part) and naming
+  the first that differs. A checkpoint without a model record, of another graph, or whose record
+  contradicts itself is refused. Every check runs before anything is written, and nothing of the
+  checkpoint is copied. The version names the checkpoint by its SHA-256 only, never by its file
+  name or path, so a copy or a link of the same checkpoint makes the same version.
+- **The pairs** follow base validation's rule on the role's part (`fixed_lp_pairs`, `BASE_FIXED`):
+  every edge once, permuted and given one negative tail by a generator seeded from the split's
+  seed, in batches of 512. An edge whose relation has no other tail in its batch has no negative:
+  it is left out and counted, never given an invented one. The version records the pairs each
+  batch kept (`pairs.batch_pairs`, counts only), so the batch boundaries can be found in the stored
+  rows, and each batch's left-out edges are its edges less that count. So a `val` set's pairs are
+  exactly the pairs base validation scores. Another rule, seed or batch size is another version.
+- **The message-passing graph** is the split's train part (scorer-retraining README A4). For role
+  `train` the measured edges are in it, and the version says so; nothing is removed.
+- **The preview** prints the view, the split's parts, the positive edges, the pairs and the edges
+  without a negative, each with its denominator. Counts are in directed graph-view edges: an edge
+  and its reverse twin are one fact and two edges, always in the same part. It also prints the
+  pair rule, the pairs file's digest, the message-passing graph and the graph and dataset record
+  it binds, but never an edge. A part with no pair cannot be committed.
+
+The version is `cohort.json` (schema 2, kind `kg_edges`, written last) and `pairs.bin`: the pairs
+as little-endian int64 rows (head, relation, tail, negative tail) in the order made. The manifest
+binds `pairs.bin` by the digest of its bytes; a reader compares that digest before it parses the
+bytes, so a changed, truncated or missing file is refused. The pairs are kept, never rebuilt,
+because torch's random stream is not promised across releases. No source file is kept: the graph
+is the workspace's, bound by its four digests and the dataset record, which a measurement
+compares as it does a supplied version's.
+
+The server's lists (`GET /cohorts`) give a KG edge set with its kind, role and counts, never an
+edge; the Test page lists it by label, kind and role ("kg-test · KG edge set (test)", after the
+supplied cohorts), with its counts in their own units, never with a supplied cohort's counts
+(since research comparison Stage 7). With no KG edge set in the registry, the Test page names the
+command that imports one (this section). The KG link-prediction protocol measures it (below); a task protocol
+naming one, from `measure_scorer.py --cohort` or the Test page's Start, is refused with that
+protocol's reason ("the disease measurement does not measure a KG edge set; ..."), and nothing is
+written.
+Each reader of a supplied cohort's cases refuses one with one shared reason, "a KG edge set
+(test), not a supplied cohort version": the Diagnosis route, as a reference cohort, and
+`audit_split_overlap.py --cohort` (exit 1, one message, nothing written). The Diagnosis page's
+Reference cohort select lists it marked "KG edge set" and never chooses it by default; when the
+registry holds no readable supplied cohort, Run Diagnosis is off with that reason.
+
+**Schema 1 and 2.** A supplied import still writes schema 1, byte for byte as before, and schema 1
+is read as a supplied cohort. A KG edge set and a generated split (below) are schema 2, which
+states its kind. Schema 2 is read only for the kinds written in it: a schema-2 manifest of kind
+`supplied`, which no revision writes, is refused ("which no revision writes: a supplied version is
+schema 1"), never read by the schema-1 rules. A revision from before schema 2 lists a KG edge set
+or a generated split as unreadable with its reason ("is schema 2; this revision reads schema 1
+only"), so an older revision never reads one as a supplied cohort; one that reads KG edge sets
+but not generated splits (research comparison Stage 4a) lists a generated split as "of kind
+'generated'; this revision reads kinds supplied and kg_edges only".
+
+### A generated split: `--kind generated` (since research comparison Stage 4b)
+
+A **generated split** is one of the workspace's own generated patient splits, the
+`<role>_samples.json` the generator wrote and `measure_scorer.py --split` measures in place, kept
+as a registry version with a limited data identity of its own:
+
+```bash
+python scripts/import_cohort.py --kind generated --registry /srv/shepherd/cohorts \
+    --data-dir data/workspaces/<ws> --label gen-val-2026-11 --role val
+```
+
+- **The role is the split, recorded as given:** `train`, `val` or `test`; none is refused for
+  what it is, and none is relabelled. The generator writes `train` and `val` only, so `--role
+  test` is refused where the workspace's split manifest binds no generated test split, naming
+  the splits it binds, with nothing written.
+- **What is checked.** The importer reads the workspace as `--split` measurement does: the graph
+  against the split manifest, the dataset record, and both generated splits against that one
+  manifest reading (their digests, disease sets and disjointness). A split that is not the file
+  the manifest binds is refused, and so is a workspace re-sampled between the preview and the
+  commit (its preview id changes). Every check runs before anything is written. `--source`,
+  `--partial-phenotypes` and `--from-checkpoint` do not apply (exit 2).
+- **Its data identity** is the samples' digest, the split manifest's digest and the digest of each
+  samples file it binds, the generation definition (the generator's algorithm, version and
+  recorded settings, and the disease allocation it cut, copied from the split manifest as they
+  are), and the role. The counts are the split's generated patients and its distinct diseases,
+  counted from the samples verified, each with its unit; a split manifest whose own count of
+  them differs is refused. Each split file is named by its split's name, never a path. The
+  version records no path.
+- **The samples and the split manifest are copied, not bound in place.** The version keeps the
+  workspace's file byte for byte as `samples.json`, bound by the digest the split manifest
+  records, and the split manifest itself as `split_manifest.json` (digests and counts only, no
+  sample), bound by its own digest, so it stays readable and verifiable after the workspace is
+  rebuilt or re-sampled, its generation definition included; whether the workspace still holds
+  that split is then a reference's state, not a condition of reading the version.
+- **The functional gene fixture travels with it** (since research comparison Stage 5b). When the
+  workspace holds the gene task's functional fixture of its build (`derived/gene_fixture/`,
+  `scripts/derive_task_fixture.py`) and its record describes the split kept (the same split
+  manifest, graph and samples), the version keeps the record as `task_fixture.json` and the
+  role's rows as `task_fixture_samples.json`, each byte for byte and bound by digest, under a
+  `task_fixture` block (its rule, seed, distractors and what the derivation did to the split)
+  and a counted `task_fixture_samples`. A fixture that is absent, of another build or unreadable
+  is not kept and refuses nothing: the preview says why, and the version holds the split for the
+  disease measurement only. To keep the fixture, derive it, then import the split again under a
+  new label.
+- **The preview** prints the counts, the generation definition and allocation, the split manifest
+  and the split's files by digest, the samples kept, what was verified, the functional gene
+  fixture kept (or why none is), and the graph and dataset record it binds, never a sample or a
+  patient id. A split with no sample cannot be committed.
+
+The server's lists (`GET /cohorts`) give a generated split with its kind, role and counts, never a
+sample; the Test page lists it by label, kind and role ("gen-val · Generated split (val)"), with
+its counts in their own units, never with a supplied cohort's counts. It is never presented as a supplied cohort, or
+as test unless its role is test: the Diagnosis route and `audit_split_overlap.py --cohort` refuse
+it with the registry's shared reason ("a generated split (val), not a supplied cohort version"),
+and the Diagnosis page's Reference cohort select lists it marked "generated split" and never
+chooses it by default.
+
+**Measuring it** (since research comparison Stage 5b): `measure_scorer.py --mode <protocol>
+--cohort <label> --registry <registry>` measures a registered generated split by each task
+protocol the model's capabilities admit (disease, gene, patients_like_me), through the same
+evaluator `--split` uses, so the same model on the same split gives the same figures either way.
+Disease reads the version's `samples.json`; gene and patients-like-me read the fixture the version
+keeps; each file is read once and refused before it is parsed unless it is the bytes the version
+binds. A version that keeps no fixture, or whose fixture holds no row of its split, is refused
+for gene and patients-like-me with that stated data gap before anything is read, never for its
+role; the job runner and the Test page's Start say the same. The run is refused, with nothing
+written, where it cannot be valid: a version file that is not the bytes the version binds, or a
+`cohort.json` that contradicts them; a version of another graph than the workspace and the
+model; a protocol the model's capabilities or the data kind do not take; and
+`--training-evidence` (R10 is a supplied cohort's; a generated split's relation to training is
+its disease allocation's). Its report is kept in the version's report store like any version's,
+each run in a new run directory (`ranks.json`, then `report.json`), never overwriting one. The
+manifest records `cohort_kind` `generated`, the version's block (its role as recorded, train or
+val today, its generation identity and the fixture it keeps) and the role as `split`; there is no
+R10, and the role is never presented as test. Its report is registered like any kept report
+(`--record`, or the register-later command the run prints; research comparison Stage 6): its
+ledger record keeps the role and the generation identity. A generated test role cannot be
+imported today, so none is measured. The job
+runner chooses R10's evidence once, by the version's kind (since research comparison Stage 7): a
+supplied cohort's run is given the `SHEPHERD_TRAINING_EVIDENCE_DIRS` directories, and a refused
+setting refuses its start; a generated split's or a KG edge set's run is given none, whether the
+setting is set or refused, so a Test-page run on one starts and is measured. Reports measured with
+`--split` are untouched: they stay where they were written, no identity is made up for them, and
+`record_evaluation.py` still refuses to register them.
+
+**Moving a registry.** No version records a path: each names what it depends on by content (the
+graph's four digests, the dataset record and each source it names by role, and by kind the view,
+split, pairs and checkpoint of a KG edge set, or the split manifest, split files, samples and
+any functional gene fixture of a generated split). A registry copied or moved to another directory that `--registry` or
+`SHEPHERD_REGISTRY` then names reads the same versions under the same digests; which directory is
+allowed is that setting's rule, apart from the content check. No command or page shows whether
+a version's dependencies are present yet: the registry's library check (`check_references`)
+gives each as a state (verified, differs, missing, unreadable or not checked), never a reason a
+version cannot be read, and the results service is to show those states (research comparison
+Stage 8). The source roles a version names are the dataset record's, with no list of allowed
+roles; today's KG builder records four (MONDO, HPO, the phenotype annotations and
+genes-to-phenotype), and a new source needs the builder's own extension first.
+
 ### Measure
 
 ```bash
@@ -1301,16 +1509,20 @@ python scripts/measure_scorer.py --mode disease \
     [--training-evidence DIR ...] [--record] [--device auto|cuda|cpu] [--batch-size 32]
 ```
 
-`--mode` is required and names the **protocol**: a measurement this build implements for a
-model's learning stage and task head (`src/evaluation/protocols.py`), today `disease`, `gene` and
-`patients_like_me`, one for each task head of a finetuned model. The report's mode is the
+`--mode` is required and names the **protocol**: a measurement this build implements, judged by
+what the model offers (its capability description, read from its model spec;
+`src/evaluation/protocols.py`), today `disease`, `gene` and `patients_like_me`, each taking a
+finetuned model that carries its task head, and `kg_link_prediction`, taking a base or any
+finetune by its LP head and measuring a KG edge set (below). The report's mode is the
 protocol's name. The run judges the protocol on the bytes it reads, and a refusal says why and
 ends "Nothing was written.": a registered version must list the genes the protocol needs (`gene`
 causal and candidate genes, `patients_like_me` causal genes), checked right after its
-`cohort.json` is read, before the workspace or the checkpoint; the checkpoint's model record must
-be of the stage and task head the protocol takes, checked right after the checkpoint is read. A
-base is refused with "This model is a base: its formal test (link prediction on held-out
-knowledge-graph edges) is not implemented yet. A model finetuned from it can be measured.", and a
+`cohort.json` is read, before the workspace or the checkpoint; the checkpoint's model must offer
+what the protocol needs (for the three task protocols, its task head), checked right after the
+checkpoint is read. A base asked for a task protocol is refused with that protocol's reason, which
+names the one that takes it ("the disease measurement takes a finetune model with the disease
+head; this checkpoint is a base model with no task head. It can be measured by
+kg_link_prediction."), and a
 checkpoint without a model spec (a ShepherdGNN history file) with the record reader's phrase,
 "written before the model spec: not readable by this build; start a new run" (since K8-7b,
 2026-11-08; it used to be refused "as history"). The Test page passes the
@@ -1389,6 +1601,59 @@ each category), the four R10 labels in the shared words of `src/evaluation/cavea
 `unverifiable` label with its reason), the label definitions once, the report's path and the run
 id. The report itself keeps the states and holds no prose.
 
+### The KG link-prediction measurement: `--mode kg_link_prediction` (since research comparison Stage 5)
+
+One protocol measures a KG edge set, for a base and each of its finetunes alike (the owner's O3):
+the formal KG test and a family's common read-out use this one evaluator, and differ in the data
+role, the exposure and the research question, not in how they are scored.
+
+```bash
+python scripts/measure_scorer.py --mode kg_link_prediction \
+    --checkpoint data/workspaces/<ws>/runs/<arch>/<run>/checkpoints/<file>.pt \
+    --data-dir data/workspaces/<ws> \
+    --cohort kg-test-2026-11 --registry /srv/shepherd/cohorts [--batch-size 512] [--device cpu]
+```
+
+- **What is scored.** Each stored pair, a positive edge against its one rule-generated negative,
+  by the model's LP head (the DistMult raw score), over the full-view vectors of the version's
+  message-passing graph (its split's train part, with the view's node types) for every model. No
+  patient samples are read. `--batch-size` is the pairs scored at once.
+- **Metric schema 3.** LP accuracy (a positive's raw score above 0, a negative's at or below 0,
+  over both), ROC-AUC (average ranks), AP and lp_loss, over the whole set, each with its unit and
+  denominator; a metric that cannot be computed is a status with its reason, never a number. The
+  counts carry their units: `n_samples` is the version's positive edges, `n_ranked` the pairs.
+  There is no R10: `--training-evidence` is refused for a KG edge set.
+- **Checked as for a supplied version,** before anything is written: the version's `cohort.json`
+  and `pairs.bin` against the digest it binds (a changed file is refused before it is parsed, and
+  pairs that parse to other rows or another pairs digest than the version records are refused),
+  the workspace's graph and dataset record, the version against the workspace, the checkpoint
+  against the graph, and `--expect-*` digests. Also refused: a version of another graph view than
+  the model's (there is no node mapping between views in this build: a capability gap, not a
+  research rule), a file without a model spec, a version with no pair, a recorded split that does
+  not rebuild from the view, pairs that are not the role's edges, pairs that are not what their
+  record declares though their digests match (a node or relation id outside the view, or, for
+  `fixed-lp-pairs/v1`, a negative tail equal to its own pair's tail or not a tail of its relation
+  in its batch), and `--split` with this protocol. **Not refused:** a model of another split of
+  the same view, another family, another environment, or another result.
+- **The exposure** is a top-level block of the report (definition `kg-lp-exposure/v1`, with its
+  sources: the checkpoint and the version). It says how the measured edges stand to what the
+  model's record says it used of the graph: "held out relative to the recorded training and
+  validation graph use" (a base on its own test set), "k of n" (its val or train set, or a model
+  of another split), "after full-view exposure" (a finetune, whose validation passed messages over
+  the full view), or "exposure not recorded" (a record this build cannot read). It is never a
+  gate, and the negatives are never claimed as proven non-relations.
+- **What is kept.** In the version's report store, a new run directory holds `scores.bin` (each
+  pair's actual raw scores and state, keyed to the pairs file's rows, streamed in chunks and
+  placed whole) and then `report.json`, which names it by digest and row count. A run cancelled
+  or failed before the report leaves no report, and what it left is listed as an interrupted
+  write.
+- **Registering it** (research comparison Stage 6) works as for any kept report: `--record`, or
+  the register-later command the run prints. Its ledger record is a KG edge set's: the version's
+  view, split, message-passing graph, pairs and counts with their units, no R10, the run's counts
+  and each metric's status, and its exposure block as the report wrote it, so the ledger alone
+  still says how the measured edges stand to the model's recorded graph use. Models and
+  `record_evaluation.py --show` show it by its kind, with that exposure.
+
 ### Mode D (removed in K7)
 
 Mode D (`--mode D`, Batch 3's measurement of what the Diagnosis page served in October 2026, the
@@ -1430,7 +1695,8 @@ registration of another report.
   The checkpoint is the file the run read, at its resolved path, so the command works whatever
   the file is named. Each path is double-quoted, so a path with a space stays one argument in a
   POSIX shell, cmd or PowerShell. A path holding `"`, `$`, a backtick, `%` or `!` is expanded by
-  one shell or another and has to be quoted by hand.
+  one shell or another and has to be quoted by hand. A run on a version of any kind prints it (a
+  KG edge set's and a generated split's included, since research comparison Stage 6).
 - **`record_evaluation.py` names the checkpoint with exactly one of two arguments** (neither or
   both is a rejected command line):
   - `--checkpoint FILE`: that one file, under any name, must hold the bytes the report measured;
@@ -1495,18 +1761,94 @@ registration of another report.
   was not, it says "the usage history was not written" with the reason, and the record stands.
   A ledger changed by something that takes no lock, such as a hand edit, is still refused
   rather than overwritten.
-- Only a **registered cohort version's** report is recorded; a report from `--split` is not,
-  because the ledger does not yet support a generated split's data identity (it has no
-  registered cohort version), not because such a result counts for less (policy rev 16). Its
-  report and ranks stay at `--output`; extending the ledger to them is later work.
+- A report of a **registered version** of any kind is recorded: a supplied cohort's, a KG edge
+  set's, or a generated split's kept with `import_cohort.py --kind generated` (research
+  comparison Stage 6). A report from `--split` is not, because it has no registered version, so
+  no data identity the ledger records results by, not because such a result counts for less
+  (policy rev 16). Its report and ranks stay at `--output`; the same split kept as a version is
+  measured with `--cohort` and registered.
+
+### Export every result: `scripts/export_results.py` (since research comparison Stage 8)
+
+One read-only results service (`src/api/services/results.py`) reads every kept report and every
+readable ledger record, and this command exports them as CSV or JSON. **It runs as the operator on
+this machine**: it reads the directories you name with this account's rights, never through the
+server, so nothing is offered over the network, and it writes nothing but the export.
+
+```bash
+python scripts/export_results.py --workspaces-root /srv/shepherd/workspaces \
+    --registry /srv/shepherd/cohorts --format csv --output results.csv
+
+# several sources, each named; filters keep the rows that match
+python scripts/export_results.py --workspaces-root lab=/data/lab/workspaces \
+    --workspaces-root archive=/mnt/archive/workspaces --registry /srv/shepherd/cohorts \
+    --protocol kg_link_prediction --role test --format json --output kg.json
+```
+
+- **Sources are named explicitly**, as many as needed: `--workspaces-root [NAME=]DIR` (a directory
+  whose subdirectories are workspaces, as `SHEPHERD_WORKSPACES_ROOT` names one) and
+  `--registry [NAME=]DIR`. Each is read with the rule the service reads its own setting by
+  (absolute, existing; a registry outside the repository), as a source of its own; this shell's
+  `SHEPHERD_*` settings are neither read nor changed for them. `NAME` is what rows show for the
+  source, never its path or the directory's own name (which may say more than an export should); by
+  default `workspaces-root-1`, `workspaces-root-2`, ... and `registry-1`, ... in the order given,
+  and two sources may not share one.
+- **One row per result.** A kept report and a ledger record are one row only when the record names
+  that report's run and holds its bytes; copies of one run in several sources are one row with each
+  place. A ledger record whose report no named store keeps reads "report not available"; a kept
+  report no named ledger registered reads "not registered in a listed ledger"; a record merged
+  before each run had its own record is its own row with no run, never counted as a run, and the
+  reports it holds say they may overlap it. Two runs of one condition group, with equal or
+  different numbers, are two rows of one `condition_group`, with the fields they differ on.
+- **What a row lists**, where its records hold it: the checkpoint's SHA-256 and where the
+  server's lists find it (source, workspace, run and file), lineage, spec summary and structure
+  (`spec`: every value of the model's spec as its record holds it), the training settings the
+  checkpoint records (rules, learning settings, what took effect; a weights-only file records
+  none), its weight transfer and loss identity as its record holds them (`weight_transfer`: how
+  its stage's weights began, each part trainable or frozen and the SHA-256 of the downstream
+  weights training started from, where the record names them; `loss_identity`: the loss's terms
+  and coefficients and the terms without a trainable parameter), the data's kind, label, role
+  and digests, the measurement's protocol, settings and
+  environment (class, regime, GPU, native build identity, and `components`: every fact each named
+  component's record holds, its requested, installed, available, selected and in-effect states,
+  fallback reason, version, native identity and source facts, a fact the record does not hold left
+  out and an absolute path that starts its own word in a text replaced; a path joined to other
+  text, such as a compiler flag's `-I/…` or a `file:` URL, is not caught, so a component's reader
+  records no path), a KG edge set's run counts
+  (`run_counts`: pairs scored, pairs whose score was not finite), the data's relation to the
+  model's training (a supplied cohort's R10 states and counts in `r10`; a KG edge set's exposure;
+  a generated split's is its allocation's and is not compared), the kept / registered / group
+  states and the version's content references. Every ledger of every listed workspace is read,
+  whatever became of the weights it names: a record whose checkpoint file was removed or is
+  listed with a problem is still a row, its model unknown with why. `unknown` names each field
+  without a source, with why; nothing is filled from today's recipe.
+- **The long form**: one row per result and metric, with `protocol`, `metric_name`, `value` (the
+  number as recorded, an integer as an integer, or a status such as `not_computable`), `unit`, `role` and `semantics`, so two
+  protocols never share a metric column. CSV cells follow the Diagnosis CSV's rules (a digest as
+  `sha256:<hex>`, a text a spreadsheet would run defused, numbers unrounded); JSON keeps the same
+  rows typed. No case id, rank or server path; a report's `checkpoint_path` and `data_dir` are never
+  opened. Nothing is capped or ordered by a metric (newest first).
+- **An item that cannot be read** (a refused root, a workspace entry outside its root, a version,
+  a store, a damaged report, a checkpoint file, a ledger, a hand-edited record, one naming no
+  weights among them) is a row with its reason, and hides nothing; a kept report whose run a
+  listed ledger names in a record that cannot be read says so rather than "not registered";
+  stderr counts them. Filters (`--family`, `--workspace` (where a row was found: a listed
+  checkpoint of its model or a ledger holding its record; since Stage 8b; it matches the
+  workspace's name in every named `--workspaces-root`, and each row's locations name the root),
+  `--protocol`, `--data-kind`, `--role`, `--environment-class`, `--device`, `--torch-version`,
+  `--cuda-version`, `--software-revision`) always keep such rows; a row whose field has no value
+  matches no filter on it.
+- `--output` must name a new file; an existing one is never overwritten. Without it the export goes
+  to standard output.
 
 ### Exit codes
 
 | Command | 0 | 1 | 2 | 3 |
 |---|---|---|---|---|
-| `import_cohort.py` | preview printed, or version committed | refused, with one message ending "Nothing was written." (also a preview in which no case can be ranked) | the command line was rejected | — |
+| `import_cohort.py` | preview printed, or version committed | refused, with one message ending "Nothing was written." (also a preview with nothing to commit: no case can be ranked, no edge of the part has a negative tail, or the generated split holds no sample) | the command line was rejected | — |
 | `measure_scorer.py` | measured (with `--record`: registered or already held) | a check refused the run: one message, nothing written (so does `--device auto` or `cuda` on a host without CUDA, before anything is read); or **measured, but the report was not written** (a full or read-only disk, for example): one message saying what may be left, which is never a report that can be registered -- this run's ranks beside `--output` with no report, or an empty file it claimed at `--output` or at the ranks (since K8-6r.4 each refuses the next run on that path), or a run directory without `report.json` in the report store (a run that fails after writing its report, its console closed for example, says where the report is) | the command line was rejected, including an argument of the other kind of cohort | **measured, but the registration refused**: the message names the report and the `record_evaluation.py` command to register it later; or, when the report file no longer holds the bytes the run published, says so and asks for a re-measurement instead (that report may be gone) |
 | `record_evaluation.py` | registered, already held, or shown | refused, with one message; nothing written | the command line was rejected, including neither or both of `--checkpoint` and `--checkpoint-dir` | — |
+| `export_results.py` | export written (an item that could not be read is a row of it, counted on stderr) | — | the command line was rejected (no source, a source name given twice), or `--output` already exists: nothing written | — |
 | `audit_split_overlap.py` | report written | refused, with one message; nothing written | the command line was rejected (for example the removed `--evaluation-cohort-kind`, `--registry` without `--cohort` or the reverse, or `--splits` beside `--cohort`), with the usage line | — |
 
 A measurement whose checkpoint directory is read-only to you ends with exit 3: the report is kept,
@@ -1523,14 +1865,14 @@ registered, the run exits 3, and it says the report at that path is not the one 
 is gone), so the run's own report may not exist any more: measure again to register this
 measurement. The command for a later registration is printed only when the report read back is
 the one published and something else refused it, such as the ledger. Without `--record` the
-command is always printed: no other run's report or result can refuse a registration. A later
-registration with `record_evaluation.py` checks the checkpoint file it is given against the
-report, as before.
+command is always printed: no other run's report or result can refuse a registration, whatever
+the kind of data the run measured. A later registration with `record_evaluation.py` checks the
+checkpoint file it is given against the report, as before.
 
 ### What the Diagnosis page shows
 
 **Since M5-2 (2026-10-21) the Diagnosis page shows the loaded checkpoint's recorded tests as a
-state only**, on its "Model in use" card: "Recorded tests: 3 · runs differ for 1", "3 ·
+state only**, on its "Model in use" card: "Recorded results: 3 · runs differ for 1", "3 ·
 comparison incomplete" (no registry is set, or no record's cohort version or report store can be
 read; never shown as agreeing), "3 · runs differ for 1; comparison incomplete for 1" (counted
 apart), "3 · 1 not readable" (since K8-6e.1: 3 results and 1 record the shared check cannot read
@@ -1642,7 +1984,7 @@ Investigation notes are not shown (BACKLOG 40):
 - **Ledger schema 3 (M4), schema 4 since K8-6r.2.** An existing `evaluations.json` of schema
   1 or 2 is refused — by `--record`, by `record_evaluation.py` (`--report` and `--show`) and by
   the recorded-results readers, which report the ledger as not read (on the Diagnosis card:
-  "Recorded tests: ledger not readable"). Nothing migrates it and its results are not carried
+  "Recorded results: ledger not readable"). Nothing migrates it and its results are not carried
   over: **archive it by hand**, for example `mv evaluations.json evaluations.v2.json`, read it
   with the revision that wrote it, and re-measure what you need with this revision, then
   register the new reports (the refusal says the same). A report written before M4 is refused
@@ -2198,8 +2540,17 @@ and a file, or a label, and the server finds that name in its own list again.
   A directory under `runs/` that cannot be listed is one item with its reason, and every other
   run is still listed; only `runs/` itself failing fails the list. A directory whose name is not
   valid text is such an item, its name written with backslash escapes (`runs/bad\xff`; since
-  the fix after K8-7b). A run or file whose own name is not valid text still makes this list and
-  the one below answer HTTP 500, as before K8 (BACKLOG 66); rename it.
+  the fix after K8-7b). So is a run directory or a checkpoint file whose own name is not valid
+  text (since research comparison Stage 7, BACKLOG 66): one item with its reason ("… is not
+  listed (its name is not valid text, …), so it is not read"), never opened, chosen or found by
+  name; every other file is listed, and this list and the one below answer. Each item carries
+  `key`, its identity apart from the names shown, made of its own names under `runs/`:
+  `architecture/run/file` for a file whose names are text, two names for a run directory and one
+  for a directory directly under `runs/`, and for a name that is not text a form no text name
+  gives (its bytes in hexadecimal), so a name shown with backslash escapes never takes the place
+  of a file whose name really reads so, and no two items share a key. `run_key` is its run's
+  identity the same way (`architecture/run`), by which a list groups its items, so two runs
+  shown alike are two groups. Rename such a file to use it.
   Each item names the workspace as the list does: for
   `current -> builds/2026-10-20`, it says `current`. Listing opens every checkpoint, which SPEC_4
   classes as checkpoint inspection (C3), and D8 offers that only where the operator controls
@@ -2215,12 +2566,13 @@ and a file, or a label, and the server finds that name in its own list again.
   file without keeping its digest, and dropped a load error without a word. A file that is gone
   by the time it is read (a link whose target was removed) has no size or time to show and is
   left out of this list; it no longer fails the whole list. A directory under `runs/` that
-  cannot be listed is kept, with its reason; its size and time are the directory's own, or 0.0
-  and no time when its name is not text (no path has the name shown). Since M5-1 D8 checks it
-  like the controls (§4.13).
+  cannot be listed is kept, with its reason; its size and time are the directory's own, whatever
+  its name. Since M5-1 D8 checks it like the controls (§4.13).
 - **Cohort versions** (`GET /api/v1/cohorts`): each version in the registry, by label and the
   SHA-256 of its `cohort.json`, with its role. It also shows
-  its counts, the graph and dataset record it is bound to, and when it was imported. The list
+  its counts (a KG edge set's and a generated split's with the units its manifest records,
+  `count_units`, since research comparison Stage 7), the graph and dataset record it is bound
+  to, and when it was imported. The list
   never shows a case identifier or the exclusion list: D7 keeps those in the registry, on the
   machine. An interrupted import is listed with its reason. Each version's report store is
   listed by run id, and each run says whether its report is kept and whether it is registered
@@ -2317,7 +2669,8 @@ reading the checkpoint is an operator control" on the card, and "dataset not sho
 control" in the run header. Research › Test (§4.14)
 uses the same check for its import (the intake list, Preview and Commit), Start test, Cancel,
 Register this report, Add note and its model list, and Research › Models for its checkpoint
-list and its Load (§4.14). Everything else stays open:
+list, its Load and its Results segment (reading, showing, comparing and exporting the results,
+since research comparison Stage 8b; §4.14). Everything else stays open:
 diagnosis, the HPO and disease lookups, the pipeline status and the saved UI paths, the training
 status and metrics, the workspace and cohort lists, the recorded results and the system pages.
 
@@ -2471,7 +2824,7 @@ help control for every field. Nothing an operator sets changed; what moved is wh
 | **Research (pre-clinical)** › Prepare › **Training** | The run bar, the parameters for the next run, Continue… and the run view with its charts (below). It is the research page shown first |
 | **Research (pre-clinical)** › Prepare › **Fine-tune** | A base's task models (since K6): one listed base, one to three tasks (Disease, Gene, Patients-like-me), each trained as its own run in order, and a job card with each task's status, Stop and products |
 | **Research (pre-clinical)** › Evaluate › **Test** | Import a cohort version from the server's intake directory, run a test, keep and register its report (below) |
-| **Research (pre-clinical)** › Evaluate › **Models** | The server's checkpoints of a workspace, their recorded test results, newest first or by family, and Load (below) |
+| **Research (pre-clinical)** › Evaluate › **Models** | The server's checkpoints of a workspace, their recorded test results, newest first or by family, and Load (below); the results of a model's family or the workspace, compared and exported (Results, since research comparison Stage 8b) |
 | **⚙ Settings**, at the right of the header | Runtime Settings, as before. For a read-only browser, Apply Settings and Restart Backend are greyed out, with the reason written below them |
 
 - The selected stage (Diagnosis or Research) is filled and bold; the selected research page is
@@ -2566,7 +2919,7 @@ it: both follow Options, and stay pinned at the panel's bottom when the inputs n
 - a chip, only when true: `synthetic data` (amber). The `no trained model` and `unverified`
   chips went with the path-reasoning state (K7), and `no SP table` and `GNN not loaded` with the
   mixture (K8-4);
-- "Recorded tests: <state>" (§4.9), whose › opens Details at Evidence; "Details ›"; "🔒 Change
+- "Recorded results: <state>" (§4.9), whose › opens Details at Evidence; "Details ›"; "🔒 Change
   model…". The recorded tests, and the workspace names, are read again each time Diagnosis is
   shown, after each diagnosis, after a model change and with ↻ (the 5-second read reads only what
   is served): a test recorded in Research › Test shows when you come back to Diagnosis.
@@ -2590,7 +2943,7 @@ served model's facts in five sections (Identity, with the full digests and Copy;
 Evidence; Warnings, always open) and a link to the full records in Research › Models (the
 structural-fingerprint line is gone since K8-4: the checkpoint's record binds its graph by
 digest, checked at load). "This result" shows only what the result carries, each part beside
-what is in use now. "Details ›" and "Recorded tests ›" open the first, the badge the second; while
+what is in use now. "Details ›" and "Recorded results ›" open the first, the badge the second; while
 a model change is open (its confirmation, or a reload running) they leave the Change model drawer
 in place.
 
@@ -2745,7 +3098,10 @@ a run.
   so the recipe fills it. A finetune stage, a ShepherdGNN setting (`conv_type`, `hidden_dim`, …)
   or any field it does not define is refused with 422, and continuing a checkpoint that is not a
   base with 409, before a GPU slot or a run directory is taken. Task models are started with
-  `POST /api/v1/training/finetune`, as the Fine-tune page starts them.
+  `POST /api/v1/training/finetune`, as the Fine-tune page starts them; its `settings` take the
+  finetune recipe's settings, `frozen_parts` among them since research comparison Stage 9b
+  (`graph_side`: the frozen-backbone control, below; the Fine-tune page does not offer it this
+  round). The command line's `--frozen-parts graph_side` is the same setting.
 - A failed run's **error banner** spans the page. Under its headline ("Training failed: Process
   exited with code 1") is the last error line the run printed ("Last error printed:
   TrainingDeviceUnavailable: --device auto requires CUDA, …"), redacted for a read-only browser
@@ -2804,7 +3160,27 @@ when it differs (with the listed workspace it matches, or "matches no listed wor
 K8-7 (2026-11-08) a continued run inherits only the settings this version has: a setting the
 parent recorded that this version no longer has (`num_workers`, the old model settings such as
 `conv_type`) is neither inherited nor a reason to refuse, a parent missing a current setting is
-refused, and Check checkpoint and the training process decide alike, in the same words. While
+refused, and Check checkpoint and the training process decide alike, in the same words. Since
+research comparison Stage 9a (2026-11-10) new checkpoints record training rules 2, which add one
+setting, `frozen_parts` (which parts of a finetune do not train: `none`, the recipe's, or
+`graph_side`). A parent of rules 1 continues: one settings decode, shared by Check checkpoint and
+the training process, reads it with `frozen_parts` none from what its record shows (rules 1 had
+no freeze; a finetune's weight transfer records every part trainable), lists it once under
+"Settings taken from this checkpoint" with that source ("none, decoded from rules 1: rules 1 had
+no freeze and trained every part"), as the training log says it on a line of its own, and
+records that source on the continued run's checkpoints; the parent's file is not changed. A
+parent that records no rules (K4's) or rules this version does not know is refused, and so is
+any other missing, contradictory or unknown setting. A continued run never changes the freeze; a
+branch keeps it too. Since Stage 9b (2026-11-10) `graph_side` trains: a finetune with it keeps its
+base's input module, encoder and LP head as they are (no gradient, no optimizer group, evaluation
+mode for the whole run, so BatchNorm's statistics are used and never updated and dropout is off)
+and trains only its patient encoder and task head, at the recipe's loss coefficients; its record
+says the LP term has no trainable parameter, each part trainable or frozen, the frozen parts'
+forward mode and the SHA-256 of the downstream weights it started from (two children of one base
+and seed start alike). Resumed or extended it stays frozen, with the same optimizer groups
+restored, and its new checkpoints record their stage's weight transfer, their parent's
+unchanged, so an arm paused and resumed still names the downstream weights it started from (Models
+› Results shows it in Compare and the export). While
 the drawer is open the run bar shows Start (disabled: "close Continue… to start a new run"),
 **🔒 Continue Training** (disabled while the datasets differ, with the reason) and **Cancel**.
 A listed checkpoint is found again in the server's list. **The model fingerprint shown is the one
@@ -2895,13 +3271,23 @@ the state line gives only the run's state, and the parent list is not shown. The
 
 ### Research › Evaluate › Test
 
-The page for the flow of §4.9: import a cohort version, measure a model on it, keep its report
-and register it. Three panels:
+The page for the flow of §4.9: import a cohort version, measure a model on a data version of
+any kind (a supplied cohort, a KG edge set or a generated split), keep its report and register
+it. Three panels:
 
-- **Cohort.** The workspace (the server's list, shown by its dataset fingerprint as on Datasets)
-  and the cohort version (the registry's list, `SHEPHERD_REGISTRY`), with its role, its counts,
-  its version digest and whether it was mapped against this workspace's graph ("bound to this
-  graph", or "mapped against another graph", which a run would refuse). Below them, every run
+- **Data** (since research comparison Stage 7; "Cohort" before). The workspace (the server's
+  list, shown by its dataset fingerprint as on Datasets) and the **Data version** (the registry's
+  list, `SHEPHERD_REGISTRY`), by kind and role: supplied cohorts first, as before ("label · role R
+  · n of N ranked-eligible"), then KG edge sets ("kg-test · KG edge set (test)"), then generated
+  splits ("gen-val · Generated split (val)"). The chosen version shows its counts (a supplied
+  cohort's role and cases; a KG edge set's pairs and edges; a generated split's patients,
+  diseases and fixture rows, each with the unit its manifest records under **Counts and units**;
+  a KG edge set's or a generated split's kind and role are its option's, not repeated), its
+  version digest and whether it was mapped against this workspace's graph ("bound to this graph",
+  or "mapped against another graph", which a run would refuse; never in the option). With no KG
+  edge set in the registry, a line under it names the command that imports one on the machine (the
+  importer's `--kind kg_edges` with `--from-checkpoint`, §4.9); the page's Import makes supplied
+  cohorts only. Below them, every run
   directory of the version's report store, newest first: when it ran, on which model, whether a
   report was kept, whether it is registered, and "runs under these conditions differ" when the
   runs of its group differ (in amber with "— investigate" only when the group records
@@ -2919,17 +3305,28 @@ and register it. Three panels:
   and model fingerprint. Listing them opens every checkpoint, so it is an operator control: a
   read-only browser is not shown it, and the page lists them once per workspace (↻ reads the
   list again). Then **Measurement** (since K8-6a), the protocol the run passes as
-  `--mode <protocol>` (§4.9): the options are the protocols this build implements whose learning
-  stage and task head the chosen model's record meets, today one for each task head of a
-  finetuned model (Disease, Gene or Patients-like-me). A single option is chosen already; of
-  several, none is until you choose one; with none (a base, whose formal test is not implemented
-  yet), Start says why. A file whose record cannot be read offers none either, and Start is off
+  `--mode <protocol>` (§4.9): the options are the protocols this build implements whose needs
+  the chosen model's listed capabilities meet and that measure the chosen version's kind (since
+  research comparison Stage 7): a task head's measurement of a finetuned model (Disease, Gene or
+  Patients-like-me) on a supplied cohort or a generated split, and KG link prediction for a base
+  and every finetune on a KG edge set. So a finetune on a supplied cohort is offered its task's
+  measurement alone, chosen already, and on a KG edge set KG link prediction alone; a base on a
+  supplied cohort is offered none, and Start says which measurements take it and what they
+  measure. With no version chosen, every measurement the model's capabilities meet is listed. A
+  single option is chosen already; of several, none is until you choose one; with none, Start
+  says why. One Start runs one measurement: measure the model by another protocol with another
+  Start, one GPU job at a time. A file whose record cannot be read offers none either, and Start is off
   with the record's own reason ("Record not readable (written before the model spec: not
-  readable by this build; start a new run): not measured here. Choose a model finetuned for a
-  task" for a file without a model spec; since K8-7b, 2026-11-08). Like the model, it is an
+  readable by this build; start a new run): not measured here. Choose a model with a readable
+  record" for a file without a model spec; since K8-7b, 2026-11-08). Like the model, it is an
   operator control. Mode C and Mode D are not
-  protocols, so no page or command runs them. Then the R10 evidence the run will look in (the
-  measured workspace, and `SHEPHERD_TRAINING_EVIDENCE_DIRS`), **Register the result**,
+  protocols, so no page or command runs them. Then the **R10 evidence**, chosen by the runner once
+  by the chosen version's kind (since research comparison Stage 7): for a supplied cohort, the
+  directories the run will look in (the measured workspace, and
+  `SHEPHERD_TRAINING_EVIDENCE_DIRS`), and a refused setting in red with ✕ and "Refused:" and
+  its reason, which turns Start off; for a KG edge set or a generated split, "Not applicable"
+  in grey with ○ and why (R10 is a supplied cohort's), and the run is given no evidence
+  directory whatever the setting says. Then **Register the result**,
   **Deterministic execution**, and the batch size and device the server fixes (the measurement's
   default; `SHEPHERD_DEVICE`).
   **🔒 Start test** starts the real `measure_scorer.py` through the job runner (§4.11), with the
@@ -2962,10 +3359,14 @@ and register it. Three panels:
   value; the score semantics exactly as recorded; coverage with each exclusion, the relations,
   R10 in words (*unverifiable* is never a 0), the environment, the dataset origin, and whether it is registered (for an
   operator, checked in the ledger beside the listed checkpoint holding the weights it
-  measured). When a record names this run with other bytes (the report was replaced after it
+  measured). Since research comparison Stage 8b the report is read by the one reader the results
+  service and Models read with (its data kind's result view, registered or not): a KG edge set's
+  exposure and a generated split's generation are said in the same lines as on Models, and a
+  record the reader cannot read is shown with its reason (the field named, never its value),
+  not as a result. When a record names this run with other bytes (the report was replaced after it
   was registered), or that ledger cannot tell, the Result gives the registration's reason.
-  **🔒 Register this report** registers a kept report through the one registration
-  function (§4.9): the server finds the report in the version's store, checks that its bytes
+  **🔒 Register this report** registers a kept report of any kind (a supplied cohort's, a KG
+  edge set's or a generated split's) through the one registration function (§4.9): the server finds the report in the version's store, checks that its bytes
   are the ones shown, finds where its ledger goes from its own checkpoint list (the listed file
   holding the weights, by full digest, never the path the report records: the file the run read
   when it is listed with those weights, which is where the list looks, else another listed copy
@@ -3041,7 +3442,7 @@ its name (since K8-7b). Columns:
   top 20 is no longer shown; its raw values stay in the file, and the detail says "Validation
   (Trainer): not read (record not readable)"). It is never a test result and never shares a
   column with one;
-- **Recorded tests**: what the ledger beside the checkpoint holds, as a state ("none in
+- **Recorded results**: what the ledger beside the checkpoint holds, as a state ("none in
   ledger", "no ledger", "3 · runs differ for 1", …), never a number of a result.
 
 **Listing opens every checkpoint of the workspace**, so the list is an operator control (§4.13).
@@ -3051,7 +3452,7 @@ after a Load, opens no unchanged file; a load, a start or a measurement still ch
 uses against the digest shown.
 A read-only browser gets no list: the page says why, naming the three conditions (deployment
 mode M1, a request on this machine's loopback, here or through an SSH forward, and no forwarding
-header), and shows instead **Recorded test results of the model in use**, read from the ledger
+header), and shows instead **Recorded results of the model in use**, read from the ledger
 beside the served checkpoint by its model fingerprint, opening no checkpoint. Each record's
 regime (device, deterministic on or off) is the one the record holds, as an operator sees it
 (`GET /api/v1/evaluations/loaded-model` carries each record's `deterministic_algorithms` for
@@ -3066,10 +3467,12 @@ score.
 
 **Selecting a row** shows its full model fingerprint with Copy, what it was trained on (and
 whether that is this workspace's current dataset), the Trainer's validation figure in its own
-card, any warning, and two segments:
+card, any warning, and three segments:
 
-- **Recorded test results**: every record the ledger holds for these weights, one table per
-  measurement mode, in the order first shown, each under its mode's label (and a task's note),
+- **Recorded results** ("Recorded test results" until research comparison Stage 6): every
+  record the ledger holds for these weights, of any data kind and role, each named by its
+  version's kind and role (a KG edge set's with its exposure, "exposure not recorded" with the
+  reason when its block does not read), one table per measurement mode, in the order first shown, each under its mode's label (and a task's note),
   by one display for every mode (since K8-6e.2; before it, Mode C's records came first, then
   Mode D's, under labels of their own). Each row gives the cohort version and its role; a task's
   pooled MRR and its second figure named in full in the header, or, for a mode this version does
@@ -3090,7 +3493,7 @@ card, any warning, and two segments:
   read as a result (since K8-6e.1) is never shown or counted as one: under the tables, "▲ 1
   record for these weights cannot be read as a result. The ledger keeps it as written." and a
   small table, Index · Registration · Report · Reason (a sequence or report digest it does not
-  carry readably reads "not readable"); the segment then reads "Recorded test results · 3 (1 not
+  carry readably reads "not readable"); the segment then reads "Recorded results · 3 (1 not
   readable)". The read-only view lists the same items, from the route;
 - **Usage history**: the entries that name this checkpoint in every listed cohort version's
   usage history, newest first: test runs and registrations, and any model load kept from before
@@ -3098,7 +3501,57 @@ card, any warning, and two segments:
   run reads a task's first figure over its ranked cases, or another mode's label and case count,
   then how it ran, then every metric it records behind "Recorded metrics (N)" ("no metric
   recorded" when it records none). An entry written before the usage history recorded a mode
-  reads "Measurement mode not recorded" (since K8-6e.2; before it, Mode C).
+  reads "Measurement mode not recorded" (since K8-6e.2; before it, Mode C);
+- **Results** (since research comparison Stage 8b): every result of **This family** (the
+  selected model's family, in this workspace) or **This workspace** (each result found in it: a
+  listed checkpoint of its model, or a ledger holding its record), read by the one results
+  service (the rows `scripts/export_results.py` exports) when the segment is opened, and again
+  with **↻ Read again**. A result found in no listed workspace (a kept report no listed ledger
+  registered, whose weights are not listed now: moved, or a `last.pt` saved over) is listed
+  under This workspace too, its model "Unknown" with why, and the line over the tables counts
+  such results in either scope, so none is hidden. **Protocol**, **Data kind**, **Role** and
+  **Environment** filter them, each offering the values the scope holds (a field without a
+  value offers none). One table per protocol, newest first by run time
+  (the service's listing order, so nothing is ranked; nothing is ordered by a metric, and a
+  default order for task records stays the owner's open item, BACKLOG 63). Each row: the
+  result's name (its run's time and its report's 12 hex digits; where two would read alike, as
+  two runs of one model in a minute with byte-equal reports do, the time to the second and then
+  the run id's own last part; its Compare option and column head say the same name), the
+  model (fingerprint and kind; its family under This workspace), the data
+  (label, kind and role), the metrics as a record of that protocol shows them (a task's two
+  figures, unrounded where its condition group's runs differ on them; any other protocol's every
+  metric as recorded), the state (report kept, or "Report not available (ledger record
+  only)"; registered, not registered or merged; ▲ report bytes that differ elsewhere; how its
+  condition group compares), the exposure where its record holds one (a KG edge set's reading,
+  a supplied cohort's R10 one click away; a generated split's is its allocation's, not
+  compared) and the environment. Every item that could not be read is listed under the tables
+  with its reason, whatever the scope and filters. **Compare** puts the first five of the
+  **Chosen results** side by side, one column each headed by its name and protocol,
+  **Differences only** on by default: the result, the model (stage, task, operation, parent,
+  family, encoder, relation to the reference recipe, capabilities and every spec value; the
+  stage, the encoder's kind and the task once, in the model's own rows, not again under the spec,
+  the capabilities or the training settings), the recorded and effective training settings with
+  the weight transfer and the loss identity (so two arms of one base are checked to start from
+  the same downstream weights here), the data's identity and role, the measurement, the
+  environment, the exposure and every metric, as recorded, each group once. Each row is named in
+  words (a metric as the tables name it, a learning setting as the Training page does; its
+  record key in the row's title), and a nested setting is one row per entry, so a difference
+  inside it is a row of its own. No difference is computed, and each metric row is one
+  protocol's (a result of another protocol reads "another protocol" there). Each missing value
+  keeps its words: a field without a source reads "Unknown" with why (the why once per field:
+  its other rows read "Unknown", the why in their tooltip, and **Differences only** hides such a
+  row unless the other columns differ there), a value recorded as null "none", a
+  field the result's records do not hold "not recorded", and a field that does not apply to the
+  result's data kind "not applicable" (a KG edge set's exposure definition and counts, R10, and
+  an entry of the data's identity, counts or content references that only another data kind
+  records). Five is this view's
+  cap only: the choice is not capped. **Export** writes every chosen result or every shown row
+  (the unreadable items among them), uncapped, as CSV or JSON through the export's one
+  serializer (the columns and bytes of `scripts/export_results.py`), as a new file to
+  download. Reading the results opens every
+  workspace's checkpoints, so each of these is an operator control (§4.13): a refused request
+  reads and lists nothing and says why. Comparing results across workspaces is not built in
+  this page yet; on the machine, `scripts/export_results.py` joins workspaces.
 
 **🔒 Load this model** is the shared Load (the same confirmation as Diagnosis' "Change model…";
 it covers the detail while it is open, its buttons stay in view under its table however short
@@ -3130,10 +3583,95 @@ writing the version a second time), or on ARM from the prebuilt release or a loc
 (`PYG_ARM_STRATEGY`). Their versions differ by platform (the GB10's prebuilt pyg-lib is 0.6.0, the
 x86 index's 0.8.0) and are recorded by the probe's A1 and A5, not pinned.
 
+**The ARM + CUDA route** (`deploy.sh` Stage 3; since research-comparison Stage 2a, BACKLOG 70 and
+71). data.pyg.org has no aarch64 wheels, so the menu, or `PYG_ARM_STRATEGY`, chooses the prebuilt
+release (`pull`), a source build (`compile`), `skip` or `abort`; with no terminal and no setting it
+is `skip`, as before.
+
+- **A failed pull stops by default.** The pull downloads the release asset pinned in `deploy.sh`
+  (`PYG_RELEASE_TAG`, one SHA-256 per CPython tag), verifies its SHA-256, installs exactly its four
+  wheels by file path (`--reinstall --no-deps`) and checks what was installed. When a step fails,
+  the deployment stops and names it: the release is not usable on this host (exit 11: the host's
+  torch or CUDA is not the release's, "Case B", or the release has no asset for its Python), the
+  download failed (12), the checksum failed or could not be taken (13; such a download is never
+  reported as verified), the install failed (14), or the check failed: the installed extensions are
+  not shown to be the release's wheels (15). When the wheels are installed and checked but the source
+  receipt (below) cannot be written, it stops with 17 and builds nothing in their place: a build
+  would keep its receipt in the same place.
+- **`PYG_ARM_ON_PULL_FAILURE=build`** lets a failed pull build from source instead, non-interactively
+  too; `stop` is the default. On a terminal, choosing the pull in the menu asks this once, right
+  then; nothing waits for a person after the pull has started. An unknown value is refused before
+  anything runs (exit 4). Before Stage 2a a failed pull, and `PYG_ARM_STRATEGY=pull` on a Case B
+  host, built from source without being asked; both now need this setting.
+- **The source build** (`compile`, or a failed pull where allowed: `scripts/build_pyg_arm.sh`)
+  builds all four packages with `--no-cache-dir` into a fresh directory per run under
+  `PYG_WHEEL_OUT` (default `~/pyg-wheels-arm`; earlier runs' directories are left as they are). Only
+  when all four built does it install them, exactly those four wheels by file path (`--reinstall
+  --no-deps`); it then checks that each imports and that what is installed is exactly those wheels,
+  and only then writes the receipt. It exits non-zero when a build (2, nothing installed), the
+  install (3), an import or the check (4) fails, or when the receipt cannot be written (5).
+  `SCATTER_SPEC`, `SPARSE_SPEC`, `CLUSTER_SPEC` and `PYGLIB_SPEC` choose each package's source: a
+  registry requirement (`torch-scatter==2.1.2`), a VCS URL
+  (`git+https://github.com/pyg-team/pyg-lib.git@0.6.0`) or a local sdist or tree; `deploy.sh` passes
+  them through. Without them the builder takes the newest pyg-lib tag the data.pyg.org index lists
+  for the installed torch and the unversioned names of the other three, so a build can resolve other
+  versions than the release's; the receipt says which. Under `compile`, a build that stopped before
+  its install (nothing installed) is said and the deployment continues, as before. Once the build
+  has installed its wheels, a failed install, import or check stops the deployment (exit 16: what is
+  installed is not verified), and so does a receipt that cannot be written (17). The build a failed
+  pull is allowed to run behaves the same; and when that pull had already installed the release's
+  wheels (its install or its check failed), a build that does not complete stops the deployment too
+  (16), since those wheels stay installed, unverified.
+- **The check** (`scripts/validate_pyg_ext.py --check-wheels`, over `src/utils/pyg_native_check.py`):
+  each installed distribution's version, and each installed native library's SHA-256, equal its
+  wheel's. Only the two routes above run it: the Linux index route (x86, or no CUDA) and Windows'
+  `deploy.cmd` install from the data.pyg.org index by name, as before, and are **not covered** by it.
+- **The source receipt.** After a passing check (for a build, once each extension has imported),
+  either route writes `.venv/share/shepherd-advanced/pyg-native-receipt.json`, outside every
+  distribution, so `uv sync --inexact` leaves it (a test runs uv to show it). It is kept in a
+  virtual environment only: the builder run for an interpreter that is not one keeps none, and says
+  so. Per wheel: the requested source (a registry name and specifier, a VCS URL with the commit it
+  resolved to, or a local source's SHA-256; for the pull, the release tag, the asset and its
+  SHA-256), the resolved and installed version, the wheel's SHA-256 and the installed native
+  libraries' count, digests and aggregate digest. Both routes record the torch and CUDA build
+  compiled against, in one notation (torch `2.10.0+cu130`, CUDA `13.0`): a build its target
+  environment's, the pull the release's declared target. A build adds the version numbers of nvcc,
+  gcc and g++ (never their banners, which can carry a path or a name) and `TORCH_CUDA_ARCH_LIST`,
+  `FORCE_CUDA` and `MAX_JOBS`; the release carries no compiler facts, and they read unknown. No
+  path, user name or URL credential is recorded. The receipt is keyed by the installed native
+  digests: `scripts/validate_pyg_ext.py` (or `--receipt`) shows per distribution whether what is
+  installed now is what it records, and a later install from elsewhere reads as differing, never as
+  the receipt's. A record, never a gate: no version is judged anywhere.
+- **What every run records** (since research-comparison Stage 2b, BACKLOG 71). The run environment
+  that training writes into each checkpoint and a measurement into each manifest (and so each ledger
+  record), and the probe's A1, name each extension as a component: whether it is installed and
+  imports, its distribution version, its native libraries' count and aggregate SHA-256 (so two builds
+  of one version read apart), and, only where the receipt above matches what is installed, the
+  receipt's route, requested and resolved source, wheel SHA-256, torch and CUDA build, compiler
+  versions and flags; otherwise "not recorded", with why. Whether PyG used an extension for a given
+  operation is not observed and reads unknown. No path on the machine and no wheel, library or
+  release asset file name is recorded (their SHA-256 names them); a requested source's URL is kept
+  without user name, password, query or fragment. The Models and Test pages show the identity as
+  "Native build", on one line on Models and a component per line on Test; a record written before
+  reads "not recorded". Every recorded fact of each component (its states, fallback reason and
+  source facts as well) reaches the API's record views (`components`), the results query, Models ›
+  Results' Compare (one row per fact) and the export (since review fix RC-P2-1). This holds for every
+  route, the Linux index route and `deploy.cmd` included; only the receipt is the two ARM routes'.
+- **What is verified**: these routes run in tests with stand-ins for the ARM host, GitHub, pip and
+  the compilers (`tests/unit/test_deploy_pyg_route.py`), which is software simulation. Each route
+  counts as verified on a GB10 only by its own GB10 run. Since Stage 2a, both ARM routes have run on
+  the GB10 once, at `e60f23e` on `claude/research-comparison` (not merged): the prebuilt pull on
+  2026-11-11 and a local build of all four extensions on 2026-11-12, each in its own new environment,
+  with its receipt matched (`docs/working/research-comparison-acceptance-2026-11-12/`). A failed
+  pull's stop, the build fallback, a wrong wheel and a mismatched receipt are still software
+  simulation only.
+
 **The verified set**: `torch_geometric` 2.8.1 with torch 2.10.0+cu130 and the prebuilt ARM
 release's extensions (pyg-lib 0.6.0, torch-scatter 2.1.2, torch-sparse 0.6.18, torch-cluster
-1.6.3), in M5's GB10 acceptance at `b14c4de`. Since Batch 1, `deploy.sh` installs that set from the
-lock, as checked on the GB10 at `0bc5178` (2026-10-26: A1–A5 passed, A5 equal to the committed lock,
+1.6.3), in M5's GB10 acceptance at `b14c4de`, and again at `e60f23e` (not merged), where a local
+build (pyg-lib 0.8.0, the other three at the release's versions) passed beside it. Since Batch 1,
+`deploy.sh` installs that set from the lock, as checked on the GB10 at `0bc5178` (2026-10-26: A1–A5
+passed, A5 equal to the committed lock,
 the PyG native check 5 of 5; `docs/working/batch1-acceptance-2026-10-26/`). Windows' `deploy.cmd`
 has not been run. M4's acceptance ran 2.8.0.post1; its evidence stays with that environment. After pulling, `uv sync --inexact` moves an installed
 2.8.0.post1 to 2.8.1: that is a change of environment, and an acceptance made before it does not
@@ -3161,8 +3699,9 @@ maintained, goes through the same entry points:
    installed torch by itself.
 3. On ARM, the prebuilt extension release (`PYG_PREBUILT_*` in `deploy.sh`) matches one torch and
    CUDA only. Another torch takes the source build (`scripts/build_pyg_arm.sh`, which builds
-   against whatever torch is installed) or the fallback, so the release never blocks an upgrade;
-   publishing a new release and updating those four values is optional.
+   against whatever torch is installed; `compile`, or `pull` with `PYG_ARM_ON_PULL_FAILURE=build`)
+   or the fallback, so the release never blocks an upgrade; publishing a new release and updating
+   those four values is optional.
 4. Run the deployment probe and keep its record; checks follow what the upgrade changed, not a
    rerun of every past acceptance. The new set becomes the baseline once verified, and an older
    acceptance stays with the environment it ran in.

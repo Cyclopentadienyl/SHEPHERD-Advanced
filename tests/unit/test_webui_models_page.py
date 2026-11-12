@@ -31,7 +31,7 @@ registry's report store (`tests/fixtures/model_records.py`):
   names; *unverifiable* never a number; the usage history segment (this
   checkpoint's entries, newest first, read through the page's cohort version
   list: a guard); ledger states said, never a path;
-- **read-only (D8)**: no list, D8's three conditions named, and "Recorded test
+- **read-only (D8)**: no list, D8's three conditions named, and "Recorded
   results of the model in use" read by the API's read-only route function from
   the ledger beside the served checkpoint, by its digest, opening no
   checkpoint; no server path, even when a report store cannot be read; the
@@ -512,7 +512,7 @@ def _kept_c_and_d_records(*more):
 
 def _table(raw, mode_label_text):
     """The records table named for `mode_label_text` (its aria-label)."""
-    start = raw.index(f'aria-label="{e("Recorded test results, " + mode_label_text)}"')
+    start = raw.index(f'aria-label="{e("Recorded results, " + mode_label_text)}"')
     return raw[start:raw.index("</table>", start)]
 
 
@@ -575,6 +575,33 @@ def test_kept_c_and_d_records_are_shown_as_recorded_by_the_one_display():
         for name, value in metrics.items():
             assert f"{name} {value}" in _words(row)
         assert "reached" not in _text(row) and "import-eligible" not in _text(row)
+
+
+def test_a_records_native_build_is_one_line_of_its_detail():
+    """research-comparison Stage 2b: each record's detail has one "Native
+    build" line, in the run environment's one wording (the Test page shows
+    its words a component per line): "not recorded" for the kept records, whose environment names no
+    components, and each component's identity and route for one that does."""
+    from src.utils.run_environment import PYG_NATIVE_KIND, component_facts, native_identity_text
+    from tests.unit.test_evaluation_sidecar import environment_block, registered_report
+
+    environment = environment_block()
+    environment["facts"]["components"] = {"pyg_lib": component_facts(
+        PYG_NATIVE_KIND, installed=True, available=True, version="0.8.0",
+        native={"state": "recorded", "count": 1, "aggregate_sha256": "a" * 64},
+        source={"state": "recorded", "route": "local build", "wheel_sha256": "b" * 64})}
+    records = _kept_c_and_d_records((registered_report(environment=environment), "e" * 64))
+    views = [mp.record_view(record) for record in records]
+
+    raw = mp.records_block_html(views, {})
+
+    words = _words(raw)
+    assert raw.count("Native build:") == 3
+    assert words.count("Native build: not recorded") == 2
+    assert native_identity_text(views[2]["native_identity"]) == (
+        "local build — pyg_lib 0.8.0 aaaaaaaaaaaa")
+    assert "Native build: local build — pyg_lib 0.8.0 aaaaaaaaaaaa" in words
+    assert "b" * 12 not in raw
 
 
 def test_a_mode_never_seen_before_is_shown_as_recorded_with_no_list_of_modes():
@@ -766,7 +793,7 @@ def test_the_detail_keeps_validation_and_mode_c_apart(world, monkeypatch):
     # no role says anything about ordering
     assert "ordering" not in records
     # The heading names no mode: each record's table carries its own (PLAN_B05 §6).
-    assert detail["seg"][0] == ("Recorded test results · 3 (1 where runs differ)", mp.RECORDS)
+    assert detail["seg"][0] == ("Recorded results · 3 (1 where runs differ)", mp.RECORDS)
     # a role code is never broken inside its name in its narrow column: not
     # "research_selectio" / "n" (1440x900), nor "research_" / "selection" (M5-3);
     # it stays whole, in a titled ellipsis where it does not fit
@@ -778,7 +805,7 @@ def test_the_detail_keeps_validation_and_mode_c_apart(world, monkeypatch):
 def test_a_record_that_cannot_be_read_is_named_apart_from_the_results(world, monkeypatch):
     """K8-6e.1 (R3): model-05's ledger holds three records; one loses
     ``n_ranked`` by a hand edit. The segment counts the results and names the
-    rest with one " · " ("Recorded test results · 2 (1 not readable; 1 where
+    rest with one " · " ("Recorded results · 2 (1 not readable; 1 where
     runs differ)"); the detail lists it by index, registration, report and
     reason under the amber sentence, never as a result and never pointing to
     the server's log; the row reads "2 · 1 not readable; runs differ for 1".
@@ -795,7 +822,7 @@ def test_a_record_that_cannot_be_read_is_named_apart_from_the_results(world, mon
     detail = mp.detail_parts(listing, page, _key(world, "model-05.pt"), NEWEST_CTL)
 
     assert detail["seg"][0] == (
-        "Recorded test results · 2 (1 not readable; 1 where runs differ)", mp.RECORDS)
+        "Recorded results · 2 (1 not readable; 1 where runs differ)", mp.RECORDS)
     assert detail["seg"][0][0].count(" · ") == 1
     said = _words(detail["records"])
     assert ("▲ 1 record for these weights cannot be read as a result. The ledger keeps it as "
@@ -805,7 +832,7 @@ def test_a_record_that_cannot_be_read_is_named_apart_from_the_results(world, mon
     assert "registered #2" not in detail["records"]
     assert "server's log" not in said
     assert r.recorded_tests_text(ml._recorded(listing, _key(world, "model-05.pt"))) == (
-        "Recorded tests: 2 · 1 not readable; runs differ for 1")
+        "Recorded results: 2 · 1 not readable; runs differ for 1")
 
 
 def test_the_pages_amber_sentences_are_amber_and_the_note_after_the_list_stands_apart():
@@ -834,13 +861,13 @@ def test_the_pages_amber_sentences_are_amber_and_the_note_after_the_list_stands_
 def test_unverifiable_is_a_word_and_never_a_count(world, monkeypatch):
     listing, data = _read(world, monkeypatch)
     records = mp.detail_parts(listing, data, _key(world, "model-08.pt"), NEWEST_CTL)["records"]
-    assert "Training disease overlap: unverifiable" in records
+    assert "Training disease overlap: <b>unverifiable</b>" in records
     assert "there is no count" in records
-    line = records[records.index("R10, training inputs"):]
-    line = line[:line.index("</span>")]
+    line = records[records.index("<b>R10, training</b>"):]
+    line = line[:line.index('<span class="shep-mp-ln">')]
     assert " of 50 " not in line and " of 80 " not in line
-    text = mp.r10_label_text("disease_overlap", "D", {"state": "unverifiable", "k": None,
-                                                      "n": 50, "cases": None}, "not_found")
+    text = r.r10_label_text("disease_overlap", "D", {"state": "unverifiable", "k": None,
+                                                     "n": 50, "cases": None}, "not_found")
     assert "0" not in text.replace("D:", "")
 
 
@@ -869,11 +896,12 @@ def test_a_records_r10_reads_in_its_states_words_never_a_count(version, state,
 
     html = mp.r10_html(block)
 
-    line = html[:html.index("</span>")]
-    assert line.startswith('<span class="shep-mp-ln"><b>R10, training inputs (evidence '
-                           f'{evidence_words}):</b> ')
+    # The one R10 rendering (`renderers.r10_rows`), its scope's label leading.
+    line = html[:html.index('<span class="shep-mp-ln">', 1)]
+    assert line.startswith('<span class="shep-mp-ln"><b>R10, training</b> <span '
+                           f'class="shep-muted">inputs (evidence {evidence_words}):</span> ')
     for name in ("Training disease overlap", "Training phenotype-set overlap"):
-        assert f"{name}: unverifiable: {reason}" in line
+        assert f"{name}: <b>unverifiable</b>: {reason}" in line
     text = re.sub(r"<[^>]+>", "", line).split("):", 1)[1]  # the labels, after "R10, ..."
     assert not re.search(r"\d", text) and "—" not in text and " none" not in text
     assert "/srv/secret" not in html
@@ -949,8 +977,8 @@ def test_the_usage_history_lists_every_listed_versions_entries_for_a_listed_chec
          (MYGENE, "model_load")])
     detail = mp.detail_parts(listing, data, _key(world, "model-05.pt"),
                              {"task": mp.ALL_TASKS, "order": mp.NEWEST})
-    assert detail["seg"] == [("Recorded test results · 3 (1 where runs differ)", mp.RECORDS),
-                             ("Usage history · 7", mp.USAGE)]
+    assert detail["seg"] == [("Recorded results · 3 (1 where runs differ)", mp.RECORDS),
+                             ("Usage history · 7", mp.USAGE), ("Results", mp.RESULTS)]
     usage = detail["usage"]
     assert usage.count(">Test run<") == 3 and usage.count(">Registered<") == 3
     assert usage.count(">Model load from an ordered list<") == 1
@@ -1015,8 +1043,9 @@ def test_no_record_is_dropped_or_set_apart_for_its_family_dataset_or_cohort(worl
         for key, (_sha, _path) in models.items():
             assert items[key] in shown, (order, key)
             detail = mp.detail_parts(listing, data, key, ctl)
-            assert detail["seg"] == [("Recorded test results · 2", mp.RECORDS),
-                                     ("Usage history · 2", mp.USAGE)], (order, key)
+            assert detail["seg"] == [("Recorded results · 2", mp.RECORDS),
+                                     ("Usage history · 2", mp.USAGE),
+                                     ("Results", mp.RESULTS)], (order, key)
             for label in blocks:
                 assert detail["records"].count(f'<div class="shep-w600">{label}</div>') == 1
                 assert detail["usage"].count(f"<td>{label}</td>") == 1
@@ -1205,7 +1234,8 @@ def test_by_family_draws_each_family_parent_first_with_its_lineage(world, monkey
     # A record this build refused and a file never read: two groups, each
     # titled with its own word (skill §6: missing states are never merged).
     broken = ml.find_item(listing, _key(world, "broken.pt"))
-    refused = {**broken, "filename": "refused.pt", "record": "refused",
+    # Another file: its own identity (keyed by its names), never the copy's.
+    refused = {**broken, "filename": "refused.pt", "key": None, "record": "refused",
                "record_problem": "an unknown field"}
     row = {**mp.family_row(listing, _key(world, "broken.pt")), "key": ml.item_key(refused)}
     both = {**listing, "items": [*listing["items"], refused],
@@ -1438,12 +1468,36 @@ def test_a_route_records_own_determinism_setting_is_read_for_a_cpu_run():
 
 
 def test_the_api_record_view_carries_the_records_own_determinism():
-    from src.api.routes.evaluations import _recorded_determinism
+    from src.api.services.record_views import _recorded_determinism
 
     assert _recorded_determinism({"regime": {"deterministic_algorithms": True}}) is True
     assert _recorded_determinism({"regime": {"deterministic_algorithms": False}}) is False
     assert _recorded_determinism({"regime": {"deterministic_algorithms": "yes"}}) is None
     assert _recorded_determinism({"regime": None}) is None and _recorded_determinism({}) is None
+
+
+def test_a_record_is_shown_only_with_what_an_answer_can_carry(world, monkeypatch):
+    """Review fix RC-R1: the page read its record's device straight from the
+    record, beside the view, and a GPU name holding a lone surrogate reached
+    the view as text no answer can encode. The device now comes through the
+    one reader of the record's settings (`recorded_settings`), which does not
+    read such a value; a value the view shows is refused by the one reader,
+    so the record is not shown and the listing says why; valid Unicode is
+    shown exactly."""
+    import json
+
+    _listing, data = _read(world, monkeypatch)
+    raw = next(r for entry in data["ledgers"].values() for r in entry.get("records") or [])
+    odd_device = {**raw, "regime": {**raw["regime"], "device": "cuda:0" + chr(0xd800)}}
+    view = mp.record_view(odd_device)
+    assert view is not None and view["device"] is None
+    json.dumps(view, ensure_ascii=False).encode("utf-8")
+    facts = {**raw["environment"]["facts"], "gpu": {"name": "GB10 " + chr(0xd800),
+                                                    "driver": "580"}}
+    assert mp.record_view({**raw, "environment": {**raw["environment"], "facts": facts}}) is None
+    facts = {**raw["environment"]["facts"], "gpu": {"name": "GB10 測試 🚀", "driver": "580"}}
+    shown = mp.record_view({**raw, "environment": {**raw["environment"], "facts": facts}})
+    assert shown["gpu"]["name"] == "GB10 測試 🚀"
 
 
 def _served_read_only(world, monkeypatch, name="model-05.pt"):
@@ -1608,7 +1662,7 @@ def test_a_listing_already_read_is_not_read_again(world, monkeypatch):
     states = _sync_states(demo)
     by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
     detail = [by_id[i] for i in ("shep-mp-detail-hd", "shep-mp-detail-top", "shep-mp-seg",
-                                 "shep-mp-records", "shep-mp-usage")]
+                                 "shep-mp-records", "shep-mp-usage", "shep-rs")]
     listing, data = _read(world, monkeypatch)
     monkeypatch.setattr(mp, "read_page", lambda listing: pytest.fail("read again"))
     key = _key(world, "model-05.pt")
@@ -1723,9 +1777,9 @@ def test_controls_selection_and_segments_are_wired(world, monkeypatch):
                 "shep-mp-independence"} & set(by_id)
     assert sync.trigger_mode == "always_last"
     assert sync.outputs[:3] == [states["stale"], states["last"], states["selected"]]
-    assert sync.outputs[-5:] == [by_id["shep-mp-detail-hd"], by_id["shep-mp-detail-top"],
+    assert sync.outputs[-6:] == [by_id["shep-mp-detail-hd"], by_id["shep-mp-detail-top"],
                                  by_id["shep-mp-seg"], by_id["shep-mp-records"],
-                                 by_id["shep-mp-usage"]]
+                                 by_id["shep-mp-usage"], by_id["shep-rs"]]
     assert not [fn for fn in demo.fns.values() if fn.name in ("_recompute", "_reorder", "_detail")]
     # "Reload with …" marks the page's data stale, at once, beside the shared Load.
     started = _fn(demo, "_load_started")
@@ -1734,8 +1788,13 @@ def test_controls_selection_and_segments_are_wired(world, monkeypatch):
     assert started.fn() is True
     segment = _fn(demo, "_segment")
     assert segment.queue is False
-    records, usage = segment.fn(mp.USAGE)
+    records, usage, results = segment.fn(mp.USAGE)
     assert records["visible"] is False and usage["visible"] is True
+    assert results["visible"] is False
+    # The third segment, Models › Results (research comparison Stage 8b): its
+    # column only; its content is its own gated handlers'.
+    records, usage, results = segment.fn(mp.RESULTS)
+    assert (records["visible"], usage["visible"], results["visible"]) == (False, False, True)
 
 
 def test_the_page_registers_its_help_and_every_i_it_draws(world, monkeypatch):
@@ -1933,6 +1992,8 @@ def test_a_merged_record_and_a_named_run_show_their_possible_overlap(world):
     result. HEAD: no run, no overlap, "1 corroborating report"."""
     import copy as _copy
 
+    from src.api.services.record_views import ledger_entry
+
     named = _copy.deepcopy(dict(world["det"]))
     named["registration"] = {"sequence": 2, "registered_at": "2026-11-07T10:00:00Z"}
     merged = _copy.deepcopy(named)
@@ -1945,7 +2006,7 @@ def test_a_merged_record_and_a_named_run_show_their_possible_overlap(world):
     lost["registration"] = {"sequence": 3, "registered_at": "2026-11-07T11:00:00Z"}
     ledger = {"schema_version": 4, "run_identity_from_sequence": 2,
               "records": [merged, named, lost]}
-    entry = ml.ledger_entry(ledger, named["checkpoint_digest"])
+    entry = ledger_entry(ledger, named["checkpoint_digest"])
 
     html, count, _contested, unreadable = mp._records_for_item(entry, {"contest": {}})
 
@@ -1970,13 +2031,15 @@ def test_records_whose_run_cannot_be_told_are_listed_with_the_boundary_reason(wo
     "(the server's log says why)"."""
     import copy as _copy
 
+    from src.api.services.record_views import ledger_entry
+
     named = _copy.deepcopy(dict(world["det"]))
     named["registration"] = {"sequence": 2, "registered_at": "2026-11-07T10:00:00Z"}
     unnamed = _copy.deepcopy(named)
     unnamed.pop("run_id")
     unnamed["registration"] = {"sequence": 1, "registered_at": "2026-10-01T10:00:00Z"}
     ledger = {"schema_version": 4, "records": [unnamed, named]}   # no boundary
-    entry = ml.ledger_entry(ledger, named["checkpoint_digest"], "/srv/x/evaluations.json")
+    entry = ledger_entry(ledger, named["checkpoint_digest"], "/srv/x/evaluations.json")
 
     html, count, _contested, unreadable = mp._records_for_item(entry, {"contest": {}})
 

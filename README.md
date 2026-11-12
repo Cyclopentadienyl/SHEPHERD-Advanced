@@ -85,7 +85,7 @@ Two steps, in order. Full walkthrough with data sources and expected artifacts:
 | Step | Command | Produces |
 |---|---|---|
 | 1. Knowledge graph | `scripts/build_knowledge_graph.py` | `kg.json`, `node_features.pt`, `edge_indices.pt` |
-| 2. Train | a base on the dashboard's Research › Prepare › Training, then its task models on Research › Prepare › Fine-tune; or `scripts/train_model.py --data-dir <workspace> --stage base` in a shell given the service's `SHEPHERD_WORKSPACES_ROOT` (deployment guide §4.11), then `--stage finetune` with `--task` and `--finetune-from` the base's checkpoint | `runs/<arch>/<run>/checkpoints/*.pt` |
+| 2. Train | a base on the dashboard's Research › Prepare › Training, then its task models on Research › Prepare › Fine-tune; or `scripts/train_model.py --data-dir <workspace> --stage base` in a shell given the service's `SHEPHERD_WORKSPACES_ROOT` (deployment guide §4.11), then `--stage finetune` with `--task` and `--finetune-from` the base's checkpoint, adding `--frozen-parts graph_side` for the frozen-backbone control: the base's input module, encoder and LP head kept as they are, only the patient encoder and task head trained (research comparison Stage 9b; the Fine-tune page does not offer it yet) | `runs/<arch>/<run>/checkpoints/*.pt` |
 
 There is no shortest-path step: no task model reads `shortest_paths.pt`, and neither does the
 GB10 acceptance probe (`scripts/probe_deployment.py`, its `--m2-acceptance` run), which trains,
@@ -113,16 +113,27 @@ guide §4.11): `SHEPHERD_REGISTRY` naming the deployment's registry, the `<regis
 | Step | Command | Produces |
 |---|---|---|
 | 1. Import a cohort | `scripts/import_cohort.py --registry <registry> --data-dir <workspace> --source <cases.json> --label <label> --role <role>`: a preview, then the same with `--commit <preview id>` | an immutable cohort version, mapped to one workspace's graph, in a registry outside the repository |
-| 2. Measure | `scripts/measure_scorer.py --checkpoint <file> --data-dir <workspace> --mode disease --cohort <label> --registry <registry>`, with `--mode` (required) a protocol this build implements for the model's learning stage and task head (today `disease`, `gene` or `patients_like_me`, one for each task head) | a task report, kept in the registry's report store |
+| 1b. Import a KG edge set | `scripts/import_cohort.py --kind kg_edges --registry <registry> --data-dir <workspace> --from-checkpoint <file> --label <label> --role test`, the role `train`, `val` or `test`: a preview, then the same with `--commit <preview id>` | an immutable KG edge set in the same registry: that part of the edge split the checkpoint was trained on, with its fixed link-prediction pairs (deployment guide §4.9); measured by `--mode kg_link_prediction` (step 2) |
+| 1c. Keep a generated split | `scripts/import_cohort.py --kind generated --registry <registry> --data-dir <workspace> --label <label> --role val`, the role `train`, `val` or `test`: a preview, then the same with `--commit <preview id>` | an immutable generated split in the same registry: the workspace's own split, its samples and split manifest copied as written, identified by their digests and the generation definition, with the workspace's functional gene fixture of that split when it holds one (deployment guide §4.9); measured by `--mode disease`, and by `gene` or `patients_like_me` when it keeps the fixture (step 2) |
+| 2. Measure | `scripts/measure_scorer.py --checkpoint <file> --data-dir <workspace> --mode disease --cohort <label> --registry <registry>`, with `--mode` (required) a protocol this build implements that the model's capabilities admit (today `disease`, `gene` or `patients_like_me`, each taking a model that carries its task head and measuring a patient cohort, a supplied cohort version or a generated split, and `kg_link_prediction`, taking a base or any finetune by its LP head and measuring a KG edge set) | a report, kept in the registry's report store; a KG edge set's run also keeps each pair's raw scores and its exposure (what the model's record says of the measured edges) |
 | 3. Record | `--record` on step 2, or later `scripts/record_evaluation.py --report <report> --checkpoint <file>`, the command step 2 prints | a record in `evaluations.json` beside the checkpoint's resolved path, where the service reads it |
+| 4. Export | `scripts/export_results.py --workspaces-root <root> --registry <registry> --format csv --output <file>`, run as the operator on the machine, each source named explicitly (several of each may be given) | every kept report and readable ledger record as CSV or JSON, one row per result and metric, with what its records say of the model, data, measurement, environment and exposure, and `unknown` naming what has no source (research comparison Stage 8; deployment guide §4.9) |
 
 The Diagnosis page's "Model in use" card shows the loaded checkpoint's recorded results as a
 state (how many, and for how many the runs under the same conditions differ); Research › Evaluate › Models lists them, each with its run, and API clients
-read them through `GET /api/v1/evaluations/loaded-model`. The Test page measures a model as step 2
-does, by a protocol this build implements for its learning stage and task head, chosen among those
-its model record admits: today one for each task head of a finetuned model, and none yet for a
-base, whose formal test is not implemented. A record it registers names the mode of its report: the
-protocol of a new run (Disease, Gene or Patients-like-me), or a kept report's own mode. A Mode C record, the model's own disease
+read them through `GET /api/v1/evaluations/loaded-model`. Models' Results segment (research
+comparison Stage 8b) lists every result of a model's family or of the workspace through step 4's
+service (the workspace's with any result found in no listed workspace, counted in either scope),
+compares up to five side by side and exports every one chosen or shown. The Test page measures a model as step 2
+does, by a protocol this build implements, chosen among those its listed capabilities admit:
+today one for each task head of a finetuned model, and the KG link-prediction measurement for a
+base and every finetune, which measures a KG edge set (research comparison Stage 5; its report is
+registered like any kept report since Stage 6, its record keeping the run's exposure; since Stage
+7 the Test page offers the measurements that take the model and measure the chosen version's kind,
+and the job runner chooses R10's evidence by that kind, so a KG edge set's run is given none). A
+record it registers names the
+mode of its report: the protocol of a new run (Disease, Gene, Patients-like-me or KG link
+prediction), or a kept report's own mode, and is read by the kind of data it measured. A Mode C record, the model's own disease
 ranking from before the tasks, is historical: kept Mode C reports and records are read by the
 shared readers (policy rev 15), and since K8-6a no command writes one (`--mode` is required and
 names a protocol; a checkpoint without a model spec, a ShepherdGNN history file, is refused).

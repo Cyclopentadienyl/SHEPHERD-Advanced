@@ -90,10 +90,16 @@ GENERATED_SPLITS: Tuple[str, ...] = ("train", "val")
 #: newline, so ``"mygene2\n"`` would pass an alphabet that does not contain one.
 SPLIT_NAME = re.compile(r"[a-z0-9][a-z0-9_.-]{0,63}")
 
-#: What a measurement manifest records a cohort as: `generated` for the
-#: generator's own splits, resolved here; `supplied` for a registered cohort
-#: version, resolved by `src/evaluation/cohort_registry.py`.
-COHORT_KINDS: Tuple[str, ...] = ("generated", "supplied")
+#: The data kinds, one name each: what a measurement manifest records as its
+#: `cohort_kind` and what a registered version states as its `kind`.
+#: `generated` is the generator's own splits, resolved here in a workspace,
+#: and also kept as a registered version (its samples copied, its identity the
+#: split's digests, generation definition and role); `supplied` a registered
+#: cohort version (a case set mapped to one graph) and `kg_edges` a registered
+#: KG edge set (one part of a recorded edge split, with its fixed LP pairs).
+#: Every registered version is resolved by `src/evaluation/cohort_registry.py`
+#: (`VERSION_KINDS`).
+COHORT_KINDS: Tuple[str, ...] = ("generated", "supplied", "kg_edges")
 
 
 class CohortProvenance(NamedTuple):

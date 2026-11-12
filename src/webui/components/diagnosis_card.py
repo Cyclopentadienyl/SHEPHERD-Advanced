@@ -50,7 +50,7 @@ it is shown, after each diagnosis, after a Load ("served model changed") and on
   served model per session (what it records is kept while the served
   identity is the same); the timer's read never opens a checkpoint;
 - the mode chip, only when true: amber "synthetic data";
-- "Recorded tests: <state>" from the ledger beside the checkpoint and the
+- "Recorded results: <state>" from the ledger beside the checkpoint and the
   cohort versions' report stores, by the shared model list's own reader
   (`model_list.recorded_tests_for`): a state, never a number of a result, the
   same words as the checkpoint's row in "Change model…". The recorded tests and
@@ -64,6 +64,9 @@ it is shown, after each diagnosis, after a Load ("served model changed") and on
   report store is scanned), each with whether it was mapped against the
   serving workspace's graph (`workspaces.binding_state`, the registry's one
   comparison), read with the rest on a queued refresh and kept on the timer.
+  A version of another kind (a KG edge set, a generated split) is listed with
+  the registry's reason it is not one (`NOT_A_COHORT`), never as bound or
+  chosen by default.
   A hint only: the server checks the version it is sent.
 
 **Details** (the identity drawer's "Model in use") is the shared Model Facts
@@ -95,7 +98,7 @@ from src.webui.components.served_status import (
     served_checkpoint_sha,
     served_key,
 )
-from src.webui.components.workspaces import redact_paths
+from src.utils.path_redaction import redact_paths
 
 logger = logging.getLogger(__name__)
 
@@ -222,9 +225,16 @@ def task_model_name(task: str) -> str:
 #: What an absolute path the cohort registry does not hold reads as.
 SERVER_PATH = "a server path"
 
+#: A listed reference cohort's ``binding`` when it is a readable version of
+#: another kind than a supplied cohort (a KG edge set, which holds no
+#: patients; a generated split, the workspace generator's, never a supplied
+#: cohort): it is listed with its reason and is never bound
+#: (`reference_cohorts`).
+NOT_A_COHORT = "not_a_cohort"
+
 
 def redacted(text: Any, environ: Optional[Mapping[str, str]] = None) -> str:
-    """`text` with no absolute server path left (`workspaces.redact_paths`, the
+    """`text` with no absolute server path left (`path_redaction.redact_paths`, the
     dashboard's one redaction): a path in the cohort registry reads
     ``<registry>/…`` (the Test page's name for it), any other "a server path".
     For the registry's and the reference cohort's refusals, which name the
@@ -250,9 +260,15 @@ def reference_cohorts(serving: Optional[str], rows: List[Mapping[str, Any]],
     `workspaces.version_row` with ``binding`` and ``binding_words``: whether
     it was mapped against the serving workspace's graph (`binding_state`, the
     registry's one comparison; a hint, the server checks the version it is
-    sent). ``problem``: why no version is listed (no registry, or one
+    sent). A readable version of another kind than a supplied cohort (a KG
+    edge set, a generated split) is listed with ``binding`` `NOT_A_COHORT`
+    and, as its words,
+    the reason the server refuses it with
+    (`cohort_registry.not_a_supplied_cohort`), so it is never bound or chosen
+    by default. ``problem``: why no version is listed (no registry, or one
     refused). Every text is without a server path (`redacted`)."""
     from src.api.services.server_lists import list_cohort_versions
+    from src.evaluation.cohort_registry import not_a_supplied_cohort
     from src.webui.components.workspaces import binding_state, version_row, workspace_binding
 
     try:
@@ -268,7 +284,9 @@ def reference_cohorts(serving: Optional[str], rows: List[Mapping[str, Any]],
     versions = []
     for item in listing.items:
         version = version_row(item)
-        state, words = binding_state(version, binding)
+        other = (None if version.get("problem")
+                 else not_a_supplied_cohort(version.get("kind"), version.get("role")))
+        state, words = (NOT_A_COHORT, other) if other else binding_state(version, binding)
         if version.get("problem"):
             version["problem"] = redacted(version["problem"], environ)
         versions.append({**version, "binding": state, "binding_words": words})
@@ -585,14 +603,14 @@ def _chips(status: Mapping[str, Any], *, grey: bool) -> List[str]:
 
 def _recorded_html(facts: Mapping[str, Any], *, grey: bool) -> str:
     if grey:
-        return f'<span class="shep-dx-tests">{r.e("Recorded tests: not read")}</span>'
+        return f'<span class="shep-dx-tests">{r.e("Recorded results: not read")}</span>'
     raw = facts.get("recorded")
     recorded = r.RecordedTests(**raw) if isinstance(raw, Mapping) else None
     text = r.recorded_tests_text(recorded)
     if recorded is None and facts.get("item_problem"):
         text += f" · {facts['item_problem']}"
     return (f'<span class="shep-dx-tests">{r.e(text)} <button type="button" class="shep-dx-link" '
-            'data-key="evidence" aria-label="Recorded tests: open Details at Evidence">›</button>'
+            'data-key="evidence" aria-label="Recorded results: open Details at Evidence">›</button>'
             '</span>')
 
 
@@ -869,6 +887,7 @@ def served_facts_html(state: Mapping[str, Any], *, open_section: str = "identity
 
 __all__ = [
     "CARD_HELP",
+    "NOT_A_COHORT",
     "SERVER_PATH",
     "STATUS_TIMEOUT_SECONDS",
     "TRAINED_NOT_READ_YET",

@@ -523,6 +523,22 @@ weights-only base **with a model spec** may be a finetune parent; strict resume 
   continuation check (`src.utils.run_plan`, which the manager's preview and the training process
   both call) refuses a parent of other rules before anything is written: start a new run, or
   finetune from it. A finetune takes only the parent's weights and is unaffected.
+- *As built at research comparison Stage 9a (2026-11-10; owner's O4, the reviewer's plan review
+  F1):* the rules are 2, which add the freeze setting `frozen_parts`, and a parent is judged by what
+  this build's one executor can faithfully run, through one settings decode
+  (`run_plan.decode_learning_settings`) that the preview and the training process share. A rules-1
+  parent resumes, extends and branches with `frozen_parts` "none", read from what its record shows
+  (rules 1 had no freeze; a weight transfer records "all"), and that source is recorded on the
+  continued run; its file is not changed. A parent of no recorded rules (K4's, as above) or of rules
+  this build does not know is still refused, with its reason
+  ([`../research-comparison/README.md`](../research-comparison/README.md) §5, Stage 9).
+- *As built at research comparison Stage 9b (2026-11-10; owner's O2 and O4a):* `frozen_parts`
+  `graph_side` trains. The bundle's freeze (`ModelBundle.freeze`) turns the input module's,
+  encoder's and LP head's gradients off before the Trainer builds its optimizer and keeps them in
+  evaluation mode whoever calls `train()`, so a finetune trains only its patient encoder and task
+  head. The weight transfer adds each part trainable or frozen, the frozen parts' forward mode and
+  the SHA-256 of the downstream weights as training starts; the loss identity keeps the recipe's
+  coefficients and names the terms without a trainable parameter (the LP term under that freeze).
 
 **One switch (R2).**
 - When the work is delivered, active training, inference and evaluation accept only the new

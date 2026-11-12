@@ -442,7 +442,48 @@ RULES_LEARNING_SETTINGS = {
         "model_spec", "num_epochs", "num_neighbors", "save_top_k", "scheduler_type", "seed",
         "sparse_sample_size", "split_seed", "task", "task_loss_weight", "use_amp",
         "warmup_steps", "weight_decay"),
+    # Research comparison Stage 9a: the freeze setting (owner's O4a).
+    2: ("amp_dtype", "batch_size", "candidate_sample_size", "candidate_upsample_size",
+        "early_stopping_patience", "eval_every_n_epochs", "frozen_parts",
+        "gradient_accumulation_steps", "learning_rate", "learning_stage", "lp_loss_weight",
+        "max_grad_norm", "min_lr_ratio", "model_spec", "num_epochs", "num_neighbors",
+        "save_top_k", "scheduler_type", "seed", "sparse_sample_size", "split_seed", "task",
+        "task_loss_weight", "use_amp", "warmup_steps", "weight_decay"),
 }
+
+#: The SHA-256 of rules 1's entry as released (its sorted names, one per
+#: line), pinned so an edit of the released entry fails even when the current
+#: rules' entry is what the tests compare with.
+RULES_1_ENTRY_SHA256 = "03ad2c12e4158e032213eef579c1c064690979c0e48696e27c31ac6818fc2e97"
+
+
+def test_the_released_rules_1_entry_is_never_edited():
+    """Rules 1's entry, as released at `2da28cf` and pinned since K8-7 (25
+    settings), is unchanged by the rules-2 entry beside it (research
+    comparison Stage 9a), and rules 2 reads exactly it plus the freeze."""
+    import hashlib
+
+    entry = RULES_LEARNING_SETTINGS[1]
+    assert len(entry) == 25 and list(entry) == sorted(set(entry))
+    assert hashlib.sha256("\n".join(entry).encode()).hexdigest() == RULES_1_ENTRY_SHA256
+    assert set(RULES_LEARNING_SETTINGS[2]) == set(entry) | {"frozen_parts"}
+
+
+def test_every_released_rules_version_is_continued():
+    """The released rules this build continues (`run_plan.CONTINUED_RULES`,
+    written as the versions themselves) are exactly the released entries, the
+    current rules among them (research comparison Stage 9a review): raising
+    `TRAINING_RULES_VERSION` without a person deciding how each earlier
+    released version decodes for the new executor (`decode_learning_settings`)
+    fails here, never drops released rules into "rules this build does not
+    know". A version that cannot be continued any more leaves both lists only
+    by a recorded retirement, its reason written here."""
+    from src.utils.checkpoint_io import TRAINING_RULES_VERSION
+    from src.utils.run_plan import CONTINUED_RULES
+
+    assert TRAINING_RULES_VERSION in CONTINUED_RULES
+    assert list(CONTINUED_RULES) == sorted(set(CONTINUED_RULES))
+    assert set(CONTINUED_RULES) == set(RULES_LEARNING_SETTINGS)
 
 
 def _released_entry():

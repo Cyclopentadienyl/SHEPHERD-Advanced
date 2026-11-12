@@ -916,7 +916,8 @@ class DiagnosisPipeline:
         from src.models.tasks.scoring import full_view_vectors
 
         view = self._bundle_view
-        self._bundle_z = full_view_vectors(self.model, view.edge_index(), view.rel, device)
+        self._bundle_z = full_view_vectors(self.model, view.edge_index(), view.rel, device,
+                                           node_type=view.node_type)
         task = self.model.task
         if task == "disease":
             self._bundle_diseases = view.type_nodes("disease")

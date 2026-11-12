@@ -43,6 +43,7 @@ import errno
 import hashlib
 import json
 import os
+import re
 import sys
 import shutil
 from pathlib import Path
@@ -490,7 +491,8 @@ def test_an_uncheckable_evidence_directory_that_alone_may_hold_the_bytes_is_sear
     assert run["state"]["registered"] == "registered"
     result = tp.result_html(reports, path.parent.name, tp.path_roots(), notes=[])
     assert "inputs (evidence search incomplete):" in result
-    assert "R10, training inputs (evidence search incomplete):" in mp.r10_html(record["r10"])
+    assert "R10, training inputs (evidence search incomplete):" in re.sub(
+        r"<[^>]+>", "", mp.r10_html(record["r10"]))
 
 
 def test_evidence_in_a_later_directory_is_found_past_one_that_cannot_be_checked(
@@ -697,11 +699,13 @@ def test_r10_states_follow_what_the_checkpoint_records(cli, cohort):
     assert opens.opens(cohort.data_dir / "val_samples.json") == 1
 
 
-def test_build_manifest_takes_the_kind_from_the_version_and_requires_r10(cli, cohort):
+def test_build_manifest_records_the_judged_kind_and_requires_r10(cli, cohort):
     """With a version block the manifest of a disease run (`--mode disease`,
     measured by the disease evaluator's semantics) is a registered cohort's
-    whatever `args.split` says; without R10 beside a version it is refused, so
-    no report of a registered version can lack its overlap."""
+    whatever `args.split` says, and records the kind the protocol judged (the
+    version's recorded kind, `MeasurementInputs.data_kind`); a kind that does
+    not match the version is refused, and so is a version without R10, so no
+    report of a registered version can lack its overlap."""
     import argparse
 
     from src.evaluation.task_measurement import disease_semantics
@@ -715,14 +719,25 @@ def test_build_manifest_takes_the_kind_from_the_version_and_requires_r10(cli, co
               "semantics": disease_semantics(4)}
     graph = {"num_nodes_dict": {"disease": 1}}
 
+    # The kind the run is judged by is the kind it records: one value, read once.
+    inputs = cli.read_measurement_inputs(
+        cohort.checkpoint, cohort.data_dir, torch.device("cpu"),
+        cohort=cohort.version.manifest["label"], registry=cohort.registry,
+        protocol="disease")
+    assert inputs.data_kind == cohort.version.kind == "supplied"
     manifest = cli.build_manifest(args, graph, 1, torch.device("cpu"), cohort_version=block,
-                                  r10={"definition_version": 1}, **common)
+                                  cohort_kind=inputs.data_kind, r10={"definition_version": 1},
+                                  **common)
     assert manifest.mode == "disease"
     assert (manifest.split, manifest.cohort_kind) == (block["role"], "supplied")
     assert manifest.relations["cohort_graph"] == "verified"
     assert manifest.relations["R2"] == "not_applicable"
+    with pytest.raises(ValueError, match="records cohort_kind 'generated' beside one"):
+        cli.build_manifest(args, graph, 1, torch.device("cpu"), cohort_version=block,
+                           cohort_kind="generated", r10={"definition_version": 1}, **common)
     with pytest.raises(ValueError, match="R10 is recorded for a registered cohort version"):
-        cli.build_manifest(args, graph, 1, torch.device("cpu"), cohort_version=block, **common)
+        cli.build_manifest(args, graph, 1, torch.device("cpu"), cohort_version=block,
+                           cohort_kind="supplied", **common)
 
 
 # ---------------------------------------------------------------------------

@@ -13,8 +13,8 @@ Purpose:
       scripts/train_model.py with its config in a temp YAML, and **test runs**,
       scripts/measure_scorer.py on one registered cohort version, measuring a
       model by the evaluation protocol asked (`--mode <protocol>`), once
-      `src.evaluation.protocols` has judged that the listed model record and
-      version admit it
+      `src.evaluation.protocols` has judged that the listed model's
+      capabilities and the listed version admit it
     - Holds **one GPU slot**: a job that is running or stopping keeps it,
       whatever its type, and the deployment's GPU lock
       (src/utils/gpu_lock.py) is checked before a start, so a job a CLI
@@ -118,7 +118,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import (
-    Any, Callable, Deque, Dict, Iterator, List, Mapping, Optional, Sequence, Set, Tuple,
+    Any, Callable, Deque, Dict, Iterator, List, Mapping, NamedTuple, Optional, Sequence, Set,
+    Tuple,
 )
 
 import yaml
@@ -266,6 +267,52 @@ def _remove(path: Path) -> None:
         pass
 
 
+class EvidenceChoice(NamedTuple):
+    """The R10 evidence a test run is given, chosen once by its version's data
+    kind (`evidence_choice`). `dirs` are the evidence directories passed as
+    `--training-evidence`; `problem` is why the evidence setting refuses a
+    start and `note` its remark that turns nothing off (both a supplied
+    version's only); `not_applicable` is why no evidence applies, for a
+    version of another kind (`protocols.training_evidence_refusal`), None
+    for a supplied one."""
+
+    dirs: Tuple[Path, ...] = ()
+    problem: Optional[str] = None
+    note: Optional[str] = None
+    not_applicable: Optional[str] = None
+
+
+def evidence_choice(version_kind: Any, setting: Any = None, *,
+                    environ: Optional[Mapping[str, str]] = None) -> EvidenceChoice:
+    """**The one R10 evidence choice of a test run, by its version's data
+    kind** (research comparison Stage 7), which the Test page's Start and the
+    probe build their `TestRunInputs` with and the page's Start check and R10
+    row show. A supplied cohort version takes the evidence directories of the
+    evidence setting (`setting`, read now from `environ` when None:
+    `server_settings.training_evidence_dirs`), and a refused setting refuses
+    its start. A version of any other kind (a KG edge set, a generated split)
+    takes none: the setting is neither read nor required, and
+    `not_applicable` says why (`protocols.training_evidence_refusal`), as
+    the command line refuses `--training-evidence` for it.
+    `TestRunInputs.reports_dir` refuses inputs that carry directories for it.
+
+    Args:
+        version_kind: the listed version's kind (`CohortVersionItem.kind`).
+        setting: the evidence setting as read (a `server_settings.Setting`,
+            or any value with its `value`, `problem` and `note`).
+    """
+    from src.evaluation import protocols
+
+    why = protocols.training_evidence_refusal(version_kind)
+    if why is not None:
+        return EvidenceChoice(not_applicable=why)
+    if setting is None:
+        from src.config import server_settings
+
+        setting = server_settings.training_evidence_dirs(environ)
+    return EvidenceChoice(tuple(setting.value or ()), setting.problem, setting.note)
+
+
 @dataclass(frozen=True)
 class TestRunInputs:
     """A test run's inputs, every one taken from the server's lists and
@@ -273,16 +320,19 @@ class TestRunInputs:
 
     The caller resolves a request's names through those lists (WP1): the
     registry from its setting, the version by label with its `cohort.json`
-    digest and `version_counts` (that listing's `counts`), the workspace by
-    name under the workspace root, the checkpoint by name and digest from that
-    workspace's listing, `learning_stage` and `task` from the same listing's
-    model record (`task` is the model's task head, None for none), the
-    evidence directories from their setting. `protocol`, `record` and
-    `deterministic` are the operator's choices: `protocol` is the evaluation
-    protocol asked (`--mode`), one `src.evaluation.protocols` admits for that
-    record and version, and it need not be the model's task. The run judges it
-    again on the bytes it reads. Nothing else is chosen: the batch size is the
-    CLI's default and the device the deployment's (D5).
+    digest, `version_kind` and `version_counts` (that listing's `kind` and
+    `counts`), the workspace by name under the workspace root, the checkpoint
+    by name and digest from that workspace's listing, `learning_stage`, `task`
+    and `capabilities` from the same listing's model record (`task` is the
+    model's task head, None for none; `capabilities` its capability
+    description, which the protocol is judged by), the evidence directories
+    by the one choice by the version's kind (`evidence_choice`: the
+    setting's for a supplied version, none for any other kind). `protocol`,
+    `record` and `deterministic` are the operator's choices: `protocol` is
+    the evaluation protocol asked (`--mode`), one `src.evaluation.protocols`
+    admits for that model and version, and it need not be the model's task.
+    The run judges it again on the bytes it reads. Nothing else is chosen:
+    the batch size is the CLI's default and the device the deployment's (D5).
     """
 
     __test__ = False  # a dataclass, not a pytest test class, whatever its name says
@@ -296,6 +346,8 @@ class TestRunInputs:
     protocol: str
     learning_stage: Optional[str]
     task: Optional[str]
+    capabilities: Optional[Mapping[str, Any]]
+    version_kind: Optional[str]
     version_counts: Optional[Mapping[str, Any]]
     evidence_dirs: Tuple[Path, ...] = ()
     record: bool = False
@@ -308,18 +360,26 @@ class TestRunInputs:
 
         Raises:
             ValueError: the reason `src.evaluation.protocols.refusal` gives
-                for the protocol asked on the listed record and version (a
-                name that is not a protocol, a model record it does not take,
-                or a version that lacks what it needs), a digest that is not
-                a full SHA-256, a path that is not absolute, or a registry or
-                label the registry's rules refuse.
+                for the protocol asked on the listed model's capabilities and
+                the listed version (a name that is not a protocol, a model it
+                does not take, or a version of a kind it does not measure or
+                that lacks what it needs), evidence directories for a version
+                of a kind that takes none (`evidence_choice`, the command
+                line's refusal of `--training-evidence`, said before a process
+                is started), a digest that is not a full SHA-256, a path that
+                is not absolute, or a registry or label the registry's rules
+                refuse.
         """
         from src.evaluation import cohort_registry, protocols
 
-        why = protocols.refusal(self.protocol, self.learning_stage, self.task,
+        why = protocols.refusal(self.protocol, self.capabilities, self.version_kind,
                                 self.version_counts)
         if why:
             raise ValueError(why)
+        if self.evidence_dirs:
+            why = protocols.training_evidence_refusal(self.version_kind)
+            if why:
+                raise ValueError(f"{why} A test run on it is given no evidence directory.")
         for name, digest in (("checkpoint", self.checkpoint_sha256),
                              ("cohort version", self.version_sha256)):
             if not (isinstance(digest, str) and _SHA256.fullmatch(digest)):
@@ -347,6 +407,7 @@ class TestRunInputs:
             "protocol": self.protocol,
             "learning_stage": self.learning_stage,
             "task": self.task,
+            "version_kind": self.version_kind,
             "evidence_dirs": [str(d) for d in self.evidence_dirs],
             "record": bool(self.record),
             "deterministic": bool(self.deterministic),
@@ -430,17 +491,26 @@ def _task_words(tasks: Sequence[str]) -> str:
 
 
 def _recipe_settings_problem(settings: Mapping[str, Any], references: Sequence[Mapping[str, Any]],
-                             what: str) -> Optional[str]:
+                             what: str, *, learning_stage: str) -> Optional[str]:
     """**The one check of the settings a new model bundle run is started with**
     (BACKLOG 54), shared by `start_training` (a base) and `start_finetune`
-    (every child): why `settings` cannot start `what`, or None. `references`
-    are the recipe values of every run the start makes (`reference_settings`:
-    one per Fine-tune task, one for a base), so a setting is taken only when
-    every run reads it, its value only when its field spec takes it
-    (`value_problem`), and None only where a reference value is None. Checked
-    here, a refused setting starts nothing and writes nothing."""
+    (every child): why `settings` cannot start `what`, a run of
+    `learning_stage`, or None. `references` are the recipe values of every run
+    the start makes (`reference_settings`: one per Fine-tune task, one for a
+    base), so a setting is taken only when every run reads it, its value only
+    when its field spec takes it (`value_problem`), and None only where a
+    reference value is None. The freeze is checked first, by the training
+    process's own check of it and in its order (`frozen_parts_problem`, before
+    the settings a run does not read), so a base asked to freeze hears from
+    both that nothing would train. Checked here, a refused setting starts
+    nothing and writes nothing."""
+    from src.config.recipe import frozen_parts_problem
     from src.config.training_fields import value_problem
 
+    if "frozen_parts" in settings:
+        frozen = frozen_parts_problem(learning_stage, settings["frozen_parts"])
+        if frozen:
+            return frozen
     common = set.intersection(*(set(values) for values in references))
     unread = sorted(set(settings) - common)
     if unread:
@@ -462,10 +532,11 @@ def _new_bundle_run(config: Mapping[str, Any]) -> Tuple[Optional[str], Optional[
     Only a base starts here: a finetune is a Fine-tune start's
     (`start_finetune`, one child per task from a base). Its keys are the
     recipe's base settings and `_NEW_RUN_KEYS`, each value one its field spec
-    takes (`_recipe_settings_problem`), and its hop list one number per layer
-    of the spec's encoder (`hops_problem`, the recipe's list when it names
-    none); a setting outside them is refused, never passed on for the process
-    to refuse."""
+    takes (`_recipe_settings_problem`), and its hop list one number per hop
+    the spec's encoder declares (`hops_problem`, the recipe's list when it
+    names none; GATv2: one per layer), so a spec whose encoder this build
+    cannot build or sample is refused here too; a setting outside them is
+    refused, never passed on for the process to refuse."""
     from src.config.recipe import reference_settings
     from src.models.bundle.spec import ModelSpec, SpecError, hops_problem, reference_spec
 
@@ -481,7 +552,7 @@ def _new_bundle_run(config: Mapping[str, Any]) -> Tuple[Optional[str], Optional[
     references = reference_settings("base")[0]
     problem = _recipe_settings_problem(
         {name: value for name, value in config.items() if name not in _NEW_RUN_KEYS},
-        [references], "a base run")
+        [references], "a base run", learning_stage="base")
     if problem:
         return None, problem
     if config.get("model_spec") is None:
@@ -1253,7 +1324,7 @@ class TrainingManager:
             return refused("A task is named more than once; each task is one child.")
         problem = _recipe_settings_problem(
             inputs.settings, [reference_settings("finetune", task)[0] for task in tasks],
-            f"a Fine-tune start of {_task_words(tasks)}")
+            f"a Fine-tune start of {_task_words(tasks)}", learning_stage="finetune")
         if problem:
             return {**refused(problem), "invalid_settings": True}
         if expected_dataset_fingerprint is not None:
@@ -2333,7 +2404,10 @@ class TrainingManager:
         # set explicitly, so every other learning setting shows as inherited.
         # A setting the parent records and this build does not have is not in
         # it, so not inherited; a current one the parent does not record is in
-        # it with nothing behind it, so refused, as the process refuses it.
+        # it with nothing behind it, and the plan reads the parent through the
+        # one settings decode (`run_plan.decode_learning_settings`), as the
+        # process does: a rules-1 parent's freeze is decoded, any other
+        # missing setting refused, as the process refuses it.
         explicit = dict(requested or {})
         recorded = (record.get("config") or {}).get("requested")
         recorded = recorded if isinstance(recorded, dict) else {}
@@ -2358,8 +2432,9 @@ class TrainingManager:
         except RunPlanRefused as exc:
             return {**facts, "ok": False, "reason": str(exc)}
         return {**facts, "ok": True, "mode": plan.mode, "action": plan.action,
-                "inherited": plan.inherited, "start_epoch": plan.start_epoch,
-                "end_epoch": plan.end_epoch, "stage": plan.stage}
+                "inherited": plan.inherited, "decoded": plan.decoded,
+                "start_epoch": plan.start_epoch, "end_epoch": plan.end_epoch,
+                "stage": plan.stage}
 
     # =========================================================================
     # Checkpoint Management
@@ -2391,7 +2466,7 @@ class TrainingManager:
             List of checkpoint info dicts.
         """
         from src.models.bundle.record import listed_record
-        from src.utils.checkpoint_paths import read_run_checkpoints, run_architecture
+        from src.utils.checkpoint_paths import read_run_checkpoints, shown_path
 
         if data_dir is None:
             if not self._config:
@@ -2406,19 +2481,22 @@ class TrainingManager:
             except OSError:
                 if entry.path != entry.run_dir:
                     continue  # removed since it was listed: there is nothing to show
-                # A directory under runs/ the listing could not list, which it
-                # names as shown when its name is not text: no path has that
-                # name, so it is listed with its reason and no size or time.
+                # A directory the listing could not list (one it may not
+                # enter): listed with its reason, and no size or time.
                 stat = None
+            # Text as every answer shows it, and the identity apart from it.
+            architecture, run_name, filename = entry.names
             info: Dict[str, Any] = {
-                "filename": entry.path.name,
-                "filepath": str(entry.path),
+                "filename": filename,
+                "filepath": shown_path(entry.path),
                 "size_mb": round(stat.st_size / (1024 * 1024), 2) if stat is not None else 0.0,
                 "modified": (datetime.fromtimestamp(stat.st_mtime).isoformat()
                              if stat is not None else ""),
-                "run": entry.run_dir.name,
-                "run_dir": str(entry.run_dir),
-                "architecture": run_architecture(entry.run_dir),
+                "run": run_name,
+                "run_dir": shown_path(entry.run_dir),
+                "architecture": architecture,
+                "key": entry.key,
+                "run_key": entry.run_key,
                 "sha256": entry.sha256,
                 "validation": ({"metric": entry.validation[0], "value": entry.validation[1]}
                                if entry.validation else None),

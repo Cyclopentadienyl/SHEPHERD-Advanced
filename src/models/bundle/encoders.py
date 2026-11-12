@@ -32,7 +32,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-from src.models.bundle.spec import EncoderSpec, InputSpec, SpecError
+from src.models.bundle.spec import EncoderSpec, InputSpec, SpecError, require_encoder_declaration
 
 
 class InputModule(nn.Module):
@@ -51,6 +51,16 @@ class InputModule(nn.Module):
             nn.Embedding(num_node_types, spec.dim) if spec.type_embedding else None)
 
     def forward(self, node_ids: Tensor, node_types: Optional[Tensor] = None) -> Tensor:
+        """Each node's row, plus its type's when the spec adds a type embedding.
+
+        `node_types`, when given, holds one type id per entry of `node_ids`,
+        in the same order (the view's `GraphView.node_type` read at those ids);
+        a count that differs is refused, never broadcast or cut. A module
+        without a type embedding reads no type."""
+        if node_types is not None and node_types.shape != node_ids.shape:
+            raise ValueError(f"node types are given for {tuple(node_types.shape)} nodes, not the "
+                             f"{tuple(node_ids.shape)} the input reads; each node's type comes "
+                             "in the nodes' order")
         x = self.table(node_ids)
         if self.type_embedding is not None:
             if node_types is None:
@@ -66,6 +76,14 @@ class GraphEncoder(nn.Module):
     message-passing edges (kept apart from supervision edges by the caller),
     and, for encoders that use them, node types and relation ids. Out: one
     vector of `width` per node the caller asked for.
+
+    Each kind states, without torch, what its implementation here does: its
+    declaration (`src.models.bundle.spec.EncoderDeclaration`) gives its width,
+    the computations it offers, the hops its sampled computation needs and the
+    inputs it reads, and the model's capability description is read from it.
+    A built encoder's `width`, `uses_node_types` and `uses_relations` are its
+    declaration's answers for its spec. `chunk_size` is an execution parameter
+    of the implementation's full-view computation, not a rule of the contract.
     """
 
     #: Output width (`EncoderSpec.width`).
@@ -94,7 +112,11 @@ class GATv2Encoder(GraphEncoder):
         if spec.kind != "gatv2":
             raise SpecError(f"GATv2Encoder built for encoder kind {spec.kind!r}")
         self.spec = spec
-        self.width = spec.width
+        # The width and what it reads are its declaration's answers for its spec.
+        declaration = require_encoder_declaration(spec.kind)
+        self.width = declaration.width(spec)
+        self.uses_node_types = declaration.reads_node_types(spec)
+        self.uses_relations = declaration.reads_edge_relations(spec)
         widths: List[int] = []
         for i in range(spec.layers):
             if i == spec.layers - 1:
@@ -103,7 +125,6 @@ class GATv2Encoder(GraphEncoder):
                 widths.append(spec.hidden * spec.first_hidden_multiplier)
             else:
                 widths.append(spec.hidden)
-        self.uses_relations = spec.relation_edge_dim is not None
         self.relation_embedding: Optional[nn.Embedding] = None
         if self.uses_relations:
             if num_relations <= 0:
@@ -127,11 +148,20 @@ class GATv2Encoder(GraphEncoder):
                 self.layer_norms.append(LayerNorm(dim, mode="graph"))
                 self.batch_norms.append(nn.BatchNorm1d(dim))
 
-    def _edge_attr(self, edge_type: Optional[Tensor]) -> Optional[Tensor]:
+    def _edge_attr(self, edge_index: Tensor, edge_type: Optional[Tensor]) -> Optional[Tensor]:
+        """The relation vector of each message-passing edge, in `edge_index`'s
+        column order; None when the encoder reads no relation. Relation ids
+        that are not one per edge are refused: sliced per hop or reordered by
+        destination below, a longer or shorter list would pair edges with
+        another edge's relation."""
         if self.relation_embedding is None:
             return None
         if edge_type is None:
             raise ValueError("a relation-aware GATv2 needs edge types")
+        if edge_type.shape != (edge_index.size(1),):
+            raise ValueError(f"relation ids are given for {tuple(edge_type.shape)} edges, not the "
+                             f"{edge_index.size(1)} message-passing edges; each edge's relation "
+                             "comes in the edges' order")
         return self.relation_embedding(edge_type)
 
     def _after(self, i: int, x: Tensor) -> Tensor:
@@ -151,7 +181,7 @@ class GATv2Encoder(GraphEncoder):
                              f"(got {len(nodes_per_hop) - 1})")
         cum_nodes = torch.tensor([0, *nodes_per_hop]).cumsum(0).tolist()
         cum_edges = torch.tensor([0, *edges_per_hop]).cumsum(0).tolist()
-        edge_attr = self._edge_attr(edge_type)
+        edge_attr = self._edge_attr(edge_index, edge_type)
         for i, conv in enumerate(self.convs):
             # Destinations: nodes within L-1-i hops; their sampled incoming
             # edges are the first L-i hops' edges.
@@ -168,7 +198,7 @@ class GATv2Encoder(GraphEncoder):
     def forward_full(self, x: Tensor, edge_index: Tensor, *, edge_type: Optional[Tensor] = None,
                      node_type: Optional[Tensor] = None, chunk_size: int = 65536) -> Tensor:
         N = x.size(0)
-        edge_attr = self._edge_attr(edge_type)
+        edge_attr = self._edge_attr(edge_index, edge_type)
         dst_all = edge_index[1]
         order = torch.argsort(dst_all, stable=True)
         src_sorted, dst_sorted = edge_index[0][order], dst_all[order]

@@ -72,9 +72,7 @@ import csv
 import io
 import logging
 import re
-import tempfile
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 import gradio as gr
@@ -88,6 +86,7 @@ from src.core.types import (
     result_label,
 )
 from src.evaluation.caveats import TASK_NAMES
+from src.utils import csv_cells
 from src.utils.server_address import ServerAddressUnknownError, api_base_url
 from src.webui.components import diagnosis_card as card
 from src.webui.components.chips import D8_SHORT
@@ -95,6 +94,7 @@ from src.webui.components.help import copy_button, help_button, text_id
 from src.webui.components.renderers import IDENTITY_BANNERS
 from src.webui.components.renderers import NOT_A_MEDICAL_DEVICE as _NOT_A_MEDICAL_DEVICE
 from src.webui.components.renderers import e as _e
+from src.webui.exports import export_dir, file_slug
 from src.webui.components.renderers import kv_cells as _kv_cells
 from src.webui.components.renderers import short_hex as _short_hex
 from src.webui.operator_access import operator_access
@@ -657,20 +657,17 @@ def _field(part: Any, key: str) -> Any:
     return part.get(key, _MISSING) if isinstance(part, dict) else _MISSING
 
 
-def _is_sha256(value: Any) -> bool:
-    return isinstance(value, str) and _SHA256_RE.fullmatch(value) is not None
+#: Whether a value is a SHA-256 (the shared CSV cells' rule, `csv_cells.is_sha256`).
+_is_sha256 = csv_cells.is_sha256
 
 
 def _is_synthetic(identity: Dict[str, Any]) -> bool:
     return _field(_field(identity, "dataset_record"), "origin") == "synthetic"
 
 
-def _plain_value(value: Any) -> str:
-    """A JSON scalar as text: ``true``/``false`` for booleans, floats as Python
-    prints them (``0.7``, ``1.0``)."""
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    return str(value)
+#: A JSON scalar as text (`csv_cells.plain_text`): ``true``/``false`` for
+#: booleans, floats as Python prints them (``0.7``, ``1.0``).
+_plain_value = csv_cells.plain_text
 
 
 # ----------------------------------------------------------------- Markdown form
@@ -986,34 +983,25 @@ def _fmt_num(value: Any) -> str:
             else "")
 
 
-#: A cell a spreadsheet would run as a formula starts with one of these (OWASP,
-#: "CSV Injection").
-_CSV_FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
-
-
-def _csv_text(value: Any) -> str:
-    """A free-text cell, defused: one that a spreadsheet would run as a formula
-    gets a leading apostrophe. Numeric columns are written by `_fmt_num` and
-    never pass through here, so a negative number stays a number."""
-    text = "" if value is None else str(value)
-    return "'" + text if text.startswith(_CSV_FORMULA_START) else text
+#: A free-text cell, defused by the one rule every CSV here follows
+#: (`csv_cells.text_cell`): one a spreadsheet would run as a formula gets a
+#: leading apostrophe. Numeric columns are written by `_fmt_num` and never
+#: pass through it, so a negative number stays a number.
+_csv_text = csv_cells.text_cell
 
 
 def _csv_value(value: Any, null_word: str) -> str:
-    """One identity value as a CSV cell, never empty."""
+    """One identity value as a CSV cell, never empty (`csv_cells.value_cell`):
+    a key the response did not carry, or an empty text, is ``not_reported``."""
     if value is _MISSING:
         return IDENTITY_NOT_REPORTED
-    if value is None:
-        return null_word
-    if isinstance(value, str):
-        return _csv_text(value) if value else IDENTITY_NOT_REPORTED
-    return _plain_value(value)
+    return csv_cells.value_cell(value, null_word=null_word, empty_word=IDENTITY_NOT_REPORTED)
 
 
 def _csv_digest(value: Any, null_word: str) -> str:
-    if _is_sha256(value):
-        return f"sha256:{value}"
-    return _csv_value(value, null_word)
+    """A digest as ``sha256:<hex>`` (`csv_cells.digest_cell`), anything else
+    as `_csv_value`."""
+    return csv_cells.digest_cell(value) or _csv_value(value, null_word)
 
 
 def _served_csv_values(result: Dict[str, Any]) -> Dict[str, str]:
@@ -1244,22 +1232,6 @@ def _task_meta_lines(result: Mapping[str, Any], kind: Optional[str]) -> List[str
     return []
 
 
-def _slug(value: Any, default: str) -> str:
-    return re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value or "")).strip("_") or default
-
-
-# One export directory reused across diagnoses in this process. Files are named by
-# session signature so they don't collide; periodic cleanup is future work.
-_EXPORT_DIR: Optional[Path] = None
-
-
-def _export_dir() -> Path:
-    global _EXPORT_DIR
-    if _EXPORT_DIR is None or not _EXPORT_DIR.exists():
-        _EXPORT_DIR = Path(tempfile.mkdtemp(prefix="shepherd_export_"))
-    return _EXPORT_DIR
-
-
 def _export_basename(result: Dict[str, Any]) -> str:
     """diagnosis_[SYNTHETIC_]<patient>_<session-signature> — distinct per run
     for easy filing.
@@ -1268,8 +1240,8 @@ def _export_basename(result: Dict[str, Any]) -> str:
     M3c): SYNTHETIC for a result from a synthetic workspace. A CSV has no place
     for a banner, and a file is often seen by its name alone.
     """
-    patient = _slug(result.get("patient_id"), "webui_patient")
-    session = _slug(result.get("session_id") or result.get("timestamp"), "run")
+    patient = file_slug(result.get("patient_id"), "webui_patient")
+    session = file_slug(result.get("session_id") or result.get("timestamp"), "run")
     kind, identity = _identity_of(result)
     marker = ("SYNTHETIC_" if kind == _SERVED and identity is not None
               and _is_synthetic(identity) else "")
@@ -1280,7 +1252,9 @@ def _write_exports(result: Dict[str, Any]) -> Tuple[str, str]:
     """Generate both export files for a result up front (so the DownloadButtons
     can serve them on the first click). Returns (csv_path, md_path)."""
     base = _export_basename(result)
-    directory = _export_dir()
+    # The dashboard's one download directory (`src/webui/exports.py`); files
+    # are named by session signature so they do not collide.
+    directory = export_dir()
     csv_path = directory / f"{base}.csv"
     md_path = directory / f"{base}_report.md"
     csv_path.write_text(_build_results_csv(result), encoding="utf-8")
@@ -1321,8 +1295,9 @@ FIELD_HELP = {
         "Reference cohort",
         "The registered cohort version whose patients a patients-like-me model ranks for this "
         "query. Every version in the server's registry is listed. One mapped against another "
-        "graph, or one that cannot be read, is marked; the server refuses it. Under the "
-        "select: the chosen version's fingerprint and its graph check.",
+        "graph, a KG edge set, a generated split, or one that cannot be read is marked; the "
+        "server refuses it. "
+        "Under the select: the chosen version's fingerprint and its graph check.",
     ),
     "dx_patient_id": (
         "Patient ID (optional)",
@@ -1406,9 +1381,9 @@ TOPIC_HELP = {
     ),
     "dx-run-no-cohort": (
         "Run Diagnosis is disabled",
-        "This model ranks a registered reference cohort's patients, and no version can be read. "
-        "The registry is not set or refused, holds no version yet, or "
-        "every version is marked \"cannot be read\". An operator imports a version in "
+        "This model ranks a registered reference cohort's patients, and no such version can be "
+        "read. The registry is not set or refused, holds no version yet, or holds only KG edge "
+        "sets and versions marked \"cannot be read\". An operator imports a cohort in "
         "Research › Test, or corrects the server's cohort registry setting.",
     ),
     **{f"dx-banner-{key}": (headline, detail) for key, (headline, detail) in IDENTITY_BANNERS.items()},
@@ -1431,6 +1406,11 @@ NO_COHORT_VERSION = ("The registry holds no cohort version yet; an operator impo
                      "Research\u00a0› Test.")
 NO_READABLE_VERSION = ("Every version in the registry is marked “cannot be read”; an operator "
                        "imports a readable one in Research\u00a0› Test.")
+#: Every readable version is of another kind (a KG edge set, a generated
+#: split), which is not a supplied cohort (`diagnosis_card.NOT_A_COHORT`).
+NO_REFERENCE_VERSION = ("No listed version is a reference cohort: each is a KG edge set, a "
+                        "generated split or cannot be read. An operator imports a cohort in "
+                        "Research\u00a0› Test.")
 
 #: The change drawer's link to Research › Models: each "›" held to the word
 #: before it by a no-break space, so it is never alone on a line.
@@ -2042,8 +2022,29 @@ _TASK_BOX = ("shep-dx-task-box",)
 #: An option's visible text is at most this long (skill §8); its value is the
 #: version's full label.
 OPTION_MAX = 40
-#: The marks an option carries for a version the server would refuse.
-_VERSION_MARKS = {"another": " · another graph", "unreadable": " · cannot be read"}
+#: The marks an option carries for a version the server would refuse: one
+#: mapped against another graph, one that cannot be read, and one of another
+#: kind, which holds no patients (`card.NOT_A_COHORT`), marked by its kind.
+_VERSION_MARKS = {"another": " · another graph", "unreadable": " · cannot be read",
+                  card.NOT_A_COHORT: " · not a cohort"}
+_KIND_MARKS = {"kg_edges": " · KG edge set", "generated": " · generated split"}
+
+
+def _version_mark(version: Mapping[str, Any]) -> str:
+    """The mark of a listed version's option (`_VERSION_MARKS`), or none."""
+    if version.get("problem"):
+        return _VERSION_MARKS["unreadable"]
+    binding = version.get("binding")
+    if binding == card.NOT_A_COHORT:
+        return _KIND_MARKS.get(version.get("kind"), _VERSION_MARKS[binding])
+    return _VERSION_MARKS.get(binding, "")
+
+
+def _reference(version: Mapping[str, Any]) -> bool:
+    """Whether a listed version can be ranked as a reference cohort: it can be
+    read and is a supplied cohort (not a KG edge set or a generated split); its
+    graph is the server's check."""
+    return not version.get("problem") and version.get("binding") != card.NOT_A_COHORT
 
 
 def _cohorts(state: Mapping[str, Any]) -> Dict[str, Any]:
@@ -2124,26 +2125,26 @@ def cohort_choices(cohorts: Mapping[str, Any], current: Any
                    ) -> Tuple[List[Tuple[str, str]], Optional[str]]:
     """The Reference cohort options and the version chosen. Every listed
     version, as ``(text, full label)``: the text is the label with at most one
-    mark ("another graph", "cannot be read"), at most `OPTION_MAX` characters
-    (a long label shortened where it shows what tells it from the others,
-    `_option_text`) and unique. The chosen one is the current value while it
-    is listed, else the first version mapped against the serving workspace's
-    graph, else the first readable one."""
+    mark ("another graph", "cannot be read", "KG edge set", "generated split"), at most
+    `OPTION_MAX` characters (a long label shortened where it shows what tells
+    it from the others, `_option_text`) and unique. The chosen one is the
+    current value while it is listed, else the first version mapped against
+    the serving workspace's graph, else the first readable cohort; a KG edge
+    set or a generated split is never chosen by default."""
     versions = cohorts.get("versions") or []
     labels = [str(v.get("label")) for v in versions]
     options: List[Tuple[str, str]] = []
     taken: set = set()
     for index, version in enumerate(versions):
         label = labels[index]
-        mark = _VERSION_MARKS["unreadable"] if version.get("problem") else \
-            _VERSION_MARKS.get(version.get("binding"), "")
+        mark = _version_mark(version)
         text = _option_text(label, mark, labels[:index] + labels[index + 1:], taken)
         taken.add(text)
         options.append((text, label))
     if current in labels:
         return options, current
     bound = [str(v.get("label")) for v in versions if v.get("binding") == "bound"]
-    readable = [str(v.get("label")) for v in versions if not v.get("problem")]
+    readable = [str(v.get("label")) for v in versions if _reference(v)]
     return options, (bound or readable or [None])[0]
 
 
@@ -2164,9 +2165,10 @@ def cohort_info(cohorts: Mapping[str, Any], chosen: Any) -> str:
 
 def cohort_refusal(state: Mapping[str, Any]) -> Optional[str]:
     """Why Run Diagnosis is off for a patients-like-me model, or None: no
-    usable registry, no version, or no readable one, each in its own words
-    with who can act (the registry's own problem, an operator's text, is not
-    repeated here)."""
+    usable registry, no version, no readable one, or no readable cohort (each
+    readable version a KG edge set or a generated split), each in its own words
+    with who can act
+    (the registry's own problem, an operator's text, is not repeated here)."""
     if card.served_task(state.get("status")) != "patients_like_me":
         return None
     cohorts = _cohorts(state)
@@ -2177,6 +2179,8 @@ def cohort_refusal(state: Mapping[str, Any]) -> Optional[str]:
         return f"{RUN_DISABLED_NO_COHORT} {NO_COHORT_VERSION}"
     if all(v.get("problem") for v in versions):
         return f"{RUN_DISABLED_NO_COHORT} {NO_READABLE_VERSION}"
+    if not any(_reference(v) for v in versions):
+        return f"{RUN_DISABLED_NO_COHORT} {NO_REFERENCE_VERSION}"
     return None
 
 
@@ -2511,7 +2515,7 @@ def select_candidate(result: Any, segment: Any, key: Any) -> Dict[str, Any]:
 
 def open_identity(state: Any, result: Any, seg: str = "model",
                   section: str = "identity", phase: Any = "idle") -> Dict[str, Any]:
-    """Details › (Model in use, at Identity), Recorded tests › (at Evidence) or
+    """Details › (Model in use, at Identity), Recorded results › (at Evidence) or
     the badge (This result): the identity drawer, in the details column's
     slot; the change-model drawer closes. While a model change is open (its
     confirmation, or a reload running: `phase` not idle) the change drawer
@@ -2872,7 +2876,7 @@ def create_diagnosis_tab(ctx: Any) -> None:
                             outputs=[card_loading, run_btn, run_cover, run_reason],
                             show_progress="hidden")
 
-    # --- the card's own links: dismiss, Retry / read it, Recorded tests ›
+    # --- the card's own links: dismiss, Retry / read it, Recorded results ›
     identity_names = ("identity_view", "identity_drawer", "change_drawer", "identity_seg",
                       "id_model", "id_result_md", "id_result_html")
 

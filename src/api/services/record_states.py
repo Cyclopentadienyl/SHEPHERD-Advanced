@@ -17,7 +17,9 @@ a UI module: the read-only route ``GET /api/v1/evaluations/loaded-model``
 (`src/api/routes/evaluations.py`) and the dashboard's model list, Models page
 and Diagnosis card all take a record's state from `contest_states`, so an API
 client and the dashboard cannot disagree about a record. The read-only Models
-view shows the route's answer and computes nothing itself.
+view shows the route's answer and computes nothing itself. The results service
+takes each listed store's description of a group from the same body
+(`group_state`).
 
 **A run's description** (`run_contest`) is the same comparison for one run
 directory of a store: the one run listing that ``GET /api/v1/cohorts`` and the Test page
@@ -166,7 +168,11 @@ class CohortVersions:
             if entry.version is None:
                 continue
             digest = entry.version.identity.sha256
-            found.listed[digest] = {"label": entry.label, "sha256": digest}
+            # The version's kind and role, as its one read says them: a KG edge
+            # set is listed as one, beside the supplied cohorts.
+            found.listed[digest] = {"label": entry.label, "sha256": digest,
+                                    "kind": entry.version.kind,
+                                    "role": entry.version.manifest.get("role")}
             found._resolved[entry.label] = (entry.version, None)
         return found
 
@@ -225,30 +231,42 @@ def contest_states(records: Iterable[Mapping[str, Any]], versions: CohortVersion
             version, why = versions.by_digest(digest)
             scans[digest] = (StoreRead(None, why) if version is None
                              else read_report_store(version))
-        scan, why = scans[digest]
-        if scan is None:
-            out[text] = {"state": "cannot_be_checked", "differing": [], "runs": [],
-                         "problems": _shown([why], operator)}
-            continue
-        try:
-            status = scan.status(key)
-        except Exception as exc:  # noqa: BLE001
-            out[text] = {"state": "cannot_be_checked", "differing": [], "runs": [],
-                         "problems": _shown([f"({type(exc).__name__})"], operator)}
-            continue
-        runs = []
-        if status.state == "contested":
-            for run_id, record in (scan.reports.get(tuple(key)) or {}).values():
-                if run_id in status.disagreeing_runs:
-                    metrics = record.get("metrics") if isinstance(record, Mapping) else None
-                    runs.append({"run": run_id, "values": {
-                        name: metrics.get(name) for name in status.differing
-                        if isinstance(metrics, Mapping) and name in metrics}})
-        out[text] = {"state": status.state, "differing": list(status.differing),
-                     "runs": sorted(runs, key=lambda run: run["run"]),
-                     "problems": _shown(status.problems, operator)}
+        out[text] = group_state(scans[digest], key, operator=operator)
     return out
 
 
-__all__ = ["CohortVersions", "StoreRead", "contest_states", "key_text", "read_report_store",
-           "run_contest"]
+def group_state(store: StoreRead, key: Sequence[Any], *, operator: bool) -> Dict[str, Any]:
+    """One condition group's description in one store (`StoreScan.status`),
+    as every surface shows it: ``state``, ``differing``, ``runs`` (for a
+    ``contested`` group, each run carrying a differing report with its values
+    of the metrics that differ) and ``problems``. A store that could not be
+    read, or a scan that fails to describe the group, is ``cannot_be_checked``
+    with why, never uncontested. **The one turning of a scan into a group's
+    state**: `contest_states` takes each record's from it, and the results
+    service each listed store's (`src/api/services/results.py`). It decides
+    nothing. `operator` False leaves out the problems' own words, which may
+    name a server path."""
+    scan, why = store
+    if scan is None:
+        return {"state": "cannot_be_checked", "differing": [], "runs": [],
+                "problems": _shown([why], operator)}
+    try:
+        status = scan.status(tuple(key))
+    except Exception as exc:  # noqa: BLE001
+        return {"state": "cannot_be_checked", "differing": [], "runs": [],
+                "problems": _shown([f"({type(exc).__name__})"], operator)}
+    runs = []
+    if status.state == "contested":
+        for run_id, record in (scan.reports.get(tuple(key)) or {}).values():
+            if run_id in status.disagreeing_runs:
+                metrics = record.get("metrics") if isinstance(record, Mapping) else None
+                runs.append({"run": run_id, "values": {
+                    name: metrics.get(name) for name in status.differing
+                    if isinstance(metrics, Mapping) and name in metrics}})
+    return {"state": status.state, "differing": list(status.differing),
+            "runs": sorted(runs, key=lambda run: run["run"]),
+            "problems": _shown(status.problems, operator)}
+
+
+__all__ = ["CohortVersions", "StoreRead", "contest_states", "group_state", "key_text",
+           "read_report_store", "run_contest"]

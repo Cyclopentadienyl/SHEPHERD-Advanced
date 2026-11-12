@@ -266,19 +266,30 @@ def build_demo_kg() -> KnowledgeGraph:
 #: Epochs of each stage `--train-model` trains, the base and its disease child:
 #: the demo graph is learnt in that, and the point is the path, not the score.
 DEMO_EPOCHS = 2
+#: Distractor candidates per case of the demo workspace's functional gene
+#: fixture (`scripts/derive_task_fixture.py --distractors`), which a gene or
+#: patients-like-me child of the demo trains and is measured on: the demo
+#: graph holds eight genes, too few for the script's default of 19.
+DEMO_FIXTURE_DISTRACTORS = 4
 
 
 def demo_task_training() -> Dict[str, Dict[str, Any]]:
-    """The demo graph's training sizes, by stage ("base", "disease"): the
-    reference base spec shrunk (input 8, two layers of width 4 with 2 heads)
-    and small batches, hops and samples, so the base and its disease child each
-    train in seconds on CPU. Every other setting is the stage's reference
-    recipe (`src.config.recipe`), which the trainer fills and records.
+    """The demo graph's training sizes, by stage and task ("base", "disease",
+    "gene", "patients_like_me"): the reference base spec shrunk (input 8, two
+    layers of width 4 with 2 heads) and small batches, hops and samples, so
+    the base and each child of it train in seconds on CPU. Every other setting
+    is the stage's reference recipe (`src.config.recipe`), which the trainer
+    fills and records. A gene or patients-like-me child trains on the gene
+    task's functional fixture of the demo workspace
+    (`scripts/derive_task_fixture.py --distractors`, `DEMO_FIXTURE_DISTRACTORS`),
+    which `--train-model` does not derive.
 
-    **The one statement of the demo's sizes**: `train_demo_model` trains at
-    them, and the deployment probe trains and starts every demo model at them
-    (`scripts/probe_deployment.py`: D1's base and child, M2's finetune, the
-    base starts of M11, W7 and W11)."""
+    **The one statement of the demo's sizes**: `train_demo_model` trains its
+    base and disease child at them, the deployment probe trains and starts
+    every demo model at them (`scripts/probe_deployment.py`: D1's base and
+    child, M2's finetune, the base starts of M11, W7 and W11, L4's two bases
+    and L7's disease, gene and patients-like-me children), and so do the
+    tests' trained children (`tests/fixtures/trained_children.py`)."""
     import dataclasses
 
     from src.models.bundle import reference_spec
@@ -293,6 +304,8 @@ def demo_task_training() -> Dict[str, Dict[str, Any]]:
         "base": {"model_spec": small.to_dict(), "batch_size": 32, "num_neighbors": [4, 4]},
         "disease": {"batch_size": 8, "num_neighbors": [3, 3], "candidate_sample_size": 8,
                     "sparse_sample_size": 8},
+        "gene": {"batch_size": 4, "num_neighbors": [3, 3], "sparse_sample_size": 4},
+        "patients_like_me": {"batch_size": 4, "num_neighbors": [3, 3], "sparse_sample_size": 4},
     }
 
 

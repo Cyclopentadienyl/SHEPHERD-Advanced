@@ -430,12 +430,34 @@ def _listed_form(payload):
 
 
 def test_the_listed_record_states():
+    from src.models.bundle.capabilities import model_capabilities
+
     child = listed_record(_listed_form(_record_payload("disease")))
     assert set(child) == set(LISTED_RECORD_FIELDS)
+    spec = finetune_spec_from_parent(_base_spec(), "disease")
+    # The structure, every value of the spec as the record holds it, without
+    # the reference recipe's provenance notes (research comparison Stage 8).
+    structure = {name: value for name, value in spec.to_dict().items() if name != "sources"}
     assert child == {"record": "model", "record_problem": None, "learning_stage": "finetune",
                      "task": "disease", "operation": "finetune", "family_id": BASE_RUN,
                      "parent_sha256": "a" * 64, "parent_run": BASE_RUN, "encoder": "gatv2",
-                     "reference": False, "differences": SMALL_SPEC_DIFFERENCES}
+                     "reference": False, "differences": SMALL_SPEC_DIFFERENCES,
+                     "capabilities": model_capabilities(spec), "spec": structure,
+                     "weight_transfer": None,
+                     "loss_identity": {"terms": ["lp"], "lp_loss_weight": 1.0}}
+    # The weight transfer and the loss identity as the record holds them
+    # (research comparison Stage 9b fixes), copies; a part that is not plain
+    # data refuses the summary as a whole, with why, never half shown.
+    transfer = {"trainable": "all", "parts": {"input": "frozen"},
+                "downstream_initial_sha256": "d" * 64}
+    payload = {**_listed_form(_record_payload("disease")), "weight_transfer": transfer}
+    shown = listed_record(payload)
+    assert shown["weight_transfer"] == transfer and shown["weight_transfer"] is not transfer
+    payload["weight_transfer"] = {**transfer, "parts": {"input": torch.zeros(2)}}
+    unplain = listed_record(payload)
+    assert unplain["record"] == "refused" and unplain["weight_transfer"] is None
+    assert unplain["record_problem"] == ("the record's weight_transfer.parts.input is a Tensor, "
+                                         "not plain data, so a list does not show the record")
     base = listed_record(_listed_form(_record_payload()))
     assert (base["learning_stage"], base["task"], base["operation"], base["parent_sha256"]) == (
         "base", None, "new", None)
@@ -449,6 +471,8 @@ def test_the_listed_record_states():
     assert refused["record"] == "refused" and "record version" in refused["record_problem"]
     assert refused["task"] is None, "a refused record states nothing it could not read"
     assert refused["differences"] is None and refused["reference"] is None
+    assert refused["capabilities"] is None, "a refused record offers nothing to judge"
+    assert refused["spec"] is None
 
 
 #: The fields `_base_spec` changes from the reference recipe (README §5, axis 2).
@@ -459,7 +483,7 @@ SMALL_SPEC_DIFFERENCES = ("encoder.heads", "encoder.hidden", "encoder.layers", "
 def test_the_listed_record_names_the_fields_that_differ_from_the_reference():
     """README §5 axis 2 lists the differing items, not a bool: a reference spec
     lists none and is the reference; a changed one names each field, sorted."""
-    assert LISTED_RECORD_FIELDS[-1] == "differences"
+    assert "differences" in LISTED_RECORD_FIELDS
     for task in (None, "gene"):
         spec = reference_spec("base")
         if task is not None:
@@ -577,12 +601,14 @@ def test_the_lists_show_a_bundle_run_and_resolve_it_by_its_key(tmp_path):
 def test_a_ledger_does_not_change_what_automatic_selection_chooses(service):
     """Two checkpoints of one disease child run, the validation metric
     (``val_pooled_mrr``) favouring `best.pt`; a ledger beside them whose
-    test result (a registered disease task record) favours `other.pt`. The
-    reload's task-first selection and `select_auto_run_checkpoint` choose
-    `best.pt`, with or without the ledger (the import-linter contract
-    `selection-ignores-test-results` keeps the modules apart). Moved from
-    `test_test_score_ordering` at K8-2a, from a ShepherdGNN run's history
-    files to a task child's."""
+    test results favour `other.pt`: a registered disease task record on a
+    supplied cohort, and, since the ledger records every data kind (research
+    comparison Stage 6), a KG link-prediction record with its exposure and a
+    record on a generated split. The reload's task-first selection and
+    `select_auto_run_checkpoint` choose `best.pt`, with or without the ledger
+    (the import-linter contract `selection-ignores-test-results` keeps the
+    modules apart). Moved from `test_test_score_ordering` at K8-2a, from a
+    ShepherdGNN run's history files to a task child's."""
     import hashlib
     import json
 
@@ -598,6 +624,11 @@ def test_a_ledger_does_not_change_what_automatic_selection_chooses(service):
     from src.utils.checkpoint_io import read_checkpoint
     from src.utils.checkpoint_paths import ranking_score_detail, select_auto_run_checkpoint
     from tests.unit.test_evaluation_sidecar import registered_report
+    from tests.unit.test_ledger_by_data_kind import (
+        KG_METRICS,
+        generated_report,
+        kg_edges_report,
+    )
 
     run = "20261002-000000_disease_bbbbbb"
     # `best.pt` older, so recency would not favour it.
@@ -619,17 +650,27 @@ def test_a_ledger_does_not_change_what_automatic_selection_chooses(service):
 
     without = chosen()
     ledger = empty_ledger()
-    for n, (path, pooled_mrr) in enumerate(((other, 0.99), (best, 0.01)), start=1):
-        report = registered_report(metrics={"pooled_mrr": pooled_mrr}, **disease_semantics(32))
+    reports = []
+    for path, figure in ((other, 0.99), (best, 0.01)):
+        reports += [
+            (path, registered_report(metrics={"pooled_mrr": figure}, **disease_semantics(32))),
+            (path, kg_edges_report(metrics=dict(KG_METRICS, lp_roc_auc=figure))),
+            (path, generated_report(metrics={"pooled_mrr": figure}))]
+    for n, (path, report) in enumerate(reports, start=1):
         report["manifest"]["artifact_digests"]["checkpoint"] = file_sha256(path)
+        if "exposure" in report:
+            report["exposure"]["sources"]["model_record"]["checkpoint_sha256"] = file_sha256(path)
         digest = hashlib.sha256(json.dumps(report, sort_keys=True).encode()).hexdigest()
         run_id = f"20261020T090000Z-{file_sha256(path)[:12]}-0000000{n}"
         ledger = append_record(ledger, build_record(report, digest), run_id=run_id,
                                registered_at="2026-10-20T09:00:00Z")[1]
     write_ledger(best.parent / LEDGER_FILENAME, ledger, None)
-    tested = {record["checkpoint_digest"]: record["metrics"]["pooled_mrr"]
+    tested = {(record["checkpoint_digest"], record["cohort"]["kind"]):
+              record["metrics"].get("pooled_mrr", record["metrics"].get("lp_roc_auc"))
               for record in read_ledger(best.parent / LEDGER_FILENAME)[0]["records"]}
-    assert tested == {file_sha256(other): 0.99, file_sha256(best): 0.01}
+    assert tested == {(file_sha256(path), kind): figure
+                      for path, figure in ((other, 0.99), (best, 0.01))
+                      for kind in ("supplied", "kg_edges", "generated")}
 
     assert without == chosen() == (best, best)
 

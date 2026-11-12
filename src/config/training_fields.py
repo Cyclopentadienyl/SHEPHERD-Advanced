@@ -266,6 +266,16 @@ FIELDS: Tuple[FieldSpec, ...] = (
               current_api=None,
               known_divergence=True, divergence_note="Unset is the task's reference (U14).",
               description="Rarely seen genes added to each gene-task patient's list in training."),
+    # The freeze setting (research comparison Stage 9, owner's O4a): which parts
+    # of a finetune train. Its parts and the stage rule are `src.config.recipe`'s
+    # (`FROZEN_PARTS`, `frozen_parts_problem`).
+    FieldSpec("frozen_parts", "str", "none", "trainer", projects_to="TrainConfig.frozen_parts",
+              choices=("none", "graph_side"), current_api=None,
+              known_divergence=True,
+              divergence_note="A finetune setting (the recipe's reference 'none'); a base with "
+                              "any freeze is refused. Not a WebUI or base-start field.",
+              description="Parts of a finetune that do not train: none, or graph_side (the "
+                          "input module, the encoder and the LP head)."),
 
     # ---- sampling (the stage samplers, from TrainConfig) ------------------------------------
     FieldSpec("batch_size", "int", 32, "dataloader", projects_to="TrainConfig.batch_size",
@@ -277,8 +287,9 @@ FIELDS: Tuple[FieldSpec, ...] = (
               item_valid={"ge": 1}, min_length=1,
               current_api={}, current_api_item={"ge": 1}, current_api_min_length=1,
               known_divergence=True,
-              divergence_note="One hop per layer of the model spec's encoder (`hops_problem`), "
-                              "checked by the base start and by the run.",
+              divergence_note="One number per hop the model spec's encoder declares "
+                              "(`hops_problem`; GATv2: one per layer), checked by the base "
+                              "start and by the run.",
               description="Neighbor fan-out per sampling hop."),
     # ---- trainer (TrainerConfig) ------------------------------------------------------------
     FieldSpec("num_epochs", "int", 100, "trainer", projects_to="TrainerConfig.num_epochs",

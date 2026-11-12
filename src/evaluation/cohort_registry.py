@@ -1,6 +1,6 @@
 """
-Test cohort versions: a source case set mapped to one graph, kept outside the repository.
-========================================================================================
+Data versions: a source case set mapped to one graph, or a KG edge set, kept outside the repository.
+====================================================================================================
 Contract M4 (item 14, phase 1; `docs/working/PLAN_TEST_RESULTS.md` D6, D7). A
 supplied cohort used to be a loose `<split>_samples.json` dropped into a
 workspace: integer indices with nothing saying which graph's node order they
@@ -71,6 +71,125 @@ node's id (``disgenet:SCN1A``) or a symbol only one gene node carries
 left out and counted, and the case is not excluded for it (a task binds what
 it needs). The ``genes`` counts appear only when the source lists genes.
 
+**Kinds and schemas** (research comparison §5 Stage 4, owner's O7). A version
+is of one data kind (`VERSION_KINDS`, the words of
+`src.evaluation.cohort.COHORT_KINDS`), read and checked by the one reader,
+`resolve_version`, in either schema it reads (`VERSION_SCHEMAS`):
+
+- **schema 1** records no kind and is a ``supplied`` cohort, as every version
+  before schema 2 is; a supplied import still writes schema 1, byte for byte
+  as before (golden P0-4);
+- **schema 2** states its ``kind``, and is read only for a kind written in
+  it (`KIND_SCHEMAS`: a KG edge set, a generated split); a schema-2 manifest
+  of kind ``supplied`` is a shape no revision writes, and is refused rather
+  than read by the schema-1 rules. A revision that reads schema 1 only
+  refuses a schema-2 version by its schema check ("is schema 2; this revision
+  reads schema 1 only"), so it never reads one as a supplied cohort, and a
+  revision that reads schema 2 but not a kind refuses that kind by name
+  ("this revision reads kinds ... only").
+
+A **KG edge set** (``kg_edges``) is one part of a recorded edge split of one
+graph view, kept as fixed link-prediction pairs. `prepare_kg_edges_import`
+takes the view's rule and the split from a named checkpoint's model record
+(``data_roles``), rebuilds both from the workspace's graph and checks them
+(`src.kg.graph_view.rebuild_split`), then builds the pairs of the chosen part
+by base validation's rule (`src.models.bundle.lp_head.fixed_lp_pairs`, the
+split's seed, `BASE_FIXED`'s batch size). Its role is the part, recorded as
+given: ``train``, ``val`` or ``test``, none refused for not being test. Its
+manifest binds the four graph digests and the dataset record (compared by
+`verify_cohort_binding`, as a supplied version's are), the view's rule and
+digest, the split's rule, seed, digest and part counts, the message-passing
+graph (the split's train part, README A4; for role ``train`` the measured
+edges are in it, and the manifest says so), the pair rule with its seed, its
+batch size and the pairs each batch kept (the batch boundaries in the stored
+rows, and each batch's edges left out), and ``pairs.bin``: the pairs as
+compact little-endian int64 rows (head, relation, tail, negative tail) in the
+order made, bound by the digest of its bytes and read only through
+`read_kg_edge_pairs`. torch's generator
+stream is not promised across releases, so the pairs are kept, never rebuilt.
+Its counts carry their units (``count_units``). The checkpoint it was taken
+from is named by its digest only, never by its file name, so a copy or a link
+of the same checkpoint makes the same version. Nothing about it holds a case.
+
+A **generated split** (``generated``; research comparison §3 (A), a limited
+data identity) is one of a workspace's generated patient splits, the
+``<role>_samples.json`` that `src/kg/sample_generator.py` wrote and the split
+manifest binds, which ``measure_scorer --split`` reads in place.
+`prepare_generated_import` reads and verifies the workspace as that
+measurement does (the graph, the dataset record, and both generated splits
+against the one split manifest reading: their digests, disease sets and
+disjointness, `verify_cohort_reads`), then keeps the role's samples and the
+split manifest. Its data identity is the samples' content digest, the
+workspace's split artefact digests (the split manifest and every samples file
+it binds, each named by its split's name, never a path), the generation
+definition (the generator's algorithm, version and recorded settings, and the
+allocation it cut), and its role, recorded as given: ``train``, ``val`` or
+``test`` (`GENERATED_ROLES`). Its counts (patients, distinct diseases) are
+counted from the samples verified, never taken from the split manifest's
+word. It is listed and named as a generated split of
+its role, never as a supplied cohort, and as test only when its role is test;
+no role is refused. The generator writes, and `verify_cohort_reads` checks,
+``train`` and ``val`` only, so a ``test`` import is refused for what the
+workspace lacks (a generated test split this revision can verify), never for
+the role. **The samples and the split manifest are copied, not bound in
+place**: a workspace is rebuilt or re-sampled in its own directory, and a
+version that only named the workspace's files by digest would stop being
+readable, and verifiable as data, the day that happened. The copies are the
+bytes the workspace held: ``samples.json``, bound by the digest the split
+manifest records, and ``split_manifest.json`` (small, digests and counts
+only, no sample), bound by its own digest, from whose parse the version's
+generation definition, allocation and realised sets were copied. So a
+registered generated version, its generation definition included, is as
+immutable and verifiable as a supplied one, and the workspace's split is
+still named by content: whether the workspace still holds it is a
+reference's state (`check_references`), not a condition of reading the
+version. **The functional gene fixture** (`src.kg.task_fixture`) is kept the
+same way when the workspace holds the fixture of its build for the role's
+split (research comparison Stage 5b): its record as written
+(``task_fixture.json``) and the role's rows (``task_fixture_samples.json``),
+each bound by digest, under a ``task_fixture`` block and a counted
+``task_fixture_samples``, so the gene and patients-like-me measurements read
+the split through the registry (`read_generated_task_fixture`). A workspace
+without one (absent, of another build, unreadable) still gives a version, one
+that keeps no fixture: those two measurements are then refused for that data
+gap, never for the role. ``measure_scorer --cohort`` measures a registered
+generated split (Stage 5b) by the protocols the model's capabilities admit,
+its report kept in the version's report store. Archived reports measured with
+``--split`` are untouched: no identity is made up for them, and registering
+them stays refused (`src.evaluation.sidecar.build_record`). A result on a
+registered generated split is registered in the ledger like any other kept
+report, under its role and generation identity (research comparison Stage 6).
+
+**Content references** (E3). Every version records what it depends on by
+content identity, never by path: `version_references` names each reference
+of a version by its kind's own fields (the four graph digests: ``kg.json``,
+which carries the node naming, node types, species, namespaces and external
+ids, and the tensors; the dataset record; each source the record names, by
+role; and per kind the view, the split, the pairs and the checkpoint the view
+and split were taken from, by its SHA-256; the split manifest, the split's
+files and the samples; or the case source and the samples). A path is only a
+location: `check_references` compares the bytes found at a location the
+caller gives (a version's own directory, a workspace, a checkpoint file) with
+the recorded digests, and reports each reference's state (verified, differs,
+missing, unreadable, or not checked), its reason naming the location by its
+kind and file name, never by a path; a missing dependency is a state, never
+a crash and never a pass. No command or page shows these states yet: the
+results service is their consumer (research comparison Stage 8). Which roots
+may be read is decided apart from this:
+a registry root by `validate_registry` (and the service's
+``SHEPHERD_REGISTRY``), a workspace by its caller. A registry copied to
+another authorised root resolves to the same versions, by the same digests.
+
+**Source roles** (E4). A KG edge set's and a generated split's
+``dataset_record.sources`` list each named source as its record names it:
+role, digest and declared version, with no list of allowed roles (any role
+that is an identifier, each once, each with a SHA-256). Species, namespace and
+external-id distinctions are kept by reference to the graph (``kg.json``) and,
+for a KG edge set, the view, never derived from symbols. Today's KG builder
+names four roles (`src.kg.provenance.SOURCE_ROLES`); a real new source needs
+the builder's own provenance extension first, which this module does not
+make.
+
 Module: src/evaluation/cohort_registry.py
 """
 from __future__ import annotations
@@ -87,7 +206,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Mapping, NamedTuple, Optional, Sequence, Tuple
 
 from src.config.server_settings import DirectoryRefused, check_registry_root
+from src.evaluation.caveats import version_words
 from src.evaluation.cohort import GENERATED_SPLITS, validate_split_name
+from src.evaluation.sidecar import VERSION_BLOCK_FIELDS
 from src.kg.artifacts import GRAPH_ARTIFACTS
 from src.kg.phenotype_normalisation import PHENOTYPE_NORMALISATION_VERSION, normalise_phenotypes
 from src.utils.fingerprint import ReadIdentity
@@ -107,20 +228,68 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: (OWNER Q5).
 SOURCE_FORMAT = "shepherd-cases/1"
 
-#: Bumped when the version manifest's shape changes in a way an old reader
-#: cannot read. A reader refuses any other value rather than guessing.
+#: The schema a supplied import writes: schema 1, which records no kind, so a
+#: supplied version's bytes are what they always were (golden P0-4).
 VERSION_SCHEMA_VERSION = 1
+#: The schema that states its kind, which a KG edge set is written in.
+KINDED_SCHEMA_VERSION = 2
+#: The schemas `resolve_version` reads, each bumped when the manifest's shape
+#: changes in a way an old reader cannot read. A reader refuses any other value
+#: rather than guessing.
+VERSION_SCHEMAS: Tuple[int, ...] = (VERSION_SCHEMA_VERSION, KINDED_SCHEMA_VERSION)
+
+#: The kinds a registered version is, one name each, the words of
+#: `src.evaluation.cohort.COHORT_KINDS` (the measurement manifest's
+#: ``cohort_kind``): a supplied cohort, a KG edge set, and a generated split
+#: kept from a workspace.
+SUPPLIED = "supplied"
+KG_EDGES = "kg_edges"
+GENERATED = "generated"
+VERSION_KINDS: Tuple[str, ...] = (SUPPLIED, KG_EDGES, GENERATED)
+#: The schema each kind is written in. A manifest stating a kind in another
+#: schema is a shape no revision writes, so it is refused, never read by the
+#: rules of the shape it resembles (research comparison §2: nothing guessed).
+KIND_SCHEMAS: Dict[str, int] = {SUPPLIED: VERSION_SCHEMA_VERSION, KG_EDGES: KINDED_SCHEMA_VERSION,
+                                GENERATED: KINDED_SCHEMA_VERSION}
+
+#: A KG edge set's roles: the parts of an edge split
+#: (`src.kg.graph_view.SPLIT_NAMES`, pinned equal by
+#: tests/unit/test_kg_edge_versions.py; this module imports no torch).
+KG_EDGES_ROLES: Tuple[str, ...] = ("train", "val", "test")
+
+#: A generated split's roles, recorded as given (owner's O7): the split it is,
+#: whose samples are the workspace's ``<role>_samples.json``. The generator
+#: writes ``train`` and ``val`` (`src.evaluation.cohort.GENERATED_SPLITS`), the
+#: splits `verify_cohort_reads` checks; a ``test`` version needs a workspace
+#: holding a generated test split this revision verifies, which none does
+#: today, so its import is refused for that absence, never for the role.
+GENERATED_ROLES: Tuple[str, ...] = ("train", "val", "test")
 
 VERSION_MANIFEST = "cohort.json"
 VERSION_SAMPLES = "samples.json"
+#: A KG edge set's pairs (`lp_pairs_table`'s bytes), bound by its manifest.
+VERSION_PAIRS = "pairs.bin"
+#: A generated split's copy of the workspace's split manifest, the bytes its
+#: generation definition, allocation and realised sets were copied from, bound
+#: by its manifest.
+VERSION_SPLIT_MANIFEST = "split_manifest.json"
+#: A generated split's copy of the workspace's functional gene fixture
+#: (`src.kg.task_fixture`), kept when the workspace holds the fixture of its
+#: build: the record as written, and the role's rows as written, each bound by
+#: its manifest (research comparison Stage 5b).
+VERSION_TASK_FIXTURE = "task_fixture.json"
+VERSION_TASK_FIXTURE_SAMPLES = "task_fixture_samples.json"
 SOURCES_DIR = "sources"
 VERSIONS_DIR = "versions"
 REPORTS_DIR = "reports"
 
 #: A run's two files in the report store, in the order the measurement publishes
-#: them: the per-case ranks, then the report that names them by digest (the
-#: run's commit point; a run directory without it is an interrupted write).
+#: them: its kept outputs, then the report that names them by digest (the run's
+#: commit point; a run directory without it is an interrupted write). A run on
+#: a patient cohort keeps its per-case ranks; a run on a KG edge set keeps each
+#: pair's raw scores (`SCORES_FILE`, research comparison F4).
 RANKS_FILE = "ranks.json"
+SCORES_FILE = "scores.bin"
 REPORT_FILE = "report.json"
 
 #: The name `create_report_dir` gives a run directory: ``<UTC time>-<checkpoint
@@ -154,13 +323,78 @@ _MONDO_TERM = re.compile(r"MONDO:[0-9]{7}")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _PREVIEW_ID = re.compile(r"[0-9a-f]{16}")
 
-#: Every field `commit_import` writes. A manifest missing one is not a version
-#: this revision reads.
+#: Every field `commit_import` writes for a supplied version. A manifest
+#: missing one is not a version this revision reads.
 REQUIRED_VERSION_FIELDS: Tuple[str, ...] = (
     "schema_version", "what_this_is", "label", "role", "source", "graph",
     "dataset_record", "mapping", "counts", "samples", "unmappable_terms",
     "exclusions", "imported",
 )
+
+#: Every field `commit_import` writes for a KG edge set (`build_kg_edges_manifest`).
+KG_EDGES_REQUIRED_FIELDS: Tuple[str, ...] = (
+    "schema_version", "kind", "what_this_is", "label", "role", "graph", "dataset_record",
+    "graph_view", "split", "message_passing", "pairs", "counts", "count_units",
+    "taken_from", "imported",
+)
+
+KG_EDGES_WHAT_THIS_IS = ("a KG edge set: one part of a recorded edge split of one graph view, "
+                         "kept as fixed link-prediction pairs")
+
+#: A KG edge set's counts, each with its unit. An edge is a directed edge of
+#: the graph view: an edge and its reverse twin are one fact and two edges, and
+#: always in the same part.
+KG_EDGES_COUNT_UNITS: Dict[str, str] = {
+    "positive_edges": "directed graph-view edges of the role's part, each a positive",
+    "pairs": "(positive, negative) pairs: a positive edge with its one negative tail",
+    "edges_without_negative": ("positive edges left out: no other tail of their relation in "
+                               "their batch to draw a negative from"),
+    "message_passing_edges": "directed graph-view edges of the split's train part",
+}
+
+#: The model-record fields a KG edge set's view and split are taken from.
+KG_EDGES_TAKEN_FROM = ("data_roles.graph_view", "data_roles.split")
+
+#: What `cohort_version_block` gives for a KG edge set, exactly: the ledger's
+#: list of that kind's block (`sidecar.VERSION_BLOCK_FIELDS`), which a
+#: registration reads the block by, so the two cannot differ.
+KG_EDGES_BLOCK_FIELDS: Tuple[str, ...] = VERSION_BLOCK_FIELDS[KG_EDGES]
+
+#: Every field `commit_import` writes for a generated split
+#: (`build_generated_manifest`).
+GENERATED_REQUIRED_FIELDS: Tuple[str, ...] = (
+    "schema_version", "kind", "what_this_is", "label", "role", "graph", "dataset_record",
+    "split_manifest", "split_artifacts", "generation", "allocation", "realised", "verified",
+    "samples", "counts", "count_units", "imported",
+)
+
+GENERATED_WHAT_THIS_IS = ("a generated split: one of a workspace's generated patient splits, "
+                          "its samples kept as the generator wrote them")
+
+#: A generated split's counts, each with its unit. Both are counted from the
+#: samples the import verified, never taken from the split manifest's word.
+GENERATED_COUNT_UNITS: Dict[str, str] = {
+    "samples": "generated patients: the sample rows of the role's split, as written",
+    "diseases": "distinct diseases among those patients (the split's realised disease set)",
+}
+
+#: The count a generated split's counts hold beside `GENERATED_COUNT_UNITS`
+#: when, and only when, the version keeps the functional gene fixture
+#: (``task_fixture``), with its unit: the fixture's rows of the role's split,
+#: what the gene and patients-like-me measurements score. Named once here and
+#: in `src.evaluation.protocols` (pinned equal), which judges a version by it.
+GENERATED_FIXTURE_COUNT = "task_fixture_samples"
+GENERATED_FIXTURE_COUNT_UNIT = (
+    "functional gene fixture rows of the role's split: its patients whose disease has a gene "
+    "in the graph, each given one causal gene drawn from that disease's genes and distractor "
+    "candidates by the fixture's rule; the cases the gene and patients-like-me measurements "
+    "score")
+
+#: What `cohort_version_block` gives for a generated split, exactly:
+#: aggregates and digests, never a sample. ``task_fixture`` is the version's
+#: fixture block, or None for a version that keeps none. The ledger's list of
+#: that kind's block (`sidecar.VERSION_BLOCK_FIELDS`), as for a KG edge set.
+GENERATED_BLOCK_FIELDS: Tuple[str, ...] = VERSION_BLOCK_FIELDS[GENERATED]
 
 
 # ---------------------------------------------------------------------------
@@ -282,27 +516,98 @@ class ImportPlan(NamedTuple):
     """Everything a commit writes, computed from one read of each input.
 
     `manifest` is the version manifest without its ``imported`` block, which is
-    what `preview_id` covers. `source_bytes` are the bytes parsed, kept so the
-    copy in the registry is the file that was mapped, not a second read of it.
+    what `preview_id` covers. For a supplied version, `source_bytes` are the
+    bytes parsed, kept so the copy in the registry is the file that was
+    mapped, not a second read of it, and `samples_bytes` the mapped samples.
+    A KG edge set keeps no source file (its graph is the workspace's, bound by
+    digest) and no samples: `pairs_bytes` are its pairs (`VERSION_PAIRS`). A
+    generated split keeps no source file either: `samples_bytes` are the
+    workspace's samples file, the bytes its split manifest binds, and
+    `split_manifest_bytes` that split manifest (`VERSION_SPLIT_MANIFEST`), the
+    bytes the version's generation definition, allocation and realised sets
+    were copied from. When the workspace holds the functional gene fixture of
+    its build, `task_fixture_bytes` are its record and
+    `task_fixture_samples_bytes` the role's rows (`VERSION_TASK_FIXTURE`,
+    `VERSION_TASK_FIXTURE_SAMPLES`); when it does not, both are None and
+    `task_fixture_note` says why none is kept, for the preview.
     """
 
     label: str
     role: str
     manifest: Dict[str, Any]
     preview_id: str
-    source_sha256: str
-    source_bytes: bytes
-    samples_bytes: bytes
+    source_sha256: Optional[str]
+    source_bytes: Optional[bytes]
+    samples_bytes: Optional[bytes]
+    pairs_bytes: Optional[bytes] = None
+    split_manifest_bytes: Optional[bytes] = None
+    task_fixture_bytes: Optional[bytes] = None
+    task_fixture_samples_bytes: Optional[bytes] = None
+    task_fixture_note: Optional[str] = None
+
+    @property
+    def kind(self) -> Optional[str]:
+        """The kind of the version this plan writes (`version_kind`)."""
+        return version_kind(self.manifest)
 
 
 class CohortVersionRead(NamedTuple):
     """A committed version as resolved: its manifest, the identity of the bytes
-    that manifest was parsed from, its directory, and where its samples are."""
+    that manifest was parsed from, its directory, and where its samples are
+    (a supplied cohort's and a generated split's ``samples.json``; None for a
+    kind that keeps none: a KG edge set's pairs are read by
+    `read_kg_edge_pairs`)."""
 
     manifest: Dict[str, Any]
     identity: ReadIdentity
     directory: Path
-    samples_path: Path
+    samples_path: Optional[Path]
+
+    @property
+    def kind(self) -> str:
+        """The version's data kind, in the words a measurement manifest's
+        `cohort_kind` uses (`src.evaluation.cohort.COHORT_KINDS`), which a
+        new measurement is judged by (`src.evaluation.protocols`): a schema-1
+        version records no kind and is a supplied cohort; a schema-2 version
+        states its own (`version_kind`)."""
+        return version_kind(self.manifest)
+
+
+class KgEdgePairsRead(NamedTuple):
+    """A KG edge set's pairs as `read_kg_edge_pairs` parsed them from one read
+    of ``pairs.bin`` (`src.models.bundle.lp_head.LPPairs`, with the version's
+    counts and the pairs' digest), and the identity of those bytes."""
+
+    pairs: Any
+    identity: ReadIdentity
+
+
+def version_kind(manifest: Mapping[str, Any]) -> Optional[str]:
+    """The kind of a version manifest: ``supplied`` for schema 1, which records
+    none, and the stated ``kind`` for schema 2 (None when it states none, which
+    `resolve_version` refuses). The one rule the reader, a plan and every
+    listing read a kind by."""
+    if manifest.get("schema_version") == VERSION_SCHEMA_VERSION:
+        return SUPPLIED
+    kind = manifest.get("kind")
+    return kind if isinstance(kind, str) else None
+
+
+def not_a_supplied_cohort(kind: Any, role: Any) -> Optional[str]:
+    """Why a version of `kind` (its role `role`) is not a supplied cohort
+    version, or None when it is one: ``a KG edge set (test), not a supplied
+    cohort version``.
+
+    The one sentence a reader of a supplied cohort's cases gives a version of
+    another kind, which it lists or is named but cannot read as cases: the
+    Diagnosis route and its card (a reference cohort's patients) and the
+    overlap audit (`scripts/audit_split_overlap.py`, a cohort's diseases).
+    Each caller says what it needed the cases for. A KG edge set holds edges,
+    not cases, and is named by its role, never as a cohort (research
+    comparison §5 Stage 4)."""
+    if kind == SUPPLIED:
+        return None
+    return f"{version_words(kind, role)}, not a supplied cohort version"
 
 
 # ---------------------------------------------------------------------------
@@ -385,15 +690,17 @@ def validate_label(label: Any) -> str:
     try:
         return validate_split_name(label)
     except ValueError as exc:
-        raise CohortVersionRefused(f"the cohort label is refused: {exc}") from None
+        raise CohortVersionRefused(f"the version label is refused: {exc}") from None
 
 
 def validate_role(role: Any) -> str:
-    """A cohort role: the identifier rule, and never a generator split name.
+    """A supplied cohort's role: the identifier rule, and never a generator
+    split name.
 
     `train` and `val` name the generator's cohorts; a test cohort carrying one
     would read as a generated cohort in every artifact downstream, the hazard
-    `src/evaluation/cohort.py` refuses for a supplied split.
+    `src/evaluation/cohort.py` refuses for a supplied split. A KG edge set's
+    role is another rule (`validate_kg_edges_role`).
     """
     try:
         validate_split_name(role)
@@ -404,6 +711,32 @@ def validate_role(role: Any) -> str:
             f"the cohort role {role!r} is one of the generator's own split names "
             f"({', '.join(GENERATED_SPLITS)}); a test cohort carrying it would read as "
             "a generated cohort. Give it its own role, such as mygene2."
+        )
+    return role
+
+
+def validate_kg_edges_role(role: Any) -> str:
+    """A KG edge set's role: the part of the edge split it holds, recorded as
+    given (owner's O7). ``train`` and ``val`` are roles like ``test``: measuring
+    the train part is a fitting diagnostic and the val part a development
+    measurement, and neither is ever relabelled as test."""
+    if not (isinstance(role, str) and role in KG_EDGES_ROLES):
+        raise CohortVersionRefused(
+            f"a KG edge set's role is the part of the edge split it holds, one of "
+            f"{', '.join(KG_EDGES_ROLES)}; got {role!r}"
+        )
+    return role
+
+
+def validate_generated_role(role: Any) -> str:
+    """A generated split's role: the split it is, recorded as given (owner's
+    O7), one of `GENERATED_ROLES`. ``train`` is a fitting diagnostic, ``val``
+    the checkpoint-selection split, ``test`` a held-out split where a workspace
+    has one; none is refused for what it is, and none is ever relabelled."""
+    if not (isinstance(role, str) and role in GENERATED_ROLES):
+        raise CohortVersionRefused(
+            f"a generated split's role is the split it is, one of "
+            f"{', '.join(GENERATED_ROLES)}; got {role!r}"
         )
     return role
 
@@ -427,7 +760,7 @@ def _require_label_free(root: Path, label: str) -> None:
         return
     if (directory / VERSION_MANIFEST).is_file():
         raise CohortVersionRefused(
-            f"the cohort version {label!r} already exists ({directory}). Versions are "
+            f"the version {label!r} already exists ({directory}). Versions are "
             "immutable; import under a new label."
         )
     raise CohortVersionRefused(
@@ -946,6 +1279,591 @@ def prepare_import(
                       samples_bytes)
 
 
+# ---------------------------------------------------------------------------
+# A KG edge set (research comparison §5 Stage 4)
+# ---------------------------------------------------------------------------
+def _dataset_record_block(dataset_record: "DatasetRecord") -> Dict[str, Any]:
+    """The dataset record as a KG edge set and a generated split record it:
+    its digest, its origin, and every source it names, by role, as it names
+    them (role, digest, declared version), with no list of allowed roles
+    (E4). Species, namespaces and external ids are not derived here: they are
+    the graph's, referenced by its digest."""
+    return {
+        "sha256": dataset_record.identity.sha256,
+        "origin": dataset_record.origin,
+        "sources": [{"role": entry["role"], "digest": entry["digest"],
+                     "declared_version": entry.get("declared_version")}
+                    for entry in dataset_record.record["sources"]],
+    }
+
+
+def build_kg_edges_manifest(
+    *,
+    label: str,
+    role: str,
+    bound: Mapping[str, str],
+    dataset_record: "DatasetRecord",
+    checkpoint_sha256: str,
+    view: Any,
+    split: Any,
+    pairs: Any,
+    pairs_sha256: str,
+    batch_size: int,
+) -> Dict[str, Any]:
+    """A KG edge set's manifest (schema 2) without its ``imported`` block.
+
+    Built only from what was read and computed: the four digests the workspace
+    manifest binds and the dataset record the run verified (its digest, origin
+    and every source it names, by role, with no list of allowed roles); the
+    graph view (`GraphView`: its rule and digest) and the edge split
+    (`EdgeSplit.record`: rule, seed, view digest, digest, edges per part) the
+    checkpoint's record named and this workspace rebuilt; the message-passing
+    graph, the split's train part; the pairs (`LPPairs`) of the role's part,
+    with the rule, seed and batch size that made them, the pairs each batch
+    kept, the digest of the file's bytes and the LP core's pairs digest; the
+    counts with their units; and the checkpoint the view and split were taken
+    from, by its digest (a dependency reference: its file name is a location
+    and is not recorded). Aggregates only: no edge is listed here.
+    """
+    from src.models.bundle.lp_head import LP_PAIR_RULE, LP_PAIRS_LAYOUT
+
+    record = split.record()
+    edges = record["edges"]
+    positive = int(pairs.counts["edges"])
+    return {
+        "schema_version": KINDED_SCHEMA_VERSION,
+        "kind": KG_EDGES,
+        "what_this_is": KG_EDGES_WHAT_THIS_IS,
+        "label": label,
+        "role": role,
+        "graph": {role_name: bound[role_name] for role_name in GRAPH_ARTIFACTS},
+        "dataset_record": _dataset_record_block(dataset_record),
+        "graph_view": {"rule": copy.deepcopy(view.rule), "digest": view.digest},
+        "split": record,
+        # README A4: base validation and test message passing are the training
+        # edges only. For role train the measured edges are among them, and
+        # the version says so rather than removing anything.
+        "message_passing": {"part": "train", "edges": edges["train"],
+                            "includes_measured_edges": role == "train"},
+        "pairs": {
+            "file": VERSION_PAIRS,
+            "layout": copy.deepcopy(LP_PAIRS_LAYOUT),
+            "rows": int(pairs.counts["pairs"]),
+            "sha256": pairs_sha256,
+            "lp_pairs_digest": pairs.digest,
+            "rule": LP_PAIR_RULE,
+            "part": role,
+            "seed": int(split.seed),
+            "batch_size": int(batch_size),
+            "batches": -(-positive // int(batch_size)),
+            # The batch boundaries in the stored rows: batch k's pairs are the
+            # batch_pairs[k] rows after the earlier batches'; its edges less
+            # that count are the ones it left out (plan review §5 item 7).
+            "batch_pairs": [int(n) for n in pairs.batch_pairs],
+        },
+        "counts": {
+            "positive_edges": positive,
+            "pairs": int(pairs.counts["pairs"]),
+            "edges_without_negative": int(pairs.counts["without_negative"]),
+            "message_passing_edges": edges["train"],
+        },
+        "count_units": dict(KG_EDGES_COUNT_UNITS),
+        "taken_from": {"checkpoint_sha256": checkpoint_sha256,
+                       "record_fields": list(KG_EDGES_TAKEN_FROM)},
+    }
+
+
+def _read_checkpoint_record(checkpoint: Path) -> Tuple[Any, Any]:
+    """The checkpoint at `checkpoint`, one read at its resolved path, and its
+    model record (`read_model_record`), or a refusal naming the file.
+
+    A file torch cannot parse as a weights-only checkpoint is named, with
+    torch's error; a file that cannot be read keeps the read's own `OSError`.
+    A checkpoint without a model record this build reads is refused for that
+    (`ModelRecordError`, a `ValueError`): its view and split are not known.
+    """
+    from src.models.bundle.record import ModelRecordError, read_model_record
+    from src.utils.checkpoint_io import read_checkpoint
+
+    try:
+        read = read_checkpoint(Path(checkpoint).resolve(), map_location="cpu",
+                               weights_only=True)
+    except (OSError, MemoryError):
+        raise
+    except Exception as exc:  # noqa: BLE001 - torch raises a different type for each kind of junk
+        raise CohortVersionRefused(
+            f"{checkpoint} could not be read as a checkpoint ({type(exc).__name__}: {exc})"
+        ) from exc
+    try:
+        record = read_model_record(read.checkpoint)
+    except ModelRecordError as exc:
+        raise CohortVersionRefused(
+            f"the checkpoint {checkpoint} has no model record this build reads ({exc}), so "
+            "the graph view and edge split it was trained on are not known"
+        ) from None
+    return read, record
+
+
+def prepare_kg_edges_import(
+    registry: Any,
+    data_dir: Path,
+    checkpoint: Path,
+    label: str,
+    role: str,
+) -> ImportPlan:
+    """Read the workspace and the checkpoint, rebuild the checkpoint's view and
+    split, build the role's pairs and the version; write nothing.
+
+    In order, each refusal before anything is written:
+
+    1. the registry, the label (free, as at commit) and the role
+       (`validate_kg_edges_role`);
+    2. the workspace graph through the readers measurement uses: the split
+       manifest, the tensors against it, ``kg.json`` identified against it and
+       the dataset record (`verify_graph_reads`, `check_unparsed_kg_json`,
+       `verify_dataset_record`);
+    3. the checkpoint, one read, trained on this graph (`verify_training_record`,
+       contract M2.4), with a model record this build reads (which refuses a
+       record naming one input two ways);
+    4. the view its record names (``data_roles.graph_view``), rebuilt from this
+       graph by its rule, must have the recorded digest; its split
+       (``data_roles.split``) is rebuilt and checked field by field
+       (`rebuild_split`), the first field that differs named;
+    5. the pairs of the role's part by base validation's rule
+       (`fixed_lp_pairs` with the split's seed and `BASE_FIXED`'s
+       ``validation_batch_size``), so a ``val`` set's pairs are the ones base
+       validation scores.
+
+    Raises:
+        RegistryRefused, CohortVersionRefused: the registry, label, role,
+            checkpoint, view or split is refused.
+        ValueError: from the workspace readers and verifiers, naming the file.
+        OSError: a file could not be read.
+    """
+    from src.config.recipe import BASE_FIXED
+    from src.kg.artifacts import (
+        check_unparsed_kg_json,
+        read_split_manifest,
+        verify_dataset_record,
+        verify_graph_reads,
+    )
+    from src.kg.graph_view import (
+        GraphViewError,
+        SplitMismatchError,
+        build_graph_view,
+        rebuild_split,
+    )
+    from src.kg.storage.file_storage import read_graph_artifacts
+    from src.models.bundle.lp_head import fixed_lp_pairs, lp_pairs_table
+    from src.utils.fingerprint import verify_training_record
+
+    root = validate_registry(registry)
+    label = validate_label(label)
+    role = validate_kg_edges_role(role)
+    _require_label_free(root, label)
+
+    data_dir, checkpoint = Path(data_dir), Path(checkpoint)
+    manifest = read_split_manifest(data_dir)
+    graph = read_graph_artifacts(data_dir, map_location="cpu")
+    bound = verify_graph_reads(manifest, graph.reads)
+    check_unparsed_kg_json(data_dir, manifest)
+    dataset_record = verify_dataset_record(manifest, bound["kg"])
+
+    read, record = _read_checkpoint_record(checkpoint)
+    verify_training_record(read.checkpoint, bound, tuple(GRAPH_ARTIFACTS),
+                           recorded_by=f"checkpoint {checkpoint}",
+                           compared_with=f"the workspace {data_dir}")
+    checkpoint_sha256 = read.identity.sha256
+    del read
+
+    roles = record.data_roles
+    view_record = roles.get("graph_view")
+    split_record = roles.get("split")
+    if not (isinstance(view_record, Mapping) and isinstance(view_record.get("rule"), Mapping)
+            and isinstance(split_record, Mapping)):
+        raise CohortVersionRefused(
+            f"the checkpoint {checkpoint}'s model record names no graph view rule or edge "
+            f"split ({', '.join(KG_EDGES_TAKEN_FROM)}), so there is no split to take a part of"
+        )
+    try:
+        view = build_graph_view(graph.graph_data, rule=copy.deepcopy(dict(view_record["rule"])))
+    except GraphViewError as exc:
+        raise CohortVersionRefused(
+            f"the graph view rule the checkpoint {checkpoint} records cannot be applied to "
+            f"this workspace's graph: {exc}"
+        ) from None
+    del graph
+    recorded_digest = view_record.get("digest")
+    if view.digest != recorded_digest:
+        raise CohortVersionRefused(
+            f"the checkpoint {checkpoint} records graph view {str(recorded_digest)[:12]}..., "
+            f"but its rule builds view {view.digest[:12]}... from this workspace's graph: the "
+            "record does not describe this graph's view"
+        )
+    try:
+        split = rebuild_split(view, split_record)
+    except SplitMismatchError as exc:
+        raise CohortVersionRefused(
+            f"the checkpoint {checkpoint}'s recorded edge split does not rebuild from this "
+            f"workspace's view: {exc}"
+        ) from None
+
+    part = split.mask(role)
+    batch_size = int(BASE_FIXED["validation_batch_size"])
+    pairs = fixed_lp_pairs(view.edge_index(part), view.rel[part], seed=split.seed,
+                           batch_size=batch_size)
+    pairs_bytes = lp_pairs_table(pairs.head, pairs.relation, pairs.tail, pairs.negative_tail)
+    version = build_kg_edges_manifest(
+        label=label, role=role, bound=bound, dataset_record=dataset_record,
+        checkpoint_sha256=checkpoint_sha256, view=view, split=split, pairs=pairs,
+        pairs_sha256=_sha256(pairs_bytes), batch_size=batch_size,
+    )
+    return ImportPlan(label, role, version, preview_id(version), None, None, None, pairs_bytes)
+
+
+# ---------------------------------------------------------------------------
+# A generated split (research comparison §3 (A), §5 Stage 4)
+# ---------------------------------------------------------------------------
+#: The split manifest's blocks a generated split's version copies, as they are:
+#: the generation definition (the generator's algorithm, its version and the
+#: settings it recorded) and the disease allocation it cut, both counts and
+#: digests only, and what each split realised.
+_SPLIT_MANIFEST_BLOCKS = ("generation", "allocation", "realised")
+
+
+def _split_files(artifacts: Mapping[str, Any]) -> Dict[str, Any]:
+    """The samples files a split manifest's ``artifacts`` binds, by name
+    (``train_samples``, ``val_samples``, ...), each with its digest: the
+    workspace's split artefacts beside the manifest itself. Every key ending
+    in ``_samples`` is taken as it is; one that is not a split's name
+    (`_is_split_file`) is refused by the reader's rules, never dropped."""
+    return {name: digest for name, digest in sorted(artifacts.items())
+            if name.endswith("_samples")}
+
+
+def _is_split_file(name: Any) -> bool:
+    """Whether `name` names a split's samples file as a split manifest binds
+    it, ``<split>_samples``, the split a name `validate_split_name` accepts:
+    a name, never a path, so the file it names (``<split>_samples.json``) can
+    only lie inside the workspace that holds the manifest."""
+    if not (isinstance(name, str) and name.endswith("_samples")):
+        return False
+    try:
+        validate_split_name(name[: -len("_samples")])
+    except ValueError:
+        return False
+    return True
+
+
+def build_generated_manifest(
+    *,
+    label: str,
+    role: str,
+    bound: Mapping[str, str],
+    dataset_record: "DatasetRecord",
+    split_manifest: Mapping[str, Any],
+    split_manifest_sha256: str,
+    verified: Any,
+    samples_sha256: str,
+    n_samples: int,
+    task_fixture: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, Any]:
+    """A generated split's manifest (schema 2) without its ``imported`` block.
+
+    Built only from what was read and verified: the four digests the
+    workspace manifest binds and the dataset record the import verified
+    (`_dataset_record_block`); the split manifest, kept in the version as
+    ``split_manifest.json`` (`VERSION_SPLIT_MANIFEST`) and bound by the digest
+    of the bytes read, and its blocks copied as they are from the parse of
+    those bytes (`_SPLIT_MANIFEST_BLOCKS`: the generation definition, the
+    allocation, what each split realised); the split's files by the digests
+    that manifest binds (`_split_files`); what was verified
+    (`GeneratedCohorts`: the splits in scope, disjointness measured); the
+    samples, the role's file kept as ``samples.json``, by digest and row
+    count; and the counts with their units, both counted from the verified
+    samples: the role's patients, and the distinct diseases among them
+    (`verified.disease_sets`, the set whose digest the split manifest records
+    as realised). The manifest's own count of them is copied in ``realised``
+    as it is, and the reader refuses a version whose count is not it
+    (`_generated_shape_problems`). Aggregates and digests only: no sample,
+    and no path.
+
+    **The functional gene fixture, when kept** (`task_fixture`, the block
+    `_task_fixture_block` built from the workspace's fixture record): the
+    block, and the count of its rows (`GENERATED_FIXTURE_COUNT`, with its
+    unit) beside the two counts above. Without one the manifest has neither,
+    the shape every generated version had before (research comparison
+    Stage 5b).
+    """
+    counts = {"samples": int(n_samples), "diseases": len(verified.disease_sets[role])}
+    units = dict(GENERATED_COUNT_UNITS)
+    kept: Dict[str, Any] = {}
+    if task_fixture is not None:
+        kept["task_fixture"] = copy.deepcopy(dict(task_fixture))
+        counts[GENERATED_FIXTURE_COUNT] = int(task_fixture["samples"]["n"])
+        units[GENERATED_FIXTURE_COUNT] = GENERATED_FIXTURE_COUNT_UNIT
+    return {
+        "schema_version": KINDED_SCHEMA_VERSION,
+        "kind": GENERATED,
+        "what_this_is": GENERATED_WHAT_THIS_IS,
+        "label": label,
+        "role": role,
+        "graph": {role_name: bound[role_name] for role_name in GRAPH_ARTIFACTS},
+        "dataset_record": _dataset_record_block(dataset_record),
+        "split_manifest": {"file": VERSION_SPLIT_MANIFEST, "sha256": split_manifest_sha256,
+                           "schema_version": split_manifest.get("schema_version")},
+        "split_artifacts": _split_files(split_manifest.get("artifacts") or {}),
+        **{block: copy.deepcopy(split_manifest.get(block)) for block in _SPLIT_MANIFEST_BLOCKS},
+        "verified": {"splits": list(verified.verified),
+                     "disjointness_measured": bool(verified.disjointness_measured)},
+        "samples": {"file": VERSION_SAMPLES, "sha256": samples_sha256, "n": int(n_samples)},
+        **kept,
+        "counts": counts,
+        "count_units": units,
+    }
+
+
+def _task_fixture_block(record: Mapping[str, Any], record_sha256: str,
+                        role: str) -> Dict[str, Any]:
+    """A generated split version's ``task_fixture`` block, taken from the
+    fixture record (`src.kg.task_fixture.parse_fixture_record`'s parse) whose
+    bytes have `record_sha256`: what the fixture is (its kind, label, rule,
+    seed and distractors, as recorded), what it did to the role's split (its
+    derivation counts), the record kept as ``task_fixture.json`` by its digest
+    and schema, and the role's rows kept as ``task_fixture_samples.json`` by
+    the digest and row count the record names. Values the record does not hold
+    are None, which the reader refuses (`_task_fixture_shape_problems`).
+    Aggregates and digests only: no row and no path."""
+    files = record.get("files") if isinstance(record.get("files"), Mapping) else {}
+    entry = files.get(role) if isinstance(files.get(role), Mapping) else {}
+    counts = record.get("counts") if isinstance(record.get("counts"), Mapping) else {}
+    return {
+        "kind": record.get("kind"),
+        "label": record.get("label"),
+        "rule": record.get("rule"),
+        "seed": record.get("seed"),
+        "distractors": record.get("distractors"),
+        "derivation": copy.deepcopy(counts.get(role)),
+        "record": {"file": VERSION_TASK_FIXTURE, "sha256": record_sha256,
+                   "schema_version": record.get("schema_version")},
+        "samples": {"file": VERSION_TASK_FIXTURE_SAMPLES, "sha256": entry.get("sha256"),
+                    "n": entry.get("rows")},
+    }
+
+
+def _task_fixture_unbound(record: Mapping[str, Any], *, role: str, kg: Any,
+                          split_manifest_sha256: Any, samples_sha256: Any) -> List[str]:
+    """How the fixture record does not describe the split a generated version
+    keeps, or nothing: the record must name the version's split manifest, its
+    graph (``kg``) and the role's samples as the samples it derived from. The
+    import keeps a fixture only when nothing is listed; the version's reader
+    refuses a kept record that lists anything. What a record must be to be
+    read at all (its files named as the derivation names them, with a row
+    count) is the record's one parser's rule
+    (`src.kg.task_fixture.parse_fixture_record`), which every record passed
+    here has passed."""
+    workspace = record.get("workspace") if isinstance(record.get("workspace"), Mapping) else {}
+    samples = workspace.get("samples") if isinstance(workspace.get("samples"), Mapping) else {}
+    problems = []
+    if workspace.get("split_manifest") != split_manifest_sha256:
+        problems.append("it was derived from another split manifest")
+    if workspace.get("kg") != kg:
+        problems.append("it names another graph (kg)")
+    if samples.get(role) != samples_sha256:
+        problems.append(f"it was derived from other {role} samples than the version keeps")
+    return problems
+
+
+def prepare_generated_import(
+    registry: Any,
+    data_dir: Path,
+    label: str,
+    role: str,
+) -> ImportPlan:
+    """Read and verify a workspace's generated splits, keep the role's; write
+    nothing.
+
+    In order, each refusal before anything is written:
+
+    1. the registry, the label (free, as at commit) and the role
+       (`validate_generated_role`);
+    2. the workspace through the readers ``measure_scorer --split`` uses: the
+       split manifest, the tensors against it, ``kg.json`` identified against
+       it and the dataset record (`verify_graph_reads`,
+       `check_unparsed_kg_json`, `verify_dataset_record`);
+    3. the role's split must be one the split manifest binds: the generator
+       writes ``train`` and ``val`` only, so ``test`` is refused here, for
+       what the workspace lacks, naming the splits it binds;
+    4. the generator's splits, one read each (`read_samples`), against that
+       one manifest reading (`verify_cohort_reads`: their digests, disease
+       sets and disjointness);
+    4a. the workspace's functional gene fixture of the role's split, when it
+       holds one of this build that describes the split
+       (`_workspace_task_fixture`): kept with the version, so the gene and
+       patients-like-me measurements read the split through the registry.
+       A fixture that is absent, of another build or unreadable is not kept
+       and refuses nothing (the plan's ``task_fixture_note`` says why);
+    5. the role's file, the split manifest and the fixture's two files, when
+       kept, read once more for their bytes, each of which must hash to the
+       digest just verified (the samples `read_samples` parsed, the split
+       manifest `read_split_manifest` parsed, the fixture's record and rows
+       their readers parsed), so the bytes kept are the bytes verified;
+    6. the version as the reader reads it (`_generated_shape_problems`): a
+       split manifest that names a split file by anything but a split's name,
+       states no generation definition, or counts the role's realised
+       diseases otherwise than the samples hold them (the counts are taken
+       from the samples verified) is refused here, naming the split manifest.
+
+    **Why the samples and the split manifest are copied** (the module's
+    note): a registered version is immutable, and a workspace is not; the
+    copies are bound by the digests the workspace's split manifest records and
+    its own, so the version, its generation definition included, is
+    verifiable after the workspace changes, and the workspace's split stays
+    named by content.
+
+    Raises:
+        RegistryRefused, CohortVersionRefused: the registry, label or role is
+            refused, the workspace binds no split of that role, a file changed
+            while it was read, or the split manifest does not describe the
+            split as a version records it.
+        ValueError: from the workspace readers and verifiers, naming the file.
+        OSError: a file could not be read.
+    """
+    from src.evaluation.cohort import GENERATED_SPLITS, verify_cohort_reads
+    from src.kg.artifacts import (
+        MANIFEST_FILENAME,
+        check_unparsed_kg_json,
+        manifest_section,
+        read_split_manifest,
+        verify_dataset_record,
+        verify_graph_reads,
+    )
+    from src.kg.storage.file_storage import read_graph_artifacts, read_samples
+    from src.utils.fingerprint import read_once
+
+    root = validate_registry(registry)
+    label = validate_label(label)
+    role = validate_generated_role(role)
+    _require_label_free(root, label)
+
+    data_dir = Path(data_dir)
+    manifest = read_split_manifest(data_dir)
+    graph = read_graph_artifacts(data_dir, map_location="cpu")
+    bound = verify_graph_reads(manifest, graph.reads)
+    del graph
+    check_unparsed_kg_json(data_dir, manifest)
+    dataset_record = verify_dataset_record(manifest, bound["kg"])
+
+    split_files = _split_files(manifest_section(manifest.manifest, manifest.identity.path,
+                                                "artifacts"))
+    if f"{role}_samples" not in split_files or role not in GENERATED_SPLITS:
+        held = ", ".join(name[: -len("_samples")] for name in split_files) or "none"
+        raise CohortVersionRefused(
+            f"the workspace {data_dir} holds no generated {role} split this revision can "
+            f"verify: its {MANIFEST_FILENAME} binds the splits {held}, and the generator "
+            f"writes and verifies {' and '.join(GENERATED_SPLITS)} only, so there is no "
+            f"{role} split to keep."
+        )
+    reads = {name: read_samples(data_dir, name) for name in GENERATED_SPLITS}
+    verified = verify_cohort_reads(manifest, reads)
+    verified_sha256 = reads[role].identity.sha256
+    n_samples = len(reads[role].samples)
+    del reads
+    fixture, fixture_files, fixture_note = _workspace_task_fixture(
+        data_dir, manifest.identity.sha256, bound["kg"], role, verified_sha256)
+
+    # The bytes kept are the bytes verified: each file is read once more and
+    # kept only when it hashes to the digest of the read that was parsed.
+    kept = {}
+    for name, verified_digest in ((f"{role}_samples.json", verified_sha256),
+                                  (MANIFEST_FILENAME, manifest.identity.sha256),
+                                  *fixture_files):
+        read = read_once(data_dir / name)
+        if read.sha256 != verified_digest:
+            raise CohortVersionRefused(
+                f"{read.identity.path} changed while it was read (its bytes are "
+                f"{read.sha256[:12]}..., the {verified_digest[:12]}... verified a moment "
+                "before); nothing is kept. Import again once the workspace is not being "
+                "written."
+            )
+        kept[name] = read
+    samples = kept[f"{role}_samples.json"]
+    version = build_generated_manifest(
+        label=label, role=role, bound=bound, dataset_record=dataset_record,
+        split_manifest=manifest.manifest, split_manifest_sha256=manifest.identity.sha256,
+        verified=verified, samples_sha256=samples.sha256, n_samples=n_samples,
+        task_fixture=fixture,
+    )
+    # The reader's rules, before anything is written: a split manifest the
+    # verifiers passed but which names a split file by a path, states no
+    # generation definition (an algorithm and its version), or counts the
+    # role's realised diseases otherwise than its samples hold them is refused
+    # here, not published as a version every reader refuses.
+    problems = _generated_shape_problems({**version, "imported": {}})
+    if problems:
+        raise CohortVersionRefused(
+            f"the workspace {data_dir}'s {MANIFEST_FILENAME} does not describe its {role} split "
+            f"as a generated split version records it: {'; '.join(problems)}."
+        )
+    # The fixture's record and the role's rows, as kept (none without a fixture).
+    record_bytes, rows_bytes = ([kept[name].data for name, _digest in fixture_files]
+                                or [None, None])
+    return ImportPlan(label, role, version, preview_id(version), None, None, samples.data,
+                      split_manifest_bytes=kept[MANIFEST_FILENAME].data,
+                      task_fixture_bytes=record_bytes, task_fixture_samples_bytes=rows_bytes,
+                      task_fixture_note=fixture_note)
+
+
+def _workspace_task_fixture(
+    data_dir: Path, split_manifest_sha256: str, kg: str, role: str, samples_sha256: str,
+) -> Tuple[Optional[Dict[str, Any]], List[Tuple[str, str]], Optional[str]]:
+    """The workspace's functional gene fixture of the role's split, as a
+    generated split version keeps it (research comparison Stage 5b): its
+    ``task_fixture`` block (`_task_fixture_block`), the two files to keep
+    (the record and the role's rows, each by its path in the workspace and
+    the digest of the read that was parsed), and None; or no block, no file,
+    and why none is kept.
+
+    **Read as a ``--split`` measurement of the workspace reads it**, by the
+    one reader of a workspace's fixture (`src.kg.task_fixture.read_gene_fixture`),
+    against this run's split manifest reading: the record, and each split's
+    rows against the digest and the row count the record names. So a fixture
+    is kept by the rules it is measured by. The record must then describe the
+    split the version keeps (`_task_fixture_unbound`: the graph and the
+    role's samples). **A fixture that is absent, of another build or
+    unreadable is not kept, and never refuses the import**: the version still
+    holds the role's split, which the disease measurement reads; it then
+    keeps no fixture, and a measurement that needs one is refused with that
+    data gap (`src.evaluation.protocols`). The reason is the preview's to
+    show."""
+    from src.kg.task_fixture import FIXTURE_DIR, FIXTURE_RECORD, TaskFixtureError, read_gene_fixture
+
+    try:
+        fixture = read_gene_fixture(data_dir, manifest_sha256=split_manifest_sha256)
+    except TaskFixtureError as exc:
+        return None, [], f"{exc.state.replace('_', ' ')}: {exc}"
+    except OSError as exc:  # a sample file this account may not read
+        return None, [], f"the fixture cannot be read: {exc}"
+    record = fixture.record
+    unbound = _task_fixture_unbound(record, role=role, kg=kg,
+                                    split_manifest_sha256=split_manifest_sha256,
+                                    samples_sha256=samples_sha256)
+    if unbound:
+        return None, [], (f"the workspace's fixture record does not describe the {role} split "
+                          f"this version keeps: {'; '.join(unbound)}")
+    block = _task_fixture_block(record, fixture.identity.sha256, role)
+    # The reader's rules for the block, so a record the version could not
+    # record as it is (a seed that is no whole number, no derivation counts)
+    # is not kept, rather than refusing the whole import.
+    problems = _task_fixture_shape_problems(block, None)
+    if problems:
+        return None, [], (f"the workspace's fixture record does not state what a version records "
+                          f"of it: {'; '.join(problems)}")
+    return (block, [(f"{FIXTURE_DIR.as_posix()}/{FIXTURE_RECORD}", fixture.identity.sha256),
+                    (f"{FIXTURE_DIR.as_posix()}/{record['files'][role]['name']}",
+                     fixture.samples[role].identity.sha256)], None)
+
+
 def _utc(now: datetime, pattern: str) -> str:
     if now.tzinfo is None:
         raise ValueError(f"{now!r} has no time zone; a recorded time must say which it is in")
@@ -995,17 +1913,23 @@ def commit_import(
 
     Writes nothing until every check passes: the registry, the preview id
     (recomputed from `plan.manifest`, not taken from `plan`), the plan's label
-    and bytes against what its manifest binds, a non-empty sample set, and a
-    free label. Then, in order: the source is kept (no-clobber), the version
-    directory is claimed with ``mkdir(exist_ok=False)``, ``samples.json`` is
-    published, and ``cohort.json`` -- the commit point -- last, with the
-    ``imported`` block (when, and `code_revision(REPO_ROOT)`, both taken before
-    the first write). ``sources/``, ``versions/`` and, after the claim, the
-    version directory are each resolved again before anything is written into
-    them, and refused when a link takes one outside the registry or into the
-    repository (`_registry_directory`); the refusal says what was already
-    written. A failure after the claim leaves a directory without
-    ``cohort.json``, which every reader refuses as incomplete.
+    and bytes against what its manifest binds, something to measure (a
+    non-empty sample set; a KG edge set's pairs), and a free label. Then, in
+    order: a supplied version's source is kept (no-clobber), the version
+    directory is claimed with ``mkdir(exist_ok=False)``, its data files are
+    published (``samples.json``, a supplied cohort's mapped samples; a KG edge
+    set's ``pairs.bin``; a generated split's ``split_manifest.json``, its
+    functional gene fixture's ``task_fixture.json`` and
+    ``task_fixture_samples.json`` when it keeps one, and ``samples.json``, as
+    the workspace held them), and
+    ``cohort.json`` -- the commit point -- last, with the ``imported`` block
+    (when, and `code_revision(REPO_ROOT)`, both taken before the first write).
+    ``sources/``, ``versions/`` and, after the claim, the version directory are
+    each resolved again before anything is written into them, and refused when
+    a link takes one outside the registry or into the repository
+    (`_registry_directory`); the refusal says what was already written. A
+    failure after the claim leaves a directory without ``cohort.json``, which
+    every reader refuses as incomplete.
 
     `now` is the time recorded as ``imported.at``; the current time when omitted.
 
@@ -1032,20 +1956,7 @@ def commit_import(
         # The id covers the manifest, not the bytes beside it; those must be the
         # ones it binds, or the registry would keep a file under another's name.
         label = validate_label(plan.manifest["label"])
-        source_sha256 = plan.manifest["source"]["sha256"]
-        if (plan.label != label or plan.source_sha256 != source_sha256
-                or _sha256(plan.source_bytes) != source_sha256
-                or _sha256(plan.samples_bytes) != plan.manifest["samples"]["sha256"]):
-            raise CohortVersionRefused(
-                f"the plan for {label!r} carries a label, source or samples its manifest "
-                "does not bind, so it is not one prepare_import made from one read of each "
-                "input."
-            )
-        if not plan.manifest["samples"]["n"]:
-            raise CohortVersionRefused(
-                f"no case of the source is eligible for ranking against this graph, so the "
-                f"version {label!r} would measure nobody. See the preview's exclusions."
-            )
+        data_files = _plan_data_files(plan, label)
         _require_label_free(root, label)
     except (RegistryRefused, CohortVersionRefused) as exc:
         raise type(exc)(f"{exc} Nothing was written.") from None
@@ -1060,9 +1971,14 @@ def commit_import(
 
     # Each directory is resolved again before it is written into: a link below
     # the root would otherwise carry the files wherever it points (D7).
-    sources = _keep_source(root, plan)
-    kept = (f"Only the source copy was written (under {sources}, named by its digest, which "
-            "is harmless to keep).")
+    if plan.kind == SUPPLIED:
+        sources = _keep_source(root, plan)
+        kept = (f"Only the source copy was written (under {sources}, named by its digest, "
+                "which is harmless to keep).")
+        claimed = f"Only the source copy (under {sources}) and the empty directory"
+    else:
+        kept = "Nothing was written."
+        claimed = "Only the empty directory"
 
     versions = _registry_directory(root / VERSIONS_DIR, within=root, done=kept)
     versions.mkdir(exist_ok=True)
@@ -1076,14 +1992,97 @@ def commit_import(
         ) from None
     directory = _registry_directory(
         directory, within=root,
-        done=(f"Only the source copy (under {sources}) and the empty directory {directory}, "
-              "which claimed the label, were written; nothing was written into it. Every "
-              "reader refuses it as an interrupted import; remove it to reuse the label."),
+        done=(f"{claimed} {directory}, which claimed the label, "
+              f"{'were' if plan.kind == SUPPLIED else 'was'} written; nothing was written "
+              "into it. Every reader refuses it as an interrupted import; remove it to reuse "
+              "the label."),
     )
 
-    publish_bytes(directory / VERSION_SAMPLES, plan.samples_bytes)
+    for name, data in data_files:
+        publish_bytes(directory / name, data)
     publish_bytes(directory / VERSION_MANIFEST, manifest_bytes)
     return resolve_version(root, label)
+
+
+def _plan_data_files(plan: ImportPlan, label: str) -> List[Tuple[str, bytes]]:
+    """The data files a commit publishes before the manifest, in order, by the
+    plan's kind, once the plan's label and bytes are those its manifest binds
+    and it holds something to measure; else a refusal.
+
+    A supplied version: its label, source and samples, and at least one case
+    eligible for ranking. A KG edge set: its label and pairs, and at least one
+    pair (a part none of whose edges has a negative would measure nothing). A
+    generated split: its label, split manifest and samples, its functional
+    gene fixture's record and rows exactly when its manifest keeps one, and
+    at least one sample."""
+    manifest = plan.manifest
+    kind = plan.kind
+    if kind == SUPPLIED:
+        source_sha256 = manifest["source"]["sha256"]
+        if (plan.label != label or plan.source_sha256 != source_sha256
+                or plan.source_bytes is None or plan.samples_bytes is None
+                or _sha256(plan.source_bytes) != source_sha256
+                or _sha256(plan.samples_bytes) != manifest["samples"]["sha256"]):
+            raise CohortVersionRefused(
+                f"the plan for {label!r} carries a label, source or samples its manifest "
+                "does not bind, so it is not one prepare_import made from one read of each "
+                "input."
+            )
+        if not manifest["samples"]["n"]:
+            raise CohortVersionRefused(
+                f"no case of the source is eligible for ranking against this graph, so the "
+                f"version {label!r} would measure nobody. See the preview's exclusions."
+            )
+        return [(VERSION_SAMPLES, plan.samples_bytes)]
+    if kind == KG_EDGES:
+        if (plan.label != label or plan.pairs_bytes is None
+                or _sha256(plan.pairs_bytes) != manifest["pairs"]["sha256"]):
+            raise CohortVersionRefused(
+                f"the plan for {label!r} carries a label or pairs its manifest does not "
+                "bind, so it is not one prepare_kg_edges_import made from one read of each "
+                "input."
+            )
+        if not manifest["counts"]["pairs"]:
+            raise CohortVersionRefused(
+                f"none of the {manifest['counts']['positive_edges']} edges of the "
+                f"{manifest['role']} part has a negative tail (no other tail of its relation "
+                f"in its batch), so the KG edge set {label!r} would measure nothing."
+            )
+        return [(VERSION_PAIRS, plan.pairs_bytes)]
+    if kind == GENERATED:
+        if (plan.label != label or plan.samples_bytes is None
+                or plan.split_manifest_bytes is None
+                or plan.source_bytes is not None or plan.pairs_bytes is not None
+                or _sha256(plan.samples_bytes) != manifest["samples"]["sha256"]
+                or _sha256(plan.split_manifest_bytes) != manifest["split_manifest"]["sha256"]):
+            raise CohortVersionRefused(
+                f"the plan for {label!r} carries a label, split manifest or samples its "
+                "manifest does not bind, so it is not one prepare_generated_import made from "
+                "one read of each input."
+            )
+        if not manifest["samples"]["n"]:
+            raise CohortVersionRefused(
+                f"the workspace's generated {manifest['role']} split holds no sample, so the "
+                f"version {label!r} would measure nobody."
+            )
+        fixture = manifest.get("task_fixture")
+        fixture_bytes = (plan.task_fixture_bytes, plan.task_fixture_samples_bytes)
+        if (fixture is None and fixture_bytes != (None, None)) or (fixture is not None and (
+                None in fixture_bytes
+                or _sha256(plan.task_fixture_bytes) != fixture["record"]["sha256"]
+                or _sha256(plan.task_fixture_samples_bytes) != fixture["samples"]["sha256"])):
+            raise CohortVersionRefused(
+                f"the plan for {label!r} carries a functional gene fixture its manifest does not "
+                "bind, so it is not one prepare_generated_import made from one read of each "
+                "input."
+            )
+        kept_fixture = ([] if fixture is None else
+                        [(VERSION_TASK_FIXTURE, plan.task_fixture_bytes),
+                         (VERSION_TASK_FIXTURE_SAMPLES, plan.task_fixture_samples_bytes)])
+        return [(VERSION_SPLIT_MANIFEST, plan.split_manifest_bytes), *kept_fixture,
+                (VERSION_SAMPLES, plan.samples_bytes)]
+    raise CohortVersionRefused(f"the plan for {label!r} is of kind {kind!r}, which this "
+                               f"revision does not write ({', '.join(VERSION_KINDS)}).")
 
 
 # ---------------------------------------------------------------------------
@@ -1145,7 +2144,63 @@ def _counts_problems(manifest: Dict[str, Any], samples_n: Any) -> List[str]:
     return problems
 
 
+def _is_sha(value: Any) -> bool:
+    return isinstance(value, str) and bool(_SHA256.fullmatch(value))
+
+
+def _is_whole(value: Any) -> bool:
+    """A whole number, and not a boolean (a seed may be any integer)."""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _graph_problems(manifest: Dict[str, Any]) -> List[str]:
+    """The four graph digests, which `verify_cohort_binding` compares, of
+    every kind."""
+    graph = manifest["graph"]
+    if not isinstance(graph, dict) or not all(_is_sha(graph.get(r)) for r in GRAPH_ARTIFACTS):
+        return [f"graph must hold a SHA-256 for each of {list(GRAPH_ARTIFACTS)}"]
+    return []
+
+
+def _kind_problem(manifest: Dict[str, Any]) -> Optional[str]:
+    """Why a manifest of a schema this revision reads does not say its kind as
+    that schema does, or None: schema 1 states none (it is a supplied cohort),
+    schema 2 states one of `VERSION_KINDS` that is written in schema 2
+    (`KIND_SCHEMAS`). A kind stated in a schema it is not written in is a
+    shape no revision writes; reading it by the rules of the shape it
+    resembles would guess at what its fields mean."""
+    schema = manifest.get("schema_version")
+    if schema == VERSION_SCHEMA_VERSION:
+        if "kind" in manifest:
+            return (f"is schema {VERSION_SCHEMA_VERSION}, which records no kind, yet states kind "
+                    f"{manifest['kind']!r}: it was edited, so it does not say what it is.")
+        return None
+    if "kind" not in manifest:
+        return f"is schema {schema!r}, which must state its kind (missing kind)."
+    kind = version_kind(manifest)
+    if kind not in VERSION_KINDS:
+        return (f"is of kind {manifest['kind']!r}; this revision reads kinds "
+                f"{', '.join(VERSION_KINDS[:-1])} and {VERSION_KINDS[-1]} only.")
+    if KIND_SCHEMAS[kind] != schema:
+        return (f"is schema {schema!r} of kind {kind!r}, which no revision writes: a {kind} "
+                f"version is schema {KIND_SCHEMAS[kind]}.")
+    return None
+
+
 def _version_shape_problems(manifest: Dict[str, Any]) -> List[str]:
+    """What a reader relies on, beyond the field list, by the manifest's kind
+    (`version_kind`): a supplied cohort's (`_supplied_shape_problems`), a KG
+    edge set's (`_kg_edges_shape_problems`) or a generated split's
+    (`_generated_shape_problems`)."""
+    kind = version_kind(manifest)
+    if kind == KG_EDGES:
+        return _kg_edges_shape_problems(manifest)
+    if kind == GENERATED:
+        return _generated_shape_problems(manifest)
+    return _supplied_shape_problems(manifest)
+
+
+def _supplied_shape_problems(manifest: Dict[str, Any]) -> List[str]:
     """What a reader relies on, beyond the field list: the four graph digests,
     the dataset record's digest, the samples' digest and count, the source's
     digest, counts that are present and consistent (`_counts_problems`), and a
@@ -1154,18 +2209,13 @@ def _version_shape_problems(manifest: Dict[str, Any]) -> List[str]:
     if problems:
         return problems
 
-    def is_sha(value: Any) -> bool:
-        return isinstance(value, str) and bool(_SHA256.fullmatch(value))
-
-    graph = manifest["graph"]
-    if not isinstance(graph, dict) or not all(is_sha(graph.get(r)) for r in GRAPH_ARTIFACTS):
-        problems.append(f"graph must hold a SHA-256 for each of {list(GRAPH_ARTIFACTS)}")
+    problems += _graph_problems(manifest)
     for block in ("dataset_record", "source"):
-        if not (isinstance(manifest[block], dict) and is_sha(manifest[block].get("sha256"))):
+        if not (isinstance(manifest[block], dict) and _is_sha(manifest[block].get("sha256"))):
             problems.append(f"{block} must hold a sha256")
     samples = manifest["samples"]
     n = samples.get("n") if isinstance(samples, dict) else None
-    if not (isinstance(samples, dict) and is_sha(samples.get("sha256")) and _is_count(n)):
+    if not (isinstance(samples, dict) and _is_sha(samples.get("sha256")) and _is_count(n)):
         problems.append("samples must hold a sha256 and a count n")
     for block in ("mapping", "unmappable_terms", "imported"):
         if not isinstance(manifest[block], dict):
@@ -1180,13 +2230,361 @@ def _version_shape_problems(manifest: Dict[str, Any]) -> List[str]:
     return problems
 
 
+def _kg_edges_counts(manifest: Dict[str, Any], problems: List[str]) -> Optional[Dict[str, int]]:
+    """A KG edge set's counts when they are exactly `KG_EDGES_COUNT_UNITS`' keys,
+    each a whole number of at least 0, with a unit each; else None, with the
+    problems named."""
+    keys = list(KG_EDGES_COUNT_UNITS)
+    units = manifest["count_units"]
+    if not (isinstance(units, dict) and set(units) == set(keys)
+            and all(isinstance(u, str) and u for u in units.values())):
+        problems.append(f"count_units must give a unit for each of {keys}")
+    counts = manifest["counts"]
+    if not (isinstance(counts, dict) and set(counts) == set(keys)):
+        problems.append(f"counts must hold exactly {keys}")
+        return None
+    bad = [f"counts.{key} must be a whole number of at least 0"
+           for key in keys if not _is_count(counts[key])]
+    problems += bad
+    return None if bad else counts
+
+
+def _kg_edges_shape_problems(manifest: Dict[str, Any]) -> List[str]:
+    """What a reader relies on in a KG edge set, beyond the field list, each
+    problem naming its field: the four graph digests and the dataset record's
+    digest (`verify_cohort_binding` compares them); a role that is a part of
+    the split; the view's rule and digest; the split's rule, seed, digest and
+    part counts, recorded for this view; counts with their units, equal to
+    what the split and the pairs say (the pairs plus the edges without a
+    negative are the part's edges, the message-passing edges the train part's);
+    the message-passing graph, the split's train part, saying whether the
+    measured edges are in it (exactly when the role is ``train``); the pairs
+    file's name, digests, rule, layout, part, seed, batch size, batch count,
+    the pairs each batch kept (`_batch_pairs_problems`) and its row count; and
+    the checkpoint the view and split were taken from."""
+    problems = [f"missing {name}" for name in KG_EDGES_REQUIRED_FIELDS if name not in manifest]
+    if problems:
+        return problems
+
+    problems += _graph_problems(manifest)
+    problems += _dataset_record_problems(manifest["dataset_record"])
+    role = manifest["role"]
+    try:
+        validate_kg_edges_role(role)
+    except CohortVersionRefused as exc:
+        problems.append(str(exc))
+        role = None
+
+    view = manifest["graph_view"]
+    if not (isinstance(view, dict) and isinstance(view.get("rule"), dict)
+            and _is_sha(view.get("digest"))):
+        problems.append("graph_view must hold a rule (an object) and a digest (a SHA-256)")
+        view = {}
+    split = manifest["split"]
+    parts: Optional[Dict[str, Any]] = None
+    if not isinstance(split, dict):
+        problems.append("split must be an object")
+        split = {}
+    else:
+        if not (isinstance(split.get("rule"), str) and split["rule"]):
+            problems.append("split.rule must be a non-empty string")
+        if not _is_whole(split.get("seed")):
+            problems.append("split.seed must be a whole number")
+        if not _is_sha(split.get("digest")):
+            problems.append("split.digest must be a SHA-256")
+        if split.get("view_digest") != view.get("digest"):
+            problems.append("split.view_digest is not graph_view.digest")
+        parts = split.get("edges")
+        if not (isinstance(parts, dict) and set(parts) == set(KG_EDGES_ROLES)
+                and all(_is_count(n) for n in parts.values())):
+            problems.append(f"split.edges must hold a whole number of at least 0 for exactly "
+                            f"{list(KG_EDGES_ROLES)}")
+            parts = None
+
+    counts = _kg_edges_counts(manifest, problems)
+    if counts is not None:
+        positive, paired = counts["positive_edges"], counts["pairs"]
+        without = counts["edges_without_negative"]
+        if paired + without != positive:
+            problems.append(f"counts.pairs ({paired}) plus counts.edges_without_negative "
+                            f"({without}) is not counts.positive_edges ({positive})")
+        if parts is not None and role is not None and positive != parts[role]:
+            problems.append(f"counts.positive_edges ({positive}) is not split.edges.{role} "
+                            f"({parts[role]})")
+        if parts is not None and counts["message_passing_edges"] != parts["train"]:
+            problems.append(f"counts.message_passing_edges ({counts['message_passing_edges']}) "
+                            f"is not split.edges.train ({parts['train']})")
+
+    passing = manifest["message_passing"]
+    if not (isinstance(passing, dict) and passing.get("part") == "train"):
+        problems.append("message_passing must be the split's train part (part train, README A4)")
+    else:
+        if counts is not None and not (_is_count(passing.get("edges"))
+                                       and passing["edges"] == counts["message_passing_edges"]):
+            problems.append(f"message_passing.edges ({passing.get('edges')!r}) is not "
+                            f"counts.message_passing_edges ({counts['message_passing_edges']})")
+        if role is not None and passing.get("includes_measured_edges") is not (role == "train"):
+            problems.append(f"message_passing.includes_measured_edges must be "
+                            f"{str(role == 'train').lower()} for role {role}: the train part "
+                            "is the message-passing graph")
+
+    pairs = manifest["pairs"]
+    if not isinstance(pairs, dict):
+        problems.append("pairs must be an object")
+    else:
+        if pairs.get("file") != VERSION_PAIRS:
+            problems.append(f"pairs.file must be {VERSION_PAIRS}")
+        problems += [f"pairs.{key} must be a SHA-256" for key in ("sha256", "lp_pairs_digest")
+                     if not _is_sha(pairs.get(key))]
+        if not (isinstance(pairs.get("rule"), str) and pairs["rule"]):
+            problems.append("pairs.rule must be a non-empty string")
+        if not isinstance(pairs.get("layout"), dict):
+            problems.append("pairs.layout must be an object")
+        if role is not None and pairs.get("part") != role:
+            problems.append(f"pairs.part ({pairs.get('part')!r}) is not the role ({role})")
+        if not (_is_whole(pairs.get("seed")) and pairs.get("seed") == split.get("seed")):
+            problems.append(f"pairs.seed ({pairs.get('seed')!r}) is not split.seed "
+                            f"({split.get('seed')!r})")
+        batch = pairs.get("batch_size")
+        if not (_is_count(batch) and batch > 0):
+            problems.append("pairs.batch_size must be a whole number above 0")
+        elif counts is not None:
+            batches = -(-counts["positive_edges"] // batch)
+            if not (_is_count(pairs.get("batches")) and pairs["batches"] == batches):
+                problems.append(f"pairs.batches ({pairs.get('batches')!r}) is not "
+                                f"counts.positive_edges in batches of {batch} ({batches})")
+            else:
+                problems += _batch_pairs_problems(pairs.get("batch_pairs"), batch,
+                                                  counts["positive_edges"], counts["pairs"])
+        if counts is not None and not (_is_count(pairs.get("rows"))
+                                       and pairs["rows"] == counts["pairs"]):
+            problems.append(f"pairs.rows ({pairs.get('rows')!r}) is not counts.pairs "
+                            f"({counts['pairs']})")
+
+    taken = manifest["taken_from"]
+    if not (isinstance(taken, dict) and _is_sha(taken.get("checkpoint_sha256"))
+            and isinstance(taken.get("record_fields"), list)):
+        problems.append("taken_from must hold a checkpoint_sha256 and the record_fields read")
+    if not isinstance(manifest["imported"], dict):
+        problems.append("imported must be an object")
+    return problems
+
+
+def _batch_pairs_problems(batch_pairs: Any, batch_size: int, positive: int,
+                          rows: int) -> List[str]:
+    """Why ``pairs.batch_pairs`` is not the pairs each batch kept, or none: one
+    whole number per batch of `batch_size` over the `positive` edges, none
+    above its batch's edge count (the last batch holds the remainder), summing
+    to the `rows` the pairs file holds."""
+    batches = -(-positive // batch_size)
+    sizes = [min(batch_size, positive - k * batch_size) for k in range(batches)]
+    if not (isinstance(batch_pairs, list) and len(batch_pairs) == batches
+            and all(_is_count(n) for n in batch_pairs)):
+        return [f"pairs.batch_pairs must hold a whole number of at least 0 for each of the "
+                f"{batches} batches"]
+    problems = [f"pairs.batch_pairs[{k}] ({n}) is above its batch's {size} edges"
+                for k, (n, size) in enumerate(zip(batch_pairs, sizes, strict=True)) if n > size]
+    if sum(batch_pairs) != rows:
+        problems.append(f"pairs.batch_pairs sum to {sum(batch_pairs)}, not counts.pairs ({rows})")
+    return problems
+
+
+def _dataset_record_problems(record: Any) -> List[str]:
+    """Why a KG edge set's or a generated split's ``dataset_record`` is not
+    one a reader can name its sources by, or none: a SHA-256, and its sources
+    as `_source_roles_problems` reads them."""
+    if not (isinstance(record, dict) and _is_sha(record.get("sha256"))
+            and isinstance(record.get("sources"), list)):
+        return ["dataset_record must hold a sha256 and its sources"]
+    return _source_roles_problems(record["sources"])
+
+
+def _source_roles_problems(sources: List[Any]) -> List[str]:
+    """Why a version's named sources (``dataset_record.sources``) are not each
+    a named, digested source role, or none (E4): each an object with a
+    ``role`` that is an identifier (`validate_split_name`, the label's rule),
+    a ``digest`` that is a SHA-256 and a ``declared_version`` that is text or
+    null, no role twice. **No list of allowed roles**: the KG builder's four
+    (`src.kg.provenance.SOURCE_ROLES`) are what today's records name, not what
+    a version may carry."""
+    problems: List[str] = []
+    seen: List[str] = []
+    for index, entry in enumerate(sources):
+        where = f"dataset_record.sources[{index}]"
+        if not (isinstance(entry, dict) and set(entry) == {"role", "digest", "declared_version"}):
+            problems.append(f"{where} must hold exactly role, digest and declared_version")
+            continue
+        try:
+            role = validate_split_name(entry["role"])
+        except ValueError:
+            problems.append(f"{where}.role ({entry['role']!r}) is not an identifier")
+            continue
+        if role in seen:
+            problems.append(f"{where} names the role {role!r} a second time")
+        seen.append(role)
+        if not _is_sha(entry["digest"]):
+            problems.append(f"{where}.digest (role {role}) must be a SHA-256")
+        if not (entry["declared_version"] is None or isinstance(entry["declared_version"], str)):
+            problems.append(f"{where}.declared_version (role {role}) must be text or null")
+    return problems
+
+
+def _generated_shape_problems(manifest: Dict[str, Any]) -> List[str]:
+    """What a reader relies on in a generated split, beyond the field list,
+    each problem naming its field: the four graph digests and the dataset
+    record (its digest and named sources); a role of `GENERATED_ROLES`; the
+    split manifest, kept as ``split_manifest.json``, and its digest; the
+    split's files, each named by a split's name (`_is_split_file`: never a
+    path, so a reference to one cannot address a file outside the workspace
+    it is looked for in) with a SHA-256, among them the role's, which is the
+    samples' digest (the samples are the file the workspace's split manifest
+    binds); the generation definition (an
+    algorithm and its version) and the allocation, each an object; what each
+    split realised, holding the role's disease count, which ``counts.diseases``
+    is; what was verified; the samples (``samples.json``, a SHA-256 and a
+    count, which ``counts.samples`` is); and counts with their units. The
+    functional gene fixture is optional (``task_fixture``, research comparison
+    Stage 5b): kept, its block is checked (`_task_fixture_shape_problems`) and
+    the counts and units hold its rows (`GENERATED_FIXTURE_COUNT`); not kept,
+    neither does."""
+    problems = [f"missing {name}" for name in GENERATED_REQUIRED_FIELDS
+                if name not in manifest]
+    if problems:
+        return problems
+
+    problems += _graph_problems(manifest)
+    problems += _dataset_record_problems(manifest["dataset_record"])
+    role = manifest["role"]
+    try:
+        validate_generated_role(role)
+    except CohortVersionRefused as exc:
+        problems.append(str(exc))
+        role = None
+
+    split_manifest = manifest["split_manifest"]
+    if not (isinstance(split_manifest, dict)
+            and split_manifest.get("file") == VERSION_SPLIT_MANIFEST
+            and _is_sha(split_manifest.get("sha256"))):
+        problems.append(f"split_manifest must hold the file {VERSION_SPLIT_MANIFEST} and a "
+                        "sha256")
+    files = manifest["split_artifacts"]
+    if not (isinstance(files, dict) and files
+            and all(_is_split_file(name) and _is_sha(digest) for name, digest in files.items())):
+        problems.append("split_artifacts must name each split's samples file "
+                        "(<split>_samples, the split an identifier) with a SHA-256")
+        files = {}
+
+    generation = manifest["generation"]
+    if not (isinstance(generation, dict) and isinstance(generation.get("algorithm"), str)
+            and generation["algorithm"] and _is_whole(generation.get("algorithm_version"))):
+        problems.append("generation must state the generator's algorithm and algorithm_version")
+    if not isinstance(manifest["allocation"], dict):
+        problems.append("allocation must be an object")
+    realised = manifest["realised"]
+    if not isinstance(realised, dict):
+        problems.append("realised must be an object")
+        realised = {}
+    verified = manifest["verified"]
+    if not (isinstance(verified, dict) and isinstance(verified.get("splits"), list)
+            and (role is None or role in verified["splits"])
+            and isinstance(verified.get("disjointness_measured"), bool)):
+        problems.append("verified must list the splits verified, the role's among them, and "
+                        "whether disjointness was measured")
+
+    samples = manifest["samples"]
+    n = samples.get("n") if isinstance(samples, dict) else None
+    if not (isinstance(samples, dict) and samples.get("file") == VERSION_SAMPLES
+            and _is_sha(samples.get("sha256")) and _is_count(n)):
+        problems.append(f"samples must hold the file {VERSION_SAMPLES}, a sha256 and a count n")
+        samples = {}
+    elif role is not None and files and files.get(f"{role}_samples") != samples["sha256"]:
+        problems.append(f"samples.sha256 is not split_artifacts.{role}_samples: the samples are "
+                        "the file the workspace's split manifest binds")
+
+    # The fixture's count is there exactly when the version keeps the fixture
+    # (a version without one has the shape every generated version had
+    # before research comparison Stage 5b).
+    fixture = manifest.get("task_fixture")
+    keys = list(GENERATED_COUNT_UNITS) + ([GENERATED_FIXTURE_COUNT] if fixture is not None
+                                          else [])
+    units = manifest["count_units"]
+    if not (isinstance(units, dict) and set(units) == set(keys)
+            and all(isinstance(u, str) and u for u in units.values())):
+        problems.append(f"count_units must give a unit for each of {keys}")
+    counts = manifest["counts"]
+    if not (isinstance(counts, dict) and set(counts) == set(keys)
+            and all(_is_count(counts[key]) for key in keys)):
+        problems.append(f"counts must hold a whole number of at least 0 for exactly {keys}")
+        counts = None
+    else:
+        if _is_count(n) and counts["samples"] != n:
+            problems.append(f"counts.samples ({counts['samples']}) is not samples.n ({n})")
+        if role is not None and counts["diseases"] != realised.get(f"{role}_diseases"):
+            problems.append(f"counts.diseases ({counts['diseases']}, the distinct diseases "
+                            f"among the samples) is not realised.{role}_diseases "
+                            f"({realised.get(f'{role}_diseases')!r})")
+    if "task_fixture" in manifest:
+        problems += _task_fixture_shape_problems(fixture, counts)
+    if not isinstance(manifest["imported"], dict):
+        problems.append("imported must be an object")
+    return problems
+
+
+def _task_fixture_shape_problems(fixture: Any, counts: Optional[Dict[str, Any]]) -> List[str]:
+    """What a reader relies on in a generated split's ``task_fixture`` block
+    (`_task_fixture_block`), each problem naming its field: the fixture's
+    kind, label and rule as text, its seed and distractors as whole numbers,
+    its derivation as an object, the record kept as ``task_fixture.json``
+    with a SHA-256 and its schema, and the role's rows kept as
+    ``task_fixture_samples.json`` with a SHA-256 and a count n, which
+    ``counts.task_fixture_samples`` is."""
+    from src.kg.task_fixture import FIXTURE_KIND
+
+    if not isinstance(fixture, dict):
+        return ["task_fixture must be an object"]
+    problems = []
+    if fixture.get("kind") != FIXTURE_KIND:
+        problems.append(f"task_fixture.kind must be {FIXTURE_KIND!r}")
+    for field in ("label", "rule"):
+        if not (isinstance(fixture.get(field), str) and fixture[field]):
+            problems.append(f"task_fixture.{field} must be text")
+    for field in ("seed", "distractors"):
+        if not _is_whole(fixture.get(field)):
+            problems.append(f"task_fixture.{field} must be a whole number")
+    if not isinstance(fixture.get("derivation"), dict):
+        problems.append("task_fixture.derivation must be an object")
+    record = fixture.get("record")
+    if not (isinstance(record, dict) and record.get("file") == VERSION_TASK_FIXTURE
+            and _is_sha(record.get("sha256")) and _is_whole(record.get("schema_version"))):
+        problems.append(f"task_fixture.record must hold the file {VERSION_TASK_FIXTURE}, a "
+                        "sha256 and its schema_version")
+    rows = fixture.get("samples")
+    n = rows.get("n") if isinstance(rows, dict) else None
+    if not (isinstance(rows, dict) and rows.get("file") == VERSION_TASK_FIXTURE_SAMPLES
+            and _is_sha(rows.get("sha256")) and _is_count(n)):
+        problems.append(f"task_fixture.samples must hold the file {VERSION_TASK_FIXTURE_SAMPLES}, "
+                        "a sha256 and a count n")
+    elif counts is not None and counts[GENERATED_FIXTURE_COUNT] != n:
+        problems.append(f"counts.{GENERATED_FIXTURE_COUNT} ({counts[GENERATED_FIXTURE_COUNT]}) "
+                        f"is not task_fixture.samples.n ({n})")
+    return problems
+
+
 def resolve_version(registry: Any, label: str, *,
                     expected_sha256: Optional[str] = None) -> CohortVersionRead:
     """Resolve a committed version: one read of its ``cohort.json``, parsed from
     those bytes, and the identity of those bytes.
 
-    Does not read ``samples.json``: its path is returned, and the caller reads
-    it once, comparing the read's digest with ``manifest["samples"]["sha256"]``.
+    Does not read ``samples.json`` (a supplied cohort's or a generated
+    split's): its path is returned, and the caller reads it once, comparing
+    the read's digest with ``manifest["samples"]["sha256"]``. Nor a KG edge
+    set's ``pairs.bin``, which `read_kg_edge_pairs` reads. Nor a generated
+    split's ``split_manifest.json``, nor anything a version references outside
+    its directory (`check_references` compares those).
+
+    **Either schema, by kind** (`VERSION_SCHEMAS`): schema 1 is a supplied
+    cohort and states no kind; schema 2 states its kind (`VERSION_KINDS`).
+    Each kind's fields are checked by its own rules (`_version_shape_problems`).
 
     The version directory is resolved before anything is read from it, and the
     resolved path is the one returned, so a caller writing reports under it
@@ -1208,10 +2606,12 @@ def resolve_version(registry: Any, label: str, *,
             it, or there is nothing to read.
         CohortVersionRefused: the label is invalid; there is no such version;
             the directory has no ``cohort.json`` (an interrupted import); the
-            manifest cannot be read or parsed, is not an object, is not schema
-            `VERSION_SCHEMA_VERSION`, names another label than its directory,
-            lacks a required field, or holds counts that are missing or
-            contradict each other or the version (`_counts_problems`).
+            manifest cannot be read or parsed, is not an object, is of a schema
+            not in `VERSION_SCHEMAS`, does not state its kind as its schema
+            does, states one this revision does not read or one in a schema
+            that kind is not written in (`KIND_SCHEMAS`), names another label
+            than its directory, lacks a required field of its kind, or holds
+            counts that are missing or contradict each other or the version.
     """
     from src.utils.fingerprint import read_once
 
@@ -1224,7 +2624,7 @@ def resolve_version(registry: Any, label: str, *,
         if expected_sha256 is not None:
             raise CohortVersionChanged(path, expected_sha256, None)
         raise CohortVersionRefused(
-            f"the registry {root} holds no cohort version {label!r} (no {directory})."
+            f"the registry {root} holds no version {label!r} (no {directory})."
         )
     try:
         read = read_once(path)
@@ -1255,11 +2655,14 @@ def resolve_version(registry: Any, label: str, *,
     if not isinstance(manifest, dict):
         raise CohortVersionRefused(f"{path} is not a JSON object.")
     schema = manifest.get("schema_version")
-    if isinstance(schema, bool) or schema != VERSION_SCHEMA_VERSION:
+    if isinstance(schema, bool) or schema not in VERSION_SCHEMAS:
         raise CohortVersionRefused(
-            f"{path} is schema {schema!r}; this revision reads schema "
-            f"{VERSION_SCHEMA_VERSION} only."
+            f"{path} is schema {schema!r}; this revision reads schemas "
+            f"{' and '.join(str(s) for s in VERSION_SCHEMAS)} only."
         )
+    kind_problem = _kind_problem(manifest)
+    if kind_problem is not None:
+        raise CohortVersionRefused(f"{path} {kind_problem}")
     if manifest.get("label") != label:
         raise CohortVersionRefused(
             f"{path} names the label {manifest.get('label')!r}, not its directory's "
@@ -1271,7 +2674,219 @@ def resolve_version(registry: Any, label: str, *,
         raise CohortVersionRefused(
             f"{path} is not a complete, consistent version manifest: {'; '.join(problems)}."
         )
-    return CohortVersionRead(manifest, identity, directory, directory / VERSION_SAMPLES)
+    samples = (directory / VERSION_SAMPLES if version_kind(manifest) in (SUPPLIED, GENERATED)
+               else None)
+    return CohortVersionRead(manifest, identity, directory, samples)
+
+
+def read_kg_edge_pairs(version: CohortVersionRead) -> KgEdgePairsRead:
+    """A KG edge set's pairs, from one read of its ``pairs.bin`` (contract M2.1).
+
+    **The digest is of the bytes parsed, and compared before they are**: the
+    file is read once (`read_once`), its digest compared with the one the
+    version binds (``pairs.sha256``), and only then are the same bytes parsed
+    (`lp_pairs_from_table`, by the layout the version records, which must be
+    the LP core's `LP_PAIRS_LAYOUT`). The parsed pairs must then be the rows
+    and the pairs digest the version records (``pairs.rows``,
+    ``pairs.lp_pairs_digest``). A file changed after the import, gone, or of
+    another layout is refused by name; nothing is ever rebuilt in its place.
+
+    The version directory is resolved before anything is read from it
+    (`_registry_directory`), as every read of a registry file is.
+
+    Returns:
+        The pairs as `LPPairs` (head, relation, tail, negative tail, in the
+        order made; the version's counts as `fixed_lp_pairs` names them; the
+        pairs digest; the pairs each batch kept), and the identity of the
+        bytes read.
+
+    Raises:
+        CohortVersionRefused: the version is not a KG edge set, or its pairs
+            file is missing, is not the bytes it binds, or does not parse to
+            the pairs it records.
+        RegistryRefused: the version directory resolves into the repository.
+    """
+    from src.models.bundle.lp_head import (
+        LP_PAIRS_LAYOUT,
+        LPPairs,
+        lp_pairs_digest,
+        lp_pairs_from_table,
+    )
+    from src.utils.fingerprint import read_once
+
+    manifest = version.manifest
+    if version.kind != KG_EDGES:
+        raise CohortVersionRefused(
+            f"{version.identity.path} is a version of kind {version.kind!r}, which keeps no "
+            "pairs file."
+        )
+    block = manifest["pairs"]
+    if block["layout"] != LP_PAIRS_LAYOUT:
+        raise CohortVersionRefused(
+            f"{version.identity.path} lays its pairs out as {block['layout']!r}; this revision "
+            f"reads {LP_PAIRS_LAYOUT!r} only. Nothing was read."
+        )
+    directory = _registry_directory(version.directory, within=None, done="Nothing was read.")
+    path = directory / VERSION_PAIRS
+    try:
+        read = read_once(path)
+    except FileNotFoundError:
+        raise CohortVersionRefused(
+            f"{path} is missing, though {version.identity.path} binds it: the KG edge set "
+            "cannot be read."
+        ) from None
+    identity = read.identity
+    if identity.sha256 != block["sha256"]:
+        del read
+        raise CohortVersionRefused(
+            f"{path} is not the pairs file {version.identity.path} binds (its bytes are "
+            f"{identity.sha256[:12]}..., the version binds {block['sha256'][:12]}...): it was "
+            "changed after the import, so it is not read."
+        )
+    try:
+        head, relation, tail, negative_tail = lp_pairs_from_table(read.data)
+    except ValueError as exc:
+        raise CohortVersionRefused(f"{path} is not a pairs table: {exc}") from None
+    finally:
+        del read
+    counts = manifest["counts"]
+    if head.numel() != block["rows"]:
+        raise CohortVersionRefused(
+            f"{path} holds {head.numel()} pairs, and {version.identity.path} records "
+            f"{block['rows']}."
+        )
+    digest = lp_pairs_digest(head, relation, tail, negative_tail)
+    if digest != block["lp_pairs_digest"]:
+        raise CohortVersionRefused(
+            f"{path} parses to pairs {digest[:12]}..., not the {block['lp_pairs_digest'][:12]}"
+            f"... {version.identity.path} records."
+        )
+    pairs = LPPairs(head, relation, tail, negative_tail,
+                    {"edges": counts["positive_edges"],
+                     "without_negative": counts["edges_without_negative"],
+                     "pairs": counts["pairs"]}, digest, tuple(block["batch_pairs"]))
+    return KgEdgePairsRead(pairs, identity)
+
+
+def read_generated_task_fixture(version: CohortVersionRead) -> Any:
+    """A generated split version's functional gene fixture, read through the
+    registry (research comparison Stage 5b): what the gene and
+    patients-like-me measurements score on it, as they score the workspace's
+    fixture of a ``--split`` run (`src.kg.task_fixture.read_gene_fixture`).
+
+    **Each digest is of the bytes parsed, compared before they are**: the
+    kept record (``task_fixture.json``) is read once, its digest compared with
+    the one the version binds, and only then parsed by the record's one parser
+    (`parse_fixture_record`), against the split manifest the version keeps;
+    the version's copies of it must be the record's, and the record must
+    describe the split the version keeps (`_task_fixture_differs`). The role's
+    rows (``task_fixture_samples.json``) are read once against the digest the
+    version binds (`read_samples_file`, with the gene fields), and must be as
+    many as it records. Nothing is rebuilt or read from a workspace.
+
+    Returns:
+        A `GeneFixtureRead`: the role's rows by its role, the record, and the
+        identity of the record's bytes (the workspace record's own digest, as
+        the version kept it byte for byte).
+
+    Raises:
+        CohortVersionRefused: the version is not a generated split keeping a
+            fixture, or a kept file is missing, is not the bytes it binds,
+            does not parse, or is not what the version records of it.
+        RegistryRefused: the version directory resolves into the repository.
+    """
+    from src.kg.storage.file_storage import SamplesDigestMismatch, read_samples_file
+    from src.kg.task_fixture import GeneFixtureRead, TaskFixtureError, parse_fixture_record
+    from src.utils.fingerprint import read_once
+
+    manifest = version.manifest
+    block = manifest.get("task_fixture") if version.kind == GENERATED else None
+    if not isinstance(block, dict):
+        raise CohortVersionRefused(
+            f"{version.identity.path} is {version_words(version.kind, manifest.get('role'))} "
+            "that keeps no functional gene fixture."
+        )
+    directory = _registry_directory(version.directory, within=None, done="Nothing was read.")
+    path = directory / VERSION_TASK_FIXTURE
+    try:
+        read = read_once(path)
+    except FileNotFoundError:
+        raise CohortVersionRefused(
+            f"{path} is missing, though {version.identity.path} binds it: the version's "
+            "functional gene fixture cannot be read."
+        ) from None
+    identity = read.identity
+    if identity.sha256 != block["record"]["sha256"]:
+        del read
+        raise CohortVersionRefused(
+            f"{path} is not the fixture record {version.identity.path} binds (its bytes are "
+            f"{identity.sha256[:12]}..., the version binds {block['record']['sha256'][:12]}...): "
+            "it was changed after the import, so it is not read."
+        )
+    try:
+        record = parse_fixture_record(read.data, path,
+                                      manifest_sha256=manifest["split_manifest"]["sha256"])
+    except TaskFixtureError as exc:
+        raise CohortVersionRefused(
+            f"{path} is not a fixture record of the split manifest {version.identity.path} "
+            f"keeps ({exc.state.replace('_', ' ')}): {exc}"
+        ) from None
+    finally:
+        del read
+    differ = _task_fixture_differs(manifest, record)
+    if differ:
+        raise CohortVersionRefused(
+            f"{version.identity.path} does not record the functional gene fixture it keeps: "
+            f"{'; '.join(differ)}. The version was edited after the import."
+        )
+    rows_path = directory / VERSION_TASK_FIXTURE_SAMPLES
+    try:
+        rows = read_samples_file(rows_path, gene_fields=True,
+                                 expected_sha256=block["samples"]["sha256"])
+    except SamplesDigestMismatch as exc:
+        raise CohortVersionRefused(
+            f"{rows_path} is not the fixture rows {version.identity.path} binds (its bytes are "
+            f"{exc.sha256[:12]}..., the version binds {block['samples']['sha256'][:12]}...): it "
+            "was changed after the import, and its bytes were not parsed."
+        ) from None
+    except FileNotFoundError:
+        raise CohortVersionRefused(
+            f"{rows_path} is missing, though {version.identity.path} binds it: the version's "
+            "functional gene fixture cannot be read."
+        ) from None
+    if len(rows.samples) != block["samples"]["n"]:
+        raise CohortVersionRefused(
+            f"{rows_path} holds {len(rows.samples)} rows, and {version.identity.path} records "
+            f"{block['samples']['n']}: the version was edited after the import."
+        )
+    return GeneFixtureRead({manifest["role"]: rows}, record, identity)
+
+
+def _task_fixture_differs(manifest: Mapping[str, Any], record: Mapping[str, Any]) -> List[str]:
+    """How a generated version's ``task_fixture`` block is not its kept
+    record's (`record`, already parsed from bytes compared with the digest the
+    block binds), each said as a phrase, or nothing: each of the block's
+    fields against the same block built from the record
+    (`_task_fixture_block`), and whether the record still describes the split
+    the version keeps (`_task_fixture_unbound`). None differ for a version as
+    `prepare_generated_import` made it, which built the block from that
+    record's parse; one that differs was edited after the import."""
+    block = manifest.get("task_fixture")
+    block = block if isinstance(block, Mapping) else {}
+    role = manifest.get("role")
+    kept = block.get("record") if isinstance(block.get("record"), Mapping) else {}
+    rebuilt = _task_fixture_block(record, kept.get("sha256"), role)
+    differ = [f"its task_fixture.{key} is not the kept record's" for key in rebuilt
+              if rebuilt[key] != block.get(key)]
+
+    def field(name: str) -> Any:
+        value = manifest.get(name)
+        return value.get("sha256") if isinstance(value, Mapping) else None
+
+    graph = manifest.get("graph") if isinstance(manifest.get("graph"), Mapping) else {}
+    return differ + [f"the kept record: {problem}" for problem in _task_fixture_unbound(
+        record, role=role, kg=graph.get("kg"), split_manifest_sha256=field("split_manifest"),
+        samples_sha256=field("samples"))]
 
 
 # ---------------------------------------------------------------------------
@@ -1449,7 +3064,8 @@ def verify_cohort_binding(
 
 def cohort_version_block(version: CohortVersionRead) -> Dict[str, Any]:
     """The registered version as a report records it: exactly the fields
-    `src.evaluation.sidecar.COHORT_VERSION_FIELDS` names, aggregates only.
+    `src.evaluation.sidecar.VERSION_BLOCK_FIELDS` names for its kind
+    (`COHORT_VERSION_FIELDS` for a supplied cohort), aggregates only.
 
     `manifest_sha256` is the digest of the `cohort.json` bytes this read parsed,
     the ledger's cohort identity (M4 decision 11). No case id, exclusion entry or
@@ -1462,11 +3078,54 @@ def cohort_version_block(version: CohortVersionRead) -> Dict[str, Any]:
     report store holds it under (`src/evaluation/registration.py`), so a report
     is registered only under the version it measured, with that version's counts.
 
+    **By kind.** A supplied version's block is the fields above, as it always
+    was. A KG edge set's (`KG_EDGES_BLOCK_FIELDS`) names its kind and role,
+    the manifest digest, the graph and dataset record digests, the view, the
+    split, the message-passing graph, the pairs' rule and digests, and the
+    counts with their units: aggregates only, never an edge. A generated
+    split's (`GENERATED_BLOCK_FIELDS`) names its kind and role, the manifest
+    digest, the graph and dataset record digests, the samples' digest, the
+    split manifest and the split's files by digest, the generation definition
+    and allocation, the counts with their units, and the functional gene
+    fixture it keeps (its block; None when it keeps none): never a sample. A
+    measurement of either records it in its manifest (research comparison §5
+    Stage 5), and a registration compares the report's block with this one of
+    the version the store holds it under, whatever its kind (Stage 6).
+
     Raises:
         CohortVersionRefused: the manifest does not state its source format,
             which `resolve_version`'s shape checks do not cover.
     """
     manifest = version.manifest
+    if version.kind == KG_EDGES:
+        return {
+            "label": manifest["label"],
+            "role": manifest["role"],
+            "kind": KG_EDGES,
+            "manifest_sha256": version.identity.sha256,
+            "graph": dict(manifest["graph"]),
+            "dataset_record_sha256": manifest["dataset_record"]["sha256"],
+            # Copies, so the block cannot alias the version read.
+            **{key: copy.deepcopy(manifest[key]) for key in (
+                "graph_view", "split", "message_passing", "pairs", "counts", "count_units")},
+        }
+    if version.kind == GENERATED:
+        return {
+            "label": manifest["label"],
+            "role": manifest["role"],
+            "kind": GENERATED,
+            "manifest_sha256": version.identity.sha256,
+            "graph": dict(manifest["graph"]),
+            "dataset_record_sha256": manifest["dataset_record"]["sha256"],
+            "samples_sha256": manifest["samples"]["sha256"],
+            # Copies, so the block cannot alias the version read.
+            **{key: copy.deepcopy(manifest[key]) for key in (
+                "split_manifest", "split_artifacts", "generation", "allocation", "counts",
+                "count_units")},
+            # The functional gene fixture it keeps, or None (research
+            # comparison Stage 5b): a version without one reads as it did.
+            "task_fixture": copy.deepcopy(manifest.get("task_fixture")),
+        }
     source_format = manifest["source"].get("format")
     if not isinstance(source_format, str) or not source_format:
         raise CohortVersionRefused(
@@ -1486,6 +3145,329 @@ def cohort_version_block(version: CohortVersionRead) -> Dict[str, Any]:
         "mapping": copy.deepcopy(manifest["mapping"]),
         "counts": copy.deepcopy(manifest["counts"]),
     }
+
+
+# ---------------------------------------------------------------------------
+# Content references (E3)
+# ---------------------------------------------------------------------------
+#: Where a reference's bytes are kept, which is where `check_references` looks:
+#: a file of the version's own directory; a file the registry keeps beside the
+#: versions (a supplied source); a file of the workspace the version was made
+#: from; the checkpoint it was taken from; an object rebuilt from the graph by a
+#: recorded rule (a view, a split); a source named by the dataset record only.
+IN_VERSION = "version"
+IN_REGISTRY = "registry"
+IN_WORKSPACE = "workspace"
+IN_CHECKPOINT = "checkpoint"
+REBUILT = "rebuilt"
+NAMED = "named"
+
+#: A reference's state, as `check_references` finds it: the bytes at the
+#: location given hash to the recorded digest; they hash to another (or, for a
+#: generated split's kept split manifest, the version's copies of its blocks
+#: are not that file's); there is nothing there; it cannot be read; or it was
+#: not looked for (no location was given, or it is rebuilt or only named),
+#: which is never a pass.
+VERIFIED = "verified"
+DIFFERS = "differs"
+MISSING = "missing"
+UNREADABLE = "unreadable"
+NOT_CHECKED = "not checked"
+REFERENCE_STATES: Tuple[str, ...] = (VERIFIED, DIFFERS, MISSING, UNREADABLE, NOT_CHECKED)
+
+
+class ContentReference(NamedTuple):
+    """One thing a version depends on, by content identity: its name in the
+    version (``graph.kg``, ``source.mondo``, ``checkpoint``, ...), what it is,
+    its SHA-256, where its bytes are kept (`IN_VERSION` ...) and, for a file,
+    its name there. The name of a file is a location, never the identity."""
+
+    name: str
+    what: str
+    sha256: str
+    kept: str
+    file: Optional[str] = None
+
+
+class ReferenceState(NamedTuple):
+    """A reference as `check_references` found it: its state
+    (`REFERENCE_STATES`), the digest found when its bytes were read, why, in
+    words, and where it was looked for.
+
+    **The reason names the location by its kind and the file's name** ("the
+    workspace's kg.json is not there", "the given checkpoint holds ..."),
+    never by a path, so a view or an export can show it as it is (D7). The
+    path looked at is `location` alone, for a caller on the machine that gave
+    it (a command line) to print; it is None where nothing was looked for."""
+
+    reference: ContentReference
+    state: str
+    found: Optional[str]
+    reason: str
+    location: Optional[Path] = None
+
+
+_GRAPH_WHAT = {
+    "kg": ("the graph (kg.json): its node naming, node types, species, namespaces and external "
+           "ids; every node index the version holds names a node of it"),
+    "node_features": "the graph's node features (node_features.pt)",
+    "edge_indices": "the graph's typed edges (edge_indices.pt)",
+    "num_nodes": "the graph's node counts by type (num_nodes.json)",
+}
+
+
+def version_references(version: Any) -> Tuple[ContentReference, ...]:
+    """What a version depends on, by content identity, read from its kind's
+    own fields (a `CohortVersionRead` or a manifest): the one list of a
+    version's dependency references, never a path.
+
+    Every kind: the four graph files (``graph.<role>``) and the dataset record
+    (``kg.provenance.json``), and each source the record names, by role
+    (``source.<role>``; E4, any role it names). Then by kind:
+
+    - a KG edge set: the graph view (its relations and the raw-to-view node
+      mapping) and the edge split, both rebuilt from the graph by their
+      recorded rules; the pairs (``pairs.bin``, in the version); and the
+      checkpoint whose model record named the view and split, by its SHA-256;
+    - a generated split: the split manifest the version keeps
+      (``split_manifest.json``, the workspace's, whose blocks the version
+      copies), each split's samples file it binds (``split.<name>``, in the
+      workspace), the samples the version keeps (``samples.json``, which
+      is the role's file of the workspace), and, when it keeps one, the
+      functional gene fixture's record and the role's rows
+      (``task_fixture.json``, ``task_fixture_samples.json``);
+    - a supplied cohort: its case source, which the registry keeps
+      (``sources/<sha256>.json``), and its mapped samples (``samples.json``).
+    """
+    from src.kg.provenance import PROVENANCE_FILENAME
+
+    manifest = version.manifest if isinstance(version, CohortVersionRead) else version
+    kind = version_kind(manifest)
+    record = manifest["dataset_record"]
+    refs: List[ContentReference] = [
+        ContentReference(f"graph.{role}", _GRAPH_WHAT[role], manifest["graph"][role],
+                         IN_WORKSPACE, GRAPH_ARTIFACTS[role])
+        for role in GRAPH_ARTIFACTS
+    ]
+    refs.append(ContentReference("dataset_record", "the dataset record: what the graph was "
+                                 "built from", record["sha256"], IN_WORKSPACE,
+                                 PROVENANCE_FILENAME))
+    if kind == SUPPLIED:
+        named = [(role, record[role]) for role in ("hpo", "mondo")
+                 if isinstance(record.get(role), Mapping)]
+    else:
+        named = [(entry["role"], entry) for entry in record["sources"]]
+    refs += [ContentReference(f"source.{role}", f"the {role} source the graph was built from, "
+                              "as the dataset record names it", entry["digest"], NAMED)
+             for role, entry in named]
+    if kind == KG_EDGES:
+        refs += [
+            ContentReference("graph_view", "the graph view: its relations and the raw-to-view "
+                             "node mapping, rebuilt from the graph by its recorded rule",
+                             manifest["graph_view"]["digest"], REBUILT),
+            ContentReference("split", "the edge split of that view, rebuilt by its recorded "
+                             "rule and seed", manifest["split"]["digest"], REBUILT),
+            ContentReference("pairs", "the fixed link-prediction pairs",
+                             manifest["pairs"]["sha256"], IN_VERSION, VERSION_PAIRS),
+            ContentReference("checkpoint", "the checkpoint whose model record named the view "
+                             "and split", manifest["taken_from"]["checkpoint_sha256"],
+                             IN_CHECKPOINT),
+        ]
+    elif kind == GENERATED:
+        refs.append(ContentReference("split_manifest", "the workspace's split manifest, kept "
+                                     "in the version: the generation definition, the "
+                                     "allocation, the realised sets and the split's files the "
+                                     "version copies", manifest["split_manifest"]["sha256"],
+                                     IN_VERSION, VERSION_SPLIT_MANIFEST))
+        refs += [ContentReference(f"split.{name}", f"the workspace's generated "
+                                  f"{name[: -len('_samples')]} split", digest, IN_WORKSPACE,
+                                  f"{name}.json")
+                 for name, digest in manifest["split_artifacts"].items()]
+        refs.append(ContentReference("samples", f"the {manifest['role']} split's samples, kept "
+                                     "in the version", manifest["samples"]["sha256"],
+                                     IN_VERSION, VERSION_SAMPLES))
+        fixture = manifest.get("task_fixture")
+        if isinstance(fixture, Mapping):
+            refs += [
+                ContentReference("task_fixture", "the workspace's functional gene fixture "
+                                 "record, kept in the version: its rule, seed and derivation, "
+                                 "and the split manifest and samples it was derived from",
+                                 fixture["record"]["sha256"], IN_VERSION, VERSION_TASK_FIXTURE),
+                ContentReference("task_fixture.samples", f"the functional gene fixture's "
+                                 f"{manifest['role']} rows, kept in the version",
+                                 fixture["samples"]["sha256"], IN_VERSION,
+                                 VERSION_TASK_FIXTURE_SAMPLES),
+            ]
+    else:
+        sha = manifest["source"]["sha256"]
+        refs += [
+            ContentReference("source", "the case source, kept by the registry", sha,
+                             IN_REGISTRY, f"{SOURCES_DIR}/{sha}.json"),
+            ContentReference("samples", "the mapped samples, kept in the version",
+                             manifest["samples"]["sha256"], IN_VERSION, VERSION_SAMPLES),
+        ]
+    return tuple(refs)
+
+
+def check_references(
+    version: CohortVersionRead,
+    *,
+    workspace: Optional[Path] = None,
+    checkpoint: Optional[Path] = None,
+) -> Tuple[ReferenceState, ...]:
+    """Each of the version's references (`version_references`) and its state,
+    found by comparing the bytes at a location with the recorded digest.
+
+    **Locations, not identities.** The version's own files are looked for in
+    its directory, a supplied source in the registry it was resolved from, a
+    workspace's files in `workspace` and the checkpoint at `checkpoint`, each
+    only when given; nothing a version records is a path. A reference with no
+    location given, one rebuilt from the graph by a recorded rule (checked
+    when the import rebuilds it) and one only named by the dataset record are
+    `NOT_CHECKED`, with the reason: never a pass.
+
+    **A generated split's kept split manifest** is compared twice: its bytes
+    with the recorded digest, and then, parsed from those same bytes, its
+    blocks with the version's copies of them (`_split_manifest_copies_differ`:
+    the generation definition, the allocation, the realised sets, the split's
+    files and the schema), so the generation definition the version records
+    is checked against bytes it keeps, whatever became of the workspace. **Its
+    kept fixture record** likewise (`_kept_fixture_differs`: the version's
+    ``task_fixture`` block against the record's one parse, and the record
+    against the split the version keeps).
+
+    **A missing dependency is a state**, never an exception: a file that is
+    not there is `MISSING`, one that cannot be read (a directory, a file this
+    account may not read) is `UNREADABLE`, other bytes are `DIFFERS`. Each
+    reason names the location by its kind and the file's name, never by a
+    path; the path looked at is the state's `location` (`ReferenceState`).
+
+    **Authorisation is not this.** Which registry roots may be read is
+    `validate_registry`'s (and the service's ``SHEPHERD_REGISTRY``), checked
+    when the version was resolved; which workspace may be read is its
+    caller's. This compares bytes with digests and reads only the files named
+    by the references, writing nothing.
+    """
+    from src.utils.fingerprint import file_sha256, read_once
+
+    registry_root = version.directory.parent.parent
+    places = {IN_VERSION: version.directory, IN_REGISTRY: registry_root,
+              IN_WORKSPACE: None if workspace is None else Path(workspace)}
+    states: List[ReferenceState] = []
+    for ref in version_references(version):
+        if ref.kept == REBUILT:
+            states.append(ReferenceState(ref, NOT_CHECKED, None, (
+                "rebuilt from the graph by its recorded rule, and checked when the import "
+                "rebuilds it, not by a file")))
+            continue
+        if ref.kept == NAMED:
+            states.append(ReferenceState(ref, NOT_CHECKED, None, (
+                "named by the dataset record; its file is an input of the KG build and is not "
+                "kept with the version")))
+            continue
+        if ref.kept == IN_CHECKPOINT:
+            path = None if checkpoint is None else Path(checkpoint)
+            where, unlocated = "the given checkpoint", "no checkpoint location was given"
+        else:
+            place = places[ref.kept]
+            path = None if place is None else place / ref.file
+            where, unlocated = f"the {ref.kept}'s {ref.file}", f"no {ref.kept} location was given"
+        if path is None:
+            states.append(ReferenceState(ref, NOT_CHECKED, None, unlocated))
+            continue
+        # The kept files a version copies blocks from, compared twice.
+        copies = ref.kept == IN_VERSION and ref.file in _KEPT_COPIES
+        data: Optional[bytes] = None
+        try:
+            if copies:
+                read = read_once(path)
+                found, data = read.sha256, read.data
+                del read
+            else:
+                found = file_sha256(path)
+        except FileNotFoundError:
+            found = None
+        except OSError as exc:
+            states.append(ReferenceState(ref, UNREADABLE, None, (
+                f"{where} cannot be read ({type(exc).__name__}: "
+                f"{exc.strerror or 'no reason given'})"), path))
+            continue
+        differ = ([] if data is None or found != ref.sha256
+                  else _KEPT_COPIES[ref.file](version.manifest, data))
+        if found is None:
+            states.append(ReferenceState(ref, MISSING, None, f"{where} is not there", path))
+        elif found != ref.sha256:
+            states.append(ReferenceState(ref, DIFFERS, found, (
+                f"{where} holds {found[:12]}..., not the {ref.sha256[:12]}... recorded"), path))
+        elif differ and ref.file == VERSION_TASK_FIXTURE:
+            states.append(ReferenceState(ref, DIFFERS, found, (
+                f"{where} holds the bytes recorded, but {'; '.join(differ)}"), path))
+        elif differ:
+            states.append(ReferenceState(ref, DIFFERS, found, (
+                f"{where} holds the bytes recorded, but the version's {', '.join(differ)} "
+                f"{'is' if len(differ) == 1 else 'are'} not that file's"), path))
+        else:
+            states.append(ReferenceState(ref, VERIFIED, found, f"{where} holds the bytes recorded",
+                                         path))
+    return tuple(states)
+
+
+def _split_manifest_copies_differ(manifest: Mapping[str, Any], data: bytes) -> List[str]:
+    """Which of a generated split's copies of its split manifest's blocks are
+    not the blocks of `data`, the kept split manifest's bytes (already
+    compared with their recorded digest): ``generation``, ``allocation``,
+    ``realised`` (`_SPLIT_MANIFEST_BLOCKS`), ``split_artifacts`` (the split's
+    files it binds, `_split_files`) and ``split_manifest.schema_version``.
+    None differ for a version as `prepare_generated_import` made it, since it
+    copied them from the parse of these very bytes; one that differs was
+    edited after the import. Bytes that are not a JSON object differ in
+    every block."""
+    try:
+        kept = json.loads(data.decode("utf-8"))
+    except (ValueError, RecursionError):
+        kept = None
+    if not isinstance(kept, dict):
+        kept = {}
+    artifacts = kept.get("artifacts")
+    copies = {
+        **{block: kept.get(block) for block in _SPLIT_MANIFEST_BLOCKS},
+        "split_artifacts": _split_files(artifacts) if isinstance(artifacts, Mapping) else None,
+        "split_manifest.schema_version": kept.get("schema_version"),
+    }
+    recorded = {
+        **{block: manifest.get(block) for block in _SPLIT_MANIFEST_BLOCKS},
+        "split_artifacts": manifest.get("split_artifacts"),
+        "split_manifest.schema_version": (manifest.get("split_manifest") or {}).get(
+            "schema_version"),
+    }
+    return [name for name in copies if copies[name] != recorded[name] or not kept]
+
+
+def _kept_fixture_differs(manifest: Mapping[str, Any], data: bytes) -> List[str]:
+    """How a generated version's kept fixture record (`data`, its bytes,
+    already compared with their recorded digest) is not what the version
+    records of it, each said as a phrase, or nothing: bytes the record's one
+    parser (`parse_fixture_record`) refuses against the split manifest the
+    version keeps, or a ``task_fixture`` block that is not that parse's
+    (`_task_fixture_differs`). None for a version as
+    `prepare_generated_import` made it."""
+    from src.kg.task_fixture import TaskFixtureError, parse_fixture_record
+
+    split_manifest = manifest.get("split_manifest")
+    try:
+        record = parse_fixture_record(
+            data, VERSION_TASK_FIXTURE, manifest_sha256=(
+                split_manifest.get("sha256") if isinstance(split_manifest, Mapping) else None))
+    except TaskFixtureError as exc:
+        return [f"they are not a fixture record of the split manifest the version keeps "
+                f"({exc.state.replace('_', ' ')})"]
+    return _task_fixture_differs(manifest, record)
+
+
+#: The files a generated version keeps whose blocks it copies, and how each
+#: kept copy is compared with the version's (`check_references`).
+_KEPT_COPIES = {VERSION_SPLIT_MANIFEST: _split_manifest_copies_differ,
+                VERSION_TASK_FIXTURE: _kept_fixture_differs}
 
 
 def is_run_id(name: Any) -> bool:
@@ -1569,33 +3551,76 @@ __all__ = [
     "CohortVersionChanged",
     "CohortVersionRead",
     "CohortVersionRefused",
+    "ContentReference",
     "DEFAULT_PARTIAL_PHENOTYPES",
+    "DIFFERS",
     "EXCLUSION_CATEGORIES",
+    "GENERATED",
+    "GENERATED_BLOCK_FIELDS",
+    "GENERATED_COUNT_UNITS",
+    "GENERATED_FIXTURE_COUNT",
+    "GENERATED_FIXTURE_COUNT_UNIT",
+    "GENERATED_REQUIRED_FIELDS",
+    "GENERATED_ROLES",
+    "GENERATED_WHAT_THIS_IS",
+    "IN_CHECKPOINT",
+    "IN_REGISTRY",
+    "IN_VERSION",
+    "IN_WORKSPACE",
     "ImportPlan",
+    "KG_EDGES",
+    "KG_EDGES_BLOCK_FIELDS",
+    "KG_EDGES_COUNT_UNITS",
+    "KG_EDGES_REQUIRED_FIELDS",
+    "KG_EDGES_ROLES",
+    "KG_EDGES_TAKEN_FROM",
+    "KG_EDGES_WHAT_THIS_IS",
+    "KINDED_SCHEMA_VERSION",
+    "KIND_SCHEMAS",
+    "KgEdgePairsRead",
     "ListedRun",
     "ListedVersion",
+    "MISSING",
     "MalformedSource",
     "MappedCohort",
+    "NAMED",
+    "NOT_CHECKED",
     "PARTIAL_PHENOTYPE_POLICIES",
     "RANKS_FILE",
+    "REBUILT",
+    "REFERENCE_STATES",
     "REPORTS_DIR",
     "REPORT_FILE",
     "REPO_ROOT",
     "REQUIRED_VERSION_FIELDS",
     "RUN_ID_PATTERN",
+    "ReferenceState",
     "RegistryRefused",
+    "SCORES_FILE",
     "SOURCES_DIR",
     "SOURCE_FORMAT",
+    "SUPPLIED",
     "SourceCase",
+    "UNREADABLE",
     "UNSUPPORTED_DISEASE_NAMESPACES",
     "UnsupportedDiseaseNamespace",
+    "VERIFIED",
     "VERSIONS_DIR",
+    "VERSION_KINDS",
     "VERSION_MANIFEST",
+    "VERSION_PAIRS",
     "VERSION_SAMPLES",
+    "VERSION_SCHEMAS",
     "VERSION_SCHEMA_VERSION",
+    "VERSION_SPLIT_MANIFEST",
+    "VERSION_TASK_FIXTURE",
+    "VERSION_TASK_FIXTURE_SAMPLES",
     "WHAT_THIS_IS",
     "WorkspaceGraph",
+    "build_generated_manifest",
+    "build_kg_edges_manifest",
     "build_version_manifest",
+    "check_references",
     "cohort_version_block",
     "commit_import",
     "create_report_dir",
@@ -1604,16 +3629,26 @@ __all__ = [
     "list_report_runs",
     "list_versions",
     "map_cases",
+    "not_a_supplied_cohort",
     "parse_source",
+    "prepare_generated_import",
     "prepare_import",
+    "prepare_kg_edges_import",
     "preview_id",
+    "read_generated_task_fixture",
+    "read_kg_edge_pairs",
     "read_workspace_graph",
     "report_run_directory",
     "report_store_directory",
     "resolve_version",
+    "validate_generated_role",
+    "validate_kg_edges_role",
     "validate_label",
     "validate_partial_policy",
     "validate_registry",
     "validate_role",
     "verify_cohort_binding",
+    "version_kind",
+    "version_references",
+    "version_words",
 ]

@@ -2,8 +2,9 @@
 Research › Evaluate › Models: the research preset of the shared model list (M5-2, UI-D).
 ========================================================================================
 `docs/working/PLAN_TEST_RESULTS.md` §6, "M5's boundaries" (Model Management on
-the shared model list, Trainer validation and each cohort's recorded test results
-kept apart), D5 (every run's record, each with its run; runs under one condition
+the shared model list, Trainer validation and each version's recorded results
+kept apart; a result is named by its version's kind and role, never "test" for
+another role), D5 (every run's record, each with its run; runs under one condition
 group that differ are described) and D8 (the list is an operator control). D4's
 ordering by test score retired in K8-6d, with its role list, its Mode C rule and
 its one record per checkpoint: no order ranks a model by a test score.
@@ -41,8 +42,8 @@ anything is read (`model_list.load_refusal`), its reason beside the button.
 it was trained on, what it is (kind, operation, parent, family, encoder and its
 relation to the paper, README §5 axis 2: "matches the reference recipe" or the
 fields that differ), the Trainer's validation figure in its own card (a selection
-metric on val, never beside a test result), Model Facts' warnings, and two
-in-page segments: "Recorded test results" (every record its ledger holds, one
+metric on val, never beside a test result), Model Facts' warnings, and three
+in-page segments: "Recorded results" (every record its ledger holds, one
 table per mode in the order first shown, as the API's record view shows a record
 by **one display for every mode** (R2, K8-6e.2): its mode's label, a described
 measurement's two columns in words with every metric as recorded one click away,
@@ -57,12 +58,17 @@ records deterministic algorithms on) or "comparison incomplete" per record, neve
 agreeing by default, and never hiding or ordering out a record; a record for
 these weights that cannot be read as a result is listed apart, by its index,
 registration and report with its reason, and never counted as one, K8-6e.1)
-and "Usage history" (the entries of every listed cohort version's usage history
-that name this checkpoint, newest first, each shown as it was recorded).
+"Usage history" (the entries of every listed cohort version's usage history
+that name this checkpoint, newest first, each shown as it was recorded), and
+"Results" (research comparison Stage 8b, `results_segment`: every result of
+this model's family or this workspace from the one results service, one table
+per protocol newest first, up to five compared side by side with differences
+only, and the chosen or shown rows exported as CSV or JSON; its own handlers
+each ask D8 first).
 
 **Read-only (D8).** Listing opens checkpoint files (SPEC_4 C3), so a request D8
 refuses gets no list: the page says why (the three conditions of an operator
-request) and shows "Recorded test results of the model in use", read by the
+request) and shows "Recorded results of the model in use", read by the
 API's own read-only route function (`get_loaded_model_evaluations`): the ledger
 beside the served checkpoint, filtered by the served digest, **opening no
 checkpoint**, with each record's run and group description as that route
@@ -106,8 +112,6 @@ from src.api.services.record_states import CohortVersions, key_text
 # Each mode's label and note, R10's and the relations' words: rendered, never reworded.
 from src.evaluation.caveats import (
     R10_LABEL_TEXT,
-    R10_STATE_TEXT,
-    R10_UNVERIFIABLE_REASON,
     RECORD_ABSENCE,
     RELATION_DISPLAY_NAMES,
     TASK_NAMES,
@@ -116,7 +120,9 @@ from src.evaluation.caveats import (
     mode_note,
     recorded_metric_lines,
     recorded_value_text,
+    version_words,
 )
+from src.utils.run_environment import native_identity_text
 from src.webui.components import model_list as ml
 from src.webui.components import renderers as r
 from src.webui.components.chips import D8_SHORT
@@ -149,7 +155,10 @@ ORDER_CHOICES = [("Newest first", NEWEST), ("By family", BY_FAMILY)]
 TASK_CHOICES = [(ml.FILTER_WORDS[name][0], name)
                 for name in ("all", "base", *TASK_NAMES)]
 ALL_TASKS = "all"
-RECORDS, USAGE = "records", "usage"
+#: The detail's segments: this checkpoint's recorded results, its usage
+#: history, and the results of its family or workspace (Stage 8b,
+#: `results_segment`).
+RECORDS, USAGE, RESULTS = "records", "usage", "results"
 
 #: By family's groups and extra column (the files whose record was refused or
 #: never read are each grouped under their own `record_kind_text` word, the
@@ -167,7 +176,7 @@ REFERENCE_ANCHOR = ("The reference recipe is anchored on e95433a, with correctio
 LOAD_NOTE = ("Reloads the pipeline and asks once, from → to, as Change model does. Results "
              "already produced keep their own identity.")
 
-READONLY_TITLE = "Recorded test results of the model in use"
+READONLY_TITLE = "Recorded results of the model in use"
 READONLY_WHERE = "from the ledger beside the loaded checkpoint · opens no checkpoint"
 #: D8's three conditions, named together for a read-only request.
 D8_CONDITIONS = ("Operator controls need this deployment set to M1, a request on this "
@@ -186,10 +195,10 @@ ORIGIN_MEANING = {
     "synthetic": "a generated stand-in, not a clinical knowledge graph",
     "files": "built from identified source files",
 }
-_R10_EVIDENCE = {"found": "found", "not_found": "not found", "unreadable": "found, not readable",
-                 "not_recorded": "not recorded by the checkpoint",
-                 "search_incomplete": "search incomplete"}
-_RELATION_SHORT = {"cohort_graph": "cohort↔graph"}
+#: A relation's short name in a record's Relations line, its full words
+#: (`caveats.RELATION_DISPLAY_NAMES`) in the tooltip: `cohort_graph` binds a
+#: data version of any kind, so it is the version's, never "cohort".
+_RELATION_SHORT = {"cohort_graph": "version↔graph"}
 
 #: The help texts this page's ⓘ name (registered through `ctx.help`).
 PAGE_HELP = {
@@ -293,8 +302,6 @@ if (!window.__shepModelsScroll) {
 }
 """
 
-_RUN_ID_TIME = re.compile(r"^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z-")
-
 
 # ---------------------------------------------------------------------------
 # Small helpers
@@ -315,7 +322,7 @@ def fmt_metric(name: str, value: Any) -> str:
     """A described measurement's value in its column or its words: four
     decimals. Every value is also shown unrounded, as recorded
     (`recorded_metric_html`), and a differing run's value only so
-    (`_contested_value`)."""
+    (`contested_value_text`)."""
     if not _number(value):
         return "not reported"
     return f"{value:.4f}"
@@ -345,15 +352,6 @@ def _utc_text(raw: Any) -> str:
     if moment.tzinfo is None:
         return raw
     return moment.strftime("%Y-%m-%d %H:%M UTC")
-
-
-def run_time(run_id: Any) -> Optional[str]:
-    """"2026-10-17 13:40 UTC" from a report store run id, else None."""
-    match = _RUN_ID_TIME.match(str(run_id or ""))
-    if not match:
-        return None
-    y, mo, d, h, mi, _s = match.groups()
-    return f"{y}-{mo}-{d} {h}:{mi} UTC"
 
 
 def listing_key(listing: Mapping[str, Any]) -> str:
@@ -527,15 +525,15 @@ def record_view(record: Mapping[str, Any], reading: Optional[Sequence[Any]] = No
     the page needs beside it: the condition group, the device and whether
     deterministic algorithms were on. `reading` is the record's
     ``[run_id, historical, problem, overlaps]`` as its ledger's boundary reads it
-    (`model_list.ledger_records`). The listing gives this only the records the
-    shared check already read as results (`evaluations.read_records`, which
+    (`record_views.ledger_records`). The listing gives this only the records the
+    shared check already read as results (`record_views.read_records`, which
     lists every other one with its reason), so None, for a record that does
     not have the shape registration writes or whose run identity cannot be
     read (never shown half-read, never shown as historical), is a defensive
     case here; the server's log then says why in the listing's one bounded
     line (`unreadable_reason`, never an input value), naming `ledger` (the
     file it was read from) when given."""
-    from src.api.routes.evaluations import _record_view, unreadable_reason
+    from src.api.services.record_views import _record_view, recorded_settings, unreadable_reason
     from src.evaluation.sidecar import RecordIdentity, record_key
 
     identity, overlaps = None, ()
@@ -549,7 +547,9 @@ def record_view(record: Mapping[str, Any], reading: Optional[Sequence[Any]] = No
         logger.warning("A ledger record%s is not shown: %s",
                        f" in {ledger}" if ledger else "", unreadable_reason(exc))
         return None
-    regime = record.get("regime") if isinstance(record.get("regime"), Mapping) else {}
+    # The record's settings as the one reader reads them (`recorded_settings`:
+    # a value no answer can carry is not read, review fix RC-R1).
+    regime = recorded_settings(record)["regime"]
     flag = regime.get("deterministic_algorithms")
     view["key"] = list(key)
     view["deterministic"] = flag if type(flag) is bool else None
@@ -588,11 +588,52 @@ def regime_text(device: Any, deterministic: Any) -> str:
     return f"{kind} · {determinism}"
 
 
+def data_kind(view: Mapping[str, Any]) -> str:
+    """The kind of data a record view measured (its ``cohort.kind``, by which
+    the one reader read it): supplied, kg_edges or generated."""
+    kind = _get(view, "cohort", "kind")
+    return kind if isinstance(kind, str) else "supplied"
+
+
+def role_text(view: Mapping[str, Any]) -> Optional[str]:
+    """A version of another kind than a supplied cohort as the record's line
+    names it, by its kind and role ("A KG edge set (test)", "A generated split
+    (val)", `caveats.version_words`); None for a supplied cohort, whose line
+    says "role <role>" as it always did. Never "cohort" for the others."""
+    kind = data_kind(view)
+    if kind == "supplied":
+        return None
+    words = version_words(kind, _get(view, "cohort", "role"))
+    return words[:1].upper() + words[1:]
+
+
 def coverage_html(view: Mapping[str, Any]) -> str:
     """The record's case sets: a task record's ranked cases of the
     import-eligible ones (PLAN_B05 §4); for any other mode, its source cases and
-    exclusions and the cases its record counts, with no claim of what they are."""
+    exclusions and the cases its record counts, with no claim of what they are.
+    A KG edge set's record: the pairs scored of those stored, and its positive
+    edges; a generated split's: the cases ranked, and its generated patients
+    and diseases (each count's unit is in the record's counts, below)."""
+    kind = data_kind(view)
     counts = view.get("counts") if isinstance(view.get("counts"), Mapping) else {}
+    count = r.recorded_count_text
+    if kind == "kg_edges":
+        run = _get(view, "measured", "counts")
+        run = run if isinstance(run, Mapping) else {}
+        return (f'<div>{r.e(count(run.get("pairs_scored")))} of '
+                f'{r.e(count(counts.get("pairs")))} stored pairs scored</div>'
+                f'<div class="shep-sub">{r.e(count(counts.get("positive_edges")))} '
+                f'positive edges; {r.e(count(counts.get("edges_without_negative")))} '
+                'without a negative to pair</div>')
+    if kind == "generated":
+        ranked = (f"{count(view.get('n_ranked'))} cases ranked by the model"
+                  if record_mode(view) in TASK_NAMES else
+                  f"{count(view.get('n_ranked'))} counted by the record; what they are is "
+                  "not described for this mode")
+        diseases = counts.get("diseases")
+        return (f'<div>{r.e(ranked)}</div><div class="shep-sub">'
+                f'{r.e(count(counts.get("samples")))} generated patients of '
+                f'{r.e(count(diseases))} disease{"" if diseases == 1 else "s"}</div>')
     excluded = counts.get("excluded") if isinstance(counts.get("excluded"), Mapping) else None
     if excluded is None:
         reasons = "not reported"
@@ -635,38 +676,51 @@ def relations_html(relations: Any) -> str:
             f'{r.e(" · ".join(short))}</span>')
 
 
-def r10_label_text(label: str, name: str, part: Any, evidence: Any) -> str:
-    """One R10 label in the caveats' words: a count with its denominator only
-    where the state has one; *unverifiable* is a reason, never a number."""
-    state = _get(part, "state")
-    words = R10_STATE_TEXT.get(state) if isinstance(state, str) else None
-    if state == "unverifiable" and isinstance(evidence, str):
-        words = R10_UNVERIFIABLE_REASON.get(evidence, words)
-    if words is None:
-        return f"{name}: not reported"
-    if state not in ("overlap", "none"):
-        return f"{name}: {words}"
-    unit = "distinct test diseases" if label == "disease_overlap" else "test cases"
-    text = f"{name}: {words} — {_get(part, 'k')} of {_get(part, 'n')} {unit}"
-    if label == "disease_overlap":
-        text += f"; {_get(part, 'cases')} test cases with one of them"
-    return text
+def _counts_fold(title: str, counts: Any, units: Any) -> str:
+    """A version's or a run's counts, each with its unit as recorded, one
+    click away: a closed disclosure, "<title> (N)"."""
+    counts = counts if isinstance(counts, Mapping) else {}
+    units = units if isinstance(units, Mapping) else {}
+    lines = "".join(f'<span class="shep-mp-ln"><code>{r.e(name)}</code> '
+                    f'{r.e(r.recorded_count_text(value))}: '
+                    f'{r.e(units.get(name) or "unit not recorded")}'
+                    '</span>' for name, value in counts.items())
+    return (f'<details class="shep-mp-fold"><summary>{r.e(title)} ({len(counts)})</summary>'
+            f'{lines}</details>')
+
+
+def kind_html(view: Mapping[str, Any]) -> str:
+    """The detail lines a record's data kind decides (research comparison
+    Stage 6): a supplied cohort's R10 per scope (`r10_html`); a KG edge set's
+    and a generated split's lines in the one rendering every page shares
+    (`renderers.data_kind_lines`: the exposure, its source, the graph and pairs
+    and the metrics not computable; the generation identity and how it stands
+    to a model's training), then the counts with their units one click away.
+    The KG edges' "held out" is never said for a patient cohort, and R10 never
+    for a KG edge set or a generated split."""
+    kind = data_kind(view)
+    if kind == "supplied":
+        return r10_html(view.get("r10"))
+    lines = "".join(f'<span class="shep-mp-ln"><b>{r.e(label)}:</b> {value}</span>'
+                    for label, value in r.data_kind_lines(view))
+    counts = _counts_fold("Data version counts", view.get("counts"), view.get("count_units"))
+    if kind == "generated":
+        return lines + counts
+    run_counts = _counts_fold("Run counts", _get(view, "measured", "counts"),
+                              _get(view, "measured", "count_units"))
+    return f"{lines}{counts}{run_counts}"
 
 
 def r10_html(r10: Any) -> str:
-    lines = []
-    for scope, labels in R10_LABEL_TEXT.items():
-        part = _get(r10, scope)
-        evidence = _get(part, "evidence", "state")
-        found = _R10_EVIDENCE.get(evidence) if isinstance(evidence, str) else None
-        text = " · ".join(r10_label_text(label, words["name"], _get(part, label), evidence)
-                          for label, words in labels.items())
-        lines.append(f'<span class="shep-mp-ln"><b>R10, {r.e(scope)} inputs (evidence '
-                     f'{r.e(found or "not reported")}):</b> {r.e(text)}</span>')
-    return "".join(lines)
+    """A supplied cohort's R10, one line per scope, "R10, training inputs
+    (evidence found): …": the one rendering (`renderers.r10_rows`), its
+    scope's label in bold leading its row, as this page lays out a kind's
+    lines."""
+    return "".join(f'<span class="shep-mp-ln"><b>{r.e(label)}</b> {value}</span>'
+                   for label, value in r.r10_rows(r10))
 
 
-def _contested_value(value: Any) -> str:
+def contested_value_text(value: Any) -> str:
     """A differing run's value as `contest_html` shows it, whatever the mode:
     a finite number as recorded, unrounded (`caveats.recorded_value_text`), so
     two runs that differ never read as equal; null is "not reported"; a value
@@ -688,7 +742,7 @@ def contest_html(state: Optional[Mapping[str, Any]], *, mode: Optional[str],
                  deterministic: Optional[bool]) -> str:
     """How a record's condition group compares, beside it: "runs under these
     conditions differ" (with what differs, each metric named in the record's
-    `mode` and each run's value as recorded, `_contested_value`) or
+    `mode` and each run's value as recorded, `contested_value_text`) or
     "comparison incomplete"; nothing when the runs agree. Every
     caller gives the mode and whether the group records deterministic
     algorithms on (`deterministic`, from the record's regime: every run of the
@@ -706,8 +760,8 @@ def contest_html(state: Optional[Mapping[str, Any]], *, mode: Optional[str],
         values = []
         names = state.get("differing") or []
         for name in names:
-            per_run = [f"{_contested_value(run['values'][name])} (run "
-                       f"{run_time(run['run']) or run['run']})"
+            per_run = [f"{contested_value_text(run['values'][name])} (run "
+                       f"{r.run_time(run['run']) or run['run']})"
                        for run in state.get("runs") or [] if name in (run.get("values") or {})]
             if per_run:
                 values.append(f"{metric_label(name, mode)} " + " vs ".join(per_run))
@@ -847,11 +901,15 @@ def _mode_table(mode: Optional[str], views: Sequence[Mapping[str, Any]],
         synthetic = (r.chip("synthetic", "amber") if view.get("dataset_origin") == "synthetic"
                      else "")
         role = cohort.get("role")
+        # A version of another kind is named by its kind and role, never as
+        # a cohort (`role_text`).
+        role_line = role_text(view)
         cohort_cell = (f'<div class="shep-w600">{r.e(cohort.get("label"))}</div>'
                        f'<div class="shep-sub">(version <code>'
                        f'{r.e(r.short_hex(cohort.get("version_manifest_sha256")))}</code>) '
-                       f'{synthetic}</div><div class="shep-sub">role '
-                       f'{r.ident_html(role)}</div>')
+                       f'{synthetic}</div><div class="shep-sub">'
+                       + (r.e(role_line) if role_line else f"role {r.ident_html(role)}")
+                       + '</div>')
         if columns:
             mrr, hits = (fmt_metric(name, metrics.get(name)) for name in columns)
             metric_cells = (f'<td class="shep-num">{r.e(mrr)}</td>'
@@ -875,6 +933,9 @@ def _mode_table(mode: Optional[str], views: Sequence[Mapping[str, Any]],
         if gpu is not None:
             environment += (f" · GPU {gpu.get('name') or 'name not read'}, driver "
                             f"{gpu.get('driver') or 'not read'}")
+        # The run environment's one wording of the native build identity, on
+        # one line (the Test page's narrower column puts a component per line).
+        native = native_identity_text(view.get("native_identity"))
         origin = view.get("dataset_origin")
         # The record's run once, here; its merged reports and overlaps are in
         # the Record cell (the skill's rule 1.2).
@@ -884,22 +945,31 @@ def _mode_table(mode: Optional[str], views: Sequence[Mapping[str, Any]],
         more = (f'<tr class="shep-mp-more"><td colspan="5">'
                 f'<span class="shep-mp-ln">{relations_html(view.get("relations"))}'
                 f'{" · " + r.e(" · ".join(others)) if others else ""}</span>'
-                f'{r10_html(view.get("r10"))}{semantics_html(view)}{fold}'
+                f'{kind_html(view)}{semantics_html(view)}{fold}'
                 f'<span class="shep-mp-ln">Environment: {r.e(environment)} · Dataset: '
-                f'<b>{r.e(origin)}</b> · {r.e(registration)}</span></td></tr>')
+                f'<b>{r.e(origin)}</b> · {r.e(registration)}</span>'
+                f'<span class="shep-mp-ln">Native build: {r.e(native)}</span></td></tr>')
         body.append(main + more)
     heads = (f'<th scope="col" class="shep-num">{_column_head(mode, 0)}</th>'
              f'<th scope="col" class="shep-num">{_column_head(mode, 1)}</th>' if columns else
              '<th scope="col" colspan="2">Recorded metrics</th>')
     # Each table named for its mode's label, so a screen reader tells them apart.
     return ('<div class="shep-tbl-wrap shep-mp-recwrap"><table class="shep-tbl shep-mp-rec" '
-            f'aria-label="{r.e("Recorded test results, " + mode_label(mode))}">'
+            f'aria-label="{r.e("Recorded results, " + mode_label(mode))}">'
             '<colgroup><col class="shep-mp-c1"><col '
             'class="shep-mp-c2"><col class="shep-mp-c3"><col class="shep-mp-c4"><col></colgroup>'
-            f'<thead><tr><th scope="col">Cohort version</th>{heads}'
+            f'<thead><tr><th scope="col">{_version_head(views)}</th>{heads}'
             '<th scope="col">Coverage</th>'
             f'<th scope="col">Record</th></tr></thead><tbody>{"".join(body)}</tbody></table>'
             '</div>')
+
+
+def _version_head(views: Sequence[Mapping[str, Any]]) -> str:
+    """The first column's header: "Cohort version" for a table of supplied
+    cohorts' records, as it always was; "Data version" once a KG edge set's or
+    a generated split's record is in it (never "cohort" for those)."""
+    return ("Cohort version" if all(data_kind(view) == "supplied" for view in views)
+            else "Data version")
 
 
 def _by_mode(views: Sequence[Mapping[str, Any]]
@@ -963,8 +1033,11 @@ def records_block_html(views: Sequence[Mapping[str, Any]], contest: Mapping[str,
             parts.append(f'<p class="shep-mp-p"><b>{r.e(mode_label(mode))}.</b>'
                          + (f" {r.e(note)}" if note else "") + "</p>")
             parts.append(records_table_html(group, contest))
-        parts.append(f'<p class="shep-note">R10 labels '
-                     f'{help_button("models-r10", "R10 labels")} · The Trainer validation '
+        # R10's definitions where a supplied cohort's record is shown; a KG
+        # edge set's and a generated split's records carry none.
+        r10 = (f'R10 labels {help_button("models-r10", "R10 labels")} · '
+               if any(data_kind(view) == "supplied" for view in views) else "")
+        parts.append(f'<p class="shep-note">{r10}The Trainer validation '
                      "figure is not among these records' metrics.</p>")
     parts.append(unreadable_html(unreadable))
     return "".join(parts)
@@ -972,7 +1045,7 @@ def records_block_html(views: Sequence[Mapping[str, Any]], contest: Mapping[str,
 
 def unreadable_html(items: Sequence[Mapping[str, Any]]) -> str:
     """The records for these weights that cannot be read as results, as the
-    readers' one listing gives them (`evaluations.read_records`; the API's
+    readers' one listing gives them (`record_views.read_records`; the API's
     ``unreadable_records``, K8-6e.1): one sentence in amber with ▲ (needs
     attention, blocks nothing; skill §6), then a small table, Index ·
     Registration · Report · Reason, every value escaped. A sequence or report
@@ -1021,7 +1094,7 @@ def controls(data: Mapping[str, Any], order: Any, task: Any) -> Dict[str, Any]:
     return {"task": chosen_task, "order": mode}
 
 
-def _run_words(run: Any) -> str:
+def run_words(run: Any) -> str:
     """"run 2026-10-01 00:00" for a run named by its start time, else its name."""
     started = r.run_started(run)
     return f"run {started}" if started else f"run {run}"
@@ -1040,7 +1113,7 @@ def parent_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]]) -> st
     if not r.is_digest(sha):
         return "none: a new run"
     where = (f'<code class="shep-fpv">{r.e(r.short_hex(sha))}</code> of '
-             f'{r.e(_run_words(item.get("parent_run")))}')
+             f'{r.e(run_words(item.get("parent_run")))}')
     state = (row or {}).get("parent_state")
     if state == "listed":
         return f"{where} · listed here"
@@ -1245,7 +1318,7 @@ def identity_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]]) -> 
             relation = '<span class="shep-muted">not read</span>'
         rows += [("Operation", r.e(OPERATION_WORDS.get(operation, operation or "not read"))),
                  ("Parent", parent_html(item, row)),
-                 ("Family", r.e(_run_words(item.get("family_id")))),
+                 ("Family", r.e(run_words(item.get("family_id")))),
                  ("Encoder", r.e(r.architecture_label(item.get("encoder")))),
                  ("Relation to the paper", relation)]
     return f'<div class="shep-kv shep-mp-ident">{r.kv_cells(rows)}</div>'
@@ -1255,7 +1328,8 @@ def detail_parts(listing: Mapping[str, Any], data: Mapping[str, Any], key: Any,
                  ctl: Mapping[str, Any]) -> Dict[str, Any]:
     """The detail of the selected checkpoint (operator), or the read-only view.
     Returns ``header``, ``top``, ``records``, ``usage`` (HTML) and ``seg``
-    (the segment labels, or None when the segments are not shown)."""
+    (the segment labels, or None when the segments are not shown; Results'
+    content is its own handlers', `results_segment`)."""
     if data.get("readonly"):
         return readonly_parts(data)
     item = ml.find_item(listing, key)
@@ -1263,7 +1337,7 @@ def detail_parts(listing: Mapping[str, Any], data: Mapping[str, Any], key: Any,
         return {"header": ('<div class="shep-panel-hd"><h2>Details</h2>'
                            f'<span class="shep-panel-right">{_served_line(listing)}</span></div>'),
                 "top": ('<p class="shep-muted shep-mp-p">Select a model to see its fingerprints, '
-                        'its validation figure and its recorded test results.</p>'),
+                        'its validation figure and its recorded results.</p>'),
                 "records": "", "usage": "", "seg": None}
     in_use = bool(listing.get("served_sha")) and item.get("sha256") == listing.get("served_sha")
     tag = r.chip("In use (Diagnosis)", "accent") if in_use else r.chip("not in use", "grey")
@@ -1311,17 +1385,18 @@ def detail_parts(listing: Mapping[str, Any], data: Mapping[str, Any], key: Any,
     notes = [f"{unreadable} not readable"] if unreadable else []
     if contested:
         notes.append(f"{contested} where runs differ")
-    seg_records = f"Recorded test results · {count}" + (
+    seg_records = f"Recorded results · {count}" + (
         f" ({'; '.join(notes)})" if notes else "")
     return {"header": header, "top": top, "records": records, "usage": usage,
-            "seg": [(seg_records, RECORDS), (f"Usage history · {n_usage}", USAGE)]}
+            "seg": [(seg_records, RECORDS), (f"Usage history · {n_usage}", USAGE),
+                    ("Results", RESULTS)]}
 
 
 def _records_for_item(ledger: Optional[Mapping[str, Any]], data: Mapping[str, Any]
                       ) -> Tuple[str, int, int, int]:
     """The ledger entry's block, how many records read as results, how many of
     them are in a group whose runs differ, and how many records cannot be read
-    as results: the listing classified them once (`ml.ledger_records`, the
+    as results: the listing classified them once (`record_views.ledger_records`, the
     readers' one listing), so a record is never counted as both."""
     from src.evaluation.sidecar import LEDGER_FILENAME
 
@@ -1370,8 +1445,11 @@ def usage_entry_html(entry: Mapping[str, Any]) -> str:
         n_ranked = entry.get("n_ranked")
         counted = type(n_ranked) is int
         if columns is None:
+            # What n_ranked counts: a KG link-prediction run's pairs, any
+            # other mode's cases.
+            unit = "pairs" if mode == "kg_link_prediction" else "cases"
             figure = (f"{mode_label(mode)}, "
-                      + (f"{n_ranked} cases" if counted else "case count not recorded"))
+                      + (f"{n_ranked} {unit}" if counted else f"{unit[:-1]} count not recorded"))
         else:
             value = f"{metric_label(columns[0], mode)} {fmt_metric(columns[0], metrics.get(columns[0]))}"
             figure = (f"{value} over {n_ranked} ranked cases" if counted
@@ -1440,7 +1518,7 @@ def usage_html(item: Mapping[str, Any], data: Mapping[str, Any]) -> Tuple[str, i
 
 
 def readonly_parts(data: Mapping[str, Any]) -> Dict[str, Any]:
-    """"Recorded test results of the model in use": the served digest (from
+    """"Recorded results of the model in use": the served digest (from
     the status), then the route's records for it, each with its run and its
     group's description. Nothing here opened a checkpoint."""
     header = (f'<div class="shep-panel-hd"><h2>{r.e(READONLY_TITLE)}</h2>'
@@ -1494,7 +1572,12 @@ def readonly_parts(data: Mapping[str, Any]) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 def create_models_page(ctx: Any) -> None:
     """Build Research › Evaluate › Models (the page contract: `src/webui/shell.py`)."""
+    # The Results segment's module reads this one's words and renderers, so it
+    # is imported here, never at the top (no import cycle).
+    from src.webui.components import results_segment as rs
+
     ctx.help.topics(PAGE_HELP)
+    ctx.help.topics(rs.SEGMENT_HELP)
     data_state = gr.State({"readonly": False, "listing_key": None, "versions": [], "ledgers": {},
                            "contest": {}, "usage": {}})
     #: True from "Reload with …" until the page reads its data after that Load.
@@ -1526,13 +1609,15 @@ def create_models_page(ctx: Any) -> None:
             with gr.Column(elem_id="shep-mp-detail-bd", elem_classes=["shep-mp-detail-bd"]):
                 parts["detail_top"] = plain_html(detail_parts({}, {}, None, {})["top"],
                                                  elem_id="shep-mp-detail-top")
-                parts["seg"] = gr.Radio(choices=[("Recorded test results", RECORDS),
-                                                 ("Usage history", USAGE)], value=RECORDS,
+                parts["seg"] = gr.Radio(choices=[("Recorded results", RECORDS),
+                                                 ("Usage history", USAGE),
+                                                 ("Results", RESULTS)], value=RECORDS,
                                         show_label=False, label="Shown", visible=False,
                                         elem_id="shep-mp-seg", elem_classes=["shep-seg"],
                                         container=False)
                 parts["records"] = plain_html("", elem_id="shep-mp-records")
                 parts["usage"] = plain_html("", elem_id="shep-mp-usage", visible=False)
+                parts["results"] = rs.create_results_segment()
         return column
 
     with gr.Row(elem_classes=["shep-page", "shep-models"], equal_height=False):
@@ -1544,19 +1629,22 @@ def create_models_page(ctx: Any) -> None:
     control_ids = {c.elem_id for c in control_inputs}
     page_outputs = [data_state, handle.view, parts["task"], parts["order"], parts["options"],
                     parts["lhd"], parts["wsline"], parts["detail_hd"], parts["detail_top"],
-                    parts["seg"], parts["records"], parts["usage"]]
+                    parts["seg"], parts["records"], parts["usage"],
+                    parts["results"]["column"]]
 
     def detail_updates(listing, data, selected, ctl, seg_value) -> Tuple[Any, ...]:
-        """The detail's header, top, segments, records and usage history; the
+        """The detail's header, top, segments, records, usage history and the
+        Results segment's column (its content is its own handlers'); the
         segment shown is kept across selections."""
         detail = detail_parts(listing, data, selected, ctl)
         seg_shown = detail["seg"] is not None
-        seg = seg_value if seg_value in (RECORDS, USAGE) else RECORDS
+        seg = seg_value if seg_value in (RECORDS, USAGE, RESULTS) else RECORDS
         return (detail["header"], detail["top"],
                 (gr.update(choices=detail["seg"], value=seg, visible=True) if seg_shown
                  else gr.update(visible=False)),
                 gr.update(value=detail["records"], visible=(not seg_shown) or seg == RECORDS),
-                gr.update(value=detail["usage"], visible=seg_shown and seg == USAGE))
+                gr.update(value=detail["usage"], visible=seg_shown and seg == USAGE),
+                gr.update(visible=seg_shown and seg == RESULTS))
 
     def outputs_for(listing, data, ctl_values, selected, seg_value, condition, *,
                     new_data: bool) -> Tuple[Any, ...]:
@@ -1634,7 +1722,7 @@ def create_models_page(ctx: Any) -> None:
         by_control = getattr(getattr(evt, "target", None), "elem_id", None) in control_ids
         if not (fresh or again is not None or by_control):
             ctl = controls(data, *ctl_values)
-            return (*states, *(gr.update() for _ in page_outputs[:-5]),
+            return (*states, *(gr.update() for _ in page_outputs[:-6]),
                     *detail_updates(listing, data, key, ctl, seg_value))
         condition = operator_access(request).condition
         out = list(outputs_for(listing, data, ctl_values, key, seg_value, condition,
@@ -1652,11 +1740,15 @@ def create_models_page(ctx: Any) -> None:
           show_progress="hidden", trigger_mode="always_last")
 
     def _segment(value):
-        return (gr.update(visible=value != USAGE), gr.update(visible=value == USAGE))
+        return (gr.update(visible=value == RECORDS), gr.update(visible=value == USAGE),
+                gr.update(visible=value == RESULTS))
 
     parts["seg"].input(_segment, inputs=[parts["seg"]],
-                       outputs=[parts["records"], parts["usage"]], queue=False,
-                       show_progress="hidden")
+                       outputs=[parts["records"], parts["usage"], parts["results"]["column"]],
+                       queue=False, show_progress="hidden")
+    # Models › Results (research comparison Stage 8b): its own gated handlers.
+    rs.wire_results_segment(parts["results"], seg=parts["seg"], listing=handle.listing,
+                            selected=handle.selected)
 
 
 _PAGE = "#" + page_elem_id("models")
@@ -1767,6 +1859,47 @@ PAGE_CSS = f"""
 {_PAGE} .shep-mp-rec tr.shep-mp-main td {{ border-bottom: 0; }}
 {_PAGE} .shep-mp-rec tr.shep-mp-more td {{ background: var(--shep-panel-2); font-size: 14px; color: var(--shep-text-2); }}
 {_PAGE} .shep-mp-ln {{ display: block; line-height: 1.45; }}
+/* Models › Results (Stage 8b): its controls in rows that wrap, its tables
+   scrolling sideways inside their own wrapper, Compare's groups as row
+   headers. A wrapper not scrolled to its end shades its right edge, so a
+   column cut there reads as more to the right: a shade fixed at the edge
+   (`scroll`) under a cover that moves with the table (`local`) and covers it
+   at the table's end (a table that fits is at its end); it shows through
+   every cell without a background of its own. A protocol table's words
+   break only where they must: with
+   `break-word` a column is never sized narrower than its longest word, so a
+   word, a 12-hex fingerprint or a raw value stays whole (with `anywhere`
+   every character was a break point when the columns were sized, and the
+   other columns were squeezed around the one-line result name); a result's
+   name wraps only after its " · " (`results_segment._name_html`).
+   Compare's prose, JSON and reasons may break anywhere, so its long values
+   never set its columns' widths; a number never breaks (a raw value split
+   mid-digit read as two numbers), nor does a run id between its hyphens
+   (`results_segment._run_id_html`). Five columns of raw values can be wider
+   than the panel: the table then scrolls sideways inside its own wrapper,
+   never the page, its Field column pinned at the left with the words of its
+   group and sub-heading rows (`shep-rs-pin`). A nested entry's row, named by
+   its own words, sits one step in under the sub-heading that says its path
+   (a plain cell styled as a heading, `results_segment.compare_html`). */
+{_PAGE} .shep-rs {{ gap: 12px !important; }}
+{_PAGE} .shep-rs-row {{ align-items: flex-end !important; gap: 8px !important; flex-wrap: wrap !important; }}
+{_PAGE} .shep-rs-wrap {{ margin: 0 !important; overflow-x: auto;
+  background: linear-gradient(to left, var(--shep-panel) 14px, transparent) right / 28px 100% no-repeat local,
+    linear-gradient(to left, rgba(20, 24, 40, .12), transparent) right / 14px 100% no-repeat scroll,
+    var(--shep-panel); }}
+{_PAGE} .shep-rs-wrap + .shep-mp-p {{ margin-top: 16px; }}
+{_PAGE} .shep-rs-tbl td {{ overflow-wrap: break-word; vertical-align: top; }}
+{_PAGE} .shep-rs-cmp td, {_PAGE} .shep-rs-unread td {{ overflow-wrap: anywhere; vertical-align: top; }}
+{_PAGE} .shep-rs-cmp td.shep-num {{ white-space: nowrap; overflow-wrap: normal; }}
+{_PAGE} .shep-rs-cmp tbody th {{ position: static; }}
+{_PAGE} .shep-rs-cmp tbody th[scope="row"], {_PAGE} .shep-rs-cmp thead th:first-child {{ position: sticky; left: 0; box-shadow: inset -1px 0 0 var(--shep-border); }}
+{_PAGE} .shep-rs-cmp tbody th[scope="row"] {{ top: auto; z-index: 1; }}
+{_PAGE} .shep-rs-cmp thead th:first-child {{ z-index: 2; }}
+{_PAGE} .shep-rs-cmp th[scope="row"] {{ text-align: left; font-weight: 400; color: var(--shep-text-2); background: var(--shep-panel); }}
+{_PAGE} .shep-rs-cmp tr.shep-rs-entry th[scope="row"] {{ padding-left: 22px; }}
+{_PAGE} .shep-rs-cmp tr.shep-rs-grp th {{ text-align: left; font-weight: 600; background: var(--shep-panel-2); }}
+{_PAGE} .shep-rs-cmp tr.shep-rs-sub td {{ text-align: left; font-size: 14px; font-weight: 600; color: var(--shep-text-2); line-height: inherit; padding: 12px 10px 4px; border-bottom: 0; }}
+{_PAGE} .shep-rs-cmp .shep-rs-pin {{ position: sticky; left: 10px; display: inline-block; }}
 /* Every metric as recorded (R2): a closed native disclosure, its summary a 24 px
    target that shows the keyboard focus (skill §10). */
 {_PAGE} .shep-mp-fold > summary {{ cursor: pointer; min-height: 24px; line-height: 24px; width: max-content; max-width: 100%; }}

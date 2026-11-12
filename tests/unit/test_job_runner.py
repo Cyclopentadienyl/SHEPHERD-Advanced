@@ -35,6 +35,7 @@ from src.utils.gpu_lock import (
     GpuLock,
     probe,
 )
+from tests.fixtures.capabilities import described
 from tests.fixtures.job_processes import FakeProcess
 
 SHA_CKPT = "c" * 64
@@ -116,7 +117,8 @@ def inputs(tmp_path):
         workspace=workspace,
         checkpoint=workspace / "runs" / "gatv2" / "r1" / "checkpoints" / "best.pt",
         checkpoint_sha256=SHA_CKPT, protocol="disease", learning_stage="finetune",
-        task="disease", version_counts=COUNTS)
+        task="disease", capabilities=described("finetune", "disease"),
+        version_kind=protocols.SUPPLIED, version_counts=COUNTS)
 
 
 def reports(inputs: TestRunInputs) -> Path:
@@ -507,7 +509,7 @@ def test_the_stop_route_does_not_run_on_the_event_loop():
 # --------------------------------------------------------------------------- the test job's inputs
 def test_the_test_command_line_comes_from_the_inputs_only(inputs):
     """`--mode` is the protocol asked (`inputs.protocol`), which the CLI
-    requires; the listed record's stage and task are judged, never passed."""
+    requires; the listed model's capabilities are judged, never passed."""
     outcome = Path("/tmp/job/outcome.json")
     argv = build_test_argv(inputs, None, outcome)
     assert argv[:2] == [sys.executable, str(tm.PROJECT_ROOT / "scripts" / "measure_scorer.py")]
@@ -521,10 +523,9 @@ def test_the_test_command_line_comes_from_the_inputs_only(inputs):
     from dataclasses import replace
 
     for name in ("gene", "patients_like_me"):
-        # Each protocol asked of a listed record it takes (its own stage and head).
-        taken = protocols.PROTOCOLS[name]
-        asked = replace(inputs, protocol=name, learning_stage=taken.learning_stage,
-                        task=taken.task)
+        # Each protocol asked of a listed model it takes (a finetune carrying its head).
+        asked = replace(inputs, protocol=name, task=name,
+                        capabilities=described("finetune", name))
         assert asked.reports_dir() == reports(inputs)
         argv = build_test_argv(asked, None, outcome)
         assert argv[argv.index("--mode") + 1] == name and argv.count("--mode") == 1
@@ -568,6 +569,102 @@ def test_every_test_run_writes_its_outcome_to_a_new_file_in_its_own_directory(po
     assert paths[0].parent != paths[1].parent
 
 
+#: A KG edge set's and a generated split's listed counts (their `cohort.json`'s):
+#: what the KG link-prediction and disease protocols need of each.
+KG_COUNTS = {"positive_edges": 6, "pairs": 5, "edges_without_negative": 1,
+             "message_passing_edges": 40}
+GENERATED_COUNTS = {"samples": 5, "diseases": 2}
+#: Each non-supplied kind, with a protocol that measures it and the listed counts.
+OTHER_KINDS = [(protocols.KG_EDGES, "kg_link_prediction", KG_COUNTS),
+               (protocols.GENERATED, "disease", GENERATED_COUNTS)]
+
+
+def _evidence_setting(monkeypatch, tmp_path, state: str):
+    """SHEPHERD_TRAINING_EVIDENCE_DIRS set to an existing directory ("set") or
+    to a relative path the setting refuses ("refused"); the directory."""
+    directory = tmp_path / "evidence"
+    directory.mkdir(exist_ok=True)
+    monkeypatch.setenv("SHEPHERD_TRAINING_EVIDENCE_DIRS",
+                       str(directory) if state == "set" else "relative/evidence")
+    return directory.resolve()
+
+
+@pytest.mark.parametrize("state", ["set", "refused"])
+def test_the_evidence_choice_is_made_once_by_the_version_s_kind(monkeypatch, tmp_path, state):
+    """Research comparison Stage 7, item 1: a supplied version takes the
+    evidence setting's directories, and a refused setting is its problem; a KG
+    edge set or a generated split takes none whatever the setting says, the
+    setting is never read for it, and the choice says why, in the words the
+    command line's refusal of `--training-evidence` uses."""
+    from src.config import server_settings
+
+    directory = _evidence_setting(monkeypatch, tmp_path, state)
+    supplied = tm.evidence_choice(protocols.SUPPLIED)
+    if state == "set":
+        assert supplied == tm.EvidenceChoice(dirs=(directory,))
+    else:
+        assert supplied.dirs == () and supplied.not_applicable is None
+        assert supplied.problem.startswith("SHEPHERD_TRAINING_EVIDENCE_DIRS is refused")
+    read = []
+    monkeypatch.setattr(server_settings, "training_evidence_dirs",
+                        lambda *a, **k: read.append(1))
+    for kind, _protocol, _counts in OTHER_KINDS:
+        choice = tm.evidence_choice(kind)
+        assert (choice.dirs, choice.problem, choice.note) == ((), None, None)
+        assert choice.not_applicable == protocols.training_evidence_refusal(kind)
+        assert protocols.TRAINING_RELATION[kind] in choice.not_applicable
+    assert read == [], "the evidence setting was read for a version that takes none"
+    assert protocols.training_evidence_refusal(protocols.SUPPLIED) is None
+
+
+@pytest.mark.parametrize("kind, protocol, counts", OTHER_KINDS, ids=["kg_edges", "generated"])
+def test_a_kg_or_generated_start_carries_no_evidence_and_names_its_kind(
+        popen, inputs, kind, protocol, counts):
+    """A run on a KG edge set or a generated split, its inputs built with the
+    runner's choice (which gives such a kind no directory: the test above,
+    and the Test page's and the probe's with the setting set and refused),
+    starts, and the runner adds no evidence of its own: its command line
+    carries no `--training-evidence`. Its status names its kind
+    (`version_kind`) and lists no evidence directory."""
+    from dataclasses import replace
+
+    asked = replace(inputs, protocol=protocol, version_kind=kind, version_counts=counts,
+                    evidence_dirs=tm.evidence_choice(kind).dirs)
+    process = FakeProcess(pid=7)
+    calls = popen(process)
+    manager = TrainingManager(report_state=Reader(True, False))
+    assert manager.start_test(asked)["success"]
+    (argv,) = calls.calls
+    assert "--training-evidence" not in argv and argv[argv.index("--mode") + 1] == protocol
+    shown = manager.get_test_status()["inputs"]
+    assert (shown["version_kind"], shown["evidence_dirs"]) == (kind, [])
+    process.finish(1)
+    ended(manager, "test")
+
+
+@pytest.mark.parametrize("kind, protocol, counts", OTHER_KINDS, ids=["kg_edges", "generated"])
+def test_evidence_directories_for_a_kind_that_takes_none_are_refused_before_a_start(
+        popen, inputs, kind, protocol, counts):
+    """Inputs that carry evidence directories for a KG edge set or a generated
+    split are refused by the runner's judgment (`reports_dir`), in the rule's
+    words, before a process is started: the command line would refuse them
+    after it started."""
+    from dataclasses import replace
+
+    asked = replace(inputs, protocol=protocol, version_kind=kind, version_counts=counts,
+                    evidence_dirs=(Path("/srv/evidence"),))
+    with pytest.raises(ValueError) as refused:
+        asked.reports_dir()
+    said = protocols.training_evidence_refusal(kind)
+    assert str(refused.value) == f"{said} A test run on it is given no evidence directory."
+    calls = popen()
+    result = TrainingManager().start_test(asked)
+    assert result["success"] is False and result["error"].startswith(said)
+    assert result["error"].endswith("Nothing was started.") and calls.calls == []
+    # The same inputs without the directories start (judged, not launched here).
+    assert replace(asked, evidence_dirs=()).reports_dir() == reports(inputs)
+
+
 def test_the_operators_choices_and_the_evidence_setting_reach_the_command_line(inputs):
     from dataclasses import replace
 
@@ -599,31 +696,44 @@ def test_a_deployment_device_the_cli_cannot_take_refuses_the_start(monkeypatch, 
     ({"version_sha256": "E" * 64}, "not a full SHA-256"),
     ({"workspace": Path("relative/ws")}, "not an absolute path"),
     ({"evidence_dirs": (Path("evidence"),)}, "not an absolute path"),
-    ({"version_label": "../x"}, "cohort label is refused"),
+    ({"version_label": "../x"}, "version label is refused"),
     ({"registry": Path("registry")}, "not an absolute path"),
     # The measurement asked, judged by the one protocol definition on the
-    # listed record and version, whoever calls. A name that is not a protocol,
+    # listed model's capabilities and the listed version, whoever calls. A name that is not a protocol,
     # whatever it may once have meant, gets the ordinary sentence naming the
     # protocols this build implements.
     ({"protocol": "C"},
-     "'C' is not a measurement this build implements (disease, gene, patients_like_me)."),
+     "'C' is not a measurement this build implements (disease, gene, patients_like_me, "
+     "kg_link_prediction)."),
     ({"protocol": "D"},
-     "'D' is not a measurement this build implements (disease, gene, patients_like_me)."),
+     "'D' is not a measurement this build implements (disease, gene, patients_like_me, "
+     "kg_link_prediction)."),
     ({"protocol": None},
-     "None is not a measurement this build implements (disease, gene, patients_like_me)."),
+     "None is not a measurement this build implements (disease, gene, patients_like_me, "
+     "kg_link_prediction)."),
     ({"protocol": "Disease"},
-     "'Disease' is not a measurement this build implements (disease, gene, patients_like_me)."),
-    # A listed record the protocol does not take: a base, a head that differs,
-    # no record read.
-    ({"learning_stage": "base", "task": None}, protocols.BASE_MESSAGE),
+     "'Disease' is not a measurement this build implements (disease, gene, patients_like_me, "
+     "kg_link_prediction)."),
+    # A listed model the protocol does not take: a base (taken by the KG
+    # link-prediction protocol, research comparison Stage 5), a head that
+    # differs, no record read.
+    ({"learning_stage": "base", "task": None, "capabilities": described("base", None)},
+     "the disease measurement takes a finetune model with the disease head; this checkpoint "
+     "is a base model with no task head. It can be measured by kg_link_prediction."),
     ({"protocol": "gene"},
      "the gene measurement takes a finetune model with the gene head; this checkpoint is a "
-     "finetune model with the disease head. It can be measured by disease."),
-    ({"learning_stage": None, "task": None}, protocols.NO_RECORD),
+     "finetune model with the disease head. It can be measured by disease, "
+     "kg_link_prediction."),
+    ({"learning_stage": None, "task": None, "capabilities": None}, protocols.NO_RECORD),
     # A listed version without what the protocol needs.
-    ({"protocol": "gene", "task": "gene", "version_counts": {"source_cases": 3}},
+    ({"protocol": "gene", "task": "gene", "capabilities": described("finetune", "gene"),
+      "version_counts": {"source_cases": 3}},
      "this cohort version lists no causal genes, which the gene measurement needs. Import a "
      "source that lists causal_genes."),
+    # A listed version of a kind the protocol does not measure.
+    ({"version_kind": "unknown_kind"},
+     "the disease measurement does not measure data of kind 'unknown_kind'; it measures a "
+     "generated split or a supplied cohort version."),
 ])
 def test_inputs_of_the_wrong_shape_are_refused_before_launch(monkeypatch, popen, inputs,
                                                              change, says):

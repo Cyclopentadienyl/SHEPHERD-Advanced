@@ -74,6 +74,7 @@ Version: 1.0.0
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import logging
 import os
@@ -201,6 +202,13 @@ class TrainConfig:
     candidate_sample_size: Optional[int] = None
     sparse_sample_size: Optional[int] = None
     candidate_upsample_size: Optional[int] = None
+    # The parts of a finetune that do not train (research comparison Stage 9,
+    # owner's O4a; `src.config.recipe.FROZEN_PARTS`): "none", or "graph_side"
+    # (the input module, the encoder and the LP head, frozen before the
+    # optimizer is built and run in eval: `ModelBundle.freeze`). A base with
+    # any freeze is refused (`frozen_parts_problem`); a continued or branched
+    # run keeps its parent's.
+    frozen_parts: str = "none"
 
     # Training configuration
     num_epochs: int = 100
@@ -364,6 +372,16 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=None,
         help="With --stage: the edge split's seed",
+    )
+    parser.add_argument(
+        "--frozen-parts",
+        type=str,
+        choices=["none", "graph_side"],
+        default=None,
+        help="With --stage finetune: the parts that do not train. 'graph_side' keeps the "
+             "base's input module, encoder and LP head as they are (in eval mode), so only "
+             "the patient encoder and task head train: the frozen-backbone control. A "
+             "continued or branched run keeps its parent's",
     )
 
     # Training
@@ -563,6 +581,8 @@ def load_config_with_explicit(args: argparse.Namespace) -> Tuple[TrainConfig, Se
         config.finetune_from = args.finetune_from
     if getattr(args, "branch_from", None) is not None:
         config.branch_from = args.branch_from
+    if getattr(args, "frozen_parts", None) is not None:
+        config.frozen_parts = args.frozen_parts
 
     for name, value in vars(args).items():
         if name in ("config", "debug", "expect_dataset_sha256", "expect_resume_sha256",
@@ -829,7 +849,7 @@ def plan_from_parent(
     loads the file (`read_checkpoint(expected_sha256=)`): the weights a run
     restores at its end are the ones its record names, or the run is refused.
     """
-    from src.utils.run_plan import RunPlanRefused, plan_continuation
+    from src.utils.run_plan import RunPlanRefused, decoded_sentence, plan_continuation
     from src.utils.checkpoint_io import read_checkpoint
 
     if explicit is None:
@@ -843,6 +863,8 @@ def plan_from_parent(
     if plan.inherited:
         logger.info("Inherited from the parent: " + ", ".join(
             f"{name}={value!r}" for name, value in sorted(plan.inherited.items())))
+    if plan.decoded:
+        logger.info(decoded_sentence(plan.decoded))
 
     best_weights = None
     if (plan.best_weights or {}).get("kind") == "file":
@@ -1056,16 +1078,22 @@ def apply_stage_recipe(config: TrainConfig, explicit: Set[str]
 
 
 def inherited_recipe_record(stage: str, task: Optional[str], explicit: Set[str],
-                            inherited: Mapping[str, Any]) -> Dict[str, Any]:
+                            inherited: Mapping[str, Any],
+                            decoded: Mapping[str, str]) -> Dict[str, Any]:
     """The recipe record of a run whose settings come from its parent (a
     resume, an extension, a branch): nothing is filled from the recipe; each
-    reference setting is the parent's or the operator's."""
+    reference setting is the parent's or the operator's. `decoded` is each
+    setting the one settings decode gave that the parent's record does not
+    hold (`run_plan.decode_learning_settings`), with its source in words
+    ("none, decoded from rules 1: ..."), listed there and not as inherited
+    (one source per setting); the parent's file is not changed."""
     from src.config.recipe import reference_settings
 
     values, _ = reference_settings(stage, task)
     return {"learning_stage": stage, "reference_filled": {},
             "inherited_from_parent": sorted(name for name in values if name in inherited),
-            "operator_set": sorted(name for name in values if name in explicit)}
+            "operator_set": sorted(name for name in values if name in explicit),
+            "decoded_from_parent": dict(sorted(decoded.items()))}
 
 
 def _read_bundle_parent(requested: str, role: str, device: str, *,
@@ -1176,18 +1204,21 @@ def train(config: TrainConfig, explicit: Collection[str], *,
     """
     from dataclasses import asdict as _asdict
 
-    from src.kg.graph_view import build_graph_view, split_facts
+    from src.kg.graph_view import SplitMismatchError, build_graph_view, rebuild_split, split_facts
     from src.models.bundle import ModelSpec, build_bundle, finetune_spec_from_parent, reference_spec
     from src.models.bundle.spec import hops_problem
     from src.models.bundle.record import (
+        EXPOSURE_FULL_VIEW, EXPOSURE_FULL_VIEW_SP, EXPOSURE_TRAIN_CASES, EXPOSURE_TRAIN_EDGES,
+        EXPOSURE_TRAIN_EDGES_DRAWN_PAIRS_REMOVED, EXPOSURE_VAL_CASES, EXPOSURE_VAL_EDGES,
         MODEL_RECORD_VERSION, ModelRecord, ModelRecordError, read_model_record,
     )
-    from src.config.recipe import BASE_FIXED, unread_settings
+    from src.config.recipe import BASE_FIXED, FROZEN_PARTS, frozen_parts_problem, unread_settings
+    from src.models.bundle.builder import DOWNSTREAM_PARTS, GRAPH_SIDE_PARTS
     from src.training.lp_task import BASE_SELECTION_METRIC, BaseLPSampler, BaseLPTask
     from src.utils.checkpoint_paths import (
         check_run_dir_free, claim_run_dir, propose_run_dir, run_checkpoint_dir, run_log_dir,
     )
-    from src.utils.run_plan import RunPlanRefused, plan_branch
+    from src.utils.run_plan import RunPlanRefused, decoded_sentence, plan_branch
 
     if explicit is None:
         raise TypeError("train() needs the fields the operator set (explicit); they are "
@@ -1212,11 +1243,24 @@ def train(config: TrainConfig, explicit: Collection[str], *,
         if not parents:
             raise ValueError("a finetune run starts from a base (finetune_from), resumes a "
                              "finetune run (resume_from) or branches one (branch_from)")
+    # The freeze of a new run (a base, a finetune), by its one check
+    # (`frozen_parts_problem`), before the unread settings, so a base asked to
+    # freeze hears why; its value is final here (a finetune's recipe value is
+    # "none"). A continued or branched run trains with its parent's, which the
+    # settings decode checks (`run_plan.decode_learning_settings`), a different
+    # one stated being refused there, as the job runner's preview refuses it.
+    if not (config.resume_from or config.branch_from):
+        frozen_problem = frozen_parts_problem(stage, config.frozen_parts)
+        if frozen_problem:
+            raise ValueError(frozen_problem)
+    # A base reads no finetune setting (a task's, or the freeze); a finetune
+    # reads its own task's, not another task's.
     unread = sorted(explicit_set & unread_settings(stage, config.task))
     if unread:
         raise ValueError(
-            f"{', '.join(unread)} configure another task, which a {stage} run"
-            + (f" for {config.task}" if config.task else "")
+            f"{', '.join(unread)} configure "
+            + ("a finetune" if stage == "base" else "another task")
+            + f", which a {stage} run" + (f" for {config.task}" if config.task else "")
             + " does not read. Remove them.")
     if expected_parent_sha256 is not None and not (config.finetune_from or config.branch_from):
         raise ValueError("--expect-parent-sha256 names a finetune or branch parent; give "
@@ -1277,7 +1321,8 @@ def train(config: TrainConfig, explicit: Collection[str], *,
         plan, best_weights = plan_from_parent(parent, config, explicit_set, device,
                                               record_version=MODEL_RECORD_VERSION)
         config = TrainConfig(**plan.settings)
-        recipe = inherited_recipe_record(stage, config.task, explicit_set, plan.inherited)
+        recipe = inherited_recipe_record(stage, config.task, explicit_set, plan.inherited,
+                                         plan.decoded)
     if branch_parent is not None:
         # The branch's data is its parent's (BACKLOG 23, M2.3's rule), its
         # settings the parent's but the changes on the stage's list.
@@ -1286,9 +1331,11 @@ def train(config: TrainConfig, explicit: Collection[str], *,
                                   _asdict(config), explicit_set, device=device,
                                   record_version=MODEL_RECORD_VERSION)
         logger.info(f"{branch_plan.action}.")
+        if branch_plan.decoded:
+            logger.info(decoded_sentence(branch_plan.decoded))
         config = TrainConfig(**branch_plan.settings)
         recipe = inherited_recipe_record(stage, config.task, explicit_set,
-                                         branch_plan.inherited)
+                                         branch_plan.inherited, branch_plan.decoded)
 
     # The spec: the operator's (read strictly), the parent's (inherited with
     # the settings), the base's graph side with the task's reference head, or
@@ -1328,13 +1375,21 @@ def train(config: TrainConfig, explicit: Collection[str], *,
     view_rule = _asdict(spec.graph_view)
     view_rule["exclude_relations"] = list(view_rule["exclude_relations"])
     view = build_graph_view(inputs.graph.graph_data, rule=view_rule)
-    split = split_facts(view, config.split_seed)
-    if lineage is not None:
+    if lineage is None:
+        split = split_facts(view, config.split_seed)
+    else:
+        # The parent's recorded split, rebuilt from this view and checked field
+        # by field, this run's seed included (`rebuild_split`); the field that
+        # differs is the refusal's cause, the sentence stays the same.
         recorded = lineage.data_roles
-        if (recorded.get("graph_view") or {}).get("digest") != view.digest \
-                or (recorded.get("split") or {}).get("digest") != split.digest:
+        mismatch: Optional[SplitMismatchError] = None
+        try:
+            split = rebuild_split(view, recorded.get("split") or {}, seed=config.split_seed)
+        except SplitMismatchError as exc:
+            mismatch = exc
+        if mismatch is not None or (recorded.get("graph_view") or {}).get("digest") != view.digest:
             raise ValueError("the graph view or edge split differs from the parent's record; "
-                             "a child trains on its parent's view and split")
+                             "a child trains on its parent's view and split") from mismatch
     train_mask, val_mask = split.mask("train"), split.mask("val")
 
     # The task data, bound to the view (F7), and its derived tables, before
@@ -1356,18 +1411,37 @@ def train(config: TrainConfig, explicit: Collection[str], *,
     if config.seed is not None:
         apply_seed(config.seed)
     bundle = build_bundle(spec, view)
-    weight_transfer = None
+    # The freeze (`frozen_parts`, its value final here: a new run's checked
+    # above, a continued or branched run's its parent's, through the settings
+    # decode), before any weight is loaded and before the Trainer builds its
+    # optimizer, which then holds no frozen parameter; a frozen part runs in
+    # eval for the whole run, whatever calls `train()` (`ModelBundle.freeze`).
+    # A resume restores the optimizer state of the same groups.
+    bundle.freeze(FROZEN_PARTS[config.frozen_parts])
+    # The stage's weight transfer: how the weights it trains began. A new
+    # base has none; a finetune and a branch make theirs here; a resume and an
+    # extension continue their parent's stage, whose freeze they keep (the
+    # settings decode checked that transfer against it), and record its
+    # transfer unchanged, so every checkpoint of a stage names the downstream
+    # weights it started from in its own record (research comparison Stage 9b
+    # fixes: two arms compared after a pause are checked where they are
+    # listed). A parent that records none passes none on.
+    weight_transfer = (copy.deepcopy(parent_record.weight_transfer)
+                       if parent_record is not None else None)
     if base_parent is not None:
         weight_transfer = _transfer_parent_weights(
-            bundle, base_parent.checkpoint["state_dict"], new_parts=("patient_encoder", "task_head"))
+            bundle, base_parent.checkpoint["state_dict"], new_parts=DOWNSTREAM_PARTS)
     if branch_parent is not None:
         weight_transfer = _transfer_parent_weights(
             bundle, branch_parent.checkpoint["state_dict"], new_parts=())
     seed = int(config.seed or 0)
+    # Both graph inputs carry the view's own node types (research-comparison
+    # README §3, F6): each step's sampled nodes' and, in validation, every
+    # view node's; a spec whose input adds a type embedding reads them.
     lp_sampler = BaseLPSampler(
         view.num_nodes, view.edge_index(train_mask), view.rel[train_mask],
         view.edge_index(train_mask), view.rel[train_mask], sizes=config.num_neighbors,
-        batch_size=config.batch_size, seed=seed)
+        batch_size=config.batch_size, seed=seed, node_type=view.node_type)
     if stage == "base":
         sampler = lp_sampler
         # The validation pairs are the split's (BASE_FIXED): seeded by the
@@ -1377,7 +1451,7 @@ def train(config: TrainConfig, explicit: Collection[str], *,
             num_nodes=view.num_nodes, train_edges=view.edge_index(train_mask),
             train_relations=view.rel[train_mask], val_edges=view.edge_index(val_mask),
             val_relations=view.rel[val_mask], seed=int(config.split_seed),
-            val_batch_size=BASE_FIXED["validation_batch_size"])
+            val_batch_size=BASE_FIXED["validation_batch_size"], node_type=view.node_type)
         monitor = BASE_SELECTION_METRIC
     elif config.task == "disease":
         from src.training.finetune_task import (
@@ -1498,11 +1572,14 @@ def train(config: TrainConfig, explicit: Collection[str], *,
         "graph_view": {"digest": view.digest, "rule": dict(view.rule)},
         "split": split.record(),
     }
+    # The record's graph exposure, in the words `src.models.bundle.record`
+    # names once for this writer and its readers (`recorded_graph_use`).
     if stage == "base":
         exposure = {"base": {
-            "training": {"message_passing": "train edges, the step's drawn pairs removed (F5)",
-                         "supervision": "train edges"},
-            "validation": {"message_passing": "train edges", "supervision": "val edges"}}}
+            "training": {"message_passing": EXPOSURE_TRAIN_EDGES_DRAWN_PAIRS_REMOVED,
+                         "supervision": EXPOSURE_TRAIN_EDGES},
+            "validation": {"message_passing": EXPOSURE_TRAIN_EDGES,
+                           "supervision": EXPOSURE_VAL_EDGES}}}
         loss_identity = {"terms": ["lp"], "lp_loss_weight": 1.0, "lp_head": spec.lp_head.kind,
                          "margin": spec.lp_head.margin}
         scoring = None
@@ -1514,13 +1591,20 @@ def train(config: TrainConfig, explicit: Collection[str], *,
                          "binding": dict(binding[split_name].counts)}
             for split_name in ("train", "val")}
         exposure = {"finetune": {
-            "training": {"message_passing": "train edges, the step's drawn pairs removed (F5)",
-                         "lp_supervision": "train edges", "task": "train cases"},
-            "validation": {"message_passing": "the full view", "task": "val cases"}}}
+            "training": {"message_passing": EXPOSURE_TRAIN_EDGES_DRAWN_PAIRS_REMOVED,
+                         "lp_supervision": EXPOSURE_TRAIN_EDGES, "task": EXPOSURE_TRAIN_CASES},
+            "validation": {"message_passing": EXPOSURE_FULL_VIEW, "task": EXPOSURE_VAL_CASES}}}
+        # Both terms at the recipe's coefficients, frozen or not (owner's O4a);
+        # a term every part of whose parameters is frozen trains nothing, said
+        # so here, never dropped: the LP term reads the graph side alone, the
+        # task term every part.
+        untrained = [term for term, reads in (("task", bundle.parts), ("lp", GRAPH_SIDE_PARTS))
+                     if set(reads) <= set(bundle.frozen)]
         loss_identity = {"terms": ["task", "lp"], "task_loss": "nca",
                          "task_loss_weight": float(config.task_loss_weight),
                          "lp_loss_weight": float(config.lp_loss_weight),
-                         "lp_head": spec.lp_head.kind, "margin": spec.lp_head.margin}
+                         "lp_head": spec.lp_head.kind, "margin": spec.lp_head.margin,
+                         "terms_without_trainable_parameters": untrained}
         scoring = {"task": config.task, "score": "-||z_d - z_P||^2 on L2-normalised vectors",
                    "candidates": "every disease of the graph view", "ties": "average rank",
                    "version": 1}
@@ -1548,7 +1632,7 @@ def train(config: TrainConfig, explicit: Collection[str], *,
                                  "genes": int(distances.table.shape[1])},
                 "augmentation_neighbours": (derived["neighbours"].record
                                             if derived["neighbours"] is not None else None)}
-            exposure["finetune"]["sp"] = "the full view (README G4, §6)"
+            exposure["finetune"]["sp"] = EXPOSURE_FULL_VIEW_SP
             alpha, beta, base, ms_margin = spec.task_head.multi_similarity
             loss_identity.update({"task_loss": "multi_similarity", "multi_similarity": {
                 "alpha": alpha, "beta": beta, "base": base, "mining_margin": ms_margin}})
@@ -1617,7 +1701,20 @@ def _transfer_parent_weights(bundle: Any, parent_state: Mapping[str, Any], *,
     exist with the same shape, and only `new_parts` may be absent from the
     parent: a finetune's patient encoder and task head over its base's graph
     side (README A10), nothing for a branch, whose load is strict and complete.
-    Returns the weight-transfer record; the optimizer is always new."""
+
+    Returns the weight-transfer record (the model record's `weight_transfer`)
+    of the bundle as it will train, its freeze already applied
+    (`ModelBundle.freeze`): what was loaded and what initialised new; `trainable`, "all" when no part is frozen
+    (as training rules 1 recorded every transfer) or else the parts that
+    train; the optimizer, always new; each part, trainable or frozen
+    (`parts`), and the frozen parts' forward mode (`frozen_forward`, None when
+    none is frozen); and the SHA-256 of the downstream parts' weights as
+    training starts (`downstream_initial_sha256`, by `downstream_digest_rule`;
+    None for a base's branch, which has none), so two runs from one base can
+    be checked to start from the same downstream weights, not inferred from a
+    seed (research comparison Stage 9, owner's O4a)."""
+    from src.models.bundle.builder import DOWNSTREAM_PARTS, FROZEN_FORWARD, PARTS_DIGEST_RULE
+
     own = bundle.state_dict()
     foreign = sorted(k for k in parent_state if k not in own)
     mismatched = sorted(k for k in parent_state
@@ -1631,8 +1728,15 @@ def _transfer_parent_weights(bundle: Any, parent_state: Mapping[str, Any], *,
         raise ValueError(f"the parent lacks weights of {absent}")
     bundle.load_state_dict(dict(parent_state), strict=not new_parts)
     loaded = sorted({k.split(".")[0] for k in parent_state})
-    return {"loaded_from_parent": loaded, "initialised_new": absent, "trainable": "all",
-            "optimizer": "new"}
+    frozen = bundle.frozen
+    downstream = [part for part in DOWNSTREAM_PARTS if part in bundle.parts]
+    return {"loaded_from_parent": loaded, "initialised_new": absent,
+            "trainable": [part for part in bundle.parts if part not in frozen] if frozen else "all",
+            "optimizer": "new",
+            "parts": {part: "frozen" if part in frozen else "trainable" for part in bundle.parts},
+            "frozen_forward": FROZEN_FORWARD if frozen else None,
+            "downstream_initial_sha256": bundle.parts_sha256(downstream) if downstream else None,
+            "downstream_digest_rule": PARTS_DIGEST_RULE if downstream else None}
 
 
 # =============================================================================

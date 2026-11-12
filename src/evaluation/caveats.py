@@ -10,17 +10,29 @@ two places cannot be compared, and a claim that has to be corrected in two
 places will eventually be corrected in one.
 
 **Constants, and pure lookups over them (`mode_label`, `mode_note`,
-`metric_text`, `recorded_metric_lines`, `recorded_value_text`), with the one
-name of each finetuned task (`TASK_NAMES`). No imports beyond the standard
-library, no I/O.** These strings are rendered into ``--help`` text, where
-``argparse`` performs ``%`` substitution, so every literal percent sign here
-is escaped as ``%%``.
+`metric_text`, `recorded_metric_lines`, `recorded_value_text`, `version_words`,
+`exposure_text`), with the one name of each finetuned task (`TASK_NAMES`). No
+imports beyond the standard library, no I/O.** These strings are rendered into
+``--help`` text, where ``argparse`` performs ``%`` substitution, so every
+literal percent sign here is escaped as ``%%``.
 
 **One display for every recorded mode** (policy rev 15, R2; K8-6e.2). Words
-exist only for the measurements this build describes (`TASK_NAMES`). A record of
-any other mode, a kept one included, is named by its own recorded mode and shown
-as recorded: its metric names and values (`recorded_metric_lines`) and its score
-semantics, never relabelled, hidden or refused for its mode's name.
+exist only for the measurements this build describes (`MEASUREMENT_NAMES`). A
+record of any other mode, a kept one included, is named by its own recorded
+mode and shown as recorded: its metric names and values
+(`recorded_metric_lines`) and its score semantics, never relabelled, hidden or
+refused for its mode's name.
+
+**Words by data kind** (research comparison §5 Stage 6). A record is read by
+the kind of data it measured: a supplied cohort version's by its role and R10;
+a KG edge set's and a generated split's by their own words (`version_words`,
+never "cohort"), a KG edge set's run with its exposure (`EXPOSURE_READINGS`,
+`exposure_text`), a generated split's with its generation identity
+(`GENERATED_EXPOSURE_NOTE`). Words every kind's record is shown with (a
+relation's, `RELATION_DISPLAY_NAMES`; a measurement's label) fit each kind
+they are shown for. The KG edges' "held out" is scoped to the recorded
+graph use and is never a patient cohort's holdout: no supplied cohort's or
+generated split's words say it.
 
 Module: src/evaluation/caveats.py
 """
@@ -67,7 +79,7 @@ GENERATED_VAL_IS_DISEASE_DISJOINT = (
 
 #: Why a supplied cohort's relationship to training is measured, not assumed.
 #:
-#: **Since M4 every measurement of a registered cohort version takes it** (R10,
+#: **Since M4 every measurement of a supplied cohort version takes it** (R10,
 #: contract §5.4): the report records the cohort's disease and phenotype-set
 #: overlap with the training and validation inputs the checkpoint names, found
 #: by digest, so the number travels with the result it qualifies.
@@ -76,7 +88,7 @@ SUPPLIED_COHORT_OVERLAP = (
     "contract.** An institutional or external patient set was not cut from this "
     "project's disease universe, so how much of it the model has labelled examples "
     "for is an open number — the upstream team reported 109 of 319 UDN diseases "
-    "present in their simulated cohort. Each measurement of a registered cohort "
+    "present in their simulated cohort. Each measurement of a supplied cohort "
     "version records it as R10: disease and phenotype-set overlap with the training "
     "and validation inputs the checkpoint names, found by their digests in the "
     "workspace's own splits and then in each --training-evidence directory, and "
@@ -97,24 +109,30 @@ SPLIT_ARGUMENT_HELP = (
     "--split and --cohort is required; there is no default. Needs --output. An "
     "institutional or external cohort is not a split of the workspace: it is "
     "imported as a registered cohort version (scripts/import_cohort.py) and "
-    "measured with --cohort. A generated split's report is not registered in the "
-    "ledger, which does not yet support a generated split's data identity; its "
-    "report and ranks stay at --output. Two distinct limits apply, and they are "
+    "measured with --cohort. A report from --split is not registered in the "
+    "ledger: it has no registered version, so no data identity the ledger records "
+    "results by (the same split kept with scripts/import_cohort.py --kind generated "
+    "is measured with --cohort and registered); its report and ranks stay at "
+    "--output. Two distinct limits apply, and they are "
     "not the same limit. (1) "
     + SELECTION_CONTAMINATION
     + " (2) "
     + GENERATED_VAL_IS_DISEASE_DISJOINT
 )
 
-#: The full `--cohort` help text: a registered test cohort version (contract M4).
+#: The full `--cohort` help text: a registered data version of any kind (a
+#: supplied cohort, contract M4; a KG edge set or a generated split, research
+#: comparison Stages 4-5), and R10, which only a supplied cohort's measurement
+#: records.
 COHORT_ARGUMENT_HELP = (
-    "The label of a registered test cohort version to measure "
-    "(scripts/import_cohort.py), with --registry. Its samples are read once and "
-    "must be the bytes its cohort.json binds, and the version must have been mapped "
-    "against this workspace's graph and dataset record, or the run is refused "
-    "before the checkpoint is read. The report is kept in the registry's report "
-    "store, <registry>/versions/<label>/reports/<run id>/, so --output does not "
-    "apply. "
+    "The label of a registered data version to measure (scripts/import_cohort.py), "
+    "with --registry: a supplied test cohort version, a KG edge set, or a generated "
+    "split kept from a workspace, measured under its role as recorded. Its data are "
+    "read once and must be the bytes its cohort.json binds, and the version must "
+    "have been made against this workspace's graph and dataset record, or the run "
+    "is refused before the checkpoint is read. The report is kept in the "
+    "registry's report store, <registry>/versions/<label>/reports/<run id>/, so "
+    "--output does not apply. "
     + SUPPLIED_COHORT_OVERLAP
 )
 
@@ -125,13 +143,26 @@ COHORT_ARGUMENT_HELP = (
 # ---------------------------------------------------------------------------
 
 #: **Each finetuned task's name, the one every surface shows** (K6 decision 6):
-#: the Test page's measurement, the Models page's filter and records, the
-#: Fine-tune page's options and the Diagnosis card's name line read it, and
-#: `src.webui.components.renderers.record_kind_text` builds on it. Keyed by
-#: the model spec's tasks (`src.models.bundle.spec.TASKS`, which this
-#: standard-library-only module does not import;
+#: the Test page's measurement (through `MEASUREMENT_NAMES`), the Models page's
+#: filter and records, the Fine-tune page's options and the Diagnosis card's
+#: name line read it, and `src.webui.components.renderers.record_kind_text`
+#: builds on it. Keyed by the model spec's tasks (`src.models.bundle.spec.TASKS`,
+#: which this standard-library-only module does not import;
 #: `tests/unit/test_webui_renderers.py` pins the two equal).
 TASK_NAMES = {"disease": "Disease", "gene": "Gene", "patients_like_me": "Patients-like-me"}
+
+#: **Each measurement's name where a page offers or names one** (the Test
+#: page's Measurement options, its job line, its report rows and the ⓘ beside
+#: a result's label), keyed by protocol name
+#: (`src.evaluation.protocols.names`, pinned equal by
+#: `tests/unit/test_kg_link_prediction.py`): a task's measurement by its task's
+#: name (`TASK_NAMES`), and the common KG link-prediction measurement by its
+#: own words (research comparison Stage 5). Never a task name: no task filter
+#: or option reads it. Each protocol row restates its words as its `label`
+#: (that module imports the standard library only), which its reasons name it
+#: by, pinned equal by the same test; the words of a recorded mode stay here,
+#: whatever protocols this build implements.
+MEASUREMENT_NAMES = {**TASK_NAMES, "kg_link_prediction": "KG link prediction"}
 
 
 def task_list_text(names: Iterable[str]) -> str:
@@ -157,18 +188,35 @@ GENE_TASK_NOTE = ("A score mixing the finetuned model's gene head with shortest-
                   "similarity, uncalibrated. Every causal gene is a positive; a rank depends on "
                   "the list's length, which the report gives.")
 
+#: One label for every data kind it measures (a supplied cohort, a generated
+#: split), so its words fit each: never "cohort" (research comparison §5
+#: Stage 4).
 PATIENTS_LIKE_ME_RESULT_LABEL = ("Patients-like-me (model bundle): each patient against every "
-                                 "other patient of the cohort, average ranks")
+                                 "other patient measured, average ranks")
 PATIENTS_LIKE_ME_NOTE = ("A similarity from the finetuned model's patient tower, uncalibrated. A "
                          "pair is relevant when the two patients share a causal gene; a patient "
                          "with no other relevant patient has no recall, not a recall of 0.")
 
+#: The common KG link-prediction measurement (`task_measurement.run_kg_link_prediction`,
+#: research comparison Stage 5): a base's and a finetune's LP head on one KG
+#: edge set, its negatives rule-generated (never proven non-relations).
+KG_LINK_PREDICTION_RESULT_LABEL = ("KG link prediction (model bundle): each positive edge of a "
+                                   "KG edge set against its one rule-generated negative, over "
+                                   "the version's message-passing graph")
+KG_LINK_PREDICTION_NOTE = ("A raw score from the model's LP head (DistMult), uncalibrated; LP "
+                           "accuracy decides at raw > 0. The negatives are rule-generated, never "
+                           "proven non-relations. The report's exposure says how the measured "
+                           "edges stand to the model's recorded graph use: a figure after "
+                           "full-view exposure is never called held out.")
+
 MODE_RESULT_LABELS = {"disease": DISEASE_TASK_RESULT_LABEL, "gene": GENE_TASK_RESULT_LABEL,
-                      "patients_like_me": PATIENTS_LIKE_ME_RESULT_LABEL}
+                      "patients_like_me": PATIENTS_LIKE_ME_RESULT_LABEL,
+                      "kg_link_prediction": KG_LINK_PREDICTION_RESULT_LABEL}
 
 #: The note each described measurement's record is shown with.
 MODE_RESULT_NOTES = {"disease": DISEASE_TASK_NOTE, "gene": GENE_TASK_NOTE,
-                     "patients_like_me": PATIENTS_LIKE_ME_NOTE}
+                     "patients_like_me": PATIENTS_LIKE_ME_NOTE,
+                     "kg_link_prediction": KG_LINK_PREDICTION_NOTE}
 
 
 #: The label of a record whose mode cannot be read: never taken for another mode.
@@ -225,6 +273,16 @@ _TASK_METRIC_WORDS = {"pooled_mrr": "pooled MRR", "macro_mrr": "macro MRR",
 _TASK_METRIC_FAMILIES = {"pooled_top": "pooled top-", "macro_recall@": "macro recall@",
                          "macro_precision@": "macro precision@"}
 
+#: The KG link-prediction measurement's metrics (metric schema 3,
+#: `src.evaluation.task_measurement.LP_METRICS`, pinned equal by
+#: `tests/unit/test_kg_link_prediction.py`), as a surface names them after the
+#: measurement's name: "KG link prediction ROC-AUC". Each metric's unit and
+#: denominator are the report's (and a KG edge set's ledger record's
+#: ``measured``), never restated here.
+LP_METRIC_WORDS = {"lp_accuracy": "accuracy (raw > 0)", "lp_roc_auc": "ROC-AUC",
+                   "lp_average_precision": "average precision",
+                   "lp_loss": "loss (the LP head's hinge)"}
+
 
 def _metric_words(name: str) -> str:
     if name in _TASK_METRIC_WORDS:
@@ -237,16 +295,131 @@ def _metric_words(name: str) -> str:
 
 def metric_text(mode: Optional[str], name: str) -> str:
     """A recorded metric as a surface names it, never without its mode: a
-    described measurement's in words, by its task's name (`TASK_NAMES`): "Gene
-    pooled MRR", "Disease pooled top-10", "Patients-like-me macro recall@10";
-    any other mode's by its recorded mode and the name as recorded, whatever
-    the mode: "Mode kg_link_prediction pooled_mrr"; "pooled MRR (mode not
-    recorded)" when the mode cannot be read."""
+    described measurement's in words, by its measurement's name
+    (`MEASUREMENT_NAMES`): "Gene pooled MRR", "Disease pooled top-10",
+    "Patients-like-me macro recall@10", "KG link prediction ROC-AUC" (a name
+    the measurement does not write keeps its recorded name after the
+    measurement's); any other mode's by its recorded mode and the name as
+    recorded ("Mode <mode> <name>"); "pooled MRR (mode not recorded)" when the
+    mode cannot be read."""
     if not mode or not mode.strip():
         return f"{_metric_words(name)} (mode not recorded)"
     if mode in TASK_NAMES:
         return f"{TASK_NAMES[mode]} {_metric_words(name)}"
+    if mode == "kg_link_prediction":
+        return f"{MEASUREMENT_NAMES[mode]} {LP_METRIC_WORDS.get(name, name)}"
     return f"Mode {mode} {name}"
+
+
+# ---------------------------------------------------------------------------
+# Data kinds (research comparison §5 Stages 4-6): how a version of each kind,
+# and a KG edge set's run's exposure, are said.
+# ---------------------------------------------------------------------------
+#: Each data kind as a sentence names it (`src.evaluation.cohort.COHORT_KINDS`'
+#: words): a protocol's refusal (`src.evaluation.protocols`), a ledger
+#: record's refusal (`src.evaluation.sidecar`) and `version_words`. Never
+#: "cohort" for a KG edge set or a generated split.
+DATA_KIND_WORDS = {"generated": "a generated split", "supplied": "a supplied cohort version",
+                   "kg_edges": "a KG edge set"}
+
+
+def version_words(kind: Any, role: Any) -> str:
+    """A version of another kind than a supplied cohort as a sentence names
+    it, by its kind and role: ``a KG edge set (test)``, ``a generated split
+    (val)``. Never "cohort": a KG edge set holds edges, and a generated split
+    is the workspace generator's, never a supplied cohort (research comparison
+    §5 Stage 4). `src.evaluation.cohort_registry.version_words` is this
+    function; every reader and refusal names a version by it."""
+    if kind in ("kg_edges", "generated"):
+        return f"{DATA_KIND_WORDS[kind]} ({role})"
+    return f"a version of kind {kind!r}"
+
+
+def label_words(words: str) -> str:
+    """Words a sentence names a thing by, as a label or an option leads with
+    them: the leading article dropped and the first letter capitalised ("a KG
+    edge set (test)" → "KG edge set (test)", "a supplied cohort version" →
+    "Supplied cohort version"). With `version_words` and `DATA_KIND_WORDS`,
+    the one wording of a version or a data kind in a label."""
+    words = words[2:] if words.startswith("a ") else words
+    return words[:1].upper() + words[1:]
+
+
+#: The version of the KG link-prediction exposure definition below: the
+#: states, their readings and how each count is taken
+#: (`src.evaluation.exposure`, which writes a run's exposure block by it). A
+#: reader reads a block by the version it records.
+EXPOSURE_DEFINITION_VERSION = "kg-lp-exposure/v1"
+
+#: The states an exposure block holds, each read by `EXPOSURE_READINGS`.
+HELD_OUT = "held_out"
+IN_RECORDED_GRAPH_USE = "in_recorded_graph_use"
+ANOTHER_SPLIT = "another_split"
+AFTER_FULL_VIEW_EXPOSURE = "after_full_view_exposure"
+NOT_RECORDED = "not_recorded"
+EXPOSURE_STATES = (HELD_OUT, IN_RECORDED_GRAPH_USE, ANOTHER_SPLIT, AFTER_FULL_VIEW_EXPOSURE,
+                   NOT_RECORDED)
+
+#: Each state's reading; "{k}" and "{n}" are the block's counts. **A KG edge
+#: set's "held out" is scoped to the recorded graph use** of the measured
+#: model, never a patient cohort's holdout or an institutional acceptance's.
+EXPOSURE_READINGS = {
+    HELD_OUT: "held out relative to the recorded training and validation graph use",
+    IN_RECORDED_GRAPH_USE: ("{k} of {n} measured edges were in the recorded training or "
+                            "validation graph use"),
+    ANOTHER_SPLIT: ("{k} of {n} measured edges were in this model's recorded training or "
+                    "validation graph use, on another split of the same view"),
+    AFTER_FULL_VIEW_EXPOSURE: "after full-view exposure",
+    NOT_RECORDED: "exposure not recorded",
+}
+
+#: What every exposure block says of itself and of the negatives.
+EXPOSURE_CAVEAT = (
+    "Scoped to the recorded evidence: what the model's record and this KG edge set say, read by "
+    "this build. It does not establish that no other exposure happened (another run, a "
+    "person's choice, a file outside the record), and it is never a gate. The negatives are "
+    "rule-generated (another tail of the same relation in the pair's batch, never the "
+    "positive's own) and are never claimed as proven non-relations: a negative may be a true "
+    "relation the graph does not hold.")
+
+#: The unit of an exposure block's counts, said in the block.
+MEASURED_EDGE_UNIT = ("positive edges scored: the (head, relation, tail) of each row of the "
+                      "pairs file, a directed edge of the graph view")
+
+
+def exposure_text(exposure: Any) -> str:
+    """A KG edge set run's exposure block (a report's, its ledger record's,
+    or the API's view of it, which keeps the block's shape) as a surface says
+    it: for a block of this build's definition (`EXPOSURE_DEFINITION_VERSION`),
+    its state's reading with its counts ("2 of 6 measured edges were in ...");
+    for a block of another definition, its reading as recorded, naming that
+    definition; "exposure not recorded" when there is no block or its state or
+    counts do not read. Never "unseen", and never a gate."""
+    if not isinstance(exposure, Mapping):
+        return EXPOSURE_READINGS[NOT_RECORDED]
+    version, state = exposure.get("definition_version"), exposure.get("state")
+    if version == EXPOSURE_DEFINITION_VERSION and state in EXPOSURE_READINGS:
+        edges = exposure.get("measured_edges")
+        edges = edges if isinstance(edges, Mapping) else {}
+        k, n = edges.get("in_recorded_graph_use"), edges.get("n")
+        if "{k}" not in EXPOSURE_READINGS[state] or (type(k) is int and type(n) is int):
+            return EXPOSURE_READINGS[state].format(k=k, n=n)
+        return EXPOSURE_READINGS[NOT_RECORDED]
+    reading = exposure.get("reading")
+    if isinstance(version, str) and isinstance(reading, str) and reading.strip():
+        return f"{reading} (as recorded under the exposure definition {version})"
+    return EXPOSURE_READINGS[NOT_RECORDED]
+
+
+#: How a generated split's run stands to a model's training, where a KG edge
+#: set's run shows its exposure: by the split's generation identity and role,
+#: which its record keeps (research comparison §5 Stage 6). Never a test set's
+#: words, and never computed against the model's own record.
+GENERATED_EXPOSURE_NOTE = (
+    "A generated split's relation to a model's training is its allocation's: the generation "
+    "and allocation below cut the workspace's patients into its train and val splits by "
+    "disease. Whether the measured model was trained on this generation is not compared "
+    "here; a val split is the one checkpoint selection reads.")
 
 
 #: R10's four labels (contract §5.4), keyed as a record's `r10` block is: scope,
@@ -363,10 +536,15 @@ RECORD_ABSENCE = (
 #: How each relation a report records (`RELATION_NAMES` in
 #: `src/evaluation/measurement.py`) is named where a person reads it. Keyed by
 #: those names; `tests/unit/test_registration.py` fails if the two differ.
+#: **Words that fit every data kind a relation is recorded for:**
+#: `cohort_graph` binds a registered version of any kind (a supplied cohort, a
+#: KG edge set, a generated split) to the graph read, so it is said as the
+#: data version's, never "cohort" (research comparison §5 Stage 4); its key
+#: is the manifest's and keeps its name.
 RELATION_DISPLAY_NAMES = {
     "R1": "graph files match the workspace manifest",
     "R2": "generated split's samples match the workspace manifest",
     "R3": "model trained on this graph",
     "R5": "dataset record bound to this graph",
-    "cohort_graph": "cohort version mapped against this graph",
+    "cohort_graph": "data version bound to this graph",
 }

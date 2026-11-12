@@ -28,10 +28,20 @@ from __future__ import annotations
 
 import html
 import re
+from collections import Counter
 from datetime import datetime, timezone
-from typing import Any, Iterable, Mapping, NamedTuple, Optional, Sequence, Tuple
+from typing import (Any, Callable, Dict, Hashable, Iterable, Mapping, NamedTuple, Optional,
+                    Sequence, Tuple)
 
-from src.evaluation.caveats import TASK_NAMES
+from src.evaluation.caveats import (
+    EXPOSURE_CAVEAT,
+    GENERATED_EXPOSURE_NOTE,
+    R10_LABEL_TEXT,
+    R10_STATE_TEXT,
+    R10_UNVERIFIABLE_REASON,
+    TASK_NAMES,
+    exposure_text,
+)
 from src.webui.components.help import copy_button, help_button
 
 #: Hex digits of a digest shown by default.
@@ -77,6 +87,11 @@ RENDERER_HELP = {
         "hex digits are shown; every comparison uses all 64. A test record, a usage history "
         "entry and the served identity name the model by it.",
     ),
+    "kg-exposure": (
+        "Exposure (KG edge sets)",
+        "How a KG edge set's measured edges stand to the model's recorded graph use.\n"
+        + EXPOSURE_CAVEAT,
+    ),
     "validation-trainer": (
         "Validation (Trainer)",
         "The Trainer's own figure on the val samples, recorded in the checkpoint.\n"
@@ -108,6 +123,11 @@ WARN_MARK = '<span aria-hidden="true">▲</span>'
 
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _RUN_TIME = re.compile(r"^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})")
+#: A report store run id (`cohort_registry.create_report_dir`, its
+#: `RUN_ID_PATTERN`): its UTC time, then the checkpoint's 12 hex digits and the
+#: run's own 8.
+_REPORT_RUN_ID = re.compile(
+    r"^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z-[0-9a-f]{12}-[0-9a-f]{8}$")
 
 
 def e(value: Any) -> str:
@@ -411,19 +431,19 @@ class RecordedTests(NamedTuple):
 
 
 def recorded_tests_text(recorded: Optional[RecordedTests]) -> str:
-    """"Recorded tests: 3 · 1 not readable; runs differ for 1; comparison
+    """"Recorded results: 3 · 1 not readable; runs differ for 1; comparison
     incomplete for 1": states, never a number of a result; a record that
     cannot be read is never counted as one (K8-6e.1) and a record whose
     comparison is incomplete is never shown as agreeing. "none in ledger"
     only when the ledger holds neither. One " · " (the skill's §5)."""
     if recorded is None:
-        return "Recorded tests: not read"
+        return "Recorded results: not read"
     if recorded.state == "no_ledger":
-        return "Recorded tests: no ledger"
+        return "Recorded results: no ledger"
     if recorded.state == "not_read":
-        return "Recorded tests: ledger not readable"
+        return "Recorded results: ledger not readable"
     if recorded.state == "none" or (recorded.count == 0 and not recorded.unreadable):
-        return "Recorded tests: none in ledger"
+        return "Recorded results: none in ledger"
     contested = recorded.contested or 0
     unchecked = recorded.count if recorded.contested is None else recorded.unchecked
     notes = []
@@ -434,7 +454,7 @@ def recorded_tests_text(recorded: Optional[RecordedTests]) -> str:
     if unchecked:
         notes.append("comparison incomplete" if unchecked >= recorded.count
                      else f"comparison incomplete for {unchecked}")
-    return f"Recorded tests: {recorded.count}" + (f" · {'; '.join(notes)}" if notes else "")
+    return f"Recorded results: {recorded.count}" + (f" · {'; '.join(notes)}" if notes else "")
 
 
 #: Run layout keys whose name is not their upper case (a model bundle's
@@ -497,6 +517,36 @@ def run_name(run: Any) -> Optional[str]:
     time and its 6-hex id; None when it is not named by its start time."""
     rest = run_suffix(run)
     return re.sub(r"_[0-9a-f]{6}$", "", rest) if rest else None
+
+
+def run_time(run_id: Any, *, seconds: bool = False) -> Optional[str]:
+    """A run's time from its run id, as the pages name a run: "2026-10-17
+    13:40 UTC" (with `seconds`, "2026-10-17 13:40:07 UTC") from a report store
+    run id (`create_report_dir` names it by its UTC time), else None."""
+    match = _REPORT_RUN_ID.match(str(run_id or ""))
+    if not match:
+        return None
+    y, mo, d, h, mi, s = match.groups()
+    return f"{y}-{mo}-{d} {h}:{mi}{':' + s if seconds else ''} UTC"
+
+
+def distinct_names(items: Mapping[Hashable, Any], name_at: Callable[[Any, int], str], *,
+                   top: int = 2) -> Dict[Hashable, str]:
+    """Names that read alike, told apart: each item's name, by its key, at
+    level 0 (``name_at(item, level)``), a level higher only for the items
+    whose names read alike, until no two do or each of them is at `top` (runs
+    named by their time to the minute, then to the second, then with the run
+    id's own last part: Models › Results' `row_names`). Names still alike at
+    `top` are the caller's to tell apart."""
+    levels = dict.fromkeys(items, 0)
+    while True:
+        names = {key: name_at(item, levels[key]) for key, item in items.items()}
+        seen = Counter(names.values())
+        clashing = [key for key, name in names.items() if seen[name] > 1 and levels[key] < top]
+        if not clashing:
+            return names
+        for key in clashing:
+            levels[key] += 1
 
 
 def record_kind_text(item: Any) -> str:
@@ -611,7 +661,7 @@ def model_row_html(item: Any, workspaces: Sequence[Any], *,
 def recorded_tests_cell(recorded: Optional[RecordedTests]) -> str:
     """The recorded tests' state for a table cell (`recorded_tests_text`
     without its label): never a number of a result."""
-    return recorded_tests_text(recorded).replace("Recorded tests: ", "", 1)
+    return recorded_tests_text(recorded).replace("Recorded results: ", "", 1)
 
 
 def validation_cell(validation: Any) -> str:
@@ -629,7 +679,7 @@ def validation_cell(validation: Any) -> str:
 #: The research table's fixed columns (Models): an extra column a page fills
 #: goes before the recorded tests.
 MODEL_TABLE_COLUMNS = ("Model", "Fingerprints: model · dataset trained on",
-                       "Validation (Trainer)", "Recorded tests")
+                       "Validation (Trainer)", "Recorded results")
 
 
 def model_table_row_html(item: Any, workspaces: Sequence[Any], *,
@@ -808,6 +858,153 @@ def _kv(rows: Iterable[Tuple[str, str]], *, wide: Iterable[str] = ()) -> str:
     return f'<div class="shep-kv">{kv_cells(rows, wide=wide)}</div>'
 
 
+def recorded_count_text(value: Any) -> str:
+    """A count as its record holds it (the integer as written, with no
+    separator), or "not reported" where the record holds no integer: the
+    words every result surface gives a recorded count in (Models' records, the
+    Test page's result, `data_kind_lines`, `r10_rows`)."""
+    return str(value) if type(value) is int else "not reported"
+
+
+#: An R10 scope's evidence state in words (`record_views.R10Evidence`'s
+#: states): whether the inputs the checkpoint records were found.
+R10_EVIDENCE_WORDS = {
+    "found": "evidence found",
+    "not_found": "evidence not found",
+    "unreadable": "evidence found, not readable",
+    "not_recorded": "evidence not recorded by the checkpoint",
+    "search_incomplete": "evidence search incomplete",
+}
+
+
+def r10_state_text(label: str, part: Any, evidence: Any) -> str:
+    """One R10 label's state in the caveats' words, as text: a count with its
+    denominator only where the state has one; *unverifiable* is a reason
+    (by its scope's evidence state, `caveats.R10_UNVERIFIABLE_REASON`), never
+    a number; "not reported" where the state does not read. Models ›
+    Results' Compare shows it beside the label's name (its row's), and
+    `r10_label_text` after it."""
+    state = _get(part, "state")
+    words = R10_STATE_TEXT.get(state) if isinstance(state, str) else None
+    if state == "unverifiable" and isinstance(evidence, str):
+        words = R10_UNVERIFIABLE_REASON.get(evidence, words)
+    if words is None:
+        return "not reported"
+    if state not in ("overlap", "none"):
+        return words
+    unit = "distinct test diseases" if label == "disease_overlap" else "test cases"
+    text = (f"{words} — {recorded_count_text(_get(part, 'k'))} of "
+            f"{recorded_count_text(_get(part, 'n'))} {unit}")
+    if label == "disease_overlap":
+        text += f"; {recorded_count_text(_get(part, 'cases'))} test cases with one of them"
+    return text
+
+
+def r10_label_text(label: str, name: str, part: Any, evidence: Any) -> str:
+    """One R10 label in the caveats' words, as text: its name, then its state
+    (`r10_state_text`). The text of `r10_rows`."""
+    return f"{name}: {r10_state_text(label, part, evidence)}"
+
+
+def r10_rows(r10: Any) -> list:
+    """**The one rendering of a supplied cohort's R10** (research comparison
+    Stage 8b), as ``(label, escaped HTML)`` rows, one per scope, from the one
+    reader's view of a record (its ``r10``: each scope's evidence state and its
+    disease and phenotype-set overlap): ``("R10, training", "inputs (evidence
+    found): Training disease overlap: … · Training phenotype-set overlap: …")``,
+    each label in `r10_label_text`'s words with *unverifiable* in bold. Models'
+    records and the Test page's result lay the rows out each their own way,
+    as they lay out `data_kind_lines`; the evidence's path is never read."""
+    rows = []
+    for scope, labels in R10_LABEL_TEXT.items():
+        part = _get(r10, scope)
+        evidence = _get(_get(part, "evidence"), "state")
+        found = R10_EVIDENCE_WORDS.get(evidence) if isinstance(evidence, str) else None
+        shown = []
+        for label, words in labels.items():
+            name = words["name"]
+            text = r10_label_text(label, name, _get(part, label), evidence)
+            lead = f"{name}: unverifiable"
+            shown.append(f"{e(name)}: <b>unverifiable</b>{e(text[len(lead):])}"
+                         if _get(_get(part, label), "state") == "unverifiable"
+                         and text.startswith(lead) else e(text))
+        rows.append((f"R10, {scope}",
+                     f'<span class="shep-muted">inputs ({e(found or "evidence not reported")}):'
+                     f'</span> {" · ".join(shown)}'))
+    return rows
+
+
+def data_kind_lines(view: Mapping[str, Any]) -> list:
+    """**The one rendering of what a result's data kind adds** (research
+    comparison Stages 6 and 8b), as ``(label, escaped HTML)`` rows, from the
+    one reader's view of a record (`record_views`: a ledger record's record
+    view, or a kept report's result view, `result_view`, as a JSON dump), so a
+    registered record on Models and a kept report on Test say it alike, each
+    page laying the rows out its own way:
+
+    - a KG edge set's exposure in this build's words (`caveats.exposure_text`,
+      the ⓘ holding `EXPOSURE_CAVEAT`) and its source (definition version and
+      split, or why its block does not read: fields named, never values), its
+      message-passing graph and pairs, and each metric that could not be
+      computed, as a status;
+    - a generated split's generation identity, its split manifest and gene
+      fixture, and how it stands to a model's training
+      (`caveats.GENERATED_EXPOSURE_NOTE`);
+    - nothing for a supplied cohort, whose relation to training is its R10.
+
+    The KG edges' "held out" is never said for a patient cohort, and R10
+    never for a KG edge set or a generated split. Every value is escaped."""
+    cohort = _get(view, "cohort")
+    cohort = cohort if isinstance(cohort, Mapping) else {}
+    kind = cohort.get("kind")
+    if kind == "generated":
+        generation = cohort.get("generation") if isinstance(cohort.get("generation"),
+                                                            Mapping) else {}
+        allocation = cohort.get("allocation") if isinstance(cohort.get("allocation"),
+                                                            Mapping) else {}
+        fixture = cohort.get("task_fixture")
+        manifest = cohort.get("split_manifest")
+        identity = (f"{generation.get('algorithm')} v{generation.get('algorithm_version')}, "
+                    f"allocation {allocation.get('algorithm')} v"
+                    f"{allocation.get('algorithm_version')} with seed {allocation.get('seed')}")
+        record = fixture.get("record") if isinstance(fixture, Mapping) else None
+        kept = (f"gene fixture {short_hex(_get(record, 'sha256'))}"
+                if isinstance(fixture, Mapping) else "no gene fixture kept")
+        return [("Generation", e(identity)),
+                ("Split manifest", f"<code>{e(short_hex(_get(manifest, 'sha256')))}</code>; "
+                                   f"{e(kept)}"),
+                ("Training relation", e(GENERATED_EXPOSURE_NOTE))]
+    if kind != "kg_edges":
+        return []
+    exposure = _get(view, "exposure")
+    exposure = exposure if isinstance(exposure, Mapping) else None
+    split = exposure.get("split") if exposure is not None else None
+    # An exposure block the one reader could not read is null with its
+    # problem (fields named, never values): the result stands beside it.
+    source = ("Definition " + str(exposure.get("definition_version")) + "; "
+              + (split if isinstance(split, str) else "the model record was not read")
+              if exposure is not None else
+              f"Its block does not read: {_get(view, 'exposure_problem') or 'no reason given'}")
+    passing = cohort.get("message_passing") if isinstance(cohort.get("message_passing"),
+                                                          Mapping) else {}
+    pairs = cohort.get("pairs") if isinstance(cohort.get("pairs"), Mapping) else {}
+    graph = (f"Message passing over the split's {passing.get('part')} part, "
+             f"{recorded_count_text(passing.get('edges'))} edges; pairs {pairs.get('rule')} "
+             f"with seed {pairs.get('seed')}, {recorded_count_text(pairs.get('rows'))} rows")
+    measured = _get(view, "measured")
+    statuses = measured.get("metrics") if isinstance(measured, Mapping) else None
+    not_computed = [str(name) for name, status in (statuses or {}).items()
+                    if isinstance(status, Mapping) and status.get("status") != "computed"]
+    rows = [("Exposure", e(exposure_text(exposure))
+             + help_button("kg-exposure", "Exposure (KG edge sets)")),
+            ("Exposure source", e(source)),
+            ("Graph and pairs", e(graph))]
+    if not_computed:
+        rows.append(("Not computable", e(", ".join(not_computed))
+                     + " (a status, never a number)"))
+    return rows
+
+
 #: The labels of Model Facts' digest rows (`kv_cells`' wide rows).
 FACTS_MODEL_FP = "Model fingerprint (checkpoint sha256)"
 FACTS_TRAINED_FP = ("Trained on: dataset fingerprint (split_manifest.json, from the checkpoint's "
@@ -895,6 +1092,7 @@ __all__ = [
     "NOT_A_MEDICAL_DEVICE",
     "NO_READABLE_SPLIT_MANIFEST",
     "NO_SPLIT_MANIFEST",
+    "R10_EVIDENCE_WORDS",
     "RENDERER_HELP",
     "RecordedTests",
     "VALIDATION_LABELS",
@@ -907,7 +1105,9 @@ __all__ = [
     "built_text",
     "chip",
     "configuration_text",
+    "data_kind_lines",
     "dataset_identity_html",
+    "distinct_names",
     "distinguishing_digits",
     "e",
     "facts_from_checkpoint",
@@ -921,10 +1121,14 @@ __all__ = [
     "model_table_row_html",
     "not_trainable_short",
     "origin_of",
+    "r10_label_text",
+    "r10_rows",
+    "r10_state_text",
     "record_chip",
     "record_kind_text",
     "record_read",
     "record_verified",
+    "recorded_count_text",
     "recorded_tests_cell",
     "recorded_tests_text",
     "run_label",
@@ -932,6 +1136,7 @@ __all__ = [
     "run_name",
     "run_started",
     "run_suffix",
+    "run_time",
     "short_hex",
     "short_reason",
     "sources_text",

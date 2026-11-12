@@ -8,11 +8,10 @@ wrote, not a payload a test assembled. A gene or patients-like-me child trains
 on the gene task's functional fixture, derived first through
 `scripts/derive_task_fixture.py` when the workspace has none.
 
-The base's spec and sizes and the disease child's sizes are the demo's, read
-from `scripts/setup_demo.py`'s `demo_task_training` (the one statement of the
-demo's sizes), so a test's child is trained at the demo's sizes; the gene and
-patients-like-me children's sizes, which the demo does not train, are this
-helper's own.
+The base's spec and sizes and every child's sizes are the demo's, read from
+`scripts/setup_demo.py`'s `demo_task_training` (the one statement of the
+demo's sizes, which the deployment probe's L7 children train at too), so a
+test's child is trained at the demo's sizes.
 
 The runs are filed where the server's list finds them by default
 (``<workspace>/runs/gatv2/<run>``, named by a start time so the listing's
@@ -44,14 +43,6 @@ CHILD_RUNS = {"disease": "20261002-000000_disease_bbbbbb",
               "gene": "20261003-000000_gene_cccccc",
               "patients_like_me": "20261004-000000_patients_like_me_dddddd"}
 
-#: The gene and patients-like-me tasks' settings for a 1-epoch CPU child on
-#: the demo workspace; the task's recipe fills the rest. The disease child's
-#: are the demo's (`demo_task_training`).
-_CHILD_SETTINGS: Dict[str, Dict[str, Any]] = {
-    "gene": {"batch_size": 4, "num_neighbors": [3, 3], "sparse_sample_size": 4},
-    "patients_like_me": {"batch_size": 4, "num_neighbors": [3, 3], "sparse_sample_size": 4},
-}
-
 #: The settings a base or child trained before K8-7 (training rules 1) records
 #: in `config.requested` and this build no longer has (the ShepherdGNN path's
 #: architecture, loader and loss settings), at the defaults that build wrote
@@ -65,6 +56,60 @@ RULES_1_RETIRED_SETTINGS = {
     "contrastive_weight": 0.3, "ortholog_weight": 0.2, "margin": 1.0, "label_smoothing": 0.1,
     "temperature": 0.07,
 }
+
+
+#: The keys of a weight transfer as every build before research comparison
+#: Stage 9b wrote one (rules 1 at `cbd2e3f`, and rules 2 at Stage 9a), every
+#: part trainable: the record shape without each part's freeze (`parts`), the
+#: frozen parts' forward mode and the downstream start's digest.
+RELEASED_TRANSFER_KEYS = ("loaded_from_parent", "initialised_new", "trainable", "optimizer")
+
+
+def as_before_9b(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """A checkpoint payload this build wrote with nothing frozen, as a build
+    of training rules 2 before research comparison Stage 9b (Stage 9a, which
+    had no freeze applied) wrote the same run: its weight transfer, where it
+    records one, with the released keys only (`RELEASED_TRANSFER_KEYS`), and
+    its loss identity without `terms_without_trainable_parameters`, the two
+    record parts Stage 9b added to. Everything else is the same bytes. A
+    copy; the payload given is not changed."""
+    import copy
+
+    old = copy.deepcopy(payload)
+    transfer = old.get("weight_transfer")
+    if isinstance(transfer, dict):
+        old["weight_transfer"] = {key: transfer[key] for key in RELEASED_TRANSFER_KEYS
+                                  if key in transfer}
+    if isinstance(old.get("loss_identity"), dict):
+        old["loss_identity"].pop("terms_without_trainable_parameters", None)
+    return old
+
+
+def as_rules_1(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """A checkpoint payload this build wrote with nothing frozen, as the build
+    of training rules 1 wrote the same run (research comparison Stage 9a: the
+    branch at `cbd2e3f`, the last commit of rules 1): its record as before
+    Stage 9b (`as_before_9b`: the released weight-transfer keys, the loss
+    identity without the terms without a trainable parameter), `training_rules`
+    1, and the one setting rules 2 added, `frozen_parts`, nowhere in its record
+    (not requested, not filled from the recipe, not inherited, no setting
+    decoded). Everything else is the same bytes, the weights and the
+    optimizer, scheduler and scaler state included: nothing else a checkpoint
+    holds changed since. A copy; the payload given is not changed."""
+    old = as_before_9b(payload)
+    old["training_rules"] = 1
+    config = old.get("config")
+    if isinstance(config, dict):
+        (config.get("requested") or {}).pop("frozen_parts", None)
+        recipe = (((config.get("effective") or {}).get("loaders") or {}).get("train")
+                  or {}).get("recipe")
+        if isinstance(recipe, dict):
+            recipe.pop("decoded_from_parent", None)
+            (recipe.get("reference_filled") or {}).pop("frozen_parts", None)
+            for key in ("operator_set", "inherited_from_parent"):
+                if isinstance(recipe.get(key), list):
+                    recipe[key] = [name for name in recipe[key] if name != "frozen_parts"]
+    return old
 
 
 def _demo_training() -> Dict[str, Dict[str, Any]]:
@@ -94,17 +139,24 @@ def _train(**settings: Any) -> None:
 
 
 def train_children(data_dir: Path, tasks: Sequence[str] = ("disease",), *,
-                   runs: Optional[Path] = None) -> Dict[str, Path]:
+                   runs: Optional[Path] = None,
+                   base_model_spec: Optional[Dict[str, Any]] = None) -> Dict[str, Path]:
     """Train a base on `data_dir` (a complete workspace, `write_demo_workspace`)
     and one child of it per task in `tasks`, and return each one's
-    ``checkpoints/last.pt`` by ``"base"`` and by task, beside ``"data_dir"``."""
+    ``checkpoints/last.pt`` by ``"base"`` and by task, beside ``"data_dir"``.
+
+    `base_model_spec` (plain data, `ModelSpec.to_dict()`) is the base's spec
+    in place of the demo's, as an operator's configuration states one; each
+    child keeps its graph side, as every finetune does."""
     data_dir = Path(data_dir)
     runs = Path(runs) if runs is not None else data_dir / "runs" / "gatv2"
     demo = _demo_training()
-    child_settings = {**_CHILD_SETTINGS, "disease": demo["disease"]}
+    base_settings = dict(demo["base"])
+    if base_model_spec is not None:
+        base_settings["model_spec"] = dict(base_model_spec)
     base_run = runs / BASE_RUN
     _train(data_dir=str(data_dir), run_dir=str(base_run), learning_stage="base",
-           num_epochs=1, device="cpu", save_top_k=1, **demo["base"])
+           num_epochs=1, device="cpu", save_top_k=1, **base_settings)
     base = base_run / "checkpoints" / "last.pt"
     out: Dict[str, Path] = {"data_dir": data_dir, "base": base}
     for task in tasks:
@@ -115,11 +167,13 @@ def train_children(data_dir: Path, tasks: Sequence[str] = ("disease",), *,
                 sys.path.insert(0, str(_SCRIPTS))
             from derive_task_fixture import derive
 
-            derive(data_dir, distractors=4)
+            from scripts.setup_demo import DEMO_FIXTURE_DISTRACTORS
+
+            derive(data_dir, distractors=DEMO_FIXTURE_DISTRACTORS)
         child_run = runs / CHILD_RUNS[task]
         _train(data_dir=str(data_dir), run_dir=str(child_run), learning_stage="finetune",
                task=task, finetune_from=str(base), num_epochs=1, device="cpu", save_top_k=1,
-               **child_settings[task])
+               **demo[task])
         out[task] = child_run / "checkpoints" / "last.pt"
     return out
 
@@ -173,6 +227,6 @@ def serve(trained: Dict[str, Path], task: str = "disease", **kwargs: Any) -> Any
                                  data_dir=str(data_dir), **{"device": "cpu", **kwargs})
 
 
-__all__ = ["BASE_RUN", "CHILD_RUNS", "RULES_1_RETIRED_SETTINGS", "demo_fixture",
+__all__ = ["BASE_RUN", "CHILD_RUNS", "RULES_1_RETIRED_SETTINGS", "as_rules_1", "demo_fixture",
            "finetune_demo_base", "serve", "small_base_spec", "train_children",
            "workspace_fixture"]

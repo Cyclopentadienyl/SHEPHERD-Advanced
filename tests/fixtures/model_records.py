@@ -1,5 +1,5 @@
 """
-Recorded test results beside listed checkpoints, for the Models page.
+Recorded results beside listed checkpoints, for the Models page.
 =====================================================================
 Research › Models (`src/webui/components/models_page.py`) reads what a listed
 checkpoint's ledger holds and what the cohort version's report store says of

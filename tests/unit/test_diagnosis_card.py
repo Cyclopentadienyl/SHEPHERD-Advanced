@@ -354,7 +354,7 @@ def test_a_failed_read_keeps_the_last_known_status_grey_and_never_current(root):
     assert 'title="timed out after 5 s"' in body
     assert "last known 10:14:05 UTC · not current" in body
     assert "verified</span>" not in body          # no ✓ on a last known identity
-    assert "Recorded tests: not read" in body
+    assert "Recorded results: not read" in body
     assert card.time_html(failed) == ""
     assert not card.run_blocked(failed)
 
@@ -464,7 +464,7 @@ def test_a_queued_refresh_reads_the_recorded_tests_again_without_opening_the_che
     from src.utils import checkpoint_io
 
     first = _state(root)
-    assert "Recorded tests: no ledger" in card.body_html(first)
+    assert "Recorded results: no ledger" in card.body_html(first)
     ledger = root["workspace"] / "runs" / "gatv2" / RUN / "checkpoints" / "evaluations.json"
     ledger.write_text("{not json")
 
@@ -476,12 +476,12 @@ def test_a_queued_refresh_reads_the_recorded_tests_again_without_opening_the_che
     # The timer reads the status alone: its answer is the first read's.
     ticked = card.advance(first, _status(root), None, now=later, operator=True, d8_short=None,
                           open_checkpoints=False)
-    assert "Recorded tests: no ledger" in card.body_html(ticked)
+    assert "Recorded results: no ledger" in card.body_html(ticked)
     # Diagnosis shown again (a queued refresh, not ↻): the ledger is read again.
     shown = card.advance(ticked, _status(root), None, now=later, operator=True, d8_short=None,
                          open_checkpoints=True)
     body = card.body_html(shown)
-    assert "Recorded tests: ledger not readable" in body and "no ledger" not in body
+    assert "Recorded results: ledger not readable" in body and "no ledger" not in body
     assert "checked 13:14:05" in card.time_html(shown)
     # What the checkpoint records is kept (it was not opened again).
     assert shown["facts"]["trained"] == first["facts"]["trained"]
@@ -498,7 +498,7 @@ def test_the_normal_card_names_the_model_its_fingerprint_and_its_states(root):
     # A disease model uses no SP table, so it is not missing one.
     assert "synthetic data" in body and "no SP table" not in body
     assert "no trained model" not in body and "unverified" not in body
-    assert "Recorded tests: no ledger" in body
+    assert "Recorded results: no ledger" in body
 
 
 def test_mode_chips_appear_only_when_true(root):
@@ -761,7 +761,7 @@ def test_no_registry_is_said_without_a_path(root, tmp_path, monkeypatch):
     registry = tmp_path / "reg"
     registry.mkdir()
     monkeypatch.setenv("SHEPHERD_REGISTRY", str(registry))
-    said = card.redacted(f"the registry {registry} holds no cohort version 'x' (no "
+    said = card.redacted(f"the registry {registry} holds no version 'x' (no "
                          f"{registry}/versions/x); see /etc/shepherd/notes.txt")
-    assert said == ("the registry <registry> holds no cohort version 'x' (no "
+    assert said == ("the registry <registry> holds no version 'x' (no "
                     "<registry>/versions/x); see a server path")

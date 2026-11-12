@@ -245,8 +245,7 @@ class DiseaseTask:
 
     def training_step(self, model: Any, batch: TaskBatch, device: torch.device) -> StepResult:
         lp = batch.lp.to(device)
-        z = model.node_vectors_sampled(lp.node_ids, lp.edge_index, lp.nodes_per_hop,
-                                       lp.edges_per_hop, edge_type=lp.edge_type)
+        z = lp.node_vectors(model)
         head = model.task_head
         patients = patient_vectors(model, z, batch.phenotype_index.to(device),
                                    batch.phenotype_mask.to(device))
@@ -267,7 +266,7 @@ class DiseaseTask:
         """Every case against every disease of the view (U6, E3), by the
         full-view rule (§2.8, G4), through the shared scorer."""
         z = full_view_vectors(model, self.full_edges, self.full_relations, device,
-                              self.chunk_size)
+                              self.chunk_size, node_type=self.view.node_type)
         return rank_cases(model, z, cases, self.diseases)
 
     def validate(self, model: Any, device: torch.device) -> Dict[str, Any]:
@@ -416,8 +415,7 @@ class GeneTask:
 
     def training_step(self, model: Any, batch: GeneBatch, device: torch.device) -> StepResult:
         lp = batch.lp.to(device)
-        z = model.node_vectors_sampled(lp.node_ids, lp.edge_index, lp.nodes_per_hop,
-                                       lp.edges_per_hop, edge_type=lp.edge_type)
+        z = lp.node_vectors(model)
         spec = model.task_head.spec
         sp, defined = case_sp(self.distances, batch.phenotype_view, batch.phenotype_mask,
                               batch.gene_view, batch.gene_mask, spec.gene)
@@ -454,7 +452,7 @@ class GeneTask:
                    ) -> List[QueryOutcome]:
         """Each case's own list (no upsampling) by the full-view rule (§2.8, G4)."""
         z = full_view_vectors(model, self.full_edges, self.full_relations, device,
-                              self.chunk_size)
+                              self.chunk_size, node_type=self.view.node_type)
         return rank_gene_cases(model, z, cases, self.distances, self.neighbours)
 
     def validate(self, model: Any, device: torch.device) -> Dict[str, Any]:
@@ -562,8 +560,7 @@ class PatientsTask:
 
     def training_step(self, model: Any, batch: PatientBatch, device: torch.device) -> StepResult:
         lp = batch.lp.to(device)
-        z = model.node_vectors_sampled(lp.node_ids, lp.edge_index, lp.nodes_per_hop,
-                                       lp.edges_per_hop, edge_type=lp.edge_type)
+        z = lp.node_vectors(model)
         spec = model.task_head.spec
         patients = patient_vectors(model, z, batch.phenotype_index.to(device),
                                    batch.phenotype_mask.to(device))
@@ -586,7 +583,7 @@ class PatientsTask:
                    ) -> List[QueryOutcome]:
         """Each patient against every other one of `cases` (E1), full view (G4)."""
         z = full_view_vectors(model, self.full_edges, self.full_relations, device,
-                              self.chunk_size)
+                              self.chunk_size, node_type=self.view.node_type)
         return rank_patients(model, z, cases, cases, unranked=self.val_unranked)
 
     def validate(self, model: Any, device: torch.device) -> Dict[str, Any]:

@@ -71,13 +71,30 @@ finite number is null, and a ``contested`` description whose details fail
 validation is shown contested without them. Investigation notes are not shown
 here, nor by the Models page; only the Test page lists them (BACKLOG 40).
 
-**Aggregates only** (D7). A record is shown as its counts, metrics, relation
-states, R10 states and counts, environment class and GPU, dataset origin,
-registration, its run, digests and group description (field names, run ids and
-values; never a problem's words, which may name a server path: an unreadable
-record's reason is built from field names and fixed words only). No path (a record's R10
-evidence paths among them), no case id, no rank; a ledger problem names the
-file, never its directory.
+**Each record is read by the one reader, by its data kind**
+(`src.api.services.record_views`, moved there from this module in research
+comparison Stage 8): a supplied cohort version's as `RecordView`, a KG edge
+set's as `KgEdgesRecordView` (its exposure read apart from the result), a
+generated split's as `GeneratedRecordView`, each with this route's group
+description (`LoadedRecordView` and the rest, told apart by ``cohort.kind``).
+A record whose kind this build does not read is listed in
+``unreadable_records``, naming the field and never its value, and hides no
+other record.
+
+**Aggregates only** (D7). A record is shown as its view holds it (counts,
+metrics, relation states, R10 states and counts, environment class, GPU and
+native build identity, every recorded fact of each named component
+(``components``, each text through the one D7 redaction, which replaces an
+absolute path that starts its own word: `run_environment.recorded_components`;
+a component's reader records no path, `ComponentReader`), dataset origin,
+registration, its run and digests) and
+its group description (field names, run ids and values; never a problem's
+words, which may name a server path). No path (a record's R10 evidence paths
+among them), no case id, no rank; a ledger problem names the file, never its
+directory. A KG edge set's exposure is shown by its definition version, state,
+reading, counts and sources' identities; its reason and its caveat stay in the
+ledger (the surfaces say the caveat in this build's words,
+`caveats.EXPOSURE_CAVEAT`).
 
 **Expected failures are states; nothing else is swallowed.** A ledger that cannot
 be read as a whole is ``ledger_not_read`` with its reason, and none of its
@@ -86,13 +103,11 @@ is still read, its records naming a run shown and the others listed. A record
 for these weights that does not have the shape registration writes, after a
 hand edit (the sanctioned correction path), is not raised (a 500 here would
 take the model status with it) and never shown as a result: **it is listed in
-``unreadable_records``** (K8-6e.1; `read_records`, the one listing every reader
-uses) by its index in the ledger, its registration sequence, report digest and
-run where it still carries them readably, and the reason in one line of at most
-300 characters that names the refused fields by their path in the ledger
-record, never their values (`unreadable_reason`). ``records_not_shown`` keeps its meaning and equals the
-list's length. The server log says the same line with the index. Any other
-exception is a defect and reaches the client as one.
+``unreadable_records``** (K8-6e.1; `record_views.read_records`, the one listing
+every reader uses) with its index, what identifies it and the reason in one
+bounded line naming fields, never values. ``records_not_shown`` keeps its
+meaning and equals the list's length. The server log says the same line with
+the index. Any other exception is a defect and reaches the client as one.
 
 No write, no `find_checkpoint`, no `torch.load`.
 
@@ -102,40 +117,28 @@ from __future__ import annotations
 
 import logging
 import math
-from collections.abc import Sequence
 from pathlib import Path
-from typing import (
-    TYPE_CHECKING,
-    Annotated,
-    Any,
-    Callable,
-    Dict,
-    Iterable,
-    List,
-    Literal,
-    Optional,
-    Tuple,
-)
+from typing import TYPE_CHECKING, Annotated, Any, Callable, Dict, List, Literal, Optional, Union
 
 from fastapi import APIRouter
-from pydantic import Field, field_validator, model_validator
+from pydantic import Discriminator, Field, Tag, model_validator
 from starlette.concurrency import run_in_threadpool
 
-from src.api.routes.diagnose import _SHA256, _Strict
-from src.evaluation.sidecar import (
-    LEDGER_FILENAME,
-    REGISTERED_RELATIONS,
-    RUN_ID_PATTERN,
-    RecordIdentity,
-    environment_class,
-    indexed_records_for,
-    possible_overlaps,
-    read_ledger,
-    record_identities,
+from src.api.services.record_views import (
+    GeneratedRecordView,
+    KgEdgesRecordView,
+    RecordView,
+    UnreadableRecord,
+    _Count,
+    _Digest,
+    _Metric,
+    _Text,
+    _view_kind,
+    ledger_problem,
+    read_records,
 )
-# How long an unreadable record's reason may be: `problem_line`'s own bound,
-# so the line it gives always fits the field.
-from src.utils.checkpoint_paths import _PROBLEM_LIMIT as _REASON_LIMIT
+from src.api.services.response_models import StrictModel as _Strict
+from src.evaluation.sidecar import LEDGER_FILENAME, read_ledger
 
 if TYPE_CHECKING:
     from src.utils.fingerprint import ReadIdentity
@@ -150,16 +153,6 @@ LEDGER_WHERE = "beside the loaded checkpoint"
 
 #: States with no checkpoint digest, and so no ledger to look in.
 _NOTHING_TO_LOOK_UP = ("no_model",)
-#: R10 states that carry a count (spec §3.2); every other state carries none.
-_COUNTED_R10_STATES = ("overlap", "none")
-
-_Count = Annotated[int, Field(strict=True, ge=0)]
-_Metric = Annotated[float, Field(strict=True, allow_inf_nan=False)]
-_Digest = Annotated[str, Field(pattern=_SHA256)]
-_Text = Annotated[str, Field(min_length=1)]
-_RunId = Annotated[str, Field(pattern=f"^{RUN_ID_PATTERN.pattern}$")]
-_Sequence = Annotated[int, Field(strict=True, ge=1)]
-_R10State = Literal["overlap", "none", "unverifiable", "no_validation_inputs_recorded"]
 
 
 # =============================================================================
@@ -178,193 +171,6 @@ class LedgerView(_Strict):
     problem: Optional[str] = Field(
         ..., description="Why the ledger was not read, naming the file and not its "
         "directory; null otherwise")
-
-
-class RecordCohort(_Strict):
-    """The registered cohort version a result was measured on."""
-
-    label: _Text
-    role: _Text
-    kind: Literal["supplied"]
-    samples_sha256: _Digest
-    source_sha256: _Digest
-    version_manifest_sha256: _Digest = Field(
-        ..., description="SHA-256 of the cohort version's manifest (`cohort.json`) the "
-        "run read: the record's cohort digest, a key field. A label is unique only "
-        "within one registry, so two imports of one label are two versions, and "
-        "differ here")
-
-
-class RecordCounts(_Strict):
-    """The cohort's denominators (D6): every source case is ranked or excluded."""
-
-    source_cases: _Count
-    ranked_eligible: _Count
-    excluded: Dict[str, _Count]
-    n_excluded: _Count
-
-    @model_validator(mode="after")
-    def _the_counts_add_up(self) -> "RecordCounts":
-        # The cohort version's own equalities (spec §2.3). Shown counts that do
-        # not add up would give a coverage that no cohort had.
-        if sum(self.excluded.values()) != self.n_excluded:
-            raise ValueError("the exclusion counts do not add up to n_excluded")
-        if self.ranked_eligible + self.n_excluded != self.source_cases:
-            raise ValueError("ranked_eligible and n_excluded do not add up to source_cases")
-        return self
-
-
-def _check_r10_counts(state: str, k: Optional[int], n: int, *more: Optional[int]) -> None:
-    """A count exactly where the state has one (spec §3.2): never a number for
-    an unverifiable label, never a missing one for a counted label."""
-    counts = (k, *more)
-    if state not in _COUNTED_R10_STATES:
-        if any(value is not None for value in counts):
-            raise ValueError(f"an R10 label in state {state!r} carries a count")
-        return
-    if any(value is None for value in counts):
-        raise ValueError(f"an R10 label in state {state!r} has no count")
-    if k > n:
-        raise ValueError("an R10 label counts more than its denominator")
-    if state == "none" and any(counts):
-        raise ValueError("an R10 label in state 'none' counts an overlap")
-    if state == "overlap" and not all(counts):
-        raise ValueError("an R10 label in state 'overlap' counts none")
-
-
-class R10Evidence(_Strict):
-    """Whether the inputs the checkpoint records were found; the file's path and
-    any read error stay in the ledger. "search_incomplete" (R10 definition
-    version 2): no file that was read holds them, and a place that may could
-    not be read. A version-1 record's states mean what they meant then."""
-
-    state: Literal["found", "not_found", "unreadable", "not_recorded", "search_incomplete"]
-
-
-class R10DiseaseOverlap(_Strict):
-    """``k`` of ``n`` distinct test diseases, and the test ``cases`` among them."""
-
-    state: _R10State
-    k: Optional[_Count]
-    n: _Count
-    cases: Optional[_Count]
-
-    @model_validator(mode="after")
-    def _counts_follow_the_state(self) -> "R10DiseaseOverlap":
-        _check_r10_counts(self.state, self.k, self.n, self.cases)
-        return self
-
-
-class R10PhenotypeSetOverlap(_Strict):
-    """``k`` of ``n`` test cases whose disease and phenotype set occur in scope."""
-
-    state: _R10State
-    k: Optional[_Count]
-    n: _Count
-
-    @model_validator(mode="after")
-    def _counts_follow_the_state(self) -> "R10PhenotypeSetOverlap":
-        _check_r10_counts(self.state, self.k, self.n)
-        return self
-
-
-class R10Scope(_Strict):
-    evidence: R10Evidence
-    disease_overlap: R10DiseaseOverlap
-    phenotype_set_overlap: R10PhenotypeSetOverlap
-
-
-class R10View(_Strict):
-    """R10's four labels, by scope."""
-
-    training: R10Scope
-    validation: R10Scope
-
-    @model_validator(mode="after")
-    def _only_validation_can_be_unrecorded(self) -> "R10View":
-        # A checkpoint with no training inputs recorded is not the pipeline's,
-        # which makes its training labels unverifiable (spec §0.16), never this.
-        for label in (self.training.disease_overlap, self.training.phenotype_set_overlap):
-            if label.state == "no_validation_inputs_recorded":
-                raise ValueError("a training label is 'no_validation_inputs_recorded'")
-        return self
-
-
-class RecordGpu(_Strict):
-    """The GPU a CUDA run used, each fact null where it could not be read."""
-
-    name: Optional[str]
-    driver: Optional[str]
-
-
-class RecordRegistration(_Strict):
-    sequence: Annotated[int, Field(strict=True, ge=1)]
-    registered_at: _Text
-
-
-class RecordView(_Strict):
-    """One recorded result, as a person reads it: aggregates and digests only."""
-
-    cohort: RecordCohort
-    counts: RecordCounts
-    mode: _Text = Field(
-        ..., description="the record's measurement mode (`scoring.mode`), as recorded: the "
-        "protocol its report names. This build runs disease, gene and patients_like_me, each "
-        "for a finetuned model's learning stage and task head (what the Test page runs); a "
-        "record of any other mode is read and returned the same way. A surface labels each "
-        "record by its own mode")
-    score_semantics: _Text = Field(
-        ..., description="the record's `scoring.score_semantics`, as recorded: what its score "
-        "is, in its measurement's own words (a task record: the task head's score). Returned "
-        "whole, never split or interpreted")
-    metrics: Dict[str, _Metric] = Field(
-        ..., description="the record's metrics, as recorded: each name as its measurement "
-        "wrote it, with its value. A task mode's: `pooled_mrr`, `pooled_top<k>`, "
-        "`macro_recall@<k>`, `macro_precision@<k>`, `macro_mrr`, `best_positive_mrr` and "
-        "`conservative_pooled_mrr` (each left out when it has no case to average), and "
-        "`coverage`, the share of the cases measured that were ranked. None of them is the "
-        "Trainer's validation figure")
-    n_ranked: _Count = Field(
-        ..., description="the record's `n_ranked`, as recorded: for a task mode, the cases "
-        "ranked")
-    relations: Dict[str, Literal["verified", "not_applicable"]]
-    r10: R10View
-    environment_class: str
-    deterministic_algorithms: Optional[bool] = Field(
-        ..., description="whether deterministic algorithms were on in the measuring run, as the "
-        "record's regime says (a CPU run's environment class does not carry it); null when the "
-        "record does not say")
-    gpu: Optional[RecordGpu] = Field(..., description="null for a run off CUDA")
-    dataset_origin: Literal["files", "synthetic"]
-    scoring_semantics_digest: _Digest
-    measurement_semantics_digest: _Digest
-    registration: RecordRegistration
-    run_id: Optional[_RunId] = Field(
-        ..., description="The run the record was registered from: its run directory in the "
-        "version's report store (time, checkpoint and a random suffix; never a path). null for "
-        "a record written before each run had its own record (shown as \"not recorded\"): "
-        "which run it came from was never recorded")
-    historical_overlap: List[_Sequence] = Field(
-        ..., description="Registration sequences of the records this one may overlap, derived "
-        "from the ledger: for a record naming its run, the records merged before each run had "
-        "its own record that hold its report; for such a merged record, the records naming a "
-        "run whose report it holds. Not confirmed: whether they are one execution was never "
-        "recorded, and they are never counted as two independent runs. Empty when none")
-    n_corroborating: _Count = Field(
-        ..., description="Reports merged into this record before each run had its own record "
-        "(K8-6r.2); 0 for every record that names its run. A merged report is not a confirmed "
-        "independent run")
-    source_artifact_digest: _Digest = Field(
-        ..., description="SHA-256 of the report the record was built from")
-
-    @field_validator("relations")
-    @classmethod
-    def _a_registered_results_states(cls, value: Dict[str, str]) -> Dict[str, str]:
-        # Registration refuses any other states (`build_record`), so a record
-        # carrying them was edited into a claim no measurement made.
-        if value != REGISTERED_RELATIONS:
-            raise ValueError("the relation states are not a registered result's")
-        return value
 
 
 class ContestRun(_Strict):
@@ -411,38 +217,39 @@ class RecordContest(_Strict):
 
 
 class LoadedRecordView(RecordView):
-    """A record as this route shows it: `RecordView` and its group's
-    description."""
+    """A record on a supplied cohort version as this route shows it:
+    `RecordView` and its group's description."""
 
     contest: RecordContest
 
 
-class UnreadableRecord(_Strict):
-    """A ledger record for these weights that the shared check (`_record_view`)
-    cannot read as a result (K8-6e.1, policy rev 15 and rev 16): named by its
-    place in the ledger and, where it still carries them readably, its
-    registration sequence, report digest and run, with the reason in one
-    bounded line that names the refused fields and never their values. It is
-    never a result: it carries no metric, count or state. The ledger keeps it
-    as written."""
+class LoadedKgEdgesRecordView(KgEdgesRecordView):
+    """A record on a KG edge set as this route shows it: `KgEdgesRecordView`
+    and its group's description."""
 
-    index: _Count = Field(
-        ..., description="Its place in the ledger's records list, counted from 0: the number "
-        "the writer's refusals name a record by")
-    sequence: Optional[_Sequence] = Field(
-        ..., description="Its registration sequence, or null when it carries none that reads "
-        "(not an integer of at least 1)")
-    source_artifact_digest: Optional[_Digest] = Field(
-        ..., description="SHA-256 of the report it names, or null when it carries none that "
-        "reads")
-    run_id: Optional[_RunId] = Field(
-        ..., description="The run it names, or null when it names none (a record written before "
-        "each run had its own record) or its run cannot be read")
-    reason: Annotated[str, Field(min_length=1, max_length=_REASON_LIMIT)] = Field(
-        ..., description="Why it cannot be read as a result: the refused fields (at most three, "
-        "then how many more), each by its path in the ledger record, and what is wrong with "
-        "each, never their values (a key the record itself carries inside an object, such as a "
-        "metric's name, is named as written); one line")
+    contest: RecordContest
+
+
+class LoadedGeneratedRecordView(GeneratedRecordView):
+    """A record on a generated split as this route shows it:
+    `GeneratedRecordView` and its group's description."""
+
+    contest: RecordContest
+
+
+#: Each kind's view as this route shows it, by the view's class.
+_LOADED_VIEWS: Dict[type, type] = {
+    RecordView: LoadedRecordView,
+    KgEdgesRecordView: LoadedKgEdgesRecordView,
+    GeneratedRecordView: LoadedGeneratedRecordView,
+}
+
+#: Any kind's record as this route shows it, told apart by ``cohort.kind``.
+AnyLoadedRecordView = Annotated[
+    Union[Annotated[LoadedRecordView, Tag("supplied")],
+          Annotated[LoadedKgEdgesRecordView, Tag("kg_edges")],
+          Annotated[LoadedGeneratedRecordView, Tag("generated")]],
+    Discriminator(_view_kind)]
 
 
 class LoadedModelEvaluations(_Strict):
@@ -460,9 +267,10 @@ class LoadedModelEvaluations(_Strict):
         ..., description="The digest the ledger was filtered by, from the loaded "
         "model's checkpoint read; null when there is none")
     ledger: Optional[LedgerView]
-    records: List[LoadedRecordView] = Field(
+    records: List[AnyLoadedRecordView] = Field(
         ..., description="Every readable record, sorted by registration sequence, each with "
-        "its run (null: not recorded) and its group's description")
+        "its run (null: not recorded) and its group's description, read by its data kind "
+        "(`cohort.kind`: supplied, kg_edges or generated)")
     records_not_shown: _Count = Field(
         ..., description="How many records for these weights cannot be read as a result "
         "(they do not have the shape registration writes, or their run identity cannot be "
@@ -498,128 +306,8 @@ class LoadedModelEvaluations(_Strict):
 # =============================================================================
 # Reading
 # =============================================================================
-#: A step of a record that is not there: no field accepts it, so validation
-#: refuses the record instead of a lookup raising `KeyError` or `TypeError`.
-_NOT_THERE = object()
-
-
-def _at(value: Any, *keys: str) -> Any:
-    """``value[k1][k2]...``, or `_NOT_THERE` where a step is not an object or
-    lacks its key."""
-    for key in keys:
-        if not isinstance(value, dict) or key not in value:
-            return _NOT_THERE
-        value = value[key]
-    return value
-
-
-def _pick(value: Any, fields: Iterable[str]) -> Any:
-    """The named fields of an object, the rest left behind (an evidence path, the
-    cohort's graph and mapping); a value that is not an object is passed on for
-    validation to refuse."""
-    if not isinstance(value, dict):
-        return value
-    return {name: value[name] for name in fields if name in value}
-
-
-def _record_view(record: Dict[str, Any], identity: Optional[RecordIdentity] = None,
-                 overlaps: Tuple[int, ...] = ()) -> RecordView:
-    """A ledger record as `RecordView`, or a ``ValueError`` saying why not.
-
-    The view picks its fields out of the record by name, so what a record carries
-    beyond them never reaches the response, and validates every one of them, so a
-    record of the wrong shape is refused here and never shown half-read.
-
-    ``identity`` is how its ledger's boundary reads it (`record_identities`):
-    a record whose identity cannot be read is refused with that reason, a
-    historical one has ``run_id`` null. ``overlaps`` are its possible overlaps
-    (`possible_overlaps`). Every reader of a ledger passes both; without
-    ``identity`` (a record read alone, outside its ledger) its own ``run_id``
-    is shown as written.
-
-    A field taken from another place in the record is listed in
-    `_RECORD_PATHS`, so a refusal names the record's own path.
-    """
-    if identity is not None and identity.problem is not None:
-        raise ValueError(identity.problem)
-    run_id = (identity.run_id if identity is not None
-              else record.get("run_id") if "run_id" in record else None)
-    corroborating = record.get("corroborating_reports")
-    if not isinstance(corroborating, list):
-        raise ValueError("its corroborating_reports is not a list")
-    if record.get("cohort_role") != _at(record, "cohort", "role"):
-        raise ValueError("its cohort_role is not its cohort's role")
-    r10 = record.get("r10")
-    # The version's manifest digest is the record's key field, not a field of its
-    # cohort block; a record lacking it is refused like any other missing field.
-    cohort = _pick(_at(record, "cohort"), RecordCohort.model_fields)
-    if isinstance(cohort, dict):
-        cohort = {**cohort, "version_manifest_sha256": _at(record, "cohort_digest")}
-    return RecordView(
-        cohort=cohort,
-        counts=_pick(_at(record, "cohort", "counts"), RecordCounts.model_fields),
-        mode=_at(record, "scoring", "mode"),
-        score_semantics=_at(record, "scoring", "score_semantics"),
-        metrics=_at(record, "metrics"),
-        n_ranked=_at(record, "n_ranked"),
-        relations=_at(record, "relations"),
-        r10={
-            scope: {
-                "evidence": _pick(_at(r10, scope, "evidence"), R10Evidence.model_fields),
-                "disease_overlap": _pick(_at(r10, scope, "disease_overlap"),
-                                         R10DiseaseOverlap.model_fields),
-                "phenotype_set_overlap": _pick(_at(r10, scope, "phenotype_set_overlap"),
-                                               R10PhenotypeSetOverlap.model_fields),
-            }
-            for scope in R10View.model_fields
-        },
-        environment_class=environment_class(record),
-        deterministic_algorithms=_recorded_determinism(record),
-        gpu=_pick(_at(record, "environment", "facts", "gpu"), RecordGpu.model_fields),
-        dataset_origin=_at(record, "dataset_record", "origin"),
-        scoring_semantics_digest=_at(record, "scoring_semantics_digest"),
-        measurement_semantics_digest=_at(record, "measurement_semantics_digest"),
-        registration=_pick(_at(record, "registration"), RecordRegistration.model_fields),
-        run_id=run_id,
-        historical_overlap=list(overlaps),
-        n_corroborating=len(corroborating),
-        source_artifact_digest=_at(record, "source_artifact_digest"),
-    )
-
-
-def _recorded_determinism(record: Dict[str, Any]) -> Optional[bool]:
-    """The record's own setting for deterministic algorithms (its regime), or
-    None when it records none: read from the ledger, so it opens no checkpoint
-    and a read-only request sees what an operator sees (M5-3)."""
-    regime = record.get("regime")
-    flag = regime.get("deterministic_algorithms") if isinstance(regime, dict) else None
-    return flag if type(flag) is bool else None
-
-
 def _ledger_view(sha256: Optional[str] = None, problem: Optional[str] = None) -> LedgerView:
     return LedgerView(file=LEDGER_FILENAME, where=LEDGER_WHERE, sha256=sha256, problem=problem)
-
-
-def _ledger_problem(exc: Exception, ledger_path: Path) -> str:
-    """Why the ledger was not read, with its directory left out: the response
-    names no path on the server, and the file is the one beside the checkpoint.
-
-    **An `OSError` is described by its type and its error text only, never
-    `str(exc)`,** which quotes the filename with ``repr``: a directory name with
-    a backslash, a newline or a byte that is not UTF-8 is escaped there, the
-    quoted text no longer equals the path, and replacing the path would leave
-    the server's directory in the answer. `read_ledger`'s own refusals name the
-    path as written, so replacing it is enough for them.
-    """
-    if isinstance(exc, OSError):
-        if exc.strerror:
-            reason = f": {exc.strerror}"
-        elif exc.errno is not None:
-            reason = f": errno {exc.errno}"
-        else:
-            reason = ""
-        return f"{LEDGER_FILENAME} could not be read ({type(exc).__name__}{reason})"
-    return str(exc).replace(str(ledger_path), LEDGER_FILENAME)
 
 
 def _recorded_results(read: "ReadIdentity") -> LoadedModelEvaluations:
@@ -639,7 +327,7 @@ def _recorded_results(read: "ReadIdentity") -> LoadedModelEvaluations:
     except (OSError, ValueError) as exc:
         return LoadedModelEvaluations(
             state="ledger_not_read", checkpoint_sha256=digest,
-            ledger=_ledger_view(problem=_ledger_problem(exc, ledger_path)),
+            ledger=_ledger_view(problem=ledger_problem(exc, ledger_path)),
             records=[], records_not_shown=0, unreadable_records=[],
         )
     if ledger_sha is None:
@@ -653,130 +341,14 @@ def _recorded_results(read: "ReadIdentity") -> LoadedModelEvaluations:
         logger.warning("A ledger record for checkpoint %s... is not shown: the ledger's record "
                        "%d: %s", digest[:12], item.index, item.reason)
     contest = _contest_states([record for record, _ in viewed])
-    shown = [LoadedRecordView(**dict(view), contest=contest(record)) for record, view in viewed]
+    shown = [_LOADED_VIEWS[type(view)](**dict(view), contest=contest(record))
+             for record, view in viewed]
     shown.sort(key=lambda view: view.registration.sequence)
     return LoadedModelEvaluations(
         state="records" if shown or unreadable else "no_records",
         checkpoint_sha256=digest, ledger=_ledger_view(sha256=ledger_sha),
         records=shown, records_not_shown=len(unreadable), unreadable_records=unreadable,
     )
-
-
-def unreadable_reason(exc: ValueError) -> str:
-    """Why the shared check refused a record, as one bounded line that names
-    the refused fields and never their values (K8-6e.1).
-
-    For pydantic's refusal, at most three of its errors, each "<field path>:
-    missing" (a field the record lacks, `_NOT_THERE`) or "<field path>: <what
-    is wrong>" (pydantic's words, its "Value error, " prefix left out), then
-    how many more; the input it was given is never written (pydantic's own
-    text carries it, with a documentation link, over several lines). **The
-    field path is the ledger record's** (`_record_path`), not the API view's
-    name for it: the key a hand edit of the ledger corrects. A key the record
-    itself carries inside an object (a metric's name, an exclusion reason) is
-    a step of that path and is named as written, as a readable record's
-    metric names are shown. For any other `ValueError`, its own words:
-    `_record_view`'s and the shared checks' refusals name a field, never its
-    value. Either way through `problem_line`: one line, each character that
-    is not printable escaped (a field name is a key a hand edit may have
-    written), at most 300 characters."""
-    from pydantic import ValidationError
-
-    from src.utils.checkpoint_paths import problem_line
-
-    if isinstance(exc, ValidationError):
-        errors = exc.errors(include_url=False)
-        parts = []
-        for error in errors[:3]:
-            where = ".".join(_printable(step) for step in _record_path(error.get("loc") or ())
-                             ) or "the record"
-            if error.get("type") == "missing" or error.get("input") is _NOT_THERE:
-                parts.append(f"{where}: missing")
-                continue
-            words = str(error.get("msg") or "is not valid")
-            if words.startswith("Value error, "):
-                words = words[len("Value error, "):]
-            parts.append(f"{where}: {words}")
-        if len(errors) > 3:
-            parts.append(f"{len(errors) - 3} more")
-        text = "; ".join(parts)
-    else:
-        text = str(exc)
-    return problem_line(text) or "it does not have the shape registration writes"
-
-
-#: Where each field `_record_view` takes from another place sits in the ledger
-#: record, by the view's path: a reason names the record's own path, the key a
-#: hand edit of the ledger corrects. Every other field has one path in both.
-_RECORD_PATHS: Dict[Tuple[str, ...], Tuple[str, ...]] = {
-    ("cohort", "version_manifest_sha256"): ("cohort_digest",),
-    ("counts",): ("cohort", "counts"),
-    ("mode",): ("scoring", "mode"),
-    ("score_semantics",): ("scoring", "score_semantics"),
-    ("gpu",): ("environment", "facts", "gpu"),
-    ("dataset_origin",): ("dataset_record", "origin"),
-}
-
-
-def _record_path(loc: Sequence[Any]) -> Tuple[Any, ...]:
-    """Pydantic's location in `RecordView` as the path in the ledger record
-    (`_RECORD_PATHS`): the longest view path it starts with is replaced."""
-    loc = tuple(loc)
-    for size in (2, 1):
-        moved = _RECORD_PATHS.get(loc[:size]) if len(loc) >= size else None
-        if moved is not None:
-            return moved + loc[size:]
-    return loc
-
-
-def _printable(step: Any) -> str:
-    """One step of a field path as text, each character that is not
-    printable escaped, so a newline in a hand-written key cannot end the line."""
-    text = str(step)
-    return text if text.isprintable() else "".join(
-        c if c.isprintable() else repr(c)[1:-1] for c in text)
-
-
-def read_records(ledger: Dict[str, Any], checkpoint_digest: str
-                 ) -> Tuple[List[Tuple[Dict[str, Any], RecordView]], List[UnreadableRecord]]:
-    """**The one listing of a ledger's records for one set of weights**
-    (K8-6e.1), for every reader (this route, Models' operator view through
-    the shared model list, `record_evaluation.py --show`): the records the
-    shared check (`_record_view`) reads as results, each with its view, and
-    every other record as an `UnreadableRecord` with its index and reason, in
-    ledger order. Each record's run is read by the file's boundary, and its
-    possible overlaps, from the whole ledger once (`record_reading`).
-
-    Reading one record never waits on or hides another; nothing is repaired,
-    edited or dropped (a record that is not an object, or names no checkpoint
-    digest, belongs to no model: `indexed_records_for` does not give it)."""
-    from src.evaluation.sidecar import _is_digest, _readable_sequence
-
-    read_as = record_reading(ledger)
-    viewed: List[Tuple[Dict[str, Any], RecordView]] = []
-    unreadable: List[UnreadableRecord] = []
-    for index, record in indexed_records_for(ledger, checkpoint_digest):
-        identity, overlaps = read_as[id(record)]
-        try:
-            viewed.append((record, _record_view(record, identity, overlaps)))
-        except ValueError as exc:
-            source = record.get("source_artifact_digest")
-            unreadable.append(UnreadableRecord(
-                index=index, sequence=_readable_sequence(record),
-                source_artifact_digest=source if _is_digest(source) else None,
-                run_id=identity.run_id, reason=unreadable_reason(exc)))
-    return viewed, unreadable
-
-
-def record_reading(ledger: Dict[str, Any]) -> Dict[int, Tuple[RecordIdentity, Tuple[int, ...]]]:
-    """Each record of `ledger`, by ``id()``, with how the file's boundary reads
-    its run (`record_identities`) and its possible overlaps
-    (`possible_overlaps`): the one reading the route and the Models page give
-    `_record_view`. Reads nothing more than the ledger already parsed."""
-    records = ledger.get("records") if isinstance(ledger.get("records"), list) else []
-    return {id(record): (identity, overlaps)
-            for record, identity, overlaps in zip(records, record_identities(ledger),
-                                                  possible_overlaps(ledger))}
 
 
 def _contest_states(records: List[Dict[str, Any]]) -> Callable[[Dict[str, Any]], RecordContest]:
@@ -862,16 +434,15 @@ async def get_loaded_model_evaluations() -> LoadedModelEvaluations:
 
 
 __all__ = [
+    "AnyLoadedRecordView",
     "ContestRun",
     "LEDGER_WHERE",
     "LedgerView",
+    "LoadedGeneratedRecordView",
+    "LoadedKgEdgesRecordView",
     "LoadedModelEvaluations",
     "LoadedRecordView",
     "RecordContest",
-    "RecordView",
-    "UnreadableRecord",
     "get_loaded_model_evaluations",
-    "read_records",
     "router",
-    "unreadable_reason",
 ]

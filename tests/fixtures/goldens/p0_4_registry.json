@@ -1,0 +1,304 @@
+{
+  "versions": {
+    "genes": {
+      "cohort_json_sha256": "4bf2f89e5348b3d7fc29c1b1c1a53b601ba286da2d45551cebc8e2eb22c33f15",
+      "cohort_version_block": {
+        "counts": {
+          "cases_with_lost_terms": 1,
+          "cases_with_repeats": 1,
+          "excluded": {
+            "ground_truth_absent": 2,
+            "phenotype_unmappable": 1
+          },
+          "genes": {
+            "cases_with_candidate_genes": 10,
+            "cases_with_causal_genes": 10,
+            "cases_with_unmapped_causal_genes": 1,
+            "identifiers_listed": 51,
+            "identifiers_repeated": 0,
+            "identifiers_unmappable": 1
+          },
+          "n_excluded": 3,
+          "ranked_eligible": 10,
+          "repeats_removed": 1,
+          "source_cases": 13,
+          "terms_unmappable": 2
+        },
+        "dataset_record_sha256": "9170959de0d57ea33dce4a05393e8f67232bb6332ac1cc879352a3c9a0af4396",
+        "graph": {
+          "edge_indices": "7624169d26decbe534873d25e385817c01485df08e5c6fe3df82222f2c854bec",
+          "kg": "7980bf7d7492f139e92d71cf7cfe971030567a1a3fc79d715b6ef34d8631fae1",
+          "node_features": "19447503128d85ee52aa5482335af850ad2b455d39b74e48d0d6e0f9161b08a9",
+          "num_nodes": "2e747928e24494e04ddb4dd8b2135afbeef63cb5a64172ad4bc24b8b9c509bee"
+        },
+        "label": "demo-genes-1",
+        "manifest_sha256": "4bf2f89e5348b3d7fc29c1b1c1a53b601ba286da2d45551cebc8e2eb22c33f15",
+        "mapping": {
+          "disease_namespace": "MONDO",
+          "partial_phenotypes": "keep",
+          "phenotype_namespace": "HP",
+          "phenotype_normalisation_version": 1
+        },
+        "role": "demo",
+        "samples_sha256": "6e61021ab077cefceb1e958572ec6ec5234944b9437be9d29a406856b7e53d42",
+        "source_format": "shepherd-cases/1",
+        "source_sha256": "f2f888631aecc5d3e259dda074ead6b6c31fb9ae6e802799148d1b5306492622"
+      },
+      "cohort_version_block_sha256": "6211e6c62e9b48e8e43671e8bc92ff443e557902b317179c7c301dfea2b90259",
+      "resolve_version": {
+        "directory": "versions/demo-genes-1",
+        "identity_sha256": "4bf2f89e5348b3d7fc29c1b1c1a53b601ba286da2d45551cebc8e2eb22c33f15",
+        "manifest": {
+          "counts": {
+            "cases_with_lost_terms": 1,
+            "cases_with_repeats": 1,
+            "excluded": {
+              "ground_truth_absent": 2,
+              "phenotype_unmappable": 1
+            },
+            "genes": {
+              "cases_with_candidate_genes": 10,
+              "cases_with_causal_genes": 10,
+              "cases_with_unmapped_causal_genes": 1,
+              "identifiers_listed": 51,
+              "identifiers_repeated": 0,
+              "identifiers_unmappable": 1
+            },
+            "n_excluded": 3,
+            "ranked_eligible": 10,
+            "repeats_removed": 1,
+            "source_cases": 13,
+            "terms_unmappable": 2
+          },
+          "dataset_record": {
+            "hpo": null,
+            "mondo": null,
+            "origin": "synthetic",
+            "sha256": "9170959de0d57ea33dce4a05393e8f67232bb6332ac1cc879352a3c9a0af4396"
+          },
+          "exclusions": [
+            {
+              "case_id": "case-11",
+              "category": "ground_truth_absent",
+              "reasons": [
+                "ground_truth_absent"
+              ],
+              "terms_total": 2,
+              "terms_unmappable": 0
+            },
+            {
+              "case_id": "case-12",
+              "category": "phenotype_unmappable",
+              "reasons": [
+                "phenotype_unmappable"
+              ],
+              "terms_total": 1,
+              "terms_unmappable": 1
+            },
+            {
+              "case_id": "case-13",
+              "category": "ground_truth_absent",
+              "reasons": [
+                "ground_truth_absent",
+                "phenotype_unmappable"
+              ],
+              "terms_total": 1,
+              "terms_unmappable": 1
+            }
+          ],
+          "graph": {
+            "edge_indices": "7624169d26decbe534873d25e385817c01485df08e5c6fe3df82222f2c854bec",
+            "kg": "7980bf7d7492f139e92d71cf7cfe971030567a1a3fc79d715b6ef34d8631fae1",
+            "node_features": "19447503128d85ee52aa5482335af850ad2b455d39b74e48d0d6e0f9161b08a9",
+            "num_nodes": "2e747928e24494e04ddb4dd8b2135afbeef63cb5a64172ad4bc24b8b9c509bee"
+          },
+          "imported": {
+            "at": "2026-10-16T12:00:00Z",
+            "code_revision": {
+              "dirty": false,
+              "modified_tracked": 0,
+              "revision": "2da28cf89d6eb7e31ad28d11f2f03024aa8f03da",
+              "state": "recorded",
+              "untracked": 0
+            }
+          },
+          "label": "demo-genes-1",
+          "mapping": {
+            "disease_namespace": "MONDO",
+            "partial_phenotypes": "keep",
+            "phenotype_namespace": "HP",
+            "phenotype_normalisation_version": 1
+          },
+          "role": "demo",
+          "samples": {
+            "n": 10,
+            "sha256": "6e61021ab077cefceb1e958572ec6ec5234944b9437be9d29a406856b7e53d42"
+          },
+          "schema_version": 1,
+          "source": {
+            "filename": "cases.json",
+            "format": "shepherd-cases/1",
+            "n_cases": 13,
+            "sha256": "f2f888631aecc5d3e259dda074ead6b6c31fb9ae6e802799148d1b5306492622"
+          },
+          "unmappable_terms": {
+            "HP:9999998": 1,
+            "HP:9999999": 2
+          },
+          "what_this_is": "a test cohort version: a source case set mapped to one graph's node indices"
+        },
+        "samples_path": "versions/demo-genes-1/samples.json"
+      },
+      "samples_json_sha256": "6e61021ab077cefceb1e958572ec6ec5234944b9437be9d29a406856b7e53d42",
+      "source_sha256": "f2f888631aecc5d3e259dda074ead6b6c31fb9ae6e802799148d1b5306492622"
+    },
+    "graph": {
+      "cohort_json_sha256": "52b558d38715ca07fa98ece1f84bf36e04c19de4fef148d1cd49b07e6415dbbc",
+      "cohort_version_block": {
+        "counts": {
+          "cases_with_lost_terms": 1,
+          "cases_with_repeats": 1,
+          "excluded": {
+            "ground_truth_absent": 2,
+            "phenotype_unmappable": 1
+          },
+          "n_excluded": 3,
+          "ranked_eligible": 10,
+          "repeats_removed": 1,
+          "source_cases": 13,
+          "terms_unmappable": 2
+        },
+        "dataset_record_sha256": "9170959de0d57ea33dce4a05393e8f67232bb6332ac1cc879352a3c9a0af4396",
+        "graph": {
+          "edge_indices": "7624169d26decbe534873d25e385817c01485df08e5c6fe3df82222f2c854bec",
+          "kg": "7980bf7d7492f139e92d71cf7cfe971030567a1a3fc79d715b6ef34d8631fae1",
+          "node_features": "19447503128d85ee52aa5482335af850ad2b455d39b74e48d0d6e0f9161b08a9",
+          "num_nodes": "2e747928e24494e04ddb4dd8b2135afbeef63cb5a64172ad4bc24b8b9c509bee"
+        },
+        "label": "demo-test-1",
+        "manifest_sha256": "52b558d38715ca07fa98ece1f84bf36e04c19de4fef148d1cd49b07e6415dbbc",
+        "mapping": {
+          "disease_namespace": "MONDO",
+          "partial_phenotypes": "keep",
+          "phenotype_namespace": "HP",
+          "phenotype_normalisation_version": 1
+        },
+        "role": "demo",
+        "samples_sha256": "b0ce50606360d8ae1123b3105cb163cfd1478ee448deeecef80bf95906de546c",
+        "source_format": "shepherd-cases/1",
+        "source_sha256": "25c7c4b8b14ac353d0ce0fa3e2dcf833e335362db35f73e9ee669462cf097f1c"
+      },
+      "cohort_version_block_sha256": "08c79d564fff7f9c5a1fc70d09a487a95feaf8d45ab800c1fdf9d2cc38d126e9",
+      "resolve_version": {
+        "directory": "versions/demo-test-1",
+        "identity_sha256": "52b558d38715ca07fa98ece1f84bf36e04c19de4fef148d1cd49b07e6415dbbc",
+        "manifest": {
+          "counts": {
+            "cases_with_lost_terms": 1,
+            "cases_with_repeats": 1,
+            "excluded": {
+              "ground_truth_absent": 2,
+              "phenotype_unmappable": 1
+            },
+            "n_excluded": 3,
+            "ranked_eligible": 10,
+            "repeats_removed": 1,
+            "source_cases": 13,
+            "terms_unmappable": 2
+          },
+          "dataset_record": {
+            "hpo": null,
+            "mondo": null,
+            "origin": "synthetic",
+            "sha256": "9170959de0d57ea33dce4a05393e8f67232bb6332ac1cc879352a3c9a0af4396"
+          },
+          "exclusions": [
+            {
+              "case_id": "case-11",
+              "category": "ground_truth_absent",
+              "reasons": [
+                "ground_truth_absent"
+              ],
+              "terms_total": 2,
+              "terms_unmappable": 0
+            },
+            {
+              "case_id": "case-12",
+              "category": "phenotype_unmappable",
+              "reasons": [
+                "phenotype_unmappable"
+              ],
+              "terms_total": 1,
+              "terms_unmappable": 1
+            },
+            {
+              "case_id": "case-13",
+              "category": "ground_truth_absent",
+              "reasons": [
+                "ground_truth_absent",
+                "phenotype_unmappable"
+              ],
+              "terms_total": 1,
+              "terms_unmappable": 1
+            }
+          ],
+          "graph": {
+            "edge_indices": "7624169d26decbe534873d25e385817c01485df08e5c6fe3df82222f2c854bec",
+            "kg": "7980bf7d7492f139e92d71cf7cfe971030567a1a3fc79d715b6ef34d8631fae1",
+            "node_features": "19447503128d85ee52aa5482335af850ad2b455d39b74e48d0d6e0f9161b08a9",
+            "num_nodes": "2e747928e24494e04ddb4dd8b2135afbeef63cb5a64172ad4bc24b8b9c509bee"
+          },
+          "imported": {
+            "at": "2026-10-16T12:00:00Z",
+            "code_revision": {
+              "dirty": false,
+              "modified_tracked": 0,
+              "revision": "2da28cf89d6eb7e31ad28d11f2f03024aa8f03da",
+              "state": "recorded",
+              "untracked": 0
+            }
+          },
+          "label": "demo-test-1",
+          "mapping": {
+            "disease_namespace": "MONDO",
+            "partial_phenotypes": "keep",
+            "phenotype_namespace": "HP",
+            "phenotype_normalisation_version": 1
+          },
+          "role": "demo",
+          "samples": {
+            "n": 10,
+            "sha256": "b0ce50606360d8ae1123b3105cb163cfd1478ee448deeecef80bf95906de546c"
+          },
+          "schema_version": 1,
+          "source": {
+            "filename": "cases.json",
+            "format": "shepherd-cases/1",
+            "n_cases": 13,
+            "sha256": "25c7c4b8b14ac353d0ce0fa3e2dcf833e335362db35f73e9ee669462cf097f1c"
+          },
+          "unmappable_terms": {
+            "HP:9999998": 1,
+            "HP:9999999": 2
+          },
+          "what_this_is": "a test cohort version: a source case set mapped to one graph's node indices"
+        },
+        "samples_path": "versions/demo-test-1/samples.json"
+      },
+      "samples_json_sha256": "b0ce50606360d8ae1123b3105cb163cfd1478ee448deeecef80bf95906de546c",
+      "source_sha256": "25c7c4b8b14ac353d0ce0fa3e2dcf833e335362db35f73e9ee669462cf097f1c"
+    }
+  },
+  "workspace": {
+    "artifacts": {
+      "edge_indices": "7624169d26decbe534873d25e385817c01485df08e5c6fe3df82222f2c854bec",
+      "kg": "7980bf7d7492f139e92d71cf7cfe971030567a1a3fc79d715b6ef34d8631fae1",
+      "node_features": "19447503128d85ee52aa5482335af850ad2b455d39b74e48d0d6e0f9161b08a9",
+      "num_nodes": "2e747928e24494e04ddb4dd8b2135afbeef63cb5a64172ad4bc24b8b9c509bee",
+      "provenance": "9170959de0d57ea33dce4a05393e8f67232bb6332ac1cc879352a3c9a0af4396",
+      "train_samples": "fcf61e546b55e760b186a025edd4d2b4914fdd04bab5ed9854455640ff3722d1",
+      "val_samples": "80a830b99517408e521aae2245a02391ac58cf6e05539b065650ee4a84c0cddd"
+    },
+    "split_manifest_sha256": "3f563f74bb04b1415b5bb9de9a967d9fa3effe5a9828b1ca871cd48e5ada1ef4"
+  }
+}

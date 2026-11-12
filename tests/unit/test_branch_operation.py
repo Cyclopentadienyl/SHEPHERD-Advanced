@@ -155,6 +155,33 @@ def test_a_refused_branch_writes_nothing(workspace, parent, tmp_path, case):
     assert not (tmp_path / "x").exists()
 
 
+#: Training's lineage refusal (`scripts/train_model.py`), kept word for word.
+LINEAGE_REFUSAL = ("the graph view or edge split differs from the parent's record; "
+                   "a child trains on its parent's view and split")
+
+
+@pytest.mark.parametrize("field, value", [
+    ("digest", "0" * 64), ("edges", {"train": 1, "val": 1, "test": 1})])
+def test_a_parent_whose_recorded_split_is_not_rebuilt_is_refused(workspace, parent, tmp_path,
+                                                                  field, value):
+    """A parent recording a split its view does not rebuild (`rebuild_split`)
+    is refused before anything is written, with the lineage sentence; the
+    field that differs is the refusal's cause."""
+    import train_model
+    from src.kg.graph_view import SplitMismatchError
+
+    payload = _load(parent)
+    payload["data_roles"]["split"][field] = value
+    torch.save(payload, tmp_path / "parent.pt")
+    with pytest.raises(ValueError) as refused:
+        train_model.train(*_branch(workspace, tmp_path / "x", tmp_path / "parent.pt",
+                                   learning_rate=1e-3))
+    assert str(refused.value) == LINEAGE_REFUSAL
+    assert isinstance(refused.value.__cause__, SplitMismatchError)
+    assert refused.value.__cause__.mismatch.field == field
+    assert not (tmp_path / "x").exists()
+
+
 def test_a_parent_without_its_settings_or_its_bytes_is_refused(workspace, parent, tmp_path):
     import train_model
     from src.utils.checkpoint_io import CheckpointChanged

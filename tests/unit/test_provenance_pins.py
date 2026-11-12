@@ -87,7 +87,10 @@ ALLOWED = {
     ("src/utils/fingerprint.py", "DigestingFile.__init__", "hashlib.sha256"):
         (1, _IN_MEMORY.format(what="every byte a writer writes, as it is written (contract "
                                    "M3b)")),
-    ("src/kg/task_fixture.py", "read_fixture_record", "json.loads"): (1, _READER),
+    # The fixture record's one parse (research comparison Stage 5b): the bytes
+    # of the caller's one read_once, the workspace's record here and a
+    # generated split version's kept copy in the registry.
+    ("src/kg/task_fixture.py", "parse_fixture_record", "json.loads"): (1, _READER),
     ("src/kg/task_fixture.py", "read_fixture_record", "read_once"): (1, _READER),
     ("src/kg/graph.py", "KnowledgeGraph.read_json", "json.loads"): (1, _READER),
     ("src/kg/graph.py", "KnowledgeGraph.read_json", "read_once"): (1, _READER),
@@ -138,6 +141,50 @@ ALLOWED = {
             "must hash to its name before an import relies on it; records nothing"),
     ("src/evaluation/cohort_registry.py", "resolve_version", "read_once"): (1, _READER),
     ("src/evaluation/cohort_registry.py", "resolve_version", "json.loads"): (1, _READER),
+    # Research comparison Stage 4: a KG edge set's pairs file, compared with the
+    # digest its version binds before the same bytes are parsed.
+    ("src/evaluation/cohort_registry.py", "read_kg_edge_pairs", "read_once"): (1, _READER),
+    # Research comparison Stage 5b: a generated split version's kept fixture
+    # record, compared with the digest its version binds before the same
+    # bytes are parsed (parse_fixture_record); its rows go through
+    # read_samples_file against their bound digest.
+    ("src/evaluation/cohort_registry.py", "read_generated_task_fixture", "read_once"):
+        (1, _READER),
+    # Research comparison Stage 4b: a generated split's samples and split
+    # manifest, kept from the workspace. read_samples and read_split_manifest
+    # parsed the files and verify_cohort_reads compared those reads; this read
+    # (one site, once per file) takes the bytes to keep and is refused unless
+    # they hash to the digest of the read that was parsed, so the bytes kept
+    # are the bytes verified. Nothing is parsed from it. Since Stage 5b the
+    # same site takes the workspace's functional gene fixture record and the
+    # role's rows when a version keeps them, each against the digest
+    # read_fixture_record or read_samples_file parsed.
+    ("src/evaluation/cohort_registry.py", "prepare_generated_import", "read_once"):
+        (1, "Stage 4b: the generated split's samples file and split manifest (and, since "
+            "Stage 5b, its functional gene fixture's record and rows) read for the bytes a "
+            "version keeps, each refused unless its digest is the one its reader parsed; "
+            "nothing is parsed from it"),
+    # Research comparison Stage 4b (E3): a reference's state, the digest of the
+    # file found at a location the caller gives compared with the digest the
+    # version records. A state shown, never an input: nothing is parsed,
+    # recorded or written from it. Owner: the results service (Stage 8).
+    ("src/evaluation/cohort_registry.py", "check_references", "file_sha256"):
+        (1, _NOT_INPUT.format(what="a version reference's state (verified, differs, missing), "
+                                   "the bytes at a given location against the recorded "
+                                   "digest")),
+    # The same state for a generated split's kept split manifest: one read,
+    # its digest compared with the recorded one, then the same bytes parsed
+    # and its blocks compared with the version's copies of them. Owner: the
+    # results service (Stage 8).
+    ("src/evaluation/cohort_registry.py", "check_references", "read_once"):
+        (1, _NOT_INPUT.format(what="a generated split's kept split manifest or kept fixture "
+                                   "record (Stage 5b), read once for a reference's state: its "
+                                   "digest against the recorded one, and its blocks against "
+                                   "the version's copies")),
+    ("src/evaluation/cohort_registry.py", "_split_manifest_copies_differ", "json.loads"):
+        (1, _NOT_INPUT.format(what="the kept split manifest's blocks, parsed from the bytes of "
+                                   "check_references' one read_once, against the version's "
+                                   "copies of them")),
     ("src/ontology/loader.py", "OntologyLoader.load", "hashlib.sha256"):
         (1, "KG build, unchanged by M2.1 (BACKLOG 19.13): the digest of the handle that "
             "is parsed, M2.1's precedent"),
@@ -151,9 +198,10 @@ ALLOWED = {
     ("src/evaluation/cohort_registry.py", "_sha256", "hashlib.sha256"):
         (1, _IN_MEMORY.format(what="the mapped samples about to be written and the canonical "
                                    "form of a would-be version manifest (the preview id)")),
-    ("src/utils/file_modes.py", "publish_bytes", "hashlib.sha256"):
-        (1, _IN_MEMORY.format(what="the bytes publish_bytes is about to write, returned as "
-                                   "the writer's digest of what it wrote (contract M4)")),
+    ("src/utils/file_modes.py", "publish_chunks", "hashlib.sha256"):
+        (1, _IN_MEMORY.format(what="the bytes publish_chunks (and publish_bytes through it) "
+                                   "is about to write, chunk by chunk, returned as the "
+                                   "writer's digest of what it wrote (contract M4)")),
     ("src/kg/disease_allocation.py", "disease_set_digest", "hashlib.sha256"):
         (1, _IN_MEMORY.format(what="a disease set")),
     ("src/kg/disease_allocation.py", "universe_digest", "hashlib.sha256"):
@@ -164,6 +212,19 @@ ALLOWED = {
         (1, _IN_MEMORY.format(what="the graph view's rule, mapping and edges (README G1)")),
     ("src/kg/graph_view.py", "split_facts", "hashlib.sha256"):
         (1, _IN_MEMORY.format(what="the edge split's rule, seed, view and parts (README F2)")),
+    # The one LP core (research-comparison Stage 1): fixed pairs are identified
+    # by the digest of their in-memory table, never of a file.
+    ("src/models/bundle/lp_head.py", "lp_pairs_digest", "hashlib.sha256"):
+        (1, _IN_MEMORY.format(what="the fixed LP pairs' table: head, relation, tail and "
+                                   "negative tail per pair (README F3; kept with each LP "
+                                   "run's scores, research-comparison F4)")),
+    # The frozen-backbone control (research-comparison Stage 9b, O4a): two arms
+    # from one base are checked to start from identical downstream weights by
+    # the digest of the bundle's parts' state in memory, never of a file.
+    ("src/models/bundle/builder.py", "ModelBundle.parts_sha256", "hashlib.sha256"):
+        (1, _IN_MEMORY.format(what="a bundle's parts' parameters and buffers as they are, "
+                                   "recorded as weight_transfer.downstream_initial_sha256 "
+                                   "(research-comparison O4a)")),
     ("src/models/tasks/gene.py", "neighbour_table", "hashlib.sha256"):
         (1, _IN_MEMORY.format(what="the gene augmentation neighbour table (README F10)")),
     ("src/models/tasks/gene.py", "distance_table", "hashlib.sha256"):
@@ -197,6 +258,17 @@ ALLOWED = {
     ("src/webui/components/charts.py", "_versioned", "hashlib.sha256"):
         (1, _NOT_INPUT.format(what="the dashboard's own chart script, its digest in the "
                                    "script's URL so a browser never runs an old copy (M5-2)")),
+    # The PyG install identity (BACKLOG 70, 71; research-comparison Stage 2):
+    # the environment's description, never a run's input. Deploy time only;
+    # deliberately not file_sha256, which carries the path-form poison.
+    ("src/utils/pyg_native_check.py", "stream_sha256", "hashlib.sha256"):
+        (1, _NOT_INPUT.format(what="the one digest of the PyG install identity: a wheel, "
+                                   "its members, an installed native library, a local "
+                                   "source and their aggregates, compared with each other "
+                                   "at deploy time and kept in the source receipt")),
+    ("src/utils/pyg_native_check.py", "read_receipt", "json.loads"):
+        (1, _NOT_INPUT.format(what="the deploy layer's PyG source receipt in the virtual "
+                                   "environment, shown against the installed bytes")),
     # --- The deployment probe: identification of files nobody parses there ---
     ("scripts/probe_deployment.py", "snapshot", "file_sha256"):
         (1, _PROBE + "An untouched-directory check (a location check, contract §2 rule "
@@ -238,6 +310,26 @@ ALLOWED = {
         (1, _PROBE + "A5 (BACKLOG 59): an installed distribution's direct_url.json, read to "
             "tell this checkout's editable install; the environment's description, not an "
             "input"),
+    # --- The deployment probe's research comparison (Stage 10): its own outputs ---
+    # The kept reports, the version manifests and the pairs these probes check
+    # are read through the product's readers (`_read_json`, `resolve_version`,
+    # `read_kg_edge_pairs`); what is listed here no product path reads back.
+    ("scripts/probe_deployment.py", "_lp_scores_verified", "read_once"):
+        (1, _PROBE + "L2, L3, L5: the scores file the measurement this probe ran kept, read "
+            "once; its digest and size are held to the ones its report names and the same "
+            "bytes are parsed by the LP core (lp_scores_from_table) to be checked against the "
+            "pairs and the summary. No product path reads it back (its digest is the "
+            "writer's); not an input"),
+    ("scripts/probe_deployment.py", "_rc_demo._exported", "read_once"):
+        (1, _PROBE + "L8: the export this probe had the export command write, read once; the "
+            "digest of those bytes is the evidence (export_sha256)"),
+    ("scripts/probe_deployment.py", "_rc_demo._exported", "json.loads"):
+        (1, _PROBE + "L8: that export, parsed from the bytes of its one read, its rows held to "
+            "the runs the flow kept; not an input"),
+    # --- The deployment probe's M1 readings (research comparison Stage 10b, S1) ---
+    ("scripts/probe_deployment.py", "_served_requests", "json.loads"):
+        (1, _PROBE + "S1: a timed diagnose request's HTTP answer from the service the probe "
+            "started, read for its served identity and handler time; not a file"),
 }
 
 _MODULES = ("hashlib", "json", "torch")

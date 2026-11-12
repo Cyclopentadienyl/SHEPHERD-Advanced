@@ -1,0 +1,702 @@
+{
+  "checks": [
+    {
+      "check": "Linux aarch64",
+      "passed": true,
+      "value": null
+    },
+    {
+      "check": "Python 3.12",
+      "passed": true,
+      "value": "3.12.3"
+    },
+    {
+      "check": "lock bytes are the tested commit",
+      "passed": true,
+      "value": null
+    },
+    {
+      "check": "saved allocator and compile settings",
+      "passed": true,
+      "value": null
+    },
+    {
+      "check": "Torch is the tested lock CUDA package",
+      "passed": true,
+      "value": "2.10.0+cu130"
+    },
+    {
+      "check": "Torch CUDA build matches tested lock",
+      "passed": true,
+      "value": "13.0"
+    },
+    {
+      "check": "CUDA available",
+      "passed": true,
+      "value": true
+    },
+    {
+      "check": "GB10",
+      "passed": true,
+      "value": {
+        "capability": [
+          12,
+          1
+        ],
+        "name": "NVIDIA GB10"
+      }
+    },
+    {
+      "check": "CUDA computation",
+      "passed": true,
+      "value": null
+    },
+    {
+      "check": "import pyg_lib",
+      "passed": true,
+      "value": null
+    },
+    {
+      "check": "import torch_scatter",
+      "passed": true,
+      "value": null
+    },
+    {
+      "check": "import torch_sparse",
+      "passed": true,
+      "value": null
+    },
+    {
+      "check": "import torch_cluster",
+      "passed": true,
+      "value": null
+    },
+    {
+      "check": "import voyager",
+      "passed": true,
+      "value": null
+    },
+    {
+      "check": "native receipt exists",
+      "passed": true,
+      "value": null
+    },
+    {
+      "check": "pyg_lib native bytes recorded",
+      "passed": true,
+      "value": null
+    },
+    {
+      "check": "pyg_lib actual route is prebuilt release",
+      "passed": true,
+      "value": {
+        "compiled_against": {
+          "basis": "the release's declared target",
+          "cuda": "13.0",
+          "torch": "2.10.0+cu130"
+        },
+        "flags": null,
+        "requested": {
+          "asset_sha256": "7cba46d26ba819aa6439cd319654b3a10e2a611e8637b2bec3684a51e97b8967",
+          "kind": "prebuilt release",
+          "tag": "pyg-arm-cu130-torch2.10.0"
+        },
+        "resolved": {
+          "version": "0.6.0"
+        },
+        "route": "prebuilt release",
+        "state": "recorded",
+        "toolchain": null,
+        "wheel_sha256": "aa8ce60bfdb5c205b65b63b9991d45bf2a522937a7fc11ed149259f6017c9619"
+      }
+    },
+    {
+      "check": "torch_scatter native bytes recorded",
+      "passed": true,
+      "value": null
+    },
+    {
+      "check": "torch_scatter actual route is prebuilt release",
+      "passed": true,
+      "value": {
+        "compiled_against": {
+          "basis": "the release's declared target",
+          "cuda": "13.0",
+          "torch": "2.10.0+cu130"
+        },
+        "flags": null,
+        "requested": {
+          "asset_sha256": "7cba46d26ba819aa6439cd319654b3a10e2a611e8637b2bec3684a51e97b8967",
+          "kind": "prebuilt release",
+          "tag": "pyg-arm-cu130-torch2.10.0"
+        },
+        "resolved": {
+          "version": "2.1.2"
+        },
+        "route": "prebuilt release",
+        "state": "recorded",
+        "toolchain": null,
+        "wheel_sha256": "26fcf49c63c725e3649c37e81fd561803a5415088aa48e8b2082f65bed2a3f68"
+      }
+    },
+    {
+      "check": "torch_sparse native bytes recorded",
+      "passed": true,
+      "value": null
+    },
+    {
+      "check": "torch_sparse actual route is prebuilt release",
+      "passed": true,
+      "value": {
+        "compiled_against": {
+          "basis": "the release's declared target",
+          "cuda": "13.0",
+          "torch": "2.10.0+cu130"
+        },
+        "flags": null,
+        "requested": {
+          "asset_sha256": "7cba46d26ba819aa6439cd319654b3a10e2a611e8637b2bec3684a51e97b8967",
+          "kind": "prebuilt release",
+          "tag": "pyg-arm-cu130-torch2.10.0"
+        },
+        "resolved": {
+          "version": "0.6.18"
+        },
+        "route": "prebuilt release",
+        "state": "recorded",
+        "toolchain": null,
+        "wheel_sha256": "99beaa96f6bb0d8e75c6c6109bbc5fdb6d93edf6e0197eaa96145d2b5b402596"
+      }
+    },
+    {
+      "check": "torch_cluster native bytes recorded",
+      "passed": true,
+      "value": null
+    },
+    {
+      "check": "torch_cluster actual route is prebuilt release",
+      "passed": true,
+      "value": {
+        "compiled_against": {
+          "basis": "the release's declared target",
+          "cuda": "13.0",
+          "torch": "2.10.0+cu130"
+        },
+        "flags": null,
+        "requested": {
+          "asset_sha256": "7cba46d26ba819aa6439cd319654b3a10e2a611e8637b2bec3684a51e97b8967",
+          "kind": "prebuilt release",
+          "tag": "pyg-arm-cu130-torch2.10.0"
+        },
+        "resolved": {
+          "version": "1.6.3"
+        },
+        "route": "prebuilt release",
+        "state": "recorded",
+        "toolchain": null,
+        "wheel_sha256": "7787802660df0b954f8b7013d3da7e5ac0237883f40ec692d00aef33d739b86f"
+      }
+    },
+    {
+      "check": "all four receipt entries match installed libraries",
+      "passed": true,
+      "value": {
+        "pyg_lib": {
+          "state": "matches"
+        },
+        "torch_cluster": {
+          "state": "matches"
+        },
+        "torch_scatter": {
+          "state": "matches"
+        },
+        "torch_sparse": {
+          "state": "matches"
+        }
+      }
+    },
+    {
+      "check": "A5 lock identity",
+      "passed": true,
+      "value": null
+    },
+    {
+      "check": "A5 installed lock packages",
+      "passed": true,
+      "value": []
+    }
+  ],
+  "facts": {
+    "a5": {
+      "counted_once": [],
+      "declared_not_installed": [],
+      "installed_distributions": 119,
+      "installed_more_than_once": [],
+      "installed_not_in_lock": [
+        {
+          "name": "cuda-python",
+          "version": "13.0.3",
+          "why": "deploy_scripts"
+        },
+        {
+          "name": "cuda-toolkit",
+          "version": "13.0.2",
+          "why": "deploy_scripts"
+        },
+        {
+          "name": "cuvs-cu13",
+          "version": "26.6.0",
+          "why": "deploy_scripts"
+        },
+        {
+          "name": "libcuvs-cu13",
+          "version": "26.6.0",
+          "why": "deploy_scripts"
+        },
+        {
+          "name": "libraft-cu13",
+          "version": "26.6.0",
+          "why": "deploy_scripts"
+        },
+        {
+          "name": "librmm-cu13",
+          "version": "26.6.0",
+          "why": "deploy_scripts"
+        },
+        {
+          "name": "pyg-lib",
+          "version": "0.6.0",
+          "why": "deploy_scripts"
+        },
+        {
+          "name": "pylibraft-cu13",
+          "version": "26.6.0",
+          "why": "deploy_scripts"
+        },
+        {
+          "name": "rapids-logger",
+          "version": "0.2.3",
+          "why": "deploy_scripts"
+        },
+        {
+          "name": "rmm-cu13",
+          "version": "26.6.0",
+          "why": "deploy_scripts"
+        },
+        {
+          "name": "torch-cluster",
+          "version": "1.6.3",
+          "why": "deploy_scripts"
+        },
+        {
+          "name": "torch-scatter",
+          "version": "2.1.2",
+          "why": "deploy_scripts"
+        },
+        {
+          "name": "torch-sparse",
+          "version": "0.6.18",
+          "why": "deploy_scripts"
+        }
+      ],
+      "lock_is_the_committed_one": true,
+      "lock_packages": 172,
+      "lock_sha256": "0f92a5ecff12170bb26127c9d7098ab4301ffac8c7c3bcbd4b7dc9723815c356",
+      "locked_not_installed": [
+        "absl-py",
+        "ast-serialize",
+        "audioop-lts",
+        "black",
+        "blis",
+        "catalogue",
+        "cfgv",
+        "cloudpathlib",
+        "colorama",
+        "confection",
+        "coverage",
+        "cymem",
+        "distlib",
+        "execnet",
+        "fhir-core",
+        "fhir-resources",
+        "grimp",
+        "grpcio",
+        "hl7",
+        "identify",
+        "import-linter",
+        "iniconfig",
+        "joblib",
+        "librt",
+        "markdown",
+        "memory-profiler",
+        "murmurhash",
+        "mypy",
+        "mypy-extensions",
+        "nodeenv",
+        "pathspec",
+        "pipdeptree",
+        "platformdirs",
+        "pluggy",
+        "pre-commit",
+        "preshed",
+        "protobuf",
+        "py-spy",
+        "pytest",
+        "pytest-asyncio",
+        "pytest-cov",
+        "pytest-xdist",
+        "python-discovery",
+        "pytokens",
+        "regex",
+        "ruff",
+        "safetensors",
+        "scikit-learn",
+        "sentence-transformers",
+        "smart-open",
+        "spacy",
+        "spacy-legacy",
+        "spacy-loggers",
+        "srsly",
+        "tensorboard",
+        "tensorboard-data-server",
+        "thinc",
+        "threadpoolctl",
+        "tokenizers",
+        "torch-tb-profiler",
+        "transformers",
+        "virtualenv",
+        "wasabi",
+        "weasel",
+        "werkzeug",
+        "wrapt"
+      ],
+      "version_differs": [],
+      "versions_match_lock": true
+    },
+    "components": {
+      "pyg_lib": {
+        "available": true,
+        "fallback_reason": null,
+        "in_effect": "unknown",
+        "installed": true,
+        "kind": "PyG native extension",
+        "native": {
+          "aggregate_sha256": "ddbe3ee8901cbb9d2ee34dd104054026a65eae67ea992628e15ad6408ca03c89",
+          "count": 1,
+          "state": "recorded"
+        },
+        "requested": "unknown",
+        "selected": "unknown",
+        "source": {
+          "compiled_against": {
+            "basis": "the release's declared target",
+            "cuda": "13.0",
+            "torch": "2.10.0+cu130"
+          },
+          "flags": null,
+          "requested": {
+            "asset_sha256": "7cba46d26ba819aa6439cd319654b3a10e2a611e8637b2bec3684a51e97b8967",
+            "kind": "prebuilt release",
+            "tag": "pyg-arm-cu130-torch2.10.0"
+          },
+          "resolved": {
+            "version": "0.6.0"
+          },
+          "route": "prebuilt release",
+          "state": "recorded",
+          "toolchain": null,
+          "wheel_sha256": "aa8ce60bfdb5c205b65b63b9991d45bf2a522937a7fc11ed149259f6017c9619"
+        },
+        "version": "0.6.0"
+      },
+      "torch_cluster": {
+        "available": true,
+        "fallback_reason": null,
+        "in_effect": "unknown",
+        "installed": true,
+        "kind": "PyG native extension",
+        "native": {
+          "aggregate_sha256": "7032490042c1ed2386431dd951480b642dff59d0b00c4d8a8e95d552c988fb83",
+          "count": 18,
+          "state": "recorded"
+        },
+        "requested": "unknown",
+        "selected": "unknown",
+        "source": {
+          "compiled_against": {
+            "basis": "the release's declared target",
+            "cuda": "13.0",
+            "torch": "2.10.0+cu130"
+          },
+          "flags": null,
+          "requested": {
+            "asset_sha256": "7cba46d26ba819aa6439cd319654b3a10e2a611e8637b2bec3684a51e97b8967",
+            "kind": "prebuilt release",
+            "tag": "pyg-arm-cu130-torch2.10.0"
+          },
+          "resolved": {
+            "version": "1.6.3"
+          },
+          "route": "prebuilt release",
+          "state": "recorded",
+          "toolchain": null,
+          "wheel_sha256": "7787802660df0b954f8b7013d3da7e5ac0237883f40ec692d00aef33d739b86f"
+        },
+        "version": "1.6.3"
+      },
+      "torch_scatter": {
+        "available": true,
+        "fallback_reason": null,
+        "in_effect": "unknown",
+        "installed": true,
+        "kind": "PyG native extension",
+        "native": {
+          "aggregate_sha256": "0ecdb239a8cad1781c40df5fa1e427c2e5f6a27b2c5dafda2be05ba844b98350",
+          "count": 8,
+          "state": "recorded"
+        },
+        "requested": "unknown",
+        "selected": "unknown",
+        "source": {
+          "compiled_against": {
+            "basis": "the release's declared target",
+            "cuda": "13.0",
+            "torch": "2.10.0+cu130"
+          },
+          "flags": null,
+          "requested": {
+            "asset_sha256": "7cba46d26ba819aa6439cd319654b3a10e2a611e8637b2bec3684a51e97b8967",
+            "kind": "prebuilt release",
+            "tag": "pyg-arm-cu130-torch2.10.0"
+          },
+          "resolved": {
+            "version": "2.1.2"
+          },
+          "route": "prebuilt release",
+          "state": "recorded",
+          "toolchain": null,
+          "wheel_sha256": "26fcf49c63c725e3649c37e81fd561803a5415088aa48e8b2082f65bed2a3f68"
+        },
+        "version": "2.1.2"
+      },
+      "torch_sparse": {
+        "available": true,
+        "fallback_reason": null,
+        "in_effect": "unknown",
+        "installed": true,
+        "kind": "PyG native extension",
+        "native": {
+          "aggregate_sha256": "2e46ea78f7bff217372bdc684cebde8f170856c0b141db1d95511fefa838d8ca",
+          "count": 24,
+          "state": "recorded"
+        },
+        "requested": "unknown",
+        "selected": "unknown",
+        "source": {
+          "compiled_against": {
+            "basis": "the release's declared target",
+            "cuda": "13.0",
+            "torch": "2.10.0+cu130"
+          },
+          "flags": null,
+          "requested": {
+            "asset_sha256": "7cba46d26ba819aa6439cd319654b3a10e2a611e8637b2bec3684a51e97b8967",
+            "kind": "prebuilt release",
+            "tag": "pyg-arm-cu130-torch2.10.0"
+          },
+          "resolved": {
+            "version": "0.6.18"
+          },
+          "route": "prebuilt release",
+          "state": "recorded",
+          "toolchain": null,
+          "wheel_sha256": "99beaa96f6bb0d8e75c6c6109bbc5fdb6d93edf6e0197eaa96145d2b5b402596"
+        },
+        "version": "0.6.18"
+      }
+    },
+    "gpu": {
+      "capability": [
+        12,
+        1
+      ],
+      "name": "NVIDIA GB10"
+    },
+    "python": "3.12.3",
+    "receipt": {
+      "compiled_against": {
+        "basis": "the release's declared target",
+        "cuda": "13.0",
+        "torch": "2.10.0+cu130"
+      },
+      "flags": null,
+      "receipt": "shepherd-pyg-native-receipt",
+      "route": "prebuilt release",
+      "schema": 1,
+      "toolchain": null,
+      "wheels": [
+        {
+          "distribution": "pyg_lib",
+          "installed": {
+            "native_aggregate_sha256": "ddbe3ee8901cbb9d2ee34dd104054026a65eae67ea992628e15ad6408ca03c89",
+            "native_count": 1,
+            "native_sha256": [
+              "640fc8ce8abd08539d52e6b1a017973ad1dc616d8a3ed4188c1c858fa62f898c"
+            ],
+            "version": "0.6.0"
+          },
+          "requested": {
+            "asset": "pyg-ext-torch2.10.0-cu130-cp312-linux_aarch64.tar.gz",
+            "asset_sha256": "7cba46d26ba819aa6439cd319654b3a10e2a611e8637b2bec3684a51e97b8967",
+            "kind": "prebuilt release",
+            "tag": "pyg-arm-cu130-torch2.10.0"
+          },
+          "resolved": {
+            "version": "0.6.0"
+          },
+          "wheel": {
+            "file": "pyg_lib-0.6.0-cp312-cp312-linux_aarch64.whl",
+            "sha256": "aa8ce60bfdb5c205b65b63b9991d45bf2a522937a7fc11ed149259f6017c9619"
+          }
+        },
+        {
+          "distribution": "torch_cluster",
+          "installed": {
+            "native_aggregate_sha256": "7032490042c1ed2386431dd951480b642dff59d0b00c4d8a8e95d552c988fb83",
+            "native_count": 18,
+            "native_sha256": [
+              "10b126349df9be395aebf8732aa7c6e63dadf1e27dbc77a21be9e808dea193aa",
+              "11c65ef47c4bd29cb730902f68a58167e59efb411bd25ea240f80acd658032f1",
+              "1fb220a2a226d555028de1c28c2e1b7508c39d796c914d56a7d6a62275afb6b1",
+              "2073cf1a6be345aad04474d77cab379b24a2c90527c65615ba4e7222b64c365d",
+              "2a9530a844ce7ab4e63f55b66405455f8d5ae54fb452037357331f8af441b9c4",
+              "501ac7ec2b8ed819a6979ee079c68da7c9a05639b5e5c8e46c8e9431403c20d0",
+              "53f2216c23048699b1c125b9b64ebad2b9bce6beee510cfc859793507753078f",
+              "571f3bba98983f41853b1ac35e20d75665021d46f6cf26d4869ebe3b2b65fee7",
+              "5a8b3811067bf823fc9c7a82883438f268d9698b7b5ba7ab8a3de3ad49e07065",
+              "6bd38455f1c12de1bb1799581ed234fda7533e45fc3ef434a03a729b2cf638b6",
+              "72784a2aec7655cf3c78ffe3f7bd1ffe62ab31f0ce7ed6cc4c216d18035b15b2",
+              "93e07c90cf6c5cc715a0b9affe6da94ea4578762fa9a315f59c4a5435d9529f6",
+              "a41fe06a258122a3a0865b672bc43d4a81820432baac8d5bae89a0f230e7c3bf",
+              "ba36c132ef6df72edaf5d89f7ff3bca14c4d7cdd2eb52728650598af5eb423b5",
+              "cf353edbab3be6ba9e7fd51337bf5df91dd658d859a7d577a347d949c4e8905d",
+              "ea485a2ce7f6eb23880fba3b343899e3e71a346bd5be31896f88c6c29c6286b9",
+              "f20b8a73c5db093bd425749d22447037202daf6b4f20adc500afa7b0174eeab4",
+              "fc7f907a53ee4a40fd075ebd9b28872acce44632802d454f771f7182b4fb6a64"
+            ],
+            "version": "1.6.3"
+          },
+          "requested": {
+            "asset": "pyg-ext-torch2.10.0-cu130-cp312-linux_aarch64.tar.gz",
+            "asset_sha256": "7cba46d26ba819aa6439cd319654b3a10e2a611e8637b2bec3684a51e97b8967",
+            "kind": "prebuilt release",
+            "tag": "pyg-arm-cu130-torch2.10.0"
+          },
+          "resolved": {
+            "version": "1.6.3"
+          },
+          "wheel": {
+            "file": "torch_cluster-1.6.3-cp312-cp312-linux_aarch64.whl",
+            "sha256": "7787802660df0b954f8b7013d3da7e5ac0237883f40ec692d00aef33d739b86f"
+          }
+        },
+        {
+          "distribution": "torch_scatter",
+          "installed": {
+            "native_aggregate_sha256": "0ecdb239a8cad1781c40df5fa1e427c2e5f6a27b2c5dafda2be05ba844b98350",
+            "native_count": 8,
+            "native_sha256": [
+              "210e5af748a4f1e867cb22381de03ab6ca1c40f232d699d0652d6d20117b39c5",
+              "55de04ff8dd4af472aa03a27a6693c3fd0dc5c3696409cc017e02892b15b6e41",
+              "607884098591d997fd52ec5c020f38e7b2f1ec7896aef3c7fe063be5ae2cab32",
+              "8c3e51e96810ccda1a12b617f35eaf02e1d494e63cbdc374b147ecfc5f826a9d",
+              "ac0095dbd211c2f38d57687a42a92a8f1c8428cacc5a730cf822e808b8d681d4",
+              "c251dd0247e80bd3a851f4e4dff774599bdab620803c26bb3ffe6ff7c443c6b0",
+              "d2780712d28b1767d8d8f7486e021fd5f95ff0de5cae6a2a1e2b6638a8687155",
+              "f67612bd4e0946814527c05249323625f197037f4ffef97f06054f15e56f1da4"
+            ],
+            "version": "2.1.2"
+          },
+          "requested": {
+            "asset": "pyg-ext-torch2.10.0-cu130-cp312-linux_aarch64.tar.gz",
+            "asset_sha256": "7cba46d26ba819aa6439cd319654b3a10e2a611e8637b2bec3684a51e97b8967",
+            "kind": "prebuilt release",
+            "tag": "pyg-arm-cu130-torch2.10.0"
+          },
+          "resolved": {
+            "version": "2.1.2"
+          },
+          "wheel": {
+            "file": "torch_scatter-2.1.2-cp312-cp312-linux_aarch64.whl",
+            "sha256": "26fcf49c63c725e3649c37e81fd561803a5415088aa48e8b2082f65bed2a3f68"
+          }
+        },
+        {
+          "distribution": "torch_sparse",
+          "installed": {
+            "native_aggregate_sha256": "2e46ea78f7bff217372bdc684cebde8f170856c0b141db1d95511fefa838d8ca",
+            "native_count": 24,
+            "native_sha256": [
+              "0556592e6ffad23ea0c08692e983dc7b589f3f7f99fb277cc39ee9312181f55b",
+              "225dd9ea7eec7ff82cf0186ff86e7629a7bd39f1414b6e848fa077b5fc4e8c70",
+              "33a6109552a05292a65cbbb8684b7275b6d889919deecf2b18e16f7127ea6c40",
+              "6df80e416376d90b1334a3a6dca87b451897d370171cbaf24d1ce6e3a91cb3d9",
+              "77f9892f430f3502b89ca979913d2ab84234b28e8356035f9fe951592563df70",
+              "832a8543a16324c805fe01c9bf7ad3d069b55f5dcc7671dbc93534d6637bd4dd",
+              "84394bb710f276539fc2d33100d7bf8b2da9838e49b66902f9b83dc68f4f09c1",
+              "9373add877ce56155c423a0efbf29a5afe5f492ec5de701cee62f4b73c277022",
+              "9b6c735f9f26a1032e1937984d17b230e4bd01231fcba884dcfbbf968514cc12",
+              "b54018f77db89cfdcbb868f7488ab1b271ba57a3ac18313f26cc8c3915f89dba",
+              "bcaac92a06c4a8cd6d1895114d57b405f1188e9786f301a0415812c5076358f8",
+              "bd91a088152fc125207d8daa1b99fec70b818864d25992e433cf89c7f1fe2b98",
+              "c0f6df45f275c64d2fffb1a61b30c7fe5a3ce0cf76b7fa45b56ef09266370d7a",
+              "cef21e3525894b1723469015f91306c52784f43cf8a7b8dc516229b1edad5cb7",
+              "d2eb7a915202b31ffa8830485a8ba4e13aa44932b004afa79bf220d551c885e7",
+              "d9c380c1ef6f03de0aa6da19a732ecaefb546f6b41e35166efa047e3e8015b2c",
+              "df99ed772aa7d54b6828b974f111618a8a0b8d12b3c02776e9474da6e9b8db0f",
+              "e01533b3f396d587cba3ade8b5ef9b5fbbe9e1cbec351ee46dc60b5d7a3e2d7d",
+              "e01533b3f396d587cba3ade8b5ef9b5fbbe9e1cbec351ee46dc60b5d7a3e2d7d",
+              "e3373676ae0941c0ae33fb727241a269073938c9a72cad1f3e5cdefaaba1a63c",
+              "ed3b2391028c57ae56efd6e29bf7ec14f87c59f089bc46af6873d9f3323be520",
+              "ed3b2391028c57ae56efd6e29bf7ec14f87c59f089bc46af6873d9f3323be520",
+              "f66d368d1a49f45a3b7ae4d817141a92e9cc7f0677684e1133761f41375ee0a6",
+              "fb18138e50a90e3694b1a27f308834945e5a9b74543763066c3a3be718db6bc2"
+            ],
+            "version": "0.6.18"
+          },
+          "requested": {
+            "asset": "pyg-ext-torch2.10.0-cu130-cp312-linux_aarch64.tar.gz",
+            "asset_sha256": "7cba46d26ba819aa6439cd319654b3a10e2a611e8637b2bec3684a51e97b8967",
+            "kind": "prebuilt release",
+            "tag": "pyg-arm-cu130-torch2.10.0"
+          },
+          "resolved": {
+            "version": "0.6.18"
+          },
+          "wheel": {
+            "file": "torch_sparse-0.6.18-cp312-cp312-linux_aarch64.whl",
+            "sha256": "99beaa96f6bb0d8e75c6c6109bbc5fdb6d93edf6e0197eaa96145d2b5b402596"
+          }
+        }
+      ]
+    },
+    "receipt_states": {
+      "pyg_lib": {
+        "state": "matches"
+      },
+      "torch_cluster": {
+        "state": "matches"
+      },
+      "torch_scatter": {
+        "state": "matches"
+      },
+      "torch_sparse": {
+        "state": "matches"
+      }
+    },
+    "route": "pull",
+    "tested_commit": "e60f23ee0314c33d7785d13656a146e0ca0022d8",
+    "torch": "2.10.0+cu130",
+    "torch_cuda_build": "13.0"
+  }
+}

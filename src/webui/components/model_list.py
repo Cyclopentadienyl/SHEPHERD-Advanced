@@ -12,7 +12,7 @@ one gated Load, no second implementation).
 workspace (SPEC_4 C3), so it is an operator control: D8's helper is asked on the
 triggering request first, and a read-only request gets the reason and no list.
 Each row's recorded tests are a state read from the ledger beside the
-checkpoint (`read_ledger`, then the readers' one listing, `evaluations.read_records`:
+checkpoint (`read_ledger`, then the readers' one listing, `record_views.read_records`:
 the records that read as results, and apart from them those that cannot, never
 counted as results) and, for how each record's condition
 group compares (runs that differ, a comparison incomplete), from the cohort
@@ -226,95 +226,34 @@ PRESETS: Dict[str, Preset] = {
 # The listing (server side)
 # ---------------------------------------------------------------------------
 def item_key(item: Mapping[str, Any]) -> str:
-    """A listed checkpoint's key in this workspace: architecture/run/file."""
-    return f"{item.get('architecture')}/{item.get('run')}/{item.get('filename')}"
+    """A listed checkpoint's key in this workspace: the server's list's
+    identity (`CheckpointItem.key`: architecture/run/file for names that are
+    text, a form no text names give otherwise, BACKLOG 66), never its shown
+    names, so two entries shown alike are never one key; an item that carries
+    none (one built by hand) by its names, as the list keys them."""
+    from src.api.services.record_views import item_key as key
+
+    return key(item)
 
 
-def ledger_records(workspace_dir: Path, items: Sequence[Mapping[str, Any]]
-                   ) -> Dict[str, Dict[str, Any]]:
-    """For each listed checkpoint with a digest, what the ledger beside it holds
-    for its weights, read through the one ledger reader (`read_ledger`, once per
-    directory) and **classified once, by the readers' one listing**
-    (`evaluations.read_records`, K8-6e.1): ``state`` (``records`` when it holds
-    a result or a record that cannot be read as one, ``none``, ``no_ledger`` or
-    ``not_read``), ``records``: those that read as results, as the ledger holds
-    them (kept on the server, in the session's state; never sent to the browser
-    as they are), ``readings`` beside them (each record's run as the file's
-    boundary reads it and its possible overlaps, `evaluations.record_reading`,
-    as ``[run_id, historical, problem, overlaps]``), ``unreadable``: every other
-    record for these weights as the API lists it (`UnreadableRecord`: index,
-    sequence, report digest, run and reason; never a result), ``problem``
-    (naming the file, never its directory) and ``ledger`` (the ledger's resolved
-    path, which only tells two ledgers apart).
+def item_run_key(item: Mapping[str, Any]) -> str:
+    """A listed checkpoint's run's identity, by which a list groups its
+    entries: the server's list's (`CheckpointItem.run_key`: architecture/run
+    for names that are text, BACKLOG 66), never its shown names, so two runs
+    shown alike are never one group; an item that carries none (one built by
+    hand) by its names, as `item_key`."""
+    key = item.get("run_key")
+    if isinstance(key, str) and key:
+        return key
+    from src.utils.checkpoint_paths import listing_key
 
-    The checkpoint file is never opened: its path is the run layout's, resolved
-    to find the directory its ledger is in, as registration writes it."""
-    from src.api.routes.evaluations import _ledger_problem
-    from src.evaluation.sidecar import LEDGER_FILENAME, read_ledger
-    from src.utils.checkpoint_paths import RUN_CHECKPOINTS_DIRNAME, RUNS_DIRNAME
-
-    workspace_dir = Path(workspace_dir).resolve()
-    read: Dict[Path, Tuple[Optional[dict], Optional[str], bool]] = {}
-    out: Dict[str, Dict[str, Any]] = {}
-    for item in items:
-        if not loadable(item):
-            continue
-        key = item_key(item)
-        file = (workspace_dir / RUNS_DIRNAME / str(item.get("architecture")) / str(item.get("run"))
-                / RUN_CHECKPOINTS_DIRNAME / str(item.get("filename")))
-        try:
-            directory = file.resolve().parent
-        except (OSError, RuntimeError):
-            out[key] = {"state": "not_read", "records": [], "unreadable": [], "ledger": None,
-                        "problem": "the checkpoint's directory cannot be resolved"}
-            continue
-        if directory != workspace_dir and workspace_dir not in directory.parents:
-            out[key] = {"state": "not_read", "records": [], "unreadable": [], "ledger": None,
-                        "problem": "the checkpoint resolves outside the workspace"}
-            continue
-        ledger_path = directory / LEDGER_FILENAME
-        if directory not in read:
-            try:
-                ledger, digest = read_ledger(ledger_path)
-                read[directory] = (ledger, None, digest is not None)
-            except (OSError, ValueError) as exc:
-                read[directory] = (None, _ledger_problem(exc, ledger_path), True)
-        ledger, problem, present = read[directory]
-        if problem is not None:
-            out[key] = {"state": "not_read", "records": [], "unreadable": [],
-                        "ledger": str(ledger_path), "problem": problem}
-        elif not present:
-            out[key] = {"state": "no_ledger", "records": [], "unreadable": [],
-                        "ledger": str(ledger_path), "problem": None}
-        else:
-            out[key] = ledger_entry(ledger, item["sha256"], str(ledger_path))
-    return out
-
-
-def ledger_entry(ledger: Mapping[str, Any], checkpoint_digest: str,
-                 ledger_path: Optional[str] = None) -> Dict[str, Any]:
-    """One checkpoint's entry of `ledger_records` from a ledger already read:
-    the readers' one listing (`evaluations.read_records`) splits its records
-    for these weights into results (``records``, with their ``readings``) and
-    the rest (``unreadable``, each item as the API lists it), once."""
-    from src.api.routes.evaluations import read_records, record_reading
-
-    ledger = dict(ledger)
-    viewed, unreadable = read_records(ledger, checkpoint_digest)
-    records = [record for record, _view in viewed]
-    reading = record_reading(ledger)
-    readings = [[found.run_id, found.historical, found.problem, list(overlaps)]
-                for found, overlaps in (reading[id(record)] for record in records)]
-    return {"state": "records" if records or unreadable else "none",
-            "records": records, "readings": readings,
-            "unreadable": [item.model_dump(mode="json") for item in unreadable],
-            "ledger": ledger_path, "problem": None}
+    return listing_key((str(item.get("architecture")), str(item.get("run"))))
 
 
 def recorded_tests(ledgers: Mapping[str, Mapping[str, Any]],
                    contest: Mapping[str, Mapping[str, Any]]) -> Dict[str, r.RecordedTests]:
-    """Each checkpoint's recorded tests as a state, from what `ledger_records`
-    and `contest_states` read: how many records read as results, how many of
+    """Each checkpoint's recorded tests as a state, from what
+    `record_views.ledger_records` and `contest_states` read: how many records read as results, how many of
     them in a group whose runs differ and how many whose comparison is
     incomplete, counted apart (M5-3 review EVAL-3: one uncheckable record hid a
     known difference), and how many records cannot be read as results, counted
@@ -349,9 +288,12 @@ def read_recorded(workspace_dir: Path, items: Sequence[Mapping[str, Any]], *,
                   environ: Optional[Mapping[str, str]] = None
                   ) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Dict[str, Any]]]:
     """``(ledgers, contest)`` for the listed checkpoints: the ledger beside each
-    (`ledger_records`, read once per directory) and every record key's state in
-    its cohort version's report store (`contest_states`, one scan per version).
-    The one read behind the rows, Models and the Diagnosis card."""
+    (`record_views.ledger_records`, read once per directory, the shared
+    implementation the results service reads by too) and every record key's
+    state in its cohort version's report store (`contest_states`, one scan per
+    version). The one read behind the rows, Models and the Diagnosis card."""
+    from src.api.services.record_views import ledger_records
+
     ledgers = ledger_records(workspace_dir, items)
     records = [rec for entry in ledgers.values() for rec in entry["records"]]
     contest = contest_states(records, CohortVersions.listed(environ)) if records else {}
@@ -463,11 +405,15 @@ def _recorded(listing: Mapping[str, Any], key: str) -> Optional[r.RecordedTests]
 
 
 def _runs_in_order(items: Sequence[Mapping[str, Any]]) -> List[Tuple[str, List[Mapping[str, Any]]]]:
-    """Items grouped by run, in the listing's order (latest run first)."""
+    """Items grouped by run, in the listing's order (latest run first), each
+    group with its run's shown names (``architecture/run``). Grouped by the
+    run's identity (`item_run_key`), never by those names, so two runs shown
+    alike (BACKLOG 66) are two groups."""
     runs: Dict[str, List[Mapping[str, Any]]] = {}
     for item in items:
-        runs.setdefault(f"{item.get('architecture')}/{item.get('run')}", []).append(item)
-    return list(runs.items())
+        runs.setdefault(item_run_key(item), []).append(item)
+    return [(f"{group[0].get('architecture')}/{group[0].get('run')}", group)
+            for group in runs.values()]
 
 
 def _view(view: Any) -> Mapping[str, Any]:
@@ -763,7 +709,10 @@ def find_item(listing: Mapping[str, Any], key: Any) -> Optional[Mapping[str, Any
 
 
 def loadable(item: Optional[Mapping[str, Any]]) -> bool:
-    return bool(item) and item.get("problem") is None and r.is_digest(item.get("sha256"))
+    """A listed checkpoint that was read, with its digest (`record_views.item_was_read`)."""
+    from src.api.services.record_views import item_was_read
+
+    return item_was_read(item)
 
 
 def load_refusal(item: Mapping[str, Any]) -> Optional[str]:
@@ -1710,7 +1659,6 @@ __all__ = [
     "finish_load",
     "item_key",
     "kept_selection",
-    "ledger_records",
     "list_html",
     "list_models",
     "load_answered_js",

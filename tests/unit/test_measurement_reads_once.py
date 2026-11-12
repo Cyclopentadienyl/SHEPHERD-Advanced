@@ -630,9 +630,9 @@ def test_a_registered_cohort_is_resolved_before_the_workspace_is_read(
 
     cohort, registry, extra = registered.label, registered.registry, ()
     if case == "label_path":
-        cohort, message = str(tmp_path / "x"), "cohort label is refused"
+        cohort, message = str(tmp_path / "x"), "version label is refused"
     elif case == "no_such_label":
-        cohort, message = "never-imported", "holds no cohort version"
+        cohort, message = "never-imported", "holds no version"
     elif case == "interrupted":
         (registered.registry / "versions" / "half-done").mkdir()
         cohort, message = "half-done", "interrupted import"

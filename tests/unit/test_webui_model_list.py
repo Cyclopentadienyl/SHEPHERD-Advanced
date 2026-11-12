@@ -318,7 +318,7 @@ def test_contested_and_unchecked_are_counted_apart_from_the_report_store(root, m
     assert (result.state, result.count, result.contested, result.unchecked) == (
         "records", 4, 2, 1)
     assert r.recorded_tests_text(result) == (
-        "Recorded tests: 4 · runs differ for 2; comparison incomplete for 1")
+        "Recorded results: 4 · runs differ for 2; comparison incomplete for 1")
     states["2" * 64] = "cannot_be_checked"
     result = ml.recorded_tests_for(root["workspace"], [item])[ml.item_key(item)]
     assert (result.count, result.contested, result.unchecked) == (4, 2, 2)
@@ -326,7 +326,7 @@ def test_contested_and_unchecked_are_counted_apart_from_the_report_store(root, m
     states["2" * 64] = "uncontested"
     result = ml.recorded_tests_for(root["workspace"], [item])[ml.item_key(item)]
     assert r.recorded_tests_text(result) == (
-        "Recorded tests: 4 · comparison incomplete for 1")
+        "Recorded results: 4 · comparison incomplete for 1")
     # K8-6e.1: a record that loses a field is counted apart, never as a result,
     # and never in a group's count; the others still read.
     del ledger["records"][0]["n_ranked"]
@@ -334,7 +334,7 @@ def test_contested_and_unchecked_are_counted_apart_from_the_report_store(root, m
     result = ml.recorded_tests_for(root["workspace"], [item])[ml.item_key(item)]
     assert (result.count, result.contested, result.unchecked, result.unreadable) == (3, 1, 1, 1)
     assert r.recorded_tests_text(result) == (
-        "Recorded tests: 3 · 1 not readable; runs differ for 1; comparison incomplete for 1")
+        "Recorded results: 3 · 1 not readable; runs differ for 1; comparison incomplete for 1")
 
 
 # --------------------------------------------------------------------------- the Load
@@ -884,7 +884,7 @@ def test_the_research_preset_is_a_table_with_in_use_on_its_own_row(root, serving
     research = ml.list_html(listing, None, ml.PRESETS["research"])
     assert '<table class="shep-tbl shep-mtbl"' in research and "In use now" not in research
     for column in ("Model", "Fingerprints: model · dataset trained on",
-                   "Validation (Trainer)", "Recorded tests"):
+                   "Validation (Trainer)", "Recorded results"):
         assert f">{column}</th>" in research, column
     served_row = next(row for row in research.split("<tr") if "disease_3fa9c1" in row)
     assert "In use (Diagnosis)" in served_row and "0.3500" in served_row

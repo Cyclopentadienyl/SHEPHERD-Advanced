@@ -32,8 +32,9 @@ from __future__ import annotations
 import re
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
+from src.utils.path_redaction import redact_paths
 from src.webui.components import renderers as r
 
 #: What replaces an absolute path that is not under the workspaces root.
@@ -42,55 +43,8 @@ OUTSIDE_PATH = "a path outside the workspaces root"
 ROOT_REFUSED = ("The workspaces root setting (SHEPHERD_WORKSPACES_ROOT) is refused, so the "
                 "server lists no workspace until it is corrected on the server.")
 
-#: **The dashboard's one pattern for an absolute path in a text** (M5-3 review
-#: ARCH-7: Datasets and Test had a copy each): POSIX (``/…``) or a drive letter
-#: (``C:\\…``), not right after a word, a dot, a colon, a slash or a NUL (a root
-#: already replaced, `redact_paths`). Where it ends (SECURITY-4: a path ended at
-#: its first space, so the rest of ``/mnt/clinic share/MRN 0012345/cases.json``
-#: was shown):
-#:
-#: - after a quote (``'…'``, as Python's messages quote a path), at the
-#:   closing quote, spaces included;
-#: - otherwise at a space, a quote, a bracket, a comma or a semicolon, but it
-#:   runs on through the words after a space up to the last one that holds a
-#:   path separator (``share/MRN 0012345/cases.json``), and then takes one more
-#:   word that ends in a file extension (``MRN 0012345.json``). A word that
-#:   starts another absolute path is never taken; it is replaced on its own.
-#:
-#: It may take a few words of prose too (``… cannot be read: train/val``):
-#: shown less, never a path. A space-holding last part with no separator or
-#: extension after it (``/data/Jane Doe``) still ends at its space.
-_P = r"""[^\s'"(),;\x00]"""
-_NOT_ABSOLUTE = r"""(?![/\\]|[A-Za-z]:[\\/])"""
-_ABSOLUTE = re.compile(rf"""
-    (?<![\w.:/\\\x00])
-    (?:
-        (?<=['"]) (?:/[^\s'"/\x00]|[A-Za-z]:[\\/]) [^'"\n\x00]*
-      | (?:/[^\s'"(),;/\x00]|[A-Za-z]:[\\/]) {_P}*
-        (?: (?:[ \t]+{_NOT_ABSOLUTE}{_P}+)* [ \t]+{_NOT_ABSOLUTE}{_P}*[/\\]{_P}* )?
-        (?: [ \t]+{_NOT_ABSOLUTE}[^\s'"(),;\x00/\\]*\.[A-Za-z][A-Za-z0-9]{{0,7}}(?!{_P}) )?
-    )""", re.VERBOSE)
 #: WP1's words for a link whose target is outside the root.
 _RESOLVES_OUTSIDE = re.compile(r"resolves to .+?, outside the workspaces root")
-
-
-def redact_paths(text: Any, roots: Sequence[Tuple[str, str]], *, other: str) -> str:
-    """`text` with no absolute server path left: one under a named server
-    directory (`roots`: ``(path, name)``, longest first) is shown under its
-    name, any other replaced by `other` (`_ABSOLUTE`). The one redaction every
-    page uses, for one root (`redact`) or several (the Test page's)."""
-    flat = str(text if text is not None else "")
-    marks: Dict[str, str] = {}
-    for index, (prefix, token) in enumerate(roots):
-        if not prefix:
-            continue
-        mark = f"\x00{index}\x00"
-        flat = re.sub(re.escape(prefix) + r"(?=$|[/\\\s'\"(),;:])", mark, flat)
-        marks[mark] = token
-    flat = _ABSOLUTE.sub(other, flat)
-    for mark, token in marks.items():
-        flat = flat.replace(mark, token)
-    return flat
 
 
 def redact(text: Any, root: Optional[Path]) -> str:
@@ -275,7 +229,6 @@ __all__ = [
     "manifest_state",
     "read_workspaces",
     "redact",
-    "redact_paths",
     "version_row",
     "workspace_binding",
     "workspaces_root",

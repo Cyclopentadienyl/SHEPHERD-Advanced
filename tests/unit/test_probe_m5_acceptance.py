@@ -452,12 +452,76 @@ def test_a5_states_a_differing_set_on_the_console_and_in_the_environment(
         "version_differs"]
 
 
+#: A1's facts before research-comparison Stage 2b, every one kept.
+A1_KEYS = {"python", "platform", "torch_version", "torch_cuda_build", "cuda_available",
+           "device_name", "torch_geometric", "pyg_native_present", "runtime_status"}
+
+
+def test_a1_keeps_its_keys_and_adds_the_collectors_native_identity(probe, monkeypatch, capsys):
+    """A1 adds the run environment's components beside its keys, from the one
+    collector every run records (read once per process), and says the native
+    build on the console in the wording the record views use."""
+    from src.utils.run_environment import (
+        collect_components,
+        native_identity,
+        native_identity_text,
+    )
+
+    monkeypatch.setattr(probe, "installed_against_lock", lambda path: _differing())
+    report = probe.Report()
+
+    probe.phase_environment(report, "cpu", describe_only=True)
+
+    a1 = {p.probe_id: p for p in report.probes}["A1"]
+    assert a1.status == "passed"
+    assert set(a1.facts) == A1_KEYS | {"components"}
+    assert a1.facts["components"] == collect_components()
+    said = capsys.readouterr().out
+    assert f"Native build: {native_identity_text(native_identity(collect_components()))}" in said
+
+
+def test_the_verdict_states_each_extensions_identity_and_route(probe):
+    """The route only where the source receipt matched what is installed;
+    otherwise the source reads "not recorded", with no route."""
+    from src.utils.run_environment import PYG_NATIVE_KIND, component_facts
+
+    built = component_facts(
+        PYG_NATIVE_KIND, installed=True, available=True, version="0.8.0",
+        native={"state": "recorded", "count": 1, "aggregate_sha256": "a" * 64},
+        source={"state": "recorded", "route": "local build", "requested": {"kind": "registry"},
+                "resolved": {"version": "0.8.0"}, "wheel_sha256": "b" * 64,
+                "compiled_against": {}, "toolchain": None, "flags": None})
+    differing = component_facts(
+        PYG_NATIVE_KIND, installed=True, available=True, version="2.1.2",
+        native={"state": "recorded", "count": 4, "aggregate_sha256": "c" * 64},
+        source={"state": "not recorded", "reason": "the source receipt does not describe what "
+                "is installed: installed version 2.1.2, the receipt's 2.1.1"})
+    report = probe.Report()
+    report.probes.append(probe.Probe("A1", "environment", "x", status="passed", facts={
+        "components": {"pyg_lib": built, "torch_scatter": differing}}))
+
+    verdict = probe.m2_acceptance(report, False)["environment"]
+
+    assert verdict == {"A5": "not run", "A1": "passed", "native_identity": {
+        "pyg_lib": {"kind": PYG_NATIVE_KIND, "version": "0.8.0",
+                    "native": {"state": "recorded", "count": 1, "aggregate_sha256": "a" * 64},
+                    "source": {"state": "recorded", "route": "local build"}},
+        "torch_scatter": {"kind": PYG_NATIVE_KIND, "version": "2.1.2",
+                          "native": {"state": "recorded", "count": 4,
+                                     "aggregate_sha256": "c" * 64},
+                          "source": {"state": "not recorded"}}}}
+    report.probes[0] = probe.Probe("A1", "environment", "x", status="failed")
+    assert probe.environment_verdict(report) == {
+        "A5": "not run", "A1": "failed", "native_identity": None}
+
+
 def test_a5_is_said_again_beside_the_acceptance_verdict(probe, monkeypatch):
     """At the end of the run and in the report's `m2_acceptance`, not only on
     a line an hour up the console."""
     report = probe.Report()
     assert probe.environment_line(report) is None
-    assert probe.m2_acceptance(report, False)["environment"] == {"A5": "not run"}
+    assert probe.m2_acceptance(report, False)["environment"] == {
+        "A5": "not run", "A1": "not run", "native_identity": None}
     report.probes.append(probe.Probe("A5", "environment", "x", status="passed",
                                      facts=_differing()))
 
@@ -465,6 +529,7 @@ def test_a5_is_said_again_beside_the_acceptance_verdict(probe, monkeypatch):
     line = probe.environment_line(report)
 
     assert verdict == {
+        "A1": "not run", "native_identity": None,
         "A5": "passed", "lock_sha256": "0" * 64, "lock_is_the_committed_one": False,
         "versions_match_lock": False, "version_differs": ["click"],
         "declared_not_installed": [], "installed_more_than_once": [], "not_in_lock": 2, "not_in_lock_from_deploy_scripts": 1,
@@ -475,7 +540,8 @@ def test_a5_is_said_again_beside_the_acceptance_verdict(probe, monkeypatch):
     report.probes[-1] = probe.Probe("A5", "environment", "x", status="skipped",
                                     detail="there is no uv.lock beside this checkout")
     assert "skipped (there is no uv.lock" in probe.environment_line(report)
-    assert probe.m2_acceptance(report, False)["environment"] == {"A5": "skipped"}
+    assert probe.m2_acceptance(report, False)["environment"] == {
+        "A5": "skipped", "A1": "not run", "native_identity": None}
 
 
 def test_a5_runs_after_the_device_probes_in_a_full_run(probe, monkeypatch):
@@ -483,7 +549,8 @@ def test_a5_runs_after_the_device_probes_in_a_full_run(probe, monkeypatch):
                         lambda path: {"version_differs": [], "installed_not_in_lock": []})
     report = probe.Report()
     probe.phase_environment(report, "cpu")
-    assert [p.probe_id for p in report.probes] == ["A1", "A2", "A3", "A4", "A5"]
+    # A6 (research comparison Stage 10) closes the phase, reading A1's facts.
+    assert [p.probe_id for p in report.probes] == ["A1", "A2", "A3", "A4", "A5", "A6"]
 
 
 def test_the_committed_lock_is_read_as_it_is(probe):
@@ -1096,12 +1163,15 @@ class _RunInputs:
 
     def __init__(self, reports: Path):
         from src.api.services.training_manager import TestRunInputs
+        from tests.fixtures.capabilities import described
 
         self.reports = reports
         self.inputs = TestRunInputs(
             registry=reports, version_label="v1", version_sha256="a" * 64, workspace=reports,
             checkpoint=reports / "model.pt", checkpoint_sha256="c" * 64, protocol="disease",
-            learning_stage="finetune", task="disease", version_counts={"source_cases": 1})
+            learning_stage="finetune", task="disease",
+            capabilities=described("finetune", "disease"), version_kind="supplied",
+            version_counts={"source_cases": 1})
 
     def reports_dir(self):
         return self.reports
@@ -1401,9 +1471,13 @@ def _rw3(probe, tmp_path, monkeypatch, sizes):
         "configured": False, "held": False, "unreadable": False})
     real = tmp_path / "workspaces" / "real"
     real.mkdir(parents=True)
-    version = SimpleNamespace(identity=SimpleNamespace(sha256="e" * 64), manifest={"counts": {}})
+    from tests.fixtures.capabilities import described
+
+    version = SimpleNamespace(identity=SimpleNamespace(sha256="e" * 64), manifest={"counts": {}},
+                              kind="supplied")
     child = {"path": tmp_path / "c.pt", "sha256": "c" * 64, "training_seconds": {},
-             "learning_stage": "finetune", "task": "disease"}
+             "learning_stage": "finetune", "task": "disease",
+             "capabilities": described("finetune", "disease")}
     report = probe.Report()
     probe._m5_real(report, tmp_path / "work", real, tmp_path / "workspaces", "cpu",
                    {"read": {"split_manifest.json": "f" * 64}, "task_child": child,

@@ -1,0 +1,969 @@
+{
+  "profile": "current GB10 acceptance",
+  "tested_commit": "e60f23ee0314c33d7785d13656a146e0ca0022d8",
+  "route": "compile",
+  "passed": 182,
+  "failed": 0,
+  "checks": [
+    {
+      "name": "the probe exited 0",
+      "passed": true,
+      "value": 0
+    },
+    {
+      "name": "probe list shape",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "probe IDs unique",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "summary agrees with actual probes",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "probe status vocabulary",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "no probe failed",
+      "passed": true,
+      "value": {
+        "error": 0,
+        "failed": 0,
+        "passed": 116,
+        "skipped": 0
+      }
+    },
+    {
+      "name": "no probe errored",
+      "passed": true,
+      "value": {
+        "error": 0,
+        "failed": 0,
+        "passed": 116,
+        "skipped": 0
+      }
+    },
+    {
+      "name": "demo: requested",
+      "passed": true,
+      "value": true
+    },
+    {
+      "name": "demo: the required list is the tested commit's",
+      "passed": true,
+      "value": 66
+    },
+    {
+      "name": "demo: A2 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: B1 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: C1 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: D1 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: D2 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: E1 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: E7 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: E8 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: M1 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: M2 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: M3 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: M4 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: M5.pre_contract passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: M5.other_graph passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: M5.other_samples passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: M5.validated_parent passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: M5.missing passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: M5.no_model_spec passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: M6 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: M7 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: M8 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: M9 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: M10 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: C5.missing passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: C5.replaced passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: C5.other_graph passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: C5.unbound passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: C5.unreadable passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: C5.unidentified passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: B22 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: B23 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: M11.training passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: M11.serving passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: M11.measurement passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: T1 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: T2 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: T3 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: T4 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: T5 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: T6 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: A5 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: W1 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: W2 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: W3 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: W4 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: W5 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: W6 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: W7 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: W8 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: W9 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: W10 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: W11 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: A6 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: L1 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: L2 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: L3 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: L4.other_graph passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: L4.tampered_pairs passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: L4.other_view passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: L4.split_record passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: L5 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: L6 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: L7.disease passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: L7.gene passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: L7.patients_like_me passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: L8 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "demo: complete, nothing not passed",
+      "passed": true,
+      "value": {}
+    },
+    {
+      "name": "real_data: requested",
+      "passed": true,
+      "value": true
+    },
+    {
+      "name": "real_data: the required list is the tested commit's",
+      "passed": true,
+      "value": 15
+    },
+    {
+      "name": "real_data: R1 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "real_data: R2 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "real_data: R3 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "real_data: R4 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "real_data: R4.finetune passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "real_data: R5 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "real_data: R6 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "real_data: R7 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "real_data: R8 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "real_data: RT1 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "real_data: RT2 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "real_data: RT3 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "real_data: RW1 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "real_data: RW2 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "real_data: RW3 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "real_data: complete, nothing not passed",
+      "passed": true,
+      "value": {}
+    },
+    {
+      "name": "the acceptance is complete",
+      "passed": true,
+      "value": true
+    },
+    {
+      "name": "tested commit",
+      "passed": true,
+      "value": "e60f23ee0314c33d7785d13656a146e0ca0022d8"
+    },
+    {
+      "name": "no tracked file modified during the run",
+      "passed": true,
+      "value": false
+    },
+    {
+      "name": "allocator backend cudaMallocAsync",
+      "passed": true,
+      "value": "cudaMallocAsync"
+    },
+    {
+      "name": "allocator from the saved preset",
+      "passed": true,
+      "value": "saved preset"
+    },
+    {
+      "name": "PYTORCH_ALLOC_CONF backend:cudaMallocAsync",
+      "passed": true,
+      "value": "backend:cudaMallocAsync"
+    },
+    {
+      "name": "torch not imported before the allocator was set",
+      "passed": true,
+      "value": false
+    },
+    {
+      "name": "environment device_name = NVIDIA GB10",
+      "passed": true,
+      "value": "NVIDIA GB10"
+    },
+    {
+      "name": "environment capability = 12.1",
+      "passed": true,
+      "value": "12.1"
+    },
+    {
+      "name": "environment cuda_available = True",
+      "passed": true,
+      "value": true
+    },
+    {
+      "name": "environment resolved_device = cuda",
+      "passed": true,
+      "value": "cuda"
+    },
+    {
+      "name": "environment platform = Linux aarch64",
+      "passed": true,
+      "value": "Linux aarch64"
+    },
+    {
+      "name": "environment torch_version = 2.10.0+cu130",
+      "passed": true,
+      "value": "2.10.0+cu130"
+    },
+    {
+      "name": "environment torch_cuda_build = 13.0",
+      "passed": true,
+      "value": "13.0"
+    },
+    {
+      "name": "environment allocator_backend = cudaMallocAsync",
+      "passed": true,
+      "value": "cudaMallocAsync"
+    },
+    {
+      "name": "environment python 3.12",
+      "passed": true,
+      "value": "3.12.3"
+    },
+    {
+      "name": "environment: all four PyG native extensions present",
+      "passed": true,
+      "value": [
+        "pyg_lib",
+        "torch_cluster",
+        "torch_scatter",
+        "torch_sparse"
+      ]
+    },
+    {
+      "name": "settings: device cuda",
+      "passed": true,
+      "value": "cuda"
+    },
+    {
+      "name": "settings: M2 acceptance requested",
+      "passed": true,
+      "value": true
+    },
+    {
+      "name": "settings: real data requested",
+      "passed": true,
+      "value": true
+    },
+    {
+      "name": "A5 passed",
+      "passed": true,
+      "value": "passed"
+    },
+    {
+      "name": "A5: the lock is the one committed at the tested commit",
+      "passed": true,
+      "value": true
+    },
+    {
+      "name": "A5: installed versions match the lock",
+      "passed": true,
+      "value": []
+    },
+    {
+      "name": "A5 read this checkout's uv.lock",
+      "passed": true,
+      "value": "0f92a5ecff12170bb26127c9d7098ab4301ffac8c7c3bcbd4b7dc9723815c356"
+    },
+    {
+      "name": "R1: the graph digest is M4's",
+      "passed": true,
+      "value": "6cae2d1a58690eec9aa9c5e3ca9182c2fc942db0f468a5123983251bd4c51e43"
+    },
+    {
+      "name": "R2: the stripped copy is refused by finetune, resume and serving",
+      "passed": true,
+      "value": {
+        "finetune": "refused before anything was written",
+        "resume": "refused before anything was written",
+        "serving": "refused at load before any model was built"
+      }
+    },
+    {
+      "name": "R2: the deployment's file without a model spec is refused by finetune and resume",
+      "passed": true,
+      "value": {
+        "finetune": "refused before anything was written",
+        "resume": "refused before anything was written"
+      }
+    },
+    {
+      "name": "M2: float16 in effect on CUDA with a gradient scaler (Q13 (b))",
+      "passed": true,
+      "value": [
+        true,
+        "float16",
+        true
+      ]
+    },
+    {
+      "name": "M2: the scaler restored from the parent before the first update",
+      "passed": true,
+      "value": "verified at restore: equal to the parent's before the first update"
+    },
+    {
+      "name": "M9: float16 in effect on CUDA with a gradient scaler (Q13 (b))",
+      "passed": true,
+      "value": [
+        true,
+        "float16",
+        true
+      ]
+    },
+    {
+      "name": "M9: the scaler restored from the parent before the first update",
+      "passed": true,
+      "value": "verified at restore: equal to the parent's before the first update"
+    },
+    {
+      "name": "R3: a GATv2 base under tested training rules 2",
+      "passed": true,
+      "value": [
+        "base",
+        "gatv2",
+        2
+      ]
+    },
+    {
+      "name": "R4: the reference recipe's fp32, no gradient scaler",
+      "passed": true,
+      "value": "no gradient scaler (fp32 recipe)"
+    },
+    {
+      "name": "R8: 19 entries unchanged, the deployment's file without a model spec unchanged",
+      "passed": true,
+      "value": [
+        19,
+        "unchanged"
+      ]
+    },
+    {
+      "name": "explicit deployment route",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "L1: preview, graph and test-kind identity",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "L1: manifest_sha256",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "L1: taken_from_checkpoint_sha256",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "L1: graph_view_digest",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "L1: split_digest",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "L1: pairs.sha256",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "L1: pairs.lp_pairs_digest",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "L1: count binds pairs",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "A6: component identities and routes are present",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "deployment: pyg_lib is local build",
+      "passed": true,
+      "value": "local build"
+    },
+    {
+      "name": "deployment: torch_scatter is local build",
+      "passed": true,
+      "value": "local build"
+    },
+    {
+      "name": "deployment: torch_sparse is local build",
+      "passed": true,
+      "value": "local build"
+    },
+    {
+      "name": "deployment: torch_cluster is local build",
+      "passed": true,
+      "value": "local build"
+    },
+    {
+      "name": "L2: checkpoint and KG version bind",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "L2: exposure is recorded",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "L2: scores bind pairs and count",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "L2: core recomputed metrics and scores",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "L2: CUDA, report and own run registered",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "L2: LP requested",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "L3: checkpoint and KG version bind",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "L3: exposure is recorded",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "L3: scores bind pairs and count",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "L3: core recomputed metrics and scores",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "L3: CUDA, report and own run registered",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "L3: LP requested",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "L3: runner kept and registered",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "L4.other_graph: refusal before publication",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "L4.tampered_pairs: refusal before publication",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "L4.other_view: refusal before publication",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "L4.split_record: refusal before publication",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "L4.other_graph: KG mismatch identified",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "L5.disease: CUDA, report and own run registered",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "L5.disease: supplied disease protocol",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "L5.kg_link_prediction: checkpoint and KG version bind",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "L5.kg_link_prediction: exposure is recorded",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "L5.kg_link_prediction: scores bind pairs and count",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "L5.kg_link_prediction: core recomputed metrics and scores",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "L5.kg_link_prediction: CUDA, report and own run registered",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "L5: both protocols through same reader",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "L6: CUDA, report and own run registered",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "L6: generated val on same child, preview read-only",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "L7.disease: CUDA, report and own run registered",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "L7.disease: child trained on CUDA from listed base under tested rules",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "L7.disease: same declared data version",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "L7.gene: CUDA, report and own run registered",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "L7.gene: child trained on CUDA from listed base under tested rules",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "L7.gene: same declared data version",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "L7.patients_like_me: CUDA, report and own run registered",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "L7.patients_like_me: child trained on CUDA from listed base under tested rules",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "L7.patients_like_me: same declared data version",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "L8: complete uncapped export",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "L8: every run and report is its own, in flow order",
+      "passed": true,
+      "value": ""
+    },
+    {
+      "name": "L8: metric rows accounted for",
+      "passed": true,
+      "value": ""
+    }
+  ],
+  "info": [
+    "torch_geometric 2.8.1 (A5 checks the tested lock)",
+    "RW2 training_seconds {'disease': 1100.6}",
+    "R4.finetune training_seconds {'disease': 1125.1}",
+    "disk: 173 samples; peak 14857318251 B; least free 3069811531776 B (recorded, not judged)",
+    "L2 largest_raw_score_difference 2.384185791015625e-07 (probe already checked tolerance; not required to be zero)",
+    "L3 largest_raw_score_difference 5.960464477539063e-08 (probe already checked tolerance; not required to be zero)",
+    "L5.kg_link_prediction largest_raw_score_difference 2.9802322387695312e-08 (probe already checked tolerance; not required to be zero)",
+    "L7.disease training_seconds 0.2",
+    "L7.gene training_seconds 0.4",
+    "L7.patients_like_me training_seconds 0.4",
+    "S1 (informational only): passed"
+  ]
+}

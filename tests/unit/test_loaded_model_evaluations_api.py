@@ -60,6 +60,7 @@ from tests.fixtures.opens import count_opens  # noqa: E402
 from tests.fixtures.report_store import IMPORTED_AT, store_report  # noqa: E402
 from tests.unit.test_evaluation_sidecar import (  # noqa: E402
     cohort_version,
+    environment_block,
     r10_block,
     registered_report,
 )
@@ -79,7 +80,7 @@ RESPONSE_KEYS = {"state", "checkpoint_sha256", "ledger", "records", "records_not
 RECORD_VIEW_KEYS = {
     "cohort", "counts", "mode", "score_semantics", "metrics", "n_ranked", "relations", "r10",
     "environment_class",
-    "deterministic_algorithms", "gpu", "dataset_origin", "scoring_semantics_digest", "measurement_semantics_digest",
+    "deterministic_algorithms", "gpu", "native_identity", "components", "dataset_origin", "scoring_semantics_digest", "measurement_semantics_digest",
     "registration", "run_id", "historical_overlap", "n_corroborating", "source_artifact_digest",
     "contest",
 }
@@ -288,6 +289,9 @@ def test_the_loaded_checkpoints_records_are_shown(app, served, tmp_path, monkeyp
     assert view["environment_class"] == "CUDA, deterministic algorithms on"
     assert view["deterministic_algorithms"] is True     # the record's regime says so (M5-3)
     assert view["gpu"] == {"name": "NVIDIA GeForce RTX 4090", "driver": "560.35"}
+    # Its environment names no components (as before research-comparison Stage
+    # 2b): no native build identity, shown as not recorded.
+    assert view["native_identity"] is None
     assert view["dataset_origin"] == "synthetic"
     assert view["scoring_semantics_digest"] == record["scoring_semantics_digest"]
     assert view["measurement_semantics_digest"] == record["measurement_semantics_digest"]
@@ -703,6 +707,8 @@ MALFORMED = {
     "cohort digest not hex": _set(("cohort_digest",), "a" * 63),
     "cohort a list": _set(("cohort",), []),
     "cohort kind generated": _set(("cohort", "kind"), "generated"),
+    "cohort kind no build reads": _set(("cohort", "kind"), "/srv/private/cases"),
+    "no cohort kind": _delete("cohort", "kind"),
     "samples digest not hex": _set(("cohort", "samples_sha256"), "not-a-digest"),
     "empty label": _set(("cohort", "label"), ""),
     "cohort_role is not the cohort's role": _set(("cohort_role",), "udn"),
@@ -767,6 +773,14 @@ MALFORMED_REASONS = {
     "environment a string": "environment.facts.gpu: missing",
     "dataset_record a number": "dataset_record.origin: missing",
     "corroborating reports not a list": "its corroborating_reports is not a list",
+    # One reader by data kind (research comparison Stage 6): a kind no build
+    # reads is named by its field, never its value; a supplied record edited
+    # to another kind is read as that kind's and lacks its fields.
+    "cohort kind no build reads": (
+        "cohort.kind: not a data kind this build reads (supplied, kg_edges, generated)"),
+    "no cohort kind": "cohort.kind: missing",
+    "cohort kind generated": ("cohort.split_manifest: missing; cohort.generation: missing; "
+                              "cohort.allocation: missing; 4 more"),
     "r10 null": ("r10.training.evidence: missing; r10.training.disease_overlap: missing; "
                  "r10.training.phenotype_set_overlap: missing; 3 more"),
 }
@@ -813,8 +827,10 @@ def test_a_malformed_record_for_these_weights_is_listed_with_its_reason_not_show
     if name in MALFORMED_REASONS:
         assert reason == MALFORMED_REASONS[name]
     # Every field the reason names is a path the record registration wrote
-    # has: the key a hand edit corrects, never the view's name for it.
-    for part in reason.split("; "):
+    # has: the key a hand edit corrects, never the view's name for it. (A
+    # record whose kind was edited to another kind's is read as that kind's,
+    # so its reason names that kind's paths, pinned above.)
+    for part in reason.split("; ") if name != "cohort kind generated" else ():
         if ": " in part and not part.startswith(("its ", "the ")):
             target = written
             for step in part.split(": ", 1)[0].split("."):
@@ -906,7 +922,7 @@ def _computed_r10(tmp_path, situation):
 def test_every_block_r10_computes_is_shown_as_computed(tmp_path, situation):
     """The view's R10 rules are R10's own: a block `compute_r10` writes is never
     refused as malformed, and is shown as computed, less its paths."""
-    from src.api.routes.evaluations import _record_view
+    from src.api.services.record_views import _record_view
     from src.evaluation.sidecar import append_record, build_record, empty_ledger
 
     block = _computed_r10(tmp_path, situation)
@@ -940,6 +956,176 @@ def test_a_record_that_is_not_an_object_or_names_no_digest_is_not_these_weights(
     assert len(body["records"]) == 1 and body["records_not_shown"] == 0
     # They belong to no model (policy rev 15): no model's view lists them.
     assert body["unreadable_records"] == []
+
+
+# ---------------------------------------------------------------------------
+# 5b. The native build identity (research-comparison Stage 2b, E1): one
+#     projection beside the GPU, validated like every other field
+# ---------------------------------------------------------------------------
+def _components():
+    """Two named components as the collector writes them: an extension built
+    locally, its source receipt matching what was installed, and a component
+    of another kind, selected but fallen back, with no source recorded."""
+    from src.utils.run_environment import PYG_NATIVE_KIND, component_facts
+
+    return {
+        "pyg_lib": component_facts(
+            PYG_NATIVE_KIND, installed=True, available=True, version="0.8.0",
+            native={"state": "recorded", "count": 2, "aggregate_sha256": "a" * 64},
+            source={"state": "recorded", "route": "local build",
+                    "requested": {"kind": "registry", "name": "pyg-lib", "specifier": "==0.8.0"},
+                    "resolved": {"version": "0.8.0"}, "wheel_sha256": "b" * 64,
+                    "compiled_against": {"torch": "2.10.0+cu130", "cuda": "13.0",
+                                         "basis": "the build's target environment"},
+                    "toolchain": {"gcc": "13.3.0"}, "flags": {"MAX_JOBS": "8"}}),
+        "test_attention": component_facts(
+            "attention kernel", installed=True, available=True, selected=True,
+            in_effect=False, fallback_reason="the run's dtype is not supported", version="2.0"),
+    }
+
+
+def _report_with_components(checkpoint_sha):
+    environment = environment_block()
+    environment["facts"]["components"] = _components()
+    return _report_for(checkpoint_sha, environment=environment)
+
+
+def test_a_records_native_build_identity_is_shown_by_component(app, served, tmp_path):
+    """Each component the record's environment names is shown by its identity:
+    kind, version, native libraries and route. Its states, fallback and source
+    details are not in the identity, the display summary: they are in
+    ``components``, every fact as the record holds it (review fix RC-P2-1). No
+    file name is anywhere."""
+    _, _, checkpoint = served
+    _register(_report_with_components(_sha(checkpoint)), checkpoint.parent,
+              tmp_path / "reports")
+
+    (view,) = _get(app)["records"]
+
+    assert view["native_identity"] == {
+        "pyg_lib": {"kind": "PyG native extension", "version": "0.8.0",
+                    "native": {"state": "recorded", "count": 2, "aggregate_sha256": "a" * 64},
+                    "source": {"state": "recorded", "route": "local build"}},
+        "test_attention": {"kind": "attention kernel", "version": "2.0",
+                           "native": {"state": "not recorded", "count": None,
+                                      "aggregate_sha256": None},
+                           "source": {"state": "not recorded", "route": None}},
+    }
+    shown = json.dumps(view["native_identity"])
+    for detail in ("in_effect", "fallback", "requested", "toolchain", "MAX_JOBS", "b" * 64):
+        assert detail not in shown
+    # Every recorded fact, as the record holds it: the states, the fallback
+    # and its reason, and every source fact.
+    assert view["components"] == _components()
+    every = json.dumps(view["components"])
+    for detail in ("in_effect", "fallback", "requested", "toolchain", "MAX_JOBS", "b" * 64):
+        assert detail in every
+    assert ".whl" not in every
+
+
+#: The native identity edited out of the collector's shape: each is listed
+#: with its reason by the ledger record's own path (`_RECORD_PATHS`).
+NATIVE_MALFORMED = {
+    "components not an object": (
+        _set(("environment", "facts", "components"), ["pyg_lib"]),
+        "environment.facts.components: Input should be a valid dictionary"),
+    "a component without its kind": (
+        _delete("environment", "facts", "components", "pyg_lib", "kind"),
+        "environment.facts.components.pyg_lib.kind: missing"),
+    "a native digest not hex": (
+        _set(("environment", "facts", "components", "pyg_lib", "native", "aggregate_sha256"),
+             "a" * 63),
+        "environment.facts.components.pyg_lib.native.aggregate_sha256: String should match "
+        "pattern '^[0-9a-f]{64}$'"),
+    "a recorded source without its route": (
+        _delete("environment", "facts", "components", "pyg_lib", "source", "route"),
+        "environment.facts.components.pyg_lib.source: a route is given exactly when the source "
+        "is recorded"),
+    # Facts only the component's every-fact view reads (review fix RC-P2-1):
+    # named by their path, never their value.
+    "a state that is not one": (
+        _set(("environment", "facts", "components", "test_attention", "in_effect"), "yes"),
+        "environment.facts.components.test_attention.in_effect: true, false or 'unknown'"),
+    # Each component is read by the rule its collector holds it to
+    # (`plain_data`, review fix RC-R1), which names the fact itself.
+    "a source fact that is not plain data": (
+        _set(("environment", "facts", "components", "pyg_lib", "source", "flags"),
+             {"MAX_JOBS": float("nan")}),
+        "environment.facts.components.pyg_lib.source.flags.MAX_JOBS is not a finite number"),
+    # Review fix RC-R1: a lone surrogate, which JSON's escapes let a ledger
+    # hold and no answer can encode, anywhere a view shows it; the record is
+    # listed apart, and the answer, which is JSON, is still given.
+    "a source fact that is not text": (
+        _set(("environment", "facts", "components", "pyg_lib", "source", "toolchain"),
+             {"gcc": "cc " + chr(0xd800)}),
+        "environment.facts.components.pyg_lib.source.toolchain.gcc is not text: character 3 "
+        "is a lone surrogate"),
+    "a fact's key that is not text": (
+        _set(("environment", "facts", "components", "pyg_lib", "source", "flags"),
+             {"MAX" + chr(0xd800): "8"}),
+        "environment.facts.components.pyg_lib.source.flags has a key that is not text: "
+        "character 3 is a lone surrogate"),
+    "a GPU name that is not text": (
+        _set(("environment", "facts", "gpu"), {"name": "GB10 " + chr(0xd800), "driver": "580"}),
+        "environment.facts.gpu.name is not text: character 5 is a lone surrogate"),
+    # Review fix RC-R1 (its review): a refused fact is named by what the view
+    # shows of it, after the one D7 redaction, never by a server path the
+    # record holds as a key.
+    "a fact under a server path that is not plain data": (
+        _set(("environment", "facts", "components", "pyg_lib", "source", "flags"),
+             {"/home/secret-user/build": float("nan")}),
+        "environment.facts.components.pyg_lib.source.flags.a server path is not a finite "
+        "number"),
+    "a fact under a server path that is not text": (
+        _set(("environment", "facts", "components", "pyg_lib", "source", "flags"),
+             {"/home/secret-user/build": "x" + chr(0xd800)}),
+        "environment.facts.components.pyg_lib.source.flags.a server path is not text: "
+        "character 1 is a lone surrogate"),
+}
+
+
+@pytest.mark.parametrize("name", sorted(NATIVE_MALFORMED))
+def test_a_malformed_native_identity_is_listed_with_its_reason(app, served, tmp_path, name):
+    _, _, checkpoint = served
+    _register(_report_with_components(_sha(checkpoint)), checkpoint.parent,
+              tmp_path / "reports")
+    edit, reason = NATIVE_MALFORMED[name]
+    _edit_ledger(checkpoint.parent / "evaluations.json",
+                 lambda ledger: edit(ledger["records"][0]))
+
+    body = _get(app)
+
+    assert body["records"] == [] and body["records_not_shown"] == 1
+    assert body["unreadable_records"][0]["reason"] == reason
+    # The answer holds no surrogate: JSON's ASCII form would write one as \\ud8..
+    assert "\\ud8" not in json.dumps(body)
+    assert "secret-user" not in json.dumps(body)
+
+
+@pytest.mark.parametrize("edit, compiler", [
+    (_set(("environment", "facts", "components", "pyg_lib", "source", "compiler"),
+          "/opt/lab-" + chr(0xdcff) + "/bin/cc"), "a server path"),
+    (_set(("environment", "facts", "components", "pyg_lib", "future_note"), "x" + chr(0xd800)),
+     None),
+], ids=["a path the redaction replaces", "a fact outside the shape"])
+def test_text_no_view_shows_never_hides_a_record_whatever_it_holds(app, served, tmp_path,
+                                                                   edit, compiler):
+    """Review fix RC-R1 (its review): a lone surrogate in a component's text
+    that no view shows (a path the one D7 redaction replaces, a newer writer's
+    fact outside the shape) leaves the record shown, as it was before RC-R1,
+    and the answer, which is JSON, holds no surrogate."""
+    _, _, checkpoint = served
+    _register(_report_with_components(_sha(checkpoint)), checkpoint.parent,
+              tmp_path / "reports")
+    _edit_ledger(checkpoint.parent / "evaluations.json",
+                 lambda ledger: edit(ledger["records"][0]))
+
+    body = _get(app)
+
+    assert body["records_not_shown"] == 0 and len(body["records"]) == 1
+    shown = body["records"][0]["components"]["pyg_lib"]
+    assert shown["source"].get("compiler") == compiler and "future_note" not in shown
+    assert "\\ud8" not in json.dumps(body) and "\\udc" not in json.dumps(body)
 
 
 # ---------------------------------------------------------------------------
@@ -1185,12 +1371,15 @@ def test_the_route_opens_the_ledger_the_manifests_and_the_shown_versions_reports
     assert ledger.read_bytes() == ledger_bytes
 
 
-def test_the_route_module_names_no_checkpoint_reader_or_writer():
+@pytest.mark.parametrize("module", ["src.api.routes.evaluations",
+                                    "src.api.services.record_views"])
+def test_the_route_module_names_no_checkpoint_reader_or_writer(module):
     """The static half of the test above: a call reached only on a path that
-    test does not take is still found."""
-    from src.api.routes import evaluations
+    test does not take is still found, in the route and in the one reader it
+    reads records by (moved out of the route in research comparison Stage 8)."""
+    import importlib
 
-    tree = ast.parse(Path(evaluations.__file__).read_text(encoding="utf-8"))
+    tree = ast.parse(Path(importlib.import_module(module).__file__).read_text(encoding="utf-8"))
     names = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
     names |= {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
     names |= {alias.name.split(".")[0] for node in ast.walk(tree)
@@ -1426,7 +1615,8 @@ def test_the_state_descriptions_say_their_meaning_changed_and_decide_nothing():
     descriptions say they changed meaning and decide nothing; `run_id` and
     `historical_overlap` are described. HEAD: "the record stays, marked", no
     run field."""
-    from src.api.routes.evaluations import RecordContest, RecordView
+    from src.api.routes.evaluations import RecordContest
+    from src.api.services.record_views import RecordView
 
     state = RecordContest.model_fields["state"]
     assert set(state.annotation.__args__) == {"uncontested", "contested", "cannot_be_checked"}
@@ -1502,7 +1692,7 @@ def test_a_mixed_ledger_lists_its_unreadable_record_the_same_way_in_every_reader
     and "n_ranked: missing"; the request leaves the ledger's bytes as they
     were. Models' operator details (through the shared listing) and its
     read-only view (through this route) list the same item and never point to
-    the server's log; the row and the Diagnosis card read "Recorded tests: 3 ·
+    the server's log; the row and the Diagnosis card read "Recorded results: 3 ·
     1 not readable". Registering a new disease, C and D report appends records
     5, 6 and 7, and the unreadable record stays as written at index 3. HEAD: no
     ``unreadable_records``, "the server's log says why", and the row counted
@@ -1557,9 +1747,9 @@ def test_a_mixed_ledger_lists_its_unreadable_record_the_same_way_in_every_reader
         assert str(tmp_path) not in shown
     # The row and the Diagnosis card count results only, and name the rest.
     assert (recorded.count, recorded.unreadable) == (3, 1)
-    assert r.recorded_tests_text(recorded).startswith("Recorded tests: 3 · 1 not readable")
+    assert r.recorded_tests_text(recorded).startswith("Recorded results: 3 · 1 not readable")
     card = _text(diagnosis_card._recorded_html({"recorded": recorded._asdict()}, grey=False))
-    assert card.startswith("Recorded tests: 3 · 1 not readable")
+    assert card.startswith("Recorded results: 3 · 1 not readable")
 
     # Appending goes on past it; the unreadable record stays as written.
     more = [_report_for(digest, batch_size=16), mode_c_report(artifact_digests=digests,
@@ -1653,7 +1843,7 @@ def test_the_record_path_helpers_annotations_resolve():
     import typing
     from collections.abc import Sequence
 
-    from src.api.routes import evaluations
+    from src.api.services import record_views
 
-    hints = typing.get_type_hints(evaluations._record_path)
+    hints = typing.get_type_hints(record_views._record_path)
     assert typing.get_origin(hints["loc"]) is Sequence

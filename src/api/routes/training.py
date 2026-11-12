@@ -211,6 +211,12 @@ class CheckpointInfo(BaseModel):
     run: Optional[str] = None
     run_dir: Optional[str] = None
     architecture: Optional[str] = None
+    # The entry's identity in the listing, apart from the names shown above
+    # (BACKLOG 66: a name that is not text is shown with backslash escapes and
+    # identified by its bytes): architecture/run/file for names that are text;
+    # and its run's identity, architecture/run, by which a list groups entries.
+    key: Optional[str] = None
+    run_key: Optional[str] = None
     checkpoint_kind: Optional[str] = None
     # From the same one read as the metadata (M5-1, BACKLOG 19.3): the SHA-256
     # of the bytes read, the Trainer's validation figure, the dataset
@@ -222,7 +228,7 @@ class CheckpointInfo(BaseModel):
     # The model record's summary (`src.models.bundle.record.listed_record`):
     # model or refused (with why); a model's stage, task, operation, family and
     # parent, encoder kind, the spec fields that differ from the reference
-    # recipe and whether there are none.
+    # recipe, whether there are none, and its capability description.
     record: Optional[str] = None
     record_problem: Optional[str] = None
     learning_stage: Optional[str] = None
@@ -234,6 +240,7 @@ class CheckpointInfo(BaseModel):
     encoder: Optional[str] = None
     reference: Optional[bool] = None
     differences: Optional[List[str]] = None
+    capabilities: Optional[Dict[str, Any]] = None
 
 
 # =============================================================================

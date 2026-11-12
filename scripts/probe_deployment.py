@@ -173,13 +173,18 @@ package installed more than once, and the packages outside the lock, the deploy
 scripts' (PyG's native extensions, cuVS and what they require) told from the
 ones nothing installed requires (an older lock's leftovers). A set that differs (a homelab's, say) is stated in the report and
 on the console, never hidden, and said again beside the acceptance's verdict.
+Since research-comparison Stage 2b, A1 also records each named component as
+every run's environment does (`src/utils/run_environment.collect_components`:
+the PyG extensions' native build identity, and the source receipt's facts where
+it matches what is installed), and the verdict states each one's identity and
+route.
     Phase M, after T6, on the probe's own deployment under <work>/m5: a copy of
     the demo workspace under its own workspace root, M2's resumed disease
     child copied into a run there, filed under its encoder kind, and T1's
     registry; W7-W11's test runs measure that listed copy by the disease
     protocol (a test run measures a model by a protocol this build implements
-    for its stage and task head, which the runner judges on the listed model
-    record and version, `src.evaluation.protocols`). The server's lists name
+    that its capabilities admit, which the runner judges on the listed model's
+    capability description and the listed version, `src.evaluation.protocols`). The server's lists name
     the workspace, its
     checkpoints and the cohort versions by name and digest and resolve only
     what they list (W1). The service, started as the launcher starts it in its
@@ -236,9 +241,12 @@ on the console, never hidden, and said again beside the acceptance's verdict.
     lock (P2-4), so phases M and R name a lock of the probe's own, under a
     workspaces root of its own, `<work>/probe-gpu-lock/`
     (`_probes_own_gpu_lock`); they therefore do not exclude a deployment job
-    that runs meanwhile. **The training probes take
+    that runs meanwhile. The research comparison's probes (L1-L8, below) run
+    under settings of their own the same way (`_rc_demo`), their lock under
+    the workspaces root of their own deployment. **The training probes take
     no GPU lock at all**, not even the probe's own (D1, M2, M9, R3, R4,
-    R4.finetune and RW2's child train; M5, M10, M11.training and R2 are
+    R4.finetune and RW2's child train, and so do L4.other_graph's and
+    L4.other_view's bases and L7's children; M5, M10, M11.training and R2 are
     refused before they do):
     they call the production trainer in this process, and `train()` takes no
     lock, only the program entries do (`src/utils/gpu_lock.py`), so they
@@ -257,6 +265,73 @@ on the console, never hidden, and said again beside the acceptance's verdict.
     pid, which the GPU lock's holder record (``<lock file>.json``) names, with
     ``kill -INT <pid>``, or end its whole process group with
     ``kill -TERM -- -<pid>`` (the job leads its own group).
+
+The research comparison round's probes (its plan's §5 Stage 10, the owner's
+O9; the field contract the external closing check reads is
+docs/working/research-comparison/GB10_ACCEPTANCE.md), carried by the same run,
+functional only: not model quality, and no figure of one model compared with
+another's. A6, in phase A, requires A1's components: each named component's
+facts in the shape every run records, its native build identity, and its route
+only where the source receipt matched what is installed ("not recorded"
+otherwise); no version is compared with anything. Phase M, after W11, on the
+probe's own deployment under <work>/rc (a copy of the demo workspace under a
+root of its own, listing copies of D1's base and disease child, and a registry),
+every step through its production entry point:
+    a KG edge set, the test part of the edge split D1's base records, imported
+    by the importer (`--kind kg_edges --from-checkpoint`), previewed and
+    committed (L1); the base measured on it by the KG link-prediction protocol
+    through measure_scorer with --record (L2) and through the job runner from
+    the server's lists with record (L3), each kept and registered, its exposure
+    scoped to the base's record and its scores file, the version's pairs and
+    the report's summary checked against each other (`_lp_scores_verified`);
+    the refusals before anything is written (L4): a KG edge set of another
+    graph (a base trained on M1's graph, its own set imported there), a pairs
+    file changed after its import, a model of another graph view (a base
+    trained without the ortholog relation: a stated capability gap), and a
+    split record whose seed and digest contradict each other; D1's disease
+    child measured by the disease protocol on a supplied cohort and by the KG
+    link-prediction protocol on L1's set, two independent records read by the
+    one reader (L5); the workspace's functional gene fixture derived
+    (`scripts/derive_task_fixture.py`) and its generated val split imported
+    with it, measured by that child and registered (L6); the GPU regression
+    cases, a short disease, gene and patients-like-me child of the listed base
+    each trained on the probe's device at the demo's sizes, measured by its own
+    protocol (disease on the supplied cohort, the other two on the generated
+    split's fixture) and registered (L7.disease, L7.gene,
+    L7.patients_like_me); and the results export (`scripts/export_results.py`)
+    over that deployment listing every run L2-L7 kept, with its identities,
+    training settings, environment and exposure, no row capped (L8). On CUDA
+    the measurements and the L7 children run on the device; this container's
+    tests run the same phase on the CPU.
+
+M1's minimal served readings (the round's Stage 10b, the owner's item D;
+BACKLOG 64), carried by the same run, last in phase M after L8, and
+**informational**: S1 is in neither required list, so `m2_acceptance` never
+reads it and no reading can leave the acceptance incomplete, and the run's
+exit status never counts it (`INFORMATIONAL_PROBES`, `run_exit_status`), so
+not even a failed S1 fails the run; nothing it reads is judged, and there is
+no threshold. It takes a minimal part of the retired
+`scripts/measure_served_pipeline.py`'s reviewed procedure (PLAN_B04 §7.3),
+which stays that script's record:
+    D1's disease child served by a service of its own, started as the
+    launcher starts it (`_ProbeServer`) with the child configured at startup,
+    readiness asserted (/ready, and the status's served identity held to the
+    probe's own reads, `_assert_served_identity`) before anything counts; a
+    service not shown ready fails S1 with what was read before it (the
+    readiness record, the cold start) and every later reading not taken. The
+    readings: the cold start (launch to the first /health answer, the
+    startup's pipeline build included), a warm-up and a steady state of a
+    fixed count of serial diagnose requests (one query from the workspace's
+    own validation cases, the API's defaults), each counted request timed on
+    the probe's clock to its whole answer (on CUDA already synchronised by the server's
+    copy of the scores to the host) beside the server's own handler time;
+    each failure by class. The server process's own memory (VmRSS, and VmHWM,
+    its peak since the start) at readiness and after each phase, and its
+    allocator variables, from its PID's /proc entries. The server's CUDA
+    allocator peak is recorded as not obtainable, with why: torch keeps it
+    inside the server's process and no route exposes it, and a figure taken
+    in the probe's process would describe the probe. What the readings do not
+    cover is listed with them (`SERVED_READINGS_NOT_COVERED`).
 """
 from __future__ import annotations
 
@@ -278,6 +353,9 @@ from typing import (Any, Callable, Dict, List, Mapping, NamedTuple, Optional, Se
 
 project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
+
+# Standard library only (no torch), so it is safe before `_apply_allocator`.
+from src.utils.pyg_native_check import normalised_name as _normalised  # noqa: E402
 
 REPORT_SCHEMA_VERSION = 1
 
@@ -318,17 +396,23 @@ def _apply_allocator() -> Dict[str, Any]:
     return {"source": source, "torch_imported_before": torch_first}
 
 
-def _allocator_record(backend: Optional[str]) -> Dict[str, Any]:
-    """The allocator variables in effect, where they came from, and the backend
-    torch reports (None when no CUDA device was resolved)."""
-    import os
-
+def _allocator_variables() -> Tuple[str, ...]:
+    """The allocator variables a report records, by name: for the probe's own
+    process (`_allocator_record`) and for the served readings' server process
+    (`_process_allocator`), one list for both."""
     from src.config.runtime_presets import ALLOC_SOURCE_ENV
 
+    return ("PYTORCH_ALLOC_CONF", "PYTORCH_CUDA_ALLOC_CONF", ALLOC_SOURCE_ENV)
+
+
+def _allocator_record(backend: Optional[str]) -> Dict[str, Any]:
+    """The allocator variables in effect (`_allocator_variables`), where they
+    came from, and the backend torch reports (None when no CUDA device was
+    resolved)."""
+    import os
+
     return {
-        "PYTORCH_ALLOC_CONF": os.environ.get("PYTORCH_ALLOC_CONF"),
-        "PYTORCH_CUDA_ALLOC_CONF": os.environ.get("PYTORCH_CUDA_ALLOC_CONF"),
-        ALLOC_SOURCE_ENV: os.environ.get(ALLOC_SOURCE_ENV),
+        **{name: os.environ.get(name) for name in _allocator_variables()},
         "source": ALLOCATOR.get("source", "not applied (main() called in process)"),
         "torch_imported_before": ALLOCATOR.get("torch_imported_before"),
         "backend": backend,
@@ -638,7 +722,8 @@ def phase_environment(
     report: Report, device: str, *, describe_only: bool = False
 ) -> Dict[str, Any]:
     """What this machine is, and — unless `describe_only` — whether its device
-    serves: A2 resolves it, A3 records its architectures, A4 launches kernels.
+    serves: A2 resolves it, A3 records its architectures, A4 launches kernels;
+    and A6 requires A1's native build identity of each named component.
 
     `describe_only` is for runs whose verdict is about something else. A
     download check that launched kernels was failed by a GPU that could not run
@@ -649,6 +734,11 @@ def phase_environment(
     facts: Dict[str, Any] = {}
 
     def _runtime() -> Tuple[str, Dict[str, Any]]:
+        from src.utils.run_environment import (
+            collect_components,
+            native_identity,
+            native_identity_text,
+        )
         from src.utils.version_checker import probe_runtime
 
         runtime = probe_runtime(force=True)
@@ -666,8 +756,15 @@ def phase_environment(
                 if status.get("available")
             ),
             "runtime_status": runtime.get("status"),
+            # Beside the keys above (research-comparison Stage 2b, BACKLOG 71):
+            # each named component as every run's environment records it (the
+            # one collector, read once per process), its native identity and,
+            # where the source receipt matches what is installed, its source.
+            "components": collect_components(),
         }
         facts.update(collected)
+        print(f"         Native build: "
+              f"{native_identity_text(native_identity(collected['components']))}")
         return "runtime described", collected
 
     report.run("A1", "environment", "the runtime describes itself", _runtime)
@@ -808,16 +905,62 @@ def phase_environment(
         _kernel_runs,
     )
     _environment_record()
+
+    def _native_identity_and_route() -> Tuple[str, Dict[str, Any]]:
+        """**A1's components, required** (research comparison Stage 10; the
+        owner's O9): each named component's facts in the one shape every run's
+        environment records them in (`component_facts`), its native identity
+        as the record views read it (`native_identity`, `RecordComponent`),
+        and its route only where the collector recorded its source, which it
+        does only when the source receipt matched what is installed; otherwise
+        the route reads "not recorded". **Never a gate on versions**: no
+        version, digest or route is compared with anything, so another build
+        passes and is told apart by its identity."""
+        from src.api.services.record_views import RecordComponent
+        from src.utils.run_environment import (
+            SOURCE_NOT_RECORDED,
+            SOURCE_RECORDED,
+            component_facts,
+            native_identity,
+            native_identity_text,
+        )
+
+        a1 = next((probe for probe in report.probes if probe.probe_id == "A1"), None)
+        assert a1 is not None and a1.status == "passed", "A1 did not describe the runtime"
+        components = a1.facts.get("components")
+        assert isinstance(components, dict) and components, "A1 records no named component"
+        identity = native_identity(components)
+        routes: Dict[str, str] = {}
+        for name in sorted(components):
+            entry = components[name]
+            try:
+                held = component_facts(entry["kind"], **{key: value for key, value
+                                                         in entry.items() if key != "kind"})
+                RecordComponent.model_validate(identity[name])
+            except (KeyError, TypeError, ValueError):
+                raise AssertionError(f"the component {name}'s facts are not in the shape every "
+                                     "run's environment records") from None
+            assert held == entry, (
+                f"the component {name}'s facts change when held to the one shape")
+            source = entry["source"]
+            routes[name] = (source["route"] if source["state"] == SOURCE_RECORDED
+                            else SOURCE_NOT_RECORDED)
+        return "each component's native identity, its route only where the receipt matched", {
+            "components": len(components),
+            "native_identity": identity,
+            "routes": routes,
+            "line": native_identity_text(identity),
+        }
+
+    report.run("A6", "environment",
+               "each named component's native build identity and route are recorded, never "
+               "compared with a version", _native_identity_and_route)
     return facts
 
 
 #: What a Python environment records of each installed distribution and what
-#: `uv.lock` pins, compared by normalised name (PEP 503).
-_DISTRIBUTION_NAME = re.compile(r"[-_.]+")
-
-
-def _normalised(name: str) -> str:
-    return _DISTRIBUTION_NAME.sub("-", name).lower()
+#: `uv.lock` pins are compared by normalised name (PEP 503): `_normalised`, the
+#: install identity's one implementation, imported at the top.
 
 
 def _same_version(installed: str, locked: str) -> bool:
@@ -2090,6 +2233,18 @@ M2_DEMO_REQUIRED: Tuple[str, ...] = (
     # W9); the start's provenance check (W10); a training job's exclusion and
     # stop (W11).
     "A5", "W1", "W2", "W3", "W4", "W5", "W6", "W7", "W8", "W9", "W10", "W11",
+    # The research comparison round's (its plan's §5 Stage 10, the owner's
+    # O9), functional only: each named component's native identity and route
+    # (A6); a KG edge set imported from D1's base and measured by the KG
+    # link-prediction protocol through measure_scorer and the job runner,
+    # kept and registered (L1-L3); the refusals before anything is written
+    # (L4); a disease child by both of its protocols (L5); a generated split
+    # imported, measured and registered (L6); a short disease, gene and
+    # patients-like-me child each on the probe's device, measured and
+    # registered (L7, the GPU regression cases); and the results export (L8).
+    "A6", "L1", "L2", "L3",
+    "L4.other_graph", "L4.tampered_pairs", "L4.other_view", "L4.split_record",
+    "L5", "L6", "L7.disease", "L7.gene", "L7.patients_like_me", "L8",
 )
 #: R8, the unchanged-workspace check, runs last, after M4's RT1-RT3 and M5's
 #: RW1-RW3; R2 runs after R4.finetune, whose child it strips.
@@ -2142,7 +2297,22 @@ def m2_acceptance(report: Report, real_requested: bool) -> Dict[str, Any]:
             "lock beside the checkout, the server's lists, D8, CORS and the route "
             "guard on the service started as the launcher starts it, the GPU lock, and test "
             "and training jobs through the job runner, started and stopped; not "
-            "the dashboard's layout or a browser session, and no long training."
+            "the dashboard's layout or a browser session, and no long training. It "
+            "carries the research comparison round's probes too (A6, L1-L8), on the demo "
+            "workspace: each named component's native build identity and route, recorded "
+            "and never compared with a version; a KG edge set taken from the demo base, "
+            "measured by the KG link-prediction protocol through the measurement command "
+            "and the job runner, its exposure, scores, pairs and summary checked against "
+            "each other, and its refusals; a disease child measured by two protocols; a "
+            "generated split imported, measured and registered; short disease, gene and "
+            "patients-like-me children trained and measured on this device as regression "
+            "cases, not studies; and the results export listing every record of that flow. "
+            "Its figures are a functional check, never a comparison of models. Last, it "
+            "records M1's served readings of the demo disease child (S1): the service's cold "
+            "start, warm-up and steady-state request times and its process's memory, "
+            "informational and never required, so no reading, however slow or large, leaves "
+            "the acceptance incomplete, and nothing it reads is judged. Nor does its failure "
+            "set the run's exit status."
         ),
     }
 
@@ -2196,17 +2366,33 @@ def _precision_scope() -> str:
             f"{said(demo)}; the real part's R3 and R4 run in {said(real)}.")
 
 
+def _native_verdict(report: Report) -> Dict[str, Any]:
+    """A1's native build identity in short: each component's identity and
+    route (`native_identity`: its route only where the source receipt matched
+    what is installed, otherwise its source reads "not recorded"), or None
+    when A1 did not pass."""
+    from src.utils.run_environment import native_identity
+
+    a1 = next((probe for probe in report.probes if probe.probe_id == "A1"), None)
+    passed = a1 is not None and a1.status == "passed"
+    return {"A1": a1.status if a1 is not None else "not run",
+            "native_identity": native_identity(a1.facts.get("components")) if passed else None}
+
+
 def environment_verdict(report: Report) -> Dict[str, Any]:
     """A5's record in short, for the end of a run beside its verdict (the
     report's `m2_acceptance` and the console's last lines): whether the lock
     read is the committed one, and the names of what differs from it. A set
-    that differs is said again where the run ends, not only an hour earlier."""
+    that differs is said again where the run ends, not only an hour earlier.
+    Beside it, A1's native build identity (`_native_verdict`)."""
+    native = _native_verdict(report)
     a5 = next((probe for probe in report.probes if probe.probe_id == "A5"), None)
     if a5 is None or a5.status != "passed":
-        return {"A5": a5.status if a5 is not None else "not run"}
+        return {"A5": a5.status if a5 is not None else "not run", **native}
     facts = a5.facts
     outside = facts.get("installed_not_in_lock") or []
     return {
+        **native,
         "A5": "passed",
         "lock_sha256": facts.get("lock_sha256"),
         "lock_is_the_committed_one": facts.get("lock_is_the_committed_one"),
@@ -2785,10 +2971,10 @@ def _disease_diagnosis(pipeline: Any, phenotypes: Sequence[str],
 
 
 def _child_view(checkpoint: Path, workspace: Path) -> Any:
-    """A disease child's own graph view, as the probe computes it apart from
-    serving and measurement: rebuilt from the workspace's graph by the rule
-    the child's model record names, and required to be the view its record
-    holds (by digest)."""
+    """A model's own graph view (a disease child's for T2 and RT2, a base's or
+    a child's for L2 and L5), as the probe computes it apart from serving and
+    measurement: rebuilt from the workspace's graph by the rule the model
+    record names, and required to be the view its record holds (by digest)."""
     from src.kg.graph_view import build_graph_view
     from src.kg.storage.file_storage import read_graph_artifacts
     from src.models.bundle.record import read_model_record
@@ -3023,15 +3209,23 @@ def _write_cohort_source(path: Path, cases: List[Dict[str, Any]]) -> Path:
     return path
 
 
-def _import_cohort(registry: Path, data_dir: Path, source: Path, label: str,
-                   commit: Optional[str] = None) -> Tuple[int, str, str]:
-    """`scripts/import_cohort.py`'s `main`, its exit code and what it printed."""
+def _import_cohort(registry: Path, data_dir: Path, source: Optional[Path], label: str,
+                   commit: Optional[str] = None, *,
+                   kind_argv: Optional[Sequence[str]] = None) -> Tuple[int, str, str]:
+    """`scripts/import_cohort.py`'s `main`, its exit code and what it printed.
+
+    A supplied cohort from the case file `source` with M4's role, or, with
+    `kind_argv`, the version those arguments name in its place (``--kind``
+    and what that kind takes: a KG edge set's ``--from-checkpoint`` and
+    ``--role``, a generated split's ``--role``; `_kg_edges_argv`,
+    `_generated_argv`)."""
     import io
 
     import scripts.import_cohort as import_cohort
 
-    argv = ["--registry", str(registry), "--data-dir", str(data_dir), "--source", str(source),
-            "--label", label, "--role", M4_ROLE]
+    argv = ["--registry", str(registry), "--data-dir", str(data_dir), "--label", label]
+    argv += (list(kind_argv) if kind_argv is not None
+             else ["--source", str(source), "--role", M4_ROLE])
     if commit is not None:
         argv += ["--commit", commit]
     out, err = io.StringIO(), io.StringIO()
@@ -3040,10 +3234,13 @@ def _import_cohort(registry: Path, data_dir: Path, source: Path, label: str,
     return code, out.getvalue(), err.getvalue()
 
 
-def _import_version(registry: Path, data_dir: Path, source: Path, label: str) -> Tuple[Any, str]:
+def _import_version(registry: Path, data_dir: Path, source: Optional[Path], label: str, *,
+                    kind_argv: Optional[Sequence[str]] = None) -> Tuple[Any, str]:
     """The importer's two steps through its CLI: the preview, which must leave
     the registry as it was, then the commit by the preview id it printed.
-    Returns the version as `resolve_version` reads it, and the preview id.
+    Returns the version as `resolve_version` reads it, and the preview id. A
+    supplied cohort from `source`, or the version `kind_argv` names
+    (`_import_cohort`).
 
     A refusal's message names paths, so it goes to the console and the report
     says what happened in this file's words. A registry inside the repository
@@ -3052,7 +3249,7 @@ def _import_version(registry: Path, data_dir: Path, source: Path, label: str) ->
     from src.evaluation.cohort_registry import resolve_version
 
     before = snapshot(registry, include_dirs=True)
-    code, out, err = _import_cohort(registry, data_dir, source, label)
+    code, out, err = _import_cohort(registry, data_dir, source, label, kind_argv=kind_argv)
     if code != 0:
         print(err, end="", file=sys.stderr)
         if "inside the repository" in err:
@@ -3065,7 +3262,8 @@ def _import_version(registry: Path, data_dir: Path, source: Path, label: str) ->
     assert_untouched(before, registry, "the import preview", include_dirs=True)
     found = re.search(r"Preview id: ([0-9a-f]{16})", out)
     assert found, "the import preview printed no preview id"
-    code, _, err = _import_cohort(registry, data_dir, source, label, commit=found.group(1))
+    code, _, err = _import_cohort(registry, data_dir, source, label, commit=found.group(1),
+                                  kind_argv=kind_argv)
     if code != 0:
         print(err, end="", file=sys.stderr)
         raise AssertionError(f"the commit by the printed preview id was refused (exit {code}); "
@@ -4187,16 +4385,19 @@ def _listed_test_inputs(label: str, workspace: str, run: str, filename: str, *,
     (`test_page.start_test_run`): the version, the workspace and the checkpoint
     found in the server's lists again by name, the digests those lists show
     passed as the expected ones, the evaluation `protocol` asked apart from the
-    learning stage and task the listing's model record names, the listed
-    version's counts, and the registry and evidence directories from their
-    settings. `protocol` and `choices` (`record`, `deterministic`) are the
-    operator's. As the page's Start does, the protocol is first judged on that
-    record and those counts (`src.evaluation.protocols.refusal`); the runner
-    judges it again before it starts, and the run on the bytes it reads. M5's
-    test runs ask for the disease protocol on the probe's own disease
-    children."""
+    learning stage, task and capability description the listing's model
+    record gives, the listed version's kind and counts, the registry from its
+    setting and the evidence directories by the runner's one choice by the
+    version's kind (`evidence_choice`: the setting's, which must not be
+    refused, for a supplied version; none, the setting unread, for a KG edge
+    set or a generated split). `protocol` and `choices`
+    (`record`, `deterministic`) are the operator's. As the page's Start does,
+    the protocol is first judged on that description and that version
+    (`src.evaluation.protocols.refusal`); the runner judges it again before it
+    starts, and the run on the bytes it reads. M5's test runs ask for the
+    disease protocol on the probe's own disease children."""
     from src.api.services import server_lists
-    from src.api.services.training_manager import TestRunInputs
+    from src.api.services.training_manager import TestRunInputs, evidence_choice
     from src.config import server_settings
     from src.evaluation import protocols
 
@@ -4208,20 +4409,21 @@ def _listed_test_inputs(label: str, workspace: str, run: str, filename: str, *,
                    if (item.run, item.filename) == (run, filename)), None)
     assert listed is not None and listed.sha256, (
         f"the server lists no readable checkpoint {run}/{filename} in {workspace}")
-    why = protocols.refusal(protocol, listed.learning_stage, listed.task, version.counts)
+    why = protocols.refusal(protocol, listed.capabilities, version.kind, version.counts)
     assert why is None, (
         f"the {protocol} measurement is refused for the listed checkpoint {run}/{filename}: {why}")
-    registry, evidence = (server_settings.cohort_registry(),
-                          server_settings.training_evidence_dirs())
-    assert registry.available and evidence.available, "the registry or evidence setting is refused"
+    registry, evidence = server_settings.cohort_registry(), evidence_choice(version.kind)
+    assert registry.available, "the registry setting is refused"
+    assert evidence.problem is None, "the evidence setting is refused"
     return TestRunInputs(
         registry=registry.value, version_label=label, version_sha256=version.manifest_sha256,
         workspace=server_lists.resolve_workspace(workspace),
         checkpoint=server_lists.resolve_checkpoint(workspace, listed.architecture, run,
                                                    filename),
         checkpoint_sha256=listed.sha256, protocol=protocol,
-        learning_stage=listed.learning_stage, task=listed.task, version_counts=version.counts,
-        evidence_dirs=tuple(evidence.value), **choices)
+        learning_stage=listed.learning_stage, task=listed.task,
+        capabilities=listed.capabilities, version_kind=version.kind,
+        version_counts=version.counts, evidence_dirs=evidence.dirs, **choices)
 
 
 def _first_line(process: Any, timeout: float) -> str:
@@ -5293,9 +5495,9 @@ def _m5_real(report: Report, runs: Path, real: Path, workspaces_root: Path, devi
         """The disease child RW2 measures and RW3's refused test start names:
         finetuned by the production trainer from R4's resumed base on the real
         workspace, which is only read, into a run directory of its own under
-        <work>/real/m5 (`_train_disease_child`), with the learning stage and
-        task its model record names (through the one reader), which the test
-        runs' inputs carry as the listed record's. Trained once, by RW2; a
+        <work>/real/m5 (`_train_disease_child`), with the learning stage, task
+        and capability description its model record gives (through the one
+        reader), which the test runs' inputs carry as the listed record's. Trained once, by RW2; a
         training that fails is RW2's failure, and RW3 then says it is not
         available."""
         from src.models.bundle.record import read_model_record
@@ -5314,6 +5516,7 @@ def _m5_real(report: Report, runs: Path, real: Path, workspaces_root: Path, devi
             state["task_child"] = {"path": trained.child, "sha256": read.identity.sha256,
                                    "learning_stage": record.learning_stage,
                                    "task": record.task,
+                                   "capabilities": record.capabilities,
                                    "training_seconds": trained.seconds}
         return state["task_child"]
 
@@ -5332,6 +5535,7 @@ def _m5_real(report: Report, runs: Path, real: Path, workspaces_root: Path, devi
                 version_sha256=version.identity.sha256, workspace=real,
                 checkpoint=child["path"], checkpoint_sha256=child["sha256"],
                 protocol="disease", learning_stage=child["learning_stage"], task=child["task"],
+                capabilities=child["capabilities"], version_kind=version.kind,
                 version_counts=version.manifest.get("counts"), record=True))
             assert started.get("success"), "the runner refused the test run"
             not_reached = _training_stop_does_not_reach_a_test_run(manager)
@@ -5392,6 +5596,7 @@ def _m5_real(report: Report, runs: Path, real: Path, workspaces_root: Path, devi
             version_sha256=version.identity.sha256, workspace=real, checkpoint=child["path"],
             checkpoint_sha256=child["sha256"], protocol="disease",
             learning_stage=child["learning_stage"], task=child["task"],
+            capabilities=child["capabilities"], version_kind=version.kind,
             version_counts=version.manifest.get("counts"))
         manager = TrainingManager()
         # A new base run by the reference recipe (or `task_sizes` over it, as
@@ -5421,6 +5626,1331 @@ def _m5_real(report: Report, runs: Path, real: Path, workspaces_root: Path, devi
                    "lock and is stopped as stopped, other jobs refused", _training_job)
 
 
+# =============================================================================
+# The research comparison round's flow, carried by the acceptance (L1-L8 in M)
+# =============================================================================
+#: The round's probes in phase M (research comparison §5 Stage 10; the owner's
+#: O9), in the order they run, every one required (`M2_DEMO_REQUIRED`).
+RC_DEMO_PROBES: Tuple[str, ...] = (
+    "L1", "L2", "L3", "L4.other_graph", "L4.tampered_pairs", "L4.other_view",
+    "L4.split_record", "L5", "L6", "L7.disease", "L7.gene", "L7.patients_like_me", "L8",
+)
+#: The KG link-prediction protocol's name (`src.evaluation.protocols`).
+LP_PROTOCOL = "kg_link_prediction"
+#: The three task protocols L7's regression cases each train a short child for.
+RC_TASKS: Tuple[str, ...] = ("disease", "gene", "patients_like_me")
+#: The flow's own deployment under <work>/rc: one workspace under its own root,
+#: a copy of the demo workspace whose runs list copies of D1's base and disease
+#: child and L7's children, and one registry. Everything the flow measures is
+#: listed there, so every ledger it writes is one the export reads.
+RC_WORKSPACE = "probe-rc"
+RC_BASE_RUN = "probe-rc-base"
+RC_CHILD_RUN = "probe-rc-d1-disease"
+RC_TASK_RUNS: Dict[str, str] = {task: "probe-rc-" + task.replace("_", "-") for task in RC_TASKS}
+RC_CHECKPOINT = "last.pt"
+#: The registry's versions: the KG edge set L1 imports from the listed base
+#: (role test); the KG edge sets the refusals measure, each its own import
+#: through the importer (another graph's; one whose pairs file is changed
+#: after; one whose split record is made to contradict its graph after); a
+#: supplied cohort (L5, L7.disease); and the workspace's own generated val
+#: split with its functional gene fixture (L6, L7.gene, L7.patients_like_me).
+RC_KG_LABEL = "probe-kg-test-1"
+RC_KG_OTHER_GRAPH_LABEL = "probe-kg-other-graph-1"
+RC_KG_TAMPERED_LABEL = "probe-kg-tampered-pairs-1"
+RC_KG_SPLIT_LABEL = "probe-kg-split-record-1"
+RC_SUPPLIED_LABEL = "probe-rc-supplied-1"
+RC_GENERATED_LABEL = "probe-gen-val-1"
+#: The relation a base of another graph view leaves out (L4.other_view): the
+#: demo graph's one ortholog relation, so the view, its node and relation ids
+#: and its split are another view's.
+RC_OTHER_VIEW_EXCLUDES: Tuple[str, ...] = ("gene|human_mouse_ortholog|mouse_gene",)
+#: How close the probe's own recomputation of an LP run's raw scores must come
+#: to the scores file (`_lp_scores_verified`). On the CPU it is exact; CUDA's
+#: message passing sums in an order it does not promise, so a recomputation
+#: there may differ in the last bits, and the largest difference is recorded.
+RC_SCORE_TOLERANCE: Dict[str, float] = {"rtol": 1e-4, "atol": 1e-5}
+#: The export's names for its two sources (`scripts/export_results.py
+#: --workspaces-root NAME=DIR --registry NAME=DIR`; two sources never share
+#: one): what its rows show for them, never a path.
+RC_EXPORT_SOURCES: Dict[str, str] = {"workspaces_root": "probe-rc-workspaces",
+                                     "registry": "probe-rc-registry"}
+
+
+def _kg_edges_argv(checkpoint: Path, role: str = "test") -> List[str]:
+    """The importer's arguments for a KG edge set: the `role` part of the edge
+    split `checkpoint`'s model record names (`_import_cohort`)."""
+    return ["--kind", "kg_edges", "--from-checkpoint", str(checkpoint), "--role", role]
+
+
+def _generated_argv(role: str) -> List[str]:
+    """The importer's arguments for the workspace's own generated `role`
+    split (`_import_cohort`)."""
+    return ["--kind", "generated", "--role", role]
+
+
+def _one_new_run(reports: Path, before: Sequence[str]) -> str:
+    """The one run directory a measurement added to the report store
+    `reports` (whose runs were `before`)."""
+    created = sorted(set(_store_runs(reports)) - set(before))
+    assert len(created) == 1, f"the run left {len(created)} report directories, not one"
+    return created[0]
+
+
+def _ran_on(manifest: Mapping[str, Any], device: str) -> None:
+    """A kept report's measurement ran on the probe's `device`: its manifest
+    records `cuda_executed` true exactly when that device is CUDA, the value
+    the measurement command gives only to a run that executed there (it
+    refuses `--device cuda` without CUDA)."""
+    on_cuda = device.startswith("cuda")
+    assert manifest.get("cuda_executed") is on_cuda, (
+        f"the report records cuda_executed {manifest.get('cuda_executed')} for a run on {device}")
+
+
+def _recorded_native_identity(report: Mapping[str, Any]) -> Dict[str, Any]:
+    """The native identity a kept report's run recorded (its manifest's
+    environment components), as every reader shows it: the record views' one
+    projection (`native_identity`) through their model (`RecordComponent`),
+    which is how an export row serialises it. What that run's own process
+    recorded, never this one's."""
+    from src.api.services.record_views import RecordComponent
+    from src.utils.run_environment import native_identity
+
+    components = report["manifest"]["environment"]["facts"]["components"]
+    return {name: RecordComponent.model_validate(entry).model_dump(mode="json")
+            for name, entry in native_identity(components).items()}
+
+
+def _recorded_components(report: Mapping[str, Any]) -> Dict[str, Any]:
+    """Every fact of each component a kept report's run recorded (its
+    manifest's environment components), as every reader passes them on: the
+    record views' one projection (`recorded_components`) through their model
+    (`RecordComponentFacts`), which is how an export row serialises them.
+    What that run's own process recorded, never this one's."""
+    from src.api.services.record_views import RecordComponentFacts
+    from src.utils.run_environment import recorded_components
+
+    components = report["manifest"]["environment"]["facts"]["components"]
+    return {name: RecordComponentFacts.model_validate(entry).model_dump(mode="json")
+            for name, entry in recorded_components(components).items()}
+
+
+def _lp_scores_verified(run: Path, report: Mapping[str, Any], version: Any, checkpoint: Path,
+                        workspace: Path, device: str) -> Dict[str, Any]:
+    """**The scores file, the pairs file and the summary verify each other**
+    (research comparison §7, LP artefacts), as the probe checks them apart
+    from the measurement:
+
+    - the scores file is the bytes the report names (digest, size, rows), keyed
+      to the version's pairs file by its digest and the LP core's pairs digest,
+      one row per pair in the pairs file's order, each row's state the one its
+      raw scores give (`lp_score_states`);
+    - its raw scores are the model's scores of those pairs, recomputed through
+      the LP core (`score_lp_pairs`) over the version's message-passing graph
+      (its recorded split's train part, rebuilt from the model's own view),
+      within `RC_SCORE_TOLERANCE`;
+    - the report's metrics are recomputed from the scores file alone, by the
+      LP core's whole-set summary (`lp_set_metrics`) and the evaluator's status
+      rule (`lp_metric_statuses`): the ranking metrics exactly, lp_loss (the
+      head's hinge, which the run computed on its device) within float
+      rounding.
+
+    The pairs are read through the digest-checking reader
+    (`read_kg_edge_pairs`). The scores file is read once (`read_once`), so
+    the digest held to the report's is that of the bytes the LP core then
+    parses (contract M2.1's rule for every reader). Nothing in the product
+    reads it back (the measurement's digest is its writer's,
+    `publish_chunks`): this read is the probe's own check of a file it had
+    the measurement keep. Returns the evidence: counts, digests and the
+    largest raw-score difference."""
+    import math
+
+    import numpy as np
+    import torch
+
+    from src.evaluation.cohort_registry import read_kg_edge_pairs
+    from src.evaluation.task_measurement import LP_METRICS, lp_metric_statuses
+    from src.kg.graph_view import rebuild_split
+    from src.models.bundle.lp_head import (
+        lp_score_states,
+        lp_scores_from_table,
+        lp_set_metrics,
+        score_lp_pairs,
+    )
+    from src.models.bundle.record import load_bundle
+    from src.utils.checkpoint_io import read_checkpoint
+    from src.utils.fingerprint import read_once
+
+    scores = report["scores"]
+    read = read_once(run / scores["file"])
+    data = read.data
+    assert read.sha256 == scores["sha256"] and len(data) == scores["bytes"], (
+        "the scores file is not the bytes the report names")
+    pairs = read_kg_edge_pairs(version).pairs
+    block = version.manifest["pairs"]
+    assert scores["keyed_to"] == {"file": block["file"], "sha256": block["sha256"],
+                                  "lp_pairs_digest": block["lp_pairs_digest"]}, (
+        "the scores file is keyed to another pairs file than the version's")
+    table = lp_scores_from_table(data, scores["layout"])
+    n = int(pairs.head.numel())
+    assert scores["rows"] == len(table) == block["rows"] == n, (
+        f"the scores file holds {len(table)} rows for the version's {n} pairs")
+    assert table["pair_row"].tolist() == list(range(n)), (
+        "the scores file's rows are not the pairs file's, in its order")
+    positive = torch.from_numpy(table["positive_raw"].copy())
+    negative = torch.from_numpy(table["negative_raw"].copy())
+    states = lp_score_states(positive, negative)
+    assert table["state"].tolist() == states.tolist(), (
+        "a row's state is not the one its raw scores give")
+
+    # The model's raw scores of those pairs, recomputed through the LP core
+    # over the version's message-passing graph, on the run's device.
+    view = _child_view(checkpoint, workspace)
+    payload = read_checkpoint(checkpoint, map_location="cpu", weights_only=True).checkpoint
+    bundle, _record = load_bundle(payload, view_digest=view.digest)
+    run_device = torch.device(device)
+    bundle.to(run_device)
+    split = rebuild_split(view, version.manifest["split"])
+    passing = split.mask("train")
+    again = score_lp_pairs(bundle, pairs, view.edge_index(passing), view.rel[passing],
+                           run_device, node_type=view.node_type,
+                           pair_chunk=report["manifest"]["batch_size"])
+    sides = ((table["positive_raw"], again.positive.numpy()),
+             (table["negative_raw"], again.negative.numpy()))
+    # A score that is not finite is the same state on both sides, never a
+    # difference (`lp_score_states` judged the stored ones above).
+    differences = [float(np.nanmax(np.abs(stored - computed))) if n else 0.0
+                   for stored, computed in sides]
+    close = all(np.allclose(stored, computed, equal_nan=True, **RC_SCORE_TOLERANCE)
+                for stored, computed in sides)
+    assert close, (f"the raw scores in the scores file are not the model's scores of the pairs "
+                   f"(largest difference {max(differences):.3g})")
+
+    # The summary, from the scores file alone, by the LP core's one rule.
+    recomputed = lp_set_metrics(bundle.lp_head, positive, negative)
+    values, _statuses = lp_metric_statuses(recomputed, pairs=n, not_finite=int(states.sum()))
+    stated = report["authoritative_metrics"]
+    assert set(stated) == set(values), (
+        f"the report gives the metrics {sorted(stated)}; the scores file gives {sorted(values)}")
+    for name in values:
+        same = (math.isclose(stated[name], values[name], rel_tol=1e-5, abs_tol=1e-7)
+                if name == "lp_loss" else stated[name] == values[name])
+        assert same, f"the report's {name} is not the one its scores file gives"
+    return {"rows": n, "scores_sha256": scores["sha256"], "pairs_sha256": block["sha256"],
+            "lp_pairs_digest": block["lp_pairs_digest"],
+            "pairs_not_finite": int(states.sum()),
+            "metrics_recomputed_from_the_scores": sorted(values),
+            "metrics_defined": sorted(LP_METRICS),
+            "raw_scores_recomputed": "through the LP core over the version's message-passing "
+                                     "graph, on the run's device",
+            "largest_raw_score_difference": max(differences)}
+
+
+def _lp_run_facts(run: Path, version: Any, checkpoint: Path, checkpoint_sha256: str,
+                  workspace: Path, device: str, *, stage: str,
+                  exposure_state: str) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """A kept KG link-prediction run of the model `checkpoint` on the KG edge
+    set `version`: its report parsed and identified from one read, measured by
+    the protocol on that version's part, with no R10, on the probe's `device`
+    (`_ran_on`); its exposure block scoped to the model's own record (its
+    definition version, its sources: the model record by the checkpoint's
+    digest and stage, the version by its label, kind, role, digest and split)
+    and reading `exposure_state`'s words; and its scores file, pairs and
+    summary verified against each other (`_lp_scores_verified`). Returns the
+    evidence, and the report as parsed."""
+    from src.evaluation.caveats import EXPOSURE_DEFINITION_VERSION, EXPOSURE_READINGS
+    from src.evaluation.cohort_registry import REPORT_FILE
+    from src.kg.storage.file_storage import _read_json
+
+    report, identity = _read_json(run / REPORT_FILE)
+    manifest = report["manifest"]
+    role = version.manifest["role"]
+    assert (manifest["mode"], manifest["cohort_kind"], manifest["split"]) == (
+        LP_PROTOCOL, "kg_edges", role), (
+        f"the report measured {manifest['mode']} on a {manifest['cohort_kind']} "
+        f"{manifest['split']} part, not KG link prediction on the version's {role} part")
+    assert manifest["cohort_version"]["manifest_sha256"] == version.identity.sha256, (
+        "the report names another KG edge set")
+    assert manifest["artifact_digests"]["checkpoint"] == checkpoint_sha256, (
+        "the report does not name the checkpoint it was given")
+    assert manifest["r10"] is None, "a KG edge set's report records R10"
+    _ran_on(manifest, device)
+    exposure = report["exposure"]
+    sources = exposure.get("sources") or {}
+    model_source = sources.get("model_record") or {}
+    assert exposure.get("definition_version") == EXPOSURE_DEFINITION_VERSION, (
+        f"the exposure block is of definition {exposure.get('definition_version')!r}")
+    assert (model_source.get("checkpoint_sha256"), model_source.get("learning_stage")) == (
+        checkpoint_sha256, stage), "the exposure block names another model record"
+    assert sources.get("version") == {
+        "label": version.manifest["label"], "kind": "kg_edges", "role": role,
+        "manifest_sha256": version.identity.sha256,
+        "split_digest": version.manifest["split"]["digest"]}, (
+        "the exposure block names another version")
+    assert (exposure.get("state"), exposure.get("reading")) == (
+        exposure_state, EXPOSURE_READINGS[exposure_state]), (
+        f"the exposure reads {exposure.get('state')!r}, not {exposure_state!r}")
+    return {
+        "run_id": run.name, "report_sha256": identity.sha256,
+        "checkpoint_sha256": checkpoint_sha256,
+        "version": {"label": version.manifest["label"], "kind": "kg_edges", "role": role,
+                    "manifest_sha256": version.identity.sha256},
+        "exposure": {"definition_version": exposure["definition_version"],
+                     "state": exposure["state"], "reading": exposure["reading"],
+                     "measured_edges": (exposure.get("measured_edges") or {}).get("n")},
+        "n_ranked": report["n_ranked"], "metrics": report["authoritative_metrics"],
+        "scores": _lp_scores_verified(run, report, version, checkpoint, workspace, device),
+        "cuda_executed": manifest["cuda_executed"],
+    }, report
+
+
+def _registered_record(checkpoint: Path, report_sha256: str, run_id: str, version: Any,
+                       checkpoint_sha256: str) -> Dict[str, Any]:
+    """The record the ledger beside `checkpoint` holds for the kept run
+    `run_id` of `version`: found through the one ledger reader and read as its
+    kind's view by the readers' one listing (`read_records`), built from the
+    report's bytes, naming the version. Found by its run, since two runs
+    whose reports are equal bytes are two records (research comparison §7).
+    Returns its evidence."""
+    from src.api.services.record_views import read_records
+    from src.evaluation.sidecar import LEDGER_FILENAME, read_ledger
+
+    ledger, ledger_sha256 = read_ledger(checkpoint.resolve().parent / LEDGER_FILENAME)
+    assert ledger_sha256 is not None, "no ledger was written beside the checkpoint"
+    viewed, unreadable = read_records(ledger, checkpoint_sha256)
+    assert not unreadable, f"{len(unreadable)} records for the checkpoint cannot be read"
+    # By its run: two runs whose reports are equal bytes are two records.
+    found = [(record, view) for record, view in viewed if record.get("run_id") == run_id]
+    assert len(found) == 1, f"the ledger holds {len(found)} records of the kept run, not one"
+    record, view = found[0]
+    assert (record.get("source_artifact_digest"), record.get("cohort_digest")) == (
+        report_sha256, version.identity.sha256), (
+        "the run's record was not built from the kept report's bytes, or names another version")
+    return {"sequence": record["registration"]["sequence"], "run_id": record["run_id"],
+            "mode": view.mode, "view": type(view).__name__, "ledger_sha256": ledger_sha256}
+
+
+def _export_row_verified(row: Mapping[str, Any], entry: Mapping[str, Any]) -> None:
+    """One row of the results export (L8) holds what the flow kept for its run
+    (`entry`: the report's, the measured checkpoint's and the version's
+    digests, the data kind and role, and the native identity and every
+    component fact the run's report recorded, `_recorded_native_identity`,
+    `_recorded_components`):
+
+    - those identities, and the run kept and registered;
+    - the recorded training settings, rules, learning and effective settings
+      and loss identity, the environment class, the metric and its status; a
+      finetune's weight transfer listing its parts, the frozen parts' forward
+      mode and the downstream start (Stage 9b);
+    - the native identity and every component fact its run recorded (each
+      state, the fallback reason and the source's facts), as the record
+      views show them;
+    - a KG edge set's units and denominators, and the absence said for
+      another kind's;
+    - the exposure by kind: a KG edge set's state and reading, a supplied
+      cohort's R10, a generated split's allocation note."""
+    from src.api.services import results
+    from src.evaluation.caveats import AFTER_FULL_VIEW_EXPOSURE, HELD_OUT
+
+    probe_id = entry["probe"]
+    said = (row["report_sha256"], row["checkpoint_sha256"], row["data_version_sha256"],
+            row["data_kind"], row["role"])
+    assert said == (entry["report_sha256"], entry["checkpoint_sha256"],
+                    entry["version_sha256"], entry["kind"], entry["role"]), (
+        f"{probe_id}'s run is exported with other identities")
+    assert (row["report"], row["registered"]) == (results.REPORT_KEPT, results.REGISTERED), (
+        f"{probe_id}'s run is exported as {row['report']}, {row['registered']}")
+    for column in ("training_rules", "learning_settings", "effective_settings",
+                   "loss_identity", "environment_class", "metric_name", "value_status"):
+        assert row[column] is not None, f"{probe_id}'s run is exported without its {column}"
+    # A KG edge set's run records each metric's unit and denominator; another
+    # kind's says it records none.
+    assert (row["unit"] is not None and row["denominator"] is not None
+            if entry["kind"] == "kg_edges" else
+            row["unit"] is None and "metric.unit" in (row["unknown"] or {})), (
+        f"{probe_id}'s run is exported with its units unsaid")
+    transfer = row["weight_transfer"]
+    assert row["learning_stage"] != "finetune" or (
+        isinstance(transfer, dict) and transfer.get("parts") and "frozen_forward" in transfer
+        and transfer.get("downstream_initial_sha256")), (
+        f"{probe_id}'s finetune is exported without its weight transfer")
+    assert row["native_identity"] == entry["native_identity"], (
+        f"{probe_id}'s run is exported with another native identity than its report records")
+    assert row["components"] == entry["components"], (
+        f"{probe_id}'s run is exported with other component facts than its report records")
+    exposure = row["exposure_state"]
+    if entry["kind"] == "kg_edges":
+        assert exposure in (HELD_OUT, AFTER_FULL_VIEW_EXPOSURE) and (
+            row["exposure_reading"] and row["exposure_definition"]), (
+            f"{probe_id}'s KG edge set run is exported without its exposure")
+    elif entry["kind"] == "supplied":
+        assert row["r10"] is not None, f"{probe_id}'s run is exported without its R10"
+    else:
+        assert exposure == results.EXPOSURE_BY_ALLOCATION, (
+            f"{probe_id}'s generated split run reads exposure {exposure!r}")
+
+
+def _rc_demo(report: Report, work: Path, sound: Path, base: Path, child: Path, device: str,
+             other: Optional[Path]) -> None:
+    """The research comparison round's flow on the demo workspace (L1-L8),
+    after M5's, on the probe's own deployment under <work>/rc: its settings
+    (its workspaces root, which names its GPU lock, its registry and the
+    device) are the M5 settings in effect while the flow runs, every other
+    one unset, as M5's are (`_deployment_settings`).
+    `base` and `child` are D1's base and disease child, whose bytes are copied
+    into the flow's workspace and listed there; `other` is M1's same-shaped
+    workspace over another graph (None when M1 did not pass).
+
+    Functional only: every step through its production entry point (the
+    importer, the measurement command, the job runner, the trainer, the
+    fixture derivation and the export command), the outputs checked against
+    what each left on disk. The figures say nothing of a model's quality, and
+    no two of them are compared.
+    """
+    print("   Research comparison: KG link prediction, its refusals, two protocols, a "
+          "generated split, the GPU regression cases, the export")
+    from scripts.setup_demo import demo_task_training
+    from src.api.services.training_manager import TrainingManager
+    from src.evaluation.caveats import AFTER_FULL_VIEW_EXPOSURE, HELD_OUT
+    from src.evaluation.cohort_registry import (
+        REPORT_FILE,
+        CohortBindingMismatch,
+        CohortVersionRefused,
+    )
+    from src.evaluation.registration import report_state
+    from src.models.bundle.record import read_model_record
+    from src.utils.checkpoint_io import read_checkpoint
+    from src.utils.checkpoint_paths import RUNS_DIRNAME, run_checkpoint_dir
+
+    rc = work / "rc"
+    root, registry = rc / "workspaces", rc / "registry"
+    settings = {"SHEPHERD_WORKSPACES_ROOT": str(root), "SHEPHERD_REGISTRY": str(registry),
+                "SHEPHERD_DEVICE": device}
+    state: Dict[str, Any] = {}
+    #: Each run the flow kept and registered, for L8: by run id, the report's
+    #: digest, the measured checkpoint's, the version's, the probe's id, and
+    #: the native identity and component facts the run's report recorded.
+    kept: List[Dict[str, Any]] = []
+
+    def _need(*keys: str) -> None:
+        names = {"workspace": "the flow's workspace (L1)", "kg": "the KG edge set (L1)",
+                 "supplied": "the supplied cohort (L5)", "generated": "the generated split (L6)",
+                 "fixture": "the functional gene fixture (L6)"}
+        missing = [key for key in keys if key not in state]
+        assert not missing, f"{names.get(missing[0], missing[0])} is not available"
+
+    def _reports(label: str) -> Path:
+        return registry / "versions" / label / "reports"
+
+    def _keep(probe_id: str, run_id: str, report_sha256: str, checkpoint_sha256: str,
+              version: Any, record: Mapping[str, Any], kept_report: Mapping[str, Any]) -> None:
+        kept.append({"probe": probe_id, "run_id": run_id, "report_sha256": report_sha256,
+                     "checkpoint_sha256": checkpoint_sha256,
+                     "version_sha256": version.identity.sha256, "kind": version.kind,
+                     "role": version.manifest["role"], "sequence": record["sequence"],
+                     "native_identity": _recorded_native_identity(kept_report),
+                     "components": _recorded_components(kept_report)})
+
+    def _measured_and_registered(probe_id: str, checkpoint: Path, checkpoint_sha256: str,
+                                 label: str, version: Any, protocol: str
+                                 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """`checkpoint` measured by `protocol` on `version` through the
+        measurement command with --record: one run kept in the version's
+        store, its report naming the checkpoint, the version and the protocol,
+        run on the probe's device (`_ran_on`), and one record of it beside the
+        checkpoint, read as its kind's view. Returns the evidence, and the
+        report as parsed from its one read (`_read_json`), so a caller checks
+        what else it holds without reading the file again."""
+        from src.kg.storage.file_storage import _read_json
+
+        reports = _reports(label)
+        before = _store_runs(reports)
+        code = _measure_cohort(checkpoint, state["workspace"], registry, label, device,
+                               "--record", protocol=protocol)
+        assert code == 0, f"the measurement with --record exited {code}"
+        run_id = _one_new_run(reports, before)
+        kept_report, identity = _read_json(reports / run_id / REPORT_FILE)
+        manifest = kept_report["manifest"]
+        assert (manifest["mode"], manifest["cohort_kind"]) == (protocol, version.kind), (
+            f"the report measured {manifest['mode']} on a {manifest['cohort_kind']} version, "
+            f"not {protocol} on a {version.kind} one")
+        assert manifest["cohort_version"]["manifest_sha256"] == version.identity.sha256, (
+            "the report names another version")
+        assert manifest["artifact_digests"]["checkpoint"] == checkpoint_sha256, (
+            "the report does not name the checkpoint it was given")
+        _ran_on(manifest, device)
+        record = _registered_record(checkpoint, identity.sha256, run_id, version,
+                                    checkpoint_sha256)
+        _keep(probe_id, run_id, identity.sha256, checkpoint_sha256, version, record, kept_report)
+        return {"run_id": run_id, "report_sha256": identity.sha256,
+                "protocol": protocol, "n_ranked": kept_report.get("n_ranked"),
+                "metrics": kept_report.get("authoritative_metrics"),
+                "cuda_executed": manifest["cuda_executed"], "record": record}, kept_report
+
+    # ---- L1: the flow's deployment and a KG edge set imported from the base
+    def _kg_edge_set() -> Tuple[str, Dict[str, Any]]:
+        from src.evaluation.cohort_registry import read_kg_edge_pairs
+
+        workspace = _workspace_copy(sound, root / RC_WORKSPACE)
+        runs = workspace / RUNS_DIRNAME / _demo_encoder_kind()
+        for name, run, source in (("base", RC_BASE_RUN, base), ("child", RC_CHILD_RUN, child)):
+            target = run_checkpoint_dir(runs / run) / RC_CHECKPOINT
+            target.parent.mkdir(parents=True)
+            shutil.copyfile(source, target)
+            state[name], state[f"{name}_sha"] = target, _read_run_checkpoint(target)["sha256"]
+        state["workspace"] = workspace
+        registry.mkdir(parents=True)
+        version, preview = _import_version(registry, workspace, None, RC_KG_LABEL,
+                                           kind_argv=_kg_edges_argv(state["base"]))
+        manifest = version.manifest
+        assert (version.kind, manifest["role"]) == ("kg_edges", "test"), (
+            f"the import is a {version.kind} version of role {manifest['role']}")
+        bound, _, _, record = verify_workspace(workspace)
+        assert manifest["graph"] == bound, "the KG edge set's graph digests are not the workspace's"
+        assert manifest["dataset_record"]["sha256"] == record.summary()["sha256"], (
+            "the KG edge set is bound to another dataset record than the workspace's")
+        model = read_model_record(read_checkpoint(state["base"], map_location="cpu",
+                                                  weights_only=True).checkpoint)
+        assert manifest["graph_view"]["digest"] == model.graph_view.digest, (
+            "the KG edge set's graph view is not the base's")
+        assert manifest["split"]["digest"] == model.data_roles["split"]["digest"], (
+            "the KG edge set's split is not the one the base records")
+        assert manifest["taken_from"]["checkpoint_sha256"] == state["base_sha"], (
+            "the KG edge set names another checkpoint than the listed base")
+        pairs = read_kg_edge_pairs(version).pairs
+        rows = int(pairs.head.numel())
+        assert rows == manifest["counts"]["pairs"] > 0, (
+            f"the pairs file holds {rows} pairs; the version counts {manifest['counts']['pairs']}")
+        state["kg"] = version
+        return ("previewed with nothing written, committed by the printed id, the base's view "
+                "and split, its test part's pairs stored"), {
+            "preview_wrote_nothing": True, "preview_id": preview,
+            "kind": version.kind, "role": manifest["role"],
+            "manifest_sha256": version.identity.sha256, "graph_is_the_workspaces": True,
+            "graph_view_digest": manifest["graph_view"]["digest"],
+            "split_digest": manifest["split"]["digest"],
+            "taken_from_checkpoint_sha256": state["base_sha"],
+            "pairs": {"sha256": manifest["pairs"]["sha256"],
+                      "lp_pairs_digest": manifest["pairs"]["lp_pairs_digest"], "rows": rows},
+            "counts": manifest["counts"],
+        }
+
+    # ---- L2: the protocol through the measurement command, kept and registered
+    def _lp_kept_and_registered(probe_id: str, checkpoint: Path, checkpoint_sha256: str, *,
+                                stage: str, exposure_state: str) -> Dict[str, Any]:
+        """`checkpoint` measured by the KG link-prediction protocol on L1's
+        set through the measurement command with --record: one run kept, its
+        report and outputs checked (`_lp_run_facts`), and its record beside
+        the checkpoint (`_registered_record`). Returns the evidence."""
+        version, reports = state["kg"], _reports(RC_KG_LABEL)
+        before = _store_runs(reports)
+        code = _measure_cohort(checkpoint, state["workspace"], registry, RC_KG_LABEL, device,
+                               "--record", protocol=LP_PROTOCOL)
+        assert code == 0, f"the measurement with --record exited {code}"
+        run_id = _one_new_run(reports, before)
+        facts, kept_report = _lp_run_facts(reports / run_id, version, checkpoint,
+                                           checkpoint_sha256, state["workspace"], device,
+                                           stage=stage, exposure_state=exposure_state)
+        record = _registered_record(checkpoint, facts["report_sha256"], run_id, version,
+                                    checkpoint_sha256)
+        _keep(probe_id, run_id, facts["report_sha256"], checkpoint_sha256, version, record,
+              kept_report)
+        return {**facts, "record": record}
+
+    def _lp_measured() -> Tuple[str, Dict[str, Any]]:
+        _need("workspace", "kg")
+        facts = _lp_kept_and_registered("L2", state["base"], state["base_sha"], stage="base",
+                                        exposure_state=HELD_OUT)
+        assert facts["record"]["sequence"] == 1, (
+            f"the record is the ledger's {facts['record']['sequence']}th")
+        return ("measured, kept and registered; held out as the base's record says; the scores, "
+                "pairs and summary agree"), {
+            "measured": {"model": "D1's base, listed in the flow's workspace",
+                         "run": RC_BASE_RUN, "protocol": LP_PROTOCOL}, **facts,
+        }
+
+    # ---- L3: the protocol through the job runner, kept and registered
+    def _lp_through_the_runner() -> Tuple[str, Dict[str, Any]]:
+        _need("workspace", "kg")
+        version, reports = state["kg"], _reports(RC_KG_LABEL)
+        inputs = _listed_test_inputs(RC_KG_LABEL, RC_WORKSPACE, RC_BASE_RUN, RC_CHECKPOINT,
+                                     protocol=LP_PROTOCOL, record=True)
+        assert (inputs.checkpoint, inputs.checkpoint_sha256, inputs.learning_stage) == (
+            state["base"], state["base_sha"], "base"), (
+            "the listed base is not listed by its run, its digest as read and its record")
+        assert inputs.evidence_dirs == (), "R10's evidence is chosen for a KG edge set"
+        before = _store_runs(reports)
+        manager = TrainingManager()
+        with _job_ended_on_exit(manager, "test"):
+            started = manager.start_test(inputs)
+            assert started.get("success"), "the runner refused the test run"
+            word = _job_ended(manager, "test", _TEST_RUN_SECONDS)
+        status = manager.get_test_status()
+        if word != "completed" or status["exit_code"] != 0:
+            _job_said(manager, "test")
+        assert word == "completed" and status["exit_code"] == 0, (
+            f"the test run ended {word}, exit {status['exit_code']}")
+        run_id = _one_new_run(reports, before)
+        outcome = status["outcome"] or {}
+        assert outcome.get("report_dir") == str(reports / run_id), (
+            "the runner's outcome names another report directory than the run created")
+        published = (outcome.get("run_outcome") or {}).get("report_sha256")
+        # **Kept and registered as the publication contract says**, never
+        # inferred from the exit status: the run was asked to record.
+        assert (outcome.get("kept"), outcome.get("registered")) == (True, True), (
+            f"the outcome says kept {outcome.get('kept')}, registered {outcome.get('registered')}")
+        facts, kept_report = _lp_run_facts(reports / run_id, version, state["base"],
+                                           state["base_sha"], state["workspace"], device,
+                                           stage="base", exposure_state=HELD_OUT)
+        assert facts["report_sha256"] == published, (
+            "the outcome file's digest is not the kept report's bytes")
+        record = _registered_record(state["base"], published, run_id, version,
+                                    state["base_sha"])
+        after = report_state(reports / run_id / REPORT_FILE, checkpoint=state["base"],
+                             expected_sha256=published)
+        assert (after.kept, after.registered) == ("kept", "registered"), (
+            f"the report reads {after.kept}, {after.registered}")
+        _keep("L3", run_id, published, state["base_sha"], version, record, kept_report)
+        return "a test run from the server's lists: kept and registered, its outputs verified", {
+            "inputs": "the version, workspace and checkpoint found in the server's lists again, "
+                      "their digests passed as the expected ones",
+            "measured": {"model": "D1's base, listed in the flow's workspace",
+                         "run": RC_BASE_RUN, "protocol": LP_PROTOCOL},
+            "status": word, "exit_code": status["exit_code"],
+            "outcome_file_names_the_kept_report": True, "kept": True, "registered": True,
+            **facts, "record": record,
+            "report_state": {"kept": after.kept, "registered": after.registered},
+        }
+
+    # ---- L4: the refusals before anything is written
+    def _lp_refused(label: str, checkpoint: Path, error: type,
+                    fragment: Union[str, Tuple[str, ...]]
+                    ) -> Tuple[Dict[str, Any], BaseException]:
+        """`checkpoint` measured by the protocol on `label` with --record,
+        refused with `error` naming `fragment`: the registry, the flow's
+        workspace (the listed checkpoints' ledgers) and the checkpoint's own
+        directory unchanged, no run directory made. Returns how many reads of
+        a checkpoint and how many model builds the refusal came after
+        (`_observing_checkpoint_reads`, `_observing_builds`), and the refusal,
+        for what it carries besides its message."""
+        watched = [registry, state["workspace"], checkpoint.resolve().parent]
+        before = [snapshot(directory, include_dirs=True) for directory in watched]
+        runs_before = _store_runs(_reports(label))
+        reads: List[str] = []
+        builds: List[str] = []
+        with _observing_checkpoint_reads(reads), _observing_builds(builds):
+            refusal = refuses(lambda: _measure_cohort(checkpoint, state["workspace"], registry,
+                                                      label, device, "--record",
+                                                      protocol=LP_PROTOCOL),
+                              error, fragment)
+        for taken, directory in zip(before, watched, strict=True):
+            assert_untouched(taken, directory, "a refused measurement", include_dirs=True)
+        assert _store_runs(_reports(label)) == runs_before, (
+            "the refused measurement made a run directory")
+        return {"checkpoint_reads": len(reads), "models_built": len(builds),
+                "nothing_written": True}, refusal
+
+    def _refuse_other_graph() -> Tuple[str, Dict[str, Any]]:
+        _need("workspace", "kg")
+        assert other is not None, "the same-shaped workspace (M1) is not available"
+        # **A KG edge set of another graph**, made as any is: a base trained
+        # on M1's same-shaped other graph and the importer taking its test
+        # part there. Then measured over the flow's workspace.
+        other_base = _last(_train_run(other, rc / "other_graph_base", device, stage="base",
+                                      epochs=1, settings=demo_task_training()["base"]))
+        _import_version(registry, other, None, RC_KG_OTHER_GRAPH_LABEL,
+                        kind_argv=_kg_edges_argv(other_base))
+        refusal, refused = _lp_refused(RC_KG_OTHER_GRAPH_LABEL, state["base"],
+                                       CohortBindingMismatch, "mapped against another graph")
+        assert refusal["checkpoint_reads"] == 0, "the checkpoint was read before the refusal"
+        assert "kg" in refused.roles, f"the refusal names {refused.roles}, not the graph"
+        return "refused by the binding before the checkpoint was read; nothing written", {
+            **refusal, "refused_as": "the KG edge set is bound to another graph",
+            "differing_roles": sorted(refused.roles)}
+
+    def _refuse_tampered_pairs() -> Tuple[str, Dict[str, Any]]:
+        _need("workspace", "kg")
+        # Its own import of the base's test part, then one byte of its stored
+        # pairs changed: the version's digest no longer binds the file.
+        version, _ = _import_version(registry, state["workspace"], None, RC_KG_TAMPERED_LABEL,
+                                     kind_argv=_kg_edges_argv(state["base"]))
+        pairs = version.identity.path.parent / version.manifest["pairs"]["file"]
+        data = bytearray(pairs.read_bytes())
+        data[3] ^= 1
+        pairs.write_bytes(bytes(data))
+        refusal, _ = _lp_refused(RC_KG_TAMPERED_LABEL, state["base"], CohortVersionRefused,
+                                 "is not the pairs file")
+        assert refusal["checkpoint_reads"] == 0, "the checkpoint was read before the refusal"
+        return "refused before the pairs were parsed or the checkpoint read; nothing written", {
+            **refusal, "refused_as": "the pairs file is not the bytes the version binds"}
+
+    def _refuse_other_view() -> Tuple[str, Dict[str, Any]]:
+        _need("workspace", "kg")
+        # **A model of another graph view**: a base trained on the flow's
+        # workspace with the ortholog relation left out of its view. Its view
+        # has other node and relation ids, and this build has no mapping
+        # between views: a stated capability gap, not a research rule.
+        sizes = demo_task_training()["base"]
+        spec = {**sizes["model_spec"],
+                "graph_view": {**(sizes["model_spec"].get("graph_view") or {}),
+                               "exclude_relations": list(RC_OTHER_VIEW_EXCLUDES)}}
+        other_view = _last(_train_run(state["workspace"], rc / "other_view_base", device,
+                                      stage="base", epochs=1,
+                                      settings={**sizes, "model_spec": spec}))
+        refusal, _ = _lp_refused(RC_KG_LABEL, other_view, ValueError,
+                                 ("this build has no node mapping between graph views",
+                                  "a capability this build lacks, not a research rule"))
+        assert refusal["models_built"] == 0, "a model was built before the refusal"
+        return "refused as a capability this build lacks, before any model was built or " \
+               "anything written", {
+            **refusal, "refused_as": "a capability gap: no node mapping between graph views"}
+
+    def _refuse_split_record() -> Tuple[str, Dict[str, Any]]:
+        _need("workspace", "kg")
+        # Its own import, then its cohort.json's split seed changed, and its
+        # pairs' seed with it, so the manifest stays whole and consistent in
+        # shape (the reader refuses a pairs seed that is not the split's): the
+        # split record's seed and its recorded digest now contradict each
+        # other on the view, so the split does not rebuild from the graph the
+        # version binds. The manifest changed is the one the import's
+        # `resolve_version` parsed from the file's bytes, never a second read.
+        version, _ = _import_version(registry, state["workspace"], None, RC_KG_SPLIT_LABEL,
+                                     kind_argv=_kg_edges_argv(state["base"]))
+        held = version.manifest
+        seed = int(held["split"]["seed"]) + 1
+        manifest = {**held, "split": {**held["split"], "seed": seed},
+                    "pairs": {**held["pairs"], "seed": seed}}
+        version.identity.path.write_text(json.dumps(manifest, indent=2, sort_keys=True),
+                                         encoding="utf-8")
+        refusal, _ = _lp_refused(RC_KG_SPLIT_LABEL, state["base"], ValueError,
+                                 ("records an edge split that does not rebuild",
+                                  "its record contradicts the graph it binds"))
+        return "refused before anything was scored or written", {
+            **refusal, "refused_as": "the version's split record does not rebuild: its seed "
+                                     "and its digest contradict each other on its graph's view"}
+
+    # ---- L5: a disease child by both of its protocols, two records
+    def _two_protocols() -> Tuple[str, Dict[str, Any]]:
+        _need("workspace", "kg")
+        from src.api.services.record_views import read_records
+        from src.evaluation.sidecar import LEDGER_FILENAME, read_ledger
+
+        # A supplied cohort built from the demo graph's own ids, as T1's.
+        source = _write_cohort_source(rc / "cases.json", _m4_demo_cases(state["workspace"]))
+        supplied, _ = _import_version(registry, state["workspace"], source, RC_SUPPLIED_LABEL)
+        state["supplied"] = supplied
+        child_path, child_sha = state["child"], state["child_sha"]
+        disease, _ = _measured_and_registered("L5", child_path, child_sha, RC_SUPPLIED_LABEL,
+                                              supplied, "disease")
+        # A finetune passed messages over the full view in its validation, so
+        # its figure on the base's test part reads after full-view exposure.
+        lp = _lp_kept_and_registered("L5", child_path, child_sha, stage="finetune",
+                                     exposure_state=AFTER_FULL_VIEW_EXPOSURE)
+        # **The one reader**: both records, independent, each read as its
+        # kind's view, in the one ledger beside the child.
+        ledger, _ = read_ledger(child_path.resolve().parent / LEDGER_FILENAME)
+        viewed, unreadable = read_records(ledger, child_sha)
+        assert not unreadable and len(viewed) == 2, (
+            f"the one reader reads {len(viewed)} records and {len(unreadable)} unreadable")
+        seen = sorted((view.mode, type(view).__name__, record["run_id"],
+                       record["registration"]["sequence"]) for record, view in viewed)
+        assert [mode for mode, *_ in seen] == ["disease", LP_PROTOCOL], (
+            f"the records are of the modes {[mode for mode, *_ in seen]}")
+        assert len({run for _m, _v, run, _s in seen}) == 2 and sorted(
+            sequence for *_rest, sequence in seen) == [1, 2], (
+            "the two records are not two runs registered one after the other")
+        return "two independent records, one per protocol, read by the one reader", {
+            "measured": {"model": "D1's disease child, listed in the flow's workspace",
+                         "run": RC_CHILD_RUN, "checkpoint_sha256": child_sha},
+            "disease": {**disease, "version": {"label": RC_SUPPLIED_LABEL, "kind": "supplied",
+                                               "manifest_sha256": supplied.identity.sha256}},
+            "kg_link_prediction": lp,
+            "records": [{"mode": mode, "view": view, "sequence": sequence}
+                        for mode, view, _run, sequence in seen],
+        }
+
+    # ---- L6: a generated split imported, measured and registered
+    def _generated_split() -> Tuple[str, Dict[str, Any]]:
+        _need("workspace")
+        import io
+
+        import scripts.derive_task_fixture as derive_task_fixture
+        from scripts.setup_demo import DEMO_FIXTURE_DISTRACTORS
+
+        # The demo workspace's functional gene fixture, through its own entry
+        # point, so the version keeps it (Stage 5b) and L7 trains on it.
+        with contextlib.redirect_stdout(io.StringIO()):
+            assert derive_task_fixture.main(["--data-dir", str(state["workspace"]),
+                                             "--distractors",
+                                             str(DEMO_FIXTURE_DISTRACTORS)]) == 0, (
+                "the fixture derivation failed")
+        state["fixture"] = True
+        version, preview = _import_version(registry, state["workspace"], None,
+                                           RC_GENERATED_LABEL, kind_argv=_generated_argv("val"))
+        manifest = version.manifest
+        assert (version.kind, manifest["role"]) == ("generated", "val"), (
+            f"the import is a {version.kind} version of role {manifest['role']}")
+        bound, _, _, _ = verify_workspace(state["workspace"])
+        assert manifest["graph"] == bound, "the generated split's graph digests are not the " \
+                                           "workspace's"
+        assert manifest.get("task_fixture"), "the generated split keeps no functional fixture"
+        state["generated"] = version
+        measured, kept_report = _measured_and_registered(
+            "L6", state["child"], state["child_sha"], RC_GENERATED_LABEL, version, "disease")
+        assert (kept_report["manifest"]["split"], kept_report["manifest"]["r10"]) == (
+            "val", None), "the report is not of the generated val split, without R10"
+        assert measured["record"]["view"] == "GeneratedRecordView", (
+            f"the record reads as {measured['record']['view']}")
+        return "imported with its fixture, measured, kept and registered as a generated split", {
+            "preview_wrote_nothing": True, "preview_id": preview,
+            "version": {"label": RC_GENERATED_LABEL, "kind": version.kind,
+                        "role": manifest["role"], "manifest_sha256": version.identity.sha256,
+                        "counts": manifest["counts"]},
+            "measured": {"model": "D1's disease child, listed in the flow's workspace",
+                         "run": RC_CHILD_RUN, "checkpoint_sha256": state["child_sha"]},
+            **measured,
+        }
+
+    # ---- L7: the GPU regression cases, one short child per task
+    def _regression_case(task: str) -> Callable[[], Tuple[str, Dict[str, Any]]]:
+        def case() -> Tuple[str, Dict[str, Any]]:
+            _need("workspace", *(("supplied",) if task == "disease" else
+                                 ("generated", "fixture")))
+            run = state["workspace"] / RUNS_DIRNAME / _demo_encoder_kind() / RC_TASK_RUNS[task]
+            started = time.monotonic()
+            trained = _last(_train_run(state["workspace"], run, device, stage="finetune",
+                                       task=task, epochs=1,
+                                       settings=demo_task_training()[task],
+                                       finetune_from=state["base"]))
+            seconds = round(time.monotonic() - started, 1)
+            payload = read_checkpoint(trained, map_location="cpu", weights_only=True).checkpoint
+            record = read_model_record(payload)
+            sha = _read_run_checkpoint(trained)["sha256"]
+            assert (record.learning_stage, record.task) == ("finetune", task), (
+                f"the child is a {record.learning_stage} of task {record.task}")
+            assert (record.parent or {}).get("sha256") == state["base_sha"], (
+                "the child names another parent than the listed base")
+            gpu = (payload.get("environment") or {}).get("gpu")
+            on_cuda = device.startswith("cuda")
+            assert (gpu is not None) == on_cuda, (
+                f"the child's environment {'names no' if on_cuda else 'names a'} GPU for a run "
+                f"on {device}")
+            label, version = ((RC_SUPPLIED_LABEL, state["supplied"]) if task == "disease"
+                              else (RC_GENERATED_LABEL, state["generated"]))
+            measured, _ = _measured_and_registered(f"L7.{task}", trained, sha, label, version,
+                                                   task)
+            assert measured["record"]["sequence"] == 1, "the child's ledger held a record before"
+            return f"a {task} child trained on {device}, measured by its protocol and registered", {
+                "task": task, "device": device, "trained_on_cuda": gpu is not None,
+                "training_seconds": seconds, "epochs": 1,
+                "sizes": "the demo's (setup_demo.demo_task_training)",
+                "child": {"run": RC_TASK_RUNS[task], "sha256": sha,
+                          "parent_sha256": state["base_sha"],
+                          "training_rules": payload.get("training_rules")},
+                "version": {"label": label, "kind": version.kind,
+                            "manifest_sha256": version.identity.sha256},
+                **measured,
+            }
+
+        return case
+
+    # ---- L8: the results export, every record of the flow, uncapped
+    def _exported() -> Tuple[str, Dict[str, Any]]:
+        import io
+
+        import scripts.export_results as export_results
+        from src.api.services import results
+        from src.utils.fingerprint import read_once
+        # Models › Results' side-by-side cap: that view's only; a query and an
+        # export are never capped (owner's O6), so the flow keeps more runs.
+        from src.webui.components.results_segment import COMPARE_CAP
+
+        assert kept, "the flow kept no run to export"
+        output = rc / "export.json"
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                code = export_results.main([
+                    "--workspaces-root", f"{RC_EXPORT_SOURCES['workspaces_root']}={root}",
+                    "--registry", f"{RC_EXPORT_SOURCES['registry']}={registry}",
+                    "--format", "json", "--output", str(output)])
+        except SystemExit as refused:   # a usage error: argparse's exit
+            raise AssertionError(f"the export refused its arguments (exit {refused.code})"
+                                 ) from None
+        assert code == 0, f"the export exited {code}"
+        # One read: the digest recorded is of the bytes checked and parsed.
+        written = read_once(output)
+        export_sha256, text = written.sha256, written.data.decode("utf-8")
+        del written
+        assert str(work.resolve()) not in text and str(work) not in text, (
+            "the export carries a server path")
+        exported = json.loads(text)
+        assert (exported.get("format"), exported.get("columns")) == (
+            results.EXPORT_FORMAT, list(results.COLUMN_NAMES)), "the export is of another format"
+        rows = exported["rows"]
+        unreadable = [row for row in rows if row["result"] == results.UNREADABLE]
+        assert not unreadable, f"{len(unreadable)} exported items could not be read"
+        by_run: Dict[str, List[Dict[str, Any]]] = {}
+        for row in rows:
+            by_run.setdefault(row["run_id"], []).append(row)
+        expected = {entry["run_id"]: entry for entry in kept}
+        assert sorted(by_run) == sorted(expected), (
+            f"the export lists {len(by_run)} runs; the flow kept and registered {len(expected)}")
+        assert len(by_run) > COMPARE_CAP, (
+            f"the flow kept {len(by_run)} runs, too few to show the export is not capped at "
+            f"{COMPARE_CAP}")
+        for run_id, group in by_run.items():
+            for row in group:
+                _export_row_verified(row, expected[run_id])
+        return "every run of the flow exported with its identities, settings, environment and " \
+               "exposure; none capped, none unreadable", {
+                   "format": exported["format"], "export_sha256": export_sha256,
+                   "results": len(by_run), "rows": len(rows), "unreadable": 0,
+                   "ui_compare_cap": COMPARE_CAP, "capped": False,
+                   "runs": [{"probe": entry["probe"], "run_id": entry["run_id"],
+                             "report_sha256": entry["report_sha256"], "kind": entry["kind"],
+                             "role": entry["role"],
+                             "metric_rows": len(by_run[entry["run_id"]])} for entry in kept],
+                   "carries_no_server_path": True,
+               }
+
+    with _deployment_settings(settings):
+        report.run("L1", "m2", "research comparison: a KG edge set (role test) is imported by "
+                   "the CLI importer from D1's base: the preview writes nothing, the commit "
+                   "binds the base's view, split and test pairs", _kg_edge_set)
+        report.run("L2", "m2", "research comparison: KG link prediction through measure_scorer "
+                   "is kept and registered, its exposure scoped to the base's record and its "
+                   "scores, pairs and summary verified against each other", _lp_measured)
+        report.run("L3", "m2", "research comparison: KG link prediction through the job runner "
+                   "from the server's lists is kept and registered", _lp_through_the_runner)
+        for case, claim, probe in (
+            ("other_graph", "a KG edge set of another graph", _refuse_other_graph),
+            ("tampered_pairs", "a KG edge set whose pairs file was changed",
+             _refuse_tampered_pairs),
+            ("other_view", "a model of another graph view, as a stated capability gap",
+             _refuse_other_view),
+            ("split_record", "a KG edge set whose split record contradicts its graph",
+             _refuse_split_record),
+        ):
+            report.run(f"L4.{case}", "m2", f"research comparison: KG link prediction refuses "
+                       f"{claim}, before anything is written", probe)
+        report.run("L5", "m2", "research comparison: a disease child measured by both of its "
+                   "protocols gives two independent records, read by the one reader",
+                   _two_protocols)
+        report.run("L6", "m2", "research comparison: a generated split is imported with its "
+                   "fixture, measured and registered", _generated_split)
+        for task in RC_TASKS:
+            report.run(f"L7.{task}", "m2", f"research comparison, GPU regression: a short {task} "
+                       "child of D1's base trained on the probe's device, measured by its "
+                       "protocol and registered", _regression_case(task))
+        report.run("L8", "m2", "research comparison: the results export lists every run of the "
+                   "flow with its identities, settings, environment and exposure, uncapped",
+                   _exported)
+
+
+# =============================================================================
+# M1's served readings, informational (S1 in phase M)
+# =============================================================================
+#: The probe that takes M1's minimal served resource and latency readings
+#: (research comparison §5 Stage 10, the owner's item D; BACKLOG 64), after the
+#: retired `scripts/measure_served_pipeline.py` (PLAN_B04 §7.3, its reviewed
+#: procedure, of which this takes a minimal part). Its own letter: the probe
+#: ID M1 is M2's other-graph precondition, and M1 is also the deployment mode
+#: M5's service runs in. **Informational**: in neither required list
+#: (`M2_DEMO_REQUIRED`, `M2_REAL_REQUIRED`), so `m2_acceptance` never reads it
+#: and no reading, however slow or large, can leave the acceptance incomplete;
+#: and outside the run's exit status (`INFORMATIONAL_PROBES`), so not even a
+#: failed S1 (a start slower than `_SERVICE_START_SECONDS`, say) fails the run.
+#: There is no threshold: nothing it reads is judged.
+SERVED_READINGS_PROBE = "S1"
+#: The probes the report records with their status but the run's exit status
+#: never counts (`run_exit_status`): informational readings, which hardware
+#: variance alone can fail and no acceptance requires. The console prints a
+#: failure of one as an INFO line.
+INFORMATIONAL_PROBES: Tuple[str, ...] = (SERVED_READINGS_PROBE,)
+#: The readings' definition, recorded with them (`SERVED_READING_DEFINITIONS`).
+SERVED_READINGS_VERSION = "served-readings/1"
+#: The fixed workload after readiness: the first requests are the warm-up, a
+#: count fixed here and never detected, and the next ones the steady state,
+#: all sent serially, one at a time.
+SERVED_WARM_UP_REQUESTS = 5
+SERVED_STEADY_REQUESTS = 50
+#: What each reading is, recorded with the readings so the report says it.
+SERVED_READING_DEFINITIONS: Dict[str, str] = {
+    "cold_start.seconds": (
+        "the probe's clock from launching the service's process (uvicorn serving the "
+        "application, as the launcher starts it; the process is the server's own) to its "
+        "first /health answer. The application builds the configured pipeline in its startup, "
+        "before the service accepts a connection, so this covers the interpreter's start, the "
+        "imports, the dashboard's mount, reading the workspace and the checkpoint, building "
+        "the model and moving it to the device. /health is asked every 0.5 s, so it reads up "
+        "to that much late, and the seconds are rounded to 0.1 s (`_ProbeServer.wait_ready`). "
+        "`state` \"read\" with them, or \"not_obtainable\" with its reason when /health never "
+        "answered"),
+    "readiness": (
+        "before anything counts: the first /health answer (the cold start), /ready answering "
+        "200, and the status's served identity naming the child, the workspace and its dataset "
+        "record by the digests this probe read, the disease task and the device asked for "
+        "(`_assert_served_identity`). `state` \"ready\" with /ready's `ready_status`, or "
+        "\"not_ready\" with `failed_at` (\"health\", \"ready\" or \"served_identity\"), its "
+        "`reason` and /ready's `ready_status` once it answered. A service not shown ready is "
+        "sent no request: what was read before stays, and every reading after is not taken"),
+    "seconds": (
+        "per counted request, the probe's clock (time.perf_counter) from sending one POST "
+        "/api/v1/diagnose, on a new loopback connection, to reading its whole answer. The "
+        "service answers after the disease head's scores are copied to the host, so on CUDA "
+        "the time includes the device's work, synchronised by that copy in the server's "
+        "process; the probe's process runs no part of the request, and no synchronise call "
+        "is made in it"),
+    "server_handler_seconds": (
+        "per counted request, the answer's own inference_time_ms in seconds: the route's "
+        "wall time from its start to the answer built, before it is validated and sent"),
+    "warm_up": "the first requests after readiness, a fixed count, whatever they took",
+    "steady_state": (
+        "the requests after the warm-up, a fixed count, sent serially. Every request asks the "
+        "same query, and the service keeps no result cache, so each answer is computed"),
+    "counted": (
+        "a request answered 200 with a JSON body whose served identity is the one the status "
+        "reported at readiness; any other answer is a failure, by class, and a phase with one "
+        "is incomplete. A request with no whole answer (timed out, reset or cut off) ends the "
+        "readings: the server may still be working on it"),
+    "memory": (
+        "the server process's VmRSS (resident now) and VmHWM (its peak resident size since the "
+        "process started) from /proc/<pid>/status, in bytes, approximate as the kernel's RSS "
+        "accounting is. VmHWM is never reset here, so it is the peak since the start, never "
+        "one phase's. Whether a unified-memory device's allocations count in it is not "
+        "established"),
+    "allocator": (
+        "the allocator variables in the environment the server process was started with "
+        "(/proc/<pid>/environ), raw, null when absent: `state` \"read\" with them, or "
+        "\"not_obtainable\" with its reason when that environment cannot be read or the "
+        "process has exited"),
+    "cuda_allocator_peak": (
+        "torch.cuda.max_memory_allocated of the server's process: torch keeps it inside that "
+        "process, and no route of the service exposes it"),
+}
+#: What these readings do not cover, said in the report with them.
+SERVED_READINGS_NOT_COVERED: Tuple[str, ...] = (
+    "a peak per phase: VmHWM is not reset between phases (PLAN_B04 §7.3's reset pauses the "
+    "server, and is not taken here)",
+    "system-wide memory and swap, a baseline before the launch, and the machine's OOM kills "
+    "(PLAN_B04 §7.3's R0 and system counters)",
+    "a reload, and the old and new pipelines held together (PLAN_B04 §7.3's R3 and R4)",
+    "concurrent requests, a varied or largest-size workload, and repeats over several cold "
+    "starts: one query, the same each time, from one cold start",
+    "the real workspace's children at deployment size, and gene and patients-like-me "
+    "children: only D1's disease child on the demo workspace is served",
+    "the server's CUDA allocator counters (cuda_allocator_peak)",
+)
+
+
+def _reading_not(state: str, reason: str) -> Dict[str, Any]:
+    """A reading that has no value: its state (``not_obtainable``,
+    ``not_applicable`` or ``not_taken``) and why, never a number."""
+    return {"state": state, "reason": reason}
+
+
+def _process_memory(pid: int, proc: Path = Path("/proc")) -> Dict[str, Any]:
+    """`pid`'s VmRSS and VmHWM in bytes, read from its ``status`` under `proc`
+    (Linux's process counters; SERVED_READING_DEFINITIONS["memory"]), or the
+    reason they cannot be read: no /proc on this platform, or the process gone
+    (a process that has exited has neither line)."""
+    if not (proc / "self" / "status").is_file():
+        return _reading_not("not_obtainable",
+                            "this platform has no /proc/<pid>/status (Linux's process counters)")
+    try:
+        text = (proc / str(pid) / "status").read_text()
+    except OSError:
+        return _reading_not("not_obtainable", "the server's process is gone")
+    values: Dict[str, int] = {}
+    for line in text.splitlines():
+        name, _, rest = line.partition(":")
+        parts = rest.split()
+        if name in ("VmRSS", "VmHWM") and len(parts) == 2 and parts[1] == "kB" \
+                and parts[0].isdigit():
+            values[name] = int(parts[0]) * 1024
+    if set(values) != {"VmRSS", "VmHWM"}:
+        return _reading_not("not_obtainable",
+                            "the server's process has exited: its status has no VmRSS or VmHWM")
+    return {"state": "read", "rss_bytes": values["VmRSS"],
+            "peak_rss_since_start_bytes": values["VmHWM"]}
+
+
+def _process_allocator(pid: int, proc: Path = Path("/proc")) -> Dict[str, Any]:
+    """The allocator variables `pid` was started with, by the names the
+    report's `allocator` records for the probe's own process
+    (`_allocator_variables`), raw, None when absent, from its ``environ``
+    under `proc`; or why they cannot be read. A process that has exited but
+    is not yet reaped has an ``environ`` that reads empty on some kernels:
+    that is no environment, not one without the variables (the service is
+    always started with some, `_ProbeServer.environment`)."""
+    try:
+        raw = (proc / str(pid) / "environ").read_bytes()
+    except OSError:
+        return _reading_not("not_obtainable",
+                            "the server process's environment cannot be read here "
+                            "(/proc/<pid>/environ)")
+    if not raw.strip(b"\0"):
+        return _reading_not("not_obtainable",
+                            "the server's process has exited: its environment reads empty")
+    pairs = dict(item.split(b"=", 1) for item in raw.split(b"\0") if b"=" in item)
+    return {"state": "read", **{
+        name: (pairs[name.encode()].decode("utf-8", "replace")
+               if name.encode() in pairs else None) for name in _allocator_variables()}}
+
+
+def _cuda_allocator_peak(device: str) -> Dict[str, Any]:
+    """The server's CUDA allocator peak, which this probe cannot read
+    (SERVED_READING_DEFINITIONS["cuda_allocator_peak"]): never a figure taken
+    in the probe's own process, which would describe the probe."""
+    if device != "cuda":
+        return _reading_not("not_applicable", f"the model is served on the {device}")
+    return _reading_not("not_obtainable",
+                        "torch keeps its allocator counters inside the server's process and "
+                        "no route of the service exposes them; a reading in the probe's "
+                        "process would describe the probe, not the server")
+
+
+def _seconds_summary(values: Sequence[float]) -> Dict[str, Any]:
+    """The median, smallest and largest of `values` (no mean, as PLAN_B04 §7.3
+    reports), or the state that none was counted."""
+    import statistics
+
+    if not values:
+        return _reading_not("not_obtainable", "no request of this phase was counted")
+    return {"state": "read", "median_seconds": round(statistics.median(values), 6),
+            "min_seconds": min(values), "max_seconds": max(values)}
+
+
+def _served_requests(server: Any, body: bytes, planned: int,
+                     identity: Mapping[str, Any]) -> Dict[str, Any]:
+    """`planned` diagnose requests of `body` to `server`, serially, each timed
+    on the probe's clock (SERVED_READING_DEFINITIONS["seconds"]). A request
+    counts only by SERVED_READING_DEFINITIONS["counted"]; a failure is
+    counted by class (``http_<status>``, with ``out_of_memory_in_body``
+    beside it when the body says so, ``not_json``, ``served_identity_mismatch``,
+    ``no_inference_time``), and the phase goes on. A request with no whole
+    answer (``no_response``) or a server that has exited (``server_exited``)
+    ends it, said in ``ended``."""
+    import http.client
+
+    seconds: List[float] = []
+    handler: List[float] = []
+    failures: Dict[str, int] = {}
+    sent, ended = 0, None
+
+    def fail(kind: str) -> None:
+        failures[kind] = failures.get(kind, 0) + 1
+
+    for _ in range(planned):
+        if server.process is None or server.process.poll() is not None:
+            ended = "server_exited"
+            fail(ended)
+            break
+        sent += 1
+        started = time.perf_counter()
+        try:
+            status, _, answer = server.request(
+                "POST", "/api/v1/diagnose", {"Content-Type": "application/json"}, body)
+        except (OSError, http.client.HTTPException):
+            ended = "no_response"
+            fail(ended)
+            break
+        elapsed = time.perf_counter() - started
+        if status != 200:
+            fail(f"http_{status}")
+            if b"out of memory" in answer.lower():
+                fail("out_of_memory_in_body")
+            continue
+        try:
+            result = json.loads(answer)
+        except ValueError:
+            fail("not_json")
+            continue
+        if not isinstance(result, dict) or result.get("served_identity") != identity:
+            fail("served_identity_mismatch")
+            continue
+        try:
+            handler_seconds = float(result["inference_time_ms"]) / 1000.0
+        except (KeyError, TypeError, ValueError):
+            fail("no_inference_time")
+            continue
+        seconds.append(round(elapsed, 6))
+        handler.append(round(handler_seconds, 6))
+    return {
+        "state": "read", "planned": planned, "sent": sent, "counted": len(seconds),
+        "failures": failures, "ended": ended,
+        "complete": sent == planned and len(seconds) == planned,
+        "seconds": seconds, "summary": _seconds_summary(seconds),
+        "server_handler_seconds": handler, "server_handler_summary": _seconds_summary(handler),
+    }
+
+
+def _served_readiness(
+    server: Any, *, checkpoint_sha256: str, workspace_digests: Dict[str, str], record: Any,
+    device: str,
+) -> Tuple[Dict[str, Any], Dict[str, Any], Optional[Dict[str, Any]]]:
+    """S1's readiness, before anything counts
+    (SERVED_READING_DEFINITIONS["readiness"]): the service's first /health
+    answer (`wait_ready`, the cold start), /ready answering 200, and the
+    status's served identity held to this probe's own reads
+    (`_assert_served_identity`). Returns the readiness record, the cold start
+    and the served identity. The identity is None when the service was not
+    shown ready: the record then says at which step (`failed_at`) and why
+    (`reason`, this file's words, with no path), with /ready's status once it
+    answered, and the cold start keeps its seconds once /health answered."""
+    try:
+        seconds = server.wait_ready()
+    except AssertionError as failure:
+        return ({"state": "not_ready", "failed_at": "health", "reason": str(failure)},
+                _reading_not("not_obtainable", "the service never answered /health"), None)
+    cold_start = {"state": "read", "seconds": seconds}
+    ready = server.request("GET", "/ready")[0]
+    if ready != 200:
+        return ({"state": "not_ready", "failed_at": "ready", "ready_status": ready,
+                 "reason": f"the service answered /ready {ready}: it serves no pipeline (its "
+                           "log is under the work directory)"}, cold_start, None)
+    try:
+        identity = _assert_served_identity(
+            server.json("/api/v1/pipeline/status").get("served_identity"),
+            checkpoint_sha256=checkpoint_sha256, workspace_digests=workspace_digests,
+            record=record, task="disease", device=device)
+    except AssertionError as failure:
+        return ({"state": "not_ready", "failed_at": "served_identity", "ready_status": ready,
+                 "reason": str(failure)}, cold_start, None)
+    return {"state": "ready", "ready_status": ready}, cold_start, identity
+
+
+def _served_not_taken(cold_start: Mapping[str, Any]) -> Dict[str, Any]:
+    """The readings of a service not shown ready (`_served_readiness`), which
+    is sent no request: the cold start as it was read, and every reading after
+    readiness not taken, with why. The same keys as `_served_reading`'s."""
+    not_taken = _reading_not("not_taken",
+                             "the service was not shown ready (readiness): no request was sent")
+    return {
+        "cold_start": ({**cold_start, "memory_at_ready": not_taken}
+                       if cold_start["state"] == "read" else dict(cold_start)),
+        "warm_up": {**not_taken, "planned": SERVED_WARM_UP_REQUESTS, "complete": False},
+        "steady_state": {**not_taken, "planned": SERVED_STEADY_REQUESTS, "complete": False},
+        "complete": False,
+    }
+
+
+def _served_reading(server: Any, query: Sequence[str], identity: Mapping[str, Any],
+                    cold_start: Mapping[str, Any]) -> Dict[str, Any]:
+    """The readings of a service already shown ready and serving `identity`
+    (`_served_readiness`), beside its cold start: the server's memory at
+    readiness, then the warm-up and the steady state of `query`, each with the
+    memory after it. Everything is read from the server's process (its PID's
+    /proc entries) or its answers, never from the probe's process, which
+    reads no device counter at all. A warm-up ended by a request with no whole
+    answer or the server's exit leaves the steady state not taken."""
+    pid = server.process.pid
+    body = json.dumps({"phenotypes": list(query)}).encode("utf-8")
+    memory_at_ready = _process_memory(pid)
+    warm_up = _served_requests(server, body, SERVED_WARM_UP_REQUESTS, identity)
+    warm_up["memory_after"] = _process_memory(pid)
+    if warm_up["ended"] is None:
+        steady = _served_requests(server, body, SERVED_STEADY_REQUESTS, identity)
+        steady["memory_after"] = _process_memory(pid)
+    else:
+        steady = {**_reading_not("not_taken", f"the warm-up ended: {warm_up['ended']}"),
+                  "planned": SERVED_STEADY_REQUESTS, "complete": False}
+    return {
+        "cold_start": {**cold_start, "memory_at_ready": memory_at_ready},
+        "warm_up": warm_up,
+        "steady_state": steady,
+        "complete": bool(warm_up["complete"] and steady["complete"]),
+    }
+
+
+def _served_readings(report: Report, work: Path, sound: Path, checkpoint: Path,
+                     device: str) -> None:
+    """S1, M1's minimal served readings (`SERVED_READINGS_PROBE`): D1's disease
+    child (`checkpoint`) on the demo workspace, served by a service of its own,
+    started as the launcher starts it (`_ProbeServer`) with the pipeline
+    configured at startup (`SHEPHERD_KG_PATH`, `SHEPHERD_DATA_DIR`,
+    `SHEPHERD_CHECKPOINT_PATH`, `SHEPHERD_DEVICE`), its files under
+    <work>/served-readings. Readiness is asserted before anything counts:
+    /ready answers 200 and the status's served identity names the child, the
+    workspace and its dataset record by the digests this probe read, the
+    disease task and the device asked for, in effect (`_assert_served_identity`).
+    (`_served_readiness`). Then the fixed workload of one query from the
+    workspace's own validation cases (`_workspace_query`), sent with the API's
+    defaults (`_served_reading`).
+
+    **Informational, never required and outside the exit status**
+    (`SERVED_READINGS_PROBE`, `INFORMATIONAL_PROBES`). The probe fails only
+    when no reading of the child could be taken: the service did not start,
+    was not ready or served something else. It then fails with its facts
+    (`ProbeFailure`): what was read before (the readiness record, the cold
+    start) and every reading after as not taken (`_served_not_taken`). Every
+    reading that cannot be taken is recorded as a state with its reason,
+    never a number, and an incomplete workload is recorded as incomplete, not
+    as a failure."""
+    def _read() -> Tuple[str, Dict[str, Any]]:
+        from src.api.routes.diagnose import DiagnoseRequest
+        from src.kg.artifacts import GRAPH_ARTIFACTS
+
+        _, _, reads, record = verify_workspace(sound)
+        query, asked = _workspace_query(checkpoint, sound, reads)
+        checkpoint_sha256 = _read_run_checkpoint(checkpoint)["sha256"]
+        server = _ProbeServer(SERVED_READINGS_PROBE, work / "served-readings", {
+            "SHEPHERD_KG_PATH": str(sound / GRAPH_ARTIFACTS["kg"]),
+            "SHEPHERD_DATA_DIR": str(sound),
+            "SHEPHERD_CHECKPOINT_PATH": str(checkpoint),
+            "SHEPHERD_DEVICE": device,
+        })
+        try:
+            server.start()
+            readiness, cold_start, identity = _served_readiness(
+                server, checkpoint_sha256=checkpoint_sha256, workspace_digests=reads,
+                record=record, device=device)
+            reading = (_served_reading(server, query, identity, cold_start)
+                       if identity is not None else _served_not_taken(cold_start))
+            # Read while the server's process runs, whether it was ready or not.
+            allocator = _process_allocator(server.process.pid)
+        finally:
+            server.stop()
+        defaults = {name: DiagnoseRequest.model_fields[name].default
+                    for name in ("top_k", "include_explanations", "include_paths")}
+        facts = {
+            "required": False,
+            "version": SERVED_READINGS_VERSION,
+            "subject": {"task": "disease", "checkpoint_sha256": checkpoint_sha256,
+                        "served_identity": identity if identity is not None else _reading_not(
+                            "not_taken", "the service was not shown ready (readiness)")},
+            "device": device,
+            "query": asked,
+            "request": {"fields_sent": ["phenotypes"], "api_defaults": defaults},
+            "readiness": readiness,
+            **reading,
+            "allocator": allocator,
+            "cuda_allocator_peak": _cuda_allocator_peak(device),
+            "definitions": dict(SERVED_READING_DEFINITIONS),
+            "not_covered": list(SERVED_READINGS_NOT_COVERED),
+        }
+        if identity is None:
+            raise ProbeFailure(readiness["reason"], facts)
+        steady = reading["steady_state"]
+        summary = steady.get("summary") or {}
+        memory = steady.get("memory_after") or {}
+        print(f"         Served readings: cold start {cold_start['seconds']} s; steady state "
+              f"{steady.get('counted', 0)} of {steady['planned']} counted"
+              + (f", median {summary['median_seconds']} s" if summary.get("state") == "read"
+                 else "")
+              + (f"; server resident {memory['rss_bytes'] / 1e9:.2f} GB, peak since start "
+                 f"{memory['peak_rss_since_start_bytes'] / 1e9:.2f} GB"
+                 if memory.get("state") == "read" else ""))
+        detail = ("readings taken: cold start, warm-up and steady state, each counted request "
+                  "timed" if reading["complete"] else
+                  "readings incomplete: recorded as taken, each failure by class")
+        return detail, facts
+
+    report.run(SERVED_READINGS_PROBE, "m2",
+               "M1's served readings of D1's disease child: cold start, warm-up and "
+               "steady-state request times and the server's memory (informational: never "
+               "required, never judged, outside the exit status)", _read)
+
+
 def _under_the_probes_own_gpu_lock(phase: Callable[..., None]) -> Callable[..., None]:
     """`phase(report, work, ...)` run with the lock under `<work>/probe-gpu-lock/`
     as the GPU lock in effect (`_probes_own_gpu_lock`), the operator's setting
@@ -5439,12 +6969,16 @@ def phase_m2_demo(
 ) -> None:
     """Contract M2's acceptance on the demo workspace: the successes first, then
     every refusal, each from the production entry point that makes it; then
-    contract M4's flow on the same workspace (T1-T6), then M5's (W1-W11). The
-    formal entry points take the probe's own GPU lock (`_probes_own_gpu_lock`).
+    contract M4's flow on the same workspace (T1-T6), then M5's (W1-W11), then
+    the research comparison round's (L1-L8, `_rc_demo`), and last M1's served
+    readings (S1, `_served_readings`), informational. The formal entry
+    points take the probe's own GPU lock (`_probes_own_gpu_lock`), and M5's
+    and the research comparison's each that of their own deployment.
 
     `checkpoint` is D1's disease child, the resume refusals' parent and the
-    subject of M6, M7, M8 and T2; `base` is D1's base, which M2 finetunes
-    again into a run it pauses and resumes."""
+    subject of M6, M7, M8, T2, L5 and S1; `base` is D1's base, which M2 finetunes
+    again into a run it pauses and resumes and the research comparison's flow
+    lists, measures and finetunes."""
     print("\nM. Contract M2 on the demo workspace, then M4's flow")
     import src.api.main as api
     from scripts.setup_demo import demo_task_training
@@ -6060,6 +7594,16 @@ def phase_m2_demo(
              m4.get("version"),
              [m4["report"].parent.name] if m4.get("report") else [],
              [m4["report"].parent.name] if m4.get("record") else [])
+
+    # ---- The research comparison round's flow on the same workspace: D1's
+    # base and disease child, M1's other graph, the probe's own deployment
+    # under <work>/rc.
+    _rc_demo(report, work, sound, base, checkpoint, device, state.get("other"))
+
+    # ---- M1's served readings (S1), informational and never required: D1's
+    # disease child served by a service of its own, after every other probe
+    # of the part, so no other service or job of the probe runs meanwhile.
+    _served_readings(report, work, sound, checkpoint, device)
 
 
 # =============================================================================
@@ -7019,6 +8563,20 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     return args
 
 
+def run_exit_status(report: Report, acceptance: Optional[Mapping[str, Any]]) -> int:
+    """The run's exit status, the verdict an external check reads: 1 when a
+    probe failed or raised, or a requested acceptance is not complete; else 0.
+    **An informational probe never counts** (`INFORMATIONAL_PROBES`): the
+    report keeps its status, and the console prints its failure as an INFO
+    line, so hardware variance in a reading never fails the run."""
+    failed = sum(1 for probe in report.probes
+                 if probe.status in ("failed", "error")
+                 and probe.probe_id not in INFORMATIONAL_PROBES)
+    if acceptance is not None and not acceptance["complete"]:
+        failed += 1
+    return 1 if failed else 0
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     args = parse_args(argv)
     # **Absolute from here on.** parse_args made every path argument absolute
@@ -7144,7 +8702,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     print(f"report: {report_path}")
     print("=" * 66)
 
-    failed = summary["failed"] + summary["error"]
+    for probe in report.probes:
+        if probe.probe_id in INFORMATIONAL_PROBES and probe.status in ("failed", "error"):
+            print(f"INFO {probe.probe_id} {probe.status}, informational and outside the exit "
+                  f"status: {probe.detail}")
     if acceptance is not None:
         for part, name in (("demo", "demo"), ("real_data", "real data")):
             verdict = acceptance[part]
@@ -7156,8 +8717,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 print(f"M2 acceptance, {name}: INCOMPLETE {verdict['not_passed']}")
         print("M2 acceptance: " + ("COMPLETE" if acceptance["complete"] else
                                    "NOT COMPLETE (both parts must run and pass)"))
-        if not acceptance["complete"]:
-            failed += 1
+    failed = run_exit_status(report, acceptance)
     # **What the run ran with, said again where it ends** (A5): a set that
     # differs from the lock is not left on a line an hour up the console.
     closing = environment_line(report)
@@ -7172,7 +8732,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             print("(work directory kept because the report lives inside it)")
         else:
             shutil.rmtree(work, ignore_errors=True)
-    return 1 if failed else 0
+    return failed
 
 
 if __name__ == "__main__":

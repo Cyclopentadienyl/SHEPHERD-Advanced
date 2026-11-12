@@ -767,7 +767,7 @@ def _refused_before_the_checkpoint(cohort, match, **kwargs):
 
 
 def test_a_label_that_does_not_exist_is_refused(cohort):
-    _refused_before_the_checkpoint(cohort, "holds no cohort version", label="never-imported")
+    _refused_before_the_checkpoint(cohort, "holds no version", label="never-imported")
     assert _nothing_written(cohort)
 
 
