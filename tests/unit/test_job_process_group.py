@@ -216,7 +216,8 @@ def test_a_job_that_ends_by_itself_leaves_no_worker_and_keeps_the_slot_until_the
 
     def observed(job_):
         seen["active"] = manager.active_job()
-        seen["start"] = manager.start_training({"data_dir": str(tmp), "learning_stage": "base"})
+        seen["start"] = manager.start_training({"data_dir": str(tmp), "learning_stage": "base",
+                                                "device": "cpu"})
         real_end_group(job_)
 
     monkeypatch.setattr(tm.TrainingManager, "_end_group", staticmethod(observed))
@@ -408,8 +409,8 @@ def test_a_stand_in_process_is_never_signalled_as_a_group(monkeypatch, tmp_path,
     fake = FakeProcess(pid=pid, ignore_sigint=True, ignore_terminate=True)
     manager = tm.TrainingManager()
     with patch("subprocess.Popen", return_value=fake):
-        assert manager.start_training({"data_dir": str(tmp_path),
-                                       "learning_stage": "base"})["success"]
+        assert manager.start_training({"data_dir": str(tmp_path), "learning_stage": "base",
+                                       "device": "cpu"})["success"]
     assert manager._last["training"].group is None
     answer = manager.stop_training()
     assert fake.signals == ["SIGINT", "SIGTERM", "SIGKILL"] and answer["status"] == "stopped"

@@ -77,8 +77,9 @@ def _real_job(manager: tm.TrainingManager, job_type: str = "training"):
 
 def _base(workspace: Path) -> dict:
     """A training start as the runner takes a new run: a base (K8, TM12), the
-    recipe filling its settings, so the start reaches the slot it checks."""
-    return {"data_dir": str(workspace), "learning_stage": "base"}
+    recipe filling its settings, on the CPU (auto is refused on a host without
+    CUDA before the slot), so the start reaches the slot it checks."""
+    return {"data_dir": str(workspace), "learning_stage": "base", "device": "cpu"}
 
 
 def _cleanup(job) -> None:

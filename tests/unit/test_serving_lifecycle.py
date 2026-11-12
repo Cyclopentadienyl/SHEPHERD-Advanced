@@ -67,7 +67,9 @@ def _held_by() -> dict:
 
 
 def _base_start(workspace) -> dict:
-    return {"data_dir": str(workspace), "learning_stage": "base"}
+    """A base start on the CPU: the training device is the host's (auto is
+    refused without CUDA), whatever the faked serving resolver answers."""
+    return {"data_dir": str(workspace), "learning_stage": "base", "device": "cpu"}
 
 
 def _wait(predicate, seconds: float = 10.0) -> None:

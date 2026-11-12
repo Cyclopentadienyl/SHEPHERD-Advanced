@@ -326,5 +326,6 @@ def test_without_an_expectation_the_process_is_given_none(workspace):
 
     with patch("subprocess.Popen", return_value=FakeProcess(pid=8)) as popen:
         result = tm.TrainingManager().start_training({"data_dir": str(workspace),
-                                                      "learning_stage": "base"})
+                                                      "learning_stage": "base",
+                                                      "device": "cpu"})
     assert result["success"] and "--expect-dataset-sha256" not in popen.call_args[0][0]
