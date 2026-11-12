@@ -121,7 +121,7 @@ def test_with_no_pipeline_nothing_is_counted(monkeypatch):
     from src.api import main as api_main
 
     monkeypatch.setattr(api_main.app_state, "pipeline", None, raising=False)
-    monkeypatch.setattr(api_main.app_state, "real_pipeline_requested", False, raising=False)
+    monkeypatch.setattr(api_main.app_state, "not_serving", None)
     monkeypatch.delenv("SHEPHERD_KG_PATH", raising=False)
 
     response = TestClient(api_main.app).post(
@@ -143,7 +143,7 @@ def test_a_graph_alone_is_refused_and_never_ranked(monkeypatch, tmp_path):
     kg_file = tmp_path / "kg.json"
     build_two_phenotype_kg().save_json(str(kg_file))
     monkeypatch.setattr(api_main.app_state, "pipeline", None, raising=False)
-    monkeypatch.setattr(api_main.app_state, "real_pipeline_requested", False, raising=False)
+    monkeypatch.setattr(api_main.app_state, "not_serving", None)
     monkeypatch.setenv("SHEPHERD_KG_PATH", str(kg_file))
     monkeypatch.setenv("SHEPHERD_DATA_DIR", str(tmp_path))
     monkeypatch.delenv("SHEPHERD_CHECKPOINT_PATH", raising=False)

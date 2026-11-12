@@ -1,19 +1,25 @@
 """
 One GPU lock per deployment (M5)
 ================================
-Managed training and evaluation jobs exclude each other through one lock file
-per deployment, whatever the workspace (`docs/working/PLAN_TEST_RESULTS.md` §6,
-"M5's boundaries"). The jobs the WebUI or the API start through the job runner
+Managed training and evaluation jobs, and the service's CUDA inference,
+exclude each other through one lock file per deployment, whatever the
+workspace (`docs/working/PLAN_TEST_RESULTS.md` §6, "M5's boundaries"). The jobs
+the WebUI or the API start through the job runner
 (`src/api/services/training_manager.py`) and the formal CLIs
 (`scripts/train_model.py`, `scripts/measure_scorer.py`,
-`scripts/setup_demo.py --train-model`) take the same lock. A busy lock is
-refused, naming its holder; nothing is queued. **A program entry takes it**,
-in its `main`, before it reads its inputs or writes anything; the production
-code it calls takes none (`train()`, measure_scorer's run), so a caller that
-trains or measures through that code in its own process is not a managed job
-and excludes nothing unless its own entry takes the lock. The deployment
-probe's in-process training probes are such callers: they take no lock, so
-its acceptance is run while no managed GPU job runs.
+`scripts/setup_demo.py --train-model`) take the same lock, and **so does the
+service while it serves a model on CUDA** (`src/api/main.py`, the serving
+lifecycle: decided by the resolved device, held from before a candidate is
+read until inference is stopped, described as `SERVING_JOB_TYPE` with how to
+stop it and no path). A busy lock is refused, naming its holder; nothing is
+queued. **A program entry takes it**, in its `main`, before it reads its
+inputs or writes anything (the service: its load, before any candidate); the
+production code it calls takes none (`train()`, measure_scorer's run,
+`build_pipeline`), so a caller that trains, measures or builds a pipeline
+through that code in its own process is not a managed job and excludes nothing
+unless its own entry takes the lock. The deployment probe's in-process
+training probes are such callers: they take no lock, so its acceptance is run
+while no managed GPU job runs.
 
 **Where it is.** **The workspaces root is the lock's one name**:
 `.shepherd-gpu.lock` directly under `SHEPHERD_WORKSPACES_ROOT`, so two
@@ -46,8 +52,11 @@ itself; a description whose process has exited is never named as the holder.
 
 **The limits, stated rather than hidden:**
 - **Cooperative.** A GPU process that does not take the lock is not stopped by
-  it; the resident inference service does not take it and may hold GPU memory.
-  There is no cross-process inference scheduling.
+  it. The service takes it for CUDA inference only: serving on the CPU takes
+  no lock and checks no job slot, and an in-process build (the probe's) takes
+  none. There is no inference scheduling: a job is refused while inference
+  holds the lock, and inference is stopped by an operator, never unloaded for
+  a job.
 - **Inherited descriptors.** The descriptor is close-on-exec, so a program the
   holder starts (`subprocess`, any `exec`) does not keep the lock. A process
   forked without exec (a worker pool under the `fork` start method, say)
@@ -94,6 +103,17 @@ logger = logging.getLogger(__name__)
 WORKSPACES_ROOT_ENV = server_settings.ENV_WORKSPACES_ROOT
 LOCK_FILE_NAME = server_settings.GPU_LOCK_FILE_NAME
 HOLDER_SUFFIX = ".json"
+
+#: The job type the service's CUDA inference describes itself with while it
+#: holds the lock (`src/api/main.py`, `AppState`), which the job runner's
+#: refusal reads to name it as this service's inference.
+SERVING_JOB_TYPE = "inference"
+#: How an operator frees the GPU from it: words its description and every
+#: refusal that names it carry. No path: the dashboard's GPU chip shows a
+#: holder's description to every request.
+STOP_INFERENCE = "stop inference first with POST /api/v1/pipeline/stop (an operator control)"
+#: The serving holder's command, as its description records it.
+SERVING_COMMAND = f"the SHEPHERD service's CUDA inference: {STOP_INFERENCE}"
 
 #: How long a taker keeps trying before it refuses: long enough to step over
 #: the runner's instant check, a holder that has just let go, or the forked
@@ -359,8 +379,9 @@ def probe(path: Path) -> str | None:
 
 
 def take_gpu_lock(job_type: str, command: str, *, log: logging.Logger | None = None,
-                  environ: Mapping[str, str] | None = None) -> AbstractContextManager:
-    """The lock for a CLI's run, taken now: a context manager that releases it.
+                  environ: Mapping[str, str] | None = None) -> GpuLock:
+    """The lock for a CLI's run, or the service's CUDA inference, taken now: a
+    `GpuLock`, a context manager that releases it.
 
     **Never a run without it** (review of 8242b47, P2-4): with the lock not
     configured, or a setting unusable, this raises before anything is read.
@@ -423,6 +444,9 @@ __all__ = [
     "HOLDER_SUFFIX",
     "LOCK_FILE_NAME",
     "GRACE_SECONDS",
+    "SERVING_COMMAND",
+    "SERVING_JOB_TYPE",
+    "STOP_INFERENCE",
     "WORKSPACES_ROOT_ENV",
     "describe_holder",
     "holder_path",

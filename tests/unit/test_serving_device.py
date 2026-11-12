@@ -287,16 +287,14 @@ def test_the_service_build_refuses_before_the_graph_is_read(
 ):
     """A deployment that names a checkpoint and no device asks for CUDA. The
     refusal comes before `kg.json` is parsed and changes nothing served:
-    catches a check placed after the graph load, or one that publishes. It
-    comes after the request for a real pipeline is recorded, which is what
-    makes `/diagnose` refuse it as a configured pipeline that could not be
-    built, without trying the build again: catches the check moved ahead of
-    that record."""
+    catches a check placed after the graph load, or one that publishes. The
+    build records nothing either: why nothing is served is the lifecycle's
+    record (`initialize_pipeline`, `run_reload`), and a diagnosis never
+    builds, so nothing has to stop it trying again."""
     api = no_device_configured
     data_dir, checkpoint = workspace
     serving = disease_pipeline
     monkeypatch.setattr(api.app_state, "pipeline", serving)
-    monkeypatch.setattr(api.app_state, "real_pipeline_requested", False)
     before = _served_fields(api)
 
     def read_json(cls, path):
@@ -312,9 +310,7 @@ def test_the_service_build_refuses_before_the_graph_is_read(
     assert _opened_inputs(opens, data_dir, checkpoint) == []
     assert _served_fields(api) == before
     assert api.app_state.pipeline is serving
-    assert api.app_state.real_pipeline_requested is True, (
-        "a deployment refused for its device was recorded as asking for nothing"
-    )
+    assert api.app_state.not_serving is None, "the build recorded a refusal itself"
 
 
 def test_a_startup_refused_for_its_device_answers_503(
@@ -323,14 +319,12 @@ def test_a_startup_refused_for_its_device_answers_503(
     """A deployment that names a checkpoint and no device, on a host without
     CUDA, is refused at startup, and every surface says no pipeline is served:
     `/diagnose` and `/ready` answer 503, as for any configured pipeline that
-    could not be built. Catches the device check moved ahead of the record that
-    a real pipeline was asked for (a natural "settle the device first"
-    refactor): `/diagnose` then retries the build on every request and says
-    nothing was configured. Driven through the real lifespan and HTTP routes,
-    as `TestReadinessFollowsWhatIsServed` is."""
+    could not be built: the start-up's refusal is the not-serving record
+    (`STARTUP_REFUSED`), whichever check refused it, and the device is now
+    the first. Driven through the real lifespan and HTTP routes, as
+    `TestReadinessFollowsWhatIsServed` is."""
     api = no_device_configured
     data_dir, checkpoint = workspace
-    monkeypatch.setattr(api.app_state, "real_pipeline_requested", False)
 
     with caplog.at_level(logging.ERROR, logger=api.__name__):
         with Readiness._start(api, monkeypatch, data_dir, checkpoint) as client:
@@ -344,7 +338,8 @@ def test_a_startup_refused_for_its_device_answers_503(
     assert answers == Readiness.NOT_SERVING
     assert "candidates" not in diagnosis.json(), "a diagnosis was answered"
     assert diagnosis.json()["error"].startswith("A pipeline is configured")
-    assert ready.json()["error"].startswith("A pipeline is configured")
+    assert ready.json()["error"] == diagnosis.json()["error"]
+    assert "requires CUDA" not in diagnosis.json()["error"], "the build's words on an open route"
     assert api.app_state.pipeline is None
 
 
@@ -433,17 +428,16 @@ def test_the_service_build_on_the_cpu_is_asked_for_explicitly(
 def test_a_service_with_no_checkpoint_is_refused_for_that(no_cuda, no_device_configured,
                                                           workspace):
     """K7 (PATH1): a graph named with no checkpoint (a `SHEPHERD_KG_PATH`-only
-    start) is refused for the missing model, not for its device, and is
-    recorded as a request, so the service then answers 503."""
+    start) is refused for the missing model, not for its device; the build
+    records nothing (the lifecycle that called it does)."""
     api = no_device_configured
     data_dir, _ = workspace
-    api.app_state.real_pipeline_requested = False
 
     with pytest.raises(PipelineBuildError, match="No model is configured") as refused:
         api.build_pipeline(kg_path=str(data_dir / "kg.json"), data_dir=str(data_dir))
 
     assert not isinstance(refused.value, ServingDeviceUnavailable)
-    assert api.app_state.real_pipeline_requested is True
+    assert api.app_state.not_serving is None
 
 
 # ---------------------------------------------------------------------------

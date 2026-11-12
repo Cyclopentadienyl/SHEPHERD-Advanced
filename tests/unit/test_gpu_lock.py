@@ -717,21 +717,61 @@ def test_a_lock_taker_below_the_top_directory_is_found(tmp_path):
     assert _lock_takers(tmp_path, "scripts") == ["scripts/launch/entry.py"]
 
 
+def _functions_calling(path: Path, names) -> list:
+    """The functions in `path` whose own body calls one of `names`."""
+    import ast
+
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    found = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and any(
+                isinstance(call, ast.Call) and (getattr(call.func, "id", None) in names
+                                                or getattr(call.func, "attr", None) in names)
+                for call in ast.walk(node)):
+            found.append(node.name)
+    return found
+
+
 def test_the_program_entries_take_the_lock_and_the_module_names_each_one():
     """Root-cause round, INT-2: the lock is taken by program entries only,
     never by the production code they call (`train()` takes none, so an
     in-process caller such as the deployment probe's training probes holds no
     lock), and this module's docstring, the one place that says who takes it,
     names every entry that does (it once left out setup_demo.py), by its path
-    from the checkout."""
+    from the checkout. **The service is one** since the ops round's A3a: its
+    serving lifecycle takes it for CUDA inference, in the load's one hold
+    (`AppState._hold_gpu_for`), never in `build_pipeline` or the shared build
+    it calls, so the probe's in-process builds hold no lock either."""
     repo = Path(__file__).resolve().parents[2]
     takers = _lock_takers(repo, "scripts")
     assert takers == ["scripts/measure_scorer.py", "scripts/setup_demo.py",
                       "scripts/train_model.py"]
-    for name in takers:
-        assert f"`{name}" in gpu_lock.__doc__, f"{name} is not named as a taker"
     in_src = [name for name in _lock_takers(repo, "src") if name != "src/utils/gpu_lock.py"]
-    assert in_src == [], f"production code takes the lock itself: {in_src}"
+    assert in_src == ["src/api/main.py"], f"production code takes the lock itself: {in_src}"
+    for name in takers + in_src:
+        assert f"`{name}" in gpu_lock.__doc__, f"{name} is not named as a taker"
+    assert _functions_calling(repo / "src/api/main.py", {"take_gpu_lock", "GpuLock"}) == [
+        "_hold_gpu_for"]
+
+
+def test_a_cli_is_refused_naming_the_serving_holder(root, monkeypatch, capsys):
+    """I8: while this service's CUDA inference holds the lock (its
+    description: `SERVING_JOB_TYPE` and `SERVING_COMMAND`, which names how to
+    stop it and no path), a research CLI is refused before it reads anything,
+    and its refusal names inference and how to stop it."""
+    import scripts.measure_scorer as ms
+
+    _deployment_registry(root, monkeypatch)
+    with take_gpu_lock(gpu_lock.SERVING_JOB_TYPE, gpu_lock.SERVING_COMMAND):
+        record = json.loads(holder_path(root / LOCK_FILE_NAME).read_text())
+        status = ms._run_as_program(_measure_argv(root))
+    err = capsys.readouterr().err
+    assert status == 1
+    assert "is held by an inference job (the SHEPHERD service's CUDA inference" in err
+    assert "stop inference first with POST /api/v1/pipeline/stop" in err
+    assert err.rstrip().endswith("Nothing was written.")
+    assert str(root) not in record["command"], "the serving holder's command names a path"
+    assert list((root / "registry").iterdir()) == [], "nothing was written"
 
 
 # --------------------------------------------------------------------------- the CLIs

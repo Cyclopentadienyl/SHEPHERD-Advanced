@@ -1,22 +1,29 @@
 """
 SHEPHERD-Advanced Pipeline Management API Routes
 ==================================================
-Endpoints for pipeline status and reload.
+Endpoints for the served pipeline's status, its load and its stop.
 
 Module: src/api/routes/pipeline.py
 
 Endpoints:
-    GET  /pipeline/status  — Current pipeline state (gnn_ready, scoring_mode, served identity, …)
-    POST /pipeline/reload  — Reload pipeline with new data_dir / checkpoint_path
+    GET  /pipeline/status  — What is served and the lifecycle around it (gnn_ready,
+                             scoring_mode, served identity, serving, in flight, …)
+    POST /pipeline/reload  — Load a model, or change the one served (data_dir,
+                             checkpoint_path or task)
+    POST /pipeline/stop    — Stop inference: accepted requests finish, the model
+                             and its GPU lock are released
 
-**The POST is an operator control** (D8, M5-1): the route takes the one D8
-dependency (`src/api/operator_access.py`), and does its work through one
-function, `run_reload`, which the dashboard's shared Load
+**The two POSTs are operator controls** (D8, M5-1): each route takes the one
+D8 dependency (`src/api/operator_access.py`), and does its work through one
+function the dashboard calls in process too, each entrance judging its own
+request: `run_reload`, which the shared Load
 (`src/webui/components/model_list.py`, "Change model…" and Research › Models)
-also calls in process after its own check, each entrance judging its own
-request (the Load binds it to the model fingerprint it showed,
-`expected_checkpoint_sha256`, which an API client can pass too). The GET stays
-open. **No configuration route**: `/pipeline/config` and its writer saved a
+calls after its own check (the Load binds it to the model fingerprint it
+showed, `expected_checkpoint_sha256`, which an API client can pass too); and
+`run_stop`, the one stop. Both run in the service's one lifecycle
+(`src.api.main.AppState`): one load or stop at a time, refused rather than
+queued, CUDA serving under the deployment's GPU lock. The GET stays open.
+**No configuration route**: `/pipeline/config` and its writer saved a
 selection to `.shepherd_ui_config.json` that nothing read back (no start-up,
 no page), so they are retired (the ops round's I10); a file an operator has is
 left as it is, and nothing persists "the last model".
@@ -69,6 +76,20 @@ class PipelineStatusResponse(BaseModel):
     checkpoint_meta: Dict[str, Any] = Field(default_factory=dict)
     current_data_dir: Optional[str] = None
     current_checkpoint_path: Optional[str] = None
+    #: The lifecycle (`AppState.snapshot`): "not_loaded", "serving", or
+    #: "stopping" while a stop lets the accepted requests finish.
+    serving: Literal["not_loaded", "serving", "stopping"] = "not_loaded"
+    #: A load (start-up's or a reload's) is running now.
+    loading: bool = False
+    #: Accepted diagnoses still running.
+    in_flight: int = 0
+    #: This service holds the deployment's GPU lock (CUDA inference). No lock
+    #: path: this route is open.
+    holds_gpu_lock: bool = False
+    #: Why no diagnosis is admitted now (stopping, stopped, a load or the
+    #: start-up refused, nothing loaded), None while one is: the reason
+    #: `/diagnose` and `/ready` refuse with. Names no path.
+    not_serving_reason: Optional[str] = None
 
 
 class PipelineReloadRequest(BaseModel):
@@ -135,6 +156,31 @@ class PipelineReloadResponse(BaseModel):
     selection_reason: Optional[str] = None
 
 
+class PipelineStopRequest(BaseModel):
+    """A stop of inference (`POST /pipeline/stop`). **The body is required**:
+    an empty or ill-shaped one, or one with another field, is refused in
+    validation (HTTP 422) and nothing is stopped. `{}` stops whatever is
+    served."""
+    model_config = ConfigDict(extra="forbid")
+
+    expected_checkpoint_sha256: Optional[str] = Field(
+        None,
+        pattern=r"^[0-9a-f]{64}$",
+        description="The model fingerprint the caller was shown (64 lowercase hex): "
+        "when given, only that model is stopped; another one keeps serving and the "
+        "stop is refused. Null stops whatever is served.",
+    )
+
+
+class PipelineStopResponse(BaseModel):
+    """What a stop did. `released` only once the accepted requests have ended
+    and the model, its graph and the GPU lock are given back."""
+    success: bool
+    released: bool
+    message: str
+    status: PipelineStatusResponse
+
+
 # =============================================================================
 # File completeness check
 # =============================================================================
@@ -188,19 +234,31 @@ def _check_files(data_dir: str, checkpoint_path: Optional[str] = None) -> Dict[s
 # =============================================================================
 # Endpoints
 # =============================================================================
+#: The status fields the lifecycle fills (`AppState.snapshot`).
+_LIFECYCLE_FIELDS = ("serving", "loading", "in_flight", "holds_gpu_lock", "not_serving_reason")
+
+
+def _lifecycle_of(snapshot: Dict[str, Any]) -> Dict[str, Any]:
+    return {name: snapshot[name] for name in _LIFECYCLE_FIELDS}
+
+
 def _status_of(
     config: Optional[Dict[str, Any]],
     data_dir: Optional[str],
     checkpoint_path: Optional[str],
+    lifecycle: Optional[Dict[str, Any]] = None,
 ) -> PipelineStatusResponse:
-    """Render one pipeline configuration as a status response."""
+    """Render one pipeline configuration as a status response, with the
+    lifecycle's fields when given (`_lifecycle_of`)."""
+    lifecycle = lifecycle or {}
     if config is None:
         return PipelineStatusResponse(
             initialized=False,
             current_data_dir=data_dir,
             current_checkpoint_path=checkpoint_path,
+            **lifecycle,
         )
-    return PipelineStatusResponse(
+    return PipelineStatusResponse(**lifecycle,
         initialized=True,
         gnn_ready=config.get("gnn_ready", False),
         scoring_mode=config.get("scoring_mode", "unknown"),
@@ -250,12 +308,26 @@ def _live_status() -> PipelineStatusResponse:
     """
     from src.api.main import app_state
 
-    pipeline = app_state.pipeline
+    # **One snapshot**: the pipeline, the paths it was built from and the
+    # lifecycle are read in one step under admission, so they are one
+    # publication's.
+    snapshot = app_state.snapshot()
+    pipeline = snapshot["pipeline"]
     return _status_of(
         None if pipeline is None else pipeline.get_pipeline_config(),
-        app_state._current_data_dir,
-        app_state._current_checkpoint_path,
+        snapshot["data_dir"],
+        snapshot["checkpoint_path"],
+        _lifecycle_of(snapshot),
     )
+
+
+def _with_lifecycle(status: PipelineStatusResponse) -> PipelineStatusResponse:
+    """`status` with the lifecycle's fields as they are now: what a reload
+    answers once its load has left the lifecycle. Primitives only, so this
+    cannot fail where the response's own encoding did not."""
+    from src.api.main import app_state
+
+    return status.model_copy(update=_lifecycle_of(app_state.snapshot()))
 
 
 def live_status() -> PipelineStatusResponse:
@@ -315,9 +387,58 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
     An operator control: refused by D8's dependency before anything here runs.
     `run_reload` does the work. **Still ``async`` with nothing awaited**, so the
     reload runs on the event loop and waits behind a running diagnosis, as it
-    always has (BACKLOG 28 records that this serialisation is the blocked loop).
+    always has (BACKLOG 28 records that this serialisation is the blocked loop);
+    a stop running meanwhile refuses it at once, so the loop never waits for
+    one.
     """
     return run_reload(request)
+
+
+@router.post("/pipeline/stop", response_model=PipelineStopResponse,
+             dependencies=OPERATOR_ONLY)
+def stop_pipeline(request: PipelineStopRequest) -> PipelineStopResponse:
+    """
+    Stop inference (I1, I4): new diagnoses refused at once, the accepted ones
+    finished, then the model, its graph and the GPU lock released.
+
+    An operator control: refused by D8's dependency before anything here runs,
+    and its body is required (`PipelineStopRequest`), so an empty or
+    ill-shaped one is refused in validation and nothing is stopped. **A plain
+    ``def``**: the stop waits for the accepted requests, so it runs in the
+    threadpool, never on the event loop where they run. `run_stop` does the
+    work.
+    """
+    return run_stop(request)
+
+
+def run_stop(request: PipelineStopRequest) -> PipelineStopResponse:
+    """The one stop: the route above (and the dashboard, in process, after
+    D8's check on its own request) call this. It goes through the service's
+    lifecycle (`AppState.stop_serving`): refused at once while a load or
+    another stop runs; nothing loaded is "nothing to stop"; bound to a shown
+    model, another one keeps serving. Blocks while the accepted requests
+    finish: call it from a thread."""
+    from src.api.main import LifecycleBusy, app_state
+
+    try:
+        outcome = app_state.stop_serving(
+            by="operator", expected_checkpoint_sha256=request.expected_checkpoint_sha256)
+    except LifecycleBusy as busy:
+        return PipelineStopResponse(success=False, released=False, message=str(busy),
+                                    status=_live_status())
+    return PipelineStopResponse(success=outcome.success, released=outcome.released,
+                                message=outcome.message, status=_live_status())
+
+
+def _out_of_memory(exc: BaseException) -> bool:
+    """Whether a build failed for memory: the host's, or the CUDA device's."""
+    if isinstance(exc, MemoryError):
+        return True
+    try:
+        import torch
+    except ImportError:
+        return False
+    return isinstance(exc, getattr(torch.cuda, "OutOfMemoryError", ()))
 
 
 def run_reload(request: PipelineReloadRequest) -> PipelineReloadResponse:
@@ -328,27 +449,39 @@ def run_reload(request: PipelineReloadRequest) -> PipelineReloadResponse:
     the event loop calls it without awaiting anything, so a reload never runs
     beside a diagnosis.
 
+    **It runs in the service's lifecycle** (`AppState.loading`): refused at
+    once while another load or a stop runs, never queued. Its resolved device
+    decides the GPU lock, held right after the device check and before any
+    candidate is read; a holding it took is given back unless the model it
+    published uses it. A reload refused while nothing is served is recorded as
+    why nothing is (`LOAD_REFUSED`).
+
     Builds the replacement first and swaps it in only once it is complete and
-    verified; a rejected candidate leaves the running pipeline serving. **A
-    caller that was shown a model binds the reload to it**
+    verified; a rejected candidate leaves the running pipeline serving, and
+    its holding. **A caller that was shown a model binds the reload to it**
     (`expected_checkpoint_sha256`): the build's one checkpoint read is compared
     with it before torch parses the bytes (`read_checkpoint(expected_sha256=)`,
     inside the build), so the bytes served are the bytes confirmed or nothing
     changes, and other bytes -- a checkpoint or not, or no file -- are refused
     as not the model that was shown.
     """
+    from src.api.main import LOAD_REFUSED, RELOAD_REFUSED, LifecycleBusy, app_state
+
+    try:
+        with app_state.loading() as load:
+            response = _reload(request, load)
+            if not response.success:
+                shown = request.expected_checkpoint_sha256
+                app_state.record_refusal(LOAD_REFUSED, load.lock_refusal or RELOAD_REFUSED,
+                                         shown[:12] if shown else None)
+    except LifecycleBusy as busy:
+        return _refused(f"{busy}{_still_serving()}", {})
+    return response.model_copy(update={"status": _with_lifecycle(response.status)})
+
+
+def _reload(request: PipelineReloadRequest, load: Any) -> PipelineReloadResponse:
+    """`run_reload`'s work inside the lifecycle; `load` is its `ServingLoad`."""
     data_dir = request.data_dir
-
-    # **Naming a workspace is the request, whatever becomes of it.** The refusals
-    # below — missing files, no checkpoint, a build that fails — all return
-    # before `build_pipeline` records anything, and a caller who reached any of
-    # them has still asked this service for a real pipeline. Without this,
-    # `/diagnose` would afterwards try to build again on the next diagnosis and
-    # refuse as though nothing were configured. Recorded here rather than after a
-    # successful build for exactly that reason.
-    from src.api.main import app_state as _app_state
-
-    _app_state.real_pipeline_requested = True
     checkpoint_path = request.checkpoint_path
     device = request.device
 
@@ -367,13 +500,24 @@ def run_reload(request: PipelineReloadRequest) -> PipelineReloadResponse:
     # candidate in the run layout. The same resolution `build_pipeline` applies
     # (the request, then SHEPHERD_DEVICE, then `auto`), and the request is still
     # passed on as given, so the served identity records what was asked for.
+    from src.api.main import ServingRefused
     from src.config.serving_device import requested_serving_device
     from src.inference.pipeline import PipelineBuildError, resolve_serving_device
 
     try:
-        resolve_serving_device(requested_serving_device(device))
+        resolved = resolve_serving_device(requested_serving_device(device))
     except PipelineBuildError as exc:
         return _refused(f"{str(exc).rstrip('.')}.{_still_serving()}", files)
+
+    # **The GPU lock, by that device, before any candidate is read** (I2, I3):
+    # CUDA holds the deployment's one lock, the one already held when a CUDA
+    # model is served (CUDA to CUDA), and reads the job runner's slot after
+    # taking it; a busy or unconfigured lock, or a job in the slot, refuses
+    # here. The CPU takes none.
+    try:
+        load.hold(resolved)
+    except ServingRefused as refused:
+        return _refused(f"{refused.reason}{_still_serving()}", files)
 
     # **Neither a task nor a path names nothing to serve** (SG2): refused here,
     # after the file and device checks (the file report stays) and before the
@@ -599,6 +743,15 @@ def run_reload(request: PipelineReloadRequest) -> PipelineReloadResponse:
         )
     except Exception as e:
         logger.error(f"Pipeline reload failed: {e}")
+        if _out_of_memory(e):
+            # **Never by unloading first** (I5): the candidate is refused, and
+            # the model in use keeps serving and its holding.
+            keeps = (" The model in use keeps serving; stop inference first to free its "
+                     "memory, then load again." if _still_serving() else "")
+            return _refused(
+                f"Pipeline initialization failed: out of memory while the candidate was "
+                f"built ({str(e).rstrip('.')}).{keeps} Nothing was unloaded to make room.",
+                files)
         return _refused(
             f"Pipeline initialization failed: {str(e).rstrip('.')}."
             f"{_still_serving()}", files

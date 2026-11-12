@@ -718,9 +718,9 @@ class TestReadinessFollowsWhatIsServed:
     ):
         """K7 (DEMO1): nothing configured is not ready, and no diagnosis is
         answered; the reason says nothing is loaded. A reload that names a
-        workspace is a request for a real pipeline; refused, the reason says a
-        configured pipeline could not be initialized. (The reload is an
-        operator's, which D8 allows: mode M1, loopback requests.)"""
+        workspace and is refused is recorded as why nothing is served: the
+        reason says the last load was refused, without the paths it named. (The
+        reload is an operator's, which D8 allows: mode M1, loopback requests.)"""
         from fastapi.testclient import TestClient
 
         from tests.fixtures.operator_access import OPERATOR_BASE_URL, operator_mode
@@ -737,4 +737,7 @@ class TestReadinessFollowsWhatIsServed:
 
             assert refused.json()["success"] is False
             assert self._answers(client) == self.NOT_SERVING
-            assert client.get("/ready").json()["error"].startswith("A pipeline is configured")
+            reason = client.get("/ready").json()["error"]
+            assert reason.startswith("No model is loaded: the last load was refused at ")
+            assert str(empty) not in reason
+            assert refused.json()["status"]["not_serving_reason"] == reason

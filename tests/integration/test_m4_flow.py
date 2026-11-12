@@ -205,7 +205,7 @@ def _served_view(monkeypatch, cohort, served: Path) -> dict:
     pipeline = DiagnosisPipeline(graph=KnowledgeGraph.read_json(cohort.data_dir / "kg.json"),
                                  data_dir=str(cohort.data_dir), checkpoint_path=str(served),
                                  device="cpu")
-    monkeypatch.setattr(api_main.app_state, "real_pipeline_requested", False, raising=False)
+    monkeypatch.setattr(api_main.app_state, "not_serving", None)
     monkeypatch.setattr(api_main.app_state, "pipeline", pipeline, raising=False)
     response = TestClient(api_main.app).get("/api/v1/evaluations/loaded-model")
     assert response.status_code == 200, response.text

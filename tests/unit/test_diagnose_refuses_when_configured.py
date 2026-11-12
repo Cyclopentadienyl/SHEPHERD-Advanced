@@ -3,19 +3,20 @@
 `/api/v1/diagnose` used to answer with fixed illustrative candidates (the demo
 answer, `demo/v1`) whenever nobody had configured a pipeline, and to refuse
 only a deployment that had configured one and failed. Since K7 (the owner's
-decision 1) there is one state, **no pipeline served**, and one definition of
-it (`AppState.no_pipeline_reason`): `/diagnose` and `/ready` both answer 503
+decision 1) there is one state, **no pipeline admitted**, and one definition
+of it (`AppState.not_serving_reason`): `/diagnose` and `/ready` both answer 503
 with the reason, and `/health` stays 200, so the launcher (which checks
 `/health`) starts the service and the dashboard's Load entry can load a model.
-The reason still tells "nothing is configured" from "a configured pipeline
-could not be initialized".
+The reason tells apart nothing loaded, a start-up whose configured pipeline
+could not be initialized, a load that was refused, a stop letting the
+accepted requests finish and a stopped model: one not-serving record, the
+lifecycle's (the ops round's A3a), which replaced the "a real pipeline was
+requested" flag.
 
-**What "configured" means took two attempts.** The first version keyed on
-`SHEPHERD_KG_PATH`, which covers startup and misses the reload API entirely: a
-caller can point `/pipeline/reload` at a real workspace, have the candidate
-refused, and reach `/diagnose` with no environment variable in sight. These
-tests therefore drive the real chain rather than replacing `initialize_pipeline`
-with a stub — the stub was what let the first version look covered.
+**A diagnosis never loads a model** (I9): the lazy load `/diagnose` used to
+try with nothing served is retired, so these tests reach a configured
+deployment through its real start-up (`with TestClient(app)`), and a
+diagnosis with nothing served never builds.
 
 `TestTheNoModelMatrix` is the reviewer's matrix (K7 audit §2A), over the real
 lifespan, the real routes and a disease child trained for real
@@ -25,13 +26,18 @@ Module: tests/unit/test_diagnose_refuses_when_configured.py
 """
 from __future__ import annotations
 
+import threading
+
 import pytest
 
 pytest.importorskip("fastapi")
 
-#: The two reasons `AppState.no_pipeline_reason` gives, by their first words.
-NOTHING_LOADED = "No model is loaded"
+#: The reasons `AppState.not_serving_reason` gives, by their first words.
+NOTHING_LOADED = "No model is loaded, so no diagnosis"
 CONFIGURED_BUT_FAILED = "A pipeline is configured"
+LOAD_REFUSED = "No model is loaded: the last load"
+STOPPING = "Inference is stopping"
+STOPPED = "Inference was stopped by an operator"
 
 
 def _client(app=None, *, base_url=None):
@@ -51,15 +57,13 @@ def _request():
 
 @pytest.fixture(autouse=True)
 def _clean_state(monkeypatch):
-    """No pipeline, no deployment configured, and no request recorded by an
+    """No pipeline, no deployment configured, and no refusal recorded by an
     earlier test; the served fields a publish writes are put back afterwards."""
     from src.api import main as api_main
 
     for field in ("pipeline", "kg", "_current_data_dir", "_current_checkpoint_path"):
         monkeypatch.setattr(api_main.app_state, field, None, raising=False)
-    monkeypatch.setattr(
-        api_main.app_state, "real_pipeline_requested", False, raising=False
-    )
+    monkeypatch.setattr(api_main.app_state, "not_serving", None)
     for name in ("SHEPHERD_KG_PATH", "SHEPHERD_DATA_DIR", "SHEPHERD_CHECKPOINT_PATH"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("SHEPHERD_DEVICE", "cpu")
@@ -69,22 +73,49 @@ def _clean_state(monkeypatch):
 
 
 def test_a_startup_configured_deployment_refuses(monkeypatch, tmp_path):
-    """The real lazy path: `initialize_pipeline` runs, `build_pipeline` records
-    the request, the build fails, and nothing is published."""
+    """Through the real start-up: `initialize_pipeline` runs in the lifecycle,
+    the build fails, nothing is published, and the start-up's refusal is the
+    reason every diagnosis then gets."""
+    from src.api import main as api_main
+
     monkeypatch.setenv("SHEPHERD_KG_PATH", str(tmp_path / "absent_kg.json"))
 
-    response = _client().post("/api/v1/diagnose", json=_request())
+    with _client() as client:
+        response = client.post("/api/v1/diagnose", json=_request())
+        record = api_main.app_state.not_serving
 
     assert response.status_code == 503
+    assert response.json()["error"].startswith(CONFIGURED_BUT_FAILED)
     assert "could not be initialized" in response.text
+    assert str(tmp_path) not in response.text, "an open refusal named a server path"
+    assert record.kind == api_main.STARTUP_REFUSED
+
+
+def test_a_diagnosis_never_builds(monkeypatch, tmp_path):
+    """I9: with nothing served, a diagnosis is refused with the reason and no
+    build is tried, whatever the environment configures (the lazy load is
+    retired: loading is start-up's or an operator's)."""
+    from src.api import main as api_main
+
+    builds = []
+    monkeypatch.setattr(api_main, "build_pipeline", lambda *a, **k: builds.append(k))
+    client = _client()                                  # no start-up: no lifespan
+    unconfigured = client.post("/api/v1/diagnose", json=_request())
+    monkeypatch.setenv("SHEPHERD_KG_PATH", str(tmp_path / "kg.json"))
+    configured = client.post("/api/v1/diagnose", json=_request())
+
+    assert unconfigured.status_code == configured.status_code == 503
+    assert configured.json()["error"].startswith(NOTHING_LOADED)
+    assert builds == [], "a diagnosis built a pipeline"
+    assert api_main.app_state.pipeline is None
 
 
 def test_a_workspace_named_only_through_reload_refuses_too(monkeypatch, tmp_path):
     """The path the first version missed, with no environment variable set.
 
     A caller points the reload API at a workspace, the candidate is refused, and
-    the next diagnosis is refused as a configured pipeline that could not be
-    built.
+    the next diagnosis is refused naming that refused load (the record says
+    why nothing is served), never as though nothing had been asked for.
     """
     workspace = tmp_path / "ws"
     workspace.mkdir()
@@ -99,9 +130,10 @@ def test_a_workspace_named_only_through_reload_refuses_too(monkeypatch, tmp_path
     response = client.post("/api/v1/diagnose", json=_request())
 
     assert response.status_code == 503
-    assert response.json()["error"].startswith(CONFIGURED_BUT_FAILED), (
+    assert response.json()["error"].startswith(LOAD_REFUSED), (
         "a caller who named a real workspace was told nothing was configured"
     )
+    assert str(workspace) not in response.json()["error"]
     assert "candidates" not in response.json()
 
 
@@ -120,7 +152,7 @@ def test_a_reload_d8_refuses_requests_nothing(monkeypatch, tmp_path):
         "/api/v1/pipeline/reload", json={"data_dir": str(workspace)})
     assert refused.status_code == 403
     assert api_main.app_state.pipeline is None
-    assert api_main.app_state.real_pipeline_requested is False
+    assert api_main.app_state.not_serving is None
 
     response = _client(base_url="http://192.0.2.10").post("/api/v1/diagnose", json=_request())
     assert response.status_code == 503
@@ -130,9 +162,11 @@ def test_a_reload_d8_refuses_requests_nothing(monkeypatch, tmp_path):
 def test_no_fabricated_candidate_reaches_any_caller(monkeypatch, tmp_path):
     """Neither a configured deployment that failed nor one with nothing
     configured is handed the retired demo's candidates."""
-    unconfigured = _client().post("/api/v1/diagnose", json=_request()).text
+    with _client() as client:
+        unconfigured = client.post("/api/v1/diagnose", json=_request()).text
     monkeypatch.setenv("SHEPHERD_KG_PATH", str(tmp_path / "absent_kg.json"))
-    configured = _client().post("/api/v1/diagnose", json=_request()).text
+    with _client() as client:
+        configured = client.post("/api/v1/diagnose", json=_request()).text
 
     for body in (unconfigured, configured):
         assert "Marfan" not in body and "MONDO:0007947" not in body
@@ -145,7 +179,8 @@ def test_the_refusal_is_not_relabelled_as_an_internal_error(monkeypatch, tmp_pat
     rather than the service declining to answer."""
     monkeypatch.setenv("SHEPHERD_KG_PATH", str(tmp_path / "absent_kg.json"))
 
-    assert _client().post("/api/v1/diagnose", json=_request()).status_code == 503
+    with _client() as client:
+        assert client.post("/api/v1/diagnose", json=_request()).status_code == 503
     monkeypatch.delenv("SHEPHERD_KG_PATH")
     assert _client().post("/api/v1/diagnose", json=_request()).status_code == 503
 
@@ -163,11 +198,13 @@ def test_an_unconfigured_deployment_is_refused_with_its_reason():
 
 
 def test_every_no_model_reason_names_the_load_entry_the_page_shows(monkeypatch):
-    """Both reasons a 503 carries, and the build's refusal when no checkpoint is
-    named, name the Diagnosis page's entry as the page labels it with no model
-    loaded (`diagnosis_card.change_button`), say that loading is an operator
-    control, and name the reload route. Compared here, so the API never imports
-    the WebUI and the two cannot drift apart."""
+    """Every reason a 503 carries (nothing loaded, a load in progress, a stop
+    letting the accepted requests finish, a stopped model, a refused load or
+    start-up), and the build's refusal when no checkpoint is named, name the
+    Diagnosis page's entry as the page labels it with no model loaded
+    (`diagnosis_card.change_button`), say that loading is an operator
+    control, and name the reload route. Compared here, so the API never
+    imports the WebUI and the two cannot drift apart."""
     pytest.importorskip("gradio")
     from src.api import main as api_main
     from src.inference.pipeline import PipelineBuildError, require_model_source
@@ -177,10 +214,18 @@ def test_every_no_model_reason_names_the_load_entry_the_page_shows(monkeypatch):
                                 "operator": True})["value"]
     entry = label.removeprefix("🔒").strip()
     assert entry and entry != label
+    state = api_main.app_state
+    at = "2026-11-12T10:00:00+00:00"
     reasons = []
-    for requested in (False, True):
-        monkeypatch.setattr(api_main.app_state, "real_pipeline_requested", requested)
-        reasons.append(api_main.app_state.no_pipeline_reason)
+    for record in (None,
+                   api_main.NotServingRecord(api_main.STOPPED, at, "by an operator", "a" * 12),
+                   api_main.NotServingRecord(api_main.LOAD_REFUSED, at, "words", None),
+                   api_main.NotServingRecord(api_main.STARTUP_REFUSED, at, "words", None)):
+        monkeypatch.setattr(state, "not_serving", record)
+        reasons.append(state.not_serving_reason)
+    for transition in (api_main.LOADING, api_main.STOPPING):
+        monkeypatch.setattr(state, "transition", transition)
+        reasons.append(state.not_serving_reason)
     with pytest.raises(PipelineBuildError) as refused:
         require_model_source(None, None)
     reasons.append(str(refused.value))
@@ -346,11 +391,79 @@ class TestTheNoModelMatrix:
             refused = client.post("/api/v1/pipeline/reload", json={
                 "data_dir": str(data_dir), "checkpoint_path": str(corrupt)}).json()
             answers, _ready, after = self._surfaces(client)
+            still = api_main.app_state.pipeline
 
         assert refused["success"] is False and "still being served" in refused["message"]
-        assert api_main.app_state.pipeline is served
+        assert still is served
+        assert api_main.app_state.pipeline is None, "the shutdown did not stop serving"
         assert answers == self.SERVING
         assert after.json()["served_identity"] == before.json()["served_identity"]
+
+    def test_a_stop_refuses_new_diagnoses_then_says_it_stopped(
+            self, monkeypatch, trained_disease_child):
+        """The stop's rows (I4): while a stop lets an accepted diagnosis
+        finish, a new one and `/ready` answer 503 saying inference is
+        stopping, and `/health` 200; once it has released the model, 503 says
+        it was stopped; an operator's reload then serves again."""
+        import time
+
+        from src.api import main as api_main
+
+        data_dir = trained_disease_child["data_dir"]
+        monkeypatch.setenv("SHEPHERD_KG_PATH", str(data_dir / "kg.json"))
+        monkeypatch.setenv("SHEPHERD_DATA_DIR", str(data_dir))
+        monkeypatch.setenv("SHEPHERD_CHECKPOINT_PATH", str(trained_disease_child["disease"]))
+        state = api_main.app_state
+
+        with _client() as client:
+            assert self._surfaces(client)[0] == self.SERVING
+            stopped = []
+            with state.lease():                 # a diagnosis accepted, still running
+                stopper = threading.Thread(target=lambda: stopped.append(state.stop_serving()))
+                stopper.start()
+                deadline = time.monotonic() + 10
+                while state.transition != api_main.STOPPING and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                answers, ready, diagnose = self._surfaces(client)
+                waiting = list(stopped)
+            stopper.join(30)
+            after, ready_after, diagnose_after = self._surfaces(client)
+            loaded = client.post("/api/v1/pipeline/reload", json={
+                "data_dir": str(data_dir),
+                "checkpoint_path": str(trained_disease_child["disease"])}).json()
+            again = self._surfaces(client)[0]
+
+        assert answers == self.NOT_SERVING
+        assert diagnose.json()["error"].startswith(STOPPING)
+        assert ready.json()["error"] == diagnose.json()["error"]
+        assert waiting == [], "the stop did not wait for the accepted diagnosis"
+        assert stopped[0].released is True
+        assert after == self.NOT_SERVING
+        assert diagnose_after.json()["error"].startswith(STOPPED)
+        assert ready_after.json()["error"] == diagnose_after.json()["error"]
+        assert loaded["success"] is True, loaded["message"]
+        assert again == self.SERVING
+
+    def test_a_load_refused_while_nothing_is_served_is_the_reason(
+            self, monkeypatch, trained_disease_child, tmp_path):
+        """The refused load's row: nothing served, a reload of a file that is
+        no checkpoint is refused, and every surface then says the last load
+        was refused, naming no path; `/health` answers."""
+        corrupt = tmp_path / "corrupt.pt"
+        corrupt.write_bytes(b"not a checkpoint")
+
+        with _client() as client:
+            refused = client.post("/api/v1/pipeline/reload", json={
+                "data_dir": str(trained_disease_child["data_dir"]),
+                "checkpoint_path": str(corrupt)}).json()
+            answers, ready, diagnose = self._surfaces(client)
+
+        assert refused["success"] is False
+        assert answers == self.NOT_SERVING
+        assert diagnose.json()["error"].startswith(LOAD_REFUSED)
+        assert ready.json()["error"] == diagnose.json()["error"]
+        assert refused["status"]["not_serving_reason"] == diagnose.json()["error"]
+        assert str(tmp_path) not in diagnose.json()["error"]
 
     def test_the_diagnosis_page_offers_the_load_and_keeps_its_gate(self):
         """With no model loaded the page's card says so, turns Run off with

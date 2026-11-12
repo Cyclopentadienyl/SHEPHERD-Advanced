@@ -357,7 +357,7 @@ def test_every_state_changing_route_takes_the_one_dependency():
         for method in route.methods:
             (gated if deps else open_routes).add((method, route.path))
     assert gated == {
-        ("POST", "/api/v1/pipeline/reload"),
+        ("POST", "/api/v1/pipeline/reload"), ("POST", "/api/v1/pipeline/stop"),
         ("POST", "/api/v1/training/start"), ("POST", "/api/v1/training/finetune"),
         ("POST", "/api/v1/training/branch"), ("POST", "/api/v1/training/stop"),
         ("GET", "/api/v1/training/checkpoints"), ("GET", "/api/v1/workspaces/{name}/checkpoints"),
@@ -368,6 +368,60 @@ def test_every_state_changing_route_takes_the_one_dependency():
     # The UI configuration's route is retired (I10): its file was read by
     # nothing, and no route reads or writes it.
     assert not any(path == "/api/v1/pipeline/config" for _, path in gated | open_routes)
+
+
+class _Served:
+    """A pipeline a test serves, never run."""
+
+    def get_pipeline_config(self):
+        return {}
+
+
+def test_the_stop_route_is_refused_before_the_stop_runs(monkeypatch):
+    """I1: a request D8 refuses (here: arriving on a LAN address) gets 403
+    before the stop runs, and the model stays served."""
+    import src.api.main as api
+    from src.api.routes import pipeline
+
+    served = _Served()
+    monkeypatch.setattr(api.app_state, "pipeline", served)
+    monkeypatch.setattr(pipeline, "run_stop",
+                        lambda request: pytest.fail("a refused request reached the stop"))
+    operator_mode(monkeypatch)
+    refused = _app_client("http://192.0.2.10").post("/api/v1/pipeline/stop", json={})
+    assert refused.status_code == 403 and "Refused: " in refused.json()["error"]
+    assert api.app_state.pipeline is served
+
+
+@pytest.mark.parametrize("body", [None, [], {"expected_checkpoint_sha256": "abc"},
+                                  {"checkpoint_path": "x"}],
+                         ids=["empty", "list", "short-sha", "other-field"])
+def test_the_stop_route_refuses_an_empty_or_wrong_body_and_stops_nothing(monkeypatch, body):
+    """The stop's body is required (`PipelineStopRequest`, extra fields
+    forbidden), so what D8 allows but is not a stop request is answered 422
+    in validation: the deployment probe's ``[]`` stops nothing."""
+    import src.api.main as api
+    from src.api.routes import pipeline
+
+    served = _Served()
+    monkeypatch.setattr(api.app_state, "pipeline", served)
+    monkeypatch.setattr(pipeline, "run_stop",
+                        lambda request: pytest.fail("an invalid body reached the stop"))
+    operator_mode(monkeypatch)
+    client = _app_client()
+    answer = (client.post("/api/v1/pipeline/stop") if body is None
+              else client.post("/api/v1/pipeline/stop", json=body))
+    assert answer.status_code == 422
+    assert api.app_state.pipeline is served
+
+
+def test_the_stop_route_runs_off_the_event_loop():
+    """The stop waits for the accepted diagnoses, which run on the event loop,
+    so its route is a plain `def` (FastAPI's threadpool)."""
+    from src.api.routes import pipeline
+
+    assert not inspect.iscoroutinefunction(pipeline.stop_pipeline)
+    assert not inspect.iscoroutinefunction(pipeline.run_stop)
 
 
 def test_the_reload_route_is_refused_before_the_reload_runs(monkeypatch):

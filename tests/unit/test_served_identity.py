@@ -673,7 +673,7 @@ def app(monkeypatch):
     from src.api import main as api_main
 
     monkeypatch.setattr(api_main.app_state, "pipeline", None, raising=False)
-    monkeypatch.setattr(api_main.app_state, "real_pipeline_requested", False, raising=False)
+    monkeypatch.setattr(api_main.app_state, "not_serving", None)
     for name in ("SHEPHERD_KG_PATH", "SHEPHERD_DATA_DIR", "SHEPHERD_CHECKPOINT_PATH"):
         monkeypatch.delenv(name, raising=False)
     return api_main

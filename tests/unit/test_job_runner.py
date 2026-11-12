@@ -31,9 +31,12 @@ from src.api.services.training_manager import TestRunInputs, TrainingManager, bu
 from src.evaluation import protocols
 from src.utils.gpu_lock import (
     LOCK_FILE_NAME,
+    SERVING_COMMAND,
+    SERVING_JOB_TYPE,
     WORKSPACES_ROOT_ENV,
     GpuLock,
     probe,
+    take_gpu_lock,
 )
 from tests.fixtures.capabilities import described
 from tests.fixtures.job_processes import FakeProcess
@@ -313,6 +316,65 @@ def test_a_lock_not_configured_refuses_every_start_before_anything(tmp_path, pop
     assert calls.calls == [] and manager.run_dir is None and not (tmp_path / "run").exists()
     lock = manager.get_status()["gpu"]["lock"]
     assert lock["unset"] is True and lock["configured"] is False and lock["problem"]
+
+
+# --------------------------------------------------------------------------- serving
+def test_a_start_is_refused_while_this_service_serves_on_cuda_naming_inference(
+        tmp_path, popen, inputs):
+    """I8: this service's CUDA inference holds the lock as the serving
+    lifecycle takes it (`take_gpu_lock` with `SERVING_JOB_TYPE` and
+    `SERVING_COMMAND`, in this process): a start of either type is refused
+    naming inference and how to stop it, and nothing is started or unloaded.
+    The same description under another pid is another process's holder,
+    named as such."""
+    calls = popen()
+    manager = TrainingManager()
+    with take_gpu_lock(SERVING_JOB_TYPE, SERVING_COMMAND):
+        for result in (manager.start_training(base_start(tmp_path / "ws")),
+                       manager.start_test(inputs)):
+            assert result["success"] is False
+            assert result["error"].startswith("The GPU is in use by this service's inference")
+            assert "stop inference first with POST /api/v1/pipeline/stop" in result["error"]
+            assert result["error"].endswith("Nothing was started.")
+        with patch.object(tm.os, "getpid", return_value=os.getpid() + 1):
+            other = manager.start_training(base_start(tmp_path / "ws"))
+    assert "this service's inference" not in other["error"]
+    assert "is held by an inference job" in other["error"]
+    assert calls.calls == []
+
+
+def test_serving_refusal_sees_a_job_spawned_before_its_child_takes_the_lock(tmp_path, popen):
+    """I3: a job the runner has spawned holds the slot before its process
+    has taken the lock (this stand-in never takes it), so a CUDA load that
+    reads the slot after taking the lock is refused naming the job; once the
+    job has ended, nothing refuses."""
+    process = FakeProcess()
+    popen(process)
+    manager = TrainingManager()
+    assert manager.start_training(base_start(tmp_path / "ws"))["success"]
+    assert tm.lock_state()["held_by"] is None, "the stand-in took the lock"
+
+    refusal = manager.serving_refusal()
+
+    job = manager._last["training"].job_id
+    assert refusal == ("CUDA inference is refused: the GPU is in use, since training is "
+                       f"running in this service's job runner (job {job}). Load again once "
+                       "it has ended.")
+    process.finish(0)
+    ended(manager, "training")
+    assert manager.serving_refusal() is None
+
+
+def test_serving_refusal_refuses_while_the_slot_is_closed():
+    """The backend stopping (`close`) or restarting (`close_if_idle`):
+    nothing new runs on the GPU, CUDA inference included."""
+    manager = TrainingManager()
+    assert manager.serving_refusal() is None
+    assert manager.close_if_idle() is True
+    assert "the backend is stopping or restarting" in manager.serving_refusal()
+    manager.open()
+    manager.close()
+    assert "the backend is stopping or restarting" in manager.serving_refusal()
 
 
 # --------------------------------------------------------------------------- stop

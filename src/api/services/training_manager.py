@@ -126,7 +126,7 @@ from typing import (
 import yaml
 
 from src.config.serving_device import requested_serving_device
-from src.utils.gpu_lock import lock_state
+from src.utils.gpu_lock import SERVING_JOB_TYPE, STOP_INFERENCE, lock_state
 
 logger = logging.getLogger(__name__)
 
@@ -1022,6 +1022,10 @@ class TrainingManager:
         under it. Then the deployment's GPU lock: a job started elsewhere (a
         CLI over SSH) is refused here, naming its holder, and a lock setting
         that cannot be used refuses every start rather than running unlocked.
+        **This service's CUDA inference** holding it is named as such, with
+        how to stop it (I8): its description says `SERVING_JOB_TYPE` and this
+        process's pid. Words only: the flock decides, and starting a job
+        never unloads a model.
         """
         if self._closed_by is not None:
             return self.STOPPING
@@ -1035,9 +1039,39 @@ class TrainingManager:
         if lock["problem"]:
             return f"The GPU lock cannot be used: {lock['problem']} Nothing was started."
         if lock["held_by"]:
+            holder = lock["holder"] or {}
+            if holder.get("job_type") == SERVING_JOB_TYPE and holder.get("pid") == os.getpid():
+                return ("The GPU is in use by this service's inference: a model is loaded on "
+                        f"CUDA and holds the GPU lock. To start {wanted.noun.lower()}, "
+                        f"{STOP_INFERENCE}. Nothing was started.")
             return (f"The GPU is in use: the GPU lock {lock['path']} is held by "
                     f"{lock['held_by']}. One managed GPU job runs at a time. "
                     "Nothing was started.")
+        return None
+
+    def serving_refusal(self) -> Optional[str]:
+        """Why this service's CUDA inference cannot load now, or None: read
+        under the runner's lock **by a load that already holds the GPU lock**
+        (`src/api/main.py`, the serving lifecycle).
+
+        The runner checks the lock and spawns its job in one section under
+        its lock (`start_training`, `start_test`, the next finetune child),
+        and the job's process takes the lock only later, in its own `main`.
+        Read after the lock is held, this closes that window: either the
+        runner's check came first, and its job holds the slot here, or it
+        comes after and finds the lock held. A closed slot refuses too: the
+        backend is stopping or restarting. CPU serving never asks.
+        """
+        with self._lock:
+            if self._closed_by is not None:
+                return ("CUDA inference is refused: the backend is stopping or restarting, so "
+                        "nothing new runs on the GPU.")
+            active = self._active
+            if active is not None and active.status in BUSY_STATUSES:
+                doing = "is running" if active.status == "running" else "is still stopping"
+                return (f"CUDA inference is refused: the GPU is in use, since "
+                        f"{active.kind.noun.lower()} {doing} in this service's job runner (job "
+                        f"{active.job_id}). Load again once it has ended.")
         return None
 
     def _spawn_locked(self, kind: JobType, argv: List[str], *,

@@ -234,15 +234,11 @@ def verified(trained):
 
     probe = _probe()
     _, sound, checkpoint = trained
-    # `build_pipeline` sets this flag, and a module-scoped fixture runs outside
-    # the conftest's per-test reset, so it is put back here.
-    requested = api.app_state.real_pipeline_requested
-    try:
-        bundle = api.build_pipeline(kg_path=str(sound / "kg.json"),
-                                    checkpoint_path=str(checkpoint),
-                                    data_dir=str(sound), device="cpu")
-    finally:
-        api.app_state.real_pipeline_requested = requested
+    # The build touches no application state, so this module-scoped fixture,
+    # outside the conftest's per-test reset, leaves none behind.
+    bundle = api.build_pipeline(kg_path=str(sound / "kg.json"),
+                                checkpoint_path=str(checkpoint),
+                                data_dir=str(sound), device="cpu")
     _, _, read, record = probe.verify_workspace(sound)
     expected = {"checkpoint_sha256": probe._read_run_checkpoint(checkpoint)["sha256"],
                 "workspace_digests": read, "record": record, "task": "disease",

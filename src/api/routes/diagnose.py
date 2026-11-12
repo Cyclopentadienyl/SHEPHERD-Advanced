@@ -563,6 +563,12 @@ _REFERENCE_SAMPLES: Dict[Any, Any] = {}
 _REFERENCE_SAMPLES_KEPT = 4
 
 
+def clear_reference_samples() -> None:
+    """Forget the reference cohort samples read: a stop of inference does,
+    with the model and its graph (`AppState.stop_serving`)."""
+    _REFERENCE_SAMPLES.clear()
+
+
 def _reference_cohort(label: Optional[str], served_mode: str, pipeline: Any) -> Any:
     """The registered reference cohort version a patients-like-me request names,
     resolved in `SHEPHERD_REGISTRY`, its samples read against the digest the
@@ -687,96 +693,78 @@ async def diagnose(request: DiagnoseRequest) -> DiagnoseResponse:
     # `[]` was supplied.
     genes_ignored = request.candidate_genes is not None
 
+    from src.api.main import NotServing, app_state
+
     try:
-        # Get application state
-        from src.api.main import app_state, initialize_pipeline
+        # **No pipeline admitted, no answer** (K7, DEMO1; I4, I9). Nothing
+        # loaded, a stop letting the accepted requests finish, a stopped model,
+        # a load or start-up refused: every answer comes from a model, so the
+        # request is refused with the reason (`NotServing`, below), never
+        # answered with illustrative candidates, and **a diagnosis never loads
+        # a model** (loading is an operator's: start-up's configuration or a
+        # reload). `/ready` reads the same definition
+        # (`AppState.not_serving_reason`). **The lease is held until the answer
+        # is built**: a stop waits for it, and the pipeline is read once, so a
+        # reload published meanwhile cannot mix two models in one answer.
+        with app_state.lease() as pipeline:
+            from src.core.types import PatientPhenotypes
 
-        # Attempt lazy pipeline initialization if not yet loaded, **and not
-        # after a build has already been asked for.** `real_pipeline_requested`
-        # is set by every build that names a workspace or a checkpoint, so it is
-        # True after a startup or an earlier lazy build that failed, and after a
-        # refused reload. Retrying here repeated the graph load, the workspace
-        # digests and the tensor reads on every request -- synchronously, in an
-        # async route, so `/health` and the WebUI waited behind it -- only to
-        # answer the same 503. **A retry is asked for, not implied:** the files
-        # or the mount behind a failed build can be repaired while the service
-        # runs, and the way to try again is a reload (or a restart), not
-        # expensive I/O on every diagnosis.
-        if app_state.pipeline is None and not app_state.real_pipeline_requested:
-            try:
-                initialize_pipeline()
-            except Exception as e:
-                logger.warning(f"Lazy pipeline init failed: {e}")
+            patient_input = PatientPhenotypes(
+                patient_id=patient_id,
+                phenotypes=request.phenotypes,
+                phenotype_confidences=request.phenotype_confidences,
+                candidate_genes=request.candidate_genes,
+            )
 
-        # **No pipeline served, no answer** (K7, DEMO1). Whatever led here --
-        # nothing configured, a graph named without a model, a build that
-        # failed -- every answer comes from a model, so the request is refused
-        # with the reason, never answered with illustrative candidates.
-        # `/ready` reads the same definition (`AppState.no_pipeline_reason`).
-        # The pipeline is read once: a reload published meanwhile cannot mix two
-        # models in one answer.
-        pipeline = app_state.pipeline
-        if pipeline is None:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                                detail=app_state.no_pipeline_reason)
-        from src.core.types import PatientPhenotypes
+            served_mode = pipeline.served_identity().scoring_mode
+            reference = None
+            if served_mode == "patients_like_me" or request.reference_cohort is not None:
+                reference = _reference_cohort(request.reference_cohort, served_mode, pipeline)
+            result = pipeline.run(
+                patient_input=patient_input,
+                top_k=request.top_k,
+                include_explanations=request.include_explanations,
+                reference_cohort=reference,
+            )
+            genes_ignored = genes_ignored and result.result_kind != "gene_task/v1"
 
-        patient_input = PatientPhenotypes(
-            patient_id=patient_id,
-            phenotypes=request.phenotypes,
-            phenotype_confidences=request.phenotype_confidences,
-            candidate_genes=request.candidate_genes,
-        )
+            if result.warnings:
+                warnings.extend(result.warnings)
+            account = result.phenotype_input
+            body = {
+                "result_kind": result.result_kind,
+                "served_identity": result.served_identity.to_dict(),
+                "phenotype_input": (asdict(result.phenotype_input)
+                                    if result.phenotype_input is not None else None),
+                "candidates": [
+                    _candidate_body(c, request.include_explanations, request.include_paths)
+                    for c in result.candidates
+                ],
+            }
+            if result.result_kind == "disease_task/v1":
+                body.update(tie_policy=result.tie_policy)
+            elif result.result_kind == "gene_task/v1":
+                body.update(tie_policy=result.tie_policy, sp_bounds=list(result.sp_bounds))
+            elif result.result_kind == "patients_like_me/v1":
+                body.update(tie_policy=result.tie_policy,
+                            reference_cohort=result.reference_cohort)
 
-        served_mode = pipeline.served_identity().scoring_mode
-        reference = None
-        if served_mode == "patients_like_me" or request.reference_cohort is not None:
-            reference = _reference_cohort(request.reference_cohort, served_mode, pipeline)
-        result = pipeline.run(
-            patient_input=patient_input,
-            top_k=request.top_k,
-            include_explanations=request.include_explanations,
-            reference_cohort=reference,
-        )
-        genes_ignored = genes_ignored and result.result_kind != "gene_task/v1"
+            if genes_ignored:
+                warnings.insert(0, CANDIDATE_GENES_IGNORED_WARNING)
 
-        if result.warnings:
-            warnings.extend(result.warnings)
-        account = result.phenotype_input
-        body = {
-            "result_kind": result.result_kind,
-            "served_identity": result.served_identity.to_dict(),
-            "phenotype_input": (asdict(result.phenotype_input)
-                                if result.phenotype_input is not None else None),
-            "candidates": [
-                _candidate_body(c, request.include_explanations, request.include_paths)
-                for c in result.candidates
-            ],
-        }
-        if result.result_kind == "disease_task/v1":
-            body.update(tie_policy=result.tie_policy)
-        elif result.result_kind == "gene_task/v1":
-            body.update(tie_policy=result.tie_policy, sp_bounds=list(result.sp_bounds))
-        elif result.result_kind == "patients_like_me/v1":
-            body.update(tie_policy=result.tie_policy,
-                        reference_cohort=result.reference_cohort)
-
-        if genes_ignored:
-            warnings.insert(0, CANDIDATE_GENES_IGNORED_WARNING)
-
-        body.update(
-            result_schema_version=result.result_schema_version,
-            session_id=session_id,
-            patient_id=patient_id,
-            timestamp=datetime.now().isoformat(),
-            summary=_summary(len(body["candidates"]), len(request.phenotypes), account,
-                             body["result_kind"]),
-            inference_time_ms=(time.time() - start_time) * 1000,
-            warnings=warnings,
-        )
-        # Validated here, inside the handler, so a response that breaks the
-        # union's rules is refused with its reason, never sent.
-        response = DiagnoseResponse.model_validate(body)
+            body.update(
+                result_schema_version=result.result_schema_version,
+                session_id=session_id,
+                patient_id=patient_id,
+                timestamp=datetime.now().isoformat(),
+                summary=_summary(len(body["candidates"]), len(request.phenotypes), account,
+                                 body["result_kind"]),
+                inference_time_ms=(time.time() - start_time) * 1000,
+                warnings=warnings,
+            )
+            # Validated here, inside the handler, so a response that breaks the
+            # union's rules is refused with its reason, never sent.
+            response = DiagnoseResponse.model_validate(body)
 
     except HTTPException:
         # **Deliberate statuses pass through.** `HTTPException` is an
@@ -784,6 +772,9 @@ async def diagnose(request: DiagnoseRequest) -> DiagnoseResponse:
         # unexpected 500 — which reads to a caller as a bug in the service rather
         # than as the service declining to answer.
         raise
+    except NotServing as refused:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                            detail=refused.reason)
     except ResultRefused as e:
         # **The pipeline refused to write a number it does not have** (Spec 1
         # §2.1): a model term it cannot compute, a row outside its table, a

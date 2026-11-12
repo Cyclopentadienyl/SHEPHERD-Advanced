@@ -239,6 +239,111 @@ def test_the_application_s_shutdown_stops_the_job_its_runner_holds(monkeypatch):
         _cleanup(job)
 
 
+# --------------------------------------------------------------------------- serving (I6, I7)
+@pytest.fixture
+def configured(monkeypatch, tmp_path):
+    """A start-up model configured in the environment, on (faked) CUDA: the
+    lifespan's load goes through the real lifecycle and lock, the build is a
+    stub that records each call; nothing served before, and a runner of the
+    test's own."""
+    import src.api.main as api
+    from tests.fixtures.serving_lifecycle import (
+        StubBuilds,
+        checkpoint,
+        fake_cuda,
+        served_workspace,
+    )
+
+    for name in ("pipeline", "kg", "_current_data_dir", "_current_checkpoint_path"):
+        monkeypatch.setattr(api.app_state, name, None)
+    manager = tm.TrainingManager()
+    monkeypatch.setattr(tm, "training_manager", manager)
+    fake_cuda(monkeypatch)
+    builds = StubBuilds().install(monkeypatch)
+    workspace = served_workspace(tmp_path / "served")
+    monkeypatch.setenv("SHEPHERD_KG_PATH", str(workspace / "kg.json"))
+    monkeypatch.setenv("SHEPHERD_DATA_DIR", str(workspace))
+    monkeypatch.setenv("SHEPHERD_CHECKPOINT_PATH", str(checkpoint(workspace, "a")))
+    monkeypatch.setenv("SHEPHERD_DEVICE", "cuda")
+    return api, manager, builds
+
+
+def test_the_application_s_shutdown_releases_the_serving_lock(configured):
+    """I7: the lifespan's end stops serving through the one stop: the model
+    and the GPU lock are given back and the record says why."""
+    from fastapi.testclient import TestClient
+
+    from src.utils.gpu_lock import SERVING_JOB_TYPE, lock_state
+
+    api, _, _ = configured
+    with TestClient(api.app) as client:
+        assert client.get("/ready").status_code == 200
+        holder = lock_state()["holder"]
+    assert holder["job_type"] == SERVING_JOB_TYPE
+    assert lock_state()["held_by"] is None and api.app_state.gpu_lock is None
+    assert api.app_state.pipeline is None
+    assert api.app_state.not_serving_reason.startswith(
+        "Inference was stopped as the service shut down")
+
+
+def test_startup_opens_the_slot_before_the_configured_load(configured):
+    """I6: a CUDA load reads the runner's slot after it holds the lock, and
+    an earlier lifespan (an in-process client's) left the slot closed: the
+    slot is opened first, so the configured model loads."""
+    from fastapi.testclient import TestClient
+
+    api, manager, builds = configured
+    manager.close()
+    with TestClient(api.app) as client:
+        ready = client.get("/ready")
+        served = api.app_state.pipeline
+    assert ready.status_code == 200, ready.text
+    assert served is not None and len(builds.calls) == 1
+
+
+def test_a_startup_with_the_gpu_lock_busy_is_not_loaded_and_names_the_holder(
+        configured, tmp_path):
+    """I6: the configured load is refused before anything is read, the
+    service reports not ready naming the lock's holder (no path), and no
+    other model is chosen."""
+    from fastapi.testclient import TestClient
+
+    from tests.fixtures.job_processes import start_lock_holder
+
+    api, _, builds = configured
+    holder = start_lock_holder("sleep", {}, tmp_path)
+    try:
+        with TestClient(api.app) as client:
+            ready = client.get("/ready")
+            status = client.get("/api/v1/pipeline/status").json()
+    finally:
+        holder.kill()
+        holder.wait(10)
+    reason = ready.json()["error"]
+    assert ready.status_code == 503 and builds.calls == []
+    assert reason.startswith("A pipeline is configured for this deployment's start-up")
+    assert "the GPU is in use by a training job (lock_holder.py" in reason
+    assert str(tmp_path) not in reason
+    assert status["serving"] == "not_loaded" and status["not_serving_reason"] == reason
+    assert api.app_state.pipeline is None
+
+
+def test_with_no_start_up_model_the_service_starts_with_none(configured, monkeypatch):
+    """I6: no explicit start-up config, no model: none is picked, nothing is
+    built, and the status says not loaded."""
+    from fastapi.testclient import TestClient
+
+    api, _, builds = configured
+    for name in ("SHEPHERD_KG_PATH", "SHEPHERD_DATA_DIR", "SHEPHERD_CHECKPOINT_PATH"):
+        monkeypatch.delenv(name)
+    with TestClient(api.app) as client:
+        ready = client.get("/ready")
+        status = client.get("/api/v1/pipeline/status").json()
+    assert ready.status_code == 503 and ready.json()["error"].startswith("No model is loaded")
+    assert builds.calls == [] and status["serving"] == "not_loaded"
+    assert status["holds_gpu_lock"] is False
+
+
 class _Server:
     """uvicorn's handlers as far as these tests need: what each signal did."""
 

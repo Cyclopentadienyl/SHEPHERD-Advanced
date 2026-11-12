@@ -424,7 +424,7 @@ def test_a_reload_by_task_publishes_a_model_without_eta(trained, monkeypatch):
     monkeypatch.setenv("SHEPHERD_DEVICE", "cpu")
     monkeypatch.setattr(api, "publish_pipeline", published.append)
     monkeypatch.setattr(api.app_state, "pipeline", None, raising=False)
-    monkeypatch.setattr(api.app_state, "real_pipeline_requested", False, raising=False)
+    monkeypatch.setattr(api.app_state, "not_serving", None)
     result = run_reload(PipelineReloadRequest(
         data_dir=str(trained["data_dir"]), task="patients_like_me",
         checkpoint_path=str(trained["patients_like_me"])))

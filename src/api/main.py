@@ -15,6 +15,11 @@ Purpose:
 
 Endpoints:
     POST /api/v1/diagnose     - Run diagnosis on patient phenotypes
+    GET  /api/v1/pipeline/status, POST /api/v1/pipeline/reload,
+    POST /api/v1/pipeline/stop
+                              - What is served; load a model; stop inference
+                                (src/api/routes/pipeline.py, the lifecycle in
+                                `AppState`)
     GET  /api/v1/hpo/search   - Search HPO terms
     GET  /api/v1/disease/{id} - Get disease information
     GET  /api/v1/evaluations/loaded-model
@@ -48,16 +53,18 @@ Version: 1.0.0
 from __future__ import annotations
 
 import asyncio
+import gc
 import logging
 import os
 import signal
 import sys
 import threading
 import time
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple
+from typing import Any, Callable, Dict, Iterator, List, NamedTuple, Optional, Set, Tuple
 
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -80,15 +87,134 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 # Application State
 # =============================================================================
+#: What a status says of serving (`AppState.snapshot`): no model loaded, a
+#: model served, or a stop letting the accepted requests finish.
+NOT_LOADED, SERVING, STOPPING = "not_loaded", "serving", "stopping"
+#: The lifecycle's other transition: a load (start-up's or a reload's).
+LOADING = "loading"
+#: Why nothing is served, as the one record of it says (`NotServingRecord`).
+STOPPED, LOAD_REFUSED, STARTUP_REFUSED = "stopped", "load_refused", "startup_refused"
+
+#: How every not-serving reason tells an operator to load a model: the
+#: Diagnosis page's entry as the page shows it with no model loaded ("Load a
+#: model…") and the reload route.
+LOAD_HINT = ("An operator loads one with “Load a model…” on the Diagnosis page or POST "
+             "/api/v1/pipeline/reload")
+#: What a refused build says on the open surfaces: its own message can name
+#: server paths, so it goes to the log and the operator's reload response only.
+BUILD_REFUSED = ("it could not be initialized (the service logs name the condition that "
+                 "stopped it)")
+#: A refused reload's words on the open surfaces, for the same reason.
+RELOAD_REFUSED = "the operator's reload response and the service log say why"
+#: Who stopped inference, in a stopped record's words.
+STOPPED_BY = {"operator": "by an operator", "restart": "for Restart Backend",
+              "shutdown": "as the service shut down"}
+
+
+class LifecycleBusy(RuntimeError):
+    """A load or a stop is already running in this service: a second is
+    refused at once, never queued (`AppState.loading`, `stop_serving`)."""
+
+
+class ServingRefused(RuntimeError):
+    """A CUDA load refused before any candidate is read: the GPU lock is busy,
+    not configured or unusable, or the job runner's slot is taken. `reason`
+    names no path, so it is also what the open not-serving reason says."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+class NotServing(RuntimeError):
+    """No request is accepted now: nothing is loaded, or a stop is letting the
+    accepted ones finish. `reason` is `AppState.not_serving_reason`'s."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+@dataclass(frozen=True)
+class NotServingRecord:
+    """**Why nothing is served: one record** (it replaces the
+    `real_pipeline_requested` flag). `kind` is `STOPPED`, `LOAD_REFUSED` or
+    `STARTUP_REFUSED`; `reason` names no path (a stop's: who stopped it, as
+    `STOPPED_BY` says); `model_sha12` is the model it was about, when known.
+    Written by the lifecycle only while nothing is served, and cleared by the
+    next publication."""
+
+    kind: str
+    at: str
+    reason: str
+    model_sha12: Optional[str] = None
+
+
+class StopOutcome(NamedTuple):
+    """What a stop did (`AppState.stop_serving`): `released` only once the
+    model, its graph and the GPU lock are given back."""
+
+    success: bool
+    released: bool
+    message: str
+
+
+def _on_cuda(device: Any) -> bool:
+    """Whether a device name is a CUDA device, the one rule that decides the
+    GPU lock: the resolved device before a build, the device in effect at
+    publication."""
+    return isinstance(device, str) and device.startswith("cuda")
+
+
+def _served_part(config: Any, *keys: str) -> Any:
+    """A value of a built pipeline's served identity, None when the
+    configuration does not hold it (a stand-in's)."""
+    value = config.get("served_identity") if isinstance(config, dict) else None
+    for key in keys:
+        value = value.get(key) if isinstance(value, dict) else None
+    return value
+
+
+def _now() -> str:
+    return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
 class AppState:
-    """Application state container"""
+    """Application state container, and **the inference lifecycle** (I1-I10
+    of the ops round, `docs/working/ops-wiring-and-ui-ux/README.md` §4): one
+    state for what is served, how it is admitted and what it holds.
+
+    - **One load or stop at a time** (`_lifecycle`, taken non-blocking): a
+      second is refused (`LifecycleBusy`), never queued, so the event loop,
+      where a reload and a diagnosis run, never waits for one.
+    - **Admission** (`_admission`): a request takes a lease on the pipeline
+      served when it is accepted (`lease`) and gives it back when it ends; a
+      stop refuses new ones at once and waits for the accepted ones, with no
+      timeout and nothing killed.
+    - **The holding**: CUDA serving holds the deployment's one GPU lock
+      (`gpu_lock`, a `GpuLock` taken through `take_gpu_lock`), decided by the
+      resolved device, from before a candidate is read until nothing uses it:
+      the model served on CUDA, a replaced CUDA model whose accepted requests
+      still run, or a load holding it for its CUDA candidate. CPU serving
+      takes no lock and checks no job slot.
+    - **The transition** (`transition`: `LOADING`, `STOPPING` or None) and
+      **one not-serving record** (`not_serving`).
+
+    **Lock order, never the other way round:** the lifecycle, then the GPU
+    lock's flock, then the job runner's lock (`TrainingManager.
+    serving_refusal`), then admission. Admission is held only for a few reads
+    and assignments, and nothing waits under it but a stop's `wait`, which
+    gives it up; the lifecycle is never taken under admission, and the flock
+    is taken under neither the runner's lock nor admission and given back
+    outside admission.
+    """
 
     def __init__(self):
         self.pipeline = None
         self.kg = None
         self.ontology = None
         #: Startup's half of what `/ready` answers; the other half is
-        #: `no_pipeline_reason`. Set when startup completes, cleared
+        #: `not_serving_reason`. Set when startup completes, cleared
         #: when startup's build fails and at shutdown, and set again by
         #: `publish_pipeline` -- so a reload that succeeds after a failed
         #: startup restores it, and a refused reload leaves the flag as it was.
@@ -104,43 +230,374 @@ class AppState:
         # including after an environment-configured startup, which used to
         # publish a pipeline and leave these reading as unknown.
         self._current_data_dir = None
-        #: Whether any real workspace has ever been named for this service —
-        #: through `SHEPHERD_KG_PATH` or `SHEPHERD_CHECKPOINT_PATH` at startup,
-        #: or through a reload that pointed at one. It records a **request**,
-        #: not an outcome, so it stays True after a build that failed: a
-        #: diagnosis then does not try the build again (the way to retry is a
-        #: reload or a restart), and the refusal says the configured pipeline
-        #: could not be initialized rather than that nothing is configured.
-        self.real_pipeline_requested = False
         self._current_checkpoint_path = None
+        #: One load or stop at a time, taken non-blocking.
+        self._lifecycle = threading.Lock()
+        #: Admission: the served fields are swapped and the leases counted
+        #: under it.
+        self._admission = threading.Condition(threading.Lock())
+        #: Accepted requests still running, by the pipeline each was accepted
+        #: on (`id`; a leased pipeline is alive, so its id is its own).
+        self._leases: Dict[int, int] = {}
+        #: Replaced CUDA pipelines whose accepted requests still run: each
+        #: keeps the GPU lock until its last lease ends.
+        self._retired_on_gpu: Set[int] = set()
+        #: A load holds the GPU lock for its CUDA candidate.
+        self._load_holds_gpu = False
+        #: The deployment's GPU lock as this service holds it, or None.
+        self.gpu_lock = None
+        #: The served model's device in effect and checkpoint digest, as its
+        #: served identity names them (None when nothing is served).
+        self.serving_device: Optional[str] = None
+        self.served_sha256: Optional[str] = None
+        #: `LOADING` or `STOPPING` while one runs, else None.
+        self.transition: Optional[str] = None
+        #: Why nothing is served (`NotServingRecord`), None when nothing has
+        #: been stopped or refused since the last publication.
+        self.not_serving: Optional[NotServingRecord] = None
+
+    # ----------------------------------------------------------- what is said
+    @property
+    def accepting(self) -> bool:
+        """Whether a request is admitted now: a pipeline is served and no stop
+        is letting the accepted requests finish."""
+        return self.pipeline is not None and self.transition != STOPPING
 
     @property
-    def no_pipeline_reason(self) -> Optional[str]:
-        """Why no diagnosis can be answered, or None while a pipeline is served.
+    def not_serving_reason(self) -> Optional[str]:
+        """Why no diagnosis can be answered, or None while one is admitted.
 
-        **One definition, two surfaces** (K7, DEMO1): no pipeline served is the
-        state, whatever led to it -- nothing configured, a graph named without
-        a model, a build that failed. `/diagnose` refuses with 503 and this
-        reason, and `/ready` answers 503 from the same definition, so the
-        service is never called ready while every diagnosis is refused. Every
-        answer comes from a model: no illustrative candidates are invented.
+        **One definition, every surface** (K7, DEMO1): `/diagnose` refuses
+        with 503 and this reason, `/ready` answers 503 from it and the status
+        reports it, so the service is never called ready while every
+        diagnosis is refused. It covers a stop letting the accepted requests
+        finish, a stopped model, a load or a start-up refused (naming the GPU
+        lock's holder when that refused it) and nothing loaded. Every answer
+        comes from a model: no illustrative candidates are invented.
         `/health` stays 200, so the launcher starts the service and the
-        dashboard's Load entry can load a model. Both reasons name that entry
+        dashboard's Load entry can load a model. Every reason names that entry
         as the Diagnosis page shows it in this state ("Load a model…"), and
-        that loading is an operator control.
+        that loading is an operator control. **No reason names a path**: the
+        routes that carry it are open.
         """
+        with self._admission:
+            return self._reason_locked()
+
+    def _reason_locked(self) -> Optional[str]:
+        if self.transition == STOPPING:
+            return ("Inference is stopping: the diagnoses already accepted finish, and new ones "
+                    f"are refused; then no model is loaded. {LOAD_HINT} once the stop has "
+                    "ended.")
         if self.pipeline is not None:
             return None
-        if self.real_pipeline_requested:
-            return ("A pipeline is configured for this deployment but none is being "
-                    "served: it could not be initialized (the service logs name the "
-                    "condition that stopped it). An operator loads a model with “Load a "
-                    "model…” on the Diagnosis page or POST /api/v1/pipeline/reload, or "
-                    "restarts the service to try again.")
-        return ("No model is loaded, so no diagnosis can be produced. An operator loads one "
-                "with “Load a model…” on the Diagnosis page or POST /api/v1/pipeline/reload, "
-                "or starts the service with SHEPHERD_KG_PATH, SHEPHERD_DATA_DIR and "
-                "SHEPHERD_CHECKPOINT_PATH naming a workspace and a model trained on it.")
+        if self.transition == LOADING:
+            return ("No model is loaded yet: a load is in progress, and no diagnosis can be "
+                    f"produced until it publishes one. {LOAD_HINT} if it is refused.")
+        record = self.not_serving
+        if record is None:
+            return ("No model is loaded, so no diagnosis can be produced. An operator loads one "
+                    "with “Load a model…” on the Diagnosis page or POST /api/v1/pipeline/reload, "
+                    "or starts the service with SHEPHERD_KG_PATH, SHEPHERD_DATA_DIR and "
+                    "SHEPHERD_CHECKPOINT_PATH naming a workspace and a model trained on it.")
+        model = f"model {record.model_sha12}" if record.model_sha12 else "the model"
+        if record.kind == STOPPED:
+            return (f"Inference was stopped {record.reason} at {record.at}: {model} is no "
+                    f"longer loaded, so no diagnosis can be produced. {LOAD_HINT}.")
+        if record.kind == STARTUP_REFUSED:
+            return ("A pipeline is configured for this deployment's start-up but none is being "
+                    f"served: {record.reason.rstrip('.')}. {LOAD_HINT}, or restarts the "
+                    "service to try again.")
+        of = f" of model {record.model_sha12}" if record.model_sha12 else ""
+        return (f"No model is loaded: the last load{of} was refused at {record.at}: "
+                f"{record.reason.rstrip('.')}. {LOAD_HINT}.")
+
+    def snapshot(self) -> Dict[str, Any]:
+        """What is served and the lifecycle around it, read in one step under
+        admission, so the pipeline and the paths it was built from are one
+        publication's: `pipeline`, `data_dir`, `checkpoint_path`, `serving`
+        (`NOT_LOADED`, `SERVING` or `STOPPING`), `loading`, `in_flight` (the
+        accepted requests still running), `holds_gpu_lock` and
+        `not_serving_reason`. No lock path: the status route is open."""
+        with self._admission:
+            return {
+                "pipeline": self.pipeline,
+                "data_dir": self._current_data_dir,
+                "checkpoint_path": self._current_checkpoint_path,
+                "serving": (STOPPING if self.transition == STOPPING
+                            else SERVING if self.pipeline is not None else NOT_LOADED),
+                "loading": self.transition == LOADING,
+                "in_flight": sum(self._leases.values()),
+                "holds_gpu_lock": self.gpu_lock is not None and self.gpu_lock.held,
+                "not_serving_reason": self._reason_locked(),
+            }
+
+    def lifecycle_busy(self) -> bool:
+        """Whether a load or a stop is running now (Restart Backend refuses
+        then)."""
+        return self._lifecycle.locked()
+
+    def _busy_words(self) -> str:
+        with self._admission:
+            doing = {LOADING: "A model is being loaded",
+                     STOPPING: "Inference is stopping"}.get(self.transition,
+                                                            "A load or a stop is running")
+        return (f"{doing} in this service; one load or stop runs at a time, so this one was "
+                "refused, never queued. Nothing was changed.")
+
+    # -------------------------------------------------------------- admission
+    @contextmanager
+    def lease(self) -> Iterator[Any]:
+        """The served pipeline for one request, admitted now or refused with
+        `NotServing` and the reason. Held until the request ends; a stop waits
+        for it, and a replaced CUDA pipeline keeps the GPU lock until its last
+        lease ends."""
+        with self._admission:
+            pipeline = self.pipeline
+            if not self.accepting:
+                raise NotServing(self._reason_locked())
+            key = id(pipeline)
+            self._leases[key] = self._leases.get(key, 0) + 1
+        try:
+            yield pipeline
+        finally:
+            with self._admission:
+                left = self._leases.pop(key) - 1
+                if left:
+                    self._leases[key] = left
+                else:
+                    self._retired_on_gpu.discard(key)
+                self._admission.notify_all()
+            del pipeline
+            self._release_gpu_if_unused()
+
+    # ------------------------------------------------------------------- load
+    @contextmanager
+    def loading(self) -> Iterator["ServingLoad"]:
+        """One load (start-up's or a reload's) in the lifecycle, or
+        `LifecycleBusy`. At its end, a GPU lock it took and no model uses is
+        given back (a refused CUDA candidate, a CPU load replacing a CUDA
+        model whose requests have ended)."""
+        if not self._lifecycle.acquire(blocking=False):
+            raise LifecycleBusy(self._busy_words())
+        try:
+            with self._admission:
+                self.transition = LOADING
+            yield ServingLoad(self)
+        finally:
+            with self._admission:
+                self._load_holds_gpu = False
+                self.transition = None
+            self._release_gpu_if_unused()
+            self._lifecycle.release()
+
+    def _hold_gpu_for(self, device: Optional[str]) -> None:
+        """Inside a load, right after its device is resolved and before any
+        candidate is read: **the GPU lock held for a CUDA device**, the one
+        this service already holds (a CUDA model served, or a replaced one
+        still running: a second taker in this process would refuse itself),
+        else taken now (`take_gpu_lock`); then the job runner's slot read
+        under its lock (`serving_refusal`), which closes the window between
+        the runner spawning a job and that job's process taking the lock.
+        Nothing for a CPU device. Raises `ServingRefused`, the lock given
+        back unless a served model uses it."""
+        if not _on_cuda(device):
+            return
+        from src.api.services.training_manager import training_manager
+        from src.config.server_settings import ENV_WORKSPACES_ROOT
+        from src.utils.gpu_lock import (
+            SERVING_COMMAND,
+            SERVING_JOB_TYPE,
+            GpuLockBusy,
+            GpuLockMisconfigured,
+            GpuLockNotConfigured,
+            take_gpu_lock,
+        )
+
+        with self._admission:
+            held = self.gpu_lock is not None and self.gpu_lock.held
+            if held:
+                self._load_holds_gpu = True
+        if not held:
+            try:
+                lock = take_gpu_lock(SERVING_JOB_TYPE, SERVING_COMMAND, log=logger)
+            except GpuLockNotConfigured as exc:
+                raise ServingRefused(f"CUDA inference is refused: {exc}") from exc
+            except GpuLockMisconfigured as exc:
+                logger.error("CUDA inference is refused: %s", exc)
+                raise ServingRefused(
+                    f"CUDA inference is refused: the GPU lock cannot be used ({ENV_WORKSPACES_ROOT} "
+                    "is set but cannot be used; the service log says why), and nothing runs "
+                    "on the GPU without excluding the others.") from exc
+            except GpuLockBusy as exc:
+                raise ServingRefused(
+                    f"CUDA inference is refused: the GPU is in use by {exc.holder}. Load "
+                    "again once it has ended.") from exc
+            except OSError as exc:
+                logger.error("CUDA inference is refused: %s", exc)
+                raise ServingRefused("CUDA inference is refused: the GPU lock cannot be taken "
+                                     "(the service log says why).") from exc
+            with self._admission:
+                self.gpu_lock = lock
+                self._load_holds_gpu = True
+        refusal = training_manager.serving_refusal()
+        if refusal is not None:
+            with self._admission:
+                self._load_holds_gpu = False
+            self._release_gpu_if_unused()
+            raise ServingRefused(refusal)
+
+    def record_refusal(self, kind: str, reason: str, model_sha12: Optional[str] = None) -> None:
+        """A load or start-up refused while nothing is served, recorded as why
+        nothing is (`LOAD_REFUSED`, `STARTUP_REFUSED`); a refusal while a
+        model serves changes nothing."""
+        with self._admission:
+            if self.pipeline is None:
+                self.not_serving = NotServingRecord(kind, _now(), reason, model_sha12)
+
+    def _publish(self, bundle: "PipelineBundle", device: Any, sha256: Any) -> None:
+        """`publish_pipeline`'s swap, under admission. **A model on CUDA is
+        published only while this service holds the GPU lock**, refused
+        before anything changes otherwise. The replaced pipeline: a CUDA one
+        whose accepted requests still run keeps the lock until they end;
+        CUDA to CUDA keeps the one `GpuLock`; CUDA to CPU gives it back once
+        nothing uses it, which is now when no request of the old one runs."""
+        with self._admission:
+            if _on_cuda(device) and not (self.gpu_lock is not None and self.gpu_lock.held):
+                raise RuntimeError(
+                    "A model on CUDA is served only while this service holds the GPU lock; "
+                    "load it through the lifecycle (start-up or a reload). Nothing was "
+                    "published.")
+            old, old_device = self.pipeline, self.serving_device
+            if (old is not None and old is not bundle.pipeline and _on_cuda(old_device)
+                    and self._leases.get(id(old))):
+                self._retired_on_gpu.add(id(old))
+            self.kg = bundle.kg
+            self.pipeline = bundle.pipeline
+            self._current_data_dir = bundle.data_dir
+            self._current_checkpoint_path = bundle.checkpoint_path
+            self.serving_device = device if isinstance(device, str) else None
+            self.served_sha256 = sha256 if isinstance(sha256, str) else None
+            self.is_ready = True
+            self.not_serving = None
+        del old
+        self._release_gpu_if_unused()
+
+    # ------------------------------------------------------------------- stop
+    def stop_serving(self, *, by: str = "operator",
+                     expected_checkpoint_sha256: Optional[str] = None) -> StopOutcome:
+        """**The one stop** (I4): new requests refused at once, with the
+        reason; the accepted ones waited for, with no timeout and nothing
+        killed; then the pipeline, its graph, the current paths and the
+        diagnosis reference-sample cache cleared, `gc`, and on CUDA a
+        synchronize and `empty_cache` (no claim that memory is returned: the
+        measured reading is the resource route's); then the GPU lock and its
+        description given back; only then is "released" reported. Nothing
+        loaded is "nothing to stop". With `expected_checkpoint_sha256`, a
+        stop of another model is refused and it keeps serving. Refused with
+        `LifecycleBusy` while a load or another stop runs. `by` is who stops
+        it (`STOPPED_BY`). Blocks while it waits: call it from a thread."""
+        if not self._lifecycle.acquire(blocking=False):
+            raise LifecycleBusy(self._busy_words())
+        try:
+            with self._admission:
+                if self.pipeline is None:
+                    return StopOutcome(False, False, "Nothing to stop: no model is loaded.")
+                sha = self.served_sha256
+                shown = expected_checkpoint_sha256
+                if shown is not None and sha != shown:
+                    serving = (f"the model in use is {sha[:12]}" if sha else
+                               "the model in use records no checkpoint fingerprint")
+                    return StopOutcome(False, False, (
+                        f"Not stopped: {serving}, not {shown[:12]} that was shown; it keeps "
+                        "serving. Read the status again to see what is served."))
+                self.transition = STOPPING
+                accepted = sum(self._leases.values())
+                while self._leases:
+                    self._admission.wait()
+                device = self.serving_device
+                self.pipeline = None
+                self.kg = None
+                self._current_data_dir = None
+                self._current_checkpoint_path = None
+                self.serving_device = None
+                self.served_sha256 = None
+            from src.api.routes.diagnose import clear_reference_samples
+
+            clear_reference_samples()
+            _free_device_memory(device)
+            released_lock = self._release_gpu_if_unused(free=False)
+            with self._admission:
+                self.not_serving = NotServingRecord(STOPPED, _now(), STOPPED_BY.get(by, by),
+                                                    sha[:12] if sha else None)
+                self.transition = None
+            model = f"model {sha[:12]}" if sha else "the model"
+            return StopOutcome(True, True, (
+                f"Inference stopped: {accepted} accepted request(s) finished first, then "
+                f"{model} and its graph were released"
+                f"{' and the GPU lock given back' if released_lock else ''}. New diagnoses are "
+                "refused until a model is loaded."))
+        finally:
+            with self._admission:
+                if self.transition == STOPPING:
+                    self.transition = None
+            self._lifecycle.release()
+
+    # ---------------------------------------------------------------- the GPU
+    def _gpu_in_use_locked(self) -> bool:
+        return (self._load_holds_gpu or bool(self._retired_on_gpu)
+                or (self.pipeline is not None and _on_cuda(self.serving_device)))
+
+    def _release_gpu_if_unused(self, *, free: bool = True) -> bool:
+        """Give the GPU lock back once nothing uses it: no CUDA model served,
+        no replaced CUDA model's request running, no load holding it. Taken
+        out under admission, released outside it, after a `gc` and the CUDA
+        cache emptied (`free`; a stop has done both already). True when it
+        was given back here."""
+        with self._admission:
+            lock = self.gpu_lock
+            if lock is None or self._gpu_in_use_locked():
+                return False
+            self.gpu_lock = None
+        if free:
+            _free_device_memory("cuda")
+        lock.release()
+        logger.info("This service's CUDA inference gave the GPU lock back.")
+        return True
+
+
+class ServingLoad:
+    """One load in the lifecycle (`AppState.loading`): `hold` is where its
+    resolved device decides the GPU lock, and `lock_refusal` keeps why that
+    refused it, the words the open not-serving reason then says."""
+
+    def __init__(self, state: AppState) -> None:
+        self._state = state
+        self.lock_refusal: Optional[str] = None
+
+    def hold(self, device: Optional[str]) -> None:
+        try:
+            self._state._hold_gpu_for(device)
+        except ServingRefused as refused:
+            self.lock_refusal = refused.reason
+            raise
+
+
+def _free_device_memory(device: Optional[str]) -> None:
+    """`gc`, and on CUDA a synchronize and `empty_cache`: what a stop and a
+    lock given back do. `empty_cache` returns the allocator's unused blocks
+    and claims nothing about the host's memory (the GB10's is shared); a
+    failure is logged, never raised."""
+    gc.collect()
+    if not _on_cuda(device):
+        return
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+    except Exception as exc:  # noqa: BLE001 - freeing is best effort
+        logger.warning("The CUDA cache could not be emptied: %s", exc)
 
 
 app_state = AppState()
@@ -161,6 +618,12 @@ async def lifespan(app: FastAPI):
     through the same rule they applied (`server_settings.startup_bind`), and
     a refused one ends startup by raising, so uvicorn exits without serving.
     None passed in (a uvicorn started by hand) is not checked, as §3.1 says.
+
+    **Serving** (I6, I7): the job runner's slot opens first, then the model
+    the environment configures for start-up, if any, loads through the one
+    lifecycle (`initialize_pipeline`); with none configured nothing is loaded
+    and no other model is chosen. At the end, after the job's stop, serving
+    stops through the one stop, so the model and the GPU lock are given back.
 
     **Stopping the backend stops its jobs** (the owner's decision of
     2026-10-22): each GPU job leads its own process group (review of 8242b47,
@@ -218,11 +681,17 @@ async def lifespan(app: FastAPI):
 
         loop.set_exception_handler(_quiet_connection_reset)
 
+    # **The job slot opens before the configured load** (I6): a CUDA load
+    # reads the runner's slot after it holds the GPU lock
+    # (`TrainingManager.serving_refusal`), and an in-process client's earlier
+    # lifespan left it closed.
+    _open_the_gpu_slot()
     try:
         # Attempt eager initialization if a pipeline is configured. A graph
         # alone or a checkpoint alone counts: `build_pipeline` refuses either,
         # and startup is where an operator should see that, not the first
-        # diagnosis.
+        # diagnosis. **Nothing else is loaded**: with no model configured the
+        # service starts with none, and no other model is picked (I6).
         if os.environ.get("SHEPHERD_KG_PATH") or os.environ.get(
             "SHEPHERD_CHECKPOINT_PATH"
         ):
@@ -238,10 +707,10 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         # Not ready until a pipeline is published; a reload that succeeds does
         # that (`publish_pipeline`), so this is not a state only a restart clears.
+        # Why is the not-serving record's (`initialize_pipeline`).
         logger.error(f"Startup failed: {e}")
         app_state.is_ready = False
 
-    _open_the_gpu_slot()
     shutdown_signals = _ShutdownSignals(app)
     shutdown_signals.install()
     try:
@@ -252,6 +721,11 @@ async def lifespan(app: FastAPI):
         app_state.is_ready = False
         try:
             await asyncio.to_thread(shutdown_signals.end_jobs)
+            # **Then serving stops** (I7): uvicorn has closed the connections,
+            # so the accepted requests have ended, and the model, its graph and
+            # the GPU lock are given back. A process killed instead has its
+            # lock released by the kernel; no state file pretends a holding.
+            await asyncio.to_thread(_stop_serving_at_shutdown)
         finally:
             shutdown_signals.restore()
 
@@ -452,6 +926,19 @@ def _stop_the_active_job() -> None:
                        ended.get("error") or f"still {ended.get('status')}")
 
 
+def _stop_serving_at_shutdown() -> None:
+    """At the lifespan's end: the model served stopped through the one stop
+    (`AppState.stop_serving`), said in the log. A load or stop still running
+    is said and left: the process ends, and the kernel releases its lock."""
+    try:
+        outcome = app_state.stop_serving(by="shutdown")
+    except LifecycleBusy as busy:
+        logger.warning("Serving was not stopped at shutdown: %s", busy)
+        return
+    if outcome.released:
+        logger.info(outcome.message)
+
+
 def _open_the_gpu_slot() -> None:
     """At startup: the job runner's GPU slot open. A shutdown closes it
     (`_stop_the_active_job`), and the runner is a process-wide singleton, so
@@ -617,12 +1104,12 @@ async def readiness_check() -> Dict[str, Any]:
     Readiness probe
 
     Returns whether the service is ready to accept requests: a pipeline is
-    served (`AppState.no_pipeline_reason`, the state `/diagnose` refuses) and
-    startup succeeded or a pipeline has since been published (`is_ready`). The
-    pipeline is checked first, so a service with none is told how to recover,
-    as `/diagnose` tells it.
+    served and admitted (`AppState.not_serving_reason`, the state `/diagnose`
+    refuses) and startup succeeded or a pipeline has since been published
+    (`is_ready`). The pipeline is checked first, so a service with none is
+    told why and how to recover, as `/diagnose` tells it.
     """
-    reason = app_state.no_pipeline_reason
+    reason = app_state.not_serving_reason
     if reason is not None:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=reason)
     if not app_state.is_ready:
@@ -768,7 +1255,9 @@ def build_pipeline(
 
     Loads the knowledge graph, creates the DiagnosisPipeline with its model, and
     reads back its configuration — everything that can fail. **Application
-    state is not touched.** Returns the finished bundle, or ``None`` when there
+    state is not touched, and no lock is taken**: the lifecycle that calls it
+    (`initialize_pipeline`, `run_reload`) holds the GPU lock for a CUDA device
+    and records a refusal. Returns the finished bundle, or ``None`` when there
     is nothing to build because no KG path is configured or the configured one
     does not exist; raises when a configured pipeline fails to build, a graph
     named with no checkpoint included (a graph is never served without a
@@ -820,9 +1309,8 @@ def build_pipeline(
     if not kg_path:
         if checkpoint_path:
             # **A model was asked for, so this is not "nothing configured".**
-            # Returning None here would refuse diagnoses as though nothing were
-            # configured, for a deployment that named a checkpoint.
-            app_state.real_pipeline_requested = True
+            # Returning None here would leave a deployment that named a
+            # checkpoint described as one that configured nothing.
             from src.inference.pipeline import PipelineBuildError
 
             raise PipelineBuildError(
@@ -835,16 +1323,6 @@ def build_pipeline(
             "Pipeline will not be available."
         )
         return None
-
-    # **Recorded here because this is where both entry points meet.** Startup
-    # resolves `SHEPHERD_KG_PATH` and a reload passes a workspace it derived from
-    # the request; keying the distinction on the environment variable alone
-    # covered only the first, so a caller who named a real workspace through the
-    # reload API and had it refused was told nothing was configured. This is the
-    # request, not its result — it stays True when the build below fails, which
-    # is the whole point — and it touches nothing the published bundle owns, so
-    # the build-then-publish separation is unchanged.
-    app_state.real_pipeline_requested = True
 
     try:
         from src.inference.pipeline import (
@@ -897,11 +1375,17 @@ def build_pipeline(
 def publish_pipeline(bundle: PipelineBundle) -> None:
     """Make a built pipeline the one this service serves.
 
-    **The only writer of the served-pipeline fields, and it writes all of them.**
-    They answer one question together — what is being served, and out of which
-    workspace — so a caller that set some of them would leave the service
-    describing a pipeline that is not the one loaded. Everything that can fail
-    happened in `build_pipeline`; these assignments cannot.
+    **The only writer of the served-pipeline fields, and it writes all of them**,
+    swapped in one step under admission (`AppState._publish`): what is served,
+    out of which workspace and checkpoint, on which device, with which digest.
+    They answer one question together, so a caller that set some of them would
+    leave the service describing a pipeline that is not the one loaded.
+    Everything that can fail happened in `build_pipeline`; the one refusal here
+    comes before anything changes: **a model on CUDA is published only while
+    this service holds the GPU lock**, which its load took
+    (`ServingLoad.hold`). The replaced pipeline's holding follows the switch
+    rules (CUDA to CUDA keeps the one `GpuLock`; CUDA to CPU gives it back once
+    the replaced model's accepted requests have ended).
 
     **And it is the one path that restores readiness after startup.** Startup
     sets `is_ready` once; a startup whose build failed clears it, as shutdown
@@ -909,7 +1393,8 @@ def publish_pipeline(bundle: PipelineBundle) -> None:
     through here, so `is_ready` is set with the fields it vouches for. Restoring
     it anywhere else would let the flag claim a pipeline before a candidate is
     built. A refused reload never gets here and leaves the flag as it was; what
-    `/ready` answers also depends on `AppState.no_pipeline_reason`.
+    `/ready` answers also depends on `AppState.not_serving_reason`. The
+    not-serving record is cleared with the swap.
     """
     # **Formatted before the first assignment.** These are values out of an
     # arbitrary configuration dictionary, and formatting one calls its `__str__`;
@@ -920,12 +1405,8 @@ def publish_pipeline(bundle: PipelineBundle) -> None:
         f"Pipeline published: scoring_mode={bundle.config.get('scoring_mode')}, "
         f"gnn_ready={bundle.config.get('gnn_ready')}"
     )
-
-    app_state.kg = bundle.kg
-    app_state.pipeline = bundle.pipeline
-    app_state._current_data_dir = bundle.data_dir
-    app_state._current_checkpoint_path = bundle.checkpoint_path
-    app_state.is_ready = True
+    app_state._publish(bundle, _served_part(bundle.config, "settings", "device"),
+                       _served_part(bundle.config, "checkpoint", "sha256"))
     logger.info(announcement)
 
 
@@ -934,14 +1415,20 @@ def initialize_pipeline(
     checkpoint_path: Optional[str] = None,
     data_dir: Optional[str] = None,
     device: Optional[str] = None,
-):
+) -> None:
     """
-    Initialize the diagnosis pipeline if one is not already loaded.
+    **Start-up's configured load** (I6): the lifespan's, when the environment
+    names a model; nothing else calls it, and a diagnosis never loads one (I9).
 
-    Called at startup, or lazily on first diagnosis request. Reloading a running
-    service does not go through here: it must build its candidate first and keep
-    serving the current pipeline until that succeeds, so it calls
-    `build_pipeline` and `publish_pipeline` itself.
+    It goes through the one lifecycle, as a reload does (`AppState.loading`):
+    the device resolved by the shared resolver, the GPU lock held for a CUDA
+    device before anything is read (busy, not configured or the runner's slot
+    taken refuses it), the shared build, then publication. A refusal is
+    recorded as why nothing is served (`STARTUP_REFUSED`, naming the lock's
+    holder when that refused it, else pointing at the log, since a build's own
+    words can name server paths) and raised, so the lifespan reports the
+    service not ready; no other model is chosen. A graph file that is not
+    there (`build_pipeline` returns None) is recorded the same way.
 
     Args:
         kg_path: Path to KG JSON file (overrides env var)
@@ -949,18 +1436,24 @@ def initialize_pipeline(
         data_dir: Path to processed data directory (overrides env var)
         device: Inference device (overrides env var)
     """
-    if app_state.pipeline is not None:
-        return
+    from src.inference.pipeline import resolve_serving_device
 
-    bundle = build_pipeline(
-        kg_path=kg_path,
-        checkpoint_path=checkpoint_path,
-        data_dir=data_dir,
-        device=device,
-    )
-    if bundle is None:
-        return
-    publish_pipeline(bundle)
+    with app_state.loading() as load:
+        try:
+            load.hold(resolve_serving_device(requested_serving_device(device)))
+            bundle = build_pipeline(
+                kg_path=kg_path,
+                checkpoint_path=checkpoint_path,
+                data_dir=data_dir,
+                device=device,
+            )
+            if bundle is None:
+                app_state.record_refusal(STARTUP_REFUSED, BUILD_REFUSED)
+                return
+            publish_pipeline(bundle)
+        except Exception:
+            app_state.record_refusal(STARTUP_REFUSED, load.lock_refusal or BUILD_REFUSED)
+            raise
 
 
 def initialize_ontology():

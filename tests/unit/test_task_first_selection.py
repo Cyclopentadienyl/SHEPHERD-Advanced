@@ -160,7 +160,7 @@ def service(tmp_path, monkeypatch):
     monkeypatch.setattr(api, "build_pipeline", build)
     monkeypatch.setattr(api, "publish_pipeline", published.append)
     monkeypatch.setattr(api.app_state, "pipeline", None, raising=False)
-    monkeypatch.setattr(api.app_state, "real_pipeline_requested", False, raising=False)
+    monkeypatch.setattr(api.app_state, "not_serving", None)
     return SimpleNamespace(data_dir=data_dir, built=built, published=published)
 
 

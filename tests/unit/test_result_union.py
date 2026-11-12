@@ -218,7 +218,8 @@ def test_with_no_pipeline_nothing_is_answered(monkeypatch):
     from src.api import main as api_main
 
     monkeypatch.setattr(api_main.app_state, "pipeline", None, raising=False)
-    monkeypatch.setattr(api_main.app_state, "real_pipeline_requested", True, raising=False)
+    monkeypatch.setattr(api_main.app_state, "not_serving", api_main.NotServingRecord(
+        api_main.STARTUP_REFUSED, "2026-11-12T10:00:00+00:00", api_main.BUILD_REFUSED))
     response = TestClient(api_main.app).post(
         "/api/v1/diagnose", json={"phenotypes": [SEIZURE], "top_k": 3,
                                   "include_explanations": True})
