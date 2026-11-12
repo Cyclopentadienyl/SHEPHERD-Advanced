@@ -663,12 +663,20 @@ def _summary(n_candidates: int, n_received: int, phenotype_input: Any,
 # Endpoints
 # =============================================================================
 @router.post("/diagnose", response_model=DiagnoseResponse)
-async def diagnose(request: DiagnoseRequest) -> DiagnoseResponse:
+def diagnose(request: DiagnoseRequest) -> DiagnoseResponse:
     """
     Run diagnosis on patient phenotypes
 
     Analyzes the provided HPO phenotypes and returns ranked disease candidates
     with explanations and supporting evidence.
+
+    **A plain ``def``** (BACKLOG 28; checkpoint A's verification of I4): its
+    work, the lease and the pipeline's run, is done in a worker thread, never
+    on the event loop, so a stop arriving meanwhile closes admission at once
+    and the status and the health check are answered. Diagnoses still run
+    one at a time: each runs its pipeline under the one run lock, taken
+    inside its lease (`AppState.running`), so a request waiting for it is
+    accepted and a stop waits for it.
     """
     import time
     start_time = time.time()
@@ -705,67 +713,71 @@ async def diagnose(request: DiagnoseRequest) -> DiagnoseResponse:
         # reload). `/ready` reads the same definition
         # (`AppState.not_serving_reason`). **The lease is held until the answer
         # is built**: a stop waits for it, and the pipeline is read once, so a
-        # reload published meanwhile cannot mix two models in one answer.
+        # reload published meanwhile cannot mix two models in one answer. **The
+        # run lock inside it** (`AppState.running`): one diagnosis runs its
+        # pipeline at a time, in this worker thread.
         with app_state.lease() as pipeline:
             try:
-                from src.core.types import PatientPhenotypes
+                with app_state.running():
+                    from src.core.types import PatientPhenotypes
 
-                patient_input = PatientPhenotypes(
-                    patient_id=patient_id,
-                    phenotypes=request.phenotypes,
-                    phenotype_confidences=request.phenotype_confidences,
-                    candidate_genes=request.candidate_genes,
-                )
+                    patient_input = PatientPhenotypes(
+                        patient_id=patient_id,
+                        phenotypes=request.phenotypes,
+                        phenotype_confidences=request.phenotype_confidences,
+                        candidate_genes=request.candidate_genes,
+                    )
 
-                served_mode = pipeline.served_identity().scoring_mode
-                reference = None
-                if served_mode == "patients_like_me" or request.reference_cohort is not None:
-                    reference = _reference_cohort(request.reference_cohort, served_mode, pipeline)
-                result = pipeline.run(
-                    patient_input=patient_input,
-                    top_k=request.top_k,
-                    include_explanations=request.include_explanations,
-                    reference_cohort=reference,
-                )
-                genes_ignored = genes_ignored and result.result_kind != "gene_task/v1"
+                    served_mode = pipeline.served_identity().scoring_mode
+                    reference = None
+                    if served_mode == "patients_like_me" or request.reference_cohort is not None:
+                        reference = _reference_cohort(request.reference_cohort, served_mode,
+                                                      pipeline)
+                    result = pipeline.run(
+                        patient_input=patient_input,
+                        top_k=request.top_k,
+                        include_explanations=request.include_explanations,
+                        reference_cohort=reference,
+                    )
+                    genes_ignored = genes_ignored and result.result_kind != "gene_task/v1"
 
-                if result.warnings:
-                    warnings.extend(result.warnings)
-                account = result.phenotype_input
-                body = {
-                    "result_kind": result.result_kind,
-                    "served_identity": result.served_identity.to_dict(),
-                    "phenotype_input": (asdict(result.phenotype_input)
-                                        if result.phenotype_input is not None else None),
-                    "candidates": [
-                        _candidate_body(c, request.include_explanations, request.include_paths)
-                        for c in result.candidates
-                    ],
-                }
-                if result.result_kind == "disease_task/v1":
-                    body.update(tie_policy=result.tie_policy)
-                elif result.result_kind == "gene_task/v1":
-                    body.update(tie_policy=result.tie_policy, sp_bounds=list(result.sp_bounds))
-                elif result.result_kind == "patients_like_me/v1":
-                    body.update(tie_policy=result.tie_policy,
-                                reference_cohort=result.reference_cohort)
+                    if result.warnings:
+                        warnings.extend(result.warnings)
+                    account = result.phenotype_input
+                    body = {
+                        "result_kind": result.result_kind,
+                        "served_identity": result.served_identity.to_dict(),
+                        "phenotype_input": (asdict(result.phenotype_input)
+                                            if result.phenotype_input is not None else None),
+                        "candidates": [
+                            _candidate_body(c, request.include_explanations, request.include_paths)
+                            for c in result.candidates
+                        ],
+                    }
+                    if result.result_kind == "disease_task/v1":
+                        body.update(tie_policy=result.tie_policy)
+                    elif result.result_kind == "gene_task/v1":
+                        body.update(tie_policy=result.tie_policy, sp_bounds=list(result.sp_bounds))
+                    elif result.result_kind == "patients_like_me/v1":
+                        body.update(tie_policy=result.tie_policy,
+                                    reference_cohort=result.reference_cohort)
 
-                if genes_ignored:
-                    warnings.insert(0, CANDIDATE_GENES_IGNORED_WARNING)
+                    if genes_ignored:
+                        warnings.insert(0, CANDIDATE_GENES_IGNORED_WARNING)
 
-                body.update(
-                    result_schema_version=result.result_schema_version,
-                    session_id=session_id,
-                    patient_id=patient_id,
-                    timestamp=datetime.now().isoformat(),
-                    summary=_summary(len(body["candidates"]), len(request.phenotypes), account,
-                                     body["result_kind"]),
-                    inference_time_ms=(time.time() - start_time) * 1000,
-                    warnings=warnings,
-                )
-                # Validated here, inside the handler, so a response that breaks the
-                # union's rules is refused with its reason, never sent.
-                response = DiagnoseResponse.model_validate(body)
+                    body.update(
+                        result_schema_version=result.result_schema_version,
+                        session_id=session_id,
+                        patient_id=patient_id,
+                        timestamp=datetime.now().isoformat(),
+                        summary=_summary(len(body["candidates"]), len(request.phenotypes), account,
+                                         body["result_kind"]),
+                        inference_time_ms=(time.time() - start_time) * 1000,
+                        warnings=warnings,
+                    )
+                    # Validated here, inside the handler, so a response that breaks the
+                    # union's rules is refused with its reason, never sent.
+                    response = DiagnoseResponse.model_validate(body)
             finally:
                 # **The model is not referenced past its lease** (`AppState.lease`):
                 # the stop this request's end may wake frees the device memory

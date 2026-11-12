@@ -35,7 +35,6 @@ Module: tests/unit/test_serving_reads_once.py
 """
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import inspect
 import json
@@ -447,8 +446,8 @@ def test_the_model_is_built_from_the_final_read_not_from_the_selection(
     monkeypatch.setattr(api, "build_pipeline", replace_then_build)
     from src.api.routes.pipeline import PipelineReloadRequest, reload_pipeline
 
-    result = asyncio.run(reload_pipeline(PipelineReloadRequest(data_dir=str(data_dir),
-                                                               task="disease")))
+    result = reload_pipeline(PipelineReloadRequest(data_dir=str(data_dir),
+                                                               task="disease"))
 
     assert result.success, result.message
     assert api.app_state.pipeline._checkpoint_identity.sha256 == replacement

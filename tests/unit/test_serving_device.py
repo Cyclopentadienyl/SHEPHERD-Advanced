@@ -25,7 +25,6 @@ Module: tests/unit/test_serving_device.py
 """
 from __future__ import annotations
 
-import asyncio
 import inspect
 import logging
 
@@ -477,9 +476,9 @@ def test_a_start_up_with_no_checkpoint_is_refused_for_that_not_its_device(
 def _reload(data_dir, checkpoint, device):
     from src.api.routes.pipeline import PipelineReloadRequest, reload_pipeline
 
-    return asyncio.run(reload_pipeline(PipelineReloadRequest(
+    return reload_pipeline(PipelineReloadRequest(
         data_dir=str(data_dir), checkpoint_path=str(checkpoint), device=device,
-    )))
+    ))
 
 
 @pytest.fixture
@@ -594,9 +593,9 @@ def test_a_reload_refused_for_its_device_reads_no_candidate_checkpoint(
     shutil.copyfile(checkpoint, candidate)
 
     with count_opens() as opens:
-        result = asyncio.run(reload_pipeline(PipelineReloadRequest(
+        result = reload_pipeline(PipelineReloadRequest(
             data_dir=str(data_dir), device=device, task="disease",
-        )))
+        ))
 
     assert result.success is False
     assert REMEDY in result.message

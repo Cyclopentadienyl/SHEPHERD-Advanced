@@ -149,9 +149,9 @@ def test_the_serving_phase_serves_through_the_lifecycle_and_stops_at_its_end(
     roots = []
     real_reload = routes.reload_pipeline
 
-    async def seen(request):
+    def seen(request):
         roots.append(os.environ.get("SHEPHERD_WORKSPACES_ROOT"))
-        return await real_reload(request)
+        return real_reload(request)
 
     monkeypatch.setattr(routes, "reload_pipeline", seen)
 
@@ -238,8 +238,8 @@ def test_e5_fails_when_a_refused_reload_moves_the_served_identity(trained, serve
     api = served_state
     real_reload = routes.reload_pipeline
 
-    async def reload_then_drift(request):
-        response = await real_reload(request)
+    def reload_then_drift(request):
+        response = real_reload(request)
         if not response.success:
             api.app_state.pipeline._device_requested = "cuda"
         return response

@@ -587,7 +587,7 @@ def test_a_request_ending_during_a_stop_leaves_the_lock_to_the_stop(service, mon
     assert stop.result.released is True
     assert at_answer is None, "the stop reported released while the flock was still held"
     assert "and the GPU lock given back" in stop.result.message
-    assert freed_in_request == [], "the request's thread (a diagnosis's is the event loop) freed"
+    assert freed_in_request == [], "the request's own thread freed the memory, not the stop"
 
 
 def test_a_stop_after_a_switch_to_the_cpu_frees_the_cuda_model_it_drained(service,

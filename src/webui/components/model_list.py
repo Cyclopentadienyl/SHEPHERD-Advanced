@@ -75,8 +75,8 @@ components (a filter, links) in the list's header and footer rows.
    workspace's graph read again, the refusal checked again on what the file
    holds now). A change in either since the confirmation was shown is said
    with the new values, and nothing is reloaded until the operator confirms
-   what is shown. Then WP2's one reload (`run_reload`, in process, on the event
-   loop as the API route runs it) with the workspace, the checkpoint the
+   what is shown. Then WP2's one reload (`run_reload`, in process, in a worker
+   thread as the API route runs it) with the workspace, the checkpoint the
    server resolves from the item and the task its record names, **bound to the
    model fingerprint shown** (`expected_checkpoint_sha256`): the file
    can still change between this hash and the reload's own read, seconds later
@@ -91,22 +91,21 @@ components (a filter, links) in the list's header and footer rows.
 **While the reload runs the confirmation shows only its status and Close**
 (`loading_buttons`, before the reload; the mockup's footer): Reload goes, at
 once in the browser too, so a second click cannot ask for a second reload, and
-Keep becomes Close, since closing does not stop it. **Close works at once**,
-although nothing on the server answers meanwhile: the page itself hides the
-confirmation (or the page's drawer, with its ×) and, once the reload has
-answered, sends the close to the server in order after that answer
-(`load_guard`, `start_wait_js`, `load_answered_js`); a close sent while the
-reload held the server would be handled after it in no fixed order with its
+Keep becomes Close, since closing does not stop it. **Close works at once**:
+the page itself hides the confirmation (or the page's drawer, with its ×) and,
+once the reload has answered, sends the close to the server in order after
+that answer (`load_guard`, `start_wait_js`, `load_answered_js`); a close sent
+while the reload ran would be handled beside it in no fixed order with its
 answer, and could leave the box open and empty. A closed load's outcome is not
 shown again: what is served then is on the page (the card, the list's "In use").
 
-**The page waits 180 s.** The reload holds the event loop (it never runs beside
-a diagnosis, BACKLOG 28), so nothing answers meanwhile: the page itself counts
-(a script built for this list's own confirmation, `start_wait_js`) and after
-180 s says "The page stopped waiting after 180 s; the server may still finish
-the reload." with "Read again" (a status read). When the reload's answer
-arrives later, it says so ("The reload finished after the page stopped
-waiting.").
+**The page waits 180 s.** The reload's build runs in a worker thread (BACKLOG
+28: the server answers other requests meanwhile) and can take minutes on a
+large graph, so the page itself counts (a script built for this list's own
+confirmation, `start_wait_js`) and after 180 s says "The page stopped waiting
+after 180 s; the server may still finish the reload." with "Read again" (a
+status read). When the reload's answer arrives later, it says so ("The reload
+finished after the page stopped waiting.").
 
 **Per browser session**: the listing, the selection, the view and the
 confirmation are `gr.State`; nothing here is module state.
@@ -1074,7 +1073,7 @@ def _sides_differ(one: Mapping[str, Any], other: Mapping[str, Any]) -> bool:
 
 def finish_load(plan: Optional[Mapping[str, Any]], request: Any, *,
                 reload: Any = None, environ: Optional[Mapping[str, str]] = None) -> LoadStep:
-    """Step 2, synchronous (the caller runs it on the event loop, as the API
+    """Step 2, synchronous (the caller runs it in a worker thread, as the API
     route runs its reload): D8 on this request; what is served and what would be
     loaded both read again, and the confirmation shown again with a notice when
     either changed; WP2's reload with what the server resolves from the item,
@@ -1559,10 +1558,11 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
         extra = on_loading["fn"](current or None, *page_values)
         return (*own, *extra)
 
-    async def _confirm(current, request: gr.Request):
-        # **D8, the status and the reload run here, on the event loop, with
-        # nothing awaited before the reload**: it waits behind a running
-        # diagnosis and never runs beside one, as the API route's does.
+    def _confirm(current, request: gr.Request):
+        # **D8, the status and the reload run here, in Gradio's worker thread
+        # (a plain ``def``), never on the event loop** (BACKLOG 28), as the
+        # API route's reload runs: a diagnosis accepted on the served model
+        # meanwhile finishes on it, and the server answers meanwhile.
         try:
             step = finish_load(current, request)
         except Exception as exc:  # noqa: BLE001 - the page must leave "loading"

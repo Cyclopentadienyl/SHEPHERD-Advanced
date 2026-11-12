@@ -40,7 +40,6 @@ Module: tests/unit/test_served_identity.py
 """
 from __future__ import annotations
 
-import asyncio
 import dataclasses
 import hashlib
 import json
@@ -900,8 +899,8 @@ def test_the_reported_metric_is_the_loaded_files_when_the_selection_was_replaced
 
     monkeypatch.setattr(api, "build_pipeline", replace_then_build)
 
-    result = asyncio.run(reload_pipeline(PipelineReloadRequest(data_dir=str(data_dir),
-                                                               task="disease")))
+    result = reload_pipeline(PipelineReloadRequest(data_dir=str(data_dir),
+                                                               task="disease"))
 
     assert result.success, result.message
     assert "; loaded file val_pooled_mrr=0.8123" in result.selection_reason
@@ -936,8 +935,8 @@ def test_a_replacement_without_a_metric_is_not_said_to_show_one(
 
     monkeypatch.setattr(api, "build_pipeline", replace_then_build)
 
-    result = asyncio.run(reload_pipeline(PipelineReloadRequest(data_dir=str(data_dir),
-                                                               task="disease")))
+    result = reload_pipeline(PipelineReloadRequest(data_dir=str(data_dir),
+                                                               task="disease"))
 
     assert result.success, result.message
     assert result.checkpoint_path == str(selected)
@@ -983,8 +982,8 @@ def test_best_is_said_only_of_a_file_ranked_by_its_metric(api, served_child, cas
     _with_val_pooled_mrr(checkpoint, run_dir / "model-a.pt", first, shift=1.0)
     _with_val_pooled_mrr(checkpoint, run_dir / "last.pt", last)
 
-    result = asyncio.run(reload_pipeline(PipelineReloadRequest(data_dir=str(data_dir),
-                                                               task="disease")))
+    result = reload_pipeline(PipelineReloadRequest(data_dir=str(data_dir),
+                                                               task="disease"))
 
     assert result.success, result.message
     assert result.checkpoint_path == str(run_dir / served)
@@ -1003,8 +1002,8 @@ def test_an_unreplaced_selection_reports_its_metric_and_no_replacement(api, serv
     selected = _with_val_pooled_mrr(checkpoint, _run_checkpoint(data_dir), 0.25)
 
     with count_opens() as opens:
-        result = asyncio.run(reload_pipeline(PipelineReloadRequest(data_dir=str(data_dir),
-                                                                   task="disease")))
+        result = reload_pipeline(PipelineReloadRequest(data_dir=str(data_dir),
+                                                                   task="disease"))
 
     assert result.success, result.message
     assert result.checkpoint_path == str(selected)

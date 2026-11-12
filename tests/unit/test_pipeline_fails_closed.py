@@ -36,7 +36,6 @@ Module: tests/unit/test_pipeline_fails_closed.py
 """
 from __future__ import annotations
 
-import asyncio
 import hashlib
 
 import pytest
@@ -274,7 +273,7 @@ def _diagnose(client):
 def _reload(**kwargs):
     from src.api.routes.pipeline import PipelineReloadRequest, reload_pipeline
 
-    return asyncio.run(reload_pipeline(PipelineReloadRequest(**kwargs)))
+    return reload_pipeline(PipelineReloadRequest(**kwargs))
 
 
 class TestStartupPublishesNothing:

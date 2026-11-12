@@ -159,6 +159,16 @@ class StopOutcome(NamedTuple):
     message: str
 
 
+class StopBegun(NamedTuple):
+    """A stop whose admission cut-off is set (`AppState.begin_stop`): who
+    stops, the model's digest and how many accepted requests it waits for.
+    The lifecycle is held until `AppState.finish_stop` ends it."""
+
+    by: str
+    sha256: Optional[str]
+    accepted: int
+
+
 def _on_cuda(device: Any) -> bool:
     """Whether a device name is a CUDA device, the one rule that decides the
     GPU lock: the resolved device before a build, the device in effect at
@@ -185,17 +195,26 @@ class AppState:
     state for what is served, how it is admitted and what it holds.
 
     - **One load or stop at a time** (`_lifecycle`, taken non-blocking): a
-      second is refused (`LifecycleBusy`), never queued, so the event loop,
-      where a reload and a diagnosis run, never waits for one. One wait is
-      bounded instead: a CUDA load that finds another process holding the
-      GPU lock tries it for the lock's grace (`gpu_lock.GRACE_SECONDS`, a
-      second, which the runner's and the chip's momentary probes of the lock
-      need) before it refuses, and a reload does that on the loop (BACKLOG
-      28 records the reload's place on the loop).
+      second is refused (`LifecycleBusy`), never queued. One wait is bounded
+      instead: a CUDA load that finds another process holding the GPU lock
+      tries it for the lock's grace (`gpu_lock.GRACE_SECONDS`, a second,
+      which the runner's and the chip's momentary probes of the lock need)
+      before it refuses.
+    - **No lifecycle request runs its work on the event loop** (BACKLOG 28,
+      checkpoint A's verification): a diagnosis (lease, run) and a reload's
+      build run in worker threads, and a stop closes admission on the loop
+      when it arrives (`begin_stop`, which waits for nothing) and drains in a
+      thread (`finish_stop`), so the status, the health check and a stop are
+      answered while a diagnosis or a load runs.
     - **Admission** (`_admission`): a request takes a lease on the pipeline
       served when it is accepted (`lease`) and gives it back when it ends; a
       stop refuses new ones at once and waits for the accepted ones, with no
       timeout and nothing killed.
+    - **One run at a time** (`running`, the one run lock): a diagnosis runs
+      its pipeline inside its lease and under this lock, so `pipeline.run`
+      never runs concurrently, as when the blocked loop serialised them; a
+      request accepted and waiting for it is in flight, and a stop waits for
+      it too.
     - **The holding**: CUDA serving holds the deployment's one GPU lock
       (`gpu_lock`, a `GpuLock` taken through `take_gpu_lock`), decided by the
       resolved device, from before a candidate is read until nothing uses it:
@@ -240,6 +259,9 @@ class AppState:
         self._current_checkpoint_path = None
         #: One load or stop at a time, taken non-blocking.
         self._lifecycle = threading.Lock()
+        #: The one run lock: one diagnosis runs its pipeline at a time, inside
+        #: its lease (`running`).
+        self._run = threading.Lock()
         #: Admission: the served fields are swapped and the leases counted
         #: under it.
         self._admission = threading.Condition(threading.Lock())
@@ -386,6 +408,17 @@ class AppState:
             if not stopping:
                 self._release_gpu_if_unused()
 
+    @contextmanager
+    def running(self) -> Iterator[None]:
+        """**The one run lock**, taken inside a lease: one request runs its
+        leased pipeline at a time (`/diagnose`), so `pipeline.run`, whose
+        caches are its own, never runs concurrently. Blocks while another
+        runs: call it from a worker thread, never on the event loop. A
+        request waiting here holds its lease, so it is in flight, and a stop
+        waits for it."""
+        with self._run:
+            yield
+
     # ------------------------------------------------------------------- load
     @contextmanager
     def loading(self) -> Iterator["ServingLoad"]:
@@ -505,35 +538,67 @@ class AppState:
     # ------------------------------------------------------------------- stop
     def stop_serving(self, *, by: str = "operator",
                      expected_checkpoint_sha256: Optional[str] = None) -> StopOutcome:
-        """**The one stop** (I4): new requests refused at once, with the
-        reason; the accepted ones waited for, with no timeout and nothing
-        killed; then the pipeline, its graph, the current paths and the
-        diagnosis reference-sample cache cleared, `gc`, and while the GPU lock
-        is held a synchronize and `empty_cache` (no claim that memory is
-        returned: the measured reading is the resource route's); then the GPU
-        lock and its description given back, by this stop alone (a request
-        ending meanwhile leaves them to it); only then is "released"
-        reported. Nothing
-        loaded is "nothing to stop". With `expected_checkpoint_sha256`, a
-        stop of another model is refused and it keeps serving. Refused with
-        `LifecycleBusy` while a load or another stop runs. `by` is who stops
-        it (`STOPPED_BY`). Blocks while it waits: call it from a thread."""
+        """**The one stop** (I4), in one call: `begin_stop`, then
+        `finish_stop`. Blocks while it waits: call it from a thread (the
+        dashboard's Stop inference and the shutdown do; the route closes
+        admission on the event loop itself and drains in a thread)."""
+        begun = self.begin_stop(by=by, expected_checkpoint_sha256=expected_checkpoint_sha256)
+        if isinstance(begun, StopOutcome):
+            return begun
+        return self.finish_stop(begun)
+
+    def begin_stop(self, *, by: str = "operator",
+                   expected_checkpoint_sha256: Optional[str] = None
+                   ) -> "StopBegun | StopOutcome":
+        """**The stop's admission cut-off, set when it arrives** (I4): new
+        requests are refused from here on, with the reason, and the accepted
+        ones are counted. **Waits for nothing** (the lifecycle taken
+        non-blocking, admission held for a few assignments), so the route
+        calls it on the event loop before it first yields, and no request
+        arriving after the stop is admitted. Returns the `StopBegun` that
+        `finish_stop` ends, the lifecycle held until then; or the outcome of
+        a stop that does nothing: nothing loaded is "nothing to stop", and
+        with `expected_checkpoint_sha256` a stop of another model is refused
+        and it keeps serving. Refused with `LifecycleBusy` while a load or
+        another stop runs. `by` is who stops it (`STOPPED_BY`)."""
         if not self._lifecycle.acquire(blocking=False):
             raise LifecycleBusy(self._busy_words())
         try:
             with self._admission:
                 if self.pipeline is None:
-                    return StopOutcome(False, False, "Nothing to stop: no model is loaded.")
-                sha = self.served_sha256
-                shown = expected_checkpoint_sha256
-                if shown is not None and sha != shown:
-                    serving = (f"the model in use is {sha[:12]}" if sha else
-                               "the model in use records no checkpoint fingerprint")
-                    return StopOutcome(False, False, (
-                        f"Not stopped: {serving}, not {shown[:12]} that was shown; it keeps "
-                        "serving. Read the status again to see what is served."))
-                self.transition = STOPPING
-                accepted = sum(self._leases.values())
+                    outcome = StopOutcome(False, False, "Nothing to stop: no model is loaded.")
+                else:
+                    sha = self.served_sha256
+                    shown = expected_checkpoint_sha256
+                    if shown is not None and sha != shown:
+                        serving = (f"the model in use is {sha[:12]}" if sha else
+                                   "the model in use records no checkpoint fingerprint")
+                        outcome = StopOutcome(False, False, (
+                            f"Not stopped: {serving}, not {shown[:12]} that was shown; it keeps "
+                            "serving. Read the status again to see what is served."))
+                    else:
+                        self.transition = STOPPING
+                        return StopBegun(by, sha, sum(self._leases.values()))
+        except BaseException:
+            self._lifecycle.release()
+            raise
+        self._lifecycle.release()
+        return outcome
+
+    def finish_stop(self, begun: StopBegun) -> StopOutcome:
+        """The rest of the stop `begin_stop` began: the accepted requests
+        waited for (those waiting for the run lock among them), with no
+        timeout and nothing killed; then the pipeline, its graph, the current
+        paths and the diagnosis reference-sample cache cleared, `gc`, and
+        while the GPU lock is held a synchronize and `empty_cache` (no claim
+        that memory is returned: the measured reading is the resource
+        route's); then the GPU lock and its description given back, by this
+        stop alone (a request ending meanwhile leaves them to it); only then
+        is "released" reported, and the lifecycle given back whatever
+        happened. Blocks while it waits: call it from a worker thread."""
+        by, sha, accepted = begun
+        try:
+            with self._admission:
                 while self._leases:
                     self._admission.wait()
                 device = self.serving_device

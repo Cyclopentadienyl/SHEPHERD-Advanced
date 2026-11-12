@@ -22,7 +22,11 @@ calls after its own check (the Load binds it to the model fingerprint it
 showed, `expected_checkpoint_sha256`, which an API client can pass too); and
 `run_stop`, the one stop. Both run in the service's one lifecycle
 (`src.api.main.AppState`): one load or stop at a time, refused rather than
-queued, CUDA serving under the deployment's GPU lock. The GET stays open.
+queued, CUDA serving under the deployment's GPU lock. **Neither runs its
+work on the event loop** (BACKLOG 28): a reload's build runs in a worker
+thread, and the stop closes admission on the loop as it arrives and drains in
+a thread of its own, so the status and the health check answer meanwhile.
+The GET stays open.
 **No configuration route**: `/pipeline/config` and its writer saved a
 selection to `.shepherd_ui_config.json` that nothing read back (no start-up,
 no page), so they are retired (the ops round's I10); a file an operator has is
@@ -32,9 +36,11 @@ Version: 1.0.0
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+import threading
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Callable, Dict, List, Literal, Optional
 
 from fastapi import APIRouter
 from fastapi.encoders import jsonable_encoder
@@ -382,56 +388,121 @@ async def get_pipeline_status() -> PipelineStatusResponse:
 
 @router.post("/pipeline/reload", response_model=PipelineReloadResponse,
              dependencies=OPERATOR_ONLY)
-async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadResponse:
+def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadResponse:
     """
     Reload the diagnosis pipeline with new data directory and/or checkpoint.
 
     An operator control: refused by D8's dependency before anything here runs.
-    `run_reload` does the work. **Still ``async`` with nothing awaited**, so the
-    reload runs on the event loop and waits behind a running diagnosis, as it
-    always has (BACKLOG 28 records that this serialisation is the blocked loop);
-    a stop running meanwhile refuses it at once, so the loop never waits for
-    one. A CUDA load that finds the GPU lock held by another process does wait,
-    for the lock's grace (`gpu_lock.GRACE_SECONDS`, a second), before it is
-    refused, on the loop.
+    `run_reload` does the work. **A plain ``def``** (BACKLOG 28): the build
+    runs in FastAPI's threadpool, never on the event loop, so the status, the
+    health check and a stop are answered while it runs, and a diagnosis
+    accepted on the served model meanwhile finishes on it (its lease; the
+    publish swaps under admission). Another load or a stop running meanwhile
+    refuses it at once. A CUDA load that finds the GPU lock held by another
+    process waits for the lock's grace (`gpu_lock.GRACE_SECONDS`, a second),
+    in its thread, before it is refused.
     """
     return run_reload(request)
 
 
 @router.post("/pipeline/stop", response_model=PipelineStopResponse,
              dependencies=OPERATOR_ONLY)
-def stop_pipeline(request: PipelineStopRequest) -> PipelineStopResponse:
+async def stop_pipeline(request: PipelineStopRequest) -> PipelineStopResponse:
     """
     Stop inference (I1, I4): new diagnoses refused at once, the accepted ones
     finished, then the model, its graph and the GPU lock released.
 
     An operator control: refused by D8's dependency before anything here runs,
     and its body is required (`PipelineStopRequest`), so an empty or
-    ill-shaped one is refused in validation and nothing is stopped. **A plain
-    ``def``**: the stop waits for the accepted requests, so it runs in the
-    threadpool, never on the event loop where they run. `run_stop` does the
-    work.
+    ill-shaped one is refused in validation and nothing is stopped. **The
+    admission cut-off is set as the stop arrives** (checkpoint A's
+    verification): this handler is ``async`` and closes admission first, on
+    the event loop, before it first yields (`begin_stop`, which waits for
+    nothing; D8's dependency takes no worker thread either), so no diagnosis
+    arriving after it is admitted, whatever the worker threads are doing.
+    Then it awaits the drain in a thread of its own (`finish_stop`), which
+    runs to its end whatever becomes of the request, so a stop begun always
+    releases the model and the lifecycle.
     """
-    return run_stop(request)
+    begun = begin_stop(request)
+    if isinstance(begun, PipelineStopResponse):
+        return begun
+    return await _to_its_end_in_a_thread(lambda: finish_stop(begun))
 
 
 def run_stop(request: PipelineStopRequest) -> PipelineStopResponse:
-    """The one stop: the route above (and the dashboard, in process, after
-    D8's check on its own request) call this. It goes through the service's
-    lifecycle (`AppState.stop_serving`): refused at once while a load or
-    another stop runs; nothing loaded is "nothing to stop"; bound to a shown
-    model, another one keeps serving. Blocks while the accepted requests
-    finish: call it from a thread."""
-    from src.api.main import LifecycleBusy, app_state
+    """The one stop for a caller in a worker thread (the dashboard's Stop
+    inference, in process, after D8's check on its own request): `begin_stop`,
+    then `finish_stop`, as the route makes them. Blocks while the accepted
+    requests finish: call it from a thread."""
+    begun = begin_stop(request)
+    if isinstance(begun, PipelineStopResponse):
+        return begun
+    return finish_stop(begun)
+
+
+def begin_stop(request: PipelineStopRequest) -> Any:
+    """The stop's admission cut-off (`AppState.begin_stop`): waits for
+    nothing, so the route calls it on the event loop. The answer of a stop
+    that does nothing (refused at once while a load or another stop runs;
+    nothing loaded is "nothing to stop"; bound to a shown model, another one
+    keeps serving), or the begun stop that `finish_stop` ends."""
+    from src.api.main import LifecycleBusy, StopOutcome, app_state
 
     try:
-        outcome = app_state.stop_serving(
+        begun = app_state.begin_stop(
             by="operator", expected_checkpoint_sha256=request.expected_checkpoint_sha256)
     except LifecycleBusy as busy:
         return PipelineStopResponse(success=False, released=False, message=str(busy),
                                     status=_live_status())
+    if isinstance(begun, StopOutcome):
+        return PipelineStopResponse(success=begun.success, released=begun.released,
+                                    message=begun.message, status=_live_status())
+    return begun
+
+
+def finish_stop(begun: Any) -> PipelineStopResponse:
+    """The rest of a begun stop (`AppState.finish_stop`): the accepted
+    requests waited for, then the model, its graph and the GPU lock
+    released; its answer, with the status after it. Blocks: call it from a
+    worker thread."""
+    from src.api.main import app_state
+
+    outcome = app_state.finish_stop(begun)
     return PipelineStopResponse(success=outcome.success, released=outcome.released,
                                 message=outcome.message, status=_live_status())
+
+
+async def _to_its_end_in_a_thread(work: Callable[[], Any]) -> Any:
+    """`work` run in a thread of its own, started now, and its answer awaited:
+    **the thread runs to its end whatever becomes of the awaiting request**
+    (a client gone, a shutdown), which a worker of the threadpool, waiting
+    for a free token at a cancellation point, does not promise. A stop that
+    closed admission therefore always drains and gives the lifecycle back.
+    Not a daemon: the interpreter waits for it before it exits."""
+    loop = asyncio.get_running_loop()
+    answer = loop.create_future()
+
+    def settle(result: Any, error: Optional[BaseException]) -> None:
+        if answer.done():
+            return
+        if error is not None:
+            answer.set_exception(error)
+        else:
+            answer.set_result(result)
+
+    def run() -> None:
+        try:
+            result, error = work(), None
+        except BaseException as exc:  # noqa: BLE001 - handed to the awaiting request
+            result, error = None, exc
+        try:
+            loop.call_soon_threadsafe(settle, result, error)
+        except RuntimeError:  # the event loop has closed: no request awaits it
+            pass
+
+    threading.Thread(target=run, name="inference-stop", daemon=False).start()
+    return await asyncio.shield(answer)
 
 
 def _out_of_memory(exc: BaseException) -> bool:
@@ -459,9 +530,11 @@ def run_reload(request: PipelineReloadRequest) -> PipelineReloadResponse:
     """
     The one reload: the route above and the dashboard's shared Load
     (`model_list`'s confirmation) both call this, each after D8's check on its
-    own request. Synchronous; a caller on
-    the event loop calls it without awaiting anything, so a reload never runs
-    beside a diagnosis.
+    own request. **Synchronous and blocking: every caller runs it in a worker
+    thread** (the route is a plain ``def``, the Load's confirmation a plain
+    ``def`` handler), never on the event loop (BACKLOG 28). A diagnosis
+    accepted on the served model while it builds finishes on that model (its
+    lease), and the publish swaps the served fields under admission.
 
     **It runs in the service's lifecycle** (`AppState.loading`): refused at
     once while another load or a stop runs, never queued. Its resolved device

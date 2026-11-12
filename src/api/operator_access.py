@@ -31,9 +31,14 @@ from fastapi import Depends, HTTPException, Request, status
 from src.utils.operator_access import check_operator_access
 
 
-def require_operator_access(request: Request) -> None:
+async def require_operator_access(request: Request) -> None:
     """403 unless D8 allows this request (`check_operator_access` on its own
-    scope). A plain `def`: it reads the scope and the environment only."""
+    scope). **An ``async def`` that awaits nothing**: it reads the scope and
+    the environment only, so it runs on the event loop and takes no worker
+    thread. A route's handler is reached without waiting for one, so a stop
+    of inference closes admission as it arrives even while every worker of
+    the threadpool runs a diagnosis (`pipeline.stop_pipeline`; checkpoint A's
+    verification of I4)."""
     access = check_operator_access(request.scope)
     if not access.allowed:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=access.refusal)

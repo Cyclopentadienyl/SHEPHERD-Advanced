@@ -415,13 +415,30 @@ def test_the_stop_route_refuses_an_empty_or_wrong_body_and_stops_nothing(monkeyp
     assert api.app_state.pipeline is served
 
 
-def test_the_stop_route_runs_off_the_event_loop():
-    """The stop waits for the accepted diagnoses, which run on the event loop,
-    so its route is a plain `def` (FastAPI's threadpool)."""
+def test_the_stop_closes_admission_as_it_arrives_and_drains_off_the_event_loop():
+    """Checkpoint A's verification of I4: the stop's admission cut-off is set
+    on arrival. Its route is ``async`` and its first statement closes
+    admission (`begin_stop`, which waits for nothing), before any ``await``;
+    the drain (`finish_stop`) runs in a thread. D8's dependency takes no
+    worker thread either, so a stop is never queued behind diagnoses that
+    hold every worker. The dashboard's stop (`run_stop`) is a plain `def`."""
+    import ast
+    import textwrap
+
+    from src.api import operator_access
     from src.api.routes import pipeline
 
-    assert not inspect.iscoroutinefunction(pipeline.stop_pipeline)
-    assert not inspect.iscoroutinefunction(pipeline.run_stop)
+    assert inspect.iscoroutinefunction(pipeline.stop_pipeline)
+    assert inspect.iscoroutinefunction(operator_access.require_operator_access)
+    for blocking in (pipeline.run_stop, pipeline.begin_stop, pipeline.finish_stop):
+        assert not inspect.iscoroutinefunction(blocking)
+    tree = ast.parse(textwrap.dedent(inspect.getsource(pipeline.stop_pipeline)))
+    body = tree.body[0].body
+    statements = [node for node in body if not (isinstance(node, ast.Expr)
+                                                and isinstance(node.value, ast.Constant))]
+    assert ast.unparse(statements[0]) == "begun = begin_stop(request)"
+    (only,) = [node for node in ast.walk(tree) if isinstance(node, ast.Await)]
+    assert only.lineno > statements[0].lineno
 
 
 def test_the_reload_route_is_refused_before_the_reload_runs(monkeypatch):
@@ -436,16 +453,18 @@ def test_the_reload_route_is_refused_before_the_reload_runs(monkeypatch):
     assert "another website" in response.json()["error"] and CANARY not in response.text
 
 
-def test_the_reload_route_runs_the_reload_on_the_event_loop(monkeypatch):
-    """The route calls `run_reload` on the event loop, never in a thread, as
-    the dashboard's Reload does (`test_the_reload_handler_runs_the_reload_on_
-    the_event_loop`): two reloads, or a reload and a diagnosis, then never run
-    side by side, whichever entrance each came through (BACKLOG 28)."""
+def test_the_reload_route_runs_the_reload_in_a_worker_thread(monkeypatch):
+    """The route calls `run_reload` in a worker thread, never on the event
+    loop, as the dashboard's Load does (`test_confirm_returns_the_phase_and_
+    the_served_model_changed_token`): the status, the health check and a stop
+    answer while it builds (BACKLOG 28); two loads never run side by side
+    (the lifecycle refuses the second), and a diagnosis accepted on the
+    served model finishes on it."""
     import asyncio
 
     from src.api.routes import pipeline
 
-    assert inspect.iscoroutinefunction(pipeline.reload_pipeline)
+    assert not inspect.iscoroutinefunction(pipeline.reload_pipeline)
     assert not inspect.iscoroutinefunction(pipeline.run_reload)
     where = []
 
@@ -460,7 +479,7 @@ def test_the_reload_route_runs_the_reload_on_the_event_loop(monkeypatch):
     monkeypatch.setattr(pipeline, "run_reload", reload_spy)
     operator_mode(monkeypatch)
     _app_client().post("/api/v1/pipeline/reload", json={"data_dir": "x"})
-    assert where == ["event loop"]
+    assert where == ["worker thread"]
 
 
 @pytest.mark.parametrize("url, service", [

@@ -2096,8 +2096,6 @@ def phase_serving(
     )
 
     def _reload_and_measure() -> Tuple[str, Dict[str, Any]]:
-        import asyncio
-
         from fastapi.encoders import jsonable_encoder
 
         from src.api.routes.pipeline import PipelineReloadRequest, reload_pipeline
@@ -2108,11 +2106,11 @@ def phase_serving(
         # lock (the probe's own, `_under_the_probes_own_gpu_lock`) from before
         # the candidate is read; on the CPU it takes none. A direct publication
         # is refused for a CUDA model (`publish_pipeline`).
-        live = asyncio.run(reload_pipeline(PipelineReloadRequest(
+        live = reload_pipeline(PipelineReloadRequest(
             data_dir=str(sound), checkpoint_path=str(checkpoint), task="disease",
             device=device,
             expected_checkpoint_sha256=state["bundle"].config["served_identity"]["checkpoint"][
-                "sha256"])))
+                "sha256"]))
         assert live.success, f"the lifecycle did not serve D1's child: {live.message}"
         assert live.status.holds_gpu_lock is (device == "cuda"), (
             f"serving on {device} says it holds the GPU lock: {live.status.holds_gpu_lock}")
@@ -2133,8 +2131,8 @@ def phase_serving(
             before_bytes = torch.cuda.memory_allocated()
         # **Selected by its task**, as the dashboard's Load names one: the
         # disease child among the workspace's runs, never the base beside it.
-        result = asyncio.run(reload_pipeline(PipelineReloadRequest(
-            data_dir=str(sound), task="disease", device=device)))
+        result = reload_pipeline(PipelineReloadRequest(
+            data_dir=str(sound), task="disease", device=device))
         assert result.success, "a sound workspace failed to reload"
         jsonable_encoder(result)
         if device == "cuda":
@@ -2164,8 +2162,6 @@ def phase_serving(
     )
 
     def _failed_reload_keeps_serving() -> Tuple[str, Dict[str, Any]]:
-        import asyncio
-
         from fastapi.encoders import jsonable_encoder
 
         import src.api.main as api
@@ -2188,8 +2184,8 @@ def phase_serving(
         shutil.copytree(sound, broken)
         (broken / "node_features.pt").write_bytes(b"same shape, another workspace")
 
-        result = asyncio.run(reload_pipeline(PipelineReloadRequest(
-            data_dir=str(broken), task="disease", device=device)))
+        result = reload_pipeline(PipelineReloadRequest(
+            data_dir=str(broken), task="disease", device=device))
         assert not result.success, "a mixed workspace was accepted"
         # **Refused for the replaced file**, not for a model it could not find.
         assert "node_features" in (result.message or ""), (
@@ -2215,7 +2211,6 @@ def phase_serving(
     )
 
     def _missing_manifest_reload() -> Tuple[str, Dict[str, Any]]:
-        import asyncio
 
         import src.api.main as api
         from src.api.routes.pipeline import PipelineReloadRequest, reload_pipeline
@@ -2225,8 +2220,8 @@ def phase_serving(
             shutil.rmtree(stripped)
         shutil.copytree(sound, stripped)
         (stripped / "split_manifest.json").unlink()
-        result = asyncio.run(reload_pipeline(PipelineReloadRequest(
-            data_dir=str(stripped), task="disease", device=device)))
+        result = reload_pipeline(PipelineReloadRequest(
+            data_dir=str(stripped), task="disease", device=device))
         assert not result.success, "an unbound workspace was accepted"
         assert result.files_found.get("split_manifest.json") is False, (
             "the file report did not name the missing manifest"
@@ -3662,16 +3657,14 @@ def _serve_and_view(data_dir: Path, checkpoint: Path, expected_sha256: str,
     must be the one expected, and the records answer, whose echoed digest must
     be that one.
     """
-    import asyncio
-
     from fastapi.testclient import TestClient
 
     import src.api.main as api
     from src.api.routes.pipeline import PipelineReloadRequest, reload_pipeline
 
-    result = asyncio.run(reload_pipeline(PipelineReloadRequest(
+    result = reload_pipeline(PipelineReloadRequest(
         data_dir=str(data_dir), checkpoint_path=str(checkpoint), task="disease", device=device,
-        expected_checkpoint_sha256=expected_sha256)))
+        expected_checkpoint_sha256=expected_sha256))
     assert result.success, f"the reload naming the checkpoint was refused: {result.message}"
     # Not entered as a context, which would run the application's lifespan and
     # build a pipeline from any SHEPHERD_* configuration in the environment over

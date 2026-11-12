@@ -1234,31 +1234,35 @@ def test_load_and_reload_refresh_the_chips_and_reload_sets_the_trigger(root, ser
 
 
 def test_confirm_returns_the_phase_and_the_served_model_changed_token(root, serving, monkeypatch):
-    import asyncio
+    """The confirmed Load is a plain ``def`` handler: Gradio runs it, and the
+    reload's build, in a worker thread, never on the event loop (BACKLOG 28,
+    checkpoint A's verification), as the API route runs its reload."""
+    import inspect
 
     from src.api.routes import pipeline as pipeline_routes
     from src.api.routes.pipeline import PipelineReloadResponse, PipelineStatusResponse
 
     demo, ctx, handle, _ = _component()
     confirm = _named(demo, "_confirm")
+    assert not inspect.iscoroutinefunction(confirm.fn)
     phase_at = confirm.outputs.index(handle.phase)
     token_at = confirm.outputs.index(ctx.served_model_changed)
     plan = _plan(root, monkeypatch)
     monkeypatch.setattr(pipeline_routes, "run_reload", lambda request: PipelineReloadResponse(
         success=True, message="ok", status=PipelineStatusResponse(
             **_status(root, served="model-12.pt"))))
-    out = asyncio.run(confirm.fn(plan, operator_request(monkeypatch)))
+    out = confirm.fn(plan, operator_request(monkeypatch))
     assert out[0] is None and out[phase_at] == "idle"
     assert out[token_at].startswith(root["shas"]["model-12.pt"] + "@")
     # shown again (what is served changed): still confirming, no token
     serving["value"] = _status(root)
     shown = _plan(root, monkeypatch)
     serving["value"] = _status(root, served="model-08.pt")
-    out = asyncio.run(confirm.fn(shown, operator_request(monkeypatch)))
+    out = confirm.fn(shown, operator_request(monkeypatch))
     assert out[phase_at] == "confirming" and out[token_at] == gr.update()
     # an unexpected error never leaves the page "loading"
     monkeypatch.setattr(ml, "finish_load", lambda *a, **k: (_ for _ in ()).throw(KeyError("x")))
-    out = asyncio.run(confirm.fn(plan, operator_request(monkeypatch)))
+    out = confirm.fn(plan, operator_request(monkeypatch))
     assert out[phase_at] == "idle" and "The Load stopped with an error." in out[2]
 
 
@@ -1295,8 +1299,8 @@ def test_while_a_reload_runs_the_confirmation_shows_only_its_status_and_close():
 
 
 def test_a_close_while_the_reload_runs_is_done_in_the_page_and_sent_after_its_answer():
-    """M5-3 review: the reload holds the server's event loop, so Close (and
-    the drawer's ×) did nothing until the reload answered; then its close and
+    """M5-3 review: while the reload ran, Close (and the drawer's ×) did
+    nothing until the reload answered; then its close and
     the answer came back in no fixed order, and the box could be left open,
     empty, with "Reload with <the model now served>". While a reload runs the
     page closes it at once (`load_guard`) and clicks Close again only after

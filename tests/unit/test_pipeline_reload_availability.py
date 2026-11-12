@@ -22,7 +22,6 @@ Module: tests/unit/test_pipeline_reload_availability.py
 """
 from __future__ import annotations
 
-import asyncio
 import copy
 
 import pytest
@@ -169,7 +168,7 @@ def _assert_untouched(api, before):
 
 
 def _reload(**kwargs):
-    return asyncio.run(reload_pipeline(PipelineReloadRequest(**kwargs)))
+    return reload_pipeline(PipelineReloadRequest(**kwargs))
 
 
 def _candidate_workspace(monkeypatch, tmp_path, name="candidate"):
