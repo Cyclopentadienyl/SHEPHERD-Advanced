@@ -139,7 +139,7 @@ from src.models.bundle.spec import hops_problem, reference_spec
 from src.utils.gpu_lock import lock_state
 from src.webui.components import charts
 from src.webui.components import renderers as r
-from src.webui.components.chips import D8_SHORT, chips_on_change, gpu_chip_from
+from src.webui.components.chips import D8_SHORT, busy_words, chips_on_change, gpu_chip_from
 from src.webui.components.help import copy_button, help_button
 from src.webui.components.workspaces import (
     manifest_facts,
@@ -740,7 +740,9 @@ def _gpu_line(active: Optional[Mapping[str, Any]], lock: Optional[Mapping[str, A
         return None
     chip = gpu_chip_from(None, lock, operator=operator)
     if chip.kind == "busy" or lock.get("problem"):
-        text = chip.text if chip.kind == "busy" else "the GPU lock cannot be used"
+        # The header chip's words, and where to stop this service's inference
+        # when that holds it (`busy_words`): the runner refuses a start itself.
+        text = busy_words(chip) if chip.kind == "busy" else "the GPU lock cannot be used"
         if lock.get("problem") and operator:
             text += f" ({lock['problem']})"
         return {"text": text, "test": False}

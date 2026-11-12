@@ -915,13 +915,14 @@ def read_job(*, manager: Any = None) -> Dict[str, Any]:
 
 
 def gpu_line(*, manager: Any = None, operator: bool = False) -> Tuple[str, str]:
-    """``(kind, words)`` of the GPU chip, read now (the header's wording)."""
-    from src.webui.components.chips import read_gpu_chip
+    """``(kind, words)`` of the GPU chip, read now (the header's wording, with
+    where to stop this service's inference when that holds it: `busy_words`)."""
+    from src.webui.components.chips import busy_words, read_gpu_chip
 
     if manager is None:
         from src.api.services.training_manager import training_manager as manager
     chip = read_gpu_chip(manager, operator=operator)
-    return chip.kind, chip.text
+    return chip.kind, busy_words(chip)
 
 
 # ---------------------------------------------------------------------------

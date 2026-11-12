@@ -11,14 +11,20 @@ for the request that asked: "🔒 Operator controls: on (this machine)", or grey
 control and how to reach them, and, when refused, the check's own reason (which
 repeats no header value). It is a display: each control checks its own request.
 
-**The GPU chip** says which managed GPU job holds the one GPU slot, from the job
-runner (`training_manager.active_job`) and, for a job started elsewhere, the GPU
+**The GPU chip** says what holds the one GPU slot, from the job runner
+(`training_manager.active_job`) and, for a holder outside the runner, the GPU
 lock's descriptive holder record (`src/utils/gpu_lock.py`): "GPU jobs: none",
-"GPU job: training (job runner)", "GPU job: test run (job runner)", "GPU job:
+"GPU job: training (job runner)", "GPU job: test run (job runner)", "GPU:
+inference (this service)" (this process's CUDA inference, which holds the lock
+while a model is loaded on CUDA, the ops round's I2; with where it is stopped),
+"GPU: inference (pid …, since …)" (another process's), "GPU job:
 train_model.py (pid …, since …)" (what the holder record says: its command, pid
 and start; never "CLI", which the record does not say), or grey "GPU jobs: not
-read". It never says "free": the lock is cooperative, and the resident
-inference service is outside it, which its ⓘ says.
+read". It never says "free": the lock is cooperative (a GPU process that does
+not take it is not stopped by it), and inference on the CPU takes no lock,
+which its ⓘ says. The research start controls repeat its words, with where to
+stop this service's inference (`busy_words`); the job runner's refusal stays
+the authority.
 
 **Nothing here raises and no exception text is shown**: a read that fails is the
 grey "not read" state with a fixed sentence. Every value from a file or a
@@ -31,12 +37,13 @@ from __future__ import annotations
 
 import html
 import logging
+import os
 from datetime import datetime
 from typing import Any, Callable, Mapping, NamedTuple, Optional
 
 import gradio as gr
 
-from src.utils.gpu_lock import lock_state
+from src.utils.gpu_lock import SERVING_JOB_TYPE, lock_state
 from src.utils.operator_access import CONDITIONS, OperatorAccess
 from src.webui.components.help import help_button
 
@@ -59,8 +66,8 @@ D8_ON = "Operator controls: on (this machine)"
 #: Every operator control, as the D8 chip's ⓘ lists them (no exception remains).
 D8_SCOPE = (
     "Operator controls: the import (preview and commit), test start and cancel, "
-    "registration, model load, the checkpoint list, training start and stop, pipeline "
-    "reload, saving settings, and restart."
+    "registration, model load, stopping inference, the checkpoint list, training start and "
+    "stop, pipeline reload, saving settings, and restart."
 )
 #: How to reach them.
 D8_HOW = (
@@ -75,11 +82,18 @@ D8_HOW = (
 GPU_SCOPE = (
     "One GPU lock covers managed training and evaluation jobs: the ones started here or "
     "through the API (the job runner) and the formal training and evaluation CLIs "
-    "(train_model.py, measure_scorer.py). A second job is refused, not queued. The resident "
-    "inference service is outside the lock and may still hold GPU memory."
+    "(train_model.py, measure_scorer.py). This service's inference holds it while a model "
+    "is loaded on CUDA, until an operator stops inference. A second holder is refused, not "
+    "queued. Inference on the CPU takes no lock."
 )
 
 GPU_NONE = "GPU jobs: none"
+#: This service's CUDA inference holding the lock (its holder record's job
+#: type is `SERVING_JOB_TYPE` and its pid this process's).
+GPU_INFERENCE = "GPU: inference (this service)"
+#: Where an operator frees the GPU from this service's inference: said beside
+#: every research start it disables (`busy_words`) and in the chip's ⓘ.
+STOP_INFERENCE_HERE = "stop it with Stop inference on Diagnosis"
 GPU_NOT_READ = "GPU jobs: not read"
 GPU_NOT_CONFIGURED = "GPU jobs: refused, lock not configured"
 #: What the chip's ⓘ says with no workspaces root set (review of 8242b47,
@@ -105,11 +119,14 @@ _COMMAND_LIMIT = 40
 
 
 class Chip(NamedTuple):
-    """One chip: its look (`kind`, a CSS modifier), its words and its ⓘ text."""
+    """One chip: its look (`kind`, a CSS modifier), its words, its ⓘ text and,
+    for a holder an operator here can end (this service's inference), where
+    to end it (`remedy`, "" otherwise)."""
 
     kind: str
     text: str
     detail: str
+    remedy: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -177,7 +194,16 @@ def gpu_chip_from(active: Optional[Mapping[str, Any]], lock: Mapping[str, Any],
     if not description:
         return Chip("none", GPU_NONE, GPU_SCOPE)
     holder = lock.get("holder")
-    if isinstance(holder, Mapping) and lock.get("holder_alive") is not False:
+    alive = isinstance(holder, Mapping) and lock.get("holder_alive") is not False
+    if alive and holder.get("job_type") == SERVING_JOB_TYPE and holder.get("pid") == os.getpid():
+        # **This service's inference**, named as such, never by its holder
+        # record's words (which name the host): the job runner names it the
+        # same way when it refuses a job (`_slot_refusal_locked`).
+        return Chip("busy", GPU_INFERENCE,
+                    "Held by this service's inference: a model is loaded on CUDA. To start a "
+                    f"training or a test run, {STOP_INFERENCE_HERE} (Model in use), or with "
+                    f"POST /api/v1/pipeline/stop.\n\n{GPU_SCOPE}", remedy=STOP_INFERENCE_HERE)
+    if alive:
         # What the holder record says, and only that: its command, pid and
         # start. A formal CLI run and another server's job runner write the
         # same record (the runner starts the same scripts), so the record does
@@ -190,11 +216,20 @@ def gpu_chip_from(active: Optional[Mapping[str, Any]], lock: Mapping[str, Any],
         since = _since(holder.get("started_at"))
         if since:
             parts.append(f"since {since}")
-        text = f"GPU job: {_command(holder.get('command'))}" + (f" ({', '.join(parts)})"
-                                                                  if parts else "")
+        what = ("GPU: inference" if holder.get("job_type") == SERVING_JOB_TYPE
+                else f"GPU job: {_command(holder.get('command'))}")
+        text = what + (f" ({', '.join(parts)})" if parts else "")
     else:
         text = "GPU job: lock held, holder not described"
     return Chip("busy", text, f"Held by {description}.\n\n{GPU_SCOPE}")
+
+
+def busy_words(chip: Chip) -> str:
+    """The GPU chip's words as a research start control repeats them beside the
+    start it disables (the Training run bar, Fine-tune, Test): the chip's own,
+    then, for this service's inference, where to stop it. A display: the job
+    runner refuses a start itself, naming the holder."""
+    return f"{chip.text}; {chip.remedy}" if chip.remedy else chip.text
 
 
 def read_gpu_chip(manager: Any, *, operator: bool,
@@ -276,10 +311,13 @@ __all__ = [
     "D8_ON",
     "D8_SCOPE",
     "D8_SHORT",
+    "GPU_INFERENCE",
     "GPU_NONE",
     "GPU_NOT_READ",
     "GPU_NOT_CONFIGURED",
     "GPU_SCOPE",
+    "STOP_INFERENCE_HERE",
+    "busy_words",
     "chip_html",
     "chips_html",
     "chips_on_change",

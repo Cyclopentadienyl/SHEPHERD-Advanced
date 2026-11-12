@@ -39,8 +39,8 @@ def test_on_says_this_machine_and_lists_every_control():
     chip = c.d8_chip(ENABLED)
     assert (chip.kind, chip.text) == ("on", "Operator controls: on (this machine)")
     for control in ("import", "test start and cancel", "registration", "model load",
-                    "checkpoint list", "training start and stop", "pipeline reload",
-                    "saving settings", "restart"):
+                    "stopping inference", "checkpoint list", "training start and stop",
+                    "pipeline reload", "saving settings", "restart"):
         assert control in chip.detail, control
     assert "SSH forward" in chip.detail and "forwarding header" in chip.detail
     assert "except" not in chip.detail.lower()
@@ -98,9 +98,81 @@ def test_a_runner_job_is_named_by_its_type(job_type, status, text):
 
 
 def test_nothing_running_is_none_never_free():
+    """Never "free": the lock is cooperative. Since the ops round's A3a CUDA
+    inference holds it, so the ⓘ says that and that the CPU takes none; it no
+    longer says inference is outside the lock."""
     chip = c.gpu_chip_from(None, LOCK_FREE, operator=True)
     assert (chip.kind, chip.text) == ("none", "GPU jobs: none")
-    assert "resident inference service is outside the lock" in chip.detail
+    assert "inference holds it while a model is loaded on CUDA" in chip.detail
+    assert "Inference on the CPU takes no lock" in chip.detail
+    assert "outside the lock" not in chip.detail and chip.remedy == ""
+
+
+def _inference_holder(pid):
+    from src.utils.gpu_lock import SERVING_COMMAND, SERVING_JOB_TYPE
+
+    holder = {"job_type": SERVING_JOB_TYPE, "command": SERVING_COMMAND, "pid": pid,
+              "host": "server-host-name", "started_at": "2026-11-12T09:58:12+00:00"}
+    return {**LOCK_FREE, "holder": holder, "holder_alive": True,
+            "held_by": f"an inference job ({SERVING_COMMAND}, pid {pid} on server-host-name, "
+                       "as it described itself)"}
+
+
+def test_this_services_inference_is_named_as_such_with_where_to_stop_it():
+    """The ops round's A3b: a holder whose job type is inference and whose pid
+    is this process's is this service's CUDA inference, "GPU: inference (this
+    service)"; its ⓘ says where to stop it and names no host; the research
+    start lines repeat the words with the pointer (`busy_words`)."""
+    chip = c.gpu_chip_from(None, _inference_holder(os.getpid()), operator=False)
+    assert (chip.kind, chip.text) == ("busy", "GPU: inference (this service)")
+    assert chip.remedy == c.STOP_INFERENCE_HERE
+    assert "Stop inference on Diagnosis" in chip.detail and "POST /api/v1/pipeline/stop" in chip.detail
+    assert "server-host-name" not in chip.detail and c.GPU_SCOPE in chip.detail
+    assert c.busy_words(chip) == ("GPU: inference (this service); stop it with Stop inference "
+                                  "on Diagnosis")
+    html = c.chip_html(chip, which="gpu")
+    assert "GPU: inference (this service)" in html and "server-host-name" not in html
+
+
+def test_another_processs_inference_is_inference_with_its_pid_never_this_service():
+    chip = c.gpu_chip_from(None, _inference_holder(os.getpid() + 1), operator=True)
+    assert chip.text == f"GPU: inference (pid {os.getpid() + 1}, since 09:58 UTC)"
+    assert chip.remedy == "" and c.busy_words(chip) == chip.text
+    assert "this service" not in chip.text
+
+
+def test_a_runner_job_needs_no_pointer():
+    chip = c.gpu_chip_from({"job_type": "training", "status": "running"}, LOCK_FREE,
+                           operator=True)
+    assert c.busy_words(chip) == "GPU job: training (job runner)"
+
+
+def test_the_chip_and_the_research_starts_read_this_services_real_holding(monkeypatch,
+                                                                          tmp_path):
+    """This process holding the lock as its CUDA inference does
+    (`take_gpu_lock(SERVING_JOB_TYPE, SERVING_COMMAND)`): the chip, the
+    Training run bar's GPU line and the Test page's start reason name it and
+    point to Stop inference."""
+    from src.utils.gpu_lock import SERVING_COMMAND, SERVING_JOB_TYPE, lock_state, take_gpu_lock
+    from src.webui.components import test_page as tp
+    from src.webui.components import training_console as tc
+
+    monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(tmp_path))
+
+    class Idle:
+        def active_job(self):
+            return None
+
+    held = take_gpu_lock(SERVING_JOB_TYPE, SERVING_COMMAND)
+    try:
+        assert c.read_gpu_chip(Idle(), operator=False).text == c.GPU_INFERENCE
+        line = tc._gpu_line(None, lock_state(), None, operator=True)
+        assert line == {"text": f"{c.GPU_INFERENCE}; {c.STOP_INFERENCE_HERE}", "test": False}
+        kind, words = tp.gpu_line(manager=Idle(), operator=True)
+        assert (kind, words) == ("busy", f"{c.GPU_INFERENCE}; {c.STOP_INFERENCE_HERE}")
+    finally:
+        held.release()
+    assert c.read_gpu_chip(Idle(), operator=True).text == "GPU jobs: none"
 
 
 def test_a_holder_outside_this_runner_is_named_by_what_its_record_says():
