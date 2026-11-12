@@ -8,9 +8,10 @@ each record with its run and how its condition group compares in the store.
 Endpoint:
     GET /evaluations/loaded-model — the loaded model's recorded results
 
-**Its own router, outside `pipeline.router`.** SPEC_4's C3 class covers the
-reload, the UI configuration and checkpoint inspection; a deployment applying
-B2 by unmounting or protecting that router as a whole keeps this view, which
+**Its own router, outside `pipeline.router`.** That router holds the
+pipeline's status, reload and stop (the configuration route SPEC_4's C3 class
+also names is retired, the ops round's I10); a deployment applying B2 by
+unmounting or protecting that router as a whole keeps this view, which
 reads the ledger, the registry's version manifests (each ``cohort.json`` once,
 to find each shown record's version by the cohort digest its key carries) and
 the report store of each shown record's version; no checkpoint, and no write

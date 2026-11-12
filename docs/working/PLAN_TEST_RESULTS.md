@@ -1916,16 +1916,19 @@ contract and BACKLOG stay the record, and no new planning document is added.
   root-cause round, the deployment's workspaces root is its one name, below); a busy
   lock is refused with who holds it, never queued. The lock covers the working process's whole
   life, with tests for a stop, an abnormal exit and a parent and child process. What is claimed
-  is exactly that: managed training and evaluation jobs exclude each other, and so does the
-  service's CUDA inference, which holds the lock while it serves on CUDA (since the ops-wiring
-  round's A3a, 2026-11-12; serving on the CPU takes none). `flock` is released only when every
-  descriptor of its file is closed, which a child can inherit, and it is cooperative, so a GPU
-  process that does not take it is not stopped. No inference scheduling, multi-GPU allocation
-  or automatic model unloading is added; the owner's requirement that training and inference
-  exclude each other (2026-10-23) is BACKLOG 48, met in its minimal form by that round
-  (`working/ops-wiring-and-ui-ux/README.md`, I1-I10): an operator loads and stops inference, a
-  stop lets the accepted diagnoses finish before it releases, and a GPU job is refused while
-  CUDA inference holds the lock, naming it.
+  is exactly that: managed training and evaluation jobs exclude each other. `flock` is
+  released only when every descriptor of its file is closed, which a child can inherit, and it
+  is cooperative, so a GPU process that does not take it is not stopped; the resident
+  inference service may still hold memory. No cross-process inference scheduling, multi-GPU
+  allocation or automatic model unloading is added; the owner's requirement that training and
+  inference exclude each other (2026-10-23) is BACKLOG 48, recorded and not started.
+  *(2026-11-12: the service's CUDA inference takes the same lock while it serves on CUDA, and
+  serving on the CPU takes none, so CUDA inference and the managed jobs exclude each other; no
+  inference scheduling, multi-GPU allocation or automatic unloading is added. BACKLOG 48 is met
+  in its minimal form by the ops-wiring round's A3a,
+  [`ops-wiring-and-ui-ux/README.md`](ops-wiring-and-ui-ux/README.md) I1-I10: an operator loads
+  and stops inference, a stop lets the accepted diagnoses finish before it releases the model
+  and the lock, and a GPU job is refused while CUDA inference holds the lock, naming it.)*
   *As implemented (M5-1, 2026-10-20):* `src/utils/gpu_lock.py`. The lock file was
   `SHEPHERD_GPU_LOCK_FILE`, or `.shepherd-gpu.lock` under `SHEPHERD_WORKSPACES_ROOT` (since the
   root-cause round only the latter, below); with

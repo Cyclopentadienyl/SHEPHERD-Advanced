@@ -325,8 +325,9 @@ BACKLOG 57; it went with the ShepherdGNN training path and its loader.)*
    three tensors) match the workspace it is served over, and that workspace's dataset record is the
    one its manifest binds; then it runs the GNN forward pass once and caches every node embedding.
    **On CUDA it holds the deployment's GPU lock** from before the checkpoint is read until an
-   operator stops inference (`POST /api/v1/pipeline/stop`), so a training or test job waits for
-   that stop; on the CPU it takes none (the ops-wiring round's A3a, `src/api/main.py` `AppState`).
+   operator stops inference (`POST /api/v1/pipeline/stop`), so a training or test job is refused,
+   naming inference, until an operator stops it; on the CPU it takes none (the ops-wiring round's
+   A3a, `src/api/main.py` `AppState`).
 3. **No model, no pipeline** (K7): with a graph configured (`SHEPHERD_KG_PATH`) and no model
    source, with nothing configured, or with a requested model that cannot be built, no pipeline
    is published; `/diagnose` and `/ready` answer 503 with the reason and `/health` stays 200, so a
