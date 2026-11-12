@@ -430,6 +430,10 @@ def test_a_fine_tune_spec_is_one_tasks_and_keeps_its_bases_graph_side(base):
     result, calls = _finetune(base, "disease", "gene", num_neighbors=[3], model_spec=own)
     assert result["success"] is False and calls == []
     assert "model_spec is one task's spec" in result["error"]
+    result, calls = _finetune(base, "disease", "gene", num_neighbors=[3], model_spec=None)
+    assert result["success"] is True and len(calls) == 1, "a null spec is no spec"
+    assert yaml.safe_load(Path(calls[0][calls[0].index("--config") + 1]).read_text())[
+        "model_spec"] is None
     other = reference_spec("finetune", "disease").to_dict()
     result, calls = _finetune(base, "disease", num_neighbors=[3], model_spec=other)
     assert result["success"] is False and calls == []

@@ -1408,7 +1408,11 @@ class TrainingManager:
             return refused("A task is named more than once; each task is one child.")
         problem = _recipe_settings_problem(inputs.settings, "finetune", tasks,
                                            f"a Fine-tune start of {_task_words(tasks)}")
-        if problem is None and "model_spec" in inputs.settings and len(tasks) > 1:
+        # A spec is one task's (its patient encoder and task head); a null one
+        # is no spec: each child then builds its base's graph side with its
+        # own task's reference head, as its process does.
+        if (problem is None and inputs.settings.get("model_spec") is not None
+                and len(tasks) > 1):
             problem = (f"model_spec is one task's spec (its patient encoder and task head), and "
                        f"a Fine-tune start of {_task_words(tasks)} would give it to every child; "
                        "start each task with its own.")
