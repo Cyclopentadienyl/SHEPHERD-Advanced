@@ -328,6 +328,16 @@ ALLOWED = {
     ("scripts/probe_deployment.py", "_served_requests", "json.loads"):
         (1, _PROBE + "S1: a timed diagnose request's HTTP answer from the service the probe "
             "started, read for its served identity and handler time; not a file"),
+    # --- The ops-wiring round's inference lifecycle (A3b, W12): HTTP answers ---
+    ("scripts/probe_deployment.py", "_diagnosis_answer", "json.loads"):
+        (1, _PROBE + "W12: a diagnose request's HTTP answer across the stop, read for its "
+            "served identity or its refusal's reason; not a file"),
+    ("scripts/probe_deployment.py", "_diagnoses_across_a_stop", "json.loads"):
+        (1, _PROBE + "W12: the stop route's HTTP answer (released, its message and status); "
+            "not a file"),
+    ("scripts/probe_deployment.py", "_inference_handoff._handoff.post", "json.loads"):
+        (1, _PROBE + "W12: a POST's HTTP answer from the service the probe started (a reload, "
+            "a refused runner start); not a file"),
 }
 
 _MODULES = ("hashlib", "json", "torch")
