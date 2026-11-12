@@ -126,6 +126,10 @@ def _status(root, served="model-05.pt", run=RUN, **extra):
                          "use_direct_path_optimization": True,
                          "phenotype_normalisation_version": 1},
         },
+        # The lifecycle's fields, which the status route always carries
+        # (`PipelineStatusResponse`): a model serving.
+        "serving": "serving", "loading": False, "in_flight": 0, "holds_gpu_lock": False,
+        "not_serving_reason": None,
     }
     status.update(extra)
     return status
@@ -775,13 +779,14 @@ def test_no_registry_is_said_without_a_path(root, tmp_path, monkeypatch):
      "Stopping · 3 in flight"),
     ({"serving": "not_loaded", "loading": True, "in_flight": 0}, "loading", "Loading"),
     ({"serving": "not_loaded", "loading": False, "in_flight": 0}, "not_loaded", "Not loaded"),
-    ({"initialized": True}, "serving", "Serving"),          # no lifecycle fields
-    ({"initialized": False}, "not_loaded", "Not loaded"),
 ])
 def test_the_serving_state_is_the_status_s_in_its_own_words(lifecycle, state, words):
     """The ops round's A3b: the card's state is read from the status's
-    lifecycle fields (the backend's), never a page flag."""
-    assert card.serving_state(lifecycle) == (state, words)
+    lifecycle fields (the backend's), never a page flag, and from nothing
+    else: `initialized` alone says no state (the status route always carries
+    the lifecycle's fields, so nothing reads a shape it never answers)."""
+    assert card.serving_state({"initialized": True, **lifecycle}) == (state, words)
+    assert card.serving_state({**lifecycle, "initialized": False}) == (state, words)
     assert card.serving_state(None) == ("unknown", "Not known")
 
 

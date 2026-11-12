@@ -225,8 +225,17 @@ def test_export_basename_falls_back_when_ids_missing():
 
 
 # ------------------------------------------------------------------- the page's handlers
+#: The lifecycle's fields as the status route answers them
+#: (`PipelineStatusResponse`, `AppState.snapshot`): a model serving, and
+#: nothing loaded with the service's reason.
+_SERVING = {"serving": "serving", "loading": False, "in_flight": 0, "holds_gpu_lock": False,
+            "not_serving_reason": None}
+_NOT_LOADED = {"serving": "not_loaded", "loading": False, "in_flight": 0, "holds_gpu_lock": False,
+               "not_serving_reason": "No model is loaded, so no diagnosis can be produced."}
+
+
 def _no_model_status():
-    return {"initialized": False}
+    return {"initialized": False, **_NOT_LOADED}
 
 
 def _loaded_status(**extra):
@@ -234,7 +243,7 @@ def _loaded_status(**extra):
     status = {
         "initialized": True, "gnn_ready": True,
         "scoring_mode": "disease_task", "kg_nodes": 10, "kg_edges": 20,
-        "served_identity": _served_identity(),
+        "served_identity": _served_identity(), **_SERVING,
     }
     status.update(extra)
     return status
@@ -242,7 +251,7 @@ def _loaded_status(**extra):
 
 def _status_serving(identity, **extra):
     status = {"initialized": True, "gnn_ready": True, "served_identity": identity,
-              "checkpoint_meta": {"epoch": 5}}
+              "checkpoint_meta": {"epoch": 5}, **_SERVING}
     status.update(extra)
     return status
 

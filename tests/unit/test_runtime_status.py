@@ -232,7 +232,17 @@ def _status() -> dict:
                                       "split_manifest_sha256": "c" * 64},
                             "shortest_paths": {"state": "absent"},
                             "dataset_record": {"state": "verified", "origin": "files"}},
+        # The lifecycle's fields, which the status route always carries.
+        "serving": "serving", "loading": False, "in_flight": 0, "holds_gpu_lock": False,
+        "not_serving_reason": None,
     }
+
+
+#: Nothing loaded, as the status route answers it (`PipelineStatusResponse`
+#: and `AppState.not_serving_reason`).
+_NOT_LOADED = {"initialized": False, "serving": "not_loaded", "loading": False, "in_flight": 0,
+               "holds_gpu_lock": False,
+               "not_serving_reason": "No model is loaded, so no diagnosis can be produced."}
 
 
 def _card(status):
@@ -255,7 +265,7 @@ def test_the_card_says_no_model_serves_for_as_long_as_it_is_true():
     pytest.importorskip("gradio")
     from src.webui.components import diagnosis_card as card
 
-    without = card.body_html(_card({"initialized": False}))
+    without = card.body_html(_card(_NOT_LOADED))
     served = card.body_html(_card(_status()))
 
     assert "Not loaded" in without and "path reasoning" not in without

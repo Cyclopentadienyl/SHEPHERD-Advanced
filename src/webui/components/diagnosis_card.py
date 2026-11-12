@@ -226,13 +226,11 @@ def serving_state(status: Optional[Mapping[str, Any]]) -> Tuple[str, str]:
     ("Serving"), ``stopping`` ("Stopping · N in flight": the accepted
     diagnoses still running), ``loading`` ("Loading": nothing served yet, a
     load runs) or ``not_loaded`` ("Not loaded"); ``unknown`` ("Not known")
-    without a status. A status without the lifecycle fields says only whether
-    a pipeline is served (``initialized``)."""
+    without a status. The status route always carries these fields
+    (`PipelineStatusResponse`), so they are read as it gives them."""
     if not isinstance(status, Mapping):
         return "unknown", "Not known"
     serving = status.get("serving")
-    if serving is None:
-        serving = SERVING if status.get("initialized") else NOT_LOADED
     if serving == STOPPING:
         count = status.get("in_flight")
         count = count if isinstance(count, int) and not isinstance(count, bool) else 0
@@ -666,8 +664,6 @@ def _chips(status: Mapping[str, Any], *, grey: bool) -> List[str]:
     return [r.chip(text, "grey shep-tag-dashed" if grey else kind_) for text, kind_ in chips]
 
 
-#: What not being served means, when the status gives no reason of its own.
-NOT_SERVING_MEANS = "Diagnoses are refused until a model is loaded."
 #: The serving state's mark (the skill's §6: shape and word with the colour).
 _STATE_MARK = {SERVING: '<span class="shep-ok-t"><span aria-hidden="true">●</span> {}</span>',
                LOADING: '<span class="shep-dx-loading-t"><span class="shep-spinner" '
@@ -680,9 +676,9 @@ _STATE_MARK = {SERVING: '<span class="shep-ok-t"><span aria-hidden="true">●</s
 
 def _serving_html(status: Mapping[str, Any], *, grey: bool) -> str:
     """The serving state's line (`serving_state`), and under it the backend's
-    own reason when no diagnosis is admitted (``not_serving_reason``: it
-    names no path). Grey while the card is not current: the last known
-    state."""
+    own reason when no diagnosis is admitted (``not_serving_reason``, which
+    the service gives whenever nothing is admitted, and which names no
+    path). Grey while the card is not current: the last known state."""
     state, words = serving_state(status)
     if state == "unknown":
         return ""
@@ -690,11 +686,8 @@ def _serving_html(status: Mapping[str, Any], *, grey: bool) -> str:
             else _STATE_MARK[state]).format(r.e(words))
     line = f'<p class="shep-dx-line shep-dx-serving" data-state="{r.e(state)}">{mark}</p>'
     reason = status.get("not_serving_reason")
-    if state != SERVING:
-        # A status with no reason (one without the lifecycle's fields) says
-        # only what not being served means.
-        text = reason if isinstance(reason, str) and reason else NOT_SERVING_MEANS
-        line += f'<p class="shep-dx-line shep-dx-reason">{r.e(text)}</p>'
+    if state != SERVING and isinstance(reason, str) and reason:
+        line += f'<p class="shep-dx-line shep-dx-reason">{r.e(reason)}</p>'
     return line
 
 
