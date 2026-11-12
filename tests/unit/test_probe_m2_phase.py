@@ -1563,8 +1563,10 @@ def test_a_stated_precision_is_the_request_and_an_unstated_one_the_recipe_s():
 def test_the_scope_names_the_encoder_kind_the_runs_train():
     """The acceptance's scope names the encoder kind it covers, read from the
     specs the probe trains (the demo's and the reference recipe's base), and
-    says other kinds are refused by the builder and outside the acceptance
-    until the multi-architecture milestone (Q13 (b), X10 (b))."""
+    says other kinds are refused by the builder and outside the acceptance,
+    the kinds this build declares and builds, and that a second architecture
+    is chosen after the ops-wiring round's fit assessment (Q13 (b), X10 (b);
+    no multi-architecture milestone is planned)."""
     from scripts.setup_demo import demo_task_training
     from src.models.bundle.spec import ModelSpec, reference_spec
 
@@ -1576,7 +1578,13 @@ def test_the_scope_names_the_encoder_kind_the_runs_train():
     assert f"the real part the {reference_spec('base').encoder.kind} encoder" in scope
     assert ("Other encoder kinds are refused by the model-bundle builder and are outside this "
             "acceptance") in scope
-    assert "until the multi-architecture milestone" in scope
+    from src.models.bundle.spec import ENCODER_DECLARATIONS
+
+    assert sorted(ENCODER_DECLARATIONS) == ["gatv2"]
+    assert "this build declares and builds gatv2 only" in scope
+    assert ("a second architecture is chosen after the fit assessment of the ops-wiring round "
+            "(docs/working/ops-wiring-and-ui-ux/README.md §10)") in scope
+    assert "milestone" not in scope
 
 
 def _base_settings(**extra):

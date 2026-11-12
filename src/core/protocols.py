@@ -554,8 +554,11 @@ class GNNProtocol(Protocol):
 
     實現模組: src/models/bundle/encoders.py (IMPLEMENTED)
       ↳ The GraphEncoder contract, with GATv2Encoder as its reference encoder.
-        HeteroGNNLayer (src/models/gnn/layers.py) is kept for the
-        multi-architecture port and is not yet behind the contract.
+        Only gatv2 is declared and built (src/models/bundle/spec.py
+        ENCODER_DECLARATIONS); HeteroGNNLayer (src/models/gnn/layers.py) is
+        kept, reached only by tests and not behind the contract. A second
+        architecture is chosen after the ops-wiring round's fit assessment
+        (docs/working/ops-wiring-and-ui-ux/README.md §10).
     """
 
     def forward(

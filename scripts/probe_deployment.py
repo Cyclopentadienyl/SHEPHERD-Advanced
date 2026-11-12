@@ -2340,19 +2340,27 @@ def _demo_encoder_kind() -> str:
 
 def _architecture_scope() -> str:
     """The encoder kind the acceptance covers, in words, read from the specs the
-    probe trains (never a literal): the demo part's from the demo's model spec
-    (`_demo_encoder_kind`), the real part's from the reference recipe's base
-    spec, which R3 trains as it states no model spec (Q13 (b): other
-    architectures prove their own devices and precisions in the
-    multi-architecture milestone)."""
-    from src.models.bundle.spec import reference_spec
+    probe trains and the kinds this build declares (never a literal): the demo
+    part's from the demo's model spec (`_demo_encoder_kind`), the real part's
+    from the reference recipe's base spec, which R3 trains as it states no
+    model spec, and the declared kinds from `spec.ENCODER_DECLARATIONS`, which
+    the builder's implementations equal. A second architecture is chosen
+    after the ops-wiring round's fit assessment
+    (docs/working/ops-wiring-and-ui-ux/README.md §10, C0) and proves its own
+    devices and precisions then (Q13 (b))."""
+    from src.models.bundle.spec import ENCODER_DECLARATIONS, reference_spec
 
     demo, real = _demo_encoder_kind(), reference_spec("base").encoder.kind
+    declared = sorted(ENCODER_DECLARATIONS)
+    listed = declared[0] if len(declared) == 1 else (
+        f"{', '.join(declared[:-1])} and {declared[-1]}")
     return (f"Architecture, as the runs are built: the demo part trains the {demo} encoder "
             f"(the demo's model spec) and the real part the {real} encoder (the reference "
             "recipe's base spec, which R3 trains). Other encoder kinds are refused by the "
             "model-bundle builder and are outside this acceptance, their devices and "
-            "precisions included, until the multi-architecture milestone.")
+            f"precisions included: this build declares and builds {listed} only, and a second "
+            "architecture is chosen after the fit assessment of the ops-wiring round "
+            "(docs/working/ops-wiring-and-ui-ux/README.md §10).")
 
 
 def _precision_scope() -> str:

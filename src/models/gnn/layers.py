@@ -141,8 +141,11 @@ class HeteroGNNLayer(nn.Module):
             # plan): its relation linears are built `is_sorted=True` and cut
             # their input by edge-type index in the order the edges arrive, so
             # another order gives wrong outputs silently on both kernel paths.
-            # No formal caller builds this layer until the multi-architecture
-            # port.
+            # No formal caller builds this layer, which tests alone reach: only
+            # gatv2 is declared and built (`spec.ENCODER_DECLARATIONS`,
+            # `builder._ENCODERS`), and a second architecture is chosen after the
+            # ops-wiring round's fit assessment
+            # (docs/working/ops-wiring-and-ui-ux/README.md §10).
             self._hgt_edge_order: Tuple[EdgeType, ...] = tuple(self.conv.edge_types_map)
         else:
             # GAT or SAGE: per-edge-type convolutions wrapped in HeteroConv
