@@ -813,6 +813,41 @@ def _finetune_base_supplied_kg(world, monkeypatch):
     return finetune, base, row, kg
 
 
+def test_a_frozen_backbone_result_is_named_a_task_model_never_the_bases(world, monkeypatch):
+    """Ops-wiring round, decision F1: a result of the frozen-backbone control
+    names its model a task model with a frozen graph backbone
+    (`renderers.model_kind_text`, from the record's weight transfer), never
+    the base's score; the full fine-tune and a rules-1 child (every part
+    trainable, "all") are "Disease"; the family line is the same for each
+    (one fact, the family it came from)."""
+    from src.webui.components import results_segment as rs
+
+    full, base, _supplied, _kg = _finetune_base_supplied_kg(world, monkeypatch)
+    frozen, rules_1 = copy.deepcopy(full), copy.deepcopy(full)
+    frozen["model"]["weight_transfer"] = {
+        **full["model"]["weight_transfer"], "trainable": ["patient_encoder", "task_head"],
+        "parts": {"input": "frozen", "encoder": "frozen", "lp_head": "frozen",
+                  "patient_encoder": "trainable", "task_head": "trainable"},
+        "frozen_forward": "eval"}
+    rules_1["model"]["weight_transfer"] = {"loaded_from_parent": ["encoder", "input", "lp_head"],
+                                           "initialised_new": ["patient_encoder", "task_head"],
+                                           "trainable": "all", "optimizer": "new"}
+    cells = {name: rs._model_cell(row) for name, row in (
+        ("frozen", frozen), ("full", full), ("rules_1", rules_1), ("base", base))}
+    words = {name: re.sub(r"^<div><code[^>]*>[^<]*</code> ", "", cell).split("</div>", 1)[0]
+             for name, cell in cells.items()}
+    assert words == {"frozen": "Disease · frozen graph backbone", "full": "Disease",
+                     "rules_1": "Disease", "base": "Base"}
+    family = re.findall(r'<div class="shep-sub">.*?</div>', cells["full"])
+    assert family and re.findall(r'<div class="shep-sub">.*?</div>', cells["frozen"]) == family
+    # A model whose record was not read says so, whatever its transfer.
+    unread = copy.deepcopy(frozen)
+    unread["model"].update(learning_stage=None, task=None)
+    unread["unknown"] = {**unread["unknown"], "model.learning_stage": "its record was not read"}
+    assert "○ Unknown: its record was not read" in _text(rs._model_cell(unread))
+    assert "frozen graph backbone" not in rs._model_cell(unread)
+
+
 def test_compare_says_what_a_branch_changed_from_its_parent(world, monkeypatch):
     """Decision B4: what a branch changed from its parent is a Model row of
     Compare and of a result's details, "Settings changed", as on the Models

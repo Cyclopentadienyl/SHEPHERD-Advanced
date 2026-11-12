@@ -24,8 +24,9 @@ groups, one extra column, the note beside Load).
 The Task select (All, Base, Disease, Gene, Patients-like-me) is the
 shared list's one filter vocabulary (`model_list.TASK_FILTERS`); a file whose
 record was refused or not read is listed under All only. Every row says what
-its file is (the shared list's first line, `renderers.record_kind_text`),
-under every order. The Order switch offers Newest first and By family. By
+its file is (the shared list's first line, `renderers.model_kind_text`: the
+frozen-backbone control reads "Disease · frozen graph backbone"), under every
+order. The Order switch offers Newest first and By family. By
 family draws the families of the listing's family view
 (`model_list.family_views`, from the one listing), each parent before its
 children, with a Lineage column (the operation and the exact parent file,
@@ -1327,14 +1328,15 @@ def _served_line(listing: Mapping[str, Any]) -> str:
 
 def identity_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]]) -> str:
     """What the selected checkpoint is, as one key-value list (README §5):
-    its kind; for a model record its operation, the exact parent file and
+    its kind (`renderers.model_kind_text`: a task model with a frozen graph
+    backbone says so); for a model record its operation, the exact parent file and
     where it is (`parent_html`), for a branch the settings it changed from
     its parent, each with both values, or that it kept them all
     (`changes_html`), its family, its encoder and its relation to
     the paper (axis 2: "matches the reference recipe" with what that recipe
     is, or the fields that differ). Model Facts' Task and Configuration rows
     say the kind and axis 1 elsewhere; neither is repeated here."""
-    rows = [("Kind", r.e(r.record_kind_text(item)))]
+    rows = [("Kind", r.e(r.model_kind_text(item)))]
     if item.get("record") == "model":
         operation = item.get("operation")
         differences = item.get("differences")

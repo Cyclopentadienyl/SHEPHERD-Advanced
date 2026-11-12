@@ -33,6 +33,7 @@ from datetime import datetime, timezone
 from typing import (Any, Callable, Dict, Hashable, Iterable, Mapping, NamedTuple, Optional,
                     Sequence, Tuple)
 
+from src.config.recipe import FROZEN_PARTS
 from src.evaluation.caveats import (
     EXPOSURE_CAVEAT,
     GENERATED_EXPOSURE_NOTE,
@@ -42,6 +43,7 @@ from src.evaluation.caveats import (
     TASK_NAMES,
     exposure_text,
 )
+from src.utils.run_plan import recorded_frozen_parts
 from src.webui.components.help import copy_button, help_button
 
 #: Hex digits of a digest shown by default.
@@ -569,6 +571,39 @@ def record_kind_text(item: Any) -> str:
     return "Record not readable"
 
 
+#: What a task model whose graph backbone did not train is called after its
+#: kind (`model_kind_text`; ops-wiring round, decision F1): never the base's.
+FROZEN_BACKBONE_WORDS = "frozen graph backbone"
+
+
+def freeze_words(item: Any) -> Optional[str]:
+    """The words a listed model's freeze adds to its kind
+    (`FROZEN_BACKBONE_WORDS`) when its record's weight transfer names exactly
+    the graph side frozen (`recipe.FROZEN_PARTS["graph_side"]`: the input
+    module, the encoder and the LP head; read by the continuation's own
+    reading of that record, `run_plan.recorded_frozen_parts`), else None: a
+    full fine-tune, a rules-1 child (every part trainable, "all"), a base and
+    a record that names no transfer read as their kind alone. `item` is a
+    listing item or a result's model (`results._model`), which carry the
+    record's `weight_transfer` alike."""
+    frozen = recorded_frozen_parts(_get(item, "weight_transfer"))
+    if frozen is not None and frozen == tuple(sorted(FROZEN_PARTS["graph_side"])):
+        return FROZEN_BACKBONE_WORDS
+    return None
+
+
+def model_kind_text(item: Any) -> str:
+    """**What a listed model is, wherever a model or a result is described**:
+    its kind in the one word every page leads with (`record_kind_text`), and
+    for the frozen-backbone control "Disease · frozen graph backbone"
+    (`freeze_words`): a task model whose graph side kept its base's weights,
+    never the base's score. At most one separator and 40 characters. The one
+    word alone stays the grouping key and an option's lead
+    (`record_kind_text`)."""
+    kind, words = record_kind_text(item), freeze_words(item)
+    return f"{kind} · {words}" if words else kind
+
+
 def configuration_text(item: Any) -> str:
     """A listed model's configuration (README §5, axis 1): its encoder and
     whether its spec is the reference recipe, "GATv2 · reference recipe" or
@@ -1086,6 +1121,7 @@ __all__ = [
     "CHECK",
     "FACTS_MODEL_FP",
     "FACTS_TRAINED_FP",
+    "FROZEN_BACKBONE_WORDS",
     "IDENTITY_BANNERS",
     "MODEL_TABLE_COLUMNS",
     "ModelFacts",
@@ -1112,10 +1148,12 @@ __all__ = [
     "e",
     "facts_from_checkpoint",
     "fingerprint_html",
+    "freeze_words",
     "ident_html",
     "is_digest",
     "kv_cells",
     "model_facts_html",
+    "model_kind_text",
     "model_name_line",
     "model_row_html",
     "model_table_row_html",

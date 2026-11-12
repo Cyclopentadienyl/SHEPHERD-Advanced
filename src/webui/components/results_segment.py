@@ -114,7 +114,6 @@ from src.evaluation.caveats import (
     DATA_KIND_WORDS,
     MEASUREMENT_NAMES,
     R10_LABEL_TEXT,
-    TASK_NAMES,
     label_words,
     metric_text,
     mode_label,
@@ -197,14 +196,15 @@ def _option_words(name: str, value: str) -> str:
 
 
 def _model_words(model: Mapping[str, Any]) -> str:
-    """What the result's model is, as the shared list's first word says it:
-    "Base", a task's name, or that its record was not read here."""
-    if model.get("learning_stage") == "base":
-        return "Base"
-    task = model.get("task")
-    if task in TASK_NAMES:
-        return TASK_NAMES[task]
-    return "Model record not read"
+    """What the result's model is, in the words the shared list describes it
+    by (`renderers.model_kind_text`: "Base", a task's name, "Disease · frozen
+    graph backbone", never the base's), or that its record was not read
+    here. A result's model holds its listed checkpoint's record fields, its
+    stage set exactly when that record was read as a model's
+    (`results._model`), so it reads as that listing item does."""
+    if model.get("learning_stage") is None:
+        return "Model record not read"
+    return r.model_kind_text({**model, "record": "model"})
 
 
 def _utc(moment: Optional[datetime] = None) -> str:

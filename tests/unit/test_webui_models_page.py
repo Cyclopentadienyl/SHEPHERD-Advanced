@@ -1325,6 +1325,15 @@ def test_the_detail_says_what_the_model_is_and_its_relation_to_the_paper(world, 
     html = mp.identity_html(item, {"parent_state": "unavailable", "parent_problem": EVIL})
     assert "▲</span> parent unavailable: &lt;img" in html and EVIL not in html
     assert "none: a new run" in mp.identity_html({**item, "parent_sha256": None}, None)
+    # The frozen-backbone control is a task model with a frozen graph
+    # backbone (ops-wiring round, decision F1), from its record's transfer.
+    frozen = {**item, "task": "disease", "weight_transfer": {
+        "trainable": ["patient_encoder", "task_head"],
+        "parts": {"input": "frozen", "encoder": "frozen", "lp_head": "frozen",
+                  "patient_encoder": "trainable", "task_head": "trainable"}}}
+    assert ('<span class="shep-k">Kind</span><span class="shep-v">Disease · frozen graph '
+            'backbone</span>') in mp.identity_html(frozen, None)
+    assert '<span class="shep-v">Gene</span>' in mp.identity_html(item, None)
     # A branch says what it changed from its parent, or that it changed
     # nothing (decision B4): every value in the details, the names in By
     # family's Lineage; text from a record is escaped.

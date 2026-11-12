@@ -1106,6 +1106,29 @@ def test_every_row_says_what_its_file_is_in_both_presets(root, serving, monkeypa
         assert f'"><td><div class="shep-sub shep-row-kind">{kind}</div>' in row, (name, row)
 
 
+def test_a_frozen_backbone_row_says_so_in_its_kind_line_in_both_presets(root, serving,
+                                                                        monkeypatch):
+    """Ops-wiring round, decision F1: the frozen-backbone control's row leads
+    with "Disease · frozen graph backbone" (`renderers.model_kind_text`, from
+    its record's weight transfer), in the drawer's rows and the research
+    table alike; the other disease rows stay "Disease"."""
+    listing = _listing(root, monkeypatch)
+    frozen = {"trainable": ["patient_encoder", "task_head"],
+              "parts": {"input": "frozen", "encoder": "frozen", "lp_head": "frozen",
+                        "patient_encoder": "trainable", "task_head": "trainable"}}
+    for item in listing["items"]:
+        if item.get("filename") == "model-12.pt":
+            item["weight_transfer"] = frozen
+    rows = ml.list_html(listing, None, ml.PRESETS["clinical"], show_older=True)
+    assert ('"><span class="shep-row-sub shep-row-kind">Disease · frozen graph backbone</span>'
+            in _row_of(rows, "model-12.pt"))
+    assert '<span class="shep-row-sub shep-row-kind">Disease</span>' in _row_of(rows,
+                                                                                "model-05.pt")
+    table = ml.list_html(listing, None, ml.PRESETS["research"])
+    assert ('"><td><div class="shep-sub shep-row-kind">Disease · frozen graph backbone</div>'
+            in _row_of(table, "model-12.pt"))
+
+
 def test_the_research_listing_carries_the_family_view_from_its_one_listing(
         root, serving, monkeypatch):
     """`listing["family"]`: per filter, the server's family view

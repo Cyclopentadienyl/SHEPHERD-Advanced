@@ -569,6 +569,26 @@ def test_a_frozen_record_that_contradicts_its_parts_is_refused(world, tmp_path):
         "contradicts itself."), preview["reason"]
 
 
+def test_the_recorded_frozen_parts_are_read_once_for_the_check_and_the_words(world):
+    """`run_plan.recorded_frozen_parts`: the one reading of a record's
+    transfer, which the continuation's check and the pages' words
+    (`renderers.freeze_words`) share: the parts named frozen, sorted; none for
+    a transfer of every part trainable ("all", rules 1's shape, no parts);
+    None where nothing says which parts are frozen."""
+    from src.utils.run_plan import recorded_frozen_parts
+
+    control, full = (_load(world["files"][name])["weight_transfer"] for name in ("control",
+                                                                                 "full"))
+    assert recorded_frozen_parts(control) == tuple(sorted(GRAPH_SIDE))
+    assert recorded_frozen_parts(full) == ()
+    rules_1 = {key: control[key] for key in ("loaded_from_parent", "initialised_new",
+                                             "optimizer")}
+    assert recorded_frozen_parts({**rules_1, "trainable": "all"}) == ()
+    assert recorded_frozen_parts("all") == ()
+    assert recorded_frozen_parts({**rules_1, "trainable": ["task_head"]}) is None
+    assert recorded_frozen_parts(None) is None
+
+
 # ---------------------------------------------------------------------------
 # A new frozen run: the CLI, the job runner's Fine-tune start, the process
 # ---------------------------------------------------------------------------
@@ -707,6 +727,13 @@ def test_both_arms_are_measured_registered_listed_and_exported_with_their_freeze
     assert shown["decoded"][(
         "Training settings", "Effective setting · Loaders › Train › Recipe › Decoded from parent "
         "› Graph backbone")] == recipe["decoded_from_parent"]["frozen_parts"]
+    # The Results table names the control's model a task model with a frozen
+    # graph backbone, from its record as the service read it; the full arm
+    # and the rules-1 child are "Disease" (decision F1: never the base's).
+    from src.webui.components.results_segment import _model_words
+
+    assert {name: _model_words(row["model"]) for name, row in rows.items()} == {
+        "control": "Disease · frozen graph backbone", "full": "Disease", "decoded": "Disease"}
     # The weight transfer and the loss identity as each record holds them,
     # through the same listing: the two arms start from one downstream digest,
     # checked where they are compared; the control's parts frozen and its LP

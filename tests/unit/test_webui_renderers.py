@@ -396,6 +396,68 @@ def test_a_listed_checkpoint_leads_with_its_kind_word():
         "Record not read")
 
 
+#: A record's weight transfer, by arm (`train_model._transfer_parent_weights`'s
+#: shapes): the frozen-backbone control, the full fine-tune, a rules-1 child
+#: (no parts, every part trainable) and a freeze of another set of parts.
+GRAPH_SIDE_FROZEN = {"trainable": ["patient_encoder", "task_head"], "optimizer": "new",
+                     "parts": {"input": "frozen", "encoder": "frozen", "lp_head": "frozen",
+                               "patient_encoder": "trainable", "task_head": "trainable"},
+                     "frozen_forward": "eval"}
+FULL = {"trainable": "all", "optimizer": "new", "frozen_forward": None,
+        "parts": dict.fromkeys(GRAPH_SIDE_FROZEN["parts"], "trainable")}
+RULES_1 = {"loaded_from_parent": ["encoder", "input", "lp_head"],
+           "initialised_new": ["patient_encoder", "task_head"], "trainable": "all",
+           "optimizer": "new"}
+ENCODER_ONLY = {**GRAPH_SIDE_FROZEN, "parts": {**GRAPH_SIDE_FROZEN["parts"],
+                                               "lp_head": "trainable"}}
+
+
+@pytest.mark.parametrize("transfer, words", [
+    (GRAPH_SIDE_FROZEN, "frozen graph backbone"),
+    (FULL, None),
+    (RULES_1, None),
+    (ENCODER_ONLY, None),
+    (None, None),
+    ("all", None),
+])
+def test_the_frozen_backbone_control_is_named_by_its_recorded_freeze(transfer, words):
+    """Ops-wiring round, decision F1: a task model whose record names exactly
+    the graph side frozen (the input module, the encoder and the LP head) is
+    "Disease · frozen graph backbone" wherever a model is described
+    (`model_kind_text`), read by the continuation's own reading of the
+    record (`run_plan.recorded_frozen_parts`); a full fine-tune, a rules-1
+    child ("all"), another freeze and no transfer keep the kind alone.
+    `record_kind_text` keeps its one word, the grouping key."""
+    from src.config.recipe import FROZEN_PARTS
+    from src.utils.run_plan import recorded_frozen_parts
+
+    item = {**_record(), "weight_transfer": transfer}
+    assert r.freeze_words(item) == words
+    assert r.record_kind_text(item) == "Disease"
+    assert r.model_kind_text(item) == ("Disease · frozen graph backbone" if words else "Disease")
+    frozen = recorded_frozen_parts(transfer)
+    assert (frozen == tuple(sorted(FROZEN_PARTS["graph_side"]))) is (words is not None)
+    # A result's model (`results._model`) carries the same field.
+    assert r.freeze_words({"weight_transfer": transfer}) == words
+
+
+def test_the_model_kind_text_fits_an_option_for_every_task_and_keeps_other_words():
+    """At most one separator and 40 characters for every task (skill §5,
+    §8); a base, a refused record and one never read read as their own word,
+    whatever a transfer says."""
+    from src.models.bundle.spec import TASKS
+    from src.webui.components.training_console import OPTION_CHARS
+
+    for task in TASKS:
+        text = r.model_kind_text({**_record(task=task), "weight_transfer": GRAPH_SIDE_FROZEN})
+        assert text.endswith(" · frozen graph backbone") and text.count(" · ") == 1, text
+        assert len(text) <= OPTION_CHARS, text
+    assert r.model_kind_text(_record(stage="base", task=None)) == "Base"
+    assert r.model_kind_text(_record("refused")) == "Record not readable"
+    assert r.model_kind_text({**checkpoint(problem="torn"), "record": None}) == (
+        "Record not read")
+
+
 def test_a_task_metric_is_named_by_its_task_never_as_a_mode():
     """K6 decision 6: one vocabulary. A task measurement's metric reads "Gene
     pooled MRR", never "Mode gene pooled_mrr"; any other mode's metric, a kept

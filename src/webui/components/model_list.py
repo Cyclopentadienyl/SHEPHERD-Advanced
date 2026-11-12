@@ -24,8 +24,8 @@ is matched by the **full** model fingerprint the status serves and marks the
 checkpoint only.
 
 **The two presets** (`PRESETS`), each row of either leading with what its
-file is (`renderers.record_kind_text`: "Disease", "Base", "Record not
-readable" …), under every view and order:
+file is (`renderers.model_kind_text`: "Disease", "Base", "Disease · frozen
+graph backbone", "Record not readable" …), under every view and order:
 
 - ``clinical`` (the drawer): rows (`renderers.model_row_html`), "In use now"
   pinned on top, the latest 4 runs, then "Show older runs"; **models
@@ -529,11 +529,12 @@ def _groups(items: Sequence[Mapping[str, Any]], view: Any
 
 
 def _kind_line(item: Mapping[str, Any], tag: str) -> str:
-    """A row's first line: what its file is, in the one word every page leads
-    with (`renderers.record_kind_text`: "Disease", "Base", "Record not
-    readable", "Record not read" …), escaped."""
+    """A row's first line: what its file is, in the words every page
+    describes a model by (`renderers.model_kind_text`: "Disease", "Base",
+    "Disease · frozen graph backbone", "Record not readable", "Record not
+    read" …), escaped."""
     css = "shep-row-sub" if tag == "span" else "shep-sub"
-    return f'<{tag} class="{css} shep-row-kind">{r.e(r.record_kind_text(item))}</{tag}>'
+    return f'<{tag} class="{css} shep-row-kind">{r.e(r.model_kind_text(item))}</{tag}>'
 
 
 def _no_items_html(listing: Mapping[str, Any], view: Any, preset: Optional[Preset]) -> str:

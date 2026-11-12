@@ -76,7 +76,7 @@ import math
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Collection, Dict, List, Mapping, Optional
+from typing import Any, Collection, Dict, List, Mapping, Optional, Tuple
 
 from src.config.model_types import WRITTEN_BEFORE_SPEC
 from src.config.recipe import (
@@ -695,31 +695,47 @@ def decode_learning_settings(parent: Mapping[str, Any], where: str) -> DecodedSe
     return DecodedSettings(settings=settings, decoded=decoded)
 
 
+def recorded_frozen_parts(transfer: Any) -> Optional[Tuple[str, ...]]:
+    """**The parts a record's weight transfer names frozen** (its
+    `weight_transfer`, as a checkpoint holds it or a list shows it), sorted,
+    by the one reading of that record: where it names each part trainable or
+    frozen (`parts`, the shape since research comparison Stage 9b), the parts
+    it names frozen; where it names no parts and every part trainable
+    (``trainable`` "all", as training rules 1 recorded every transfer), none,
+    ``()``; and None where it records no transfer (a base) or does not say
+    which parts are frozen. The continuation's check of a parent's transfer
+    against its freeze (`_check_transfer_matches_freeze`) and the words a page
+    names a model by (`renderers.freeze_words`) read it alike."""
+    if not isinstance(transfer, Mapping):
+        return () if transfer == "all" else None
+    parts = transfer.get("parts")
+    if isinstance(parts, Mapping):
+        return tuple(sorted(part for part, state in parts.items() if state == "frozen"))
+    return () if transfer.get("trainable") == "all" else None
+
+
 def _check_transfer_matches_freeze(transfer: Any, frozen_parts: str, decoded: bool,
                                    where: str) -> None:
     """**One check of a parent's weight transfer against its freeze, under
     every rules** (`decode_learning_settings`): a transfer, where the record
     holds one (a finetune, a branch), records every part trainable ("all")
     exactly when the freeze keeps nothing from training
-    (`FROZEN_PARTS[frozen_parts]` empty), and, where it names each part
-    trainable or frozen (`parts`, the shape since research comparison Stage
-    9b), exactly the freeze's parts frozen. A record that says otherwise
-    contradicts itself or, its freeze decoded from rules 1 (`decoded`), the
-    rules it records, which trained every part."""
+    (`FROZEN_PARTS[frozen_parts]` empty), and, where it names which parts are
+    frozen (`recorded_frozen_parts`), exactly the freeze's parts. A record
+    that says otherwise contradicts itself or, its freeze decoded from rules
+    1 (`decoded`), the rules it records, which trained every part."""
     if transfer is None:
         return
     trainable = transfer.get("trainable") if isinstance(transfer, Mapping) else transfer
-    parts = transfer.get("parts") if isinstance(transfer, Mapping) else None
     frozen = FROZEN_PARTS[frozen_parts]
-    recorded_frozen = (sorted(part for part, state in parts.items() if state == "frozen")
-                       if isinstance(parts, Mapping) else None)
-    if (trainable == "all") == (not frozen) and recorded_frozen in (None, sorted(frozen)):
+    recorded_frozen = recorded_frozen_parts(transfer)
+    if (trainable == "all") == (not frozen) and recorded_frozen in (None, tuple(sorted(frozen))):
         return
     if (trainable == "all") == (not frozen):
         raise RunPlanRefused(
-            f"{where} records a weight transfer with frozen parts {recorded_frozen} beside "
-            f"frozen_parts {frozen_parts!r}, which freezes {sorted(frozen)}, so its record "
-            "contradicts itself.")
+            f"{where} records a weight transfer with frozen parts {list(recorded_frozen)} "
+            f"beside frozen_parts {frozen_parts!r}, which freezes {sorted(frozen)}, so its "
+            "record contradicts itself.")
     if decoded:
         raise RunPlanRefused(
             f"{where} records a weight transfer with trainable {trainable!r} under training "
@@ -1049,6 +1065,7 @@ __all__ = [
     "parents_problem",
     "plan_branch",
     "plan_continuation",
+    "recorded_frozen_parts",
     "recorded_training_settings",
     "resolve_recorded_file",
     "shown_value",
