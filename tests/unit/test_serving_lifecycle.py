@@ -315,7 +315,7 @@ def test_a_stop_refuses_new_requests_waits_for_the_accepted_one_then_releases(se
     assert api.app_state._current_checkpoint_path is None
     assert stopped.status.serving == "not_loaded" and stopped.status.holds_gpu_lock is False
     assert stopped.status.not_serving_reason.startswith(
-        f"Inference was stopped by an operator at ")
+        "Inference was stopped by an operator at ")
     assert sha_of(model)[:12] in stopped.status.not_serving_reason
 
 
