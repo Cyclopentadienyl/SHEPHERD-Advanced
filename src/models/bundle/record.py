@@ -451,6 +451,20 @@ def finetune_parent_problem(record: ModelRecord, payload: Mapping[str, Any]) -> 
     return None
 
 
+def branch_parent_problem(record: ModelRecord, learning_stage: Any,
+                          task: Any) -> Optional[str]:
+    """Why a read checkpoint cannot be the parent of a branch of
+    `learning_stage` and `task` (contract §9.2), as a sentence, or None: a
+    branch keeps its parent's stage and task. The training process
+    (`train_model.read_branch_parent`) and the job runner's preview
+    (`TrainingManager.preview_branch`) ask it of one read alike."""
+    if record.learning_stage == learning_stage and record.task == task:
+        return None
+    return (f"The branch parent is a {record.learning_stage} checkpoint"
+            + (f" for {record.task}" if record.task else "")
+            + "; a branch keeps its parent's stage and task.")
+
+
 #: What a model list shows of a checkpoint's record (`listed_record`).
 LISTED_RECORD_FIELDS = ("record", "record_problem", "learning_stage", "task", "operation",
                         "family_id", "parent_sha256", "parent_run", "encoder", "reference",
@@ -551,6 +565,7 @@ __all__ = [
     "PLAIN_DEPTH",
     "PLAIN_VALUES",
     "RECORD_KEYS",
+    "branch_parent_problem",
     "check_model_record",
     "finetune_parent_problem",
     "has_model_spec",

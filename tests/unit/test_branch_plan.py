@@ -186,3 +186,22 @@ def test_a_resume_that_changes_a_setting_points_to_the_branch():
         plan_continuation(_parent("paused"), Path("last.pt"),
                           {**RECORDED, "learning_rate": 1e-3, "device": "cpu"},
                           {"learning_rate"}, device="cpu", record_version=2)
+
+
+@pytest.mark.parametrize("request_, settings, fragment", [
+    (dict(learning_rate=-1.0), True, "learning_rate must be"),
+    (dict(seed="5"), True, "seed must be"),
+    (dict(split_seed=1), True, "but those on its list"),
+    (dict(extend_epochs=2), False, "a branch starts a new run"),
+])
+def test_a_refusal_of_the_requests_settings_is_said_as_such(request_, settings, fragment):
+    """Decision B2: what a branch changes is judged as a new run's settings
+    are, each new value by its field spec (`stated_values_problem`), and a
+    refusal of the request's settings themselves is a `SettingsRefused`, the
+    runner's invalid settings; a refusal about the parent or the operation is
+    not."""
+    from src.utils.run_plan import SettingsRefused
+
+    with pytest.raises(RunPlanRefused, match=fragment) as refused:
+        _plan(_parent(), **request_)
+    assert isinstance(refused.value, SettingsRefused) is settings

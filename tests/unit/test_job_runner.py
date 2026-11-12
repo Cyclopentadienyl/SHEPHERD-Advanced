@@ -1114,3 +1114,134 @@ def test_a_cancel_that_lands_while_the_run_s_interpreter_starts_is_a_cancel(
         assert not any("Fatal Python error" in line for line in said)
     finally:
         _end_real_job(manager, "test")
+
+
+# --------------------------------------------------------------------------- the branch
+# A branch through the one start (ops-wiring round, decisions B1, B2): its one
+# preview (`preview_branch`, `run_plan.plan_branch`) judges a request as the
+# training process does, in its words, and the start dispatches it through the
+# same slot, run directory, configuration file and spawn, bound to the
+# preview's read.
+@pytest.fixture
+def branch_parent(trained_disease_child):
+    """The session's trained base: a parent a branch starts from."""
+    pytest.importorskip("torch")
+    return trained_disease_child
+
+
+def _sha256(path: Path) -> str:
+    import hashlib
+
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def test_a_same_settings_branch_preview_states_no_change(branch_parent):
+    from src.config.recipe import branch_settings
+
+    base = branch_parent["base"]
+    preview = TrainingManager().preview_branch(str(base), device="cpu",
+                                               expected_sha256=_sha256(base))
+    assert preview["ok"] is True, preview
+    assert (preview["mode"], preview["changes"], preview["sha256"]) == (
+        "branch", {}, _sha256(base))
+    assert (preview["learning_stage"], preview["task"], preview["architecture"]) == (
+        "base", None, "gatv2")
+    assert preview["changeable"] == sorted(branch_settings("base"))
+    assert "no setting changed" in preview["action"]
+    assert "learning_rate" in preview["inherited"] and preview["decoded"] == {}
+    changed = TrainingManager().preview_branch(str(base), device="cpu",
+                                               requested={"learning_rate": 1e-3})
+    assert changed["ok"] is True and changed["changes"] == {
+        "learning_rate": {"parent": preview["inherited"]["learning_rate"], "new": 1e-3}}
+
+
+def _weights_only(base: Path, tmp_path: Path) -> Path:
+    import torch
+
+    payload = torch.load(base, map_location="cpu", weights_only=True)
+    payload = {key: value for key, value in payload.items()
+               if key not in ("config", "optimizer_state_dict", "scheduler_state_dict")}
+    payload["checkpoint_kind"] = "weights"
+    torch.save(payload, tmp_path / "weights.pt")
+    return tmp_path / "weights.pt"
+
+
+#: Each request a branch refuses, as (the request, whether it is a refusal of
+#: its settings themselves, the invalid settings the runner answers 422 for).
+BRANCH_REFUSALS = {
+    "off the list": (lambda recorded: {"split_seed": recorded["split_seed"] + 1}, True),
+    "an extension": (lambda recorded: {"extend_epochs": 1}, False),
+    "weights only": (lambda recorded: {}, False),
+    "another stage": (lambda recorded: {"learning_stage": "finetune", "task": "disease"}, False),
+    "two parents": (lambda recorded: {"resume_from": "PARENT"}, True),
+    "an invalid value": (lambda recorded: {"learning_rate": -1.0}, True),
+}
+
+
+@pytest.mark.parametrize("case", sorted(BRANCH_REFUSALS))
+def test_the_branch_previews_refusal_is_the_training_processs(branch_parent, tmp_path, case):
+    """The preview refuses what the training process refuses, in its words
+    (checkpoint A: one judgement of one request and parent), and says which
+    refusals are of the request's settings themselves."""
+    import torch
+
+    sys.path.insert(0, str(tm.PROJECT_ROOT / "scripts"))
+    import train_model
+
+    base = branch_parent["base"]
+    recorded = torch.load(base, map_location="cpu", weights_only=True)["config"]["requested"]
+    make, invalid = BRANCH_REFUSALS[case]
+    request = {name: (str(base) if value == "PARENT" else value)
+               for name, value in make(recorded).items()}
+    parent = _weights_only(base, tmp_path) if case == "weights only" else base
+    stated = {"learning_stage": "base", "device": "cpu", **request}
+    preview = TrainingManager().preview_branch(str(parent), device="cpu", requested=stated)
+    assert preview["ok"] is False
+    assert bool(preview.get("invalid_settings")) is invalid, preview
+    fields = {"data_dir": str(branch_parent["data_dir"]), "run_dir": str(tmp_path / "run"),
+              "branch_from": str(parent), **stated}
+    with pytest.raises(ValueError) as refused:
+        train_model.train(train_model.TrainConfig(**fields), set(fields) - {"data_dir", "run_dir"},
+                          on_claim=lambda run: pytest.fail(f"a refusal claimed {run}"))
+    assert preview["reason"] == str(refused.value)
+    assert not (tmp_path / "run").exists()
+
+
+def test_a_branch_starts_through_the_one_start_bound_to_its_preview(branch_parent, popen,
+                                                                     tmp_path):
+    """The same slot, run directory, configuration file and spawn as every
+    training start: filed under the parent's architecture, its stage the
+    parent's, the settings as asked (none for a same-settings branch), the
+    process bound to the preview's read (`--expect-parent-sha256`)."""
+    import yaml
+
+    base, data_dir = branch_parent["base"], branch_parent["data_dir"]
+    calls = popen(FakeProcess(pid=3))
+    manager = TrainingManager()
+    started = manager.start_training({"data_dir": str(data_dir), "branch_from": str(base),
+                                      "device": "cpu"})
+    assert started["success"], started
+    (argv,) = calls.calls
+    assert argv[4:6] == ["--expect-parent-sha256", _sha256(base)]
+    written = yaml.safe_load(Path(started["config_path"]).read_text())
+    assert written == {"data_dir": str(data_dir), "branch_from": str(base), "device": "cpu",
+                       "learning_stage": "base", "run_dir": started["run_dir"]}
+    assert Path(started["run_dir"]).parent.name == "gatv2"
+    calls.queue.append(FakeProcess(pid=4))
+    busy = manager.start_training({"data_dir": str(data_dir), "branch_from": str(base),
+                                   "device": "cpu"})
+    assert busy["success"] is False and busy["error"].startswith("Training is already running")
+    assert len(calls.calls) == 1, "a busy slot started a second process"
+
+
+def test_a_start_naming_two_parents_is_refused_before_anything(branch_parent, popen):
+    from src.utils.run_plan import parents_problem
+
+    base = branch_parent["base"]
+    calls = popen()
+    config = {"data_dir": str(branch_parent["data_dir"]), "branch_from": str(base),
+              "resume_from": str(base), "device": "cpu"}
+    refused = TrainingManager().start_training(config, expected_parent_sha256=_sha256(base))
+    assert refused["success"] is False and refused["invalid_settings"] is True
+    assert refused["error"] == f"{parents_problem(config)} Nothing was started."
+    assert calls.calls == []

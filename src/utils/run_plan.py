@@ -103,6 +103,31 @@ class RunPlanRefused(ValueError):
     what to do instead."""
 
 
+class SettingsRefused(RunPlanRefused):
+    """A branch refused for the settings its request changes, whatever the
+    parent's state (`plan_branch`): a setting off its list, a value its field
+    spec does not take, or a rule across settings it breaks. The job runner
+    answers it as invalid settings (`TrainingManager.preview_branch`), as it
+    answers a new run's (`new_run_problem`); every other refusal of a plan
+    concerns the parent."""
+
+
+#: The fields that name a run's parent, one per operation from a parent.
+PARENT_FIELDS = ("resume_from", "finetune_from", "branch_from")
+
+
+def parents_problem(request: Mapping[str, Any]) -> Optional[str]:
+    """Why `request` names more than one parent (`PARENT_FIELDS`), or None:
+    a run continues one, finetunes a base or branches one. Asked by the
+    training process (`train_model.train`) and by the job runner's start and
+    branch preview, in the same sentence."""
+    parents = [name for name in PARENT_FIELDS if request.get(name)]
+    if len(parents) < 2:
+        return None
+    return (f"{' and '.join(parents)} name two parents; a run continues one (resume_from), "
+            "finetunes a base (finetune_from) or branches one (branch_from).")
+
+
 #: What names a run's stage and task: the run's identity, not a setting of it.
 _RUN_IDENTITY = frozenset({"learning_stage", "task"})
 
@@ -185,22 +210,33 @@ def new_run_problem(learning_stage: str, tasks: Collection[Optional[str]],
         frozen = frozen_parts_problem(learning_stage, settings["frozen_parts"])
         if frozen:
             return frozen
-    problem = unread_problem(learning_stage, tasks, settings)
+    problem = (unread_problem(learning_stage, tasks, settings)
+               or stated_values_problem(learning_stage, tasks, settings))
     if problem:
         return problem
-    references = [reference_settings(learning_stage, task)[0] for task in tasks]
-    problems = [problem for name, value in sorted(settings.items())
-                for problem in [value_problem(name, value, allow_none=any(
-                    name in values and values[name] is None for values in references))]
-                if problem]
-    if problems:
-        return " ".join(problems)
     for task in tasks:
         problems = cross_field_problems(new_run_values(learning_stage, task, settings),
                                         settings)
         if problems:
             return " ".join(problems)
     return None
+
+
+def stated_values_problem(learning_stage: str, tasks: Collection[Optional[str]],
+                          settings: Mapping[str, Any]) -> Optional[str]:
+    """Why a value of `settings`, values the operator stated for the runs of
+    `learning_stage` a start makes, one per one of `tasks`, is not one its
+    field spec takes, or None: **the one check of a stated value**
+    (`value_problem`: its kind, strictly, its bounds and choices), None
+    taken only where a run's reference value is None or the field's default
+    is. A new run's settings (`new_run_problem`) and a branch's changes
+    (`plan_branch`, ops-wiring round, decision B2) are judged by it alike."""
+    references = [reference_settings(learning_stage, task)[0] for task in tasks]
+    problems = [problem for name, value in sorted(settings.items())
+                for problem in [value_problem(name, value, allow_none=any(
+                    name in values and values[name] is None for values in references))]
+                if problem]
+    return " ".join(problems) if problems else None
 
 
 def new_run_values(learning_stage: str, task: Optional[str],
@@ -718,6 +754,11 @@ def plan_branch(
     mixed precision kept on or off must take effect here as it did for the
     parent, as a resume's must, whether or not anything else changed.
 
+    **What the request changes is judged as a new run's settings are**
+    (`SettingsRefused`): a setting off the list, each new value by its field
+    spec (`stated_values_problem`) and the rules across settings, in that
+    order, in the training process and the job runner's preview alike.
+
     Raises:
         RunPlanRefused: with the reason and the remedy.
     """
@@ -811,7 +852,7 @@ def _inherit_settings(
               "train with another, finetune the base again (finetune_from)."
               if any(c.startswith("frozen_parts:") for c in conflicts) else "")
     if conflicts and changeable:
-        raise RunPlanRefused(
+        raise SettingsRefused(
             f"A branch keeps every setting of its parent but those on its list "
             f"({', '.join(sorted(changeable))}); this request changes others: "
             + "; ".join(conflicts) + "." + freeze)
@@ -821,15 +862,22 @@ def _inherit_settings(
             + "; ".join(conflicts) + ". A continued run keeps every learning setting of "
             "its parent; remove these to inherit them, or branch the parent (branch_from) "
             "to change settings on a model bundle's list." + freeze)
-    # The rules across settings (decision S3), judged on the settings the run
-    # trains with for what the request changes (a branch's changes): a
-    # setting changed that the run would not read is refused, never ignored.
-    # A setting kept from the parent, inherited or stated at the parent's
-    # value, is never refused by them, so a resume and an extension, which
-    # change nothing, never meet them.
-    problems = cross_field_problems(settings, set(changes))
-    if problems:
-        raise RunPlanRefused(" ".join(problems))
+    # A branch's changes are judged as a new run's settings are (decision
+    # B2): each new value by its field spec, then the rules across settings
+    # (decision S3) on the settings the run trains with, for what the request
+    # changes: a setting changed that the run would not read is refused,
+    # never ignored. A setting kept from the parent, inherited or stated at
+    # the parent's value, is never judged by them, so a resume, an extension
+    # and a same-settings branch, which change nothing, never meet them.
+    if changes:
+        problem = stated_values_problem(
+            parent.get("learning_stage"), (parent.get("task"),),
+            {name: change["new"] for name, change in changes.items()})
+        if problem:
+            raise SettingsRefused(problem)
+        problems = cross_field_problems(settings, set(changes))
+        if problems:
+            raise SettingsRefused(" ".join(problems))
     return settings, inherited, changes, decoded
 
 
@@ -986,18 +1034,22 @@ __all__ = [
     "ContinuationPlan",
     "DecodedSettings",
     "OPERATIONAL_FIELDS",
+    "PARENT_FIELDS",
     "RUN_SETTINGS",
     "RunPlanRefused",
+    "SettingsRefused",
     "decode_learning_settings",
     "decoded_sentence",
     "finetune_split_seed_problem",
     "new_run_problem",
     "new_run_settings",
     "new_run_values",
+    "parents_problem",
     "plan_branch",
     "plan_continuation",
     "recorded_training_settings",
     "resolve_recorded_file",
+    "stated_values_problem",
     "unread_problem",
     "zero_rate_groups",
 ]

@@ -25,6 +25,12 @@ refusal from them, with the action for where the fingerprint was shown):
   of its own preview read, so the process continues from exactly the parent
   its decisions came from, whether or not the caller sent a digest.
 
+A branch (ops-wiring round, decision B2) is bound the same way through the
+same start: `preview_branch(expected_sha256=)` compares the caller's digest,
+and `start_training` passes ``--expect-parent-sha256`` with the digest of its
+own preview read; the runner and process cases below run for a resume and a
+same-settings branch of the same paused parent alike.
+
 Through the real runner, the real training process, the real route and the
 console's handlers, every one continuing paused model bundle bases: the API is
 a strict base start (K7), the dashboard offers model records only (K6 decision
@@ -122,11 +128,17 @@ def case(trained, tmp_path, monkeypatch):
             "dataset": _sha(ws / "split_manifest.json")}
 
 
-def _start(manager, case, monkeypatch, swap=None, **kwargs):
-    """A continued run through the real runner, `swap` applied when the
-    runner starts the process (after its own preview passed). The request
-    names no stage, as the console's does: the runner reads it from the
-    parent's record."""
+#: Each operation from a parent the runner binds to its preview's read: the
+#: request's parent field and the process's argument.
+OPERATIONS = {"resume": ("resume_from", "--expect-resume-sha256"),
+              "branch": ("branch_from", "--expect-parent-sha256")}
+
+
+def _start(manager, case, monkeypatch, swap=None, operation="resume", **kwargs):
+    """A continued run (or a same-settings branch) through the real runner,
+    `swap` applied when the runner starts the process (after its own preview
+    passed). The request names no stage, as the console's does: the runner
+    reads it from the parent's record."""
     real = subprocess.Popen
     seen = {}
 
@@ -139,7 +151,7 @@ def _start(manager, case, monkeypatch, swap=None, **kwargs):
     monkeypatch.setattr(tm.subprocess, "Popen", spawn)
     return manager.start_training(
         {"data_dir": str(case["ws"]), "device": "cpu",
-         "resume_from": str(case["parents"]["a"])},
+         OPERATIONS[operation][0]: str(case["parents"]["a"])},
         expected_dataset_fingerprint=case["dataset"], **kwargs), seen
 
 
@@ -159,39 +171,53 @@ def _swap(case, name):
 
 
 # --------------------------------------------------------------------------- the runner and the process
-def test_positive_control_the_parent_shown_is_continued_and_recorded(case, monkeypatch):
+@pytest.mark.parametrize("operation", sorted(OPERATIONS))
+def test_positive_control_the_parent_shown_is_continued_and_recorded(case, monkeypatch,
+                                                                     operation):
+    """A resume, and a same-settings branch (decision B1): the parent shown
+    is the one the run starts from and records."""
     import torch
 
     shown = _sha(case["parents"]["a"])
     manager = tm.TrainingManager()
-    started, seen = _start(manager, case, monkeypatch, expected_parent_sha256=shown)
+    started, seen = _start(manager, case, monkeypatch, operation=operation,
+                           expected_parent_sha256=shown)
     assert started["success"], started
-    assert seen["argv"][4:6] == ["--expect-resume-sha256", shown]
+    assert seen["argv"][4:6] == [OPERATIONS[operation][1], shown]
     job, log = _wait(manager)
     assert job.status == "completed", log[-3000:]
     run = Path(started["run_dir"])
     # Filed under the parent's architecture: a bundle base's encoder kind.
     assert run.parent.name == "gatv2"
     record = torch.load(run / "checkpoints" / "last.pt", weights_only=True, map_location="cpu")
-    assert record["training_input_digests"]["resume_checkpoint"] == shown
+    if operation == "resume":
+        assert record["training_input_digests"]["resume_checkpoint"] == shown
+    else:
+        assert (record["operation"], record["parent"]["sha256"], record["parent"]["changes"]) \
+            == ("branch", shown, {})
+        assert record["weight_transfer"]["optimizer"] == "new"
+        assert "resume_checkpoint" not in record["training_input_digests"]
+    assert _sha(case["parents"]["a"]) == shown, "the parent's bytes changed"
     # A precondition, not a setting: never in what the run records.
     assert "expect" not in json.dumps(record["config"], default=str)
     assert "expect" not in (run / "config.yaml").read_text()
 
 
+@pytest.mark.parametrize("operation", sorted(OPERATIONS))
 @pytest.mark.parametrize("swapped", ["same", "other"])
 def test_a_parent_replaced_after_the_runners_preview_is_refused_by_the_process(
-        case, monkeypatch, swapped):
+        case, monkeypatch, swapped, operation):
     """The finder's and the skeptic's cases: another paused run's last.pt
     (``same``: the same model spec; ``other``: another spec, where the runner
     decided from the first parent's) put at the parent's path when the process
     starts. It used to complete and record the other parent; it is refused
-    before it is loaded, exit 1, no traceback, and no run directory left."""
+    before it is loaded, exit 1, no traceback, and no run directory left. A
+    branch is bound alike (decision B2)."""
     shown = _sha(case["parents"]["a"])
     before = set((case["ws"] / "runs").rglob("*"))
     manager = tm.TrainingManager()
     started, _seen = _start(manager, case, monkeypatch, _swap(case, swapped),
-                            expected_parent_sha256=shown)
+                            operation=operation, expected_parent_sha256=shown)
     assert started["success"], started
     job, log = _wait(manager)
     assert job.status == "failed" and job.exit_code == 1, log[-3000:]
@@ -203,27 +229,32 @@ def test_a_parent_replaced_after_the_runners_preview_is_refused_by_the_process(
     assert set((case["ws"] / "runs").rglob("*")) == before
 
 
+@pytest.mark.parametrize("operation", sorted(OPERATIONS))
 def test_without_a_callers_digest_the_process_is_bound_to_the_runners_preview(case,
-                                                                              monkeypatch):
+                                                                              monkeypatch,
+                                                                              operation):
     """(a) of the skeptic: a caller that sends no parent digest (an API client)
     still gets a process bound to the parent the runner decided on."""
     shown = _sha(case["parents"]["a"])
     manager = tm.TrainingManager()
-    started, seen = _start(manager, case, monkeypatch, _swap(case, "other"))
+    started, seen = _start(manager, case, monkeypatch, _swap(case, "other"),
+                           operation=operation)
     assert started["success"], started
-    assert seen["argv"][4:6] == ["--expect-resume-sha256", shown]
+    assert seen["argv"][4:6] == [OPERATIONS[operation][1], shown]
     job, log = _wait(manager)
     assert job.exit_code == 1 and PROCESS_CHANGED in log, log[-3000:]
     assert not Path(started["run_dir"]).exists()
 
 
-def test_the_runners_preview_refuses_a_parent_that_is_not_the_one_shown(case, monkeypatch):
+@pytest.mark.parametrize("operation", sorted(OPERATIONS))
+def test_the_runners_preview_refuses_a_parent_that_is_not_the_one_shown(case, monkeypatch,
+                                                                        operation):
     shown = _sha(case["parents"]["a"])
     _swap(case, "same")()
     with patch.object(tm.subprocess, "Popen") as popen:
         manager = tm.TrainingManager()
         result = manager.start_training(
-            {"data_dir": str(case["ws"]), "resume_from": str(case["parents"]["a"])},
+            {"data_dir": str(case["ws"]), OPERATIONS[operation][0]: str(case["parents"]["a"])},
             expected_parent_sha256=shown)
     assert result["success"] is False and result["error"].startswith(f"{CHANGED}. It holds ")
     assert f"(chosen: {shown[:12]}...)" in result["error"] and result["parent_changed"] is True
@@ -238,22 +269,27 @@ def test_a_parent_digest_without_a_parent_is_refused(case):
         result = tm.TrainingManager().start_training(
             {"data_dir": str(case["ws"]), "learning_stage": "base", "device": "cpu"},
             expected_parent_sha256="a" * 64)
-    assert result["success"] is False and "continues no checkpoint" in result["error"]
+    assert result["success"] is False and result["error"] == (
+        "A parent's model fingerprint was sent, but this request continues no checkpoint "
+        "(resume_from) and branches none (branch_from). Nothing was started.")
     assert "invalid_settings" not in result
     popen.assert_not_called()
 
 
 # --------------------------------------------------------------------------- the preview
-def test_the_preview_is_the_one_comparison_of_a_callers_digest(case):
+@pytest.mark.parametrize("preview", ["preview_continuation", "preview_branch"])
+def test_the_preview_is_the_one_comparison_of_a_callers_digest(case, preview):
+    """Both previews compare through their one read of a parent
+    (`_read_parent`)."""
     manager = tm.TrainingManager()
+    read = getattr(manager, preview)
     parent = case["parents"]["a"]
     shown = _sha(parent)
-    assert manager.preview_continuation(str(parent), device="cpu",
-                                        expected_sha256=shown)["ok"] is True
-    malformed = manager.preview_continuation(str(parent), device="cpu", expected_sha256="A" * 64)
+    assert read(str(parent), device="cpu", expected_sha256=shown)["ok"] is True
+    malformed = read(str(parent), device="cpu", expected_sha256="A" * 64)
     assert malformed["ok"] is False and "not a full SHA-256" in malformed["reason"]
     parent.unlink()
-    gone = manager.preview_continuation(str(parent), device="cpu", expected_sha256=shown)
+    gone = read(str(parent), device="cpu", expected_sha256=shown)
     assert gone == {"ok": False, "changed": True, "parent": str(parent),
                     "reason": f"{CHANGED}. It is gone (chosen: {shown[:12]}...)."}
 
@@ -316,6 +352,8 @@ def test_a_parent_digest_for_a_run_that_continues_none_is_refused(case, tmp_path
                                      run_dir=str(tmp_path / "run"), learning_stage="base")
     with pytest.raises(ValueError, match="continues none"):
         train_model.train(config, {"learning_stage", "device"}, expected_resume_sha256="a" * 64)
+    with pytest.raises(ValueError, match="names a finetune or branch parent"):
+        train_model.train(config, {"learning_stage", "device"}, expected_parent_sha256="a" * 64)
     assert not (tmp_path / "run").exists()
 
 

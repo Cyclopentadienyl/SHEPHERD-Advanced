@@ -1141,40 +1141,56 @@ class TrainingManager:
                 P2-2), so a manifest replaced after this check is refused
                 there, before the graph and samples are read and before
                 anything is written, never trained on.
-            expected_parent_sha256: for a run continued from a parent, the
-                SHA-256 of the parent the caller showed (the Continue drawer's
-                model fingerprint; the API takes it as an optional query
-                parameter). Compared by this start's own preview of the parent
-                (`preview_continuation(expected_sha256=)`, the one place a
-                caller's digest is compared); a different file is refused
-                before anything is written or started (``parent_changed:
-                True``, for a caller to add what to do). **Whether or not it is
-                given, the training process is bound to the parent this start
-                decided on** (`--expect-resume-sha256` with the digest of that
-                preview's read, root-cause round P22-S1): the run's placement
-                under the parent's architecture and the extend mode come from
-                that read, and a file replaced after it is refused by the
-                process before it is loaded.
+            expected_parent_sha256: for a run continued (`resume_from`) or
+                branched (`branch_from`) from a parent, the SHA-256 of the
+                parent the caller showed (the Continue drawer's model
+                fingerprint; the API takes it as an optional query parameter).
+                Compared by this start's own preview of the parent
+                (`preview_continuation` or `preview_branch`, through their one
+                read, the one place a caller's digest is compared); a different
+                file is refused before anything is written or started
+                (``parent_changed: True``, for a caller to add what to do).
+                **Whether or not it is given, the training process is bound to
+                the parent this start decided on** (`--expect-resume-sha256`,
+                or `--expect-parent-sha256` for a branch, with the digest of
+                that preview's read, root-cause round P22-S1; decision B2): the
+                run's placement under the parent's architecture, its stage and
+                task, and the extend mode come from that read, and a file
+                replaced after it is refused by the process before it is
+                loaded. The process then checks the parent against the
+                workspace's data and split and plans again on those bytes.
 
-        **A new run** (no `resume_from`) is a model bundle base: its
-        configuration is checked whole first (`_new_bundle_run`: its stage
-        ``base``, only the settings a base reads and the run keys, each value
-        its field spec takes and the rules across settings holding; a request
-        without a stage, and a finetune, which starts through
+        **A new run** (no `resume_from`, no `branch_from`) is a model bundle
+        base: its configuration is checked whole first (`_new_bundle_run`: its
+        stage ``base``, only the settings a base reads and the run keys, each
+        value its field spec takes and the rules across settings holding; a
+        request without a stage, and a finetune, which starts through
         `start_finetune`, are refused here as invalid settings, nothing
         spawned or written), and it is filed under its model spec's encoder
         kind. A continued run takes its parent's stage and task from the
         preview's read of the parent's record; a continued run's request that
         states a learning stage (the API's start may state one) is refused by
         the preview unless the parent's record holds that stage, as any
-        explicit setting other than the parent's is.
+        explicit setting other than the parent's is. **A branch** (contract
+        §9.2; decisions B1, B2) goes through the same slot, run directory,
+        configuration file and spawn: `preview_branch` decides it (a refusal
+        of its settings is ``invalid_settings``), and it is filed under its
+        parent's architecture with its parent's stage and task. A request
+        naming two parents is refused first (`run_plan.parents_problem`).
 
         Returns:
             Status dict with success/error info. Refused while any GPU job is
             running or stopping, or while the GPU lock is held elsewhere.
         """
+        from src.utils.run_plan import parents_problem
+
+        refusal = parents_problem(config)
+        if refusal:
+            return {"success": False, "invalid_settings": True,
+                    "error": f"{refusal} Nothing was started.",
+                    "status": self.get_job_status_word("training")}
         bundle_encoder = None
-        if not config.get("resume_from"):
+        if not (config.get("resume_from") or config.get("branch_from")):
             bundle_encoder, refusal = _new_bundle_run(config)
             if refusal:
                 return {"success": False, "invalid_settings": True,
@@ -1197,11 +1213,30 @@ class TrainingManager:
         # of this read and refuses any other (P22-S1). Read before the lock, so
         # the status stays readable meanwhile.
         architecture = bundle_encoder
-        parent_sha256 = None
-        if expected_parent_sha256 is not None and not config.get("resume_from"):
+        parent_sha256 = parent_flag = None
+        if expected_parent_sha256 is not None and not (config.get("resume_from")
+                                                       or config.get("branch_from")):
             return {"success": False, "status": self.get_job_status_word("training"),
                     "error": "A parent's model fingerprint was sent, but this request "
-                             "continues no checkpoint (resume_from). Nothing was started."}
+                             "continues no checkpoint (resume_from) and branches none "
+                             "(branch_from). Nothing was started."}
+        if config.get("branch_from"):
+            # A branch, decided by its one preview as the training process
+            # decides it, and bound to that read (decision B2).
+            preview = self.preview_branch(
+                config["branch_from"], device=config.get("device", "auto"),
+                requested={k: v for k, v in config.items() if k != "branch_from"},
+                expected_sha256=expected_parent_sha256)
+            if not preview["ok"]:
+                return {"success": False, "error": preview["reason"],
+                        "parent_changed": preview.get("changed", False),
+                        **({"invalid_settings": True} if preview.get("invalid_settings")
+                           else {}),
+                        "status": self.get_job_status_word("training")}
+            parent_sha256, parent_flag = preview["sha256"], "--expect-parent-sha256"
+            architecture = preview["architecture"]
+            config = {**config, "learning_stage": preview["learning_stage"],
+                      **({"task": preview["task"]} if preview.get("task") else {})}
         if config.get("resume_from"):
             preview = self.preview_continuation(
                 config["resume_from"], device=config.get("device", "auto"),
@@ -1212,7 +1247,7 @@ class TrainingManager:
                 return {"success": False, "error": preview["reason"],
                         "parent_changed": preview.get("changed", False),
                         "status": self.get_job_status_word("training")}
-            parent_sha256 = preview["sha256"]
+            parent_sha256, parent_flag = preview["sha256"], "--expect-resume-sha256"
             architecture = preview.get("architecture") or architecture
             if preview.get("learning_stage"):
                 # A model bundle parent: the process runs the bundle path only
@@ -1268,7 +1303,7 @@ class TrainingManager:
             # since they are preconditions of this job and not settings the run
             # records.
             if parent_sha256 is not None:
-                cmd += ["--expect-resume-sha256", parent_sha256]
+                cmd += [parent_flag, parent_sha256]
             if expected_dataset_fingerprint is not None:
                 cmd += ["--expect-dataset-sha256", expected_dataset_fingerprint]
             job, error = self._spawn_locked(kind, cmd, inputs={"config_path": str(config_path)},
@@ -2357,6 +2392,108 @@ class TrainingManager:
         self._snapshot_cache = (key, snapshot)
         return snapshot
 
+    def _read_parent(self, parent_path: str, expected_sha256: Optional[str], whose: str
+                     ) -> Tuple[Optional[Any], Optional[Any], Dict[str, Any]]:
+        """**The one read of a parent a preview makes** (`preview_continuation`,
+        `preview_branch`; ops-wiring round, decision B2): ``(read, record,
+        facts)``, the checkpoint as read, its model record and what the
+        previews state of it, or ``(None, None, refusal)``.
+
+        `expected_sha256` is the parent's SHA-256 a caller showed: **the one
+        place a caller's digest of the parent is compared** (root-cause round,
+        P22-S1), by the read itself before the file is loaded
+        (`read_checkpoint(expected_sha256=)`); other bytes, or none, are
+        refused as changed (``changed: True``). The record is read by the one
+        reader, as the training process reads it (`read_model_record`), so a
+        file that is no record of this build is refused in its words, after
+        `whose` ("The parent", "The branch parent"), the training process's
+        name for the role."""
+        from src.models.bundle.record import ModelRecordError, has_model_spec, read_model_record
+        from src.utils.checkpoint_io import CheckpointChanged, read_checkpoint
+
+        if expected_sha256 is not None and not (
+                isinstance(expected_sha256, str) and _SHA256.fullmatch(expected_sha256)):
+            return None, None, {
+                "ok": False, "reason": "The parent's model fingerprint sent is not a full "
+                                       "SHA-256 hexdigest, so the checkpoint cannot be checked."}
+        path = Path(parent_path)
+        if not path.is_absolute():
+            path = PROJECT_ROOT / path
+        if expected_sha256 is None and not path.is_file():
+            return None, None, {"ok": False, "parent": str(path),
+                                "reason": f"{path} does not exist."}
+        try:
+            read = read_checkpoint(path, map_location="cpu", weights_only=True,
+                                   expected_sha256=expected_sha256)
+        except CheckpointChanged as exc:
+            now = (f"It holds {exc.found[:12]}... now" if exc.found is not None
+                   else "It is gone")
+            return None, None, {"ok": False, "changed": True, "parent": str(path),
+                                "reason": f"The checkpoint changed since it was chosen. {now} "
+                                          f"(chosen: {exc.expected[:12]}...)."}
+        except Exception as exc:  # noqa: BLE001 - a refusal to show
+            return None, None, {"ok": False, "parent": str(path),
+                                "reason": f"{path.name} cannot be read as a checkpoint "
+                                          f"({type(exc).__name__}: {exc})."}
+        record = read.checkpoint if isinstance(read.checkpoint, dict) else {}
+        progress = record.get("progress") or {}
+        stage = progress.get("stage") or {}
+        facts = {
+            "parent": str(path),
+            "sha256": read.identity.sha256,
+            "end": progress.get("end"),
+            "completed_epochs": progress.get("completed_epochs"),
+            "target_epochs": (int(stage.get("start_epoch", 0))
+                              + int(stage.get("target_epochs", 0))) if stage else None,
+            # Where a run from it is filed: its model spec's encoder kind (the
+            # run layout's key); None for a parent without a spec, which no run
+            # continues or branches.
+            "architecture": (((record.get("model_spec") or {}).get("encoder") or {}).get("kind")
+                             if has_model_spec(record) else None),
+            # The dataset the parent trained on, as it records it (M5-2: the
+            # Continue drawer compares it with the workspace's current one).
+            "dataset_fingerprint": _recorded_dataset(record),
+            # A model bundle parent's learning stage and task, from its record
+            # (None for a parent without a spec): the run is of that stage.
+            "learning_stage": record.get("learning_stage") if has_model_spec(record) else None,
+            "task": record.get("task") if has_model_spec(record) else None,
+            # The parameter groups whose rate ended at 0, from this read
+            # (`run_plan.zero_rate_groups`): the groups an extension's
+            # extend_lr replaces, and must be given for; None when the
+            # parent records no optimizer rates or they cannot be read.
+            "zero_rate_groups": _zero_rate_groups(record),
+        }
+        # **The parent's record first, by the one reader**, as the training
+        # process reads it (`train_model.train`: `read_model_record`, then the
+        # plan), so the two refuse a file that is no record of this build in
+        # the same words (checkpoint A).
+        try:
+            model_record = read_model_record(read.checkpoint)
+        except ModelRecordError as exc:
+            return None, None, {**facts, "ok": False, "reason": f"{whose} {path.name}: {exc}"}
+        return read, model_record, facts
+
+    @staticmethod
+    def _plan_request(record: Mapping[str, Any], explicit: Mapping[str, Any],
+                      **operational: Any) -> Dict[str, Any]:
+        """The request a preview's plan is given, as the training process
+        gives its own: every current setting (`training_fields.names()`, the
+        run's TrainConfig fields), the request's own over the parent's, and
+        `operational`. Only the request's fields count as set explicitly, so
+        every other learning setting shows as inherited. A setting the parent
+        records and this build does not have is not in it, so not inherited;
+        a current one the parent does not record is in it with nothing behind
+        it, and the plan reads the parent through the one settings decode
+        (`run_plan.decode_learning_settings`), as the process does: a rules-1
+        parent's freeze is decoded, any other missing setting refused, as the
+        process refuses it."""
+        from src.config.training_fields import names as setting_names
+
+        recorded = (record.get("config") or {}).get("requested")
+        recorded = recorded if isinstance(recorded, dict) else {}
+        return {**{name: recorded.get(name) for name in setting_names()}, **explicit,
+                "run_dir": "", "pause_after_epoch": None, **operational}
+
     def preview_continuation(
         self,
         parent_path: str,
@@ -2371,13 +2508,11 @@ class TrainingManager:
         before start (contract M3a-3, M3a-4).
 
         `expected_sha256` is the parent's SHA-256 a caller showed (the run
-        list's or an earlier Check's model fingerprint): **the one place a
-        caller's digest of the parent is compared** (root-cause round,
-        P22-S1), by the read itself before the file is loaded
-        (`read_checkpoint(expected_sha256=)`); other bytes, or none, are
-        refused as changed (``changed: True``, so a caller can add what to do
-        for where it showed the fingerprint: the console's "refresh the list"
-        or "check it again").
+        list's or an earlier Check's model fingerprint), compared by the one
+        read of a parent a preview makes (`_read_parent`); other bytes, or
+        none, are refused as changed (``changed: True``, so a caller can add
+        what to do for where it showed the fingerprint: the console's "refresh
+        the list" or "check it again").
 
         `requested` is a training request's own fields, set explicitly: a
         learning setting among them that differs from the parent's is refused
@@ -2395,91 +2530,20 @@ class TrainingManager:
         workspace's data and graph (M2.3) and decides again on those bytes;
         `start_training` binds it to this preview's read.
         """
-        from src.config.training_fields import names as setting_names
-        from src.models.bundle.record import (
-            MODEL_RECORD_VERSION, ModelRecordError, has_model_spec, read_model_record,
-        )
+        from src.models.bundle.record import MODEL_RECORD_VERSION
         from src.utils.run_plan import RunPlanRefused, plan_continuation
-        from src.utils.checkpoint_io import CheckpointChanged, read_checkpoint
 
-        if expected_sha256 is not None and not (
-                isinstance(expected_sha256, str) and _SHA256.fullmatch(expected_sha256)):
-            return {"ok": False,
-                    "reason": "The parent's model fingerprint sent is not a full SHA-256 "
-                              "hexdigest, so the checkpoint cannot be checked."}
-        path = Path(parent_path)
-        if not path.is_absolute():
-            path = PROJECT_ROOT / path
-        if expected_sha256 is None and not path.is_file():
-            return {"ok": False, "parent": str(path), "reason": f"{path} does not exist."}
-        try:
-            read = read_checkpoint(path, map_location="cpu", weights_only=True,
-                                   expected_sha256=expected_sha256)
-        except CheckpointChanged as exc:
-            now = (f"It holds {exc.found[:12]}... now" if exc.found is not None
-                   else "It is gone")
-            return {"ok": False, "changed": True, "parent": str(path),
-                    "reason": f"The checkpoint changed since it was chosen. {now} "
-                              f"(chosen: {exc.expected[:12]}...)."}
-        except Exception as exc:  # noqa: BLE001 - a refusal to show
-            return {"ok": False, "parent": str(path),
-                    "reason": f"{path.name} cannot be read as a checkpoint "
-                              f"({type(exc).__name__}: {exc})."}
-        record = read.checkpoint if isinstance(read.checkpoint, dict) else {}
-        progress = record.get("progress") or {}
-        stage = progress.get("stage") or {}
-        if extend_if_finished and progress.get("end") != "finished":
+        read, _record, facts = self._read_parent(parent_path, expected_sha256, "The parent")
+        if read is None:
+            return facts
+        path = Path(facts["parent"])
+        record = read.checkpoint
+        if extend_if_finished and facts["end"] != "finished":
             extend_epochs = None
-        facts = {
-            "parent": str(path),
-            "sha256": read.identity.sha256,
-            "end": progress.get("end"),
-            "completed_epochs": progress.get("completed_epochs"),
-            "target_epochs": (int(stage.get("start_epoch", 0))
-                              + int(stage.get("target_epochs", 0))) if stage else None,
-            # Where a continued run is filed: its model spec's encoder kind (the
-            # run layout's key); None for a parent without a spec, which no run
-            # continues.
-            "architecture": (((record.get("model_spec") or {}).get("encoder") or {}).get("kind")
-                             if has_model_spec(record) else None),
-            # The dataset the parent trained on, as it records it (M5-2: the
-            # Continue drawer compares it with the workspace's current one).
-            "dataset_fingerprint": _recorded_dataset(record),
-            # A model bundle parent's learning stage and task, from its record
-            # (None for a parent without a spec): the run continues that stage.
-            "learning_stage": record.get("learning_stage") if has_model_spec(record) else None,
-            "task": record.get("task") if has_model_spec(record) else None,
-            # The parameter groups whose rate ended at 0, from this read
-            # (`run_plan.zero_rate_groups`): the groups an extension's
-            # extend_lr replaces, and must be given for; None when the
-            # parent records no optimizer rates or they cannot be read.
-            "zero_rate_groups": _zero_rate_groups(record),
-        }
-        # The request the training process makes: every current setting
-        # (`training_fields.names()`, the run's TrainConfig fields), the
-        # request's own over the parent's. Only the request's fields count as
-        # set explicitly, so every other learning setting shows as inherited.
-        # A setting the parent records and this build does not have is not in
-        # it, so not inherited; a current one the parent does not record is in
-        # it with nothing behind it, and the plan reads the parent through the
-        # one settings decode (`run_plan.decode_learning_settings`), as the
-        # process does: a rules-1 parent's freeze is decoded, any other
-        # missing setting refused, as the process refuses it.
         explicit = dict(requested or {})
-        recorded = (record.get("config") or {}).get("requested")
-        recorded = recorded if isinstance(recorded, dict) else {}
-        request = {**{name: recorded.get(name) for name in setting_names()}, **explicit,
-                   "resume_from": str(path), "run_dir": "", "extend_epochs": extend_epochs,
-                   "extend_lr": explicit.get("extend_lr"), "pause_after_epoch": None,
-                   "device": device}
-        # **The parent's record first, by the one reader**, as the training
-        # process reads it (`train_model.train`: `read_model_record`, then the
-        # plan), so the two refuse a file that is no record of this build in
-        # the same words (checkpoint A).
-        try:
-            read_model_record(read.checkpoint)
-        except ModelRecordError as exc:
-            return {**facts, "ok": False, "reason": f"The parent {path.name}: {exc}"}
+        request = self._plan_request(record, explicit, resume_from=str(path),
+                                     extend_epochs=extend_epochs,
+                                     extend_lr=explicit.get("extend_lr"), device=device)
         effective_device = "cuda" if device == "auto" else device
         try:
             plan = plan_continuation(record, path, request, set(explicit),
@@ -2492,6 +2556,95 @@ class TrainingManager:
                 "inherited": plan.inherited, "decoded": plan.decoded,
                 "start_epoch": plan.start_epoch, "end_epoch": plan.end_epoch,
                 "stage": plan.stage}
+
+    def preview_branch(
+        self,
+        parent_path: str,
+        *,
+        device: str = "auto",
+        requested: Optional[Dict[str, Any]] = None,
+        expected_sha256: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """What branching `parent_path` would do (contract §9.2, BACKLOG 23;
+        ops-wiring round, decisions B1, B2): a new run of the parent's stage
+        and task from its weights, with a new optimizer and schedule, its
+        settings the parent's but those `requested` changes. For a page to
+        show before start, and the decision `start_training` starts a branch
+        by.
+
+        The parent is read once, as a continuation's is (`_read_parent`,
+        where `expected_sha256` is compared), then judged by the functions
+        the training process judges it by, in its order, so the two refuse
+        one request in the same words: two parents named (`parents_problem`);
+        a parent without weights; a stated stage or task other than the
+        parent's (`branch_parent_problem`; a request that states neither
+        branches the parent's); a setting the parent's stage and task do not
+        read (`unread_problem`); **the plan** (`run_plan.plan_branch`: the
+        record and rules, a weights-only parent, an extension, a setting off
+        the list, each new value by its field spec, the rules across settings,
+        mixed precision); and the hop list against the parent's encoder
+        (`hops_problem`). A refusal of the request's settings themselves (a
+        setting not read or off the list, a value, a rule, the hop list) says
+        ``invalid_settings: True``.
+
+        Returns the parent's facts and, when it can be branched, ``mode``
+        "branch", the plan's ``action``, the ``inherited`` and ``decoded``
+        settings, the ``changes`` (``{}`` for a same-settings branch) and
+        ``changeable``, the closed list of settings a branch of its stage and
+        task may change (`recipe.branch_settings`), so a page offers the list
+        the plan judges by and never holds one of its own. A preview is not
+        the check: `start_training` binds the training process to this
+        read's digest (`--expect-parent-sha256`), and the process reads the
+        parent again and checks it against the workspace's data and split
+        before it plans again.
+        """
+        from src.config.recipe import branch_settings
+        from src.models.bundle.record import MODEL_RECORD_VERSION, branch_parent_problem
+        from src.models.bundle.spec import hops_problem
+        from src.utils.run_plan import (
+            RUN_SETTINGS, RunPlanRefused, SettingsRefused, parents_problem, plan_branch,
+            unread_problem,
+        )
+
+        explicit = dict(requested or {})
+        problem = parents_problem({**explicit, "branch_from": parent_path})
+        if problem:
+            return {"ok": False, "invalid_settings": True, "reason": problem}
+        read, model_record, facts = self._read_parent(parent_path, expected_sha256,
+                                                      "The branch parent")
+        if read is None:
+            return facts
+        path = Path(facts["parent"])
+        record = read.checkpoint
+        if record.get("state_dict") is None:
+            return {**facts, "ok": False,
+                    "reason": f"The branch parent {path.name} holds no model weights."}
+        stage, task = model_record.learning_stage, model_record.task
+        problem = branch_parent_problem(model_record, explicit.get("learning_stage", stage),
+                                        explicit.get("task", task))
+        if problem:
+            return {**facts, "ok": False, "reason": problem}
+        problem = unread_problem(stage, (task,), {name: value for name, value
+                                                  in explicit.items() if name in RUN_SETTINGS})
+        if problem:
+            return {**facts, "ok": False, "invalid_settings": True, "reason": problem}
+        request = self._plan_request(record, explicit, branch_from=str(path),
+                                     extend_epochs=explicit.get("extend_epochs"),
+                                     extend_lr=explicit.get("extend_lr"), device=device)
+        effective_device = "cuda" if device == "auto" else device
+        try:
+            plan = plan_branch(record, path, request, set(explicit), device=effective_device,
+                               record_version=MODEL_RECORD_VERSION)
+        except RunPlanRefused as exc:
+            return {**facts, "ok": False, "reason": str(exc),
+                    **({"invalid_settings": True} if isinstance(exc, SettingsRefused) else {})}
+        problem = hops_problem(plan.settings.get("num_neighbors"),
+                               model_record.model_spec.encoder)
+        if problem:
+            return {**facts, "ok": False, "invalid_settings": True, "reason": problem}
+        return {**facts, "ok": True, "mode": "branch", "action": plan.action,
+                "inherited": plan.inherited, "decoded": plan.decoded, "changes": plan.changes,
+                "changeable": sorted(branch_settings(stage, task))}
 
     # =========================================================================
     # Checkpoint Management

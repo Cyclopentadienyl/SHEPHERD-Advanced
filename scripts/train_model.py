@@ -1185,15 +1185,14 @@ def read_branch_parent(requested: str, stage: str, task: Optional[str], device: 
     task data is read (contract §9.2): a checkpoint of this run's stage and
     task, with a model spec and weights. Its data, settings and spec are
     compared once the inputs are read (`accept_resume_parent`, `plan_branch`)."""
+    from src.models.bundle.record import branch_parent_problem
     from src.utils.run_plan import RunPlanRefused
 
     parent, record = _read_bundle_parent(requested, "branch", device,
                                          expected_sha256=expected_sha256)
-    if record.learning_stage != stage or record.task != task:
-        raise RunPlanRefused(
-            f"The branch parent is a {record.learning_stage} checkpoint"
-            + (f" for {record.task}" if record.task else "")
-            + "; a branch keeps its parent's stage and task.")
+    problem = branch_parent_problem(record, stage, task)
+    if problem:
+        raise RunPlanRefused(problem)
     return parent, record
 
 
@@ -1254,8 +1253,9 @@ def train(config: TrainConfig, explicit: Collection[str], *,
         check_run_dir_free, claim_run_dir, propose_run_dir, run_checkpoint_dir, run_log_dir,
     )
     from src.utils.run_plan import (
-        RUN_SETTINGS, RunPlanRefused, decoded_sentence, finetune_split_seed_problem,
-        new_run_problem, plan_branch, unread_problem,
+        PARENT_FIELDS, RUN_SETTINGS, RunPlanRefused, decoded_sentence,
+        finetune_split_seed_problem, new_run_problem, parents_problem, plan_branch,
+        unread_problem,
     )
 
     if explicit is None:
@@ -1268,12 +1268,10 @@ def train(config: TrainConfig, explicit: Collection[str], *,
     explicit_set = set(explicit)
     if stage == "base" and (config.task is not None or config.finetune_from):
         raise ValueError("a base run has no task and no finetune parent")
-    parents = [name for name in ("resume_from", "finetune_from", "branch_from")
-               if getattr(config, name)]
-    if len(parents) > 1:
-        raise ValueError(f"{' and '.join(parents)} name two parents; a run continues one "
-                         "(resume_from), finetunes a base (finetune_from) or branches one "
-                         "(branch_from)")
+    parents = [name for name in PARENT_FIELDS if getattr(config, name)]
+    problem = parents_problem({name: getattr(config, name) for name in PARENT_FIELDS})
+    if problem:
+        raise ValueError(problem)
     if stage == "finetune":
         if config.task not in FINETUNE_TASKS_HERE:
             raise ValueError(f"a finetune names its task, one of {list(FINETUNE_TASKS_HERE)} "
@@ -1859,8 +1857,8 @@ def _train_main(args: argparse.Namespace) -> int:
     except DatasetChanged as exc:  # a refusal, said once, not a failure with a traceback
         logger.error(f"train_model: refused: {exc} Nothing was written.")
         return 1
-    except CheckpointChanged as exc:  # the resume parent's read, the one `train` makes
-        # with an expectation (`--expect-resume-sha256`); the reader states the facts
+    except CheckpointChanged as exc:  # a parent's read `train` makes with an expectation
+        # (`--expect-resume-sha256`, `--expect-parent-sha256`); the reader states the facts
         logger.error("train_model: refused: The checkpoint changed since it was chosen; "
                      f"choose it again. {exc} Nothing was written.")
         return 1
