@@ -312,6 +312,18 @@ def test_finetune_refusals(workspace, tmp_path):
     config, explicit = _finetune_config(workspace, tmp_path / "x", child)
     with pytest.raises(RunPlanRefused, match="never chain"):
         train_model.train(config, explicit)
+    # A parent without weights, by the one check the job runner's Fine-tune
+    # start asks too (`finetune_parent_problem`): a base's weights, its stage
+    # first.
+    for source, name, said in ((parent, "noweights.pt", "holds no model weights."),
+                               (child, "noweights-child.pt", "is a finetune checkpoint")):
+        weightless = tmp_path / name
+        torch.save({**torch.load(source, map_location="cpu", weights_only=True),
+                    "state_dict": None}, weightless)
+        config, explicit = _finetune_config(workspace, tmp_path / "v", weightless)
+        with pytest.raises(RunPlanRefused) as refused:
+            train_model.train(config, explicit)
+        assert str(refused.value).startswith(f"The finetune parent {name} {said}")
     # A parent without a model spec.
     payload = torch.load(parent, map_location="cpu", weights_only=True)
     payload.pop("model_spec")
@@ -327,7 +339,7 @@ def test_finetune_refusals(workspace, tmp_path):
     config, explicit = _finetune_config(workspace, tmp_path / "w", parent, resume_from=str(child))
     with pytest.raises(ValueError, match="resume_from and finetune_from name two parents"):
         train_model.train(config, explicit)
-    for name in ("x", "y", "z", "w"):
+    for name in ("x", "v", "y", "z", "w"):
         assert not (tmp_path / name).exists()
 
 

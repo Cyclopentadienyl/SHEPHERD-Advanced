@@ -1134,7 +1134,10 @@ def inherited_recipe_record(stage: str, task: Optional[str], explicit: Set[str],
 def _read_bundle_parent(requested: str, role: str, device: str, *,
                         expected_sha256: Optional[str] = None):
     """One read of a parent checkpoint and its model record (contract §9.2),
-    compared with `expected_sha256` before it is loaded."""
+    compared with `expected_sha256` before it is loaded. Its stage and its
+    weights are judged by its role's one check, which the job runner asks of
+    its own read too (`record.finetune_parent_problem`,
+    `record.branch_parent_problem`)."""
     from src.models.bundle.record import ModelRecordError, read_model_record
     from src.utils.checkpoint_io import read_checkpoint
     from src.utils.run_plan import RunPlanRefused
@@ -1150,8 +1153,6 @@ def _read_bundle_parent(requested: str, role: str, device: str, *,
         record = read_model_record(parent.checkpoint)
     except ModelRecordError as exc:
         raise RunPlanRefused(f"The {role} parent {path.name}: {exc}") from None
-    if parent.checkpoint.get("state_dict") is None:
-        raise RunPlanRefused(f"The {role} parent {path.name} holds no model weights.")
     return parent, record
 
 
@@ -1181,16 +1182,18 @@ def read_finetune_parent(requested: str, inputs: TrainingInputs, device: str, *,
 
 def read_branch_parent(requested: str, stage: str, task: Optional[str], device: str, *,
                        expected_sha256: Optional[str] = None):
-    """Read a branch's parent once and check its stage and task, before any
-    task data is read (contract §9.2): a checkpoint of this run's stage and
-    task, with a model spec and weights. Its data, settings and spec are
-    compared once the inputs are read (`accept_resume_parent`, `plan_branch`)."""
+    """Read a branch's parent once and check its stage and task, then its
+    weights, before any task data is read (contract §9.2): a checkpoint of
+    this run's stage and task, with a model spec and weights. Its data,
+    settings and spec are compared once the inputs are read
+    (`accept_resume_parent`, `plan_branch`)."""
     from src.models.bundle.record import branch_parent_problem
     from src.utils.run_plan import RunPlanRefused
 
     parent, record = _read_bundle_parent(requested, "branch", device,
                                          expected_sha256=expected_sha256)
-    problem = branch_parent_problem(record, stage, task)
+    problem = branch_parent_problem(record, parent.checkpoint, stage, task,
+                                    Path(requested).name)
     if problem:
         raise RunPlanRefused(problem)
     return parent, record

@@ -1166,16 +1166,34 @@ def _weights_only(base: Path, tmp_path: Path) -> Path:
     return tmp_path / "weights.pt"
 
 
+def _without_weights(base: Path, tmp_path: Path) -> Path:
+    """The parent's record with no weights in it (`state_dict` None)."""
+    import torch
+
+    payload = torch.load(base, map_location="cpu", weights_only=True)
+    payload["state_dict"] = None
+    torch.save(payload, tmp_path / "noweights.pt")
+    return tmp_path / "noweights.pt"
+
+
 #: Each request a branch refuses, as (the request, whether it is a refusal of
 #: its settings themselves, the invalid settings the runner answers 422 for).
+#: A request with two refusals hears the one the training process judges
+#: first: a setting the parent's stage does not read before the parent's
+#: weights, as a branch this runner starts is judged (its stage the parent's).
 BRANCH_REFUSALS = {
     "off the list": (lambda recorded: {"split_seed": recorded["split_seed"] + 1}, True),
     "an extension": (lambda recorded: {"extend_epochs": 1}, False),
     "weights only": (lambda recorded: {}, False),
+    "no weights": (lambda recorded: {}, False),
+    "no weights and a setting not read": (lambda recorded: {"task_loss_weight": 0.5}, True),
     "another stage": (lambda recorded: {"learning_stage": "finetune", "task": "disease"}, False),
     "two parents": (lambda recorded: {"resume_from": "PARENT"}, True),
     "an invalid value": (lambda recorded: {"learning_rate": -1.0}, True),
 }
+#: The parent each case branches, where it is not the trained base.
+BRANCH_REFUSAL_PARENTS = {"weights only": _weights_only, "no weights": _without_weights,
+                          "no weights and a setting not read": _without_weights}
 
 
 @pytest.mark.parametrize("case", sorted(BRANCH_REFUSALS))
@@ -1193,7 +1211,8 @@ def test_the_branch_previews_refusal_is_the_training_processs(branch_parent, tmp
     make, invalid = BRANCH_REFUSALS[case]
     request = {name: (str(base) if value == "PARENT" else value)
                for name, value in make(recorded).items()}
-    parent = _weights_only(base, tmp_path) if case == "weights only" else base
+    parent = (BRANCH_REFUSAL_PARENTS[case](base, tmp_path) if case in BRANCH_REFUSAL_PARENTS
+              else base)
     stated = {"learning_stage": "base", "device": "cpu", **request}
     preview = TrainingManager().preview_branch(str(parent), device="cpu", requested=stated)
     assert preview["ok"] is False

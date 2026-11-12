@@ -441,31 +441,45 @@ def recorded_graph_use(graph_exposure: Any) -> Dict[str, Tuple[str, ...]]:
     return uses
 
 
-def finetune_parent_problem(record: ModelRecord, payload: Mapping[str, Any]) -> Optional[str]:
-    """Why a read checkpoint cannot be a finetune's parent (contract §9.2), as
-    the rest of a sentence naming it, or None: a base with weights; children
-    never chain. Its graph is compared with the workspace's where the
-    workspace is read (`train_model.read_finetune_parent`)."""
-    if record.learning_stage != "base":
-        return (f"is a {record.learning_stage} checkpoint; a finetune's parent is a base, "
-                "and children never chain.")
+def _weights_problem(payload: Any) -> Optional[str]:
+    """Why a read checkpoint holds no weights a child could start from, as
+    the rest of a sentence naming it, or None: **the one rule of a parent's
+    weights**, a finetune's and a branch's alike (`finetune_parent_problem`,
+    `branch_parent_problem`)."""
     if not isinstance(payload, Mapping) or payload.get("state_dict") is None:
         return "holds no model weights."
     return None
 
 
-def branch_parent_problem(record: ModelRecord, learning_stage: Any,
-                          task: Any) -> Optional[str]:
-    """Why a read checkpoint cannot be the parent of a branch of
-    `learning_stage` and `task` (contract §9.2), as a sentence, or None: a
-    branch keeps its parent's stage and task. The training process
+def finetune_parent_problem(record: ModelRecord, payload: Mapping[str, Any]) -> Optional[str]:
+    """Why a read checkpoint cannot be a finetune's parent (contract §9.2), as
+    the rest of a sentence naming it, or None: a base, then its weights;
+    children never chain. The training process
+    (`train_model.read_finetune_parent`) and the job runner's Fine-tune start
+    ask it of one read alike; its graph is compared with the workspace's
+    where the workspace is read."""
+    if record.learning_stage != "base":
+        return (f"is a {record.learning_stage} checkpoint; a finetune's parent is a base, "
+                "and children never chain.")
+    return _weights_problem(payload)
+
+
+def branch_parent_problem(record: ModelRecord, payload: Mapping[str, Any], learning_stage: Any,
+                          task: Any, name: str) -> Optional[str]:
+    """Why a read checkpoint, the file `name`, cannot be the parent of a
+    branch of `learning_stage` and `task` (contract §9.2), as a sentence, or
+    None: a branch keeps its parent's stage and task, then starts from its
+    weights, the stage first as a finetune's parent's is
+    (`finetune_parent_problem`). The training process
     (`train_model.read_branch_parent`) and the job runner's preview
-    (`TrainingManager.preview_branch`) ask it of one read alike."""
-    if record.learning_stage == learning_stage and record.task == task:
-        return None
-    return (f"The branch parent is a {record.learning_stage} checkpoint"
-            + (f" for {record.task}" if record.task else "")
-            + "; a branch keeps its parent's stage and task.")
+    (`TrainingManager.preview_branch`) ask it of one read alike, so the two
+    refuse a parent in one sentence."""
+    if record.learning_stage != learning_stage or record.task != task:
+        return (f"The branch parent {name} is a {record.learning_stage} checkpoint"
+                + (f" for {record.task}" if record.task else "")
+                + "; a branch keeps its parent's stage and task.")
+    problem = _weights_problem(payload)
+    return f"The branch parent {name} {problem}" if problem else None
 
 
 #: What a model list shows of a checkpoint's record (`listed_record`).
