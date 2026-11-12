@@ -606,27 +606,35 @@ def list_html(listing: Mapping[str, Any], selected: Optional[str], preset: Prese
             html_ = html_.replace("</button>", f'<span class="shep-row-sub">{extra}</span></button>', 1)
         return html_
 
+    def group(heading: str, label: str, entries: Sequence[str]) -> str:
+        """A heading and the list of its entries: each entry a list item (a
+        row stays a button inside its item), the heading outside the list, so
+        a screen reader counts the checkpoints only (the skill's §10, correct
+        roles)."""
+        body = "".join(f'<div role="listitem">{entry}</div>' for entry in entries)
+        return f'{heading}<div role="list" aria-label="{r.e(label)}">{body}</div>'
+
     parts = []
     if pinned:
-        parts.append(f'<div class="shep-list-hd"><b>In use now</b> · {r.e(IN_USE_NOTE)}</div>')
-        parts.append(row(pinned[0], in_use=True))
+        parts.append(group(f'<div class="shep-list-hd"><b>In use now</b> · {r.e(IN_USE_NOTE)}</div>',
+                           "In use now", [row(pinned[0], in_use=True)]))
     for title, members in sections:
-        if title:
-            parts.append(f'<div class="shep-list-hd"><b>{r.e(title)}</b></div>')
+        entries = []
         for item in members:
+            # The served file stands in its run as a note pointing above: it
+            # is one of the run's checkpoints, listed once.
             if pinned and is_served(item):
-                parts.append(f'<div class="shep-list-note">epoch {r.e(item.get("epoch"))} · model '
-                             f'fingerprint {r.e(r.short_hex(served, digits))} — in use, pinned '
-                             'above</div>')
+                entries.append(f'<div class="shep-list-note">epoch {r.e(item.get("epoch"))} · '
+                               f'model fingerprint {r.e(r.short_hex(served, digits))} — in use, '
+                               'pinned above</div>')
                 continue
-            parts.append(row(item, in_use=not pinned and is_served(item)))
+            entries.append(row(item, in_use=not pinned and is_served(item)))
+        heading = f'<div class="shep-list-hd"><b>{r.e(title)}</b></div>' if title else ""
+        parts.append(group(heading, title or "Checkpoints", entries))
     if hidden > 0:
         parts.append(f'<button type="button" class="shep-row shep-row-more" data-key="__older__">'
                      f'Show older runs ({hidden})</button>')
-    # A list of its entries: each is a list item (the skill's §10, correct
-    # roles); a row stays a button inside its item.
-    items = "".join(f'<div role="listitem">{part}</div>' for part in parts)
-    return f'<div class="shep-list" role="list">{items}</div>'
+    return f'<div class="shep-list">{"".join(parts)}</div>'
 
 
 def _table_html(sections: Sequence[Tuple[str, Sequence[Mapping[str, Any]]]],

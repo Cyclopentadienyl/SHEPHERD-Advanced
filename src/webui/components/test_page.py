@@ -1323,7 +1323,8 @@ def reports_html(reports: Mapping[str, Any], selected: Optional[str], *,
     version with hundreds of runs would otherwise push Run and Result a page
     long down at narrow sizes): the older rows are sent marked and shown by
     that control in the browser, so the choice survives the list's updates.
-    Each entry is a list item (a report a button inside one), and an older
+    The list holds the runs only, each a list item (a report a button inside
+    one; the head, "Show all" and the notes are outside it), and an older
     report's item is hidden with it, so the list counts what it shows."""
     label = reports.get("label")
     if not label:
@@ -1360,27 +1361,28 @@ def reports_html(reports: Mapping[str, Any], selected: Optional[str], *,
             f'<span class="shep-test-rep-main">{names[str(run_id)]}</span>'
             f'<span class="shep-test-rep-chip">{_row_chip(run)}</span>'
             f'<span class="shep-test-rep-sub">{_row_state(run, roots)}</span></button>')
-    if hidden:
-        rows.append(
-            '<div class="shep-test-more">'
+    more = ('<div class="shep-test-more">'
             f'<button type="button" class="shep-test-more-all" data-more="all">Show all '
             f'{len(runs)} reports ›</button>'
             f'<span class="shep-sub shep-test-more-all">{hidden} older not shown</span>'
             f'<button type="button" class="shep-test-more-fewer" data-more="fewer">Show the newest '
-            f'{ROWS_SHOWN} only</button></div>')
+            f'{ROWS_SHOWN} only</button></div>') if hidden else ""
     problem = reports.get("problem")
     count = len(runs)
     head = (f'<div class="shep-list-hd"><b>Reports of {e(label)}</b> · {count} · kept in the '
             "registry's report store</div>")
-    entries = [row for row in rows if row] or [
-        '<div class="shep-list-note">No run has kept a report on this version yet.</div>']
+    # The list holds its entries only, each a list item (a report a button
+    # inside one; the skill's §10, correct roles): the head, the "Show all"
+    # control and the notes are outside it, so it counts the runs it shows.
+    entries = [row for row in rows if row]
+    listed = ("" if not entries else
+              f'<div role="list" aria-label="Reports of {e(label)}">'
+              + "".join(f'<div role="listitem">{entry}</div>' for entry in entries) + "</div>")
+    notes = ("" if entries else
+             '<div class="shep-list-note">No run has kept a report on this version yet.</div>')
     if problem:
-        entries.append(f'<div class="shep-list-note">{e(redact(problem, roots))}</div>')
-    # A list of its entries: each is a list item (the skill's §10, correct
-    # roles); a report stays a button inside its item.
-    body = "".join(f'<div role="listitem">{entry}</div>' for entry in [head, *entries])
-    return (f'<div class="shep-list shep-test-reps" role="list" aria-label="Reports of '
-            f'{e(label)}">{body}</div>')
+        notes += f'<div class="shep-list-note">{e(redact(problem, roots))}</div>'
+    return f'<div class="shep-list shep-test-reps">{head}{listed}{more}{notes}</div>'
 
 
 # ---------------------------------------------------------------------------
@@ -3442,7 +3444,7 @@ PAGE_CSS = f"""
   text-align: left; padding: 9px 12px; border: 0; border-bottom: 1px solid #edf0f3; background: #fff;
   font: inherit; font-size: 15px; color: inherit; cursor: pointer;
 }}
-{_PAGE} .shep-test-reps > [role="listitem"]:last-child > .shep-test-rep {{ border-bottom: 0; }}
+{_PAGE} .shep-test-reps > [role="list"]:last-child > [role="listitem"]:last-child > .shep-test-rep {{ border-bottom: 0; }}
 {_PAGE} .shep-test-rep:hover {{ background: var(--shep-panel-2); }}
 {_PAGE} .shep-test-rep.shep-on {{ background: var(--shep-accent-50); box-shadow: inset 4px 0 0 var(--shep-accent); }}
 {_PAGE} .shep-test-rep-running {{ cursor: default; }}
@@ -3497,8 +3499,8 @@ PAGE_CSS = f"""
 {_PAGE} .shep-test-rep-ended {{ cursor: default; }}
 {_PAGE} .shep-test-rep-old, {_PAGE} .shep-test-more-fewer {{ display: none !important; }}
 {_PAGE} .shep-test-all .shep-test-rep-old {{ display: grid !important; }}
-{_PAGE} .shep-test-reps > [role="listitem"]:has(> .shep-test-rep-old) {{ display: none; }}
-{_PAGE} .shep-test-all .shep-test-reps > [role="listitem"]:has(> .shep-test-rep-old) {{ display: block; }}
+{_PAGE} .shep-test-reps [role="listitem"]:has(> .shep-test-rep-old) {{ display: none; }}
+{_PAGE} .shep-test-all .shep-test-reps [role="listitem"]:has(> .shep-test-rep-old) {{ display: block; }}
 {_PAGE} .shep-test-all .shep-test-more-fewer {{ display: inline-flex !important; }}
 {_PAGE} .shep-test-all .shep-test-more-all {{ display: none !important; }}
 {_PAGE} .shep-test-more {{ display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 12px; border-top: 1px solid #edf0f3; }}

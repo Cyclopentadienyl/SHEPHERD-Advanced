@@ -223,16 +223,27 @@ def test_an_operator_lists_the_serving_workspace_with_in_use_pinned(root, servin
     assert "disease_cccccc" in older and "Show older runs" not in older
     research = ml.list_html(listing, None, ml.PRESETS["research"])
     assert "disease_cccccc" in research and 'In use (Diagnosis)<' in research
-    # Correct roles (the WebUI skill's §8, §10): the drawer's list holds list
-    # items only, each row a button inside one; the table's rows take no
-    # `aria-selected`.
-    import re
+    # Correct roles (the WebUI skill's §8, §10): each group's list holds list
+    # items only, one per checkpoint (a row a button inside its item, the
+    # served file in its run a note pointing above); the headings and "Show
+    # older runs" are outside the lists, so a list counts its checkpoints
+    # (B0a review: the headings and notes were items too). The table's rows
+    # take no `aria-selected`.
+    from tests.fixtures.list_roles import lists
 
-    body = html.removeprefix('<div class="shep-list" role="list">').removesuffix("</div>")
-    assert html.startswith('<div class="shep-list" role="list"><div role="listitem">')
-    assert all(part.startswith('<div role="listitem">') for part in
-               re.split(r'(?=<div role="listitem">)', body) if part)
-    assert '<div role="listitem"><button type="button" class="shep-row' in html
+    found = lists(html)
+    assert found[0]["label"] == "In use now" and len(found[0]["children"]) == 1
+    # Then one list per run shown, named by its heading (the latest four).
+    assert len(found) == 5 and all(x["label"].startswith("Run ") for x in found[1:])
+    for group in found:
+        assert group["children"], group
+        assert all(child["role"] == "listitem" for child in group["children"]), group
+        assert not any("In use now" in c["text"] or c["text"].startswith("Run ")
+                       for c in group["children"]), group
+    rows = html.count('<button type="button" class="shep-row"') + html.count("pinned above</div>")
+    assert sum(len(group["children"]) for group in found) == rows
+    assert html.startswith('<div class="shep-list"><div class="shep-list-hd"><b>In use now</b>')
+    assert '<div role="listitem"><button type="button" class="shep-row shep-row-more"' not in html
     assert "aria-selected" not in research
     # The drawer's own rule is its scope, not a filter it names: no "· Task
     # models only, of 9 listed" (the 9 would count files it never shows).

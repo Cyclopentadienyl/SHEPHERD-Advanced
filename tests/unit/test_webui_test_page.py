@@ -2909,16 +2909,25 @@ def test_a_long_report_list_shows_the_newest_and_keeps_the_selected():
     assert "Show all 20 reports ›" in html and f"Show the newest {tp.ROWS_SHOWN} only" in html
     short = tp.reports_html({"label": LABEL, "runs": runs[:tp.ROWS_SHOWN]}, None)
     assert "shep-test-rep-old" not in short and "Show all" not in short
-    # Correct roles (the WebUI skill's §10): the list holds list items only,
-    # each report a button inside one, and an older report's item goes with it.
-    assert html.startswith(f'<div class="shep-list shep-test-reps" role="list" aria-label='
-                           f'"Reports of {LABEL}"><div role="listitem">')
-    inner = html[html.index(">") + 1:-len("</div>")]
-    assert all(part.startswith('<div role="listitem">')
-               for part in re.split(r'(?=<div role="listitem">)', inner) if part)
-    assert html.count('<div role="listitem"><button type="button" class="shep-test-rep') == 20
-    assert '[role="listitem"]:has(> .shep-test-rep-old) {{ display: none; }}'.replace(
-        "{{", "{").replace("}}", "}") in tp.PAGE_CSS.replace("{{", "{").replace("}}", "}")
+    # Correct roles (the WebUI skill's §10): the list holds the runs only,
+    # each a list item (a report a button inside one); the head, "Show all"
+    # and the notes are outside it (B0a review: the head was an item), and an
+    # older report's item goes with it.
+    from tests.fixtures.list_roles import lists
+
+    (found,) = lists(html)
+    assert found["label"] == f"Reports of {LABEL}"
+    assert all(child["role"] == "listitem" for child in found["children"])
+    assert not any(child["text"].startswith("Reports of") for child in found["children"])
+    rows = html.count('<button type="button" class="shep-test-rep')
+    assert rows == 20 and len(found["children"]) == rows
+    assert html.startswith(f'<div class="shep-list shep-test-reps"><div class="shep-list-hd">'
+                           f'<b>Reports of {LABEL}</b>')
+    assert '<div role="listitem"><div class="shep-test-more">' not in html
+    assert '[role="listitem"]:has(> .shep-test-rep-old) { display: none; }' in tp.PAGE_CSS
+    # A version with no report: its note, and no empty list.
+    empty = tp.reports_html({"label": LABEL, "runs": []}, None)
+    assert lists(empty) == [] and "No run has kept a report on this version yet." in empty
 
 
 def test_a_run_that_ended_with_no_report_is_a_row_until_the_next():
