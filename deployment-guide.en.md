@@ -3477,9 +3477,10 @@ it. Three panels:
   workspace, version and checkpoint the server finds again in its lists, and **the full model
   fingerprint and version digest the page showed as the expected ones**: the run refuses before
   measuring when the file or the version it reads holds other bytes. Start says why it is off:
-  a GPU job first ("Disabled: GPU job: … One managed GPU job at a time (training or
-  evaluation).", "Disabled: GPU: inference (this service); stop it with Stop inference on
-  Diagnosis. …" while a model is served on CUDA), since no choice enables it while one runs,
+  what holds the GPU first, in the GPU chip's words as Training's and Fine-tune's starts say it
+  ("Disabled: GPU job: training (job runner).", "Disabled: GPU: inference (this service); stop
+  it with Stop inference on Diagnosis." while a model is served on CUDA), since no choice
+  enables it while that lasts,
   then a choice missing or another
   graph. The job card shows the state (Running, Completed, Failed in red, Cancelled in grey:
   never green for a failed or cancelled run), the elapsed time, what the run was given, its

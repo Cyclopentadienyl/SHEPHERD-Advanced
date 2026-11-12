@@ -1590,8 +1590,11 @@ def start_state(page: Mapping[str, Any], models: Mapping[str, Any], workspace: O
         return False, "Disabled: no registry is available (see Data)."
     kind, words = gpu
     if kind == "busy":
-        return False, (f"Disabled: {words}. One managed GPU job at a time (training or "
-                       "evaluation).")
+        # The holder in the GPU chip's words, with where to stop this
+        # service's inference when that holds it (`gpu_line`), as Training's
+        # and Fine-tune's starts say it: whatever holds the lock, a job or
+        # inference, Start waits for it.
+        return False, f"Disabled: {words}."
     if kind == "unread":
         return False, "Disabled: the GPU lock cannot be read or used just now (see the GPU chip)."
     workspace_row = find(page.get("workspaces") or [], "name", workspace)

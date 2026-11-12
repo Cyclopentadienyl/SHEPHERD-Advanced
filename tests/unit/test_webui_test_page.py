@@ -1131,8 +1131,13 @@ def test_start_waits_for_every_choice_and_says_why(site, monkeypatch):
         False, "Disabled: choose a measurement.")
     assert state("demo", LABEL, child) == (True, None)
     busy = state("demo", LABEL, child, ("busy", "GPU job: training (job runner)"))
-    assert busy == (False, "Disabled: GPU job: training (job runner). One managed GPU job at a "
-                           "time (training or evaluation).")
+    assert busy == (False, "Disabled: GPU job: training (job runner).")
+    # This service's CUDA inference: the chip's words and where to stop it,
+    # never a job's (review of A3b: inference is not a training or test job).
+    serving = state("demo", LABEL, child, ("busy", "GPU: inference (this service); stop it with "
+                                                   "Stop inference on Diagnosis"))
+    assert serving == (False, "Disabled: GPU: inference (this service); stop it with Stop "
+                              "inference on Diagnosis.")
     another = dict(binding, graph={**binding["graph"], "kg": "0" * 64})
     allowed, why = tp.start_state(page, models, "demo", LABEL, child, another, ("none", ""))
     assert allowed is False and "mapped against another graph" in why

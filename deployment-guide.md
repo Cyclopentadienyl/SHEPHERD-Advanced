@@ -3476,10 +3476,10 @@ split）上量測模型、保留報告並登錄它。共有三個面板：
   `SHEPHERD_DEVICE`）。**🔒 Start test** 透過 job runner（§4.11）啟動真正的
   `measure_scorer.py`，使用伺服器在自己的清單中重新找到的 workspace、版本與 checkpoint，並以
   **頁面顯示過的完整模型指紋與版本 digest 作為預期值**：執行時讀到的檔案或版本若是其他位元組，
-  會在量測之前拒絕。Start 會說明它為何不可用：先說 GPU 工作（「Disabled: GPU job: … One
-  managed GPU job at a time (training or evaluation).」；在 CUDA 上服務模型時是「Disabled: GPU:
-  inference (this service); stop it with Stop inference on Diagnosis. …」），因為工作執行期間任何選擇都無法讓它
-  可用，然後才是缺少某個選擇或另一個圖譜。工作卡片顯示狀態（Running、Completed、紅色的
+  會在量測之前拒絕。Start 會說明它為何不可用：先說持有 GPU 的是什麼，用 GPU chip 的字眼，
+  與 Training 及 Fine-tune 的 Start 說法相同（「Disabled: GPU job: training (job runner).」；在 CUDA
+  上服務模型時是「Disabled: GPU: inference (this service); stop it with Stop inference on
+  Diagnosis.」），因為那期間任何選擇都無法讓它可用，然後才是缺少某個選擇或另一個圖譜。工作卡片顯示狀態（Running、Completed、紅色的
   Failed、灰色的 Cancelled：失敗或取消的執行從不顯示為綠色）、已經過的時間、執行收到的輸入、
   以 UTC 表示的開始與結束時間（與報告列命名執行的方式相同），以及其輸出的最後 12 行（取消後
   會收合，其最後一行說明執行已被取消，沒有 traceback；量測拒絕訊息中提到的病患 id 會被略去，
