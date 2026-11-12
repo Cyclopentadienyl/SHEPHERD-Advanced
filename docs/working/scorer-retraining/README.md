@@ -464,11 +464,11 @@ model spec (versioned, self-describing)
   Trainer and records where their semantics fit, and gets the build, forward, gradient, typed-order,
   save/reload, continuation and actual-dtype checks; no effect study. HGT's layers are kept as
   `HeteroGNNLayer` (`src/models/gnn/layers.py`) and its PyG problems are BACKLOG 20 (Edit 2 waits
-  for the GB10). *(2026-11-12: this bullet described the milestone as porting the heterogeneous GAT,
-  HGT and SAGE together, and said `segment_matmul` had no fp16 or bf16. Observed on the CPU with PyG
-  2.8.1 and `pyg-lib` 0.8.0, `HGTConv`, `segment_matmul` and `grouped_matmul` ran in bfloat16 under
-  both kernel policies; the GB10 is unobserved, and its two deploy routes carry `pyg-lib` 0.6.0 and
-  0.8.0.)*
+  for HGT to be chosen (C1), then for its GB10 comparison). *(2026-11-12: this bullet described the
+  milestone as porting the heterogeneous GAT, HGT and SAGE together, and said `segment_matmul` had
+  no fp16 or bf16. Observed on the CPU with PyG 2.8.1 and `pyg-lib` 0.8.0, `HGTConv`,
+  `segment_matmul` and `grouped_matmul` ran in bfloat16 under both kernel policies; the GB10 is
+  unobserved, and its two deploy routes carry `pyg-lib` 0.6.0 and 0.8.0.)*
 
 **Cross-species reasoning replaces OrthologGate** (the reviewer's review of the proposal, accepted).
 The requirement stays; the faulty module goes.

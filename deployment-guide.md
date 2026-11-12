@@ -3076,9 +3076,9 @@ Close 或 × 會立即關閉抽屜，重新載入照常進行（無法中止）�
 回 422**（`extra_forbidden`，指出該欄位），在讀取或選擇任何東西之前，所以服務沒有宣告的欄位
 絕不會被丟掉、其餘照常服務。*舊腳本*（自 K8-4 起）：`conv_type` 已移除，因為架構是從
 checkpoint 的 model spec 讀出的。不論它的值為何，都要從指定路徑、任務或兩者的請求中拿掉。
-帶 `conv_type` `"hgt"` 的任務請求，要求的是現在沒有任何欄位能指定的架構：待多架構移植讓
-HGT 可以服務之後，請改以 `checkpoint_path`（以及 `expected_checkpoint_sha256`）指定一個
-model spec 確認為 HGT 的 checkpoint；在那之前，本版不服務任何 HGT 模型。並請正確拼寫 `expected_checkpoint_sha256`：拼錯的 `expected_checkpoint_sha` 過去
+帶 `conv_type` `"hgt"` 的任務請求，要求的是現在沒有任何欄位能指定的架構，而本版不服務任何
+HGT 模型；若日後的版本可以服務 HGT，請改以 `checkpoint_path`（以及 `expected_checkpoint_sha256`）
+指定一個 model spec 確認為 HGT 的 checkpoint。並請正確拼寫 `expected_checkpoint_sha256`：拼錯的 `expected_checkpoint_sha` 過去
 會被丟掉、讓重新載入不受綁定，現在會被拒絕。**自動選擇只讀取 workspace 內的檔案**，依每次讀取
 實際開啟的檔案判斷（伺服器向已開啟的檔案詢問它位於何處，而不是看它的名稱），所以被選中的檔案若
 在讀取前被換成 workspace 外的檔案，會被拒絕，不從中讀取任何內容、也不發布，使用中的模型維持

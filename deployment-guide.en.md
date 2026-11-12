@@ -2985,9 +2985,9 @@ task or path, before any checkpoint is read (since K8-4). **Any other field is r
 service does not declare is never dropped and the rest served. *Old scripts* (since K8-4):
 `conv_type` is gone, because the architecture is read from the checkpoint's model spec. Drop
 it, whatever its value, from a request that names a path, a task or both. A task with
-`conv_type` `"hgt"` asked for an architecture no field names now: once the multi-architecture
-port makes HGT servable, name a spec-confirmed HGT checkpoint by `checkpoint_path` (and
-`expected_checkpoint_sha256`); until then this build serves no HGT model. And spell
+`conv_type` `"hgt"` asked for an architecture no field names now, and this build serves no HGT
+model; if a later build serves one, name a spec-confirmed HGT checkpoint by `checkpoint_path` (and
+`expected_checkpoint_sha256`). And spell
 `expected_checkpoint_sha256` exactly: a misspelt `expected_checkpoint_sha` used to be dropped,
 leaving the reload unbound, and is now refused. **Automatic selection reads only files inside
 the workspace**, judged on the file each of its reads actually opens (the server asks the open
