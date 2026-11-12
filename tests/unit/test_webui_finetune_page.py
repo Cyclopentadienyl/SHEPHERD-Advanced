@@ -349,16 +349,21 @@ def _child(task, status, run=None, error=None):
     ("cancelled", "○", "neutral", "Cancelled"),
 ])
 def test_each_status_is_colour_shape_and_word(status, shape, token, word):
-    html = fp.status_mark_html(status)
-    assert f"shep-ft-st-{token}" in html and f"<span>{word}</span>" in html
-    assert ("shep-ft-spin" in html) if shape is None else (f">{shape}</span>" in html)
+    """Each child's status through the shared status mark
+    (`renderers.status_mark`, the WebUI skill §6): its colour token, its shape
+    and its word, the word always shown."""
+    from src.webui import style
+
+    html = tc.job_status_html(status)
+    assert f"shep-st shep-st-{token}" in html and f'<span class="shep-st-w">{word}</span>' in html
+    assert ("shep-spinner" in html) if shape is None else (f">{shape}</span>" in html)
     # The spinner is Running's alone (the WebUI skill §6).
-    assert ("shep-ft-spin" in html) == (status == "running")
-    css = fp.PAGE_CSS
-    assert f".shep-ft-st-{token} {{ color: var(--shep-status-{token}); }}" in css
+    assert ("shep-spinner" in html) == (status == "running")
+    assert f".shep-st-{token} {{ color: var(--shep-status-{token}); }}" in style.SHELL_CSS
     # Never green for a child that did not complete.
     assert (token == "ok") == (status == "completed")
-    assert tc.PILL_KIND[status] in fp._MARKS
+    assert tc.PILL_KIND[status] in tc.STATUS_MARK_OF_KIND
+    assert html in fp.child_row_html(_child("disease", status), operator=True, products={})
 
 
 def test_the_card_draws_one_row_per_child_escaped_without_a_path(root):

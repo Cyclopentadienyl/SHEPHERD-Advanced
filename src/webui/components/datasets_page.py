@@ -132,16 +132,36 @@ def _marks(row: Mapping[str, Any], data: Mapping[str, Any], run_bar: Optional[st
 
 
 def _record_cell(row: Mapping[str, Any]) -> str:
-    if r.record_verified(row):
+    """The dataset record's state (`renderers.record_words`): verified, or its
+    own missing or contradicted state, never one "not verified" for all."""
+    kind, words = r.record_words(row)
+    if kind == "ok":
         return f'<span class="shep-ok-t">{r.CHECK} verified</span>'
-    return '<span class="shep-muted">not verified</span>'
+    return r.status_mark(kind, words.removeprefix("record ").capitalize())
 
 
 def _origin_cell(row: Mapping[str, Any]) -> str:
+    """The record's origin, or why none is shown: "Not recorded" when the
+    manifest binds no record, "Unknown" when the record was not read or names
+    no origin this build knows (never "—")."""
     origin = r.origin_of(row)
     if origin == "synthetic":
         return r.chip("synthetic", "amber")
-    return r.e(origin) if origin else '<span class="shep-muted">—</span>'
+    if origin:
+        return r.e(origin)
+    record = row.get("dataset_record") or {}
+    unrecorded = isinstance(record, Mapping) and record.get("binding") == "unrecorded"
+    return r.status_mark("neutral", r.NOT_RECORDED if unrecorded else r.UNKNOWN)
+
+
+def _fingerprint_missing(row: Mapping[str, Any]) -> str:
+    """Why a workspace has no dataset fingerprint: its split manifest is not
+    there ("Not recorded"), or it is there and was not read ("Unknown", its
+    reason in the title): never "—"."""
+    if row.get("manifest") == "absent":
+        return r.status_mark("neutral", r.NOT_RECORDED)
+    why = row.get("not_trainable") or "the split manifest was not read"
+    return f'<span title="{r.e(why)}">{r.status_mark("neutral", r.UNKNOWN)}</span>'
 
 
 def table_html(data: Mapping[str, Any], run_bar: Optional[str], selected: Optional[str]) -> str:
@@ -164,7 +184,7 @@ def table_html(data: Mapping[str, Any], run_bar: Optional[str], selected: Option
         fp_cell = (f'<code class="shep-fpv" title="{r.e(fingerprint)}">{r.e(fingerprint[:digits])}'
                    f'</code> ' + r.copy_button(fingerprint, f"the full dataset fingerprint of {name}",
                                                icon_only=True)
-                   if r.is_digest(fingerprint) else '<span class="shep-muted">—</span>')
+                   if r.is_digest(fingerprint) else _fingerprint_missing(row))
         on = name == selected
         body.append(
             f'<tr class="{"shep-on" if on else ""}" data-key="{r.e(name)}" tabindex="0" '

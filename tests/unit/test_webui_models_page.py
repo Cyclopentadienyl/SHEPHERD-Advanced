@@ -854,7 +854,7 @@ def test_the_pages_amber_sentences_are_amber_and_the_note_after_the_list_stands_
     assert gap in css and ".shep-mp-recwrap + .shep-note" not in css
     html = mp.unreadable_html([{"index": 0, "sequence": None, "source_artifact_digest": None,
                                 "reason": "n_ranked: missing"}])
-    assert '<p class="shep-mp-p shep-mp-unread-p shep-amber-t">' in html
+    assert '<p class="shep-mp-p shep-mp-unread-p"><span class="shep-st shep-st-warn"><span class="shep-st-shape" aria-hidden="true">▲</span><span class="shep-st-w">1 record' in html
     assert '<div class="shep-tbl-wrap shep-mp-recwrap shep-mp-unreadwrap">' in html
 
 
@@ -1222,7 +1222,7 @@ def test_by_family_draws_each_family_parent_first_with_its_lineage(world, monkey
     assert 'class="shep-mp-lin shep-mp-d0"' in cells[bundle_key("base")]
     assert "New run" in cells[bundle_key("base")]
     orphan = cells["gatv2/20261004-000000_disease_dddddd/last.pt"]
-    assert ('<span class="shep-mp-warn"><span aria-hidden="true">▲</span> parent unavailable: '
+    assert ('<span class="shep-st shep-st-warn"><span class="shep-st-shape" aria-hidden="true">▲</span><span class="shep-st-w">parent unavailable: '
             in orphan)
     assert EVIL not in orphan and html_lib.escape(EVIL) in orphan
     assert cells[_key(world, "model-05.pt")] == (
@@ -1248,15 +1248,14 @@ def test_by_family_draws_each_family_parent_first_with_its_lineage(world, monkey
     ctl = mp.controls(data, mp.BY_FAMILY, "gene")
     view = mp.shape(listing, data, ctl)
     assert [g["keys"] for g in view["groups"]] == [[bundle_key("base"), bundle_key("gene")]]
-    assert ('<div class="shep-sub shep-mp-ctx"><span aria-hidden="true">○</span> '
-            'Context: parent of a shown file</div>') in view["cells"][bundle_key("base")]
+    assert ('<div class="shep-sub">' + mp.r.status_mark("neutral", "Context: parent of a shown "
+                                                        "file") + '</div>'
+            ) in view["cells"][bundle_key("base")]
     assert mp.shown_view(listing, ctl) == {"keys": [bundle_key("base"), bundle_key("gene")]}
     # No filter sets the files without a model spec apart (an unknown filter
-    # is All); the CSS gives the marks their status tokens.
+    # is All); the marks are the shared status marks, in their status tokens.
     assert mp.controls(data, mp.BY_FAMILY, "history")["task"] == mp.ALL_TASKS
-    assert ".shep-mp-warn {{ color: var(--shep-status-warn); }}".replace(
-        "{{", "{").replace("}}", "}") in mp.PAGE_CSS.replace(f"{mp._PAGE} ", "")
-    assert "var(--shep-status-neutral)" in mp.PAGE_CSS
+    assert "shep-mp-warn" not in mp.PAGE_CSS and "shep-mp-ctx" not in mp.PAGE_CSS
     # Without a family view (a listing read without one): newest first, said.
     bare = {k: v for k, v in listing.items() if k != "family"}
     view = mp.shape(bare, data, mp.controls(data, mp.BY_FAMILY, None))
@@ -1323,7 +1322,8 @@ def test_the_detail_says_what_the_model_is_and_its_relation_to_the_paper(world, 
     assert "matches the reference recipe" in html and mp.REFERENCE_ANCHOR in _text(html)
     assert EVIL not in html and "in workspace <b>&lt;img" in html
     html = mp.identity_html(item, {"parent_state": "unavailable", "parent_problem": EVIL})
-    assert "▲</span> parent unavailable: &lt;img" in html and EVIL not in html
+    assert '▲</span><span class="shep-st-w">parent unavailable: &lt;img' in html
+    assert EVIL not in html
     assert "none: a new run" in mp.identity_html({**item, "parent_sha256": None}, None)
     # The frozen-backbone control is a task model with a frozen graph
     # backbone (ops-wiring round, decision F1), from its record's transfer.
@@ -1965,9 +1965,8 @@ def test_runs_that_differ_are_flagged_only_in_a_deterministic_group(world, monke
     A determinism that is not known is never assumed: it reads as neutral."""
     listing, data = _read(world, monkeypatch)
     flagged = mp.detail_parts(listing, data, _key(world, "model-40.pt"), NEWEST_CTL)["records"]
-    assert ('<span class="shep-tag shep-tag-amber"><span aria-hidden="true">▲</span> '
-            'runs differ #1</span>') in flagged
-    assert ('<div class="shep-mp-delta shep-amber-t"><span aria-hidden="true">▲</span> runs '
+    assert mp.r.warn_chip("runs differ #1") in flagged
+    assert ('<div class="shep-mp-delta"><span class="shep-st shep-st-warn"><span class="shep-st-shape" aria-hidden="true">▲</span><span class="shep-st-w">runs '
             "under these conditions differ — investigate: ") in flagged
     assert "Deterministic algorithms were on, so they were expected to agree." in flagged
 
@@ -1988,9 +1987,9 @@ def test_runs_that_differ_are_flagged_only_in_a_deterministic_group(world, monke
                                mode="disease", deterministic=deterministic) == (
             '<div class="shep-mp-delta shep-muted">runs under these conditions differ</div>')
     assert mp.contest_html(state, mode="disease", deterministic=True) == (
-        '<div class="shep-mp-delta shep-amber-t"><span aria-hidden="true">▲</span> runs under '
+        '<div class="shep-mp-delta"><span class="shep-st shep-st-warn"><span class="shep-st-shape" aria-hidden="true">▲</span><span class="shep-st-w">runs under '
         "these conditions differ — investigate: pooled_mrr. Deterministic algorithms were on, "
-        "so they were expected to agree.</div>")
+        "so they were expected to agree.</span></span></div>")
 
 
 @pytest.mark.parametrize("mode, values, shown", [

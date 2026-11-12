@@ -22,7 +22,8 @@ off): the tokens below have no dark values.
 
 **Status colours** (the WebUI skill §6; K6 decision 2): ``--shep-status-ok``,
 ``-neutral``, ``-warn``, ``-error`` and ``-info`` are the colours of a status
-mark and its word, aliases of the existing tag colours (``.shep-tag-ok``,
+mark and its word (the one indicator, `renderers.status_mark`, its
+``.shep-st-*`` classes below), aliases of the existing tag colours (``.shep-tag-ok``,
 ``-grey``, ``-amber``, ``-red``, ``-accent``), so no new hex enters; a mark
 always carries its shape and word too. `tests/unit/test_webui_button_contrast.py`
 holds them to WCAG's 4.5:1 for text against every surface a mark sits on.
@@ -262,6 +263,17 @@ body { color: var(--shep-text); }
 .shep-tag-red { background: var(--shep-red-50); border-color: var(--shep-red-200); color: var(--shep-red-700); }
 .shep-ok-t { color: var(--shep-green-800); display: inline-flex; align-items: center; gap: 3px; }
 .shep-amber-t { color: var(--shep-amber-800); }
+/* The one status indicator (`renderers.status_mark`, the WebUI skill's §6):
+   the state's colour, its shape (hidden from a screen reader) and its word,
+   in the weight of the text around it. */
+.shep-st-ok { color: var(--shep-status-ok); }
+.shep-st-neutral { color: var(--shep-status-neutral); }
+.shep-st-warn { color: var(--shep-status-warn); }
+.shep-st-error { color: var(--shep-status-error); }
+.shep-st-info { color: var(--shep-status-info); }
+.shep-st-shape { display: inline-block; margin-right: 4px; font-size: 15px; line-height: 1; }
+.shep-st > .shep-spinner { margin-right: 6px; }
+.shep-st-chip .shep-st-shape { margin-right: 0; }
 .shep-reason { display: flex; gap: 8px; align-items: flex-start; font-size: 14px; color: var(--shep-text-2); line-height: 1.45; }
 .shep-reason-grey { border: 1px solid var(--shep-grey-200); background: var(--shep-grey-50); border-radius: 8px; padding: 10px 12px; color: var(--shep-grey-800); }
 .shep-notice { border-radius: 6px; padding: 8px 10px; font-size: 14px; }

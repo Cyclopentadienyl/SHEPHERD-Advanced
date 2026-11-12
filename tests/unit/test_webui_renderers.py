@@ -7,7 +7,8 @@ items to escaped HTML. What these pin:
 - **the dataset identity**: the name; "built … UTC" or "build time not
   recorded · sources …" (never a file time); "dataset fingerprint" with 12 hex
   shown and the full 64 only in ``title`` and on Copy; amber "synthetic";
-  "record verified" / "record not verified"; "not trainable: <why>"; more
+  "record verified" / each other record state in its own words; "not
+  trainable: <why>"; more
   digits for two listed workspaces that share their first 12;
 - **the model row**: the name line from the run id and the epoch; "model
   fingerprint"; "trained on" every listed workspace with the full manifest
@@ -67,7 +68,7 @@ def text_of(html: str) -> str:
 
 # --------------------------------------------------------------------------- digests
 def test_twelve_hex_by_default_and_more_when_two_share_them():
-    assert r.short_hex(FP_A) == "2be1f04c9a83" and r.short_hex(None) == "—"
+    assert r.short_hex(FP_A) == "2be1f04c9a83" and r.short_hex(None) == "not recorded"
     assert r.distinguishing_digits([FP_A, FP_B]) == 12
     twin = FP_A[:12] + "f" * 52
     assert r.distinguishing_digits([FP_A, twin, FP_A]) == 16
@@ -103,7 +104,7 @@ def test_marks_synthetic_verified_and_not_trainable():
     html = r.dataset_identity_html(workspace())
     assert 'shep-tag-amber">synthetic<' in html and "record verified" in html
     html = r.dataset_identity_html(workspace(binding="unverifiable", origin="files"))
-    assert "record not verified" in html
+    assert "record cannot be verified" in html and "record not verified" not in html
     html = r.dataset_identity_html(workspace(trainable=False, not_trainable="files its "
                                              "split_manifest.json binds are missing (kg.json)"))
     assert "not trainable: files its split_manifest.json binds are missing (kg.json)" in html
@@ -120,7 +121,8 @@ def test_a_name_with_markup_is_escaped():
 # --------------------------------------------------------------------------- the model row
 def test_the_name_line_comes_from_the_run_id_and_the_epoch():
     assert r.model_name_line(checkpoint()) == "GATv2 · run 2026-10-17 09:15 · epoch 5"
-    assert r.model_name_line(checkpoint(epoch=None, run="odd")) == "GATv2 · run odd · epoch —"
+    assert r.model_name_line(checkpoint(epoch=None, run="odd")) == (
+        "GATv2 · run odd · epoch not recorded")
 
 
 def test_trained_on_every_listed_workspace_with_the_full_digest():
@@ -329,7 +331,9 @@ def test_the_run_suffix_and_a_validation_figure_by_its_name():
     # The names are those of the figures selection ranks by, and no other.
     from src.utils.checkpoint_paths import RANKING_SCORE_KEYS
     assert set(r.VALIDATION_LABELS) == set(RANKING_SCORE_KEYS)
-    assert "—" in r.validation_cell(None)
+    assert "—" not in r.validation_cell(None)
+    assert r.validation_cell(None) == r.status_mark("neutral", "Not recorded")
+    assert r.validation_cell(None, read=False) == r.status_mark("neutral", "Unknown")
     assert r.MODEL_TABLE_COLUMNS[2] == "Validation (Trainer)"
 
 
@@ -562,3 +566,58 @@ def test_an_identifier_shown_short_keeps_its_whole_value_as_its_title():
                     "smoke-ft-disease</code>")
     assert r.ident_html("<b>x", title="<i>y") == (
         '<code class="shep-ident" title="&lt;i&gt;y">&lt;b&gt;x</code>')
+
+
+# --------------------------------------------------------------------------- state words and marks
+@pytest.mark.parametrize("kind, shape, token", [
+    ("ok", "●", "ok"), ("neutral", "○", "neutral"), ("warn", "▲", "warn"),
+    ("error", "✕", "error"), ("running", None, "info"), ("stopping", "■", "info"),
+])
+def test_a_status_mark_is_colour_shape_and_word_with_the_word_always_shown(kind, shape, token):
+    """The one status indicator (the WebUI skill §6): the state's
+    ``--shep-status-*`` colour, its shape hidden from a screen reader, and its
+    word, escaped, always beside it; as a chip it reads the tag colours."""
+    from src.webui import style
+
+    html = r.status_mark(kind, "<b>word</b>")
+    assert html.startswith(f'<span class="shep-st shep-st-{token}">')
+    assert '<span class="shep-st-w">&lt;b&gt;word&lt;/b&gt;</span>' in html and "<b>" not in html
+    if shape is None:
+        assert '<span class="shep-spinner" aria-hidden="true"></span>' in html
+    else:
+        assert f'<span class="shep-st-shape" aria-hidden="true">{shape}</span>' in html
+    assert f".shep-st-{token} {{ color: var(--shep-status-{token}); }}" in style.SHELL_CSS
+    built = r.status_mark(kind, "<b>word</b>", words_html=True)
+    assert '<span class="shep-st-w"><b>word</b></span>' in built
+    chip = r.status_mark(kind, "word", as_chip=True)
+    assert chip.startswith(f'<span class="shep-tag shep-tag-{r._STATUS_TAG[token]} shep-st-chip">')
+
+
+def test_each_missing_state_has_its_own_word_and_a_dash_never_stands_for_not_recorded():
+    """The skill's §6: Off, Not loaded, Not applicable, Unknown, Cannot be
+    verified and Not recorded say different things; none is "—", and the
+    shared renderers that read a record's value say "not recorded" (or why it
+    is unknown), never the dash, which means only "no value here"."""
+    words = r.MISSING_WORDS
+    assert words == ("Off", "Not loaded", "Not applicable", "Unknown", "Cannot be verified",
+                     "Not recorded")
+    assert len(set(w.lower() for w in words)) == len(words)
+    assert r.NO_VALUE == "—" and r.NO_VALUE not in words
+    absent = checkpoint(epoch=None, validation=None, sha=SHA)
+    shown = [r.short_hex(None), r.count_text(None), r.model_name_line(absent),
+             r.validation_cell(None), r.validation_cell(None, read=False),
+             r.model_table_row_html(absent, [workspace()])]
+    for text in shown:
+        assert "—" not in text, text
+    assert r.count_text(None) == "not recorded" and r.count_text(1200) == "1,200"
+    assert "epoch not recorded" in r.model_table_row_html(absent, [workspace()])
+    # The record's states, each its own words: absent apart from unverifiable.
+    states = {binding: r.record_words(workspace(binding=binding))
+              for binding in ("verified", "unrecorded", "unverifiable", "mismatch", None)}
+    assert states == {"verified": ("ok", "record verified"),
+                      "unrecorded": ("neutral", "record not recorded"),
+                      "unverifiable": ("neutral", "record cannot be verified"),
+                      "mismatch": ("error", "record does not match"),
+                      None: ("neutral", "record not read")}
+    assert r.record_chip(workspace(binding="unrecorded")) == r.status_mark(
+        "neutral", "record not recorded", as_chip=True)

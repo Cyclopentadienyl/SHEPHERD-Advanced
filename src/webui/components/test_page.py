@@ -938,9 +938,7 @@ def model_choices(models: Mapping[str, Any]) -> List[Tuple[str, str]]:
     values are the listing's keys, whatever the words."""
     choices = []
     for item in models.get("items") or []:
-        epoch = item.get("epoch")
-        epoch_text = str(epoch) if isinstance(epoch, int) and not isinstance(epoch, bool) else "—"
-        label = (f"{r.record_kind_text(item)} · epoch {epoch_text} · "
+        label = (f"{r.record_kind_text(item)} · epoch {r.epoch_text(item)} · "
                  f"{r.run_label(item.get('architecture'), item.get('run'))}")
         if item.get("problem") or not r.is_digest(item.get("sha256")):
             label += " · metadata not readable"
@@ -1238,9 +1236,9 @@ def _row_state(run: Mapping[str, Any], roots: Sequence[Tuple[str, str]]) -> str:
         what = (f'runs under these conditions differ on '
                 f'{e(", ".join(contest.get("differing") or ()))}'
                 f'{" (with " + e(", ".join(run_time(x) or x for x in others)) + ")" if others else ""}')
-        line += (f'; <span class="shep-amber-t">{r.WARN_MARK} {what} — investigate: deterministic '
-                 'runs were expected to agree</span>' if _deterministic_group(run)
-                 else f"; {what}")
+        line += ("; " + r.status_mark("warn", f"{what} — investigate: deterministic runs were "
+                                              "expected to agree", words_html=True)
+                 if _deterministic_group(run) else f"; {what}")
     elif contest.get("state") == "cannot_be_checked":
         line += "; comparison incomplete"
     return line
@@ -1429,13 +1427,6 @@ def run_evidence(page: Mapping[str, Any], version: Optional[Mapping[str, Any]]) 
     return evidence_choice(protocols.SUPPLIED if kind is None else kind, setting)
 
 
-#: The mark of a refusal (the skill's §6): ✕ before its words, in the status
-#: error colour, so the colour never carries the meaning alone.
-REFUSED_MARK = '<span aria-hidden="true">✕</span>'
-#: The mark of "not applicable" (the skill's §6): a hollow ○ in grey, its word beside it.
-NOT_APPLICABLE_MARK = '<span aria-hidden="true">○</span>'
-
-
 def evidence_html(page: Mapping[str, Any], workspace: Optional[str],
                   version: Optional[Mapping[str, Any]] = None) -> str:
     """The R10 evidence row for a run on the chosen version (`run_evidence`,
@@ -1456,8 +1447,8 @@ def evidence_html(page: Mapping[str, Any], workspace: Optional[str],
     key = (f'<span class="shep-k">R10 evidence'
            f'{help_button("test-evidence", "R10 evidence")}</span>')
     if choice.not_applicable:
-        return (f'<div class="shep-test-kv">{key}<span><span class="shep-test-na">'
-                f'{NOT_APPLICABLE_MARK} Not applicable</span> · '
+        return (f'<div class="shep-test-kv">{key}<span>'
+                f'{r.status_mark("neutral", r.NOT_APPLICABLE)} · '
                 f'{e(choice.not_applicable)}</span></div>')
     evidence = page.get("evidence") or {}
     names = evidence.get("names") or []
@@ -1465,13 +1456,11 @@ def evidence_html(page: Mapping[str, Any], workspace: Optional[str],
     measured = f"{e(workspace)} (measured, always)" if workspace else "the measured workspace (always)"
     note = ""
     if choice.problem:
-        extra = (f' · <span class="shep-test-refused">{REFUSED_MARK} Refused: '
-                 f'{e(redact(choice.problem, roots))}</span>')
+        extra = " · " + r.status_mark("error", "Refused: " + redact(choice.problem, roots))
     elif names:
         extra = " · " + ", ".join(f"<code>{e(n)}</code>" for n in names) + " (the server's setting)"
         if choice.note:
-            note = (f'<span></span><span class="shep-amber-t">{r.WARN_MARK} '
-                    f'{e(redact(choice.note, roots))}</span>')
+            note = "<span></span>" + r.status_mark("warn", redact(choice.note, roots))
     else:
         extra = " · no other evidence directory is set on the server"
     return f'<div class="shep-test-kv">{key}<span>{measured}{extra}</span>{note}</div>'
@@ -2092,7 +2081,8 @@ def block_html(run: Mapping[str, Any], roots: Sequence[Tuple[str, str]],
         if deterministic:
             parts.append(
                 '<div class="shep-notice shep-notice-amber shep-test-block"><b>'
-                f'{r.WARN_MARK} Runs under these conditions differ — investigate.</b> They differ '
+                + r.status_mark("warn", "Runs under these conditions differ — investigate.")
+                + '</b> They differ '
                 f'on: {differing} (runs {e(others)}). Deterministic algorithms were on, so these '
                 "runs were expected to agree. Every run is kept as recorded and each can be "
                 "registered; compare their environment facts first. An investigation note "
@@ -3440,8 +3430,6 @@ PAGE_CSS = f"""
 {_PAGE} .shep-test-job-ft {{ display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 8px 14px 0; }}
 {_PAGE} .shep-test-log {{ margin: 0; padding: 8px 10px; background: #fff; border: 1px solid var(--shep-border); border-radius: 6px; font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--shep-mono); }}
 {_PAGE} .shep-test-fail {{ color: var(--shep-red-700); font-size: 15px; }}
-{_PAGE} .shep-test-refused {{ color: var(--shep-status-error); font-weight: 600; }}
-{_PAGE} .shep-test-na {{ color: var(--shep-status-neutral); font-weight: 600; white-space: nowrap; }}
 {_PAGE} .shep-test-units {{ font-size: 14px; color: var(--shep-text-2); }}
 {_PAGE} .shep-test-units > summary {{ cursor: pointer; min-height: 24px; line-height: 24px; width: max-content; max-width: 100%; }}
 {_PAGE} .shep-test-units > summary:focus-visible {{ outline: 2px solid var(--shep-accent); outline-offset: 2px; }}

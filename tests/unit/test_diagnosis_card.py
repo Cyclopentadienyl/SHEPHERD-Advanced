@@ -54,6 +54,7 @@ pytest.importorskip("gradio")
 
 from src.utils.fingerprint import file_sha256  # noqa: E402
 from src.webui.components import diagnosis_card as card  # noqa: E402
+from src.webui.components import renderers as r  # noqa: E402
 from tests.fixtures.clock_zone import local_zone, utc_clock  # noqa: E402,F401
 
 RUN = "20261017-091500_run_3fa9c1"
@@ -807,7 +808,7 @@ def test_each_state_shows_its_words_and_the_backend_s_reason_escaped(root):
     serving = _state(root, status=_status(root, serving="serving", loading=False, in_flight=0,
                                           not_serving_reason=None))
     body = card.body_html(serving)
-    assert "● Serving" in body.replace('<span aria-hidden="true">●</span> ', "● ")
+    assert r.status_mark("ok", "Serving") in body
     assert "shep-dx-reason" not in body
     assert not card.run_blocked(serving) and card.stop_offered(serving)
     stopping = _state(root, status=_status(

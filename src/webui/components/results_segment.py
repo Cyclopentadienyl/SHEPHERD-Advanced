@@ -422,8 +422,9 @@ def _model_cell(row: Mapping[str, Any], *, family: bool = True) -> str:
     words = _model_words(model)
     if words == "Model record not read":
         why = unknown.get("model.learning_stage") or "its record was not read"
-        words_html = (f'<span class="shep-muted" title="{r.e(why)}">○ Unknown: '
-                      f'{r.e(r.short_reason(why, 80))}</span>')
+        words_html = (f'<span title="{r.e(why)}">'
+                      + r.status_mark("neutral", f"{r.UNKNOWN}: {r.short_reason(why, 80)}")
+                      + "</span>")
     else:
         words_html = r.e(words)
     family_id = model.get("family_id")
@@ -478,13 +479,15 @@ def _metrics_cells(protocol: Any, row: Mapping[str, Any]) -> str:
     return f"<td>{lines}</td>"
 
 
-#: A row's registration as its State cell says it (the service's states).
+#: A row's registration as its State cell says it (the service's states):
+#: its words, and its status mark's row where it is a missing state (None:
+#: plain words).
 _REGISTERED_WORDS = {
-    service.REGISTERED: ("Registered", ""),
-    service.NOT_REGISTERED: ("○ Not registered", "shep-muted"),
-    service.MERGED: ("Merged record: registered before each run had its own record", ""),
-    service.POSSIBLY_MERGED: ("○ Not registered as its own run; possible overlap with a merged "
-                              "record", "shep-muted"),
+    service.REGISTERED: ("Registered", None),
+    service.NOT_REGISTERED: ("Not registered", "neutral"),
+    service.MERGED: ("Merged record: registered before each run had its own record", None),
+    service.POSSIBLY_MERGED: ("Not registered as its own run; possible overlap with a merged "
+                              "record", "neutral"),
 }
 
 
@@ -493,27 +496,28 @@ def _state_cell(row: Mapping[str, Any]) -> str:
     if row.get("report") == service.REPORT_KEPT:
         lines.append("<div>Report kept</div>")
     else:
-        lines.append('<div class="shep-muted">○ Report not available (ledger record only)</div>')
+        lines.append(f'<div>{r.status_mark("neutral", "Report not available (ledger record only)")}'
+                     '</div>')
     registered = row.get("registered")
-    words, css = _REGISTERED_WORDS.get(registered, (None, None))
+    words, kind = _REGISTERED_WORDS.get(registered, (None, None))
     if words is None:
-        lines.append(f'<div>{mp.warn_mark_html(str(registered))}</div>')
+        lines.append(f'<div>{r.status_mark("warn", str(registered))}</div>')
     else:
-        lines.append(f'<div class="{css}">{r.e(words)}</div>')
+        lines.append(f'<div>{r.status_mark(kind, words) if kind else r.e(words)}</div>')
     if row.get("conflict"):
-        lines.append(f'<div>{mp.warn_mark_html("report bytes differ elsewhere")}</div>')
+        lines.append(f'<div>{r.status_mark("warn", "report bytes differ elsewhere")}</div>')
     group = row.get("group") or {}
     deterministic = (row.get("measurement") or {}).get("deterministic_algorithms")
     if group.get("state") == "contested":
         differing = ", ".join(str(d) for d in group.get("differing") or [])
         text = f"runs under these conditions differ: {differing}" if differing else \
             "runs under these conditions differ"
-        lines.append(f'<div>{mp.warn_mark_html(text + " — investigate")}</div>'
+        lines.append(f'<div>{r.status_mark("warn", text + " — investigate")}</div>'
                      if deterministic is True else
                      f'<div class="shep-muted">{r.e(text)}</div>')
     elif group.get("state") == "cannot_be_checked":
-        lines.append(f'<div class="shep-muted" title="{r.e(group.get("why"))}">○ comparison '
-                     'incomplete</div>')
+        lines.append(f'<div title="{r.e(group.get("why"))}">'
+                     f'{r.status_mark("neutral", "comparison incomplete")}</div>')
     return "".join(lines)
 
 
@@ -526,9 +530,9 @@ def _exposure_cell(row: Mapping[str, Any]) -> str:
     if kind == "kg_edges":
         if exposure.get("reading"):
             return r.e(exposure["reading"])
-        return (f'<span class="shep-muted">○ Exposure not recorded: '
-                f'{r.e(exposure.get("problem") or "no reason given")}</span>')
-    return '<span class="shep-muted">○ Not compared (the split\'s allocation)</span>'
+        return r.status_mark("neutral", "Exposure not recorded: "
+                             + str(exposure.get("problem") or "no reason given"))
+    return r.status_mark("neutral", "Not compared (the split's allocation)")
 
 
 def _environment_cell(row: Mapping[str, Any]) -> str:
@@ -591,10 +595,11 @@ def unreadable_table_html(rows: Sequence[Mapping[str, Any]]) -> str:
     many = len(rows) != 1
     body = "".join(f'<tr><td>{r.e(row.get("item"))}</td><td>{r.e(_where_text(row.get("where")))}'
                    f'</td><td>{r.e(row.get("reason"))}</td></tr>' for row in rows)
-    return (f'<p class="shep-mp-p shep-amber-t">{r.WARN_MARK} {len(rows)} item'
-            f'{"s" if many else ""} could not be read, so {"they are" if many else "it is"} '
-            'listed with the reason and never counted as a result (no scope or filter hides '
-            'one).</p><div class="shep-tbl-wrap shep-rs-wrap"><table class="shep-tbl '
+    return ('<p class="shep-mp-p">' + r.status_mark(
+                "warn", f'{len(rows)} item{"s" if many else ""} could not be read, so '
+                        f'{"they are" if many else "it is"} listed with the reason and never '
+                        'counted as a result (no scope or filter hides one).')
+            + '</p><div class="shep-tbl-wrap shep-rs-wrap"><table class="shep-tbl '
             'shep-rs-unread" aria-label="Items that could not be read"><thead><tr>'
             '<th scope="col">Item</th><th scope="col">Where</th><th scope="col">Reason</th>'
             f'</tr></thead><tbody>{body}</tbody></table></div>')
@@ -1173,15 +1178,15 @@ def _cell_html(value: Any, why: Optional[str], *, full: bool, run: bool = False,
     if value is OTHER_PROTOCOL:
         return '<td class="shep-muted">another protocol</td>'
     if value is NOT_APPLICABLE:
-        return '<td class="shep-muted">○ not applicable</td>'
+        return f'<td>{r.status_mark("neutral", r.NOT_APPLICABLE)}</td>'
     if value is ABSENT:
-        return '<td class="shep-muted">○ not recorded</td>'
+        return f'<td>{r.status_mark("neutral", r.NOT_RECORDED)}</td>'
     if value is None:
         if isinstance(why, _SaidAbove):
-            return f'<td class="shep-muted" title="{r.e(why)}">○ Unknown</td>'
+            return f'<td title="{r.e(why)}">{r.status_mark("neutral", r.UNKNOWN)}</td>'
         if why:
-            return (f'<td class="shep-muted" title="{r.e(why)}">○ Unknown: '
-                    f'{r.e(r.short_reason(why, 120))}</td>')
+            return (f'<td title="{r.e(why)}">'
+                    f'{r.status_mark("neutral", f"{r.UNKNOWN}: {r.short_reason(why, 120)}")}</td>')
         return '<td class="shep-muted">none</td>'
     if run and isinstance(value, str):
         return f"<td>{_run_id_html(value)}</td>"

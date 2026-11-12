@@ -679,14 +679,11 @@ def _chips(status: Mapping[str, Any], *, grey: bool) -> List[str]:
     return [r.chip(text, "grey shep-tag-dashed" if grey else kind_) for text, kind_ in chips]
 
 
-#: The serving state's mark (the skill's §6: shape and word with the colour).
-_STATE_MARK = {SERVING: '<span class="shep-ok-t"><span aria-hidden="true">●</span> {}</span>',
-               LOADING: '<span class="shep-dx-loading-t"><span class="shep-spinner" '
-                        'aria-hidden="true"></span> {}</span>',
-               STOPPING: '<span class="shep-tag shep-tag-amber">'
-                         f'{r.WARN_MARK} {{}}</span>',
-               NOT_LOADED: '<span class="shep-tag shep-tag-grey"><span aria-hidden="true">○'
-                           '</span> {}</span>'}
+#: The serving state's mark (`renderers.status_mark`, the skill's §6: shape
+#: and word with the colour): its row, and whether it stands out as a tag (a
+#: stop to watch, nothing loaded).
+_STATE_MARK = {SERVING: ("ok", False), LOADING: ("running", False),
+               STOPPING: ("warn", True), NOT_LOADED: ("neutral", True)}
 
 
 def _serving_html(status: Mapping[str, Any], *, grey: bool) -> str:
@@ -697,8 +694,11 @@ def _serving_html(status: Mapping[str, Any], *, grey: bool) -> str:
     state, words = serving_state(status)
     if state == "unknown":
         return ""
-    mark = ('<span class="shep-tag shep-tag-grey shep-tag-dashed">{}</span>' if grey
-            else _STATE_MARK[state]).format(r.e(words))
+    if grey:
+        mark = f'<span class="shep-tag shep-tag-grey shep-tag-dashed">{r.e(words)}</span>'
+    else:
+        kind, as_chip = _STATE_MARK[state]
+        mark = r.status_mark(kind, words, as_chip=as_chip)
     line = f'<p class="shep-dx-line shep-dx-serving" data-state="{r.e(state)}">{mark}</p>'
     reason = status.get("not_serving_reason")
     if state != SERVING and isinstance(reason, str) and reason:

@@ -1574,13 +1574,14 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
         token = (f"{step.served}@{datetime.now().isoformat(timespec='seconds')}"
                  if step.changed else gr.update())
         still_open = step.plan is not None
-        old = r.short_hex(step.plan["from"].get("sha256")) if still_open else ""
+        served = step.plan["from"].get("sha256") if still_open else None
+        old = r.short_hex(served) if served else ""
         new = r.short_hex(step.plan["to"].get("sha256")) if still_open else ""
         return (step.plan, gr.update(visible=True), step.confirm_html, step.reason_html, token,
                 "confirming" if still_open else "idle",
                 gr.update(visible=still_open,
                           **({"value": f"🔒 Reload with {new}"} if still_open else {})),
-                gr.update(value=(f"Keep {old}" if still_open and old != "—" else
+                gr.update(value=(f"Keep {old}" if still_open and old else
                                  "Cancel" if still_open else "Close")))
 
     reload_done = reload_button.click(

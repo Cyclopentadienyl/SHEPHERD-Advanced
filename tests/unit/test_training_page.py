@@ -675,6 +675,16 @@ def test_the_used_dataset_fingerprint_is_an_operators_and_compared_in_full():
     assert "≠ not the selected dataset" in other            # 12 equal digits are not equal
     assert "recorded at the first checkpoint" in tc.run_head_html(run, ws, operator=True,
                                                                   snapshot=None, live=True)
+    # "dataset not recorded" only when the run recorded none (the WebUI skill
+    # §6); a run that recorded one beside a run-bar dataset with no
+    # fingerprint cannot be compared, which is another state.
+    unrecorded = tc.run_head_html(run, ws, operator=True,
+                                  snapshot={"readable": True, "dataset_fingerprint": None})
+    assert "dataset not recorded" in unrecorded
+    bare = tc.run_head_html(run, {"row": {}, "digits": 12}, operator=True,
+                            snapshot={"readable": True, "dataset_fingerprint": "a" * 64})
+    assert "dataset not recorded" not in bare
+    assert "dataset cannot be verified: the run bar&#x27;s dataset has no fingerprint" in bare
     read_only = tc.run_head_html(run, ws, operator=False,
                                  snapshot={"readable": True, "dataset_fingerprint": "a" * 64})
     assert "dataset not shown · operator control" in read_only
@@ -1552,6 +1562,16 @@ def test_an_ended_run_with_no_checkpoint_is_headed_as_its_snapshot_says(root, mo
     assert "first checkpoint" not in ended
     assert "recorded at the first checkpoint" in tc.run_head_html(run, ws, operator=True,
                                                                   snapshot=None, live=True)
+    # "dataset not recorded" only when the run recorded none (the WebUI skill
+    # §6); a run that recorded one beside a run-bar dataset with no
+    # fingerprint cannot be compared, which is another state.
+    unrecorded = tc.run_head_html(run, ws, operator=True,
+                                  snapshot={"readable": True, "dataset_fingerprint": None})
+    assert "dataset not recorded" in unrecorded
+    bare = tc.run_head_html(run, {"row": {}, "digits": 12}, operator=True,
+                            snapshot={"readable": True, "dataset_fingerprint": "a" * 64})
+    assert "dataset not recorded" not in bare
+    assert "dataset cannot be verified: the run bar&#x27;s dataset has no fingerprint" in bare
     monkeypatch.setattr(tc, "_get_pyg_warning", lambda: None)
     for made in (False, True):
         job_run = root / "demo" / "runs" / "gatv2" / f"20261022-011234_auto_{int(made)}"

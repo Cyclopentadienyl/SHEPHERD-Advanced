@@ -774,9 +774,11 @@ def contest_html(state: Optional[Mapping[str, Any]], *, mode: Optional[str],
         shown, fields = "; ".join(values), ", ".join(str(n) for n in names)
         if deterministic is True:
             what = shown or fields
-            return (f'<div class="shep-mp-delta shep-amber-t">{r.WARN_MARK} runs under these '
-                    f'conditions differ — investigate{": " + r.e(what) if what else ""}. '
-                    'Deterministic algorithms were on, so they were expected to agree.</div>')
+            said = f": {what}" if what else ""
+            return ('<div class="shep-mp-delta">' + r.status_mark(
+                "warn", f"runs under these conditions differ — investigate{said}. "
+                        "Deterministic algorithms were on, so they were expected to agree.")
+                    + "</div>")
         detail = f": {shown}" if shown else f" on: {fields}" if fields else ""
         return (f'<div class="shep-mp-delta shep-muted">runs under these conditions differ'
                 f'{r.e(detail)}</div>')
@@ -1073,10 +1075,10 @@ def unreadable_html(items: Sequence[Mapping[str, Any]]) -> str:
         rows.append(f'<tr><td class="shep-num">{r.e(item.get("index"))}</td>'
                     f'<td class="shep-nowrap">{registration}</td><td>{report}</td>'
                     f'<td>{r.e(item.get("reason"))}</td></tr>')
-    return (f'<p class="shep-mp-p shep-mp-unread-p shep-amber-t">{r.WARN_MARK} {len(items)} record'
-            f'{"s" if many else ""} for these weights cannot be read as '
-            f'{"results" if many else "a result"}. The ledger keeps {"them" if many else "it"} '
-            'as written.</p>'
+    return ('<p class="shep-mp-p shep-mp-unread-p">' + r.status_mark(
+                "warn", f'{len(items)} record{"s" if many else ""} for these weights cannot be read '
+                        f'as {"results" if many else "a result"}. The ledger keeps '
+                        f'{"them" if many else "it"} as written.') + '</p>'
             '<div class="shep-tbl-wrap shep-mp-recwrap shep-mp-unreadwrap"><table '
             'class="shep-tbl shep-mp-unread" '
             'aria-label="Records that cannot be read"><thead><tr>'
@@ -1104,11 +1106,6 @@ def run_words(run: Any) -> str:
     return f"run {started}" if started else f"run {run}"
 
 
-def warn_mark_html(text: str) -> str:
-    """A condition to watch (skill §6): amber, ▲ and its words, escaped."""
-    return f'<span class="shep-mp-warn">{r.WARN_MARK} {r.e(text)}</span>'
-
-
 def parent_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]]) -> str:
     """Where the exact parent file a model's record names is (its 12-hex and
     run; listed here, in another listed workspace, or not available and why,
@@ -1125,7 +1122,7 @@ def parent_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]]) -> st
         return f'{where} · in workspace <b>{r.e(row.get("parent_workspace"))}</b>'
     if state == "unavailable":
         return (f'{where}<div>'
-                + warn_mark_html("parent unavailable: "
+                + r.status_mark("warn", "parent unavailable: "
                                  + r.short_reason(row.get("parent_problem") or "not found", 160))
                 + "</div>")
     return where
@@ -1174,12 +1171,12 @@ def lineage_cell_html(item: Mapping[str, Any], row: Mapping[str, Any]) -> str:
         lines.append(f'<div class="shep-sub">'
                      f'{changes_html(item.get("parent_changes"), values=False)}</div>')
     if row.get("parent_state") == "unavailable":
-        lines.append('<div class="shep-sub">' + warn_mark_html(
+        lines.append('<div class="shep-sub">' + r.status_mark("warn", 
             "parent unavailable: " + r.short_reason(row.get("parent_problem") or "not found"))
             + "</div>")
     if row.get("context"):
-        lines.append('<div class="shep-sub shep-mp-ctx"><span aria-hidden="true">○</span> '
-                     'Context: parent of a shown file</div>')
+        lines.append('<div class="shep-sub">'
+                     + r.status_mark("neutral", "Context: parent of a shown file") + '</div>')
     body = "".join(lines) or '<span class="shep-muted">—</span>'
     return f'<div class="shep-mp-lin shep-mp-d{depth}">{body}</div>'
 
@@ -1945,13 +1942,11 @@ PAGE_CSS = f"""
 {_PAGE} .shep-mp-ro {{ padding: 0 16px 8px; }}
 {_PAGE} .shep-mtbl td.shep-num .shep-sub {{ text-align: right; }}
 /* By family's Lineage cell: a child sits one step in from its parent; a
-   parent that is not available is a condition to watch (amber, ▲, its words),
-   a context row a neutral state (grey, ○, its words): skill §6. */
+   parent that is not available is a condition to watch, a context row a
+   neutral state (`renderers.status_mark`, skill §6). */
 {_PAGE} .shep-mp-lin.shep-mp-d1 {{ padding-left: 12px; }}
 {_PAGE} .shep-mp-lin.shep-mp-d2 {{ padding-left: 24px; }}
 {_PAGE} .shep-mp-lin.shep-mp-d3 {{ padding-left: 36px; }}
-{_PAGE} .shep-mp-warn {{ color: var(--shep-status-warn); }}
-{_PAGE} .shep-mp-ctx {{ color: var(--shep-status-neutral); }}
 {_PAGE} .shep-mp-ident {{ font-size: 15px; }}
 /* Read-only: no list, no workspace, no order; the reason is the header's. */
 {_PAGE} {_LIST}:has(.shep-mp-ro) .shep-model-head > .form,

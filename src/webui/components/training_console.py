@@ -676,6 +676,20 @@ def _epochs(status: Mapping[str, Any], sep: str = " of ") -> Optional[str]:
 PILL_KIND = {"idle": "idle", "starting": "accent", "running": "running", "stopping": "accent",
              "completed": "ok", "stopped": "grey", "failed": "red",
              "queued": "grey", "cancelled": "grey", "refused": "red"}
+#: Each kind's row of the shared status marks (`renderers.STATUS_MARKS`): a
+#: job starting or stopping is busy, not yet or no longer running (the Stop
+#: button's own square), and only Running turns.
+STATUS_MARK_OF_KIND = {"ok": "ok", "grey": "neutral", "idle": "neutral", "red": "error",
+                       "running": "running", "accent": "stopping"}
+
+
+def job_status_html(status: str, words: Optional[str] = None) -> str:
+    """A job's status as colour, shape and word together (the WebUI skill
+    §6; `renderers.status_mark`), by its kind in `PILL_KIND`: never green for
+    a failed, stopped, cancelled or refused job. `words` default to the
+    status itself ("Running"). The Fine-tune job card's statuses."""
+    kind = STATUS_MARK_OF_KIND[PILL_KIND.get(status, "grey")]
+    return r.status_mark(kind, words or str(status).capitalize())
 
 
 def pill_state(status: Mapping[str, Any]) -> Tuple[str, str]:
@@ -1226,8 +1240,14 @@ def _dataset_relation(ws: Mapping[str, Any], *, operator: bool,
                 '<span class="shep-muted">not read (the checkpoint cannot be read)</span>')
     recorded, current = snapshot.get("dataset_fingerprint"), workspace_fingerprint(ws)
     row = digest_html(recorded, ws.get("digits") or r.SHORT_HEX, "dataset fingerprint")
-    if not (r.is_digest(recorded) and current):
-        return '<span class="shep-muted">dataset not recorded</span>', row
+    # The skill's §6: "not recorded" only when the run recorded none; a run
+    # that recorded one beside a run-bar dataset without a fingerprint cannot
+    # be compared, which is another state.
+    if not r.is_digest(recorded):
+        return r.status_mark("neutral", f"dataset {r.NOT_RECORDED.lower()}"), row
+    if not current:
+        return (r.status_mark("neutral", f"dataset {r.CANNOT_BE_VERIFIED.lower()}: the run "
+                                         "bar's dataset has no fingerprint"), row)
     if recorded == current:
         return f'<span class="shep-tag shep-tag-ok">{r.CHECK} same dataset as the run bar</span>', row
     return '<span class="shep-tag shep-tag-amber">≠ not the selected dataset</span>', row

@@ -54,8 +54,8 @@ by `recipe.frozen_parts_problem` among them) are the runner's alone
 start's graph backbone (`freeze_line_html`, the runner's own record of the
 settings it started with), then one row per child
 (Task | Status | Run | Best save | Validation (Trainer)). Each status is a mark
-of colour, shape and word (`training_console.PILL_KIND`, the
-``--shep-status-*`` tokens). A child's products, the best save by the Trainer
+of colour, shape and word (`training_console.job_status_html`, the shared
+`renderers.status_mark`). A child's products, the best save by the Trainer
 validation figure its saved files record and that figure (never a test
 result), are read for an operator and only once the child has ended
 (`list_checkpoints(run=)`, opening that run's files; kept per session by the
@@ -109,12 +109,6 @@ FROZEN_NOTE = ("Frozen graph backbone: only the patient encoder and the task hea
                "term trains nothing.")
 #: A child's states after which its run's saved files are final.
 ENDED = ("completed", "failed", "stopped")
-#: Each status kind's mark (the WebUI skill §6): its shape and the
-#: ``--shep-status-*`` token its colour reads. The spinner (None) is Running's
-#: alone; a stopping child, still busy but asked to stop, is blue with the
-#: Stop button's own ■.
-_MARKS = {"ok": ("●", "ok"), "grey": ("○", "neutral"), "idle": ("○", "neutral"),
-          "red": ("✕", "error"), "running": (None, "info"), "accent": ("■", "info")}
 
 
 # =============================================================================
@@ -202,8 +196,8 @@ def base_summary_html(item: Optional[Mapping[str, Any]]) -> str:
     if trained is True:
         on = f'<span class="shep-ok-t">{r.CHECK} the dataset selected</span>'
     elif trained is False:
-        on = ('<span class="shep-amber-t">▲ another dataset than the one selected (the start '
-              'refuses a parent of another knowledge graph)</span>')
+        on = r.status_mark("warn", "another dataset than the one selected (the start "
+                                   "refuses a parent of another knowledge graph)")
     else:
         on = '<span class="shep-muted">not recorded</span>'
     kind = item.get("checkpoint_kind")
@@ -222,18 +216,6 @@ def base_summary_html(item: Optional[Mapping[str, Any]]) -> str:
 # =============================================================================
 # The job card
 # =============================================================================
-def status_mark_html(status: str, words: Optional[str] = None) -> str:
-    """A child's status as colour, shape and word together (the WebUI skill
-    §6): its kind from `training_console.PILL_KIND`, never green for a failed,
-    stopped, cancelled or refused child."""
-    kind = tc.PILL_KIND.get(status, "grey")
-    shape, token = _MARKS.get(kind, ("○", "neutral"))
-    mark = ('<span class="shep-ft-spin" aria-hidden="true"></span>' if shape is None else
-            f'<span class="shep-ft-shape" aria-hidden="true">{shape}</span>')
-    return (f'<span class="shep-ft-st shep-ft-st-{token}" data-status="{r.e(status)}">{mark}'
-            f'<span>{r.e(words or str(status).capitalize())}</span></span>')
-
-
 def _run_parts(path: Any) -> Tuple[Optional[str], Optional[str]]:
     """``(architecture, run)`` of a run directory, by its last two parts."""
     if not path:
@@ -362,7 +344,7 @@ def child_row_html(child: Mapping[str, Any], *, operator: bool, products: Mappin
     else:
         run_cell = ('<span class="shep-muted">not started yet</span>' if status == "queued" else
                     '<span class="shep-muted">never started</span>')
-    return (f"<tr><td>{r.e(task)}</td><td>{status_mark_html(status)}{why}</td>"
+    return (f"<tr><td>{r.e(task)}</td><td>{tc.job_status_html(status)}{why}</td>"
             f"<td>{run_cell}</td>{_products_cells(child, operator=operator, products=products)}"
             "</tr>")
 
@@ -850,15 +832,6 @@ PAGE_CSS = f"""
 {_PAGE} .shep-ft-table th {{ text-align: left; font-size: 14px; font-weight: 600; color: var(--shep-text-2); padding: 6px 8px; border-bottom: 1px solid var(--shep-border); white-space: nowrap; }}
 {_PAGE} .shep-ft-table td {{ padding: 8px; border-bottom: 1px solid var(--shep-border); vertical-align: top; min-width: 0; }}
 {_PAGE} .shep-ft-table code.shep-ident {{ max-width: 40ch; }}
-{_PAGE} .shep-ft-st {{ display: inline-flex; align-items: center; gap: 6px; font-weight: 600; white-space: nowrap; }}
-{_PAGE} .shep-ft-st-ok {{ color: var(--shep-status-ok); }}
-{_PAGE} .shep-ft-st-neutral {{ color: var(--shep-status-neutral); }}
-{_PAGE} .shep-ft-st-error {{ color: var(--shep-status-error); }}
-{_PAGE} .shep-ft-st-info {{ color: var(--shep-status-info); }}
-{_PAGE} .shep-ft-shape {{ font-size: 15px; line-height: 1; }}
-{_PAGE} .shep-ft-spin {{ width: 12px; height: 12px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: shep-ft-spin 0.9s linear infinite; }}
-@keyframes shep-ft-spin {{ to {{ transform: rotate(360deg); }} }}
-@media (prefers-reduced-motion: reduce) {{ {_PAGE} .shep-ft-spin {{ animation: none; }} }}
 {_PAGE} .shep-ft-links {{ margin: 0; }}
 {_PAGE} .shep-link {{ border: 0; background: none; padding: 0; color: var(--shep-accent-text); font-size: 15px; cursor: pointer; font-weight: 500; }}
 {_PAGE} .shep-link:hover {{ text-decoration: underline; }}

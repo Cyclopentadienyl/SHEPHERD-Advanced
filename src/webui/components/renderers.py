@@ -119,9 +119,63 @@ _CHECK = ('<svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true" fo
 #: The dashboard's check mark (an inline svg that stays on its line), for a
 #: page's own "✓ …" (M5-3 review ARCH-4: pages used the private name).
 CHECK = _CHECK
-#: The mark of a condition to watch (the skill's §6): ▲ before its words, in
-#: amber, so the colour never carries the meaning alone.
-WARN_MARK = '<span aria-hidden="true">▲</span>'
+
+# ---------------------------------------------------------------------------
+# State words and status marks (the WebUI skill's §6)
+# ---------------------------------------------------------------------------
+#: **The missing states' own words** (the skill's §6): each says something
+#: else, so none is ever merged into another, into "Off" or into "—". Off: a
+#: setting or a control switched off. Not loaded: nothing is served. Not
+#: applicable: the fact has no meaning for this item. Unknown: the fact was
+#: asked for and could not be read. Cannot be verified: it was read, but what
+#: it would be checked against is missing or unreadable. Not recorded: the
+#: record holds none. A sentence says them in lower case.
+OFF = "Off"
+NOT_LOADED = "Not loaded"
+NOT_APPLICABLE = "Not applicable"
+UNKNOWN = "Unknown"
+CANNOT_BE_VERIFIED = "Cannot be verified"
+NOT_RECORDED = "Not recorded"
+MISSING_WORDS = (OFF, NOT_LOADED, NOT_APPLICABLE, UNKNOWN, CANNOT_BE_VERIFIED, NOT_RECORDED)
+#: **A dash's one meaning: no value here**, where nothing else is meant (a
+#: row of a kind the column does not describe, a cell with nothing in it).
+NO_VALUE = "—"
+
+#: **Each state's shape and ``--shep-status-*`` colour** (the skill's §6
+#: table): OK filled, a missing state hollow and grey, a condition to watch a
+#: triangle in amber, an error or a refusal a cross in red, Running the
+#: spinner (its alone), and a busy job asked to stop the Stop button's own
+#: square in blue.
+STATUS_MARKS = {
+    "ok": ("●", "ok"),
+    "neutral": ("○", "neutral"),
+    "warn": ("▲", "warn"),
+    "error": ("✕", "error"),
+    "running": (None, "info"),
+    "stopping": ("■", "info"),
+}
+#: The tag colour of each status colour, for a mark drawn as a chip.
+_STATUS_TAG = {"ok": "ok", "neutral": "grey", "warn": "amber", "error": "red", "info": "accent"}
+
+
+def status_mark(kind: str, words: Any, *, words_html: bool = False,
+                as_chip: bool = False) -> str:
+    """**The one status indicator** (the skill's §6): the state's colour, its
+    shape and its word together, so the colour never carries the meaning
+    alone. `kind` is a `STATUS_MARKS` row; `words` the state's word or the
+    condition's short sentence, always shown beside the shape, escaped (with
+    `words_html`, HTML these renderers built and escaped, a sentence with a
+    bold part or a code value). The shape is hidden from a screen reader,
+    which reads the word. Drawn as coloured text (``shep-st``), or with
+    `as_chip` as a tag: a state to watch, or one that stands apart in a row of
+    tags. No page shows a mark without its word."""
+    shape, token = STATUS_MARKS[kind]
+    mark = ('<span class="shep-spinner" aria-hidden="true"></span>' if shape is None else
+            f'<span class="shep-st-shape" aria-hidden="true">{shape}</span>')
+    text = str(words) if words_html else e(words)
+    classes = (f"shep-tag shep-tag-{_STATUS_TAG[token]} shep-st-chip" if as_chip
+               else f"shep-st shep-st-{token}")
+    return f'<span class="{classes}">{mark}<span class="shep-st-w">{text}</span></span>'
 
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _RUN_TIME = re.compile(r"^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})")
@@ -161,8 +215,11 @@ def is_digest(value: Any) -> bool:
 
 
 def short_hex(digest: Any, digits: int = SHORT_HEX) -> str:
-    """The first `digits` hex digits of a digest, or "—" when there is none."""
-    return digest[:digits] if is_digest(digest) else "—"
+    """The first `digits` hex digits of a recorded digest, or "not recorded"
+    when the record holds none (the skill's §6: never "—", which means "no
+    value here"). A caller with nothing to name at all (no model served)
+    says so in its own words before it asks."""
+    return digest[:digits] if is_digest(digest) else NOT_RECORDED.lower()
 
 
 def distinguishing_digits(digests: Iterable[Optional[str]], base: int = SHORT_HEX) -> int:
@@ -186,7 +243,7 @@ def chip(text: str, kind: str = "neutral", *, title: Optional[str] = None) -> st
 
 def warn_chip(text: str) -> str:
     """An amber chip with ▲ before its words: a condition to watch (the skill's §6)."""
-    return f'<span class="shep-tag shep-tag-amber">{WARN_MARK} {e(text)}</span>'
+    return status_mark("warn", text, as_chip=True)
 
 
 def resources_html(resources: Mapping[str, Any]) -> str:
@@ -303,17 +360,49 @@ def record_verified(item: Any) -> bool:
     return isinstance(record, Mapping) and record.get("binding") == "verified"
 
 
+#: **A dataset record's binding state in words** (`WorkspaceItem.dataset_record`
+#: ``binding``; `kg.artifacts.verify_dataset_record`), each its own (the
+#: skill's §6): the manifest binds no record, the record it binds cannot be
+#: read or checked, the record contradicts what the manifest binds, or the
+#: record was not read at all.
+RECORD_WORDS = {
+    "unrecorded": "record " + NOT_RECORDED.lower(),
+    "unverifiable": "record " + CANNOT_BE_VERIFIED.lower(),
+    "mismatch": "record does not match",
+    None: "record not read",
+}
+
+
+def record_words(item: Any) -> Tuple[str, str]:
+    """``(kind, words)`` of a workspace's dataset record (`RECORD_WORDS`): its
+    `status_mark` row and its words. Verified is OK; a record the manifest
+    contradicts is an error (it is refused before a run); a record absent,
+    not checkable or not read is a missing state, each in its own words."""
+    record = _get(item, "dataset_record") or {}
+    binding = record.get("binding") if isinstance(record, Mapping) else None
+    if binding == "verified":
+        return "ok", "record verified"
+    if binding == "mismatch":
+        return "error", RECORD_WORDS["mismatch"]
+    return "neutral", RECORD_WORDS.get(binding, RECORD_WORDS[None])
+
+
 def record_chip(item: Any) -> str:
-    """"✓ record verified" (the dataset record checked), or the grey "record not
-    verified"."""
-    if record_verified(item):
-        return f'<span class="shep-tag shep-tag-ok">{_CHECK} record verified</span>'
-    return chip("record not verified", "grey")
+    """"✓ record verified" (the dataset record checked), else the record's
+    own state as a chip (`record_words`): "record not recorded" apart from
+    "record cannot be verified", "record does not match" and "record not
+    read"."""
+    kind, words = record_words(item)
+    if kind == "ok":
+        return f'<span class="shep-tag shep-tag-ok">{_CHECK} {e(words)}</span>'
+    return status_mark(kind, words, as_chip=True)
 
 
 def count_text(value: Any) -> str:
-    """A count with thousands separators, or "—" for none."""
-    return f"{value:,}" if isinstance(value, int) and not isinstance(value, bool) else "—"
+    """A recorded count with thousands separators, or "not recorded" where the
+    record holds none (never "—", the skill's §6)."""
+    return (f"{value:,}" if isinstance(value, int) and not isinstance(value, bool)
+            else NOT_RECORDED.lower())
 
 
 def dataset_details_html(row: Mapping[str, Any], facts: Optional[Mapping[str, Any]], *,
@@ -663,11 +752,18 @@ def configuration_text(item: Any) -> str:
             f"field{'s' if count != 1 else ''}")
 
 
-def model_name_line(item: Any) -> str:
-    """"GAT · run 2026-10-17 09:15 · epoch 5" (epoch "—" when not recorded)."""
+def epoch_text(item: Any) -> str:
+    """A listed checkpoint's recorded epoch, or "not recorded" when its record
+    holds none (never "—", the skill's §6)."""
     epoch = _get(item, "epoch")
-    epoch_text = str(epoch) if isinstance(epoch, int) and not isinstance(epoch, bool) else "—"
-    return f"{run_label(_get(item, 'architecture'), _get(item, 'run'))} · epoch {epoch_text}"
+    return (str(epoch) if isinstance(epoch, int) and not isinstance(epoch, bool)
+            else NOT_RECORDED.lower())
+
+
+def model_name_line(item: Any) -> str:
+    """"GAT · run 2026-10-17 09:15 · epoch 5" ("epoch not recorded" when its
+    record holds none, `epoch_text`)."""
+    return f"{run_label(_get(item, 'architecture'), _get(item, 'run'))} · epoch {epoch_text(item)}"
 
 
 def trained_on(fingerprint: Any, workspaces: Sequence[Any]) -> Tuple[str, ...]:
@@ -739,13 +835,16 @@ def recorded_tests_cell(recorded: Optional[RecordedTests]) -> str:
     return recorded_tests_text(recorded).replace("Recorded results: ", "", 1)
 
 
-def validation_cell(validation: Any) -> str:
+def validation_cell(validation: Any, *, read: bool = True) -> str:
     """A checkpoint's own validation figure for the "Validation (Trainer)"
     column, escaped: its value over the figure's name (`VALIDATION_LABELS`),
     since a base, a task model and a file without a model spec each record
-    their own figure."""
+    their own figure. With none, why, as `validation_text` says it: "Not
+    recorded" for a record read that holds none, "Unknown" for a record this
+    build refuses or a file it did not read (`record_read`), which may well
+    record one."""
     if not isinstance(validation, Mapping) or not isinstance(validation.get("value"), (int, float)):
-        return '<span class="shep-muted">—</span>'
+        return status_mark("neutral", NOT_RECORDED if read else UNKNOWN)
     metric, value = str(validation.get("metric")), float(validation["value"])
     label = VALIDATION_LABELS.get(metric, f"Validation {metric} (Trainer)")
     return f'{value:.4f}<div class="shep-sub">{e(label)}</div>'
@@ -772,10 +871,8 @@ def model_table_row_html(item: Any, workspaces: Sequence[Any], *,
     classes = [c for c, on in (("shep-on", selected), ("shep-row-dis", unreadable)) if on]
     tag = f' {chip(in_use_label, "accent")}' if in_use else ""
     suffix = run_suffix(_get(item, "run"))
-    epoch = _get(item, "epoch")
-    epoch_text = str(epoch) if isinstance(epoch, int) and not isinstance(epoch, bool) else "—"
     name = run_label_html(_get(item, "architecture"), _get(item, "run"))
-    model = (f'<div class="shep-w600">{name}</div><div class="shep-sub">epoch {e(epoch_text)}'
+    model = (f'<div class="shep-w600">{name}</div><div class="shep-sub">epoch {e(epoch_text(item))}'
              f'{" · " + e(suffix) if suffix else ""}</div>{tag}')
     attrs = (f'class="{" ".join(classes)}" data-key="{e(key)}" tabindex="0" '
              f'aria-selected="{"true" if selected else "false"}"'
@@ -803,7 +900,8 @@ def model_table_row_html(item: Any, workspaces: Sequence[Any], *,
     fingerprints = (f'<div>model <code class="shep-fpv" title="{e(sha)}">{e(sha[:digits])}</code>'
                     f'</div><div class="shep-sub">{dataset}</div>')
     return (f'<tr {attrs}><td>{model}</td><td>{fingerprints}</td>'
-            f'<td class="shep-num">{validation_cell(_get(item, "validation"))}</td>{extra_cell}'
+            f'<td class="shep-num">{validation_cell(_get(item, "validation"), read=record_read(item))}'
+            f'</td>{extra_cell}'
             f'<td>{e(recorded_tests_cell(recorded))}</td></tr>')
 
 

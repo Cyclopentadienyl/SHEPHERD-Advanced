@@ -440,8 +440,8 @@ def test_compare_says_each_missing_value_in_its_own_words(world, monkeypatch):
                          "measurement.regime.device": "its record does not hold it as a value"}
     first["measurement"]["device"] = "cuda:0"
     markup = rs.compare_html([first, second], True)
-    assert _cells(markup, "Disease only_here") == ["0.8", "○ not recorded"]
-    assert _cells(markup, "Spec · Chunk size") == ["64", "○ not recorded"]
+    assert _cells(markup, "Disease only_here") == ["0.8", "○ Not recorded"]
+    assert _cells(markup, "Spec · Chunk size") == ["64", "○ Not recorded"]
     assert _cells(markup, "Spec · Dropout") == ["none", "0.1"]
     assert _cells(markup, "Device") == [
         "cuda:0", "○ Unknown: its record does not hold it as a value"]
@@ -907,13 +907,13 @@ def test_compare_keeps_not_applicable_not_recorded_and_none_apart(world, monkeyp
     for label in ("Exposure definition", "Measured edges", "In recorded graph use",
                   "Exposure problem"):
         kg_cell, supplied_cell = _cells(markup, label)
-        assert supplied_cell == "○ not applicable" and kg_cell != "○ not applicable", label
-    assert _cells(markup, "Measured edges") == ["6", "○ not applicable"]
+        assert supplied_cell == "○ Not applicable" and kg_cell != "○ Not applicable", label
+    assert _cells(markup, "Measured edges") == ["6", "○ Not applicable"]
     r10 = [label for label in _labels(markup) if label.startswith("R10 · ")]
     assert len(r10) == 4
     for label in r10:
         kg_cell, supplied_cell = _cells(markup, label)
-        assert kg_cell == "○ not applicable", label
+        assert kg_cell == "○ Not applicable", label
         assert not supplied_cell.startswith(label[len("R10 · "):]), label
     # A KG edge set's result whose record holds no exposure block: its
     # counts are not recorded, and the problem says why.
@@ -922,7 +922,7 @@ def test_compare_keeps_not_applicable_not_recorded_and_none_apart(world, monkeyp
                         "definition_version": None, "measured_edges": None,
                         "in_recorded_graph_use": None, "problem": "no exposure block"}
     markup = rs.compare_html([bare, kg], True)
-    assert _cells(markup, "Measured edges") == ["○ not recorded", "6"]
+    assert _cells(markup, "Measured edges") == ["○ Not recorded", "6"]
     assert _cells(markup, "Exposure problem") == ["no exposure block", "none"]
     # The data's identity, counts and content references are each kind's own
     # (review of the fix: a KG edge set's split read "not recorded" for a
@@ -931,20 +931,20 @@ def test_compare_keeps_not_applicable_not_recorded_and_none_apart(world, monkeyp
     # of the column's own kind holds is "not recorded" for one that lacks it.
     markup = rs.compare_html([kg, supplied], False)
     assert _cells(markup, "Data identity · Split › Rule") == [
-        "facts-80/10/10/v1", "○ not applicable"]
-    assert _cells(markup, "Data identity · Samples SHA-256")[0] == "○ not applicable"
-    assert _cells(markup, "Data counts · Pairs") == ["6", "○ not applicable"]
-    assert _cells(markup, "Data counts · Source cases")[0] == "○ not applicable"
+        "facts-80/10/10/v1", "○ Not applicable"]
+    assert _cells(markup, "Data identity · Samples SHA-256")[0] == "○ Not applicable"
+    assert _cells(markup, "Data counts · Pairs") == ["6", "○ Not applicable"]
+    assert _cells(markup, "Data counts · Source cases")[0] == "○ Not applicable"
     assert _cells(markup, "Content references · pairs › SHA-256") == [
-        "3" * 12, "○ not applicable"]
-    assert _cells(markup, "Content references · samples › SHA-256")[0] == "○ not applicable"
+        "3" * 12, "○ Not applicable"]
+    assert _cells(markup, "Content references · samples › SHA-256")[0] == "○ Not applicable"
     assert _cells(markup, "Content references · graph.kg › SHA-256")[0] == _cells(
         markup, "Content references · graph.kg › SHA-256")[1]
     lacking = copy.deepcopy(supplied)
     lacking["data"]["identity"].pop("source_sha256")
     markup = rs.compare_html([kg, supplied, lacking], False)
     assert _cells(markup, "Data identity · Source SHA-256") == [
-        "○ not applicable", supplied["data"]["identity"]["source_sha256"][:12], "○ not recorded"]
+        "○ Not applicable", supplied["data"]["identity"]["source_sha256"][:12], "○ Not recorded"]
     assert "not recorded" not in "".join(_cells(markup, "Data identity · Split › Rule"))
 
 
@@ -991,7 +991,7 @@ def test_compare_goes_down_into_nested_settings_and_says_the_spec_once(world, mo
         "Effective setting · Loaders › Train › Recipe › Reference filled › Graph backbone"]
     # A closed value under the Fine-tune field's label reads in its words and
     # then as recorded (review of A2: a bare "none" read as no graph backbone).
-    assert _cells(markup, training[-1]) == ["Trained ( none )", "○ not recorded"]
+    assert _cells(markup, training[-1]) == ["Trained ( none )", "○ Not recorded"]
     assert "<td>Trained (<code>none</code>)</td>" in markup
     assert _cells(markup, training[1]) == ['["frozen_parts", "seed"]', '["seed"]']
     assert [label for label in _labels(markup) if label.startswith("Content references")] == [
@@ -1119,7 +1119,8 @@ def test_compare_says_a_columns_unknown_reason_once_per_field(world, monkeypatch
         assert (len(transfer) == 1) if differences else (len(transfer) >= 6)
         assert [_cells(markup, label)[1] for label in transfer] == (
             [f"○ Unknown: {why}"] + ["○ Unknown"] * (len(transfer) - 1))
-        assert (f'title="{html_lib.escape(why)}">○ Unknown</td>' in markup) is not differences
+        assert (f'<td title="{html_lib.escape(why)}">{rs.r.status_mark("neutral", rs.r.UNKNOWN)}'
+                '</td>' in markup) is not differences
         # Once per field: of each model field's rows, the column says why on
         # its first only.
         said: dict = {}

@@ -114,6 +114,15 @@ def test_an_unreadable_manifest_is_told_apart_from_an_absent_one(root, monkeypat
     html = dsp.table_html(data, None, None)
     assert "not trainable: no readable split manifest" in _row(html, "broken")
     assert "not trainable: no split manifest" in _row(html, "scratch_ws")
+    # The fingerprint, origin and record cells say each missing state in its
+    # own words (the WebUI skill §6), never one "—" or "not verified".
+    from src.webui.components import renderers as r
+
+    for name, fingerprint in (("scratch_ws", r.NOT_RECORDED), ("broken", r.UNKNOWN)):
+        row = _row(html, name)
+        assert r.status_mark("neutral", fingerprint) in row, name
+        assert '<span class="shep-muted">—</span>' not in row.split("shep-ds-use")[0], name
+        assert "not verified" not in row, name
 
 
 def test_serving_is_matched_through_the_list_by_resolved_directory(root, monkeypatch):

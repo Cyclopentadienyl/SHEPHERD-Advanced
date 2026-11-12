@@ -653,12 +653,11 @@ def test_deterministic_runs_that_differ_are_flagged_for_investigation(site):
         assert "runs under these conditions differ on pooled_mrr" in row
         assert tp.notes_visible(reports, other)
         if flag:
-            assert row.endswith(" — investigate: deterministic runs were expected to agree</span>")
-            assert '<span class="shep-amber-t"><span aria-hidden="true">▲</span> runs under' in row
-            assert chip == ('<span class="shep-tag shep-tag-amber"><span aria-hidden="true">▲'
-                            '</span> runs differ</span>')
-            assert ('<span class="shep-tag shep-tag-amber"><span aria-hidden="true">▲</span> '
-                    'Runs differ — investigate</span>') in result
+            assert row.endswith(" — investigate: deterministic runs were expected to agree"
+                                "</span></span>")
+            assert '<span class="shep-st shep-st-warn"><span class="shep-st-shape" aria-hidden="true">▲</span><span class="shep-st-w">runs under' in row
+            assert chip == tp.r.warn_chip("runs differ")
+            assert tp.r.warn_chip("Runs differ — investigate") in result
             assert block.startswith('<div class="shep-notice shep-notice-amber shep-test-block">')
             assert "Runs under these conditions differ — investigate." in unescape(block)
             assert ("Deterministic algorithms were on, so these runs were expected to agree."
@@ -1210,7 +1209,6 @@ def test_an_evidence_directory_that_cannot_be_checked_never_disables_start(site,
     import os
 
     from src.api.services.training_manager import build_test_argv
-    from src.webui.components.renderers import WARN_MARK
     from tests.unit.test_r10 import _stat_fails
 
     locked, good = (site.root / "locked-evidence").resolve(), (site.root / "evidence").resolve()
@@ -1225,9 +1223,10 @@ def test_an_evidence_directory_that_cannot_be_checked_never_disables_start(site,
                           protocol="disease") == (True, None)
     row = tp.evidence_html(page, "demo")
     assert ("<code>locked-evidence</code>, <code>evidence</code> (the server's setting)</span>"
-            f'<span></span><span class="shep-amber-t">{WARN_MARK} Cannot be checked: '
+            '<span></span><span class="shep-st shep-st-warn"><span class="shep-st-shape" aria-hidden="true">▲</span><span class="shep-st-w">Cannot be checked: '
             "&lt;evidence 1&gt; (PermissionError: Permission &lt;denied&gt;). R10 cannot look "
-            "in it: inputs found nowhere else read unverifiable, naming it.</span></div>") in row
+            "in it: inputs found nowhere else read unverifiable, naming it.</span></span></div>"
+            ) in row
     assert str(site.root) not in row and "<denied>" not in row
     manager = FakeManager()
     result = tp.start_test_run(page, models, "demo", LABEL, child, False, False, request,
@@ -4196,7 +4195,7 @@ def test_a_kg_or_generated_start_needs_no_evidence_setting_and_is_given_none(
             label, kind, ())
         inputs.reports_dir()  # the runner's own judgment takes them
         row = tp.evidence_html(page, "demo", tp.find(page["versions"], "label", label))
-        assert 'class="shep-test-na"' in row and tp.NOT_APPLICABLE_MARK in row
+        assert tp.r.status_mark("neutral", "Not applicable") in row
         assert _visible(row) == (f"R10 evidence ○ Not applicable · "
                                  f"{protocols.training_evidence_refusal(kind)}"), row
         assert "Refused" not in row and "relative/evidence" not in row
@@ -4217,7 +4216,7 @@ def test_a_kg_or_generated_start_needs_no_evidence_setting_and_is_given_none(
         assert allowed is False and why.startswith(
             "Disabled: the evidence directories setting is refused: ")
         assert result["success"] is False and result["error"].endswith("Nothing was started.")
-        assert f'<span class="shep-test-refused">{tp.REFUSED_MARK} Refused: ' in row
+        assert '<span class="shep-st shep-st-error"><span class="shep-st-shape" aria-hidden="true">✕</span><span class="shep-st-w">Refused: ' in row
         assert len(manager.started) == 2
 
 
@@ -4237,11 +4236,11 @@ def test_the_r10_row_renders_each_state_escaped():
         row = tp.evidence_html(hostile, "demo", version)
         assert HOSTILE not in row and "&lt;img src=x onerror=alert(1)&gt;" in row
         assert "/srv/x" not in row and "&lt;srv&gt;/x" in row
-        assert f'<span class="shep-test-refused">{tp.REFUSED_MARK} Refused: ' in row
+        assert '<span class="shep-st shep-st-error"><span class="shep-st-shape" aria-hidden="true">✕</span><span class="shep-st-w">Refused: ' in row
     for kind in (protocols.KG_EDGES, protocols.GENERATED):
         row = tp.evidence_html(hostile, "demo", {"kind": kind})
         assert "Refused" not in row and HOSTILE not in row and "onerror" not in row
-        assert f'<span class="shep-test-na">{tp.NOT_APPLICABLE_MARK} Not applicable</span>' in row
+        assert tp.r.status_mark("neutral", "Not applicable") in row
     named = {"evidence": {"dirs": [f"/srv/{HOSTILE}"], "names": [HOSTILE], "problem": None,
                           "note": None}}
     row = tp.evidence_html(named, "demo", {"kind": "supplied"})
