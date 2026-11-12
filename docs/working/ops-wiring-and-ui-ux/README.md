@@ -96,7 +96,9 @@ The author's, within §3. The plan's wording is the source where this section is
   set". The record names each learning setting's source: reference, operator, build default, inherited or decoded.
 - **S3. A setting the run would not read is refused when it is explicit**, as `unread_settings` already is, never
   accepted and ignored: `warmup_steps` unless the scheduler is cosine, `min_lr_ratio` with no scheduler, `amp_dtype`
-  with AMP off. Inherited values are never refused for this. A request whose effect the record already states apart
+  with AMP off. Inherited values are never refused for this: a continuation or a branch meets these rules only in the
+  settings it changes, and a setting stated at its parent's value is kept as inherited. A request whose effect the
+  record already states apart
   (AMP asked on a CPU device: requested and in effect recorded) stays accepted. The trainer's warmup semantics are
   not changed (with cosine, `warmup_steps` 0 means a ratio of the steps); only the words that misdescribe it are.
 - **S4. What the child process checks, the runner checks before it starts**, through the same functions: a
