@@ -151,7 +151,7 @@ class TestTrainingManagerStartStop:
         manager = TrainingManager()
         mock_proc = FakeProcess(pid=1)
         config = {"data_dir": str(tmp_path / "ws"), "learning_stage": "base",
-                  "run_name": "Pilot A"}
+                  "run_name": "Pilot A", "device": "cpu"}
 
         with patch("subprocess.Popen", return_value=mock_proc) as popen:
             result = manager.start_training(config)
@@ -199,7 +199,8 @@ class TestTrainingManagerStartStop:
         real continuation reaches the guard today, since the preview of a real
         parent refuses a retired location first (the case above)."""
         manager = TrainingManager()
-        config = {"data_dir": str(tmp_path), "resume_from": "p.pt", retired: "x"}
+        config = {"data_dir": str(tmp_path), "resume_from": "p.pt", "device": "cpu",
+                  retired: "x"}
         preview = {"ok": True, "architecture": "gatv2", "sha256": "c" * 64,
                    "learning_stage": "base"}
         with patch.object(manager, "preview_continuation", return_value=preview), \
@@ -215,7 +216,8 @@ class TestTrainingManagerStartStop:
         (used / "config.yaml").write_text("x")
         manager = TrainingManager()
         with patch("subprocess.Popen") as popen:
-            result = manager.start_training({"learning_stage": "base", "run_dir": str(used)})
+            result = manager.start_training({"learning_stage": "base", "run_dir": str(used),
+                                             "device": "cpu"})
         assert result["success"] is False and "already holds files" in result["error"]
         popen.assert_not_called()
 
@@ -230,7 +232,7 @@ class TestTrainingManagerStartStop:
         workspace.mkdir()
         elsewhere.mkdir()
         (workspace / "runs").symlink_to(elsewhere, target_is_directory=True)
-        config = {"data_dir": str(workspace), "learning_stage": "base"}
+        config = {"data_dir": str(workspace), "learning_stage": "base", "device": "cpu"}
         if explicit:
             config["run_dir"] = str(workspace / "runs" / "gatv2" / "mine")
         manager = TrainingManager()
@@ -265,7 +267,8 @@ class TestTrainingManagerStartStop:
         manager = TrainingManager()
         process = FakeProcess(pid=7, on_sigint=0)
         with patch("subprocess.Popen", return_value=process):
-            manager.start_training({"data_dir": str(tmp_path / "ws"), "learning_stage": "base"})
+            manager.start_training({"data_dir": str(tmp_path / "ws"), "learning_stage": "base",
+                                    "device": "cpu"})
 
         result = manager.stop_training()
 
@@ -279,7 +282,7 @@ class TestTrainingManagerStartStop:
         import torch
         torch.save({"state_dict": {}}, parent)   # no record at all
         with patch("subprocess.Popen") as popen:
-            result = manager.start_training({"resume_from": str(parent)})
+            result = manager.start_training({"resume_from": str(parent), "device": "cpu"})
         assert result["success"] is False
         assert f"The parent old.pt: {WRITTEN_BEFORE_SPEC}" in result["error"]
         popen.assert_not_called()
@@ -291,7 +294,7 @@ class TestTrainingManagerStartStop:
         with patch.object(manager, "preview_continuation", return_value=preview), \
                 patch("subprocess.Popen", return_value=mock_proc) as popen:
             result = manager.start_training({"data_dir": str(tmp_path / "ws"),
-                                             "resume_from": "p.pt"})
+                                             "resume_from": "p.pt", "device": "cpu"})
         assert Path(result["run_dir"]).parent == tmp_path / "ws" / "runs" / "hgt"
         # The process is bound to the parent this placement was decided on (P22-S1).
         argv = popen.call_args[0][0]

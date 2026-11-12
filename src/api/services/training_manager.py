@@ -611,6 +611,22 @@ def _zero_rate_groups(record: Mapping[str, Any]) -> Optional[List[int]]:
         return None
 
 
+def _training_device(requested: Any) -> Tuple[Optional[str], Optional[str]]:
+    """The device a start's runs train on, ``(device, None)``, or ``(None,
+    why not)``: **the rule the training process resolves its device by**
+    (`training_device.resolve_training_device`; decision S4), asked by every
+    start before anything is read or spawned (a new base, a continuation, a
+    branch, a Fine-tune start), so a device this host cannot give is refused
+    in the process's sentence and nothing is started. The request keeps the
+    device as asked; the run records it beside the one in effect."""
+    from src.utils.training_device import TrainingDeviceUnavailable, resolve_training_device
+
+    try:
+        return resolve_training_device(str(requested)), None
+    except TrainingDeviceUnavailable as exc:
+        return None, f"{exc} Nothing was started."
+
+
 def deployment_device() -> Optional[str]:
     """The device a test run is given: the deployment's (D5), `SHEPHERD_DEVICE`
     as the served pipeline reads it (`requested_serving_device`). None leaves
@@ -1216,6 +1232,11 @@ class TrainingManager:
         of its settings is ``invalid_settings``), and it is filed under its
         parent's architecture with its parent's stage and task. A request
         naming two parents is refused first (`run_plan.parents_problem`).
+        **The device is resolved before any parent is read or anything is
+        spawned** (`training_device.resolve_training_device`, the rule the
+        training process resolves its device by; decision S4), so a device
+        this host cannot give is refused here in the process's sentence, and
+        the previews judge the run on the device it would have.
 
         Returns:
             Status dict with success/error info. Refused while any GPU job is
@@ -1235,6 +1256,10 @@ class TrainingManager:
                 return {"success": False, "invalid_settings": True,
                         "error": f"{refusal} Nothing was started.",
                         "status": self.get_job_status_word("training")}
+        device, refusal = _training_device(config.get("device", "auto"))
+        if refusal:
+            return {"success": False, "error": refusal,
+                    "status": self.get_job_status_word("training")}
 
         # The dataset the caller showed, checked first: nothing is read from a
         # parent, named, written or started for a dataset that changed since.
@@ -1263,7 +1288,7 @@ class TrainingManager:
             # A branch, decided by its one preview as the training process
             # decides it, and bound to that read (decision B2).
             preview = self.preview_branch(
-                config["branch_from"], device=config.get("device", "auto"),
+                config["branch_from"], device=device,
                 requested={k: v for k, v in config.items() if k != "branch_from"},
                 expected_sha256=expected_parent_sha256)
             if not preview["ok"]:
@@ -1278,7 +1303,7 @@ class TrainingManager:
                       **({"task": preview["task"]} if preview.get("task") else {})}
         if config.get("resume_from"):
             preview = self.preview_continuation(
-                config["resume_from"], device=config.get("device", "auto"),
+                config["resume_from"], device=device,
                 extend_epochs=config.get("extend_epochs"),
                 requested={k: v for k, v in config.items() if k != "resume_from"},
                 expected_sha256=expected_parent_sha256)
@@ -1394,7 +1419,9 @@ class TrainingManager:
         one this build does not train; a setting not every chosen task reads,
         a value its field spec refuses or a setting a child would not read
         (`run_plan.new_run_problem`, the check a base start and each child's
-        process share), a model spec for more than one task; a dataset that
+        process share), a model spec for more than one task; a device this
+        host cannot give (`training_device.resolve_training_device`, as each
+        child's process resolves it); a dataset that
         changed; a parent that is
         not a base with weights, or not the bytes the caller showed, or was
         trained on another graph than the workspace's; **what a child's
@@ -1448,6 +1475,12 @@ class TrainingManager:
                        "start each task with its own.")
         if problem:
             return {**refused(problem), "invalid_settings": True}
+        # Every child's device, as each child's process resolves it, before
+        # anything of the workspace or the base is read (decision S4).
+        _device, refusal = _training_device(inputs.device)
+        if refusal:
+            return {"success": False, "error": refusal,
+                    "status": self.get_job_status_word("training")}
         if expected_dataset_fingerprint is not None:
             refusal = self.dataset_refusal(inputs.data_dir, expected_dataset_fingerprint)
             if refusal:

@@ -528,7 +528,7 @@ def test_a_finetune_waits_for_no_one_while_the_slot_is_busy(base, popen, tmp_pat
     calls = popen(running)
     manager = TrainingManager()
     assert manager.start_training({"data_dir": str(tmp_path / "ws"),
-                                   "learning_stage": "base"})["success"]
+                                   "learning_stage": "base", "device": "cpu"})["success"]
     refused = manager.start_finetune(_inputs(base, "disease"))
     assert refused["success"] is False and "already running" in refused["error"]
     assert len(calls.calls) == 1

@@ -46,14 +46,16 @@ def workspace(built, tmp_path):
     return ws
 
 
-#: The smallest base start the route takes (K7, TM11: its workspace and stage).
-BASE_START = {"data_dir": "data/workspaces/x", "learning_stage": "base"}
+#: The smallest base start the route takes (K7, TM11: its workspace and stage),
+#: on the CPU (device auto is refused on a host without CUDA, by the training
+#: process's resolver, before anything starts: decision S4).
+BASE_START = {"data_dir": "data/workspaces/x", "learning_stage": "base", "device": "cpu"}
 
 
 def _base(ws: Path) -> dict:
     """The smallest base start on `ws` (TM12: a new run the runner starts is a
-    base)."""
-    return {"data_dir": str(ws), "learning_stage": "base"}
+    base), on the CPU."""
+    return {"data_dir": str(ws), "learning_stage": "base", "device": "cpu"}
 
 
 def _fingerprint(ws: Path) -> str:
@@ -113,7 +115,8 @@ def test_a_continued_run_on_a_changed_dataset_is_refused_before_its_parent_is_re
                         lambda *a, **k: pytest.fail("the parent was read"))
     with patch("subprocess.Popen") as popen:
         result = manager.start_training(
-            {"data_dir": str(workspace), "resume_from": str(workspace / "x.pt")},
+            {"data_dir": str(workspace), "resume_from": str(workspace / "x.pt"),
+             "device": "cpu"},
             expected_dataset_fingerprint=shown)
     assert result["success"] is False and "dataset changed" in result["error"]
     popen.assert_not_called()
@@ -195,7 +198,7 @@ def test_the_route_takes_the_same_check_through_the_one_start_path(workspace, mo
     shown = _fingerprint(workspace)
     with patch("subprocess.Popen", return_value=FakeProcess(pid=9)) as popen:
         ok = client.post(f"/api/v1/training/start?expected_dataset_fingerprint={shown}",
-                         json={"data_dir": str(workspace), "learning_stage": "base"})
+                         json=_base(workspace))
         assert ok.status_code == 200, ok.text
         written = Path(ok.json()["config_path"]).read_text()
         # The process gets it as an argument it checks on its own manifest read
@@ -206,7 +209,7 @@ def test_the_route_takes_the_same_check_through_the_one_start_path(workspace, mo
         fresh._last["training"].done.wait(5)
         _rewrite_manifest(workspace)
         refused = client.post(f"/api/v1/training/start?expected_dataset_fingerprint={shown}",
-                              json={"data_dir": str(workspace), "learning_stage": "base"})
+                              json=_base(workspace))
     assert refused.status_code == 409
     assert "The dataset changed since it was shown; select it again." in refused.text
     assert popen.call_count == 1

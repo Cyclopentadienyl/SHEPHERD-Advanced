@@ -77,11 +77,13 @@ def _end_real_job(manager: TrainingManager, job_type: str = "training") -> None:
 
 def base_start(workspace: Path, **settings) -> dict:
     """A training start as the runner takes a new run: a base (K8, TM12: a new
-    run is a base; a finetune is a Fine-tune start's). The workspace and the
-    stage, the recipe filling the rest, pass the start's own check of its
-    settings (`_new_bundle_run`), so each test reaches the slot, the lock or
-    the stop it checks."""
-    return {"data_dir": str(workspace), "learning_stage": "base", **settings}
+    run is a base; a finetune is a Fine-tune start's). The workspace, the
+    stage and the CPU, the recipe filling the rest, pass the start's own
+    checks of its settings (`_new_bundle_run`) and of its device (the
+    training process's resolver, which refuses auto on a host without CUDA,
+    decision S4), so each test reaches the slot, the lock or the stop it
+    checks."""
+    return {"data_dir": str(workspace), "learning_stage": "base", "device": "cpu", **settings}
 
 
 class Popens:

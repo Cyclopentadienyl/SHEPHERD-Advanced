@@ -137,6 +137,9 @@ from src.utils.gpu_lock import GpuLockMisconfigured, take_gpu_lock
 from src.kg.artifacts import DatasetChanged
 from src.utils.checkpoint_io import CheckpointChanged
 from src.utils.checkpoint_paths import RunDirectoryTaken
+# The device a run trains on: the one rule, which the job runner's starts ask
+# too before they spawn (decision S4).
+from src.utils.training_device import TrainingDeviceUnavailable, resolve_training_device
 
 if TYPE_CHECKING:
     from src.kg.artifacts import DatasetRecord, ManifestRead
@@ -989,35 +992,6 @@ def training_input_digests(
 #: and a checkpoint travels without the layout of the machine that wrote it.
 LOCATION_FIELDS = frozenset({"data_dir", "run_dir", "config_file", "resume_from",
                              "finetune_from", "branch_from"})
-
-
-class TrainingDeviceUnavailable(RuntimeError):
-    """The device a run asked for cannot be had on this host."""
-
-
-def resolve_training_device(requested: str) -> str:
-    """The device training runs on, or a refusal (contract M3a, §5.2).
-
-    **`auto` means CUDA, and without CUDA it refuses**, as measurement's does
-    (`scripts/measure_scorer.py`, `_resolve_device`). It used to become CPU
-    silently, so a run asked to train on the deployment's hardware trained
-    somewhere else and said nothing; the checkpoint recorded only where it ran.
-    An explicit `cpu` stays available for development and is recorded as asked.
-
-    A request for CUDA on a host without it refuses here too, before any input
-    is read or any output exists, instead of failing later when the model is
-    moved. Other device strings are handed to torch as given.
-    """
-    wants_cuda = requested == "auto" or requested == "cuda" or requested.startswith("cuda:")
-    if wants_cuda and not torch.cuda.is_available():
-        raise TrainingDeviceUnavailable(
-            f"--device {requested} requires CUDA, which is not available here. "
-            "Hardware acceleration is a hard requirement for deployment and CUDA "
-            "is currently the only supported backend, so training does not "
-            "substitute the CPU for it. Pass --device cpu explicitly for "
-            "development; the run records the device it was given."
-        )
-    return "cuda" if requested == "auto" else requested
 
 
 # =============================================================================

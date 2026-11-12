@@ -254,7 +254,8 @@ def test_the_runners_preview_refuses_a_parent_that_is_not_the_one_shown(case, mo
     with patch.object(tm.subprocess, "Popen") as popen:
         manager = tm.TrainingManager()
         result = manager.start_training(
-            {"data_dir": str(case["ws"]), OPERATIONS[operation][0]: str(case["parents"]["a"])},
+            {"data_dir": str(case["ws"]), OPERATIONS[operation][0]: str(case["parents"]["a"]),
+             "device": "cpu"},
             expected_parent_sha256=shown)
     assert result["success"] is False and result["error"].startswith(f"{CHANGED}. It holds ")
     assert f"(chosen: {shown[:12]}...)" in result["error"] and result["parent_changed"] is True
