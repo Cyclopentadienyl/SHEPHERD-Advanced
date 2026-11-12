@@ -2,31 +2,34 @@
 Training field-spec — single declarative source for the training-start parameter set.
 =====================================================================================
 B-lite (config-authority decision, docs/CONFIG_AUTHORITY.md). This module is the one
-declarative description of the ~30 user-facing training-start parameters that today live,
-hand-maintained and drifting, across three surfaces:
+declarative description of the ~30 user-facing training-start parameters, read by three
+surfaces:
 
-    - the API request model   (src/api/routes/training.py :: TrainingStartRequest; since K7 a
-                                strict base start: the reference recipe's base settings)
+    - the API request model   (src/api/routes/training.py :: TrainingStartRequest: a base
+                                start, or a continuation of any run, taking every setting a
+                                new base run reads, `run_plan.new_run_settings("base")`)
     - the WebUI form           (src/webui/components/training_console.py; since K6 the base
                                 form of the reference recipe's base settings, see below)
     - the CLI + projection hub (scripts/train_model.py :: TrainConfig -> downstream configs)
 
-Rollout phase (this file = PR-4a): **descriptive only.** It PINS current behavior and REPRESENTS
-the target policy; nothing imports it yet and no surface derives from it.
+It is read, not only descriptive: the job runner's start checks every value with
+`value_problem` and every rule across settings with `cross_field_problems`, as the training
+process does (`train_model.train`, the continuation and branch plans of `src.utils.run_plan`),
+the API's base start takes its bounds from each field's ``valid``, and the WebUI's base form
+and Fine-tune page check values with `value_problem` before the runner checks them again.
 
 Constraint representation
 -------------------------
 All bounds are structured dicts using the Pydantic/annotated-types vocabulary
 ``{"ge"|"gt"|"le"|"lt": value}`` so inclusive and exclusive bounds are distinguishable:
 
-    valid       — TARGET hard validity (PyTorch/compute-lib norms). Drives the API in PR-4c, and
-                  the one value check of a model bundle start (`value_problem`), which the
-                  WebUI's base form and Fine-tune page make before the job runner makes it again.
-    current_api — CURRENT API constraints, compared mechanically against the live Pydantic model.
+    valid       — the hard validity (PyTorch/compute-lib norms): the one value check of a
+                  model bundle start (`value_problem`), and the API request's bounds.
+    current_api — the API's constraints, compared mechanically against the live Pydantic model.
 
-``valid`` and ``current_api`` share one shape on purpose: PR-4c's job is exactly the diff between
-them, and cross-field rules live in ``CROSS_FIELD_RULES`` rather than in prose, so PR-4c consumes
-(or is guarded against) the spec instead of re-deriving policy.
+``valid`` and ``current_api`` share one shape on purpose, and cross-field rules live in
+``CROSS_FIELD_RULES`` as data rather than in prose, judged by one evaluator
+(`cross_field_problems`), so every surface consumes the spec instead of re-deriving policy.
 
 What the parity tests mechanically pin:
 
@@ -50,8 +53,14 @@ Phase status:
       ``--device`` follows the same grammar. The WebUI form of that time kept its conservative
       ranges; its only change was replacing the silent ``num_neighbors`` fallback with a
       validation error.
-      The surfaces still hand-write their constraints — the spec is the authority and the tests
-      assert the two agree (guard, not derive).
+      The surfaces then hand-wrote their constraints, guarded by the parity tests.
+
+    - The settings projection (ops-wiring round A1a, decisions S1-S6): the API's base start
+      takes every setting a new base run reads (`run_plan.new_run_settings`), its bounds from
+      each field's ``valid`` (derived; the parity tests still compare them), its hop list
+      checked item by item by `value_problem` (so a ``-1`` hop is legal, as on the CLI); the
+      rules across settings that say when a setting is read are data here, and an explicit
+      setting the run would not read is refused, never ignored.
 
 **The retired WebUI form (K6).** The ShepherdGNN form and its collector (``_collect_config``)
 are gone: the Training page offers exactly the reference recipe's base settings
@@ -307,10 +316,10 @@ class FieldSpec:
 
 
 # =============================================================================================
-# The spec. current_api transcribed from src/api/routes/training.py::TrainingStartRequest, since
-# K7 the strict base start: the run keys, the continuation keys and the reference recipe's base
-# settings (src.config.recipe.BASE), each setting unset by default (the recipe's value, never the
-# request's).
+# The spec. current_api is what src/api/routes/training.py::TrainingStartRequest enforces: the run
+# keys, the continuation keys and every setting a new base run reads
+# (`src.utils.run_plan.new_run_settings("base")`), each setting unset by default (the recipe's
+# value or this build's default, never the request's), its bounds the field's `valid`.
 # scope/projects_to from the scripts/train_model.py projection: into TrainConfig, or on into the
 # TrainerConfig it builds.
 # =============================================================================================
@@ -339,25 +348,33 @@ FIELDS: Tuple[FieldSpec, ...] = (
 
     # ---- the model bundle path (docs/working/scorer-retraining/README.md §3-§4) -------------
     # Each field's divergence note says which surface takes it: the CLI, the WebUI (K6), and
-    # the API's two starts, a base (POST /training/start, K7) and the Fine-tune children.
+    # the API's two starts, a base or a continuation (POST /training/start) and the Fine-tune
+    # children.
     FieldSpec("learning_stage", "str", None, "trainer", projects_to="TrainConfig.learning_stage",
-              choices=("base", "finetune"), current_api={}, current_api_choices=("base",),
+              choices=("base", "finetune"), current_api={},
+              current_api_choices=("base", "finetune"),
               known_divergence=True,
-              divergence_note="CLI (--stage); the WebUI's Training base form and POST "
-                              "/training/start send learning_stage='base' (required there, and "
-                              "only 'base', K7); the Fine-tune page and POST /training/finetune "
-                              "start finetunes.",
+              divergence_note="CLI (--stage); the WebUI's Training base form sends 'base'. POST "
+                              "/training/start requires 'base' for a new run and takes either "
+                              "stage, or none, with resume_from (compared with the parent's "
+                              "when given, so a finetune child continues over HTTP); the "
+                              "Fine-tune page and POST /training/finetune start finetunes.",
               description="Model bundle stage: base (KG link prediction) or finetune; "
                           "required, a run without one is refused before anything is read."),
     FieldSpec("model_spec", "dict", None, "model", projects_to="TrainConfig.model_spec",
-              current_api=None,
+              current_api={},
               known_divergence=True,
-              divergence_note="Configuration file only; unset is the stage's reference spec.",
+              divergence_note="Configuration file, POST /training/start and a Fine-tune start "
+                              "of one task (its graph side the base's); unset is the stage's "
+                              "reference spec (a finetune's: its base's graph side). Not a "
+                              "WebUI field yet.",
               description="The model spec as plain data, read strictly."),
     FieldSpec("split_seed", "int", 0, "dataloader", projects_to="TrainConfig.split_seed",
-              valid={"ge": 0}, current_api=None,
+              valid={"ge": 0}, current_api={"ge": 0},
               known_divergence=True,
-              divergence_note="CLI only (--split-seed); a finetune takes its base's.",
+              divergence_note="CLI (--split-seed) and POST /training/start; a finetune takes "
+                              "its base's, and one stated otherwise is refused before any "
+                              "child starts. Not a WebUI field yet.",
               description="Seed of the graph view's edge split (README F2)."),
     FieldSpec("task", "str", None, "trainer", projects_to="TrainConfig.task",
               choices=("disease", "gene", "patients_like_me"), current_api=None,
@@ -425,7 +442,9 @@ FIELDS: Tuple[FieldSpec, ...] = (
               known_divergence=True,
               divergence_note="One number per hop the model spec's encoder declares "
                               "(`hops_problem`; GATv2: one per layer), checked by the base "
-                              "start and by the run.",
+                              "start, the Fine-tune start (against its base's encoder) and by "
+                              "the run. The API checks the list by `value_problem`, so -1, "
+                              "every neighbour, is legal there as on the CLI.",
               description="Neighbor fan-out per sampling hop."),
     # ---- trainer (TrainerConfig) ------------------------------------------------------------
     FieldSpec("num_epochs", "int", 100, "trainer", projects_to="TrainerConfig.num_epochs",
@@ -452,13 +471,13 @@ FIELDS: Tuple[FieldSpec, ...] = (
                           "steps)."),
     FieldSpec("min_lr_ratio", "float", 0.01, "trainer", projects_to="TrainerConfig.min_lr_ratio",
               valid={"ge": 0.0, "le": 1.0},
-              current_api=None,
+              current_api={"ge": 0.0, "le": 1.0},
               description="Final LR as a fraction of peak; 0 decays to zero, which onecycle "
                           "cannot (see CROSS_FIELD_RULES)."),
     FieldSpec("gradient_accumulation_steps", "int", 1, "trainer",
               projects_to="TrainerConfig.gradient_accumulation_steps",
               valid={"ge": 1},
-              current_api=None,
+              current_api={"ge": 1},
               description="Micro-batches accumulated per optimizer step."),
     FieldSpec("max_grad_norm", "float", 1.0, "trainer", projects_to="TrainerConfig.max_grad_norm",
               valid={"gt": 0},
@@ -469,17 +488,18 @@ FIELDS: Tuple[FieldSpec, ...] = (
               description="Enable automatic mixed precision."),
     FieldSpec("amp_dtype", "str", "float16", "trainer", projects_to="TrainerConfig.amp_dtype",
               choices=("float16", "bfloat16"),
-              current_api=None,
-              description="AMP compute dtype."),
+              current_api={}, current_api_choices=("float16", "bfloat16"),
+              description="AMP compute dtype, read only with use_amp on."),
     FieldSpec("eval_every_n_epochs", "int", 1, "trainer", projects_to="TrainerConfig.eval_every_n_epochs",
-              valid={"ge": 1}, current_api=None,
+              valid={"ge": 1}, current_api={"ge": 1},
               description="Run validation every N epochs."),
     FieldSpec("early_stopping_patience", "int", 10, "trainer", projects_to="TrainerConfig.early_stopping_patience",
               valid={"ge": 1},
               current_api={"ge": 1},
-              description="Epochs without improvement before stopping."),
+              description="Epochs without improvement before stopping; none, the recipes' "
+                          "reference, is no early stopping."),
     FieldSpec("save_top_k", "int", 3, "trainer", projects_to="TrainerConfig.save_top_k",
-              valid={"ge": 1}, current_api=None,
+              valid={"ge": 1}, current_api={"ge": 1},
               description="Keep the best K checkpoints."),
     FieldSpec("device", "str", "auto", "trainer", projects_to="TrainerConfig.device",
               valid_pattern=r"^(auto|cpu|mps|cuda(:\d+)?)$",
@@ -499,13 +519,16 @@ FIELDS: Tuple[FieldSpec, ...] = (
     FieldSpec("extend_epochs", "int", None, "trainer", projects_to="TrainConfig.extend_epochs",
               valid={"ge": 1}, current_api={"ge": 1},
               known_divergence=True,
-              divergence_note="Set in the console's continue block, shown only for a finished "
+              divergence_note="CLI (--extend-epochs), POST /training/start with resume_from, "
+                              "and the console's continue block, shown only for a finished "
                               "parent; not a training-form field.",
               description="Extend a finished parent by this many epochs at a fixed rate."),
     FieldSpec("extend_lr", "float", None, "trainer", projects_to="TrainConfig.extend_lr",
-              valid={"gt": 0}, current_api=None,
+              valid={"gt": 0}, current_api={"gt": 0},
               known_divergence=True,
-              divergence_note="CLI only (--extend-lr): replaces a zero rate, and only a zero rate.",
+              divergence_note="CLI (--extend-lr) and POST /training/start with resume_from: "
+                              "replaces a zero rate, and only a zero rate (the preview's "
+                              "zero_rate_groups names them). Not a WebUI field yet.",
               description="Rate for parameter groups whose rate ended at 0, when extending."),
     FieldSpec("pause_after_epoch", "int", None, "runtime_setting",
               projects_to="TrainConfig.pause_after_epoch",
@@ -516,11 +539,11 @@ FIELDS: Tuple[FieldSpec, ...] = (
 
     # ---- runtime setting (exempt from the projection requirement) ----------------------------
     FieldSpec("compile", "bool", False, "runtime_setting", projects_to="TrainConfig.compile",
-              current_api=None,
+              current_api={},
               known_divergence=True,
-              divergence_note="Runtime setting, not a training-form field. API does not expose it; "
-                              "the WebUI's base start and Continue send it, sourced from the "
-                              "Runtime Settings file.",
+              divergence_note="Runtime setting, not a training-form field: an operational field "
+                              "of POST /training/start (CLI --compile); the WebUI's base start "
+                              "and Continue send it, sourced from the Runtime Settings file.",
               description="torch.compile toggle (Runtime Settings)."),
 )
 

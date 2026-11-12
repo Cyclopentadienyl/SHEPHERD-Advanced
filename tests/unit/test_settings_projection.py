@@ -221,6 +221,125 @@ def test_the_warmup_help_says_what_the_trainer_does():
 
 
 # ---------------------------------------------------------------------------
+# S6: the start request over HTTP
+# ---------------------------------------------------------------------------
+@pytest.fixture
+def client(monkeypatch):
+    """The real route over a real TrainingManager; only the process is stubbed."""
+    pytest.importorskip("fastapi")
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from src.api.routes.training import router
+    from src.api.services.training_manager import TrainingManager
+    from tests.fixtures.job_processes import FakeProcess
+    from tests.fixtures.operator_access import OPERATOR_BASE_URL, operator_mode
+
+    manager = TrainingManager()
+    monkeypatch.setattr("src.api.routes.training.training_manager", manager)
+    monkeypatch.delenv("SHEPHERD_DEVICE", raising=False)
+    operator_mode(monkeypatch)
+    app = FastAPI()
+    app.include_router(router, prefix="/api/v1")
+    process = FakeProcess(pid=11)
+    with patch("subprocess.Popen", return_value=process) as popen:
+        yield TestClient(app, base_url=OPERATOR_BASE_URL), popen, manager
+    process.finish(0)
+
+
+def _written(resp):
+    return yaml.safe_load(Path(resp.json()["config_path"]).read_text())
+
+
+@pytest.mark.parametrize("rule", sorted(RULES))
+def test_the_api_refuses_a_rule_with_422_before_any_spawn_in_the_clis_sentence(client, rule,
+                                                                              tmp_path):
+    http, popen, manager = client
+    refused, taken = RULES[rule]
+    body = {"data_dir": str(tmp_path / "ws"), "learning_stage": "base", "device": "cpu"}
+    resp = http.post("/api/v1/training/start", json={**body, **refused})
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"] == f"{_sentence(rule, refused)} Nothing was started."
+    popen.assert_not_called()
+    assert manager.active_job() is None and manager.run_dir is None
+    resp = http.post("/api/v1/training/start", json={**body, **taken})
+    assert resp.status_code == 200, resp.text
+    popen.assert_called_once()
+    assert {name: _written(resp)[name] for name in taken} == taken
+
+
+def test_the_api_takes_every_setting_a_new_base_reads_and_a_minus_one_hop(client, tmp_path):
+    http, popen, _ = client
+    settings = {"split_seed": 7, "gradient_accumulation_steps": 2, "eval_every_n_epochs": 2,
+                "save_top_k": 1, "num_neighbors": [-1, 10, 5], "compile": False}
+    resp = http.post("/api/v1/training/start", json={
+        "data_dir": str(tmp_path / "ws"), "learning_stage": "base", "device": "cpu", **settings})
+    assert resp.status_code == 200, resp.text
+    assert {name: _written(resp)[name] for name in settings} == settings
+
+
+def test_an_explicit_null_reaches_the_service_and_is_judged(client, tmp_path):
+    """Decision S2: a null the caller sent is the caller's: refused where the
+    setting takes none, kept where it does (no patience), never dropped."""
+    http, popen, _ = client
+    body = {"data_dir": str(tmp_path / "ws"), "learning_stage": "base", "device": "cpu"}
+    resp = http.post("/api/v1/training/start", json={**body, "num_epochs": None})
+    assert resp.status_code == 422 and "num_epochs must be set, not null." in resp.text
+    popen.assert_not_called()
+    resp = http.post("/api/v1/training/start", json={**body, "early_stopping_patience": None,
+                                                     "resume_from": None})
+    assert resp.status_code == 200, resp.text
+    written = _written(resp)
+    assert "early_stopping_patience" in written and written["early_stopping_patience"] is None
+    assert "resume_from" not in written, "a null parent is no parent"
+
+
+@pytest.fixture(scope="module")
+def patient_base(tmp_path_factory):
+    """A real paused base whose run has an early stopping patience (5)."""
+    train_model = _train_model()
+    from tests.fixtures.base_workspace import write_base_workspace
+    from tests.unit.test_train_base_stage import _config
+
+    ws = write_base_workspace(tmp_path_factory.mktemp("patient-base"))
+    run = ws / "runs" / "gatv2" / "20261001-000000_base_cccccc"
+    train_model.train(*_config(ws, run, pause_after_epoch=1, early_stopping_patience=5))
+    return ws, run / "checkpoints" / "last.pt"
+
+
+def test_an_explicit_null_patience_on_a_resume_is_a_change_refused(client, patient_base):
+    http, popen, manager = client
+    ws, parent = patient_base
+    body = {"data_dir": str(ws), "resume_from": str(parent), "device": "cpu"}
+    resp = http.post("/api/v1/training/start", json={**body, "early_stopping_patience": None})
+    assert resp.status_code == 409, resp.text
+    assert "early_stopping_patience: the parent's 5, requested None" in resp.text
+    popen.assert_not_called()
+    resp = http.post("/api/v1/training/start", json=body)
+    assert resp.status_code == 200, resp.text
+    assert "early_stopping_patience" not in _written(resp), "inherited, not written"
+
+
+def test_a_finetune_child_is_extended_over_http_without_its_stage(client, trained_disease_child):
+    """Decision S6: with resume_from the stage may be left out (the parent's
+    record gives it), and a stage given is compared with the parent's."""
+    http, popen, manager = client
+    body = {"data_dir": str(trained_disease_child["data_dir"]),
+            "resume_from": str(trained_disease_child["disease"]), "device": "cpu",
+            "extend_epochs": 1}
+    resp = http.post("/api/v1/training/start", json={**body, "learning_stage": "base"})
+    assert resp.status_code == 409 and ("learning_stage: the parent's 'finetune', requested "
+                                        "'base'") in resp.text
+    stated = manager.preview_continuation(body["resume_from"], device="cpu", extend_epochs=1,
+                                          requested={"learning_stage": "finetune"})
+    assert stated["ok"] is True and stated["mode"] == "extend", stated
+    resp = http.post("/api/v1/training/start", json=body)
+    assert resp.status_code == 200, resp.text
+    written = _written(resp)
+    assert (written["learning_stage"], written["task"]) == ("finetune", "disease")
+
+
+# ---------------------------------------------------------------------------
 # S4: a Fine-tune start checks what each child's process checks against its base
 # ---------------------------------------------------------------------------
 @pytest.fixture

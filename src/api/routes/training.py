@@ -9,8 +9,9 @@ Absolute Path: /home/user/SHEPHERD-Advanced/src/api/routes/training.py
 Purpose:
     Provide training management API endpoints:
     - POST /training/start: Start a base (KG link prediction) training run,
-      or continue a base run from its checkpoint (K7: a strict base start,
-      the WebUI base form's)
+      or continue a run of either stage from its checkpoint (a strict start:
+      every setting a new base run reads, a thin projection of the training
+      process's settings)
     - POST /training/finetune: Start one to three finetune children of a base,
       in order (README §1; contract §9.3 hazard 6)
     - POST /training/stop: Stop the current training run (and cancel the
@@ -54,65 +55,93 @@ router = APIRouter()
 _DEVICE_RE = re.compile(r"^(auto|cpu|mps|cuda(:\d+)?)$")
 
 
+#: The start request's operational fields for which an explicit null means
+#: "not given": the parent and its extension.
+_NULL_IS_NOT_GIVEN = frozenset({"resume_from", "extend_epochs", "extend_lr"})
+
+
 # =============================================================================
 # Request/Response Models
 # =============================================================================
-class TrainingStartRequest(BaseModel):
-    """A base start (K7, TM11): a new base (KG link prediction) run, or a
-    base run continued from its checkpoint (`resume_from`), through the job
-    runner's one start (`TrainingManager.start_training`), as the WebUI's
-    base form starts one.
+def _setting(name: str) -> Any:
+    """A setting of a start request: unset by default (the training process
+    fills it, by the stage's recipe or this build's default, and records its
+    source), its bounds and words the field spec's (`training_fields`: the
+    field's `valid` and description), so the request is a thin projection and
+    the runner's one check (`value_problem`) and the request agree."""
+    from src.config.training_fields import by_name
 
-    **Strict** (BACKLOG 54), as the Fine-tune start is: `learning_stage` must
-    be ``"base"`` (a finetune is POST /training/finetune's start), and a field
-    this request does not define, a ShepherdGNN setting among them, is refused
-    (422), never dropped. Its settings are the reference recipe's base settings
-    (`src.config.recipe.BASE`); one left unset is the recipe's value, filled
-    and recorded by the training process, never a default of this request.
-    The runner checks them again (`_new_bundle_run`) before anything starts. A
-    continued run inherits its parent's settings, and one set here to another
-    value is refused, as is a parent that is not a base."""
+    spec = by_name(name)
+    return Field(default=None, description=spec.description, **(spec.valid or {}))
+
+
+class TrainingStartRequest(BaseModel):
+    """A training start (ops-wiring round, decision S6): a new base (KG link
+    prediction) run, or a run of either stage continued from its checkpoint
+    (`resume_from`: resumed, or extended with `extend_epochs`), through the
+    job runner's one start (`TrainingManager.start_training`), as the WebUI's
+    base form and Continue start one. **A thin projection** of what the
+    training process takes: every setting a new base run reads
+    (`run_plan.new_run_settings("base")`, the model spec and split seed among
+    them), each unset by default, its bounds the field spec's; and the run's
+    operational fields.
+
+    **Strict** (BACKLOG 54), as the Fine-tune start is: a field this request
+    does not define, a ShepherdGNN setting among them, is refused (422), never
+    dropped. `learning_stage` is required and ``"base"`` for a new run (a
+    finetune is POST /training/finetune's start); with `resume_from` it may be
+    left out, and when given is compared with the parent's, so a finetune
+    child is resumed or extended here too. **Only the fields sent reach the
+    service** (the route dumps the fields set, an explicit null included, so
+    it is judged: refused where the field takes no null, or as another value
+    than the parent's), and the runner checks them again (`_new_bundle_run`,
+    the continuation preview) before anything starts."""
 
     model_config = ConfigDict(extra="forbid")
 
     # The run. Every run writes into a directory of its own, allocated under
     # the workspace (contract M3a-2); the name is optional and for people.
     data_dir: str = Field(..., description="Workspace directory")
-    learning_stage: Literal["base"] = Field(
-        ..., description="'base': this start trains a base; a finetune is started with "
-                         "POST /training/finetune")
+    learning_stage: Optional[Literal["base", "finetune"]] = Field(
+        default=None, description="'base' for a new run (a finetune is started with POST "
+                                  "/training/finetune); with resume_from optional, and "
+                                  "compared with the parent's stage when given")
     run_name: str = Field(default="", max_length=200,
                           description="Optional run name, part of the allocated directory's name")
     device: str = Field(default="auto", description="Device: auto, cpu, mps, cuda, or cuda:N")
+    compile: bool = Field(default=False, description="torch.compile (experimental; falls back "
+                                                     "to eager on failure)")
     resume_from: Optional[str] = Field(
         default=None,
-        description="A base checkpoint to continue from: an unfinished run is resumed with "
-                    "its settings, a finished one extended with extend_epochs")
+        description="A checkpoint to continue from: an unfinished run is resumed with its "
+                    "settings, a finished one extended with extend_epochs")
     extend_epochs: Optional[int] = Field(
         default=None, ge=1, description="Extend a finished parent by this many epochs at a "
                                         "fixed rate")
+    extend_lr: Optional[float] = _setting("extend_lr")
 
-    # The reference recipe's base settings (src.config.recipe.BASE). Unset is
-    # the recipe's value; the bounds are the field spec's (training_fields).
-    num_epochs: Optional[int] = Field(default=None, ge=1, le=10000,
-                                      description="Number of epochs")
-    learning_rate: Optional[float] = Field(default=None, gt=0, le=1.0,
-                                           description="Learning rate")
-    weight_decay: Optional[float] = Field(default=None, ge=0.0, description="Weight decay")
-    batch_size: Optional[int] = Field(default=None, ge=1, le=2048,
-                                      description="Source edges per batch")
-    num_neighbors: Optional[List[Annotated[int, Field(ge=1)]]] = Field(
-        default=None, min_length=1,
-        description="Neighbor fan-out per sampling hop, one per encoder layer (each >= 1)")
-    max_grad_norm: Optional[float] = Field(default=None, gt=0.0, description="Max gradient norm")
-    seed: Optional[int] = Field(default=None, ge=0, le=2**32 - 1, description="Random seed")
-    scheduler_type: Optional[Literal["cosine", "onecycle", "linear", "none"]] = Field(
-        default=None, description="LR scheduler type")
-    warmup_steps: Optional[int] = Field(default=None, ge=0, description="Warmup steps")
-    use_amp: Optional[bool] = Field(default=None, description="Use automatic mixed precision")
-    early_stopping_patience: Optional[int] = Field(
-        default=None, ge=1, description="Early stopping patience (unset: no early stopping, "
-                                        "the recipe's)")
+    # The settings a new base run reads (`run_plan.new_run_settings("base")`).
+    # Unset is the recipe's value or this build's default; the bounds are the
+    # field spec's (training_fields).
+    num_epochs: Optional[int] = _setting("num_epochs")
+    learning_rate: Optional[float] = _setting("learning_rate")
+    weight_decay: Optional[float] = _setting("weight_decay")
+    batch_size: Optional[int] = _setting("batch_size")
+    num_neighbors: Optional[List[int]] = _setting("num_neighbors")
+    max_grad_norm: Optional[float] = _setting("max_grad_norm")
+    seed: Optional[int] = _setting("seed")
+    scheduler_type: Optional[Literal["cosine", "onecycle", "linear", "none"]] = _setting(
+        "scheduler_type")
+    warmup_steps: Optional[int] = _setting("warmup_steps")
+    min_lr_ratio: Optional[float] = _setting("min_lr_ratio")
+    use_amp: Optional[bool] = _setting("use_amp")
+    amp_dtype: Optional[Literal["float16", "bfloat16"]] = _setting("amp_dtype")
+    gradient_accumulation_steps: Optional[int] = _setting("gradient_accumulation_steps")
+    early_stopping_patience: Optional[int] = _setting("early_stopping_patience")
+    eval_every_n_epochs: Optional[int] = _setting("eval_every_n_epochs")
+    save_top_k: Optional[int] = _setting("save_top_k")
+    split_seed: Optional[int] = _setting("split_seed")
+    model_spec: Optional[Dict[str, Any]] = _setting("model_spec")
 
     @model_validator(mode="before")
     @classmethod
@@ -137,13 +166,34 @@ class TrainingStartRequest(BaseModel):
             )
         return v
 
+    @field_validator("num_neighbors")
+    @classmethod
+    def _validate_hops(cls, value: Optional[List[int]]) -> Optional[List[int]]:
+        # The hop list by the field spec's one check (`value_problem`): at
+        # least one hop, each 1 or more or -1 (every neighbour), as the CLI
+        # and the WebUI take it.
+        from src.config.training_fields import value_problem
+
+        problem = None if value is None else value_problem("num_neighbors", value)
+        if problem:
+            raise ValueError(problem)
+        return value
+
     @model_validator(mode="after")
-    def _validate_extend_needs_a_parent(self) -> "TrainingStartRequest":
+    def _validate_the_run(self) -> "TrainingStartRequest":
         # Extending continues a parent; without one the training process
         # refuses (scripts/train_model.py), so the request is refused here,
-        # before a process is started for nothing.
-        if self.extend_epochs is not None and not self.resume_from:
-            raise ValueError("extend_epochs continues a parent; give resume_from.")
+        # before a process is started for nothing. A new run names its stage,
+        # a base (decision S6).
+        if not self.resume_from:
+            for name in ("extend_epochs", "extend_lr"):
+                if getattr(self, name) is not None:
+                    raise ValueError(f"{name} continues a parent; give resume_from.")
+            if self.learning_stage != "base":
+                raise ValueError(
+                    "A new run names its learning stage, learning_stage 'base' (a finetune "
+                    "is started with POST /training/finetune); a continuation (resume_from) "
+                    "may leave it out.")
         return self
 
 
@@ -259,18 +309,19 @@ async def start_training(
                     "still has this SHA-256 (the model fingerprint shown)")] = None,
 ) -> Dict[str, Any]:
     """
-    Start a base training run, or continue one (K7, TM11).
+    Start a base training run, or continue a run of either stage.
 
     Launches scripts/train_model.py as a subprocess, through the job runner's
-    one start (`TrainingManager.start_training`), with the configuration the
-    WebUI's base form sends: ``learning_stage="base"``, the run keys, and
-    **only the fields the caller set** (contract M3a-3). The reference recipe
-    fills every base setting not set; a run continued from a parent inherits
-    every learning setting the caller did not set, and refuses one it set to
-    another value. The runner refuses, before anything is started, written
-    or claimed (the GPU slot, a run directory), a setting the recipe does not
-    take or a value its field spec does not (422), and a parent that is not a
-    base (409: its record's stage differs from the ``base`` asked for).
+    one start (`TrainingManager.start_training`), with **only the fields the
+    caller set** (contract M3a-3; decision S2), an explicit null included: a
+    new base's ``learning_stage="base"``, the run keys and its settings. The
+    reference recipe, then this build's default, fills every setting not set;
+    a run continued from a parent inherits every learning setting the caller
+    did not set, and refuses one it set to another value, a stated stage
+    other than the parent's among them (409). The runner refuses, before
+    anything is started, written or claimed (the GPU slot, a run directory),
+    a setting a base does not read, a value its field spec does not take, or
+    a setting the run would not read by the rules across settings (422).
 
     ``expected_dataset_fingerprint`` (an optional query parameter, M5-2: a
     precondition on the request, not a training setting, so it is not in the
@@ -284,7 +335,11 @@ async def start_training(
     process is still bound to the parent the service decided on (root-cause
     round, P22-S1): a file replaced after that is refused before it is loaded.
     """
-    config = request.model_dump(exclude_unset=True, exclude_none=True)
+    # The fields the caller set, an explicit null included (decision S2): a
+    # null setting is the caller's and is judged by the runner; for the parent
+    # and its extension, null is not given.
+    config = {name: value for name, value in request.model_dump(exclude_unset=True).items()
+              if not (value is None and name in _NULL_IS_NOT_GIVEN)}
     result = training_manager.start_training(
         config, expected_dataset_fingerprint=expected_dataset_fingerprint,
         expected_parent_sha256=expected_parent_sha256)

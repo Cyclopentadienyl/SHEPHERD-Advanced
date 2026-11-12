@@ -13,6 +13,7 @@ reads `recipe.BASE` and checks values with `value_problem` (tests/unit/test_trai
 """
 import ast
 import dataclasses
+import re
 from pathlib import Path
 
 import pytest
@@ -174,11 +175,20 @@ def _api_model():
     return TrainingStartRequest
 
 
-#: The base start's required fields (K7, TM11): the workspace and the stage.
-API_REQUIRED = {"data_dir", "learning_stage"}
-#: The base start's run and continuation keys, beside the recipe's base settings.
-API_RUN_KEYS = {"data_dir", "learning_stage", "run_name", "device", "resume_from",
-                "extend_epochs"}
+#: The start's required field: the workspace (the stage is required for a new
+#: run, by the request's own check, and optional for a continuation).
+API_REQUIRED = {"data_dir"}
+#: The start's run and continuation keys, beside the settings a new base reads.
+API_RUN_KEYS = {"data_dir", "learning_stage", "run_name", "device", "compile", "resume_from",
+                "extend_epochs", "extend_lr"}
+
+
+def _base_settings():
+    """What a new base run reads (`run_plan.new_run_settings`, decision S1):
+    the settings the API's start offers, each unset by default."""
+    from src.utils.run_plan import new_run_settings
+
+    return new_run_settings("base")
 
 
 def _base(**fields):
@@ -187,23 +197,26 @@ def _base(**fields):
 
 
 def test_api_fields_are_the_base_start_s():
-    """K7 (TM11): POST /training/start is a strict base start: the run and
-    continuation keys and exactly the reference recipe's base settings
-    (`recipe.BASE`, the WebUI base form's), no ShepherdGNN field; the
-    workspace and the stage are required."""
-    from src.config.recipe import BASE
-
+    """Decision S6: POST /training/start is a thin projection: the run and
+    continuation keys and exactly the settings a new base run reads
+    (`run_plan.new_run_settings("base")`, the CLI's rule), no ShepherdGNN
+    field and no finetune setting; the workspace is required, the stage by
+    the request's own check of a new run."""
     mf = _api_model().model_fields
-    assert set(mf) == API_RUN_KEYS | set(BASE)
+    assert set(mf) == API_RUN_KEYS | set(_base_settings())
     assert {name for name, field in mf.items() if field.is_required()} == API_REQUIRED
+    VE = _validation_error()
+    with pytest.raises(VE):
+        _api_model()(data_dir="data/workspaces/x")      # a new run names its stage
+    assert _api_model()(data_dir="x", resume_from="last.pt").learning_stage is None
 
 
 def test_api_defaults_match_spec():
-    """A recipe setting is unset by default: the training process fills the
-    recipe's value and records it as the recipe's, never a default of the
-    request. The other fields' defaults are the spec's; the required ones have
-    none."""
-    from src.config.recipe import BASE
+    """A setting is unset by default: the training process fills the
+    recipe's value or this build's default and records which, never a default
+    of the request. The other fields' defaults are the spec's (the stage's
+    none); the required ones have none."""
+    BASE = _base_settings()
 
     mf = _api_model().model_fields
     for f in tf.FIELDS:
@@ -222,9 +235,10 @@ def test_api_defaults_match_spec():
 
 def test_api_constraints_match_spec():
     """Mechanical: the spec's current_api dict must equal the live Pydantic
-    ge/gt/le/lt, and for a recipe setting it is the field's target policy
-    (`valid`), which the job runner's one check applies again (`value_problem`)."""
-    from src.config.recipe import BASE
+    ge/gt/le/lt, and for a setting it is the field's policy (`valid`, which
+    the request derives its bounds from), which the job runner's one check
+    applies again (`value_problem`)."""
+    BASE = _base_settings()
 
     mf = _api_model().model_fields
     for f in tf.FIELDS:
@@ -264,12 +278,15 @@ def test_api_enforces_declared_choices():
     """Every field declaring current_api_choices must reject a value outside the enum."""
     VE = _validation_error()
     enforced = [f for f in tf.FIELDS if f.current_api_choices]
-    assert {f.name for f in enforced} == {"learning_stage", "scheduler_type"}
+    assert {f.name for f in enforced} == {"learning_stage", "scheduler_type", "amp_dtype"}
     for f in enforced:
+        # Either stage continues a parent (compared with its stage there);
+        # a new run is a base, by the request's own check.
+        continued = {"resume_from": "last.pt"} if f.name == "learning_stage" else {}
         for good in f.current_api_choices:
-            _base(**{f.name: good})                       # every declared choice is accepted
+            _base(**{f.name: good, **continued})          # every declared choice is accepted
         with pytest.raises(VE):
-            _base(**{f.name: "definitely-not-a-valid-choice"})
+            _base(**{f.name: "definitely-not-a-valid-choice", **continued})
 
 
 def test_api_enum_sets_exactly_equal_the_spec():
@@ -301,15 +318,15 @@ def test_api_enforces_device_grammar_and_keeps_multi_gpu():
 @pytest.mark.parametrize("field, value", [
     ("learning_stage", "finetune"), ("learning_stage", None),
     ("conv_type", "gat"), ("hidden_dim", 64), ("num_heads", 4), ("num_layers", 2),
-    ("num_workers", 0), ("min_lr_ratio", 0.1), ("amp_dtype", "bfloat16"),
-    ("diagnosis_weight", 1.0), ("task", "disease"), ("finetune_from", "base.pt"),
-    ("model_spec", {}), ("run_dir", "/elsewhere"), ("compile", True), ("split_seed", 1),
-    ("candidate_sample_size", 8), ("unknown_setting", 1),
+    ("num_workers", 0), ("diagnosis_weight", 1.0), ("task", "disease"),
+    ("finetune_from", "base.pt"), ("run_dir", "/elsewhere"), ("frozen_parts", "none"),
+    ("candidate_sample_size", 8), ("task_loss_weight", 0.5), ("pause_after_epoch", 1),
+    ("unknown_setting", 1),
 ])
 def test_the_api_takes_a_base_start_only(field, value):
-    """K7 (TM11): a stage other than base, a ShepherdGNN field, a finetune's
-    or a run key the API does not offer, and an unknown field are refused by
-    the request itself, never dropped."""
+    """A new run's stage other than base, a ShepherdGNN field, a finetune's
+    setting or a run key the API does not offer, and an unknown field are
+    refused by the request itself, never dropped."""
     VE = _validation_error()
     with pytest.raises(VE):
         _base(**{field: value})
@@ -318,17 +335,18 @@ def test_the_api_takes_a_base_start_only(field, value):
 
 
 def test_api_enforces_num_neighbors_policy():
+    """The hop list by the field spec's one check (`value_problem`): -1, every
+    neighbour, is legal, as on the CLI and the WebUI (decision S6)."""
     VE = _validation_error()
     spec = tf.by_name("num_neighbors")
     assert spec.current_api_item == spec.item_valid
     assert spec.current_api_min_length == spec.min_length
     assert _base(num_neighbors=[15, 10, 5]).num_neighbors == [15, 10, 5]
-    with pytest.raises(VE):
-        _base(num_neighbors=[])          # min_length
-    with pytest.raises(VE):
-        _base(num_neighbors=[15, 0])     # element >= 1
-    with pytest.raises(VE):
-        _base(num_neighbors=[-1])
+    assert _base(num_neighbors=[-1, 10, 5]).num_neighbors == [-1, 10, 5]
+    for bad, said in (([], "needs at least 1 item"), ([15, 0], "items must be 1 or more"),
+                      ([-2], "items must be 1 or more (or -1, every neighbour)")):
+        with pytest.raises(VE, match=re.escape(said)):
+            _base(num_neighbors=bad)
 
 
 def test_cross_field_rules_report_where_they_are_enforced():

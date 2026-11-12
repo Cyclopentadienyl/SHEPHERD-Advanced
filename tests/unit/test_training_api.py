@@ -717,9 +717,9 @@ class TestTheBaseStartRequest:
 
     @pytest.mark.parametrize("field, value", [
         ("conv_type", "gat"), ("hidden_dim", 256), ("num_heads", 8), ("num_workers", 0),
-        ("min_lr_ratio", 0.01), ("diagnosis_weight", 1.0), ("use_ortholog_gate", True),
-        ("task", "disease"), ("finetune_from", "base.pt"), ("model_spec", {}),
-        ("run_dir", "/r"), ("unknown", 1),
+        ("diagnosis_weight", 1.0), ("use_ortholog_gate", True), ("task", "disease"),
+        ("finetune_from", "base.pt"), ("frozen_parts", "none"), ("run_dir", "/r"),
+        ("unknown", 1),
     ])
     def test_a_shepherdgnn_or_unknown_field_is_refused(self, field, value):
         from pydantic import ValidationError
