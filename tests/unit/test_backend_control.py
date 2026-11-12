@@ -530,3 +530,24 @@ def test_a_failed_exec_does_not_load_a_model_again(serving, runner, tmp_path):
     assert len(builds.calls) == built, "a failed exec loaded a model"
     assert api.app_state.pipeline is None and lock_state()["held_by"] is None
     assert _start(runner, tmp_path)["success"], "the process serves on, so jobs start"
+
+
+def test_a_restart_whose_stop_fails_opens_the_slot_again(serving, runner, monkeypatch):
+    """A stop of serving that fails aborts the restart as a failed exec does:
+    nothing is executed and the slot the restart closed is opened again, so
+    the process serves on and no job is refused for a restart that is not
+    coming."""
+    api, _ = serving
+    executed = []
+
+    def failing_stop(**kwargs):
+        raise RuntimeError("the stop failed")
+
+    monkeypatch.setattr(api.app_state, "stop_serving", failing_stop)
+    worker_box = []
+    assert bc.restart_backend(delay=0, _scheduler=worker_box.append,
+                              _execv=lambda *a: executed.append(a))["success"]
+    worker_box[0]()
+
+    assert executed == []
+    assert runner._closed_by is None, "the slot stayed closed after the restart's stop failed"

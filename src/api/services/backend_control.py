@@ -189,25 +189,25 @@ def restart_backend(
         # accepted diagnoses finish and the model and the GPU lock are given
         # back (the lock's descriptor is close-on-exec too, but the drain and
         # the description are this stop's). A load or a stop begun during the
-        # delay aborts the restart and opens the slot again.
+        # delay aborts the restart and opens the slot again, and so does a
+        # stop that fails: the process serves on, and no job is refused for
+        # a restart that is not coming.
         from src.api.main import LifecycleBusy, app_state
 
         try:
             stopped = app_state.stop_serving(by="restart")
-        except LifecycleBusy as busy:
-            logger.warning("Backend restart aborted: %s", busy)
-            training_manager.open(closed_by=training_manager.CLOSED_BY_RESTART)
-            return
-        if stopped.released:
-            logger.info(stopped.message)
-        try:
+            if stopped.released:
+                logger.info(stopped.message)
             env = resolve_restart_env(dict(os.environ))
             logger.info("Restarting backend: %s", " ".join(argv))
             if not training_manager.exec_if_closed_for_restart(
                     lambda: _execv(executable, argv, env)):
                 logger.warning(aborted)
+        except LifecycleBusy as busy:
+            logger.warning("Backend restart aborted: %s", busy)
+            training_manager.open(closed_by=training_manager.CLOSED_BY_RESTART)
         except Exception:  # noqa: BLE001 — log and leave the process running
-            logger.exception("Backend restart failed (execve)")
+            logger.exception("Backend restart failed (its stop of serving, or the execve)")
             training_manager.open(closed_by=training_manager.CLOSED_BY_RESTART)
 
     scheduler = _scheduler or (
