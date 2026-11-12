@@ -418,6 +418,7 @@ def test_a_concurrent_load_or_stop_is_refused_without_waiting(service):
     request.thread.join(10)
 
     assert refused.success is False and "Inference is stopping" in refused.message
+    assert "still being served" not in refused.message, "a stopping model is not served"
     assert took < 2.0
     assert stopping.result.released is True
 
@@ -436,14 +437,35 @@ def test_a_model_on_cuda_is_never_published_without_the_lock(service):
     assert api.app_state.pipeline is None and api.app_state.serving_device is None
 
 
-def test_an_out_of_memory_candidate_is_refused_and_the_model_in_use_keeps_serving(service):
-    """I5: out of memory refuses the candidate with "stop inference first";
-    nothing is unloaded to make room."""
+def _wrapped_out_of_memory() -> BaseException:
+    """Out of memory as the build's checkpoint read raises it: refused as an
+    unreadable checkpoint, `from` the `MemoryError`."""
+    from src.inference.pipeline import PipelineBuildError
+
+    try:
+        raise MemoryError("cannot allocate")
+    except MemoryError as cause:
+        try:
+            raise PipelineBuildError(
+                "Checkpoint b.pt could not be read (MemoryError: cannot allocate).") from cause
+        except PipelineBuildError as wrapped:
+            return wrapped
+
+
+@pytest.mark.parametrize("failure", [lambda: MemoryError("cannot allocate"),
+                                     _wrapped_out_of_memory],
+                         ids=["raised", "wrapped by the build"])
+def test_an_out_of_memory_candidate_is_refused_and_the_model_in_use_keeps_serving(service,
+                                                                                failure):
+    """I5: out of memory refuses the candidate with "stop inference first",
+    raised as it is or wrapped by the build (a checkpoint read in host memory,
+    the GPU's on the GB10's unified memory); nothing is unloaded to make
+    room."""
     builds, _, workspace = service
     assert reload(workspace, checkpoint(workspace, "a"), "cuda").success
     served, lock = api.app_state.pipeline, api.app_state.gpu_lock
 
-    builds.fail = MemoryError("cannot allocate")
+    builds.fail = failure()
     refused = reload(workspace, checkpoint(workspace, "b"), "cuda")
 
     assert refused.success is False

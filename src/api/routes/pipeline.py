@@ -277,13 +277,15 @@ def _status_of(
 def _still_serving() -> str:
     """The tail every rejected-candidate message carries.
 
-    Empty when nothing was loaded to begin with: a service that has never built
-    a pipeline is not "still serving" one, and a reassurance that is sometimes
-    false is worth less than no reassurance.
+    Empty unless a model is admitting requests (`AppState.accepting`): a
+    service that has never built a pipeline is not "still serving" one, and
+    neither is one whose stop is letting the accepted requests finish before
+    it releases the model. A reassurance that is sometimes false is worth less
+    than no reassurance.
     """
     from src.api.main import app_state
 
-    if app_state.pipeline is None:
+    if not app_state.accepting:
         return ""
     return " The previously loaded pipeline is still being served."
 
@@ -389,7 +391,9 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
     reload runs on the event loop and waits behind a running diagnosis, as it
     always has (BACKLOG 28 records that this serialisation is the blocked loop);
     a stop running meanwhile refuses it at once, so the loop never waits for
-    one.
+    one. A CUDA load that finds the GPU lock held by another process does wait,
+    for the lock's grace (`gpu_lock.GRACE_SECONDS`, a second), before it is
+    refused, on the loop.
     """
     return run_reload(request)
 
@@ -431,14 +435,24 @@ def run_stop(request: PipelineStopRequest) -> PipelineStopResponse:
 
 
 def _out_of_memory(exc: BaseException) -> bool:
-    """Whether a build failed for memory: the host's, or the CUDA device's."""
-    if isinstance(exc, MemoryError):
-        return True
+    """Whether a build failed for memory: the host's, or the CUDA device's,
+    raised as it is or wrapped by the build (a checkpoint read that runs out
+    of memory is refused as unreadable, `from` its cause), so the whole chain
+    of causes is read."""
+    kinds: List[type] = [MemoryError]
     try:
         import torch
-    except ImportError:
-        return False
-    return isinstance(exc, getattr(torch.cuda, "OutOfMemoryError", ()))
+
+        kinds.append(torch.cuda.OutOfMemoryError)
+    except (ImportError, AttributeError):
+        pass
+    seen = set()
+    while exc is not None and id(exc) not in seen:
+        if isinstance(exc, tuple(kinds)):
+            return True
+        seen.add(id(exc))
+        exc = exc.__cause__ or exc.__context__
+    return False
 
 
 def run_reload(request: PipelineReloadRequest) -> PipelineReloadResponse:

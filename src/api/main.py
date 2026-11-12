@@ -186,7 +186,12 @@ class AppState:
 
     - **One load or stop at a time** (`_lifecycle`, taken non-blocking): a
       second is refused (`LifecycleBusy`), never queued, so the event loop,
-      where a reload and a diagnosis run, never waits for one.
+      where a reload and a diagnosis run, never waits for one. One wait is
+      bounded instead: a CUDA load that finds another process holding the
+      GPU lock tries it for the lock's grace (`gpu_lock.GRACE_SECONDS`, a
+      second, which the runner's and the chip's momentary probes of the lock
+      need) before it refuses, and a reload does that on the loop (BACKLOG
+      28 records the reload's place on the loop).
     - **Admission** (`_admission`): a request takes a lease on the pipeline
       served when it is accepted (`lease`) and gives it back when it ends; a
       stop refuses new ones at once and waits for the accepted ones, with no
