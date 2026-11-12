@@ -503,7 +503,8 @@ def _read_spec(data: Any) -> Tuple[Any, Optional[str]]:
 
 
 def _new_bundle_run(config: Mapping[str, Any]) -> Tuple[Optional[str], Optional[str]]:
-    """A new run asked of `start_training` (no `resume_from`): ``(encoder
+    """A new run asked of `start_training` (no `resume_from`, no
+    `branch_from`): ``(encoder
     kind, None)``, the run layout key it is filed under (its model spec's
     encoder kind, the reference recipe's when the request names no spec), or
     ``(None, why not)``, decided before anything is read or written. A request

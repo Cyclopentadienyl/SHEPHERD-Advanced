@@ -3132,9 +3132,10 @@ a run.
   line's `--branch-from`). The runner's preview judges it as the training process does: a name in
   `settings` that is not a training setting, a setting the parent's stage does not read or a branch
   keeps (the freeze, the split seed, the model spec), a value or a rule across settings is refused
-  with 422; a parent it cannot branch (weights only, another stage), one changed since it was shown
-  (`expected_parent_sha256`) or a busy slot with 409. The process is bound to the parent the
-  preview read, and the lists show what each branch changed.
+  with 422; a parent it cannot branch (weights only or no weights, a record or rules this build
+  does not read, mixed precision that would not take effect as it did for the parent), one
+  changed since it was shown (`expected_parent_sha256`) or a busy slot with 409. The process is
+  bound to the parent the preview read, and the lists show what each branch changed.
 - A failed run's **error banner** spans the page. Under its headline ("Training failed: Process
   exited with code 1") is the last error line the run printed ("Last error printed:
   TrainingDeviceUnavailable: --device auto requires CUDA, …"), redacted for a read-only browser

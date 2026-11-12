@@ -397,9 +397,12 @@ FIELDS: Tuple[FieldSpec, ...] = (
     FieldSpec("branch_from", "str", None, "path", projects_to="TrainConfig.branch_from",
               current_api=None,
               known_divergence=True,
-              divergence_note="CLI only (--branch-from) this round (README §1).",
+              divergence_note="CLI (--branch-from), the job runner's start (start_training "
+                              "with branch_from) and POST /training/branch. Not a WebUI "
+                              "field yet: the Training page's Branch mode is the ops-wiring "
+                              "round's stage B1.",
               description="The checkpoint a branch starts from: its stage, task, weights "
-                          "and settings, some changed on the stage's list."),
+                          "and settings, none or some changed on the stage's list."),
     FieldSpec("task_loss_weight", "float", None, "loss", projects_to="TrainConfig.task_loss_weight",
               valid={"ge": 0}, current_api=None,
               known_divergence=True,

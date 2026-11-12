@@ -3202,7 +3202,8 @@ Training Console 現在是分成三部分的一個頁面：上方橫跨整頁的
   `{}` 以 parent 的全部設定分支，從它的權重開始一個新 run、使用新的 optimizer（即命令列的
   `--branch-from`）。runner 的預覽與訓練行程以同樣的方式判斷：`settings` 中不是訓練設定的名稱、
   parent 的 stage 不讀取或分支保留的設定（freeze、split seed、model spec）、值或跨設定規則，以
-  422 拒絕；無法分支的 parent（只有權重、另一個 stage）、顯示後已變更的 parent
+  422 拒絕；無法分支的 parent（只有權重或沒有權重、本版本讀不了的紀錄或規則、混合精度無法像在
+  parent 上那樣生效）、顯示後已變更的 parent
   （`expected_parent_sha256`）或忙碌的名額，以 409 拒絕。行程綁定預覽讀到的 parent，清單會顯示
   每個分支改了什麼。
 - 失敗的 run 的**錯誤橫幅**橫跨整頁。標題（"Training failed: Process exited with code 1"）
