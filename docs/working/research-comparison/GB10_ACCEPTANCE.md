@@ -367,7 +367,9 @@ the external review, as O9 says.
    column per route in its §1 and each route's evidence in `pull/` and `compile/`.
 
 **What the run does not cover, already known:** the frozen-backbone control on CUDA, with AMP, its scaler or
-`torch.compile` (its tests run on the CPU only, and no probe trains one); the WebUI in a browser on the GB10 (the
+`torch.compile` (its tests run on the CPU only, and no probe trains one; *2026-11-12: so at `e60f23e`. Since the
+ops-wiring round's stage A2 the probe's `L7.disease_frozen` trains one in fp32 on the probe's device, a probe of that
+round's own field contract; AMP, its scaler and `torch.compile` with a freeze stay not covered*); the WebUI in a browser on the GB10 (the
 round's browser check ran in a CPU container); the server's CUDA allocator counters (S1 says so); HGT, SAGE or hetero
 GAT; bfloat16; model quality.
 

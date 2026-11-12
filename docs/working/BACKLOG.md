@@ -18,7 +18,12 @@ not restate their decisions.
   `claude/ops-wiring-and-ui-ux`. Its plan, its decisions (§3–§4) and its record are
   [`ops-wiring-and-ui-ux/README.md`](ops-wiring-and-ui-ux/README.md). It takes up item 23's branch
   through the job runner, the API and the pages, item 48's minimal version, item 55, and the parts
-  of items 51, 52, 68, 69 and 72 that lie on the flow.
+  of items 51, 52, 68, 69 and 72 that lie on the flow. The frozen-backbone control is offered on
+  the Fine-tune page since its stage A2 (Graph backbone: Frozen) and named in the lists and
+  results as a task model with a frozen graph backbone; its fp32 functional check on CUDA, which
+  the acceptance of `e60f23e` does not cover (below), is the probe's `L7.disease_frozen` at the
+  GB10 candidate-slot run after the round's review; mixed precision and `torch.compile` with a
+  freeze stay not verified.
 - **In parallel, blocking nothing:** C0, a fit assessment of one second architecture (that README
   §10), with C1 only for the one the owner chooses; package C's research part, as before.
 - **Not in this round:** that README's §3 point 8. The clinical route is unchanged (package C,

@@ -136,10 +136,12 @@ here builds `shortest_paths.pt`, and the GB10 acceptance probe accepts a workspa
    a test result.
 6. Then open Research › Prepare › **Fine-tune**: choose the dataset, a base
    checkpoint of it, and one to three **Tasks** (Disease, Gene,
-   Patients-like-me; each option says whether it is ready on the dataset).
-   Start trains one child run per task, in order. The job card shows each
-   child's status and, once it has ended, its best save by the Trainer's pooled
-   MRR; **Stop** there names the queued children it cancels.
+   Patients-like-me; each option says whether it is ready on the dataset),
+   then **Epochs**, **Seed** and **Graph backbone** (Trained, the reference,
+   or Frozen: item 7), one value for every child. Start trains one child run
+   per task, in order. The job card shows the start's graph backbone, each
+   child's status and, once it has ended, its best save by the Trainer's
+   pooled MRR; **Stop** there names the queued children it cancels.
 7. **The frozen-backbone control** (since research comparison Stage 9b,
    2026-11-10): a child with `frozen_parts` `graph_side` keeps its base's input
    module, encoder and LP head exactly as they are (no gradient, no optimizer
@@ -153,10 +155,19 @@ here builds `shortest_paths.pt`, and the GB10 acceptance probe accepts a workspa
    other, the freeze among their learning settings; Models › Results' Compare
    and the export show each one's weight transfer and loss identity as recorded,
    so the two downstream starts are compared there (an arm paused and resumed
-   keeps its stage's transfer in its record). It is set on the command
-   line (`--frozen-parts graph_side`, below) or in the job runner's Fine-tune
-   settings (`frozen_parts`, `POST /api/v1/training/finetune`); the Fine-tune
-   page does not offer it in this round.
+   keeps its stage's transfer in its record). It is set on the Fine-tune page
+   (**Graph backbone: Frozen**, for every task of the start; a note under the
+   fields says that only the patient encoder and the task head train and the
+   LP term trains nothing), on the command line (`--frozen-parts graph_side`,
+   below) or in the job runner's Fine-tune settings (`frozen_parts`,
+   `POST /api/v1/training/finetune`, whose invalid settings answer 422). The
+   full fine-tune and the control are two ordinary starts from one base. The
+   model lists, the Models details and the Results table name the control
+   "Disease · frozen graph backbone": a task model, never the base's score.
+   The acceptance probe runs an fp32 functional check of it, paused and
+   resumed (`L7.disease_frozen`, on the CPU in the tests and on CUDA at the
+   GB10 candidate run); mixed precision and `torch.compile` with a freeze are
+   not verified by it, and stay available.
 
 **Every run writes into a new folder of its own** (contract M3a-2):
 `$WS/runs/<encoder kind>/<date-time>_<run name>_<id>/` (`gatv2` for the

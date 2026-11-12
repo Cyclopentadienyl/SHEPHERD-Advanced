@@ -2822,7 +2822,7 @@ help control for every field. Nothing an operator sets changed; what moved is wh
 | **Diagnosis (clinical)** | Patient phenotypes, the results and the selected candidate's details, with the model in use on a card (below). It is the first screen |
 | **Research (pre-clinical)** › Prepare › **Datasets** | The server's workspaces, read-only (below) |
 | **Research (pre-clinical)** › Prepare › **Training** | The run bar, the parameters for the next run, Continue… and the run view with its charts (below). It is the research page shown first |
-| **Research (pre-clinical)** › Prepare › **Fine-tune** | A base's task models (since K6): one listed base, one to three tasks (Disease, Gene, Patients-like-me), each trained as its own run in order, and a job card with each task's status, Stop and products |
+| **Research (pre-clinical)** › Prepare › **Fine-tune** | A base's task models (since K6): one listed base, one to three tasks (Disease, Gene, Patients-like-me), each trained as its own run in order, with Epochs, Seed and Graph backbone (Trained, or Frozen for the frozen-backbone control) for every child, and a job card with the start's graph backbone, each task's status, Stop and products |
 | **Research (pre-clinical)** › Evaluate › **Test** | Import a cohort version from the server's intake directory, run a test, keep and register its report (below) |
 | **Research (pre-clinical)** › Evaluate › **Models** | The server's checkpoints of a workspace, their recorded test results, newest first or by family, and Load (below); the results of a model's family or the workspace, compared and exported (Results, since research comparison Stage 8b) |
 | **⚙ Settings**, at the right of the header | Runtime Settings, as before. For a read-only browser, Apply Settings and Restart Backend are greyed out, with the reason written below them |
@@ -3121,10 +3121,13 @@ a run.
   a run directory is taken. Task models are started with
   `POST /api/v1/training/finetune`, as the Fine-tune page starts them; its `settings` take every
   setting each chosen task reads, `frozen_parts` among them since research comparison Stage 9b
-  (`graph_side`: the frozen-backbone control, below; the Fine-tune page does not offer it this
-  round), and a `model_spec` for one task only, its graph side the base's. What each child's
+  (`graph_side`: the frozen-backbone control, below; the Fine-tune page's Graph backbone: Frozen),
+  and a `model_spec` for one task only, its graph side the base's. What each child's
   process checks against its base is checked before any child starts: the spec, each child's
-  hop list against the base's encoder, a stated `split_seed` against the base's. The command
+  hop list against the base's encoder, a stated `split_seed` against the base's. Invalid
+  settings (any of these, a value or a rule across settings) answer 422, as a base start's do;
+  a parent it cannot start from, one changed since it was shown, a dataset changed or a busy
+  slot answer 409 (since the ops-wiring round, A2). The command
   line's `--frozen-parts graph_side` is the same setting. A checkpoint is branched with
   `POST /api/v1/training/branch`: `data_dir`, `branch_from`, `device`, `run_name` and `settings`,
   the settings to change, each on the branch list of the parent's stage and task; `{}` branches
@@ -3214,7 +3217,11 @@ forward mode and the SHA-256 of the downstream weights it started from (two chil
 and seed start alike). Resumed or extended it stays frozen, with the same optimizer groups
 restored, and its new checkpoints record their stage's weight transfer, their parent's
 unchanged, so an arm paused and resumed still names the downstream weights it started from (Models
-› Results shows it in Compare and the export). While
+› Results shows it in Compare and the export). The Fine-tune page offers it as Graph backbone:
+Frozen, and the model lists, the Models details and the Results table name such a model "Disease ·
+frozen graph backbone", a task model, never the base's score. The acceptance probe checks it in
+fp32, paused and resumed (`L7.disease_frozen`); mixed precision and `torch.compile` with a freeze
+are not verified by that check, and stay available. While
 the drawer is open the run bar shows Start (disabled: "close Continue… to start a new run"),
 **🔒 Continue Training** (disabled while the datasets differ, with the reason) and **Cancel**.
 A listed checkpoint is found again in the server's list. **The model fingerprint shown is the one

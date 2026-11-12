@@ -2935,7 +2935,7 @@ CORS 只決定頁面能讀取什麼。不需要預檢的跨來源請求仍會抵
 | **Diagnosis (clinical)** | 病患表型、結果與選中候選的細節，使用中的模型顯示在一張卡片上（見下文）。它是第一個畫面 |
 | **Research (pre-clinical)** › Prepare › **Datasets** | 伺服器的 workspace，唯讀（見下文） |
 | **Research (pre-clinical)** › Prepare › **Training** | run bar、下一次 run 的參數、Continue… 與附圖表的 run 檢視（見下文）。它是 Research 下最先顯示的頁面 |
-| **Research (pre-clinical)** › Prepare › **Fine-tune** | 一個 base 的任務模型（自 K6 起）：一個已列出的 base、一到三個任務（Disease、Gene、Patients-like-me），每個任務依序各自訓練成一個 run；一張 job card 顯示每個任務的狀態、Stop 與產出 |
+| **Research (pre-clinical)** › Prepare › **Fine-tune** | 一個 base 的任務模型（自 K6 起）：一個已列出的 base、一到三個任務（Disease、Gene、Patients-like-me），每個任務依序各自訓練成一個 run，Epochs、Seed 與 Graph backbone（Trained，或凍結主幹對照的 Frozen）對每個子模型相同；一張 job card 顯示這次啟動的 graph backbone、每個任務的狀態、Stop 與產出 |
 | **Research (pre-clinical)** › Evaluate › **Test** | 從伺服器的 intake 目錄匯入 cohort 版本、執行測試、保留並登錄其報告（見下文） |
 | **Research (pre-clinical)** › Evaluate › **Models** | 伺服器為某個 workspace 列出的 checkpoint、它們已記錄的測試結果、最新在前或依 family 排列，以及 Load（見下文）；模型 family 或此 workspace 的結果，可比較與匯出（Results，自 research comparison Stage 8b 起） |
 | 頁首右側的 **⚙ Settings** | Runtime Settings，與以前相同。對唯讀的瀏覽器，Apply Settings 與 Restart Backend 會呈灰色不可用，原因寫在它們下方 |
@@ -3193,10 +3193,13 @@ Training Console 現在是分成三部分的一個頁面：上方橫跨整頁的
   值或規則以 422 拒絕；parent 不允許的續訓以 409 拒絕，都在佔用 GPU 名額或建立 run 目錄之前。
   任務模型以 `POST /api/v1/training/finetune`
   啟動，與 Fine-tune 頁相同；它的 `settings` 接受每個所選任務都會讀取的設定，自 research
-  comparison Stage 9b 起包括 `frozen_parts`（`graph_side`：凍結主幹的對照，見下文；本輪
-  Fine-tune 頁不提供），以及只限單一任務、graph side 與 base 相同的 `model_spec`。每個子模型的
+  comparison Stage 9b 起包括 `frozen_parts`（`graph_side`：凍結主幹的對照，見下文；即
+  Fine-tune 頁的 Graph backbone：Frozen），以及只限單一任務、graph side 與 base 相同的
+  `model_spec`。每個子模型的
   行程會對 base 檢查的項目，在任何子模型啟動之前就先檢查：spec、每個子模型的 hop 清單對 base
-  的 encoder、明確給出的 `split_seed` 對 base 的。命令列的 `--frozen-parts graph_side` 是同一個
+  的 encoder、明確給出的 `split_seed` 對 base 的。無效的設定（以上任一項、值或跨設定規則）與
+  base 的啟動一樣以 422 回應；無法作為起點的 parent、顯示後已改變的 parent、已改變的資料集或
+  忙碌的名額以 409 回應（自 ops-wiring 輪 A2 起）。命令列的 `--frozen-parts graph_side` 是同一個
   設定。分支一個 checkpoint 用 `POST /api/v1/training/branch`：`data_dir`、`branch_from`、
   `device`、`run_name` 與 `settings`（要改的設定，每個都須在 parent 的 stage 與任務的分支清單上）；
   `{}` 以 parent 的全部設定分支，從它的權重開始一個新 run、使用新的 optimizer（即命令列的
@@ -3267,7 +3270,11 @@ dropout 關閉），只訓練 patient encoder 與 task head，損失係數沿用
 可訓練參數、每個部分可訓練或凍結、凍結部分的前向模式，以及開始訓練時下游權重的 SHA-256（同一
 base、同一 seed 的兩個子模型起點相同）。resume 或 extend 時仍維持凍結，並還原相同的 optimizer
 參數群；它新的 checkpoint 記錄所屬階段的 weight transfer（即 parent 的，原樣不變），所以暫停後再
-resume 的一組仍寫明它開始時的下游權重（Models › Results 的 Compare 與匯出會顯示）。抽屜打開
+resume 的一組仍寫明它開始時的下游權重（Models › Results 的 Compare 與匯出會顯示）。Fine-tune
+頁以 Graph backbone：Frozen 提供它；模型清單、Models 的詳細資料與 Results 表格把這種模型稱為
+「Disease · frozen graph backbone」，是任務模型，絕不是 base 的分數。驗收 probe 以 fp32 檢查它，
+包括暫停後再 resume（`L7.disease_frozen`）；凍結下的混合精度與 `torch.compile` 不在這個檢查的
+範圍內，也仍然可用。抽屜打開
 期間，run bar 顯示 Start（停用：「close Continue… to start a new run」）、
 **🔒 Continue Training**（資料集不同時停用，並附原因）與 **Cancel**。從清單選的
 checkpoint 會在伺服器的清單中重新找到。**繼續訓練所用的就是所顯示的模型指紋**（於根因修正輪
