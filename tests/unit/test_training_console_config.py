@@ -238,6 +238,13 @@ def test_the_freeze_field_shows_plain_words_and_sends_the_field_specs_values():
     lead = text.split("\n", 1)[0]
     assert title == "Graph backbone" and len(lead) < 90, lead
     assert "Reference: Trained." in text and FINETUNE_SOURCES["frozen_parts"] in text
+    # The freeze is a study's two arms, not a tuned value: its help says what
+    # each is, never "a provisional default ... not tuned" (review of A2).
+    assert text.endswith("\n\nNot a tuned value: Trained is the source's full fine-tune, and "
+                         "Frozen is the frozen-backbone control.")
+    assert "provisional" not in text
+    assert tc.setting_help("num_epochs", FINETUNE, FINETUNE_SOURCES)[1].endswith(
+        "\n\nA provisional default from the source, not tuned on this data.")
     reference = {"frozen_parts": FINETUNE["frozen_parts"]}
     assert tc.recipe_differences({"frozen_parts": "graph_side"}, reference) == (
         {"frozen_parts": "graph_side"}, [])

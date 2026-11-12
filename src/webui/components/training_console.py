@@ -294,15 +294,28 @@ def setting_shown(name: str, value: Any) -> str:
     return str(value)
 
 
+#: What a setting's help closes with (`setting_help`): a tunable value's
+#: reference is the source's provisional default (`src.config.recipe`), so
+#: says that; a setting whose values are a study's arms, not a tuned value,
+#: says what each arm is instead.
+_SETTING_CLOSINGS = {
+    "frozen_parts": "Not a tuned value: Trained is the source's full fine-tune, and Frozen is "
+                    "the frozen-backbone control.",
+}
+_PROVISIONAL = "A provisional default from the source, not tuned on this data."
+
+
 def setting_help(name: str, references: Mapping[str, Any], sources: Mapping[str, str]
                  ) -> Tuple[str, str]:
     """A setting's help, ``(title, text)``: its label, then what it is, its
-    reference value and the source of that value (`src.config.recipe`)."""
+    reference value and the source of that value (`src.config.recipe`), and
+    what that reference is (`_SETTING_CLOSINGS`, else a provisional default
+    from the source)."""
     return (SETTING_LABELS[name],
             f"{_SETTING_LEADS[name]}\n\n"
             f"Reference: {setting_shown(name, references[name])}.\n"
             f"Source: {sources[name]}.\n\n"
-            "A provisional default from the source, not tuned on this data.")
+            f"{_SETTING_CLOSINGS.get(name, _PROVISIONAL)}")
 
 
 def form_value(name: str, value: Any) -> Any:
