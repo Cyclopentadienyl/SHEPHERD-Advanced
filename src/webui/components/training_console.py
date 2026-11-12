@@ -253,7 +253,8 @@ _SETTING_LEADS = {
     "num_neighbors": "Neighbours sampled at each hop, one number per encoder layer; -1 takes all.",
     "max_grad_norm": "The largest gradient norm a step takes; a larger one is scaled down.",
     "scheduler_type": "How the learning rate changes over the run; none keeps it constant.",
-    "warmup_steps": "Steps over which the learning rate ramps up from zero; 0 is none.",
+    "warmup_steps": "Cosine's warmup steps, read only with cosine; 0 warms up over a tenth of "
+                    "the steps.",
     "weight_decay": "The optimizer's penalty on large weights; 0 is none.",
     "use_amp": "16-bit arithmetic on CUDA to save memory and time; off keeps float32.",
     "early_stopping_patience": "Epochs without a better Trainer validation figure before the "

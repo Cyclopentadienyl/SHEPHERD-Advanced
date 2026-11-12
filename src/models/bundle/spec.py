@@ -744,7 +744,9 @@ def hops_problem(num_neighbors: Sequence[Any], encoder: EncoderSpec) -> Optional
     needs, **as its kind's declaration states it**
     (`EncoderDeclaration.sampled_hops`; GATv2: one hop per layer). **The one
     statement of this check**: the start's check of a new base run
-    (`training_manager._new_bundle_run`), the Training page's base form
+    (`training_manager._new_bundle_run`), the Fine-tune start's of each
+    child against its base's encoder, before any child starts
+    (`TrainingManager.start_finetune`), the Training page's base form
     (`training_console.setting_problem`) and the training process
     (`scripts/train_model.py`) all ask it. No hop list fits an encoder a run
     cannot sample, so the run is refused before it starts: one whose kind this
@@ -764,6 +766,38 @@ def hops_problem(num_neighbors: Sequence[Any], encoder: EncoderSpec) -> Optional
             f"not {len(num_neighbors)}.")
 
 
+#: The parts of a base's spec a finetune keeps (README §3.3, Inheritance):
+#: its graph side, as `finetune_spec_from_parent` copies it.
+FINETUNE_KEPT = ("graph_view", "input", "encoder", "lp_head")
+
+
+def run_spec_problem(spec: ModelSpec, learning_stage: Optional[str], task: Optional[str], *,
+                     base: Optional[ModelSpec] = None) -> Optional[str]:
+    """Why `spec` cannot be the model spec of a run of `learning_stage` and
+    `task`, or of a finetune of the base whose spec is `base`, or None. **The
+    one check of a run's spec against its stage and its base**: the training
+    process (`train_model.train`, every run), the job runner's new base run
+    (`training_manager._new_bundle_run`) and its Fine-tune start of one task,
+    before any child starts (`TrainingManager.start_finetune`), ask it alike.
+
+    - a spec of another stage or task than the run's;
+    - a finetune's spec whose graph side (`FINETUNE_KEPT`) is not its base's:
+      a finetune never changes its base's graph view, input, encoder or LP
+      head (README §3.3, Inheritance), only its patient encoder and task head
+      are its own."""
+    if spec.learning_stage != learning_stage or spec.task != task:
+        def named(stage: Any, of: Any) -> str:
+            return f"a {stage} spec" + (f" for {of}" if of is not None else "")
+
+        return (f"model_spec is {named(spec.learning_stage, spec.task)}, not "
+                f"{named(learning_stage, task)}")
+    if base is not None and any(getattr(spec, part) != getattr(base, part)
+                                for part in FINETUNE_KEPT):
+        return ("a finetune keeps its base's graph view, input, encoder and LP head "
+                "(README §3.3, Inheritance)")
+    return None
+
+
 def finetune_spec_from_parent(parent: ModelSpec, task: str) -> ModelSpec:
     """A finetune spec over `parent`'s graph side, with the reference head for
     `task`. A finetune never changes the parent's encoder (README §3.3)."""
@@ -779,6 +813,7 @@ __all__ = [
     "ENCODER_KINDS",
     "EncoderDeclaration",
     "EncoderSpec",
+    "FINETUNE_KEPT",
     "FULL_VIEW",
     "GATv2Declaration",
     "GeneScoringSpec",
@@ -802,4 +837,5 @@ __all__ = [
     "hops_problem",
     "reference_spec",
     "require_encoder_declaration",
+    "run_spec_problem",
 ]

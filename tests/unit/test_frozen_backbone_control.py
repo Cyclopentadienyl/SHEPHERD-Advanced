@@ -608,19 +608,23 @@ def test_the_job_runners_fine_tune_start_takes_the_freeze_and_its_run_trains_as_
     process = FakeProcess(pid=1)
     calls = Popens(process)
     monkeypatch.setattr("subprocess.Popen", calls)
+    from scripts.setup_demo import demo_task_training
+
     manager = TrainingManager()
+    # The demo's disease sizes, its two hops among them: the start checks
+    # each child's hop list against its base's encoder before any child
+    # starts, as the child's process does (decision S4).
     started = manager.start_finetune(FinetuneInputs(
         data_dir=str(workspace), finetune_from=str(base), tasks=("disease",), device="cpu",
-        run_name="", settings={"frozen_parts": "graph_side", "num_epochs": 1}))
+        run_name="", settings={"frozen_parts": "graph_side", "num_epochs": 1,
+                               **demo_task_training()["disease"]}))
     assert started["success"], started
     (argv,) = calls.calls
     config_path = Path(argv[argv.index("--config") + 1])
     config = yaml.safe_load(config_path.read_text())
     assert config["frozen_parts"] == "graph_side"
     kept = tmp_path / "config.yaml"
-    from scripts.setup_demo import demo_task_training
-
-    kept.write_text(yaml.safe_dump({**config, **demo_task_training()["disease"]}))
+    kept.write_text(yaml.safe_dump(config))
     process.finish(0)
     monkeypatch.setattr("subprocess.Popen", real_popen)
     monkeypatch.setattr(sys, "argv", ["train_model.py", "--config", str(kept),

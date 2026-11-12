@@ -167,10 +167,15 @@ def _validate_min_lr_ratio(min_lr_ratio: float, scheduler_type: str) -> None:
         silently train at a negative learning rate, so reject it here.
       - ``onecycle`` additionally requires a strictly positive ratio: it computes
         ``final_div_factor = 1 / min_lr_ratio`` (0 -> ZeroDivisionError; OneCycleLR
-        does not validate the factor).
+        does not validate the factor). **That rule is the field spec's**
+        (`training_fields.CROSS_FIELD_RULES`), refused here in its one sentence
+        (`rule_problem`), the sentence the training process and the job
+        runner's start refuse a stated ratio with before a Trainer exists.
       - ``cosine`` / ``linear`` accept 0 (legitimate decay-to-zero via a floor
         factor), so 0 is NOT rejected for them.
     """
+    from src.config.training_fields import rule_problem
+
     if scheduler_type == "none":
         return
     if min_lr_ratio < 0:
@@ -178,13 +183,10 @@ def _validate_min_lr_ratio(min_lr_ratio: float, scheduler_type: str) -> None:
             f"min_lr_ratio must be >= 0 (got {min_lr_ratio!r}) for "
             f"scheduler_type={scheduler_type!r}."
         )
-    if scheduler_type == "onecycle" and min_lr_ratio <= 0:
-        raise ValueError(
-            f"min_lr_ratio must be > 0 for the 'onecycle' scheduler "
-            f"(got {min_lr_ratio!r}); onecycle computes "
-            f"final_div_factor = 1 / min_lr_ratio. Use a small positive value "
-            f"(e.g. 0.01), or choose scheduler_type 'cosine'/'linear' which accept 0."
-        )
+    problem = rule_problem("onecycle_requires_positive_min_lr_ratio",
+                           {"min_lr_ratio": min_lr_ratio, "scheduler_type": scheduler_type})
+    if problem:
+        raise ValueError(problem)
 
 
 # =============================================================================

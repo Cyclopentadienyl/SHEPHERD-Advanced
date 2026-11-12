@@ -17,6 +17,10 @@ task, with its weights, settings and data, changing some of the settings on
 the stage's closed list (`src.config.recipe.branch_settings`) and recording
 each change; a new optimizer, schedule and stage.
 
+**What a new run takes** (a base, a finetune; ops-wiring round, decision S1)
+is stated here once, `new_run_settings`, and filled once, `new_run_values`:
+the training process, the job runner's starts and the API's start read them.
+
 **What the parent's state allows:**
 
 - an unfinished stage (`progress.end` is `None` or `"paused"`) is resumed:
@@ -73,7 +77,10 @@ from pathlib import Path
 from typing import Any, Collection, Dict, List, Mapping, Optional
 
 from src.config.model_types import WRITTEN_BEFORE_SPEC
-from src.config.recipe import FROZEN_PARTS, branch_settings, frozen_parts_problem
+from src.config.recipe import (
+    FROZEN_PARTS, branch_settings, frozen_parts_problem, reference_settings, unread_settings,
+)
+from src.config.training_fields import FIELDS, cross_field_problems
 from src.utils.checkpoint_paths import PLAIN_DEPTH, PLAIN_VALUES, plain_data_problem
 
 #: Fields that say where a run reads and writes, how it is run on this host, or
@@ -92,6 +99,58 @@ OPERATIONAL_FIELDS = frozenset({
 class RunPlanRefused(ValueError):
     """The parent cannot be continued as requested; the message says why and
     what to do instead."""
+
+
+#: What names a run's stage and task: the run's identity, not a setting of it.
+_RUN_IDENTITY = frozenset({"learning_stage", "task"})
+
+
+def new_run_settings(learning_stage: str, task: Optional[str] = None) -> frozenset:
+    """**What a new run of `learning_stage` (and `task`) takes** (ops-wiring
+    round, decision S1): every learning setting (a field of the field spec
+    outside `OPERATIONAL_FIELDS`, `TrainConfig`'s fields), but the run's stage
+    and task, which name the run, and the recipe's settings this stage and
+    task do not read (`recipe.unread_settings`: another task's, or any task
+    setting on a base), which are refused, never ignored. The one statement of
+    that rule: the training process refuses an explicit setting outside it
+    (`train_model.train`, the CLI and every spawned job), the job runner's
+    start takes exactly what every run it makes takes (the intersection over
+    a Fine-tune start's tasks), and the API's base start offers it."""
+    learning = {spec.name for spec in FIELDS} - OPERATIONAL_FIELDS - _RUN_IDENTITY
+    return frozenset(learning - unread_settings(learning_stage, task))
+
+
+def new_run_values(learning_stage: str, task: Optional[str],
+                   given: Mapping[str, Any]) -> Dict[str, Any]:
+    """The settings a new run of `learning_stage` and `task` trains with, given
+    `given`, the operator's: each of `new_run_settings` the operator's when
+    given, else the stage's reference (`recipe.reference_settings`), else this
+    build's default (the field spec's, `TrainConfig`'s, pinned equal). **The
+    one fill of a new run**: the training process fills its configuration
+    with it (`train_model.apply_stage_recipe`), and the job runner judges a
+    start's runs by it before it spawns (`cross_field_problems`). A model spec
+    left unset is None here, the stage's reference spec, and a finetune's split
+    seed is its base's, which the training process takes from the base."""
+    defaults = {spec.name: (list(spec.default) if isinstance(spec.default, tuple)
+                            else spec.default) for spec in FIELDS}
+    references, _ = reference_settings(learning_stage, task)
+    return {name: (given[name] if name in given else references[name] if name in references
+                   else defaults[name])
+            for name in new_run_settings(learning_stage, task)}
+
+
+def finetune_split_seed_problem(split_seed: Any, base_split: Any) -> Optional[str]:
+    """Why a finetune stating `split_seed` cannot train on its base's split,
+    recorded as `base_split` (the base's ``data_roles["split"]``), or None:
+    **a finetune trains on its base's split** (README G4), so a seed other
+    than the base's is refused. The training process (`train_model.train`)
+    and the job runner's Fine-tune start, before any child starts, ask it of
+    a stated seed alike."""
+    recorded = base_split.get("seed") if isinstance(base_split, Mapping) else None
+    if recorded is not None and _same(split_seed, recorded):
+        return None
+    return (f"split_seed {split_seed!r} differs from the base's {recorded!r}; a finetune trains "
+            "on its base's split")
 
 
 @dataclass(frozen=True)
@@ -617,7 +676,10 @@ def _inherit_settings(
     another value is a change when `changeable` names it (a branch), and
     refused otherwise. Each setting the run takes from the parent and the
     request does not set has one source: `inherited` when the parent's record
-    holds it, `decoded` (with the decode's words) when the decode gave it."""
+    holds it, `decoded` (with the decode's words) when the decode gave it.
+    Then the rules across settings judge what the request sets
+    (`training_fields.cross_field_problems`), for a resume, an extension and a
+    branch alike, in the training process and the job runner's preview."""
     parent_settings = decode_learning_settings(parent, where)
     recorded = parent_settings.settings
     decoded: Dict[str, str] = {}
@@ -667,6 +729,12 @@ def _inherit_settings(
             + "; ".join(conflicts) + ". A continued run keeps every learning setting of "
             "its parent; remove these to inherit them, or branch the parent (branch_from) "
             "to change settings on a model bundle's list." + freeze)
+    # The rules across settings (decision S3), judged on the settings the run
+    # trains with for what the request sets: a setting stated that the run
+    # would not read is refused, never ignored; an inherited one never is.
+    problems = cross_field_problems(settings, explicit)
+    if problems:
+        raise RunPlanRefused(" ".join(problems))
     return settings, inherited, changes, decoded
 
 
@@ -806,6 +874,9 @@ __all__ = [
     "RunPlanRefused",
     "decode_learning_settings",
     "decoded_sentence",
+    "finetune_split_seed_problem",
+    "new_run_settings",
+    "new_run_values",
     "plan_branch",
     "plan_continuation",
     "recorded_training_settings",

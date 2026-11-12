@@ -69,7 +69,7 @@ Module: src/config/training_fields.py
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Collection, Dict, List, Mapping, Optional, Tuple
 
 SCOPES = ("model", "dataloader", "trainer", "loss", "path", "runtime_setting")
 KINDS = ("int", "float", "bool", "str", "list[int]", "dict")
@@ -78,23 +78,42 @@ BOUND_KEYS = ("ge", "gt", "le", "lt")
 _PROJECTION_EXEMPT_SCOPES = ("runtime_setting",)
 
 
+#: The kinds of rule across settings (`CrossFieldRule.kind`).
+RULE_KINDS = ("min_exclusive", "read_only_when")
+
+
 @dataclass(frozen=True)
 class CrossFieldRule:
     """A constraint spanning more than one field, represented structurally.
 
-    ``when`` is an optional applicability guard: ``{"scheduler_type": ("onecycle",)}`` means the
-    rule applies only when ``scheduler_type`` holds one of those values.
+    ``when`` is the applicability guard: ``{"scheduler_type": ("onecycle",)}`` means the
+    rule's condition is that ``scheduler_type`` holds one of those values. Two kinds:
+
+    - ``min_exclusive``: while ``when`` holds, ``subject`` must be above ``threshold``;
+    - ``read_only_when``: a run reads ``subject`` only while ``when`` holds, so a
+      ``subject`` set explicitly while it does not is refused (it would not take effect;
+      the precedent of `recipe.unread_settings`: refused, never ignored).
     """
 
     name: str
-    kind: str                                            # "divisible_by" | "min_exclusive"
+    kind: str                                            # one of RULE_KINDS
     subject: str                                         # field the rule constrains
-    operand: Optional[str] = None                        # other field involved (divisible_by)
     threshold: Optional[float] = None                    # bound value (min_exclusive)
     when: Optional[Dict[str, Tuple[Any, ...]]] = None    # applicability guard
-    enforced_in: str = ""                                # where it is / will be enforced
+    enforced_in: str = ""                                # where it is enforced
     description: str = ""
 
+    def __post_init__(self) -> None:
+        if self.kind not in RULE_KINDS:
+            raise ValueError(f"{self.name}: unknown rule kind {self.kind!r}")
+        if not self.when:
+            raise ValueError(f"{self.name}: a rule across settings names its guard (when)")
+
+
+#: Where every rule is judged: the one evaluator's callers.
+_ENFORCED_IN = ("current (`cross_field_problems`: the training process's `train_model.train` "
+                "for a new run, the continuation and branch plans of `src.utils.run_plan`, "
+                "and the job runner's start before it spawns)")
 
 CROSS_FIELD_RULES: Tuple[CrossFieldRule, ...] = (
     CrossFieldRule(
@@ -103,14 +122,131 @@ CROSS_FIELD_RULES: Tuple[CrossFieldRule, ...] = (
         subject="min_lr_ratio",
         threshold=0.0,
         when={"scheduler_type": ("onecycle",)},
-        enforced_in="current (trainer _validate_min_lr_ratio; the API took min_lr_ratio "
-                    "until K7, when its start became a strict base start)",
+        enforced_in=_ENFORCED_IN + "; and the Trainer's `_validate_min_lr_ratio`, by this "
+                                   "rule's own sentence (`rule_problem`)",
         description=(
             "onecycle computes final_div_factor = 1 / min_lr_ratio, so it needs a strictly "
-            "positive value; cosine/linear legitimately allow 0 (decay to zero)."
+            "positive value; cosine and linear allow 0 (decay to zero)."
         ),
     ),
+    # Read only when (ops-wiring round, decision S3): the Trainer's schedule
+    # and precision read these settings only under their guard
+    # (`Trainer._create_scheduler`, `Trainer._setup_amp`).
+    CrossFieldRule(
+        name="warmup_steps_read_only_by_cosine",
+        kind="read_only_when",
+        subject="warmup_steps",
+        when={"scheduler_type": ("cosine",)},
+        enforced_in=_ENFORCED_IN,
+        description=(
+            "The cosine schedule's linear warmup reads it (0 warms up over the Trainer's "
+            "warmup_ratio, a tenth of the steps); onecycle warms up over that ratio, and "
+            "linear and none have no warmup."
+        ),
+    ),
+    CrossFieldRule(
+        name="min_lr_ratio_read_only_by_a_scheduler",
+        kind="read_only_when",
+        subject="min_lr_ratio",
+        when={"scheduler_type": ("cosine", "onecycle", "linear")},
+        enforced_in=_ENFORCED_IN,
+        description="It is a schedule's final rate as a fraction of the peak; none keeps one "
+                    "rate.",
+    ),
+    CrossFieldRule(
+        name="amp_dtype_read_only_with_amp",
+        kind="read_only_when",
+        subject="amp_dtype",
+        when={"use_amp": (True,)},
+        enforced_in=_ENFORCED_IN,
+        description="It is mixed precision's compute dtype; with use_amp off the run computes "
+                    "in float32.",
+    ),
 )
+
+
+def _rule_value(value: Any) -> str:
+    """A value as a rule's sentence names it: a switch as true or false (the
+    request's and the configuration file's words), anything else as written."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return repr(value)
+
+
+def _rule_guard_words(rule: CrossFieldRule) -> str:
+    """A rule's guard in words: "scheduler_type is 'cosine'", "scheduler_type
+    is 'cosine', 'onecycle' or 'linear'"."""
+    parts = []
+    for name, allowed in (rule.when or {}).items():
+        shown = [_rule_value(value) for value in allowed]
+        listed = shown[0] if len(shown) == 1 else f"{', '.join(shown[:-1])} or {shown[-1]}"
+        parts.append(f"{name} is {listed}")
+    return " and ".join(parts)
+
+
+def _rule_by_name(name: str) -> CrossFieldRule:
+    for rule in CROSS_FIELD_RULES:
+        if rule.name == name:
+            return rule
+    raise KeyError(name)
+
+
+def rule_problem(rule: Any, values: Mapping[str, Any]) -> Optional[str]:
+    """Why `values`, a run's settings as it would train with them, break the
+    rule `rule` (a `CrossFieldRule` or its name), in the rule's one sentence,
+    or None. A rule whose fields `values` does not hold is not judged. Whether
+    the rule applies to a run (what the operator set) is
+    `cross_field_problems`'s; the Trainer asks a rule of its own settings
+    here directly, so the rule has one sentence wherever it is refused."""
+    rule = _rule_by_name(rule) if isinstance(rule, str) else rule
+    fields = (rule.subject, *(rule.when or {}))
+    if any(name not in values for name in fields):
+        return None
+    holds = all(values[name] in allowed for name, allowed in (rule.when or {}).items())
+    subject = values[rule.subject]
+    if rule.kind == "min_exclusive":
+        if not holds or subject is None or isinstance(subject, bool) \
+                or not isinstance(subject, (int, float)) or subject > rule.threshold:
+            return None
+        return (f"{rule.subject} must be more than {rule.threshold:g} when "
+                f"{_rule_guard_words(rule)}, not {_rule_value(subject)}: {rule.description}")
+    if holds:
+        return None
+    guards = ", ".join(f"{name} is {_rule_value(values[name])}" for name in (rule.when or {}))
+    return (f"{rule.subject} is read only when {_rule_guard_words(rule)}, and this run's "
+            f"{guards}, so it would not take effect. {rule.description} Remove "
+            f"{rule.subject}, or change {' and '.join(rule.when or {})}.")
+
+
+def cross_field_problems(values: Mapping[str, Any], explicit: Collection[str]) -> List[str]:
+    """**The one evaluator of the rules across settings** (`CROSS_FIELD_RULES`):
+    every problem of a run whose settings are `values` (as it would train with
+    them: the operator's, the stage's reference or this build's default, or a
+    parent's) and whose operator set `explicit`, each in its rule's sentence
+    (`rule_problem`). A rule is judged only where the operator set one of its
+    fields: a ``read_only_when`` rule where the operator set its subject (an
+    explicit setting the run would not read is refused, never ignored), a
+    ``min_exclusive`` rule where the operator set its subject or a field of its
+    guard. **A value the operator did not set is never refused here**: an
+    inherited (a continuation's, a branch's) or filled one. Requested mixed
+    precision on a device without it is no problem of these rules: the run
+    records the precision requested and the precision in effect apart.
+
+    Called by the training process (`train_model.train`, for a new run once the
+    recipe has filled it), the continuation and branch plans (`run_plan`), and
+    the job runner's start before it spawns (`training_manager`), so the CLI,
+    every spawned job and the service give one judgement."""
+    chosen = set(explicit)
+    problems = []
+    for rule in CROSS_FIELD_RULES:
+        judged = ({rule.subject} if rule.kind == "read_only_when"
+                  else {rule.subject, *(rule.when or {})})
+        if not judged & chosen:
+            continue
+        problem = rule_problem(rule, values)
+        if problem:
+            problems.append(problem)
+    return problems
 
 
 @dataclass(frozen=True)
@@ -311,7 +447,9 @@ FIELDS: Tuple[FieldSpec, ...] = (
     FieldSpec("warmup_steps", "int", 500, "trainer", projects_to="TrainerConfig.warmup_steps",
               valid={"ge": 0},
               current_api={"ge": 0},
-              description="Scheduler warmup steps."),
+              description="The cosine schedule's linear warmup, in steps, read only with "
+                          "cosine; 0 warms up over the Trainer's warmup_ratio (a tenth of the "
+                          "steps)."),
     FieldSpec("min_lr_ratio", "float", 0.01, "trainer", projects_to="TrainerConfig.min_lr_ratio",
               valid={"ge": 0.0, "le": 1.0},
               current_api=None,
@@ -450,7 +588,7 @@ def bound_words(constraint: Optional[Dict[str, Any]]) -> str:
 _ALL_NEIGHBOURS = -1
 #: Each kind in a refusal's words.
 _KIND_WORDS = {"int": "an integer", "float": "a number", "bool": "true or false",
-               "str": "text", "list[int]": "a list of integers"}
+               "str": "text", "list[int]": "a list of integers", "dict": "a mapping"}
 
 
 def value_problem(name: str, value: Any, *, allow_none: bool = False) -> Optional[str]:
@@ -475,7 +613,7 @@ def value_problem(name: str, value: Any, *, allow_none: bool = False) -> Optiona
         ok = isinstance(value, list) and all(
             isinstance(v, int) and not isinstance(v, bool) for v in value)
     else:
-        ok = True
+        ok = isinstance(value, dict)
     if not ok:
         return f"{name} must be {_KIND_WORDS.get(spec.kind, spec.kind)}, not {value!r}."
     if spec.choices is not None and value not in spec.choices:

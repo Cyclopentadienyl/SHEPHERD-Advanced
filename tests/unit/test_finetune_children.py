@@ -104,10 +104,17 @@ def base(tmp_path, built):
     return workspace, path, child
 
 
+#: The base here has one encoder layer (`_base_spec`), so each child samples
+#: one hop, as its process requires and the start checks before any child
+#: starts (`hops_problem`, decision S4); the tasks' reference lists have three.
+ONE_HOP = {"num_neighbors": [3]}
+
+
 def _inputs(base, *tasks, **kw):
     workspace, path, _ = base
     fields = dict(data_dir=str(workspace), finetune_from=str(path), tasks=tasks, device="cpu")
     fields.update(kw)
+    fields["settings"] = {**ONE_HOP, **kw.get("settings", {})}
     return FinetuneInputs(**fields)
 
 
@@ -142,7 +149,8 @@ def test_children_run_in_order_and_a_failure_does_not_stop_its_siblings(base, po
     config = _config(argv)
     assert config == {"data_dir": str(base[0]), "learning_stage": "finetune", "task": "disease",
                       "finetune_from": str(base[1]), "device": "cpu", "num_epochs": 2,
-                      "run_dir": config["run_dir"]}, "only what was asked: the recipe fills the rest"
+                      **ONE_HOP, "run_dir": config["run_dir"]}, (
+        "only what was asked: the recipe fills the rest")
     assert "/runs/gatv2/" in config["run_dir"], "filed under the parent's encoder"
 
     first.finish(1)  # the disease child fails ...
@@ -303,7 +311,12 @@ def test_what_fails_in_starting_a_child_never_stops_the_monitor(base, popen, mon
      "candidate_sample_size is not a setting a Fine-tune start of Disease and Gene takes"),
     (dict(settings={"hidden_dim": 8}),
      "hidden_dim is not a setting a Fine-tune start of Disease takes"),
-    (dict(settings={"save_top_k": 2}), "save_top_k is not a setting"),
+    (dict(settings={"save_top_k": 0}), "save_top_k must be 1 or more, not 0."),
+    (dict(settings={"warmup_steps": 5}), "warmup_steps is read only when scheduler_type is "
+                                         "'cosine'"),
+    (dict(settings={"num_neighbors": [3, 3]}), "The Disease child's hop list [3, 3] (stated) "
+                                               "does not fit its base's encoder: num_neighbors "
+                                               "needs 1 numbers"),
     (dict(settings={"num_epochs": 0}), "num_epochs must be between 1 and 10000, not 0."),
     (dict(settings={"learning_rate": "fast"}), "learning_rate must be a number, not 'fast'"),
     (dict(settings={"use_amp": "false"}), "use_amp must be true or false, not 'false'"),

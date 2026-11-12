@@ -1,0 +1,298 @@
+"""The settings projection (ops-wiring round A1a; decisions S1-S6).
+
+What a new run takes is stated once (`run_plan.new_run_settings`), and the
+training process (`train_model.train`), the job runner's starts and the API's
+start (`TrainingStartRequest`) read it. The rules across settings are data in
+the field spec (`training_fields.CROSS_FIELD_RULES`) with one evaluator, so
+the CLI, every spawned job and the service give one judgement in one
+sentence: an explicit setting the run would not read is refused, never
+ignored, and an inherited one never is. A Fine-tune start checks what each
+child's process checks against its base before any child starts. The start
+request is a thin projection: an explicit null reaches the service and is
+judged, a -1 hop is legal, and a finetune child continues over HTTP. Each
+setting's source is recorded, and the continuation preview states the
+optimizer groups whose rate ended at 0.
+
+Module: tests/unit/test_settings_projection.py
+"""
+from __future__ import annotations
+
+import dataclasses
+import shutil
+import sys
+from pathlib import Path
+from unittest.mock import patch
+
+import pytest
+import yaml
+
+from src.config import recipe
+from src.config import training_fields as tf
+from src.utils.run_plan import OPERATIONAL_FIELDS, new_run_settings, new_run_values
+
+_SCRIPTS = str(Path(__file__).resolve().parents[2] / "scripts")
+
+#: Every stage and task a new run is.
+RUNS = [("base", None)] + [("finetune", task) for task in recipe.FINETUNE_TASKS]
+
+
+def _train_model():
+    pytest.importorskip("torch")
+    pytest.importorskip("torch_geometric")
+    if _SCRIPTS not in sys.path:
+        sys.path.insert(0, _SCRIPTS)
+    import train_model
+
+    return train_model
+
+
+# ---------------------------------------------------------------------------
+# S1: one definition of what a new run takes
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("stage, task", RUNS)
+def test_a_new_run_takes_the_learning_settings_but_those_its_stage_does_not_read(stage, task):
+    """The definition: every learning setting (a TrainConfig field outside
+    the operational ones), but the run's stage and task and the recipe's
+    settings this stage and task do not read; and each has a field spec."""
+    train_model = _train_model()
+    fields = {f.name for f in dataclasses.fields(train_model.TrainConfig)}
+    learning = fields - OPERATIONAL_FIELDS - train_model.LOCATION_FIELDS
+    expected = learning - {"learning_stage", "task"} - recipe.unread_settings(stage, task)
+    assert new_run_settings(stage, task) == expected
+    assert new_run_settings(stage, task) <= set(tf.names())
+    assert set(recipe.reference_settings(stage, task)[0]) <= new_run_settings(stage, task)
+    assert {"model_spec", "split_seed", "min_lr_ratio", "amp_dtype",
+            "gradient_accumulation_steps", "eval_every_n_epochs",
+            "save_top_k"} <= new_run_settings(stage, task)
+
+
+@pytest.mark.parametrize("stage, task", RUNS)
+def test_the_training_process_refuses_exactly_what_a_new_run_does_not_take(stage, task, tmp_path):
+    """`train()` asks `new_run_settings`: a learning setting outside it is
+    refused before anything is read (the workspace here does not exist), and
+    one inside it passes that check (it is refused later, by another rule or
+    by the absent workspace, never as a setting the run does not read)."""
+    train_model = _train_model()
+    parent = {"finetune_from": str(tmp_path / "base.pt")} if stage == "finetune" else {}
+    learning = (set(tf.names()) - OPERATIONAL_FIELDS) - {"learning_stage", "task"}
+    for name in sorted(learning):
+        config = train_model.TrainConfig(data_dir=str(tmp_path / "absent"), device="cpu",
+                                         learning_stage=stage, task=task, **parent)
+        with pytest.raises(Exception) as refused:
+            train_model.train(config, {"learning_stage", "task", "device", name})
+        said = str(refused.value)
+        unread = said.startswith(f"{name} configure")
+        assert unread is (name not in new_run_settings(stage, task)), (name, said)
+
+
+def test_the_fill_of_a_new_run_is_the_operators_then_the_recipes_then_the_builds():
+    values = new_run_values("base", None, {"learning_rate": 0.5, "split_seed": 3})
+    assert set(values) == new_run_settings("base")
+    assert (values["learning_rate"], values["split_seed"]) == (0.5, 3)
+    assert values["num_epochs"] == recipe.BASE["num_epochs"]
+    assert values["min_lr_ratio"] == tf.by_name("min_lr_ratio").default
+    assert values["model_spec"] is None
+
+
+# ---------------------------------------------------------------------------
+# S3: the rules across settings, one evaluator, one sentence
+# ---------------------------------------------------------------------------
+#: Each rule: settings it refuses on a new base (the recipe's scheduler none,
+#: AMP off) and settings it takes.
+RULES = {
+    "warmup_steps_read_only_by_cosine": (
+        {"warmup_steps": 500}, {"scheduler_type": "cosine", "warmup_steps": 500}),
+    "min_lr_ratio_read_only_by_a_scheduler": (
+        {"min_lr_ratio": 0.05}, {"scheduler_type": "linear", "min_lr_ratio": 0.05}),
+    "amp_dtype_read_only_with_amp": (
+        {"amp_dtype": "bfloat16"}, {"use_amp": True, "amp_dtype": "bfloat16"}),
+    "onecycle_requires_positive_min_lr_ratio": (
+        {"scheduler_type": "onecycle", "min_lr_ratio": 0.0},
+        {"scheduler_type": "onecycle", "min_lr_ratio": 0.01}),
+}
+
+
+def _sentence(rule, settings):
+    return tf.rule_problem(rule, new_run_values("base", None, settings))
+
+
+def test_every_rule_is_data_with_its_cases_here():
+    assert set(RULES) == {rule.name for rule in tf.CROSS_FIELD_RULES}
+    said = _sentence("warmup_steps_read_only_by_cosine", {"warmup_steps": 500})
+    assert said.startswith("warmup_steps is read only when scheduler_type is 'cosine', and "
+                           "this run's scheduler_type is 'none', so it would not take effect.")
+    assert "0 warms up over the Trainer's warmup_ratio" in said
+    assert _sentence("onecycle_requires_positive_min_lr_ratio",
+                     RULES["onecycle_requires_positive_min_lr_ratio"][0]).startswith(
+        "min_lr_ratio must be more than 0 when scheduler_type is 'onecycle', not 0.0")
+
+
+@pytest.mark.parametrize("rule", sorted(RULES))
+def test_a_rule_refuses_only_what_the_operator_set(rule):
+    """Judged on the settings the run trains with, for what the operator set:
+    the same values filled or inherited are never refused."""
+    refused, taken = RULES[rule]
+    values = new_run_values("base", None, refused)
+    assert tf.cross_field_problems(values, set(refused)) == [tf.rule_problem(rule, values)]
+    assert tf.cross_field_problems(values, set()) == []
+    assert tf.cross_field_problems(new_run_values("base", None, taken), set(taken)) == []
+
+
+@pytest.mark.parametrize("rule", sorted(RULES))
+def test_the_cli_refuses_a_rule_in_its_sentence_before_anything_is_read(rule, tmp_path):
+    """`train()`: the illegal case is refused by the rule before the
+    workspace is read (it does not exist here); the legal case passes the
+    rule and reaches the workspace's own refusal."""
+    train_model = _train_model()
+    refused, taken = RULES[rule]
+    for settings, legal in ((refused, False), (taken, True)):
+        config = train_model.TrainConfig(data_dir=str(tmp_path / "absent"), device="cpu",
+                                         learning_stage="base", **settings)
+        with pytest.raises(Exception) as said:
+            train_model.train(config, {"learning_stage", "device", *settings})
+        if legal:
+            assert not any(str(said.value).startswith(r.subject) for r in tf.CROSS_FIELD_RULES)
+        else:
+            assert str(said.value) == _sentence(rule, settings)
+
+
+def test_the_trainer_refuses_onecycle_in_the_rules_sentence():
+    pytest.importorskip("torch")
+    from src.training.trainer import _validate_min_lr_ratio
+
+    with pytest.raises(ValueError) as refused:
+        _validate_min_lr_ratio(0.0, "onecycle")
+    assert str(refused.value) == tf.rule_problem(
+        "onecycle_requires_positive_min_lr_ratio",
+        {"scheduler_type": "onecycle", "min_lr_ratio": 0.0})
+
+
+def test_amp_asked_on_a_cpu_device_stays_accepted_for_a_new_run():
+    """Decision S3: the record states the precision requested and in effect
+    apart, so a request for AMP on a device without it is no rule's problem."""
+    values = new_run_values("base", None, {"use_amp": True, "amp_dtype": "float16"})
+    assert tf.cross_field_problems(values, {"use_amp", "amp_dtype"}) == []
+
+
+def test_a_continuation_states_a_setting_its_parent_would_not_read_and_is_refused():
+    """The plans judge what a continuation or a branch states, on the
+    settings it inherits; what it inherits is never refused."""
+    from src.utils.checkpoint_io import TRAINING_RULES_VERSION
+    from src.utils.run_plan import RunPlanRefused, plan_branch, plan_continuation
+
+    recorded = {**new_run_values("base", None, {}), "learning_stage": "base", "task": None}
+    parent = {"record_version": 2, "training_rules": TRAINING_RULES_VERSION,
+              "checkpoint_kind": "training_state", "learning_stage": "base", "task": None,
+              "config": {"requested": recorded,
+                         "effective": {"amp": {"enabled": False, "dtype": "float16"}}},
+              "progress": {"end": "paused", "completed_epochs": 1,
+                           "stage": {"kind": "original", "start_epoch": 0, "target_epochs": 2,
+                                     "schedule": {"type": "constant"}}}}
+    request = {**recorded, "device": "cpu", "extend_epochs": None, "extend_lr": None}
+    where = Path("runs/gatv2/base/checkpoints/last.pt")
+    plan = plan_continuation(parent, where, request, set(), device="cpu", record_version=2)
+    assert plan.settings["warmup_steps"] == 0 and plan.inherited["warmup_steps"] == 0
+    with pytest.raises(RunPlanRefused, match="^warmup_steps is read only when"):
+        plan_continuation(parent, where, request, {"warmup_steps"}, device="cpu",
+                          record_version=2)
+    with pytest.raises(RunPlanRefused, match="^min_lr_ratio is read only when"):
+        plan_branch(parent, where, {**request, "branch_from": "p.pt", "min_lr_ratio": 0.2},
+                    {"min_lr_ratio"}, device="cpu", record_version=2)
+    assert plan_branch(parent, where, {**request, "branch_from": "p.pt",
+                                       "scheduler_type": "linear", "min_lr_ratio": 0.2},
+                       {"scheduler_type", "min_lr_ratio"}, device="cpu",
+                       record_version=2).changes["min_lr_ratio"] == {"parent": 0.01, "new": 0.2}
+
+
+def test_the_warmup_help_says_what_the_trainer_does():
+    """The words, not the trainer, are corrected (decision S3): warmup is read
+    only by the cosine schedule, and 0 warms up over the Trainer's
+    warmup_ratio, a tenth of the steps."""
+    pytest.importorskip("gradio")
+    pytest.importorskip("torch")
+    from src.training.trainer import TrainerConfig
+    from src.webui.components import training_console
+
+    lead = training_console._SETTING_LEADS["warmup_steps"]
+    assert TrainerConfig().warmup_ratio == 0.1
+    assert "read only with cosine" in lead and "0 warms up over a tenth of the steps" in lead
+    assert "from zero" not in lead and len(lead) <= 90
+    assert "read only with cosine" in tf.by_name("warmup_steps").description
+
+
+# ---------------------------------------------------------------------------
+# S4: a Fine-tune start checks what each child's process checks against its base
+# ---------------------------------------------------------------------------
+@pytest.fixture
+def base(tmp_path):
+    """A one-layer base trained on a generated workspace's graph, its split
+    seed recorded (`test_finetune_children`'s, with a split record)."""
+    pytest.importorskip("torch")
+    from tests.unit.test_finetune_children import _derive_fixture, _trained_on
+    from tests.unit.test_task_first_selection import BASE_RUN, _put, _record_payload
+    from tests.fixtures.generated_workspace import write_generated_workspace
+
+    workspace, _ = write_generated_workspace(tmp_path / "ws", train_ids=[1, 2], val_ids=[3])
+    _derive_fixture(workspace)
+    payload = _trained_on(workspace, _record_payload())
+    payload["data_roles"] = {**payload["data_roles"], "split": {"seed": 4}}
+    return workspace, _put(workspace, "gatv2", BASE_RUN, payload, 100)
+
+
+def _finetune(base, *tasks, **settings):
+    from src.api.services.training_manager import FinetuneInputs, TrainingManager
+    from tests.fixtures.job_processes import FakeProcess
+    from tests.unit.test_job_runner import Popens
+
+    workspace, path = base
+    calls = Popens(FakeProcess(pid=1), FakeProcess(pid=2))
+    with patch("subprocess.Popen", calls):
+        result = TrainingManager().start_finetune(FinetuneInputs(
+            data_dir=str(workspace), finetune_from=str(path), tasks=tasks, device="cpu",
+            settings=settings))
+    for process in calls.queue:
+        process.finish(0)
+    return result, calls.calls
+
+
+def test_a_fine_tune_whose_hops_contradict_its_base_is_refused_before_any_child(base):
+    result, calls = _finetune(base, "disease")
+    assert result["success"] is False and result["invalid_settings"] is True and calls == []
+    assert result["error"] == (
+        "The Disease child's hop list [15, 10, 5] (its task's reference) does not fit its base's "
+        "encoder: num_neighbors needs 1 numbers, one hop per encoder layer, not 3. Nothing was "
+        "started.")
+    result, calls = _finetune(base, "disease", "gene", num_neighbors=[3])
+    assert result["success"] is True and len(calls) == 1
+
+
+def test_a_fine_tune_whose_split_seed_contradicts_its_base_is_refused(base):
+    result, calls = _finetune(base, "disease", num_neighbors=[3], split_seed=9)
+    assert result["success"] is False and calls == []
+    assert "split_seed 9 differs from the base's 4; a finetune trains on its base's split." \
+        in result["error"]
+    result, calls = _finetune(base, "disease", num_neighbors=[3], split_seed=4)
+    assert result["success"] is True, result
+
+
+def test_a_fine_tune_spec_is_one_tasks_and_keeps_its_bases_graph_side(base):
+    from src.models.bundle.spec import finetune_spec_from_parent, reference_spec
+    from tests.unit.test_task_first_selection import _base_spec
+
+    own = finetune_spec_from_parent(_base_spec(), "disease").to_dict()
+    result, calls = _finetune(base, "disease", "gene", num_neighbors=[3], model_spec=own)
+    assert result["success"] is False and calls == []
+    assert "model_spec is one task's spec" in result["error"]
+    other = reference_spec("finetune", "disease").to_dict()
+    result, calls = _finetune(base, "disease", num_neighbors=[3], model_spec=other)
+    assert result["success"] is False and calls == []
+    assert "a finetune keeps its base's graph view, input, encoder and LP head" in result["error"]
+    result, calls = _finetune(base, "disease", num_neighbors=[3],
+                              model_spec=finetune_spec_from_parent(_base_spec(),
+                                                                   "gene").to_dict())
+    assert "model_spec is a finetune spec for gene, not a finetune spec for disease" \
+        in result["error"]
+    result, calls = _finetune(base, "disease", num_neighbors=[3], model_spec=own)
+    assert result["success"] is True and len(calls) == 1
+    assert yaml.safe_load(Path(calls[0][calls[0].index("--config") + 1]).read_text())[
+        "model_spec"] == own

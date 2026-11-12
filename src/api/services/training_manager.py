@@ -475,11 +475,11 @@ class _Finetune:
                 "children": [child.describe() for child in self.children]}
 
 
-#: What a new model bundle run's configuration may name besides its recipe
-#: settings (README §1, BACKLOG 54): where and how it runs, its stage, and the
-#: model spec it builds (the reference recipe's when it names none).
+#: What a new model bundle run's configuration may name besides the settings
+#: it reads (`run_plan.new_run_settings`, the model spec among them; README
+#: §1, BACKLOG 54): where and how it runs, and its stage.
 _NEW_RUN_KEYS = frozenset({"data_dir", "run_name", "run_dir", "device", "compile",
-                           "learning_stage", "model_spec"})
+                           "learning_stage"})
 
 
 def _task_words(tasks: Sequence[str]) -> str:
@@ -490,36 +490,64 @@ def _task_words(tasks: Sequence[str]) -> str:
     return task_list_text([TASK_NAMES.get(task, task) for task in tasks])
 
 
-def _recipe_settings_problem(settings: Mapping[str, Any], references: Sequence[Mapping[str, Any]],
-                             what: str, *, learning_stage: str) -> Optional[str]:
+def _recipe_settings_problem(settings: Mapping[str, Any], learning_stage: str,
+                             tasks: Sequence[Optional[str]], what: str) -> Optional[str]:
     """**The one check of the settings a new model bundle run is started with**
-    (BACKLOG 54), shared by `start_training` (a base) and `start_finetune`
-    (every child): why `settings` cannot start `what`, a run of
-    `learning_stage`, or None. `references` are the recipe values of every run
-    the start makes (`reference_settings`: one per Fine-tune task, one for a
-    base), so a setting is taken only when every run reads it, its value only
-    when its field spec takes it (`value_problem`), and None only where a
-    reference value is None. The freeze is checked first, by the training
-    process's own check of it and in its order (`frozen_parts_problem`, before
-    the settings a run does not read), so a base asked to freeze hears from
-    both that nothing would train. Checked here, a refused setting starts
-    nothing and writes nothing."""
-    from src.config.recipe import frozen_parts_problem
-    from src.config.training_fields import value_problem
+    (BACKLOG 54), shared by `start_training` (a base, `tasks` ``(None,)``) and
+    `start_finetune` (one child per task): why `settings` cannot start
+    `what`, the runs of `learning_stage` the start makes, or None, by the
+    rules the training process applies to each (decisions S1, S3):
+
+    - the freeze first, by the process's own check and in its order
+      (`frozen_parts_problem`, before the settings a run does not read), so a
+      base asked to freeze hears from both that nothing would train;
+    - a setting is taken only when every run reads it: the intersection of
+      `run_plan.new_run_settings` over the runs;
+    - its value only when its field spec takes it (`value_problem`), None
+      only where a run's reference value is None or the field's default is;
+    - the rules across settings (`training_fields.cross_field_problems`), on
+      each run's settings as the process fills them (`run_plan.new_run_values`)
+      for what `settings` set: one the run would not read is refused.
+
+    Checked here, a refused setting starts nothing and writes nothing."""
+    from src.config.recipe import frozen_parts_problem, reference_settings
+    from src.config.training_fields import cross_field_problems, value_problem
+    from src.utils.run_plan import new_run_settings, new_run_values
 
     if "frozen_parts" in settings:
         frozen = frozen_parts_problem(learning_stage, settings["frozen_parts"])
         if frozen:
             return frozen
-    common = set.intersection(*(set(values) for values in references))
+    common = set.intersection(*(set(new_run_settings(learning_stage, task)) for task in tasks))
     unread = sorted(set(settings) - common)
     if unread:
         return (f"{', '.join(unread)} is not a setting {what} takes (it takes "
                 f"{', '.join(sorted(common))}).")
+    references = [reference_settings(learning_stage, task)[0] for task in tasks]
     problems = [problem for name, value in sorted(settings.items())
                 for problem in [value_problem(name, value, allow_none=any(
-                    values.get(name) is None for values in references))] if problem]
-    return " ".join(problems) or None
+                    name in values and values[name] is None for values in references))]
+                if problem]
+    if problems:
+        return " ".join(problems)
+    for task in tasks:
+        problems = cross_field_problems(new_run_values(learning_stage, task, settings),
+                                        settings)
+        if problems:
+            return " ".join(problems)
+    return None
+
+
+def _read_spec(data: Any) -> Tuple[Any, Optional[str]]:
+    """A model spec given as plain data (a start's `model_spec`), read
+    strictly and validated (`ModelSpec.from_dict`), and None; or None and why
+    it cannot be read."""
+    from src.models.bundle.spec import ModelSpec, SpecError
+
+    try:
+        return ModelSpec.from_dict(data).validate(), None
+    except (SpecError, TypeError, ValueError, KeyError, AttributeError) as exc:
+        return None, f"The model_spec cannot be read: {exc}"
 
 
 def _new_bundle_run(config: Mapping[str, Any]) -> Tuple[Optional[str], Optional[str]]:
@@ -531,14 +559,16 @@ def _new_bundle_run(config: Mapping[str, Any]) -> Tuple[Optional[str], Optional[
 
     Only a base starts here: a finetune is a Fine-tune start's
     (`start_finetune`, one child per task from a base). Its keys are the
-    recipe's base settings and `_NEW_RUN_KEYS`, each value one its field spec
-    takes (`_recipe_settings_problem`), and its hop list one number per hop
-    the spec's encoder declares (`hops_problem`, the recipe's list when it
-    names none; GATv2: one per layer), so a spec whose encoder this build
-    cannot build or sample is refused here too; a setting outside them is
-    refused, never passed on for the process to refuse."""
+    settings a base reads (`run_plan.new_run_settings("base")`) and
+    `_NEW_RUN_KEYS`, each value one its field spec takes and the rules across
+    settings hold (`_recipe_settings_problem`), its model spec a base's
+    (`run_spec_problem`), and its hop list one number per hop the spec's
+    encoder declares (`hops_problem`, the recipe's list when it names none;
+    GATv2: one per layer), so a spec whose encoder this build cannot build or
+    sample is refused here too; a setting outside them is refused, never
+    passed on for the process to refuse."""
     from src.config.recipe import reference_settings
-    from src.models.bundle.spec import ModelSpec, SpecError, hops_problem, reference_spec
+    from src.models.bundle.spec import hops_problem, reference_spec, run_spec_problem
 
     stage = config.get("learning_stage")
     if stage is None:
@@ -552,22 +582,61 @@ def _new_bundle_run(config: Mapping[str, Any]) -> Tuple[Optional[str], Optional[
     references = reference_settings("base")[0]
     problem = _recipe_settings_problem(
         {name: value for name, value in config.items() if name not in _NEW_RUN_KEYS},
-        [references], "a base run", learning_stage="base")
+        "base", (None,), "a base run")
     if problem:
         return None, problem
     if config.get("model_spec") is None:
         spec = reference_spec("base")
     else:
-        try:
-            spec = ModelSpec.from_dict(config["model_spec"]).validate()
-        except (SpecError, TypeError, ValueError, KeyError, AttributeError) as exc:
-            return None, f"The model_spec cannot be read: {exc}."
-        if spec.learning_stage != "base":
-            return None, f"The model_spec is a {spec.learning_stage} spec; a new run is a base."
+        spec, problem = _read_spec(config["model_spec"])
+        if problem is None:
+            problem = run_spec_problem(spec, "base", None)
+        if problem:
+            return None, f"{problem}."
     problem = hops_problem(config.get("num_neighbors", references["num_neighbors"]), spec.encoder)
     if problem:
         return None, problem
     return spec.encoder.kind, None
+
+
+def _finetune_base_problem(settings: Mapping[str, Any], tasks: Sequence[str],
+                           base: Any) -> Optional[str]:
+    """Why a Fine-tune start's `settings` contradict its base, the model
+    record `base` (the start's one read of the parent), for one of its
+    `tasks`, or None (decision S4): what each child's process checks against
+    its base (`train_model.train`), checked here before any child starts,
+    through the same functions and in the same order:
+
+    - a stated model spec (one task's; `start_finetune` refuses one for
+      several) of the finetune stage and task, its graph side the base's
+      (`run_spec_problem`);
+    - each child's hop list, the one stated or its task's reference, one
+      number per hop of the base's encoder (`hops_problem`);
+    - a stated split seed, the base's (`finetune_split_seed_problem`)."""
+    from src.config.recipe import reference_settings
+    from src.models.bundle.spec import hops_problem, run_spec_problem
+    from src.utils.run_plan import finetune_split_seed_problem
+
+    encoder = base.model_spec.encoder
+    if settings.get("model_spec") is not None:
+        spec, problem = _read_spec(settings["model_spec"])
+        if problem is None:
+            problem = run_spec_problem(spec, "finetune", tasks[0], base=base.model_spec)
+        if problem:
+            return f"{problem}."
+    for task in tasks:
+        hops = settings.get("num_neighbors",
+                            reference_settings("finetune", task)[0]["num_neighbors"])
+        problem = hops_problem(hops, encoder)
+        if problem:
+            whose = "stated" if "num_neighbors" in settings else "its task's reference"
+            return (f"The {_task_words([task])} child's hop list {hops} ({whose}) does not fit "
+                    f"its base's encoder: {problem}")
+    if "split_seed" in settings:
+        problem = finetune_split_seed_problem(settings["split_seed"], base.data_roles.get("split"))
+        if problem:
+            return f"{problem}."
+    return None
 
 
 def deployment_device() -> Optional[str]:
@@ -1123,15 +1192,16 @@ class TrainingManager:
 
         **A new run** (no `resume_from`) is a model bundle base: its
         configuration is checked whole first (`_new_bundle_run`: its stage
-        ``base``, only the recipe's base settings and the run keys, each value
-        its field spec takes; a request without a stage, and a finetune, which
-        starts through `start_finetune`, are refused here as invalid settings,
-        nothing spawned or written), and it is filed under its model spec's
-        encoder kind. A continued run takes its parent's stage and task from
-        the preview's read of the parent's record; a continued run's request
-        that states a learning stage (the API's base start states ``base``) is
-        refused by the preview unless the parent's record holds that stage, as
-        any explicit setting other than the parent's is.
+        ``base``, only the settings a base reads and the run keys, each value
+        its field spec takes and the rules across settings holding; a request
+        without a stage, and a finetune, which starts through
+        `start_finetune`, are refused here as invalid settings, nothing
+        spawned or written), and it is filed under its model spec's encoder
+        kind. A continued run takes its parent's stage and task from the
+        preview's read of the parent's record; a continued run's request that
+        states a learning stage (the API's start may state one) is refused by
+        the preview unless the parent's record holds that stage, as any
+        explicit setting other than the parent's is.
 
         Returns:
             Status dict with success/error info. Refused while any GPU job is
@@ -1282,10 +1352,14 @@ class TrainingManager:
 
         Refused before anything starts: no task, more than three, one twice or
         one this build does not train; a setting not every chosen task reads,
-        or a value its field spec refuses (`_recipe_settings_problem`, the
-        check a base start shares); a dataset that changed; a parent that is
+        a value its field spec refuses or a setting a child would not read
+        (`_recipe_settings_problem`, the check a base start shares), a model
+        spec for more than one task; a dataset that changed; a parent that is
         not a base with weights, or not the bytes the caller showed, or was
-        trained on another graph than the workspace's; for a gene or
+        trained on another graph than the workspace's; **what a child's
+        process checks against its base** (`_finetune_base_problem`: a model
+        spec of another graph side, a hop list that does not fit its encoder,
+        another split seed); for a gene or
         patients-like-me task, a functional fixture that is absent or derived
         from another build of the workspace (`read_fixture_record`); a busy
         slot. **The graph and the fixture are checked as each child's process
@@ -1299,7 +1373,6 @@ class TrainingManager:
         refused and say why; nothing waits. Every child is bound to the
         digest of this start's read of the parent (`--expect-parent-sha256`).
         """
-        from src.config.recipe import reference_settings
         from src.kg.artifacts import (
             MANIFEST_FILENAME, DatasetChanged, manifest_section, read_split_manifest,
         )
@@ -1322,9 +1395,12 @@ class TrainingManager:
             return refused(f"{unknown[0]!r} is not a task; one of {list(TASKS)}.")
         if len(set(tasks)) != len(tasks):
             return refused("A task is named more than once; each task is one child.")
-        problem = _recipe_settings_problem(
-            inputs.settings, [reference_settings("finetune", task)[0] for task in tasks],
-            f"a Fine-tune start of {_task_words(tasks)}", learning_stage="finetune")
+        problem = _recipe_settings_problem(inputs.settings, "finetune", tasks,
+                                           f"a Fine-tune start of {_task_words(tasks)}")
+        if problem is None and "model_spec" in inputs.settings and len(tasks) > 1:
+            problem = (f"model_spec is one task's spec (its patient encoder and task head), and "
+                       f"a Fine-tune start of {_task_words(tasks)} would give it to every child; "
+                       "start each task with its own.")
         if problem:
             return {**refused(problem), "invalid_settings": True}
         if expected_dataset_fingerprint is not None:
@@ -1378,6 +1454,11 @@ class TrainingManager:
                 verb = "trains" if len(on_fixture) == 1 else "train"
                 return refused(f"{_task_words(on_fixture)} {verb} on the gene task's functional "
                                f"fixture: {exc}.")
+        # What each child's process checks against its base once it has read
+        # its data, in its order (`train_model.train`).
+        problem = _finetune_base_problem(inputs.settings, tasks, record)
+        if problem:
+            return {**refused(problem), "invalid_settings": True}
 
         sequence = _Finetune(inputs=FinetuneInputs(**{**inputs.__dict__, "finetune_from": str(path),
                                                       "tasks": tasks}),

@@ -335,6 +335,22 @@ def test_a_kind_this_build_does_not_implement_offers_no_computation():
     assert str(refused.value) == encoder_not_built("hgt")
 
 
+def test_a_declared_encoder_kind_is_exactly_a_built_one():
+    """Decision S5: the architectures offered as trainable are the implemented
+    declarations, `ENCODER_DECLARATIONS`, pinned equal to the builder's
+    implementations (`builder._ENCODERS`), so a list read from the
+    declarations never offers a kind the builder refuses, and a built kind is
+    never missing from it. `ENCODER_KINDS` names more (kinds a spec may name
+    and a run refuses), never the options."""
+    pytest.importorskip("torch")
+    pytest.importorskip("torch_geometric")
+    from src.config.model_types import ENCODER_KINDS
+    from src.models.bundle import builder
+
+    assert set(spec_module.ENCODER_DECLARATIONS) == set(builder._ENCODERS) == {"gatv2"}
+    assert set(spec_module.ENCODER_DECLARATIONS) < set(ENCODER_KINDS)
+
+
 @pytest.mark.parametrize("kind", ["hgt", "sage", "hetero_gat"])
 def test_the_base_start_refuses_a_kind_this_build_does_not_implement(kind, tmp_path):
     """A run that cannot be built is refused at the start, in the builder's

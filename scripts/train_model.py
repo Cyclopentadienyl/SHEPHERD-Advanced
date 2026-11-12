@@ -1206,19 +1206,24 @@ def train(config: TrainConfig, explicit: Collection[str], *,
 
     from src.kg.graph_view import SplitMismatchError, build_graph_view, rebuild_split, split_facts
     from src.models.bundle import ModelSpec, build_bundle, finetune_spec_from_parent, reference_spec
-    from src.models.bundle.spec import hops_problem
+    from src.models.bundle.spec import hops_problem, run_spec_problem
     from src.models.bundle.record import (
         EXPOSURE_FULL_VIEW, EXPOSURE_FULL_VIEW_SP, EXPOSURE_TRAIN_CASES, EXPOSURE_TRAIN_EDGES,
         EXPOSURE_TRAIN_EDGES_DRAWN_PAIRS_REMOVED, EXPOSURE_VAL_CASES, EXPOSURE_VAL_EDGES,
         MODEL_RECORD_VERSION, ModelRecord, ModelRecordError, read_model_record,
     )
-    from src.config.recipe import BASE_FIXED, FROZEN_PARTS, frozen_parts_problem, unread_settings
+    from src.config.recipe import BASE_FIXED, FROZEN_PARTS, frozen_parts_problem
+    from src.config.training_fields import cross_field_problems
+    from src.config.training_fields import names as setting_names
     from src.models.bundle.builder import DOWNSTREAM_PARTS, GRAPH_SIDE_PARTS
     from src.training.lp_task import BASE_SELECTION_METRIC, BaseLPSampler, BaseLPTask
     from src.utils.checkpoint_paths import (
         check_run_dir_free, claim_run_dir, propose_run_dir, run_checkpoint_dir, run_log_dir,
     )
-    from src.utils.run_plan import RunPlanRefused, decoded_sentence, plan_branch
+    from src.utils.run_plan import (
+        OPERATIONAL_FIELDS, RunPlanRefused, decoded_sentence, finetune_split_seed_problem,
+        new_run_settings, plan_branch,
+    )
 
     if explicit is None:
         raise TypeError("train() needs the fields the operator set (explicit); they are "
@@ -1253,9 +1258,12 @@ def train(config: TrainConfig, explicit: Collection[str], *,
         frozen_problem = frozen_parts_problem(stage, config.frozen_parts)
         if frozen_problem:
             raise ValueError(frozen_problem)
-    # A base reads no finetune setting (a task's, or the freeze); a finetune
-    # reads its own task's, not another task's.
-    unread = sorted(explicit_set & unread_settings(stage, config.task))
+    # A run reads the settings of its stage and task (`new_run_settings`, the
+    # one statement of that rule): a base no finetune setting (a task's, or
+    # the freeze), a finetune its own task's, not another task's.
+    stated = (explicit_set & set(setting_names())) - OPERATIONAL_FIELDS - {"learning_stage",
+                                                                          "task"}
+    unread = sorted(stated - new_run_settings(stage, config.task))
     if unread:
         raise ValueError(
             f"{', '.join(unread)} configure "
@@ -1271,6 +1279,13 @@ def train(config: TrainConfig, explicit: Collection[str], *,
     recipe = None
     if not (config.resume_from or config.branch_from):
         config, recipe = apply_stage_recipe(config, explicit_set)
+        # The rules across settings (decision S3), on the settings the run
+        # trains with, for what the operator set: one it would not read is
+        # refused, never ignored (a continuation's and a branch's are judged
+        # by their plans, on the settings they inherit).
+        problems = cross_field_problems(_asdict(config), explicit_set)
+        if problems:
+            raise ValueError(" ".join(problems))
 
     device = resolve_training_device(config.device)
     logger.info(f"Model bundle run, learning stage {stage}"
@@ -1346,18 +1361,16 @@ def train(config: TrainConfig, explicit: Collection[str], *,
         spec = finetune_spec_from_parent(base_record.model_spec, config.task)
     else:
         spec = reference_spec(stage, config.task)
-    if spec.learning_stage != stage or spec.task != config.task:
-        raise ValueError(f"model_spec is a {spec.learning_stage} spec for {spec.task!r}, not "
-                         f"{stage} for {config.task!r}")
+    # Its stage and task, and a finetune's graph side its base's, by the one
+    # check the job runner's starts make too (`run_spec_problem`).
+    problem = run_spec_problem(spec, stage, config.task,
+                               base=base_record.model_spec if base_record is not None else None)
+    if problem:
+        raise ValueError(problem)
     kept_from = parent_record or branch_record
     if kept_from is not None and spec != kept_from.model_spec:
         raise ValueError("model_spec differs from the parent's; a continued or branched run "
                          "keeps its parent's architecture")
-    if base_record is not None:
-        graph_side = ("graph_view", "input", "encoder", "lp_head")
-        if any(getattr(spec, f) != getattr(base_record.model_spec, f) for f in graph_side):
-            raise ValueError("a finetune keeps its base's graph view, input, encoder and LP head "
-                             "(README §3.3, Inheritance)")
     hops = hops_problem(config.num_neighbors, spec.encoder)
     if hops:
         raise ValueError(hops)
@@ -1367,11 +1380,12 @@ def train(config: TrainConfig, explicit: Collection[str], *,
     # A finetune trains on its base's split (G4): the seed is the base's.
     lineage = parent_record or branch_record or base_record
     if base_record is not None:
-        recorded_seed = (base_record.data_roles.get("split") or {}).get("seed")
-        if "split_seed" in explicit_set and config.split_seed != recorded_seed:
-            raise ValueError(f"split_seed {config.split_seed} differs from the base's "
-                             f"{recorded_seed}; a finetune trains on its base's split")
-        config.split_seed = int(recorded_seed)
+        base_split = base_record.data_roles.get("split") or {}
+        if "split_seed" in explicit_set:
+            problem = finetune_split_seed_problem(config.split_seed, base_split)
+            if problem:
+                raise ValueError(problem)
+        config.split_seed = int(base_split.get("seed"))
     view_rule = _asdict(spec.graph_view)
     view_rule["exclude_relations"] = list(view_rule["exclude_relations"])
     view = build_graph_view(inputs.graph.graph_data, rule=view_rule)

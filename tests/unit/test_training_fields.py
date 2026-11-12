@@ -124,9 +124,9 @@ def test_cross_field_rules_are_structured_and_reference_real_fields():
     assert tf.CROSS_FIELD_RULES, "cross-field rules must be represented structurally"
     names = set(tf.names())
     for rule in tf.CROSS_FIELD_RULES:
+        assert rule.kind in tf.RULE_KINDS, f"{rule.name}: unknown kind {rule.kind}"
         assert rule.subject in names, f"{rule.name}: unknown subject {rule.subject}"
-        if rule.operand:
-            assert rule.operand in names, f"{rule.name}: unknown operand {rule.operand}"
+        assert rule.when, f"{rule.name}: a rule names its guard"
         for guard_field, allowed in (rule.when or {}).items():
             assert guard_field in names, f"{rule.name}: unknown guard field {guard_field}"
             spec_choices = tf.by_name(guard_field).choices
