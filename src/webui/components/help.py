@@ -37,11 +37,19 @@ into one hidden container (`HelpRegistry.texts_html`), and the one head script
   the help text, and the ``<label>`` names its input by id, so a click on the
   title still focuses the field (a button inside a label would otherwise
   become its control);
-- shows one shared bubble on hover, keyboard focus and click, by document-level
-  delegation, so a ⓘ inside an HTML value that is replaced later keeps working;
-  closes on Esc and on a click outside; stays open while the pointer is in the
-  bubble; a click pins it open; it is placed below or above its ⓘ, on the side
-  with room, and never taller than the window (a long text scrolls inside);
+- shows one shared bubble, a toggletip (the WebUI skill's §7), by
+  document-level delegation, so a ⓘ inside an HTML value that is replaced
+  later keeps working: a hover previews it after a short delay
+  (`HOVER_OPEN_MS`) and keyboard focus at once, both as a ``tooltip``; a click
+  (or Enter or Space) pins it open as a ``dialog`` named by its title; Esc and
+  a click outside close it; it stays open while the pointer is in the bubble;
+- places it so it **never covers the field it explains** (the field's block,
+  the table row, the key-value row's key and value, or the line the ⓘ sits
+  in): beside that field, then above it, then below it, the first that fits
+  the window without overlapping it; failing all, narrower beside it, or on
+  the side with more room with its height capped (a long text scrolls
+  inside); at most 320 px wide (`BUBBLE_MAX_WIDTH`), the ⓘ's hit target at
+  least 24 × 24 px;
 - fills the bubble with ``textContent`` only: no help text is ever parsed as
   HTML in the browser.
 
@@ -63,6 +71,13 @@ _KEY = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")
 
 #: The prefix of a help text's element id (``aria-describedby`` names it).
 TEXT_ID_PREFIX = "shep-help-text-"
+
+#: The bubble's widest (CSS px; the WebUI skill's §7 budget), the delay before
+#: a hover opens its preview (ms), and the ⓘ's smallest hit target (CSS px,
+#: the skill's §10 floor).
+BUBBLE_MAX_WIDTH = 320
+HOVER_OPEN_MS = 300
+HIT_TARGET = 24
 
 #: The ⓘ glyph: an inline SVG, so no font or network is needed.
 _I_ICON = ('<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" '
@@ -193,8 +208,9 @@ _HELP_JS = r"""
 (function () {
   if (window.ShepHelp) { return; }
   var SEL = 'button.shep-i';
+  var MAX_W = __MAX_W__, HOVER_MS = __HOVER_MS__, GAP = 10, EDGE = 8;
   var bubble = null, anchor = null, anchorKey = null, pinned = false;
-  var hideTimer = null;
+  var hideTimer = null, openTimer = null, previewFor = null;
 
   function closestHelp(node) {
     return node && node.closest ? node.closest(SEL) : null;
@@ -220,6 +236,7 @@ _HELP_JS = r"""
     bubble.hidden = true;
     var hd = document.createElement('div'); hd.className = 'shep-bubble-hd';
     var title = document.createElement('span'); title.className = 'shep-bubble-title';
+    title.id = 'shep-help-bubble-title';
     var x = document.createElement('button');
     x.type = 'button'; x.className = 'shep-bubble-x'; x.tabIndex = -1;
     x.setAttribute('aria-label', 'Close help'); x.textContent = '×';
@@ -235,6 +252,29 @@ _HELP_JS = r"""
     document.body.appendChild(bubble);
     return bubble;
   }
+  // The field a ⓘ explains, which the bubble never covers: a registered
+  // field's block, else its table row, else its key-value row (the key cell
+  // and the value beside it), else the line the ⓘ sits in.
+  function box(r) { return {left: r.left, top: r.top, right: r.right, bottom: r.bottom}; }
+  function fieldRect(btn) {
+    var el = btn.classList.contains('shep-i-field') && btn.closest('.block');
+    el = el || btn.closest('tr');
+    if (!el) {
+      var key = btn.closest('.shep-k');
+      if (key) {
+        var k = box(key.getBoundingClientRect()), next = key.nextElementSibling;
+        if (!next) { return k; }
+        var v = next.getBoundingClientRect();
+        return {left: Math.min(k.left, v.left), top: Math.min(k.top, v.top),
+                right: Math.max(k.right, v.right), bottom: Math.max(k.bottom, v.bottom)};
+      }
+      el = btn.closest('.shep-chip, li, p, dt, dd, h1, h2, h3, h4, label, div') || btn;
+    }
+    return box(el.getBoundingClientRect());
+  }
+  function overlaps(a, b) {
+    return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+  }
   function place() {
     if (!bubble || bubble.hidden || !anchor) { return; }
     if (!anchor.isConnected) {
@@ -242,38 +282,92 @@ _HELP_JS = r"""
       if (again) { anchor = again; anchor.setAttribute('aria-expanded', 'true'); }
       else { close(false); return; }
     }
-    var r = anchor.getBoundingClientRect();
+    var a = anchor.getBoundingClientRect(), f = fieldRect(anchor);
     var vw = document.documentElement.clientWidth, vh = document.documentElement.clientHeight;
-    bubble.style.maxWidth = Math.max(220, Math.min(360, vw - 24)) + 'px';
+    var width = Math.max(220, Math.min(MAX_W, vw - 2 * EDGE));
+    bubble.style.maxWidth = width + 'px';
     bubble.style.maxHeight = '';
     var bw = bubble.offsetWidth, bh = bubble.offsetHeight;
-    // Below when it fits, else above when it fits, else on the side with more
-    // room, its height capped to that room (its text then scrolls inside).
-    var roomBelow = vh - r.bottom - 18, roomAbove = r.top - 18;
-    var below = bh <= roomBelow || (bh > roomAbove && roomBelow >= roomAbove);
-    var room = below ? roomBelow : roomAbove;
-    if (bh > room) { bubble.style.maxHeight = Math.max(96, room) + 'px'; bh = bubble.offsetHeight; }
-    var top = below ? r.bottom + 10 : r.top - 10 - bh;
-    var left = Math.min(Math.max(8, r.left + r.width / 2 - 24), vw - bw - 8);
-    bubble.style.top = Math.max(8, top) + 'px';
-    bubble.style.left = Math.max(8, left) + 'px';
-    bubble.classList.toggle('shep-up', !below);
-    bubble.style.setProperty('--shep-ax', Math.max(10, Math.min(bw - 22, r.left + r.width / 2 - left - 6)) + 'px');
+    var cx = a.left + a.width / 2, cy = a.top + a.height / 2;
+    function x(left, w) { return Math.min(Math.max(EDGE, left), vw - w - EDGE); }
+    function y(top, h) { return Math.min(Math.max(EDGE, top), vh - h - EDGE); }
+    function at(side, w, h) {
+      if (side === 'right') { return {side: side, left: f.right + GAP, top: y(cy - 24, h), w: w, h: h}; }
+      if (side === 'left') { return {side: side, left: f.left - GAP - w, top: y(cy - 24, h), w: w, h: h}; }
+      if (side === 'above') { return {side: side, left: x(cx - 24, w), top: f.top - GAP - h, w: w, h: h}; }
+      return {side: side, left: x(cx - 24, w), top: f.bottom + GAP, w: w, h: h};
+    }
+    function fits(p) {
+      return p.left >= EDGE && p.top >= EDGE && p.left + p.w <= vw - EDGE &&
+        p.top + p.h <= vh - EDGE &&
+        !overlaps({left: p.left, top: p.top, right: p.left + p.w, bottom: p.top + p.h}, f);
+    }
+    // Beside the field, then above it, then below it: the first that fits
+    // the window and leaves the field uncovered.
+    var sides = ['right', 'left', 'above', 'below'], chosen = null;
+    for (var i = 0; i < sides.length && !chosen; i++) {
+      var p = at(sides[i], bw, bh);
+      if (fits(p)) { chosen = p; }
+    }
+    if (!chosen) {
+      // Narrower beside it, on the side with room for 220 px or more.
+      var roomR = vw - EDGE - f.right - GAP, roomL = f.left - GAP - EDGE;
+      var room = Math.max(roomR, roomL);
+      if (room >= 220) {
+        bubble.style.maxWidth = Math.min(width, room) + 'px';
+        if (bubble.offsetHeight > vh - 2 * EDGE) { bubble.style.maxHeight = (vh - 2 * EDGE) + 'px'; }
+        chosen = at(roomR >= roomL ? 'right' : 'left', bubble.offsetWidth, bubble.offsetHeight);
+      }
+    }
+    if (!chosen) {
+      // Above or below, on the side with more room, its height capped to
+      // that room (its text then scrolls inside).
+      var roomAbove = f.top - GAP - EDGE, roomBelow = vh - EDGE - f.bottom - GAP;
+      var up = roomAbove > roomBelow;
+      bubble.style.maxHeight = Math.max(48, up ? roomAbove : roomBelow) + 'px';
+      chosen = at(up ? 'above' : 'below', bubble.offsetWidth, bubble.offsetHeight);
+    }
+    bubble.style.left = chosen.left + 'px';
+    bubble.style.top = Math.max(EDGE, chosen.top) + 'px';
+    bubble.classList.toggle('shep-up', chosen.side === 'above');
+    bubble.classList.toggle('shep-at-right', chosen.side === 'right');
+    bubble.classList.toggle('shep-at-left', chosen.side === 'left');
+    bubble.style.setProperty('--shep-ax', Math.max(10, Math.min(chosen.w - 22, cx - chosen.left - 6)) + 'px');
+    bubble.style.setProperty('--shep-ay', Math.max(10, Math.min(chosen.h - 22, cy - chosen.top - 6)) + 'px');
+  }
+  // Pinned, the bubble is a dialog named by its title; a preview (hover or
+  // focus) is a tooltip.
+  function setRole() {
+    if (!bubble) { return; }
+    bubble.setAttribute('role', pinned ? 'dialog' : 'tooltip');
+    if (pinned) { bubble.setAttribute('aria-labelledby', 'shep-help-bubble-title'); }
+    else { bubble.removeAttribute('aria-labelledby'); }
   }
   function open(btn, pin) {
     clearTimeout(hideTimer);
+    clearTimeout(openTimer); previewFor = null;
     if (anchor && anchor !== btn) { anchor.setAttribute('aria-expanded', 'false'); pinned = false; }
     anchor = btn; anchorKey = btn.getAttribute('data-help');
     pinned = pin ? true : pinned;
     var b = ensureBubble();
     b.querySelector('.shep-bubble-title').textContent = titleOf(btn);
     b.querySelector('.shep-bubble-bd').textContent = textOf(btn);
+    setRole();
     b.hidden = false;
     btn.setAttribute('aria-expanded', 'true');
     place();
   }
+  // A hover previews after a short delay, so a pointer passing over a ⓘ
+  // opens nothing.
+  function openSoon(btn) {
+    if (previewFor === btn) { return; }
+    clearTimeout(openTimer);
+    previewFor = btn;
+    openTimer = setTimeout(function () { previewFor = null; if (btn.isConnected) { open(btn, false); } }, HOVER_MS);
+  }
   function close(returnFocus) {
     clearTimeout(hideTimer);
+    clearTimeout(openTimer); previewFor = null;
     if (bubble) { bubble.hidden = true; }
     if (anchor) {
       anchor.setAttribute('aria-expanded', 'false');
@@ -282,6 +376,7 @@ _HELP_JS = r"""
       }
     }
     anchor = null; anchorKey = null; pinned = false;
+    setRole();
   }
   function scheduleHide() {
     clearTimeout(hideTimer);
@@ -289,14 +384,15 @@ _HELP_JS = r"""
   }
   document.addEventListener('mouseover', function (e) {
     var btn = closestHelp(e.target);
-    if (btn) { if (anchor !== btn || !bubble || bubble.hidden) { open(btn, false); } else { clearTimeout(hideTimer); } }
+    if (btn) { if (anchor !== btn || !bubble || bubble.hidden) { openSoon(btn); } else { clearTimeout(hideTimer); } }
   });
   document.addEventListener('mouseout', function (e) {
     var btn = closestHelp(e.target);
-    if (!btn || pinned) { return; }
+    if (!btn) { return; }
     var to = e.relatedTarget;
     if (to && (btn.contains(to) || (bubble && bubble.contains(to)))) { return; }
-    scheduleHide();
+    if (previewFor === btn) { clearTimeout(openTimer); previewFor = null; }
+    if (!pinned) { scheduleHide(); }
   });
   document.addEventListener('focusin', function (e) {
     var btn = closestHelp(e.target);
@@ -407,23 +503,33 @@ _HELP_JS = r"""
 """
 
 #: The help control's script, for the mount's ``head=`` (`src/webui/app.py`).
-HELP_HEAD = "<script>" + _HELP_JS.replace("__I_ICON__", _I_ICON.replace("'", "\\'")) + "</script>"
+HELP_HEAD = "<script>" + (_HELP_JS.replace("__I_ICON__", _I_ICON.replace("'", "\\'"))
+                          .replace("__MAX_W__", str(BUBBLE_MAX_WIDTH))
+                          .replace("__HOVER_MS__", str(HOVER_OPEN_MS))) + "</script>"
 
 
-#: The look of the ⓘ and its bubble (part of the dashboard's CSS).
+#: The look of the ⓘ and its bubble (part of the dashboard's CSS). The ⓘ's
+#: button is the hit target, `HIT_TARGET` square; the 20 px ring it draws
+#: inside (``::before``) keeps the look, and its negative margins keep the
+#: line's height.
 HELP_CSS = """
 button.shep-i {
-  display: inline-flex; align-items: center; justify-content: center; flex: none;
-  width: 20px; height: 20px; padding: 0; margin: 0 0 0 6px; border-radius: 50%;
-  border: 1.5px solid #8d94a1; background: #fff; color: #4b5260; cursor: pointer;
-  vertical-align: middle; line-height: 1;
+  position: relative; display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: __HIT__px; height: __HIT__px; padding: 0; margin: -2px 0 -2px 4px; border: 0; border-radius: 50%;
+  background: transparent; color: #4b5260; cursor: pointer; vertical-align: middle; line-height: 1;
 }
-button.shep-i:hover, button.shep-i[aria-expanded="true"] { border-color: var(--shep-accent); color: var(--shep-accent-text); background: var(--shep-accent-50); }
-button.shep-i:focus-visible { outline: 2px solid var(--shep-accent); outline-offset: 2px; }
-.shep-i-field { position: relative; top: -1px; }
+button.shep-i::before {
+  content: ""; position: absolute; inset: 2px; border-radius: 50%;
+  border: 1.5px solid #8d94a1; background: #fff;
+}
+button.shep-i > svg { position: relative; }
+button.shep-i:hover, button.shep-i[aria-expanded="true"] { color: var(--shep-accent-text); }
+button.shep-i:hover::before, button.shep-i[aria-expanded="true"]::before { border-color: var(--shep-accent); background: var(--shep-accent-50); }
+button.shep-i:focus-visible { outline: 2px solid var(--shep-accent); outline-offset: 0; }
+.shep-i-field { top: -1px; }
 .shep-help-texts { display: none !important; }
 .shep-bubble {
-  position: fixed; z-index: 1000; width: max-content; max-width: 360px; box-sizing: border-box;
+  position: fixed; z-index: 1000; width: max-content; max-width: __MAX_W__px; box-sizing: border-box;
   max-height: calc(100vh - 16px); display: flex; flex-direction: column;
   background: #fff; border: 1px solid var(--shep-border-2); border-radius: 10px;
   box-shadow: 0 10px 28px rgba(20, 24, 40, .16), 0 2px 6px rgba(20, 24, 40, .08);
@@ -439,6 +545,8 @@ button.shep-i:focus-visible { outline: 2px solid var(--shep-accent); outline-off
   top: -7px; left: var(--shep-ax, 18px); transform: rotate(45deg);
 }
 .shep-bubble.shep-up::before { top: auto; bottom: -7px; transform: rotate(225deg); }
+.shep-bubble.shep-at-right::before { top: var(--shep-ay, 18px); left: -7px; transform: rotate(-45deg); }
+.shep-bubble.shep-at-left::before { top: var(--shep-ay, 18px); left: auto; right: -7px; transform: rotate(135deg); }
 .shep-bubble-hd { display: flex; align-items: center; gap: 8px; font-weight: 600; margin-bottom: 4px; }
 .shep-bubble-x {
   margin-left: auto; width: 26px; height: 26px; border: 0; background: none; color: var(--shep-muted);
@@ -459,7 +567,7 @@ button.shep-copy {
 button.shep-copy:hover { background: var(--shep-panel-2); }
 .shep-copy[data-copied] { border-color: var(--shep-green-200); color: var(--shep-green-800); }
 .shep-copy.shep-copy-icon .shep-copy-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-"""
+""".replace("__HIT__", str(HIT_TARGET)).replace("__MAX_W__", str(BUBBLE_MAX_WIDTH))
 
 
 def as_json_for_script(value: object) -> str:

@@ -3389,6 +3389,7 @@ PAGE_CSS = f"""
 {_TAB} #shep-dx-run-cover .html-container, {_TAB} #shep-dx-run-cover .prose {{ height: 100%; }}
 {_TAB} button.shep-i.shep-i-cover {{ position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; border: 0;
   border-radius: 8px; background: transparent !important; cursor: not-allowed; pointer-events: auto; color: transparent; }}
+{_TAB} button.shep-i.shep-i-cover::before {{ display: none; }}
 {_TAB} button.shep-i.shep-i-cover:focus-visible {{ outline: 2px solid var(--shep-accent); outline-offset: 2px; }}
 {_TAB} #shep-dx-results-hd .shep-panel-right b {{ color: var(--shep-text); }}
 {_TAB} .shep-dx-badge-row {{ display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }}

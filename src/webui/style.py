@@ -86,7 +86,8 @@ body { color: var(--shep-text); }
   background: #fff; color: var(--shep-text-2); max-width: 100%;
 }
 .shep-chip-text { overflow: hidden; text-overflow: ellipsis; max-width: 360px; }
-.shep-chip button.shep-i { width: 18px; height: 18px; margin: 0 0 0 2px; border-color: currentColor; color: inherit; background: transparent; }
+.shep-chip button.shep-i { margin: 0 -3px 0 -1px; color: inherit; }
+.shep-chip button.shep-i::before { inset: 3px; border-color: currentColor; background: transparent; }
 .shep-chip-on { background: var(--shep-accent-50); border-color: var(--shep-accent-100); color: var(--shep-accent-text); }
 .shep-chip-readonly, .shep-chip-unread { background: var(--shep-grey-50); border-color: var(--shep-grey-200); color: var(--shep-grey-800); }
 .shep-chip-busy { background: var(--shep-accent-50); border-color: var(--shep-accent-100); color: var(--shep-accent-text); }

@@ -10,11 +10,23 @@ The shared ⓘ (M5-2, UI-A): one help control for every ordinary help text.
   its title is the field's label; no component keeps ordinary help in
   ``info=``; every ⓘ the shared renderers draw names a registered text;
 - **the browser side** fills the bubble with ``textContent`` and is given to
-  the mount's ``head`` (Gradio 6 drops a head given to ``gr.Blocks``).
+  the mount's ``head`` (Gradio 6 drops a head given to ``gr.Blocks``); in a
+  real headless browser (Node and Playwright, skipped without): a hover
+  previews after a delay as a tooltip, a click pins a dialog named by its
+  title, the pinned bubble never covers the field it explains (beside, then
+  above, then below) at a wide and a narrow window, its width stays within
+  the budget, the ⓘ's hit target is at least 24 × 24 px, and a hostile text
+  shows as literal text.
 
 Module: tests/unit/test_webui_help.py
 """
 from __future__ import annotations
+
+import json
+import os
+import shutil
+import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -106,7 +118,107 @@ def test_the_bubble_is_in_the_dashboards_font_and_never_taller_than_the_window()
     assert "font-family: 'IBM Plex Sans'" in bubble        # it lives outside .gradio-container
     assert "max-height: calc(100vh - 16px)" in bubble
     assert "overflow-y: auto" in h.HELP_CSS[h.HELP_CSS.index(".shep-bubble-bd {"):]
-    assert "roomBelow >= roomAbove" in h.HELP_HEAD and "bubble.style.maxHeight" in h.HELP_HEAD
+    assert "roomAbove > roomBelow" in h.HELP_HEAD and "bubble.style.maxHeight" in h.HELP_HEAD
+
+
+def test_the_bubble_is_a_tooltip_previewing_and_a_dialog_when_pinned():
+    """The skill's §7 and §10: pinned, the bubble is a dialog named by its
+    title; a hover or focus preview is a tooltip; a hover opens after a short
+    delay; its width is the 320 px budget; the ⓘ's hit target is 24 × 24."""
+    head = h.HELP_HEAD
+    assert "bubble.setAttribute('role', pinned ? 'dialog' : 'tooltip')" in head
+    assert "bubble.setAttribute('aria-labelledby', 'shep-help-bubble-title')" in head
+    assert f"HOVER_MS = {h.HOVER_OPEN_MS}" in head and 150 <= h.HOVER_OPEN_MS <= 600
+    assert "openSoon(btn)" in head and "__" not in head.replace("__pwned", "")
+    assert h.BUBBLE_MAX_WIDTH == 320 and "max-width: 320px" in h.HELP_CSS
+    assert f"MAX_W = {h.BUBBLE_MAX_WIDTH}" in head
+    assert h.HIT_TARGET >= 24 and "width: 24px; height: 24px" in h.HELP_CSS
+    # Beside, then above, then below the field it explains, never over it.
+    assert "['right', 'left', 'above', 'below']" in head and "overlaps(" in head
+
+
+# --------------------------------------------------------------------------- in a real browser
+HOSTILE = "<img src=x onerror=window.__pwned=true> & more"
+HOST = Path(__file__).resolve().parent.parent / "fixtures" / "help_host.cjs"
+
+
+def _node_with_playwright():
+    """Node and a NODE_PATH under which it resolves Playwright, or None."""
+    node = shutil.which("node")
+    if node is None:
+        return None
+    env = dict(os.environ)
+    npm = shutil.which("npm")
+    if npm:
+        found = subprocess.run([npm, "root", "-g"], capture_output=True, text=True, timeout=60)
+        if found.returncode == 0 and found.stdout.strip():
+            env["NODE_PATH"] = os.pathsep.join(
+                p for p in (env.get("NODE_PATH"), found.stdout.strip()) if p)
+    probe = subprocess.run([node, "-e", "require.resolve('playwright')"], env=env,
+                           capture_output=True, timeout=60)
+    return (node, env) if probe.returncode == 0 else None
+
+
+def _page(tmp_path: Path) -> Path:
+    registry = h.HelpRegistry()
+    registry.field("fld", "Epochs", "How many passes. " + HOSTILE)
+    registry.topic("kv-help", "A key", "What the key means. " + HOSTILE)
+    registry.topic("row-help", "A row", "What the row says.")
+    page = f"""<!doctype html><html><head><meta charset="utf-8">
+<style>:root {{ --shep-accent: #5558e3; --shep-accent-50: #eef0ff; --shep-accent-text: #3a3dbd;
+--shep-border: #e1e4ea; --shep-border-2: #cdd2da; --shep-text: #1d2230; --shep-muted: #5b6270; }}
+body {{ margin: 0; font: 15px sans-serif; }}
+.shep-kv {{ display: grid; grid-template-columns: 10em 1fr; margin: 24px 40px; max-width: 640px; }}
+{h.HELP_CSS}</style>{h.HELP_HEAD}</head><body>
+<div class="block" id="fld" style="margin: 40px; width: 300px; padding: 8px; border: 1px solid #ccc">
+<label><span data-testid="block-info">Epochs</span><input></label></div>
+<div class="shep-kv"><span class="shep-k">A key{h.help_button("kv-help", "A key")}</span>
+<span class="shep-v">its value, long enough to fill the row</span></div>
+<table id="tbl" style="margin: 24px 40px; width: calc(100% - 80px)"><tr>
+<td>A row{h.help_button("row-help", "A row")}</td><td>its cells</td></tr></table>
+<div style="height: 1400px"></div>
+{registry.texts_html()}</body></html>"""
+    path = tmp_path / "help.html"
+    path.write_text(page, encoding="utf-8")
+    return path
+
+
+def test_the_pinned_bubble_never_covers_its_field_and_shows_text_as_text(tmp_path):
+    """In a real browser, at the deployment window (1850 × 960) and a narrow
+    one (420 × 800), for a field's ⓘ, a key-value row's and a table row's: a
+    hover opens nothing before the delay and a tooltip after it; a click pins
+    a dialog named by the help's title; the bubble's rect does not intersect
+    the field's (measured here, by the test's own rule) and is not under the
+    field's centre (``document.elementsFromPoint``); it is at most 320 px
+    wide; the ⓘ's hit target is at least 24 × 24; a hostile text is literal
+    text and runs nothing; Esc closes it back to a tooltip."""
+    found = _node_with_playwright()
+    if found is None:
+        pytest.skip("Node with Playwright is not installed")
+    node, env = found
+    result = subprocess.run([node, str(HOST), str(_page(tmp_path))], env=env,
+                            capture_output=True, text=True, timeout=240)
+    assert result.returncode == 0, result.stderr
+    sizes = json.loads(result.stdout)
+    assert set(sizes) == {"1850x960", "420x800"}
+    for size, targets in sizes.items():
+        for which, seen in targets.items():
+            where = f"{size} {which}"
+            assert seen["hit"]["width"] >= 24 and seen["hit"]["height"] >= 24, where
+            assert seen["early"] is False and seen["hover"] == "tooltip", where
+            pinned = seen["pinned"]
+            assert not pinned["hidden"] and pinned["role"] == "dialog", where
+            assert pinned["labelledby"] and pinned["title"] in ("Epochs", "A key", "A row"), where
+            b, f = pinned["bubble"], pinned["field"]
+            assert not (b["left"] < f["right"] and f["left"] < b["right"]
+                        and b["top"] < f["bottom"] and f["top"] < b["bottom"]), (where, b, f)
+            assert pinned["bubbleAtFieldCentre"] is False, where
+            assert pinned["width"] <= 320 + 0.5, where
+            assert b["left"] >= 0 and b["right"] <= pinned["viewport"]["width"], where
+            assert pinned["made"] == 0 and pinned["pwned"] is False, where
+            if which in ("field", "kv"):
+                assert HOSTILE in pinned["text"], where
+            assert seen["closed"] is True, where
 
 
 # --------------------------------------------------------------------------- the built dashboard
