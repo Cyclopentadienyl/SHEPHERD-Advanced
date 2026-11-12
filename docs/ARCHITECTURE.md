@@ -310,8 +310,10 @@ BACKLOG 57; it went with the ShepherdGNN training path and its loader.)*
     GB10 acceptance (`e60f23e`, L7, merged as #133; `working/research-comparison-acceptance-2026-11-12/`);
     on the real data only the disease child was trained. The frozen-backbone control is unit-tested on
     the CPU, with no CUDA record. Other encoder kinds: §1;
-  - *branch* training, which starts from a parent with changed settings on its stage's closed list,
-    is CLI only (K5; BACKLOG 23) and has no GB10 record;
+  - *branch* training, a new run from a parent's weights with its settings kept or changed on its
+    stage's closed list, is started from the CLI, the job runner and the API (K5; the ops-wiring
+    round's A1b; BACKLOG 23), the Training page's Branch mode following in that round's B1, and has
+    no GB10 record;
   - the losses the new specs replaced are listed retired in that README's §7.
 
 ### Training → Inference Bridge
@@ -562,9 +564,11 @@ and integration tests sit beside each module.
 - **A Mode C test score is not the Diagnosis page's ranking.** Mode C ranked every disease by raw
   cosine; Diagnosis serves a task model's own head (§8; the path-gated GNN/SP mixture is retired
   since K8-4).
-- **Resume and extend are done; branch training is built for model bundles, from the CLI** (K5;
-  no GB10 record). A continued run inherits every learning setting. A branch changes only settings
-  on its stage's list, and records each change (BACKLOG 23).
+- **Resume and extend are done; branch training is built for model bundles, from the CLI, the
+  job runner and the API** (K5, the ops-wiring round's A1b; no GB10 record). A continued run
+  inherits every learning setting. A branch is a new run from its parent's weights with a new
+  optimizer; it changes only settings on its stage's list, or none (a same-settings branch), and
+  records each change, `{}` when none (BACKLOG 23).
 - **The GPU lock covers managed training and test jobs and the GPU CLIs (`train_model.py`,
   `measure_scorer.py`, `setup_demo.py --train-model`), not the resident inference service.** Training and serving do not exclude each other (BACKLOG 48).
 - **Trustworthy provenance and test records are not model quality or institutional acceptance.**
@@ -590,7 +594,7 @@ and integration tests sit beside each module.
 | **Model families** (each checkpoint under the exact parent file it records; task and stage filters) | `GET /api/v1/workspaces/{name}/family` (D8); the lists' record fields | `src/api/services/server_lists.py` (`family_rows`, `list_family`) | Models: the Task select and the By family order (K6) | Connected on `main` (#131; K6) | unit tests; the K6 browser smoke on CPU (`working/scorer-retraining/README.md` §8, "K6 delivery"); no GB10 record | a fuller lineage view stays BACKLOG 52 (D) |
 | **Fine-tune children** (one to three tasks from one base, in order, through the one job runner) | `POST /api/v1/training/finetune` (D8); `train_model.py --stage finetune` per task | `src/api/services/training_manager.py` (`start_finetune`) | Research › Prepare › Fine-tune: the form, the job card and its Stop (K6) | Connected on `main` (#131; K6) | unit tests; the K6 browser smoke on CPU (`working/scorer-retraining/README.md` §8, "K6 delivery"): three children in order, a Stop cancelling the queued one; no GB10 record | a stop cancels the queued children; a failed child does not stop the others |
 | **Frozen-backbone disease control** (`frozen_parts` `graph_side`: the base's graph side kept as it is, only the patient encoder and the task head trained; each part's freeze and the downstream starting weights recorded; a rules-1 parent continues as `none`) | `train_model.py --frozen-parts`; `POST /api/v1/training/finetune` `settings` (D8); the job runner | `src/config/recipe.py` `frozen_parts_problem`, `src/models/bundle/builder.py` `ModelBundle.freeze`, `src/utils/run_plan.py` `decode_learning_settings` | none to start one (Fine-tune offers epochs and seed); Models › Results shows each part's freeze | Awaiting UI (research comparison Stage 9a, 9b) | `tests/unit/test_frozen_backbone_control.py`, `test_rules_1_continuation.py`, on the CPU; no CUDA record (AMP, its scaler and `torch.compile` with a freeze not exercised) | the Fine-tune field (`working/ops-wiring-and-ui-ux/README.md`, A2) |
-| **Branch training** (a model bundle parent with changed settings on its stage's list) | `scripts/train_model.py --branch-from` | `src/utils/run_plan.py` (`plan_branch`), `src/config/recipe.py` (`branch_settings`) | none | CLI only (K5) | unit tests only; no GB10 record | no API, job runner or page yet (BACKLOG 23) |
+| **Branch training** (a new run from a model bundle parent's weights, its settings kept or changed on its stage's list, each change recorded, `{}` when none) | `scripts/train_model.py --branch-from`; the job runner (`TrainingManager.preview_branch`, `start_training` with `branch_from`); `POST /api/v1/training/branch` (D8) | `src/utils/run_plan.py` (`plan_branch`), `src/config/recipe.py` (`branch_settings`), the one start and spawn (`training_manager`), bound to the parent read (`--expect-parent-sha256`) | none to start one; Models shows what a branch changed (identity and By family) | Connected to the runner and the API (the ops-wiring round's A1b); the page is that round's B1 | unit tests (`test_branch_plan.py`, `test_branch_operation.py`, `test_job_runner.py`, `test_training_parent_expected.py`, `test_training_api.py`); the probe's L7.branch on the CPU; no GB10 record | the Training page's Branch mode (`working/ops-wiring-and-ui-ux/README.md`, B1); BACKLOG 23 |
 | **One managed GPU job at a time**: the lock, its holder, refusals naming it | the job runner; `train_model.py`, `measure_scorer.py`, `setup_demo.py --train-model` | `src/utils/gpu_lock.py`, `training_manager.py` | header chip; Training and Test GPU lines | Connected | W7, W11, RW3 at `b14c4de` | a job this backend did not start is shown and refused, and stopped by pid only (by design) |
 | **Test run start and cancel**, process-group reaping | the runner's test job | `training_manager.start_test`, `cancel_test` | Test: Start test, Cancel | Connected | W8, W10 at `b14c4de` (a start run to the end, a training stop refused meanwhile; a start refused before measuring); Start test by hand at `773dc4a`; no GB10 record of a running test cancelled or of leftover group processes ended (unit and integration tests cover them) | none |
 | **Backend stop stops its job; Restart Backend** | process signals, the systemd unit; Settings | `src/api/main.py` shutdown, `backend_control.py` | Settings: Restart Backend; stopping stays an operator action | Connected (Restart); CLI only (stop) | normal stops at `b14c4de`, `f9202b6`, `773dc4a` (no job running); no GB10 record of a Restart Backend (`tests/unit/test_backend_control.py` covers it) | no GB10 record of a stop while a job runs; a SIGKILLed backend leaves its job holding the lock |

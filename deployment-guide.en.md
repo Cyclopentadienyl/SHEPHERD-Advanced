@@ -2658,7 +2658,7 @@ the read-only lists keep working.
 
 | Where | Controls |
 |---|---|
-| API | `POST /api/v1/pipeline/reload`, `POST /api/v1/pipeline/config`, `POST /api/v1/training/start`, `POST /api/v1/training/finetune`, `POST /api/v1/training/stop`, `GET /api/v1/training/checkpoints`, `GET /api/v1/workspaces/{name}/checkpoints`, `GET /api/v1/workspaces/{name}/family` |
+| API | `POST /api/v1/pipeline/reload`, `POST /api/v1/pipeline/config`, `POST /api/v1/training/start`, `POST /api/v1/training/finetune`, `POST /api/v1/training/branch`, `POST /api/v1/training/stop`, `GET /api/v1/training/checkpoints`, `GET /api/v1/workspaces/{name}/checkpoints`, `GET /api/v1/workspaces/{name}/family` |
 | Dashboard | Diagnosis: Change model… (its list of checkpoints and its Load; since M5-2). ⚙ Settings (Runtime Settings): Restart Backend and Apply Settings. Research › Training: Start, Stop (its confirmation reads the run's last checkpoint), Continue… (it lists the parents), the parent list's Refresh, Check checkpoint and Continue Training |
 
 The three checkpoint lists (the family view among them), and Check checkpoint, open checkpoint files, which SPEC_4 classes as
@@ -3125,7 +3125,16 @@ a run.
   round), and a `model_spec` for one task only, its graph side the base's. What each child's
   process checks against its base is checked before any child starts: the spec, each child's
   hop list against the base's encoder, a stated `split_seed` against the base's. The command
-  line's `--frozen-parts graph_side` is the same setting.
+  line's `--frozen-parts graph_side` is the same setting. A checkpoint is branched with
+  `POST /api/v1/training/branch`: `data_dir`, `branch_from`, `device`, `run_name` and `settings`,
+  the settings to change, each on the branch list of the parent's stage and task; `{}` branches
+  with every setting of the parent, a new run from its weights with a new optimizer (the command
+  line's `--branch-from`). The runner's preview judges it as the training process does: a name in
+  `settings` that is not a training setting, a setting the parent's stage does not read or a branch
+  keeps (the freeze, the split seed, the model spec), a value or a rule across settings is refused
+  with 422; a parent it cannot branch (weights only, another stage), one changed since it was shown
+  (`expected_parent_sha256`) or a busy slot with 409. The process is bound to the parent the
+  preview read, and the lists show what each branch changed.
 - A failed run's **error banner** spans the page. Under its headline ("Training failed: Process
   exited with code 1") is the last error line the run printed ("Last error printed:
   TrainingDeviceUnavailable: --device auto requires CUDA, …"), redacted for a read-only browser

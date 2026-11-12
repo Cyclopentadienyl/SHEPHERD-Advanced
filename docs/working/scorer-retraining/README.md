@@ -171,11 +171,18 @@ flag read in different ways.
 - `branch` keeps architecture and data (BACKLOG 23), starts a new optimizer and records every
   difference. Its closed list of changeable settings was built in the A + B round (K5), before any
   variable comparison. An extend never carries a seed or learning-setting change.
-  - As built at K5: the list is `src.config.recipe.branch_settings`, the stage's reference settings
-    plus `min_lr_ratio`, `amp_dtype` and `gradient_accumulation_steps`. Early stopping, the split
+  - The list is `src.config.recipe.branch_settings`, the stage's reference settings plus
+    `min_lr_ratio`, `amp_dtype` and `gradient_accumulation_steps` (as built at K5), early stopping's
+    patience among them (`../ops-wiring-and-ui-ux/README.md`, decision B3). The freeze, the split
     seed, the evaluation cadence, the kept files, the model spec and the data stay the parent's.
-  - Each change is recorded as `parent.changes` {setting: {parent, new}}. A branch with no change,
-    a weights-only parent and an extension are refused. It is CLI only (`--branch-from`).
+  - Each change is recorded as `parent.changes` {setting: {parent, new}}. A branch that changes
+    none is a same-settings branch, a new run from the parent's weights recorded with `{}` (decision
+    B1); a branch record without `changes` is still refused. A weights-only parent and an extension
+    are refused. It is started from the CLI (`--branch-from`), the job runner
+    (`TrainingManager.preview_branch`, `start_training` with `branch_from`) and
+    `POST /api/v1/training/branch` (decision B2); the Training page's Branch mode is that round's B1.
+    The lists say what a branch changed, `{}` as "same settings" (decision B4). *(2026-11-12: as built
+    at K5 the list kept early stopping, a branch with no change was refused, and it was CLI only.)*
   - The base validates on pairs fixed by its split, whatever a run's seed or batch size, so
     branches over one split compare on one set.
 - `finetune` is its own operation and page. It never borrows resume or branch to get past a parent

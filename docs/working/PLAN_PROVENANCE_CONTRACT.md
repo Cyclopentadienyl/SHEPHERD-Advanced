@@ -4154,7 +4154,7 @@ comparing.
 | `new` | none | given | given | given | new |
 | `resume` | An unfinished run of the same stage, with a full `training_state` | inherited (decision 8) | equal (decision 7, M2.3) | equal | restored |
 | `extend` | A finished stage | fixed rate (M3a-4) | equal | equal | restored |
-| `branch` | A qualified checkpoint of the same learning stage and task | changed, and the change recorded | equal (BACKLOG 23) | equal | new |
+| `branch` | A qualified checkpoint of the same learning stage and task | kept, or changed on the stage's list; each change recorded, `{}` when none | equal (BACKLOG 23) | equal | new |
 | `finetune` | A **base** checkpoint with a `model_spec`: a `training_state`, early stopping's best weights or a weights-only file | the finetune recipe | the task's roles; other patient data is allowed. The KG equals the parent's (decision 1: the learned node table is transductive) | the parent's encoder spec plus a new task head | new |
 
 - **Accepted as a finetune parent:** an early-stopped or weights-only base. It is still refused as a
@@ -4162,7 +4162,13 @@ comparing.
 - **A qualified branch parent** (as built at K5, `run_plan.plan_branch`) is a training-state
   checkpoint with a model record, of the branch's stage and task, trained on the same data, view
   and split. Any end state qualifies, since nothing of its progress continues. A weights-only file
-  is refused: it records no settings.
+  is refused: it records no settings. **A branch that changes no setting** is a new run from the
+  parent's weights with a new optimizer and schedule, its `parent.changes` `{}` beside the parent's
+  digest (`ops-wiring-and-ui-ux/README.md`, decision B1); a branch record without
+  `changes` is refused, since not recorded is not "none changed". The job runner's preview
+  (`TrainingManager.preview_branch`) and the training process judge one request by the same
+  functions, and a start is bound to the parent its preview read (`--expect-parent-sha256`,
+  decision B2).
 - **The parent's learning settings, by its training rules** (as built at research comparison
   Stage 9a, 2026-11-10; `run_plan.decode_learning_settings`). A resume, an extension and a branch
   read the parent's recorded settings through one settings decode, which the job runner's preview

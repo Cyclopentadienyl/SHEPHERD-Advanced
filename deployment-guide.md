@@ -2794,7 +2794,7 @@ M5 在 SPEC_4 的部署模式 **M1** 下執行：由 owner 或指定的技術人
 
 | 位置 | 控制項 |
 |---|---|
-| API | `POST /api/v1/pipeline/reload`、`POST /api/v1/pipeline/config`、`POST /api/v1/training/start`、`POST /api/v1/training/finetune`、`POST /api/v1/training/stop`、`GET /api/v1/training/checkpoints`、`GET /api/v1/workspaces/{name}/checkpoints`、`GET /api/v1/workspaces/{name}/family` |
+| API | `POST /api/v1/pipeline/reload`、`POST /api/v1/pipeline/config`、`POST /api/v1/training/start`、`POST /api/v1/training/finetune`、`POST /api/v1/training/branch`、`POST /api/v1/training/stop`、`GET /api/v1/training/checkpoints`、`GET /api/v1/workspaces/{name}/checkpoints`、`GET /api/v1/workspaces/{name}/family` |
 | 儀表板 | Diagnosis：Change model…（其 checkpoint 清單與它的 Load；自 M5-2 起）。⚙ Settings（Runtime Settings）：Restart Backend 與 Apply Settings。Research › Training：Start、Stop（它的確認會讀取該 run 最後的 checkpoint）、Continue…（它列出 parent）、parent 清單的 Refresh、Check checkpoint 與 Continue Training |
 
 三份 checkpoint 清單（含家族檢視）與 Check checkpoint 會開啟 checkpoint 檔案，SPEC_4 將此歸類為 checkpoint 檢視
@@ -3197,7 +3197,14 @@ Training Console 現在是分成三部分的一個頁面：上方橫跨整頁的
   Fine-tune 頁不提供），以及只限單一任務、graph side 與 base 相同的 `model_spec`。每個子模型的
   行程會對 base 檢查的項目，在任何子模型啟動之前就先檢查：spec、每個子模型的 hop 清單對 base
   的 encoder、明確給出的 `split_seed` 對 base 的。命令列的 `--frozen-parts graph_side` 是同一個
-  設定。
+  設定。分支一個 checkpoint 用 `POST /api/v1/training/branch`：`data_dir`、`branch_from`、
+  `device`、`run_name` 與 `settings`（要改的設定，每個都須在 parent 的 stage 與任務的分支清單上）；
+  `{}` 以 parent 的全部設定分支，從它的權重開始一個新 run、使用新的 optimizer（即命令列的
+  `--branch-from`）。runner 的預覽與訓練行程以同樣的方式判斷：`settings` 中不是訓練設定的名稱、
+  parent 的 stage 不讀取或分支保留的設定（freeze、split seed、model spec）、值或跨設定規則，以
+  422 拒絕；無法分支的 parent（只有權重、另一個 stage）、顯示後已變更的 parent
+  （`expected_parent_sha256`）或忙碌的名額，以 409 拒絕。行程綁定預覽讀到的 parent，清單會顯示
+  每個分支改了什麼。
 - 失敗的 run 的**錯誤橫幅**橫跨整頁。標題（"Training failed: Process exited with code 1"）
   之下是 run 印出的最後一行錯誤（"Last error printed: TrainingDeviceUnavailable: --device auto
   requires CUDA, …"），對唯讀瀏覽器與輸出一樣經過遮蔽。run 旁邊只在有日誌時說明日誌在哪裡（它的
