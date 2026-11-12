@@ -322,6 +322,24 @@ every step through its production entry point:
     the measurements and the L7 children run on the device; this container's
     tests run the same phase on the CPU.
 
+The ops-wiring round's inference lifecycle (its README §6, A3b; decisions
+I1-I9), carried by the same run, in phase M after L8 and before S1, required
+(W12): a service of its own (`_ProbeServer`) under <work>/w12, with a
+workspaces root of its own (its GPU lock), mode M1, the probe's device and no
+start-up model, over a copy of the demo workspace holding a copy of D1's
+disease child; every step through the service's routes or the training
+command with the service's root, and the expectations follow the device
+(`_inference_handoff`): not loaded at start-up; the child loaded, on CUDA the
+status holding the GPU lock and the lock naming the service's inference, a
+runner start and train_model.py refused naming it, on the CPU nothing held
+and a short training run beside it; a corrupt explicit checkpoint refused
+with the model (and the lock) kept; concurrent diagnoses across POST
+/pipeline/stop answered by the model or refused with the stopping or stopped
+reason, released reported only after (`_judge_the_stop`), the resources
+reading then recorded and not judged; a short training then run to its end;
+the child loaded again; on CUDA a reload on the CPU giving the lock back and
+one on CUDA taking it again.
+
 M1's minimal served readings (the round's Stage 10b, the owner's item D;
 BACKLOG 64), carried by the same run, last in phase M after L8, and
 **informational**: S1 is in neither required list, so `m2_acceptance` never
@@ -2329,6 +2347,12 @@ M2_DEMO_REQUIRED: Tuple[str, ...] = (
     "L4.other_graph", "L4.tampered_pairs", "L4.other_view", "L4.split_record",
     "L5", "L6", "L7.disease", "L7.gene", "L7.patients_like_me", "L7.disease_frozen",
     "L7.branch", "L8",
+    # The ops-wiring round's A3b, after L8: the inference lifecycle across
+    # processes on the probe's device, a service of its own (W12, decisions
+    # I1-I9): no start-up model is not loaded; CUDA serving holds the GPU lock
+    # and research is refused naming it, the CPU holds nothing; a bad candidate
+    # keeps the model; the stop; research after it; device switches.
+    "W12",
 )
 #: R8, the unchanged-workspace check, runs last, after M4's RT1-RT3 and M5's
 #: RW1-RW3; R2 runs after R4.finetune, whose child it strips.
@@ -2395,7 +2419,16 @@ def m2_acceptance(report: Report, real_requested: bool) -> Dict[str, Any]:
             "trained (L7.disease_frozen; mixed precision and torch.compile with a freeze are "
             "not covered); a same-settings branch of the demo base started through the "
             "job runner, listed under its parent with no change (L7.branch); and the results "
-            "export listing every record of that flow. "
+            "export listing every record of that flow. It carries the ops-wiring round's "
+            "inference lifecycle too (W12), on a service of its own on this device: started "
+            "with no model configured it serves none; a disease child loaded holds the GPU "
+            "lock on CUDA, where a job runner start and the training command are refused "
+            "naming inference, and nothing on the CPU, where a short training runs beside it; "
+            "a corrupt checkpoint is refused and the model kept; concurrent diagnoses across a "
+            "stop are answered by the model or refused with the stop's reason, and the stop "
+            "reports released only after them; a short training then runs, the child loads "
+            "again, and on CUDA a switch to the CPU and back gives the lock back and takes it "
+            "again. "
             "Its figures are a functional check, never a comparison of models. Last, it "
             "records M1's served readings of the demo disease child (S1): the service's cold "
             "start, warm-up and steady-state request times and its process's memory, "
@@ -7409,6 +7442,443 @@ def _served_readings(report: Report, work: Path, sound: Path, checkpoint: Path,
                "required, never judged, outside the exit status)", _read)
 
 
+# =============================================================================
+# W12 — the inference lifecycle on a service of its own (the ops round's A3b)
+# =============================================================================
+#: The ops-wiring round's inference hand-off probe (its README §6, A3b;
+#: decisions I1-I9), in phase M after L8 and before S1: required in the demo
+#: part (`M2_DEMO_REQUIRED`).
+INFERENCE_PROBE = "W12"
+#: W12's deployment under <work>/w12: one workspace under its own root, a copy
+#: of the demo workspace, with one run holding a copy of D1's disease child.
+W12_WORKSPACE = "probe-demo"
+W12_RUN = "probe-w12-served"
+#: How many clients send diagnoses across W12's stop, and the most each sends
+#: before the stop has answered.
+W12_CLIENTS = 3
+W12_MOST_PER_CLIENT = 400
+_STOPPED_COUNT = re.compile(r"^Inference stopped: (\d+) accepted request\(s\) finished first")
+
+
+def _names_this_services_inference(detail: str) -> bool:
+    """Whether a job runner's refusal names this service's CUDA inference as
+    the GPU's holder, with how to stop it, and says nothing was started
+    (`TrainingManager._slot_refusal_locked`): W12's runner start, refused
+    while a CUDA model serves."""
+    from src.utils.gpu_lock import STOP_INFERENCE
+
+    return ("this service's inference" in detail and STOP_INFERENCE in detail
+            and "Nothing was started." in detail)
+
+
+def _names_the_inference_holder(said: str, pid: int) -> bool:
+    """Whether a CLI's refusal names an inference job of process `pid` as the
+    GPU lock's holder (`describe_holder`) and says nothing was written: W12's
+    train_model.py, refused while a CUDA model serves."""
+    from src.utils.gpu_lock import SERVING_JOB_TYPE
+
+    return (f"held by an {SERVING_JOB_TYPE} job" in said and _names_pid(said, pid)
+            and "Nothing was written." in said)
+
+
+def _not_serving_kind(reason: str) -> Optional[str]:
+    """Which refusal a diagnosis met across a stop, by the not-serving
+    reason's own words (`AppState.not_serving_reason`): "stopping" while the
+    stop lets the accepted diagnoses finish, "stopped" once the model is
+    released; None for any other reason."""
+    if reason.startswith("Inference is stopping"):
+        return "stopping"
+    if reason.startswith("Inference was stopped"):
+        return "stopped"
+    return None
+
+
+def _diagnosis_answer(status: Optional[int], body: bytes, sha256: str) -> str:
+    """One diagnosis's answer across W12's stop, by class: "accepted" (200,
+    produced by the model `sha256`, its served identity says), "stopping" or
+    "stopped" (503 with that reason, `_not_serving_kind`), else what it was
+    (``another_model``, ``another_reason``, ``not_json``, ``http_<status>``)."""
+    if status not in (200, 503):
+        return f"http_{status}"
+    try:
+        answer = json.loads(body)
+    except ValueError:
+        return "not_json"
+    if not isinstance(answer, dict):
+        return "not_json"
+    if status == 200:
+        checkpoint = (answer.get("served_identity") or {}).get("checkpoint") or {}
+        return "accepted" if checkpoint.get("sha256") == sha256 else "another_model"
+    return _not_serving_kind(str(answer.get("error") or "")) or "another_reason"
+
+
+def _holding(status: Mapping[str, Any], lock: Mapping[str, Any], pid: int, on_cuda: bool) -> str:
+    """'' when the service's GPU holding is what its device makes it (I2): on
+    CUDA its status says it holds the GPU lock and the lock's state names an
+    inference job of the service's process `pid`; on the CPU neither. Else
+    what is not so, in words with no path."""
+    from src.utils.gpu_lock import SERVING_JOB_TYPE
+
+    holds = status.get("holds_gpu_lock")
+    holder = lock.get("holder") or {}
+    named = (bool(lock.get("held_by")) and holder.get("job_type") == SERVING_JOB_TYPE
+             and holder.get("pid") == pid)
+    if on_cuda:
+        if holds is not True:
+            return "the status does not say the service holds the GPU lock"
+        if not named:
+            return "the GPU lock's state does not name the service's inference"
+        return ""
+    if holds is not False:
+        return "the status says a CPU model holds the GPU lock"
+    if lock.get("held_by"):
+        return "the GPU lock is held while a CPU model serves"
+    return ""
+
+
+def _diagnoses_across_a_stop(server: Any, body: bytes, sha256: str, *,
+                             clients: int = W12_CLIENTS,
+                             most: int = W12_MOST_PER_CLIENT) -> Dict[str, Any]:
+    """`clients` concurrent clients sending the diagnosis `body` until POST
+    /api/v1/pipeline/stop, bound to `sha256` and sent once the first diagnosis
+    has answered, has answered; then each sends one more. Returns the stop's
+    HTTP status and answer and each diagnosis's class (`_diagnosis_answer`)
+    with whether it was sent after the stop answered."""
+    import threading
+
+    answered, first = threading.Event(), threading.Event()
+    guard = threading.Lock()
+    seen: List[Tuple[bool, str]] = []
+
+    def send(after: bool) -> None:
+        try:
+            status, _, raw = server.request("POST", "/api/v1/diagnose",
+                                            {"Content-Type": "application/json"}, body)
+            kind = _diagnosis_answer(status, raw, sha256)
+        except OSError:
+            kind = "no_response"
+        with guard:
+            seen.append((after, kind))
+        first.set()
+
+    def client() -> None:
+        for _ in range(most):
+            if answered.is_set():
+                break
+            send(False)
+        send(True)
+
+    threads = [threading.Thread(target=client, daemon=True, name=f"w12-client-{index}")
+               for index in range(clients)]
+    for thread in threads:
+        thread.start()
+    first.wait(_SERVICE_START_SECONDS)
+    try:
+        status, _, raw = server.request(
+            "POST", "/api/v1/pipeline/stop", {"Content-Type": "application/json"},
+            json.dumps({"expected_checkpoint_sha256": sha256}).encode("utf-8"))
+    finally:
+        answered.set()
+        for thread in threads:
+            thread.join(_SERVICE_START_SECONDS)
+    try:
+        stop = json.loads(raw)
+    except ValueError:
+        stop = {}
+    return {"stop_status": status, "stop": stop if isinstance(stop, dict) else {},
+            "answers": list(seen)}
+
+
+def _judge_the_stop(seen: Mapping[str, Any], on_cuda: bool) -> Dict[str, Any]:
+    """W12's stop judged from what its clients and the stop were answered
+    (`_diagnoses_across_a_stop`), as I4 says: the stop answered released, its
+    status then serving nothing, no request in flight and no GPU holding; the
+    diagnoses answered 200 by the model (accepted) or 503 with the stopping or
+    stopped reason, nothing else; every one sent after the stop answered
+    refused as stopped; at least one accepted, and no more finished first, as
+    the stop counts them, than were accepted; the GPU lock said given back on
+    CUDA only. Returns the counts, the report's facts."""
+    stop = seen.get("stop") or {}
+    message = str(stop.get("message") or "")
+    assert seen.get("stop_status") == 200 and stop.get("success") is True and \
+        stop.get("released") is True, (
+            f"the stop answered {seen.get('stop_status')} and did not report released: "
+            f"{message or 'no message'}")
+    after = stop.get("status") or {}
+    assert (after.get("serving"), after.get("in_flight"), after.get("holds_gpu_lock")) == (
+        "not_loaded", 0, False), (
+        "the stop reported released while its status said "
+        f"{after.get('serving')}, {after.get('in_flight')} in flight, holding the GPU lock "
+        f"{after.get('holds_gpu_lock')}")
+    kinds = [kind for _, kind in seen.get("answers") or ()]
+    others = sorted({kind for kind in kinds if kind not in ("accepted", "stopping", "stopped")})
+    assert not others, ("diagnoses across the stop were answered otherwise than by the model "
+                        f"or with the stop's reason: {others}")
+    late = [kind for sent_after, kind in seen.get("answers") or () if sent_after]
+    assert late and set(late) == {"stopped"}, (
+        "a diagnosis sent after the stop answered was not refused as stopped")
+    accepted = kinds.count("accepted")
+    assert accepted >= 1, "no diagnosis was accepted before the stop"
+    counted = _STOPPED_COUNT.match(message)
+    finished = int(counted.group(1)) if counted else None
+    assert finished is not None and finished <= accepted, (
+        f"the stop says {finished} accepted request(s) finished first, of {accepted} accepted")
+    gave_back = "the GPU lock given back" in message
+    assert gave_back is on_cuda, (
+        "the stop says it gave the GPU lock back" if gave_back else
+        "the stop of a CUDA model does not say it gave the GPU lock back")
+    return {"diagnoses": len(kinds), "accepted": accepted,
+            "refused_stopping": kinds.count("stopping"), "refused_stopped": kinds.count("stopped"),
+            "sent_after_the_stop_answered": len(late),
+            "finished_first_as_the_stop_counts": finished, "released": True,
+            "gpu_lock_given_back": gave_back, "status_after": dict(serving="not_loaded",
+                                                                   in_flight=0,
+                                                                   holds_gpu_lock=False)}
+
+
+def _resources_reading(server: Any) -> Dict[str, Any]:
+    """The service's own resources reading (``GET /api/v1/system/resources``,
+    what the Diagnosis page shows after a stop), read now: each GPU's memory
+    in use and the system memory, recorded and never judged (I4: a stop
+    claims nothing about memory returned); no device name. A reading that
+    fails is a state with its reason."""
+    try:
+        reading = server.json("/api/v1/system/resources")
+    except (AssertionError, OSError, ValueError) as exc:
+        return _reading_not("not_read", f"the resources route could not be read ({type(exc).__name__})")
+    gpu = reading.get("gpu") or {}
+    ram = reading.get("ram") or {}
+    return {"state": "read", "judged": False, "unified_memory": bool(reading.get("unified_memory")),
+            "gpu_memory_used_mb": [device.get("memory_used_mb")
+                                   for device in gpu.get("devices") or []
+                                   if isinstance(device, dict)],
+            "ram_used_gb": ram.get("used_gb"), "ram_available_gb": ram.get("available_gb")}
+
+
+def _inference_handoff(report: Report, work: Path, sound: Path, checkpoint: Path,
+                       device: str) -> None:
+    """W12, the inference lifecycle across processes on the probe's device
+    (the ops round's A3b; decisions I1-I9), on a service of its own under
+    <work>/w12: started as the launcher starts it (`_ProbeServer`) with a
+    workspaces root of its own (its GPU lock), mode M1, the device set and
+    **no start-up model**, a copy of the demo workspace under that root with
+    a copy of D1's disease child (`checkpoint`) in one of its runs. Every
+    step goes through the service's own routes or a formal CLI with the
+    service's root. **The expectations follow the device** (I2: the resolved
+    device decides the lock):
+
+    - started with no model configured, it reports not loaded (the status,
+      /ready 503), the lock free;
+    - the child loaded (POST /pipeline/reload, explicit, bound to its digest):
+      on CUDA the status says it holds the GPU lock and the lock's state names
+      an inference job of the service's pid, and a runner start (POST
+      /training/start) and a train_model.py are both refused naming
+      inference, nothing started or written; on the CPU nothing is held and a
+      short research job (train_model.py) runs to its end beside the model;
+    - a corrupt explicit checkpoint is refused, the same model and (CUDA) the
+      lock kept;
+    - concurrent diagnoses across POST /pipeline/stop: the accepted ones
+      answered by the model, the later ones 503 with the stopping or stopped
+      reason, released reported only once nothing is in flight and the lock
+      is free (`_judge_the_stop`); the resources reading then is recorded,
+      not judged;
+    - then a short research job runs to its end, and the child loads again
+      (on CUDA holding the lock again);
+    - on CUDA, a reload on the CPU gives the lock back and one on CUDA takes
+      it again, naming the service; on the CPU not applicable.
+
+    The service is stopped at the end, and the lock is free after."""
+    def _handoff() -> Tuple[str, Dict[str, Any]]:
+        import subprocess
+
+        import yaml
+
+        from scripts.setup_demo import demo_task_training
+        from src.utils.checkpoint_paths import RUNS_DIRNAME, run_checkpoint_dir
+        from src.utils.gpu_lock import WORKSPACES_ROOT_ENV, lock_location, lock_state
+        from src.utils.gpu_lock import probe as lock_probe
+
+        on_cuda = device == "cuda"
+        base = work / "w12"
+        root = base / "workspaces"
+        workspace = _workspace_copy(sound, root / W12_WORKSPACE)
+        served = (run_checkpoint_dir(workspace / RUNS_DIRNAME / _demo_encoder_kind() / W12_RUN)
+                  / M5_CHECKPOINT)
+        served.parent.mkdir(parents=True)
+        shutil.copyfile(checkpoint, served)
+        sha = _read_run_checkpoint(served)["sha256"]
+        _, _, reads, _ = verify_workspace(workspace)
+        query, _ = _workspace_query(served, workspace, reads)
+        body = json.dumps({"phenotypes": list(query)}).encode("utf-8")
+        environ = {WORKSPACES_ROOT_ENV: str(root)}
+        lock_path = lock_location(environ)
+        corrupt = base / "corrupt.pt"
+        corrupt.write_bytes(served.read_bytes()[: max(1, served.stat().st_size // 2)])
+        server = _ProbeServer(INFERENCE_PROBE, base / "service", {
+            "SHEPHERD_WORKSPACES_ROOT": str(root), "SHEPHERD_DEPLOYMENT_MODE": "M1",
+            "SHEPHERD_DEVICE": device})
+        facts: Dict[str, Any] = {"device": device, "checkpoint_sha256": sha}
+        base_settings = {"learning_stage": "base", **demo_task_training()["base"],
+                         "data_dir": str(workspace), "num_epochs": 1, "device": device}
+
+        def status() -> Dict[str, Any]:
+            return server.json("/api/v1/pipeline/status")
+
+        def post(path: str, payload: Mapping[str, Any]) -> Tuple[int, Dict[str, Any]]:
+            code, _, raw = server.request("POST", path, {"Content-Type": "application/json"},
+                                          json.dumps(payload).encode("utf-8"))
+            try:
+                answer = json.loads(raw)
+            except ValueError:
+                answer = {}
+            return code, answer if isinstance(answer, dict) else {}
+
+        def load(path: Path, device_now: str, expected: Optional[str]) -> Dict[str, Any]:
+            code, answer = post("/api/v1/pipeline/reload", {
+                "data_dir": str(workspace), "checkpoint_path": str(path), "task": "disease",
+                "device": device_now, "expected_checkpoint_sha256": expected})
+            assert code == 200, f"the reload answered {code}"
+            return answer
+
+        def served_sha(answer: Mapping[str, Any]) -> Optional[str]:
+            return ((answer.get("served_identity") or {}).get("checkpoint") or {}).get("sha256")
+
+        def holding(device_now: str) -> str:
+            return _holding(status(), lock_state(environ), server.process.pid,
+                            device_now == "cuda")
+
+        def training(name: str) -> Tuple[int, str, Path]:
+            run = base / "cli" / name
+            config = base / "cli" / f"{name}.yaml"
+            config.parent.mkdir(parents=True, exist_ok=True)
+            config.write_text(yaml.safe_dump({**base_settings, "run_dir": str(run)}),
+                              encoding="utf-8")
+            done = subprocess.run(
+                [sys.executable, str(project_root / "scripts" / "train_model.py"),
+                 "--config", str(config)], cwd=project_root, capture_output=True, text=True,
+                timeout=900, env={**os.environ, **environ})
+            return done.returncode, done.stdout + done.stderr, run
+
+        def runs_to_its_end(name: str) -> str:
+            code, said, run = training(name)
+            if code != 0:
+                print(f"--- the short research job's last output ---\n{said[-4000:]}\n---",
+                      file=sys.stderr)
+            assert code == 0 and (run_checkpoint_dir(run) / "last.pt").is_file(), (
+                f"the short research job ({name}) did not run to its end (exit {code})")
+            return "ran to its end (exit 0)"
+
+        try:
+            server.start()
+            facts["service"] = {
+                "started_as": "uvicorn src.api.main:app on 127.0.0.1, --no-proxy-headers, "
+                              "SHEPHERD_DEPLOYMENT_MODE=M1, a workspaces root of its own, the "
+                              "device set, no start-up model",
+                "seconds_to_health": server.wait_ready()}
+            pid = server.process.pid
+            # ---- no start-up model: not loaded (I6)
+            first = status()
+            assert (first.get("initialized"), first.get("serving"), first.get("holds_gpu_lock")) \
+                == (False, "not_loaded", False), "a service with no start-up model serves one"
+            assert "No model is loaded" in (first.get("not_serving_reason") or ""), (
+                "the not-loaded service does not say no model is loaded")
+            ready = server.request("GET", "/ready")[0]
+            assert ready == 503, f"the not-loaded service answered /ready {ready}"
+            assert lock_probe(lock_path) is None, "the GPU lock is held with no model loaded"
+            facts["started_without_a_model"] = {"serving": "not_loaded", "ready_status": ready,
+                                                "lock_free": True}
+            # ---- the child loaded: the holding follows the device (I2)
+            loaded = load(served, device, sha)
+            assert loaded.get("success"), "the disease child was not loaded"
+            now = status()
+            assert now.get("serving") == "serving" and served_sha(now) == sha, (
+                "the status does not serve the loaded child")
+            why = holding(device)
+            assert not why, f"after the load, {why}"
+            facts["loaded"] = {"serving": "serving", "holds_gpu_lock": on_cuda,
+                               "lock_names_the_service": on_cuda}
+            # ---- research while serving: refused on CUDA (I8), allowed on the CPU
+            if on_cuda:
+                code, answer = post("/api/v1/training/start", base_settings)
+                detail = str(answer.get("error") or "")
+                assert code == 409 and _names_this_services_inference(detail), (
+                    f"the runner's start was not refused naming this service's inference "
+                    f"({code})")
+                assert server.json("/api/v1/training/status").get("status") == "idle", (
+                    "the refused runner start started a job")
+                exit_code, said, run = training("refused-while-serving")
+                assert exit_code == 1 and _names_the_inference_holder(said, pid), (
+                    f"train_model.py was not refused naming the inference holder "
+                    f"(exit {exit_code})")
+                assert not run.exists(), "the refused train_model.py made its run directory"
+                facts["while_serving"] = {
+                    "runner_start": "refused (409), naming this service's inference",
+                    "training_cli": "refused (exit 1), naming the inference holder; nothing "
+                                    "written"}
+            else:
+                facts["while_serving"] = {"runner_start": "not asked on the CPU",
+                                          "training_cli": runs_to_its_end("beside-the-cpu-model")}
+                why = holding(device)
+                assert not why, f"after a research job beside the CPU model, {why}"
+            # ---- a corrupt candidate refused, the model and its holding kept (I5)
+            refused = load(corrupt, device, None)
+            assert refused.get("success") is False, "a corrupt checkpoint was loaded"
+            kept = status()
+            assert kept.get("serving") == "serving" and served_sha(kept) == sha, (
+                "the refused reload did not keep the model in use")
+            why = holding(device)
+            assert not why, f"after the refused reload, {why}"
+            facts["corrupt_reload"] = {"refused": True, "model_kept": True,
+                                       "holds_gpu_lock": on_cuda}
+            # ---- concurrent diagnoses and the stop (I4)
+            facts["stop"] = _judge_the_stop(_diagnoses_across_a_stop(server, body, sha), on_cuda)
+            assert lock_probe(lock_path) is None, (
+                "the GPU lock was still held after the stop reported released")
+            after = status()
+            assert (after.get("serving"), after.get("holds_gpu_lock")) == ("not_loaded", False), (
+                "the status after the stop still serves or holds the GPU lock")
+            assert (after.get("not_serving_reason") or "").startswith("Inference was stopped"), (
+                "the status after the stop does not say inference was stopped")
+            facts["memory_after_the_stop"] = _resources_reading(server)
+            # ---- back to research, then load again
+            facts["after_the_stop"] = {"training_cli": runs_to_its_end("after-the-stop")}
+            again = load(served, device, sha)
+            assert again.get("success"), "the child was not loaded again after the stop"
+            why = holding(device)
+            assert not why, f"after the second load, {why}"
+            facts["loaded_again"] = {"serving": "serving", "holds_gpu_lock": on_cuda}
+            # ---- device switches (I5): CUDA to CPU gives the lock back, CPU to CUDA takes it
+            if on_cuda:
+                assert load(served, "cpu", sha).get("success"), "the reload on the CPU was refused"
+                why = holding("cpu")
+                assert not why and lock_probe(lock_path) is None, (
+                    f"after CUDA to CPU, {why or 'the GPU lock is still held'}")
+                assert load(served, "cuda", sha).get("success"), "the reload on CUDA was refused"
+                why = holding("cuda")
+                assert not why, f"after CPU to CUDA, {why}"
+                facts["device_switch"] = {"cuda_to_cpu": "the GPU lock given back",
+                                          "cpu_to_cuda": "the GPU lock taken again, naming the "
+                                                         "service"}
+            else:
+                facts["device_switch"] = "not applicable on the CPU"
+        finally:
+            server.stop()
+        assert _wait_for(lambda: lock_probe(lock_path) is None, 10.0), (
+            "the GPU lock stayed held after the service stopped")
+        stop = facts["stop"]
+        return (f"{'CUDA' if on_cuda else 'CPU'} serving {'held' if on_cuda else 'took no'} GPU "
+                f"lock; {stop['accepted']} diagnoses accepted and {stop['refused_stopping']} + "
+                f"{stop['refused_stopped']} refused across the stop, released only after"), facts
+
+    report.run(INFERENCE_PROBE, "m2",
+               "Ops round: the inference lifecycle across processes on the probe's device: no "
+               "start-up model is not loaded; CUDA serving holds the GPU lock and research jobs "
+               "are refused naming it, CPU serving holds nothing; a bad candidate keeps the "
+               "model; a stop finishes accepted diagnoses, refuses new ones and only then "
+               "reports released; research runs after it; device switches move the lock",
+               _handoff)
+
+
 @_under_the_probes_own_gpu_lock
 def phase_m2_demo(
     report: Report, work: Path, sound: Path, checkpoint: Path, base: Path, device: str
@@ -7416,8 +7886,9 @@ def phase_m2_demo(
     """Contract M2's acceptance on the demo workspace: the successes first, then
     every refusal, each from the production entry point that makes it; then
     contract M4's flow on the same workspace (T1-T6), then M5's (W1-W11), then
-    the research comparison round's (L1-L8, `_rc_demo`), and last M1's served
-    readings (S1, `_served_readings`), informational. The formal entry
+    the research comparison round's (L1-L8, `_rc_demo`), then the ops round's
+    inference lifecycle on a service of its own (W12, `_inference_handoff`),
+    and last M1's served readings (S1, `_served_readings`), informational. The formal entry
     points take the probe's own GPU lock (`_probes_own_gpu_lock`), and M5's
     and the research comparison's each that of their own deployment.
 
@@ -8045,6 +8516,11 @@ def phase_m2_demo(
     # base and disease child, M1's other graph, the probe's own deployment
     # under <work>/rc.
     _rc_demo(report, work, sound, base, checkpoint, device, state.get("other"))
+
+    # ---- The ops round's inference lifecycle (W12), required: D1's disease
+    # child served by a service of its own on the probe's device, after L8,
+    # so no other service or job of the probe runs meanwhile.
+    _inference_handoff(report, work, sound, checkpoint, device)
 
     # ---- M1's served readings (S1), informational and never required: D1's
     # disease child served by a service of its own, after every other probe

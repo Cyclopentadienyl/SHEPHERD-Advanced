@@ -170,8 +170,9 @@ def test_the_m4_probes_are_required_in_both_parts():
     assert "R4.finetune" in probe.M2_REAL_REQUIRED
     # 52 demo and 15 real until the research comparison round, whose Stage 10
     # added 14 demo probes (A6, L1-L8) under new IDs; the ops-wiring round's
-    # A1b one more (L7.branch) and A2 one more (L7.disease_frozen).
-    assert (len(probe.M2_DEMO_REQUIRED), len(probe.M2_REAL_REQUIRED)) == (68, 15)
+    # A1b one more (L7.branch), A2 one more (L7.disease_frozen) and A3b one
+    # more (W12).
+    assert (len(probe.M2_DEMO_REQUIRED), len(probe.M2_REAL_REQUIRED)) == (69, 15)
     assert len(set(probe.M2_DEMO_REQUIRED)) == len(probe.M2_DEMO_REQUIRED)
     assert len(set(probe.M2_REAL_REQUIRED)) == len(probe.M2_REAL_REQUIRED)
     report = probe.Report()
@@ -205,7 +206,7 @@ def test_the_research_comparison_probes_are_required_under_new_ids():
     probe = _probe()
     assert probe.M2_DEMO_REQUIRED[:len(REQUIRED_AT_CHECKPOINT_C)] == REQUIRED_AT_CHECKPOINT_C
     assert probe.M2_DEMO_REQUIRED[len(REQUIRED_AT_CHECKPOINT_C):] == (
-        "A6", *probe.RC_DEMO_PROBES)
+        "A6", *probe.RC_DEMO_PROBES, probe.INFERENCE_PROBE)
     assert probe.RC_DEMO_PROBES == (
         "L1", "L2", "L3", "L4.other_graph", "L4.tampered_pairs", "L4.other_view",
         "L4.split_record", "L5", "L6", "L7.disease", "L7.gene", "L7.patients_like_me",
@@ -226,6 +227,25 @@ def test_the_research_comparison_probes_are_required_under_new_ids():
     assert "frozen-backbone disease child of the demo base in fp32" in scope
     assert "(L7.disease_frozen; mixed precision and torch.compile with a freeze are not " \
            "covered)" in scope
+
+
+def test_the_inference_lifecycle_probe_is_required_after_the_research_comparison_s():
+    """The ops-wiring round's A3b: W12 is required in the demo part, last of
+    the required IDs, after L8 and every earlier one, none renamed; the real
+    part's list is unchanged; a missing W12 leaves the demo part incomplete,
+    and the scope says what it covers. S1 stays informational, after it."""
+    probe = _probe()
+    assert probe.INFERENCE_PROBE == "W12"
+    assert probe.M2_DEMO_REQUIRED[-2:] == ("L8", "W12")
+    assert "W12" not in probe.M5_DEMO_PROBES and "W12" not in probe.M2_REAL_REQUIRED
+    assert probe.SERVED_READINGS_PROBE not in probe.M2_DEMO_REQUIRED
+    report = probe.Report()
+    report.probes = [probe.Probe(probe_id, "m2", "x", status="passed")
+                     for probe_id in probe.M2_DEMO_REQUIRED if probe_id != "W12"]
+    assert probe.m2_acceptance(report, False)["demo"]["not_passed"] == {"W12": "not run"}
+    scope = probe.m2_acceptance(report, False)["scope"]
+    assert "inference lifecycle too (W12)" in scope
+    assert "holds the GPU lock on CUDA" in scope and "nothing on the CPU" in scope
 
 
 def test_r2s_serving_half_refuses_before_a_model_is_built(trained_disease_child, served_state,
@@ -391,7 +411,7 @@ def test_the_demo_phase_passes_and_every_required_probe_runs(tmp_path, served_st
 
     # ---- M5's acceptance (W1-W11), after T6, every probe passed, and its
     # evidence holds no path.
-    m5 = _statuses(report, "W")
+    m5 = {k: v for k, v in _statuses(report, "W").items() if k in probe.M5_DEMO_PROBES}
     assert list(m5) == list(probe.M5_DEMO_PROBES)
     assert {k: v[0] for k, v in m5.items()} == dict.fromkeys(m5, "passed"), (
         {k: v[1] for k, v in m5.items() if v[0] != "passed"}
@@ -468,6 +488,49 @@ def test_the_demo_phase_passes_and_every_required_probe_runs(tmp_path, served_st
     assert (tmp_path / "m5" / "workspaces" / ".shepherd-gpu.lock").is_file()
 
     _check_the_research_comparison_flow(probe, report, tmp_path, models)
+    _check_the_inference_lifecycle(probe, report, tmp_path, models)
+
+
+def _check_the_inference_lifecycle(probe, report, tmp_path, models):
+    """W12 (the ops round's A3b), after L8 and before S1, on the CPU: passed
+    with the CPU's expectations (no GPU holding, a short training beside the
+    served model, the device switch not applicable), the stop's counts as its
+    judge requires them, no path in its facts, its own root's lock free and
+    its service stopped."""
+    import json
+
+    statuses = [p.probe_id for p in report.probes]
+    assert statuses.index("L8") < statuses.index("W12") < statuses.index("S1")
+    (w12,) = [p for p in report.probes if p.probe_id == "W12"]
+    assert w12.status == "passed", w12.detail
+    facts = w12.facts
+    assert facts["device"] == "cpu"
+    assert facts["checkpoint_sha256"] == hashlib.sha256(models.child.read_bytes()).hexdigest()
+    assert facts["started_without_a_model"] == {"serving": "not_loaded", "ready_status": 503,
+                                                "lock_free": True}
+    assert facts["loaded"] == {"serving": "serving", "holds_gpu_lock": False,
+                               "lock_names_the_service": False}
+    assert facts["while_serving"] == {"runner_start": "not asked on the CPU",
+                                      "training_cli": "ran to its end (exit 0)"}
+    assert facts["corrupt_reload"] == {"refused": True, "model_kept": True,
+                                       "holds_gpu_lock": False}
+    stop = facts["stop"]
+    assert stop["released"] is True and stop["gpu_lock_given_back"] is False
+    assert stop["accepted"] >= 1 and stop["sent_after_the_stop_answered"] == probe.W12_CLIENTS
+    assert stop["refused_stopped"] >= stop["sent_after_the_stop_answered"]
+    assert stop["finished_first_as_the_stop_counts"] <= stop["accepted"]
+    assert stop["diagnoses"] == stop["accepted"] + stop["refused_stopping"] + stop[
+        "refused_stopped"]
+    assert facts["memory_after_the_stop"]["judged"] is False
+    assert facts["after_the_stop"] == {"training_cli": "ran to its end (exit 0)"}
+    assert facts["loaded_again"] == {"serving": "serving", "holds_gpu_lock": False}
+    assert facts["device_switch"] == "not applicable on the CPU"
+    assert str(tmp_path) not in json.dumps(facts)
+    root = tmp_path / "w12" / "workspaces"
+    assert (root / ".shepherd-gpu.lock").is_file()
+    for run in ("beside-the-cpu-model", "after-the-stop"):
+        assert (root.parent / "cli" / run / "checkpoints" / "last.pt").is_file(), run
+    assert "Finished server process" in (tmp_path / "w12" / "service" / "server.log").read_text()
 
 
 def _check_the_research_comparison_flow(probe, report, tmp_path, models):

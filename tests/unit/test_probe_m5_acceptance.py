@@ -1594,3 +1594,124 @@ def test_the_probe_s_own_lock_is_named_and_the_operator_s_is_still_stated(probe,
         assert probe._deployment_gpu_lock() == {"configured": False, "held": False,
                                                 "unreadable": False}
     assert WORKSPACES_ROOT_ENV not in os.environ
+
+
+# --------------------------------------------------------------------------- W12 (ops round A3b)
+def test_w12_reads_the_refusals_of_this_services_inference_in_their_real_shapes(
+        probe, monkeypatch, tmp_path):
+    """W12's two refusal shapes, from the product's own words while this
+    process holds the GPU lock as its CUDA inference does: the job runner's
+    start refusal names this service's inference with how to stop it, and a
+    CLI's lock refusal (train_model.py's line) names an inference job of this
+    pid; another holder's words, or another pid, are not read as either."""
+    from src.api.services.training_manager import JOB_TYPES, TrainingManager
+    from src.utils.gpu_lock import (SERVING_COMMAND, SERVING_JOB_TYPE, GpuLockBusy,
+                                    take_gpu_lock)
+
+    monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(tmp_path))
+    held = take_gpu_lock(SERVING_JOB_TYPE, SERVING_COMMAND)
+    try:
+        manager = TrainingManager()
+        with manager._lock:
+            runner = manager._slot_refusal_locked(JOB_TYPES["training"])
+        with pytest.raises(GpuLockBusy) as busy:
+            take_gpu_lock("training", "train_model.py")
+        cli = f"train_model: refused: {busy.value} Nothing was written."
+    finally:
+        held.release()
+    assert probe._names_this_services_inference(runner)
+    assert probe._names_the_inference_holder(cli, os.getpid())
+    assert not probe._names_the_inference_holder(cli, os.getpid() + 1)
+    assert not probe._names_the_inference_holder(cli.replace(" Nothing was written.", ""),
+                                                 os.getpid())
+    other = ("The GPU is in use: the GPU lock x is held by a training job (train_model.py, "
+             "pid 7). One managed GPU job runs at a time. Nothing was started.")
+    assert not probe._names_this_services_inference(other)
+    assert not probe._names_the_inference_holder(other, 7)
+
+
+def test_w12_classes_each_diagnosis_across_the_stop_by_the_server_s_words(probe):
+    import src.api.main as api
+
+    sha = "c" * 64
+    served = json.dumps({"served_identity": {"checkpoint": {"sha256": sha}}}).encode()
+    other = json.dumps({"served_identity": {"checkpoint": {"sha256": "d" * 64}}}).encode()
+    state = api.AppState()
+    state.transition = api.STOPPING
+    stopping = json.dumps({"error": state.not_serving_reason}).encode()
+    state.transition = None
+    state.not_serving = api.NotServingRecord(api.STOPPED, "10:15", api.STOPPED_BY["operator"],
+                                             sha[:12])
+    stopped = json.dumps({"error": state.not_serving_reason}).encode()
+    nothing = json.dumps({"error": api.AppState().not_serving_reason}).encode()
+    assert probe._diagnosis_answer(200, served, sha) == "accepted"
+    assert probe._diagnosis_answer(200, other, sha) == "another_model"
+    assert probe._diagnosis_answer(503, stopping, sha) == "stopping"
+    assert probe._diagnosis_answer(503, stopped, sha) == "stopped"
+    assert probe._diagnosis_answer(503, nothing, sha) == "another_reason"
+    assert probe._diagnosis_answer(500, b"{}", sha) == "http_500"
+    assert probe._diagnosis_answer(200, b"not json", sha) == "not_json"
+
+
+def _stop_seen(answers, *, message="Inference stopped: 1 accepted request(s) finished first, "
+                                   "then model cccccccccccc and its graph were released. New "
+                                   "diagnoses are refused until a model is loaded.",
+               status=None, released=True):
+    return {"stop_status": 200,
+            "stop": {"success": True, "released": released, "message": message,
+                     "status": status or {"serving": "not_loaded", "in_flight": 0,
+                                          "holds_gpu_lock": False}},
+            "answers": answers}
+
+
+GOOD_ANSWERS = [(False, "accepted"), (False, "accepted"), (False, "stopping"),
+                (False, "stopped"), (True, "stopped"), (True, "stopped")]
+
+
+def test_w12_s_stop_judge_passes_the_lifecycle_s_own_order(probe):
+    counts = probe._judge_the_stop(_stop_seen(GOOD_ANSWERS), on_cuda=False)
+    assert counts["accepted"] == 2 and counts["refused_stopping"] == 1
+    assert counts["refused_stopped"] == 3 and counts["sent_after_the_stop_answered"] == 2
+    assert counts["finished_first_as_the_stop_counts"] == 1
+    on_cuda = _stop_seen(GOOD_ANSWERS, message=(
+        "Inference stopped: 0 accepted request(s) finished first, then model cccccccccccc and "
+        "its graph were released and the GPU lock given back. New diagnoses are refused until "
+        "a model is loaded."))
+    assert probe._judge_the_stop(on_cuda, on_cuda=True)["gpu_lock_given_back"] is True
+
+
+@pytest.mark.parametrize("seen, message", [
+    (_stop_seen(GOOD_ANSWERS, released=False), "did not report released"),
+    (_stop_seen(GOOD_ANSWERS, status={"serving": "stopping", "in_flight": 1,
+                                      "holds_gpu_lock": False}),
+     "reported released while its status said stopping, 1 in flight"),
+    (_stop_seen(GOOD_ANSWERS + [(False, "http_500")]), "answered otherwise"),
+    (_stop_seen(GOOD_ANSWERS + [(True, "accepted")]), "was not refused as stopped"),
+    (_stop_seen([(True, "stopped")]), "no diagnosis was accepted"),
+    (_stop_seen(GOOD_ANSWERS, message="Inference stopped: 5 accepted request(s) finished "
+                                      "first, then the model"),
+     "5 accepted request(s) finished first, of 2 accepted"),
+])
+def test_w12_s_stop_judge_fails_each_way_the_lifecycle_can_be_wrong(probe, seen, message):
+    with pytest.raises(AssertionError, match=re.escape(message)):
+        probe._judge_the_stop(seen, on_cuda=False)
+
+
+def test_w12_s_stop_judge_holds_the_lock_s_words_to_the_device(probe):
+    with pytest.raises(AssertionError, match="does not say it gave the GPU lock back"):
+        probe._judge_the_stop(_stop_seen(GOOD_ANSWERS), on_cuda=True)
+
+
+def test_w12_s_holding_follows_the_device(probe):
+    from src.utils.gpu_lock import SERVING_JOB_TYPE
+
+    held = {"held_by": "an inference job (…)", "holder": {"job_type": SERVING_JOB_TYPE,
+                                                         "pid": 41}}
+    free = {"held_by": None, "holder": None}
+    assert probe._holding({"holds_gpu_lock": True}, held, 41, True) == ""
+    assert "does not say" in probe._holding({"holds_gpu_lock": False}, held, 41, True)
+    assert "does not name" in probe._holding({"holds_gpu_lock": True}, held, 42, True)
+    assert probe._holding({"holds_gpu_lock": False}, free, 41, False) == ""
+    assert "CPU model holds" in probe._holding({"holds_gpu_lock": True}, free, 41, False)
+    assert "held while a CPU model" in probe._holding({"holds_gpu_lock": False}, held, 41,
+                                                      False)
