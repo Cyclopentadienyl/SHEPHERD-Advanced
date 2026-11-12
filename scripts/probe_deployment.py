@@ -298,7 +298,12 @@ every step through its production entry point:
     each trained on the probe's device at the demo's sizes, measured by its own
     protocol (disease on the supplied cohort, the other two on the generated
     split's fixture) and registered (L7.disease, L7.gene,
-    L7.patients_like_me); and the results export (`scripts/export_results.py`)
+    L7.patients_like_me); a same-settings branch of the listed base started
+    through the job runner (`start_training` with `branch_from`, bound to the
+    base's digest) and run on the probe's device to its end, listed under its
+    parent's exact file with its changes `{}`, the parent's bytes unchanged,
+    and loaded by the one loader (L7.branch, the ops-wiring round's
+    decisions B1, B2); and the results export (`scripts/export_results.py`)
     over that deployment listing every run L2-L7 kept, with its identities,
     training settings, environment and exposure, no row capped (L8). On CUDA
     the measurements and the L7 children run on the device; this container's
@@ -2242,9 +2247,11 @@ M2_DEMO_REQUIRED: Tuple[str, ...] = (
     # imported, measured and registered (L6); a short disease, gene and
     # patients-like-me child each on the probe's device, measured and
     # registered (L7, the GPU regression cases); and the results export (L8).
+    # The ops-wiring round's, in the same flow: a same-settings branch of the
+    # demo base through the job runner (L7.branch, decisions B1, B2).
     "A6", "L1", "L2", "L3",
     "L4.other_graph", "L4.tampered_pairs", "L4.other_view", "L4.split_record",
-    "L5", "L6", "L7.disease", "L7.gene", "L7.patients_like_me", "L8",
+    "L5", "L6", "L7.disease", "L7.gene", "L7.patients_like_me", "L7.branch", "L8",
 )
 #: R8, the unchanged-workspace check, runs last, after M4's RT1-RT3 and M5's
 #: RW1-RW3; R2 runs after R4.finetune, whose child it strips.
@@ -2306,7 +2313,9 @@ def m2_acceptance(report: Report, real_requested: bool) -> Dict[str, Any]:
             "each other, and its refusals; a disease child measured by two protocols; a "
             "generated split imported, measured and registered; short disease, gene and "
             "patients-like-me children trained and measured on this device as regression "
-            "cases, not studies; and the results export listing every record of that flow. "
+            "cases, not studies; a same-settings branch of the demo base started through the "
+            "job runner, listed under its parent with no change (L7.branch); and the results "
+            "export listing every record of that flow. "
             "Its figures are a functional check, never a comparison of models. Last, it "
             "records M1's served readings of the demo disease child (S1): the service's cold "
             "start, warm-up and steady-state request times and its process's memory, "
@@ -3671,6 +3680,9 @@ _SERVICE_START_SECONDS = 300.0
 _LOCK_TAKEN_SECONDS = 300.0
 _FIRST_EPOCH_SECONDS = 1800.0
 _TEST_RUN_SECONDS = 3600.0
+#: How long a short training job the runner runs to its end may take
+#: (L7.branch: the demo base's epochs at the demo's sizes).
+_TRAINING_RUN_SECONDS = 3600.0
 #: The probe's own workspaces root, an empty directory under the work
 #: directory whose `.shepherd-gpu.lock` is the GPU lock of the phases that run
 #: the formal entry points in this process (`_probes_own_gpu_lock`).
@@ -5634,7 +5646,8 @@ def _m5_real(report: Report, runs: Path, real: Path, workspaces_root: Path, devi
 #: O9), in the order they run, every one required (`M2_DEMO_REQUIRED`).
 RC_DEMO_PROBES: Tuple[str, ...] = (
     "L1", "L2", "L3", "L4.other_graph", "L4.tampered_pairs", "L4.other_view",
-    "L4.split_record", "L5", "L6", "L7.disease", "L7.gene", "L7.patients_like_me", "L8",
+    "L4.split_record", "L5", "L6", "L7.disease", "L7.gene", "L7.patients_like_me",
+    "L7.branch", "L8",
 )
 #: The KG link-prediction protocol's name (`src.evaluation.protocols`).
 LP_PROTOCOL = "kg_link_prediction"
@@ -5648,6 +5661,10 @@ RC_WORKSPACE = "probe-rc"
 RC_BASE_RUN = "probe-rc-base"
 RC_CHILD_RUN = "probe-rc-d1-disease"
 RC_TASK_RUNS: Dict[str, str] = {task: "probe-rc-" + task.replace("_", "-") for task in RC_TASKS}
+#: The run name of L7.branch's same-settings branch of the listed base (the
+#: ops-wiring round, decisions B1, B2): part of the directory the job runner
+#: allocates for it.
+RC_BRANCH_RUN_NAME = "probe-rc-branch"
 RC_CHECKPOINT = "last.pt"
 #: The registry's versions: the KG edge set L1 imports from the listed base
 #: (role test); the KG edge sets the refusals measure, each its own import
@@ -6454,6 +6471,90 @@ def _rc_demo(report: Report, work: Path, sound: Path, base: Path, child: Path, d
 
         return case
 
+    # ---- L7.branch: a same-settings branch of the listed base, through the job runner
+    def _same_settings_branch() -> Tuple[str, Dict[str, Any]]:
+        """A branch of the listed base that changes no setting (the
+        ops-wiring round, decisions B1, B2), started through the job runner's
+        one start (`start_training` with `branch_from`), bound to the base's
+        digest as the listing read it and to the dataset's, and run on the
+        probe's device to its end: a new run in a directory of its own, listed
+        under its parent's exact file by the server's family view, its
+        changes `{}`, a new optimizer, its stage from epoch 0; the parent's
+        bytes unchanged; read back by the one loader."""
+        from src.api.services import server_lists
+        from src.kg.artifacts import read_split_manifest
+        from src.models.bundle.record import load_bundle
+
+        _need("workspace")
+        fingerprint = read_split_manifest(state["workspace"]).identity.sha256
+        runs = state["workspace"] / RUNS_DIRNAME / _demo_encoder_kind()
+        before = sorted(path.name for path in runs.iterdir())
+        manager = TrainingManager()
+        started_at = time.monotonic()
+        with _job_ended_on_exit(manager, "training"):
+            started = manager.start_training(
+                {"data_dir": str(state["workspace"]), "branch_from": str(state["base"]),
+                 "device": device, "run_name": RC_BRANCH_RUN_NAME},
+                expected_dataset_fingerprint=fingerprint,
+                expected_parent_sha256=state["base_sha"])
+            assert started.get("success"), "the runner refused the branch start"
+            word = _job_ended(manager, "training", _TRAINING_RUN_SECONDS)
+        seconds = round(time.monotonic() - started_at, 1)
+        status = manager.get_status()
+        if word != "completed" or status["exit_code"] != 0:
+            _job_said(manager, "training")
+        assert word == "completed" and status["exit_code"] == 0, (
+            f"the branch ended {word}, exit {status['exit_code']}")
+        run = Path(started["run_dir"])
+        assert run.parent == runs and run.name not in before, (
+            "the branch was not filed in a run directory of its own under its parent's "
+            "architecture")
+        assert _read_run_checkpoint(state["base"])["sha256"] == state["base_sha"], (
+            "the parent's bytes changed")
+        last = run_checkpoint_dir(run) / RC_CHECKPOINT
+        payload = read_checkpoint(last, map_location="cpu", weights_only=True).checkpoint
+        _bundle, record = load_bundle(payload, learning_stage="base")
+        family = read_model_record(read_checkpoint(state["base"], map_location="cpu",
+                                                   weights_only=True).checkpoint).family_id
+        assert (record.operation, record.family_id) == ("branch", family), (
+            "the branch is not recorded as a branch of its parent's family")
+        assert record.parent == {"sha256": state["base_sha"], "run": RC_BASE_RUN,
+                                 "changes": {}}, "the branch records another parent or changes"
+        assert (record.weight_transfer or {}).get("optimizer") == "new", (
+            "the branch did not start a new optimizer")
+        stage = (payload.get("progress") or {}).get("stage") or {}
+        assert (stage.get("kind"), stage.get("start_epoch")) == ("original", 0), (
+            "the branch did not run its stage from epoch 0")
+        gpu = (payload.get("environment") or {}).get("gpu")
+        assert (gpu is not None) == device.startswith("cuda"), (
+            f"the branch's environment {'names no' if device.startswith('cuda') else 'names a'} "
+            f"GPU for a run on {device}")
+        sha = _read_run_checkpoint(last)["sha256"]
+        rows = server_lists.list_family(RC_WORKSPACE)
+        assert rows.available, "the family view of the flow's workspace is unavailable"
+        keys = {(row.item.run, row.item.filename): row for row in rows.items}
+        branch, parent = keys.get((run.name, RC_CHECKPOINT)), keys.get(
+            (RC_BASE_RUN, RC_CHECKPOINT))
+        assert branch is not None and parent is not None, "the branch or its parent is not listed"
+        assert (branch.parent, branch.parent_state) == (parent.item.key, "listed"), (
+            "the branch is not listed under its parent's exact file")
+        assert (branch.item.sha256, branch.item.operation, branch.item.parent_changes) == (
+            sha, "branch", {}), "the list does not show the branch as it is recorded"
+        return f"a same-settings branch of D1's base through the job runner on {device}", {
+            "device": device, "trained_on_cuda": gpu is not None, "training_seconds": seconds,
+            "started_through": "the job runner's start, bound to the parent's digest shown and "
+                               "the dataset's",
+            "branch": {"run": run.name, "sha256": sha, "operation": record.operation,
+                       "changes": record.parent["changes"],
+                       "optimizer": record.weight_transfer["optimizer"],
+                       "completed_epochs": (payload.get("progress") or {}).get(
+                           "completed_epochs"),
+                       "training_rules": payload.get("training_rules")},
+            "parent": {"run": RC_BASE_RUN, "sha256": state["base_sha"], "unchanged": True},
+            "listed_under_its_parent": True, "listed_changes": branch.item.parent_changes,
+            "loaded": True,
+        }
+
     # ---- L8: the results export, every record of the flow, uncapped
     def _exported() -> Tuple[str, Dict[str, Any]]:
         import io
@@ -6542,6 +6643,9 @@ def _rc_demo(report: Report, work: Path, sound: Path, base: Path, child: Path, d
             report.run(f"L7.{task}", "m2", f"research comparison, GPU regression: a short {task} "
                        "child of D1's base trained on the probe's device, measured by its "
                        "protocol and registered", _regression_case(task))
+        report.run("L7.branch", "m2", "ops wiring: a same-settings branch of D1's base through "
+                   "the job runner, on the probe's device, listed under its parent with no "
+                   "change, its parent unchanged, and loaded", _same_settings_branch)
         report.run("L8", "m2", "research comparison: the results export lists every run of the "
                    "flow with its identities, settings, environment and exposure, uncapped",
                    _exported)

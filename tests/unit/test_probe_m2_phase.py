@@ -167,8 +167,9 @@ def test_the_m4_probes_are_required_in_both_parts():
     assert "M5.no_model_spec" in probe.M2_DEMO_REQUIRED
     assert "R4.finetune" in probe.M2_REAL_REQUIRED
     # 52 demo and 15 real until the research comparison round, whose Stage 10
-    # added 14 demo probes (A6, L1-L8) under new IDs.
-    assert (len(probe.M2_DEMO_REQUIRED), len(probe.M2_REAL_REQUIRED)) == (66, 15)
+    # added 14 demo probes (A6, L1-L8) under new IDs; the ops-wiring round's
+    # A1b one more (L7.branch).
+    assert (len(probe.M2_DEMO_REQUIRED), len(probe.M2_REAL_REQUIRED)) == (67, 15)
     assert len(set(probe.M2_DEMO_REQUIRED)) == len(probe.M2_DEMO_REQUIRED)
     assert len(set(probe.M2_REAL_REQUIRED)) == len(probe.M2_REAL_REQUIRED)
     report = probe.Report()
@@ -205,19 +206,21 @@ def test_the_research_comparison_probes_are_required_under_new_ids():
         "A6", *probe.RC_DEMO_PROBES)
     assert probe.RC_DEMO_PROBES == (
         "L1", "L2", "L3", "L4.other_graph", "L4.tampered_pairs", "L4.other_view",
-        "L4.split_record", "L5", "L6", "L7.disease", "L7.gene", "L7.patients_like_me", "L8")
+        "L4.split_record", "L5", "L6", "L7.disease", "L7.gene", "L7.patients_like_me",
+        "L7.branch", "L8")
     assert probe.M2_REAL_REQUIRED == ("R1", "R2", "R3", "R4", "R4.finetune", "R5", "R6", "R7",
                                       "R8", "RT1", "RT2", "RT3", "RW1", "RW2", "RW3")
     report = probe.Report()
     for probe_id in probe.M2_DEMO_REQUIRED:
         report.probes.append(probe.Probe(probe_id, "m2", "x", status="passed"))
-    for missing in ("A6", "L4.split_record", "L7.gene"):
+    for missing in ("A6", "L4.split_record", "L7.gene", "L7.branch"):
         kept = [p for p in report.probes if p.probe_id != missing]
         partial = probe.Report()
         partial.probes = kept
         assert probe.m2_acceptance(partial, False)["demo"]["not_passed"] == {missing: "not run"}
     scope = probe.m2_acceptance(report, False)["scope"]
     assert "A6, L1-L8" in scope and "regression cases, not studies" in scope
+    assert "same-settings branch" in scope and "(L7.branch)" in scope
 
 
 def test_r2s_serving_half_refuses_before_a_model_is_built(trained_disease_child, served_state,
@@ -556,6 +559,25 @@ def _check_the_research_comparison_flow(probe, report, tmp_path, models):
         ledger, _ = read_ledger(trained.parent / "evaluations.json")
         assert [(r["scoring"]["mode"], r["run_id"]) for r in ledger["records"]] == [
             (task, case["run_id"])]
+    # L7.branch: a same-settings branch of the listed base, through the job
+    # runner (ops-wiring round, B1, B2): its own run directory beside the
+    # others, its record a branch of the base with no change, the base's bytes
+    # D1's still.
+    import torch
+
+    case = facts["L7.branch"]
+    branched = runs / case["branch"]["run"] / "checkpoints" / "last.pt"
+    assert case["branch"]["run"] not in {probe.RC_BASE_RUN, probe.RC_CHILD_RUN,
+                                         *probe.RC_TASK_RUNS.values()}
+    assert probe.RC_BRANCH_RUN_NAME in case["branch"]["run"]
+    assert sha(branched) == case["branch"]["sha256"]
+    payload = torch.load(branched, map_location="cpu", weights_only=True)
+    assert (payload["operation"], payload["parent"]) == (
+        "branch", {"sha256": sha(base), "run": probe.RC_BASE_RUN, "changes": {}})
+    assert case["parent"] == {"run": probe.RC_BASE_RUN, "sha256": sha(base), "unchanged": True}
+    assert (case["listed_changes"], case["branch"]["optimizer"]) == ({}, "new")
+    assert (case["trained_on_cuda"], case["device"]) == (False, "cpu")
+    assert base.read_bytes() == models.base.read_bytes()
     # L8: the export on disk is the one the facts name, and it lists exactly
     # the eight runs L2-L7 kept.
     export = tmp_path / "rc" / "export.json"
