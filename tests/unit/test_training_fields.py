@@ -338,9 +338,6 @@ def test_api_enforces_num_neighbors_policy():
     """The hop list by the field spec's one check (`value_problem`): -1, every
     neighbour, is legal, as on the CLI and the WebUI (decision S6)."""
     VE = _validation_error()
-    spec = tf.by_name("num_neighbors")
-    assert spec.current_api_item == spec.item_valid
-    assert spec.current_api_min_length == spec.min_length
     assert _base(num_neighbors=[15, 10, 5]).num_neighbors == [15, 10, 5]
     assert _base(num_neighbors=[-1, 10, 5]).num_neighbors == [-1, 10, 5]
     for bad, said in (([], "needs at least 1 item"), ([15, 0], "items must be 1 or more"),

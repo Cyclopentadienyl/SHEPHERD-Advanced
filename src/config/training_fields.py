@@ -288,12 +288,12 @@ class FieldSpec:
     item_valid: Optional[Dict[str, Any]] = None   # list[int]: per-element constraint
     min_length: Optional[int] = None              # list[int]: non-empty etc.
 
-    # current API behavior pinned by PR-4a (numeric), extended by PR-4c (enum/pattern/list):
+    # current API behavior pinned by PR-4a (numeric), extended by PR-4c (enum/pattern). A
+    # list's items and length are the policy's (`item_valid`, `min_length`): the API checks
+    # each value by `value_problem`, so it has no list constraint of its own.
     current_api: Optional[Dict[str, Any]] = None
     current_api_choices: Optional[Tuple[Any, ...]] = None   # enum the API rejects outside of
     current_api_pattern: Optional[str] = None               # regex the API enforces
-    current_api_item: Optional[Dict[str, Any]] = None       # list element constraint enforced
-    current_api_min_length: Optional[int] = None            # list min length enforced
 
     known_divergence: bool = False
     divergence_note: str = ""
@@ -306,7 +306,7 @@ class FieldSpec:
             raise ValueError(f"{self.name}: unknown kind {self.kind!r}")
         if self.scope not in SCOPES:
             raise ValueError(f"{self.name}: unknown scope {self.scope!r}")
-        for label in ("valid", "current_api", "item_valid", "current_api_item"):
+        for label in ("valid", "current_api", "item_valid"):
             d = getattr(self, label)
             if d is None:
                 continue
@@ -444,7 +444,7 @@ FIELDS: Tuple[FieldSpec, ...] = (
     FieldSpec("num_neighbors", "list[int]", (15, 10, 5), "dataloader",
               projects_to="TrainConfig.num_neighbors",
               item_valid={"ge": 1}, min_length=1,
-              current_api={}, current_api_item={"ge": 1}, current_api_min_length=1,
+              current_api={},
               known_divergence=True,
               divergence_note="One number per hop the model spec's encoder declares "
                               "(`hops_problem`; GATv2: one per layer), checked by the base "
