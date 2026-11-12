@@ -116,7 +116,7 @@ def _refused_everywhere(train_model, entries, cli_fields, body, said, *, code, p
     assert bool(runner.get("invalid_settings")) is (code == 422), runner
     assert resp.status_code == code, resp.text
     detail = resp.json()["detail"]
-    assert detail == said or detail == [] or (
+    assert detail == said or (
         isinstance(detail, list) and [e["msg"] for e in detail] == [f"Value error, {said}"]), detail
     popen.assert_not_called()
     assert manager.active_job() is None and manager.run_dir is None
@@ -207,7 +207,11 @@ def test_a_resume_stating_another_stage_or_task_gets_the_identity_sentence(
 
 def test_a_branch_stating_another_task_gets_the_branch_identity_sentence(paused_base, entries):
     """The branch's identity check is the same function, in a branch's words;
-    the CLI, the runner and POST /training/branch agree."""
+    the CLI and the runner agree. POST /training/branch cannot state a task
+    (its request names the run by data_dir, branch_from, device and
+    run_name, and takes settings to change): a task among its settings is
+    refused as no training setting (422), and a finetune's setting on a
+    base's branch by the one check of a stated setting."""
     train_model = _train_model()
     ws, parent = paused_base
     said = ("The branch parent last.pt is a base checkpoint; a branch keeps its parent's "
@@ -215,17 +219,20 @@ def test_a_branch_stating_another_task_gets_the_branch_identity_sentence(paused_
     http, manager = entries
     assert _cli(train_model, {"data_dir": str(ws), "device": "cpu", "learning_stage": "base",
                               "task": "disease", "branch_from": str(parent)}) == said
+    branch = {"data_dir": str(ws), "device": "cpu", "branch_from": str(parent)}
     with _spawn_stubbed() as popen:
-        runner = manager.start_training({"data_dir": str(ws), "device": "cpu",
-                                         "branch_from": str(parent), "task": "disease"})
-        resp = http.post("/api/v1/training/branch", json={
-            "data_dir": str(ws), "device": "cpu", "branch_from": str(parent),
-            "settings": {"task_loss_weight": 0.5}})
+        runner = manager.start_training({**branch, "task": "disease"})
+        task = http.post("/api/v1/training/branch",
+                         json={**branch, "settings": {"task": "disease"}})
+        setting = http.post("/api/v1/training/branch",
+                            json={**branch, "settings": {"task_loss_weight": 0.5}})
     assert runner["success"] is False and runner["error"] == said, runner
-    # The branch route takes settings only (a task is no setting); a finetune's
-    # setting on a base's branch is the one check's refusal, 422.
-    assert resp.status_code == 422 and resp.json()["detail"].startswith(
-        "task_loss_weight is not a setting a base run reads"), resp.text
+    assert task.status_code == 422, task.text
+    assert [e["msg"] for e in task.json()["detail"]] == [
+        "Value error, settings holds 'task', which is not a training setting; a branch's run "
+        "is named by data_dir, branch_from, device and run_name."]
+    assert setting.status_code == 422 and setting.json()["detail"].startswith(
+        "task_loss_weight is not a setting a base run reads"), setting.text
     popen.assert_not_called()
 
 
