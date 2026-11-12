@@ -3618,13 +3618,13 @@ data.pyg.org 沒有 aarch64 wheel，所以由選單或 `PYG_ARM_STRATEGY` 在預
 - **已驗證的範圍**：這些路徑在測試中以替身取代 ARM 主機、GitHub、pip 與編譯器執行
   （`tests/unit/test_deploy_pyg_route.py`），屬於軟體模擬。各路徑只有在 GB10 上實際跑過才算在那裡
   驗證過。Stage 2a 之後，兩條 ARM 路徑已在 GB10 上各跑過一次，版本為 `claude/research-comparison` 的 `e60f23e`
-  （尚未合併）：預編譯下載於 2026-11-11，四個擴充全部本地編譯於 2026-11-12，各自使用新建的環境，
+  （已於 #133 合併）：預編譯下載於 2026-11-11，四個擴充全部本地編譯於 2026-11-12，各自使用新建的環境，
   收據也都相符（`docs/working/research-comparison-acceptance-2026-11-12/`）。下載失敗時的停止、
   改為編譯的退路、錯誤的 wheel 與不相符的收據，仍只有軟體模擬。
 
 **已驗證的組合**：`torch_geometric` 2.8.1，搭配 torch 2.10.0+cu130 與預編譯 ARM release 的擴充
 （pyg-lib 0.6.0、torch-scatter 2.1.2、torch-sparse 0.6.18、torch-cluster 1.6.3），見 M5 於 `b14c4de`
-的 GB10 驗收；`e60f23e`（尚未合併）再次驗證這組版本，並另以本地編譯（pyg-lib 0.8.0，其餘三個與
+的 GB10 驗收；`e60f23e`（已於 #133 合併）再次驗證這組版本，並另以本地編譯（pyg-lib 0.8.0，其餘三個與
 release 同版本）通過驗收。自 Batch 1 起，`deploy.sh` 從 lock 安裝這組版本，已於 GB10 以 `0bc5178` 檢查
 （2026-10-26：A1–A5 通過，A5 與提交的 lock 相符，PyG 原生檢查 5/5；
 `docs/working/batch1-acceptance-2026-10-26/`）。Windows 的 `deploy.cmd` 尚未實跑。M4 的驗收用的是

@@ -3660,7 +3660,7 @@ is `skip`, as before.
 - **What is verified**: these routes run in tests with stand-ins for the ARM host, GitHub, pip and
   the compilers (`tests/unit/test_deploy_pyg_route.py`), which is software simulation. Each route
   counts as verified on a GB10 only by its own GB10 run. Since Stage 2a, both ARM routes have run on
-  the GB10 once, at `e60f23e` on `claude/research-comparison` (not merged): the prebuilt pull on
+  the GB10 once, at `e60f23e` on `claude/research-comparison` (merged as #133): the prebuilt pull on
   2026-11-11 and a local build of all four extensions on 2026-11-12, each in its own new environment,
   with its receipt matched (`docs/working/research-comparison-acceptance-2026-11-12/`). A failed
   pull's stop, the build fallback, a wrong wheel and a mismatched receipt are still software
@@ -3668,7 +3668,7 @@ is `skip`, as before.
 
 **The verified set**: `torch_geometric` 2.8.1 with torch 2.10.0+cu130 and the prebuilt ARM
 release's extensions (pyg-lib 0.6.0, torch-scatter 2.1.2, torch-sparse 0.6.18, torch-cluster
-1.6.3), in M5's GB10 acceptance at `b14c4de`, and again at `e60f23e` (not merged), where a local
+1.6.3), in M5's GB10 acceptance at `b14c4de`, and again at `e60f23e` (merged as #133), where a local
 build (pyg-lib 0.8.0, the other three at the release's versions) passed beside it. Since Batch 1,
 `deploy.sh` installs that set from the lock, as checked on the GB10 at `0bc5178` (2026-10-26: A1–A5
 passed, A5 equal to the committed lock,

@@ -1,10 +1,11 @@
 # Research comparison: measuring, keeping, finding and exporting every result
 
-**Status: built on `claude/research-comparison`, from `main` `2da28cf` (2026-11-10); externally reviewed
-(the review and RC-R1's recheck, 2026-11-11); its GB10 acceptance passed on both deploy routes at `e60f23e`
-(2026-11-11/12,
+**Status: done and merged.** Built on `claude/research-comparison`, from `main` `2da28cf` (2026-11-10);
+externally reviewed (the review and RC-R1's recheck, 2026-11-11); its GB10 acceptance passed on both deploy
+routes at `e60f23e` (2026-11-11/12,
 [`../research-comparison-acceptance-2026-11-12/`](../research-comparison-acceptance-2026-11-12/README.md));
-not merged.** This is the round's plan and record. The owner authorised it on 2026-11-10 by adopting the reviewer's plan review and
+merged into `main` as #133 (`30e8ae1`, 2026-11-12; product code `e60f23e`). What comes next is
+[`../BACKLOG.md`](../BACKLOG.md) §0. This is the round's plan and record. The owner authorised it on 2026-11-10 by adopting the reviewer's plan review and
 its suggested authorisation reply, both rev 2 of 2026-11-10 (outside this repository, in
 `SHEPHERD_research_comparison_review_2da28cf_20261110_rev2_evidence.zip`). They replace the author's first
 plan (`PLAN_research_comparison_2da28cf.md`, outside the repository), which was not delivered as written.
@@ -539,3 +540,4 @@ golden difference stops that commit until its cause is found, not the round.
 | 2026-11-11 | recheck review | `e17ffe7`..`e60f23e` | The reviewer's narrow recheck of RC-R1 passed with no P1 or P2: one plain-data rule for what is read and shown, no carried size limits on results, the row guard catching the rule's refusal only, and the export publishing only a complete file |
 | 2026-11-11/12 | GB10 acceptance | `e60f23e` | Run by the owner with the reviewer's session, through the reviewer's frozen runner and TA-10 closing check, one deploy route after the other in the reused candidate slot, each with a new environment, data copy and evidence directory (the owner's A/B slot decision, made before the run, in place of O9's new clone). The prebuilt pull (2026-11-11; A6 "prebuilt release", `pyg-lib` 0.6.0) and the local build (2026-11-12; A6 "local build" for all four extensions, `pyg-lib` 0.8.0) each passed 116 of 116 probes, demo 66 and real data 15, and TA-10 182 of 182; probe and `tee` exits 0. Recorded in [`../research-comparison-acceptance-2026-11-12/`](../research-comparison-acceptance-2026-11-12/README.md), with what it does not show. Functional only; not merged |
 | 2026-11-12 | record review | `e60f23e`..`d43d812` | The reviewer's review of the GB10 record passed with no P1 or P2. On the GB10 it confirmed that the committed reports equal the runs' originals and the handed-over copies byte for byte, that its TA-10 replay read the handed-over copies, and that the deployment checkout was clean at `773dc4a` before and after the run. It accepted the slot reuse as the owner's decision, and the record's narrower statements (precision recorded for R4 only, CUDA for L2, L3, L5, L6 and L7, no source identity for the three registry builds). The record states these (its §1, §5) |
+| 2026-11-12 | merge | `30e8ae1` | Merged into `main` as #133. The merged tree equals the reviewed `bff80e2`'s; its product code is the GB10-accepted `e60f23e`'s (only documents differ, under `docs/` and the two deployment guides) |
