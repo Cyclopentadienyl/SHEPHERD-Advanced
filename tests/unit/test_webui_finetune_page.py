@@ -216,7 +216,7 @@ def test_start_sends_the_listed_digest_the_fingerprint_shown_and_what_differs(
     parents = fp._on_finetune_bases(operator, ws, None)[0]
     key = f"gatv2/{BASE_RUN}/last.pt"
     said = fp._on_finetune_start(operator, ws, parents, key, ["patients_like_me", "disease"],
-                                 100, 7.0, "cpu", "  ft  ")
+                                 "cpu", "  ft  ", 100, 7.0, "none")
     assert said == ""
     inputs, kwargs = started[-1]
     assert inputs.tasks == ("disease", "patients_like_me")           # TASKS order
@@ -227,8 +227,32 @@ def test_start_sends_the_listed_digest_the_fingerprint_shown_and_what_differs(
     assert (inputs.device, inputs.run_name) == ("cpu", "ft")
     assert kwargs == {"expected_dataset_fingerprint": ws["row"]["dataset_fingerprint"]}
     # The recipe's own values are not sent.
-    fp._on_finetune_start(operator, ws, parents, key, ["gene"], 100, 33, "auto", "")
+    fp._on_finetune_start(operator, ws, parents, key, ["gene"], "auto", "", 100, 33, "none")
     assert started[-1][0].settings == {}
+
+
+def test_a_frozen_graph_backbone_reaches_the_start_and_the_note_says_what_trains(
+        root, operator, started):
+    """Ops-wiring round, decision F1: the freeze is a field of the page's
+    common settings; Frozen reaches the runner's start as the start's
+    settings (`FinetuneInputs.settings`, which the runner alone checks), for
+    every chosen task; Trained, the reference, is not sent. While Frozen is
+    chosen a visible note says what then trains (skill §7: not only a
+    bubble)."""
+    ws = tc.workspace_state("demo")
+    parents = fp._on_finetune_bases(operator, ws, None)[0]
+    key = f"gatv2/{BASE_RUN}/last.pt"
+    assert fp._on_finetune_start(operator, ws, parents, key, ["disease", "gene"], "cpu", "",
+                                 100, 33, "graph_side") == ""
+    assert started[-1][0].settings == {"frozen_parts": "graph_side"}
+    assert started[-1][0].tasks == ("disease", "gene")
+    fp._on_finetune_start(operator, ws, parents, key, ["disease"], "cpu", "", 5, 33, "none")
+    assert started[-1][0].settings == {"num_epochs": 5}
+    assert fp.freeze_note_html("none") == ""
+    note = fp.freeze_note_html("graph_side")
+    assert note == (f'<p class="shep-ft-why">{fp.FROZEN_NOTE}</p>')
+    assert "only the patient encoder and the task head train" in note
+    assert "the LP term trains nothing" in note
 
 
 @pytest.mark.parametrize("change, words", [
@@ -236,6 +260,8 @@ def test_start_sends_the_listed_digest_the_fingerprint_shown_and_what_differs(
     ({"key": None}, "choose a base checkpoint"),
     ({"epochs": 0}, "Epochs must be between 1 and 10000, not 0."),
     ({"seed": None}, "Seed must be set"),
+    ({"frozen_parts": "all"}, "Graph backbone must be one of [&#x27;none&#x27;, "
+                              "&#x27;graph_side&#x27;], not &#x27;all&#x27;."),
     ({"ws": {"name": None, "row": None}}, "select a dataset"),
 ])
 def test_start_refuses_what_it_cannot_send_and_starts_nothing(root, operator, started, change,
@@ -243,10 +269,11 @@ def test_start_refuses_what_it_cannot_send_and_starts_nothing(root, operator, st
     ws = tc.workspace_state("demo")
     parents = fp._on_finetune_bases(operator, ws, None)[0]
     args = {"ws": ws, "parents": parents, "key": f"gatv2/{BASE_RUN}/last.pt",
-            "tasks": ["disease"], "epochs": 100, "seed": 33}
+            "tasks": ["disease"], "epochs": 100, "seed": 33, "frozen_parts": "none"}
     args.update(change)
     said = fp._on_finetune_start(operator, args["ws"], args["parents"], args["key"],
-                                 args["tasks"], args["epochs"], args["seed"], "cpu", "")
+                                 args["tasks"], "cpu", "", args["epochs"], args["seed"],
+                                 args["frozen_parts"])
     assert started == [] and words in said and "Not started" in said
 
 
@@ -255,7 +282,8 @@ def test_a_parent_listed_for_another_workspace_is_not_started(root, operator, st
     parents = fp._on_finetune_bases(operator, ws, None)[0]
     key = f"gatv2/{BASE_RUN}/last.pt"
     parents = {key: {**parents[key], "workspace": "other"}}
-    said = fp._on_finetune_start(operator, ws, parents, key, ["disease"], 100, 33, "cpu", "")
+    said = fp._on_finetune_start(operator, ws, parents, key, ["disease"], "cpu", "", 100, 33,
+                                 "none")
     assert started == [] and "the list shows other’s bases, not demo’s" in said
 
 
@@ -267,7 +295,7 @@ def test_a_refused_start_shows_the_runners_sentence_escaped(root, operator, monk
     ws = tc.workspace_state("demo")
     parents = fp._on_finetune_bases(operator, ws, None)[0]
     said = fp._on_finetune_start(operator, ws, parents, f"gatv2/{BASE_RUN}/last.pt",
-                                 ["disease"], 100, 33, "cpu", "")
+                                 ["disease"], "cpu", "", 100, 33, "none")
     assert "<img" not in said and "&lt;img" in said and "another knowledge graph" in said
     # The runner's sentence already says nothing was started: not said twice
     # (K6 closing review: "Not started: … Nothing was started.").
@@ -276,21 +304,22 @@ def test_a_refused_start_shows_the_runners_sentence_escaped(root, operator, monk
     monkeypatch.setattr(fp.training_manager, "start_finetune",
                         lambda inputs, **k: {"success": False, "error": "The slot is busy."})
     said = fp._on_finetune_start(operator, ws, parents, f"gatv2/{BASE_RUN}/last.pt",
-                                 ["disease"], 100, 33, "cpu", "")
+                                 ["disease"], "cpu", "", 100, 33, "none")
     assert said == tc.notice_html("Not started: The slot is busy.")
 
 
 def test_start_is_refused_for_a_read_only_request(root, started):
     said = fp._on_finetune_start(READ_ONLY, tc.workspace_state("demo"), {}, None, ["disease"],
-                                 100, 33, "cpu", "")
+                                 "cpu", "", 100, 33, "none")
     assert "Refused" in said and started == []
 
 
 # --------------------------------------------------------------------------- the job card
-def _status(*children, status="running", parent=None):
+def _status(*children, status="running", parent=None, settings=None):
     return {"status": status, "job_id": "j2",
             "finetune": {"parent": parent or f"/w/demo/runs/gatv2/{BASE_RUN}/checkpoints/last.pt",
-                         "parent_sha256": "b" * 64, "tasks": [c["task"] for c in children],
+                         "parent_sha256": "b" * 64, "settings": dict(settings or {}),
+                         "tasks": [c["task"] for c in children],
                          "cancelled": False, "children": list(children)}}
 
 
@@ -342,6 +371,31 @@ def test_the_card_draws_one_row_per_child_escaped_without_a_path(root):
     assert "Validation (Trainer)" in rows[0] and "Best save" in rows[0]
     cancelled = fp.job_card_html(_status(_child("gene", "cancelled")), operator=True)
     assert "never started" in cancelled and "no run" in cancelled
+
+
+def test_the_card_says_the_starts_graph_backbone_in_the_fields_words_escaped():
+    """Ops-wiring round, decision F1: the card names the freeze the start
+    sent to every child (the runner's own record, `_Finetune.describe`), in
+    the field's words, so the frozen control's children read as such while
+    they run and after; a start that sent none is the recipe's, said so."""
+    child = _child("disease", "running", "20261028-1_ft-disease_a")
+    frozen = fp.job_card_html(_status(child, settings={"frozen_parts": "graph_side"}),
+                              operator=False)
+    line = ('<p class="shep-ft-from"><span class="shep-ft-k">Graph backbone</span> '
+            'Frozen</p>')
+    assert line in frozen and frozen.count("Graph backbone") == 1
+    reference = fp.job_card_html(_status(child, settings={"num_epochs": 5}), operator=False)
+    assert ('<span class="shep-ft-k">Graph backbone</span> Trained (reference)</p>'
+            in reference)
+    stated = fp.job_card_html(_status(child, settings={"frozen_parts": "none"}), operator=False)
+    assert '<span class="shep-ft-k">Graph backbone</span> Trained</p>' in stated
+    # A status without the settings (nothing sent) reads as the reference.
+    bare = _status(child)
+    del bare["finetune"]["settings"]
+    assert "Trained (reference)" in fp.job_card_html(bare, operator=False)
+    # Whatever the status holds is escaped.
+    odd = fp.job_card_html(_status(child, settings={"frozen_parts": TAG}), operator=False)
+    assert "<img" not in odd and "&lt;img src=x onerror=alert(1)&gt;" in odd
 
 
 def test_the_cards_run_is_its_name_part_with_the_whole_id_in_its_title():
@@ -523,12 +577,35 @@ def test_the_page_follows_the_contract():
         assert by_id[elem_id].label == title, elem_id
         assert len(text.split("\n", 1)[0]) <= 180, elem_id
     assert set(fp.FIELD_HELP) >= {"ft_dataset", "ft_run", "ft_checkpoint", "ft_tasks",
-                                  "ft_num_epochs", "ft_seed", "ft_device", "ft_run_name"}
-    # Epochs and Seed only, at the recipe's finetune values.
+                                  "ft_num_epochs", "ft_seed", "ft_frozen_parts", "ft_device",
+                                  "ft_run_name"}
+    # Epochs, Seed and Graph backbone, at the recipe's finetune values, each
+    # the one field of its setting (the freeze's options the field spec's
+    # values, shown by their words).
     from src.config.recipe import FINETUNE
+    from src.config.training_fields import by_name
 
+    assert fp.FINETUNE_FIELDS == ("num_epochs", "seed", "frozen_parts")
+    assert {f"ft_{name}" for name in fp.FINETUNE_FIELDS} <= set(by_id)
+    assert all(name in FINETUNE for name in fp.FINETUNE_FIELDS)
     assert (by_id["ft_num_epochs"].value, by_id["ft_seed"].value) == (
         FINETUNE["num_epochs"], FINETUNE["seed"])
     assert by_id["ft_num_epochs"].precision == 0 and by_id["ft_seed"].precision == 0
+    frozen = by_id["ft_frozen_parts"]
+    assert isinstance(frozen, gr.Radio) and frozen.value == FINETUNE["frozen_parts"] == "none"
+    assert frozen.choices == [(tc.setting_shown("frozen_parts", value), value)
+                              for value in by_name("frozen_parts").choices]
+    assert [words for words, _ in frozen.choices] == ["Trained", "Frozen"]
+    # The note starts empty (Trained) and is hidden while empty; the field's
+    # change redraws it; Start takes the fields in `FINETUNE_FIELDS` order.
+    assert by_id["ft_freeze_note"].value == ""
+    assert f"{fp._PAGE} #ft_freeze_note:not(:has(p))" in fp.PAGE_CSS
+    fns = list(demo.fns.values())
+    (note,) = [fn for fn in fns if fn.fn is fp.freeze_note_html]
+    assert note.targets == [(frozen._id, "change")]
+    assert note.inputs == [frozen] and note.outputs == [by_id["ft_freeze_note"]]
+    (start,) = [fn for fn in fns if fn.fn is fp._on_finetune_start]
+    assert start.inputs[-len(fp.FINETUNE_FIELDS):] == [
+        by_id[f"ft_{name}"] for name in fp.FINETUNE_FIELDS]
     for gone in ("ft_learning_rate", "ft_batch_size", "ft_task_loss_weight"):
         assert gone not in by_id

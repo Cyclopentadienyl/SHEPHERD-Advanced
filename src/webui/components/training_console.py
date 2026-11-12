@@ -220,7 +220,9 @@ def _save_training_config(data_dir: str, request: gr.Request) -> str:
 # The recipe's settings in a form (K6 decisions 5, 11, 12)
 # =============================================================================
 #: **The label of each recipe setting a form offers**, one name per setting:
-#: the base form (`BASE_FIELDS`) and the Fine-tune page's Epochs and Seed.
+#: the base form (`BASE_FIELDS`) and the Fine-tune page's
+#: (`finetune_page.FINETUNE_FIELDS`). Compare names a recorded learning setting
+#: by it too (`results_segment.field_words`).
 SETTING_LABELS: Dict[str, str] = {
     "num_epochs": "Epochs",
     "learning_rate": "Learning rate",
@@ -233,6 +235,16 @@ SETTING_LABELS: Dict[str, str] = {
     "weight_decay": "Weight decay",
     "use_amp": "Mixed precision",
     "early_stopping_patience": "Early stopping patience",
+    "frozen_parts": "Graph backbone",
+}
+#: **The words of a setting's closed values**, keyed by its field spec's
+#: ``choices`` (`training_fields.FieldSpec`): its radio shows the words and
+#: sends the value (Gradio's ``(label, value)`` tuples, `setting_field`), and its
+#: notes say the words (`setting_shown`), so a value is always the spec's and no
+#: page keeps a list of its own. A setting not named here shows its values as
+#: they are (the scheduler's ``none``, ``cosine`` …).
+SETTING_CHOICE_WORDS: Dict[str, Dict[str, str]] = {
+    "frozen_parts": {"none": "Trained", "graph_side": "Frozen"},
 }
 #: The base form's fields, in its order: **exactly the reference recipe's base
 #: settings** (`recipe.BASE`), the first `BASE_SHOWN` of them shown, the rest
@@ -259,12 +271,18 @@ _SETTING_LEADS = {
     "use_amp": "16-bit arithmetic on CUDA to save memory and time; off keeps float32.",
     "early_stopping_patience": "Epochs without a better Trainer validation figure before the "
                                "run stops; empty is off.",
+    "frozen_parts": "Whether the base's input, encoder and LP head train with the task or stay "
+                    "fixed.",
 }
 
 
-def setting_shown(value: Any) -> str:
-    """A setting's value as a form and its notes say it: a list as its
+def setting_shown(name: str, value: Any) -> str:
+    """The setting `name`'s value as a form and its notes say it: a closed
+    value by its words (`SETTING_CHOICE_WORDS`: "Frozen"), a list as its
     comma-separated items, on/off for a switch, "off" for no patience."""
+    words = SETTING_CHOICE_WORDS.get(name, {})
+    if isinstance(value, str) and value in words:
+        return words[value]
     if value is None:
         return "off"
     if isinstance(value, bool):
@@ -282,7 +300,7 @@ def setting_help(name: str, references: Mapping[str, Any], sources: Mapping[str,
     reference value and the source of that value (`src.config.recipe`)."""
     return (SETTING_LABELS[name],
             f"{_SETTING_LEADS[name]}\n\n"
-            f"Reference: {setting_shown(references[name])}.\n"
+            f"Reference: {setting_shown(name, references[name])}.\n"
             f"Source: {sources[name]}.\n\n"
             "A provisional default from the source, not tuned on this data.")
 
@@ -290,13 +308,14 @@ def setting_help(name: str, references: Mapping[str, Any], sources: Mapping[str,
 def form_value(name: str, value: Any) -> Any:
     """A recipe value as its field holds it: the hop list as text, and an
     optional number's None as "off" (`setting_field`)."""
-    return setting_shown(value) if name == "num_neighbors" or value is None else value
+    return setting_shown(name, value) if name == "num_neighbors" or value is None else value
 
 
 def setting_field(name: str, value: Any, *, elem_id: str) -> Any:
     """**The one field of a recipe setting** (the base form's and the
     Fine-tune page's), by its field spec: the hop list as text, a switch, the
-    spec's few choices as a radio, else a number box (whole numbers for an
+    spec's few choices as a radio (each shown by its words, `setting_shown`,
+    and sent as the spec's value), else a number box (whole numbers for an
     integer setting, which `value_problem` refuses as a float). **An optional
     number whose value is None** (early stopping's patience) is a text box
     reading "off", a state the browser keeps: a number box shows None as 0
@@ -309,7 +328,9 @@ def setting_field(name: str, value: Any, *, elem_id: str) -> Any:
     if spec.kind == "bool":
         return gr.Checkbox(label=label, value=bool(value), elem_id=elem_id)
     if spec.choices:
-        return gr.Radio(label=label, choices=list(spec.choices), value=value, elem_id=elem_id)
+        return gr.Radio(label=label, choices=[(setting_shown(name, choice), choice)
+                                              for choice in spec.choices],
+                        value=value, elem_id=elem_id)
     return gr.Number(label=label, value=value, precision=0 if spec.kind == "int" else None,
                      elem_id=elem_id)
 
@@ -400,7 +421,8 @@ def differs_html(values: Mapping[str, Any], references: Mapping[str, Any]) -> st
     settings, problems = recipe_differences(values, references)
     if settings:
         text = "Differs from the reference settings: " + ", ".join(
-            f"{SETTING_LABELS[name]} {setting_shown(value)} ({setting_shown(references[name])})"
+            f"{SETTING_LABELS[name]} {setting_shown(name, value)} "
+            f"({setting_shown(name, references[name])})"
             for name, value in settings.items())
     else:
         text = "Uses the reference settings."

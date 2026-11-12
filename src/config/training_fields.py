@@ -68,7 +68,8 @@ Phase status:
 **The retired WebUI form (K6).** The ShepherdGNN form and its collector (``_collect_config``)
 are gone: the Training page offers exactly the reference recipe's base settings
 (`src.config.recipe.BASE`, starting at the recipe's values, sending only those that differ, with
-``learning_stage="base"``), and the Fine-tune page Epochs and Seed. Their widgets follow each
+``learning_stage="base"``), and the Fine-tune page Epochs, Seed and Graph backbone (the freeze,
+``frozen_parts``; ops-wiring round, decision F1). Their widgets follow each
 field's ``kind`` and ``choices`` (`training_console.setting_field`) and their values are checked
 by `value_problem`. The spec no longer records the retired form's widgets or ranges (removed in
 K7); a divergence note names the WebUI only where a surface in use today differs.
@@ -434,8 +435,10 @@ FIELDS: Tuple[FieldSpec, ...] = (
     FieldSpec("frozen_parts", "str", "none", "trainer", projects_to="TrainConfig.frozen_parts",
               choices=("none", "graph_side"), current_api=None,
               known_divergence=True,
-              divergence_note="A finetune setting (the recipe's reference 'none'); a base with "
-                              "any freeze is refused. Not a WebUI or base-start field.",
+              divergence_note="A finetune setting (the recipe's reference 'none'): the CLI "
+                              "(--frozen-parts), POST /training/finetune's settings and the "
+                              "WebUI's Fine-tune page (Graph backbone: Trained or Frozen); a "
+                              "base with any freeze is refused. Not a base-start field.",
               description="Parts of a finetune that do not train: none, or graph_side (the "
                           "input module, the encoder and the LP head)."),
 

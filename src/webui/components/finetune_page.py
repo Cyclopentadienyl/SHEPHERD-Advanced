@@ -27,10 +27,17 @@ Module: src/webui/components/finetune_page.py
 - **Tasks**: a checkbox group in `TASKS` order whose option text says whether
   each is ready on this workspace (`server_lists.task_readiness`, small JSON
   files only, no D8), and why not in the line under it.
-- **Epochs and Seed only**: the other common settings have a reference value
-  per task, so one value would overwrite every child's. Each starts at the
-  recipe's and is sent only when it differs (`training_console.
-  recipe_differences`).
+- **Epochs, Seed and Graph backbone** (`FINETUNE_FIELDS`, each the one field
+  of its setting, `training_console.setting_field`): settings every task
+  shares (`recipe.FINETUNE`), so one value is every child's. Each starts at
+  the recipe's and is sent only when it differs (`training_console.
+  recipe_differences`). Graph backbone is the freeze (Trained or Frozen,
+  the field spec's values); with Frozen chosen, a visible note under the
+  fields says what then trains (`freeze_note_html`). A task's own settings
+  (its learning rate, hop list, sample sizes and loss weights) have a
+  reference value per task, so one value would overwrite every child's;
+  this page offers none of them, and the other shared settings keep the
+  recipe's values.
 - Device and Run name; **Start**, its reason line, and any refusal inline
   beside it (escaped).
 
@@ -39,10 +46,13 @@ from its lists again (`resolve_workspace`, `resolve_checkpoint`; never a
 client path), then the job runner's one Fine-tune start
 (`TrainingManager.start_finetune`) with the parent's listed digest and the
 dataset fingerprint shown. Its checks before anything starts (the parent a
-base with weights, its graph, each task's fixture, the settings) are the
-runner's alone (decision 3); this page adds none.
+base with weights, its graph, each task's fixture, the settings, the freeze
+by `recipe.frozen_parts_problem` among them) are the runner's alone
+(decision 3); this page adds none.
 
-**The job card** (right panel): `get_status()["finetune"]`, one row per child
+**The job card** (right panel): `get_status()["finetune"]`, its parent, the
+start's graph backbone (`freeze_line_html`, the runner's own record of the
+settings it started with), then one row per child
 (Task | Status | Run | Best save | Validation (Trainer)). Each status is a mark
 of colour, shape and word (`training_console.PILL_KIND`, the
 ``--shep-status-*`` tokens). A child's products, the best save by the Trainer
@@ -87,9 +97,16 @@ from src.webui.shell import page_elem_id, plain_html
 
 logger = logging.getLogger(__name__)
 
-#: The settings this page offers (decision 11), each a recipe setting with its
-#: finetune reference value (`recipe.FINETUNE`).
-FINETUNE_FIELDS = ("num_epochs", "seed")
+#: The settings this page offers (decision 11; the freeze, ops-wiring round
+#: decision F1), in the form's order, each a setting every task shares with
+#: its finetune reference value (`recipe.FINETUNE`) and its one field by the
+#: field spec (`training_console.setting_field`).
+FINETUNE_FIELDS = ("num_epochs", "seed", "frozen_parts")
+#: What a Frozen graph backbone leaves to train, said under the fields while
+#: it is chosen (the WebUI skill §7: a fact that changes what happens is
+#: visible text, not only a bubble).
+FROZEN_NOTE = ("Frozen graph backbone: only the patient encoder and the task head train; the LP "
+               "term trains nothing.")
 #: A child's states after which its run's saved files are final.
 ENDED = ("completed", "failed", "stopped")
 #: Each status kind's mark (the WebUI skill §6): its shape and the
@@ -241,6 +258,28 @@ def parent_line_html(finetune: Mapping[str, Any]) -> str:
             "</p>")
 
 
+def freeze_line_html(finetune: Mapping[str, Any]) -> str:
+    """The card's graph backbone: the freeze the start sent to every child
+    (the runner's own record of its settings, `_Finetune.describe`), in the
+    field's words ("Frozen"; `training_console.setting_shown`), or "Trained
+    (reference)" when it sent none, so the recipe's filled it. Escaped."""
+    settings = finetune.get("settings") or {}
+    if "frozen_parts" in settings:
+        words = tc.setting_shown("frozen_parts", settings["frozen_parts"])
+    else:
+        words = f"{tc.setting_shown('frozen_parts', FINETUNE['frozen_parts'])} (reference)"
+    return (f'<p class="shep-ft-from"><span class="shep-ft-k">'
+            f'{r.e(tc.SETTING_LABELS["frozen_parts"])}</span> {r.e(words)}</p>')
+
+
+def freeze_note_html(value: Any) -> str:
+    """The note under the fields while a Frozen graph backbone is chosen
+    (`FROZEN_NOTE`): what then trains. Empty for any other value."""
+    if value != "graph_side":
+        return ""
+    return f'<p class="shep-ft-why">{r.e(FROZEN_NOTE)}</p>'
+
+
 def child_products(child: Mapping[str, Any]) -> Dict[str, Any]:
     """An ended child's products, read once: its run's saved files' best by
     the Trainer validation figure each records (the list's metadata, never a
@@ -329,7 +368,8 @@ def child_row_html(child: Mapping[str, Any], *, operator: bool, products: Mappin
 def job_card_html(status: Mapping[str, Any], *, operator: bool,
                   products: Optional[Mapping[str, Any]] = None, scrub: Any = str) -> str:
     """The Fine-tune job card from the job runner's status (`get_status()`):
-    its parent and one row per child; or, with no Fine-tune status, why
+    its parent, the start's graph backbone (`freeze_line_html`) and one row
+    per child; or, with no Fine-tune status, why
     (none since the server started, or the next base or continued run cleared
     it), in words of its own."""
     finetune = status.get("finetune")
@@ -350,7 +390,7 @@ def job_card_html(status: Mapping[str, Any], *, operator: bool,
             "</th></tr></thead>")
     link = ('<button type="button" class="shep-link" data-act="training">Charts on Research › '
             'Training ›</button>')
-    return (f'<div class="shep-ft-card">{parent_line_html(finetune)}'
+    return (f'<div class="shep-ft-card">{parent_line_html(finetune)}{freeze_line_html(finetune)}'
             f'<table class="shep-ft-table">{head}<tbody>{rows}</tbody></table>'
             f'<p class="shep-ft-links">{link}</p></div>')
 
@@ -499,10 +539,11 @@ def _on_base_chosen(key, parents):
     return base_summary_html((parents or {}).get(key) if key else None)
 
 
-def _on_finetune_start(request: gr.Request, ws, parents, key, tasks, epochs, seed, device,
-                       run_name):
+def _on_finetune_start(request: gr.Request, ws, parents, key, tasks, device, run_name,
+                       *values):
     """Start: an operator control (D8), checked first on this event's own
-    request; then the Fine-tune start (`_start`).
+    request; then the Fine-tune start (`_start`) with the settings' fields'
+    `values`, in `FINETUNE_FIELDS` order.
 
     Returns the notice: the refusal, inline and escaped, or nothing once
     started (the card shows the job).
@@ -510,7 +551,8 @@ def _on_finetune_start(request: gr.Request, ws, parents, key, tasks, epochs, see
     access = operator_access(request)
     if not access.allowed:
         return tc.notice_html(access.refusal)
-    return tc.notice_html(_start(ws, parents, key, tasks, epochs, seed, device, run_name))
+    return tc.notice_html(_start(ws, parents, key, tasks, device, run_name,
+                                 dict(zip(FINETUNE_FIELDS, values, strict=True))))
 
 
 def _on_finetune_stop_request(request: gr.Request, mode):
@@ -531,12 +573,14 @@ def _on_finetune_stop(request: gr.Request, mode):
                            what="Fine-tune child")
 
 
-def _start(ws, parents, key, tasks, epochs, seed, device, run_name) -> str:
+def _start(ws, parents, key, tasks, device, run_name, values: Mapping[str, Any]) -> str:
     """Start's work after D8, as a plain sentence ("" once started): the
-    chosen base and tasks (in `TASKS` order), the settings that differ from
-    the recipe's, the workspace and the parent resolved by the server from
-    its lists again, and the runner's Fine-tune start with the parent's listed
-    digest and the dataset fingerprint this session showed."""
+    chosen base and tasks (in `TASKS` order), the settings of `values` (the
+    fields', by `FINETUNE_FIELDS`) that differ from the recipe's, sent as the
+    start's settings (`FinetuneInputs.settings`, which the runner checks), the
+    workspace and the parent resolved by the server from its lists again, and
+    the runner's Fine-tune start with the parent's listed digest and the
+    dataset fingerprint this session showed."""
     row = (ws or {}).get("row") or {}
     fingerprint = tc.workspace_fingerprint(ws)
     if not row or not fingerprint:
@@ -553,7 +597,8 @@ def _start(ws, parents, key, tasks, epochs, seed, device, run_name) -> str:
     if not chosen:
         return "Not started: choose at least one task."
     settings, problems = tc.recipe_differences(
-        {"num_epochs": epochs, "seed": seed}, {name: FINETUNE[name] for name in FINETUNE_FIELDS})
+        {name: values[name] for name in FINETUNE_FIELDS},
+        {name: FINETUNE[name] for name in FINETUNE_FIELDS})
     if problems:
         return "Not started: " + " ".join(problems)
     from src.api.services.server_lists import (
@@ -682,9 +727,10 @@ def create_finetune_page(ctx: Any) -> None:
                                          elem_id="ft_tasks")
                 tasks_note = plain_html("", elem_id="ft_tasks_note")
                 with gr.Row(elem_classes=["shep-ft-settings"]):
-                    epochs = tc.setting_field("num_epochs", FINETUNE["num_epochs"],
-                                              elem_id="ft_num_epochs")
-                    seed = tc.setting_field("seed", FINETUNE["seed"], elem_id="ft_seed")
+                    fields = {name: tc.setting_field(name, FINETUNE[name], elem_id=f"ft_{name}")
+                              for name in FINETUNE_FIELDS}
+                freeze_note = plain_html(freeze_note_html(FINETUNE["frozen_parts"]),
+                                         elem_id="ft_freeze_note")
                 with gr.Row(elem_classes=["shep-ft-settings"]):
                     device = gr.Radio(label="Device", choices=["auto", "cuda", "cpu"],
                                       value="auto", elem_id="ft_device")
@@ -745,9 +791,12 @@ def create_finetune_page(ctx: Any) -> None:
     run_select.change(tc.on_run_chosen, inputs=[run_select, parents, checkpoint],
                       outputs=[checkpoint], show_progress="hidden")
     checkpoint.change(**base_step)
+    fields["frozen_parts"].change(freeze_note_html, inputs=[fields["frozen_parts"]],
+                                  outputs=[freeze_note], show_progress="hidden")
 
     start.click(_on_finetune_start,
-                inputs=[ws, parents, checkpoint, tasks, epochs, seed, device, run_name],
+                inputs=[ws, parents, checkpoint, tasks, device, run_name,
+                        *(fields[name] for name in FINETUNE_FIELDS)],
                 outputs=[notice], show_progress="hidden").then(
         tc.close_stop_question, inputs=[mode], outputs=[mode], show_progress="hidden").then(
         **card_step).then(**ctx.chip_refresh)
@@ -782,7 +831,7 @@ PAGE_CSS = f"""
 {_PAGE} .shep-ft-base {{ border: 1px solid var(--shep-border); border-radius: 8px; background: var(--shep-panel); padding: 8px 12px; }}
 {_PAGE} .shep-ft-base .shep-kv {{ font-size: 14px; gap: 4px 14px; }}
 {_PAGE} .shep-ft-base .shep-v {{ overflow-wrap: anywhere; min-width: 0; }}
-{_PAGE} #ft_base:not(:has(.shep-ft-base)), {_PAGE} #ft_tasks_note:not(:has(p)) {{ display: none !important; }}
+{_PAGE} #ft_base:not(:has(.shep-ft-base)), {_PAGE} #ft_tasks_note:not(:has(p)), {_PAGE} #ft_freeze_note:not(:has(p)) {{ display: none !important; }}
 {_PAGE} .shep-ft-why {{ margin: 0; font-size: 14px; color: var(--shep-text-2); }}
 {_PAGE} .shep-ft-start-row {{ align-items: center !important; flex-wrap: wrap !important; gap: 8px 14px !important; }}
 {_PAGE} .shep-ft-start-row > button, {_PAGE} .shep-ft-stop-row > button {{ flex: none !important; width: auto !important; min-width: max-content !important; padding: 0 14px !important; height: 40px; }}

@@ -167,6 +167,32 @@ def test_children_run_in_order_and_a_failure_does_not_stop_its_siblings(base, po
     assert status["parent_sha256"] == sha and status["cancelled"] is False
     runs = {c["run_dir"] for c in status["children"]}
     assert len(runs) == 3, "each child is its own run"
+    # The status carries the settings the start gave every child, as sent.
+    assert status["settings"] == {"num_epochs": 2, **ONE_HOP}
+
+
+def test_the_status_carries_the_starts_freeze_and_every_child_is_given_it(base, popen):
+    """Ops-wiring round, decision F1: the frozen-backbone control is an
+    ordinary Fine-tune start whose settings hold the freeze; every child's
+    configuration has it, and the runner's status shows it (the Fine-tune
+    card's "Graph backbone"), its own record of the start, never a second
+    store. The status is a copy: changing it changes nothing held."""
+    first, second = FakeProcess(pid=1), FakeProcess(pid=2)
+    calls = popen(first, second)
+    manager = TrainingManager()
+    started = manager.start_finetune(_inputs(base, "disease", "gene",
+                                             settings={"frozen_parts": "graph_side"}))
+    assert started["success"], started
+    assert started["finetune"]["settings"] == {"frozen_parts": "graph_side", **ONE_HOP}
+    assert _config(calls.calls[0])["frozen_parts"] == "graph_side"
+    status = manager.get_status()["finetune"]
+    status["settings"]["frozen_parts"] = "none"
+    assert manager.get_status()["finetune"]["settings"]["frozen_parts"] == "graph_side"
+    first.finish(0)
+    _wait(lambda: len(calls.calls) == 2)
+    assert _config(calls.calls[1])["frozen_parts"] == "graph_side"
+    second.finish(0)
+    _wait(lambda: manager.active_job() is None)
 
 
 def test_a_stop_ends_the_running_child_and_cancels_the_queued_ones(base, popen):

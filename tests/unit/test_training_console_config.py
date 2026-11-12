@@ -165,8 +165,8 @@ def test_an_optional_setting_reads_off_and_what_the_browser_sends_is_the_recipes
         _settings, problems = tc.recipe_differences(
             dict(zip(tc.BASE_FIELDS, _form(early_stopping_patience=typed), strict=True)), BASE)
         assert problems == ['Early stopping patience must be a whole number or "off".']
-    # The Fine-tune page's fields (Epochs and Seed) have set references: number
-    # boxes, as before.
+    # The Fine-tune page's number fields (Epochs and Seed) have set references:
+    # number boxes, as before.
     from src.config.recipe import FINETUNE
 
     for name in ("num_epochs", "seed"):
@@ -204,8 +204,46 @@ def test_each_settings_help_says_what_it_is_its_reference_and_its_source():
         title, text = tc.FIELD_HELP[name]
         lead = text.split("\n", 1)[0]
         assert title == tc.SETTING_LABELS[name] and len(lead) <= 90, (name, lead)
-        assert f"Reference: {tc.setting_shown(BASE[name])}." in text
+        assert f"Reference: {tc.setting_shown(name, BASE[name])}." in text
         assert BASE_SOURCES[name] in text
+
+
+# --------------------------------------------------------------------------- the freeze's field
+def test_the_freeze_field_shows_plain_words_and_sends_the_field_specs_values():
+    """Ops-wiring round, decision F1: the freeze is one field of the one
+    helper, "Graph backbone", its options the field spec's values shown by
+    their words (Gradio's ``(label, value)``; skill §5, §8), so no page holds a
+    list of its own; the reference (Trained) is not sent, Frozen is, and a
+    value outside the spec is named by the label."""
+    import gradio as gr
+
+    from src.config.recipe import FINETUNE, FINETUNE_SOURCES
+    from src.config.training_fields import by_name
+
+    choices = by_name("frozen_parts").choices
+    assert set(tc.SETTING_CHOICE_WORDS["frozen_parts"]) == set(choices)
+    field = tc.setting_field("frozen_parts", FINETUNE["frozen_parts"], elem_id="f")
+    assert isinstance(field, gr.Radio) and field.label == "Graph backbone"
+    assert field.choices == [("Trained", "none"), ("Frozen", "graph_side")]
+    assert [value for _words, value in field.choices] == list(choices)
+    assert field.value == "none" == FINETUNE["frozen_parts"]
+    words = [words for words, _value in field.choices]
+    assert len(set(words)) == len(words)
+    for label in (*words, tc.SETTING_LABELS["frozen_parts"]):
+        assert len(label) <= tc.OPTION_CHARS and " · " not in label, label
+    # The scheduler's values have no words: shown as they are.
+    assert tc.setting_field("scheduler_type", "none", elem_id="s").choices == [
+        (value, value) for value in by_name("scheduler_type").choices]
+    title, text = tc.setting_help("frozen_parts", FINETUNE, FINETUNE_SOURCES)
+    lead = text.split("\n", 1)[0]
+    assert title == "Graph backbone" and len(lead) < 90, lead
+    assert "Reference: Trained." in text and FINETUNE_SOURCES["frozen_parts"] in text
+    reference = {"frozen_parts": FINETUNE["frozen_parts"]}
+    assert tc.recipe_differences({"frozen_parts": "graph_side"}, reference) == (
+        {"frozen_parts": "graph_side"}, [])
+    assert tc.recipe_differences({"frozen_parts": "none"}, reference) == ({}, [])
+    assert tc.recipe_differences({"frozen_parts": "all"}, reference) == (
+        {}, ["Graph backbone must be one of ['none', 'graph_side'], not 'all'."])
 
 
 # --------------------------------------------------------------------------- D8, the dataset, the runner

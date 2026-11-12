@@ -101,6 +101,7 @@ Version: 2.0.0
 from __future__ import annotations
 
 import contextlib
+import copy
 import json
 import logging
 import os
@@ -470,7 +471,11 @@ class _Finetune:
             child.status, child.error = status, why
 
     def describe(self) -> Dict[str, Any]:
+        """The start as the status shows it: its parent, the settings it gave
+        every child (`FinetuneInputs.settings`, as the start was checked with
+        them; the task's recipe filled the rest), its tasks and each child."""
         return {"parent": str(self.inputs.finetune_from), "parent_sha256": self.parent_sha256,
+                "settings": copy.deepcopy(dict(self.inputs.settings)),
                 "tasks": list(self.inputs.tasks), "cancelled": self.cancelled,
                 "children": [child.describe() for child in self.children]}
 

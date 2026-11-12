@@ -672,7 +672,7 @@ def _dashboard_calls():
         # Fine-tune: a fresh session has no dataset, so the base list and
         # Start stop before their service when allowed.
         (fp._on_finetune_bases, [{}, None], None),
-        (fp._on_finetune_start, [{}, {}, None, [], 100, 33, "cpu", ""], None),
+        (fp._on_finetune_start, [{}, {}, None, [], "cpu", "", 100, 33, "none"], None),
         (fp._on_finetune_stop_request, [{}], None),         # asks, reading nothing
         (fp._on_finetune_stop, [{}], "stop_training"),
         # Models › Results: opening the segment and ↻ read the results; the

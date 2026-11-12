@@ -700,12 +700,13 @@ def test_both_arms_are_measured_registered_listed_and_exported_with_their_freeze
     # row of that one entry (a nested setting is one row per entry).
     shown = {name: {(group, label): value for group, label, value, _why in compare_fields(row)}
              for name, row in rows.items()}
-    assert shown["control"][("Training settings", "Learning setting · Frozen parts")] == (
+    # Its row is named by the Fine-tune field's label (ops-wiring round, F1).
+    assert shown["control"][("Training settings", "Learning setting · Graph backbone")] == (
         "graph_side")
-    assert shown["full"][("Training settings", "Learning setting · Frozen parts")] == "none"
+    assert shown["full"][("Training settings", "Learning setting · Graph backbone")] == "none"
     assert shown["decoded"][(
         "Training settings", "Effective setting · Loaders › Train › Recipe › Decoded from parent "
-        "› Frozen parts")] == recipe["decoded_from_parent"]["frozen_parts"]
+        "› Graph backbone")] == recipe["decoded_from_parent"]["frozen_parts"]
     # The weight transfer and the loss identity as each record holds them,
     # through the same listing: the two arms start from one downstream digest,
     # checked where they are compared; the control's parts frozen and its LP

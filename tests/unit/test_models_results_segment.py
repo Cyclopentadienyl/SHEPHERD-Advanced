@@ -953,7 +953,7 @@ def test_compare_goes_down_into_nested_settings_and_says_the_spec_once(world, mo
     assert training == [
         "Learning setting · Top-k saves kept",
         "Effective setting · Loaders › Train › Recipe › Operator set",
-        "Effective setting · Loaders › Train › Recipe › Reference filled › Frozen parts"]
+        "Effective setting · Loaders › Train › Recipe › Reference filled › Graph backbone"]
     assert _cells(markup, training[-1]) == ["none", "○ not recorded"]
     assert _cells(markup, training[1]) == ['["frozen_parts", "seed"]', '["seed"]']
     assert [label for label in _labels(markup) if label.startswith("Content references")] == [
@@ -1002,7 +1002,7 @@ def test_compare_rows_are_named_in_the_segments_words(world, monkeypatch):
     markup = rs.compare_html([finetune, base], False)
     labels = _labels(markup)
     for label in ("Learning setting · Learning rate", "Learning setting · Top-k saves kept",
-                  "Learning setting · Frozen parts",
+                  "Learning setting · Graph backbone",
                   "Weight transfer · Downstream initial SHA-256",
                   "Data identity · Samples SHA-256", "Disease pooled MRR",
                   metric_text("disease", "macro_precision@3")):
