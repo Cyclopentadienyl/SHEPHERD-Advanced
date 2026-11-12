@@ -17,8 +17,8 @@ Module: tests/unit/test_settings_projection.py
 """
 from __future__ import annotations
 
+import copy
 import dataclasses
-import shutil
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -623,18 +623,48 @@ def test_a_continued_run_records_inherited_and_stated_over_every_setting(tmp_pat
     assert set(record["inherited_from_parent"]) == new_run_settings("base") - {"split_seed"}
 
 
-def test_existing_records_read_unchanged(trained_disease_child):
-    """Additive: the listing's reader takes a record with or without the new
-    keys alike (`recorded_training_settings` reads `config.requested` and
-    `config.effective` as recorded)."""
+def test_existing_records_read_unchanged(trained_disease_child, tmp_path):
+    """Additive and informational (decision S2): a checkpoint whose recipe
+    record has the shape it had before (no `build_defaults`, `operator_set`
+    over the recipe's keys only) is read as before. The continuation preview
+    decides the same, and the listing (`read_run_checkpoints`, the one read
+    the run lists, the results service and the probe read) reads the same
+    settings and model record, the recipe record shown as it is recorded:
+    no reader decides by it."""
+    import torch
+
+    from src.api.services.training_manager import TrainingManager
+    from src.models.bundle.record import listed_record
+    from src.utils.checkpoint_paths import read_run_checkpoints
     from src.utils.run_plan import recorded_training_settings
 
-    _, payload = _recipe_record(trained_disease_child["disease"])
-    read = recorded_training_settings(payload["config"] | {"rules": 2})
-    old = dict(payload["config"]["effective"])
-    old["loaders"] = {**old["loaders"], "train": {
-        **old["loaders"]["train"],
-        "recipe": {k: v for k, v in old["loaders"]["train"]["recipe"].items()
-                   if k != "build_defaults"}}}
-    before = recorded_training_settings({**payload["config"], "effective": old, "rules": 2})
-    assert read["unshown"] == before["unshown"] == {} and read["learning"] == before["learning"]
+    now = torch.load(trained_disease_child["disease"], map_location="cpu", weights_only=True)
+    before = copy.deepcopy(now)
+    old = before["config"]["effective"]["loaders"]["train"]["recipe"]
+    del old["build_defaults"]
+    keys = set(recipe.reference_settings("finetune", "disease")[0])
+    old["operator_set"] = [name for name in old["operator_set"] if name in keys]
+    assert old["operator_set"] != _recipe_record(trained_disease_child["disease"])[0][
+        "operator_set"], "the shape before lists fewer settings"
+    paths = {}
+    for i, (name, payload) in enumerate((("now", now), ("before", before))):
+        directory = tmp_path / "runs" / "gatv2" / f"2026100{i}-000000_{name}_aaaaaa" / "checkpoints"
+        directory.mkdir(parents=True)
+        torch.save(payload, directory / "last.pt")
+        paths[name] = directory / "last.pt"
+
+    manager = TrainingManager()
+    previews = {name: {key: value for key, value in manager.preview_continuation(
+        str(path), device="cpu", extend_epochs=1).items() if key not in ("parent", "sha256")}
+        for name, path in paths.items()}
+    assert previews["now"]["ok"] is True and previews["before"] == previews["now"]
+
+    rows = {}
+    for entry in read_run_checkpoints(tmp_path):
+        settings = recorded_training_settings(entry.training)
+        shown = settings["effective"]["loaders"]["train"].pop("recipe")
+        rows[entry.names[1].split("_")[1]] = (settings, listed_record(entry.model_record), shown)
+    assert rows["before"][:2] == rows["now"][:2]
+    assert rows["before"][0]["unshown"] == {} and rows["before"][0]["unrecorded"] == []
+    assert rows["before"][2] == old
+    assert rows["now"][2] == now["config"]["effective"]["loaders"]["train"]["recipe"]
