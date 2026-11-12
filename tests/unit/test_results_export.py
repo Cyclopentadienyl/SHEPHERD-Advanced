@@ -741,6 +741,33 @@ def test_the_exports_columns_keep_their_names_and_order_with_components_added():
     assert names.index("parent_changes") == names.index("parent_run") + 1
 
 
+def test_the_parent_changes_column_keeps_none_changed_apart_from_null(world):
+    """Decision B4 in the export: a same-settings branch's ``{}`` is the
+    cell ``{}``, never the null word another operation's result has (it
+    records no changes), and a branch's changes are their compact JSON, in
+    CSV and JSON alike (review of A1b)."""
+    from src.api.services import results
+
+    (row, *_rest) = [row for row in _query(world) if row["result"] != "unreadable"]
+    assert row["model"]["parent_changes"] is None
+    same, changed = (copy.deepcopy(row) for _ in range(2))
+    same["model"].update(operation="branch", parent_changes={})
+    same["run_id"] = "same-settings"
+    changed["model"].update(operation="branch",
+                            parent_changes={"learning_rate": {"parent": 1e-4, "new": 1e-3}})
+    changed["run_id"] = "changed"
+    rows = [same, changed, row]
+    cells = {cell["run_id"]: cell["parent_changes"]
+             for cell in csv.DictReader(io.StringIO(results.to_csv(rows)))}
+    assert cells == {"same-settings": "{}", "changed": '{"learning_rate":{"new":0.001,'
+                                                        '"parent":0.0001}}',
+                     row["run_id"]: results.NULL_WORD}
+    exported = {cell["run_id"]: cell["parent_changes"]
+                for cell in json.loads(results.to_json(rows))["rows"]}
+    assert exported == {"same-settings": {}, "changed": changed["model"]["parent_changes"],
+                        row["run_id"]: None}
+
+
 # ---------------------------------------------------------------------------
 # Review fix RC-R1: one plain-data rule for every value read from a file and shown
 # ---------------------------------------------------------------------------

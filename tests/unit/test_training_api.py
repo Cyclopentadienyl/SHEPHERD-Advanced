@@ -386,6 +386,30 @@ class TestTrainingManagerCheckpoints:
         source = inspect.getsource(TrainingManager.get_checkpoints)
         assert "torch.load" not in source and "read_run_checkpoints" in source
 
+    def test_every_listed_record_field_reaches_the_lists_but_those_named(self):
+        """The one list summary of a record (`record.LISTED_RECORD_FIELDS`)
+        reaches the server's lists whole (`server_lists.CheckpointItem`), and
+        the /training/checkpoints answer, whose response model keeps its
+        fields by hand and drops any other (`CheckpointInfo`), carries each
+        but those named here with why: so a field added to the summary never
+        vanishes from an answer unnoticed (review of A1b, `parent_changes`)."""
+        from dataclasses import fields
+
+        from src.api.routes.training import CheckpointInfo
+        from src.api.services.server_lists import CheckpointItem
+        from src.models.bundle.record import LISTED_RECORD_FIELDS
+
+        assert set(LISTED_RECORD_FIELDS) <= {field.name for field in fields(CheckpointItem)}
+        assert set(LISTED_RECORD_FIELDS) - set(CheckpointInfo.model_fields) == (
+            TRAINING_LIST_LEAVES_OUT)
+
+
+#: The list summary's fields the /training/checkpoints answer leaves out: a
+#: model's whole structure and how its weights and its loss began, which the
+#: workspace list carries (`/workspaces/{name}/checkpoints`,
+#: `server_lists.CheckpointItem`).
+TRAINING_LIST_LEAVES_OUT = {"spec", "weight_transfer", "loss_identity"}
+
 
 class TestTrainingManagerResources:
     """Test system resource monitoring."""

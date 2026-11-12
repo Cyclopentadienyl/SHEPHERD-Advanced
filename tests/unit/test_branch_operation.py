@@ -194,6 +194,24 @@ def test_a_branch_with_its_parents_settings_is_a_new_run(tmp_path, monkeypatch, 
               if row.item.key == listed.key]
     assert (row.parent, row.parent_state, row.depth) == (
         last_of[parent_run.name].key, "listed", 1)
+    # And so in every answer that lists it over HTTP: the workspace's list,
+    # its families and the training list (`CheckpointInfo`).
+    from fastapi.testclient import TestClient
+
+    import src.api.main as api
+    from src.api.services.training_manager import training_manager
+    from tests.fixtures.operator_access import OPERATOR_BASE_URL, operator_mode
+
+    operator_mode(monkeypatch)
+    monkeypatch.setattr(training_manager, "_config", {"data_dir": str(workspace)})
+    http = TestClient(api.app, base_url=OPERATOR_BASE_URL)
+    workspace_list = http.get("/api/v1/workspaces/data/checkpoints").json()["checkpoints"]
+    family = [row["item"] for row in http.get("/api/v1/workspaces/data/family").json()["rows"]]
+    training_list = http.get("/api/v1/training/checkpoints").json()
+    for answer in (workspace_list, family, training_list):
+        changes = {entry["run"]: entry["parent_changes"] for entry in answer
+                   if entry["filename"] == "last.pt"}
+        assert changes == {branch_run.name: {}, parent_run.name: None}
 
 
 def _other_spec():
