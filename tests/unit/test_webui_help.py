@@ -161,6 +161,8 @@ def _node_with_playwright():
 
 def _page(tmp_path: Path) -> Path:
     registry = h.HelpRegistry()
+    # As Gradio 6 draws a field: the component's block (its elem_id), its
+    # <label> a "block" too, the title in it.
     registry.field("fld", "Epochs", "How many passes. " + HOSTILE)
     registry.topic("kv-help", "A key", "What the key means. " + HOSTILE)
     registry.topic("row-help", "A row", "What the row says.")
@@ -170,8 +172,9 @@ def _page(tmp_path: Path) -> Path:
 body {{ margin: 0; font: 15px sans-serif; }}
 .shep-kv {{ display: grid; grid-template-columns: 10em 1fr; margin: 24px 40px; max-width: 640px; }}
 {h.HELP_CSS}</style>{h.HELP_HEAD}</head><body>
-<div class="block" id="fld" style="margin: 40px; width: 300px; padding: 8px; border: 1px solid #ccc">
-<label><span data-testid="block-info">Epochs</span><input></label></div>
+<div class="block" id="fld" style="margin: 40px; width: 300px; padding: 16px; border: 1px solid #ccc">
+<label class="block" style="display: block"><span data-testid="block-info">Epochs</span><input>
+</label></div>
 <div class="shep-kv"><span class="shep-k">A key{h.help_button("kv-help", "A key")}</span>
 <span class="shep-v">its value, long enough to fill the row</span></div>
 <table id="tbl" style="margin: 24px 40px; width: calc(100% - 80px)"><tr>

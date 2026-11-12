@@ -43,9 +43,9 @@ into one hidden container (`HelpRegistry.texts_html`), and the one head script
   (`HOVER_OPEN_MS`) and keyboard focus at once, both as a ``tooltip``; a click
   (or Enter or Space) pins it open as a ``dialog`` named by its title; Esc and
   a click outside close it; it stays open while the pointer is in the bubble;
-- places it so it **never covers the field it explains** (the field's block,
-  the table row, the key-value row's key and value, or the line the ⓘ sits
-  in): beside that field, then above it, then below it, the first that fits
+- places it so it **never covers the field it explains** (the field's
+  component, by its ``elem_id``; else the table row, the key-value row's key
+  and value, or the line the ⓘ sits in): beside that field, then above it, then below it, the first that fits
   the window without overlapping it; failing all, narrower beside it, or on
   the side with more room with its height capped (a long text scrolls
   inside); at most 320 px wide (`BUBBLE_MAX_WIDTH`), the ⓘ's hit target at
@@ -253,11 +253,15 @@ _HELP_JS = r"""
     return bubble;
   }
   // The field a ⓘ explains, which the bubble never covers: a registered
-  // field's block, else its table row, else its key-value row (the key cell
-  // and the value beside it), else the line the ⓘ sits in.
+  // field's component (its key is the component's elem_id; Gradio 6 also
+  // gives the field's <label> a "block" class, so the nearest ".block" is
+  // only its label), else its table row, else its key-value row (the key
+  // cell and the value beside it), else the line the ⓘ sits in.
   function box(r) { return {left: r.left, top: r.top, right: r.right, bottom: r.bottom}; }
   function fieldRect(btn) {
-    var el = btn.classList.contains('shep-i-field') && btn.closest('.block');
+    var el = btn.classList.contains('shep-i-field') &&
+      document.getElementById(btn.getAttribute('data-help') || '');
+    el = (el && el.contains(btn)) ? el : null;
     el = el || btn.closest('tr');
     if (!el) {
       var key = btn.closest('.shep-k');
