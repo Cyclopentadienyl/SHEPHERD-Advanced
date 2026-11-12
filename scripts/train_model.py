@@ -190,10 +190,11 @@ class TrainConfig:
     # optimizer, the graph side loaded, a new task head; contract §9.2).
     task: Optional[str] = None
     finetune_from: Optional[str] = None
-    # A branch: a run of the parent's stage and task from its weights, its
+    # A branch: a new run of the parent's stage and task from its weights, its
     # settings kept but those this request changes on the stage's closed list
-    # (src/config/recipe.py `branch_settings`, contract §9.2, BACKLOG 23); a
-    # new optimizer, each change recorded.
+    # (src/config/recipe.py `branch_settings`, contract §9.2, BACKLOG 23),
+    # none included (a same-settings branch, its changes recorded as {}); a
+    # new optimizer and schedule, each change recorded.
     branch_from: Optional[str] = None
     # Finetune settings; unset, the task's reference values
     # (src/config/recipe.py, README C3, U3, U9).
@@ -356,8 +357,9 @@ def parse_args() -> argparse.Namespace:
         "--branch-from",
         type=str,
         default=None,
-        help="With --stage: branch this checkpoint of the same stage and task, changing the "
-             "settings given (each on the stage's list), with a new optimizer",
+        help="With --stage: branch this checkpoint of the same stage and task: a new run from "
+             "its weights with a new optimizer and schedule, changing the settings given (each "
+             "on the stage's list); none given, a new run with every setting of the parent",
     )
     parser.add_argument(
         "--expect-parent-sha256",

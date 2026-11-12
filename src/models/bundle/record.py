@@ -130,12 +130,16 @@ class ModelRecord:
         changes = (self.parent or {}).get("changes")
         if self.operation == "branch":
             # BACKLOG 23: a branch is its parent with the recorded changes,
-            # each from the parent's value to the new one, its weights loaded.
-            if not (isinstance(changes, dict) and changes and all(
+            # each from the parent's value to the new one, its weights loaded;
+            # `{}` when no setting changed (a same-settings branch, ops-wiring
+            # round, decision B1). Not recorded is not "none changed": a
+            # branch without `changes` is refused.
+            if not (isinstance(changes, dict) and all(
                     isinstance(c, dict) and set(c) == {"parent", "new"}
                     for c in changes.values())):
                 raise ModelRecordError("a branch records each setting it changed as "
-                                       "parent.changes {name: {parent, new}}")
+                                       "parent.changes {name: {parent, new}}, {} when it "
+                                       "changed none")
             if self.weight_transfer is None:
                 raise ModelRecordError("a branch records how its parent's weights were loaded")
         elif changes is not None:

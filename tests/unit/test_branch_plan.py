@@ -4,10 +4,12 @@ contract §9.2, BACKLOG 23), without torch.
 Any end state may be branched; each explicit setting that differs from the
 parent's and is on the stage's closed list is a change, recorded from the
 parent's value to the new one, and one set to the parent's own value is not.
-Refused: a setting off the list (the refusal names the list), no change, a
-parent without recorded settings or with weights only, another record
-version, an extension, and mixed precision that would take effect otherwise
-on this device. A resume that changes a setting points to the branch.
+A request that changes none is a same-settings branch (ops-wiring round,
+decision B1): every setting the parent's, its changes `{}`. Refused: a
+setting off the list (the refusal names the list), a parent without recorded
+settings or with weights only, another record version, an extension, and
+mixed precision that would take effect otherwise on this device, whether or
+not anything changed. A resume that changes a setting points to the branch.
 
 Module: tests/unit/test_branch_plan.py
 """
@@ -63,14 +65,30 @@ def test_any_end_state_is_branched_and_each_change_recorded(end):
     (dict(split_seed=1), "but those on its list"),
     (dict(model_spec={"kind": "other"}), "but those on its list"),
     (dict(early_stopping_patience=3), "but those on its list"),
-    (dict(learning_rate=1e-4), "changes at least one setting"),
     (dict(extend_epochs=2, learning_rate=1e-3), "a branch starts a new run"),
+    (dict(extend_epochs=2), "a branch starts a new run"),
+    (dict(extend_lr=1e-5), "a branch starts a new run"),
 ])
-def test_a_request_off_the_list_or_without_a_change_is_refused(request_, fragment):
+def test_a_request_off_the_list_or_extending_is_refused(request_, fragment):
     with pytest.raises(RunPlanRefused, match=fragment) as refused:
         _plan(_parent(), **request_)
     if "list" in fragment:
         assert ", ".join(sorted(branch_settings("base"))) in str(refused.value)
+
+
+@pytest.mark.parametrize("end", [None, "paused", "finished", "stopped_early"])
+@pytest.mark.parametrize("explicit", [(), ("seed", "learning_rate")])
+def test_a_branch_that_changes_nothing_is_a_same_settings_branch(end, explicit):
+    """Decision B1: nothing stated, or settings stated at the parent's own
+    values, is a new run with every setting of the parent's, its changes
+    `{}`; never a resume, whatever the parent's end."""
+    plan = _plan(_parent(end), explicit)
+    assert plan.changes == {}
+    assert {name: plan.settings[name] for name in RECORDED} == RECORDED
+    assert set(plan.inherited) == set(RECORDED) - set(explicit)
+    assert plan.action == ("Branch last.pt with every setting of its parent (no setting "
+                           "changed): a new run from its weights, with a new optimizer and "
+                           "schedule")
 
 
 @pytest.mark.parametrize("parent, fragment", [
@@ -134,6 +152,10 @@ def test_mixed_precision_must_take_effect_alike_unless_it_is_changed():
                                                             "dtype": "float16"}}})
     with pytest.raises(RunPlanRefused, match="mixed precision on"):
         _plan(trained_on_cuda, learning_rate=1e-3, use_amp=True)
+    # Nothing changed: it must take effect as it did, as a resume's must.
+    with pytest.raises(RunPlanRefused, match="mixed precision on"):
+        _plan(trained_on_cuda)
+    assert _plan(trained_on_cuda, device="cuda").changes == {}
     plan = _plan(trained_on_cuda, learning_rate=1e-3, use_amp=False)
     assert plan.changes["use_amp"] == {"parent": True, "new": False}
     # Kept on with only its dtype changed: it must still take effect here.

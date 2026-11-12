@@ -13,9 +13,10 @@ restores, so a preview is never the check.
 
 A model bundle run given a parent to **branch** (`branch_from`, contract §9.2,
 BACKLOG 23) is planned by `plan_branch`: a new run of the parent's stage and
-task, with its weights, settings and data, changing some of the settings on
-the stage's closed list (`src.config.recipe.branch_settings`) and recording
-each change; a new optimizer, schedule and stage.
+task, with its weights, settings and data, changing none or some of the
+settings on the stage's closed list (`src.config.recipe.branch_settings`) and
+recording each change, `{}` when none changed (a same-settings branch,
+ops-wiring round, decision B1); a new optimizer, schedule and stage.
 
 **What a new run takes** (a base, a finetune; ops-wiring round, decision S1)
 is stated here once, `new_run_settings`, filled once, `new_run_values`, and
@@ -280,7 +281,8 @@ class BranchPlan:
     settings, the request's changes and its operational fields. `inherited`
     lists the settings taken from the parent that the request did not set;
     `changes` each changed setting as ``{"parent": old, "new": new}``, as the
-    record keeps them (`parent.changes`); `decoded` as a continuation's.
+    record keeps them (`parent.changes`), empty for a same-settings branch;
+    `decoded` as a continuation's.
     """
 
     action: str
@@ -702,12 +704,19 @@ def plan_branch(
     """Decide a branch of `parent` (contract §9.2, BACKLOG 23): a new run of
     the parent's stage and task, from its weights, with every setting of the
     parent's but those the request changes, each on the closed list of the
-    parent's stage and task (`branch_settings`), and at least one.
+    parent's stage and task (`branch_settings`). **A request that changes
+    none is a same-settings branch** (ops-wiring round, decision B1): a new
+    run of the parent's stage and task from its weights with every setting
+    its parent trained with, a new optimizer and schedule, its `changes`
+    `{}`; a setting stated at the parent's own value is not a change. It is
+    never a resume: nothing of the parent's optimizer or progress continues.
 
     The parent's end state does not matter: a finished, early-stopped, paused
     or running run may be branched, since nothing of its progress continues.
     It must record the settings it trained with (a training-state checkpoint;
-    a weights-only file records none), and an extension is not a branch.
+    a weights-only file records none), an extension is not a branch, and
+    mixed precision kept on or off must take effect here as it did for the
+    parent, as a resume's must, whether or not anything else changed.
 
     Raises:
         RunPlanRefused: with the reason and the remedy.
@@ -726,11 +735,6 @@ def plan_branch(
     changeable = branch_settings(parent.get("learning_stage"), parent.get("task"))
     settings, inherited, changes, decoded = _inherit_settings(parent, request, explicit, where,
                                                               changeable=changeable)
-    if not changes:
-        raise RunPlanRefused(
-            f"A branch changes at least one setting of its parent ({', '.join(sorted(changeable))}), "
-            "and this request changes none. To continue the parent with its settings, resume "
-            "it (resume_from).")
     if "use_amp" in changes:
         # Mixed precision turned on or off is the change, recorded; on must
         # take effect here, or the record would claim what did not happen.
@@ -742,9 +746,14 @@ def plan_branch(
         # Kept on or off (amp_dtype changed or not): it must take effect as it
         # did for the parent, as a resume's must.
         _check_amp_takes_effect_alike(parent, settings, device, where)
-    shown = "; ".join(f"{name} {change['parent']!r} -> {change['new']!r}"
-                      for name, change in sorted(changes.items()))
-    return BranchPlan(action=f"Branch {parent_path.name}: {shown}",
+    if changes:
+        action = f"Branch {parent_path.name}: " + "; ".join(
+            f"{name} {change['parent']!r} -> {change['new']!r}"
+            for name, change in sorted(changes.items()))
+    else:
+        action = (f"Branch {parent_path.name} with every setting of its parent (no setting "
+                  "changed): a new run from its weights, with a new optimizer and schedule")
+    return BranchPlan(action=action,
                       settings=settings, inherited=inherited, changes=changes, decoded=decoded)
 
 

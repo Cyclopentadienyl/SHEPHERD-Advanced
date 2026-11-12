@@ -5,11 +5,12 @@ A branch is a new run of its parent's stage and task from its parent's
 weights, loaded strictly, with a new optimizer and stage. It keeps every
 setting of its parent but those the request changes on the stage's closed
 list (`src.config.recipe.branch_settings`), and records each change beside
-the exact parent file (`parent.changes`). It is refused before anything is
-written when it names two parents, another stage or task, a setting off the
-list, an extension, no change, a weights-only parent, other bytes than
-expected or other data than its parent's. A paused branch resumes as its own
-run.
+the exact parent file (`parent.changes`); a request that changes none is a
+same-settings branch, its changes `{}` (ops-wiring round, decision B1). It
+is refused before anything is written when it names two parents, another
+stage or task, a setting off the list, an extension, a weights-only parent,
+other bytes than expected or other data than its parent's. A paused branch
+resumes as its own run.
 
 With it, three shared defects are fixed at their root: early stopping follows
 the patience in effect, so a resumed or branched run keeps it on or off as
@@ -118,6 +119,81 @@ def test_a_branch_trains_from_its_parents_weights_with_its_changes(workspace, pa
     assert "resume_checkpoint" not in last["training_input_digests"]
 
 
+@pytest.mark.parametrize("end", ["finished", "paused"])
+def test_a_branch_with_its_parents_settings_is_a_new_run(tmp_path, monkeypatch, end):
+    """Decision B1, through `train()`: a branch that states no setting is a
+    new run in a run directory of its own, from its parent's weights with a
+    new optimizer and schedule, its progress from epoch 0 even for a paused
+    parent (never a resume), every setting its parent's and recorded as
+    inherited, and its record a branch whose changes are `{}`. The parent's
+    bytes are unchanged; the server's list places it under its parent, and it
+    loads."""
+    import train_model
+    from src.api.services import server_lists
+    from src.training.trainer import Trainer
+    from src.utils.fingerprint import file_sha256
+    from src.utils.run_plan import OPERATIONAL_FIELDS, new_run_settings
+
+    root = tmp_path / "root"
+    workspace = write_base_workspace(root)
+    runs = workspace / "runs" / "gatv2"
+    parent_run, branch_run = runs / "20261001-000000_base_aaaaaa", runs / "20261001-000001_b_bbbbbb"
+    train_model.train(*_config(workspace, parent_run,
+                               **({"pause_after_epoch": 1} if end == "paused" else {})))
+    parent = parent_run / "checkpoints" / "last.pt"
+    before, parent_sha256 = _load(parent), file_sha256(parent)
+    assert before["progress"]["end"] == end
+    seen = {}
+    real_train = Trainer.train
+
+    def train_checked(self):
+        seen["weights"] = all(torch.equal(value, before["state_dict"][name])
+                              for name, value in self.model.state_dict().items())
+        seen["optimizer_state"] = dict(self.optimizer.state_dict()["state"])
+        return real_train(self)
+
+    monkeypatch.setattr(Trainer, "train", train_checked)
+    config, explicit = _branch(workspace, branch_run, parent)
+    assert explicit == {"learning_stage", "branch_from", "device"}, "no setting is stated"
+    train_model.train(config, explicit)
+
+    assert file_sha256(parent) == parent_sha256, "the parent's bytes changed"
+    last = _load(branch_run / "checkpoints" / "last.pt")
+    _, record = load_bundle(last, learning_stage="base")
+    assert seen == {"weights": True, "optimizer_state": {}}, "the parent's weights, a new optimizer"
+    assert (record.operation, record.family_id) == ("branch", parent_run.name)
+    assert record.parent == {"sha256": parent_sha256, "run": parent_run.name, "changes": {}}
+    assert record.weight_transfer["optimizer"] == "new"
+    assert record.weight_transfer["initialised_new"] == []
+    # A new run of the parent's whole stage, from epoch 0: nothing of a paused
+    # parent's progress continues.
+    stage = last["progress"]["stage"]
+    assert (stage["kind"], stage["start_epoch"], stage["target_epochs"]) == ("original", 0, 2)
+    assert (last["progress"]["completed_epochs"], last["progress"]["end"]) == (2, "finished")
+    assert "resume_checkpoint" not in last["training_input_digests"]
+
+    def learning(requested):
+        return {name: value for name, value in requested.items()
+                if name not in OPERATIONAL_FIELDS}
+
+    assert learning(last["config"]["requested"]) == learning(before["config"]["requested"])
+    recipe = last["config"]["effective"]["loaders"]["train"]["recipe"]
+    assert (recipe["reference_filled"], recipe["operator_set"]) == ({}, [])
+    assert recipe["inherited_from_parent"] == sorted(new_run_settings("base"))
+
+    monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(root))
+    listing = server_lists.list_checkpoints("data")
+    assert listing.available, listing.problem
+    last_of = {item.run: item for item in listing.items if item.filename == "last.pt"}
+    listed = last_of[branch_run.name]
+    assert (listed.record, listed.operation, listed.parent_sha256, listed.parent_run) == (
+        "model", "branch", parent_sha256, parent_run.name)
+    (row,) = [row for row in server_lists.family_rows(listing.items)
+              if row.item.key == listed.key]
+    assert (row.parent, row.parent_state, row.depth) == (
+        last_of[parent_run.name].key, "listed", 1)
+
+
 def _other_spec():
     spec = dict(_small_spec())
     spec["encoder"] = {**spec["encoder"], "hidden": 8}
@@ -138,7 +214,6 @@ REFUSALS = {
                        "keeps every setting of its parent but those on its list"),
     "an extension": (dict(extend_epochs=1, learning_rate=1e-3), RunPlanRefused,
                      "a branch starts a new run: remove them to branch"),
-    "no change": (dict(learning_rate=1e-4), RunPlanRefused, "changes at least one setting"),
     "no stage": (dict(learning_stage=None, learning_rate=1e-3), ValueError,
                  "names its learning stage"),
 }
@@ -287,6 +362,18 @@ def test_a_disease_child_branches_within_its_task(tmp_path):
     assert record.parent["changes"] == {"task_loss_weight": {"parent": 0.1, "new": 0.5}}
     assert record.loss_identity["task_loss_weight"] == 0.5
     assert record.weight_transfer["initialised_new"] == []
+    # With no setting changed (decision B1): the child's task and loss, its
+    # changes `{}`.
+    fields = {**fields, "run_dir": str(tmp_path / "same")}
+    del fields["task_loss_weight"]
+    train_model.train(train_model.TrainConfig(**fields), set(fields) - {"data_dir", "run_dir"})
+    same = _load(tmp_path / "same" / "checkpoints" / "last.pt")
+    _, record = load_bundle(same, task="disease")
+    parent = _load(child)
+    assert (record.operation, record.family_id, record.parent["changes"]) == ("branch", "base", {})
+    assert record.loss_identity == parent["loss_identity"]
+    assert record.weight_transfer["optimizer"] == "new"
+    assert same["config"]["requested"]["task_loss_weight"] == 0.1
 
 
 # ---------------------------------------------------------------------------

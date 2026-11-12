@@ -150,25 +150,32 @@ def test_a_record_part_of_the_wrong_kind_is_refused_whole():
 def test_a_branch_records_its_changes_and_its_weights():
     """BACKLOG 23: a branch names each changed setting, from the parent's value
     to the new one, beside the exact parent, and how its weights were loaded;
-    no other operation records changes."""
+    `{}` when it changed none (decision B1), apart from not recorded, which is
+    refused; no other operation records changes."""
     parent = {"sha256": "p" * 64, "run": "run-a"}
     changes = {"learning_rate": {"parent": 1e-4, "new": 1e-3}}
     transfer = {"loaded_from_parent": ["encoder"], "initialised_new": [], "trainable": "all",
                 "optimizer": "new"}
-    _, branch = _record(operation="branch", parent={**parent, "changes": changes},
-                        weight_transfer=transfer)
-    branch.validate()
-    for broken in ({**parent}, {**parent, "changes": {}},
-                   {**parent, "changes": {"learning_rate": 1e-3}}):
+    for recorded in (changes, {}):
+        _, branch = _record(operation="branch", parent={**parent, "changes": recorded},
+                            weight_transfer=transfer)
+        assert branch.validate().parent["changes"] == recorded
+        bundle, branch = _record(operation="branch", parent={**parent, "changes": recorded},
+                                 weight_transfer=transfer)
+        assert read_model_record(_payload(bundle, branch)).parent["changes"] == recorded
+    for broken in ({**parent}, {**parent, "changes": None}, {**parent, "changes": []},
+                   {**parent, "changes": {"learning_rate": 1e-3}},
+                   {**parent, "changes": {"learning_rate": {"new": 1e-3}}}):
         _, record = _record(operation="branch", parent=broken, weight_transfer=transfer)
         with pytest.raises(ModelRecordError, match="parent.changes"):
             record.validate()
     _, untransferred = _record(operation="branch", parent={**parent, "changes": changes})
     with pytest.raises(ModelRecordError, match="how its parent's weights were loaded"):
         untransferred.validate()
-    _, resumed = _record(operation="resume", parent={**parent, "changes": changes})
-    with pytest.raises(ModelRecordError, match="only a branch records changed settings"):
-        resumed.validate()
+    for recorded in (changes, {}):
+        _, resumed = _record(operation="resume", parent={**parent, "changes": recorded})
+        with pytest.raises(ModelRecordError, match="only a branch records changed settings"):
+            resumed.validate()
 
 
 # --------------------------------------------------------------------------- one input, one claim
