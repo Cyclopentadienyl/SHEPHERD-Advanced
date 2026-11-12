@@ -39,6 +39,15 @@ Its settings left `TrainConfig` in K8-7, and `ShepherdGNNConfig` with
     The surfaces still write their own constraints, and parity tests assert they agree with the
     spec (guard, not derive); the job runner's start check, the Training page's base form and the
     Fine-tune page check values with its `value_problem`. The record above is left as written.
+  - *Note (2026-11-12, ops-wiring round A1a):* what a new run takes is stated once
+    (`src/utils/run_plan.py` `new_run_settings`, the training process's rule), and the API's
+    `TrainingStartRequest` is a thin projection of it: it offers every setting a new base reads
+    and **derives its bounds from the field spec** (`FieldSpec.valid`), its hop list checked by
+    `value_problem`; the parity tests still compare the two. The rules across settings are data
+    in the spec (`CROSS_FIELD_RULES`) with one evaluator (`cross_field_problems`), which the
+    training process, the continuation and branch plans and the job runner's start call; the
+    Trainer refuses the onecycle rule in the same sentence. The WebUI's base form and Fine-tune
+    page still offer part of the settings; they read the same checks.
 
 ## Rationale
 
@@ -78,3 +87,5 @@ concern — a modularity violation. Removing it **serves** the principle.
 
 *(2026-11-09: PR-4 is partly done, as 4a–4c (`5b1c846` to `dd999e3`): the surfaces are guarded by
 the parity tests, not derived from the spec; the note under the decision above.)*
+*(2026-11-12: the API's start derives its bounds from the spec since the ops-wiring round's
+A1a; the pages' fields follow in its stages B1 and B2; the note under the decision above.)*

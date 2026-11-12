@@ -3170,14 +3170,30 @@ Training Console 現在是分成三部分的一個頁面：上方橫跨整頁的
   訓練行程在這之前不檢查 workspace 的任何東西，所以已無法解析或已不存在的 manifest（連整個
   workspace 都不在了也一樣）也以同樣的文字拒絕；正是所顯示的那份、但現在讀不了的 manifest，
   則以讀不了為由拒絕。
-- **經由 HTTP，`POST /api/v1/training/start` 就是這個表單的啟動**（自 K7 起）：嚴格的 base
-  啟動。`learning_stage` 必須是 `base`；它接受這次執行（`data_dir`、`run_name`、`device`、
-  `resume_from`、`extend_epochs`）與參考配方的 base 設定，各項預設不設定，由配方補上。finetune
-  stage、ShepherdGNN 設定（`conv_type`、`hidden_dim` 等）或任何它未定義的欄位以 422 拒絕，續接
-  一個不是 base 的 checkpoint 以 409 拒絕，都在佔用 GPU 名額或建立 run 目錄之前。任務模型以
-  `POST /api/v1/training/finetune` 啟動，與 Fine-tune 頁相同；它的 `settings` 接受 finetune
-  recipe 的設定，自 research comparison Stage 9b 起包括 `frozen_parts`（`graph_side`：凍結主幹的
-  對照，見下文；本輪 Fine-tune 頁不提供）。命令列的 `--frozen-parts graph_side` 是同一個設定。
+- **經由 HTTP，`POST /api/v1/training/start` 就是這個表單的啟動**，接受命令列對 base 所接受
+  的一切：嚴格的啟動。它接受這次執行（`data_dir`、`run_name`、`device`、`compile`、
+  `resume_from`、`extend_epochs`、`extend_lr`、`learning_stage`）與新 base 會讀取的每一項設定：
+  參考配方的 base 設定，以及 `split_seed`、`min_lr_ratio`、`amp_dtype`、
+  `gradient_accumulation_steps`、`eval_every_n_epochs`、`save_top_k` 與 `model_spec`（以純資料
+  表示的 spec），各項預設不設定，由配方、再由本版本的預設值補上，checkpoint 記錄各自的來源
+  （`operator_set`、`reference_filled`、`build_defaults`）。每個值的範圍取自 field spec，所以
+  `-1` 的 hop（「所有鄰居」）在這裡與命令列一樣合法。新的 run 需要 `learning_stage` 為 `base`；
+  有 `resume_from` 時可以不給 stage，給了就與 parent 的比對，所以 finetune 子模型也能在這裡
+  續訓或延長（parent 的學習率降到 0 時用 `extend_lr`）。只有送出的欄位會到達服務，包括明確的
+  `null`，而且會被判斷：新的 run 中不接受 null 的設定會被拒絕，續訓時則視為與 parent 不同的值
+  而拒絕。run 不會讀取的設定一律拒絕，絕不忽略：scheduler 不是 `cosine` 時的 `warmup_steps`
+  （cosine 下 `0` 表示以十分之一的步數 warmup）、scheduler 為 `none` 時的 `min_lr_ratio`、
+  `use_amp` 關閉時的 `amp_dtype`；`onecycle` 需要大於 0 的 `min_lr_ratio`。在沒有 CUDA 的裝置上
+  要求混合精度仍會接受：checkpoint 分開記錄要求的精度與實際生效的精度。新 run 的 finetune
+  stage、ShepherdGNN 設定（`conv_type`、`hidden_dim` 等）、finetune 設定或任何它未定義的欄位，
+  在到達服務之前以 422 拒絕；runner 拒絕的值或規則以 422 拒絕；parent 不允許的續訓以 409
+  拒絕，都在佔用 GPU 名額或建立 run 目錄之前。任務模型以 `POST /api/v1/training/finetune`
+  啟動，與 Fine-tune 頁相同；它的 `settings` 接受每個所選任務都會讀取的設定，自 research
+  comparison Stage 9b 起包括 `frozen_parts`（`graph_side`：凍結主幹的對照，見下文；本輪
+  Fine-tune 頁不提供），以及只限單一任務、graph side 與 base 相同的 `model_spec`。每個子模型的
+  行程會對 base 檢查的項目，在任何子模型啟動之前就先檢查：spec、每個子模型的 hop 清單對 base
+  的 encoder、明確給出的 `split_seed` 對 base 的。命令列的 `--frozen-parts graph_side` 是同一個
+  設定。
 - 失敗的 run 的**錯誤橫幅**橫跨整頁。標題（"Training failed: Process exited with code 1"）
   之下是 run 印出的最後一行錯誤（"Last error printed: TrainingDeviceUnavailable: --device auto
   requires CUDA, …"），對唯讀瀏覽器與輸出一樣經過遮蔽。run 旁邊只在有日誌時說明日誌在哪裡（它的

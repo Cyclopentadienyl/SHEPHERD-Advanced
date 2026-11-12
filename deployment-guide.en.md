@@ -3092,16 +3092,35 @@ a run.
   root-cause round), and the process checks nothing about the workspace before it, so a
   manifest that no longer parses, or is gone (its whole workspace included), is refused in the
   same words; a manifest that is the one shown but cannot be read now is refused as such.
-- **Over HTTP, `POST /api/v1/training/start` is this form's start** (since K7): a strict base
-  start. `learning_stage` must be `base`; it takes the run (`data_dir`, `run_name`, `device`,
-  `resume_from`, `extend_epochs`) and the reference recipe's base settings, each unset by default
-  so the recipe fills it. A finetune stage, a ShepherdGNN setting (`conv_type`, `hidden_dim`, …)
-  or any field it does not define is refused with 422, and continuing a checkpoint that is not a
-  base with 409, before a GPU slot or a run directory is taken. Task models are started with
-  `POST /api/v1/training/finetune`, as the Fine-tune page starts them; its `settings` take the
-  finetune recipe's settings, `frozen_parts` among them since research comparison Stage 9b
+- **Over HTTP, `POST /api/v1/training/start` is this form's start**, and takes what the command
+  line takes for a base: a strict start. It takes the run (`data_dir`, `run_name`, `device`,
+  `compile`, `resume_from`, `extend_epochs`, `extend_lr`, `learning_stage`) and every setting a
+  new base reads: the reference recipe's base settings and `split_seed`, `min_lr_ratio`,
+  `amp_dtype`, `gradient_accumulation_steps`, `eval_every_n_epochs`, `save_top_k` and
+  `model_spec` (the spec as plain data), each unset by default so the recipe, then this build's
+  default, fills it, and the checkpoint records which (`operator_set`, `reference_filled`,
+  `build_defaults`). Each value's bounds are the field spec's, so a `-1` hop ("every
+  neighbour") is legal here as on the command line. A new run needs `learning_stage` `base`;
+  with `resume_from` the stage may be left out, and is compared with the parent's when given, so
+  a finetune child is resumed or extended here too (`extend_lr` for a parent whose rate ended at
+  0). Only the fields sent reach the service, an explicit `null` included, which is judged: for a
+  new run refused where the setting takes no null, for a continuation refused as another value
+  than the parent's. A setting the run would not read is refused, never ignored:
+  `warmup_steps` unless the scheduler is `cosine` (with cosine, `0` warms up over a tenth of the
+  steps), `min_lr_ratio` with the scheduler `none`, `amp_dtype` with `use_amp` off; and
+  `onecycle` needs a `min_lr_ratio` above 0. Mixed precision asked on a device without CUDA stays
+  accepted: the checkpoint records the precision requested and the one in effect apart. A
+  finetune stage for a new run, a ShepherdGNN setting (`conv_type`, `hidden_dim`, …), a finetune
+  setting or any field it does not define is refused with 422 before the service is reached, a
+  value or a rule the runner refuses with 422, and a continuation its parent does not allow with
+  409, before a GPU slot or a run directory is taken. Task models are started with
+  `POST /api/v1/training/finetune`, as the Fine-tune page starts them; its `settings` take every
+  setting each chosen task reads, `frozen_parts` among them since research comparison Stage 9b
   (`graph_side`: the frozen-backbone control, below; the Fine-tune page does not offer it this
-  round). The command line's `--frozen-parts graph_side` is the same setting.
+  round), and a `model_spec` for one task only, its graph side the base's. What each child's
+  process checks against its base is checked before any child starts: the spec, each child's
+  hop list against the base's encoder, a stated `split_seed` against the base's. The command
+  line's `--frozen-parts graph_side` is the same setting.
 - A failed run's **error banner** spans the page. Under its headline ("Training failed: Process
   exited with code 1") is the last error line the run printed ("Last error printed:
   TrainingDeviceUnavailable: --device auto requires CUDA, …"), redacted for a read-only browser
