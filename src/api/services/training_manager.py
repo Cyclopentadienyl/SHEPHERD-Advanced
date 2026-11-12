@@ -639,6 +639,17 @@ def _finetune_base_problem(settings: Mapping[str, Any], tasks: Sequence[str],
     return None
 
 
+def _zero_rate_groups(record: Mapping[str, Any]) -> Optional[List[int]]:
+    """`run_plan.zero_rate_groups` of a checkpoint record a preview read, or
+    None when its optimizer's rates are not numbers in groups."""
+    from src.utils.run_plan import zero_rate_groups
+
+    try:
+        return zero_rate_groups(record)
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return None
+
+
 def deployment_device() -> Optional[str]:
     """The device a test run is given: the deployment's (D5), `SHEPHERD_DEVICE`
     as the served pipeline reads it (`requested_serving_device`). None leaves
@@ -2478,6 +2489,11 @@ class TrainingManager:
             # (None for a parent without a spec): the run continues that stage.
             "learning_stage": record.get("learning_stage") if has_model_spec(record) else None,
             "task": record.get("task") if has_model_spec(record) else None,
+            # The parameter groups whose rate ended at 0, from this read
+            # (`run_plan.zero_rate_groups`): the groups an extension's
+            # extend_lr replaces, and must be given for; None when the
+            # parent's optimizer rates cannot be read.
+            "zero_rate_groups": _zero_rate_groups(record),
         }
         # The request the training process makes: every current setting
         # (`training_fields.names()`, the run's TrainConfig fields), the

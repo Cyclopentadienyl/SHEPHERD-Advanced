@@ -1057,42 +1057,65 @@ def bind_task_data(task: str, spec: Any, view: Any, inputs: TrainingInputs
     return binding, derived
 
 
+#: The settings of a new run that are not a build default when unset: the
+#: model spec, which is then the stage's reference spec (a finetune's: its
+#: base's graph side with its task's reference head), recorded whole in the
+#: model record; and a finetune's split seed, its base's (README G4).
+_SPEC_RULE_SETTINGS = {"base": frozenset({"model_spec"}),
+                       "finetune": frozenset({"model_spec", "split_seed"})}
+
+
 def apply_stage_recipe(config: TrainConfig, explicit: Set[str]
                        ) -> Tuple[TrainConfig, Dict[str, Any]]:
-    """Fill every reference setting the operator left unset from the stage's
-    recipe (`src.config.recipe`), and say which were filled and from where. A
-    run whose settings come from its parent is not filled (`inherited_recipe_
-    record`)."""
+    """Fill every setting a new run reads that the operator left unset, by the
+    one fill of a new run (`run_plan.new_run_values`): the stage's recipe
+    (`src.config.recipe`), else this build's default; and record each
+    setting's source (decision S2): `reference_filled`, the recipe's settings
+    filled, each with its source; `operator_set`, every setting the run reads
+    that the operator set (`run_plan.new_run_settings`), whatever its value;
+    `build_defaults`, every other one, with this build's default, but the
+    model spec and a finetune's split seed (`_SPEC_RULE_SETTINGS`), whose
+    values the model record holds with their source. Informational: no
+    reader decides by it. A run whose settings come from its parent is not
+    filled (`inherited_recipe_record`)."""
     from dataclasses import replace
 
     from src.config.recipe import reference_settings
+    from src.utils.run_plan import new_run_settings, new_run_values
 
-    values, sources = reference_settings(config.learning_stage, config.task)
-    filled = {name: value for name, value in values.items() if name not in explicit}
+    stage, task = config.learning_stage, config.task
+    settings = new_run_settings(stage, task)
+    references, sources = reference_settings(stage, task)
+    given = {name: getattr(config, name) for name in settings if name in explicit}
+    values = new_run_values(stage, task, given)
     record = {
-        "learning_stage": config.learning_stage,
-        "reference_filled": {name: sources[name] for name in sorted(filled)},
-        "operator_set": sorted(name for name in values if name in explicit),
+        "learning_stage": stage,
+        "reference_filled": {name: sources[name] for name in sorted(references)
+                             if name not in given},
+        "operator_set": sorted(given),
+        "build_defaults": {name: values[name] for name in sorted(
+            settings - set(references) - set(given) - _SPEC_RULE_SETTINGS[stage])},
     }
-    return replace(config, **filled), record
+    return replace(config, **values), record
 
 
 def inherited_recipe_record(stage: str, task: Optional[str], explicit: Set[str],
                             inherited: Mapping[str, Any],
                             decoded: Mapping[str, str]) -> Dict[str, Any]:
     """The recipe record of a run whose settings come from its parent (a
-    resume, an extension, a branch): nothing is filled from the recipe; each
-    reference setting is the parent's or the operator's. `decoded` is each
+    resume, an extension, a branch): nothing is filled from the recipe or a
+    build default; each setting the run reads (`run_plan.new_run_settings`)
+    is the parent's or the operator's. `decoded` is each
     setting the one settings decode gave that the parent's record does not
     hold (`run_plan.decode_learning_settings`), with its source in words
     ("none, decoded from rules 1: ..."), listed there and not as inherited
     (one source per setting); the parent's file is not changed."""
-    from src.config.recipe import reference_settings
+    from src.utils.run_plan import new_run_settings
 
-    values, _ = reference_settings(stage, task)
-    return {"learning_stage": stage, "reference_filled": {},
-            "inherited_from_parent": sorted(name for name in values if name in inherited),
-            "operator_set": sorted(name for name in values if name in explicit),
+    settings = new_run_settings(stage, task)
+    return {"learning_stage": stage, "reference_filled": {}, "build_defaults": {},
+            "inherited_from_parent": sorted(name for name in settings if name in inherited),
+            "operator_set": sorted(name for name in settings if name in explicit),
             "decoded_from_parent": dict(sorted(decoded.items()))}
 
 

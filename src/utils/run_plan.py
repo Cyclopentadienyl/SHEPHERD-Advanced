@@ -765,6 +765,22 @@ def _rates_text(rates: List[float]) -> str:
     return f"fixed rates of {', '.join(shown)} (one per parameter group)"
 
 
+def _group_rates(parent: Mapping[str, Any]) -> List[float]:
+    """Each parameter group's rate as the parent's optimizer holds it."""
+    groups = (parent.get("optimizer_state_dict") or {}).get("param_groups") or []
+    return [float(group["lr"]) for group in groups]
+
+
+def zero_rate_groups(parent: Mapping[str, Any]) -> List[int]:
+    """The parameter groups (their indices) whose rate ended at 0 in the
+    parent's optimizer: **the groups `extend_lr` replaces, and only those**
+    (`_fixed_rates`). An extension of a parent with one refuses without
+    `extend_lr`, so the job runner's preview states them as a fact of its one
+    read of the parent, for a page to offer the rate exactly when the plan
+    needs it."""
+    return [i for i, rate in enumerate(_group_rates(parent)) if rate == 0.0]
+
+
 def _fixed_rates(
     parent: Mapping[str, Any], extend_lr: Optional[float], where: str,
 ) -> Dict[str, Any]:
@@ -776,11 +792,10 @@ def _fixed_rates(
     would extend without training; `extend_lr` replaces a zero rate, and only a
     zero rate, and the groups it applied to are recorded.
     """
-    groups = (parent.get("optimizer_state_dict") or {}).get("param_groups") or []
-    if not groups:
+    rates = _group_rates(parent)
+    if not rates:
         raise RunPlanRefused(f"{where} records no optimizer rates to extend at.")
-    rates = [float(group["lr"]) for group in groups]
-    zero = [i for i, rate in enumerate(rates) if rate == 0.0]
+    zero = zero_rate_groups(parent)
     if extend_lr is not None:
         if not zero:
             raise RunPlanRefused(
@@ -881,4 +896,5 @@ __all__ = [
     "plan_continuation",
     "recorded_training_settings",
     "resolve_recorded_file",
+    "zero_rate_groups",
 ]

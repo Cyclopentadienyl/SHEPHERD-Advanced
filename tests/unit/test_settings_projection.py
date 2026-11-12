@@ -339,6 +339,34 @@ def test_a_finetune_child_is_extended_over_http_without_its_stage(client, traine
     assert (written["learning_stage"], written["task"]) == ("finetune", "disease")
 
 
+def test_the_preview_states_the_groups_whose_rate_ended_at_zero(client, trained_disease_child,
+                                                                 tmp_path):
+    """A parent whose rate decayed to 0 is extended only with extend_lr: the
+    preview names those groups from its one read, and the API takes the rate."""
+    import torch
+
+    http, popen, manager = client
+    child = trained_disease_child["disease"]
+    assert manager.preview_continuation(str(child), device="cpu", extend_epochs=1,
+                                        )["zero_rate_groups"] == []
+    payload = torch.load(child, map_location="cpu", weights_only=True)
+    for group in payload["optimizer_state_dict"]["param_groups"]:
+        group["lr"] = 0.0
+    zero = tmp_path / "runs" / "gatv2" / "20261003-000000_disease_zzzzzz" / "checkpoints"
+    zero.mkdir(parents=True)
+    torch.save(payload, zero / "last.pt")
+    preview = manager.preview_continuation(str(zero / "last.pt"), device="cpu",
+                                           extend_epochs=1)
+    groups = list(range(len(payload["optimizer_state_dict"]["param_groups"])))
+    assert preview["ok"] is False and preview["zero_rate_groups"] == groups
+    assert "Give extend_lr" in preview["reason"]
+    resp = http.post("/api/v1/training/start", json={
+        "data_dir": str(trained_disease_child["data_dir"]), "resume_from": str(zero / "last.pt"),
+        "device": "cpu", "extend_epochs": 1, "extend_lr": 1e-5})
+    assert resp.status_code == 200, resp.text
+    assert _written(resp)["extend_lr"] == 1e-5
+
+
 # ---------------------------------------------------------------------------
 # S4: a Fine-tune start checks what each child's process checks against its base
 # ---------------------------------------------------------------------------
@@ -415,3 +443,73 @@ def test_a_fine_tune_spec_is_one_tasks_and_keeps_its_bases_graph_side(base):
     assert result["success"] is True and len(calls) == 1
     assert yaml.safe_load(Path(calls[0][calls[0].index("--config") + 1]).read_text())[
         "model_spec"] == own
+
+
+# ---------------------------------------------------------------------------
+# S2: each setting's source, recorded
+# ---------------------------------------------------------------------------
+def _recipe_record(path):
+    import torch
+
+    payload = torch.load(path, map_location="cpu", weights_only=True)
+    return payload["config"]["effective"]["loaders"]["train"]["recipe"], payload
+
+
+def test_a_new_run_records_the_operators_the_recipes_and_the_builds_settings(
+        trained_disease_child):
+    """`operator_set` lists every setting the operator set (not only recipe
+    keys), `build_defaults` every other one the recipe does not hold, with
+    this build's default; the model spec and a finetune's split seed are the
+    model record's, never a build default. Each setting has one source."""
+    from scripts.setup_demo import demo_task_training
+
+    for name, stage, task in (("base", "base", None), ("disease", "finetune", "disease")):
+        record, payload = _recipe_record(trained_disease_child[name])
+        given = set(demo_task_training()[name]) | {"num_epochs", "save_top_k"}
+        assert set(record["operator_set"]) == given & new_run_settings(stage, task)
+        references = set(recipe.reference_settings(stage, task)[0])
+        assert set(record["reference_filled"]) == references - given
+        not_defaults = {"model_spec"} | ({"split_seed"} if stage == "finetune" else set())
+        assert set(record["build_defaults"]) == (
+            new_run_settings(stage, task) - references - given - not_defaults)
+        for setting, value in record["build_defaults"].items():
+            assert value == payload["config"]["requested"][setting] == tf.by_name(
+                setting).default, setting
+        sources = (set(record["operator_set"]), set(record["reference_filled"]),
+                   set(record["build_defaults"]))
+        assert sum(len(s) for s in sources) == len(set().union(*sources)), "one source each"
+
+
+def test_a_continued_run_records_inherited_and_stated_over_every_setting(tmp_path,
+                                                                        patient_base):
+    """The inherited record lists every setting the run reads as the parent's
+    or the operator's; nothing is filled from the recipe or a build default."""
+    train_model = _train_model()
+
+    ws, parent = patient_base
+    run = tmp_path / "resumed"
+    config = train_model.TrainConfig(data_dir=str(ws), run_dir=str(run), device="cpu",
+                                     learning_stage="base", resume_from=str(parent),
+                                     split_seed=0)
+    train_model.train(config, {"learning_stage", "device", "resume_from", "split_seed"})
+    record, _ = _recipe_record(run / "checkpoints" / "last.pt")
+    assert record["reference_filled"] == {} and record["build_defaults"] == {}
+    assert record["operator_set"] == ["split_seed"]
+    assert set(record["inherited_from_parent"]) == new_run_settings("base") - {"split_seed"}
+
+
+def test_existing_records_read_unchanged(trained_disease_child):
+    """Additive: the listing's reader takes a record with or without the new
+    keys alike (`recorded_training_settings` reads `config.requested` and
+    `config.effective` as recorded)."""
+    from src.utils.run_plan import recorded_training_settings
+
+    _, payload = _recipe_record(trained_disease_child["disease"])
+    read = recorded_training_settings(payload["config"] | {"rules": 2})
+    old = dict(payload["config"]["effective"])
+    old["loaders"] = {**old["loaders"], "train": {
+        **old["loaders"]["train"],
+        "recipe": {k: v for k, v in old["loaders"]["train"]["recipe"].items()
+                   if k != "build_defaults"}}}
+    before = recorded_training_settings({**payload["config"], "effective": old, "rules": 2})
+    assert read["unshown"] == before["unshown"] == {} and read["learning"] == before["learning"]
