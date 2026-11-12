@@ -1186,8 +1186,8 @@ routes and `train_model.py` with that root:
 - diagnoses sent by eight clients across `POST /api/v1/pipeline/stop`: each is answered by the
   model or refused (503) with the stopping or stopped reason, every client's diagnosis sent after
   the stop answered is refused, and the stop says released only with nothing in flight and the
-  lock free. Diagnoses run one at a time on the service's event loop, so a stop finds one still
-  running only some of the time; W12 loads the child again and stops again (twelve stops at
+  lock free. Diagnoses run one at a time (in worker threads, under one run lock), so a stop finds
+  one still running only some of the time; W12 loads the child again and stops again (twelve stops at
   most) until a stop counts at least one accepted diagnosis that finished first, so the stop's
   wait for it is observed, not assumed. The resources reading then is recorded, not judged;
 - a short training then runs to its end, and the child loads again;

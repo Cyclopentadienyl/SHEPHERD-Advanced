@@ -304,6 +304,14 @@ wait, and `/health` stalls meanwhile. The bounded queue and a reload-while-busy 
 item 28's, before any LAN opening. Managed training and evaluation jobs share one GPU lock
 (`PLAN_TEST_RESULTS.md` §6); inference is not scheduled by it.
 
+*2026-11-12 (the ops round, checkpoint A's verification of I4):* the blocked loop is retired. A
+diagnosis's lease and pipeline run and a reload's build run in worker threads; diagnoses still
+never overlap, by one run lock taken inside the lease (`AppState.running`); the publish swaps the
+served fields under admission, so a diagnosis accepted on the old model finishes on it; and a
+stop closes admission on the loop as it arrives and drains in a thread. `/health` and the status
+answer meanwhile. A bounded queue that reports busy, and a reload refused while busy, are still
+BACKLOG item 28's. CUDA inference holds the deployment's GPU lock since A3a (I2).
+
 ---
 
 ## 6. Multi-user target state (P4) — not designed here
