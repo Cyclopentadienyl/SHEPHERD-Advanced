@@ -724,6 +724,13 @@ def test_both_arms_are_measured_registered_listed_and_exported_with_their_freeze
     assert shown["control"][("Training settings", "Learning setting · Graph backbone")] == (
         "graph_side")
     assert shown["full"][("Training settings", "Learning setting · Graph backbone")] == "none"
+    # Its cells say the field's words, then the value as recorded (review of
+    # A2: "Graph backbone: none" read as no graph backbone).
+    from src.webui.components.results_segment import compare_html
+
+    markup = compare_html([rows["control"], rows["full"]], True)
+    assert ("Graph backbone</th><td>Frozen (<code>graph_side</code>)</td>"
+            "<td>Trained (<code>none</code>)</td></tr>") in markup
     assert shown["decoded"][(
         "Training settings", "Effective setting · Loaders › Train › Recipe › Decoded from parent "
         "› Graph backbone")] == recipe["decoded_from_parent"]["frozen_parts"]

@@ -126,7 +126,11 @@ from src.webui.components import model_list as ml
 from src.webui.components import models_page as mp
 from src.webui.components import renderers as r
 from src.webui.components.help import help_button
-from src.webui.components.training_console import SETTING_LABELS
+from src.webui.components.training_console import (
+    SETTING_CHOICE_WORDS,
+    SETTING_LABELS,
+    setting_shown,
+)
 from src.webui.exports import file_slug, write_new
 from src.webui.operator_access import operator_access
 from src.webui.shell import plain_html
@@ -1148,7 +1152,8 @@ def _run_id_html(value: str) -> str:
     return "<wbr>".join(f'<span class="shep-nowrap">{r.e(part)}</span>' for part in parts)
 
 
-def _cell_html(value: Any, why: Optional[str], *, full: bool, run: bool = False) -> str:
+def _cell_html(value: Any, why: Optional[str], *, full: bool, run: bool = False,
+               name: Optional[str] = None) -> str:
     """One Compare cell: "another protocol" on a metric row of another
     protocol's result; "not applicable" for a field that does not apply to
     the result's data kind; "not recorded" for a field the result's records
@@ -1159,7 +1164,12 @@ def _cell_html(value: Any, why: Optional[str], *, full: bool, run: bool = False)
     (all of them when its row's 12 do not tell it apart), the full value as
     its title; a list as compact JSON; a number unrounded, never broken
     (``shep-num``: its cell does not wrap, Models' Results CSS); text as
-    recorded."""
+    recorded, and a closed value of the setting `name` (the row's record
+    key, its last entry) that the Fine-tune field says in words
+    (`training_console.SETTING_CHOICE_WORDS`) by those words and then the
+    value as recorded: "Frozen (graph_side)", "Trained (none)", since its row
+    is named by that field's label ("Graph backbone", `field_words`), under
+    which the bare value would read as another fact."""
     if value is OTHER_PROTOCOL:
         return '<td class="shep-muted">another protocol</td>'
     if value is NOT_APPLICABLE:
@@ -1184,6 +1194,10 @@ def _cell_html(value: Any, why: Optional[str], *, full: bool, run: bool = False)
         return f"<td><code>{r.e(text)}</code></td>"
     if isinstance(value, (int, float)):
         return f'<td class="shep-num">{r.e(recorded_value_text(value))}</td>'
+    if isinstance(value, str) and name in SETTING_CHOICE_WORDS:
+        words = setting_shown(name, value)
+        if words != value:
+            return f"<td>{r.e(words)} (<code>{r.e(value)}</code>)</td>"
     return f"<td>{r.e(value)}</td>"
 
 
@@ -1221,7 +1235,8 @@ def compare_html(rows: Sequence[Mapping[str, Any]], differences_only: bool, *,
     row-group header would head every later cell of the table, under later
     paths and groups too (HTML's table model), and each entry's accessible
     name already says its whole path. Values
-    as recorded: nothing is computed from two of them. A metric row is one
+    as recorded (a closed setting's after its field's words, `_cell_html`):
+    nothing is computed from two of them. A metric row is one
     protocol's; a result of another protocol reads "another protocol" there,
     and one of the same protocol that does not record that metric reads "not
     recorded", as does any field a result's records do not hold. The report's
@@ -1265,7 +1280,9 @@ def compare_html(rows: Sequence[Mapping[str, Any]], differences_only: bool, *,
                         f'<span class="shep-rs-pin">{r.e(_label(path))}</span></td></tr>')
         path_shown = path or None
         run = ref in _RUN_IDS
-        cells = "".join(_cell_html(v, w, full=full, run=run) for v, w in zip(values, whys))
+        name = ref.rsplit(".", 1)[-1] if ref else None
+        cells = "".join(_cell_html(v, w, full=full, run=run, name=name)
+                        for v, w in zip(values, whys))
         title = f' title="{r.e(ref)}"' if ref else ""
         if path:
             body.append(f'<tr class="shep-rs-entry"><th scope="row"{title} '

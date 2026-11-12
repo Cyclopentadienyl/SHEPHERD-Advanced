@@ -989,7 +989,10 @@ def test_compare_goes_down_into_nested_settings_and_says_the_spec_once(world, mo
         "Learning setting · Top-k saves kept",
         "Effective setting · Loaders › Train › Recipe › Operator set",
         "Effective setting · Loaders › Train › Recipe › Reference filled › Graph backbone"]
-    assert _cells(markup, training[-1]) == ["none", "○ not recorded"]
+    # A closed value under the Fine-tune field's label reads in its words and
+    # then as recorded (review of A2: a bare "none" read as no graph backbone).
+    assert _cells(markup, training[-1]) == ["Trained ( none )", "○ not recorded"]
+    assert "<td>Trained (<code>none</code>)</td>" in markup
     assert _cells(markup, training[1]) == ['["frozen_parts", "seed"]', '["seed"]']
     assert [label for label in _labels(markup) if label.startswith("Content references")] == [
         "Content references · split.json › SHA-256"]
@@ -1036,6 +1039,10 @@ def test_compare_rows_are_named_in_the_segments_words(world, monkeypatch):
     finetune["data"]["identity"] = {"samples_sha256": "5" * 64}
     markup = rs.compare_html([finetune, base], False)
     labels = _labels(markup)
+    # Its value in the field's words, then as recorded; another setting's
+    # value as recorded alone.
+    assert _cells(markup, "Learning setting · Graph backbone")[0] == "Trained ( none )"
+    assert _cells(markup, "Learning setting · Top-k saves kept")[0] == "1"
     for label in ("Learning setting · Learning rate", "Learning setting · Top-k saves kept",
                   "Learning setting · Graph backbone",
                   "Weight transfer · Downstream initial SHA-256",
