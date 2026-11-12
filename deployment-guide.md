@@ -1557,11 +1557,33 @@ CSV 仍然**只有一列標題**、沒有前言。結果類型的候選欄位在
 > 選擇器。`scripts/setup_demo.py --train-model` 印出的 serving 指令會指名它訓練的疾病子模型
 > （自 K7 起先訓練一個 base，再訓練一個疾病子模型），並帶上訓練時用的裝置。
 
+### 驗收檢查的推論生命週期：W12（自 ops-wiring 這一輪起）
+
+GB10 驗收的示範部分要求 **W12**，排在 research comparison 的 L8 之後、S1 之前：在 probe 的裝置上，
+跨行程檢查 §4.11 的推論生命週期。它照 launcher 的方式另外啟動一個服務，模式 M1，有自己的
+workspaces root（因此有自己的 GPU 鎖），設定裝置，啟動時不設定模型；服務的是一份示範 workspace 的
+複本，其中放著示範疾病子模型的複本；每一步都經由該服務自己的路由，或以該 root 執行的
+`train_model.py`：
+
+- 啟動時沒有設定模型，服務就不服務任何模型（`/ready` 503）；
+- 載入子模型後：**在 CUDA 上**，狀態說它持有 GPU 鎖，鎖指名該服務的推論，而 job runner 的啟動
+  （`POST /api/v1/training/start`）與 `train_model.py` 都會被拒絕並指名推論，什麼都沒有啟動或寫入；
+  **在 CPU 上**什麼都不持有，一個短的訓練可以在服務中的模型旁邊跑完；
+- reload 指名一個損壞的 checkpoint 會被拒絕，使用中的模型（以及在 CUDA 上的鎖）維持不變；
+- 三個用戶端在 `POST /api/v1/pipeline/stop` 前後送出診斷：每個診斷不是由該模型回答，就是以
+  stopping 或 stopped 的原因被拒絕（503）；在停止回應之後送出的每一個都被拒絕；停止只在沒有請求
+  仍在執行、鎖已釋放時才說 released；當時的資源讀數只記錄、不判定；
+- 接著一個短的訓練跑到結束，子模型可以再次載入；
+- 在 CUDA 上，改在 CPU 上 reload 會交還鎖，再改回 CUDA 會重新取得鎖。
+
+W12 失敗會讓驗收不完整。它的欄位會列入這一輪結束時的 GB10 欄位約定。
+
 ### 驗收讀取的 serving 數據：S1（自 research comparison Stage 10b 起）
 
 GB10 驗收（`scripts/probe_deployment.py --m2-acceptance`）在示範部分的最後執行 **S1**，最低限度
 地讀取 serving 一個任務模型所需的時間與記憶體（BACKLOG 第 64 項）。它照 launcher 的方式啟動服務，
-啟動時即設定示範的疾病子模型，先確認服務已就緒且服務的正是該子模型，然後讀取：
+啟動時即設定示範的疾病子模型，並給它自己的 workspaces root（因此 CUDA 上的啟動載入持有它自己的
+GPU 鎖，絕不是部署的那一把），先確認服務已就緒且服務的正是該子模型，然後讀取：
 
 - **冷啟動**：從啟動到 `/health` 第一次回應，包含建立 pipeline；
 - **暖機**（前 5 個 diagnose 請求）與**穩態**（接下來 50 個），逐一送出：每個請求到收到完整回應的
@@ -2570,7 +2592,8 @@ by an inference job (the SHEPHERD service's CUDA inference: stop inference first
   形狀不對的本文以 422 拒絕。新的診斷立即被拒絕（503，"Inference is stopping …"）；已接受的診斷會跑完，
   沒有逾時、不強制結束；接著釋放模型、它的圖與鎖，然後回應才說 `"released": true`。沒有載入任何東西
   時回答 "Nothing to stop"。配置器交還的 GPU 記憶體是量出來的，不是保證的
-  （`GET /api/v1/system/resources`）。
+  （`GET /api/v1/system/resources`）。**Diagnosis 的 Stop inference**（§4.14）是同一個停止，在服務
+  行程內呼叫，並綁定卡片上顯示的那個模型。
 - **啟動**：環境裡沒有設定模型時，服務啟動時不載入任何模型，也不會選用其他模型。環境裡設定的模型
   經過同樣的鎖與檢查；忙碌或被拒絕時，服務回報未就緒並附上原因（`/ready` 503）。
 - **Restart Backend 與停止服務都會先停止服務推論**（見下方 job runner 一節）。重啟後不會再載入從頁面
@@ -2838,7 +2861,7 @@ M5 在 SPEC_4 的部署模式 **M1** 下執行：由 owner 或指定的技術人
 | 位置 | 控制項 |
 |---|---|
 | API | `POST /api/v1/pipeline/reload`、`POST /api/v1/pipeline/stop`、`POST /api/v1/training/start`、`POST /api/v1/training/finetune`、`POST /api/v1/training/branch`、`POST /api/v1/training/stop`、`GET /api/v1/training/checkpoints`、`GET /api/v1/workspaces/{name}/checkpoints`、`GET /api/v1/workspaces/{name}/family` |
-| 儀表板 | Diagnosis：Change model…（其 checkpoint 清單與它的 Load；自 M5-2 起）。⚙ Settings（Runtime Settings）：Restart Backend 與 Apply Settings。Research › Training：Start、Stop（它的確認會讀取該 run 最後的 checkpoint）、Continue…（它列出 parent）、parent 清單的 Refresh、Check checkpoint 與 Continue Training |
+| 儀表板 | Diagnosis：Change model…（其 checkpoint 清單與它的 Load；自 M5-2 起）與 Stop inference（它的詢問與確認；自 ops-wiring 這一輪起）。⚙ Settings（Runtime Settings）：Restart Backend 與 Apply Settings。Research › Training：Start、Stop（它的確認會讀取該 run 最後的 checkpoint）、Continue…（它列出 parent）、parent 清單的 Refresh、Check checkpoint 與 Continue Training |
 
 三份 checkpoint 清單（含家族檢視）與 Check checkpoint 會開啟 checkpoint 檔案，SPEC_4 將此歸類為 checkpoint 檢視
 （C3），因此它們與控制項一樣受檢查。為了顯示而開啟 checkpoint 的讀取也一樣：Diagnosis 卡片的
@@ -3022,8 +3045,10 @@ CORS 只決定頁面能讀取什麼。不需要預檢的跨來源請求仍會抵
 
 | Chip | 意義 |
 |---|---|
-| `GPU jobs: none` | 沒有受管理的訓練或評估工作在執行。它從不說「free」：這個鎖是協作式的，常駐的推論服務不在鎖的範圍內，仍可能佔用 GPU 記憶體 |
+| `GPU jobs: none` | 沒有受管理的訓練或評估工作在執行，也沒有在 CUDA 上服務的模型。它從不說「free」：這個鎖是協作式的（不取鎖的 GPU 行程不會被它擋下），而在 CPU 上推論不取鎖 |
 | `GPU job: training (job runner)`、`GPU job: test run (job runner)` | 本服務啟動的工作；停止中時加上 `· stopping` |
+| `GPU: inference (this service)` | 本服務正在 CUDA 上服務模型，它持有 GPU 鎖直到操作者停止推論（§4.11）。ⓘ 說明停止的地方：Diagnosis 上的 Stop inference，或 `POST /api/v1/pipeline/stop`。Research 的 Start 控制項旁也寫著同樣的話（"…; stop it with Stop inference on Diagnosis"） |
+| `GPU: inference (pid 41822, since 09:58 UTC)` | 另一個服務的 CUDA 推論持有這把鎖（同一個 workspaces root 上的另一台伺服器） |
 | `GPU job: train_model.py (pid 41822, since 09:58 UTC)` | 某個不是本服務啟動的行程持有 GPU 鎖（正式的 CLI，或同一把鎖上另一台伺服器的 job runner）；chip 只顯示其持有者紀錄所寫的內容：指令、pid 與開始時間 |
 | `GPU job: lock held, holder not described` | 鎖被持有，但沒有任何仍在執行的行程被描述為持有者 |
 | `GPU jobs: refused, lock not configured` | 沒有設定 GPU 鎖（指名它的 `SHEPHERD_WORKSPACES_ROOT` 沒有設定），因此在設定之前每個訓練與測試執行都會被拒絕（§4.11） |
@@ -3067,14 +3092,25 @@ Matching phenotypes · Paths）。選取一列（點擊，或在聚焦的列上�
 - "Recorded results: <狀態>"（§4.9），它的 › 會打開 Details 的 Evidence；"Details ›"；
   "🔒 Change model…"。紀錄的測試與 workspace 名稱會在每次顯示 Diagnosis、每次診斷後、更換模型後
   以及按下 ↻ 時重新讀取（每 5 秒的讀取只讀目前服務的內容）：在 Research › Test 記錄的測試，回到
-  Diagnosis 時就會出現。
+  Diagnosis 時就會出現；
+- **服務狀態**（自 ops-wiring 這一輪起），以伺服器自己的用語顯示："● Serving"、"Loading"、
+  "▲ Stopping · N in flight"（已接受、仍在執行的診斷）或 "○ Not loaded"，除 Serving 外，下方都
+  附上伺服器自己的原因（由操作者停止、載入或啟動被拒絕及其原因、沒有載入任何模型、載入進行中）；
+- **■ Stop inference**，在有模型服務時出現（操作者控制項，§4.13；唯讀瀏覽器看到上鎖的按鈕）。它
+  會先詢問："Stop inference of model <12 hex>? Diagnoses already accepted finish; new diagnoses
+  are refused until a model is loaded. Nothing loads a model again by itself."，附
+  **■ Stop inference now** 與 **Keep serving**。停止綁定詢問中指名的模型：期間換上的其他模型會繼續
+  服務，回應也會這樣說。停止後它顯示停止的結果（"Inference stopped: 2 accepted request(s) finished
+  first, then model … and its graph were released and the GPU lock given back. …"），以及當時取得的
+  資源讀數（`/api/v1/system/resources`）：那是一個讀數，不保證記憶體已經交還（GB10 的記憶體是共用的）。
 
 | 卡片顯示 | 意義 |
 |---|---|
 | "Model changed at HH:MM — was <舊>, now <新>"，附 × | 這次讀取發現的模型（或所服務內容的其他部分）與這個瀏覽器上一次讀取的不同（例如另一個瀏覽器做了 Change model）。× 可關閉它 |
 | 灰色："cannot check · <原因> · Retry"、"last known HH:MM:SS · not current" | 無法讀取目前服務的內容："status not read"（完整原因寫在標記下方那一行與 Details 中）或 "timed out (5 s)"。顯示的是最後已知的狀態，沒有 ✓，標籤為灰色虛線 |
 | 灰色："read HH:MM:SS · older than this result" | 最後一次成功的讀取早於畫面上的結果 |
-| "No model loaded" 與 "🔒 Load a model…" | 沒有服務任何模型：什麼都沒設定、只指定了圖而沒有模型，或建置失敗（自 K7 起，圖從不單獨服務）。Run Diagnosis 呈灰色且無法點擊：滑鼠指向它，或以 Tab 移到它，會說明原因，下方也寫著 "Disabled: no model loaded. …"。API 用戶端此時提出請求，會得到附原因的 503（§4.7） |
+| "○ Not loaded"、伺服器的原因與 "🔒 Load a model…" | 沒有服務任何模型：什麼都沒設定、推論已停止、載入或啟動被拒絕，或建置失敗（自 K7 起，圖從不單獨服務）；下方的原因是伺服器自己的。Run Diagnosis 呈灰色且無法點擊：滑鼠指向它，或以 Tab 移到它，會說明原因，下方也寫著 "Disabled: no model loaded. …"。API 用戶端此時提出請求，會得到附原因的 503（§4.7） |
+| "▲ Stopping · N in flight" | 操作者停止了推論：已接受的 N 個診斷會跑完，新的診斷被拒絕（Run Diagnosis 下方寫著 "Disabled: inference is stopping; …"；API 用戶端得到 503）。之後卡片顯示 "Not loaded" |
 | "🔒 Change model…" 呈灰色，附 "Operator controls only: <原因>" | 唯讀的瀏覽器（§4.13）。它永遠看不到 checkpoint 清單 |
 
 結果上方的**標記（badge）**（§4.7）把結果的整個 served identity 與卡片最近一次的讀取比對，而
@@ -3190,7 +3226,8 @@ Training Console 現在是分成三部分的一個頁面：上方橫跨整頁的
 - **Run name**，接著是**一行原因**，說明某個動作為何停用：「Stop disabled: no training is
   running.」、對唯讀瀏覽器顯示 D8 的原因（「Operator controls only: request not local」），或
   占用 GPU 的工作（「GPU job: test run (…) · Open Test ›」、「GPU job: train_model.py (pid …,
-  since …)」）。
+  since …)」，或在 CUDA 上服務模型時的「GPU: inference (this service); stop it with Stop
+  inference on Diagnosis」；無論哪種情況，job runner 都會自己拒絕啟動）。
 - **🔒 Start、🔒 Continue…、🔒 Stop。** Stop 會先詢問：「Stop training now? The job stops. The
   checkpoints it has saved are kept and progress not yet saved is lost; if it has saved none
   yet, this run cannot be continued. Once it has stopped, the page says where it can be
@@ -3440,7 +3477,8 @@ split）上量測模型、保留報告並登錄它。共有三個面板：
   `measure_scorer.py`，使用伺服器在自己的清單中重新找到的 workspace、版本與 checkpoint，並以
   **頁面顯示過的完整模型指紋與版本 digest 作為預期值**：執行時讀到的檔案或版本若是其他位元組，
   會在量測之前拒絕。Start 會說明它為何不可用：先說 GPU 工作（「Disabled: GPU job: … One
-  managed GPU job at a time (training or evaluation).」），因為工作執行期間任何選擇都無法讓它
+  managed GPU job at a time (training or evaluation).」；在 CUDA 上服務模型時是「Disabled: GPU:
+  inference (this service); stop it with Stop inference on Diagnosis. …」），因為工作執行期間任何選擇都無法讓它
   可用，然後才是缺少某個選擇或另一個圖譜。工作卡片顯示狀態（Running、Completed、紅色的
   Failed、灰色的 Cancelled：失敗或取消的執行從不顯示為綠色）、已經過的時間、執行收到的輸入、
   以 UTC 表示的開始與結束時間（與報告列命名執行的方式相同），以及其輸出的最後 12 行（取消後

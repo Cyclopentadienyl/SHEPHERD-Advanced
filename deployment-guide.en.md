@@ -1166,12 +1166,39 @@ device the model's parameters are on (`cuda:0`, not just `cuda`). The status's
 > disease child it trained (a base, then one disease child, since K7), with the
 > device they were trained on.
 
+### What the acceptance checks of the inference lifecycle: W12 (since the ops-wiring round)
+
+The GB10 acceptance's demo part requires **W12**, after the research comparison's L8 and
+before S1: the inference lifecycle of §4.11 across processes, on the probe's device. It starts
+a service of its own as the launcher does, in mode M1, with a workspaces root of its own (so a
+GPU lock of its own), the device set and no model configured for start-up, over a copy of the
+demo workspace holding a copy of the demo's disease child, and goes through the service's own
+routes and `train_model.py` with that root:
+
+- with no start-up model the service serves none (`/ready` 503);
+- the child loaded: **on CUDA** the status says it holds the GPU lock and the lock names the
+  service's inference, and both a job runner start (`POST /api/v1/training/start`) and a
+  `train_model.py` are refused naming inference, nothing started or written; **on the CPU**
+  nothing is held and a short training runs beside the served model;
+- a corrupt checkpoint named for a reload is refused, and the model (and on CUDA the lock) is
+  kept;
+- diagnoses sent by three clients across `POST /api/v1/pipeline/stop`: each is answered by the
+  model or refused (503) with the stopping or stopped reason, every one sent after the stop
+  answered is refused, and the stop says released only with nothing in flight and the lock
+  free; the resources reading then is recorded, not judged;
+- a short training then runs to its end, and the child loads again;
+- on CUDA, a reload on the CPU gives the lock back and one on CUDA takes it again.
+
+A failed W12 leaves the acceptance incomplete. Its fields are listed for this round's GB10
+field contract at its close.
+
 ### What the acceptance reads of serving: S1 (since research comparison Stage 10b)
 
 The GB10 acceptance (`scripts/probe_deployment.py --m2-acceptance`) ends its demo part with
 **S1**, a minimal reading of what serving a task model takes (BACKLOG 64). It starts the
-service as the launcher does, with the demo's disease child configured at startup, checks that
-the service is ready and serves that child, and then reads:
+service as the launcher does, with the demo's disease child configured at startup and a
+workspaces root of its own (so a CUDA start-up load holds a GPU lock of its own, never the
+deployment's), checks that the service is ready and serves that child, and then reads:
 
 - the **cold start**: from the launch to the first `/health` answer, which includes building
   the pipeline;
@@ -2392,6 +2419,8 @@ model. **Serving on the CPU takes no lock** and excludes nothing.
   nothing killed; then the model, its graph and the lock are released, and only then does the
   answer say `"released": true`. With nothing loaded it says "Nothing to stop". The GPU memory
   the allocator returns is measured, not promised (`GET /api/v1/system/resources`).
+  **Diagnosis's Stop inference** (§4.14) is the same stop, called in the service, bound to the
+  model the card showed.
 - **Start-up**: with no model configured in its environment the service starts with none, and no
   other model is chosen. One configured there goes through the same lock and checks; busy or
   refused, the service reports not ready with the reason (`/ready` 503).
@@ -2715,7 +2744,7 @@ the read-only lists keep working.
 | Where | Controls |
 |---|---|
 | API | `POST /api/v1/pipeline/reload`, `POST /api/v1/pipeline/stop`, `POST /api/v1/training/start`, `POST /api/v1/training/finetune`, `POST /api/v1/training/branch`, `POST /api/v1/training/stop`, `GET /api/v1/training/checkpoints`, `GET /api/v1/workspaces/{name}/checkpoints`, `GET /api/v1/workspaces/{name}/family` |
-| Dashboard | Diagnosis: Change model… (its list of checkpoints and its Load; since M5-2). ⚙ Settings (Runtime Settings): Restart Backend and Apply Settings. Research › Training: Start, Stop (its confirmation reads the run's last checkpoint), Continue… (it lists the parents), the parent list's Refresh, Check checkpoint and Continue Training |
+| Dashboard | Diagnosis: Change model… (its list of checkpoints and its Load; since M5-2) and Stop inference (its question and its confirmation; since the ops-wiring round). ⚙ Settings (Runtime Settings): Restart Backend and Apply Settings. Research › Training: Start, Stop (its confirmation reads the run's last checkpoint), Continue… (it lists the parents), the parent list's Refresh, Check checkpoint and Continue Training |
 
 The three checkpoint lists (the family view among them), and Check checkpoint, open checkpoint files, which SPEC_4 classes as
 checkpoint inspection (C3), so they are checked like the controls. So are the reads that open a
@@ -2926,8 +2955,10 @@ read-only, the full reason D8 gives. It never repeats a header's value.
 
 | Chip | Meaning |
 |---|---|
-| `GPU jobs: none` | No managed training or evaluation job is running. It never says "free": the lock is cooperative, and the resident inference service is outside it and may still hold GPU memory |
+| `GPU jobs: none` | No managed training or evaluation job is running, and no model is served on CUDA. It never says "free": the lock is cooperative (a GPU process that does not take it is not stopped by it), and inference on the CPU takes no lock |
 | `GPU job: training (job runner)`, `GPU job: test run (job runner)` | A job this service started; `· stopping` while it stops |
+| `GPU: inference (this service)` | This service serves a model on CUDA, which holds the GPU lock until an operator stops inference (§4.11). The ⓘ says where: Stop inference on Diagnosis, or `POST /api/v1/pipeline/stop`. Research's Start controls say the same beside them ("…; stop it with Stop inference on Diagnosis") |
+| `GPU: inference (pid 41822, since 09:58 UTC)` | Another service's CUDA inference holds the lock (another server on the same workspaces root) |
 | `GPU job: train_model.py (pid 41822, since 09:58 UTC)` | A process this service did not start holds the GPU lock (a formal CLI, or another server's job runner on the same lock); the chip says what its holder record says: the command, the pid and the start |
 | `GPU job: lock held, holder not described` | The lock is held, but no running process is described as its holder |
 | `GPU jobs: refused, lock not configured` | No GPU lock is configured (`SHEPHERD_WORKSPACES_ROOT`, which names it, is not set), so every training and test run is refused until it is set (§4.11) |
@@ -2978,14 +3009,28 @@ it: both follow Options, and stay pinned at the panel's bottom when the inputs n
 - "Recorded results: <state>" (§4.9), whose › opens Details at Evidence; "Details ›"; "🔒 Change
   model…". The recorded tests, and the workspace names, are read again each time Diagnosis is
   shown, after each diagnosis, after a model change and with ↻ (the 5-second read reads only what
-  is served): a test recorded in Research › Test shows when you come back to Diagnosis.
+  is served): a test recorded in Research › Test shows when you come back to Diagnosis;
+- **the serving state** (since the ops-wiring round), the server's in its own words: "● Serving",
+  "Loading", "▲ Stopping · N in flight" (the diagnoses already accepted, still running) or
+  "○ Not loaded", each but Serving with the server's own reason under it (stopped by an
+  operator, a load or the start-up refused and why, nothing loaded, a load in progress);
+- **■ Stop inference**, while a model serves (an operator control, §4.13; locked for a read-only
+  browser). It asks first: "Stop inference of model <12 hex>? Diagnoses already accepted finish;
+  new diagnoses are refused until a model is loaded. Nothing loads a model again by itself."
+  with **■ Stop inference now** and **Keep serving**. The stop is bound to the model the question
+  named: another model loaded meanwhile keeps serving, and the answer says so. After a stop it
+  says what the stop did ("Inference stopped: 2 accepted request(s) finished first, then model …
+  and its graph were released and the GPU lock given back. …") and the resources reading taken
+  then (`/api/v1/system/resources`), which is a reading and not a promise that memory was
+  returned (the GB10's memory is shared).
 
 | The card shows | Meaning |
 |---|---|
 | "Model changed at HH:MM — was <old>, now <new>" with × | A read found another model, or another part of what is served, than this browser's previous read (another browser's Change model, for example). × dismisses it |
 | grey: "cannot check · <reason> · Retry", "last known HH:MM:SS · not current" | What is served could not be read: "status not read" (the full reason is in the badge's line and in Details) or "timed out (5 s)". The lines shown are the last known state, without ✓, with grey dashed chips |
 | grey: "read HH:MM:SS · older than this result" | The last good read is older than the result shown |
-| "No model loaded" and "🔒 Load a model…" | No model is served: none configured, a graph named without a model, or a build that failed (since K7 a graph is never served on its own). Run Diagnosis is greyed out and cannot be clicked: pointing at it, or reaching it with Tab, shows why, and "Disabled: no model loaded. …" is written under it. An API client asking now gets 503 with the reason (§4.7) |
+| "○ Not loaded", the server's reason, and "🔒 Load a model…" | No model is served: none configured, inference stopped, a load or the start-up refused, or a build that failed (since K7 a graph is never served on its own); the reason under it is the server's. Run Diagnosis is greyed out and cannot be clicked: pointing at it, or reaching it with Tab, shows why, and "Disabled: no model loaded. …" is written under it. An API client asking now gets 503 with the reason (§4.7) |
+| "▲ Stopping · N in flight" | An operator stopped inference: the N diagnoses already accepted finish, and new ones are refused ("Disabled: inference is stopping; …" under Run Diagnosis; 503 for an API client). Then the card reads "Not loaded" |
 | "🔒 Change model…" greyed, "Operator controls only: <reason>" | A read-only browser (§4.13). It never sees the list of checkpoints |
 
 **The badge** above the results (§4.7) compares the result's whole served identity with the card's
@@ -3122,7 +3167,9 @@ a run.
 - **Run name**, then **one reason line** saying why an action is disabled: "Stop disabled: no
   training is running.", D8's reason for a read-only browser ("Operator controls only: request
   not local"), or the GPU job holding the slot ("GPU job: test run (…) · Open Test ›",
-  "GPU job: train_model.py (pid …, since …)").
+  "GPU job: train_model.py (pid …, since …)", or "GPU: inference (this service); stop it with
+  Stop inference on Diagnosis" while a model is served on CUDA; the job runner refuses a start
+  itself either way).
 - **🔒 Start, 🔒 Continue…, 🔒 Stop.** Stop asks first: "Stop training now? The job stops. The
   checkpoints it has saved are kept and progress not yet saved is lost; if it has saved none yet,
   this run cannot be continued. Once it has stopped, the page says where it can be continued
@@ -3431,7 +3478,9 @@ it. Three panels:
   fingerprint and version digest the page showed as the expected ones**: the run refuses before
   measuring when the file or the version it reads holds other bytes. Start says why it is off:
   a GPU job first ("Disabled: GPU job: … One managed GPU job at a time (training or
-  evaluation)."), since no choice enables it while one runs, then a choice missing or another
+  evaluation).", "Disabled: GPU: inference (this service); stop it with Stop inference on
+  Diagnosis. …" while a model is served on CUDA), since no choice enables it while one runs,
+  then a choice missing or another
   graph. The job card shows the state (Running, Completed, Failed in red, Cancelled in grey:
   never green for a failed or cancelled run), the elapsed time, what the run was given, its
   start and end times in UTC (as the report rows name runs) and the last 12 lines of its output
