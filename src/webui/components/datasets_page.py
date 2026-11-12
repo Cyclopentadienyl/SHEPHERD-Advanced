@@ -128,7 +128,7 @@ def _marks(row: Mapping[str, Any], data: Mapping[str, Any], run_bar: Optional[st
         why = row.get("not_trainable") or "not trainable"
         marks.append(f'<span class="shep-mark shep-mark-grey" title="{r.e(why)}">'
                      f'not trainable: {r.e(r.not_trainable_short(row, 60))}</span>')
-    return "".join(marks) or '<span class="shep-muted">—</span>'
+    return "".join(marks) or f'<span class="shep-muted">{r.NO_VALUE}</span>'
 
 
 def _record_cell(row: Mapping[str, Any]) -> str:

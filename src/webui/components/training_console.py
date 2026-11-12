@@ -282,14 +282,15 @@ _SETTING_LEADS = {
 def setting_shown(name: str, value: Any) -> str:
     """The setting `name`'s value as a form and its notes say it: a closed
     value by its words (`SETTING_CHOICE_WORDS`: "Frozen"), a list as its
-    comma-separated items, on/off for a switch, "off" for no patience."""
+    comma-separated items, on/off for a switch, "off" for no patience (the
+    shared word, `renderers.OFF`)."""
     words = SETTING_CHOICE_WORDS.get(name, {})
     if isinstance(value, str) and value in words:
         return words[value]
     if value is None:
-        return "off"
+        return r.OFF.lower()
     if isinstance(value, bool):
-        return "on" if value else "off"
+        return "on" if value else r.OFF.lower()
     if isinstance(value, (list, tuple)):
         return ", ".join(str(v) for v in value)
     if isinstance(value, float):
@@ -370,13 +371,13 @@ def _parsed(name: str, value: Any) -> Tuple[Any, Optional[str]]:
     kind = by_name(name).kind
     if kind in ("int", "float") and isinstance(value, str):
         text = value.strip()
-        if text.lower() in ("", "off"):
+        if text.lower() in ("", r.OFF.lower()):
             return None, None
         try:
             return (int(text) if kind == "int" else float(text)), None
         except ValueError:
-            return None, ('must be a whole number or "off".' if kind == "int"
-                          else 'must be a number or "off".')
+            return None, (f'must be a whole number or "{r.OFF.lower()}".' if kind == "int"
+                          else f'must be a number or "{r.OFF.lower()}".')
     if kind == "int" and isinstance(value, float) and value.is_integer():
         return int(value), None
     if kind == "float" and isinstance(value, int) and not isinstance(value, bool):
@@ -1244,7 +1245,7 @@ def _dataset_relation(ws: Mapping[str, Any], *, operator: bool,
         words = "recorded at the first checkpoint" if live else "not recorded (no checkpoint)"
         return f'<span class="shep-muted">dataset {words}</span>', f'<span class="shep-muted">{words}</span>'
     if not snapshot.get("readable", True):
-        return ('<span class="shep-tag shep-tag-amber">checkpoint cannot be read</span>',
+        return (r.warn_chip("checkpoint cannot be read"),
                 '<span class="shep-muted">not read (the checkpoint cannot be read)</span>')
     recorded, current = snapshot.get("dataset_fingerprint"), workspace_fingerprint(ws)
     row = digest_html(recorded, ws.get("digits") or r.SHORT_HEX, "dataset fingerprint")
@@ -1258,7 +1259,7 @@ def _dataset_relation(ws: Mapping[str, Any], *, operator: bool,
                                          "bar's dataset has no fingerprint"), row)
     if recorded == current:
         return f'<span class="shep-tag shep-tag-ok">{r.CHECK} same dataset as the run bar</span>', row
-    return '<span class="shep-tag shep-tag-amber">≠ not the selected dataset</span>', row
+    return r.warn_chip("not the selected dataset"), row
 
 
 def run_head_html(run: Optional[RunRef], ws: Mapping[str, Any], *, operator: bool,

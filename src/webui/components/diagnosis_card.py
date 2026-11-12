@@ -225,11 +225,11 @@ def serving_state(status: Optional[Mapping[str, Any]]) -> Tuple[str, str]:
     route's `AppState.snapshot`), never from a page flag: ``serving``
     ("Serving"), ``stopping`` ("Stopping · N in flight": the accepted
     diagnoses still running), ``loading`` ("Loading": nothing served yet, a
-    load runs) or ``not_loaded`` ("Not loaded"); ``unknown`` ("Not known")
-    without a status. The status route always carries these fields
+    load runs) or ``not_loaded`` ("Not loaded", `renderers.NOT_LOADED`);
+    ``unknown`` ("Unknown", `renderers.UNKNOWN`) without a status. The status route always carries these fields
     (`PipelineStatusResponse`), so they are read as it gives them."""
     if not isinstance(status, Mapping):
-        return "unknown", "Not known"
+        return "unknown", r.UNKNOWN
     serving = status.get("serving")
     if serving == STOPPING:
         count = status.get("in_flight")
@@ -239,7 +239,7 @@ def serving_state(status: Optional[Mapping[str, Any]]) -> Tuple[str, str]:
         return SERVING, "Serving"
     if status.get("loading"):
         return LOADING, "Loading"
-    return NOT_LOADED, "Not loaded"
+    return NOT_LOADED, r.NOT_LOADED
 
 
 def served_task(status: Optional[Mapping[str, Any]]) -> Optional[str]:

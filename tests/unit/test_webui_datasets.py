@@ -125,6 +125,13 @@ def test_an_unreadable_manifest_is_told_apart_from_an_absent_one(root, monkeypat
         assert r.status_mark("neutral", fingerprint) in row, name
         assert '<span class="shep-muted">—</span>' not in row.split("shep-ds-use")[0], name
         assert "not verified" not in row, name
+    # A manifest not read: its origin, record and fingerprint cells say one
+    # word for the one cause (B0a review: the record cell said "Not read").
+    broken = _row(html, "broken")
+    unknown = r.status_mark("neutral", r.UNKNOWN)
+    assert broken.count(f'<td class="shep-ds-wide">{unknown}</td>') == 2, broken  # origin, record
+    assert f"{unknown}</span></td>" in broken                                    # fingerprint
+    assert "Not read" not in broken
 
 
 def test_serving_is_matched_through_the_list_by_resolved_directory(root, monkeypatch):

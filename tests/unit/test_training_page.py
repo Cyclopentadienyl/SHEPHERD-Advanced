@@ -672,7 +672,10 @@ def test_the_used_dataset_fingerprint_is_an_operators_and_compared_in_full():
     assert "same dataset as the run bar" in same and "a" * 12 in same     # the tag; Details
     other = tc.run_head_html(run, ws, operator=True,
                              snapshot={"readable": True, "dataset_fingerprint": "a" * 12 + "b" * 52})
-    assert "≠ not the selected dataset" in other            # 12 equal digits are not equal
+    # 12 equal digits are not equal: a condition to watch, by the one mark (▲, amber).
+    assert tc.r.warn_chip("not the selected dataset") in other
+    unreadable = tc.run_head_html(run, ws, operator=True, snapshot={"readable": False})
+    assert tc.r.warn_chip("checkpoint cannot be read") in unreadable
     assert "recorded at the first checkpoint" in tc.run_head_html(run, ws, operator=True,
                                                                   snapshot=None, live=True)
     # "dataset not recorded" only when the run recorded none (the WebUI skill

@@ -136,7 +136,6 @@ NOT_APPLICABLE = "Not applicable"
 UNKNOWN = "Unknown"
 CANNOT_BE_VERIFIED = "Cannot be verified"
 NOT_RECORDED = "Not recorded"
-MISSING_WORDS = (OFF, NOT_LOADED, NOT_APPLICABLE, UNKNOWN, CANNOT_BE_VERIFIED, NOT_RECORDED)
 #: **A dash's one meaning: no value here**, where nothing else is meant (a
 #: row of a kind the column does not describe, a cell with nothing in it).
 NO_VALUE = "—"
@@ -362,14 +361,16 @@ def record_verified(item: Any) -> bool:
 
 #: **A dataset record's binding state in words** (`WorkspaceItem.dataset_record`
 #: ``binding``; `kg.artifacts.verify_dataset_record`), each its own (the
-#: skill's §6): the manifest binds no record, the record it binds cannot be
-#: read or checked, the record contradicts what the manifest binds, or the
-#: record was not read at all.
+#: skill's §6): the manifest binds no record (not recorded), the record it
+#: binds cannot be read or checked (cannot be verified), the record
+#: contradicts what the manifest binds, or the manifest was not read, so the
+#: record's state is unknown (the origin and fingerprint cells' word for the
+#: same cause).
 RECORD_WORDS = {
     "unrecorded": "record " + NOT_RECORDED.lower(),
     "unverifiable": "record " + CANNOT_BE_VERIFIED.lower(),
     "mismatch": "record does not match",
-    None: "record not read",
+    None: "record " + UNKNOWN.lower(),
 }
 
 
@@ -377,7 +378,7 @@ def record_words(item: Any) -> Tuple[str, str]:
     """``(kind, words)`` of a workspace's dataset record (`RECORD_WORDS`): its
     `status_mark` row and its words. Verified is OK; a record the manifest
     contradicts is an error (it is refused before a run); a record absent,
-    not checkable or not read is a missing state, each in its own words."""
+    not checkable or unknown is a missing state, each in its own words."""
     record = _get(item, "dataset_record") or {}
     binding = record.get("binding") if isinstance(record, Mapping) else None
     if binding == "verified":
@@ -390,8 +391,8 @@ def record_words(item: Any) -> Tuple[str, str]:
 def record_chip(item: Any) -> str:
     """"✓ record verified" (the dataset record checked), else the record's
     own state as a chip (`record_words`): "record not recorded" apart from
-    "record cannot be verified", "record does not match" and "record not
-    read"."""
+    "record cannot be verified", "record does not match" and "record
+    unknown"."""
     kind, words = record_words(item)
     if kind == "ok":
         return f'<span class="shep-tag shep-tag-ok">{_CHECK} {e(words)}</span>'
@@ -462,8 +463,9 @@ def dataset_details_html(row: Mapping[str, Any], facts: Optional[Mapping[str, An
 def dataset_identity_html(item: Any, *, digits: int = SHORT_HEX, name: bool = True,
                           compact: bool = False) -> str:
     """One workspace's identity: name; "built … UTC" or "build time not recorded ·
-    sources …"; the dataset fingerprint; amber "synthetic"; "record verified" or
-    "record not verified"; "not trainable: <why>" when it is not."""
+    sources …"; the dataset fingerprint; amber "synthetic"; the record's state
+    (`record_chip`: "record verified", or the record's own missing or
+    contradicted state); "not trainable: <why>" when it is not."""
     parts = []
     if name:
         parts.append(f'<span class="shep-ds-name">{e(_get(item, "name"))}</span>')
@@ -1035,10 +1037,11 @@ def _kv(rows: Iterable[Tuple[str, str]], *, wide: Iterable[str] = ()) -> str:
 
 def recorded_count_text(value: Any) -> str:
     """A count as its record holds it (the integer as written, with no
-    separator), or "not reported" where the record holds no integer: the
-    words every result surface gives a recorded count in (Models' records, the
-    Test page's result, `data_kind_lines`, `r10_rows`)."""
-    return str(value) if type(value) is int else "not reported"
+    separator), or "not recorded" where the record holds no integer (the
+    skill's §6, as `count_text` says it): the words every result surface
+    gives a recorded count in (Models' records, the Test page's result,
+    `data_kind_lines`, `r10_rows`)."""
+    return str(value) if type(value) is int else NOT_RECORDED.lower()
 
 
 #: An R10 scope's evidence state in words (`record_views.R10Evidence`'s

@@ -602,18 +602,22 @@ def test_each_missing_state_has_its_own_word_and_a_dash_never_stands_for_not_rec
     verified and Not recorded say different things; none is "—", and the
     shared renderers that read a record's value say "not recorded" (or why it
     is unknown), never the dash, which means only "no value here"."""
-    words = r.MISSING_WORDS
+    words = (r.OFF, r.NOT_LOADED, r.NOT_APPLICABLE, r.UNKNOWN, r.CANNOT_BE_VERIFIED,
+             r.NOT_RECORDED)
     assert words == ("Off", "Not loaded", "Not applicable", "Unknown", "Cannot be verified",
                      "Not recorded")
     assert len(set(w.lower() for w in words)) == len(words)
     assert r.NO_VALUE == "—" and r.NO_VALUE not in words
     absent = checkpoint(epoch=None, validation=None, sha=SHA)
-    shown = [r.short_hex(None), r.count_text(None), r.model_name_line(absent),
-             r.validation_cell(None), r.validation_cell(None, read=False),
-             r.model_table_row_html(absent, [workspace()])]
+    shown = [r.short_hex(None), r.count_text(None), r.recorded_count_text(None),
+             r.model_name_line(absent), r.validation_cell(None),
+             r.validation_cell(None, read=False), r.model_table_row_html(absent, [workspace()])]
     for text in shown:
         assert "—" not in text, text
     assert r.count_text(None) == "not recorded" and r.count_text(1200) == "1,200"
+    # A record's count and a manifest's count: one word for the same state.
+    assert r.recorded_count_text(None) == r.count_text(None)
+    assert r.recorded_count_text(1200) == "1200"
     assert "epoch not recorded" in r.model_table_row_html(absent, [workspace()])
     # The record's states, each its own words: absent apart from unverifiable.
     states = {binding: r.record_words(workspace(binding=binding))
@@ -622,6 +626,6 @@ def test_each_missing_state_has_its_own_word_and_a_dash_never_stands_for_not_rec
                       "unrecorded": ("neutral", "record not recorded"),
                       "unverifiable": ("neutral", "record cannot be verified"),
                       "mismatch": ("error", "record does not match"),
-                      None: ("neutral", "record not read")}
+                      None: ("neutral", "record unknown")}
     assert r.record_chip(workspace(binding="unrecorded")) == r.status_mark(
         "neutral", "record not recorded", as_chip=True)

@@ -788,7 +788,8 @@ def test_the_serving_state_is_the_status_s_in_its_own_words(lifecycle, state, wo
     the lifecycle's fields, so nothing reads a shape it never answers)."""
     assert card.serving_state({"initialized": True, **lifecycle}) == (state, words)
     assert card.serving_state({**lifecycle, "initialized": False}) == (state, words)
-    assert card.serving_state(None) == ("unknown", "Not known")
+    # The shared missing-state words (renderers, the skill's §6).
+    assert card.serving_state(None) == ("unknown", "Unknown")
 
 
 def test_each_state_shows_its_words_and_the_backend_s_reason_escaped(root):

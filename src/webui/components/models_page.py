@@ -1172,7 +1172,7 @@ def lineage_cell_html(item: Mapping[str, Any], row: Mapping[str, Any]) -> str:
         lines.append(f'<div class="shep-sub">'
                      f'{changes_html(item.get("parent_changes"), values=False)}</div>')
     if row.get("parent_state") == "unavailable":
-        lines.append('<div class="shep-sub">' + r.status_mark("warn", 
+        lines.append('<div class="shep-sub">' + r.status_mark("warn",
             "parent unavailable: " + r.short_reason(row.get("parent_problem") or "not found"))
             + "</div>")
     if row.get("context"):
