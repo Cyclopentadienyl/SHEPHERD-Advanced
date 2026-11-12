@@ -215,7 +215,8 @@ def test_the_gpu_lock_taken_between_children_refuses_the_rest(base, popen, monke
     manager = TrainingManager()
     assert manager.start_finetune(_inputs(base, "disease", "gene"))["success"]
     monkeypatch.setattr(tm, "lock_state", lambda: {"problem": None, "path": "/x/gpu.lock",
-                                                   "held_by": "pid 999 (a CLI run)"})
+                                                   "held_by": "pid 999 (a CLI run)",
+                                                   "holder": None})
     first.finish(0)
     _wait(lambda: manager.active_job() is None)
     children = manager.get_status()["finetune"]["children"]
