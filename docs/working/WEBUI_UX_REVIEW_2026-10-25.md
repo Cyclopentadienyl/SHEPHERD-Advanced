@@ -10,6 +10,11 @@ record: it changes no code, and what is done next is the owner's decision, with 
 improvements in section 4 and the appendix are BACKLOG 52's, scheduled in BACKLOG §0's UI batches; they are not
 conditions for reopening M5. Of finding 31, the contrast half was fixed in `f9202b6`; the chevron half remains.
 
+**Since (2026-11-12):** decision 4's "best" (section 5) follows the skill's section 8: the best value of the run's
+own recorded selection metric, in its recorded direction, never an LP figure called MRR
+([`ops-wiring-and-ui-ux/README.md`](ops-wiring-and-ui-ux/README.md) U1). Ordering by test score, which decision 3's
+warning guards, is no longer offered (the skill's section 13). Section 5 stays as decided.
+
 ## 1. Method
 
 - **Research**, five independent passes: design guidance and design systems (Nielsen Norman Group, IBM Carbon,
