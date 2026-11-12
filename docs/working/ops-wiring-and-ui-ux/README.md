@@ -209,6 +209,10 @@ full suite runs at the checkpoints.
 - **B3. Test, Models and Results**: Run → Checkpoint; measurements by capability; the current selection apart from
   completed results; one fact once.
 - **B4. Diagnosis**: load, stop and back to research; each task's inputs; a result keeps the model and data it used.
+  The card's not-serving reason, shown whole since A3b (about 50 words with no model, naming environment settings
+  and a route), becomes the state word and the reason's lead (who stopped it and when, or why a load was refused),
+  the full reason one click away (Details); the page's own "Loading <12 hex> for every session…" line folds into
+  the server's Loading state, said once (the skill's §1.2, §4, §5; review of A3b).
 - **B5. Datasets, Settings and the footer**: versions, roles and admissible measurements; environment facts; no
   acceleration toggles ("Not implemented yet").
 - **Checkpoint B.** From existing data and without editing YAML: a GATv2 base, a variant, a full fine-tune and its
