@@ -551,5 +551,5 @@ class TestTheNoModelMatrix:
             assert button["value"] == "🔒 Load a model…"
             assert button["interactive"] is operator
             assert ("Operator controls only" in card.change_reason_html(state)) is not operator
-            assert "No model loaded" in card.body_html(state)
+            assert "Not loaded" in card.body_html(state)
         assert "An operator" in panel.RUN_DISABLED_NO_MODEL_READ_ONLY

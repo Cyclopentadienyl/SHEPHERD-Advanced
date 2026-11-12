@@ -1253,7 +1253,7 @@ def test_the_timer_reads_only_while_diagnosis_is_shown_and_opens_no_checkpoint(m
     monkeypatch.setattr(dp, "read_card", read_card)
     assert dp.poll_card("datasets", None, None, "idle", {}, None) == {}
     out = dp.poll_card("clinical", None, None, "idle", {}, None)
-    assert seen == [False] and "No model loaded" in out["card_body"]
+    assert seen == [False] and "Not loaded" in out["card_body"]
 
 
 # -------------------------------------------------- Change model…
@@ -2173,3 +2173,130 @@ def test_the_change_drawer_filters_its_list_by_task(monkeypatch):
     assert dp.task_view("gene") == {"task": "gene"}
     assert dp.task_view("history") == {"task": "all"}
     assert "shep-dx-compare" in blocks
+
+
+# --------------------------------------------------------------------------- Stop inference (A3b)
+_SERVED_SHA = "b" * 64
+
+
+def _serving_card(sha=_SERVED_SHA, serving="serving"):
+    from src.webui.components import diagnosis_card as card
+
+    status = {"initialized": True, "serving": serving, "loading": False, "in_flight": 1,
+              "served_identity": {"scoring_mode": "disease_task",
+                                  "checkpoint": {"state": "verified", "sha256": sha}}}
+    return {**card.new_state(), "ok": True, "status": status, "operator": True}
+
+
+def _no_stop(*args, **kwargs):
+    raise AssertionError("the stop ran")
+
+
+def test_stop_inference_asks_first_naming_and_binding_the_model_shown():
+    from src.utils.operator_access import ENABLED
+
+    asked = dp.ask_stop_inference(ENABLED, _serving_card())
+    assert f"<code>{_SERVED_SHA[:12]}</code>" in asked["stop_text"]
+    assert "Diagnoses already accepted finish; new diagnoses are refused until a model is " \
+           "loaded" in asked["stop_text"]
+    assert asked["stop_asked"] == {"sha256": _SERVED_SHA}
+    assert _shown(asked["stop_now_btn"]) and _shown(asked["stop_keep_btn"])
+    nothing = dp.ask_stop_inference(ENABLED, _serving_card(serving="stopping"))
+    assert nothing["stop_asked"] is None and "Nothing to stop" in nothing["stop_text"]
+    assert not _shown(nothing["stop_now_btn"])
+
+
+def test_a_read_only_request_is_refused_and_nothing_is_asked_or_stopped():
+    from src.utils.operator_access import OperatorAccess
+
+    refused = OperatorAccess(False, "not_loopback", "This request did not arrive on loopback.")
+    asked = dp.ask_stop_inference(refused, _serving_card())
+    assert asked["stop_asked"] is None and "Refused: " in asked["stop_text"]
+    assert not _shown(asked["stop_now_btn"])
+    done = dp.confirm_stop_inference(refused, {"sha256": _SERVED_SHA}, stop=_no_stop)
+    assert "Refused: " in done["stop_notice"] and "Nothing was done." in done["stop_notice"]
+
+
+def test_the_confirmed_stop_is_the_one_stop_bound_to_the_model_shown():
+    from src.api.routes.pipeline import PipelineStopResponse, PipelineStatusResponse
+    from src.utils.operator_access import ENABLED
+
+    seen = []
+
+    def stop(request):
+        seen.append(request.expected_checkpoint_sha256)
+        return PipelineStopResponse(
+            success=True, released=True,
+            message="Inference stopped: 1 accepted request(s) finished first <b>x</b>.",
+            status=PipelineStatusResponse(initialized=False))
+
+    resources = {"gpu": {"available": False}, "ram": {"total_gb": 128.0, "used_gb": 20.5},
+                 "unified_memory": False}
+    done = dp.confirm_stop_inference(ENABLED, {"sha256": _SERVED_SHA}, stop=stop,
+                                     resources=resources)
+    assert seen == [_SERVED_SHA]
+    assert "1 accepted request(s) finished first &lt;b&gt;x&lt;/b&gt;." in done["stop_notice"]
+    assert "<b>x</b>" not in done["stop_notice"]
+    assert "not a promise that memory was returned" in done["stop_notice"]
+    assert "memory 20.5 / 128.0 GB" in done["stop_notice"]
+    assert done["stop_asked"] is None and not _shown(done["stop_now_btn"])
+
+    def not_released(request):
+        return PipelineStopResponse(success=False, released=False,
+                                    message="Not stopped: the model in use is aaaaaaaaaaaa.",
+                                    status=PipelineStatusResponse(initialized=True))
+
+    kept = dp.confirm_stop_inference(ENABLED, {"sha256": _SERVED_SHA}, stop=not_released,
+                                     resources=resources)
+    assert "Not stopped" in kept["stop_notice"] and "Read after the stop" not in kept[
+        "stop_notice"]
+
+
+def test_a_confirmation_never_asked_stops_nothing():
+    from src.utils.operator_access import ENABLED
+
+    for asked in (None, {}, {"sha256": "not a digest"}):
+        done = dp.confirm_stop_inference(ENABLED, asked, stop=_no_stop)
+        assert "Nothing was stopped" in done["stop_notice"]
+
+
+def test_the_stop_handler_calls_run_stop_after_d8_on_its_own_request(monkeypatch):
+    """`_on_stop_inference` reads D8 on the event's own request, then calls the
+    one stop in process (`run_stop`) bound to the asked model; refused, it
+    never reaches it."""
+    from src.api.routes import pipeline
+    from src.api.routes.pipeline import PipelineStopResponse, PipelineStatusResponse
+    from tests.fixtures.operator_access import gradio_request, operator_mode
+
+    seen = []
+
+    def stop(request):
+        seen.append(request.expected_checkpoint_sha256)
+        return PipelineStopResponse(success=False, released=False, message="Nothing to stop.",
+                                    status=PipelineStatusResponse(initialized=False))
+
+    monkeypatch.setattr(pipeline, "run_stop", stop)
+    monkeypatch.delenv("SHEPHERD_DEPLOYMENT_MODE", raising=False)
+    refused = dict(zip(dp.STOP_OUTPUTS, dp._on_stop_inference(gradio_request(),
+                                                               {"sha256": _SERVED_SHA})))
+    assert seen == [] and "Refused: " in refused["stop_notice"]
+    operator_mode(monkeypatch)
+    allowed = dict(zip(dp.STOP_OUTPUTS, dp._on_stop_inference(gradio_request(),
+                                                               {"sha256": _SERVED_SHA})))
+    assert seen == [_SERVED_SHA] and "Nothing to stop." in allowed["stop_notice"]
+
+
+def test_run_diagnosis_is_off_while_inference_stops():
+    run = dp.run_controls(_serving_card(serving="stopping"), "idle")
+    assert run["run_btn"]["interactive"] is False
+    assert dp.RUN_DISABLED_STOPPING in run["run_reason"]
+    assert 'data-help="dx-run-stopping"' in run["run_cover"]
+    assert dp.run_controls(_serving_card(), "idle")["run_btn"]["interactive"] is True
+
+
+def test_the_card_shows_stop_inference_by_class_while_a_model_serves():
+    out = dp.card_outputs(_serving_card(), None, "idle")
+    assert _shown(out["stop_btn"]) and out["stop_btn"]["value"] == "■ Stop inference"
+    assert "visible" not in out["stop_btn"]
+    hidden = dp.card_outputs({**_serving_card(), "status": {"initialized": False}}, None, "idle")
+    assert not _shown(hidden["stop_btn"])

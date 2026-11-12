@@ -191,8 +191,9 @@ route.
     own process on a free loopback port, in mode M1 and read-only: D8 allows a
     loopback request in M1 and refuses a forwarding header, a foreign Host, a
     foreign Origin and a cross-site request on every API route its dependency
-    gates and on three gated dashboard events (Training's Stop, Test's Start
-    and Register), nothing done either way (W2); no Access-Control-Allow-Origin
+    gates and on four gated dashboard events (Training's Stop, Test's Start
+    and Register, Diagnosis's Stop inference), nothing done either way (W2);
+    no Access-Control-Allow-Origin
     for a foreign Origin (W3); the route guard refuses the file= URL forms it
     is sent (ten spellings), none reaching Gradio's URL fetch, counted in this
     process, and process_recording and uploads before the body is read (W4);
@@ -3739,13 +3740,16 @@ OPERATOR_ROUTES: Tuple[Tuple[str, str, int], ...] = (
 #: the dashboard's own, `_dashboard_events`), with the data sent and what its
 #: answer says when D8 allows: Training's confirmed Stop with no training
 #: running, Test's Start with no listed version and no measurement chosen,
-#: Test's Register with no kept report chosen. Allowed or refused, nothing is
-#: done.
+#: Test's Register with no kept report chosen, and Diagnosis's confirmed Stop
+#: inference with no stop asked for a model in the session (the ops round's
+#: A3b; it calls the one stop, `run_stop`, only for a model its question
+#: named). Allowed or refused, nothing is done.
 GATED_EVENTS: Tuple[Tuple[str, str, Tuple[Any, ...], str], ...] = (
     ("training_console", "_on_stop", ({},), "No training is running"),
     ("test_page", "_on_start", ({}, {}, None, None, None, None, False, False),
      "Nothing was started."),
     ("test_page", "_on_register", ({}, {}, {}, None, None), "Nothing was registered."),
+    ("diagnosis_panel", "_on_stop_inference", ({},), "Nothing was stopped"),
 )
 #: The deployment settings M5's probes depend on: the server's settings
 #: (`src/config/server_settings.py`; the workspaces root also names the GPU
@@ -5489,7 +5493,7 @@ def _m5_demo(report: Report, work: Path, sound: Path, checkpoint: Path, device: 
             _start_services()
             report.run("W2", "m2", "M5: D8 on the running service allows M1 on loopback and "
                        "refuses forwarded, foreign-Host, foreign-Origin and cross-site requests "
-                       "on every gated API route and three gated dashboard events",
+                       "on every gated API route and four gated dashboard events",
                        _d8_on_the_service)
             report.run("W3", "m2", "M5: no cross-origin browser access to /api or /ui", _cors)
             report.run("W4", "m2", "M5: the route guard refuses file= URLs, never fetched, "

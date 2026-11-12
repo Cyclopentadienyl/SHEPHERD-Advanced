@@ -511,7 +511,7 @@ def test_mode_chips_appear_only_when_true(root):
 def test_no_model_loaded_turns_run_off_and_offers_a_load(root):
     state = _state(root, status={"initialized": False})
     assert card.run_blocked(state)
-    assert "No model loaded" in card.body_html(state)
+    assert "Not loaded" in card.body_html(state)
     button = card.change_button(state)
     assert button["value"] == "🔒 Load a model…" and button["variant"] == "primary"
     assert not card.details_visible(state)
@@ -765,3 +765,65 @@ def test_no_registry_is_said_without_a_path(root, tmp_path, monkeypatch):
                          f"{registry}/versions/x); see /etc/shepherd/notes.txt")
     assert said == ("the registry <registry> holds no version 'x' (no "
                     "<registry>/versions/x); see a server path")
+
+
+# --------------------------------------------------------------------------- serving states (A3b)
+@pytest.mark.parametrize("lifecycle, state, words", [
+    ({"serving": "serving", "loading": False, "in_flight": 0}, "serving", "Serving"),
+    ({"serving": "serving", "loading": True, "in_flight": 1}, "serving", "Serving"),
+    ({"serving": "stopping", "loading": False, "in_flight": 3}, "stopping",
+     "Stopping · 3 in flight"),
+    ({"serving": "not_loaded", "loading": True, "in_flight": 0}, "loading", "Loading"),
+    ({"serving": "not_loaded", "loading": False, "in_flight": 0}, "not_loaded", "Not loaded"),
+    ({"initialized": True}, "serving", "Serving"),          # no lifecycle fields
+    ({"initialized": False}, "not_loaded", "Not loaded"),
+])
+def test_the_serving_state_is_the_status_s_in_its_own_words(lifecycle, state, words):
+    """The ops round's A3b: the card's state is read from the status's
+    lifecycle fields (the backend's), never a page flag."""
+    assert card.serving_state(lifecycle) == (state, words)
+    assert card.serving_state(None) == ("unknown", "Not known")
+
+
+def test_each_state_shows_its_words_and_the_backend_s_reason_escaped(root):
+    reason = "Inference was stopped by an operator at 10:15: <img src=x onerror=alert(1)>."
+    not_loaded = _state(root, status={"initialized": False, "serving": "not_loaded",
+                                      "loading": False, "in_flight": 0,
+                                      "not_serving_reason": reason})
+    body = card.body_html(not_loaded)
+    assert "Not loaded" in body and "○" in body
+    assert "&lt;img src=x onerror=alert(1)&gt;" in body and "<img" not in body
+    assert card.run_blocked(not_loaded) and not card.stop_offered(not_loaded)
+    loading = _state(root, status={"initialized": False, "serving": "not_loaded",
+                                   "loading": True, "in_flight": 0,
+                                   "not_serving_reason": "No model is loaded yet: a load is in "
+                                                         "progress."})
+    assert "Loading" in card.body_html(loading) and "shep-spinner" in card.body_html(loading)
+    serving = _state(root, status=_status(root, serving="serving", loading=False, in_flight=0,
+                                          not_serving_reason=None))
+    body = card.body_html(serving)
+    assert "● Serving" in body.replace('<span aria-hidden="true">●</span> ', "● ")
+    assert "shep-dx-reason" not in body
+    assert not card.run_blocked(serving) and card.stop_offered(serving)
+    stopping = _state(root, status=_status(
+        root, serving="stopping", loading=False, in_flight=2,
+        not_serving_reason="Inference is stopping: the diagnoses already accepted finish."))
+    body = card.body_html(stopping)
+    assert "Stopping · 2 in flight" in body and "shep-tag-amber" in body
+    assert "the diagnoses already accepted finish" in body
+    assert card.run_blocked(stopping) and card.stopping(stopping)
+    assert not card.stop_offered(stopping)
+
+
+def test_stop_inference_is_offered_while_a_model_serves_and_locked_for_a_read_only_request(
+        root):
+    serving = _status(root, serving="serving", loading=False, in_flight=0)
+    operator = card.stop_button(_state(root, status=serving))
+    assert operator == {"value": "■ Stop inference", "visible": True, "interactive": True}
+    read_only = card.stop_button(_state(root, status=serving, operator=False))
+    assert read_only == {"value": "🔒 Stop inference", "visible": True, "interactive": False}
+    nothing = card.stop_button(_state(root, status={"initialized": False}))
+    assert nothing["visible"] is False
+    failed = card.advance(_state(root, status=serving), None, "timed out (5 s)", now=NOW,
+                          operator=True, d8_short=None, open_checkpoints=False)
+    assert card.stop_button(failed)["visible"] is False, "a read that failed offers no stop"

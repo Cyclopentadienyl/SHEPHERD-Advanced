@@ -512,7 +512,10 @@ def test_the_status_route_answers_for_the_request_that_asks(monkeypatch):
 #: Every state-changing Gradio handler, by module and name. Each takes a
 #: positional `gr.Request` (the one way Gradio passes it) and calls the helper.
 GATED_HANDLERS = {
-    "src.webui.components.diagnosis_panel": ("_on_change_model",),
+    # Diagnosis: Change model… and Stop inference's two steps (the ops round's
+    # A3b; the confirmed one calls the one stop, `run_stop`, in process).
+    "src.webui.components.diagnosis_panel": ("_on_change_model", "_on_stop_inference_request",
+                                             "_on_stop_inference"),
     "src.webui.components.runtime_settings": ("_on_restart", "_on_apply"),
     "src.webui.components.training_console": (
         "_on_start", "_on_stop", "_on_resume", "_on_check_continue", "_refresh_checkpoints",
@@ -645,6 +648,9 @@ def spies(monkeypatch, tmp_path):
         return record
 
     monkeypatch.setattr(pipeline, "run_reload", recorder("reload", pipeline._refused("spy", {})))
+    monkeypatch.setattr(pipeline, "run_stop", recorder("stop", pipeline.PipelineStopResponse(
+        success=False, released=False, message="spy",
+        status=pipeline.PipelineStatusResponse(initialized=False))))
     monkeypatch.setattr(dp, "_self_request",
                         lambda *a, **k: pytest.fail("a gated handler called the API over HTTP"))
     monkeypatch.setattr(rs, "restart_backend", recorder("restart", {"success": False,
@@ -701,6 +707,10 @@ def _dashboard_calls():
     # (test_training_console_resume.py checks a listed one is previewed).
     return [
         (dp._on_change_model, [], None),
+        # A fresh API session's card has read nothing and its Stop inference
+        # asked for no model, so allowed, both stop before the stop and say so.
+        (dp._on_stop_inference_request, [{}], None),
+        (dp._on_stop_inference, [None], None),
         (rs._on_restart, [], "restart"),
         (rs._on_apply, ["cuda_async", False], "save_runtime_settings"),
         (tc._on_start, None, None),

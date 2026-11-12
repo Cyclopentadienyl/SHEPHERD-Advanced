@@ -25,8 +25,17 @@ scrolls.
   gone, their gated operations living on in the shared Load
   (`model_list`, through "Change model…"); Save Config's route,
   ``/pipeline/config``, is retired (its file was read by nothing).
+- **Stop inference** (the ops round's I1, I4), on the card while a model
+  serves: an operator control (D8 on each event's own request) that asks
+  first, naming the model shown, and is bound to it; confirmed, it calls the
+  one stop in process (`run_stop`, which ``POST /api/v1/pipeline/stop``
+  calls): the diagnoses already accepted finish, new ones are refused until a
+  model is loaded, and it says what the stop said, with the resources reading
+  taken after it (never a promise that memory was returned). The card then
+  shows the server's state in its own words (`diagnosis_card.serving_state`).
 - **Run Diagnosis** is greyed out and not clickable when no model is loaded
-  (a bubble on hover and on keyboard focus says why, and the reason is visible
+  or inference is stopping (a bubble on hover and on keyboard focus says why,
+  and the reason is visible
   text under it) and while a model change is open; while this page's Load
   reloads, the card says "Loading <12 hex> for every session… <elapsed>" and
   Run Diagnosis says the load is in progress (the mockup's state 3; set in the
@@ -59,7 +68,8 @@ HTTP (`_call_diagnose`, `_self_request`), as every frontend's does. What is
 served is read through the dashboard's one status reader, in process
 (`served_status.read_status`, by the card), and the Load is the shared one
 (`model_list`: D8 on its own request, WP2's in-process reload). This module
-calls no reload and writes no configuration.
+calls no reload and writes no configuration; its one lifecycle call is the
+stop (`run_stop`, in process, after D8's check on its own request).
 
 **Per browser session**: the result, the selection, the card's last read and
 the drawers are `gr.State`; nothing here is module state (BACKLOG 28).
@@ -73,7 +83,7 @@ import io
 import logging
 import re
 from datetime import datetime
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 import gradio as gr
 import requests
@@ -94,6 +104,7 @@ from src.webui.components.help import copy_button, help_button, text_id
 from src.webui.components.renderers import IDENTITY_BANNERS
 from src.webui.components.renderers import NOT_A_MEDICAL_DEVICE as _NOT_A_MEDICAL_DEVICE
 from src.webui.components.renderers import e as _e
+from src.webui.components.renderers import is_digest as _is_digest
 from src.webui.exports import export_dir, file_slug
 from src.webui.components.renderers import kv_cells as _kv_cells
 from src.webui.components.renderers import short_hex as _short_hex
@@ -1368,6 +1379,12 @@ TOPIC_HELP = {
         "diagnosis. An operator loads one with \"Load a model…\" on the card above. (An API "
         "client asking now is refused, with this reason.)",
     ),
+    "dx-run-stopping": (
+        "Run Diagnosis is disabled",
+        "Inference is stopping: the diagnoses already accepted finish, and new ones are refused; "
+        "then no model is loaded. An operator loads one again with \"Load a model…\" on the "
+        "card above. (An API client asking now is refused, with the server's reason.)",
+    ),
     "dx-run-change": (
         "Run Diagnosis is disabled",
         "A model change is open: finish it (Reload with …) or cancel it (Keep … or Cancel) "
@@ -1393,6 +1410,7 @@ TOPIC_HELP = {
 RUN_DISABLED_NO_MODEL = "Disabled: no model loaded. Load one with “Load a model…” above."
 RUN_DISABLED_NO_MODEL_READ_ONLY = (
     "Disabled: no model loaded. An operator on the server's machine can load one.")
+RUN_DISABLED_STOPPING = "Disabled: inference is stopping; new diagnoses are refused."
 RUN_DISABLED_CHANGE = "Disabled: finish or cancel the model change first."
 RUN_DISABLED_LOADING = "Disabled: a model load is in progress; diagnoses wait until it finishes."
 #: A patients-like-me model with no reference cohort version to rank: the
@@ -2198,6 +2216,8 @@ def run_controls(state: Mapping[str, Any], phase: Any) -> Dict[str, Any]:
         key, why = "dx-run-loading", RUN_DISABLED_LOADING
     elif phase not in (None, "idle"):
         key, why = "dx-run-change", RUN_DISABLED_CHANGE
+    elif card.run_blocked(state) and card.stopping(state):
+        key, why = "dx-run-stopping", RUN_DISABLED_STOPPING
     elif card.run_blocked(state):
         key = "dx-run-no-model"
         why = RUN_DISABLED_NO_MODEL if state.get("operator") else RUN_DISABLED_NO_MODEL_READ_ONLY
@@ -2285,6 +2305,7 @@ def card_outputs(state: Mapping[str, Any], result: Optional[Mapping[str, Any]], 
         "card_time": card.time_html(state, produced),
         "card_body": card.body_html(state, produced),
         "change_btn": button,
+        "stop_btn": card.stop_button(state),
         "change_reason": card.change_reason_html(state),
         "details_btn": card.details_visible(state),
         "run_btn": run["run_btn"].get("interactive"),
@@ -2316,6 +2337,9 @@ def card_outputs(state: Mapping[str, Any], result: Optional[Mapping[str, Any]], 
             continue
         if name == "change_btn":
             out[name] = gr.update(**value)
+        elif name == "stop_btn":
+            out[name] = view_update(value["visible"], *_STOP_BTN, value=value["value"],
+                                    interactive=value["interactive"])
         elif name == "details_btn":
             out[name] = gr.update(visible=value)
         elif name == "run_btn":
@@ -2558,6 +2582,131 @@ def _on_change_model(request: gr.Request) -> Tuple[Any, ...]:
     return tuple(opened.get(name, gr.update()) for name in CHANGE_OUTPUTS)
 
 
+# =============================================================================
+# Stop inference (the ops round's I1, I4): asked first, bound to the model shown
+# =============================================================================
+#: The outputs of the two Stop inference handlers, in order.
+STOP_OUTPUTS = ("stop_text", "stop_asked", "stop_now_btn", "stop_keep_btn", "stop_notice")
+
+
+def _stop_said(text: str) -> str:
+    return f'<p class="shep-dx-stop-said" role="status">{_e(text)}</p>'
+
+
+def stop_question_html(sha256: str) -> str:
+    """Stop inference's question, naming the model it is bound to and what
+    the stop does (the skill's §9: what happens, who acts)."""
+    return ('<div class="shep-dx-stop-q">'
+            f'<b>Stop inference of model <code>{_e(_short_hex(sha256))}</code>?</b> '
+            'Diagnoses already accepted finish; new diagnoses are refused until a model is '
+            'loaded. Nothing loads a model again by itself.</div>')
+
+
+#: The Stop inference buttons' own classes: each is shown and hidden by a
+#: class (`view_update`), never by ``visible``.
+_STOP_BTN = ("shep-gated",)
+_STOP_NOW = ("shep-gated",)
+_STOP_KEEP = ("shep-dx-stop-keep",)
+
+
+def _stop_buttons(shown: bool) -> Dict[str, Any]:
+    return {"stop_now_btn": view_update(shown, *_STOP_NOW),
+            "stop_keep_btn": view_update(shown, *_STOP_KEEP)}
+
+
+def _stop_hidden() -> Dict[str, Any]:
+    return {"stop_asked": None, **_stop_buttons(False)}
+
+
+def ask_stop_inference(access: Any, state: Any) -> Dict[str, Any]:
+    """Stop inference's first step, for a request D8 allowed (`access`, read
+    by the page's handler on its own request): the question, **bound to the
+    model the card shows now** (its full fingerprint, kept in this session's
+    ``stop_asked``). Nothing is stopped here. Refused, or with no model
+    serving on the card, it says why and asks nothing."""
+    if not access.allowed:
+        return {**_stop_hidden(), "stop_notice": "",
+                "stop_text": f'<p class="shep-dx-why">{_e(access.refusal)}</p>'}
+    state = state if isinstance(state, Mapping) else card.new_state()
+    if not card.stop_offered(state):
+        return {**_stop_hidden(), "stop_notice": "",
+                "stop_text": _stop_said("Nothing to stop: the card shows no model serving. "
+                                        "Read it again with ↻.")}
+    sha = card.served_checkpoint_sha(state.get("status"))
+    return {"stop_text": stop_question_html(sha), "stop_asked": {"sha256": sha},
+            **_stop_buttons(True), "stop_notice": ""}
+
+
+def memory_after_stop_html(resources: Optional[Mapping[str, Any]] = None) -> str:
+    """The resources reading (`TrainingManager.get_system_resources`, what
+    ``GET /api/v1/system/resources`` answers), read now, after a stop that
+    released the model, in the Training page's words (`_format_resources`).
+    **A reading, never a promise** that memory was returned: the stop empties
+    the CUDA allocator's unused blocks only, and the GB10's memory is shared
+    (I4). A reading that fails says so."""
+    from src.webui.components.training_console import _format_resources
+
+    try:
+        if resources is None:
+            from src.api.services.training_manager import training_manager
+
+            resources = training_manager.get_system_resources()
+        line = _format_resources(resources)
+    except Exception:  # noqa: BLE001 - a reading that fails is said, never raised
+        logger.exception("The resources could not be read after a stop")
+        return '<p class="shep-dx-line shep-muted">Memory after the stop: not read.</p>'
+    return ('<div class="shep-dx-stop-mem"><span class="shep-muted">Read after the stop, a '
+            f'reading and not a promise that memory was returned:</span> {line}</div>')
+
+
+def confirm_stop_inference(access: Any, asked: Any, *, stop: Optional[Callable[..., Any]] = None,
+                           resources: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+    """**The confirmed Stop inference**, for a request D8 allowed (`access`;
+    refused, nothing is stopped): the one stop (`run_stop`, in process, the
+    function ``POST /api/v1/pipeline/stop`` calls), **bound to the model the
+    question named** (``expected_checkpoint_sha256``: another model served
+    meanwhile keeps serving, and the stop's words say so). It waits while the
+    accepted diagnoses finish, so its handler is a plain ``def`` (Gradio runs
+    it in a worker thread). What it says is the stop's own words; after a
+    stop that released the model, the resources reading
+    (`memory_after_stop_html`). A confirmation never asked on this page stops
+    nothing. `stop` and `resources` stand in for tests."""
+    out: Dict[str, Any] = {**_stop_hidden(), "stop_text": ""}
+    if not access.allowed:
+        return {**out, "stop_notice": f'<p class="shep-dx-why">{_e(access.refusal)}</p>'}
+    sha = asked.get("sha256") if isinstance(asked, Mapping) else None
+    if not _is_digest(sha):
+        return {**out, "stop_notice": _stop_said(
+            "Nothing was stopped: Stop inference was not asked for a model on this page.")}
+    from src.api.routes.pipeline import PipelineStopRequest, run_stop
+
+    outcome = (stop or run_stop)(PipelineStopRequest(expected_checkpoint_sha256=sha))
+    said = _stop_said(outcome.message)
+    if outcome.released:
+        said += memory_after_stop_html(resources)
+    return {**out, "stop_notice": said}
+
+
+def keep_serving() -> Dict[str, Any]:
+    """"Keep serving": the question closed; nothing is done."""
+    return {**_stop_hidden(), "stop_text": ""}
+
+
+def _on_stop_inference_request(request: gr.Request, state) -> Tuple[Any, ...]:
+    """"Stop inference" on the card: D8 checked first, on this event's own
+    request (`ask_stop_inference`), as for the stop itself."""
+    asked = ask_stop_inference(operator_access(request), state)
+    return tuple(asked.get(name, gr.update()) for name in STOP_OUTPUTS)
+
+
+def _on_stop_inference(request: gr.Request, asked) -> Tuple[Any, ...]:
+    """The confirmed "Stop inference now": an operator control (D8), checked
+    on this event's own request (`confirm_stop_inference`); a plain ``def``,
+    since the stop waits for the accepted diagnoses."""
+    done = confirm_stop_inference(operator_access(request), asked)
+    return tuple(done.get(name, gr.update()) for name in STOP_OUTPUTS)
+
+
 #: While this page's reload runs, its Close, × and Cancel close the whole
 #: drawer at once in the page (the card keeps the reload's "Loading …" line),
 #: and the × is clicked for the server once the reload has answered; "Change
@@ -2630,6 +2779,9 @@ def create_diagnosis_tab(ctx: Any) -> None:
     card_state = gr.State(card.new_state())
     identity_view = gr.State({"open": False})
     change_closed = gr.State(False)
+    #: The model this session's Stop inference question named (its full
+    #: fingerprint), or None: the confirmation stops only that model.
+    stop_asked = gr.State(None)
 
     with gr.Row(elem_id="shep-dx", elem_classes=["shep-page", "shep-dx"], equal_height=False):
         # --- the input column ------------------------------------------------
@@ -2699,7 +2851,23 @@ def create_diagnosis_tab(ctx: Any) -> None:
                             change_btn = gr.Button("🔒 Change model…", size="sm",
                                                    interactive=False, scale=0, min_width=0,
                                                    elem_id="shep-dx-change-btn")
+                            # Shown while a model serves (`card.stop_button`).
+                            stop_btn = gr.Button("■ Stop inference", size="sm",
+                                                 interactive=False, scale=0, min_width=0,
+                                                 elem_id="shep-dx-stop-btn",
+                                                 elem_classes=[*_STOP_BTN, VIEW_OFF])
                         change_reason = plain_html("", elem_id="shep-dx-change-why")
+                        # Stop inference asks first, bound to the model shown.
+                        with gr.Row(elem_id="shep-dx-stop-row", elem_classes=["shep-dx-stop-row"]):
+                            stop_text = plain_html("", elem_id="shep-dx-stop-text")
+                            stop_now_btn = gr.Button("■ Stop inference now", variant="stop",
+                                                     size="sm", scale=0, min_width=0,
+                                                     elem_id="shep-dx-stop-now",
+                                                     elem_classes=[*_STOP_NOW, VIEW_OFF])
+                            stop_keep_btn = gr.Button("Keep serving", size="sm", scale=0,
+                                                      min_width=0, elem_id="shep-dx-stop-keep",
+                                                      elem_classes=[*_STOP_KEEP, VIEW_OFF])
+                        stop_notice = plain_html("", elem_id="shep-dx-stop-notice")
                     with gr.Row(elem_id="shep-dx-run", elem_classes=["shep-dx-run"]):
                         with gr.Column(elem_id="shep-dx-run-wrap", min_width=0, scale=1):
                             run_btn = gr.Button("▶ Run Diagnosis", variant="primary", size="lg",
@@ -2806,6 +2974,8 @@ def create_diagnosis_tab(ctx: Any) -> None:
     named = {
         "card_state": card_state, "card_time": card_time, "card_body": card_body,
         "change_btn": change_btn, "change_reason": change_reason, "details_btn": details_btn,
+        "stop_btn": stop_btn, "stop_text": stop_text, "stop_asked": stop_asked,
+        "stop_now_btn": stop_now_btn, "stop_keep_btn": stop_keep_btn, "stop_notice": stop_notice,
         "run_btn": run_btn, "run_cover": run_cover, "run_reason": run_reason, "badge": badge,
         "results_hd": results_hd, "results_body": results_body, "results_state": results_state,
         "selected": selected, "export_csv": export_csv, "export_report": export_report,
@@ -2829,7 +2999,8 @@ def create_diagnosis_tab(ctx: Any) -> None:
         return {named[n]: v for n, v in values.items()}
 
     card_names = ("card_state", "card_time", "card_body", "change_btn", "change_reason",
-                  "details_btn", "run_btn", "run_cover", "run_reason", "badge", "results_body",
+                  "stop_btn", "details_btn", "run_btn", "run_cover", "run_reason", "badge",
+                  "results_body",
                   "identity_drawer", "identity_seg", "id_model", "id_result_md", "id_result_html")
     # The card's reads also show the served task's inputs (`TASK_OUTPUTS`);
     # Run Diagnosis, which reads those inputs, never writes them.
@@ -2939,6 +3110,21 @@ def create_diagnosis_tab(ctx: Any) -> None:
     # --- Change model…: D8 first, then the shared list's own refresh, then the chips
     change_btn.click(_on_change_model, inputs=None, outputs=outputs(*CHANGE_OUTPUTS),
                      show_progress="hidden").then(**handle.refresh).then(**ctx.chip_refresh)
+
+    # --- Stop inference: D8 first, the question bound to the model shown, then
+    # the confirmed stop (in process, `run_stop`), the card read again and the
+    # chips (the GPU chip names inference while a CUDA model serves).
+    stop_btn.click(_on_stop_inference_request, inputs=[card_state],
+                   outputs=outputs(*STOP_OUTPUTS), show_progress="hidden")
+    stop_now_btn.click(_on_stop_inference, inputs=[stop_asked], outputs=outputs(*STOP_OUTPUTS),
+                       show_progress="hidden").then(**refresh).then(**ctx.chip_refresh)
+
+    def _keep_serving():
+        return mapped(keep_serving())
+
+    stop_keep_btn.click(_keep_serving, inputs=None,
+                        outputs=outputs("stop_text", "stop_asked", "stop_now_btn",
+                                        "stop_keep_btn"), show_progress="hidden")
 
     change_names = ("change_drawer", "plan", "phase", "change_closed")
     reset_names = ("confirm", "confirm_html", "list_reason", "change_closed")
@@ -3126,6 +3312,10 @@ PAGE_CSS = f"""
 {_TAB} .shep-dx-card-actions > * {{ flex: 0 0 auto !important; width: auto !important; }}
 {_TAB} #shep-dx-details-btn {{ border: 0 !important; background: none !important; box-shadow: none !important; color: var(--shep-accent-text) !important; padding: 0 2px !important; font-weight: 500; }}
 {_TAB} #shep-dx-change-btn {{ margin-left: auto; }}
+{_TAB} .shep-dx-stop-row {{ flex-wrap: wrap !important; gap: 8px !important; justify-content: flex-end !important; }}
+{_TAB} #shep-dx-stop-text {{ flex: 1 1 100% !important; }}
+{_TAB} .shep-dx-stop-q {{ background: var(--shep-red-50); border: 1px solid var(--shep-red-200); border-radius: 8px; padding: 8px 12px; }}
+{_TAB} .shep-dx-stop-said, {_TAB} .shep-dx-stop-mem {{ margin: 2px 0 0; font-size: 14px; }}
 {_TAB} .shep-dx-why {{ margin: 2px 0 0; font-size: 14px; color: var(--shep-text-2); text-align: right; }}
 {_TAB} #shep-dx-run-why .shep-dx-why {{ text-align: left; margin: 0 16px 8px; }}
 {_TAB} .shep-dx-run {{ padding: 6px 16px !important; gap: 10px !important; flex-wrap: nowrap !important; align-items: stretch !important; }}

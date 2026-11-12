@@ -1053,7 +1053,7 @@ def test_the_gated_dashboard_events_are_found_by_their_handlers(probe):
     assert [(label, data) for label, _, data, _ in found] == [
         (f"{module}.{name}", list(data)) for module, name, data, _ in probe.GATED_EVENTS]
     names = [api_name for _, api_name, _, _ in found]
-    assert names[0] == "_on_stop" and len(set(names)) == 3
+    assert names[0] == "_on_stop" and len(set(names)) == 4
 
 
 def test_an_event_registered_otherwise_than_the_probe_sends_it_fails(probe, monkeypatch):

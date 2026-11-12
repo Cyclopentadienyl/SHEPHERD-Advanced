@@ -258,8 +258,8 @@ def test_the_card_says_no_model_serves_for_as_long_as_it_is_true():
     without = card.body_html(_card({"initialized": False}))
     served = card.body_html(_card(_status()))
 
-    assert "No model loaded" in without and "path reasoning" not in without
-    assert "No model loaded" not in served and "shep-tag-red" not in served
+    assert "Not loaded" in without and "path reasoning" not in without
+    assert "Not loaded" not in served and "shep-tag-red" not in served
 
 
 def test_reading_the_card_raises_no_toast(monkeypatch):
