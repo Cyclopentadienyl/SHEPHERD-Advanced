@@ -857,14 +857,19 @@ def _group_rates(parent: Mapping[str, Any]) -> List[float]:
     return [float(group["lr"]) for group in groups]
 
 
-def zero_rate_groups(parent: Mapping[str, Any]) -> List[int]:
+def zero_rate_groups(parent: Mapping[str, Any]) -> Optional[List[int]]:
     """The parameter groups (their indices) whose rate ended at 0 in the
     parent's optimizer: **the groups `extend_lr` replaces, and only those**
     (`_fixed_rates`). An extension of a parent with one refuses without
     `extend_lr`, so the job runner's preview states them as a fact of its one
     read of the parent, for a page to offer the rate exactly when the plan
-    needs it."""
-    return [i for i, rate in enumerate(_group_rates(parent)) if rate == 0.0]
+    needs it. **None when the parent records no optimizer rates** (a
+    weights-only file holds none), so an unknown is never read as "no group
+    at 0"."""
+    rates = _group_rates(parent)
+    if not rates:
+        return None
+    return [i for i, rate in enumerate(rates) if rate == 0.0]
 
 
 def _fixed_rates(

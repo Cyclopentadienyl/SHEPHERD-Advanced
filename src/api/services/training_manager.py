@@ -594,8 +594,9 @@ def _finetune_base_problem(settings: Mapping[str, Any], tasks: Sequence[str],
 
 
 def _zero_rate_groups(record: Mapping[str, Any]) -> Optional[List[int]]:
-    """`run_plan.zero_rate_groups` of a checkpoint record a preview read, or
-    None when its optimizer's rates are not numbers in groups."""
+    """`run_plan.zero_rate_groups` of a checkpoint record a preview read: None
+    when it records no optimizer rates (a weights-only file), or when they are
+    not numbers in groups, so an unknown is never "no group at 0"."""
     from src.utils.run_plan import zero_rate_groups
 
     try:
@@ -2451,7 +2452,7 @@ class TrainingManager:
             # The parameter groups whose rate ended at 0, from this read
             # (`run_plan.zero_rate_groups`): the groups an extension's
             # extend_lr replaces, and must be given for; None when the
-            # parent's optimizer rates cannot be read.
+            # parent records no optimizer rates or they cannot be read.
             "zero_rate_groups": _zero_rate_groups(record),
         }
         # The request the training process makes: every current setting

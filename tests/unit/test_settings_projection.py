@@ -474,6 +474,11 @@ def test_the_preview_states_the_groups_whose_rate_ended_at_zero(client, trained_
         "device": "cpu", "extend_epochs": 1, "extend_lr": 1e-5})
     assert resp.status_code == 200, resp.text
     assert _written(resp)["extend_lr"] == 1e-5
+    del payload["optimizer_state_dict"]
+    torch.save(payload, zero / "weights.pt")
+    unknown = manager.preview_continuation(str(zero / "weights.pt"), device="cpu",
+                                           extend_epochs=1)
+    assert unknown["ok"] is False and unknown["zero_rate_groups"] is None, unknown
 
 
 # ---------------------------------------------------------------------------
