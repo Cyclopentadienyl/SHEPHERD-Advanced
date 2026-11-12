@@ -33,9 +33,11 @@ catch:
   L7.disease_frozen; ops-wiring round, decision F2): a real paused and
   resumed frozen child of a base passes and says it is fp32 only; a
   graph-side buffer changed (named), downstream parts equal to their start,
-  a resume whose downstream parts are the paused file's, an optimizer group
-  holding a graph-side parameter, a full arm's record and mixed precision in
-  effect each fail, and so does a CPU run for a CUDA device.
+  a resume whose downstream parts are the paused file's, an extra parameter
+  in the optimizer groups, an optimizer group holding a graph-side parameter
+  in place of a downstream one (the count kept), a held parameter without a
+  saved state, a full arm's record and mixed precision in effect each fail,
+  and so does a CPU run for a CUDA device.
 
 Module: tests/unit/test_probe_research_comparison.py
 """
@@ -616,7 +618,12 @@ def test_a_resume_whose_downstream_parts_are_the_paused_files_fails(probe, froze
         _frozen_verified(probe, frozen_arms, resumed=resumed)
 
 
-def test_an_optimizer_group_holding_a_graph_side_parameter_fails(probe, frozen_arms, tmp_path):
+def _moment(like):
+    return {"step": torch.tensor(1.0), "exp_avg": torch.zeros_like(like),
+            "exp_avg_sq": torch.zeros_like(like)}
+
+
+def test_an_extra_parameter_in_the_optimizer_groups_fails(probe, frozen_arms, tmp_path):
     def change(payload):
         optimizer = payload["optimizer_state_dict"]
         held = [i for group in optimizer["param_groups"] for i in group["params"]]
@@ -624,14 +631,53 @@ def test_an_optimizer_group_holding_a_graph_side_parameter_fails(probe, frozen_a
         weight = next(v for k, v in payload["state_dict"].items()
                       if k.startswith("encoder.") and k.endswith("weight") and v.dim() == 2)
         optimizer["param_groups"][0]["params"].append(extra)
-        optimizer["state"][extra] = {"step": torch.tensor(1.0),
-                                     "exp_avg": torch.zeros_like(weight),
-                                     "exp_avg_sq": torch.zeros_like(weight)}
+        optimizer["state"][extra] = _moment(weight)
 
     resumed = _edited(frozen_arms["resumed"], tmp_path / "resumed.pt", change)
     with pytest.raises(AssertionError, match="the resumed file's optimizer groups hold .* "
                                              "parameters, not the .* of the downstream parts"):
         _frozen_verified(probe, frozen_arms, resumed=resumed)
+
+
+def test_an_optimizer_group_holding_a_graph_side_parameter_fails(probe, frozen_arms, tmp_path):
+    """Review of A2: the count kept, a graph-side parameter's moment in place
+    of a downstream one's fails by the shapes counted, though its shape is a
+    downstream parameter's too (a membership test of the shapes passed)."""
+    from src.models.bundle.builder import DOWNSTREAM_PARTS, GRAPH_SIDE_PARTS
+
+    def change(payload):
+        state = payload["state_dict"]
+        downstream = {tuple(v.shape) for k, v in state.items()
+                      if k.split(".", 1)[0] in DOWNSTREAM_PARTS}
+        # A graph-side parameter with a downstream parameter's shape (a bias,
+        # the LP head's relation weights): only counting the shapes tells it.
+        weight = next(v for k, v in sorted(state.items())
+                      if k.split(".", 1)[0] in GRAPH_SIDE_PARTS and v.dim()
+                      and not k.endswith(("running_mean", "running_var"))
+                      and tuple(v.shape) in downstream)
+        optimizer = payload["optimizer_state_dict"]
+        held = [i for group in optimizer["param_groups"] for i in group["params"]]
+        other = next(i for i in held
+                     if tuple(optimizer["state"][i]["exp_avg"].shape) != tuple(weight.shape))
+        optimizer["state"][other] = _moment(weight)
+
+    resumed = _edited(frozen_arms["resumed"], tmp_path / "resumed.pt", change)
+    with pytest.raises(AssertionError, match=r"the resumed file's optimizer holds a parameter of "
+                                             r"shape \([\d, ]+\) beyond the downstream parts' "
+                                             r"parameters of that shape"):
+        _frozen_verified(probe, frozen_arms, resumed=resumed)
+
+
+def test_a_held_parameter_without_a_saved_state_fails(probe, frozen_arms, tmp_path):
+    def change(payload):
+        optimizer = payload["optimizer_state_dict"]
+        held = [i for group in optimizer["param_groups"] for i in group["params"]]
+        del optimizer["state"][held[0]]
+
+    paused = _edited(frozen_arms["paused"], tmp_path / "paused.pt", change)
+    with pytest.raises(AssertionError, match="1 of the parameters the paused file's optimizer "
+                                             "holds have no saved state"):
+        _frozen_verified(probe, frozen_arms, paused=paused)
 
 
 def test_a_full_arms_record_fails_the_parts_check(probe, frozen_arms):

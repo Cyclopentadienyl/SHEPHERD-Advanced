@@ -6069,8 +6069,11 @@ def _frozen_arm_verified(base: Path, paused: Path, resumed: Path, device: str, *
       its last epoch's end, before early stopping could restore another, so a
       resume that learned nothing leaves them equal);
     - (e) **the optimizer holds the downstream parameters**: its groups hold
-      as many parameters as the downstream parts have, each once, and every
-      saved state has a downstream parameter's shape, paused and resumed;
+      as many parameters as the downstream parts have, each once, each with
+      a saved state (a step was taken for it), and the saved moments' shapes
+      are the downstream parameters' shapes, counted (a multiset: a
+      graph-side parameter in place of a downstream one of another shape
+      fails, though its shape is a downstream one's too), paused and resumed;
     - (f) **the resume**: `resumed` records operation resume, the paused
       file's weight transfer, the paused file's digest as its parent, and its
       stage's epochs completed, after the paused file's one;
@@ -6081,6 +6084,8 @@ def _frozen_arm_verified(base: Path, paused: Path, resumed: Path, device: str, *
       `device` is CUDA (the measurement's `cuda_executed` is `_ran_on`'s).
 
     Raises AssertionError naming what does not hold. Returns the facts."""
+    from collections import Counter
+
     import torch
 
     from src.config.recipe import FROZEN_PARTS
@@ -6160,12 +6165,17 @@ def _frozen_arm_verified(base: Path, paused: Path, resumed: Path, device: str, *
         assert len(held) == len(set(held)) == len(wanted), (
             f"the {which} file's optimizer groups hold {len(held)} parameters, not the "
             f"{len(wanted)} of the downstream parts")
-        shapes = sorted(tuple(parameter.shape) for parameter in wanted)
-        for index in held:
-            moment = ((optimizer.get("state") or {}).get(index) or {}).get("exp_avg")
-            assert moment is None or tuple(moment.shape) in shapes, (
-                f"the {which} file's optimizer holds a parameter of shape {tuple(moment.shape)}, "
-                "which no downstream parameter has")
+        saved = optimizer.get("state") or {}
+        moments = [(saved.get(index) or {}).get("exp_avg") for index in held]
+        stepless = sum(moment is None for moment in moments)
+        assert not stepless, (
+            f"{stepless} of the parameters the {which} file's optimizer holds have no saved "
+            "state: no step was taken for them")
+        surplus = sorted((Counter(tuple(moment.shape) for moment in moments)
+                          - Counter(tuple(parameter.shape) for parameter in wanted)).elements())
+        assert not surplus, (
+            f"the {which} file's optimizer holds a parameter of shape {surplus[0]} beyond the "
+            "downstream parts' parameters of that shape")
     # (f) the resume kept the stage's record and went on from the paused file.
     _pb, paused_record, paused_payload, paused_sha = arms["paused"]
     _rb, resumed_record, resumed_payload, resumed_sha = arms["resumed"]
