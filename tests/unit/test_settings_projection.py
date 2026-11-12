@@ -174,34 +174,57 @@ def test_amp_asked_on_a_cpu_device_stays_accepted_for_a_new_run():
     assert tf.cross_field_problems(values, {"use_amp", "amp_dtype"}) == []
 
 
-def test_a_continuation_states_a_setting_its_parent_would_not_read_and_is_refused():
-    """The plans judge what a continuation or a branch states, on the
-    settings it inherits; what it inherits is never refused."""
+def _base_parent(**recorded):
+    """A paused base's checkpoint record, its settings the recipe's filled
+    (scheduler none, AMP off) with `recorded` over them."""
     from src.utils.checkpoint_io import TRAINING_RULES_VERSION
+
+    requested = {**new_run_values("base", None, recorded), "learning_stage": "base",
+                 "task": None}
+    return {"record_version": 2, "training_rules": TRAINING_RULES_VERSION,
+            "checkpoint_kind": "training_state", "learning_stage": "base", "task": None,
+            "config": {"requested": requested,
+                       "effective": {"amp": {"enabled": False, "dtype": "float16"}}},
+            "progress": {"end": "paused", "completed_epochs": 1,
+                         "stage": {"kind": "original", "start_epoch": 0, "target_epochs": 2,
+                                   "schedule": {"type": "constant"}}}}, requested
+
+
+def test_a_continuation_meets_the_rules_only_in_what_it_changes():
+    """The plans judge the rules across settings on what a request changes
+    (a branch's changes): a setting kept from the parent, inherited or stated
+    at the parent's value, is never refused by them, so a resume and an
+    extension, which change nothing, never meet them; a branch's change the
+    run would not read is refused, and so is a change of the guard that makes
+    an inherited value break a rule."""
     from src.utils.run_plan import RunPlanRefused, plan_branch, plan_continuation
 
-    recorded = {**new_run_values("base", None, {}), "learning_stage": "base", "task": None}
-    parent = {"record_version": 2, "training_rules": TRAINING_RULES_VERSION,
-              "checkpoint_kind": "training_state", "learning_stage": "base", "task": None,
-              "config": {"requested": recorded,
-                         "effective": {"amp": {"enabled": False, "dtype": "float16"}}},
-              "progress": {"end": "paused", "completed_epochs": 1,
-                           "stage": {"kind": "original", "start_epoch": 0, "target_epochs": 2,
-                                     "schedule": {"type": "constant"}}}}
+    parent, recorded = _base_parent()
     request = {**recorded, "device": "cpu", "extend_epochs": None, "extend_lr": None}
     where = Path("runs/gatv2/base/checkpoints/last.pt")
     plan = plan_continuation(parent, where, request, set(), device="cpu", record_version=2)
     assert plan.settings["warmup_steps"] == 0 and plan.inherited["warmup_steps"] == 0
-    with pytest.raises(RunPlanRefused, match="^warmup_steps is read only when"):
-        plan_continuation(parent, where, request, {"warmup_steps"}, device="cpu",
-                          record_version=2)
+    stated = plan_continuation(parent, where, request, {"warmup_steps", "min_lr_ratio",
+                                                        "amp_dtype"},
+                               device="cpu", record_version=2)
+    assert stated.settings == plan.settings and "warmup_steps" not in stated.inherited
+    branch = {**request, "branch_from": "p.pt"}
     with pytest.raises(RunPlanRefused, match="^min_lr_ratio is read only when"):
-        plan_branch(parent, where, {**request, "branch_from": "p.pt", "min_lr_ratio": 0.2},
-                    {"min_lr_ratio"}, device="cpu", record_version=2)
-    assert plan_branch(parent, where, {**request, "branch_from": "p.pt",
-                                       "scheduler_type": "linear", "min_lr_ratio": 0.2},
+        plan_branch(parent, where, {**branch, "min_lr_ratio": 0.2}, {"min_lr_ratio"},
+                    device="cpu", record_version=2)
+    kept = plan_branch(parent, where, {**branch, "learning_rate": 0.5},
+                       {"learning_rate", "warmup_steps"}, device="cpu", record_version=2)
+    assert set(kept.changes) == {"learning_rate"} and kept.settings["warmup_steps"] == 0
+    assert plan_branch(parent, where, {**branch, "scheduler_type": "linear",
+                                       "min_lr_ratio": 0.2},
                        {"scheduler_type", "min_lr_ratio"}, device="cpu",
                        record_version=2).changes["min_lr_ratio"] == {"parent": 0.01, "new": 0.2}
+    floor, recorded = _base_parent(scheduler_type="cosine", min_lr_ratio=0.0)
+    with pytest.raises(RunPlanRefused, match="^min_lr_ratio must be more than 0 when "
+                                             "scheduler_type is 'onecycle', not 0.0"):
+        plan_branch(floor, where, {**recorded, "device": "cpu", "branch_from": "p.pt",
+                                   "scheduler_type": "onecycle"},
+                    {"scheduler_type"}, device="cpu", record_version=2)
 
 
 def test_the_warmup_help_says_what_the_trainer_does():
@@ -318,6 +341,19 @@ def test_an_explicit_null_patience_on_a_resume_is_a_change_refused(client, patie
     resp = http.post("/api/v1/training/start", json=body)
     assert resp.status_code == 200, resp.text
     assert "early_stopping_patience" not in _written(resp), "inherited, not written"
+
+
+def test_a_resume_restating_a_setting_its_run_never_read_is_accepted(client, patient_base):
+    """The parent's scheduler is none, so it never read its warmup_steps (0);
+    restated at that value, the resume changes nothing, and no rule across
+    settings refuses what a continuation keeps."""
+    http, popen, manager = client
+    ws, parent = patient_base
+    resp = http.post("/api/v1/training/start", json={
+        "data_dir": str(ws), "resume_from": str(parent), "device": "cpu", "warmup_steps": 0})
+    assert resp.status_code == 200, resp.text
+    assert _written(resp)["warmup_steps"] == 0
+    popen.assert_called_once()
 
 
 def test_a_finetune_child_is_extended_over_http_without_its_stage(client, trained_disease_child):

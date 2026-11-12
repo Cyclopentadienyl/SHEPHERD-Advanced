@@ -677,9 +677,10 @@ def _inherit_settings(
     refused otherwise. Each setting the run takes from the parent and the
     request does not set has one source: `inherited` when the parent's record
     holds it, `decoded` (with the decode's words) when the decode gave it.
-    Then the rules across settings judge what the request sets
-    (`training_fields.cross_field_problems`), for a resume, an extension and a
-    branch alike, in the training process and the job runner's preview."""
+    Then the rules across settings judge what the request changes
+    (`training_fields.cross_field_problems` over `changes`: a branch's; a
+    resume and an extension change nothing), in the training process and the
+    job runner's preview alike."""
     parent_settings = decode_learning_settings(parent, where)
     recorded = parent_settings.settings
     decoded: Dict[str, str] = {}
@@ -730,9 +731,12 @@ def _inherit_settings(
             "its parent; remove these to inherit them, or branch the parent (branch_from) "
             "to change settings on a model bundle's list." + freeze)
     # The rules across settings (decision S3), judged on the settings the run
-    # trains with for what the request sets: a setting stated that the run
-    # would not read is refused, never ignored; an inherited one never is.
-    problems = cross_field_problems(settings, explicit)
+    # trains with for what the request changes (a branch's changes): a
+    # setting changed that the run would not read is refused, never ignored.
+    # A setting kept from the parent, inherited or stated at the parent's
+    # value, is never refused by them, so a resume and an extension, which
+    # change nothing, never meet them.
+    problems = cross_field_problems(settings, set(changes))
     if problems:
         raise RunPlanRefused(" ".join(problems))
     return settings, inherited, changes, decoded
