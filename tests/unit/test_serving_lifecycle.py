@@ -102,16 +102,23 @@ def test_a_cuda_load_holds_the_gpu_lock_and_names_inference(service):
 
 
 def test_a_cpu_load_takes_no_lock_and_a_job_still_starts(service):
-    """I2: CPU serving takes no lock and checks no job slot: a job starts
-    beside it."""
+    """I2: CPU serving takes no lock and checks no job slot: it loads while
+    the runner's job runs (no blanket exclusion), and a job starts beside
+    it."""
     builds, runner, workspace = service
+    running = FakeProcess(pid=4321)
+    with patch("subprocess.Popen", return_value=running):
+        assert runner.start_training(_base_start(workspace))["success"]
 
     loaded = reload(workspace, checkpoint(workspace, "a"), "cpu")
 
     assert loaded.success, loaded.message
+    assert len(builds.calls) == 1 and runner.active_job() is not None
     assert builds.lock_at_build == [None] and lock_state()["held_by"] is None
     assert loaded.status.holds_gpu_lock is False and api.app_state.gpu_lock is None
-    with patch("subprocess.Popen", side_effect=lambda *a, **k: FakeProcess(pid=4321)):
+    running.finish(0)
+    _wait(lambda: runner.active_job() is None)
+    with patch("subprocess.Popen", side_effect=lambda *a, **k: FakeProcess(pid=4322)):
         assert runner.start_training(_base_start(workspace))["success"]
 
 
