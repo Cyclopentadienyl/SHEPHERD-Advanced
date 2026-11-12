@@ -33,9 +33,9 @@ catch:
   L7.disease_frozen; ops-wiring round, decision F2): a real paused and
   resumed frozen child of a base passes and says it is fp32 only; a
   graph-side buffer changed (named), downstream parts equal to their start,
-  an optimizer group holding a graph-side parameter, a full arm's record and
-  mixed precision in effect each fail, and so does a CPU run for a CUDA
-  device.
+  a resume whose downstream parts are the paused file's, an optimizer group
+  holding a graph-side parameter, a full arm's record and mixed precision in
+  effect each fail, and so does a CPU run for a CUDA device.
 
 Module: tests/unit/test_probe_research_comparison.py
 """
@@ -596,6 +596,24 @@ def test_downstream_parts_equal_to_their_start_fail(probe, frozen_arms, tmp_path
     with pytest.raises(AssertionError, match="the paused file's downstream parts are still "
                                              "those training started from"):
         _frozen_verified(probe, frozen_arms, paused=paused)
+
+
+def test_a_resume_whose_downstream_parts_are_the_paused_files_fails(probe, frozen_arms,
+                                                                    tmp_path):
+    """Review of A2: each run's downstream parts trained, the resumed half's
+    too: a resume that learned nothing (its downstream parts the paused
+    file's, still unlike their start) fails."""
+    paused = torch.load(frozen_arms["paused"], map_location="cpu", weights_only=True)
+
+    def change(payload):
+        for key, value in paused["state_dict"].items():
+            if key.split(".", 1)[0] in ("patient_encoder", "task_head"):
+                payload["state_dict"][key] = value.clone()
+
+    resumed = _edited(frozen_arms["resumed"], tmp_path / "resumed.pt", change)
+    with pytest.raises(AssertionError, match="the resumed file's downstream parts are the paused "
+                                             "file's: the resumed run trained nothing"):
+        _frozen_verified(probe, frozen_arms, resumed=resumed)
 
 
 def test_an_optimizer_group_holding_a_graph_side_parameter_fails(probe, frozen_arms, tmp_path):

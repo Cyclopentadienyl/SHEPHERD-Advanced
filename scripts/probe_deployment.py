@@ -6063,8 +6063,11 @@ def _frozen_arm_verified(base: Path, paused: Path, resumed: Path, device: str, *
       buffers in each file equal the base's, key by key (the first difference
       named) and by `ModelBundle.parts_sha256`, with at least one BatchNorm
       buffer among them;
-    - (d) **the downstream parts trained**: their digest in each file differs
-      from the `downstream_initial_sha256` its record names;
+    - (d) **the downstream parts trained, in each run**: their digest in each
+      file differs from the `downstream_initial_sha256` its record names, and
+      the resumed file's from the paused file's (its `last.pt` is written at
+      its last epoch's end, before early stopping could restore another, so a
+      resume that learned nothing leaves them equal);
     - (e) **the optimizer holds the downstream parameters**: its groups hold
       as many parameters as the downstream parts have, each once, and every
       saved state has a downstream parameter's shape, paused and resumed;
@@ -6143,6 +6146,9 @@ def _frozen_arm_verified(base: Path, paused: Path, resumed: Path, device: str, *
         downstream[which] = bundle.parts_sha256(DOWNSTREAM_PARTS)
         assert start and downstream[which] != start, (
             f"the {which} file's downstream parts are still those training started from")
+    assert downstream["resumed"] != downstream["paused"], (
+        "the resumed file's downstream parts are the paused file's: the resumed run trained "
+        "nothing")
     # (e) the optimizer holds exactly the downstream parameters.
     for which, (bundle, _record, payload, _sha) in arms.items():
         named = [(name, parameter) for name, parameter in bundle.named_parameters()]
