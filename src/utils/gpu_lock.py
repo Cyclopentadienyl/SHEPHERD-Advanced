@@ -436,6 +436,21 @@ def lock_state(environ: Mapping[str, str] | None = None) -> dict[str, Any]:
     return state
 
 
+def held_by_inference(state: Mapping[str, Any], pid: int | None = None) -> bool:
+    """Whether the lock, as `lock_state` read it, is held by the CUDA
+    inference of process `pid` (this process when None: **this service's
+    inference**): held now, and its holder's description says
+    `SERVING_JOB_TYPE` and that pid. **The one rule** the job runner's refusal
+    (`TrainingManager._slot_refusal_locked`), the dashboard's GPU chip and the
+    deployment probe name that holder by. Words only, as the description is:
+    the flock decides. A description naming a running process (this one, by
+    default) is a live holder's, so nothing else is asked of it."""
+    holder = state.get("holder")
+    wanted = os.getpid() if pid is None else pid
+    return (bool(state.get("held_by")) and isinstance(holder, Mapping)
+            and holder.get("job_type") == SERVING_JOB_TYPE and holder.get("pid") == wanted)
+
+
 __all__ = [
     "GpuLock",
     "GpuLockBusy",
@@ -449,6 +464,7 @@ __all__ = [
     "STOP_INFERENCE",
     "WORKSPACES_ROOT_ENV",
     "describe_holder",
+    "held_by_inference",
     "holder_path",
     "lock_location",
     "lock_state",

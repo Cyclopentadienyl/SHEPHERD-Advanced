@@ -754,6 +754,29 @@ def test_the_program_entries_take_the_lock_and_the_module_names_each_one():
         "_hold_gpu_for"]
 
 
+def test_held_by_inference_is_the_one_rule_naming_the_serving_holder(root):
+    """The ops round's A3b: `held_by_inference`, the one rule the job
+    runner's refusal, the GPU chip and the probe name a serving holder by,
+    reads the lock as `lock_state` does: held now by an inference job of
+    this process (or of the pid asked), by its description; a free lock, a
+    training holder, an undescribed holder or another pid is not."""
+    from src.utils.gpu_lock import held_by_inference
+
+    assert held_by_inference(lock_state()) is False                   # free
+    with take_gpu_lock(gpu_lock.SERVING_JOB_TYPE, gpu_lock.SERVING_COMMAND):
+        state = lock_state()
+        assert held_by_inference(state) is True
+        assert held_by_inference(state, os.getpid()) is True
+        assert held_by_inference(state, os.getpid() + 1) is False
+        holder_path(root / LOCK_FILE_NAME).unlink()                   # held, undescribed
+        assert held_by_inference(lock_state()) is False
+    with take_gpu_lock("training", "train_model.py"):
+        assert held_by_inference(lock_state()) is False
+    # A description left behind by an inference of this pid, with nothing held.
+    stale = {"job_type": gpu_lock.SERVING_JOB_TYPE, "pid": os.getpid()}
+    assert held_by_inference({"held_by": None, "holder": stale}) is False
+
+
 def test_a_cli_is_refused_naming_the_serving_holder(root, monkeypatch, capsys):
     """I8: while this service's CUDA inference holds the lock (its
     description: `SERVING_JOB_TYPE` and `SERVING_COMMAND`, which names how to

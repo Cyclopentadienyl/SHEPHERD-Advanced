@@ -126,7 +126,7 @@ from typing import (
 import yaml
 
 from src.config.serving_device import requested_serving_device
-from src.utils.gpu_lock import SERVING_JOB_TYPE, STOP_INFERENCE, lock_state
+from src.utils.gpu_lock import STOP_INFERENCE, held_by_inference, lock_state
 
 logger = logging.getLogger(__name__)
 
@@ -1023,9 +1023,9 @@ class TrainingManager:
         CLI over SSH) is refused here, naming its holder, and a lock setting
         that cannot be used refuses every start rather than running unlocked.
         **This service's CUDA inference** holding it is named as such, with
-        how to stop it (I8): its description says `SERVING_JOB_TYPE` and this
-        process's pid. Words only: the flock decides, and starting a job
-        never unloads a model.
+        how to stop it (I8), by the one rule that names it
+        (`gpu_lock.held_by_inference`). Words only: the flock decides, and
+        starting a job never unloads a model.
         """
         if self._closed_by is not None:
             return self.STOPPING
@@ -1039,8 +1039,7 @@ class TrainingManager:
         if lock["problem"]:
             return f"The GPU lock cannot be used: {lock['problem']} Nothing was started."
         if lock["held_by"]:
-            holder = lock["holder"] or {}
-            if holder.get("job_type") == SERVING_JOB_TYPE and holder.get("pid") == os.getpid():
+            if held_by_inference(lock):
                 return ("The GPU is in use by this service's inference: a model is loaded on "
                         f"CUDA and holds the GPU lock. To start {wanted.noun.lower()}, "
                         f"{STOP_INFERENCE}. Nothing was started.")

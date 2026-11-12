@@ -37,13 +37,12 @@ from __future__ import annotations
 
 import html
 import logging
-import os
 from datetime import datetime
 from typing import Any, Callable, Mapping, NamedTuple, Optional
 
 import gradio as gr
 
-from src.utils.gpu_lock import SERVING_JOB_TYPE, lock_state
+from src.utils.gpu_lock import SERVING_JOB_TYPE, held_by_inference, lock_state
 from src.utils.operator_access import CONDITIONS, OperatorAccess
 from src.webui.components.help import help_button
 
@@ -88,8 +87,7 @@ GPU_SCOPE = (
 )
 
 GPU_NONE = "GPU jobs: none"
-#: This service's CUDA inference holding the lock (its holder record's job
-#: type is `SERVING_JOB_TYPE` and its pid this process's).
+#: This service's CUDA inference holding the lock (`gpu_lock.held_by_inference`).
 GPU_INFERENCE = "GPU: inference (this service)"
 #: Where an operator frees the GPU from this service's inference: said beside
 #: every research start it disables (`busy_words`) and in the chip's ⓘ.
@@ -195,10 +193,10 @@ def gpu_chip_from(active: Optional[Mapping[str, Any]], lock: Mapping[str, Any],
         return Chip("none", GPU_NONE, GPU_SCOPE)
     holder = lock.get("holder")
     alive = isinstance(holder, Mapping) and lock.get("holder_alive") is not False
-    if alive and holder.get("job_type") == SERVING_JOB_TYPE and holder.get("pid") == os.getpid():
+    if held_by_inference(lock):
         # **This service's inference**, named as such, never by its holder
-        # record's words (which name the host): the job runner names it the
-        # same way when it refuses a job (`_slot_refusal_locked`).
+        # record's words (which name the host), by the one rule the job
+        # runner's refusal names it by (`gpu_lock.held_by_inference`).
         return Chip("busy", GPU_INFERENCE,
                     "Held by this service's inference: a model is loaded on CUDA. To start a "
                     f"training or a test run, {STOP_INFERENCE_HERE} (Model in use), or with "
