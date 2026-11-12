@@ -136,6 +136,31 @@ def test_a_load_is_refused_while_another_process_holds_the_lock(service, tmp_pat
     assert "a training job (lock_holder.py" in reason and str(tmp_path) not in reason
 
 
+def test_a_busy_gpu_refuses_a_task_reload_before_any_candidate_is_read(service, tmp_path,
+                                                                       monkeypatch):
+    """I2: the lock is decided right after the device, before automatic
+    selection scans the run layout: a candidate there is never read."""
+    import src.utils.checkpoint_io as checkpoint_io
+    from src.api.routes.pipeline import PipelineReloadRequest, run_reload
+
+    builds, _, workspace = service
+    run = workspace / "runs" / "gatv2" / "r1" / "checkpoints"
+    run.mkdir(parents=True)
+    (run / "last.pt").write_bytes(b"a candidate")
+    monkeypatch.setattr(checkpoint_io, "read_checkpoint",
+                        lambda *a, **k: pytest.fail("a candidate was read under a busy lock"))
+    holder = start_lock_holder("sleep", {}, tmp_path)
+    try:
+        refused = run_reload(PipelineReloadRequest(data_dir=str(workspace), task="disease",
+                                                   device="cuda"))
+    finally:
+        holder.kill()
+        holder.wait(10)
+
+    assert refused.success is False and "the GPU is in use by a training job" in refused.message
+    assert builds.calls == []
+
+
 def test_a_load_is_refused_while_the_runner_has_an_active_job(service):
     """I3: a job the runner spawned whose process has not taken the lock yet
     is seen through the runner's slot, read after the lock is held; the lock
