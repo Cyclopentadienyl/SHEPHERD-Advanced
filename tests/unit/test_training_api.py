@@ -938,13 +938,15 @@ class TestTheBaseStartThroughTheRunner:
                                                      trained_disease_child, real_client):
         """A finetune child (here continued by extending it) is not a base: the
         runner's preview of the parent refuses the stage asked for, on its one
-        read, before anything starts. A checkpoint with no model spec (record
-        version 1) is refused before that, by its record version."""
+        read, before anything starts, by the one check of a run's stage and
+        task against its parent's (`run_plan.parent_identity_problem`). A
+        checkpoint with no model spec (record version 1) is refused before
+        that, by its record version."""
         client, popen, manager = real_client
         for ws, parent, extra, said in (
                 (trained_disease_child["data_dir"], trained_disease_child["disease"],
-                 {"extend_epochs": 1}, "learning_stage: the parent's 'finetune', requested "
-                                       "'base'"),
+                 {"extend_epochs": 1}, "The parent last.pt is a finetune checkpoint for "
+                                       "disease; a run continues only its own stage and task."),
                 (*specless_parent, {}, WRITTEN_BEFORE_SPEC)):
             resp = client.post("/api/v1/training/start", json={
                 "data_dir": str(ws), "learning_stage": "base", "resume_from": str(parent),

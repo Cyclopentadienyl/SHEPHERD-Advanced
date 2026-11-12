@@ -6,8 +6,9 @@ declarative description of the ~30 user-facing training-start parameters, read b
 surfaces:
 
     - the API request model   (src/api/routes/training.py :: TrainingStartRequest: a base
-                                start, or a continuation of any run, taking every setting a
-                                new base run reads, `run_plan.new_run_settings("base")`)
+                                start, or a continuation of any run, taking every learning
+                                setting, `run_plan.RUN_SETTINGS`, and the task; a new base
+                                only those a base reads, `run_plan.new_run_settings("base")`)
     - the WebUI form           (src/webui/components/training_console.py; since K6 the base
                                 form of the reference recipe's base settings, see below)
     - the CLI + projection hub (scripts/train_model.py :: TrainConfig -> downstream configs)
@@ -64,6 +65,11 @@ Phase status:
       is legal, as on the CLI, and a string is never a number); the rules across settings
       that say when a setting is read are data here, and an explicit setting the run would
       not read is refused, never ignored.
+
+    - Checkpoint A's verification (AF1): the start takes every learning setting and the task,
+      so a continuation of either stage states its own settings over HTTP as on the CLI; the
+      runner judges them against the parent's stage and task (`run_plan.plan_continuation`),
+      and a new base still refuses what a base does not read in the one check's sentence.
 
 **The retired WebUI form (K6).** The ShepherdGNN form and its collector (``_collect_config``)
 are gone: the Training page offers exactly the reference recipe's base settings
@@ -324,9 +330,10 @@ class FieldSpec:
 
 # =============================================================================================
 # The spec. current_api is what src/api/routes/training.py::TrainingStartRequest enforces: the run
-# keys, the continuation keys and every setting a new base run reads
-# (`src.utils.run_plan.new_run_settings("base")`), each setting unset by default (the recipe's
-# value or this build's default, never the request's), its bounds the field's `valid`.
+# keys, the continuation keys, the task and every learning setting (`src.utils.run_plan.
+# RUN_SETTINGS`; a new base is refused those it does not read), each setting unset by default (the
+# recipe's value, this build's default or a parent's, never the request's), its bounds the
+# field's `valid`.
 # scope/projects_to from the scripts/train_model.py projection: into TrainConfig, or on into the
 # TrainerConfig it builds.
 # =============================================================================================
@@ -384,10 +391,13 @@ FIELDS: Tuple[FieldSpec, ...] = (
                               "child starts. Not a WebUI field yet.",
               description="Seed of the graph view's edge split (README F2)."),
     FieldSpec("task", "str", None, "trainer", projects_to="TrainConfig.task",
-              choices=("disease", "gene", "patients_like_me"), current_api=None,
+              choices=("disease", "gene", "patients_like_me"), current_api={},
+              current_api_choices=("disease", "gene", "patients_like_me"),
               known_divergence=True,
               divergence_note="CLI (--task), POST /training/finetune and the WebUI's "
-                              "Fine-tune page (its Tasks).",
+                              "Fine-tune page (its Tasks); POST /training/start with "
+                              "resume_from, compared with the parent's (a new base is refused "
+                              "one).",
               description="A finetune's task."),
     FieldSpec("finetune_from", "str", None, "path", projects_to="TrainConfig.finetune_from",
               current_api=None,
@@ -405,40 +415,46 @@ FIELDS: Tuple[FieldSpec, ...] = (
               description="The checkpoint a branch starts from: its stage, task, weights "
                           "and settings, none or some changed on the stage's list."),
     FieldSpec("task_loss_weight", "float", None, "loss", projects_to="TrainConfig.task_loss_weight",
-              valid={"ge": 0}, current_api=None,
+              valid={"ge": 0}, current_api={"ge": 0},
               known_divergence=True,
-              divergence_note="Unset is the task's reference (README C3).",
+              divergence_note="Unset is the task's reference (README C3). POST /training/start takes it for a continuation, judged against the parent; a new base is refused it.",
               description="Weight of the task loss in a finetune."),
     FieldSpec("lp_loss_weight", "float", None, "loss", projects_to="TrainConfig.lp_loss_weight",
-              valid={"ge": 0}, current_api=None,
+              valid={"ge": 0}, current_api={"ge": 0},
               known_divergence=True,
-              divergence_note="Unset is the task's reference (README C3).",
+              divergence_note="Unset is the task's reference (README C3). POST /training/start takes it for a continuation, judged against the parent; a new base is refused it.",
               description="Weight of the LP loss in a finetune."),
     FieldSpec("candidate_sample_size", "int", None, "dataloader",
               projects_to="TrainConfig.candidate_sample_size", valid={"ge": 1},
-              current_api=None,
-              known_divergence=True, divergence_note="Unset is the task's reference (U9).",
+              current_api={"ge": 1},
+              known_divergence=True,
+              divergence_note="Unset is the task's reference (U9). POST /training/start takes it for a continuation, judged against the parent; a new base is refused it.",
               description="Random candidate diseases per finetune batch, plus the truths."),
     FieldSpec("sparse_sample_size", "int", None, "dataloader",
               projects_to="TrainConfig.sparse_sample_size", valid={"ge": 0},
-              current_api=None,
-              known_divergence=True, divergence_note="Unset is the task's reference (U9).",
+              current_api={"ge": 0},
+              known_divergence=True,
+              divergence_note="Unset is the task's reference (U9). POST /training/start takes it for a continuation, judged against the parent; a new base is refused it.",
               description="Random gene, phenotype and disease seeds per finetune batch."),
     FieldSpec("candidate_upsample_size", "int", None, "dataloader",
               projects_to="TrainConfig.candidate_upsample_size", valid={"ge": 0},
-              current_api=None,
-              known_divergence=True, divergence_note="Unset is the task's reference (U14).",
+              current_api={"ge": 0},
+              known_divergence=True,
+              divergence_note="Unset is the task's reference (U14). POST /training/start takes it for a continuation, judged against the parent; a new base is refused it.",
               description="Rarely seen genes added to each gene-task patient's list in training."),
     # The freeze setting (research comparison Stage 9, owner's O4a): which parts
     # of a finetune train. Its parts and the stage rule are `src.config.recipe`'s
     # (`FROZEN_PARTS`, `frozen_parts_problem`).
     FieldSpec("frozen_parts", "str", "none", "trainer", projects_to="TrainConfig.frozen_parts",
-              choices=("none", "graph_side"), current_api=None,
+              choices=("none", "graph_side"), current_api={},
+              current_api_choices=("none", "graph_side"),
               known_divergence=True,
               divergence_note="A finetune setting (the recipe's reference 'none'): the CLI "
                               "(--frozen-parts), POST /training/finetune's settings and the "
                               "WebUI's Fine-tune page (Graph backbone: Trained or Frozen); a "
-                              "base with any freeze is refused. Not a base-start field.",
+                              "base with any freeze is refused. POST /training/start takes it "
+                              "for a continuation, which keeps its parent's freeze; a new base "
+                              "is refused it.",
               description="Parts of a finetune that do not train: none, or graph_side (the "
                           "input module, the encoder and the LP head)."),
 

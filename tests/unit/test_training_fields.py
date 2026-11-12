@@ -178,17 +178,26 @@ def _api_model():
 #: The start's required field: the workspace (the stage is required for a new
 #: run, by the request's own check, and optional for a continuation).
 API_REQUIRED = {"data_dir"}
-#: The start's run and continuation keys, beside the settings a new base reads.
+#: The start's run and continuation keys, beside its settings and the task.
 API_RUN_KEYS = {"data_dir", "learning_stage", "run_name", "device", "compile", "resume_from",
                 "extend_epochs", "extend_lr"}
 
 
 def _base_settings():
     """What a new base run reads (`run_plan.new_run_settings`, decision S1):
-    the settings the API's start offers, each unset by default."""
+    the settings a new base start takes."""
     from src.utils.run_plan import new_run_settings
 
     return new_run_settings("base")
+
+
+def _run_settings():
+    """Every learning setting a run states (`run_plan.RUN_SETTINGS`): the
+    settings the API's start offers, each unset by default (checkpoint A's
+    verification: a continuation states its own settings over HTTP)."""
+    from src.utils.run_plan import RUN_SETTINGS
+
+    return RUN_SETTINGS
 
 
 def _base(**fields):
@@ -196,14 +205,15 @@ def _base(**fields):
     return _api_model()(**{"data_dir": "data/workspaces/x", "learning_stage": "base", **fields})
 
 
-def test_api_fields_are_the_base_start_s():
+def test_api_fields_are_every_setting_and_the_task():
     """Decision S6: POST /training/start is a thin projection: the run and
-    continuation keys and exactly the settings a new base run reads
-    (`run_plan.new_run_settings("base")`, the CLI's rule), no ShepherdGNN
-    field and no finetune setting; the workspace is required, the stage by
-    the request's own check of a new run."""
+    continuation keys, the task and exactly the learning settings the field
+    spec defines (`run_plan.RUN_SETTINGS`, the CLI's), no ShepherdGNN field;
+    a new base takes those a base reads (`run_plan.new_run_settings("base")`)
+    by the request's own check; the workspace is required, the stage by the
+    request's own check of a new run."""
     mf = _api_model().model_fields
-    assert set(mf) == API_RUN_KEYS | set(_base_settings())
+    assert set(mf) == API_RUN_KEYS | {"task"} | set(_run_settings())
     assert {name for name, field in mf.items() if field.is_required()} == API_REQUIRED
     VE = _validation_error()
     with pytest.raises(VE):
@@ -216,7 +226,7 @@ def test_api_defaults_match_spec():
     recipe's value or this build's default and records which, never a default
     of the request. The other fields' defaults are the spec's (the stage's
     none); the required ones have none."""
-    BASE = _base_settings()
+    BASE = _run_settings()
 
     mf = _api_model().model_fields
     for f in tf.FIELDS:
@@ -238,7 +248,7 @@ def test_api_constraints_match_spec():
     ge/gt/le/lt, and for a setting it is the field's policy (`valid`, which
     the request derives its bounds from), which the job runner's one check
     applies again (`value_problem`)."""
-    BASE = _base_settings()
+    BASE = _run_settings()
 
     mf = _api_model().model_fields
     for f in tf.FIELDS:
@@ -278,11 +288,14 @@ def test_api_enforces_declared_choices():
     """Every field declaring current_api_choices must reject a value outside the enum."""
     VE = _validation_error()
     enforced = [f for f in tf.FIELDS if f.current_api_choices]
-    assert {f.name for f in enforced} == {"learning_stage", "scheduler_type", "amp_dtype"}
+    assert {f.name for f in enforced} == {"learning_stage", "scheduler_type", "amp_dtype",
+                                          "task", "frozen_parts"}
     for f in enforced:
-        # Either stage continues a parent (compared with its stage there);
-        # a new run is a base, by the request's own check.
-        continued = {"resume_from": "last.pt"} if f.name == "learning_stage" else {}
+        # Either stage, a task and the freeze continue a parent (compared
+        # with its record there); a new run is a base, by the request's own
+        # check.
+        continued = ({"resume_from": "last.pt"}
+                     if f.name in ("learning_stage", "task", "frozen_parts") else {})
         for good in f.current_api_choices:
             _base(**{f.name: good, **continued})          # every declared choice is accepted
         with pytest.raises(VE):

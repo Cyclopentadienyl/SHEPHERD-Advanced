@@ -10,8 +10,8 @@ Purpose:
     Provide training management API endpoints:
     - POST /training/start: Start a base (KG link prediction) training run,
       or continue a run of either stage from its checkpoint (a strict start:
-      every setting a new base run reads, a thin projection of the training
-      process's settings)
+      every learning setting the field spec defines and the task, a thin
+      projection of the training process's settings)
     - POST /training/finetune: Start one to three finetune children of a base,
       in order (README §1; contract §9.3 hazard 6)
     - POST /training/branch: Branch a checkpoint: a new run of its stage and
@@ -49,7 +49,7 @@ from pydantic import (
 
 from src.api.operator_access import OPERATOR_ONLY
 from src.api.services.training_manager import FinetuneInputs, training_manager
-from src.utils.run_plan import new_run_settings
+from src.utils.run_plan import RUN_SETTINGS, new_run_settings
 
 logger = logging.getLogger(__name__)
 
@@ -95,14 +95,20 @@ def _refused_start(result: Dict[str, Any], what: str) -> HTTPException:
 #: "not given": the parent and its extension.
 _NULL_IS_NOT_GIVEN = frozenset({"resume_from", "extend_epochs", "extend_lr"})
 
-#: The settings a new base run reads (`run_plan.new_run_settings("base")`, the
-#: CLI's rule): the start request's settings, beside its run and continuation
-#: fields.
-_BASE_SETTINGS = tuple(sorted(new_run_settings("base")))
+#: Every learning setting a run states (`run_plan.RUN_SETTINGS`, the field
+#: spec's): the start request's settings, beside its run and continuation
+#: fields and the task. A new base takes those a base reads
+#: (`run_plan.new_run_settings("base")`, the CLI's rule); a continuation
+#: takes what its parent's stage and task read, judged against the parent by
+#: the runner (`run_plan.plan_continuation`).
+_SETTINGS = tuple(sorted(RUN_SETTINGS))
+#: What a new base does not read: refused for a new run in the one check of
+#: a new run's settings (`run_plan.new_run_problem`), with the task.
+_NOT_READ_BY_A_BASE = frozenset(RUN_SETTINGS - new_run_settings("base")) | {"task"}
 #: The start request's fields whose values the field spec checks first
-#: (`value_problem`): every setting, and the operational ones that are not
-#: text (text is never coerced; `device` has its grammar below).
-_CHECKED_BY_THE_SPEC = (*_BASE_SETTINGS, "compile", "extend_epochs", "extend_lr")
+#: (`value_problem`): every setting and the task, and the operational ones
+#: that are not text (text is never coerced; `device` has its grammar below).
+_CHECKED_BY_THE_SPEC = (*_SETTINGS, "task", "compile", "extend_epochs", "extend_lr")
 
 
 # =============================================================================
@@ -128,27 +134,31 @@ class TrainingStartRequest(BaseModel):
     (`resume_from`: resumed, or extended with `extend_epochs`), through the
     job runner's one start (`TrainingManager.start_training`), as the WebUI's
     base form and Continue start one. **A thin projection** of what the
-    training process takes: every setting a new base run reads
-    (`run_plan.new_run_settings("base")`, the model spec and split seed among
-    them), each unset by default, its bounds the field spec's; and the run's
-    operational fields.
+    training process takes: every learning setting the field spec defines
+    (`run_plan.RUN_SETTINGS`, the model spec, split seed, a finetune's own
+    settings and the freeze among them) and the task, each unset by default,
+    its bounds the field spec's; and the run's operational fields.
 
     **Strict** (BACKLOG 54), as the Fine-tune start is: a field this request
     does not define, a ShepherdGNN setting among them, is refused (422), never
-    dropped (a setting a new base does not read, in the sentence of the one
-    check of a new run's settings, `run_plan.new_run_problem`); and each value
-    is checked first by the field spec's one check (`value_problem`),
-    strictly (a string is never a number, 1 is not true) and in its words, as
-    the job runner and the training process check it. `learning_stage` is
-    required and ``"base"`` for a new run (a finetune is POST
-    /training/finetune's start); with `resume_from` it may be left out, and
-    when given is compared with the parent's, so a finetune child is resumed
-    or extended here too. **Only the fields sent reach the service** (the
-    route dumps the fields set, an explicit null included, so it is judged:
-    refused where the field takes no null, or as another value than the
-    parent's; a null parent or extension is not given), and the runner checks
-    them again (`_new_bundle_run`, the continuation preview) before anything
-    starts."""
+    dropped; and each value is checked first by the field spec's one check
+    (`value_problem`), strictly (a string is never a number, 1 is not true)
+    and in its words, as the job runner and the training process check it.
+    **A new run is a base**: `learning_stage` is required and ``"base"`` (a
+    finetune is POST /training/finetune's start), and a setting a base does
+    not read, or a task, is refused in the sentence of the one check of a new
+    run's settings (`run_plan.new_run_problem`). **A continuation**
+    (`resume_from`) passes every field stated to the runner, which judges it
+    against the parent as the training process does
+    (`run_plan.plan_continuation`: a stage or task other than the parent's,
+    a setting the parent's stage and task do not read, a value, then the
+    parent's settings), so a finetune child is resumed or extended here too,
+    its own settings stated at its values kept. `learning_stage` may be left
+    out then. **Only the fields sent reach the service** (the route dumps
+    the fields set, an explicit null included, so it is judged: refused
+    where the field takes no null, or as another value than the parent's; a
+    null parent or extension is not given), and the runner checks them again
+    (`_new_bundle_run`, the continuation preview) before anything starts."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -173,9 +183,11 @@ class TrainingStartRequest(BaseModel):
                                         "fixed rate")
     extend_lr: Optional[float] = _setting("extend_lr")
 
-    # The settings a new base run reads (`run_plan.new_run_settings("base")`).
-    # Unset is the recipe's value or this build's default; the bounds are the
-    # field spec's (training_fields).
+    # Every learning setting (`run_plan.RUN_SETTINGS`) and the task. Unset is
+    # the recipe's value or this build's default for a new run and the
+    # parent's for a continuation; the bounds are the field spec's
+    # (training_fields).
+    task: Optional[Literal["disease", "gene", "patients_like_me"]] = _setting("task")
     num_epochs: Optional[int] = _setting("num_epochs")
     learning_rate: Optional[float] = _setting("learning_rate")
     weight_decay: Optional[float] = _setting("weight_decay")
@@ -195,6 +207,12 @@ class TrainingStartRequest(BaseModel):
     save_top_k: Optional[int] = _setting("save_top_k")
     split_seed: Optional[int] = _setting("split_seed")
     model_spec: Optional[Dict[str, Any]] = _setting("model_spec")
+    task_loss_weight: Optional[float] = _setting("task_loss_weight")
+    lp_loss_weight: Optional[float] = _setting("lp_loss_weight")
+    candidate_sample_size: Optional[int] = _setting("candidate_sample_size")
+    sparse_sample_size: Optional[int] = _setting("sparse_sample_size")
+    candidate_upsample_size: Optional[int] = _setting("candidate_upsample_size")
+    frozen_parts: Optional[Literal["none", "graph_side"]] = _setting("frozen_parts")
 
     @model_validator(mode="before")
     @classmethod
@@ -210,17 +228,19 @@ class TrainingStartRequest(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _refuse_what_a_base_does_not_read(cls, data: Any) -> Any:
-        # A setting a new base does not read (a finetune's, or the freeze) is
-        # refused by the one check of a new run's settings, in the sentence
-        # the job runner and the training process refuse it in
-        # (`run_plan.new_run_problem`); any other field this request does not
-        # define is refused by extra="forbid". A continuation's settings are
-        # its parent's: the request does not take a finetune's.
-        from src.utils.run_plan import RUN_SETTINGS, new_run_problem
+        # A new run is a base: a setting a base does not read (a finetune's,
+        # or the freeze) and a task are refused by the one check of a new
+        # run's settings, in the sentence the job runner refuses them in
+        # (`run_plan.new_run_problem`), before any value is checked. A
+        # continuation's stated settings and task go to the runner, which
+        # judges them against the parent's stage and task as the training
+        # process does (`run_plan.plan_continuation`); any field this request
+        # does not define is refused by extra="forbid".
+        from src.utils.run_plan import new_run_problem
 
         if isinstance(data, dict) and not data.get("resume_from"):
             stated = {name: value for name, value in data.items()
-                      if name in RUN_SETTINGS and name not in cls.model_fields}
+                      if name in _NOT_READ_BY_A_BASE}
             problem = new_run_problem("base", (None,), stated) if stated else None
             if problem:
                 raise ValueError(problem)
@@ -238,14 +258,14 @@ class TrainingStartRequest(BaseModel):
         # before any coercion: its kind strictly, its bounds, choices and
         # list items (a hop list of at least one hop, each 1 or more or -1,
         # every neighbour, as the CLI and the WebUI take it), in the words the
-        # job runner and the training process refuse it in. A null setting is
-        # passed on, for the runner to judge by the run's reference
-        # (`run_plan.new_run_problem`) or a parent's value; a null parent or
-        # extension is not given.
+        # job runner and the training process refuse it in. A null setting
+        # or task is passed on, for the runner to judge by the run's
+        # reference (`run_plan.new_run_problem`) or by the parent's; a null
+        # parent or extension is not given.
         from src.config.training_fields import value_problem
 
         name = info.field_name
-        problem = value_problem(name, value, allow_none=(name in _BASE_SETTINGS
+        problem = value_problem(name, value, allow_none=(name in _SETTINGS or name == "task"
                                                          or name in _NULL_IS_NOT_GIVEN))
         if problem:
             raise ValueError(problem)
@@ -429,7 +449,7 @@ class CheckpointInfo(BaseModel):
 # Endpoints
 # =============================================================================
 @router.post("/training/start", response_model=Dict[str, Any], dependencies=OPERATOR_ONLY)
-async def start_training(
+def start_training(
     request: TrainingStartRequest,
     expected_dataset_fingerprint: Annotated[Optional[str], Query(
         pattern=r"^[0-9a-f]{64}$",
@@ -449,11 +469,16 @@ async def start_training(
     new base's ``learning_stage="base"``, the run keys and its settings. The
     reference recipe, then this build's default, fills every setting not set;
     a run continued from a parent inherits every learning setting the caller
-    did not set, and refuses one it set to another value, a stated stage
-    other than the parent's among them (409). The runner refuses, before
-    anything is started, written or claimed (the GPU slot, a run directory),
-    a setting a base does not read, a value its field spec does not take, or
-    a setting the run would not read by the rules across settings (422).
+    did not set, and refuses a stage or task other than the parent's or a
+    setting set to another value than the parent's (409). The runner
+    refuses, before anything is started, written or claimed (the GPU slot, a
+    run directory), a setting the run does not read (a base's, or the
+    parent's stage and task's for a continuation), a value its field spec
+    does not take, or a setting the run would not read by the rules across
+    settings (422), and a device this host cannot give (409). **A plain
+    `def`**: a continuation's start reads the whole parent checkpoint, so
+    FastAPI runs it in its threadpool, never on the event loop the API and
+    the dashboard share.
 
     ``expected_dataset_fingerprint`` (an optional query parameter, M5-2: a
     precondition on the request, not a training setting, so it is not in the

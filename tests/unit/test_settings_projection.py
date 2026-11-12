@@ -431,14 +431,17 @@ def test_a_resume_restating_a_setting_its_run_never_read_is_accepted(client, pat
 
 def test_a_finetune_child_is_extended_over_http_without_its_stage(client, trained_disease_child):
     """Decision S6: with resume_from the stage may be left out (the parent's
-    record gives it), and a stage given is compared with the parent's."""
+    record gives it), and a stage given is compared with the parent's, by the
+    one check of a run's stage and task against its parent's
+    (`run_plan.parent_identity_problem`, checkpoint A's verification)."""
     http, popen, manager = client
     body = {"data_dir": str(trained_disease_child["data_dir"]),
             "resume_from": str(trained_disease_child["disease"]), "device": "cpu",
             "extend_epochs": 1}
     resp = http.post("/api/v1/training/start", json={**body, "learning_stage": "base"})
-    assert resp.status_code == 409 and ("learning_stage: the parent's 'finetune', requested "
-                                        "'base'") in resp.text
+    assert resp.status_code == 409 and resp.json()["detail"] == (
+        "The parent last.pt is a finetune checkpoint for disease; a run continues only its "
+        "own stage and task.")
     stated = manager.preview_continuation(body["resume_from"], device="cpu", extend_epochs=1,
                                           requested={"learning_stage": "finetune"})
     assert stated["ok"] is True and stated["mode"] == "extend", stated

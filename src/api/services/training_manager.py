@@ -1310,6 +1310,8 @@ class TrainingManager:
             if not preview["ok"]:
                 return {"success": False, "error": preview["reason"],
                         "parent_changed": preview.get("changed", False),
+                        **({"invalid_settings": True} if preview.get("invalid_settings")
+                           else {}),
                         "status": self.get_job_status_word("training")}
             parent_sha256, parent_flag = preview["sha256"], "--expect-resume-sha256"
             architecture = preview.get("architecture") or architecture
@@ -2587,8 +2589,11 @@ class TrainingManager:
         the list" or "check it again").
 
         `requested` is a training request's own fields, set explicitly: a
-        learning setting among them that differs from the parent's is refused
-        here, as the training process would refuse it.
+        stage or task other than the parent's, a setting the parent's stage
+        and task do not read or a value its field spec does not take (said
+        with ``invalid_settings: True``), and a learning setting that differs
+        from the parent's are refused here, as the training process would
+        refuse them (`plan_continuation`).
 
         `extend_if_finished` is the console's: its Extra epochs field belongs to
         a finished parent, so for any other parent the value is not sent
@@ -2603,7 +2608,7 @@ class TrainingManager:
         `start_training` binds it to this preview's read.
         """
         from src.models.bundle.record import MODEL_RECORD_VERSION
-        from src.utils.run_plan import RunPlanRefused, plan_continuation
+        from src.utils.run_plan import RunPlanRefused, SettingsRefused, plan_continuation
 
         read, _record, facts = self._read_parent(parent_path, expected_sha256, "The parent")
         if read is None:
@@ -2623,7 +2628,8 @@ class TrainingManager:
                                      parent_sha256=read.identity.sha256,
                                      record_version=MODEL_RECORD_VERSION)
         except RunPlanRefused as exc:
-            return {**facts, "ok": False, "reason": str(exc)}
+            return {**facts, "ok": False, "reason": str(exc),
+                    **({"invalid_settings": True} if isinstance(exc, SettingsRefused) else {})}
         return {**facts, "ok": True, "mode": plan.mode, "action": plan.action,
                 "inherited": plan.inherited, "decoded": plan.decoded,
                 "start_epoch": plan.start_epoch, "end_epoch": plan.end_epoch,
@@ -2649,23 +2655,21 @@ class TrainingManager:
         the functions the training process judges it by, in the order the
         process judges a branch this runner starts (its stage and task the
         parent's), so a request with one refusal is refused in the process's
-        words: two parents named (`parents_problem`); a setting the parent's
-        stage and task do not read (`unread_problem`, which the process asks
-        before it reads the parent); a stated stage or task other than the
-        parent's, then a parent without weights (`branch_parent_problem`; a
-        request that states neither branches the parent's); **the plan**
-        (`run_plan.plan_branch`: the record and rules, a weights-only parent,
-        an extension, a setting off the list, each new value by its field
-        spec, the rules across settings, mixed precision); and the hop list
-        against the parent's encoder (`hops_problem`). The process is told
-        its stage and judges the settings by it before it reads the parent;
-        the preview learns the stage from the parent's record. So a request
-        with two refusals may hear another of them here than the process
-        would say: a parent that cannot be read, or a stated stage or task
-        other than the parent's (whose settings are not judged against a
-        stage the branch cannot have), before a setting not read. A refusal
-        of the request's settings themselves (a setting not read or off the
-        list, a value, a rule, the hop list) says ``invalid_settings: True``.
+        words: two parents named (`parents_problem`); a stated stage or task
+        other than the parent's, then a parent without weights
+        (`branch_parent_problem`, whose stage and task check is the plans'
+        one, `run_plan.parent_identity_problem`; a request that states
+        neither branches the parent's); **the plan** (`run_plan.plan_branch`:
+        the record and rules, a setting the parent's stage and task do not
+        read and each stated value by its field spec, `stated_problem`, a
+        weights-only parent, an extension, a setting off the list, the rules
+        across settings, mixed precision); and the hop list against the
+        parent's encoder (`hops_problem`). The process makes them in that
+        order once it has read its parent, and checks the parent's data
+        against the workspace's before its plan, which a preview does not
+        read. A refusal of the request's settings themselves (a setting not
+        read or off the list, a value, a rule, the hop list) says
+        ``invalid_settings: True``.
 
         Returns the parent's facts and, when it can be branched, ``mode``
         "branch", the plan's ``action``, the ``inherited`` and ``decoded``
@@ -2681,10 +2685,7 @@ class TrainingManager:
         from src.config.recipe import branch_settings
         from src.models.bundle.record import MODEL_RECORD_VERSION, branch_parent_problem
         from src.models.bundle.spec import hops_problem
-        from src.utils.run_plan import (
-            RUN_SETTINGS, RunPlanRefused, SettingsRefused, parents_problem, plan_branch,
-            unread_problem,
-        )
+        from src.utils.run_plan import RunPlanRefused, SettingsRefused, parents_problem, plan_branch
 
         explicit = dict(requested or {})
         problem = parents_problem({**explicit, "branch_from": parent_path})
@@ -2698,15 +2699,6 @@ class TrainingManager:
         record = read.checkpoint
         stage, task = model_record.learning_stage, model_record.task
         told = (explicit.get("learning_stage", stage), explicit.get("task", task))
-        if told == (stage, task):
-            # The settings first, against the run's stage and task, as the
-            # process judges them before it reads its parent. A request that
-            # states another stage or task is refused for that just below.
-            problem = unread_problem(stage, (task,), {name: value for name, value
-                                                      in explicit.items()
-                                                      if name in RUN_SETTINGS})
-            if problem:
-                return {**facts, "ok": False, "invalid_settings": True, "reason": problem}
         problem = branch_parent_problem(model_record, record, *told, path.name)
         if problem:
             return {**facts, "ok": False, "reason": problem}

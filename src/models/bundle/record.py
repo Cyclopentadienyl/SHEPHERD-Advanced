@@ -468,16 +468,20 @@ def branch_parent_problem(record: ModelRecord, payload: Mapping[str, Any], learn
                           task: Any, name: str) -> Optional[str]:
     """Why a read checkpoint, the file `name`, cannot be the parent of a
     branch of `learning_stage` and `task` (contract §9.2), as a sentence, or
-    None: a branch keeps its parent's stage and task, then starts from its
-    weights, the stage first as a finetune's parent's is
+    None: a branch keeps its parent's stage and task, by the one check of a
+    run's stage and task against its parent's
+    (`run_plan.parent_identity_problem`, which the plans ask too), then
+    starts from its weights, the stage first as a finetune's parent's is
     (`finetune_parent_problem`). The training process
     (`train_model.read_branch_parent`) and the job runner's preview
     (`TrainingManager.preview_branch`) ask it of one read alike, so the two
     refuse a parent in one sentence."""
-    if record.learning_stage != learning_stage or record.task != task:
-        return (f"The branch parent {name} is a {record.learning_stage} checkpoint"
-                + (f" for {record.task}" if record.task else "")
-                + "; a branch keeps its parent's stage and task.")
+    from src.utils.run_plan import parent_identity_problem
+
+    problem = parent_identity_problem(record.learning_stage, record.task, learning_stage, task,
+                                      f"The branch parent {name}", branch=True)
+    if problem:
+        return problem
     problem = _weights_problem(payload)
     return f"The branch parent {name} {problem}" if problem else None
 

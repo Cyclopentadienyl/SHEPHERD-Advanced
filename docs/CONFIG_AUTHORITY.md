@@ -52,6 +52,14 @@ Its settings left `TrainConfig` in K8-7, and `ShepherdGNNConfig` with
     sentence. The WebUI's base form and Fine-tune page still offer part of the settings and
     check values with `value_problem`; the rules across settings are judged at the start (the
     pages follow in B1 and B2).
+  - *Note (2026-11-12, checkpoint A's verification):* `TrainingStartRequest` now carries every
+    learning setting the field spec defines (`run_plan.RUN_SETTINGS`) and the task, each
+    optional with the field spec's bounds: a new base still refuses what a base does not read
+    in `new_run_problem`'s sentence, and a continuation's stated fields go to the runner, which
+    judges them as the training process does (`run_plan.plan_continuation`: the parent's stage
+    and task by `parent_identity_problem`, then the settings stated by `stated_problem`, then
+    the parent's settings). The runner resolves the training device by the process's resolver
+    (`src/utils/training_device.py`) before any start.
 
 ## Rationale
 

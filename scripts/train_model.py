@@ -1231,8 +1231,8 @@ def train(config: TrainConfig, explicit: Collection[str], *,
     )
     from src.utils.run_plan import (
         PARENT_FIELDS, RUN_SETTINGS, RunPlanRefused, decoded_sentence,
-        finetune_split_seed_problem, new_run_problem, parents_problem, plan_branch,
-        unread_problem,
+        finetune_split_seed_problem, new_run_problem, parent_identity_problem,
+        parents_problem, plan_branch,
     )
 
     if explicit is None:
@@ -1243,42 +1243,44 @@ def train(config: TrainConfig, explicit: Collection[str], *,
         raise ValueError(f"A run names its learning stage (learning_stage, --stage): one of "
                          f"{list(LEARNING_STAGES_HERE)}, not {stage!r}.")
     explicit_set = set(explicit)
-    if stage == "base" and (config.task is not None or config.finetune_from):
+    # A run from a parent to continue or branch is of its parent's stage and
+    # task, judged against the parent's record once it is read, by the one
+    # check the plans and the job runner's previews make too
+    # (`run_plan.parent_identity_problem`), so a stage or task the request
+    # states is refused there in one sentence; a new run's are judged here.
+    continued = bool(config.resume_from or config.branch_from)
+    if stage == "base" and (config.finetune_from or (config.task is not None and not continued)):
         raise ValueError("a base run has no task and no finetune parent")
     parents = [name for name in PARENT_FIELDS if getattr(config, name)]
     problem = parents_problem({name: getattr(config, name) for name in PARENT_FIELDS})
     if problem:
         raise ValueError(problem)
     if stage == "finetune":
-        if config.task not in FINETUNE_TASKS_HERE:
+        if not continued and config.task not in FINETUNE_TASKS_HERE:
             raise ValueError(f"a finetune names its task, one of {list(FINETUNE_TASKS_HERE)} "
                              f"in this build (got {config.task!r})")
         if not parents:
             raise ValueError("a finetune run starts from a base (finetune_from), resumes a "
                              "finetune run (resume_from) or branches one (branch_from)")
-    # The settings the operator stated, with their values: the explicit
-    # settings a run may state (`run_plan.RUN_SETTINGS`; its stage and task
-    # name it, and the operational fields are not settings).
-    stated = {name: getattr(config, name) for name in sorted(explicit_set & RUN_SETTINGS)}
-    if not (config.resume_from or config.branch_from):
+    if not continued:
         # A new run (a base, a finetune), by the one check of the settings a
         # new run is started with (`run_plan.new_run_problem`), which the job
         # runner's starts make too, in the same sentences: the freeze, the
         # settings its stage and task do not read, each value by its field
         # spec, and the rules across settings (decision S3) for what the
-        # operator set. The freeze it trains with is judged first, set or not,
-        # so its value is final here (a finetune's recipe value is "none").
+        # operator set (the explicit settings a run may state,
+        # `run_plan.RUN_SETTINGS`; its stage and task name it, and the
+        # operational fields are not settings). The freeze it trains with is
+        # judged first, set or not, so its value is final here (a finetune's
+        # recipe value is "none"). A continued or branched run's stated
+        # settings are judged by its plan, of its parent's stage and task
+        # (`run_plan.stated_problem`, then the parent's settings), as the job
+        # runner's previews judge them.
+        stated = {name: getattr(config, name) for name in sorted(explicit_set & RUN_SETTINGS)}
         problem = (frozen_parts_problem(stage, config.frozen_parts)
                    or new_run_problem(stage, (config.task,), stated))
-    else:
-        # A continued or branched run trains with its parent's settings, which
-        # its plan checks (`run_plan`: a different one stated is refused, a
-        # branch's changes judged by the rules across settings, the freeze by
-        # the settings decode), as the job runner's preview does; it reads the
-        # settings of its stage and task alone (`unread_problem`).
-        problem = unread_problem(stage, (config.task,), stated)
-    if problem:
-        raise ValueError(problem)
+        if problem:
+            raise ValueError(problem)
     if expected_parent_sha256 is not None and not (config.finetune_from or config.branch_from):
         raise ValueError("--expect-parent-sha256 names a finetune or branch parent; give "
                          "finetune_from or branch_from.")
@@ -1314,11 +1316,13 @@ def train(config: TrainConfig, explicit: Collection[str], *,
             parent_record = read_model_record(parent.checkpoint)
         except ModelRecordError as exc:
             raise RunPlanRefused(f"The parent {Path(parent.identity.path).name}: {exc}") from None
-        if parent_record.learning_stage != stage or parent_record.task != config.task:
-            raise RunPlanRefused(
-                f"The parent is a {parent_record.learning_stage} checkpoint"
-                + (f" for {parent_record.task}" if parent_record.task else "")
-                + "; a run continues only its own stage and task.")
+        # Its stage and task before its task's data is read (the plan asks
+        # the same check again of what the request states).
+        problem = parent_identity_problem(parent_record.learning_stage, parent_record.task,
+                                          stage, config.task,
+                                          f"The parent {Path(parent.identity.path).name}")
+        if problem:
+            raise RunPlanRefused(problem)
     elif (config.extend_epochs or config.extend_lr is not None) and not config.branch_from:
         # A branch with them is refused by its plan, in a branch's words.
         raise ValueError("extend_epochs and extend_lr continue a parent; give resume_from.")

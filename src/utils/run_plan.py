@@ -104,12 +104,15 @@ class RunPlanRefused(ValueError):
 
 
 class SettingsRefused(RunPlanRefused):
-    """A branch refused for the settings its request changes, whatever the
-    parent's state (`plan_branch`): a setting off its list, a value its field
-    spec does not take, or a rule across settings it breaks. The job runner
-    answers it as invalid settings (`TrainingManager.preview_branch`), as it
-    answers a new run's (`new_run_problem`); every other refusal of a plan
-    concerns the parent."""
+    """A continuation or a branch refused for the settings its request
+    states, whatever the parent's state: a setting the parent's stage and
+    task do not read or a value its field spec does not take
+    (`stated_problem`, asked by `plan_continuation` and `plan_branch` alike),
+    and for a branch a setting off its list or a rule across settings it
+    breaks. The job runner answers it as invalid settings
+    (`TrainingManager.preview_continuation`, `preview_branch`), as it answers
+    a new run's (`new_run_problem`); every other refusal of a plan concerns
+    the parent."""
 
 
 #: The fields that name a run's parent, one per operation from a parent.
@@ -210,8 +213,7 @@ def new_run_problem(learning_stage: str, tasks: Collection[Optional[str]],
         frozen = frozen_parts_problem(learning_stage, settings["frozen_parts"])
         if frozen:
             return frozen
-    problem = (unread_problem(learning_stage, tasks, settings)
-               or stated_values_problem(learning_stage, tasks, settings))
+    problem = stated_problem(learning_stage, tasks, settings)
     if problem:
         return problem
     for task in tasks:
@@ -222,6 +224,23 @@ def new_run_problem(learning_stage: str, tasks: Collection[Optional[str]],
     return None
 
 
+def stated_problem(learning_stage: str, tasks: Collection[Optional[str]],
+                   settings: Mapping[str, Any]) -> Optional[str]:
+    """**The one check of the settings a request states**, by name and by
+    value, before anything is compared with a parent: why `settings`, the
+    operator's explicit settings with their values, cannot be taken by the
+    runs of `learning_stage` a start makes, one per one of `tasks`, or None:
+    a setting no run of them reads (`unread_problem`), then a value its field
+    spec does not take (`stated_values_problem`). A new run asks it
+    (`new_run_problem`), and so do a continuation and a branch, of their
+    parent's stage and task (`plan_continuation`, `plan_branch`; checkpoint
+    A's verification, decisions S1-S4), so a request is refused in one
+    sentence whether it starts a run or continues one, in the training
+    process and the job runner alike."""
+    return (unread_problem(learning_stage, tasks, settings)
+            or stated_values_problem(learning_stage, tasks, settings))
+
+
 def stated_values_problem(learning_stage: str, tasks: Collection[Optional[str]],
                           settings: Mapping[str, Any]) -> Optional[str]:
     """Why a value of `settings`, values the operator stated for the runs of
@@ -229,8 +248,8 @@ def stated_values_problem(learning_stage: str, tasks: Collection[Optional[str]],
     field spec takes, or None: **the one check of a stated value**
     (`value_problem`: its kind, strictly, its bounds and choices), None
     taken only where a run's reference value is None or the field's default
-    is. A new run's settings (`new_run_problem`) and a branch's changes
-    (`plan_branch`, ops-wiring round, decision B2) are judged by it alike."""
+    is. Asked through `stated_problem`, of a new run's settings and of what
+    a continuation or a branch states alike."""
     references = [reference_settings(learning_stage, task)[0] for task in tasks]
     problems = [problem for name, value in sorted(settings.items())
                 for problem in [value_problem(name, value, allow_none=any(
@@ -270,6 +289,49 @@ def finetune_split_seed_problem(split_seed: Any, base_split: Any) -> Optional[st
         return None
     return (f"split_seed {split_seed!r} differs from the base's {recorded!r}; a finetune trains "
             "on its base's split")
+
+
+def parent_identity_problem(parent_stage: Any, parent_task: Any, learning_stage: Any,
+                            task: Any, where: str, *, branch: bool = False) -> Optional[str]:
+    """Why a run of `learning_stage` and `task` cannot continue (or, with
+    `branch`, branch) a parent of `parent_stage` and `parent_task`, as a
+    sentence naming it by `where` ("The parent last.pt"), or None: **a run
+    from a parent is of its parent's stage and task**, which name the run and
+    are no setting of it, so another one stated is refused for that, never as
+    a setting to change (a branch changes settings, never a stage). The
+    training process asks it of its parent's record (`train_model.train`,
+    `read_branch_parent` through `record.branch_parent_problem`) and the
+    plans ask it of the stage and task a request states
+    (`plan_continuation`, `plan_branch`), so the CLI, every spawned job and
+    the service refuse one request in one sentence (checkpoint A's
+    verification)."""
+    if learning_stage == parent_stage and task == parent_task:
+        return None
+    kept = ("a branch keeps its parent's stage and task" if branch
+            else "a run continues only its own stage and task")
+    return (f"{where} is a {parent_stage} checkpoint"
+            + (f" for {parent_task}" if parent_task else "") + f"; {kept}.")
+
+
+def _check_the_request(parent: Mapping[str, Any], request: Mapping[str, Any],
+                       explicit: Collection[str], where: str, *, branch: bool) -> None:
+    """What a continuation's or a branch's request states, judged before
+    anything is compared with its parent's settings: the stage and task it
+    states, its parent's (`parent_identity_problem`; one it does not state
+    is its parent's), then the settings it states, by name and by value, of
+    that stage and task (`stated_problem`, `SettingsRefused`)."""
+    stage, task = parent.get("learning_stage"), parent.get("task")
+    problem = parent_identity_problem(
+        stage, task,
+        request.get("learning_stage") if "learning_stage" in explicit else stage,
+        request.get("task") if "task" in explicit else task, where, branch=branch)
+    if problem:
+        raise RunPlanRefused(problem)
+    stated = {name: request[name] for name in sorted(explicit)
+              if name in RUN_SETTINGS and name in request}
+    problem = stated_problem(stage, (task,), stated)
+    if problem:
+        raise SettingsRefused(problem)
 
 
 @dataclass(frozen=True)
@@ -476,11 +538,18 @@ def plan_continuation(
             which every caller passes: `src.utils` does not import
             `src.models`). A parent of another version is refused.
 
+    **What the request states is judged first** (`_check_the_request`):
+    a stage or task other than the parent's, then a setting the parent's
+    stage and task do not read or a value its field spec does not take
+    (`SettingsRefused`), before the parent's state and its settings.
+
     Raises:
-        RunPlanRefused: with the reason and the remedy.
+        RunPlanRefused: with the reason and the remedy; `SettingsRefused`
+            for a setting the request states that the run cannot take.
     """
     where = f"The parent {parent_path.name}"
     _check_record_version(parent, record_version, where)
+    _check_the_request(parent, request, explicit, where, branch=False)
     if parent.get("checkpoint_kind") != "training_state":
         weights_from = parent.get("weights_from") or {}
         raise RunPlanRefused(
@@ -772,16 +841,21 @@ def plan_branch(
     mixed precision kept on or off must take effect here as it did for the
     parent, as a resume's must, whether or not anything else changed.
 
-    **What the request changes is judged as a new run's settings are**
-    (`SettingsRefused`): a setting off the list, each new value by its field
-    spec (`stated_values_problem`) and the rules across settings, in that
-    order, in the training process and the job runner's preview alike.
+    **What the request states is judged as a new run's settings are**
+    (`SettingsRefused`): a stage or task other than the parent's first
+    (`parent_identity_problem`, a refusal of the parent), then a setting the
+    parent's stage and task do not read and each stated value by its field
+    spec (`stated_problem`), then a setting changed that is off the list and
+    the rules across settings on what it changes, in that order, in the
+    training process and the job runner's preview alike.
 
     Raises:
         RunPlanRefused: with the reason and the remedy.
     """
     where = f"The parent {parent_path.name}"
     _check_record_version(parent, record_version, where)
+    _check_the_request(parent, request, explicit, f"The branch parent {parent_path.name}",
+                       branch=True)
     if parent.get("checkpoint_kind") != "training_state":
         raise RunPlanRefused(
             f"{where} holds weights only, without the settings a branch keeps and changes. "
@@ -881,18 +955,14 @@ def _inherit_settings(
             "its parent; remove these to inherit them, or branch the parent (branch_from) "
             "to change settings on a model bundle's list." + freeze)
     # A branch's changes are judged as a new run's settings are (decision
-    # B2): each new value by its field spec, then the rules across settings
-    # (decision S3) on the settings the run trains with, for what the request
-    # changes: a setting changed that the run would not read is refused,
-    # never ignored. A setting kept from the parent, inherited or stated at
-    # the parent's value, is never judged by them, so a resume, an extension
-    # and a same-settings branch, which change nothing, never meet them.
+    # B2): each stated value by its field spec before this (`stated_problem`,
+    # `_check_the_request`), then the rules across settings (decision S3) on
+    # the settings the run trains with, for what the request changes: a
+    # setting changed that the run would not read is refused, never ignored.
+    # A setting kept from the parent, inherited or stated at the parent's
+    # value, is never judged by the rules, so a resume, an extension and a
+    # same-settings branch, which change nothing, never meet them.
     if changes:
-        problem = stated_values_problem(
-            parent.get("learning_stage"), (parent.get("task"),),
-            {name: change["new"] for name, change in changes.items()})
-        if problem:
-            raise SettingsRefused(problem)
         problems = cross_field_problems(settings, set(changes))
         if problems:
             raise SettingsRefused(" ".join(problems))
@@ -1062,6 +1132,7 @@ __all__ = [
     "new_run_problem",
     "new_run_settings",
     "new_run_values",
+    "parent_identity_problem",
     "parents_problem",
     "plan_branch",
     "plan_continuation",
@@ -1069,6 +1140,7 @@ __all__ = [
     "recorded_training_settings",
     "resolve_recorded_file",
     "shown_value",
+    "stated_problem",
     "stated_values_problem",
     "unread_problem",
     "zero_rate_groups",
