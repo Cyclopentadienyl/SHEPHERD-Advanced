@@ -19,10 +19,16 @@ Purpose:
 
 Safety:
     A restart is REFUSED while a GPU job (training or a test run) is in
-    progress — the UI also greys the button out, but this server-side guard is
-    the real safety net. After its delay the restart closes the job runner's
-    GPU slot only if it is still idle and open, in one step (`close_if_idle`),
-    and keeps it closed through the exec, so no job can start in between. The
+    progress, or while a model load or a stop of inference runs — the UI also
+    greys the button out for a job, but this server-side guard is the real
+    safety net. After its delay the restart closes the job runner's GPU slot
+    only if it is still idle and open, in one step (`close_if_idle`), and
+    keeps it closed through the exec, so no job can start in between. **Then
+    it stops serving** through the one stop (`AppState.stop_serving`, I7): the
+    accepted diagnoses finish and the model and its GPU lock are given back
+    before the image is replaced. A model loaded from the page is not loaded
+    again; one the environment configures for start-up loads again through
+    the new process's lifecycle; a failed exec loads nothing. The
     final check that the backend has not begun to stop and the exec are one
     step under the runner's lock (`exec_if_closed_for_restart`), and a stop
     signal is recorded by its handler before anything else, so a backend
@@ -40,6 +46,8 @@ Allocator re-resolution:
 
 Dependencies:
     - src.api.services.training_manager: the job runner's GPU slot (the restart lock)
+    - src.api.main: the service's serving lifecycle (`app_state`), imported
+      when a restart is asked for (it is the composition root)
     - src.config.runtime_presets: allocator preset resolution (gradio-free)
 
 Called by:
@@ -132,17 +140,23 @@ def restart_backend(
 ) -> Dict[str, object]:
     """Restart the backend (uvicorn) process after a short delay.
 
-    Refuses while a GPU job (training or a test run) is in progress. The delay lets the triggering HTTP
+    Refuses while a GPU job (training or a test run) is in progress, and while
+    a model load or a stop of inference runs. The delay lets the triggering HTTP
     response flush to the browser before the process image is replaced; the page
     then reconnects once the fresh backend is up.
 
     The ``_scheduler`` / ``_execv`` hooks exist for testing — production uses a
     daemon thread and ``os.execve``.
     """
+    from src.api.main import app_state
+
     # Fail closed for this destructive action: an unreadable status blocks it.
     if is_training_active(default_on_error=True):
         return {"success": False,
                 "error": "A GPU job (training or a test run) is in progress — restart is locked."}
+    if app_state.lifecycle_busy():
+        return {"success": False,
+                "error": "A model is being loaded or inference is stopping — restart is locked."}
 
     executable = sys.executable
     argv = build_restart_argv(executable, sys.argv)
@@ -171,6 +185,21 @@ def restart_backend(
         if not training_manager.close_if_idle():
             logger.warning(aborted)
             return
+        # **Serving stops before the exec** (I7): with the slot closed, the
+        # accepted diagnoses finish and the model and the GPU lock are given
+        # back (the lock's descriptor is close-on-exec too, but the drain and
+        # the description are this stop's). A load or a stop begun during the
+        # delay aborts the restart and opens the slot again.
+        from src.api.main import LifecycleBusy, app_state
+
+        try:
+            stopped = app_state.stop_serving(by="restart")
+        except LifecycleBusy as busy:
+            logger.warning("Backend restart aborted: %s", busy)
+            training_manager.open(closed_by=training_manager.CLOSED_BY_RESTART)
+            return
+        if stopped.released:
+            logger.info(stopped.message)
         try:
             env = resolve_restart_env(dict(os.environ))
             logger.info("Restarting backend: %s", " ".join(argv))

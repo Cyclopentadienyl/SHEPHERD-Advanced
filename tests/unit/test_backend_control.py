@@ -435,3 +435,98 @@ def test_restart_backend_schedules_and_execs(monkeypatch, runner):
         "8000",
     ]
     assert isinstance(captured["env"], dict)
+
+
+# --------------------------------------------------------------------------- serving (I7)
+@pytest.fixture
+def serving(monkeypatch, runner, tmp_path):
+    """A model served on (faked) CUDA through the real lifecycle, the GPU lock
+    held under the test's own root; builds stubbed and counted, the runner
+    the test's own for the load's slot check too."""
+    import src.api.main as api
+    import src.api.services.training_manager as tm
+    from tests.fixtures.serving_lifecycle import (
+        StubBuilds,
+        checkpoint,
+        fake_cuda,
+        reload,
+        served_workspace,
+    )
+
+    for name in ("pipeline", "kg", "_current_data_dir", "_current_checkpoint_path"):
+        monkeypatch.setattr(api.app_state, name, None)
+    monkeypatch.setattr(tm, "training_manager", runner)
+    fake_cuda(monkeypatch)
+    builds = StubBuilds().install(monkeypatch)
+    workspace = served_workspace(tmp_path / "served")
+    loaded = reload(workspace, checkpoint(workspace, "a"), "cuda")
+    assert loaded.success and loaded.status.holds_gpu_lock, loaded.message
+    return api, builds
+
+
+def test_restart_stops_serving_before_the_exec(serving, runner):
+    """The restart drains and releases before the image is replaced: at the
+    exec, nothing is served and the GPU lock is free (its description gone),
+    the stop recorded as the restart's."""
+    from src.utils.gpu_lock import lock_state
+
+    api, _ = serving
+    seen = {}
+
+    def execv(executable, argv, env):
+        seen.update(pipeline=api.app_state.pipeline, lock=lock_state()["held_by"],
+                    held=api.app_state.gpu_lock)
+
+    worker_box = []
+    assert bc.restart_backend(delay=0, _scheduler=worker_box.append, _execv=execv)["success"]
+    worker_box[0]()
+    assert seen == {"pipeline": None, "lock": None, "held": None}
+    assert api.app_state.not_serving.kind == api.STOPPED
+    assert api.app_state.not_serving_reason.startswith("Inference was stopped for Restart Backend")
+
+
+def test_restart_is_refused_while_a_load_or_stop_runs(serving, runner):
+    """One load or stop at a time is the lifecycle's: Restart Backend is
+    refused while one runs, nothing scheduled and nothing stopped; a load
+    begun during the delay aborts the restart and opens the slot again."""
+    api, _ = serving
+    executed, scheduled = [], []
+    assert api.app_state._lifecycle.acquire(blocking=False)
+    try:
+        refused = bc.restart_backend(_scheduler=scheduled.append,
+                                     _execv=lambda *a: executed.append(a))
+    finally:
+        api.app_state._lifecycle.release()
+    assert refused == {"success": False, "error": "A model is being loaded or inference is "
+                                                  "stopping — restart is locked."}
+    assert scheduled == [] and api.app_state.pipeline is not None
+
+    worker_box = []
+    assert bc.restart_backend(delay=0, _scheduler=worker_box.append,
+                              _execv=lambda *a: executed.append(a))["success"]
+    assert api.app_state._lifecycle.acquire(blocking=False)    # a load begins in the delay
+    try:
+        worker_box[0]()
+    finally:
+        api.app_state._lifecycle.release()
+    assert executed == [] and api.app_state.pipeline is not None
+    assert runner._closed_by is None, "the aborted restart left the slot closed"
+
+
+def test_a_failed_exec_does_not_load_a_model_again(serving, runner, tmp_path):
+    """The stop came before the exec; a failed exec opens the slot again and
+    loads nothing: no build, no model, the lock free."""
+    from src.utils.gpu_lock import lock_state
+
+    api, builds = serving
+    built = len(builds.calls)
+
+    def execv(executable, argv, env):
+        raise OSError("exec format error")
+
+    worker_box = []
+    assert bc.restart_backend(delay=0, _scheduler=worker_box.append, _execv=execv)["success"]
+    worker_box[0]()
+    assert len(builds.calls) == built, "a failed exec loaded a model"
+    assert api.app_state.pipeline is None and lock_state()["held_by"] is None
+    assert _start(runner, tmp_path)["success"], "the process serves on, so jobs start"
