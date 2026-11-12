@@ -444,6 +444,75 @@ class TestTheNoModelMatrix:
         assert loaded["success"] is True, loaded["message"]
         assert again == self.SERVING
 
+    def test_a_diagnosis_the_stop_drained_holds_no_model_when_the_stop_frees_it(
+            self, monkeypatch, trained_disease_child):
+        """I4: the stop frees the device memory once the last accepted request
+        has ended, so a diagnosis it drained no longer references the model
+        then: the route drops the pipeline it leased inside its lease. Its
+        handler is held after the lease ends (as one waiting for the event
+        loop is) until the stop has freed; after a `gc` the model is gone."""
+        import gc
+        import time
+        import weakref
+        from contextlib import contextmanager
+
+        from src.api import main as api_main
+
+        data_dir = trained_disease_child["data_dir"]
+        monkeypatch.setenv("SHEPHERD_KG_PATH", str(data_dir / "kg.json"))
+        monkeypatch.setenv("SHEPHERD_DATA_DIR", str(data_dir))
+        monkeypatch.setenv("SHEPHERD_CHECKPOINT_PATH", str(trained_disease_child["disease"]))
+        state = api_main.app_state
+        entered, go, freed = threading.Event(), threading.Event(), threading.Event()
+        alive_at_free, stopped, answered = [], [], []
+        real_lease = api_main.AppState.lease
+        real_free = api_main._free_device_memory
+
+        @contextmanager
+        def lingering_lease(self):
+            with real_lease(self) as leased:
+                try:
+                    yield leased
+                finally:
+                    del leased
+            freed.wait(10)
+
+        def recording_free(device):
+            gc.collect()
+            alive_at_free.append(served() is not None)
+            freed.set()
+            real_free(device)
+
+        with _client() as client:
+            served = weakref.ref(state.pipeline)
+            real_run = type(state.pipeline).run
+
+            def held_run(pipeline, **kwargs):
+                entered.set()
+                assert go.wait(30)
+                return real_run(pipeline, **kwargs)
+
+            monkeypatch.setattr(type(state.pipeline), "run", held_run)
+            monkeypatch.setattr(api_main.AppState, "lease", lingering_lease)
+            monkeypatch.setattr(api_main, "_free_device_memory", recording_free)
+            request = threading.Thread(target=lambda: answered.append(
+                client.post("/api/v1/diagnose", json=_request())))
+            request.start()
+            assert entered.wait(30)
+            stopper = threading.Thread(target=lambda: stopped.append(state.stop_serving()))
+            stopper.start()
+            deadline = time.monotonic() + 10
+            while state.transition != api_main.STOPPING and time.monotonic() < deadline:
+                time.sleep(0.01)
+            go.set()
+            stopper.join(30)
+            request.join(30)
+
+        assert answered[0].status_code == 200, answered[0].text
+        assert stopped[0].released is True
+        assert alive_at_free == [False], (
+            "the stop freed the memory while the drained diagnosis still held the model")
+
     def test_a_load_refused_while_nothing_is_served_is_the_reason(
             self, monkeypatch, trained_disease_child, tmp_path):
         """The refused load's row: nothing served, a reload of a file that is

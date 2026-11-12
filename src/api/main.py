@@ -203,10 +203,12 @@ class AppState:
     **Lock order, never the other way round:** the lifecycle, then the GPU
     lock's flock, then the job runner's lock (`TrainingManager.
     serving_refusal`), then admission. Admission is held only for a few reads
-    and assignments, and nothing waits under it but a stop's `wait`, which
-    gives it up; the lifecycle is never taken under admission, and the flock
-    is taken under neither the runner's lock nor admission and given back
-    outside admission.
+    and assignments and the lock's release, and nothing waits under it but a
+    stop's `wait`, which gives it up; the lifecycle is never taken under
+    admission, and the flock is taken under neither the runner's lock nor
+    admission. It is given back under admission, in the step that takes it
+    out of `gpu_lock` (a release waits for no one), so what the status says
+    of the lock is what the flock is.
     """
 
     def __init__(self):
@@ -350,7 +352,14 @@ class AppState:
         """The served pipeline for one request, admitted now or refused with
         `NotServing` and the reason. Held until the request ends; a stop waits
         for it, and a replaced CUDA pipeline keeps the GPU lock until its last
-        lease ends."""
+        lease ends.
+
+        **No reference to the pipeline outlives its lease**: a stop frees the
+        device memory once the last lease has ended, so the lease drops its
+        own before it wakes the stop, and a caller drops the one it bound
+        inside the `with` (`/diagnose`). A request that ends while a stop
+        runs leaves the GPU lock to that stop, which frees the memory and
+        gives the lock back before it reports released."""
         with self._admission:
             pipeline = self.pipeline
             if not self.accepting:
@@ -360,15 +369,17 @@ class AppState:
         try:
             yield pipeline
         finally:
+            del pipeline
             with self._admission:
                 left = self._leases.pop(key) - 1
                 if left:
                     self._leases[key] = left
                 else:
                     self._retired_on_gpu.discard(key)
+                stopping = self.transition == STOPPING
                 self._admission.notify_all()
-            del pipeline
-            self._release_gpu_if_unused()
+            if not stopping:
+                self._release_gpu_if_unused()
 
     # ------------------------------------------------------------------- load
     @contextmanager
@@ -376,7 +387,9 @@ class AppState:
         """One load (start-up's or a reload's) in the lifecycle, or
         `LifecycleBusy`. At its end, a GPU lock it took and no model uses is
         given back (a refused CUDA candidate, a CPU load replacing a CUDA
-        model whose requests have ended)."""
+        model whose requests have ended). The lifecycle is released last,
+        whatever happened before it, so no failure leaves every later load
+        and stop refused as busy."""
         if not self._lifecycle.acquire(blocking=False):
             raise LifecycleBusy(self._busy_words())
         try:
@@ -384,11 +397,13 @@ class AppState:
                 self.transition = LOADING
             yield ServingLoad(self)
         finally:
-            with self._admission:
-                self._load_holds_gpu = False
-                self.transition = None
-            self._release_gpu_if_unused()
-            self._lifecycle.release()
+            try:
+                with self._admission:
+                    self._load_holds_gpu = False
+                    self.transition = None
+                self._release_gpu_if_unused()
+            finally:
+                self._lifecycle.release()
 
     def _hold_gpu_for(self, device: Optional[str]) -> None:
         """Inside a load, right after its device is resolved and before any
@@ -488,10 +503,12 @@ class AppState:
         """**The one stop** (I4): new requests refused at once, with the
         reason; the accepted ones waited for, with no timeout and nothing
         killed; then the pipeline, its graph, the current paths and the
-        diagnosis reference-sample cache cleared, `gc`, and on CUDA a
-        synchronize and `empty_cache` (no claim that memory is returned: the
-        measured reading is the resource route's); then the GPU lock and its
-        description given back; only then is "released" reported. Nothing
+        diagnosis reference-sample cache cleared, `gc`, and while the GPU lock
+        is held a synchronize and `empty_cache` (no claim that memory is
+        returned: the measured reading is the resource route's); then the GPU
+        lock and its description given back, by this stop alone (a request
+        ending meanwhile leaves them to it); only then is "released"
+        reported. Nothing
         loaded is "nothing to stop". With `expected_checkpoint_sha256`, a
         stop of another model is refused and it keeps serving. Refused with
         `LifecycleBusy` while a load or another stop runs. `by` is who stops
@@ -515,6 +532,7 @@ class AppState:
                 while self._leases:
                     self._admission.wait()
                 device = self.serving_device
+                held = self.gpu_lock is not None
                 self.pipeline = None
                 self.kg = None
                 self._current_data_dir = None
@@ -524,9 +542,13 @@ class AppState:
             from src.api.routes.diagnose import clear_reference_samples
 
             clear_reference_samples()
-            _free_device_memory(device)
-            released_lock = self._release_gpu_if_unused(free=False)
+            # The CUDA cache whenever the GPU lock is held: a CUDA model, or a
+            # replaced CUDA model whose last request the drain just waited for
+            # (the service switched to the CPU while it ran).
+            _free_device_memory("cuda" if held else device)
+            self._release_gpu_if_unused(free=False)
             with self._admission:
+                gave_back = held and self.gpu_lock is None
                 self.not_serving = NotServingRecord(STOPPED, _now(), STOPPED_BY.get(by, by),
                                                     sha[:12] if sha else None)
                 self.transition = None
@@ -534,7 +556,7 @@ class AppState:
             return StopOutcome(True, True, (
                 f"Inference stopped: {accepted} accepted request(s) finished first, then "
                 f"{model} and its graph were released"
-                f"{' and the GPU lock given back' if released_lock else ''}. New diagnoses are "
+                f"{' and the GPU lock given back' if gave_back else ''}. New diagnoses are "
                 "refused until a model is loaded."))
         finally:
             with self._admission:
@@ -547,22 +569,37 @@ class AppState:
         return (self._load_holds_gpu or bool(self._retired_on_gpu)
                 or (self.pipeline is not None and _on_cuda(self.serving_device)))
 
-    def _release_gpu_if_unused(self, *, free: bool = True) -> bool:
+    def _release_gpu_if_unused(self, *, free: bool = True) -> None:
         """Give the GPU lock back once nothing uses it: no CUDA model served,
-        no replaced CUDA model's request running, no load holding it. Taken
-        out under admission, released outside it, after a `gc` and the CUDA
-        cache emptied (`free`; a stop has done both already). True when it
-        was given back here."""
+        no replaced CUDA model's request running, no load holding it.
+
+        **The memory first, then the lock in one step.** A `gc` and the CUDA
+        cache emptied come first, outside admission (`free`; a stop has done
+        both already); then, under admission and only if nothing has started
+        using it meanwhile, the flock is released and the lock taken out of
+        `gpu_lock` together (a release waits for no one), so the status never
+        says no lock while this service still holds it. A release that
+        reports an error is logged, never raised: the `GpuLock` has dropped
+        its descriptor, so it cannot be given back twice, and every caller (a
+        load's end, a lease's, a stop) finishes its own step."""
+        with self._admission:
+            if self.gpu_lock is None or self._gpu_in_use_locked():
+                return
+        if free:
+            _free_device_memory("cuda")
         with self._admission:
             lock = self.gpu_lock
             if lock is None or self._gpu_in_use_locked():
-                return False
+                return
             self.gpu_lock = None
-        if free:
-            _free_device_memory("cuda")
-        lock.release()
+            try:
+                lock.release()
+            except OSError as exc:
+                logger.error("Giving the GPU lock back reported an error (%s); its descriptor "
+                             "is closed, and the lock file's flock is what a job and the GPU "
+                             "chip read.", exc)
+                return
         logger.info("This service's CUDA inference gave the GPU lock back.")
-        return True
 
 
 class ServingLoad:

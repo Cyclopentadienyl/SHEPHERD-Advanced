@@ -450,3 +450,154 @@ def test_an_out_of_memory_candidate_is_refused_and_the_model_in_use_keeps_servin
     assert "The model in use keeps serving; stop inference first" in refused.message
     assert "Nothing was unloaded to make room." in refused.message
     assert api.app_state.pipeline is served and api.app_state.gpu_lock is lock and lock.held
+
+
+# --------------------------------------------------------------------------- giving the lock back
+def test_the_status_says_the_lock_is_held_until_the_flock_is_given_back(service, monkeypatch):
+    """The memory is freed before the lock is given back, and the flock is
+    released in the step that takes it out of the service's state: while the
+    CUDA cache is emptied (a failed CPU to CUDA load giving the lock back),
+    the status still says the lock is held, as the flock is."""
+    builds, _, workspace = service
+    assert reload(workspace, checkpoint(workspace, "a"), "cpu").success
+    seen = []
+    real_free = api._free_device_memory
+
+    def recording_free(device):
+        if device == "cuda":
+            seen.append((api.app_state.snapshot()["holds_gpu_lock"],
+                         lock_state()["held_by"] is not None))
+        real_free(device)
+
+    monkeypatch.setattr(api, "_free_device_memory", recording_free)
+    builds.fail = RuntimeError("the candidate is broken")
+
+    refused = reload(workspace, checkpoint(workspace, "b"), "cuda")
+
+    assert refused.success is False
+    assert seen == [(True, True)], "the status said no lock while the flock was held"
+    assert lock_state()["held_by"] is None and refused.status.holds_gpu_lock is False
+
+
+def test_a_failure_giving_the_lock_back_still_ends_the_load(service, monkeypatch):
+    """A release that reports an error (the descriptor's close, after the
+    unlock) is logged: the load still ends, its lifecycle is free, and the next
+    load is not refused as busy."""
+    from src.utils import gpu_lock
+
+    builds, _, workspace = service
+    builds.fail = RuntimeError("the candidate is broken")
+    real_release = gpu_lock.GpuLock.release
+    calls = []
+
+    def release_then_fail(self):
+        calls.append(self)
+        real_release(self)
+        if len(calls) == 1:
+            raise OSError(5, "Input/output error")
+
+    monkeypatch.setattr(gpu_lock.GpuLock, "release", release_then_fail)
+
+    refused = reload(workspace, checkpoint(workspace, "a"), "cuda")
+    builds.fail = None
+    after = reload(workspace, checkpoint(workspace, "b"), "cpu")
+
+    assert refused.success is False and len(calls) == 1
+    assert lock_state()["held_by"] is None and api.app_state.gpu_lock is None
+    assert after.success, after.message
+    assert not api.app_state.lifecycle_busy()
+
+
+def test_a_request_ending_during_a_stop_leaves_the_lock_to_the_stop(service, monkeypatch):
+    """I4, "released" only once the lock is given back: a request that ends
+    while a stop waits for it neither frees the memory nor gives the lock
+    back; the stop does both, so the flock is free when it answers and its
+    message says so. The interleaving it used to lose: the request's thread
+    descheduled right after its lease ended, until the stop had cleared the
+    model, then emptying the CUDA cache before its release."""
+    _, _, workspace = service
+    assert reload(workspace, checkpoint(workspace, "a"), "cuda").success
+    request_threads, freed_in_request = [], []
+    stop_answered = threading.Event()
+    real_release = api.AppState._release_gpu_if_unused
+    real_free = api._free_device_memory
+
+    def release(self, **kwargs):
+        if threading.current_thread() in request_threads:
+            _wait(lambda: self.pipeline is None)
+        return real_release(self, **kwargs)
+
+    def free(device):
+        if threading.current_thread() in request_threads:
+            freed_in_request.append(device)
+            stop_answered.wait(5)
+        real_free(device)
+
+    monkeypatch.setattr(api.AppState, "_release_gpu_if_unused", release)
+    monkeypatch.setattr(api, "_free_device_memory", free)
+    leased, end = threading.Event(), threading.Event()
+
+    def accepted_request():
+        request_threads.append(threading.current_thread())
+        with api.app_state.lease():
+            leased.set()
+            assert end.wait(30)
+
+    request = in_thread(accepted_request)
+    assert leased.wait(10)
+    stop = in_thread(lambda: run_stop(PipelineStopRequest()))
+    _wait(lambda: api.app_state.transition == api.STOPPING)
+    end.set()
+    stop.thread.join(30)
+    at_answer = lock_state()["held_by"]
+    stop_answered.set()
+    request.thread.join(10)
+
+    assert stop.result.released is True
+    assert at_answer is None, "the stop reported released while the flock was still held"
+    assert "and the GPU lock given back" in stop.result.message
+    assert freed_in_request == [], "the request's thread (a diagnosis's is the event loop) freed"
+
+
+def test_a_stop_after_a_switch_to_the_cpu_frees_the_cuda_model_it_drained(service,
+                                                                         monkeypatch):
+    """A replaced CUDA model whose request still runs when an operator stops
+    the CPU model served now: the stop waits for that request, empties the
+    CUDA cache for the model it drained (the lock is held), gives the lock
+    back, and only then answers released, the status and the flock agreeing."""
+    _, _, workspace = service
+    assert reload(workspace, checkpoint(workspace, "a"), "cuda").success
+    frees, stop_threads = [], []
+    real_free = api._free_device_memory
+
+    def recording_free(device):
+        frees.append((threading.current_thread(), device))
+        real_free(device)
+
+    monkeypatch.setattr(api, "_free_device_memory", recording_free)
+    leased, end = threading.Event(), threading.Event()
+
+    def accepted_request():
+        with api.app_state.lease():
+            leased.set()
+            assert end.wait(30)
+
+    def stop_now():
+        stop_threads.append(threading.current_thread())
+        return run_stop(PipelineStopRequest())
+
+    request = in_thread(accepted_request)
+    assert leased.wait(10)
+    assert reload(workspace, checkpoint(workspace, "b"), "cpu").success
+    assert lock_state()["held_by"] is not None, "the replaced CUDA model's request still runs"
+    stop = in_thread(stop_now)
+    _wait(lambda: api.app_state.transition == api.STOPPING)
+    end.set()
+    stop.thread.join(30)
+    at_answer = (lock_state()["held_by"], stop.result.status.holds_gpu_lock)
+    request.thread.join(10)
+
+    assert stop.result.released is True
+    assert "and the GPU lock given back" in stop.result.message
+    assert at_answer == (None, False)
+    assert (stop_threads[0], "cuda") in frees, "the CUDA cache was not emptied by the stop"
