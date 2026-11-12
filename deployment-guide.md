@@ -3103,6 +3103,10 @@ Matching phenotypes · Paths）。選取一列（點擊，或在聚焦的列上�
   服務，回應也會這樣說。停止後它顯示停止的結果（"Inference stopped: 2 accepted request(s) finished
   first, then model … and its graph were released and the GPU lock given back. …"），以及當時取得的
   資源讀數（`/api/v1/system/resources`）：那是一個讀數，不保證記憶體已經交還（GB10 的記憶體是共用的）。
+  卡片的讀取掌管它顯示的這些內容：卡片不再顯示詢問所指名的模型時（在別處停止，或換上另一個模型），
+  詢問就會關閉；停止所說的話只在卡片仍顯示該次停止留下的狀態時保留："Inference stopped: …" 在再有模型
+  服務時（本瀏覽器的 Load、另一個瀏覽器的，或載入模型的重新啟動）就會移除，因此頁面不會在有模型服務時
+  仍說「已停止」。
 
 | 卡片顯示 | 意義 |
 |---|---|

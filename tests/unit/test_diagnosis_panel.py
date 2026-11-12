@@ -2208,10 +2208,10 @@ def test_stop_inference_asks_first_naming_and_binding_the_model_shown():
     assert f"<code>{_SERVED_SHA[:12]}</code>" in asked["stop_text"]
     assert "Diagnoses already accepted finish; new diagnoses are refused until a model is " \
            "loaded" in asked["stop_text"]
-    assert asked["stop_asked"] == {"sha256": _SERVED_SHA}
+    assert asked["stop_asked"]["sha256"] == _SERVED_SHA
     assert _shown(asked["stop_now_btn"]) and _shown(asked["stop_keep_btn"])
     nothing = dp.ask_stop_inference(ENABLED, _serving_card(serving="stopping"))
-    assert nothing["stop_asked"] is None and "Nothing to stop" in nothing["stop_text"]
+    assert "sha256" not in nothing["stop_asked"] and "Nothing to stop" in nothing["stop_text"]
     assert not _shown(nothing["stop_now_btn"])
 
 
@@ -2220,7 +2220,7 @@ def test_a_read_only_request_is_refused_and_nothing_is_asked_or_stopped():
 
     refused = OperatorAccess(False, "not_loopback", "This request did not arrive on loopback.")
     asked = dp.ask_stop_inference(refused, _serving_card())
-    assert asked["stop_asked"] is None and "Refused: " in asked["stop_text"]
+    assert "sha256" not in asked["stop_asked"] and "Refused: " in asked["stop_text"]
     assert not _shown(asked["stop_now_btn"])
     done = dp.confirm_stop_inference(refused, {"sha256": _SERVED_SHA}, stop=_no_stop)
     assert "Refused: " in done["stop_notice"] and "Nothing was done." in done["stop_notice"]
@@ -2248,7 +2248,9 @@ def test_the_confirmed_stop_is_the_one_stop_bound_to_the_model_shown():
     assert "<b>x</b>" not in done["stop_notice"]
     assert "not a promise that memory was returned" in done["stop_notice"]
     assert "memory 20.5 / 128.0 GB" in done["stop_notice"]
-    assert done["stop_asked"] is None and not _shown(done["stop_now_btn"])
+    # Bound to what the stop left served (nothing), never confirmable again.
+    assert done["stop_asked"]["notice_for"] is None and "sha256" not in done["stop_asked"]
+    assert not _shown(done["stop_now_btn"])
 
     def not_released(request):
         return PipelineStopResponse(success=False, released=False,
@@ -2293,6 +2295,111 @@ def test_the_stop_handler_calls_run_stop_after_d8_on_its_own_request(monkeypatch
     allowed = dict(zip(dp.STOP_OUTPUTS, dp._on_stop_inference(gradio_request(),
                                                                {"sha256": _SERVED_SHA})))
     assert seen == [_SERVED_SHA] and "Nothing to stop." in allowed["stop_notice"]
+
+
+def _stop_released(request):
+    from src.api.routes.pipeline import PipelineStatusResponse, PipelineStopResponse
+
+    return PipelineStopResponse(
+        success=True, released=True,
+        message="Inference stopped: 0 accepted request(s) finished first, then model "
+                "bbbbbbbbbbbb and its graph were released. New diagnoses are refused until a "
+                "model is loaded.",
+        status=PipelineStatusResponse(initialized=False))
+
+
+_RESOURCES = {"gpu": {"available": False}, "ram": {}, "unified_memory": False}
+_NOTHING_SERVED = {"initialized": False, "serving": "not_loaded", "loading": False,
+                   "in_flight": 0, "not_serving_reason": "Inference was stopped by an operator."}
+
+
+def _read(card_state, stop, status=None):
+    """A card read (`card_outputs`, as the reads call it) of `status` (or the
+    card's own), after `card_state`'s reads, with this session's binding."""
+    state = dict(card_state) if status is None else {**card_state, "status": status}
+    return dp.card_outputs(state, None, "idle", stop=stop)
+
+
+def test_a_stopped_notice_lasts_while_nothing_serves_and_goes_once_a_model_is_loaded():
+    """Review of A3b (P2): what a confirmed stop said is the page's, and a read
+    of the server's status owns it: kept while nothing is served (the read
+    right after the stop included), cleared once a model serves again (this
+    session's Load, another browser's, a Restart that loads one), once, and
+    again after the next stop."""
+    from src.utils.operator_access import ENABLED
+
+    before = _read(_serving_card(), None)["card_state"]
+    done = dp.confirm_stop_inference(ENABLED, {"sha256": _SERVED_SHA}, stop=_stop_released,
+                                     resources=_RESOURCES)
+    assert "New diagnoses are refused until a model is loaded" in done["stop_notice"]
+    after = _read(before, done["stop_asked"], _NOTHING_SERVED)
+    assert not set(dp.STOP_VIEWS) & set(after), "the read after the stop closed its notice"
+    again = _read(after["card_state"], done["stop_asked"], _NOTHING_SERVED)
+    assert not set(dp.STOP_VIEWS) & set(again)
+    for served in (_SERVED_SHA, "c" * 64):           # the same model, or another
+        loaded = _read(again["card_state"], done["stop_asked"], _serving_card(served)["status"])
+        assert loaded["stop_notice"] == "", "the notice outlived the stop's state"
+        assert "stop_text" not in loaded, "a notice closes only the notice"
+        assert loaded["card_state"]["rendered"]["stop_closed"] == done["stop_asked"]
+        assert "stop_notice" not in _read(loaded["card_state"], done["stop_asked"])
+    second = dp.confirm_stop_inference(ENABLED, {"sha256": _SERVED_SHA}, stop=_stop_released,
+                                       resources=_RESOURCES)
+    assert second["stop_asked"] != done["stop_asked"], "two stops are two bindings"
+    reloaded = _read(loaded["card_state"], second["stop_asked"])
+    assert reloaded["stop_notice"] == ""
+
+
+def test_a_refused_stop_says_so_while_the_model_it_found_serves():
+    """A stop refused because another model serves says so for as long as
+    the card offers that model (the read right after it included), and goes
+    once that one is no longer served."""
+    from types import SimpleNamespace
+
+    from src.utils.operator_access import ENABLED
+
+    other = _serving_card("c" * 64)
+
+    def another_serves(request):
+        # The stop's answer, its status standing in for the route's model.
+        return SimpleNamespace(
+            success=False, released=False,
+            message="Not stopped: the model in use is cccccccccccc, not bbbbbbbbbbbb.",
+            status=SimpleNamespace(model_dump=lambda: dict(other["status"])))
+
+    done = dp.confirm_stop_inference(ENABLED, {"sha256": _SERVED_SHA}, stop=another_serves)
+    assert done["stop_asked"]["notice_for"] == "c" * 64
+    kept = _read(other, done["stop_asked"])
+    assert "stop_notice" not in kept
+    gone = _read(kept["card_state"], done["stop_asked"], _NOTHING_SERVED)
+    assert gone["stop_notice"] == ""
+
+
+def test_an_open_question_closes_once_the_card_no_longer_offers_its_model():
+    """Stop inference's question is bound to the model shown: it stays while
+    the card offers that model, and closes (its line, both buttons) once a
+    read finds it stopped elsewhere or another model served; the binding is
+    left as the handler wrote it."""
+    from src.utils.operator_access import ENABLED
+
+    asked = dp.ask_stop_inference(ENABLED, _serving_card())
+    still = _read(_serving_card(), asked["stop_asked"])
+    assert not set(dp.STOP_VIEWS) & set(still)
+    for status in (_NOTHING_SERVED, _serving_card("c" * 64)["status"],
+                   _serving_card(serving="stopping")["status"]):
+        closed = _read(still["card_state"], asked["stop_asked"], status)
+        assert closed["stop_text"] == "" and not _shown(closed["stop_now_btn"])
+        assert not _shown(closed["stop_keep_btn"]) and "stop_notice" not in closed
+        assert "stop_asked" not in closed, "a read wrote the binding"
+    nothing = dp.ask_stop_inference(ENABLED, {**_serving_card(), "status": _NOTHING_SERVED})
+    loaded = _read(_serving_card(), nothing["stop_asked"])
+    assert loaded["stop_text"] == "", "'Nothing to stop' outlived the state it described"
+
+
+def test_run_diagnosis_never_writes_the_stop_views():
+    """Run Diagnosis's card update passes no binding: the stop views are the
+    card's reads' alone."""
+    out = dp.card_outputs(_serving_card(), None, "idle")
+    assert not set(dp.STOP_VIEWS) & set(out)
 
 
 def test_run_diagnosis_is_off_while_inference_stops():

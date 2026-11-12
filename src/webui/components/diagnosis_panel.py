@@ -33,6 +33,10 @@ scrolls.
   model is loaded, and it says what the stop said, with the resources reading
   taken after it (never a promise that memory was returned). The card then
   shows the server's state in its own words (`diagnosis_card.serving_state`).
+  **The card's reads own what the stop shows**: its question closes, and what
+  it said goes, once a read no longer offers the model they were bound to
+  (`stop_views_closed`), so nothing the page holds outlives the state it
+  describes (a "stopped" notice after a model is loaded again, say).
 - **Run Diagnosis** is greyed out and not clickable when no model is loaded
   or inference is stopping (a bubble on hover and on keyboard focus says why,
   and the reason is visible
@@ -82,6 +86,7 @@ import csv
 import io
 import logging
 import re
+import time
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
@@ -2283,7 +2288,7 @@ TASK_OUTPUTS = ("genes_box", "cohort_box", "cohort")
 
 def card_outputs(state: Mapping[str, Any], result: Optional[Mapping[str, Any]], phase: Any,
                  view: Optional[Mapping[str, Any]] = None, *, cohort: Any = None,
-                 inputs: bool = True) -> Dict[str, Any]:
+                 inputs: bool = True, stop: Any = None) -> Dict[str, Any]:
     """Every output that follows the card's state, sending only what changed
     since this session's last send (kept in the state's ``rendered``): a
     focused control is never redrawn by the timer for nothing.
@@ -2297,7 +2302,12 @@ def card_outputs(state: Mapping[str, Any], result: Optional[Mapping[str, Any]], 
     server's facts, never the user's pick, so a pick never makes the timer
     redraw it, even when a read that ran beside the pick writes the state
     last (the timer runs outside the queue). Run Diagnosis passes
-    ``inputs=False`` (its outputs hold none of them)."""
+    ``inputs=False`` (its outputs hold none of them).
+
+    With `stop` (this session's Stop inference binding, ``stop_asked``: the
+    card's reads pass it), the Stop inference views this read closes
+    (`stop_views_closed`), once for each binding (kept in ``rendered`` as
+    ``stop_closed``)."""
     produced = _produced_at(result)
     button = card.change_button(state)
     run = run_controls(state, phase)
@@ -2352,7 +2362,12 @@ def card_outputs(state: Mapping[str, Any], result: Optional[Mapping[str, Any]], 
                                   info=info, **({"value": chosen} if chosen != cohort else {}))
         else:
             out[name] = value
-    out["card_state"] = {**state, "rendered": {**previous, **fresh}}
+    rendered = {**previous, **fresh}
+    closed = stop_views_closed(state, stop) if stop != previous.get("stop_closed") else {}
+    if closed:
+        out.update(closed)
+        rendered["stop_closed"] = stop
+    out["card_state"] = {**state, "rendered": rendered}
     return out
 
 
@@ -2373,22 +2388,23 @@ def read_card(state: Any, request: Any, *, open_checkpoints: bool, reread: bool 
 
 
 def refresh_card(state: Any, result: Any, phase: Any, view: Any, request: Any, *,
-                 reread: bool = False, cohort: Any = None) -> Dict[str, Any]:
-    """Page load, Diagnosis shown, ↻, a Load: read and show (queued: the
-    trained-on dataset may be read from the served checkpoint, the reference
-    cohort versions are listed again); `cohort` is the select's value now."""
+                 reread: bool = False, cohort: Any = None, stop: Any = None) -> Dict[str, Any]:
+    """Page load, Diagnosis shown, ↻, a Load, a stop: read and show (queued:
+    the trained-on dataset may be read from the served checkpoint, the
+    reference cohort versions are listed again); `cohort` is the select's
+    value now, `stop` this session's Stop inference binding."""
     return card_outputs(read_card(state, request, open_checkpoints=True, reread=reread),
-                        result, phase, view, cohort=cohort)
+                        result, phase, view, cohort=cohort, stop=stop)
 
 
 def poll_card(location: Any, state: Any, result: Any, phase: Any, view: Any,
-              request: Any, cohort: Any = None) -> Dict[str, Any]:
+              request: Any, cohort: Any = None, stop: Any = None) -> Dict[str, Any]:
     """The shell's slow timer, while Diagnosis is shown: one status read, no
     checkpoint opened (`queue=False`); nothing while another page is shown."""
     if location != CLINICAL:
         return {}
     return card_outputs(read_card(state, request, open_checkpoints=False), result, phase, view,
-                        cohort=cohort)
+                        cohort=cohort, stop=stop)
 
 
 # =============================================================================
@@ -2588,6 +2604,38 @@ def _on_change_model(request: gr.Request) -> Tuple[Any, ...]:
 # =============================================================================
 #: The outputs of the two Stop inference handlers, in order.
 STOP_OUTPUTS = ("stop_text", "stop_asked", "stop_now_btn", "stop_keep_btn", "stop_notice")
+#: The Stop inference views the card's reads may close (`stop_views_closed`):
+#: every output above but the binding, which only these handlers write.
+STOP_VIEWS = ("stop_text", "stop_now_btn", "stop_keep_btn", "stop_notice")
+
+
+def _bound(**binding: Any) -> Dict[str, Any]:
+    """This session's Stop inference binding (``stop_asked``): what its views
+    show is bound to the model the card offers to stop (`card.offered_stop`;
+    None for none), as ``sha256`` (the question, the only one a confirmation
+    stops), ``text_for`` (what the question's line says instead) or
+    ``notice_for`` (what a confirmed stop said), with when it was written, so
+    two alike are never one."""
+    return {**binding, "at": time.monotonic_ns()}
+
+
+def stop_views_closed(state: Mapping[str, Any], stop: Any) -> Dict[str, Any]:
+    """What a card read closes of the Stop inference views: **nothing while
+    the card still offers the model they are bound to** (`card.offered_stop`
+    of this read, against `stop`, the binding), else the question and its
+    buttons, or what a confirmed stop said. The binding itself is never
+    written here: a read never replaces what a Stop inference handler
+    answered meanwhile. A stop's own answer is bound to what it left served
+    (`card.stop_target` of its status), so the read after it keeps it."""
+    if not isinstance(stop, Mapping):
+        return {}
+    offered = card.offered_stop(state)
+    if "notice_for" in stop:
+        return {} if stop["notice_for"] == offered else {"stop_notice": ""}
+    for key in ("sha256", "text_for"):
+        if key in stop:
+            return {} if stop[key] == offered else {"stop_text": "", **_stop_buttons(False)}
+    return {}
 
 
 def _stop_said(text: str) -> str:
@@ -2624,17 +2672,20 @@ def ask_stop_inference(access: Any, state: Any) -> Dict[str, Any]:
     by the page's handler on its own request): the question, **bound to the
     model the card shows now** (its full fingerprint, kept in this session's
     ``stop_asked``). Nothing is stopped here. Refused, or with no model
-    serving on the card, it says why and asks nothing."""
-    if not access.allowed:
-        return {**_stop_hidden(), "stop_notice": "",
-                "stop_text": f'<p class="shep-dx-why">{_e(access.refusal)}</p>'}
+    serving on the card, it says why and asks nothing. Whatever it shows
+    lasts while the card offers the model it was answered for
+    (`stop_views_closed`)."""
     state = state if isinstance(state, Mapping) else card.new_state()
-    if not card.stop_offered(state):
-        return {**_stop_hidden(), "stop_notice": "",
+    offered = card.offered_stop(state)
+    if not access.allowed:
+        return {**_stop_buttons(False), "stop_asked": _bound(text_for=offered),
+                "stop_notice": "",
+                "stop_text": f'<p class="shep-dx-why">{_e(access.refusal)}</p>'}
+    if offered is None:
+        return {**_stop_buttons(False), "stop_asked": _bound(text_for=None), "stop_notice": "",
                 "stop_text": _stop_said("Nothing to stop: the card shows no model serving. "
                                         "Read it again with ↻.")}
-    sha = card.served_checkpoint_sha(state.get("status"))
-    return {"stop_text": stop_question_html(sha), "stop_asked": {"sha256": sha},
+    return {"stop_text": stop_question_html(offered), "stop_asked": _bound(sha256=offered),
             **_stop_buttons(True), "stop_notice": ""}
 
 
@@ -2669,13 +2720,18 @@ def confirm_stop_inference(access: Any, asked: Any, *, stop: Optional[Callable[.
     it in a worker thread). What it says is the stop's own words; after a
     stop that released the model, the resources reading
     (`memory_after_stop_html`). A confirmation never asked on this page stops
-    nothing. `stop` and `resources` stand in for tests."""
-    out: Dict[str, Any] = {**_stop_hidden(), "stop_text": ""}
-    if not access.allowed:
-        return {**out, "stop_notice": f'<p class="shep-dx-why">{_e(access.refusal)}</p>'}
+    nothing. What it says lasts while the card offers what the stop left
+    served (`card.stop_target` of the stop's own status; `stop_views_closed`):
+    a "stopped" notice goes once a model is loaded again. `stop` and
+    `resources` stand in for tests."""
+    out: Dict[str, Any] = {**_stop_buttons(False), "stop_text": ""}
     sha = asked.get("sha256") if isinstance(asked, Mapping) else None
-    if not _is_digest(sha):
-        return {**out, "stop_notice": _stop_said(
+    sha = sha if _is_digest(sha) else None
+    if not access.allowed:
+        return {**out, "stop_asked": _bound(notice_for=sha),
+                "stop_notice": f'<p class="shep-dx-why">{_e(access.refusal)}</p>'}
+    if sha is None:
+        return {**out, "stop_asked": _bound(notice_for=None), "stop_notice": _stop_said(
             "Nothing was stopped: Stop inference was not asked for a model on this page.")}
     from src.api.routes.pipeline import PipelineStopRequest, run_stop
 
@@ -2683,7 +2739,8 @@ def confirm_stop_inference(access: Any, asked: Any, *, stop: Optional[Callable[.
     said = _stop_said(outcome.message)
     if outcome.released:
         said += memory_after_stop_html(resources)
-    return {**out, "stop_notice": said}
+    left = card.stop_target(outcome.status.model_dump())
+    return {**out, "stop_asked": _bound(notice_for=left), "stop_notice": said}
 
 
 def keep_serving() -> Dict[str, Any]:
@@ -3002,19 +3059,23 @@ def create_diagnosis_tab(ctx: Any) -> None:
                   "results_body",
                   "identity_drawer", "identity_seg", "id_model", "id_result_md", "id_result_html")
     # The card's reads also show the served task's inputs (`TASK_OUTPUTS`);
-    # Run Diagnosis, which reads those inputs, never writes them.
-    read_names = card_names + TASK_OUTPUTS
-    card_inputs = [card_state, results_state, handle.phase, identity_view, cohort_input]
+    # Run Diagnosis, which reads those inputs, never writes them. They close
+    # the Stop inference views once the card no longer offers the model those
+    # are bound to (`STOP_VIEWS`, read from the binding, never writing it).
+    read_names = card_names + TASK_OUTPUTS + STOP_VIEWS
+    card_inputs = [card_state, results_state, handle.phase, identity_view, cohort_input,
+                   stop_asked]
 
-    def _card_refresh(state, result, phase, view, cohort, request: gr.Request):
-        return mapped(refresh_card(state, result, phase, view, request, cohort=cohort))
+    def _card_refresh(state, result, phase, view, cohort, stop, request: gr.Request):
+        return mapped(refresh_card(state, result, phase, view, request, cohort=cohort,
+                                   stop=stop))
 
-    def _card_reread(state, result, phase, view, cohort, request: gr.Request):
+    def _card_reread(state, result, phase, view, cohort, stop, request: gr.Request):
         return mapped(refresh_card(state, result, phase, view, request, reread=True,
-                                   cohort=cohort))
+                                   cohort=cohort, stop=stop))
 
-    def _card_poll(location, state, result, phase, view, cohort, request: gr.Request):
-        return mapped(poll_card(location, state, result, phase, view, request, cohort))
+    def _card_poll(location, state, result, phase, view, cohort, stop, request: gr.Request):
+        return mapped(poll_card(location, state, result, phase, view, request, cohort, stop))
 
     refresh = {"fn": _card_refresh, "inputs": card_inputs, "outputs": outputs(*read_names),
                "show_progress": "hidden"}
@@ -3050,14 +3111,15 @@ def create_diagnosis_tab(ctx: Any) -> None:
     identity_names = ("identity_view", "identity_drawer", "change_drawer", "identity_seg",
                       "id_model", "id_result_md", "id_result_html")
 
-    def _card_link(state, result, phase, view, cohort, evt: gr.EventData, request: gr.Request):
+    def _card_link(state, result, phase, view, cohort, stop, evt: gr.EventData,
+                   request: gr.Request):
         key = _event_key(evt)
         if key == "dismiss":
             return mapped(card_outputs(card.dismiss_change(state), result, phase, view,
-                                       cohort=cohort))
+                                       cohort=cohort, stop=stop))
         if key == "refresh":
             return mapped(refresh_card(state, result, phase, view, request, reread=True,
-                                       cohort=cohort))
+                                       cohort=cohort, stop=stop))
         if key == "evidence":
             return mapped(open_identity(state, result, "model", "evidence", phase))
         return gr.skip()
@@ -3111,8 +3173,10 @@ def create_diagnosis_tab(ctx: Any) -> None:
                      show_progress="hidden").then(**handle.refresh).then(**ctx.chip_refresh)
 
     # --- Stop inference: D8 first, the question bound to the model shown, then
-    # the confirmed stop (in process, `run_stop`), the card read again and the
-    # chips (the GPU chip names inference while a CUDA model serves).
+    # the confirmed stop (in process, `run_stop`), the card read again (its
+    # reads close these views once the model they are bound to is no longer
+    # offered) and the chips (the GPU chip names inference while a CUDA model
+    # serves).
     stop_btn.click(_on_stop_inference_request, inputs=[card_state],
                    outputs=outputs(*STOP_OUTPUTS), show_progress="hidden")
     stop_now_btn.click(_on_stop_inference, inputs=[stop_asked], outputs=outputs(*STOP_OUTPUTS),

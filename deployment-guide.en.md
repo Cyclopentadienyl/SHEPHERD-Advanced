@@ -3022,7 +3022,11 @@ it: both follow Options, and stay pinned at the panel's bottom when the inputs n
   says what the stop did ("Inference stopped: 2 accepted request(s) finished first, then model …
   and its graph were released and the GPU lock given back. …") and the resources reading taken
   then (`/api/v1/system/resources`), which is a reading and not a promise that memory was
-  returned (the GB10's memory is shared).
+  returned (the GB10's memory is shared). The card's reads own what it shows: the question
+  closes once the card no longer shows the model it named (stopped elsewhere, or another model
+  loaded), and what a stop said lasts while the card shows what that stop left: "Inference
+  stopped: …" goes once a model serves again (this browser's Load, another browser's, or a
+  restart that loads one), so the page never keeps saying "stopped" over a model that serves.
 
 | The card shows | Meaning |
 |---|---|

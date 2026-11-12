@@ -605,13 +605,28 @@ def stopping(state: Mapping[str, Any]) -> bool:
     return serving_state(state.get("status"))[0] == STOPPING
 
 
+def stop_target(status: Optional[Mapping[str, Any]]) -> Optional[str]:
+    """The model a Stop inference is bound to by this status: the full
+    fingerprint of the model serving (`serving_state`), or None (nothing
+    serving, a stop running, or a model without a fingerprint). **The one
+    rule** of what the card offers to stop (`offered_stop`) and of what a
+    stop's answer leaves served (the page's Stop inference views follow it)."""
+    if serving_state(status)[0] != SERVING:
+        return None
+    return served_checkpoint_sha(status)
+
+
+def offered_stop(state: Mapping[str, Any]) -> Optional[str]:
+    """The model the card offers to stop: `stop_target` of the last read,
+    while that read succeeded; else None."""
+    return stop_target(state.get("status")) if state.get("ok") else None
+
+
 def stop_offered(state: Mapping[str, Any]) -> bool:
     """Stop inference is offered while the last read succeeded and found a
-    model serving (`serving_state`), named by its fingerprint: the stop is
+    model serving, named by its fingerprint (`offered_stop`): the stop is
     bound to the model shown."""
-    status = state.get("status")
-    return (bool(state.get("ok")) and serving_state(status)[0] == SERVING
-            and served_checkpoint_sha(status) is not None)
+    return offered_stop(state) is not None
 
 
 def stop_button(state: Mapping[str, Any]) -> Dict[str, Any]:
