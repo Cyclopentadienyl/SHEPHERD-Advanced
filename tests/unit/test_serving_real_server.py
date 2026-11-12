@@ -50,11 +50,37 @@ STOPPING = "Inference is stopping"
 DIAGNOSIS = {"phenotypes": ["HP:0001250", "HP:0001263"], "include_explanations": True}
 
 
+#: The header a test names its request by, for `arrivals`.
+REQUEST_ID = "X-Test-Request"
+
+
+def arrival_recorder(app: Any, arrivals: Dict[str, float]) -> Any:
+    """`app` behind a pure ASGI wrapper that records, by this process's
+    monotonic clock, when each HTTP request naming itself in `REQUEST_ID`
+    reaches the application: **the server's arrival order**, which a
+    client's own send times are not (the client threads share this
+    process's interpreter with the server, so a request stamped first can
+    reach the server hundreds of milliseconds after one stamped later)."""
+    key = REQUEST_ID.lower().encode("latin-1")
+
+    async def recorded(scope, receive, send):
+        if scope["type"] == "http":
+            named = dict(scope["headers"]).get(key)
+            if named is not None:
+                arrivals[named.decode("latin-1")] = time.monotonic()
+        await app(scope, receive, send)
+
+    return recorded
+
+
 @contextmanager
-def real_server() -> Iterator[str]:
+def real_server(arrivals: Optional[Dict[str, float]] = None) -> Iterator[str]:
     """The application under uvicorn on a free loopback port, in a thread of
-    this process (its lifespan included); yields its base URL."""
-    server = uvicorn.Server(uvicorn.Config(api.app, host="127.0.0.1", port=0,
+    this process (its lifespan included); yields its base URL. With
+    `arrivals`, each named request's arrival is recorded there
+    (`arrival_recorder`)."""
+    app = api.app if arrivals is None else arrival_recorder(api.app, arrivals)
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=0,
                                            log_level="warning"))
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
@@ -71,12 +97,15 @@ def real_server() -> Iterator[str]:
 
 
 def call(base: str, method: str, path: str, body: Optional[Dict[str, Any]] = None,
-         timeout: float = 120.0) -> Tuple[int, Any, float, float]:
-    """One real HTTP request: ``(status, JSON body, sent, answered)``, the two
-    times by this process's monotonic clock."""
+         timeout: float = 120.0, name: Optional[str] = None) -> Tuple[int, Any, float, float]:
+    """One real HTTP request, named `name` in `REQUEST_ID` when given:
+    ``(status, JSON body, sent, answered)``, the two times by this process's
+    monotonic clock."""
     data = None if body is None else json.dumps(body).encode("utf-8")
-    request = urllib.request.Request(base + path, data=data, method=method,
-                                     headers={"Content-Type": "application/json"})
+    headers = {"Content-Type": "application/json"}
+    if name is not None:
+        headers[REQUEST_ID] = name
+    request = urllib.request.Request(base + path, data=data, method=method, headers=headers)
     sent = time.monotonic()
     try:
         with urllib.request.urlopen(request, timeout=timeout) as answer:
@@ -209,46 +238,66 @@ def test_a_diagnosis_sent_while_a_stop_drains_is_refused_and_the_stop_waits_for_
         assert service.runs == 1
 
 
-def test_in_a_flood_no_diagnosis_sent_after_the_stop_is_answered_by_the_stopped_model(service):
-    """The verifier's flood: sixty concurrent diagnoses, each run a little
-    slowed so they queue for the run lock, and a stop sent after the 21st.
-    Every diagnosis sent after the stop is refused (503); the ones answered
-    were all sent before it: those that ended before the stop arrived and
-    the accepted ones the stop says finished first, none after it. The runs
-    never overlapped."""
+def test_in_a_flood_no_diagnosis_arriving_after_the_stop_is_answered_by_the_stopped_model(
+        service):
+    """The verifier's flood: concurrent diagnoses, each run a little slowed
+    so they queue for the run lock (the first held in its run until the
+    stop has closed admission, so the stop has accepted requests to wait
+    for, however loaded the host), a stop sent after the 21st, and the flood
+    kept up until twenty more were sent after the stop had reached the
+    server. **Judged by the server's arrival order** (`arrival_recorder`),
+    the order the cut-off is defined by: every diagnosis that reached the
+    application after the stop did is refused (503, stopping or stopped);
+    the ones answered all reached it before the stop did: those that ended
+    before the stop and the accepted ones the stop says finished first. The
+    runs never overlapped."""
+    service.gate = threading.Event()
     service.pause = 0.02
     service.publish()
-    rows, lock, info = [], threading.Lock(), {}
-    with real_server() as base:
-        def diagnose() -> None:
-            code, said, sent, answered = call(base, "POST", "/api/v1/diagnose", DIAGNOSIS)
+    rows, lock, info, arrivals = [], threading.Lock(), {}, {}
+    with real_server(arrivals) as base:
+        def diagnose(name: str) -> None:
+            code, said, _, _ = call(base, "POST", "/api/v1/diagnose", DIAGNOSIS, name=name)
             with lock:
-                rows.append((sent, code, said))
+                rows.append((name, code, said))
 
         def stop() -> None:
-            info["answer"] = call(base, "POST", "/api/v1/pipeline/stop", {})
+            info["answer"] = call(base, "POST", "/api/v1/pipeline/stop", {}, name="stop")
 
-        threads = []
-        for i in range(60):
-            threads.append(threading.Thread(target=diagnose, daemon=True))
+        threads, after_arrival = [], 0
+        for i in range(400):
+            if after_arrival == 20:
+                break
+            if "stop" in arrivals:
+                after_arrival += 1
+            threads.append(threading.Thread(target=diagnose, args=(f"d{i}",), daemon=True))
             threads[-1].start()
             if i == 20:
+                assert service.entered.acquire(timeout=30), "the first diagnosis never ran"
                 threads.append(threading.Thread(target=stop, daemon=True))
                 threads[-1].start()
             time.sleep(0.003)
+        _wait(lambda: call(base, "GET", "/api/v1/pipeline/status",
+                           timeout=5)[1]["serving"] == "stopping")
+        service.gate.set()
         for thread in threads:
             thread.join(120)
 
-    code, said, stop_sent, _ = info["answer"]
+    assert after_arrival == 20, "the stop never reached the server during the flood"
+    code, said, _, _ = info["answer"]
     assert code == 200 and said["released"] is True, said
     accepted = int(said["message"].split("Inference stopped: ")[1].split(" accepted")[0])
-    answered = [row for row in rows if row[1] == 200]
-    after = [row for row in rows if row[0] > stop_sent]
-    assert len(rows) == 60 and after, "no diagnosis was sent after the stop"
-    assert all(code == 503 for _, code, _ in after), [code for _, code, _ in after]
+    stop_arrived = arrivals["stop"]
+    assert len(rows) == len(threads) - 1 and all(name in arrivals for name, _, _ in rows)
+    answered = [name for name, code, _ in rows if code == 200]
+    after = [(name, code, said) for name, code, said in rows if arrivals[name] > stop_arrived]
+    assert len(after) >= 20, "fewer diagnoses reached the server after the stop than were sent"
+    assert all(code == 503 for _, code, _ in after), [
+        (name, code, round(arrivals[name] - stop_arrived, 4)) for name, code, _ in after
+        if code != 503]
     assert all("stopped" in said["error"] or said["error"].startswith(STOPPING)
                for _, _, said in after)
-    assert all(sent < stop_sent for sent, _, _ in answered)
+    assert all(arrivals[name] < stop_arrived for name in answered)
     assert 0 < accepted <= len(answered) == service.runs
     assert service.most == 1, "two diagnoses ran their pipeline at once"
 
