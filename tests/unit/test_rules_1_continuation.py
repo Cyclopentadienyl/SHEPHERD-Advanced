@@ -519,8 +519,9 @@ def test_a_new_run_is_checked_for_its_freeze_by_the_process_and_the_job_runner(
         "frozen_parts": "graph_side", "candidate_sample_size": 3})
     assert started["success"] is False and started["invalid_settings"] is True
     assert started["error"] == f"{base_refused.value} Nothing was started."
-    with pytest.raises(ValueError, match=r"^frozen_parts configure a finetune, which a base run "
-                                         r"does not read\. Remove them\.$"):
+    with pytest.raises(ValueError, match=r"^frozen_parts is not a setting a base run reads, so "
+                                         r"it would not take effect \(it reads .*\)\. Remove "
+                                         r"it\.$"):
         _train(data_dir=str(runs["workspace"]), run_dir=str(tmp_path / "base"),
                learning_stage="base", device="cpu", frozen_parts="none")
     assert frozen_parts_problem("finetune", "graph_side") is None

@@ -28,7 +28,13 @@ import yaml
 
 from src.config import recipe
 from src.config import training_fields as tf
-from src.utils.run_plan import OPERATIONAL_FIELDS, new_run_settings, new_run_values
+from src.utils.run_plan import (
+    OPERATIONAL_FIELDS,
+    new_run_problem,
+    new_run_settings,
+    new_run_values,
+    unread_problem,
+)
 
 _SCRIPTS = str(Path(__file__).resolve().parents[2] / "scripts")
 
@@ -81,8 +87,75 @@ def test_the_training_process_refuses_exactly_what_a_new_run_does_not_take(stage
         with pytest.raises(Exception) as refused:
             train_model.train(config, {"learning_stage", "task", "device", name})
         said = str(refused.value)
-        unread = said.startswith(f"{name} configure")
+        unread = said.startswith(f"{name} is not a setting a {stage} ")
         assert unread is (name not in new_run_settings(stage, task)), (name, said)
+        if unread:
+            assert said == unread_problem(stage, (task,), {name})
+
+
+#: Requests every entry refuses by one check of a new run's settings, before
+#: anything is read: a bound, a null, a kind, a setting a base does not read,
+#: and a null where a rule needs a number.
+ONE_SENTENCE = {
+    "bound": {"early_stopping_patience": 0},
+    "null": {"split_seed": None},
+    "kind": {"seed": "5"},
+    "bool": {"use_amp": 1},
+    "unread": {"task_loss_weight": 0.5},
+    "null under a rule": {"scheduler_type": "onecycle", "min_lr_ratio": None},
+}
+
+
+@pytest.mark.parametrize("case", sorted(ONE_SENTENCE))
+def test_one_request_has_one_sentence_on_the_cli_the_runner_and_http(case, tmp_path,
+                                                                    monkeypatch):
+    """The one check of a new run's settings (`run_plan.new_run_problem`):
+    the training process (the CLI and every spawned job), the job runner's
+    start and POST /training/start refuse the same request in the same
+    sentence, before anything is read, written or spawned. A value is never
+    coerced (a string is not a number, 1 is not true), and a null under a
+    rule is refused as a null, never left for the Trainer to fail on."""
+    train_model = _train_model()
+    pytest.importorskip("fastapi")
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from src.api.routes.training import router
+    from src.api.services.training_manager import TrainingManager
+    from tests.fixtures.operator_access import OPERATOR_BASE_URL, operator_mode
+
+    settings = ONE_SENTENCE[case]
+    said = new_run_problem("base", (None,), settings)
+    assert said and said.startswith("min_lr_ratio must be set" if case == "null under a rule"
+                                    else next(iter(settings))), said
+    config = train_model.TrainConfig(data_dir=str(tmp_path / "absent"), device="cpu",
+                                     learning_stage="base", **settings)
+    with pytest.raises(ValueError) as cli:
+        train_model.train(config, {"learning_stage", "device", *settings})
+    assert str(cli.value) == said
+
+    manager = TrainingManager()
+    monkeypatch.setattr("src.api.routes.training.training_manager", manager)
+    monkeypatch.delenv("SHEPHERD_DEVICE", raising=False)
+    operator_mode(monkeypatch)
+    app = FastAPI()
+    app.include_router(router, prefix="/api/v1")
+    body = {"data_dir": str(tmp_path / "ws"), "learning_stage": "base", "device": "cpu",
+            **settings}
+    with patch("subprocess.Popen") as popen:
+        runner = manager.start_training(dict(body))
+        resp = TestClient(app, base_url=OPERATOR_BASE_URL).post("/api/v1/training/start",
+                                                                json=body)
+    assert runner["success"] is False and runner["invalid_settings"] is True
+    assert runner["error"] == f"{said} Nothing was started."
+    assert resp.status_code == 422, resp.text
+    detail = resp.json()["detail"]
+    if isinstance(detail, str):          # passed on: the runner's own words
+        assert detail == f"{said} Nothing was started."
+    else:                                # the request's check, by the same function
+        assert [error["msg"] for error in detail] == [f"Value error, {said}"], detail
+    popen.assert_not_called()
+    assert manager.active_job() is None and manager.run_dir is None
 
 
 def test_the_fill_of_a_new_run_is_the_operators_then_the_recipes_then_the_builds():
@@ -411,9 +484,9 @@ def base(tmp_path):
     """A one-layer base trained on a generated workspace's graph, its split
     seed recorded (`test_finetune_children`'s, with a split record)."""
     pytest.importorskip("torch")
+    from tests.fixtures.generated_workspace import write_generated_workspace
     from tests.unit.test_finetune_children import _derive_fixture, _trained_on
     from tests.unit.test_task_first_selection import BASE_RUN, _put, _record_payload
-    from tests.fixtures.generated_workspace import write_generated_workspace
 
     workspace, _ = write_generated_workspace(tmp_path / "ws", train_ids=[1, 2], val_ids=[3])
     _derive_fixture(workspace)

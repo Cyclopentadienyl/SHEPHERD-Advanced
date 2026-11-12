@@ -308,9 +308,10 @@ def test_what_fails_in_starting_a_child_never_stops_the_monitor(base, popen, mon
     (dict(tasks=("disease", "disease")), "more than once"),
     (dict(tasks=("disease", "genes")), "'genes' is not a task"),
     (dict(settings={"candidate_sample_size": 8}, tasks=("disease", "gene")),
-     "candidate_sample_size is not a setting a Fine-tune start of Disease and Gene takes"),
+     "candidate_sample_size is not a setting every finetune of disease and gene reads, so it "
+     "would not take effect (all of them read "),
     (dict(settings={"hidden_dim": 8}),
-     "hidden_dim is not a setting a Fine-tune start of Disease takes"),
+     "hidden_dim is not a setting a finetune for disease reads"),
     (dict(settings={"save_top_k": 0}), "save_top_k must be 1 or more, not 0."),
     (dict(settings={"warmup_steps": 5}), "warmup_steps is read only when scheduler_type is "
                                          "'cosine'"),
@@ -452,10 +453,10 @@ def test_a_new_run_without_a_stage_is_refused_before_anything_starts(base, popen
 
 
 @pytest.mark.parametrize("change, fragment", [
-    (dict(hidden_dim=8), "hidden_dim is not a setting a base run takes"),
-    (dict(task_loss_weight=0.5), "task_loss_weight is not a setting a base run takes"),
-    (dict(conv_type="gat"), "conv_type is not a setting a base run takes"),
-    (dict(task="disease"), "task is not a setting a base run takes"),
+    (dict(hidden_dim=8), "hidden_dim is not a setting a base run reads"),
+    (dict(task_loss_weight=0.5), "task_loss_weight is not a setting a base run reads"),
+    (dict(conv_type="gat"), "conv_type is not a setting a base run reads"),
+    (dict(task="disease"), "task is not a setting a base run reads"),
     (dict(num_epochs=0), "num_epochs must be between 1 and 10000, not 0."),
     (dict(learning_rate="fast"), "learning_rate must be a number, not 'fast'"),
     (dict(early_stopping_patience=None, seed=None), "seed must be set, not null"),

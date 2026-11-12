@@ -12,11 +12,13 @@ surfaces:
                                 form of the reference recipe's base settings, see below)
     - the CLI + projection hub (scripts/train_model.py :: TrainConfig -> downstream configs)
 
-It is read, not only descriptive: the job runner's start checks every value with
-`value_problem` and every rule across settings with `cross_field_problems`, as the training
-process does (`train_model.train`, the continuation and branch plans of `src.utils.run_plan`),
-the API's base start takes its bounds from each field's ``valid``, and the WebUI's base form
-and Fine-tune page check values with `value_problem` before the runner checks them again.
+It is read, not only descriptive: a new run's settings are judged by one check
+(`src.utils.run_plan.new_run_problem`: every value by `value_problem`, every rule across
+settings by `cross_field_problems`), which the training process (`train_model.train`) and the
+job runner's starts make alike, and a branch's plan judges what it changes by the same rules;
+the API's start checks each value by `value_problem` too and takes its bounds from each
+field's ``valid``, and the WebUI's base form and Fine-tune page check values with
+`value_problem` before the runner checks them again.
 
 Constraint representation
 -------------------------
@@ -57,10 +59,11 @@ Phase status:
 
     - The settings projection (ops-wiring round A1a, decisions S1-S6): the API's base start
       takes every setting a new base run reads (`run_plan.new_run_settings`), its bounds from
-      each field's ``valid`` (derived; the parity tests still compare them), its hop list
-      checked item by item by `value_problem` (so a ``-1`` hop is legal, as on the CLI); the
-      rules across settings that say when a setting is read are data here, and an explicit
-      setting the run would not read is refused, never ignored.
+      each field's ``valid`` (derived, for the schema; the parity tests still compare them),
+      each value checked first by `value_problem`, strictly and in its words (so a ``-1`` hop
+      is legal, as on the CLI, and a string is never a number); the rules across settings
+      that say when a setting is read are data here, and an explicit setting the run would
+      not read is refused, never ignored.
 
 **The retired WebUI form (K6).** The ShepherdGNN form and its collector (``_collect_config``)
 are gone: the Training page offers exactly the reference recipe's base settings
@@ -120,9 +123,9 @@ class CrossFieldRule:
 
 
 #: Where every rule is judged: the one evaluator's callers.
-_ENFORCED_IN = ("current (`cross_field_problems`: the training process's `train_model.train` "
-                "for a new run, the continuation and branch plans of `src.utils.run_plan`, "
-                "and the job runner's start before it spawns)")
+_ENFORCED_IN = ("current (`cross_field_problems`: through `src.utils.run_plan.new_run_problem`, "
+                "the training process's `train_model.train` for a new run and the job "
+                "runner's starts before they spawn, and a branch's plan on what it changes)")
 
 CROSS_FIELD_RULES: Tuple[CrossFieldRule, ...] = (
     CrossFieldRule(
@@ -231,20 +234,23 @@ def cross_field_problems(values: Mapping[str, Any], explicit: Collection[str]) -
     """**The one evaluator of the rules across settings** (`CROSS_FIELD_RULES`):
     every problem of a run whose settings are `values` (as it would train with
     them: the operator's, the stage's reference or this build's default, or a
-    parent's) and whose operator set `explicit`, each in its rule's sentence
-    (`rule_problem`). A rule is judged only where the operator set one of its
-    fields: a ``read_only_when`` rule where the operator set its subject (an
-    explicit setting the run would not read is refused, never ignored), a
-    ``min_exclusive`` rule where the operator set its subject or a field of its
-    guard. **A value the operator did not set is never refused here**: an
-    inherited (a continuation's, a branch's) or filled one. Requested mixed
+    parent's) and whose operator set `explicit` (for a branch, what it
+    changes), each in its rule's sentence (`rule_problem`). A rule is judged
+    only where the operator set one of its fields: a ``read_only_when`` rule
+    where the operator set its subject (an explicit setting the run would not
+    read is refused, never ignored), a ``min_exclusive`` rule where the
+    operator set its subject or a field of its guard. **A value the operator
+    did not set is never refused here**: a filled one, or one kept from a
+    parent (inherited, or stated at the parent's value), so a resume and an
+    extension, which change nothing, never meet these rules. Requested mixed
     precision on a device without it is no problem of these rules: the run
     records the precision requested and the precision in effect apart.
 
-    Called by the training process (`train_model.train`, for a new run once the
-    recipe has filled it), the continuation and branch plans (`run_plan`), and
-    the job runner's start before it spawns (`training_manager`), so the CLI,
-    every spawned job and the service give one judgement."""
+    Called through the one check of a new run's settings
+    (`run_plan.new_run_problem`: the training process's `train_model.train`
+    and the job runner's starts before they spawn) and by the branch plan
+    (`run_plan.plan_branch`, on what it changes), so the CLI, every spawned job
+    and the service give one judgement."""
     chosen = set(explicit)
     problems = []
     for rule in CROSS_FIELD_RULES:

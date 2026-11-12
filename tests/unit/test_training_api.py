@@ -179,7 +179,7 @@ class TestTrainingManagerStartStop:
         manager = TrainingManager()
         if start == "base":
             config = {"data_dir": str(tmp_path), "learning_stage": "base", retired: "x"}
-            said = f"{retired} is not a setting a base run takes"
+            said = f"{retired} is not a setting a base run reads"
         else:
             ws, parent = request.getfixturevalue("paused_base")
             config = {"data_dir": str(ws), "resume_from": str(parent), "device": "cpu",

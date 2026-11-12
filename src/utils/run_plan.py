@@ -18,7 +18,8 @@ the stage's closed list (`src.config.recipe.branch_settings`) and recording
 each change; a new optimizer, schedule and stage.
 
 **What a new run takes** (a base, a finetune; ops-wiring round, decision S1)
-is stated here once, `new_run_settings`, and filled once, `new_run_values`:
+is stated here once, `new_run_settings`, filled once, `new_run_values`, and
+judged once, `new_run_problem` (a setting a run does not read: `unread_problem`):
 the training process, the job runner's starts and the API's start read them.
 
 **What the parent's state allows:**
@@ -80,7 +81,7 @@ from src.config.model_types import WRITTEN_BEFORE_SPEC
 from src.config.recipe import (
     FROZEN_PARTS, branch_settings, frozen_parts_problem, reference_settings, unread_settings,
 )
-from src.config.training_fields import FIELDS, cross_field_problems
+from src.config.training_fields import FIELDS, cross_field_problems, value_problem
 from src.utils.checkpoint_paths import PLAIN_DEPTH, PLAIN_VALUES, plain_data_problem
 
 #: Fields that say where a run reads and writes, how it is run on this host, or
@@ -104,20 +105,101 @@ class RunPlanRefused(ValueError):
 #: What names a run's stage and task: the run's identity, not a setting of it.
 _RUN_IDENTITY = frozenset({"learning_stage", "task"})
 
+#: Every setting a run of any stage may state: each learning setting (a field
+#: of the field spec outside `OPERATIONAL_FIELDS`, `TrainConfig`'s fields) but
+#: the run's stage and task, which name the run.
+RUN_SETTINGS = frozenset(spec.name for spec in FIELDS) - OPERATIONAL_FIELDS - _RUN_IDENTITY
+
 
 def new_run_settings(learning_stage: str, task: Optional[str] = None) -> frozenset:
     """**What a new run of `learning_stage` (and `task`) takes** (ops-wiring
-    round, decision S1): every learning setting (a field of the field spec
-    outside `OPERATIONAL_FIELDS`, `TrainConfig`'s fields), but the run's stage
-    and task, which name the run, and the recipe's settings this stage and
-    task do not read (`recipe.unread_settings`: another task's, or any task
-    setting on a base), which are refused, never ignored. The one statement of
+    round, decision S1): every setting a run may state (`RUN_SETTINGS`) but
+    the recipe's settings this stage and task do not read
+    (`recipe.unread_settings`: another task's, or any task setting on a base),
+    which are refused, never ignored (`unread_problem`). The one statement of
     that rule: the training process refuses an explicit setting outside it
     (`train_model.train`, the CLI and every spawned job), the job runner's
     start takes exactly what every run it makes takes (the intersection over
     a Fine-tune start's tasks), and the API's base start offers it."""
-    learning = {spec.name for spec in FIELDS} - OPERATIONAL_FIELDS - _RUN_IDENTITY
-    return frozenset(learning - unread_settings(learning_stage, task))
+    return frozenset(RUN_SETTINGS - unread_settings(learning_stage, task))
+
+
+def _runs_words(learning_stage: str, tasks: Collection[Optional[str]]) -> str:
+    """The runs a start makes, in a refusal's words: "a base run", "a
+    finetune for disease", "every finetune of disease and gene"."""
+    named = [task for task in tasks if task is not None]
+    if not named:
+        return f"a {learning_stage} run"
+    if len(named) == 1:
+        return f"a {learning_stage} for {named[0]}"
+    return f"every {learning_stage} of {', '.join(named[:-1])} and {named[-1]}"
+
+
+def unread_problem(learning_stage: str, tasks: Collection[Optional[str]],
+                   stated: Collection[str]) -> Optional[str]:
+    """Why a start of `learning_stage` that makes a run per one of `tasks`
+    (``(None,)`` for a base) cannot take the settings `stated`, or None:
+    **a setting is taken only when every run of the start reads it**, the
+    intersection of `new_run_settings` over `tasks`; any other is refused,
+    never ignored, in this one sentence. Asked by the training process of
+    every run (`train_model.train`: one task, the CLI and every spawned job)
+    and by the job runner's starts (`new_run_problem`), so the CLI, every
+    spawned job and the service refuse one request in the same words."""
+    common = frozenset.intersection(*(new_run_settings(learning_stage, task)
+                                      for task in tasks))
+    unread = sorted(set(stated) - common)
+    if not unread:
+        return None
+    one = len(unread) == 1
+    every = len([task for task in tasks if task is not None]) > 1
+    return (f"{', '.join(unread)} {'is not a setting' if one else 'are not settings'} "
+            f"{_runs_words(learning_stage, tasks)} reads, so "
+            f"{'it' if one else 'they'} would not take effect "
+            f"({'all of them read' if every else 'it reads'} {', '.join(sorted(common))}). "
+            f"Remove {'it' if one else 'them'}.")
+
+
+def new_run_problem(learning_stage: str, tasks: Collection[Optional[str]],
+                    settings: Mapping[str, Any]) -> Optional[str]:
+    """**The one check of the settings a new run is started with** (BACKLOG
+    54; decisions S1, S3): why `settings`, the operator's explicit settings
+    with their values, cannot start the runs of `learning_stage` a start
+    makes, one per one of `tasks` (``(None,)`` for a base), or None. Asked by
+    the training process of a new run (`train_model.train`, the CLI and every
+    spawned job, with its one task) and by the job runner's base start and
+    Fine-tune start before anything is spawned (`training_manager`), so one
+    request has one judgement in one sentence wherever it is sent:
+
+    - the freeze first, by its one check (`recipe.frozen_parts_problem`),
+      before the settings a run does not read, so a base asked to freeze
+      hears that nothing would train;
+    - a setting is taken only when every run reads it (`unread_problem`);
+    - its value only when its field spec takes it (`value_problem`: its kind,
+      strictly, its bounds and choices), None only where a run's reference
+      value is None or the field's default is;
+    - the rules across settings (`training_fields.cross_field_problems`), on
+      each run's settings as they are filled (`new_run_values`), for what
+      `settings` set: one the run would not read is refused."""
+    if "frozen_parts" in settings:
+        frozen = frozen_parts_problem(learning_stage, settings["frozen_parts"])
+        if frozen:
+            return frozen
+    problem = unread_problem(learning_stage, tasks, settings)
+    if problem:
+        return problem
+    references = [reference_settings(learning_stage, task)[0] for task in tasks]
+    problems = [problem for name, value in sorted(settings.items())
+                for problem in [value_problem(name, value, allow_none=any(
+                    name in values and values[name] is None for values in references))]
+                if problem]
+    if problems:
+        return " ".join(problems)
+    for task in tasks:
+        problems = cross_field_problems(new_run_values(learning_stage, task, settings),
+                                        settings)
+        if problems:
+            return " ".join(problems)
+    return None
 
 
 def new_run_values(learning_stage: str, task: Optional[str],
@@ -890,15 +972,18 @@ __all__ = [
     "ContinuationPlan",
     "DecodedSettings",
     "OPERATIONAL_FIELDS",
+    "RUN_SETTINGS",
     "RunPlanRefused",
     "decode_learning_settings",
     "decoded_sentence",
     "finetune_split_seed_problem",
+    "new_run_problem",
     "new_run_settings",
     "new_run_values",
     "plan_branch",
     "plan_continuation",
     "recorded_training_settings",
     "resolve_recorded_file",
+    "unread_problem",
     "zero_rate_groups",
 ]

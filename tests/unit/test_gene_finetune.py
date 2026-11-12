@@ -249,13 +249,14 @@ def test_another_tasks_setting_is_refused_never_ignored(trained, tmp_path):
     import train_model
 
     config, explicit = _gene_config(trained, tmp_path / "child", candidate_sample_size=777)
-    with pytest.raises(ValueError, match="candidate_sample_size configure another task"):
+    with pytest.raises(ValueError, match="^candidate_sample_size is not a setting a finetune "
+                                         "for gene reads, so it would not take effect"):
         train_model.train(config, explicit)
     assert not (tmp_path / "child").exists()
     base = train_model.TrainConfig(data_dir=str(trained["data_dir"]), run_dir=str(tmp_path / "b"),
                                    learning_stage="base", task_loss_weight=0.5, device="cpu")
-    with pytest.raises(ValueError, match="task_loss_weight configure a finetune, which a base "
-                                         "run does not read"):
+    with pytest.raises(ValueError, match="^task_loss_weight is not a setting a base run reads, "
+                                         "so it would not take effect"):
         train_model.train(base, {"learning_stage", "task_loss_weight", "device"})
 
 

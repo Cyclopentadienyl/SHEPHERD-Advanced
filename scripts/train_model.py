@@ -1236,16 +1236,14 @@ def train(config: TrainConfig, explicit: Collection[str], *,
         MODEL_RECORD_VERSION, ModelRecord, ModelRecordError, read_model_record,
     )
     from src.config.recipe import BASE_FIXED, FROZEN_PARTS, frozen_parts_problem
-    from src.config.training_fields import cross_field_problems
-    from src.config.training_fields import names as setting_names
     from src.models.bundle.builder import DOWNSTREAM_PARTS, GRAPH_SIDE_PARTS
     from src.training.lp_task import BASE_SELECTION_METRIC, BaseLPSampler, BaseLPTask
     from src.utils.checkpoint_paths import (
         check_run_dir_free, claim_run_dir, propose_run_dir, run_checkpoint_dir, run_log_dir,
     )
     from src.utils.run_plan import (
-        OPERATIONAL_FIELDS, RunPlanRefused, decoded_sentence, finetune_split_seed_problem,
-        new_run_settings, plan_branch,
+        RUN_SETTINGS, RunPlanRefused, decoded_sentence, finetune_split_seed_problem,
+        new_run_problem, plan_branch, unread_problem,
     )
 
     if explicit is None:
@@ -1271,28 +1269,29 @@ def train(config: TrainConfig, explicit: Collection[str], *,
         if not parents:
             raise ValueError("a finetune run starts from a base (finetune_from), resumes a "
                              "finetune run (resume_from) or branches one (branch_from)")
-    # The freeze of a new run (a base, a finetune), by its one check
-    # (`frozen_parts_problem`), before the unread settings, so a base asked to
-    # freeze hears why; its value is final here (a finetune's recipe value is
-    # "none"). A continued or branched run trains with its parent's, which the
-    # settings decode checks (`run_plan.decode_learning_settings`), a different
-    # one stated being refused there, as the job runner's preview refuses it.
+    # The settings the operator stated, with their values: the explicit
+    # settings a run may state (`run_plan.RUN_SETTINGS`; its stage and task
+    # name it, and the operational fields are not settings).
+    stated = {name: getattr(config, name) for name in sorted(explicit_set & RUN_SETTINGS)}
     if not (config.resume_from or config.branch_from):
-        frozen_problem = frozen_parts_problem(stage, config.frozen_parts)
-        if frozen_problem:
-            raise ValueError(frozen_problem)
-    # A run reads the settings of its stage and task (`new_run_settings`, the
-    # one statement of that rule): a base no finetune setting (a task's, or
-    # the freeze), a finetune its own task's, not another task's.
-    stated = (explicit_set & set(setting_names())) - OPERATIONAL_FIELDS - {"learning_stage",
-                                                                          "task"}
-    unread = sorted(stated - new_run_settings(stage, config.task))
-    if unread:
-        raise ValueError(
-            f"{', '.join(unread)} configure "
-            + ("a finetune" if stage == "base" else "another task")
-            + f", which a {stage} run" + (f" for {config.task}" if config.task else "")
-            + " does not read. Remove them.")
+        # A new run (a base, a finetune), by the one check of the settings a
+        # new run is started with (`run_plan.new_run_problem`), which the job
+        # runner's starts make too, in the same sentences: the freeze, the
+        # settings its stage and task do not read, each value by its field
+        # spec, and the rules across settings (decision S3) for what the
+        # operator set. The freeze it trains with is judged first, set or not,
+        # so its value is final here (a finetune's recipe value is "none").
+        problem = (frozen_parts_problem(stage, config.frozen_parts)
+                   or new_run_problem(stage, (config.task,), stated))
+    else:
+        # A continued or branched run trains with its parent's settings, which
+        # its plan checks (`run_plan`: a different one stated is refused, a
+        # branch's changes judged by the rules across settings, the freeze by
+        # the settings decode), as the job runner's preview does; it reads the
+        # settings of its stage and task alone (`unread_problem`).
+        problem = unread_problem(stage, (config.task,), stated)
+    if problem:
+        raise ValueError(problem)
     if expected_parent_sha256 is not None and not (config.finetune_from or config.branch_from):
         raise ValueError("--expect-parent-sha256 names a finetune or branch parent; give "
                          "finetune_from or branch_from.")
@@ -1302,13 +1301,6 @@ def train(config: TrainConfig, explicit: Collection[str], *,
     recipe = None
     if not (config.resume_from or config.branch_from):
         config, recipe = apply_stage_recipe(config, explicit_set)
-        # The rules across settings (decision S3), on the settings the run
-        # trains with, for what the operator set: one it would not read is
-        # refused, never ignored (a continuation's and a branch's are judged
-        # by their plans, on the settings they inherit).
-        problems = cross_field_problems(_asdict(config), explicit_set)
-        if problems:
-            raise ValueError(" ".join(problems))
 
     device = resolve_training_device(config.device)
     logger.info(f"Model bundle run, learning stage {stage}"

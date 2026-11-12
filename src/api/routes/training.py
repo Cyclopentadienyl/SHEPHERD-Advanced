@@ -39,10 +39,13 @@ import re
 from typing import Annotated, Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, HTTPException, Query, status
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator,
+)
 
 from src.api.operator_access import OPERATOR_ONLY
 from src.api.services.training_manager import FinetuneInputs, training_manager
+from src.utils.run_plan import new_run_settings
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +62,15 @@ _DEVICE_RE = re.compile(r"^(auto|cpu|mps|cuda(:\d+)?)$")
 #: "not given": the parent and its extension.
 _NULL_IS_NOT_GIVEN = frozenset({"resume_from", "extend_epochs", "extend_lr"})
 
+#: The settings a new base run reads (`run_plan.new_run_settings("base")`, the
+#: CLI's rule): the start request's settings, beside its run and continuation
+#: fields.
+_BASE_SETTINGS = tuple(sorted(new_run_settings("base")))
+#: The start request's fields whose values the field spec checks first
+#: (`value_problem`): every setting, and the operational ones that are not
+#: text (text is never coerced; `device` has its grammar below).
+_CHECKED_BY_THE_SPEC = (*_BASE_SETTINGS, "compile", "extend_epochs", "extend_lr")
+
 
 # =============================================================================
 # Request/Response Models
@@ -67,8 +79,10 @@ def _setting(name: str) -> Any:
     """A setting of a start request: unset by default (the training process
     fills it, by the stage's recipe or this build's default, and records its
     source), its bounds and words the field spec's (`training_fields`: the
-    field's `valid` and description), so the request is a thin projection and
-    the runner's one check (`value_problem`) and the request agree."""
+    field's `valid` and description, for the schema; each value is checked
+    first by `value_problem`, `TrainingStartRequest._check_by_the_spec`), so
+    the request is a thin projection and the runner's one check and the
+    request agree."""
     from src.config.training_fields import by_name
 
     spec = by_name(name)
@@ -88,14 +102,20 @@ class TrainingStartRequest(BaseModel):
 
     **Strict** (BACKLOG 54), as the Fine-tune start is: a field this request
     does not define, a ShepherdGNN setting among them, is refused (422), never
-    dropped. `learning_stage` is required and ``"base"`` for a new run (a
-    finetune is POST /training/finetune's start); with `resume_from` it may be
-    left out, and when given is compared with the parent's, so a finetune
-    child is resumed or extended here too. **Only the fields sent reach the
-    service** (the route dumps the fields set, an explicit null included, so
-    it is judged: refused where the field takes no null, or as another value
-    than the parent's), and the runner checks them again (`_new_bundle_run`,
-    the continuation preview) before anything starts."""
+    dropped (a setting a new base does not read, in the sentence of the one
+    check of a new run's settings, `run_plan.new_run_problem`); and each value
+    is checked first by the field spec's one check (`value_problem`),
+    strictly (a string is never a number, 1 is not true) and in its words, as
+    the job runner and the training process check it. `learning_stage` is
+    required and ``"base"`` for a new run (a finetune is POST
+    /training/finetune's start); with `resume_from` it may be left out, and
+    when given is compared with the parent's, so a finetune child is resumed
+    or extended here too. **Only the fields sent reach the service** (the
+    route dumps the fields set, an explicit null included, so it is judged:
+    refused where the field takes no null, or as another value than the
+    parent's; a null parent or extension is not given), and the runner checks
+    them again (`_new_bundle_run`, the continuation preview) before anything
+    starts."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -154,6 +174,25 @@ class TrainingStartRequest(BaseModel):
         refuse_retired_locations(data, source="This request")
         return data
 
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_what_a_base_does_not_read(cls, data: Any) -> Any:
+        # A setting a new base does not read (a finetune's, or the freeze) is
+        # refused by the one check of a new run's settings, in the sentence
+        # the job runner and the training process refuse it in
+        # (`run_plan.new_run_problem`); any other field this request does not
+        # define is refused by extra="forbid". A continuation's settings are
+        # its parent's: the request does not take a finetune's.
+        from src.utils.run_plan import RUN_SETTINGS, new_run_problem
+
+        if isinstance(data, dict) and not data.get("resume_from"):
+            stated = {name: value for name, value in data.items()
+                      if name in RUN_SETTINGS and name not in cls.model_fields}
+            problem = new_run_problem("base", (None,), stated) if stated else None
+            if problem:
+                raise ValueError(problem)
+        return data
+
     @field_validator("device")
     @classmethod
     def _validate_device(cls, v: str) -> str:
@@ -166,15 +205,22 @@ class TrainingStartRequest(BaseModel):
             )
         return v
 
-    @field_validator("num_neighbors")
+    @field_validator(*_CHECKED_BY_THE_SPEC, mode="before")
     @classmethod
-    def _validate_hops(cls, value: Optional[List[int]]) -> Optional[List[int]]:
-        # The hop list by the field spec's one check (`value_problem`): at
-        # least one hop, each 1 or more or -1 (every neighbour), as the CLI
-        # and the WebUI take it.
+    def _check_by_the_spec(cls, value: Any, info: ValidationInfo) -> Any:
+        # Each value as sent, by the field spec's one check (`value_problem`),
+        # before any coercion: its kind strictly, its bounds, choices and
+        # list items (a hop list of at least one hop, each 1 or more or -1,
+        # every neighbour, as the CLI and the WebUI take it), in the words the
+        # job runner and the training process refuse it in. A null setting is
+        # passed on, for the runner to judge by the run's reference
+        # (`run_plan.new_run_problem`) or a parent's value; a null parent or
+        # extension is not given.
         from src.config.training_fields import value_problem
 
-        problem = None if value is None else value_problem("num_neighbors", value)
+        name = info.field_name
+        problem = value_problem(name, value, allow_none=(name in _BASE_SETTINGS
+                                                         or name in _NULL_IS_NOT_GIVEN))
         if problem:
             raise ValueError(problem)
         return value

@@ -175,10 +175,10 @@ _PART_WORDS = {"input": "the input module", "encoder": "the encoder", "lp_head":
 def frozen_parts_problem(learning_stage: Any, frozen_parts: Any) -> Optional[str]:
     """**The one check of the freeze setting** of a run of `learning_stage`:
     why `frozen_parts` cannot be run, or None. Shared by the training process
-    (`train_model.train`, every run's final settings), the job runner's new
-    runs (`training_manager._recipe_settings_problem`) and every continuation's
-    settings decode (`run_plan.decode_learning_settings`), so the three answer
-    one value alike.
+    (`train_model.train`, every new run's final settings), the one check of a
+    new run's settings that it and the job runner's starts make
+    (`run_plan.new_run_problem`) and every continuation's settings decode
+    (`run_plan.decode_learning_settings`), so they answer one value alike.
 
     - a value outside the field spec's closed values (`value_problem`);
     - **a freeze that leaves nothing to train**: a base is its graph side
