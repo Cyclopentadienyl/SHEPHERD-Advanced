@@ -1179,13 +1179,17 @@ routes and `train_model.py` with that root:
 - the child loaded: **on CUDA** the status says it holds the GPU lock and the lock names the
   service's inference, and both a job runner start (`POST /api/v1/training/start`) and a
   `train_model.py` are refused naming inference, nothing started or written; **on the CPU**
-  nothing is held and a short training runs beside the served model;
+  nothing is held, and a job runner start and a `train_model.py` each run a short training to its
+  end beside the served model (pure CPU inference excludes nothing);
 - a corrupt checkpoint named for a reload is refused, and the model (and on CUDA the lock) is
   kept;
-- diagnoses sent by three clients across `POST /api/v1/pipeline/stop`: each is answered by the
-  model or refused (503) with the stopping or stopped reason, every one sent after the stop
-  answered is refused, and the stop says released only with nothing in flight and the lock
-  free; the resources reading then is recorded, not judged;
+- diagnoses sent by eight clients across `POST /api/v1/pipeline/stop`: each is answered by the
+  model or refused (503) with the stopping or stopped reason, every client's diagnosis sent after
+  the stop answered is refused, and the stop says released only with nothing in flight and the
+  lock free. Diagnoses run one at a time on the service's event loop, so a stop finds one still
+  running only some of the time; W12 loads the child again and stops again (twelve stops at
+  most) until a stop counts at least one accepted diagnosis that finished first, so the stop's
+  wait for it is observed, not assumed. The resources reading then is recorded, not judged;
 - a short training then runs to its end, and the child loads again;
 - on CUDA, a reload on the CPU gives the lock back and one on CUDA takes it again.
 

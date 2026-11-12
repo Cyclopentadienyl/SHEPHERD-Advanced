@@ -510,15 +510,18 @@ def _check_the_inference_lifecycle(probe, report, tmp_path, models):
                                                 "lock_free": True}
     assert facts["loaded"] == {"serving": "serving", "holds_gpu_lock": False,
                                "lock_names_the_service": False}
-    assert facts["while_serving"] == {"runner_start": "not asked on the CPU",
-                                      "training_cli": "ran to its end (exit 0)"}
+    assert facts["while_serving"] == {
+        "runner_start": "started (200) and ran to its end (completed, exit 0)",
+        "training_cli": "ran to its end (exit 0)"}
     assert facts["corrupt_reload"] == {"refused": True, "model_kept": True,
                                        "holds_gpu_lock": False}
     stop = facts["stop"]
     assert stop["released"] is True and stop["gpu_lock_given_back"] is False
     assert stop["accepted"] >= 1 and stop["sent_after_the_stop_answered"] == probe.W12_CLIENTS
     assert stop["refused_stopped"] >= stop["sent_after_the_stop_answered"]
-    assert stop["finished_first_as_the_stop_counts"] <= stop["accepted"]
+    # The stop's wait observed: one accepted diagnosis still running when it began.
+    assert stop["drain_observed"] is True and 1 <= stop["stops"] <= probe.W12_STOP_ATTEMPTS
+    assert 1 <= stop["finished_first_as_the_stop_counts"] <= stop["accepted"]
     assert stop["diagnoses"] == stop["accepted"] + stop["refused_stopping"] + stop[
         "refused_stopped"]
     assert facts["memory_after_the_stop"]["judged"] is False

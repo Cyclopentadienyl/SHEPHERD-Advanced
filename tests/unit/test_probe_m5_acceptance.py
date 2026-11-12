@@ -1656,12 +1656,14 @@ def test_w12_classes_each_diagnosis_across_the_stop_by_the_server_s_words(probe)
 def _stop_seen(answers, *, message="Inference stopped: 1 accepted request(s) finished first, "
                                    "then model cccccccccccc and its graph were released. New "
                                    "diagnoses are refused until a model is loaded.",
-               status=None, released=True):
+               status=None, released=True, clients=None, still_sending=0):
     return {"stop_status": 200,
             "stop": {"success": True, "released": released, "message": message,
                      "status": status or {"serving": "not_loaded", "in_flight": 0,
                                           "holds_gpu_lock": False}},
-            "answers": answers}
+            "answers": answers,
+            "clients": sum(after for after, _ in answers) if clients is None else clients,
+            "still_sending": still_sending}
 
 
 GOOD_ANSWERS = [(False, "accepted"), (False, "accepted"), (False, "stopping"),
@@ -1688,6 +1690,10 @@ def test_w12_s_stop_judge_passes_the_lifecycle_s_own_order(probe):
     (_stop_seen(GOOD_ANSWERS + [(False, "http_500")]), "answered otherwise"),
     (_stop_seen(GOOD_ANSWERS + [(True, "accepted")]), "was not refused as stopped"),
     (_stop_seen([(True, "stopped")]), "no diagnosis was accepted"),
+    # Review of A3b (P3): every client answered to its end, one late each.
+    (_stop_seen(GOOD_ANSWERS, still_sending=1), "1 of 2 clients were still sending"),
+    (_stop_seen(GOOD_ANSWERS, clients=3),
+     "2 diagnosis(es) were sent after the stop answered, not one by each of the 3 clients"),
     (_stop_seen(GOOD_ANSWERS, message="Inference stopped: 5 accepted request(s) finished "
                                       "first, then the model"),
      "5 accepted request(s) finished first, of 2 accepted"),
@@ -1695,6 +1701,74 @@ def test_w12_s_stop_judge_passes_the_lifecycle_s_own_order(probe):
 def test_w12_s_stop_judge_fails_each_way_the_lifecycle_can_be_wrong(probe, seen, message):
     with pytest.raises(AssertionError, match=re.escape(message)):
         probe._judge_the_stop(seen, on_cuda=False)
+
+
+def _drained(count):
+    return _stop_seen(GOOD_ANSWERS, message=(
+        f"Inference stopped: {count} accepted request(s) finished first, then model "
+        "cccccccccccc and its graph were released. New diagnoses are refused until a model is "
+        "loaded."))
+
+
+def test_w12_stops_again_until_a_stop_waits_for_a_running_diagnosis(probe):
+    """Review of A3b (P2): a stop that found no accepted diagnosis running
+    shows nothing of I4's wait, so W12 loads the model again and stops again,
+    judging each stop whole, until one counts one finished first; none in the
+    attempts fails W12."""
+    stops = iter([_drained(0), _drained(0), _drained(1)])
+    loads = []
+    facts = probe._stops_until_one_drains(lambda: next(stops), lambda: loads.append(1), False,
+                                          attempts=5)
+    assert (facts["stops"], facts["drain_observed"], len(loads)) == (3, True, 2)
+    assert facts["finished_first_as_the_stop_counts"] == 1
+    once = probe._stops_until_one_drains(lambda: _drained(2), lambda: loads.append(1), False)
+    assert once["stops"] == 1 and len(loads) == 2
+    with pytest.raises(AssertionError, match="none of 3 stops found an accepted diagnosis"):
+        probe._stops_until_one_drains(lambda: _drained(0), lambda: None, False, attempts=3)
+    # A stop that is wrong otherwise fails at once, never retried past.
+    wrong = iter([_stop_seen(GOOD_ANSWERS, released=False), _drained(1)])
+    with pytest.raises(AssertionError, match="did not report released"):
+        probe._stops_until_one_drains(lambda: next(wrong), lambda: None, False)
+
+
+def test_w12_s_clients_say_when_each_diagnosis_was_sent_and_count_every_answer(probe):
+    """Review of A3b (P3): a diagnosis is "after" by when it was sent, never
+    by which loop sent it; each client sends one once the stop has answered,
+    even one that used up its sends before; an answer that breaks off is
+    counted as ``no_response``, never lost."""
+    import http.client
+    import threading
+
+    sha = "c" * 64
+    served = json.dumps({"served_identity": {"checkpoint": {"sha256": sha}}}).encode()
+    stopped = json.dumps({"error": "Inference was stopped by an operator at 10:15."}).encode()
+    stopped_now, used_up = threading.Event(), threading.Event()
+    guard = threading.Lock()
+    calls = []
+
+    class Server:
+        # The stop answers only once both clients have used up their sends,
+        # so each must wait for that answer before its last one.
+        def request(self, method, path, headers=None, body=None, timeout=120.0):
+            if path == "/api/v1/pipeline/stop":
+                assert used_up.wait(10)
+                stopped_now.set()
+                return 200, {}, json.dumps({"success": True}).encode()
+            with guard:
+                calls.append(stopped_now.is_set())
+                count = len(calls)
+            if count == 4:
+                used_up.set()
+            if count == 2:
+                raise http.client.IncompleteRead(b"")
+            return (503, {}, stopped) if stopped_now.is_set() else (200, {}, served)
+
+    seen = probe._diagnoses_across_a_stop(Server(), b"{}", sha, clients=2, most=2)
+    assert seen["clients"] == 2 and seen["still_sending"] == 0
+    assert sorted(seen["answers"]) == [(False, "accepted"), (False, "accepted"),
+                                       (False, "accepted"), (False, "no_response"),
+                                       (True, "stopped"), (True, "stopped")]
+    assert calls == [False] * 4 + [True] * 2
 
 
 def test_w12_s_stop_judge_holds_the_lock_s_words_to_the_device(probe):
