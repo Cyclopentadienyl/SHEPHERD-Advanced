@@ -3176,18 +3176,22 @@ Training Console 現在是分成三部分的一個頁面：上方橫跨整頁的
   參考配方的 base 設定，以及 `split_seed`、`min_lr_ratio`、`amp_dtype`、
   `gradient_accumulation_steps`、`eval_every_n_epochs`、`save_top_k` 與 `model_spec`（以純資料
   表示的 spec），各項預設不設定，由配方、再由本版本的預設值補上，checkpoint 記錄各自的來源
-  （`operator_set`、`reference_filled`、`build_defaults`）。每個值的範圍取自 field spec，所以
-  `-1` 的 hop（「所有鄰居」）在這裡與命令列一樣合法。新的 run 需要 `learning_stage` 為 `base`；
-  有 `resume_from` 時可以不給 stage，給了就與 parent 的比對，所以 finetune 子模型也能在這裡
-  續訓或延長（parent 的學習率降到 0 時用 `extend_lr`）。只有送出的欄位會到達服務，包括明確的
-  `null`，而且會被判斷：新的 run 中不接受 null 的設定會被拒絕，續訓時則視為與 parent 不同的值
-  而拒絕。run 不會讀取的設定一律拒絕，絕不忽略：scheduler 不是 `cosine` 時的 `warmup_steps`
-  （cosine 下 `0` 表示以十分之一的步數 warmup）、scheduler 為 `none` 時的 `min_lr_ratio`、
-  `use_amp` 關閉時的 `amp_dtype`；`onecycle` 需要大於 0 的 `min_lr_ratio`。在沒有 CUDA 的裝置上
-  要求混合精度仍會接受：checkpoint 分開記錄要求的精度與實際生效的精度。新 run 的 finetune
-  stage、ShepherdGNN 設定（`conv_type`、`hidden_dim` 等）、finetune 設定或任何它未定義的欄位，
-  在到達服務之前以 422 拒絕；runner 拒絕的值或規則以 422 拒絕；parent 不允許的續訓以 409
-  拒絕，都在佔用 GPU 名額或建立 run 目錄之前。任務模型以 `POST /api/v1/training/finetune`
+  （`operator_set`、`reference_filled`、`build_defaults`）。每個值都經 field spec 的同一個檢查，
+  與命令列和 job runner 的檢查相同、用同樣的文字：型別嚴格（`"5"` 不是數字，`1` 不是
+  `true`），範圍取自 field spec，所以 `-1` 的 hop（「所有鄰居」）在這裡與命令列一樣合法。新的
+  run 需要 `learning_stage` 為 `base`；有 `resume_from` 時可以不給 stage，給了就與 parent 的
+  比對，所以 finetune 子模型也能在這裡續訓或延長（parent 的學習率降到 0 時用 `extend_lr`）。
+  只有送出的欄位會到達服務，包括明確的 `null`，而且會被判斷：新的 run 中不接受 null 的設定會
+  被拒絕，續訓時則視為與 parent 不同的值而拒絕；`resume_from`、`extend_epochs` 或 `extend_lr`
+  為 `null` 表示沒有給。新 run 不會讀取的設定一律拒絕，絕不忽略：scheduler 不是 `cosine` 時的
+  `warmup_steps`（cosine 下 `0` 表示以十分之一的步數 warmup）、scheduler 為 `none` 時的
+  `min_lr_ratio`、`use_amp` 關閉時的 `amp_dtype`；`onecycle` 需要大於 0 的 `min_lr_ratio`。
+  續訓或延長不改變任何設定，所以這些規則從不拒絕它：以 parent 的值明確給出的設定與繼承的設定
+  一樣保留。在沒有 CUDA 的裝置上要求混合精度仍會接受：checkpoint 分開記錄要求的精度與實際生效
+  的精度。新 run 的 finetune stage、ShepherdGNN 設定（`conv_type`、`hidden_dim` 等）、finetune
+  設定、任何它未定義的欄位，或 field spec 不接受的值，在到達服務之前以 422 拒絕；runner 拒絕的
+  值或規則以 422 拒絕；parent 不允許的續訓以 409 拒絕，都在佔用 GPU 名額或建立 run 目錄之前。
+  任務模型以 `POST /api/v1/training/finetune`
   啟動，與 Fine-tune 頁相同；它的 `settings` 接受每個所選任務都會讀取的設定，自 research
   comparison Stage 9b 起包括 `frozen_parts`（`graph_side`：凍結主幹的對照，見下文；本輪
   Fine-tune 頁不提供），以及只限單一任務、graph side 與 base 相同的 `model_spec`。每個子模型的

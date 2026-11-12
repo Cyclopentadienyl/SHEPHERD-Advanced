@@ -40,14 +40,18 @@ Its settings left `TrainConfig` in K8-7, and `ShepherdGNNConfig` with
     spec (guard, not derive); the job runner's start check, the Training page's base form and the
     Fine-tune page check values with its `value_problem`. The record above is left as written.
   - *Note (2026-11-12, ops-wiring round A1a):* what a new run takes is stated once
-    (`src/utils/run_plan.py` `new_run_settings`, the training process's rule), and the API's
-    `TrainingStartRequest` is a thin projection of it: it offers every setting a new base reads
-    and **derives its bounds from the field spec** (`FieldSpec.valid`), its hop list checked by
-    `value_problem`; the parity tests still compare the two. The rules across settings are data
-    in the spec (`CROSS_FIELD_RULES`) with one evaluator (`cross_field_problems`), which the
-    training process, the continuation and branch plans and the job runner's start call; the
-    Trainer refuses the onecycle rule in the same sentence. The WebUI's base form and Fine-tune
-    page still offer part of the settings; they read the same checks.
+    (`src/utils/run_plan.py` `new_run_settings`, the training process's rule) and judged by one
+    check (`new_run_problem`: the settings a run does not read, each value by `value_problem`,
+    the rules across settings), which the training process and the job runner's starts make
+    alike. The API's `TrainingStartRequest` is a thin projection of it: it offers every setting
+    a new base reads, checks each value first by `value_problem` (strictly, in its words) and
+    **derives its bounds from the field spec** (`FieldSpec.valid`, for the schema); the parity
+    tests still compare the two. The rules across settings are data in the spec
+    (`CROSS_FIELD_RULES`) with one evaluator (`cross_field_problems`), which that check and a
+    branch's plan (on what it changes) call; the Trainer refuses the onecycle rule in the same
+    sentence. The WebUI's base form and Fine-tune page still offer part of the settings and
+    check values with `value_problem`; the rules across settings are judged at the start (the
+    pages follow in B1 and B2).
 
 ## Rationale
 
