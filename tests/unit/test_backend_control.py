@@ -551,3 +551,23 @@ def test_a_restart_whose_stop_fails_opens_the_slot_again(serving, runner, monkey
 
     assert executed == []
     assert runner._closed_by is None, "the slot stayed closed after the restart's stop failed"
+
+
+def test_the_restart_words_say_a_loaded_model_is_stopped_and_not_loaded_again(monkeypatch):
+    """The ops round's A3b (I7): Settings' Restart Backend says, beside the
+    button and when the restart starts, what the backend does: a loaded model
+    is stopped first and is not loaded again unless the start-up configures
+    one; no page Load is restored."""
+    pytest.importorskip("gradio")
+    import inspect
+
+    from src.webui.components import runtime_settings as rs
+    from tests.fixtures.operator_access import operator_request
+
+    assert "is stopped first" in rs.RESTART_STOPS_SERVING
+    assert "not loaded again unless the service's start-up configures one" in (
+        rs.RESTART_STOPS_SERVING)
+    assert "RESTART_STOPS_SERVING" in inspect.getsource(rs.create_runtime_settings_tab)
+    monkeypatch.setattr(rs, "restart_backend", lambda: {"success": True})
+    said = rs._on_restart(operator_request(monkeypatch))
+    assert rs.RESTART_STOPS_SERVING in said["value"]

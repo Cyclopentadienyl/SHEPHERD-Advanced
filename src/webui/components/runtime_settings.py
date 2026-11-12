@@ -60,6 +60,14 @@ def _badge_row(*badges: str) -> str:
     return "<div class='shep-badge-row'>" + "".join(badges) + "</div>"
 
 
+#: What a restart does to inference (the ops round's I7), said beside the
+#: button and when it starts: the backend stops serving before it replaces its
+#: process, and the new one loads only a model its start-up configures.
+RESTART_STOPS_SERVING = (
+    "A loaded model is stopped first (the diagnoses already accepted finish) and is not "
+    "loaded again unless the service's start-up configures one (SHEPHERD_CHECKPOINT_PATH)."
+)
+
 # Red warning shown beside the Restart button while a GPU job is in progress.
 _RESTART_LOCKED_HTML = (
     "<span class='shep-restart-locked'>⛔ A GPU job (training or a test run) is in "
@@ -118,10 +126,8 @@ def _on_restart(request: gr.Request):
         return gr.update(
             value=f"⛔ **{result.get('error', 'Cannot restart right now.')}**"
         )
-    return gr.update(
-        value="🔄 **Restarting backend…** This page will reload "
-        "automatically once the backend is back (a few seconds)."
-    )
+    return gr.update(value=f"🔄 **Restarting backend…** {RESTART_STOPS_SERVING} This page will "
+                     "reload automatically once the backend is back (a few seconds).")
 
 
 def _on_apply(alloc, compile_on, request: gr.Request):
@@ -272,7 +278,8 @@ def create_runtime_settings_tab(ctx: Any) -> None:
     gr.Markdown(
         "**Restart Backend** relaunches the backend (REST API + this UI) so a "
         "newly applied **Memory Allocator** takes effect. Locked while training is "
-        "running; the page reconnects automatically a few seconds after a restart.",
+        f"running. {RESTART_STOPS_SERVING} The page reconnects automatically a few seconds "
+        "after a restart.",
         elem_classes=["shep-note"],
     )
     gr.Markdown("#### Memory")
