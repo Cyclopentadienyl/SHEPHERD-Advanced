@@ -298,14 +298,22 @@ every step through its production entry point:
     each trained on the probe's device at the demo's sizes, measured by its own
     protocol (disease on the supplied cohort, the other two on the generated
     split's fixture) and registered (L7.disease, L7.gene,
-    L7.patients_like_me); a same-settings branch of the listed base started
+    L7.patients_like_me); an fp32 frozen-backbone disease child of the listed
+    base on the probe's device, paused after one of two epochs and resumed in
+    its own run, its graph side's parameters and buffers checked equal to the
+    base's, its downstream parts trained and alone in the optimizer, its
+    record kept across the resume and its downstream start the full arm's,
+    then measured by the disease protocol and registered (L7.disease_frozen,
+    the ops-wiring round's decision F2; AMP and compile with a freeze are not
+    covered); a same-settings branch of the listed base started
     through the job runner (`start_training` with `branch_from`, bound to the
     base's digest) and run on the probe's device to its end, listed under its
     parent's exact file with its changes `{}`, the parent's bytes unchanged,
     and loaded by the one loader (L7.branch, the ops-wiring round's
     decisions B1, B2); and the results export (`scripts/export_results.py`)
-    over that deployment listing every run L2-L7 kept, with its identities,
-    training settings, environment and exposure, no row capped (L8). On CUDA
+    over that deployment listing every run L2-L7.disease_frozen kept, with its
+    identities, training settings, environment and exposure, no row capped
+    (L8). On CUDA
     the measurements and the L7 children run on the device; this container's
     tests run the same phase on the CPU.
 
@@ -2247,11 +2255,14 @@ M2_DEMO_REQUIRED: Tuple[str, ...] = (
     # imported, measured and registered (L6); a short disease, gene and
     # patients-like-me child each on the probe's device, measured and
     # registered (L7, the GPU regression cases); and the results export (L8).
-    # The ops-wiring round's, in the same flow: a same-settings branch of the
-    # demo base through the job runner (L7.branch, decisions B1, B2).
+    # The ops-wiring round's, in the same flow: an fp32 frozen-backbone disease
+    # child of the demo base, paused and resumed (L7.disease_frozen, decision
+    # F2), and a same-settings branch of the demo base through the job runner
+    # (L7.branch, decisions B1, B2).
     "A6", "L1", "L2", "L3",
     "L4.other_graph", "L4.tampered_pairs", "L4.other_view", "L4.split_record",
-    "L5", "L6", "L7.disease", "L7.gene", "L7.patients_like_me", "L7.branch", "L8",
+    "L5", "L6", "L7.disease", "L7.gene", "L7.patients_like_me", "L7.disease_frozen",
+    "L7.branch", "L8",
 )
 #: R8, the unchanged-workspace check, runs last, after M4's RT1-RT3 and M5's
 #: RW1-RW3; R2 runs after R4.finetune, whose child it strips.
@@ -2313,7 +2324,10 @@ def m2_acceptance(report: Report, real_requested: bool) -> Dict[str, Any]:
             "each other, and its refusals; a disease child measured by two protocols; a "
             "generated split imported, measured and registered; short disease, gene and "
             "patients-like-me children trained and measured on this device as regression "
-            "cases, not studies; a same-settings branch of the demo base started through the "
+            "cases, not studies; a frozen-backbone disease child of the demo base in fp32, "
+            "paused and resumed, its graph side checked unchanged and its downstream parts "
+            "trained (L7.disease_frozen; mixed precision and torch.compile with a freeze are "
+            "not covered); a same-settings branch of the demo base started through the "
             "job runner, listed under its parent with no change (L7.branch); and the results "
             "export listing every record of that flow. "
             "Its figures are a functional check, never a comparison of models. Last, it "
@@ -5655,7 +5669,7 @@ def _m5_real(report: Report, runs: Path, real: Path, workspaces_root: Path, devi
 RC_DEMO_PROBES: Tuple[str, ...] = (
     "L1", "L2", "L3", "L4.other_graph", "L4.tampered_pairs", "L4.other_view",
     "L4.split_record", "L5", "L6", "L7.disease", "L7.gene", "L7.patients_like_me",
-    "L7.branch", "L8",
+    "L7.disease_frozen", "L7.branch", "L8",
 )
 #: The KG link-prediction protocol's name (`src.evaluation.protocols`).
 LP_PROTOCOL = "kg_link_prediction"
@@ -5673,6 +5687,20 @@ RC_TASK_RUNS: Dict[str, str] = {task: "probe-rc-" + task.replace("_", "-") for t
 #: ops-wiring round, decisions B1, B2): part of the directory the job runner
 #: allocates for it.
 RC_BRANCH_RUN_NAME = "probe-rc-branch"
+#: L7.disease_frozen's runs (ops-wiring round, decision F2): the
+#: frozen-backbone disease child of the listed base, paused after
+#: `RC_FROZEN_PAUSE_AFTER` of `RC_FROZEN_EPOCHS` epochs, and its resume in a run
+#: of its own.
+RC_FROZEN_RUNS: Dict[str, str] = {"paused": "probe-rc-disease-frozen",
+                                  "resumed": "probe-rc-disease-frozen-resumed"}
+RC_FROZEN_EPOCHS = 2
+RC_FROZEN_PAUSE_AFTER = 1
+#: What L7.disease_frozen states beside the demo's disease sizes: the freeze,
+#: and float32 throughout (no mixed precision, no torch.compile), so the
+#: check is an fp32 one and says so; AMP and compile with a freeze stay
+#: outside it, recorded as not verified, and are never refused for it.
+RC_FROZEN_SETTINGS: Dict[str, Any] = {"frozen_parts": "graph_side", "use_amp": False,
+                                      "compile": False}
 RC_CHECKPOINT = "last.pt"
 #: The registry's versions: the KG edge set L1 imports from the listed base
 #: (role test); the KG edge sets the refusals measure, each its own import
@@ -6015,6 +6043,180 @@ def _export_row_verified(row: Mapping[str, Any], entry: Mapping[str, Any]) -> No
             f"{probe_id}'s generated split run reads exposure {exposure!r}")
 
 
+def _frozen_arm_verified(base: Path, paused: Path, resumed: Path, device: str, *,
+                         full: Optional[Path] = None) -> Dict[str, Any]:
+    """**The frozen-backbone control's functional check, fp32 only**
+    (L7.disease_frozen; ops-wiring round, decision F2): `paused`, a disease
+    child of `base` trained with `frozen_parts` graph_side and paused, and
+    `resumed`, its resume in a run of its own, each read by the product's
+    readers (`read_checkpoint`, `load_bundle`), checked in this order:
+
+    - (a) **precision**: mixed precision off in effect (float32) and
+      torch.compile not requested, in both files: the check covers fp32 only,
+      and says so; AMP and compile with a freeze are not verified by it;
+    - (b) **the record**: the weight transfer marks the graph side
+      (`recipe.FROZEN_PARTS["graph_side"]`) frozen and the downstream parts
+      trainable, the frozen parts' forward mode is `FROZEN_FORWARD`, the loss
+      identity names the LP term, and only it, as a term without a trainable
+      parameter, and the learning setting is graph_side;
+    - (c) **the frozen state unchanged**: the graph side's parameters and
+      buffers in each file equal the base's, key by key (the first difference
+      named) and by `ModelBundle.parts_sha256`, with at least one BatchNorm
+      buffer among them;
+    - (d) **the downstream parts trained**: their digest in each file differs
+      from the `downstream_initial_sha256` its record names;
+    - (e) **the optimizer holds the downstream parameters**: its groups hold
+      as many parameters as the downstream parts have, each once, and every
+      saved state has a downstream parameter's shape, paused and resumed;
+    - (f) **the resume**: `resumed` records operation resume, the paused
+      file's weight transfer, the paused file's digest as its parent, and its
+      stage's epochs completed, after the paused file's one;
+    - (g) **one start for both arms**: `full`, the full arm of the same base
+      (L7.disease), records the same `downstream_initial_sha256`, or "not
+      compared" when it is None;
+    - (h) **the device**: each file's environment names a GPU exactly when
+      `device` is CUDA (the measurement's `cuda_executed` is `_ran_on`'s).
+
+    Raises AssertionError naming what does not hold. Returns the facts."""
+    import torch
+
+    from src.config.recipe import FROZEN_PARTS
+    from src.models.bundle.builder import DOWNSTREAM_PARTS, FROZEN_FORWARD, GRAPH_SIDE_PARTS
+    from src.models.bundle.record import load_bundle
+    from src.utils.checkpoint_io import read_checkpoint
+
+    def read(path: Path, stage: str) -> Tuple[Any, Any, Mapping[str, Any], str]:
+        loaded = read_checkpoint(path, map_location="cpu", weights_only=True)
+        bundle, record = load_bundle(loaded.checkpoint, learning_stage=stage,
+                                     task="disease" if stage == "finetune" else None)
+        return bundle, record, loaded.checkpoint, loaded.identity.sha256
+
+    base_bundle, _base_record, _base_payload, base_sha = read(base, "base")
+    arms = {"paused": read(paused, "finetune"), "resumed": read(resumed, "finetune")}
+    frozen = tuple(FROZEN_PARTS["graph_side"])
+    # (a) fp32 only: no mixed precision in effect, no torch.compile.
+    for which, (_bundle, _record, payload, _sha) in arms.items():
+        effective = (payload.get("config") or {}).get("effective") or {}
+        amp, compiled = effective.get("amp") or {}, effective.get("compile") or {}
+        assert amp.get("enabled") is False and amp.get("dtype") == "float32", (
+            f"the {which} file ran with mixed precision {amp.get('dtype')!r} in effect: not the "
+            "fp32 check (AMP with a freeze is not verified here)")
+        assert compiled.get("requested") is False, (
+            f"the {which} file asked for torch.compile: not the fp32 check (compile with a "
+            "freeze is not verified here)")
+    # (b) the record names the freeze it trained with.
+    for which, (bundle, record, payload, _sha) in arms.items():
+        transfer = record.weight_transfer or {}
+        expected = {part: "frozen" if part in frozen else "trainable" for part in bundle.parts}
+        assert transfer.get("parts") == expected, (
+            f"the {which} file's record does not mark the graph side frozen and the downstream "
+            f"parts trainable: {transfer.get('parts')}")
+        assert transfer.get("frozen_forward") == FROZEN_FORWARD, (
+            f"the {which} file records frozen_forward {transfer.get('frozen_forward')!r}")
+        untrained = (record.loss_identity or {}).get("terms_without_trainable_parameters")
+        assert untrained == ["lp"], (
+            f"the {which} file's loss identity names {untrained!r} as the terms without a "
+            "trainable parameter, not ['lp']")
+        setting = ((payload.get("config") or {}).get("requested") or {}).get("frozen_parts")
+        assert setting == "graph_side", (
+            f"the {which} file's learning setting frozen_parts is {setting!r}")
+    # (c) the graph side is the base's, every parameter and buffer.
+    base_state = base_bundle.state_dict()
+    graph_keys = sorted(key for key in base_state if key.split(".", 1)[0] in GRAPH_SIDE_PARTS)
+    buffers = [key for key in graph_keys
+               if key.endswith(("running_mean", "running_var", "num_batches_tracked"))]
+    assert buffers, "the base's graph side holds no BatchNorm buffer, so the check is vacuous"
+    base_digest = base_bundle.parts_sha256(GRAPH_SIDE_PARTS)
+    for which, (bundle, _record, _payload, _sha) in arms.items():
+        state = bundle.state_dict()
+        own = sorted(key for key in state if key.split(".", 1)[0] in GRAPH_SIDE_PARTS)
+        assert own == graph_keys, f"the {which} file's graph side holds other entries"
+        changed = next((key for key in graph_keys
+                        if not torch.equal(state[key].cpu(), base_state[key].cpu())), None)
+        assert changed is None, f"the {which} file's graph side changed: {changed} is not the base's"
+        assert bundle.parts_sha256(GRAPH_SIDE_PARTS) == base_digest, (
+            f"the {which} file's graph-side digest is not the base's")
+    # (d) the downstream parts trained.
+    downstream = {}
+    for which, (bundle, record, _payload, _sha) in arms.items():
+        start = (record.weight_transfer or {}).get("downstream_initial_sha256")
+        downstream[which] = bundle.parts_sha256(DOWNSTREAM_PARTS)
+        assert start and downstream[which] != start, (
+            f"the {which} file's downstream parts are still those training started from")
+    # (e) the optimizer holds exactly the downstream parameters.
+    for which, (bundle, _record, payload, _sha) in arms.items():
+        named = [(name, parameter) for name, parameter in bundle.named_parameters()]
+        wanted = [parameter for name, parameter in named
+                  if name.split(".", 1)[0] in DOWNSTREAM_PARTS]
+        optimizer = payload.get("optimizer_state_dict") or {}
+        held = [index for group in optimizer.get("param_groups") or []
+                for index in group.get("params") or []]
+        assert len(held) == len(set(held)) == len(wanted), (
+            f"the {which} file's optimizer groups hold {len(held)} parameters, not the "
+            f"{len(wanted)} of the downstream parts")
+        shapes = sorted(tuple(parameter.shape) for parameter in wanted)
+        for index in held:
+            moment = ((optimizer.get("state") or {}).get(index) or {}).get("exp_avg")
+            assert moment is None or tuple(moment.shape) in shapes, (
+                f"the {which} file's optimizer holds a parameter of shape {tuple(moment.shape)}, "
+                "which no downstream parameter has")
+    # (f) the resume kept the stage's record and went on from the paused file.
+    _pb, paused_record, paused_payload, paused_sha = arms["paused"]
+    _rb, resumed_record, resumed_payload, resumed_sha = arms["resumed"]
+    paused_epochs = (paused_payload.get("progress") or {}).get("completed_epochs")
+    resumed_epochs = (resumed_payload.get("progress") or {}).get("completed_epochs")
+    target = ((resumed_payload.get("progress") or {}).get("stage") or {}).get("target_epochs")
+    assert resumed_record.operation == "resume", (
+        f"the resumed file records operation {resumed_record.operation!r}")
+    assert resumed_record.weight_transfer == paused_record.weight_transfer, (
+        "the resumed file's weight transfer is not the paused file's")
+    assert (resumed_record.parent or {}).get("sha256") == paused_sha, (
+        "the resumed file does not name the paused file's bytes as its parent")
+    assert paused_record.parent and paused_record.parent.get("sha256") == base_sha, (
+        "the paused file does not name the base's bytes as its parent")
+    assert (paused_epochs, resumed_epochs) == (RC_FROZEN_PAUSE_AFTER, target) and (
+        target == RC_FROZEN_EPOCHS), (
+        f"the runs completed {paused_epochs} and {resumed_epochs} epochs, not "
+        f"{RC_FROZEN_PAUSE_AFTER} and {RC_FROZEN_EPOCHS}")
+    # (g) both arms of the base start from one downstream initialisation.
+    start = paused_record.weight_transfer["downstream_initial_sha256"]
+    if full is None:
+        same_start: Any = "not compared"
+    else:
+        _fb, full_record, _fp, _fs = read(full, "finetune")
+        full_start = (full_record.weight_transfer or {}).get("downstream_initial_sha256")
+        assert full_start == start, (
+            "the full arm records another downstream start than the frozen arm "
+            f"({str(full_start)[:12]}, not {start[:12]})")
+        same_start = True
+    # (h) the device: a GPU named exactly when the probe's device is CUDA.
+    on_cuda = device.startswith("cuda")
+    for which, (_bundle, _record, payload, _sha) in arms.items():
+        gpu = (payload.get("environment") or {}).get("gpu")
+        assert (gpu is not None) == on_cuda, (
+            f"the {which} file's environment {'names no' if on_cuda else 'names a'} GPU for a "
+            f"run on {device}")
+    return {
+        "precision": "fp32 only: mixed precision off and torch.compile not requested; AMP and "
+                     "compile with a freeze are not verified by this check",
+        "frozen_parts": "graph_side", "parts": paused_record.weight_transfer["parts"],
+        "frozen_forward": paused_record.weight_transfer["frozen_forward"],
+        "terms_without_trainable_parameters": ["lp"],
+        "graph_side": {"base_sha256": base_digest, "paused_equal": True, "resumed_equal": True,
+                       "entries": len(graph_keys), "batch_norm_buffers": len(buffers)},
+        "downstream": {"initial_sha256": start, "paused_sha256": downstream["paused"],
+                       "resumed_sha256": downstream["resumed"]},
+        "optimizer_holds_only_downstream_parameters": True,
+        "paused": {"sha256": paused_sha, "completed_epochs": paused_epochs,
+                   "parent_sha256": base_sha},
+        "resumed": {"sha256": resumed_sha, "operation": resumed_record.operation,
+                    "completed_epochs": resumed_epochs, "parent_sha256": paused_sha,
+                    "weight_transfer_kept": True},
+        "same_downstream_start_as_the_full_arm": same_start,
+        "trained_on_cuda": on_cuda,
+    }
+
+
 def _rc_demo(report: Report, work: Path, sound: Path, base: Path, child: Path, device: str,
              other: Optional[Path]) -> None:
     """The research comparison round's flow on the demo workspace (L1-L8),
@@ -6033,7 +6235,8 @@ def _rc_demo(report: Report, work: Path, sound: Path, base: Path, child: Path, d
     no two of them are compared.
     """
     print("   Research comparison: KG link prediction, its refusals, two protocols, a "
-          "generated split, the GPU regression cases, the export")
+          "generated split, the GPU regression cases, the frozen-backbone control, a branch, "
+          "the export")
     from scripts.setup_demo import demo_task_training
     from src.api.services.training_manager import TrainingManager
     from src.evaluation.caveats import AFTER_FULL_VIEW_EXPOSURE, HELD_OUT
@@ -6465,6 +6668,9 @@ def _rc_demo(report: Report, work: Path, sound: Path, base: Path, child: Path, d
             measured, _ = _measured_and_registered(f"L7.{task}", trained, sha, label, version,
                                                    task)
             assert measured["record"]["sequence"] == 1, "the child's ledger held a record before"
+            # Kept once the case passed: the frozen arm compares its start
+            # with the full disease arm's (L7.disease_frozen).
+            state[f"trained_{task}"] = trained
             return f"a {task} child trained on {device}, measured by its protocol and registered", {
                 "task": task, "device": device, "trained_on_cuda": gpu is not None,
                 "training_seconds": seconds, "epochs": 1,
@@ -6478,6 +6684,49 @@ def _rc_demo(report: Report, work: Path, sound: Path, base: Path, child: Path, d
             }
 
         return case
+
+    # ---- L7.disease_frozen: the frozen-backbone disease child, fp32, paused and resumed
+    def _frozen_disease_child() -> Tuple[str, Dict[str, Any]]:
+        """A demo-sized disease child of the listed base with `frozen_parts`
+        graph_side on the probe's device, in fp32 (`RC_FROZEN_SETTINGS`),
+        paused after `RC_FROZEN_PAUSE_AFTER` of `RC_FROZEN_EPOCHS` epochs and
+        resumed in a run of its own, through the production trainer
+        (`_train_run`, `train_model.train`), checked by `_frozen_arm_verified`
+        against the base and the full arm (L7.disease, when it passed); then
+        the resumed child measured by the disease protocol on the supplied
+        cohort and registered, kept for L8's export (ops-wiring round,
+        decision F2)."""
+        _need("workspace", "supplied")
+        runs = state["workspace"] / RUNS_DIRNAME / _demo_encoder_kind()
+        started = time.monotonic()
+        paused = _last(_train_run(state["workspace"], runs / RC_FROZEN_RUNS["paused"], device,
+                                  stage="finetune", task="disease", epochs=RC_FROZEN_EPOCHS,
+                                  settings={**demo_task_training()["disease"],
+                                            **RC_FROZEN_SETTINGS},
+                                  finetune_from=state["base"], pause_after=RC_FROZEN_PAUSE_AFTER))
+        resumed = _last(_train_run(state["workspace"], runs / RC_FROZEN_RUNS["resumed"], device,
+                                   stage="finetune", task="disease", resume_from=paused))
+        seconds = round(time.monotonic() - started, 1)
+        verified = _frozen_arm_verified(state["base"], paused, resumed, device,
+                                        full=state.get("trained_disease"))
+        sha = verified["resumed"]["sha256"]
+        measured, _ = _measured_and_registered("L7.disease_frozen", resumed, sha,
+                                               RC_SUPPLIED_LABEL, state["supplied"], "disease")
+        assert measured["record"]["sequence"] == 1, "the child's ledger held a record before"
+        return (f"an fp32 frozen-backbone disease child trained on {device}, paused and resumed, "
+                "its graph side the base's, measured and registered"), {
+            "task": "disease", "device": device, "training_seconds": seconds,
+            "epochs": RC_FROZEN_EPOCHS, "paused_after": RC_FROZEN_PAUSE_AFTER,
+            "sizes": "the demo's (setup_demo.demo_task_training)",
+            "settings": dict(RC_FROZEN_SETTINGS),
+            "runs": {"paused": RC_FROZEN_RUNS["paused"], "resumed": RC_FROZEN_RUNS["resumed"]},
+            "parent_sha256": state["base_sha"],
+            "training_rules": read_checkpoint(resumed, map_location="cpu",
+                                              weights_only=True).checkpoint.get("training_rules"),
+            "version": {"label": RC_SUPPLIED_LABEL, "kind": state["supplied"].kind,
+                        "manifest_sha256": state["supplied"].identity.sha256},
+            **verified, **measured,
+        }
 
     # ---- L7.branch: a same-settings branch of the listed base, through the job runner
     def _same_settings_branch() -> Tuple[str, Dict[str, Any]]:
@@ -6651,6 +6900,10 @@ def _rc_demo(report: Report, work: Path, sound: Path, base: Path, child: Path, d
             report.run(f"L7.{task}", "m2", f"research comparison, GPU regression: a short {task} "
                        "child of D1's base trained on the probe's device, measured by its "
                        "protocol and registered", _regression_case(task))
+        report.run("L7.disease_frozen", "m2", "ops wiring: an fp32 frozen-backbone disease child "
+                   "of D1's base on the probe's device, paused and resumed: its graph side the "
+                   "base's, its downstream parts trained and alone in the optimizer, its record "
+                   "kept across the resume, then measured and registered", _frozen_disease_child)
         report.run("L7.branch", "m2", "ops wiring: a same-settings branch of D1's base through "
                    "the job runner, on the probe's device, listed under its parent with no "
                    "change, its parent unchanged, and loaded", _same_settings_branch)

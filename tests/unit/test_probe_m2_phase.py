@@ -36,7 +36,9 @@ W11, research comparison Stage 10): a KG edge set imported from D1's base and
 measured by the KG link-prediction protocol through measure_scorer and the job
 runner, its refusals, D1's disease child by two protocols, a generated split
 with its functional fixture, a short disease, gene and patients-like-me child
-(the GPU regression cases, here on the CPU) and the results export. The demo
+(the GPU regression cases, here on the CPU), the ops-wiring round's fp32
+frozen-backbone disease child, paused and resumed (L7.disease_frozen), and its
+same-settings branch (L7.branch), and the results export. The demo
 phase test requires every one to pass and checks its evidence against the
 disk of the flow's own deployment; the required lists' addition is pinned
 against the IDs of checkpoint C, none renamed. The L probes' helpers' own
@@ -168,8 +170,8 @@ def test_the_m4_probes_are_required_in_both_parts():
     assert "R4.finetune" in probe.M2_REAL_REQUIRED
     # 52 demo and 15 real until the research comparison round, whose Stage 10
     # added 14 demo probes (A6, L1-L8) under new IDs; the ops-wiring round's
-    # A1b one more (L7.branch).
-    assert (len(probe.M2_DEMO_REQUIRED), len(probe.M2_REAL_REQUIRED)) == (67, 15)
+    # A1b one more (L7.branch) and A2 one more (L7.disease_frozen).
+    assert (len(probe.M2_DEMO_REQUIRED), len(probe.M2_REAL_REQUIRED)) == (68, 15)
     assert len(set(probe.M2_DEMO_REQUIRED)) == len(probe.M2_DEMO_REQUIRED)
     assert len(set(probe.M2_REAL_REQUIRED)) == len(probe.M2_REAL_REQUIRED)
     report = probe.Report()
@@ -207,13 +209,13 @@ def test_the_research_comparison_probes_are_required_under_new_ids():
     assert probe.RC_DEMO_PROBES == (
         "L1", "L2", "L3", "L4.other_graph", "L4.tampered_pairs", "L4.other_view",
         "L4.split_record", "L5", "L6", "L7.disease", "L7.gene", "L7.patients_like_me",
-        "L7.branch", "L8")
+        "L7.disease_frozen", "L7.branch", "L8")
     assert probe.M2_REAL_REQUIRED == ("R1", "R2", "R3", "R4", "R4.finetune", "R5", "R6", "R7",
                                       "R8", "RT1", "RT2", "RT3", "RW1", "RW2", "RW3")
     report = probe.Report()
     for probe_id in probe.M2_DEMO_REQUIRED:
         report.probes.append(probe.Probe(probe_id, "m2", "x", status="passed"))
-    for missing in ("A6", "L4.split_record", "L7.gene", "L7.branch"):
+    for missing in ("A6", "L4.split_record", "L7.gene", "L7.disease_frozen", "L7.branch"):
         kept = [p for p in report.probes if p.probe_id != missing]
         partial = probe.Report()
         partial.probes = kept
@@ -221,6 +223,9 @@ def test_the_research_comparison_probes_are_required_under_new_ids():
     scope = probe.m2_acceptance(report, False)["scope"]
     assert "A6, L1-L8" in scope and "regression cases, not studies" in scope
     assert "same-settings branch" in scope and "(L7.branch)" in scope
+    assert "frozen-backbone disease child of the demo base in fp32" in scope
+    assert "(L7.disease_frozen; mixed precision and torch.compile with a freeze are not " \
+           "covered)" in scope
 
 
 def test_r2s_serving_half_refuses_before_a_model_is_built(trained_disease_child, served_state,
@@ -578,16 +583,50 @@ def _check_the_research_comparison_flow(probe, report, tmp_path, models):
     assert (case["listed_changes"], case["branch"]["optimizer"]) == ({}, "new")
     assert (case["trained_on_cuda"], case["device"]) == (False, "cpu")
     assert base.read_bytes() == models.base.read_bytes()
+    # L7.disease_frozen: the fp32 frozen-backbone disease child of the listed
+    # base (ops-wiring round, F2), paused and resumed on disk, each run its
+    # own directory, the resumed one measured once by the disease protocol;
+    # its graph side the base's, its start the full arm's, here on the CPU.
+    case = facts["L7.disease_frozen"]
+    paused, resumed = (runs / probe.RC_FROZEN_RUNS[which] / "checkpoints" / "last.pt"
+                       for which in ("paused", "resumed"))
+    assert (sha(paused), sha(resumed)) == (case["paused"]["sha256"], case["resumed"]["sha256"])
+    assert case["paused"] == {"sha256": sha(paused), "completed_epochs": 1,
+                              "parent_sha256": sha(base)}
+    assert (case["resumed"]["operation"], case["resumed"]["completed_epochs"],
+            case["resumed"]["parent_sha256"]) == ("resume", 2, sha(paused))
+    assert case["parts"] == {"input": "frozen", "encoder": "frozen", "lp_head": "frozen",
+                             "patient_encoder": "trainable", "task_head": "trainable"}
+    assert (case["frozen_forward"], case["terms_without_trainable_parameters"]) == (
+        "eval", ["lp"])
+    assert case["graph_side"]["paused_equal"] is case["graph_side"]["resumed_equal"] is True
+    assert case["graph_side"]["batch_norm_buffers"] >= 1
+    assert case["same_downstream_start_as_the_full_arm"] is True
+    assert case["precision"].startswith("fp32 only")
+    assert case["settings"] == {"frozen_parts": "graph_side", "use_amp": False,
+                                "compile": False}
+    assert (case["trained_on_cuda"], case["cuda_executed"], case["device"]) == (
+        False, False, "cpu")
+    assert case["training_rules"] == 2
+    for which, path in (("paused", paused), ("resumed", resumed)):
+        payload = torch.load(path, map_location="cpu", weights_only=True)
+        assert payload["config"]["requested"]["frozen_parts"] == "graph_side", which
+        assert payload["config"]["effective"]["amp"]["enabled"] is False, which
+    ledger, _ = read_ledger(resumed.parent / "evaluations.json")
+    assert [(r["scoring"]["mode"], r["run_id"]) for r in ledger["records"]] == [
+        ("disease", case["run_id"])]
+    assert not (paused.parent / "evaluations.json").exists()
     # L8: the export on disk is the one the facts name, and it lists exactly
-    # the eight runs L2-L7 kept.
+    # the nine runs L2-L7.disease_frozen kept.
     export = tmp_path / "rc" / "export.json"
     assert sha(export) == facts["L8"]["export_sha256"]
     exported = json.loads(export.read_text())
     listed = {row["run_id"] for row in exported["rows"]}
     assert listed == {entry["run_id"] for entry in facts["L8"]["runs"]}
-    assert len(listed) == facts["L8"]["results"] == 8
+    assert len(listed) == facts["L8"]["results"] == 9
     assert [entry["probe"] for entry in facts["L8"]["runs"]] == [
-        "L2", "L3", "L5", "L5", "L6", "L7.disease", "L7.gene", "L7.patients_like_me"]
+        "L2", "L3", "L5", "L5", "L6", "L7.disease", "L7.gene", "L7.patients_like_me",
+        "L7.disease_frozen"]
 
     # ---- M1's served readings (S1), last and informational: D1's disease
     # child served by a service of its own, the whole fixed workload counted.

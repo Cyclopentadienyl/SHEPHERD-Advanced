@@ -28,7 +28,14 @@ catch:
   real rows of a disease child's supplied and KG edge set runs pass against
   their reports on disk, native identity included; a finetune's weight
   transfer without its parts, a KG edge set's row without its exposure and a
-  supplied cohort's without its R10 each fail.
+  supplied cohort's without its R10 each fail;
+- **the frozen-backbone control's fp32 check** (`_frozen_arm_verified`,
+  L7.disease_frozen; ops-wiring round, decision F2): a real paused and
+  resumed frozen child of a base passes and says it is fp32 only; a
+  graph-side buffer changed (named), downstream parts equal to their start,
+  an optimizer group holding a graph-side parameter, a full arm's record and
+  mixed precision in effect each fail, and so does a CPU run for a CUDA
+  device.
 
 Module: tests/unit/test_probe_research_comparison.py
 """
@@ -491,3 +498,135 @@ def test_a_row_whose_component_facts_are_not_its_report_s_fails(probe, exported)
     assert row["native_identity"] == entry["native_identity"]
     with pytest.raises(AssertionError, match="other component facts than its report records"):
         probe._export_row_verified(row, entry)
+
+
+# --------------------------------------------------------------------------- L7.disease_frozen
+@pytest.fixture(scope="module")
+def frozen_arms(trained_disease_child, tmp_path_factory, probe):
+    """The session's base listed in a copy of its workspace, and from it, by
+    the probe's own trainer call (`_train_run`, `train_model.train`), the
+    frozen-backbone disease child at the demo's sizes paused after one of two
+    epochs, its resume in a run of its own, and a full arm (L7.disease's
+    shape: no freeze, one epoch), all on the CPU."""
+    from scripts.setup_demo import demo_task_training
+
+    root = tmp_path_factory.mktemp("rc_frozen").resolve()
+    workspace = Path(shutil.copytree(trained_disease_child["data_dir"], root / "workspace",
+                                     ignore=shutil.ignore_patterns("runs")))
+    runs = workspace / "runs" / "gatv2"
+    base = runs / "listed-base" / "checkpoints" / "last.pt"
+    base.parent.mkdir(parents=True)
+    shutil.copyfile(trained_disease_child["base"], base)
+    sizes = demo_task_training()["disease"]
+    paused = probe._last(probe._train_run(
+        workspace, runs / probe.RC_FROZEN_RUNS["paused"], "cpu", stage="finetune",
+        task="disease", epochs=probe.RC_FROZEN_EPOCHS,
+        settings={**sizes, **probe.RC_FROZEN_SETTINGS}, finetune_from=base,
+        pause_after=probe.RC_FROZEN_PAUSE_AFTER))
+    resumed = probe._last(probe._train_run(
+        workspace, runs / probe.RC_FROZEN_RUNS["resumed"], "cpu", stage="finetune",
+        task="disease", resume_from=paused))
+    full = probe._last(probe._train_run(workspace, runs / "full", "cpu", stage="finetune",
+                                        task="disease", epochs=1, settings=sizes,
+                                        finetune_from=base))
+    return {"base": base, "paused": paused, "resumed": resumed, "full": full}
+
+
+def _edited(path: Path, target: Path, change) -> Path:
+    """A copy of the checkpoint `path` at `target`, its payload changed by
+    `change` (a function of the payload)."""
+    payload = torch.load(path, map_location="cpu", weights_only=True)
+    change(payload)
+    torch.save(payload, target)
+    return target
+
+
+def _frozen_verified(probe, arms, **files):
+    """`_frozen_arm_verified` on the CPU over `arms`, a file of it replaced
+    where `files` names one."""
+    chosen = {**arms, **files}
+    return probe._frozen_arm_verified(chosen["base"], chosen["paused"], chosen["resumed"], "cpu",
+                                      full=chosen["full"])
+
+
+def test_the_frozen_arm_passes_on_real_runs_and_says_it_is_an_fp32_check(probe, frozen_arms):
+    """Ops-wiring round, decision F2: a real paused and resumed frozen child
+    of a base passes, its graph side (parameters and BatchNorm buffers) the
+    base's, its downstream parts trained, its record kept across the resume,
+    its downstream start the full arm's; without a full arm the start is "not
+    compared"; the facts say the check is fp32 only."""
+    facts = _frozen_verified(probe, frozen_arms)
+    assert facts["precision"].startswith("fp32 only") and "not verified" in facts["precision"]
+    assert facts["same_downstream_start_as_the_full_arm"] is True
+    assert facts["graph_side"]["batch_norm_buffers"] >= 1
+    assert facts["paused"]["completed_epochs"] == probe.RC_FROZEN_PAUSE_AFTER
+    assert (facts["resumed"]["operation"], facts["resumed"]["completed_epochs"]) == (
+        "resume", probe.RC_FROZEN_EPOCHS)
+    unpaired = probe._frozen_arm_verified(frozen_arms["base"], frozen_arms["paused"],
+                                          frozen_arms["resumed"], "cpu", full=None)
+    assert unpaired["same_downstream_start_as_the_full_arm"] == "not compared"
+    # A run recorded off CUDA never passes for the probe's CUDA device.
+    with pytest.raises(AssertionError, match="environment names no GPU for a run on cuda"):
+        probe._frozen_arm_verified(frozen_arms["base"], frozen_arms["paused"],
+                                   frozen_arms["resumed"], "cuda", full=None)
+
+
+def test_a_graph_side_buffer_changed_fails_naming_it(probe, frozen_arms, tmp_path):
+    def change(payload):
+        key = next(k for k in sorted(payload["state_dict"])
+                   if k.split(".", 1)[0] == "encoder" and k.endswith("running_mean"))
+        payload["state_dict"][key] = payload["state_dict"][key] + 1.0
+
+    resumed = _edited(frozen_arms["resumed"], tmp_path / "resumed.pt", change)
+    with pytest.raises(AssertionError, match=r"the resumed file's graph side changed: "
+                                             r"encoder\..*running_mean is not the base's"):
+        _frozen_verified(probe, frozen_arms, resumed=resumed)
+
+
+def test_downstream_parts_equal_to_their_start_fail(probe, frozen_arms, tmp_path):
+    from src.models.bundle.builder import DOWNSTREAM_PARTS
+    from src.models.bundle.record import load_bundle
+
+    def change(payload):
+        bundle, _record = load_bundle(payload, learning_stage="finetune", task="disease")
+        payload["weight_transfer"]["downstream_initial_sha256"] = bundle.parts_sha256(
+            DOWNSTREAM_PARTS)
+
+    paused = _edited(frozen_arms["paused"], tmp_path / "paused.pt", change)
+    with pytest.raises(AssertionError, match="the paused file's downstream parts are still "
+                                             "those training started from"):
+        _frozen_verified(probe, frozen_arms, paused=paused)
+
+
+def test_an_optimizer_group_holding_a_graph_side_parameter_fails(probe, frozen_arms, tmp_path):
+    def change(payload):
+        optimizer = payload["optimizer_state_dict"]
+        held = [i for group in optimizer["param_groups"] for i in group["params"]]
+        extra = max(held) + 1
+        weight = next(v for k, v in payload["state_dict"].items()
+                      if k.startswith("encoder.") and k.endswith("weight") and v.dim() == 2)
+        optimizer["param_groups"][0]["params"].append(extra)
+        optimizer["state"][extra] = {"step": torch.tensor(1.0),
+                                     "exp_avg": torch.zeros_like(weight),
+                                     "exp_avg_sq": torch.zeros_like(weight)}
+
+    resumed = _edited(frozen_arms["resumed"], tmp_path / "resumed.pt", change)
+    with pytest.raises(AssertionError, match="the resumed file's optimizer groups hold .* "
+                                             "parameters, not the .* of the downstream parts"):
+        _frozen_verified(probe, frozen_arms, resumed=resumed)
+
+
+def test_a_full_arms_record_fails_the_parts_check(probe, frozen_arms):
+    with pytest.raises(AssertionError, match="the paused file's record does not mark the graph "
+                                             "side frozen"):
+        _frozen_verified(probe, frozen_arms, paused=frozen_arms["full"])
+
+
+def test_mixed_precision_in_effect_fails_as_not_the_fp32_check(probe, frozen_arms, tmp_path):
+    def change(payload):
+        payload["config"]["effective"]["amp"].update(enabled=True, dtype="float16")
+
+    paused = _edited(frozen_arms["paused"], tmp_path / "paused.pt", change)
+    with pytest.raises(AssertionError, match="the paused file ran with mixed precision "
+                                             "'float16' in effect: not the fp32 check"):
+        _frozen_verified(probe, frozen_arms, paused=paused)
