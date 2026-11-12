@@ -1057,12 +1057,21 @@ def bind_task_data(task: str, spec: Any, view: Any, inputs: TrainingInputs
     return binding, derived
 
 
-#: The settings of a new run that are not a build default when unset: the
-#: model spec, which is then the stage's reference spec (a finetune's: its
-#: base's graph side with its task's reference head), recorded whole in the
-#: model record; and a finetune's split seed, its base's (README G4).
-_SPEC_RULE_SETTINGS = {"base": frozenset({"model_spec"}),
-                       "finetune": frozenset({"model_spec", "split_seed"})}
+def _stage_rule_sources(stage: str, task: Optional[str]) -> Dict[str, str]:
+    """The settings of a new run that its stage's rule fills when unset, not a
+    recipe value or a build default, each with that rule as its source: the
+    model spec, the stage's reference spec (a finetune's: its base's graph
+    side with its task's reference head), recorded whole in the model record;
+    and a finetune's split seed, its base's (README G4), recorded in its data
+    roles. The training process fills them (`train`)."""
+    if stage != "finetune":
+        return {"model_spec": "the base stage's reference spec (spec.reference_spec), "
+                              "recorded whole in the model record"}
+    return {"model_spec": f"its base's graph view, input, encoder and LP head with the {task} "
+                          "task's reference head (spec.finetune_spec_from_parent), recorded "
+                          "whole in the model record",
+            "split_seed": "its base's split seed: a finetune trains on its base's split "
+                          "(README G4), recorded in data_roles.split"}
 
 
 def apply_stage_recipe(config: TrainConfig, explicit: Set[str]
@@ -1070,14 +1079,14 @@ def apply_stage_recipe(config: TrainConfig, explicit: Set[str]
     """Fill every setting a new run reads that the operator left unset, by the
     one fill of a new run (`run_plan.new_run_values`): the stage's recipe
     (`src.config.recipe`), else this build's default; and record each
-    setting's source (decision S2): `reference_filled`, the recipe's settings
-    filled, each with its source; `operator_set`, every setting the run reads
-    that the operator set (`run_plan.new_run_settings`), whatever its value;
-    `build_defaults`, every other one, with this build's default, but the
-    model spec and a finetune's split seed (`_SPEC_RULE_SETTINGS`), whose
-    values the model record holds with their source. Informational: no
-    reader decides by it. A run whose settings come from its parent is not
-    filled (`inherited_recipe_record`)."""
+    setting's source (decision S2), every setting the run reads
+    (`run_plan.new_run_settings`) in exactly one of: `operator_set`, every
+    one the operator set, whatever its value; `reference_filled`, each one
+    the stage's reference filled, with its source (the recipe's, and the
+    model spec and a finetune's split seed by their stage's rule,
+    `_stage_rule_sources`); `build_defaults`, every other one, with this
+    build's default. Informational: no reader decides by it. A run whose
+    settings come from its parent is not filled (`inherited_recipe_record`)."""
     from dataclasses import replace
 
     from src.config.recipe import reference_settings
@@ -1086,15 +1095,16 @@ def apply_stage_recipe(config: TrainConfig, explicit: Set[str]
     stage, task = config.learning_stage, config.task
     settings = new_run_settings(stage, task)
     references, sources = reference_settings(stage, task)
+    sources = {**sources, **_stage_rule_sources(stage, task)}
     given = {name: getattr(config, name) for name in settings if name in explicit}
     values = new_run_values(stage, task, given)
     record = {
         "learning_stage": stage,
-        "reference_filled": {name: sources[name] for name in sorted(references)
-                             if name not in given},
+        "reference_filled": {name: sources[name] for name in sorted(sources)
+                             if name in settings and name not in given},
         "operator_set": sorted(given),
         "build_defaults": {name: values[name] for name in sorted(
-            settings - set(references) - set(given) - _SPEC_RULE_SETTINGS[stage])},
+            settings - set(sources) - set(given))},
     }
     return replace(config, **values), record
 

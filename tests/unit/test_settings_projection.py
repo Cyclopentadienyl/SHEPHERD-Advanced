@@ -575,10 +575,12 @@ def _recipe_record(path):
 
 def test_a_new_run_records_the_operators_the_recipes_and_the_builds_settings(
         trained_disease_child):
-    """`operator_set` lists every setting the operator set (not only recipe
-    keys), `build_defaults` every other one the recipe does not hold, with
-    this build's default; the model spec and a finetune's split seed are the
-    model record's, never a build default. Each setting has one source."""
+    """Decision S2: every setting a new run reads has exactly one source.
+    `operator_set` lists every setting the operator set (not only recipe
+    keys); `reference_filled` each one the stage's reference filled, with its
+    source: the recipe's, and the model spec and a finetune's split seed by
+    their stage's rule (the model record holds the spec, the data roles the
+    split); `build_defaults` every other one, with this build's default."""
     from scripts.setup_demo import demo_task_training
 
     for name, stage, task in (("base", "base", None), ("disease", "finetune", "disease")):
@@ -586,16 +588,21 @@ def test_a_new_run_records_the_operators_the_recipes_and_the_builds_settings(
         given = set(demo_task_training()[name]) | {"num_epochs", "save_top_k"}
         assert set(record["operator_set"]) == given & new_run_settings(stage, task)
         references = set(recipe.reference_settings(stage, task)[0])
-        assert set(record["reference_filled"]) == references - given
-        not_defaults = {"model_spec"} | ({"split_seed"} if stage == "finetune" else set())
+        by_rule = {"model_spec"} | ({"split_seed"} if stage == "finetune" else set())
+        assert set(record["reference_filled"]) == (references | by_rule) - given
+        if "model_spec" not in given:
+            assert "reference" in record["reference_filled"]["model_spec"]
+        if stage == "finetune":
+            assert "its base's split" in record["reference_filled"]["split_seed"]
         assert set(record["build_defaults"]) == (
-            new_run_settings(stage, task) - references - given - not_defaults)
+            new_run_settings(stage, task) - references - by_rule - given)
         for setting, value in record["build_defaults"].items():
             assert value == payload["config"]["requested"][setting] == tf.by_name(
                 setting).default, setting
         sources = (set(record["operator_set"]), set(record["reference_filled"]),
                    set(record["build_defaults"]))
         assert sum(len(s) for s in sources) == len(set().union(*sources)), "one source each"
+        assert set().union(*sources) == new_run_settings(stage, task), "a source for each"
 
 
 def test_a_continued_run_records_inherited_and_stated_over_every_setting(tmp_path,
