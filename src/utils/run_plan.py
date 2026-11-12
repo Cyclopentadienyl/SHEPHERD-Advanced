@@ -80,7 +80,8 @@ from typing import Any, Collection, Dict, List, Mapping, Optional, Tuple
 
 from src.config.model_types import WRITTEN_BEFORE_SPEC
 from src.config.recipe import (
-    FROZEN_PARTS, branch_settings, frozen_parts_problem, reference_settings, unread_settings,
+    FINETUNE_TASKS, FROZEN_PARTS, branch_settings, frozen_parts_problem, reference_settings,
+    unread_settings,
 )
 from src.config.training_fields import FIELDS, cross_field_problems, value_problem
 from src.utils.checkpoint_paths import PLAIN_DEPTH, PLAIN_VALUES, plain_data_problem
@@ -289,6 +290,28 @@ def finetune_split_seed_problem(split_seed: Any, base_split: Any) -> Optional[st
         return None
     return (f"split_seed {split_seed!r} differs from the base's {recorded!r}; a finetune trains "
             "on its base's split")
+
+
+def new_run_identity_problem(learning_stage: Any, task: Any,
+                             finetune_from: Any = None) -> Optional[str]:
+    """Why a new run (one that continues and branches no parent) of
+    `learning_stage` cannot name `task` and `finetune_from`, or None: **a new
+    run's stage and task name it**, and are no setting of it: a base has no
+    task (None, stated or not, is no task) and no finetune parent; a
+    finetune names its task, one this build has a recipe for
+    (`recipe.FINETUNE_TASKS`). The one statement of that rule: the training
+    process asks it of a new run (`train_model.train`, the CLI and every
+    spawned job), the job runner of a base start (`_new_bundle_run`) and
+    POST /training/start of a new base, before any setting is judged, so a
+    request is refused in this one sentence wherever it is sent (review of
+    checkpoint A's fixes). A run from a parent is judged by
+    `parent_identity_problem` instead."""
+    if learning_stage == "base" and (finetune_from or task is not None):
+        return "A base run has no task and no finetune parent."
+    if learning_stage == "finetune" and task not in FINETUNE_TASKS:
+        return (f"A finetune names its task, one of {list(FINETUNE_TASKS)} in this build "
+                f"(got {task!r}).")
+    return None
 
 
 def parent_identity_problem(parent_stage: Any, parent_task: Any, learning_stage: Any,

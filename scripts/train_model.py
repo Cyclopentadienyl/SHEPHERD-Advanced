@@ -998,7 +998,6 @@ LOCATION_FIELDS = frozenset({"data_dir", "run_dir", "config_file", "resume_from"
 # Main Training Function
 # =============================================================================
 LEARNING_STAGES_HERE = ("base", "finetune")
-FINETUNE_TASKS_HERE = ("disease", "gene", "patients_like_me")
 
 
 def bind_task_data(task: str, spec: Any, view: Any, inputs: TrainingInputs
@@ -1231,8 +1230,8 @@ def train(config: TrainConfig, explicit: Collection[str], *,
     )
     from src.utils.run_plan import (
         PARENT_FIELDS, RUN_SETTINGS, RunPlanRefused, decoded_sentence,
-        finetune_split_seed_problem, new_run_problem, parent_identity_problem,
-        parents_problem, plan_branch,
+        finetune_split_seed_problem, new_run_identity_problem, new_run_problem,
+        parent_identity_problem, parents_problem, plan_branch,
     )
 
     if explicit is None:
@@ -1243,25 +1242,25 @@ def train(config: TrainConfig, explicit: Collection[str], *,
         raise ValueError(f"A run names its learning stage (learning_stage, --stage): one of "
                          f"{list(LEARNING_STAGES_HERE)}, not {stage!r}.")
     explicit_set = set(explicit)
-    # A run from a parent to continue or branch is of its parent's stage and
-    # task, judged against the parent's record once it is read, by the one
-    # check the plans and the job runner's previews make too
-    # (`run_plan.parent_identity_problem`), so a stage or task the request
-    # states is refused there in one sentence; a new run's are judged here.
-    continued = bool(config.resume_from or config.branch_from)
-    if stage == "base" and (config.finetune_from or (config.task is not None and not continued)):
-        raise ValueError("a base run has no task and no finetune parent")
     parents = [name for name in PARENT_FIELDS if getattr(config, name)]
     problem = parents_problem({name: getattr(config, name) for name in PARENT_FIELDS})
     if problem:
         raise ValueError(problem)
-    if stage == "finetune":
-        if not continued and config.task not in FINETUNE_TASKS_HERE:
-            raise ValueError(f"a finetune names its task, one of {list(FINETUNE_TASKS_HERE)} "
-                             f"in this build (got {config.task!r})")
-        if not parents:
-            raise ValueError("a finetune run starts from a base (finetune_from), resumes a "
-                             "finetune run (resume_from) or branches one (branch_from)")
+    # A run's stage and task name it. A new run's are judged here, by the one
+    # check the job runner's base start and the API's make too
+    # (`run_plan.new_run_identity_problem`); a run from a parent to continue
+    # or branch is of its parent's stage and task, judged against the
+    # parent's record once it is read, by the one check the plans and the job
+    # runner's previews make too (`run_plan.parent_identity_problem`), so a
+    # stage or task the request states is refused in one sentence everywhere.
+    continued = bool(config.resume_from or config.branch_from)
+    if not continued:
+        problem = new_run_identity_problem(stage, config.task, config.finetune_from)
+        if problem:
+            raise ValueError(problem)
+    if stage == "finetune" and not parents:
+        raise ValueError("a finetune run starts from a base (finetune_from), resumes a "
+                         "finetune run (resume_from) or branches one (branch_from)")
     if not continued:
         # A new run (a base, a finetune), by the one check of the settings a
         # new run is started with (`run_plan.new_run_problem`), which the job

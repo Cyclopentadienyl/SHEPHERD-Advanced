@@ -268,21 +268,23 @@ def test_an_extension_of_a_child_restating_its_own_setting_is_accepted_alike(
     assert yaml.safe_load(Path(resp.json()["config_path"]).read_text())[name] == value
 
 
-def test_a_new_base_is_still_refused_a_finetune_setting_or_a_task_in_the_shared_sentence(
+def test_a_new_base_is_still_refused_a_finetune_setting_in_the_shared_sentence(
         entries, tmp_path):
     """The start carries every setting and the task, and a new base keeps
     refusing what a base does not read in the one check's sentence
-    (`run_plan.new_run_problem`), on HTTP as in the runner; an unknown name
-    stays pydantic's extra_forbidden."""
+    (`run_plan.new_run_problem`), on the CLI, the runner and HTTP alike,
+    before anything is read; an unknown name stays pydantic's
+    extra_forbidden."""
     from src.utils.run_plan import new_run_problem
 
+    train_model = _train_model()
     http, manager = entries
     body = {"data_dir": str(tmp_path / "ws"), "learning_stage": "base", "device": "cpu"}
     with _spawn_stubbed() as popen:
-        for stated in ({"candidate_sample_size": 8}, {"task": "disease"},
-                       {"frozen_parts": "none"}):
+        for stated in ({"candidate_sample_size": 8}, {"frozen_parts": "none"}):
             said = new_run_problem("base", (None,), stated)
             assert said
+            assert _cli(train_model, {**body, **stated}) == said
             runner = manager.start_training({**body, **stated})
             assert runner["error"] == f"{said} Nothing was started."
             assert runner["invalid_settings"] is True
@@ -292,3 +294,60 @@ def test_a_new_base_is_still_refused_a_finetune_setting_or_a_task_in_the_shared_
         resp = http.post("/api/v1/training/start", json={**body, "hidden_dim": 64})
     assert resp.status_code == 422 and resp.json()["detail"][0]["type"] == "extra_forbidden"
     popen.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# A new base's stage and task: one identity sentence (review of AF1)
+# ---------------------------------------------------------------------------
+BASE_HAS_NO_TASK = "A base run has no task and no finetune parent."
+
+
+def test_a_new_base_stating_a_task_gets_one_identity_sentence(entries, tmp_path):
+    """A task names a run, and a base has none: a task stated on a new base
+    is refused by the one check of a new run's stage and task
+    (`run_plan.new_run_identity_problem`), never as a setting a base does
+    not read, on the CLI, the runner (invalid settings) and HTTP (422)
+    alike, before anything is read; a finetune parent on a base is the same
+    refusal on the CLI and the runner (the start request has no such
+    field)."""
+    from src.utils.run_plan import new_run_identity_problem
+
+    train_model = _train_model()
+    http, manager = entries
+    assert new_run_identity_problem("base", "disease") == BASE_HAS_NO_TASK
+    assert new_run_identity_problem("base", None, "base.pt") == BASE_HAS_NO_TASK
+    body = {"data_dir": str(tmp_path / "ws"), "learning_stage": "base", "device": "cpu"}
+    with _spawn_stubbed() as popen:
+        for stated in ({"task": "disease"}, {"task": "foo"}, {"finetune_from": "base.pt"}):
+            assert _cli(train_model, {**body, **stated}) == BASE_HAS_NO_TASK, stated
+            runner = manager.start_training({**body, **stated})
+            assert runner["error"] == f"{BASE_HAS_NO_TASK} Nothing was started.", runner
+            assert runner["invalid_settings"] is True
+            if "task" in stated:
+                resp = http.post("/api/v1/training/start", json={**body, **stated})
+                assert resp.status_code == 422, resp.text
+                assert [e["msg"] for e in resp.json()["detail"]] == [
+                    f"Value error, {BASE_HAS_NO_TASK}"]
+    popen.assert_not_called()
+
+
+def test_a_new_base_stating_a_null_task_is_accepted_alike(entries, tmp_path):
+    """An explicit null task is no task, decided alike on every entry
+    (decision S2: it is the operator's, and a base has none): the CLI trains
+    the base, the runner starts it and POST /training/start takes it."""
+    train_model = _train_model()
+    from tests.fixtures.base_workspace import write_base_workspace
+    from tests.unit.test_train_base_stage import _config
+
+    http, manager = entries
+    ws = write_base_workspace(tmp_path / "ws")
+    config, explicit = _config(ws, tmp_path / "cli-run", task=None, num_epochs=1)
+    assert "task" in explicit
+    assert "val_lp_accuracy" in train_model.train(config, explicit)
+    body = {"data_dir": str(ws), "learning_stage": "base", "device": "cpu", "task": None}
+    with _spawn_stubbed():
+        runner = manager.start_training(dict(body))
+        assert runner["success"] is True, runner
+        manager.stop_training()
+        resp = http.post("/api/v1/training/start", json=body)
+    assert resp.status_code == 200, resp.text

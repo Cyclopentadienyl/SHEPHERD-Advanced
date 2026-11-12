@@ -103,8 +103,8 @@ _NULL_IS_NOT_GIVEN = frozenset({"resume_from", "extend_epochs", "extend_lr"})
 #: the runner (`run_plan.plan_continuation`).
 _SETTINGS = tuple(sorted(RUN_SETTINGS))
 #: What a new base does not read: refused for a new run in the one check of
-#: a new run's settings (`run_plan.new_run_problem`), with the task.
-_NOT_READ_BY_A_BASE = frozenset(RUN_SETTINGS - new_run_settings("base")) | {"task"}
+#: a new run's settings (`run_plan.new_run_problem`).
+_NOT_READ_BY_A_BASE = frozenset(RUN_SETTINGS - new_run_settings("base"))
 #: The start request's fields whose values the field spec checks first
 #: (`value_problem`): every setting and the task, and the operational ones
 #: that are not text (text is never coerced; `device` has its grammar below).
@@ -145,8 +145,10 @@ class TrainingStartRequest(BaseModel):
     (`value_problem`), strictly (a string is never a number, 1 is not true)
     and in its words, as the job runner and the training process check it.
     **A new run is a base**: `learning_stage` is required and ``"base"`` (a
-    finetune is POST /training/finetune's start), and a setting a base does
-    not read, or a task, is refused in the sentence of the one check of a new
+    finetune is POST /training/finetune's start); a task is refused in the
+    sentence of the one check of a new run's stage and task
+    (`run_plan.new_run_identity_problem`; a null task is no task), and a
+    setting a base does not read in the sentence of the one check of a new
     run's settings (`run_plan.new_run_problem`). **A continuation**
     (`resume_from`) passes every field stated to the runner, which judges it
     against the parent as the training process does
@@ -228,20 +230,23 @@ class TrainingStartRequest(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _refuse_what_a_base_does_not_read(cls, data: Any) -> Any:
-        # A new run is a base: a setting a base does not read (a finetune's,
-        # or the freeze) and a task are refused by the one check of a new
-        # run's settings, in the sentence the job runner refuses them in
-        # (`run_plan.new_run_problem`), before any value is checked. A
-        # continuation's stated settings and task go to the runner, which
-        # judges them against the parent's stage and task as the training
-        # process does (`run_plan.plan_continuation`); any field this request
-        # does not define is refused by extra="forbid".
-        from src.utils.run_plan import new_run_problem
+        # A new run is a base: a task is refused by the one check of a new
+        # run's stage and task (`run_plan.new_run_identity_problem`), and a
+        # setting a base does not read (a finetune's, or the freeze) by the
+        # one check of a new run's settings (`run_plan.new_run_problem`), in
+        # the sentences the job runner and the training process refuse them
+        # in, before any value is checked. A continuation's stated settings
+        # and task go to the runner, which judges them against the parent's
+        # stage and task as the training process does
+        # (`run_plan.plan_continuation`); any field this request does not
+        # define is refused by extra="forbid".
+        from src.utils.run_plan import new_run_identity_problem, new_run_problem
 
         if isinstance(data, dict) and not data.get("resume_from"):
             stated = {name: value for name, value in data.items()
                       if name in _NOT_READ_BY_A_BASE}
-            problem = new_run_problem("base", (None,), stated) if stated else None
+            problem = (new_run_identity_problem("base", data.get("task"))
+                       or (new_run_problem("base", (None,), stated) if stated else None))
             if problem:
                 raise ValueError(problem)
         return data

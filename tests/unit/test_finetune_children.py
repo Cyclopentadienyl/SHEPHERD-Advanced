@@ -483,7 +483,9 @@ def test_a_new_run_without_a_stage_is_refused_before_anything_starts(base, popen
     (dict(hidden_dim=8), "hidden_dim is not a setting a base run reads"),
     (dict(task_loss_weight=0.5), "task_loss_weight is not a setting a base run reads"),
     (dict(conv_type="gat"), "conv_type is not a setting a base run reads"),
-    (dict(task="disease"), "task is not a setting a base run reads"),
+    # A task names a run, and a base has none: the one identity check's
+    # sentence (`run_plan.new_run_identity_problem`), the training process's.
+    (dict(task="disease"), "A base run has no task and no finetune parent."),
     (dict(num_epochs=0), "num_epochs must be between 1 and 10000, not 0."),
     (dict(learning_rate="fast"), "learning_rate must be a number, not 'fast'"),
     (dict(early_stopping_patience=None, seed=None), "seed must be set, not null"),

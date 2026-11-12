@@ -485,6 +485,9 @@ class _Finetune:
 #: §1, BACKLOG 54): where and how it runs, and its stage.
 _NEW_RUN_KEYS = frozenset({"data_dir", "run_name", "run_dir", "device", "compile",
                            "learning_stage"})
+#: What names a new run besides its stage, judged by its identity check
+#: (`run_plan.new_run_identity_problem`), never as a setting.
+_NEW_RUN_IDENTITY = frozenset({"task", "finetune_from"})
 
 
 def _task_words(tasks: Sequence[str]) -> str:
@@ -516,9 +519,12 @@ def _new_bundle_run(config: Mapping[str, Any]) -> Tuple[Optional[str], Optional[
     without a learning stage is refused: every run is a model bundle stage.
 
     Only a base starts here: a finetune is a Fine-tune start's
-    (`start_finetune`, one child per task from a base). Its keys are the
-    settings a base reads (`run_plan.new_run_settings("base")`) and
-    `_NEW_RUN_KEYS`, judged by the one check of a new run's settings, which
+    (`start_finetune`, one child per task from a base). A base has no task
+    and no finetune parent, judged by the one check of a new run's stage and
+    task, which the training process makes too
+    (`run_plan.new_run_identity_problem`; a null task is no task). Its other
+    keys are the settings a base reads (`run_plan.new_run_settings("base")`)
+    and `_NEW_RUN_KEYS`, judged by the one check of a new run's settings, which
     the training process makes too (`run_plan.new_run_problem`: each value
     one its field spec takes, the rules across settings holding), its model
     spec a base's (`run_spec_problem`), and its hop list one number per hop
@@ -528,7 +534,7 @@ def _new_bundle_run(config: Mapping[str, Any]) -> Tuple[Optional[str], Optional[
     refused, never passed on for the process to refuse."""
     from src.config.recipe import reference_settings
     from src.models.bundle.spec import hops_problem, reference_spec, run_spec_problem
-    from src.utils.run_plan import new_run_problem
+    from src.utils.run_plan import new_run_identity_problem, new_run_problem
 
     stage = config.get("learning_stage")
     if stage is None:
@@ -540,9 +546,10 @@ def _new_bundle_run(config: Mapping[str, Any]) -> Tuple[Optional[str], Optional[
     if stage != "base":
         return None, f"{stage!r} is not a learning stage a new run starts; a new run is a base."
     references = reference_settings("base")[0]
-    problem = new_run_problem(
-        "base", (None,),
-        {name: value for name, value in config.items() if name not in _NEW_RUN_KEYS})
+    problem = (new_run_identity_problem("base", config.get("task"), config.get("finetune_from"))
+               or new_run_problem("base", (None,),
+                                  {name: value for name, value in config.items()
+                                   if name not in _NEW_RUN_KEYS | _NEW_RUN_IDENTITY}))
     if problem:
         return None, problem
     if config.get("model_spec") is None:
