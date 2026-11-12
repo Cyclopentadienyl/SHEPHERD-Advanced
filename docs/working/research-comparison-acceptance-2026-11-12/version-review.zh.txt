@@ -1,0 +1,41 @@
+本輪版本與環境核對說明
+日期：2026-11-12（Asia/Taipei）
+受測 head：e60f23ee0314c33d7785d13656a146e0ca0022d8
+
+一、共同環境
+Linux aarch64；NVIDIA GB10，capability 12.1；Python 3.12.3。
+Torch 2.10.0+cu130；Torch CUDA build 13.0；torch_geometric 2.8.1。
+allocator 為 cudaMallocAsync，來自既有保存設定；torch_compile=false。
+此處的「本地編譯」指 PyG 原生擴充建置，不是開啟 torch.compile。
+受測 uv.lock 的 SHA-256：0f92a5ecff12170bb26127c9d7098ab4301ffac8c7c3bcbd4b7dc9723815c356。
+
+二、兩條路徑
+                         pull                    compile
+pyg_lib                  0.6.0                   0.8.0
+torch_cluster            1.6.3                   1.6.3
+torch_scatter            2.1.2                   2.1.2
+torch_sparse             0.6.18                  0.6.18
+實際來源                 prebuilt release        local build
+
+pull 的來源 tag：pyg-arm-cu130-torch2.10.0。
+compile 的 pyg_lib 來源：https://github.com/pyg-team/pyg-lib.git，ref 0.8.0，解析後 commit 26a2d1a06a4714da9bb804c19049afb4796971d7。
+compile 記錄的 toolchain：gcc/g++ 13.3.0、nvcc 13.0.88；flags 為 FORCE_CUDA=1、MAX_JOBS=16、TORCH_CUDA_ARCH_LIST=12.1。
+另外三項的 requested 來源是 package index，specifier 為空；本次 resolved 版本、wheel SHA-256、編譯器與原生二進位摘要都有記錄。這不等於宣稱所有未指定的未來安裝都會解析成同一版本。
+
+同名同版元件的原生摘要也可能不同。完整值位於 summary.json，以及各路徑 04-envcheck/environment.json、06-probe/environment-before.json、07-after/environment-after.json 的 facts.components 和 facts.receipt。不要只比較套件名稱與版本字串。
+
+三、A5 不是「鎖檔內每個套件都已安裝」
+兩條路徑的 version_differs 都是空，表示實際安裝且由該 lock 管理的版本沒有偏離。lock 的其他平台／可選／開發套件不一定全部安裝；原始 locked_not_installed 清單保留。
+pull 共 119 個已安裝 distributions，其中 13 個在 lock 之外，A5 標記為部署腳本帶入。
+compile 共 121 個，其中 15 個在 lock 之外：同類的 13 個部署套件，另加 pip 26.3、wheel 0.48.0。
+pip 與 wheel 在 compile 02-install/deploy.log 有加入紀錄。A5 的 required_by_nothing_installed 只是在讀取已安裝套件相依宣告時未找到依賴者，不等於它們沒有建置用途，也不是版本衝突或這次驗收失敗。
+
+四、能得出的結論
+這兩個具體環境都完成相同 head 的約定功能驗收，且每次環境、來源與原生檔身分可溯源。不要求跨路徑版本相同，不要求不同 run 的輸出相同，也不因 PyG 版本較新就新增產品閘門。
+這不是只改 PyG 版本的受控因果實驗；不能據此推論版本升級一定提升品質或速度。
+
+環境的 cuda_arch_support 如實記下 Torch 未原生編譯針對 sm_121，以及所列 compute_120 PTX。此次 CUDA 功能流程已實測通過，但不據此宣稱所有核心均為 GB10 原生最佳化，也不憑該提示否定已完成的實測。
+元件的 requested/selected/in_effect 若為 unknown，仍保持 unknown；收據匹配不代替實際作用狀態觀測。
+
+五、既有版本核對材料
+使用者先前要求一併交付的 K8 版本核對說明，原文保存在 support/K8_版本核對說明_歷史原文.txt，以及歷史準備包 k8-baseline/版本核對說明.txt。它描述的是 f2c2012 當次環境，不能覆蓋本輪 e60f23e 的新事實。

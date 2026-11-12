@@ -1,0 +1,5 @@
+train_outputs/config.yaml: OK
+checkpoints/hgt/model-02-0.1813.pt: OK
+kg.provenance.json: OK
+split_manifest.json: OK
+kg.json: OK

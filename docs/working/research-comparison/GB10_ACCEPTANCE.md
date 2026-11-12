@@ -1,19 +1,25 @@
 # The round's GB10 acceptance: the new probes' field contract
 
-**Status: prepared, not run on a GPU.** Stage 10a of this round (README §5 Stage 10, the owner's O9) added required
-probes to `scripts/probe_deployment.py --m2-acceptance`. This page is the contract the external closing check reads them
-by: the IDs, the report keys and what each must hold. It also records what the check's next revision has to do (TA-10).
+**Status: run on the GB10 at `e60f23e`, and passed on both deploy routes (2026-11-11 the prebuilt pull, 2026-11-12 a
+local build): 116 of 116 probes and the closing check 182 of 182 on each. The record is
+[`../research-comparison-acceptance-2026-11-12/`](../research-comparison-acceptance-2026-11-12/README.md).** Stage 10a
+of this round (README §5 Stage 10, the owner's O9) added required probes to `scripts/probe_deployment.py
+--m2-acceptance`. This page is the contract the external closing check reads them by: the IDs, the report keys and what
+each must hold. It also records what the check's revision had to do (TA-10, §3).
 Stage 10b added one informational probe, S1, M1's minimal served readings (§2.1): it is in neither required list, the
 probe's exit status never counts it, and the check must never require it or judge its numbers.
 
-- **What was verified, and where.** The probes run, and pass, on the CPU in this container only:
-  `tests/unit/test_probe_m2_phase.py` runs the demo phase end to end and checks the evidence against the disk, and
-  `tests/unit/test_probe_research_comparison.py` shows that their own checks fire.
-- **What was not verified.** Nothing here ran on CUDA or on the GB10. The values below that say "on the GB10" are what
-  the probes require when the acceptance runs there with `--device cuda`, each checked by the probe that records it
-  (§2). They have not been observed.
-- **When it runs.** As O9 says: after integration and the external review, in an isolated new clone, with the new
-  probes required. Each of the two deploy routes is recorded as it was actually verified.
+- **What was verified, and where.** On the CPU in the round's container: `tests/unit/test_probe_m2_phase.py` runs the
+  demo phase end to end and checks the evidence against the disk, and `tests/unit/test_probe_research_comparison.py`
+  shows that their own checks fire. On the GB10 at `e60f23e`, with `--device cuda`, once per deploy route: every
+  required probe passed, and the values below that say "on the GB10" were observed (the record §1, §2).
+- **What was not verified.** What §4 lists as not covered, and the deploy layer's failure paths on the GB10 (a failed
+  pull's stop, the build fallback, a wrong wheel, a mismatched receipt), which remain software simulation (the record
+  §3).
+- **When it ran.** As O9 says: after integration, the external review and RC-R1's recheck (`e17ffe7`..`e60f23e`), with
+  the new probes required. Each deploy route was recorded as it was actually verified. Both routes ran, one after the
+  other, in one existing clone with a new environment each: not O9's isolated new clone or the fresh clones of §4 items
+  1–2. The reviewer's frozen operation sheet planned this reuse (the record §1, §3).
 
 ## 1. Where the closing check reads them
 
@@ -286,6 +292,13 @@ own `inference_time_ms`, in seconds.
 The check lives outside this repository, in the owner's session. Its next revision must do three things, and be
 dry-run first (item 4).
 
+*Done before the run (2026-11-11):* the reviewer revised the check, and its dry run on K8's report passed 114 of 114,
+with R3 expecting `f2c2012`'s rules (1), RW2 reading 1,191.9 s, no W8 line and the new probes reported absent (the
+record §4). As run, it reads more strictly than items 1 and 3 say. It takes the required lists and R3's rules from
+digest-checked copies of the tested commit, and requires the report's lists and tested commit to equal them. It also
+requires A6's routes to equal the route under test, §4 item 2's rule for a verified pull; item 1's "do not gate on a
+route" is read as: do not pin which route a run must use.
+
 1. **Read the new probes.**
    - Take the required lists from the report (§1), not from a copy in the script. Require the 14 new IDs to have
      passed.
@@ -318,9 +331,10 @@ dry-run first (item 4).
 
 ## 4. The GB10 run
 
-**The code to test** is the head delivered for the round's external review, named in that delivery. Only documents may
-follow it before the run, as at K8; `src`, `scripts`, `tests`, `configs`, `pyproject.toml` and `uv.lock` are the ones
-tested. The run starts only after the external review, as O9 says.
+**The code to test** is the head delivered for the round's external review, named in that delivery; as run,
+`e60f23e`, the head of RC-R1's recheck (`e17ffe7`..`e60f23e`). Only documents may follow it before the run, as at
+K8; `src`, `scripts`, `tests`, `configs`, `pyproject.toml` and `uv.lock` are the ones tested. The run starts only after
+the external review, as O9 says.
 
 1. **A fresh clone at that head**, checked out detached in a directory of its own. The deployment checkout is not
    touched, and neither is the real workspace: the probe gets a new copy of it.
@@ -345,7 +359,9 @@ tested. The run starts only after the external review, as O9 says.
    S1's readings and any failure of S1 are printed as INFO and never judged (§2.1).
 6. **The record**, per route: a new evidence directory (`docs/working/<round>-acceptance-<date>/README.md`). It states
    the environment by the product's own facts (A1, A5, A6), the route as A6 read it, the inputs' digests before and
-   after, the duration and the disk, and what the run does not cover.
+   after, the duration and the disk, and what the run does not cover. As run: one directory,
+   [`../research-comparison-acceptance-2026-11-12/`](../research-comparison-acceptance-2026-11-12/README.md), with a
+   column per route in its §1 and each route's evidence in `pull/` and `compile/`.
 
 **What the run does not cover, already known:** the frozen-backbone control on CUDA, with AMP, its scaler or
 `torch.compile` (its tests run on the CPU only, and no probe trains one); the WebUI in a browser on the GB10 (the
@@ -354,5 +370,6 @@ GAT; bfloat16; model quality.
 
 **Time and disk.** The new probes add only demo-sized work: five short trainings (the two refusal bases and L7's
 three children), about a dozen measurements, one job-runner test run and one export. On the CPU here the whole flow
-(L1–L8) took about 7 s. Its GB10 time and disk are not measured. S1 adds one service start and 55 demo requests,
-about 8 s on the CPU here.
+(L1–L8) took about 7 s. S1 adds one service start and 55 demo requests, about 8 s on the CPU here. On the GB10, A6
+and L1–L8 recorded 9.7 s (pull) and 8.9 s (compile) of probe time, and S1 8.9 s and 8.7 s; their share of the work
+directory's disk is not measured apart (the whole probe and its disk are in the record §1).

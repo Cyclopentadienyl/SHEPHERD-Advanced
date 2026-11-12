@@ -1,0 +1,5 @@
+# Evidence is kept byte for byte (SHA256SUMS): no line-ending normalisation here.
+* -text
+# The closing check prints a space after an empty value ("PASS  probe list shape: "): evidence, not style.
+pull/acceptance-check.txt whitespace=-blank-at-eol
+compile/acceptance-check.txt whitespace=-blank-at-eol

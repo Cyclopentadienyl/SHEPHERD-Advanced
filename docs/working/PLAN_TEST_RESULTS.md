@@ -23,8 +23,11 @@ validation (K2), the disease task (K3), the gene and patients-like-me tasks (K4)
 GB10 at `f2c2012` (2026-11-09; 101 of 101 probes, the closing check 110 of 110;
 [`k8-acceptance-2026-11-09/`](k8-acceptance-2026-11-09/README.md)); the gene and patients-like-me
 tasks ran on synthetic functional fixtures and were checked on CPU only (`BACKLOG.md` §0, package
-B). Deferred out of K8 ([`scorer-retraining/README.md`](scorer-retraining/README.md) §8, "K8
-record"), among others: the base's formal KG test (N1), comparing, querying and exporting results
+B). *(2026-11-12: at `e60f23e` on `claude/research-comparison`, not merged, one-epoch demo-sized gene
+and patients-like-me children were trained and measured on CUDA on the GB10, on both deploy routes,
+and the KG link-prediction measurement ran there too (L2, L3, L5);
+[`research-comparison-acceptance-2026-11-12/`](research-comparison-acceptance-2026-11-12/README.md).)*
+Deferred out of K8 ([`scorer-retraining/README.md`](scorer-retraining/README.md) §8, "K8 record"), among others: the base's formal KG test (N1), comparing, querying and exporting results
 (N3; its direction set on 2026-11-09, `BACKLOG.md` §0 and 63), the patients-like-me reference set
 and R10's exposure scope. *(2026-11-10: N1's measurement is built since on
 `claude/research-comparison`, Stage 5a, not merged: §8.1, "The KG link-prediction measurement as

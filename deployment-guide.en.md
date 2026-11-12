@@ -3658,13 +3658,20 @@ is `skip`, as before.
   Results' Compare (one row per fact) and the export (since review fix RC-P2-1). This holds for every
   route, the Linux index route and `deploy.cmd` included; only the receipt is the two ARM routes'.
 - **What is verified**: these routes run in tests with stand-ins for the ARM host, GitHub, pip and
-  the compilers (`tests/unit/test_deploy_pyg_route.py`), which is software simulation. Neither route
-  has run on a GB10 since Stage 2a; each counts as verified there only by its own GB10 run.
+  the compilers (`tests/unit/test_deploy_pyg_route.py`), which is software simulation. Each route
+  counts as verified on a GB10 only by its own GB10 run. Since Stage 2a, both ARM routes have run on
+  the GB10 once, at `e60f23e` on `claude/research-comparison` (not merged): the prebuilt pull on
+  2026-11-11 and a local build of all four extensions on 2026-11-12, each in its own new environment,
+  with its receipt matched (`docs/working/research-comparison-acceptance-2026-11-12/`). A failed
+  pull's stop, the build fallback, a wrong wheel and a mismatched receipt are still software
+  simulation only.
 
 **The verified set**: `torch_geometric` 2.8.1 with torch 2.10.0+cu130 and the prebuilt ARM
 release's extensions (pyg-lib 0.6.0, torch-scatter 2.1.2, torch-sparse 0.6.18, torch-cluster
-1.6.3), in M5's GB10 acceptance at `b14c4de`. Since Batch 1, `deploy.sh` installs that set from the
-lock, as checked on the GB10 at `0bc5178` (2026-10-26: A1–A5 passed, A5 equal to the committed lock,
+1.6.3), in M5's GB10 acceptance at `b14c4de`, and again at `e60f23e` (not merged), where a local
+build (pyg-lib 0.8.0, the other three at the release's versions) passed beside it. Since Batch 1,
+`deploy.sh` installs that set from the lock, as checked on the GB10 at `0bc5178` (2026-10-26: A1–A5
+passed, A5 equal to the committed lock,
 the PyG native check 5 of 5; `docs/working/batch1-acceptance-2026-10-26/`). Windows' `deploy.cmd`
 has not been run. M4's acceptance ran 2.8.0.post1; its evidence stays with that environment. After pulling, `uv sync --inexact` moves an installed
 2.8.0.post1 to 2.8.1: that is a change of environment, and an acceptance made before it does not
