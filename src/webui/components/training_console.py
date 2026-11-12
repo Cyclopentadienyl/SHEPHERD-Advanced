@@ -1548,43 +1548,6 @@ def _chart_token(run: Optional[RunRef], cache: Dict[str, Any], *,
 # =============================================================================
 # The resources line
 # =============================================================================
-def _format_resources(resources: Mapping[str, Any]) -> str:
-    """The resources as one line of 14 px text: each GPU's use, memory and
-    temperature (one shared "unified memory" figure on a unified-memory
-    machine, never the same bytes twice), and the system memory."""
-    parts: List[str] = []
-    unified = bool(resources.get("unified_memory"))
-    gpu = resources.get("gpu") or {}
-    if gpu.get("available"):
-        for dev in gpu.get("devices") or []:
-            idx = dev.get("index", 0)
-            util = dev.get("utilization_percent")
-            parts.append(f"GPU {idx} {'N/A' if util is None else f'{util:.0f} %'}")
-            if not unified:
-                used, total = dev.get("memory_used_mb"), dev.get("memory_total_mb")
-                parts.append(f"VRAM {used / 1024:.1f} / {total / 1024:.1f} GB"
-                             if used is not None and total else "VRAM N/A")
-            temp = dev.get("temperature_c")
-            parts.append("N/A °C" if temp is None else f"{temp:.0f} °C")
-            if dev.get("name"):
-                parts.append(str(dev["name"]))
-    else:
-        parts.append("GPU: not available")
-    ram = resources.get("ram") or {}
-    label = "unified memory" if unified else "memory"
-    if "error" in ram:
-        parts.append(f"{label}: {ram.get('error')}")
-    elif ram:
-        total = ram.get("total_gb", 0) or 0
-        used = (total - ram.get("available_gb", 0)) if unified and ram.get(
-            "available_gb") is not None else ram.get("used_gb", 0)
-        parts.append(f"{label} {used:.1f} / {total:.1f} GB"
-                     + (" (shared CPU + GPU pool)" if unified else ""))
-    items = '<span class="shep-sep" aria-hidden="true"> · </span>'.join(
-        f'<span>{r.e(p)}</span>' for p in parts)
-    return f'<div class="shep-rv-res"><b>Resources</b> {items}</div>'
-
-
 _IDLE_RESOURCE_HTML = '<div class="shep-rv-res"><b>Resources</b> <span class="shep-muted">reading…</span></div>'
 
 
@@ -1593,7 +1556,7 @@ def _poll_resources(location: Any = TRAINING) -> Any:
     if location != TRAINING:
         return gr.update()
     try:
-        return _format_resources(training_manager.get_system_resources())
+        return r.resources_html(training_manager.get_system_resources())
     except Exception:  # noqa: BLE001 - the line must not break the page
         logger.exception("The resources could not be read")
         return '<div class="shep-rv-res"><b>Resources</b> <span class="shep-muted">not read</span></div>'

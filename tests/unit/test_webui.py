@@ -88,20 +88,20 @@ class TestTrainingConsoleHelpers:
         assert kind == "running"
         assert words == "RUNNING · epoch 5/100 · batch 340/812 · 01:01:01"
 
-    def test_format_resources_no_gpu(self):
-        from src.webui.components.training_console import _format_resources
+    def test_resources_html_no_gpu(self):
+        from src.webui.components.renderers import resources_html
 
-        result = _format_resources({
+        result = resources_html({
             "gpu": {"available": False, "devices": []},
             "ram": {"total_gb": 32.0, "used_gb": 16.0, "percent": 50.0},
         })
         assert "GPU: not available" in result
         assert "memory 16.0 / 32.0 GB" in result
 
-    def test_format_resources_with_gpu(self):
-        from src.webui.components.training_console import _format_resources
+    def test_resources_html_with_gpu(self):
+        from src.webui.components.renderers import resources_html
 
-        result = _format_resources({
+        result = resources_html({
             "gpu": {
                 "available": True,
                 "devices": [{
@@ -121,9 +121,9 @@ class TestTrainingConsoleHelpers:
     def test_the_resources_line_has_no_text_under_14px(self):
         """The resource display used 13 px (and 11 px) inline text; it is one
         line now, sized by the page's style sheet (nothing under 14 px)."""
-        from src.webui.components.training_console import _format_resources
+        from src.webui.components.renderers import resources_html
 
-        result = _format_resources({
+        result = resources_html({
             "gpu": {"available": True, "devices": [{"index": 0, "name": "GB10",
                                                      "utilization_percent": None,
                                                      "temperature_c": None}]},

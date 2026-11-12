@@ -105,6 +105,7 @@ from src.webui.components.renderers import IDENTITY_BANNERS
 from src.webui.components.renderers import NOT_A_MEDICAL_DEVICE as _NOT_A_MEDICAL_DEVICE
 from src.webui.components.renderers import e as _e
 from src.webui.components.renderers import is_digest as _is_digest
+from src.webui.components.renderers import resources_html as _resources_html
 from src.webui.exports import export_dir, file_slug
 from src.webui.components.renderers import kv_cells as _kv_cells
 from src.webui.components.renderers import short_hex as _short_hex
@@ -2640,18 +2641,16 @@ def ask_stop_inference(access: Any, state: Any) -> Dict[str, Any]:
 def memory_after_stop_html(resources: Optional[Mapping[str, Any]] = None) -> str:
     """The resources reading (`TrainingManager.get_system_resources`, what
     ``GET /api/v1/system/resources`` answers), read now, after a stop that
-    released the model, in the Training page's words (`_format_resources`).
+    released the model, in the Training page's words (`renderers.resources_html`).
     **A reading, never a promise** that memory was returned: the stop empties
     the CUDA allocator's unused blocks only, and the GB10's memory is shared
     (I4). A reading that fails says so."""
-    from src.webui.components.training_console import _format_resources
-
     try:
         if resources is None:
             from src.api.services.training_manager import training_manager
 
             resources = training_manager.get_system_resources()
-        line = _format_resources(resources)
+        line = _resources_html(resources)
     except Exception:  # noqa: BLE001 - a reading that fails is said, never raised
         logger.exception("The resources could not be read after a stop")
         return '<p class="shep-dx-line shep-muted">Memory after the stop: not read.</p>'

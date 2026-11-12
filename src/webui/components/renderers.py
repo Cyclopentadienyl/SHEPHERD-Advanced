@@ -30,8 +30,8 @@ import html
 import re
 from collections import Counter
 from datetime import datetime, timezone
-from typing import (Any, Callable, Dict, Hashable, Iterable, Mapping, NamedTuple, Optional,
-                    Sequence, Tuple)
+from typing import (Any, Callable, Dict, Hashable, Iterable, List, Mapping, NamedTuple,
+                    Optional, Sequence, Tuple)
 
 from src.config.recipe import FROZEN_PARTS
 from src.evaluation.caveats import (
@@ -187,6 +187,46 @@ def chip(text: str, kind: str = "neutral", *, title: Optional[str] = None) -> st
 def warn_chip(text: str) -> str:
     """An amber chip with ▲ before its words: a condition to watch (the skill's §6)."""
     return f'<span class="shep-tag shep-tag-amber">{WARN_MARK} {e(text)}</span>'
+
+
+def resources_html(resources: Mapping[str, Any]) -> str:
+    """The resources reading (`TrainingManager.get_system_resources`, what
+    ``GET /api/v1/system/resources`` answers) as one line of 14 px text: each
+    GPU's use, memory and temperature (one shared "unified memory" figure on
+    a unified-memory machine, never the same bytes twice), and the system
+    memory. Training's resources line, and Diagnosis's reading after a stop
+    of inference."""
+    parts: List[str] = []
+    unified = bool(resources.get("unified_memory"))
+    gpu = resources.get("gpu") or {}
+    if gpu.get("available"):
+        for dev in gpu.get("devices") or []:
+            idx = dev.get("index", 0)
+            util = dev.get("utilization_percent")
+            parts.append(f"GPU {idx} {'N/A' if util is None else f'{util:.0f} %'}")
+            if not unified:
+                used, total = dev.get("memory_used_mb"), dev.get("memory_total_mb")
+                parts.append(f"VRAM {used / 1024:.1f} / {total / 1024:.1f} GB"
+                             if used is not None and total else "VRAM N/A")
+            temp = dev.get("temperature_c")
+            parts.append("N/A °C" if temp is None else f"{temp:.0f} °C")
+            if dev.get("name"):
+                parts.append(str(dev["name"]))
+    else:
+        parts.append("GPU: not available")
+    ram = resources.get("ram") or {}
+    label = "unified memory" if unified else "memory"
+    if "error" in ram:
+        parts.append(f"{label}: {ram.get('error')}")
+    elif ram:
+        total = ram.get("total_gb", 0) or 0
+        used = (total - ram.get("available_gb", 0)) if unified and ram.get(
+            "available_gb") is not None else ram.get("used_gb", 0)
+        parts.append(f"{label} {used:.1f} / {total:.1f} GB"
+                     + (" (shared CPU + GPU pool)" if unified else ""))
+    items = '<span class="shep-sep" aria-hidden="true"> · </span>'.join(
+        f'<span>{e(p)}</span>' for p in parts)
+    return f'<div class="shep-rv-res"><b>Resources</b> {items}</div>'
 
 
 def fingerprint_html(label: str, digest: Any, *, digits: int = SHORT_HEX, copy: bool = True,
@@ -1169,6 +1209,7 @@ __all__ = [
     "recorded_count_text",
     "recorded_tests_cell",
     "recorded_tests_text",
+    "resources_html",
     "run_label",
     "run_label_html",
     "run_name",

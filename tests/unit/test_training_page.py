@@ -215,7 +215,9 @@ def test_the_page_id_and_style_sheet_follow_the_contract():
     assert tc.PAGE_CSS in PAGE_CSS and tc.PAGE_CSS in mount_options()["head"]
     for value in re.findall(r"font-size:\s*([0-9.]+)px", tc.PAGE_CSS):
         assert float(value) >= 14, value
-    assert "font-size" not in tc._format_resources({"gpu": {}, "ram": {}})
+    from src.webui.components.renderers import resources_html
+
+    assert "font-size" not in resources_html({"gpu": {}, "ram": {}})
 
 
 def test_every_gated_act_checks_d8_and_reads_the_chips_after():
