@@ -2976,13 +2976,15 @@ lock before its words, and has "Operator controls only: <reason>" beside it.
 ### Help: the ⓘ buttons
 
 The explanations that were printed under each field of Diagnosis, the Training Console and
-Runtime Settings are now behind a ⓘ after the field's name. Point at it, reach it with Tab, or
-click it: the help appears in a bubble you can move the pointer into. A click keeps it open; Esc
-or a click elsewhere closes it. A click on the field's name still puts the cursor in the field.
-The bubble opens below or above the ⓘ, wherever there is room, and is never taller than the
-window: a long text scrolls inside it. What must stay visible is still printed: a refusal's
-reason, a job's state, the synthetic marker, an unverified source, and the Training Console's
-AMP refusal for HGT ("Disabled: HGT requires full float32 …").
+Runtime Settings are now behind a ⓘ after the field's name. Point at it (the bubble opens after a
+short pause, so a pointer passing over opens nothing), reach it with Tab, or click it: the help
+appears in a bubble you can move the pointer into. A click (or Enter or Space) pins it open as a
+dialog; Esc or a click elsewhere closes it. A click on the field's name still puts the cursor in
+the field. The bubble opens beside the field it explains, else above it, else below it, and never
+covers the field; it is never taller than the window: a long text scrolls inside it. What must
+stay visible is still printed: a refusal's reason, a job's state, the synthetic marker, an
+unverified source, and the Training Console's AMP refusal for HGT ("Disabled: HGT requires full
+float32 …").
 
 ### Diagnosis (clinical)
 
