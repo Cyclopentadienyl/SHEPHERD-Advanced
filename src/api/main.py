@@ -1279,6 +1279,44 @@ class PipelineBundle(NamedTuple):
     checkpoint_path: Optional[str]
 
 
+def _configured_source(
+    kg_path: Optional[str], checkpoint_path: Optional[str], data_dir: Optional[str]
+) -> Optional[Tuple[str, Optional[str], Optional[str]]]:
+    """What a build is configured to serve, and **the checks of that
+    configuration, which read nothing**: the graph, checkpoint and workspace
+    paths from the arguments, else the environment (`SHEPHERD_KG_PATH`,
+    `SHEPHERD_CHECKPOINT_PATH`, `SHEPHERD_DATA_DIR`), or None when no graph
+    and no checkpoint is configured. **A model, or no pipeline** (K7, PATH1):
+    a checkpoint named with no graph, and a graph with no model or no
+    workspace (`require_model_source`), are refused (`PipelineBuildError`),
+    never served by path reasoning.
+
+    **Before the device**, in the build and at start-up before its GPU lock
+    (`initialize_pipeline`), so an operator is told what the configuration
+    lacks before what the host lacks. **Blank is unset**: an
+    exported-but-empty variable is how a shell says nothing, and an empty
+    checkpoint path read as a request for a model would refuse a deployment
+    that asked for none."""
+    from src.inference.pipeline import PipelineBuildError, require_model_source
+
+    kg_path = kg_path or os.environ.get("SHEPHERD_KG_PATH") or None
+    checkpoint_path = checkpoint_path or os.environ.get("SHEPHERD_CHECKPOINT_PATH") or None
+    data_dir = data_dir or os.environ.get("SHEPHERD_DATA_DIR") or None
+    if not kg_path:
+        if checkpoint_path:
+            # **A model was asked for, so this is not "nothing configured".**
+            # Returning None here would leave a deployment that named a
+            # checkpoint described as one that configured nothing.
+            raise PipelineBuildError(
+                f"A checkpoint is configured ({checkpoint_path}) and no "
+                "knowledge graph is; set SHEPHERD_KG_PATH. The model cannot be "
+                "served without the graph it scores over."
+            )
+        return None
+    require_model_source(checkpoint_path, data_dir)
+    return kg_path, checkpoint_path, data_dir
+
+
 def build_pipeline(
     kg_path: Optional[str] = None,
     checkpoint_path: Optional[str] = None,
@@ -1332,48 +1370,23 @@ def build_pipeline(
     """
     logger.info("Building diagnosis pipeline...")
 
-    # Resolve paths from args or environment. **Blank is unset**: an
-    # exported-but-empty variable is how a shell says nothing, and an empty
-    # checkpoint path read as a request for a model would refuse a deployment
-    # that asked for none.
-    kg_path = kg_path or os.environ.get("SHEPHERD_KG_PATH") or None
-    checkpoint_path = (
-        checkpoint_path or os.environ.get("SHEPHERD_CHECKPOINT_PATH") or None
-    )
-    data_dir = data_dir or os.environ.get("SHEPHERD_DATA_DIR") or None
-    device = requested_serving_device(device)
-
-    if not kg_path:
-        if checkpoint_path:
-            # **A model was asked for, so this is not "nothing configured".**
-            # Returning None here would leave a deployment that named a
-            # checkpoint described as one that configured nothing.
-            from src.inference.pipeline import PipelineBuildError
-
-            raise PipelineBuildError(
-                f"A checkpoint is configured ({checkpoint_path}) and no "
-                "knowledge graph is; set SHEPHERD_KG_PATH. The model cannot be "
-                "served without the graph it scores over."
-            )
+    source = _configured_source(kg_path, checkpoint_path, data_dir)
+    if source is None:
         logger.warning(
             "No KG path configured. Set SHEPHERD_KG_PATH or pass kg_path. "
             "Pipeline will not be available."
         )
         return None
+    kg_path, checkpoint_path, data_dir = source
+    device = requested_serving_device(device)
 
     try:
-        from src.inference.pipeline import (
-            build_served_pipeline,
-            require_model_source,
-            resolve_serving_device,
-        )
+        from src.inference.pipeline import build_served_pipeline, resolve_serving_device
 
-        # **A model, or no pipeline** (K7, PATH1): a graph named with no
-        # checkpoint is refused, never served by path reasoning. **The device is
-        # settled before the graph is read** (contract M3c). Both before the
+        # **The device is settled before the graph is read** (contract M3c),
+        # after what is configured (`_configured_source`, K7). Both before the
         # file check below; the shared build repeats both rules for its other
         # callers.
-        require_model_source(checkpoint_path, data_dir)
         resolve_serving_device(device)
 
         kg_file = Path(kg_path)
@@ -1458,9 +1471,12 @@ def initialize_pipeline(
     names a model; nothing else calls it, and a diagnosis never loads one (I9).
 
     It goes through the one lifecycle, as a reload does (`AppState.loading`):
-    the device resolved by the shared resolver, the GPU lock held for a CUDA
-    device before anything is read (busy, not configured or the runner's slot
-    taken refuses it), the shared build, then publication. A refusal is
+    the configuration's own checks first, which read nothing
+    (`_configured_source`: a graph named with no model is refused for that,
+    not for its device, as the build orders them), then the device resolved
+    by the shared resolver, the GPU lock held for a CUDA device before
+    anything is read (busy, not configured or the runner's slot taken refuses
+    it), the shared build, then publication. A refusal is
     recorded as why nothing is served (`STARTUP_REFUSED`, naming the lock's
     holder when that refused it, else pointing at the log, since a build's own
     words can name server paths) and raised, so the lifespan reports the
@@ -1477,6 +1493,7 @@ def initialize_pipeline(
 
     with app_state.loading() as load:
         try:
+            _configured_source(kg_path, checkpoint_path, data_dir)
             load.hold(resolve_serving_device(requested_serving_device(device)))
             bundle = build_pipeline(
                 kg_path=kg_path,

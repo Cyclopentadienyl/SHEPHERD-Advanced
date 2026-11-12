@@ -320,9 +320,10 @@ def test_a_startup_refused_for_its_device_answers_503(
     CUDA, is refused at startup, and every surface says no pipeline is served:
     `/diagnose` and `/ready` answer 503, as for any configured pipeline that
     could not be built: the start-up's refusal is the not-serving record
-    (`STARTUP_REFUSED`), whichever check refused it, and the device is now
-    the first. Driven through the real lifespan and HTTP routes, as
-    `TestReadinessFollowsWhatIsServed` is."""
+    (`STARTUP_REFUSED`), whichever check refused it (the configuration's own,
+    which read nothing, then the device, before the GPU lock). Driven through
+    the real lifespan and HTTP routes, as `TestReadinessFollowsWhatIsServed`
+    is."""
     api = no_device_configured
     data_dir, checkpoint = workspace
 
@@ -438,6 +439,36 @@ def test_a_service_with_no_checkpoint_is_refused_for_that(no_cuda, no_device_con
 
     assert not isinstance(refused.value, ServingDeviceUnavailable)
     assert api.app_state.not_serving is None
+
+
+def test_a_start_up_with_no_checkpoint_is_refused_for_that_not_its_device(
+    no_cuda, no_device_configured, workspace, monkeypatch, caplog
+):
+    """K7 (PATH1) at the product's start-up, the build's pin above through the
+    real lifespan: a `SHEPHERD_KG_PATH`-only start on a host without CUDA,
+    naming no device, is refused for the missing model. The configuration's
+    checks read nothing, so start-up runs them before the device and the GPU
+    lock (`initialize_pipeline`): an operator is not sent to set the device
+    first and told only after a restart that no model is configured."""
+    from fastapi.testclient import TestClient
+
+    api = no_device_configured
+    data_dir, _ = workspace
+    monkeypatch.setenv("SHEPHERD_KG_PATH", str(data_dir / "kg.json"))
+    monkeypatch.setenv("SHEPHERD_DATA_DIR", str(data_dir))
+    monkeypatch.delenv("SHEPHERD_CHECKPOINT_PATH", raising=False)
+
+    with caplog.at_level(logging.ERROR, logger=api.__name__):
+        with TestClient(api.app) as client:
+            ready = client.get("/ready")
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("No model is configured" in message for message in messages), messages
+    assert not any("requires CUDA" in message for message in messages), (
+        "start-up was refused for its device before its missing model")
+    assert ready.status_code == 503
+    assert api.app_state.not_serving.kind == api.STARTUP_REFUSED
+    assert api.app_state.pipeline is None
 
 
 # ---------------------------------------------------------------------------
