@@ -150,11 +150,13 @@ FINETUNE_FIXED: Dict[str, Any] = {"monitor": "val_pooled_mrr", "monitor_mode": "
 #: Settings a branch may change beside the stage's reference settings
 #: (BACKLOG 23: the schedule's floor, the precision and the accumulation).
 BRANCH_COMPANIONS = ("min_lr_ratio", "amp_dtype", "gradient_accumulation_steps")
-#: Reference settings a branch keeps: early stopping on or off is not a
-#: setting to compare runs by this round, and a branch starts from its
-#: parent's weights, trained or frozen as the parent trained them, so a freeze
-#: changed is a new finetune from the base, recorded as such (owner's O4a).
-BRANCH_KEPT = ("early_stopping_patience", "frozen_parts")
+#: Reference settings a branch keeps: a branch starts from its parent's
+#: weights, trained or frozen as the parent trained them, so a freeze changed
+#: is a new finetune from the base, recorded as such (owner's O4a). Early
+#: stopping's patience is a branch's to change (ops-wiring round, decision
+#: B3): nothing of the parent's early stopping carries over, since a branch
+#: builds a fresh Trainer and callbacks.
+BRANCH_KEPT = ("frozen_parts",)
 
 #: What each value of the learning setting `frozen_parts` keeps from training,
 #: by the model bundle's part names (`src.models.bundle.builder.PARTS`;

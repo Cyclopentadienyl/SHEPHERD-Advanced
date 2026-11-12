@@ -212,8 +212,6 @@ REFUSALS = {
                   "keeps every setting of its parent but those on its list"),
     "the spec": (dict(model_spec=_other_spec(), learning_rate=1e-3), RunPlanRefused,
                  "keeps every setting of its parent but those on its list"),
-    "early stopping": (dict(early_stopping_patience=3), RunPlanRefused,
-                       "keeps every setting of its parent but those on its list"),
     "an extension": (dict(extend_epochs=1, learning_rate=1e-3), RunPlanRefused,
                      "a branch starts a new run: remove them to branch"),
     "no stage": (dict(learning_stage=None, learning_rate=1e-3), ValueError,
@@ -344,6 +342,19 @@ def test_early_stopping_follows_the_patience_in_effect(workspace, tmp_path):
     off = _load(tmp_path / "off" / "checkpoints" / "last.pt")
     assert off["config"]["early_stopping"] is False
     assert off["config"]["requested"]["early_stopping_patience"] is None
+    # A branch changes it (decision B3): on for a parent without it, off for
+    # one with it, each recorded as a change.
+    off_parent = tmp_path / "off" / "checkpoints" / "last.pt"
+    for run, parent, patience, on in (("on", off_parent, 3, True), ("none", paused, None, False)):
+        config, explicit = _branch(workspace, tmp_path / run, parent, num_epochs=1,
+                                   early_stopping_patience=patience)
+        # Stated, a null included: the operator's, never "not set" (S2).
+        train_model.train(config, explicit | {"early_stopping_patience"})
+        child = _load(tmp_path / run / "checkpoints" / "last.pt")
+        assert child["config"]["early_stopping"] is on, run
+        assert child["parent"]["changes"]["early_stopping_patience"] == {
+            "parent": _load(parent)["config"]["requested"]["early_stopping_patience"],
+            "new": patience}, run
 
 
 def test_a_disease_child_branches_within_its_task(tmp_path):

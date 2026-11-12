@@ -60,11 +60,23 @@ def test_any_end_state_is_branched_and_each_change_recorded(end):
     assert plan.action == ("Branch last.pt: learning_rate 0.0001 -> 0.001; num_epochs 2 -> 4")
 
 
+@pytest.mark.parametrize("patience, parent", [(3, None), (None, 5), (7, 5)])
+def test_early_stopping_is_changed_by_a_branch(patience, parent):
+    """Decision B3: early stopping's patience is on a branch's list, on or
+    off or another patience, recorded as a change; a branch builds a fresh
+    Trainer, so nothing of the parent's early stopping carries over."""
+    recorded = {**RECORDED, "early_stopping_patience": parent}
+    plan = _plan(_parent(config={"requested": recorded,
+                                 "effective": {"amp": {"enabled": False, "dtype": "float16"}}}),
+                 early_stopping_patience=patience)
+    assert plan.changes == {"early_stopping_patience": {"parent": parent, "new": patience}}
+    assert plan.settings["early_stopping_patience"] == patience
+
+
 @pytest.mark.parametrize("request_, fragment", [
     (dict(eval_every_n_epochs=2, learning_rate=1e-3), "but those on its list"),
     (dict(split_seed=1), "but those on its list"),
     (dict(model_spec={"kind": "other"}), "but those on its list"),
-    (dict(early_stopping_patience=3), "but those on its list"),
     (dict(extend_epochs=2, learning_rate=1e-3), "a branch starts a new run"),
     (dict(extend_epochs=2), "a branch starts a new run"),
     (dict(extend_lr=1e-5), "a branch starts a new run"),
@@ -174,9 +186,10 @@ def test_mixed_precision_must_take_effect_alike_unless_it_is_changed():
 def test_the_closed_list_is_the_stages_reference_settings_and_companions():
     base, gene = branch_settings("base"), branch_settings("finetune", "gene")
     assert {"learning_rate", "seed", "num_epochs", "batch_size", "min_lr_ratio", "amp_dtype",
-            "gradient_accumulation_steps"} <= base
-    assert not {"early_stopping_patience", "split_seed", "model_spec", "eval_every_n_epochs",
-                "save_top_k", "task_loss_weight"} & base
+            "gradient_accumulation_steps", "early_stopping_patience"} <= base
+    assert not {"split_seed", "model_spec", "eval_every_n_epochs", "save_top_k",
+                "task_loss_weight", "frozen_parts"} & base
+    assert "frozen_parts" not in branch_settings("finetune", "disease"), "kept (O4a)"
     assert {"task_loss_weight", "lp_loss_weight", "candidate_upsample_size"} <= gene
     assert "candidate_sample_size" not in gene
 
