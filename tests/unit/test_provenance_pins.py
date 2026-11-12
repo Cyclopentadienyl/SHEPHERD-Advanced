@@ -234,8 +234,6 @@ ALLOWED = {
             "construction (the writer's digest of what it wrote, as contract M3b "
             "requires of every writer). Permanent, no home"),
     # --- Files that are not provenance inputs --------------------------------
-    ("src/api/routes/pipeline.py", "get_ui_config", "json.load"):
-        (1, _NOT_INPUT.format(what="the UI configuration")),
     ("src/api/services/training_manager.py", "TrainingManager._read_latest_metrics",
      "json.load"): (1, _NOT_INPUT.format(what="a training run's metrics, for display")),
     ("src/api/services/training_manager.py", "TrainingManager._read_progress_file",

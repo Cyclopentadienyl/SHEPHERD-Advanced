@@ -357,7 +357,7 @@ def test_every_state_changing_route_takes_the_one_dependency():
         for method in route.methods:
             (gated if deps else open_routes).add((method, route.path))
     assert gated == {
-        ("POST", "/api/v1/pipeline/reload"), ("POST", "/api/v1/pipeline/config"),
+        ("POST", "/api/v1/pipeline/reload"),
         ("POST", "/api/v1/training/start"), ("POST", "/api/v1/training/finetune"),
         ("POST", "/api/v1/training/branch"), ("POST", "/api/v1/training/stop"),
         ("GET", "/api/v1/training/checkpoints"), ("GET", "/api/v1/workspaces/{name}/checkpoints"),
@@ -365,19 +365,9 @@ def test_every_state_changing_route_takes_the_one_dependency():
     }
     assert {method for method, _ in open_routes} == {"GET", "POST"}
     assert [path for method, path in open_routes if method == "POST"] == ["/api/v1/diagnose"]
-
-
-def test_the_config_save_is_refused_and_writes_nothing(monkeypatch, tmp_path):
-    from src.api.routes import pipeline
-
-    target = tmp_path / "ui.json"
-    monkeypatch.setattr(pipeline, "CONFIG_FILE", target)
-    body = {"data_dir": "data/workspaces/x", "checkpoint_path": None}
-    refused = _app_client("http://192.0.2.10").post("/api/v1/pipeline/config", json=body)
-    assert refused.status_code == 403 and not target.exists()
-    operator_mode(monkeypatch)
-    assert _app_client().post("/api/v1/pipeline/config", json=body).status_code == 200
-    assert json.loads(target.read_text()) == body
+    # The UI configuration's route is retired (I10): its file was read by
+    # nothing, and no route reads or writes it.
+    assert not any(path == "/api/v1/pipeline/config" for _, path in gated | open_routes)
 
 
 def test_the_reload_route_is_refused_before_the_reload_runs(monkeypatch):
@@ -520,8 +510,7 @@ def test_no_gated_handler_calls_the_api_over_http():
         assert "_self_request" not in source and "/pipeline/reload" not in source, name
     for module in (dp, diagnosis_card):
         source = inspect.getsource(module)
-        for forbidden in ("run_reload(", "write_ui_config(", '"/api/v1/pipeline/reload',
-                          '"/api/v1/pipeline/config'):
+        for forbidden in ("run_reload(", '"/api/v1/pipeline/reload'):
             assert forbidden not in source, (module.__name__, forbidden)
 
 
@@ -602,7 +591,6 @@ def spies(monkeypatch, tmp_path):
         return record
 
     monkeypatch.setattr(pipeline, "run_reload", recorder("reload", pipeline._refused("spy", {})))
-    monkeypatch.setattr(pipeline, "write_ui_config", recorder("write_ui_config", None))
     monkeypatch.setattr(dp, "_self_request",
                         lambda *a, **k: pytest.fail("a gated handler called the API over HTTP"))
     monkeypatch.setattr(rs, "restart_backend", recorder("restart", {"success": False,

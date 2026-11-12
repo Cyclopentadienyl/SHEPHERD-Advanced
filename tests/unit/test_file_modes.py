@@ -2,16 +2,15 @@
 Files published by rename get the mode a plain open() would give them.
 
 The publishers write a staging file and rename it into place. With `tempfile`
-that staging file was 0600, so the split manifest, provenance, the evaluation
-ledger and the UI config all published 0600 -- including over files that had
-been 0644. `create_staging_file` restores open()'s behaviour: a new file gets
+that staging file was 0600, so the split manifest, provenance and the
+evaluation ledger all published 0600 -- including over files that had been
+0644. `create_staging_file` restores open()'s behaviour: a new file gets
 the directory's policy, applied by the kernel; a rewritten file keeps its mode.
 
 **The reference for "what open() would do" is open() itself**, run in the same
 directory under the same umask, so the tests hold under whatever policy the
 host applies -- umask or default ACL -- rather than restating a formula.
 """
-import asyncio
 import errno
 import os
 import shutil
@@ -222,25 +221,10 @@ def _evaluation_ledger(directory):
     return [target]
 
 
-def _ui_config(directory):
-    pytest.importorskip("fastapi")
-    from src.api.routes import pipeline
-
-    target = directory / ".shepherd_ui_config.json"
-    real = pipeline.CONFIG_FILE
-    pipeline.CONFIG_FILE = target
-    try:
-        asyncio.run(pipeline.save_ui_config(pipeline.UIConfigResponse()))
-    finally:
-        pipeline.CONFIG_FILE = real
-    return [target]
-
-
 PUBLISHERS = {
     "split_manifest": _split_manifest,
     "provenance": _provenance,
     "evaluation_ledger": _evaluation_ledger,
-    "ui_config": _ui_config,
 }
 
 
@@ -323,29 +307,6 @@ def test_a_failed_publish_leaves_the_target_and_no_staged_file(fail_at, tmp_path
         publish_bytes(target, b"new")
     assert target.read_bytes() == b"old"
     assert sorted(p.name for p in tmp_path.iterdir()) == ["out.json"]
-
-
-@pytest.mark.parametrize("fail_at", ["fsync", "replace"])
-def test_a_failed_ui_config_save_leaves_the_saved_paths_and_no_staged_file(
-        fail_at, tmp_path, monkeypatch):
-    """`write_ui_config`, the one writer of .shepherd_ui_config.json (the API's
-    save and the Diagnosis tab's Save Config, since M5-1): a write that fails
-    removes its staged file and leaves the file as it was, which is what the
-    tab's "The saved paths are as they were." says."""
-    pytest.importorskip("fastapi")
-    from src.api.routes import pipeline
-
-    target = tmp_path / ".shepherd_ui_config.json"
-    target.write_text('{"data_dir": "/srv/old"}')
-
-    def _fail(*args, **kwargs):
-        raise OSError(f"{fail_at} failed")
-
-    monkeypatch.setattr(file_modes.os, fail_at, _fail)
-    with pytest.raises(OSError, match=fail_at):
-        pipeline.write_ui_config(pipeline.UIConfigResponse(data_dir="/srv/new"), target)
-    assert target.read_text() == '{"data_dir": "/srv/old"}'
-    assert sorted(p.name for p in tmp_path.iterdir()) == [".shepherd_ui_config.json"]
 
 
 @pytest.mark.parametrize("data", ["text", bytearray(b"mutable")], ids=["str", "bytearray"])

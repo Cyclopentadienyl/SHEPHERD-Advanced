@@ -23,8 +23,8 @@ scrolls.
   place the served identity appears; the header's "Serving now" strip and the
   Model Configuration accordion (paths, Load/Reload, Save Config, Reset) are
   gone, their gated operations living on in the shared Load
-  (`model_list`, through "Change model…"); ``POST /pipeline/config`` stays
-  for API clients, gated by WP2.
+  (`model_list`, through "Change model…"); Save Config's route,
+  ``/pipeline/config``, is retired (its file was read by nothing).
 - **Run Diagnosis** is greyed out and not clickable when no model is loaded
   (a bubble on hover and on keyboard focus says why, and the reason is visible
   text under it) and while a model change is open; while this page's Load

@@ -1,52 +1,46 @@
 """
 SHEPHERD-Advanced Pipeline Management API Routes
 ==================================================
-Endpoints for pipeline status, reload, and configuration.
+Endpoints for pipeline status and reload.
 
 Module: src/api/routes/pipeline.py
 
 Endpoints:
     GET  /pipeline/status  — Current pipeline state (gnn_ready, scoring_mode, served identity, …)
     POST /pipeline/reload  — Reload pipeline with new data_dir / checkpoint_path
-    GET  /pipeline/config   — Get saved UI config (.shepherd_ui_config.json)
-    POST /pipeline/config  — Save UI config
 
-**The two POSTs are operator controls** (D8, M5-1): each route takes the one
-D8 dependency (`src/api/operator_access.py`), and does its work through one
-function: `run_reload`, which the dashboard's shared Load
+**The POST is an operator control** (D8, M5-1): the route takes the one D8
+dependency (`src/api/operator_access.py`), and does its work through one
+function, `run_reload`, which the dashboard's shared Load
 (`src/webui/components/model_list.py`, "Change model…" and Research › Models)
 also calls in process after its own check, each entrance judging its own
 request (the Load binds it to the model fingerprint it showed,
-`expected_checkpoint_sha256`, which an API client can pass too); and
-`write_ui_config`, which only the route calls since M5-2 removed the Diagnosis
-tab's Save Config. The GETs stay open.
+`expected_checkpoint_sha256`, which an API client can pass too). The GET stays
+open. **No configuration route**: `/pipeline/config` and its writer saved a
+selection to `.shepherd_ui_config.json` that nothing read back (no start-up,
+no page), so they are retired (the ops round's I10); a file an operator has is
+left as it is, and nothing persists "the last model".
 
 Version: 1.0.0
 """
 from __future__ import annotations
 
-import json
 import logging
-import os
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter
 from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.api.operator_access import OPERATOR_ONLY
 from src.api.routes.diagnose import ServedIdentity
 from src.core.types import SCORING_MODE_TASKS, TASK_SCORING_MODES
-from src.utils.file_modes import create_staging_file
 from src.utils.fingerprint import ReadOutside
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-CONFIG_FILE = Path(".shepherd_ui_config.json")
-DEFAULT_WORKSPACE_DIR = "data/workspaces/default"
 
 
 # =============================================================================
@@ -139,12 +133,6 @@ class PipelineReloadResponse(BaseModel):
         "checkpoint_path alike; null when nothing was built. A run directory's name "
         "only locates the file.")
     selection_reason: Optional[str] = None
-
-
-class UIConfigResponse(BaseModel):
-    """Saved UI configuration."""
-    data_dir: str = DEFAULT_WORKSPACE_DIR
-    checkpoint_path: Optional[str] = None
 
 
 # =============================================================================
@@ -718,66 +706,3 @@ def run_reload(request: PipelineReloadRequest) -> PipelineReloadResponse:
 
     publish_pipeline(candidate)
     return response
-
-
-@router.get("/pipeline/config", response_model=UIConfigResponse)
-async def get_ui_config() -> UIConfigResponse:
-    """Get saved UI configuration (paths, defaults)."""
-    if CONFIG_FILE.exists():
-        try:
-            with open(CONFIG_FILE) as f:
-                data = json.load(f)
-            return UIConfigResponse(**data)
-        except Exception as e:
-            logger.warning(f"Failed to read UI config: {e}")
-
-    return UIConfigResponse()
-
-
-@router.post("/pipeline/config", response_model=UIConfigResponse,
-             dependencies=OPERATOR_ONLY)
-async def save_ui_config(config: UIConfigResponse) -> UIConfigResponse:
-    """Save UI configuration to .shepherd_ui_config.json (`write_ui_config`).
-
-    An operator control: refused by D8's dependency before anything is written.
-    """
-    try:
-        return write_ui_config(config)
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to save config: {e}",
-        )
-
-
-def write_ui_config(config: UIConfigResponse, target: Optional[Path] = None) -> UIConfigResponse:
-    """The one writer of .shepherd_ui_config.json, called by the route above
-    after D8's check (the dashboard's Save Config was removed in M5-2). `target`
-    is the file, `CONFIG_FILE` unless a test names another one to write.
-
-    **Written beside the target and renamed onto it**, so an interrupted write
-    leaves the previous selection intact instead of a truncated file. This is
-    the same rule as the reload above, applied to the persisted form of the same
-    fact: which workspace this deployment serves. The consequence is milder —
-    `get_ui_config` falls back to the default workspace on an unreadable file,
-    and the operator sees that default in the path field rather than being
-    served from it silently — but the failure it removes is a real one, and
-    losing an operator's workspace selection has no upside.
-
-    Raises whatever the write raised (``OSError``, typically), after removing
-    its staged file: the file named is then as it was.
-    """
-    path = CONFIG_FILE if target is None else Path(target)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    handle, staged = create_staging_file(path, binary=False)
-    try:
-        with handle:
-            json.dump(config.model_dump(), handle, indent=2)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(staged, path)
-    except BaseException:
-        Path(staged).unlink(missing_ok=True)
-        raise
-    logger.info(f"UI config saved to {path}")
-    return config
