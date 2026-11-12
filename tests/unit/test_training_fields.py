@@ -285,11 +285,16 @@ def _literal_values(annotation) -> set:
 
 
 def test_api_enforces_declared_choices():
-    """Every field declaring current_api_choices must reject a value outside the enum."""
+    """Every field declaring current_api_choices must reject a value outside
+    the enum for a new run. A continuation's task and freeze are carried to
+    the runner as sent, which judges them against the parent as the training
+    process does (`test_continuation_judgement.py`); its stage is the
+    request's."""
     VE = _validation_error()
     enforced = [f for f in tf.FIELDS if f.current_api_choices]
     assert {f.name for f in enforced} == {"learning_stage", "scheduler_type", "amp_dtype",
                                           "task", "frozen_parts"}
+    bad = "definitely-not-a-valid-choice"
     for f in enforced:
         # Either stage, a task and the freeze continue a parent (compared
         # with its record there); a new run is a base, by the request's own
@@ -299,7 +304,12 @@ def test_api_enforces_declared_choices():
         for good in f.current_api_choices:
             _base(**{f.name: good, **continued})          # every declared choice is accepted
         with pytest.raises(VE):
-            _base(**{f.name: "definitely-not-a-valid-choice", **continued})
+            _base(**{f.name: bad})
+        if f.name == "learning_stage":
+            with pytest.raises(VE):
+                _base(**{f.name: bad, **continued})
+        elif continued:
+            assert getattr(_base(**{f.name: bad, **continued}), f.name) == bad
 
 
 def test_api_enum_sets_exactly_equal_the_spec():

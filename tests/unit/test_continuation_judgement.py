@@ -144,6 +144,26 @@ def test_a_resume_stating_a_setting_its_stage_does_not_read_is_refused_alike(
     _refused_everywhere(train_model, entries, cli, body, said, code=422)
 
 
+def test_a_resume_stating_an_out_of_range_setting_its_stage_does_not_read_hears_unread_first(
+        paused_base, entries):
+    """candidate_sample_size 0 on a resume of a base breaks two rules: a base
+    does not read it, and its field spec takes 1 or more. The training
+    process says the first (`run_plan.stated_problem`: what is read, then
+    each value), and so do the runner and HTTP, which carries a
+    continuation's settings to the runner as sent (review of AF1: HTTP
+    answered the field spec's sentence first)."""
+    from src.utils.run_plan import unread_problem
+
+    train_model = _train_model()
+    ws, parent = paused_base
+    said = unread_problem("base", (None,), {"candidate_sample_size"})
+    cli = {"data_dir": str(ws), "learning_stage": "base", "device": "cpu",
+           "resume_from": str(parent), "candidate_sample_size": 0}
+    body = {"data_dir": str(ws), "device": "cpu", "resume_from": str(parent),
+            "candidate_sample_size": 0}
+    _refused_everywhere(train_model, entries, cli, body, said, code=422)
+
+
 def test_an_out_of_range_value_on_a_resume_is_its_field_specs_refusal_alike(
         paused_base, entries):
     """learning_rate 5.0 on a resume: the field spec's sentence on every entry
@@ -184,14 +204,18 @@ BASE_IDENTITY = ("The parent last.pt is a base checkpoint; a run continues only 
                  "and task.")
 
 
-@pytest.mark.parametrize("stated", [{"learning_stage": "finetune"}, {"task": "disease"}],
-                         ids=["stage", "task"])
+@pytest.mark.parametrize("stated", [{"learning_stage": "finetune"}, {"task": "disease"},
+                                    {"task": "foo"}],
+                         ids=["stage", "task", "unknown-task"])
 def test_a_resume_stating_another_stage_or_task_gets_the_identity_sentence(
         paused_base, entries, stated):
     """A stage or task names the run: another than the parent's is refused by
     the one check (`run_plan.parent_identity_problem`), a refusal of the
     parent (409), with no branch remedy, which cannot change a stage. The
-    CLI states a stage always (a finetune with its task)."""
+    CLI states a stage always (a finetune with its task). A task that is no
+    task of this build is still another than the parent's: HTTP carries it
+    to the runner as sent (review of AF1: it answered the field spec's
+    choices first, 422)."""
     from src.utils.run_plan import parent_identity_problem
 
     train_model = _train_model()

@@ -44,7 +44,8 @@ from typing import Annotated, Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import (
-    BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator,
+    BaseModel, ConfigDict, Field, ValidationInfo, ValidatorFunctionWrapHandler, field_validator,
+    model_validator,
 )
 
 from src.api.operator_access import OPERATOR_ONLY
@@ -105,10 +106,14 @@ _SETTINGS = tuple(sorted(RUN_SETTINGS))
 #: What a new base does not read: refused for a new run in the one check of
 #: a new run's settings (`run_plan.new_run_problem`).
 _NOT_READ_BY_A_BASE = frozenset(RUN_SETTINGS - new_run_settings("base"))
-#: The start request's fields whose values the field spec checks first
-#: (`value_problem`): every setting and the task, and the operational ones
-#: that are not text (text is never coerced; `device` has its grammar below).
-_CHECKED_BY_THE_SPEC = (*_SETTINGS, "task", "compile", "extend_epochs", "extend_lr")
+#: What a run states and a continuation's parent judges: every setting and
+#: the task, checked by the field spec first for a new base, carried as sent
+#: for a continuation (`TrainingStartRequest._judged_by_the_spec_or_the_parent`).
+_STATED = (*_SETTINGS, "task")
+#: The start request's operational fields whose values the field spec checks
+#: first (`value_problem`): those that are not text (text is never coerced;
+#: `device` has its grammar below).
+_CHECKED_BY_THE_SPEC = ("compile", "extend_epochs", "extend_lr")
 
 
 # =============================================================================
@@ -118,9 +123,10 @@ def _setting(name: str) -> Any:
     """A setting of a start request: unset by default (the training process
     fills it, by the stage's recipe or this build's default, and records its
     source), its bounds and words the field spec's (`training_fields`: the
-    field's `valid` and description, for the schema; each value is checked
-    first by `value_problem`, `TrainingStartRequest._check_by_the_spec`), so
-    the request is a thin projection and the runner's one check and the
+    field's `valid` and description, for the schema; a new base's value is
+    checked first by `value_problem`, a continuation's carried to the
+    runner as sent, `TrainingStartRequest._judged_by_the_spec_or_the_parent`),
+    so the request is a thin projection and the runner's one check and the
     request agree."""
     from src.config.training_fields import by_name
 
@@ -141,17 +147,19 @@ class TrainingStartRequest(BaseModel):
 
     **Strict** (BACKLOG 54), as the Fine-tune start is: a field this request
     does not define, a ShepherdGNN setting among them, is refused (422), never
-    dropped; and each value is checked first by the field spec's one check
-    (`value_problem`), strictly (a string is never a number, 1 is not true)
-    and in its words, as the job runner and the training process check it.
+    dropped; and for a new base each value is checked first by the field
+    spec's one check (`value_problem`), strictly (a string is never a number,
+    1 is not true) and in its words, as the job runner and the training
+    process check it.
     **A new run is a base**: `learning_stage` is required and ``"base"`` (a
     finetune is POST /training/finetune's start); a task is refused in the
     sentence of the one check of a new run's stage and task
     (`run_plan.new_run_identity_problem`; a null task is no task), and a
     setting a base does not read in the sentence of the one check of a new
     run's settings (`run_plan.new_run_problem`). **A continuation**
-    (`resume_from`) passes every field stated to the runner, which judges it
-    against the parent as the training process does
+    (`resume_from`) passes every setting and the task as stated, neither
+    checked nor coerced, to the runner, which judges them against the parent
+    as the training process does and in its order
     (`run_plan.plan_continuation`: a stage or task other than the parent's,
     a setting the parent's stage and task do not read, a value, then the
     parent's settings), so a finetune child is resumed or extended here too,
@@ -185,10 +193,11 @@ class TrainingStartRequest(BaseModel):
                                         "fixed rate")
     extend_lr: Optional[float] = _setting("extend_lr")
 
-    # Every learning setting (`run_plan.RUN_SETTINGS`) and the task. Unset is
-    # the recipe's value or this build's default for a new run and the
-    # parent's for a continuation; the bounds are the field spec's
-    # (training_fields).
+    # Every learning setting (`run_plan.RUN_SETTINGS`) and the task, after
+    # `resume_from` (their validator reads it). Unset is the recipe's value or
+    # this build's default for a new run and the parent's for a continuation;
+    # the bounds are the field spec's (training_fields), judged for a new base
+    # here and for a continuation by the runner.
     task: Optional[Literal["disease", "gene", "patients_like_me"]] = _setting("task")
     num_epochs: Optional[int] = _setting("num_epochs")
     learning_rate: Optional[float] = _setting("learning_rate")
@@ -256,22 +265,44 @@ class TrainingStartRequest(BaseModel):
     def _validate_device(cls, v: str) -> str:
         return _checked_device(v)
 
+    @field_validator(*_STATED, mode="wrap")
+    @classmethod
+    def _judged_by_the_spec_or_the_parent(cls, value: Any,
+                                          handler: ValidatorFunctionWrapHandler,
+                                          info: ValidationInfo) -> Any:
+        # **A continuation's settings and task are carried as sent**, neither
+        # checked nor coerced here (`resume_from`, declared above them, is
+        # read first): the runner judges them against the parent as the
+        # training process does, in its order (`run_plan.plan_continuation`:
+        # a stage or task other than the parent's, a setting the parent's
+        # stage and task do not read, then each value by its field spec, then
+        # the parent's settings), so one request has one sentence and one
+        # status on every entry. **A new base's** are checked as sent by the
+        # field spec's one check (`value_problem`), before any coercion: its
+        # kind strictly, its bounds, choices and list items (a hop list of at
+        # least one hop, each 1 or more or -1, every neighbour, as the CLI and
+        # the WebUI take it), in the words the job runner and the training
+        # process refuse it in; a null is passed on, for the runner to judge
+        # by the run's reference (`run_plan.new_run_problem`).
+        from src.config.training_fields import value_problem
+
+        if info.data.get("resume_from"):
+            return value
+        problem = value_problem(info.field_name, value, allow_none=True)
+        if problem:
+            raise ValueError(problem)
+        return handler(value)
+
     @field_validator(*_CHECKED_BY_THE_SPEC, mode="before")
     @classmethod
     def _check_by_the_spec(cls, value: Any, info: ValidationInfo) -> Any:
-        # Each value as sent, by the field spec's one check (`value_problem`),
-        # before any coercion: its kind strictly, its bounds, choices and
-        # list items (a hop list of at least one hop, each 1 or more or -1,
-        # every neighbour, as the CLI and the WebUI take it), in the words the
-        # job runner and the training process refuse it in. A null setting
-        # or task is passed on, for the runner to judge by the run's
-        # reference (`run_plan.new_run_problem`) or by the parent's; a null
-        # parent or extension is not given.
+        # Each operational value as sent, by the field spec's one check
+        # (`value_problem`), before any coercion; a null parent or extension
+        # is not given.
         from src.config.training_fields import value_problem
 
         name = info.field_name
-        problem = value_problem(name, value, allow_none=(name in _SETTINGS or name == "task"
-                                                         or name in _NULL_IS_NOT_GIVEN))
+        problem = value_problem(name, value, allow_none=name in _NULL_IS_NOT_GIVEN)
         if problem:
             raise ValueError(problem)
         return value
@@ -499,8 +530,11 @@ def start_training(
     """
     # The fields the caller set, an explicit null included (decision S2): a
     # null setting is the caller's and is judged by the runner; for the parent
-    # and its extension, null is not given.
-    config = {name: value for name, value in request.model_dump(exclude_unset=True).items()
+    # and its extension, null is not given. A continuation's settings and task
+    # are carried as sent, whatever their kind, for the runner to judge, so
+    # the dump does not warn of a value its field's type would not take.
+    config = {name: value for name, value in request.model_dump(exclude_unset=True,
+                                                                warnings=False).items()
               if not (value is None and name in _NULL_IS_NOT_GIVEN)}
     result = training_manager.start_training(
         config, expected_dataset_fingerprint=expected_dataset_fingerprint,
