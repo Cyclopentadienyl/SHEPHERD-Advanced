@@ -223,6 +223,17 @@ def test_an_operator_lists_the_serving_workspace_with_in_use_pinned(root, servin
     assert "disease_cccccc" in older and "Show older runs" not in older
     research = ml.list_html(listing, None, ml.PRESETS["research"])
     assert "disease_cccccc" in research and 'In use (Diagnosis)<' in research
+    # Correct roles (the WebUI skill's §8, §10): the drawer's list holds list
+    # items only, each row a button inside one; the table's rows take no
+    # `aria-selected`.
+    import re
+
+    body = html.removeprefix('<div class="shep-list" role="list">').removesuffix("</div>")
+    assert html.startswith('<div class="shep-list" role="list"><div role="listitem">')
+    assert all(part.startswith('<div role="listitem">') for part in
+               re.split(r'(?=<div role="listitem">)', body) if part)
+    assert '<div role="listitem"><button type="button" class="shep-row' in html
+    assert "aria-selected" not in research
     # The drawer's own rule is its scope, not a filter it names: no "· Task
     # models only, of 9 listed" (the 9 would count files it never shows).
     assert ml.count_line(listing, ml.PRESETS["clinical"], False) == (

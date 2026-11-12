@@ -96,7 +96,9 @@ def test_the_list_is_the_servers_with_the_markers(root, monkeypatch):
     assert "in your Training run bar" in _row(html, "resampled")
     assert "same dataset" not in _row(html, "resampled")
     assert "not trainable: no split manifest" in _row(html, "scratch_ws")
-    assert 'aria-selected="true"' in _row(html, "demo")
+    # A plain table's selected row is `aria-current`, never `aria-selected` (skill §8).
+    assert 'aria-current="true"' in _row(html, "demo") and "aria-selected" not in html
+    assert 'aria-current' not in _row(html, "resampled")
     fingerprint = file_sha256(root / "demo" / "split_manifest.json")
     assert f'title="{fingerprint}">{fingerprint[:12]}</code>' in _row(html, "demo")
     assert f'data-copy="{fingerprint}"' in _row(html, "demo")

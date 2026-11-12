@@ -269,7 +269,11 @@ def test_the_research_table_row_has_its_columns_and_escapes():
                                  recorded=r.RecordedTests("records", 3, 1), in_use=True,
                                  key="gatv2/r/f.pt", in_use_label="In use (Diagnosis)",
                                  extra="<span>regime</span>")
-    assert row.startswith('<tr class="" data-key="gatv2/r/f.pt" tabindex="0" aria-selected="false"')
+    # A plain table's row: `aria-current` when selected, never `aria-selected` (skill §8).
+    assert row.startswith('<tr class="" data-key="gatv2/r/f.pt" tabindex="0">')
+    assert "aria-selected" not in row
+    chosen = r.model_table_row_html(checkpoint(), [workspace()], selected=True, key="k")
+    assert chosen.startswith('<tr class="shep-on" data-key="k" tabindex="0" aria-current="true">')
     cells = re.findall(r"<td[^>]*>(.*?)</td>", row)
     assert len(cells) == 5
     assert 'GATv2 · <span class="shep-nowrap">run 2026-10-17 09:15</span>' in cells[0]

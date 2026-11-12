@@ -1609,7 +1609,7 @@ def candidates_table_html(candidates: List[Mapping[str, Any]], selected: Any,
     if kind in TASK_ROW_KINDS:
         return _task_table_html(candidates, selected, kind)
     rows = []
-    selected_class = ' class="shep-on"'
+    selected_class = ' class="shep-on" aria-current="true"'
     for c in candidates:
         rank = c.get("rank")
         on = rank == selected
@@ -1620,8 +1620,9 @@ def candidates_table_html(candidates: List[Mapping[str, Any]], selected: Any,
         label = c.get("evidence_label") or "—"
         cells += (f'<td><span class="shep-dx-dot shep-dx-dot-{_DOT_CLASS.get(label, "none")}"'
                   f' aria-hidden="true"></span>{_e(label)}</td>')
-        rows.append(f'<tr data-key="{_e(rank)}" tabindex="0" aria-selected='
-                    f'"{"true" if on else "false"}"{selected_class if on else ""}>{cells}</tr>')
+        # A plain table's selected row is `aria-current` (the skill's §8).
+        rows.append(f'<tr data-key="{_e(rank)}" tabindex="0"'
+                    f'{selected_class if on else ""}>{cells}</tr>')
     head = ('<th scope="col" class="shep-num">Rank</th><th scope="col">Disease</th>'
             f'<th scope="col" class="shep-num">Score{help_button("dx-score", "Score")}</th>'
             '<th scope="col">Evidence</th>')

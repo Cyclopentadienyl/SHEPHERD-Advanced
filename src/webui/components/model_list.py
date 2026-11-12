@@ -623,7 +623,10 @@ def list_html(listing: Mapping[str, Any], selected: Optional[str], preset: Prese
     if hidden > 0:
         parts.append(f'<button type="button" class="shep-row shep-row-more" data-key="__older__">'
                      f'Show older runs ({hidden})</button>')
-    return '<div class="shep-list" role="list">' + "".join(parts) + "</div>"
+    # A list of its entries: each is a list item (the skill's §10, correct
+    # roles); a row stays a button inside its item.
+    items = "".join(f'<div role="listitem">{part}</div>' for part in parts)
+    return f'<div class="shep-list" role="list">{items}</div>'
 
 
 def _table_html(sections: Sequence[Tuple[str, Sequence[Mapping[str, Any]]]],

@@ -164,6 +164,11 @@ def _fingerprint_missing(row: Mapping[str, Any]) -> str:
     return f'<span title="{r.e(why)}">{r.status_mark("neutral", r.UNKNOWN)}</span>'
 
 
+#: The selected row's mark: a plain table's rows take `aria-current`, never
+#: `aria-selected` (the WebUI skill's §8).
+CURRENT = ' aria-current="true"'
+
+
 def table_html(data: Mapping[str, Any], run_bar: Optional[str], selected: Optional[str]) -> str:
     """The workspaces table; each row selects its details."""
     rows = data.get("rows") or []
@@ -187,8 +192,9 @@ def table_html(data: Mapping[str, Any], run_bar: Optional[str], selected: Option
                    if r.is_digest(fingerprint) else _fingerprint_missing(row))
         on = name == selected
         body.append(
-            f'<tr class="{"shep-on" if on else ""}" data-key="{r.e(name)}" tabindex="0" '
-            f'aria-selected="{"true" if on else "false"}">'
+            # A plain table's selected row is `aria-current` (the skill's §8).
+            f'<tr class="{"shep-on" if on else ""}" data-key="{r.e(name)}" tabindex="0"'
+            f'{CURRENT if on else ""}>'
             f'<td class="shep-ds-name"><div class="shep-w600">{r.e(name)}</div>'
             f'<div class="shep-ds-narrow shep-sub">{_origin_cell(row)} · {_record_cell(row)}</div></td>'
             f'<td>{built_cell}</td>'

@@ -874,8 +874,10 @@ def model_table_row_html(item: Any, workspaces: Sequence[Any], *,
     name = run_label_html(_get(item, "architecture"), _get(item, "run"))
     model = (f'<div class="shep-w600">{name}</div><div class="shep-sub">epoch {e(epoch_text(item))}'
              f'{" · " + e(suffix) if suffix else ""}</div>{tag}')
-    attrs = (f'class="{" ".join(classes)}" data-key="{e(key)}" tabindex="0" '
-             f'aria-selected="{"true" if selected else "false"}"'
+    # A plain table's selected row is `aria-current`, never `aria-selected`
+    # (the skill's §8).
+    attrs = (f'class="{" ".join(classes)}" data-key="{e(key)}" tabindex="0"'
+             + (' aria-current="true"' if selected else "")
              + (' aria-disabled="true"' if unreadable else ""))
     extra_cell = "" if extra is None else f"<td>{extra}</td>"
     if unreadable:
