@@ -75,6 +75,22 @@ def _checked_device(value: str) -> str:
     return value
 
 
+def _refused_start(result: Dict[str, Any], what: str) -> HTTPException:
+    """**The one answer of a refused start** (a base or a continuation, a
+    Fine-tune start, a branch; ops-wiring round, decision F3): 422 when the
+    runner judged the settings invalid (`invalid_settings`: a setting the run
+    does not read, a value its field spec does not take, a rule across
+    settings, a hop list its encoder does not take, a freeze it cannot run),
+    409 for any other refusal (a parent changed or not one it can start from,
+    a dataset changed, a busy slot), with the runner's sentence. 422 under its
+    RFC 9110 name: Starlette 1.x warns on the old
+    HTTP_422_UNPROCESSABLE_ENTITY; the status code is the same."""
+    return HTTPException(
+        status_code=(status.HTTP_422_UNPROCESSABLE_CONTENT if result.get("invalid_settings")
+                     else status.HTTP_409_CONFLICT),
+        detail=result.get("error", f"Failed to start {what}"))
+
+
 #: The start request's operational fields for which an explicit null means
 #: "not given": the parent and its extension.
 _NULL_IS_NOT_GIVEN = frozenset({"resume_from", "extend_epochs", "extend_lr"})
@@ -257,7 +273,12 @@ class FinetuneStartRequest(BaseModel):
     """A Fine-tune start: one to three tasks from one base checkpoint, each an
     independent child run, in order (README §1, §8). `settings` apply to every
     child and must be read by every chosen task; the task's recipe fills the
-    rest. Strict: any other field is refused (422)."""
+    rest. Strict: any other field is refused (422). What the runner judges of
+    `settings` (a setting a chosen task does not read, a value its field spec
+    does not take, a rule across settings, a hop list, split seed or spec
+    its base does not take, a freeze it cannot run) is refused with 422 too;
+    a parent it cannot start from, one changed since it was shown, a dataset
+    changed or a busy slot with 409."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -456,13 +477,7 @@ async def start_training(
         expected_parent_sha256=expected_parent_sha256)
 
     if not result.get("success"):
-        raise HTTPException(
-            # 422 under its RFC 9110 name: Starlette 1.x warns on the old
-            # HTTP_422_UNPROCESSABLE_ENTITY. Same status code.
-            status_code=(status.HTTP_422_UNPROCESSABLE_CONTENT if result.get("invalid_settings")
-                         else status.HTTP_409_CONFLICT),
-            detail=result.get("error", "Failed to start training"),
-        )
+        raise _refused_start(result, "training")
 
     return result
 
@@ -483,9 +498,11 @@ def start_finetune(
     one job runner (`TrainingManager.start_finetune`): each its own run,
     status and record; a failed child does not stop its siblings, and
     /training/stop ends the running child and cancels the queued ones.
-    **A plain `def`**: the start reads the whole base checkpoint, so FastAPI
-    runs it in its threadpool, never on the event loop the API and the
-    dashboard share."""
+    `settings` (the freeze `frozen_parts` among them) are checked by the
+    runner as a base start's are: invalid settings answer 422, any other
+    refusal 409 (`_refused_start`; decision F3). **A plain `def`**: the start
+    reads the whole base checkpoint, so FastAPI runs it in its threadpool,
+    never on the event loop the API and the dashboard share."""
     result = training_manager.start_finetune(
         FinetuneInputs(data_dir=request.data_dir, finetune_from=request.finetune_from,
                        tasks=tuple(request.tasks), device=request.device,
@@ -493,8 +510,7 @@ def start_finetune(
                        expected_parent_sha256=expected_parent_sha256),
         expected_dataset_fingerprint=expected_dataset_fingerprint)
     if not result.get("success"):
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
-                            detail=result.get("error", "Failed to start the finetune"))
+        raise _refused_start(result, "the finetune")
     return result
 
 
@@ -526,10 +542,7 @@ def start_branch(
         config, expected_dataset_fingerprint=expected_dataset_fingerprint,
         expected_parent_sha256=expected_parent_sha256)
     if not result.get("success"):
-        raise HTTPException(
-            status_code=(status.HTTP_422_UNPROCESSABLE_CONTENT if result.get("invalid_settings")
-                         else status.HTTP_409_CONFLICT),
-            detail=result.get("error", "Failed to start the branch"))
+        raise _refused_start(result, "the branch")
     return result
 
 

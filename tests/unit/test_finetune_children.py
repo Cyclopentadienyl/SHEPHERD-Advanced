@@ -624,6 +624,17 @@ def test_the_api_is_strict_and_gated(base, monkeypatch):
     for extra in ({"task": "disease"}, {"learning_stage": "finetune"}):
         assert client.post("/api/v1/training/finetune",
                            json={**body, **extra}).status_code == 422
+    # The runner's refusals (decision F3): invalid settings answer 422, as a
+    # base start's do, any other refusal 409, each with the runner's sentence.
+    for refusal, code in (({"invalid_settings": True, "error": "Bad setting."}, 422),
+                          ({"error": "The slot is busy."}, 409),
+                          ({"parent_changed": True, "error": "The parent changed."}, 409)):
+        monkeypatch.setattr(service.training_manager, "start_finetune",
+                            lambda inputs, refusal=refusal, **kw: {"success": False, **refusal})
+        answer = client.post("/api/v1/training/finetune", json=body)
+        assert (answer.status_code, answer.json()["error"]) == (code, refusal["error"])
+    monkeypatch.setattr(service.training_manager, "start_finetune",
+                        lambda inputs, **kw: seen.append(inputs) or {"success": True})
     # The training start is a base start (K7, TM11): a finetune there is
     # refused by the request; a base reaches the runner as the WebUI's does.
     assert client.post("/api/v1/training/start",
@@ -639,3 +650,40 @@ def test_the_api_is_strict_and_gated(base, monkeypatch):
     from src.api.routes import training
 
     assert not inspect.iscoroutinefunction(training.start_finetune)
+
+
+@pytest.mark.parametrize("settings, fragment", [
+    ({"frozen_parts": "all"}, "frozen_parts must be one of ['none', 'graph_side'], not 'all'."),
+    ({"frozen_parts": "graph_side", "num_epochs": 0},
+     "num_epochs must be between 1 and 10000, not 0."),
+])
+def test_the_api_answers_invalid_finetune_settings_with_422_through_the_real_runner(
+        base, popen, monkeypatch, settings, fragment):
+    """Decision F3: through the job runner's own check (the freeze by
+    `frozen_parts_problem` among the start's), invalid settings answer 422
+    with the runner's sentence, as POST /training/start does; nothing is
+    started. A refusal of the parent answers 409."""
+    from fastapi.testclient import TestClient
+
+    from src.api.main import app
+    from src.api.services import training_manager as service
+    from tests.fixtures.operator_access import OPERATOR_BASE_URL, operator_mode
+
+    calls = popen(FakeProcess(pid=1))
+    monkeypatch.setattr(service, "training_manager", TrainingManager())
+    from src.api.routes import training
+
+    monkeypatch.setattr(training, "training_manager", service.training_manager)
+    operator_mode(monkeypatch)
+    client = TestClient(app, base_url=OPERATOR_BASE_URL)
+    body = {"data_dir": str(base[0]), "finetune_from": str(base[1]), "tasks": ["disease"],
+            "device": "cpu", "settings": {**ONE_HOP, **settings}}
+    answer = client.post("/api/v1/training/finetune", json=body)
+    assert answer.status_code == 422 and fragment in answer.json()["error"]
+    assert "Nothing was started" in answer.json()["error"] and calls.calls == []
+    changed = client.post("/api/v1/training/finetune", json={
+        **body, "settings": {**ONE_HOP, "frozen_parts": "graph_side"}},
+        params={"expected_parent_sha256": "0" * 64})
+    assert changed.status_code == 409 and "changed since it was chosen" in changed.json()[
+        "error"]
+    assert calls.calls == []
