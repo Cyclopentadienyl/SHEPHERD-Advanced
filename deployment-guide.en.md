@@ -921,7 +921,13 @@ identity that says otherwise is refused when it is built.
 `GET /api/v1/pipeline/status` carries `served_identity` for the pipeline loaded
 now, beside its other fields (`scoring_mode` and `eta_effective`, equal to the
 identity's scoring mode and `settings.eta`; `dataset_record`; `checkpoint_meta`
-with its `device`, …). It is null when nothing is loaded. The table and mixture
+with its `device`, …). It is null when nothing is loaded. **The status says where
+serving stands** (since the ops-wiring round, 2026-11-12): `serving` (`not_loaded`,
+`serving`, or `stopping` while a stop lets the accepted diagnoses finish), `loading`,
+`in_flight` (accepted diagnoses still running), `holds_gpu_lock` (this service's CUDA
+inference holds the GPU lock; no lock path, the route is open) and `not_serving_reason`
+(the reason `/diagnose` and `/ready` refuse with, null while a model is served; it names no
+path). The table and mixture
 fields (`sp_ready`, `eta_configured`, `sp_max_hops`, `sp_hop_bound_source`,
 `sp_kg_binding`) and `fingerprint_warnings` are removed since K8-4. **The status
 describes what is loaded now, and a reload replaces it.** To know what produced a
@@ -954,7 +960,14 @@ a model or graph handed over in memory. A service started with
 `SHEPHERD_KG_PATH` and no `SHEPHERD_CHECKPOINT_PATH`, or with nothing
 configured, publishes no pipeline: `/api/v1/diagnose` and `/ready` answer 503
 with the reason, `/health` answers 200, and the Diagnosis page offers "Load a
-model…". A reload that fails keeps the model in use and its ready state.
+model…". A reload that fails keeps the model in use and its ready state. **A diagnosis
+never loads a model** (since the ops-wiring round): loading is the start-up's (a model
+configured in its environment) or an operator's (a reload). The reason says which state the
+service is in: nothing loaded, a load in progress, a stop letting the accepted diagnoses
+finish ("Inference is stopping …"), inference stopped by an operator or a restart, a load
+that was refused, or a start-up whose configured pipeline could not be initialized (naming
+the GPU lock's holder when that refused it); the details of a refused build are in the
+service log and the operator's reload response, not in this open reason.
 
 **A checkpoint without a model spec (a ShepherdGNN history file) is refused at
 load** (since K8-4), at startup and on a reload with or without a task, before
@@ -997,8 +1010,10 @@ The WebUI shows **the result's own identity**, never the status's:
   Config and Reset) and the header's "Serving now" line are gone: an operator
   changes the model with "🔒 Change model…" on the card, which lists the
   server's workspaces and their checkpoints and reloads only what the server
-  lists. `POST /api/v1/pipeline/config` stays for API clients, checked by D8
-  (§4.13); the dashboard no longer writes it.
+  lists. Save Config's route, `/api/v1/pipeline/config`, is retired (since the
+  ops-wiring round, 2026-11-12): the file it wrote was read by nothing, at start-up
+  or on a page. A `.shepherd_ui_config.json` you have is left as it is, and
+  nothing remembers "the last model" (§4.11, "CUDA inference holds the lock").
 - **The Markdown report** has a "What produced this result" section before the
   candidates: the same banners, a Part | State | Value table with digests in
   full (`sha256:<64 hex>`), the claim boundary and the fixed statement. An
@@ -2230,8 +2245,10 @@ marked untested until one is available; Windows browsers are part of the browser
 ## 4.11 One GPU job at a time: the GPU lock and the job runner (since M5, 2026-10-20)
 
 Managed training and evaluation jobs exclude each other: the jobs the WebUI and the API start,
-and `scripts/train_model.py` and `scripts/measure_scorer.py` run from a shell. A job that cannot
-have the GPU is refused, naming who has it; nothing is queued.
+and `scripts/train_model.py` and `scripts/measure_scorer.py` run from a shell. **So does the
+service's inference on CUDA** (since the ops-wiring round, 2026-11-12; below, "CUDA inference
+holds the lock"). A job that cannot have the GPU is refused, naming who has it; nothing is
+queued.
 
 ### The GPU lock
 
@@ -2322,9 +2339,9 @@ What the lock does and does not guarantee:
 
 - **It is released however the holder ends**: a normal exit or an error releases it, and after
   SIGTERM or SIGKILL the kernel does, so there is no stale lock to clean up after a crash.
-- **It is cooperative.** A GPU program that does not take it is not stopped by it. The inference
-  service does not take it and may hold GPU memory; a test run that cannot get memory fails as a
-  run, is reported, and registers nothing.
+- **It is cooperative.** A GPU program that does not take it is not stopped by it. The service
+  takes it for CUDA inference only (below); serving on the CPU takes none. A test run that cannot
+  get memory fails as a run, is reported, and registers nothing.
 - **Inherited descriptors.** A program a job starts does not keep the lock (the descriptor is
   close-on-exec). A process the job forks without starting a new program — a worker pool under
   the `fork` start method, for example — shares it: a job that ends normally releases it
@@ -2344,6 +2361,43 @@ What the lock does and does not guarantee:
   to the job's console process group, and a backend with no console, which cannot send it, goes
   on to TerminateProcess, which ends the main process only. A Job Object, the true equivalent of
   a process group, is not added while the Windows backend is untested.
+
+### CUDA inference holds the lock (since the ops-wiring round, 2026-11-12)
+
+A model the service serves on CUDA holds the deployment's GPU lock, the same file the jobs and
+the CLIs take, from before any candidate checkpoint is read until an operator stops inference;
+the device that decides is the one the serving device rule resolves (§4.8), never the words of
+a request. While it holds it, a training or test start is refused ("The GPU is in use by this
+service's inference … stop inference first with POST /api/v1/pipeline/stop"), and so is a CLI
+from a shell (`... is held by an inference job (the SHEPHERD service's CUDA inference: stop
+inference first with POST /api/v1/pipeline/stop, pid … ) ...`). Starting a job never unloads a
+model. **Serving on the CPU takes no lock** and excludes nothing.
+
+- **A load**, at start-up or by a reload (Change model…, Models' Load, `POST
+  /api/v1/pipeline/reload`), takes the lock for a CUDA device first, then checks the job runner
+  (a job it has just started holds the slot before its process takes the lock), then builds and
+  checks the candidate. Refused, nothing is read: the GPU in use, naming the holder; a job in the
+  runner; or **no lock configured**: with `SHEPHERD_WORKSPACES_ROOT` unset (or refused) CUDA
+  serving is refused in the jobs' words, while CPU serving still loads. Changing models on CUDA
+  keeps the one lock; a CPU model replacing a CUDA one gives it back once the diagnoses the CUDA
+  model accepted have ended. A refused candidate, out of memory included ("The model in use
+  keeps serving; stop inference first …"), leaves the model in use and its lock as they were;
+  nothing is unloaded to make room.
+- **One load or stop at a time.** A second load, or a stop during a load, is refused at once
+  ("A model is being loaded in this service; … never queued"), never queued.
+- **The stop** is `POST /api/v1/pipeline/stop`, an operator control (§4.13), with a JSON body:
+  `{}` stops whatever is served, `{"expected_checkpoint_sha256": "<64 hex>"}` only that model
+  (another one keeps serving). An empty or ill-shaped body is refused with 422. New diagnoses are
+  refused at once (503, "Inference is stopping …"); the accepted ones finish, with no timeout and
+  nothing killed; then the model, its graph and the lock are released, and only then does the
+  answer say `"released": true`. With nothing loaded it says "Nothing to stop". The GPU memory
+  the allocator returns is measured, not promised (`GET /api/v1/system/resources`).
+- **Start-up**: with no model configured in its environment the service starts with none, and no
+  other model is chosen. One configured there goes through the same lock and checks; busy or
+  refused, the service reports not ready with the reason (`/ready` 503).
+- **Restart Backend and a stop of the service stop serving** first (the job runner's section
+  below). A model loaded from the page is not loaded again after a restart; one configured for
+  start-up is. A killed service's lock is released by the kernel, and no file pretends a holding.
 
 ### The job runner
 
@@ -2388,10 +2442,12 @@ cohort version, the same CLI an operator runs). One job at a time:
   staged files (`*.tmp`) may be left: the run directory and, for a run that was registering its
   report, the checkpoint's directory, where its ledger is.
 - **Runtime Settings' Restart Backend** is refused while any job runs, training or a test run
-  (its note now says "A GPU job (training or a test run) is in progress"). After its short delay
-  it closes the job runner's GPU slot, only if no job holds it and in the same step as that
-  check, and keeps it closed until the process is replaced: a job started during the delay
-  aborts the restart, and a start asked for after that is refused, never orphaned by the restart
+  (its note now says "A GPU job (training or a test run) is in progress"), and while a model
+  load or a stop of inference runs. After its short delay it closes the job runner's GPU slot,
+  only if no job holds it and in the same step as that check, and keeps it closed until the
+  process is replaced; **then it stops serving** (since the ops-wiring round): the accepted
+  diagnoses finish and the model and the GPU lock are given back before the process is
+  replaced, and a failed restart loads nothing. A job started during the delay aborts the restart, and a start asked for after that is refused, never orphaned by the restart
   (since the root-cause round of 2026-10-22). A stop of the backend begun before the process is
   replaced (Ctrl-C, `systemctl stop`) aborts the restart too: its signal is recorded before
   anything else, and the restart's last check and its exec are one step (since round 3 of the
@@ -2658,7 +2714,7 @@ the read-only lists keep working.
 
 | Where | Controls |
 |---|---|
-| API | `POST /api/v1/pipeline/reload`, `POST /api/v1/pipeline/config`, `POST /api/v1/training/start`, `POST /api/v1/training/finetune`, `POST /api/v1/training/branch`, `POST /api/v1/training/stop`, `GET /api/v1/training/checkpoints`, `GET /api/v1/workspaces/{name}/checkpoints`, `GET /api/v1/workspaces/{name}/family` |
+| API | `POST /api/v1/pipeline/reload`, `POST /api/v1/pipeline/stop`, `POST /api/v1/training/start`, `POST /api/v1/training/finetune`, `POST /api/v1/training/branch`, `POST /api/v1/training/stop`, `GET /api/v1/training/checkpoints`, `GET /api/v1/workspaces/{name}/checkpoints`, `GET /api/v1/workspaces/{name}/family` |
 | Dashboard | Diagnosis: Change model… (its list of checkpoints and its Load; since M5-2). ⚙ Settings (Runtime Settings): Restart Backend and Apply Settings. Research › Training: Start, Stop (its confirmation reads the run's last checkpoint), Continue… (it lists the parents), the parent list's Refresh, Check checkpoint and Continue Training |
 
 The three checkpoint lists (the family view among them), and Check checkpoint, open checkpoint files, which SPEC_4 classes as

@@ -1354,7 +1354,12 @@ checkpoint 的 `supplied_in_memory` 與 `absent` 狀態、圖的 `unverified` �
 
 `GET /api/v1/pipeline/status` 會針對目前載入的 pipeline 帶出 `served_identity`，與其他
 欄位並列（`scoring_mode` 與 `eta_effective`，分別等於身分的評分模式與 `settings.eta`；
-`dataset_record`；含 `device` 的 `checkpoint_meta` 等）。沒有載入任何東西時為 null。距離表與
+`dataset_record`；含 `device` 的 `checkpoint_meta` 等）。沒有載入任何東西時為 null。**狀態也說明
+服務進行到哪裡**（自 2026-11-12 的 ops-wiring 輪起）：`serving`（`not_loaded`、`serving`，或停止
+正讓已接受的診斷跑完時的 `stopping`）、`loading`、`in_flight`（仍在執行的已接受診斷）、
+`holds_gpu_lock`（本服務的 CUDA 推論持有 GPU 鎖；不含鎖的路徑，這條路由是開放的）與
+`not_serving_reason`（`/diagnose` 與 `/ready` 拒絕時用的原因，有模型在服務時為 null；不含任何
+路徑）。距離表與
 mixture 的欄位（`sp_ready`、`eta_configured`、`sp_max_hops`、`sp_hop_bound_source`、
 `sp_kg_binding`）以及 `fingerprint_warnings` 自 K8-4 起已移除。**狀態描述的是現在載入的
 東西，reload 會換掉它。** 要知道某個結果是由什麼產生的，請讀那個結果自己的
@@ -1380,7 +1385,11 @@ mixture 的欄位（`sp_ready`、`eta_configured`、`sp_max_hops`、`sp_hop_boun
 也不再服務以記憶體交入的模型或圖。只設定 `SHEPHERD_KG_PATH` 而沒有
 `SHEPHERD_CHECKPOINT_PATH`、或什麼都沒設定就啟動的服務，不會發布任何 pipeline：
 `/api/v1/diagnose` 與 `/ready` 回 503 並附上原因，`/health` 回 200，Diagnosis 頁面提供
-「Load a model…」。reload 失敗時，使用中的模型與其就緒狀態維持不變。
+「Load a model…」。reload 失敗時，使用中的模型與其就緒狀態維持不變。**診斷從不載入模型**（自
+ops-wiring 輪起）：載入是啟動的事（環境裡設定的模型）或操作者的事（reload）。原因會說明服務處於
+哪種狀態：沒有載入、正在載入、停止正讓已接受的診斷跑完（"Inference is stopping …"）、推論已被操作者
+或重啟停止、某次載入被拒絕，或啟動時設定的 pipeline 無法初始化（被 GPU 鎖擋下時指出持有者）；建置被
+拒絕的細節在服務日誌與操作者的 reload 回應中，不在這個開放的原因裡。
 
 **沒有 model spec 的 checkpoint（ShepherdGNN 歷史檔）在載入時就被拒絕**（自 K8-4 起）：啟動時，
 以及帶或不帶任務的 reload，都在建出任何模型之前拒絕，原因為 "written before the model spec:
@@ -1414,8 +1423,10 @@ WebUI 顯示的是**結果自己的身分**，絕不是狀態的：
 - **目前服務的是什麼**顯示在頁面的「Model in use」卡片上（§4.14）。自 M5-2 起，Model
   Configuration 折疊區（其路徑欄位、Load / Reload、Save Config 與 Reset）以及頁首的
   「Serving now」一行都已移除：操作者以卡片上的「🔒 Change model…」更換模型，它列出伺服器的
-  workspace 與其 checkpoint，只重新載入伺服器列出的項目。`POST /api/v1/pipeline/config`
-  仍保留給 API 用戶端，由 D8 檢查（§4.13）；儀表板不再寫入它。
+  workspace 與其 checkpoint，只重新載入伺服器列出的項目。Save Config 的路由
+  `/api/v1/pipeline/config` 已退役（自 2026-11-12 的 ops-wiring 輪起）：它寫的檔案在啟動時與
+  任何頁面上都沒有人讀。你手上的 `.shepherd_ui_config.json` 維持原樣，也沒有任何東西記住「上次的
+  模型」（§4.11「CUDA 推論持有這把鎖」）。
 - **Markdown 報告**在候選之前有「What produced this result」段落：同樣的橫幅、一個
   Part | State | Value 表格（digest 完整寫出，`sha256:<64 hex>`）、宣稱界線與固定聲明。
   缺少的部分寫成它的狀態與原因，絕不留白。
@@ -2435,8 +2446,9 @@ server function 傳來，由瀏覽器存檔；伺服器不為它提供檔案。�
 ## 4.11 一次只跑一個 GPU 工作：GPU 鎖與 job runner（自 M5 起，2026-10-20）
 
 受管理的訓練與評估工作彼此互斥：WebUI 與 API 啟動的工作，以及從 shell 執行的
-`scripts/train_model.py` 與 `scripts/measure_scorer.py`。拿不到 GPU 的工作會被拒絕，並指出是誰
-占用；不會排隊等候。
+`scripts/train_model.py` 與 `scripts/measure_scorer.py`。**服務在 CUDA 上的推論也一樣**（自
+2026-11-12 的 ops-wiring 輪起；見下方「CUDA 推論持有這把鎖」）。拿不到 GPU 的工作會被拒絕，並指出
+是誰占用；不會排隊等候。
 
 ### GPU 鎖
 
@@ -2515,8 +2527,8 @@ registry 中運作，它未設定時一律拒絕（§4.9）。`EnvironmentFile=`
 
 - **不論持有者如何結束都會釋放**：正常結束或發生錯誤時由持有者自己釋放；遭 SIGTERM 或
   SIGKILL 結束時由核心釋放，因此當機後沒有殘留的鎖需要清理。
-- **它是合作式的。** 不取鎖的 GPU 程式不會被它擋住。推論服務不取這把鎖，可能占用 GPU 記憶體；
-  拿不到記憶體的測試執行會以執行失敗回報，不登錄任何東西。
+- **它是合作式的。** 不取鎖的 GPU 程式不會被它擋住。服務只在 CUDA 推論時取這把鎖（見下方）；
+  在 CPU 上服務不取鎖。拿不到記憶體的測試執行會以執行失敗回報，不登錄任何東西。
 - **繼承的檔案描述子。** 工作啟動的程式不會保有這把鎖（描述子設為 close-on-exec）。工作以 fork
   產生、卻沒有啟動新程式的行程——例如 `fork` 啟動方式下的 worker pool——與工作共用這把鎖：
   工作正常結束時，鎖也會一併對該行程釋放；但工作被強制結束（或未釋放就結束）時，該行程會保有
@@ -2533,6 +2545,36 @@ registry 中運作，它未設定時一律拒絕（§4.9）。`EnvironmentFile=`
   有延遲；停止時對工作的主控台行程群組送出 CTRL_BREAK_EVENT，沒有主控台、無法送出的後端會改用
   TerminateProcess，它只結束主行程。在 Windows 後端未經測試之前，不加入行程群組真正的對應物 Job
   Object。
+
+### CUDA 推論持有這把鎖（自 2026-11-12 的 ops-wiring 輪起）
+
+服務在 CUDA 上提供的模型持有部署的 GPU 鎖，也就是工作與 CLI 取用的同一個檔案；從讀取任何候選
+checkpoint 之前開始，直到操作者停止推論為止。決定的依據是服務裝置規則解析出的裝置（§4.8），而不是
+請求裡的字。持有期間，訓練或測試的啟動會被拒絕（"The GPU is in use by this service's inference …
+stop inference first with POST /api/v1/pipeline/stop"），從 shell 執行的 CLI 也一樣（`... is held
+by an inference job (the SHEPHERD service's CUDA inference: stop inference first with POST
+/api/v1/pipeline/stop, pid … ) ...`）。啟動工作絕不會卸載模型。**在 CPU 上服務不取鎖**，也不排除
+任何東西。
+
+- **載入**：不論是啟動時或 reload（Change model…、Models 的 Load、`POST /api/v1/pipeline/reload`），
+  對 CUDA 裝置都先取鎖，再檢查 job runner（它剛啟動的工作在其行程取鎖之前就已占住槽位），然後才建置
+  並檢查候選。被拒絕時什麼都不讀：GPU 使用中（指出持有者）、runner 裡有工作，或**沒有設定鎖**：
+  `SHEPHERD_WORKSPACES_ROOT` 未設定（或被拒絕）時，CUDA 服務以工作同樣的說法被拒絕，CPU 服務仍可
+  載入。在 CUDA 上換模型會保持同一把鎖；CPU 模型取代 CUDA 模型時，等 CUDA 模型已接受的診斷都結束後
+  才交還鎖。被拒絕的候選（包括記憶體不足："The model in use keeps serving; stop inference first …"）
+  讓使用中的模型與它的鎖維持原狀；不會為了騰出空間而先卸載。
+- **一次只進行一個載入或停止。** 第二個載入，或載入中的停止，會立即被拒絕（"A model is being loaded
+  in this service; … never queued"），不會排隊。
+- **停止**是 `POST /api/v1/pipeline/stop`，操作者控制項（§4.13），帶 JSON 本文：`{}` 停止目前服務的
+  任何模型，`{"expected_checkpoint_sha256": "<64 hex>"}` 只停止那個模型（其他模型繼續服務）。空的或
+  形狀不對的本文以 422 拒絕。新的診斷立即被拒絕（503，"Inference is stopping …"）；已接受的診斷會跑完，
+  沒有逾時、不強制結束；接著釋放模型、它的圖與鎖，然後回應才說 `"released": true`。沒有載入任何東西
+  時回答 "Nothing to stop"。配置器交還的 GPU 記憶體是量出來的，不是保證的
+  （`GET /api/v1/system/resources`）。
+- **啟動**：環境裡沒有設定模型時，服務啟動時不載入任何模型，也不會選用其他模型。環境裡設定的模型
+  經過同樣的鎖與檢查；忙碌或被拒絕時，服務回報未就緒並附上原因（`/ready` 503）。
+- **Restart Backend 與停止服務都會先停止服務推論**（見下方 job runner 一節）。重啟後不會再載入從頁面
+  載入的模型；啟動時設定的模型會再載入。被強制結束的服務的鎖由核心釋放，沒有任何檔案假裝仍持有。
 
 ### job runner
 
@@ -2569,9 +2611,10 @@ Training Console 與訓練 API 背後的服務現在執行兩種工作，各自�
   說明留下了什麼；遭 SIGTERM 或 SIGKILL 結束時，還會指出暫存檔（`*.tmp`）可能留在哪裡：執行目錄，
   以及正在登錄報告的執行所屬 checkpoint 的目錄（其 ledger 所在處）。
 - **Runtime Settings 的 Restart Backend** 在任何工作執行中時都會被拒絕，不論是訓練或測試執行
-  （提示文字現在是 "A GPU job (training or a test run) is in progress"）。在短暫延遲之後，它只在
-  沒有工作占用時、並在與這個檢查同一步中關閉 job runner 的 GPU 槽位，並保持關閉直到行程被替換：
-  延遲期間啟動的工作會讓重啟中止，之後才要求的啟動會被拒絕，絕不會因重啟而成為孤兒（自
+  （提示文字現在是 "A GPU job (training or a test run) is in progress"），模型載入或推論停止進行中
+  時也會被拒絕。在短暫延遲之後，它只在沒有工作占用時、並在與這個檢查同一步中關閉 job runner 的 GPU
+  槽位，並保持關閉直到行程被替換；**接著停止服務推論**（自 ops-wiring 輪起）：已接受的診斷跑完，模型
+  與 GPU 鎖在行程被替換之前交還，重啟失敗時也不會載入任何模型。延遲期間啟動的工作會讓重啟中止，之後才要求的啟動會被拒絕，絕不會因重啟而成為孤兒（自
   2026-10-22 的根因修正輪起）。在行程被替換之前開始的後端停止（Ctrl-C、`systemctl stop`）也會讓
   重啟中止：它的訊號會先被記錄下來，而重啟的最後檢查與 exec 是同一步（自審查修正第三輪起）。只有
   一種情況是這種自我 exec 的重啟無法避免的：在 exec 進行的那一刻到達、其處理函式還來不及記錄的停止
@@ -2794,7 +2837,7 @@ M5 在 SPEC_4 的部署模式 **M1** 下執行：由 owner 或指定的技術人
 
 | 位置 | 控制項 |
 |---|---|
-| API | `POST /api/v1/pipeline/reload`、`POST /api/v1/pipeline/config`、`POST /api/v1/training/start`、`POST /api/v1/training/finetune`、`POST /api/v1/training/branch`、`POST /api/v1/training/stop`、`GET /api/v1/training/checkpoints`、`GET /api/v1/workspaces/{name}/checkpoints`、`GET /api/v1/workspaces/{name}/family` |
+| API | `POST /api/v1/pipeline/reload`、`POST /api/v1/pipeline/stop`、`POST /api/v1/training/start`、`POST /api/v1/training/finetune`、`POST /api/v1/training/branch`、`POST /api/v1/training/stop`、`GET /api/v1/training/checkpoints`、`GET /api/v1/workspaces/{name}/checkpoints`、`GET /api/v1/workspaces/{name}/family` |
 | 儀表板 | Diagnosis：Change model…（其 checkpoint 清單與它的 Load；自 M5-2 起）。⚙ Settings（Runtime Settings）：Restart Backend 與 Apply Settings。Research › Training：Start、Stop（它的確認會讀取該 run 最後的 checkpoint）、Continue…（它列出 parent）、parent 清單的 Refresh、Check checkpoint 與 Continue Training |
 
 三份 checkpoint 清單（含家族檢視）與 Check checkpoint 會開啟 checkpoint 檔案，SPEC_4 將此歸類為 checkpoint 檢視
