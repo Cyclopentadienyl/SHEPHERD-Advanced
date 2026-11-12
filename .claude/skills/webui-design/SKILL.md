@@ -132,8 +132,8 @@ existing `shep-tag-ok/-grey/-amber/-red` classes carry the same colours.
   recorded selection metric, in its recorded direction, among this run's saved files (the checkpoint's
   `callbacks.model_checkpoint` `monitor` and `mode`: a base selects on `val_lp_accuracy`, a task model on
   `val_pooled_mrr`, both higher is better; `checkpoint_paths.ranking_score_detail` reads the value), named by that
-  metric and read from the list's metadata, never from file names; an LP figure is never called MRR; ties may share
-  it; a missing score, weights only, early stop and extend limits stay visible. A word on an option never changes its
+  metric and read from the list's metadata, never from file names; ties may share it; an LP figure is never called
+  MRR; a missing score, weights only, early stop and extend limits stay visible. A word on an option never changes its
   value, digest or permission. A validation figure is named as the Trainer's, never as a test result.
 - Tables: a title with its count, a one-line description, the name column first (pinned when wide), selection opens
   details beside the list without leaving it. No ARIA `aria-selected` on rows of a plain `table`.
