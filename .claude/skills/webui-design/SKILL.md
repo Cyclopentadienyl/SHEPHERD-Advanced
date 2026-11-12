@@ -128,10 +128,13 @@ existing `shep-tag-ok/-grey/-amber/-red` classes carry the same colours.
   about 15 options: filterable; under 5: a radio or segmented control.
 - The chosen item's details show in a summary list beside or under the select, never in its option text.
 - Checkpoint options say what the file is ("Latest save", "Top-k save") and how far it trained (`completed_epochs`;
-  an older file without it says "recorded epoch"). If "best" is used, it means the highest Trainer val MRR recorded
-  among this run's saved files, read from the list's metadata, never from file names; ties may share it; a missing
-  score, weights only, early stop and extend limits stay visible. A word on an option never changes its value, digest
-  or permission. A validation figure is named as the Trainer's, never as a test result.
+  an older file without it says "recorded epoch"). If "best" is used, it means the best value of the run's own
+  recorded selection metric, in its recorded direction, among this run's saved files (the checkpoint's
+  `callbacks.model_checkpoint` `monitor` and `mode`: a base selects on `val_lp_accuracy`, a task model on
+  `val_pooled_mrr`, both higher is better; `checkpoint_paths.ranking_score_detail` reads the value), named by that
+  metric and read from the list's metadata, never from file names; an LP figure is never called MRR; ties may share
+  it; a missing score, weights only, early stop and extend limits stay visible. A word on an option never changes its
+  value, digest or permission. A validation figure is named as the Trainer's, never as a test result.
 - Tables: a title with its count, a one-line description, the name column first (pinned when wide), selection opens
   details beside the list without leaving it. No ARIA `aria-selected` on rows of a plain `table`.
 
@@ -188,4 +191,5 @@ checks that already passed for the same code.
   and unverifiable reasons, and an unverifiable cell never reads 0, — or "no overlap"; Mode C never implies an online
   total; the key warnings (ordering by test score uses up the cohort's independence) stay visible where the choice is
   made; denominators, thresholds and the ordering and registration policy do not change. A change to the semantics is
-  the owner's.
+  the owner's. *(2026-11-12: ordering by test score retired in K8-6d and Mode C's measurement in K8-6a and K8-6b, so
+  no page offers that choice; kept Mode C records are still read and shown by the shared readers.)*
