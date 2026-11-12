@@ -20,9 +20,11 @@ starting, running with epoch, batch and time, stopping, completed, stopped,
 failed in red; never green for a failed or stopped run), the run name, one
 reason line saying why an action is disabled (D8's short words for a read-only
 request; the GPU job holding the slot, from the job runner and the GPU lock's
-holder record, with "Open Test ›" for a test run), and 🔒 Start, 🔒 Continue…
-and 🔒 Stop. Stop asks first, in the code's words ("Stop training" / "Keep
-training"). A failed run's error banner spans the page: under its headline the
+holder record, with "Open Test ›" for a test run), and Start, Continue… and
+Stop, each labelled by the one gated-button rule (`chips.gated`: no lock while
+the operator may use it; disabled, with the lock, beside D8's reason while a
+read-only request is refused). Stop asks first, in the code's words ("Stop
+training" / "Keep training"). A failed run's error banner spans the page: under its headline the
 last error line the run printed, beside it where the run's log is (only when it
 has one), then its output tail.
 
@@ -50,7 +52,7 @@ from `server_lists.list_checkpoints` (an operator control since it opens
 every checkpoint), or a typed path that locates one of them; Check checkpoint
 shows what continuing does (the shared run plan) and compares the parent's
 recorded dataset fingerprint with the workspace's current one. While it is
-open the run bar's actions are Start (disabled, with the reason), 🔒 Continue
+open the run bar's actions are Start (disabled, with the reason), Continue
 Training (disabled while the datasets differ, with the reason) and Cancel. A
 listed parent is resolved by the server from its list again (never a client
 path) and its bytes compared with the digest listed; the runner and the
@@ -139,7 +141,8 @@ from src.models.bundle.spec import hops_problem, reference_spec
 from src.utils.gpu_lock import lock_state
 from src.webui.components import charts
 from src.webui.components import renderers as r
-from src.webui.components.chips import D8_SHORT, busy_words, chips_on_change, gpu_chip_from
+from src.webui.components.chips import (busy_words, chips_on_change, gated, gpu_chip_from,
+                                         operator_only)
 from src.webui.components.help import copy_button, help_button
 from src.webui.components.workspaces import (
     manifest_facts,
@@ -763,6 +766,12 @@ def _gpu_line(active: Optional[Mapping[str, Any]], lock: Optional[Mapping[str, A
     return None
 
 
+#: The run bar's gated actions (the render's keys) and their words, shown with
+#: no lock while the operator may use them (`chips.gated`).
+ACTION_LABELS = {"start": "▸ Start", "cont": "Continue…", "stop": "■ Stop",
+                 "resume": "▸ Continue Training"}
+
+
 def run_bar_view(status: Mapping[str, Any], ws: Mapping[str, Any], mode: Mapping[str, Any],
                  *, access: Any, active: Optional[Mapping[str, Any]],
                  gpu: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
@@ -784,8 +793,7 @@ def run_bar_view(status: Mapping[str, Any], ws: Mapping[str, Any], mode: Mapping
         return f'<span class="shep-rb-why">{icon}<span>{r.e(text)}</span>{extra}</span>'
 
     if not access.allowed:
-        short = D8_SHORT.get(access.condition, "request not readable")
-        view["reason"] = line(LOCK_ICON, f"Operator controls only: {short}")
+        view["reason"] = line(LOCK_ICON, operator_only(access.condition))
         view["drawer_reason"] = view["reason"]
         return view
     if training_busy:
@@ -1701,8 +1709,11 @@ def render(ws: Optional[Mapping[str, Any]], mode: Optional[Mapping[str, Any]],
         "chip": chip_html(ws, in_use=in_use),
         "pill": pill_html(status),
         "reason": f'<div class="shep-rb-reason">{bar}{view["reason"]}</div>',
-        "start": view["start"], "cont": view["cont"], "stop": view["stop"],
-        "resume": view["resume"],
+        # The gated actions by the one rule (`chips.gated`): no lock while D8
+        # allows this request; disabled with the lock while it refuses it,
+        # beside the reason line's "Operator controls only: …".
+        **{key: gated(label, access.allowed, interactive=view[key])
+           for key, label in ACTION_LABELS.items()},
         "runbar": tuple(classes),
         "page": tuple(page),
         "run_name": bool(access.allowed),
@@ -1725,8 +1736,8 @@ def _update_for(key: str, value: Any) -> Any:
     if key == "dataset":
         choices, name, interactive = value
         return gr.update(choices=[tuple(c) for c in choices], value=name, interactive=interactive)
-    if key in ("start", "cont", "stop", "resume"):
-        return gr.update(interactive=bool(value))
+    if key in ACTION_LABELS:
+        return gr.update(**value)
     if key in ("runbar", "page"):
         return gr.update(elem_classes=list(value))
     if key == "run_name":
@@ -2363,7 +2374,7 @@ def _parents_note(ws: Mapping[str, Any], parents: Mapping[str, Any], problem: Op
     if problem:
         return f'<span class="shep-muted">{r.e(problem)}</span>'
     runs = len(runs_of(parents))
-    return (f'<span class="shep-muted">{LOCK_ICON} server list · {runs} run{"s" if runs != 1 else ""}, '
+    return (f'<span class="shep-muted">server list · {runs} run{"s" if runs != 1 else ""}, '
             f'{len(parents)} checkpoint{"s" if len(parents) != 1 else ""} · latest first</span>')
 
 
@@ -2993,23 +3004,27 @@ def create_training_tab(ctx: Any) -> None:
                 continues = plain_html("", elem_id="shep-train-continues")
                 reason = plain_html('<div class="shep-rb-reason"></div>', elem_id="shep-train-reason",
                                     js_on_load=TRIGGER_JS)
-                start_btn = gr.Button("▸ Start", variant="primary", interactive=False, scale=0,
-                                      elem_id="shep-train-start", elem_classes=["shep-gated"])
-                cont_btn = gr.Button("Continue…", interactive=False, scale=0,
-                                     elem_id="shep-train-continue", elem_classes=["shep-gated"])
-                stop_btn = gr.Button("■ Stop", variant="secondary", interactive=False, scale=0,
-                                     elem_id="shep-train-stop", elem_classes=["shep-gated", "shep-stop"])
-                resume_btn = gr.Button("▸ Continue Training", variant="primary", interactive=False,
-                                       scale=0, elem_id="shep-train-resume",
-                                       elem_classes=["shep-gated", "shep-drawer-only"])
+                # Labelled by the render's one gated-button rule (`ACTION_LABELS`).
+                start_btn = gr.Button(ACTION_LABELS["start"], variant="primary",
+                                      interactive=False, scale=0, elem_id="shep-train-start")
+                cont_btn = gr.Button(ACTION_LABELS["cont"], interactive=False, scale=0,
+                                     elem_id="shep-train-continue")
+                stop_btn = gr.Button(ACTION_LABELS["stop"], variant="secondary",
+                                     interactive=False, scale=0, elem_id="shep-train-stop",
+                                     elem_classes=["shep-stop"])
+                resume_btn = gr.Button(ACTION_LABELS["resume"], variant="primary",
+                                       interactive=False, scale=0, elem_id="shep-train-resume",
+                                       elem_classes=["shep-drawer-only"])
                 cancel_btn = gr.Button("Cancel", scale=0, elem_id="shep-train-cancel",
                                        elem_classes=["shep-drawer-only"])
-            # Stop asks first, in the code's words (contract M3a).
+            # Stop asks first, in the code's words (contract M3a). The
+            # question and Check (in the drawer) are reached only through a
+            # Stop or a Continue… D8 allowed, so they show no lock (the
+            # skill's §3); their handlers check their own request again.
             with gr.Row(elem_classes=["shep-rb-row", "shep-rb-confirm"]):
                 stop_text = plain_html("", elem_id="shep-train-stop-text")
                 stop_confirm_btn = gr.Button("■ Stop training", variant="stop", scale=0,
-                                             elem_id="shep-train-stop-confirm",
-                                             elem_classes=["shep-gated"])
+                                             elem_id="shep-train-stop-confirm")
                 stop_keep_btn = gr.Button("Keep training", scale=0, elem_id="shep-train-stop-keep")
             notice = plain_html("", elem_id="shep-train-notice")
         banner = plain_html("", elem_id="shep-train-banner", js_on_load=_BANNER_JS)
@@ -3085,8 +3100,7 @@ def create_training_tab(ctx: Any) -> None:
                                                   visible=False, elem_id="extend_epochs",
                                                   scale=0, min_width=0)
                         check_continue_btn = gr.Button("Check checkpoint", size="sm", scale=0,
-                                                       elem_id="shep-train-check",
-                                                       elem_classes=["shep-gated"])
+                                                       elem_id="shep-train-check")
                     compare = plain_html("", elem_id="shep-train-compare")
                     continue_preview = plain_html(f'<p class="shep-note">{_CONTINUE_PROMPT}</p>',
                                                   elem_id="continue_preview")
@@ -3274,11 +3288,6 @@ _PAGE = f"#shep-page-{TRAINING}"
 PLOT_MIN_HEIGHT = 140
 PLOT_AXIS_ROOM = 47
 
-#: The lock and the stop square drawn before a gated button's words (CSS only).
-_LOCK_MASK = ("url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E"
-              "%3Crect x='3' y='7' width='10' height='7.5' rx='1.6'/%3E%3Cpath d='M5.2 7V5.2a2.8 2.8 0 0 1 "
-              "5.6 0V7' fill='none' stroke='black' stroke-width='1.6'/%3E%3C/svg%3E\")")
-
 #: This page's style sheet (the page contract: listed in `src/webui/app.py`'s
 #: ``PAGE_CSS``), with the chart component's. Nothing under 14 px.
 PAGE_CSS = charts.CHART_CSS + f"""
@@ -3345,7 +3354,6 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} .shep-rb-why .shep-link {{ white-space: nowrap; }}
 {_PAGE} .shep-rb-progress {{ flex: 1 1 160px; max-width: 380px; height: 8px; border-radius: 4px; background: var(--shep-grey-200); overflow: hidden; }}
 {_PAGE} .shep-rb-progress > i {{ display: block; height: 100%; background: var(--shep-accent); }}
-{_PAGE} .shep-gated::before {{ content: ""; display: inline-block; width: 12px; height: 12px; margin-right: 6px; background: currentColor; -webkit-mask: {_LOCK_MASK} center / contain no-repeat; mask: {_LOCK_MASK} center / contain no-repeat; opacity: .85; }}
 {_PAGE} button.primary:not(:disabled) {{ background: var(--shep-accent) !important; border-color: var(--shep-accent) !important; color: #fff !important; }}
 {_PAGE} button.primary:not(:disabled):hover {{ background: var(--shep-accent-600) !important; border-color: var(--shep-accent-600) !important; }}
 {_PAGE} #shep-train-stop:not(:disabled) {{ color: var(--shep-red-700) !important; border-color: var(--shep-red-200) !important; background: #fff !important; }}

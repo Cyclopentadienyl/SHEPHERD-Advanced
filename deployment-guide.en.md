@@ -1008,7 +1008,7 @@ The WebUI shows **the result's own identity**, never the status's:
 - **What is served now** is on the page's "Model in use" card (§4.14). Since
   M5-2 the Model Configuration accordion (its path fields, Load / Reload, Save
   Config and Reset) and the header's "Serving now" line are gone: an operator
-  changes the model with "🔒 Change model…" on the card, which lists the
+  changes the model with "Change model…" on the card, which lists the
   server's workspaces and their checkpoints and reloads only what the server
   lists. Save Config's route, `/api/v1/pipeline/config`, is retired (since the
   ops-wiring round, 2026-11-12): the file it wrote was read by nothing, at start-up
@@ -2945,7 +2945,7 @@ backend (§4.13).
 
 | Chip | Meaning |
 |---|---|
-| `🔒 Operator controls: on (this machine)` | D8 allows this browser's requests |
+| `Operator controls: on (this machine)` | D8 allows this browser's requests |
 | `Read-only: deployment mode not set to M1` | `SHEPHERD_DEPLOYMENT_MODE` is not exactly `M1` |
 | `Read-only: request not local` | The request did not arrive on this machine's loopback: use an SSH forward to `localhost` |
 | `Read-only: forwarded by a proxy` | The request carries a header a proxy adds |
@@ -2955,6 +2955,10 @@ backend (§4.13).
 
 Its ⓘ lists every operator control, how to reach them (the SSH forward of §4.13) and, when
 read-only, the full reason D8 gives. It never repeats a header's value.
+
+**A lock means refused.** The lock leads only a read-only chip. A control behind D8 shows no
+lock while D8 allows this browser's requests; while D8 refuses them it is disabled, shows the
+lock before its words, and has "Operator controls only: <reason>" beside it.
 
 **GPU jobs** says which managed job holds the one GPU slot (§4.11):
 
@@ -3011,7 +3015,7 @@ it: both follow Options, and stay pinned at the panel's bottom when the inputs n
 - a chip, only when true: `synthetic data` (amber). The `no trained model` and `unverified`
   chips went with the path-reasoning state (K7), and `no SP table` and `GNN not loaded` with the
   mixture (K8-4);
-- "Recorded results: <state>" (§4.9), whose › opens Details at Evidence; "Details ›"; "🔒 Change
+- "Recorded results: <state>" (§4.9), whose › opens Details at Evidence; "Details ›"; "Change
   model…". The recorded tests, and the workspace names, are read again each time Diagnosis is
   shown, after each diagnosis, after a model change and with ↻ (the 5-second read reads only what
   is served): a test recorded in Research › Test shows when you come back to Diagnosis;
@@ -3038,7 +3042,7 @@ it: both follow Options, and stay pinned at the panel's bottom when the inputs n
 | "Model changed at HH:MM — was <old>, now <new>" with × | A read found another model, or another part of what is served, than this browser's previous read (another browser's Change model, for example). × dismisses it |
 | grey: "cannot check · <reason> · Retry", "last known HH:MM:SS · not current" | What is served could not be read: "status not read" (the full reason is in the badge's line and in Details) or "timed out (5 s)". The lines shown are the last known state, without ✓, with grey dashed chips |
 | grey: "read HH:MM:SS · older than this result" | The last good read is older than the result shown |
-| "○ Not loaded", the server's reason, and "🔒 Load a model…" | No model is served: none configured, inference stopped, a load or the start-up refused, or a build that failed (since K7 a graph is never served on its own); the reason under it is the server's. Run Diagnosis is greyed out and cannot be clicked: pointing at it, or reaching it with Tab, shows why, and "Disabled: no model loaded. …" is written under it. An API client asking now gets 503 with the reason (§4.7) |
+| "○ Not loaded", the server's reason, and "Load a model…" | No model is served: none configured, inference stopped, a load or the start-up refused, or a build that failed (since K7 a graph is never served on its own); the reason under it is the server's. Run Diagnosis is greyed out and cannot be clicked: pointing at it, or reaching it with Tab, shows why, and "Disabled: no model loaded. …" is written under it. An API client asking now gets 503 with the reason (§4.7) |
 | "▲ Stopping · N in flight" | An operator stopped inference: the N diagnoses already accepted finish, and new ones are refused ("Disabled: inference is stopping; …" under Run Diagnosis; 503 for an API client). Then the card reads "Not loaded" |
 | "🔒 Change model…" greyed, "Operator controls only: <reason>" | A read-only browser (§4.13). It never sees the list of checkpoints |
 
@@ -3057,10 +3061,10 @@ what is in use now. "Details ›" and "Recorded results ›" open the first, the
 a model change is open (its confirmation, or a reload running) they leave the Change model drawer
 in place.
 
-**🔒 Change model…** (an operator control) opens a drawer over the results and the details: the
+**Change model…** (an operator control) opens a drawer over the results and the details: the
 workspace select (the server's list; the serving workspace is chosen first), "In use now" on top,
 the latest four runs ("Show older runs" for the rest), the selected checkpoint's facts, "Compare
-in Research › Models ›", and "🔒 Load this model" / Cancel. Load asks once ("Reload the pipeline
+in Research › Models ›", and "Load this model" / Cancel. Load asks once ("Reload the pipeline
 with <12 hex> for every session?", from → to, with the changed rows marked) and reloads the
 pipeline with the workspace and checkpoint the server lists. **The reload serves only the model
 the question named**: it compares its own read of the checkpoint with that fingerprint before
@@ -3073,7 +3077,7 @@ is checked, as before. It replaces what every browser is served; results already
 their own identity, and diagnoses wait while the pipeline reloads. While the confirmation is
 open the list's own footer is hidden, so the from → to rows and that sentence stay in view;
 "Keep <old>" drops the confirmation. While the confirmation is open, Run Diagnosis is disabled:
-"Disabled: finish or cancel the model change first." Once "🔒 Reload with <new>" is clicked, the
+"Disabled: finish or cancel the model change first." Once "Reload with <new>" is clicked, the
 confirmation shows only the reload's status ("Loading <12 hex> for every session… 00:00:42") and
 Close (closing does not stop it; after 180 s, Read again and Close), so a second reload cannot
 be asked for; the card says the same "Loading …" line and Run Diagnosis says "Disabled: a model
@@ -3179,7 +3183,7 @@ a run.
   "GPU job: train_model.py (pid …, since …)", or "GPU: inference (this service); stop it with
   Stop inference on Diagnosis" while a model is served on CUDA; the job runner refuses a start
   itself either way).
-- **🔒 Start, 🔒 Continue…, 🔒 Stop.** Stop asks first: "Stop training now? The job stops. The
+- **Start, Continue…, Stop.** Stop asks first: "Stop training now? The job stops. The
   checkpoints it has saved are kept and progress not yet saved is lost; if it has saved none yet,
   this run cannot be continued. Once it has stopped, the page says where it can be continued
   from." with **■ Stop training** and **Keep training**. The question names no epoch: the job
@@ -3335,7 +3339,7 @@ frozen graph backbone", a task model, never the base's score. The acceptance pro
 fp32, paused and resumed (`L7.disease_frozen`); mixed precision and `torch.compile` with a freeze
 are not verified by that check, and stay available. While
 the drawer is open the run bar shows Start (disabled: "close Continue… to start a new run"),
-**🔒 Continue Training** (disabled while the datasets differ, with the reason) and **Cancel**.
+**Continue Training** (disabled while the datasets differ, with the reason) and **Cancel**.
 A listed checkpoint is found again in the server's list. **The model fingerprint shown is the one
 continued from** (implemented in the root-cause round). For a listed checkpoint, Check checkpoint
 and Continue Training send the list's fingerprint; for a typed path, Check checkpoint reads the
@@ -3482,7 +3486,7 @@ it. Three panels:
   directory whatever the setting says. Then **Register the result**,
   **Deterministic execution**, and the batch size and device the server fixes (the measurement's
   default; `SHEPHERD_DEVICE`).
-  **🔒 Start test** starts the real `measure_scorer.py` through the job runner (§4.11), with the
+  **Start test** starts the real `measure_scorer.py` through the job runner (§4.11), with the
   workspace, version and checkpoint the server finds again in its lists, and **the full model
   fingerprint and version digest the page showed as the expected ones**: the run refuses before
   measuring when the file or the version it reads holds other bytes. Start says why it is off:
@@ -3495,7 +3499,7 @@ it. Three panels:
   never green for a failed or cancelled run), the elapsed time, what the run was given, its
   start and end times in UTC (as the report rows name runs) and the last 12 lines of its output
   (folded after a cancel, whose last line says the run was cancelled, with no traceback; a
-  patient id a measurement refusal names is left out, D7); **🔒 Cancel**, beside the state,
+  patient id a measurement refusal names is left out, D7); **Cancel**, beside the state,
   stops the test run only, never a training job. On a wide screen, Start, its reason and the job card stay at the foot of the panel (the
   choices above scroll) and the output scrolls inside the card under the line with Cancel, so
   both stay in view. Once the run has ended, the card shows what the runner read
@@ -3521,7 +3525,7 @@ it. Three panels:
   record the reader cannot read is shown with its reason (the field named, never its value),
   not as a result. When a record names this run with other bytes (the report was replaced after it
   was registered), or that ledger cannot tell, the Result gives the registration's reason.
-  **🔒 Register this report** registers a kept report of any kind (a supplied cohort's, a KG
+  **Register this report** registers a kept report of any kind (a supplied cohort's, a KG
   edge set's or a generated split's) through the one registration function (§4.9): the server finds the report in the version's store, checks that its bytes
   are the ones shown, finds where its ledger goes from its own checkpoint list (the listed file
   holding the weights, by full digest, never the path the report records: the file the run read
@@ -3537,26 +3541,26 @@ it. Three panels:
   `record_evaluation.py --report …`. Another run, a group whose runs differ and an unreadable
   report elsewhere never turn it off. When the runs of the report's group differ, or their
   comparison is incomplete, the page describes it and lists **investigation notes** (who, when,
-  what; 🔒 Add note), kept with the group's reports. A note records what was found and changes
+  what; Add note), kept with the group's reports. A note records what was found and changes
   nothing. The registration's message carries the group note and the historical note.
-  On a wide screen the note form (Who, What was found, 🔒 Add note) stays at the panel's foot,
+  On a wide screen the note form (Who, What was found, Add note) stays at the panel's foot,
   above Register, so it is in view however long the report or the note (What was found grows
   to four lines, then scrolls inside itself).
   When the notes file cannot be read, the page says so (a note may be missing), never "no
   note is kept".
 
-**🔒 Import a new version…** opens a drawer over Run and Result: the file in the intake directory
+**Import a new version…** opens a drawer over Run and Result: the file in the intake directory
 (`SHEPHERD_INTAKE_DIR`, §4.12: its `*.json` files by name, size and modification time; one that
 is a link leaving the directory is listed and not offered; nothing is uploaded from the
 browser), the version label, the role (the version's declared purpose, for example mygene2,
 research_selection or institutional_acceptance) and the lost-terms
-policy. **🔒 Preview** runs the importer in the service, on the CPU (it reads the workspace's
+policy. **Preview** runs the importer in the service, on the CPU (it reads the workspace's
 graph), and writes nothing. The preview shows the counts, the exclusion reasons and their
 counts, the unmappable terms with how many cases list each, and what the version binds; **case
 ids are not sent to the browser** (the command-line preview on the machine lists them, and the
 committed version records them). A file that does not fit `shepherd-cases/1` is refused with its
 problems listed by case index (at most 10), never by case id; the command-line preview
-(`scripts/import_cohort.py`) lists each one with its case id. **🔒 Commit as version …**
+(`scripts/import_cohort.py`) lists each one with its case id. **Commit as version …**
 prepares again from the same inputs and commits under the preview id shown: a form changed
 since the preview, or a source or graph changed since, is refused. One preview or commit runs
 at a time; after a commit the drawer closes and the new version is chosen. Below 1400 × 760 the
@@ -3709,7 +3713,7 @@ card, any warning, and three segments:
   reads and lists nothing and says why. Comparing results across workspaces is not built in
   this page yet; on the machine, `scripts/export_results.py` joins workspaces.
 
-**🔒 Load this model** is the shared Load (the same confirmation as Diagnosis' "Change model…";
+**Load this model** is the shared Load (the same confirmation as Diagnosis' "Change model…";
 it covers the detail while it is open, its buttons stay in view under its table however short
 the window, and Close returns to the detail with the same checkpoint still selected). It is off,
 with the reason beside it, for a base and for a file whose record cannot be read, before anything

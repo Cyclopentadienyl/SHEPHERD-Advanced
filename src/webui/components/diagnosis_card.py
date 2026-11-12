@@ -98,7 +98,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 from src.core.types import SCORING_MODE_TASKS
 from src.evaluation.caveats import TASK_NAMES
 from src.webui.components import renderers as r
-from src.webui.components.chips import D8_SHORT
+from src.webui.components.chips import D8_SHORT, LOCK, OPERATOR_ONLY, gated
 from src.webui.components.help import copy_button
 from src.webui.components.served_status import (
     STATUS_NOT_READ,
@@ -631,12 +631,11 @@ def stop_offered(state: Mapping[str, Any]) -> bool:
 
 def stop_button(state: Mapping[str, Any]) -> Dict[str, Any]:
     """The card's "Stop inference": shown while a model serves
-    (`stop_offered`); usable by an operator only, and then with no lock (the
-    skill's §3: a lock means refused); refused, it shows the lock and the
-    card's "Operator controls only" line says why."""
-    operator = bool(state.get("operator"))
-    return {"value": "■ Stop inference" if operator else "🔒 Stop inference",
-            "visible": stop_offered(state), "interactive": operator}
+    (`stop_offered`), labelled by the one gated-button rule (`chips.gated`):
+    no lock while the operator may use it; refused, disabled with the lock,
+    and the card's "Operator controls only" line says why."""
+    return {**gated("■ Stop inference", bool(state.get("operator"))),
+            "visible": stop_offered(state)}
 
 
 # ---------------------------------------------------------------------------
@@ -660,7 +659,7 @@ def _trained_html(facts: Mapping[str, Any]) -> str:
     if state == "read":
         return r.trained_on_html(trained.get("fingerprint"), facts.get("workspaces") or [])
     if state == "not_shown":
-        return (f'<span class="shep-trained">trained on: <span class="shep-muted">🔒 '
+        return (f'<span class="shep-trained">trained on: <span class="shep-muted">{LOCK} '
                 f'{r.e(TRAINED_NOT_SHOWN)}</span></span>')
     if state == "pending":
         return (f'<span class="shep-trained">trained on: <span class="shep-muted">'
@@ -803,12 +802,14 @@ def body_html(state: Mapping[str, Any], produced_at: Any = None) -> str:
 
 
 def change_button(state: Mapping[str, Any]) -> Dict[str, Any]:
-    """The card's action: "🔒 Load a model…" (primary) when no model is
-    loaded, else "🔒 Change model…"; off for a request D8 refuses."""
+    """The card's action: "Load a model…" (primary) when no model is loaded,
+    else "Change model…", by the one gated-button rule (`chips.gated`): no
+    lock while the operator may use it; disabled with the lock for a request
+    D8 refuses, its reason beside it (`change_reason_html`)."""
     no_model = served_kind(state.get("status")) == "no_model" and bool(state.get("ok"))
-    return {"value": "🔒 Load a model…" if no_model else "🔒 Change model…",
-            "variant": "primary" if no_model else "secondary",
-            "interactive": bool(state.get("operator"))}
+    return {**gated("Load a model…" if no_model else "Change model…",
+                    bool(state.get("operator"))),
+            "variant": "primary" if no_model else "secondary"}
 
 
 def change_reason_html(state: Mapping[str, Any]) -> str:
@@ -818,7 +819,7 @@ def change_reason_html(state: Mapping[str, Any]) -> str:
     short = state.get("d8_short") or D8_SHORT["unreadable_request"]
     # Two word groups, so a line breaks between them and never leaves "to M1"
     # alone on the second line (M5-3).
-    return f'<p class="shep-dx-why">{r.word_groups("🔒 Operator controls only:", short)}</p>'
+    return f'<p class="shep-dx-why">{r.word_groups(f"{LOCK} {OPERATOR_ONLY}", short)}</p>'
 
 
 def details_visible(state: Mapping[str, Any]) -> bool:

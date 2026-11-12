@@ -6,10 +6,16 @@ shell's timer (outside ``gr.Tabs``, ``queue=False``) and after every gated act
 (`src/webui/shell.py`, `PageContext.chip_refresh`).
 
 **The D8 chip** says what D8's one check (`src/utils/operator_access.py`) answers
-for the request that asked: "🔒 Operator controls: on (this machine)", or grey
-"Read-only: <the failed condition in short words>". Its ⓘ lists every operator
+for the request that asked: "Operator controls: on (this machine)", or grey
+"🔒 Read-only: <the failed condition in short words>" (the lock, which means
+refused, leads only the read-only chip). Its ⓘ lists every operator
 control and how to reach them, and, when refused, the check's own reason (which
 repeats no header value). It is a display: each control checks its own request.
+
+**Gated buttons** follow one rule (`gated`; the WebUI skill's §3, a lock means
+refused): no lock while D8 allows the request; disabled, with the lock and
+the visible "Operator controls only: …" reason beside it (`operator_only`),
+while D8 refuses it.
 
 **The GPU chip** says what holds the one GPU slot, from the job runner
 (`training_manager.active_job`) and, for a holder outside the runner, the GPU
@@ -38,7 +44,7 @@ from __future__ import annotations
 import html
 import logging
 from datetime import datetime
-from typing import Any, Callable, Mapping, NamedTuple, Optional
+from typing import Any, Callable, Dict, Mapping, NamedTuple, Optional
 
 import gradio as gr
 
@@ -61,6 +67,32 @@ D8_SHORT = {
 assert set(D8_SHORT) == set(CONDITIONS) - {"enabled"}
 
 D8_ON = "Operator controls: on (this machine)"
+
+#: **The lock means "refused"** (the WebUI skill's §3): a gated control shows
+#: it only while D8 refuses the request it was drawn for (`gated`).
+LOCK = "🔒"
+#: The visible reason's lead beside a control D8 refuses (`operator_only`).
+OPERATOR_ONLY = "Operator controls only:"
+
+
+def operator_only(condition: Optional[str]) -> str:
+    """**The visible reason beside a gated control D8 refuses** for this
+    request, in D8's short words: "Operator controls only: request not
+    local" (the header chip's ⓘ gives D8's whole reason). Every page says it
+    in these words, beside the control it turns off."""
+    return f"{OPERATOR_ONLY} {D8_SHORT.get(condition or '', D8_SHORT['unreadable_request'])}"
+
+
+def gated(label: str, allowed: bool, *, interactive: bool = True) -> Dict[str, Any]:
+    """**The one rule of a gated button** (the WebUI skill's §3), as the
+    fields of its ``gr.update``: while D8 allows the request, its words as they
+    are, with no lock, usable when `interactive` (the page's own condition: a
+    selection, a running job); while D8 refuses it, disabled, with the lock
+    before its words, and the page shows `operator_only` beside it. Each
+    handler still checks its own request first: a greyed-out button is not a
+    control."""
+    return {"value": label if allowed else f"{LOCK} {label}",
+            "interactive": bool(allowed and interactive)}
 
 #: Every operator control, as the D8 chip's ⓘ lists them (no exception remains).
 D8_SCOPE = (
@@ -249,7 +281,10 @@ def chip_html(chip: Chip, *, which: str) -> str:
     titled ellipsis), its ⓘ and the ⓘ's hidden text, all escaped."""
     text_id = D8_TEXT_ID if which == "d8" else GPU_TEXT_ID
     title = "Operator controls" if which == "d8" else "GPU jobs"
-    lead = (_LOCK_SVG if which == "d8" else '<span class="shep-dot" aria-hidden="true"></span>')
+    # A lock means "refused" (the WebUI skill's §3): only a read-only D8 chip
+    # leads with it; the others with the dot.
+    lead = (_LOCK_SVG if which == "d8" and chip.kind == "readonly"
+            else '<span class="shep-dot" aria-hidden="true"></span>')
     words = html.escape(chip.text)
     return (
         f'<span class="shep-chip shep-chip-{which} shep-chip-{chip.kind}" '
@@ -314,13 +349,17 @@ __all__ = [
     "GPU_NOT_READ",
     "GPU_NOT_CONFIGURED",
     "GPU_SCOPE",
+    "LOCK",
+    "OPERATOR_ONLY",
     "STOP_INFERENCE_HERE",
     "busy_words",
     "chip_html",
     "chips_html",
     "chips_on_change",
     "d8_chip",
+    "gated",
     "gpu_chip_from",
+    "operator_only",
     "read_chips",
     "read_gpu_chip",
 ]

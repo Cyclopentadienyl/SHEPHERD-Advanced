@@ -2576,10 +2576,10 @@ def close_identity() -> Dict[str, Any]:
 
 
 def open_change(request: gr.Request) -> Dict[str, Any]:
-    """"🔒 Change model…" / "🔒 Load a model…": D8 on this request first. A
-    request D8 refuses gets the reason and no list (listing opens checkpoint
-    files); otherwise the change-model drawer opens (its list is read next, by
-    the shared list's own refresh, which asks D8 again)."""
+    """"Change model…" / "Load a model…" (`card.change_button`): D8 on this
+    request first. A request D8 refuses gets the reason and no list (listing
+    opens checkpoint files); otherwise the change-model drawer opens (its list
+    is read next, by the shared list's own refresh, which asks D8 again)."""
     access = operator_access(request)
     if not access.allowed:
         return {"change_reason": f'<p class="shep-dx-why">{_e(access.refusal)}</p>',
@@ -2904,7 +2904,8 @@ def create_diagnosis_tab(ctx: Any) -> None:
                             details_btn = gr.Button("Details ›", size="sm", visible=False,
                                                     elem_id="shep-dx-details-btn", scale=0,
                                                     min_width=0)
-                            change_btn = gr.Button("🔒 Change model…", size="sm",
+                            # Labelled by the card's read (`card.change_button`).
+                            change_btn = gr.Button("Change model…", size="sm",
                                                    interactive=False, scale=0, min_width=0,
                                                    elem_id="shep-dx-change-btn")
                             # Shown while a model serves (`card.stop_button`).
@@ -2955,7 +2956,7 @@ def create_diagnosis_tab(ctx: Any) -> None:
         with gr.Column(visible=False, elem_id="shep-dx-change",
                        elem_classes=["shep-panel", "shep-dx-drawer"], min_width=0) as change_drawer:
             with gr.Row(elem_classes=["shep-dx-drawer-hd"], elem_id="shep-dx-change-hd"):
-                plain_html('<h2>Change model</h2><span class="shep-dx-drawer-note">🔒 operator '
+                plain_html('<h2>Change model</h2><span class="shep-dx-drawer-note">operator '
                            'controls · one model is served to every session</span>',
                            elem_id="shep-dx-change-title")
                 change_close = plain_html(_close_html("change-model drawer"),

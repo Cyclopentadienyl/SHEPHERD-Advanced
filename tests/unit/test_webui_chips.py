@@ -335,3 +335,49 @@ def test_the_chips_are_read_on_load_on_the_slow_timer_and_with_no_queue():
     # and after the gated acts already on the pages (training, reload, settings)
     followers = [fn for fn in reads if fn.trigger_after is not None]
     assert len(followers) >= 5
+
+
+# --------------------------------------------------------------------------- the gated-button rule
+@pytest.mark.parametrize("condition", sorted(c.D8_SHORT))
+def test_a_gated_button_shows_no_lock_while_allowed_and_the_lock_and_reason_when_refused(
+        condition):
+    """The one gated-button rule (the WebUI skill §3, a lock means refused):
+    while D8 allows the request, the button's words as they are, with no
+    lock, usable when the page's own condition holds; while D8 refuses it,
+    disabled whatever the page's condition, with the lock before its words,
+    and the visible reason beside it in D8's short words."""
+    for interactive in (True, False):
+        assert c.gated("▸ Start", True, interactive=interactive) == {
+            "value": "▸ Start", "interactive": interactive}
+        assert c.gated("▸ Start", False, interactive=interactive) == {
+            "value": "🔒 ▸ Start", "interactive": False}
+    assert c.operator_only(condition) == f"Operator controls only: {c.D8_SHORT[condition]}"
+    assert c.operator_only(None) == "Operator controls only: request not readable"
+
+
+def test_every_gated_page_labels_its_buttons_by_the_one_rule():
+    """Each page's gated buttons read the rule's words: Training's run bar,
+    Fine-tune's Start and Stop, the Test page's, the Diagnosis card's Load or
+    Change model… and Stop inference, the shared list's Load. No page keeps a
+    lock in a label it draws for an operator."""
+    from src.webui.components import diagnosis_card as card
+    from src.webui.components import finetune_page as fp
+    from src.webui.components import model_list as ml
+    from src.webui.components import test_page as tp
+    from src.webui.components import training_console as tc
+
+    labels = [*tc.ACTION_LABELS.values(), fp.START_LABEL, fp.STOP_LABEL,
+              *tp.GATED_LABELS.values(), ml.LOAD_LABEL]
+    assert all("🔒" not in label for label in labels)
+    for operator in (True, False):
+        state = {"ok": True, "status": {"initialized": False}, "operator": operator,
+                 "d8_short": None if operator else "request not local"}
+        load = card.change_button(state)
+        assert load["value"] == ("Load a model…" if operator else "🔒 Load a model…")
+        reason = card.change_reason_html(state)
+        assert ("Operator controls only:" in reason) is not operator
+        listing = {"refused": not operator, "condition": "not_loopback", "items": []}
+        assert ml.load_button(listing, None)["value"] == (
+            "Load this model" if operator else "🔒 Load this model")
+        beside = ml.load_reason_html(None, listing)
+        assert ("🔒 Operator controls only: request not local." in beside) is not operator

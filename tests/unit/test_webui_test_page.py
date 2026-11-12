@@ -2087,11 +2087,12 @@ def test_the_gpu_line_changing_hands_start_over_to_the_selections_group(site, mo
     out = after.fn(page, models, binding, "demo", child, "disease", site.run_id, reports,
                    handoff, request)
     assert out[1] == site.run_id
-    assert out[start_at] == gr.update(interactive=True) and out[reason_at] == ""
+    assert out[start_at] == gr.update(value="▶ Start test", interactive=True)
+    assert out[reason_at] == ""
     line = ("busy", "GPU job: training (job runner)")
     out = after.fn(page, models, binding, "demo", child, "disease", site.run_id, reports,
                    handoff, request)
-    assert out[start_at] == gr.update(interactive=False)
+    assert out[start_at] == gr.update(value="▶ Start test", interactive=False)   # no lock
     assert "Disabled: GPU job: training (job runner)." in out[reason_at]
 
 
@@ -3048,7 +3049,9 @@ def test_a_read_only_request_cannot_type_a_note(site, monkeypatch):
                                         SimpleNamespace(_data={"key": site.run_id}), _readonly())
     note_btn, note_who, note_what, note_reason = out[-4:]
     assert note_who == gr.update(interactive=False) and note_what == gr.update(interactive=False)
-    assert note_btn == gr.update(interactive=False) and "Operator controls only" in note_reason
+    # Refused: disabled, with the lock, beside D8's reason (the WebUI skill §3).
+    assert note_btn == gr.update(value="🔒 Add note", interactive=False)
+    assert "Operator controls only" in note_reason
 
 
 def test_the_answer_asked_for_a_chosen_report_stays_with_it(site, monkeypatch):
@@ -3898,11 +3901,11 @@ def test_a_listed_disease_child_offers_the_test_only_protocols_and_starts_one(
     reason_at = on_model.outputs.index(by_id["shep-test-start-reason"])
     out = on_model.fn(page, models, binding, "demo", LABEL, child, None)
     assert out[radio_at] == gr.update(choices=offered, value=None, interactive=True)
-    assert out[start_at] == gr.update(interactive=False)
+    assert out[start_at] == gr.update(value="▶ Start test", interactive=False)
     assert "Disabled: choose a measurement." in out[reason_at]
     picked = on_pick.fn(page, models, binding, "demo", LABEL, child, "p2")
     assert picked == [gr.update(choices=offered, value="p2", interactive=True),
-                      gr.update(interactive=True), "", "p2"]
+                      gr.update(value="▶ Start test", interactive=True), "", "p2"]
     # Like the Model select, the radio is an operator's control only.
     readonly = dict(page, access={"allowed": False, "condition": "not_local"})
     assert on_model.fn(readonly, models, binding, "demo", LABEL, child, "p2")[radio_at] == (

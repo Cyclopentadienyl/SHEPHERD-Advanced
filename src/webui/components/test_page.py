@@ -15,7 +15,7 @@ docstring. Three panels, as the mockup draws them (``test-wide.png``,
   each with its counts in its own units, `version_choices`, `version_html`;
   with whether it is mapped against this workspace's graph; when the registry
   holds no KG edge set, the command that imports one on the machine,
-  `kg_edges_empty_html`), "🔒 Import a new version…" (a supplied cohort),
+  `kg_edges_empty_html`), "Import a new version…" (a supplied cohort),
   and the version's report store: every run directory, newest first (the
   newest `ROWS_SHOWN` and the selected one shown, "Show all N reports" for
   the rest), with what it kept
@@ -40,7 +40,7 @@ docstring. Three panels, as the mockup draws them (``test-wide.png``,
   "Not applicable" with why for a KG edge set or a generated split, which is
   given none and does not need the setting), "Register the result" and
   "Deterministic execution", the batch size and device the server fixes (D5),
-  "🔒 Start test" through the job runner (`TrainingManager.start_test`, given
+  "Start test" through the job runner (`TrainingManager.start_test`, given
   the measurement chosen, the model's learning stage, task and capability
   description and the version's kind from the session's listings) with the
   **full digests shown** as the expected ones, so
@@ -53,7 +53,7 @@ docstring. Three panels, as the mockup draws them (``test-wide.png``,
   that does not measure the version's data kind, a measurement whose needs the model's
   capabilities do not meet (its task head among them), and a measurement
   needing genes the version does not list are refused with their reason; then the job: its state, elapsed time,
-  inputs, output tail, "🔒 Cancel" (the runner's stop for test runs only), and
+  inputs, output tail, "Cancel" (the runner's stop for test runs only), and
   once it has ended, **what it left, from the runner** (its outcome file, kept
   and registered read from disk by WP4's helper; "no report was published"
   when there is no outcome file; a cancel says what was left);
@@ -69,7 +69,7 @@ docstring. Three panels, as the mockup draws them (``test-wide.png``,
   (`caveats.recorded_metric_lines`); the score semantics as recorded,
   coverage with every exclusion, relations, R10 in the
   caveats' words (*unverifiable* is a word, never a 0), environment, dataset
-  origin, whether it is kept and registered; "🔒 Register this report" through the one
+  origin, whether it is kept and registered; "Register this report" through the one
   registration function (`register_report`, the ledger beside the listed
   checkpoint holding the weights it measured, found by digest in the server's
   checkpoint list, never the report's recorded path). **Register is enabled
@@ -85,19 +85,19 @@ docstring. Three panels, as the mockup draws them (``test-wide.png``,
   agree; "comparison incomplete"), and investigation notes (who, when, what)
   are listed and added (gated); they record and change nothing. On a wide
   screen the note form stays at the panel's foot above Register, outside the
-  scrolling report, so "🔒 Add note" is in view without scrolling.
+  scrolling report, so "Add note" is in view without scrolling.
 
 **Import** (a drawer over Run and Result; D7): the files the operator placed
 in the server's intake directory (`server_lists.list_intake_files`; a request
 names a file and the server finds it in that listing again, refusing any other
 name or a link that leaves the directory); version label, role (the version's
-declared purpose) and the lost-terms policy; "🔒 Preview" runs the
+declared purpose) and the lost-terms policy; "Preview" runs the
 importer (`prepare_import`, in this process on the CPU; it reads the
 workspace's graph) and **shows only the exclusion reasons and their counts**
 (no case id reaches the browser: the CLI preview on the machine and the
 committed version keep them; a refused source is listed by case index,
 `import_refusal`, and the job's output without the ids a refusal names,
-`case_free`); "🔒 Commit" prepares again from the same inputs
+`case_free`); "Commit" prepares again from the same inputs
 and commits under the preview id shown, so changed inputs are refused
 (`commit_import`). There is no upload control: Gradio's upload route is refused
 in front of the mount.
@@ -106,8 +106,10 @@ in front of the mount.
 cancel, register, add a note) and every read that opens checkpoints (the model
 list, the registration's search for the checkpoint) asks D8's Gradio helper on
 its own triggering request first, then calls the shared service in process;
-the buttons a read-only request cannot use are disabled with D8's reason as
-visible text, but the handler's check is the protection. A read-only request
+the buttons a read-only request cannot use are disabled, with the lock and
+D8's reason as visible text beside them, and show no lock for an operator (the
+one gated-button rule, `chips.gated`, `GATED_LABELS`); the handler's check is
+the protection. A read-only request
 sees the cohort versions, their reports and states, the job's state and the
 results; no checkpoint list.
 
@@ -167,7 +169,8 @@ from src.evaluation.caveats import (
 )
 from src.utils.run_environment import native_identity_lines
 from src.webui.components import renderers as r
-from src.webui.components.chips import D8_SHORT, chips_on_change
+from src.webui.components.chips import LOCK, chips_on_change, gated
+from src.webui.components.chips import operator_only as _operator_only
 from src.webui.components.help import help_button
 from src.webui.components.model_list import item_key
 from src.utils.path_redaction import redact_paths
@@ -483,16 +486,31 @@ def _access(request: Any) -> Dict[str, Any]:
 
 
 def operator_only(access: Mapping[str, Any]) -> str:
-    """The visible reason a control a read-only request cannot use is off, in
-    D8's short words (the header chip's ⓘ gives D8's whole reason)."""
-    short = D8_SHORT.get(access.get("condition"), "request not readable")
-    return f"Operator controls only: {short}."
+    """The visible reason a control a read-only request cannot use is off
+    (`chips.operator_only`, D8's short words; the header chip's ⓘ gives D8's
+    whole reason), as a sentence."""
+    return f"{_operator_only(access.get('condition'))}."
+
+
+#: The page's gated buttons and their words, shown with no lock while the
+#: operator may use them (`chips.gated`; the WebUI skill's §3). Preview and
+#: Commit are in the import drawer, which opens only for a request D8 allowed,
+#: so they show none; each handler checks its own request again.
+GATED_LABELS = {"import": "Import a new version…", "start": "▶ Start test", "cancel": "Cancel",
+                "reload": "↻", "note": "Add note", "register": "Register this report"}
+
+
+def gated_update(name: str, page: Mapping[str, Any], *, interactive: bool = True) -> Any:
+    """A gated button's update by the one rule (`chips.gated`), from D8's
+    answer the page keeps for this session (`_access`)."""
+    allowed = bool((page.get("access") or {}).get("allowed"))
+    return gr.update(**gated(GATED_LABELS[name], allowed, interactive=interactive))
 
 
 def _reason_html(text: Optional[str], *, kind: str = "") -> str:
     if not text:
         return ""
-    lock = '<span aria-hidden="true">🔒</span>' if kind == "lock" else ""
+    lock = f'<span aria-hidden="true">{LOCK}</span>' if kind == "lock" else ""
     return f'<div class="shep-reason shep-test-reason">{lock}<span>{e(text)}</span></div>'
 
 
@@ -2715,7 +2733,7 @@ def create_test_page(ctx: Any) -> None:
                                       elem_classes=["shep-test-select"])
                 version_info = plain_html("", elem_id="shep-test-version-info")
                 with gr.Row(elem_classes=["shep-test-actions"]):
-                    import_open = gr.Button("🔒 Import a new version…", variant="secondary",
+                    import_open = gr.Button(GATED_LABELS["import"], variant="secondary",
                                             interactive=False, elem_id="shep-test-import-open",
                                             scale=0)
                 import_reason = plain_html("", elem_id="shep-test-import-reason")
@@ -2745,11 +2763,11 @@ def create_test_page(ctx: Any) -> None:
                                              elem_classes=["shep-test-select"])
                 role_note = plain_html(_reason_html(role_line(None)), elem_id="shep-test-role-note")
                 with gr.Row(elem_classes=["shep-test-actions"]):
-                    preview_btn = gr.Button("🔒 Preview", variant="secondary",
+                    preview_btn = gr.Button("Preview", variant="secondary",
                                             elem_id="shep-test-preview", scale=0)
                 preview_out = plain_html("", elem_id="shep-test-preview-card")
             with gr.Row(elem_classes=["shep-panel-ft"]):
-                commit_btn = gr.Button("🔒 Commit", variant="primary", interactive=False,
+                commit_btn = gr.Button("Commit", variant="primary", interactive=False,
                                        elem_id="shep-test-commit", scale=0)
                 plain_html(
                     '<span class="shep-note">Commit prepares again and refuses if the preview id '
@@ -2764,7 +2782,8 @@ def create_test_page(ctx: Any) -> None:
                     model = gr.Dropdown(label="Model", choices=[], value=None,
                                         elem_id="shep-test-model", interactive=False,
                                         elem_classes=["shep-test-select"])
-                    model_reload = gr.Button("↻", variant="secondary", size="sm", scale=0,
+                    model_reload = gr.Button(GATED_LABELS["reload"], variant="secondary",
+                                             size="sm", scale=0,
                                              elem_id="shep-test-model-reload",
                                              interactive=False)
                 model_info = plain_html("", elem_id="shep-test-model-info")
@@ -2784,7 +2803,7 @@ def create_test_page(ctx: Any) -> None:
             # so Start and Cancel are on screen whatever the model's details or
             # the output's length. Narrow, it follows the choices.
             with gr.Column(elem_classes=["shep-test-runft"], elem_id="shep-test-runft"):
-                start = gr.Button("🔒 ▶ Start test", variant="primary", interactive=False,
+                start = gr.Button(GATED_LABELS["start"], variant="primary", interactive=False,
                                   elem_id="shep-test-start")
                 start_reason = plain_html("", elem_id="shep-test-start-reason")
                 action_out = plain_html("", elem_id="shep-test-action")
@@ -2792,8 +2811,9 @@ def create_test_page(ctx: Any) -> None:
                     # Cancel beside the state, so it stays in view however long the output.
                     with gr.Row(elem_classes=["shep-test-job-top"]):
                         job_head = plain_html(job_head_html({}), elem_id="shep-test-job-head")
-                        cancel = gr.Button("🔒 Cancel", variant="stop", interactive=False,
-                                           elem_id="shep-test-cancel", scale=0, size="sm")
+                        cancel = gr.Button(GATED_LABELS["cancel"], variant="stop",
+                                           interactive=False, elem_id="shep-test-cancel",
+                                           scale=0, size="sm")
                     cancel_reason = plain_html("", elem_id="shep-test-cancel-reason")
                     job_out = plain_html(job_body_html({}, [], ("none", "")),
                                          elem_id="shep-test-job")
@@ -2823,12 +2843,12 @@ def create_test_page(ctx: Any) -> None:
                                            lines=2, max_lines=4, scale=3,
                                            min_width=NOTE_FIELD_MIN_WIDTH)
                 with gr.Row(elem_classes=["shep-test-actions"]):
-                    note_btn = gr.Button("🔒 Add note", variant="secondary",
+                    note_btn = gr.Button(GATED_LABELS["note"], variant="secondary",
                                          elem_id="shep-test-note-add", scale=0)
                     note_reason = plain_html("", elem_id="shep-test-note-reason")
             note_out = plain_html("", elem_id="shep-test-note-out")
             with gr.Row(elem_classes=["shep-panel-ft"]):
-                register = gr.Button("🔒 Register this report", variant="primary",
+                register = gr.Button(GATED_LABELS["register"], variant="primary",
                                      interactive=False, elem_id="shep-test-register", scale=0)
                 register_reason = plain_html("", elem_id="shep-test-register-reason")
                 register_out = plain_html("", elem_id="shep-test-register-out")
@@ -2864,7 +2884,7 @@ def create_test_page(ctx: Any) -> None:
         allowed = bool((page.get("access") or {}).get("allowed"))
         can_start, why = start_state(page, models, ws, label, key, binding, gpu,
                                      protocol=protocol)
-        return [gr.update(interactive=can_start),
+        return [gated_update("start", page, interactive=can_start),
                 _reason_html(why, kind="lock" if not allowed else "")]
 
     def _measurement_outputs(page, models, label, key, protocol):
@@ -2889,7 +2909,8 @@ def create_test_page(ctx: Any) -> None:
         cancel_why = (operator_only(page.get("access") or {})
                       if not allowed and status == "running" else None)
         return [job_head_html(job), job_body_html(job, roots, gpu),
-                gr.update(interactive=can_cancel), _reason_html(cancel_why, kind="lock")]
+                gated_update("cancel", page, interactive=can_cancel),
+                _reason_html(cancel_why, kind="lock")]
 
     def _run_outputs(page, models, binding, ws, label, key, protocol, job, gpu):
         allowed = bool((page.get("access") or {}).get("allowed"))
@@ -2897,7 +2918,7 @@ def create_test_page(ctx: Any) -> None:
         return [
             run_header_html(ws, label),
             _dd(model_choices(models), key, interactive=allowed and bool(models.get("items"))),
-            gr.update(interactive=allowed and bool(ws)),
+            gated_update("reload", page, interactive=bool(ws)),
             model_html(page, models, key),
             radio,
             evidence_html(page, ws, find(page.get("versions") or [], "label", label)),
@@ -2929,10 +2950,10 @@ def create_test_page(ctx: Any) -> None:
             reports_html(reports, run_id, models=models, job=job, roots=roots),
             result_html(reports, run_id, roots, job=job, notes=reports.get("notes"),
                         notes_problems=reports.get("notes_problems") or ()),
-            gr.update(interactive=can),
+            gated_update("register", page, interactive=can),
             _reason_html(why, kind="lock" if not allowed and why else ""),
             gr.update(visible=show_notes),
-            gr.update(interactive=allowed),
+            gated_update("note", page),
             gr.update(interactive=allowed),
             gr.update(interactive=allowed),
             _reason_html(None if allowed else operator_only(page.get("access") or {}),
@@ -2966,7 +2987,7 @@ def create_test_page(ctx: Any) -> None:
             workspace_html(page, ws),
             _dd(version_choices(page), label, interactive=registry_ok),
             version_html(page, label, binding),
-            gr.update(interactive=allowed and registry_ok and bool(ws)),
+            gated_update("import", page, interactive=registry_ok and bool(ws)),
             _reason_html(import_why, kind="lock" if not allowed else ""),
         ]
 
@@ -3318,7 +3339,7 @@ def create_test_page(ctx: Any) -> None:
         return (gr.update(visible=True), _dd(intake_choices(listing), None),
                 intake_note_html(listing, roots), sub,
                 gr.update(choices=role_choices(page or {})), None,
-                gr.update(interactive=False, value="🔒 Commit"), "", "", "")
+                gr.update(interactive=False, value="Commit"), "", "", "")
 
     import_open.click(_on_open_import, inputs=[page_state, workspace],
                       outputs=[drawer, intake, intake_note, drawer_title, new_role, preview_state,
@@ -3340,10 +3361,10 @@ def create_test_page(ctx: Any) -> None:
         roots = (page or {}).get("roots") or []
         if preview is None:
             return None, _outcome_box("amber", refusal or "Nothing was written.", roots), \
-                gr.update(interactive=False, value="🔒 Commit"), ""
+                gr.update(interactive=False, value="Commit"), ""
         can = bool(preview.get("samples_n"))
         return preview, preview_html(preview), gr.update(
-            interactive=can, value=f"🔒 Commit as version {preview.get('label')}"), ""
+            interactive=can, value=f"Commit as version {preview.get('label')}"), ""
 
     preview_btn.click(_on_preview, inputs=[page_state, workspace, intake, new_label, new_role,
                                            new_policy],
@@ -3360,7 +3381,7 @@ def create_test_page(ctx: Any) -> None:
             return box, gr.update(), gr.update(), None, gr.update(), gr.update()
         # Done: the drawer closes and the new version is chosen; the message
         # stays under "Import a new version…".
-        return ("", None, gr.update(interactive=False, value="🔒 Commit"), committed,
+        return ("", None, gr.update(interactive=False, value="Commit"), committed,
                 gr.update(visible=False), box)
 
     def _after_commit(committed, ws, label, key, protocol, current_models, current_report,

@@ -307,8 +307,8 @@ against the wrong dataset", a same-shaped graph the fingerprint cannot tell
 apart included. The refusal says "Checkpoint <path> does not match this
 workspace's graph" and names each graph file that differs (for example
 "node_features differs"). A service started with such a checkpoint serves no
-model (its log's "Startup failed" line says why), and **🔒 Change model…** ›
-**🔒 Load this model** on the Diagnosis page answers "Not reloaded; the model
+model (its log's "Startup failed" line says why), and **Change model…** ›
+**Load this model** on the Diagnosis page answers "Not reloaded; the model
 in use is unchanged." with that reason.
 
 A checkpoint whose record matches but which carries no model spec (a

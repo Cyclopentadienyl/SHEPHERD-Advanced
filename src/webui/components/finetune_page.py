@@ -88,7 +88,7 @@ from src.evaluation.caveats import TASK_NAMES, task_list_text
 from src.models.bundle.spec import TASKS
 from src.webui.components import renderers as r
 from src.webui.components import training_console as tc
-from src.webui.components.chips import D8_SHORT
+from src.webui.components.chips import gated, operator_only
 from src.webui.components.help import help_button
 from src.webui.components.workspaces import read_workspaces, redact, workspaces_root
 from src.webui.operator_access import operator_access
@@ -109,6 +109,11 @@ FROZEN_NOTE = ("Frozen graph backbone: only the patient encoder and the task hea
                "term trains nothing.")
 #: A child's states after which its run's saved files are final.
 ENDED = ("completed", "failed", "stopped")
+#: Start's and Stop's words, shown with no lock while the operator may use
+#: them (`chips.gated`). Stop training, the question's answer, is reached only
+#: through a Stop D8 allowed, so it shows none.
+START_LABEL = "▸ Start"
+STOP_LABEL = "■ Stop"
 
 
 # =============================================================================
@@ -412,8 +417,7 @@ def actions_view(status: Mapping[str, Any], *, access: Any,
     child_running = running_child(status) is not None
     view = {"start": False, "stop": False}
     if not access.allowed:
-        short = D8_SHORT.get(access.condition, "request not readable")
-        view["reason"] = _why(tc.LOCK_ICON, f"Operator controls only: {short}")
+        view["reason"] = _why(tc.LOCK_ICON, operator_only(access.condition))
     elif s == "stopping":
         view["reason"] = _why(tc.NO_ICON, "Stopping: the job is ending; Start waits for it.")
     elif child_running:
@@ -449,7 +453,11 @@ def _card_view(mode: Optional[Mapping[str, Any]], cache: Optional[Mapping[str, A
         cache["products"] = products
     scrub = str if access.allowed else tc.read_only_scrub(workspaces_root()[0])
     card = job_card_html(status, operator=access.allowed, products=products, scrub=scrub)
-    return (card, gr.update(interactive=view["start"]), gr.update(interactive=view["stop"]),
+    # Start and Stop by the one gated-button rule (`chips.gated`): no lock
+    # while D8 allows this request; disabled with the lock while it refuses
+    # it, beside the reason line.
+    return (card, gr.update(**gated(START_LABEL, access.allowed, interactive=view["start"])),
+            gr.update(**gated(STOP_LABEL, access.allowed, interactive=view["stop"])),
             f'<div class="shep-ft-reasons">{view["reason"]}</div>', gr.update(visible=asking),
             cache)
 
@@ -722,8 +730,8 @@ def create_finetune_page(ctx: Any) -> None:
                                           elem_id="ft_run_name")
             with gr.Column(elem_id="ft_start_ft", elem_classes=["shep-panel-ft"]):
                 with gr.Row(elem_classes=["shep-ft-start-row"]):
-                    start = gr.Button("▸ Start", variant="primary", interactive=False, scale=0,
-                                      elem_id="ft_start")
+                    start = gr.Button(START_LABEL, variant="primary", interactive=False,
+                                      scale=0, elem_id="ft_start")
                     reason = plain_html("", elem_id="ft_reason")
                 notice = plain_html("", elem_id="ft_notice")
         # ------------------------------------------------------------- the job
@@ -736,8 +744,8 @@ def create_finetune_page(ctx: Any) -> None:
                 card = plain_html(job_card_html({"status": "idle"}, operator=False),
                                   elem_id="ft_card", js_on_load=tc.TRIGGER_JS)
                 with gr.Row(elem_classes=["shep-ft-stop-row"]):
-                    stop = gr.Button("■ Stop", variant="secondary", interactive=False, scale=0,
-                                     elem_id="ft_stop")
+                    stop = gr.Button(STOP_LABEL, variant="secondary", interactive=False,
+                                     scale=0, elem_id="ft_stop")
                 with gr.Row(visible=False, elem_id="ft_confirm_row") as confirm_row:
                     stop_text = plain_html("", elem_id="ft_stop_text")
                     stop_confirm = gr.Button("■ Stop training", variant="stop", scale=0,

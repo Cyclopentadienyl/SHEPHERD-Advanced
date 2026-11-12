@@ -1277,7 +1277,7 @@ def left_header_html(listing: Mapping[str, Any], data: Mapping[str, Any],
                 f'<b>Model list unavailable: read-only, {r.e(short)}.</b>'
                 f'<span>{r.e(LIST_IS_C3)}</span><span>{r.e(LIST_C3_LINE)}</span></div>'
                 f'<div class="shep-reason">{r.e(D8_CONDITIONS)}</div></div>')
-    return ('<div class="shep-panel-hd"><h2>Models</h2><span class="shep-panel-right">🔒 listed '
+    return ('<div class="shep-panel-hd"><h2>Models</h2><span class="shep-panel-right">listed '
             'by the server (operator controls only)</span></div>')
 
 

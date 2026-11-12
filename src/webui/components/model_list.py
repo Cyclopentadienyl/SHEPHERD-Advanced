@@ -55,7 +55,9 @@ components (a filter, links) in the list's header and footer rows.
 
 **The Load**, in three steps, each a handler of its own:
 
-1. "🔒 Load this model" (`request_load`): D8 on that request; **a row that is
+1. "Load this model" (`request_load`; labelled by the one gated-button rule,
+   `load_button`: the lock and D8's reason beside it only for a request D8
+   refuses): D8 on that request; **a row that is
    never loaded is refused before anything of its file is read**
    (`load_refusal`: a base offers no diagnosis, a record this build refused,
    a file without a model spec among them, is said with why; the
@@ -69,7 +71,8 @@ components (a filter, links) in the list's header and footer rows.
    `core.types.TASK_SCORING_MODES`), SP table (a state: "not used by this
    task", "computed from the model's graph view"), synthetic flag, the changed
    rows marked;
-2. "🔒 Reload with <new>" (`finish_load`): D8 again, on that request; **both
+2. "Reload with <new>" (`finish_load`; shown only after a Load D8 allowed, so
+   with no lock): D8 again, on that request; **both
    columns read again**: what is served (the whole served identity,
    `served_key`) and what would be loaded (the file hashed again, the
    workspace's graph read again, the refusal checked again on what the file
@@ -484,11 +487,11 @@ def view_for_listing(view: Any, previous: Any, listing: Mapping[str, Any]) -> An
 
 def refused_line(listing: Mapping[str, Any]) -> str:
     """Why a refused listing lists nothing, as every page says an operator
-    control that is off for this request: "Operator controls only: <the
-    condition D8 named, in short words>."."""
-    from src.webui.components.chips import D8_SHORT
+    control that is off for this request (`chips.operator_only`): "Operator
+    controls only: <the condition D8 named, in short words>."."""
+    from src.webui.components.chips import operator_only
 
-    return f"Operator controls only: {D8_SHORT.get(listing.get('condition'), 'request not readable')}."
+    return f"{operator_only(listing.get('condition'))}."
 
 
 def kept_selection(previous: Any, listing: Mapping[str, Any], key: Any,
@@ -739,10 +742,31 @@ def can_load(item: Optional[Mapping[str, Any]]) -> bool:
     return loadable(item) and load_refusal(item) is None
 
 
-def load_reason_html(item: Optional[Mapping[str, Any]]) -> str:
-    """Beside the Load button, why it is off for the selected row when its
-    record is never loaded (`load_refusal`); nothing otherwise (an unreadable
-    file says so in its row)."""
+#: The Load button's words, shown with no lock while the operator may use it.
+LOAD_LABEL = "Load this model"
+
+
+def load_button(listing: Mapping[str, Any], item: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
+    """Load this model by the one gated-button rule (`chips.gated`): no lock
+    while the listing was read for a request D8 allows (offered for a row
+    `can_load` admits); for a listing D8 refused, disabled with the lock and
+    its reason beside it (`load_reason_html`)."""
+    from src.webui.components.chips import gated
+
+    return gated(LOAD_LABEL, not listing.get("refused"), interactive=can_load(item))
+
+
+def load_reason_html(item: Optional[Mapping[str, Any]],
+                     listing: Optional[Mapping[str, Any]] = None) -> str:
+    """Beside the Load button, why it is off: for a listing D8 refused, its
+    reason with the lock (`chips.operator_only`, the skill's §3); for the
+    selected row, when its record is never loaded (`load_refusal`); nothing
+    otherwise (an unreadable file says so in its row)."""
+    if (listing or {}).get("refused"):
+        from src.webui.components.chips import LOCK
+
+        return (f'<div class="shep-reason shep-reason-grey">{LOCK} '
+                f'{r.e(refused_line(listing or {}))}</div>')
     if not loadable(item):
         return ""
     why = load_refusal(item)
@@ -1464,8 +1488,8 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
                                    elem_id=f"{elem_id}-facts",
                                    elem_classes=["shep-model-facts"])
         with gr.Row(elem_classes=["shep-model-foot"]):
-            load_button = gr.Button("🔒 Load this model", variant="primary", interactive=False,
-                                    elem_id=f"{elem_id}-load", scale=0)
+            load = gr.Button(LOAD_LABEL, variant="primary", interactive=False,
+                             elem_id=f"{elem_id}-load", scale=0)
             reason = plain_html("", elem_id=f"{elem_id}-reason")
             note = plain_html("", elem_id=f"{elem_id}-note")
             foot_extra = foot() if foot is not None else None
@@ -1474,7 +1498,7 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
             confirm_html = plain_html("", elem_id=f"{elem_id}-confirm", js_on_load=MODEL_LIST_JS,
                                       elem_classes=["shep-model-confirm"])
             with gr.Row():
-                reload_button = gr.Button("🔒 Reload", variant="primary", scale=0,
+                reload_button = gr.Button("Reload", variant="primary", scale=0,
                                           elem_id=f"{elem_id}-reload")
                 keep_button = gr.Button("Keep", scale=0, elem_id=f"{elem_id}-keep")
 
@@ -1492,10 +1516,10 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
         return (data, key, gr.update(choices=choices, value=data.get("workspace")),
                 count_line(data, chosen, older, current_view),
                 list_html(data, key, chosen, show_older=older, view=current_view),
-                facts_html(data, key), gr.update(interactive=can_load(item)),
-                load_reason_html(item), note_html(current_view))
+                facts_html(data, key), gr.update(**load_button(data, item)),
+                load_reason_html(item, data), note_html(current_view))
 
-    refresh_outputs = [listing, selected, workspace, count, rows, facts, load_button, reason, note]
+    refresh_outputs = [listing, selected, workspace, count, rows, facts, load, reason, note]
     refresh = {"fn": _refresh, "inputs": [workspace, show_older, view, listing, selected],
                "outputs": refresh_outputs, "show_progress": "minimal"}
     workspace.input(**refresh)
@@ -1513,10 +1537,10 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
             return (gr.update(),) * 7
         return (key, older, list_html(data, key, chosen, show_older=older, view=current_view),
                 count_line(data, chosen, older, current_view), facts_html(data, key),
-                gr.update(interactive=can_load(item)), load_reason_html(item))
+                gr.update(**load_button(data, item)), load_reason_html(item, data))
 
     rows.click(_select, inputs=[listing, show_older, view],
-               outputs=[selected, show_older, rows, count, facts, load_button, reason],
+               outputs=[selected, show_older, rows, count, facts, load, reason],
                show_progress="hidden")
 
     def _redraw(data, key, older, current_view):
@@ -1527,11 +1551,11 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
             key, item = None, None
         return (key, list_html(data, key, chosen, show_older=older, view=current_view),
                 count_line(data, chosen, older, current_view), facts_html(data, key),
-                gr.update(interactive=can_load(item)), load_reason_html(item),
+                gr.update(**load_button(data, item)), load_reason_html(item, data),
                 note_html(current_view))
 
     view.change(_redraw, inputs=[listing, selected, show_older, view],
-                outputs=[selected, rows, count, facts, load_button, reason, note],
+                outputs=[selected, rows, count, facts, load, reason, note],
                 show_progress="hidden")
 
     def _request(data, key, request: gr.Request):
@@ -1540,11 +1564,11 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
             return None, gr.update(visible=False), "", html_, gr.update(), gr.update(), "idle"
         new, old = r.short_hex(new_plan["to"]["sha256"]), r.short_hex(new_plan["from"].get("sha256"))
         return (new_plan, gr.update(visible=True), html_, "",
-                gr.update(value=f"🔒 Reload with {new}", visible=True),
+                gr.update(value=f"Reload with {new}", visible=True),
                 gr.update(value=f"Keep {old}" if new_plan["from"].get("sha256") else "Cancel"),
                 "confirming")
 
-    load_button.click(_request, inputs=[listing, selected],
+    load.click(_request, inputs=[listing, selected],
                       outputs=[plan, confirm, confirm_html, reason, reload_button, keep_button,
                                phase]).then(**ctx.chip_refresh)
 
@@ -1580,7 +1604,7 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
         return (step.plan, gr.update(visible=True), step.confirm_html, step.reason_html, token,
                 "confirming" if still_open else "idle",
                 gr.update(visible=still_open,
-                          **({"value": f"🔒 Reload with {new}"} if still_open else {})),
+                          **({"value": f"Reload with {new}"} if still_open else {})),
                 gr.update(value=(f"Keep {old}" if still_open and old else
                                  "Cancel" if still_open else "Close")))
 
@@ -1629,7 +1653,7 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
     confirm_html.click(_read_again, inputs=None, outputs=[reason], show_progress="hidden")
 
     return ModelList(chosen, elem_id, workspace, listing, selected, plan, view, phase,
-                     show_older, count, rows, facts, reason, note, load_button, confirm,
+                     show_older, count, rows, facts, reason, note, load, confirm,
                      confirm_html, reload_button, keep_button, refresh, head_extra, foot_extra,
                      reload_done, after_close_js)
 

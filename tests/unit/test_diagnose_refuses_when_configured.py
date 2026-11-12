@@ -212,8 +212,10 @@ def test_every_no_model_reason_names_the_load_entry_the_page_shows(monkeypatch):
 
     label = card.change_button({"ok": True, "status": {"initialized": False},
                                 "operator": True})["value"]
-    entry = label.removeprefix("🔒").strip()
-    assert entry and entry != label
+    # An operator's label carries no lock (the one gated-button rule): it is
+    # the entry's words as they are.
+    entry = label
+    assert entry and "🔒" not in entry
     state = api_main.app_state
     at = "2026-11-12T10:00:00+00:00"
     reasons = []
@@ -548,7 +550,8 @@ class TestTheNoModelMatrix:
                      "d8_short": None if operator else "request not local"}
             assert card.run_blocked(state)
             button = card.change_button(state)
-            assert button["value"] == "🔒 Load a model…"
+            # The lock only for a request D8 refuses (the skill's §3).
+            assert button["value"] == ("Load a model…" if operator else "🔒 Load a model…")
             assert button["interactive"] is operator
             assert ("Operator controls only" in card.change_reason_html(state)) is not operator
             assert "Not loaded" in card.body_html(state)

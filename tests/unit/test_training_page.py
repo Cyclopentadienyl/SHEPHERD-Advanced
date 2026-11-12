@@ -736,10 +736,19 @@ def test_the_runs_checkpoint_is_read_again_only_when_it_changed(root, monkeypatc
 
 
 # --------------------------------------------------------------------------- what a tick sends
+def _action(key, interactive, allowed=True):
+    """A run-bar action's piece as the render gives it (`chips.gated`)."""
+    from src.webui.components.chips import gated
+
+    return gated(tc.ACTION_LABELS[key], allowed, interactive=interactive)
+
+
 def _rendered(**pieces):
     base = {key: f"<{key}>" for key in tc.VIEW_KEYS}
-    base.update(dataset=((("a", "a"),), "a", True), start=True, cont=True, stop=False,
-                resume=False, runbar=("shep-runbar",), page=("shep-page",), run_name=True,
+    base.update(dataset=((("a", "a"),), "a", True), start=_action("start", True),
+                cont=_action("cont", True), stop=_action("stop", False),
+                resume=_action("resume", False), runbar=("shep-runbar",), page=("shep-page",),
+                run_name=True,
                 charts={"run": None, "rev": 0}, ws={"name": "a"}, training_workspace="a")
     base.update(pieces)
     return {"pieces": base, "cache": {}, "ws_changed": False}
@@ -750,9 +759,10 @@ def test_a_tick_sends_only_what_changed_and_everything_every_few_ticks():
     cache = first[-1]
     again = tc.view_updates(_rendered(), cache)
     assert all(u == gr.update() for u in again[:-1])
-    changed = tc.view_updates(_rendered(pill="<other>", start=False), cache)
+    changed = tc.view_updates(_rendered(pill="<other>", start=_action("start", False)), cache)
     by_key = dict(zip(tc.VIEW_KEYS, changed[:-1]))
-    assert by_key["pill"] == "<other>" and by_key["start"] == gr.update(interactive=False)
+    assert by_key["pill"] == "<other>"
+    assert by_key["start"] == gr.update(value="▸ Start", interactive=False)
     assert by_key["chip"] == gr.update()
     full = tc.view_updates(_rendered(), cache, full=True)
     by_key = dict(zip(tc.VIEW_KEYS, full[:-1]))
@@ -858,7 +868,8 @@ def test_a_running_jobs_dataset_is_shown_and_the_select_disabled(root, monkeypat
     assert rendered["ws_changed"] is True and rendered["pieces"]["ws"]["name"] == "resampled"
     assert rendered["pieces"]["dataset"][1:] == ("resampled", False)
     assert "in use by the running job" in rendered["pieces"]["chip"]
-    assert rendered["pieces"]["stop"] is True and rendered["pieces"]["start"] is False
+    assert rendered["pieces"]["stop"] == {"value": "■ Stop", "interactive": True}
+    assert rendered["pieces"]["start"] == {"value": "▸ Start", "interactive": False}
 
 
 # --------------------------------------------------------------------------- the run bar's workspace, in order
@@ -1412,7 +1423,11 @@ def test_a_read_only_request_sees_every_action_disabled_and_no_checkpoint(root, 
     monkeypatch.setattr(tc.training_manager, "latest_snapshot",
                         lambda *a, **k: pytest.fail("a read-only request read the checkpoint"))
     pieces = tc.render(tc.workspace_state("demo"), {}, {}, [], READ_ONLY)["pieces"]
-    assert not any(pieces[k] for k in ("start", "cont", "stop", "resume", "run_name"))
+    assert not pieces["run_name"]
+    # Refused: every gated action disabled, with the lock, beside D8's reason
+    # (the one gated-button rule, the WebUI skill §3).
+    for key, label in tc.ACTION_LABELS.items():
+        assert pieces[key] == {"value": f"🔒 {label}", "interactive": False}, key
     assert "Operator controls only: deployment mode not set to M1" in pieces["reason"]
     assert "dataset not shown · operator control" in pieces["head"]
     assert "last.pt" not in pieces["snap"] and "runs/" not in pieces["snap"]
@@ -1720,11 +1735,13 @@ def test_a_stop_confirmation_belongs_to_the_job_it_was_asked_for(root, monkeypat
     _text, mode = tc._on_stop_request(operator, {})
     assert mode["confirm"] == "a1"
     asked = _rendered_for({"status": "running", "job_id": "a1"}, mode, operator, monkeypatch, ws)
-    assert "shep-rb-confirming" in asked["runbar"] and asked["stop"] is False
+    assert "shep-rb-confirming" in asked["runbar"]
+    assert asked["stop"] == {"value": "■ Stop", "interactive": False}
     done = _rendered_for({"status": "completed", "job_id": "a1"}, mode, operator, monkeypatch, ws)
     assert "shep-rb-confirming" not in done["runbar"]
     other = _rendered_for({"status": "running", "job_id": "b2"}, mode, operator, monkeypatch, ws)
-    assert "shep-rb-confirming" not in other["runbar"] and other["stop"] is True
+    assert "shep-rb-confirming" not in other["runbar"]
+    assert other["stop"] == {"value": "■ Stop", "interactive": True}       # no lock: allowed
     stops = []
     monkeypatch.setattr(tc.training_manager, "stop_training",
                         lambda: stops.append(1) or {"success": True, "outcome": None})

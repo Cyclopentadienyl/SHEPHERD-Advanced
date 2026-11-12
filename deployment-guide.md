@@ -1422,7 +1422,7 @@ WebUI 顯示的是**結果自己的身分**，絕不是狀態的：
   （§4.14「Diagnosis (clinical)」）。
 - **目前服務的是什麼**顯示在頁面的「Model in use」卡片上（§4.14）。自 M5-2 起，Model
   Configuration 折疊區（其路徑欄位、Load / Reload、Save Config 與 Reset）以及頁首的
-  「Serving now」一行都已移除：操作者以卡片上的「🔒 Change model…」更換模型，它列出伺服器的
+  「Serving now」一行都已移除：操作者以卡片上的「Change model…」更換模型，它列出伺服器的
   workspace 與其 checkpoint，只重新載入伺服器列出的項目。Save Config 的路由
   `/api/v1/pipeline/config` 已退役（自 2026-11-12 的 ops-wiring 輪起）：它寫的檔案在啟動時與
   任何頁面上都沒有人讀。你手上的 `.shepherd_ui_config.json` 維持原樣，也沒有任何東西記住「上次的
@@ -3035,7 +3035,7 @@ CORS 只決定頁面能讀取什麼。不需要預檢的跨來源請求仍會抵
 
 | Chip | 意義 |
 |---|---|
-| `🔒 Operator controls: on (this machine)` | D8 允許這個瀏覽器的請求 |
+| `Operator controls: on (this machine)` | D8 允許這個瀏覽器的請求 |
 | `Read-only: deployment mode not set to M1` | `SHEPHERD_DEPLOYMENT_MODE` 不完全等於 `M1` |
 | `Read-only: request not local` | 請求不是經由本機的 loopback 抵達：請使用轉發到 `localhost` 的 SSH forward |
 | `Read-only: forwarded by a proxy` | 請求帶有 proxy 會加上的標頭 |
@@ -3045,6 +3045,9 @@ CORS 只決定頁面能讀取什麼。不需要預檢的跨來源請求仍會抵
 
 它的 ⓘ 列出每一個操作者控制項、如何使用它們（§4.13 的 SSH forward），在唯讀時並附上 D8 給出
 的完整原因。它從不重複任何標頭的值。
+
+**鎖代表被拒絕。** 只有唯讀的 chip 以鎖開頭。D8 之後的控制項在 D8 允許這個瀏覽器的請求時不顯示
+鎖；D8 拒絕時它會停用、在文字前顯示鎖，並在旁邊附上 "Operator controls only: <原因>"。
 
 **GPU jobs** 顯示哪個受管理的工作佔用唯一的 GPU 名額（§4.11）：
 
@@ -3095,7 +3098,7 @@ Matching phenotypes · Paths）。選取一列（點擊，或在聚焦的列上�
 - 只在成立時出現的標籤：`synthetic data`（琥珀色）。`no trained model` 與 `unverified` 標籤
   已隨路徑推理狀態移除（K7），`no SP table` 與 `GNN not loaded` 已隨 mixture 移除（K8-4）；
 - "Recorded results: <狀態>"（§4.9），它的 › 會打開 Details 的 Evidence；"Details ›"；
-  "🔒 Change model…"。紀錄的測試與 workspace 名稱會在每次顯示 Diagnosis、每次診斷後、更換模型後
+  "Change model…"。紀錄的測試與 workspace 名稱會在每次顯示 Diagnosis、每次診斷後、更換模型後
   以及按下 ↻ 時重新讀取（每 5 秒的讀取只讀目前服務的內容）：在 Research › Test 記錄的測試，回到
   Diagnosis 時就會出現；
 - **服務狀態**（自 ops-wiring 這一輪起），以伺服器自己的用語顯示："● Serving"、"Loading"、
@@ -3118,7 +3121,7 @@ Matching phenotypes · Paths）。選取一列（點擊，或在聚焦的列上�
 | "Model changed at HH:MM — was <舊>, now <新>"，附 × | 這次讀取發現的模型（或所服務內容的其他部分）與這個瀏覽器上一次讀取的不同（例如另一個瀏覽器做了 Change model）。× 可關閉它 |
 | 灰色："cannot check · <原因> · Retry"、"last known HH:MM:SS · not current" | 無法讀取目前服務的內容："status not read"（完整原因寫在標記下方那一行與 Details 中）或 "timed out (5 s)"。顯示的是最後已知的狀態，沒有 ✓，標籤為灰色虛線 |
 | 灰色："read HH:MM:SS · older than this result" | 最後一次成功的讀取早於畫面上的結果 |
-| "○ Not loaded"、伺服器的原因與 "🔒 Load a model…" | 沒有服務任何模型：什麼都沒設定、推論已停止、載入或啟動被拒絕，或建置失敗（自 K7 起，圖從不單獨服務）；下方的原因是伺服器自己的。Run Diagnosis 呈灰色且無法點擊：滑鼠指向它，或以 Tab 移到它，會說明原因，下方也寫著 "Disabled: no model loaded. …"。API 用戶端此時提出請求，會得到附原因的 503（§4.7） |
+| "○ Not loaded"、伺服器的原因與 "Load a model…" | 沒有服務任何模型：什麼都沒設定、推論已停止、載入或啟動被拒絕，或建置失敗（自 K7 起，圖從不單獨服務）；下方的原因是伺服器自己的。Run Diagnosis 呈灰色且無法點擊：滑鼠指向它，或以 Tab 移到它，會說明原因，下方也寫著 "Disabled: no model loaded. …"。API 用戶端此時提出請求，會得到附原因的 503（§4.7） |
 | "▲ Stopping · N in flight" | 操作者停止了推論：已接受的 N 個診斷會跑完，新的診斷被拒絕（Run Diagnosis 下方寫著 "Disabled: inference is stopping; …"；API 用戶端得到 503）。之後卡片顯示 "Not loaded" |
 | "🔒 Change model…" 呈灰色，附 "Operator controls only: <原因>" | 唯讀的瀏覽器（§4.13）。它永遠看不到 checkpoint 清單 |
 
@@ -3134,9 +3137,9 @@ support for a qualified clinician." 位於結果的底部。
 "Details ›" 與 "Recorded results ›" 打開前者，標記打開後者；更換模型進行中（確認畫面打開，或正在
 重新載入）時，它們不會蓋掉 Change model 抽屜。
 
-**🔒 Change model…**（操作者控制項）會打開一個蓋住結果與細節的抽屜：workspace 選單（伺服器的
+**Change model…**（操作者控制項）會打開一個蓋住結果與細節的抽屜：workspace 選單（伺服器的
 清單；預設選中正在服務的 workspace）、置頂的 "In use now"、最近四個 run（其餘在 "Show older
-runs"）、選中 checkpoint 的資料、"Compare in Research › Models ›"，以及 "🔒 Load this model" /
+runs"）、選中 checkpoint 的資料、"Compare in Research › Models ›"，以及 "Load this model" /
 Cancel。Load 只詢問一次（"Reload the pipeline with <12 hex> for every session?"，from → to，
 變更的列會標出），並以伺服器列出的 workspace 與 checkpoint 重新載入 pipeline。**重新載入只服務
 問句中的那個模型**：它在發布任何東西之前，把自己讀到的 checkpoint 與那個指紋比對，因此期間被改寫
@@ -3147,7 +3150,7 @@ Cancel。Load 只詢問一次（"Reload the pipeline with <12 hex> for every ses
 所服務的內容；已產生的結果保留自己的身分，重新載入期間診斷會等待。確認畫面打開期間，清單本身的
 底部列會隱藏，讓 from → to 各列與這句話保持在畫面內；"Keep <舊>" 會放棄這次確認。確認畫面打開
 期間，Run Diagnosis 停用："Disabled: finish or cancel the model change first."。按下
-"🔒 Reload with <新>" 之後，確認畫面只顯示重新載入的狀態（"Loading <12 hex> for every
+"Reload with <新>" 之後，確認畫面只顯示重新載入的狀態（"Loading <12 hex> for every
 session… 00:00:42"）與 Close（關閉不會中止重新載入；180 秒後為 Read again 與 Close），因此無法
 再要求第二次重新載入；卡片顯示同一行 "Loading …"，Run Diagnosis 顯示 "Disabled: a model load is
 in progress; diagnoses wait until it finishes."。Cancel 或 × 關閉抽屜而不重新載入。重新載入期間，
@@ -3237,7 +3240,7 @@ Training Console 現在是分成三部分的一個頁面：上方橫跨整頁的
   占用 GPU 的工作（「GPU job: test run (…) · Open Test ›」、「GPU job: train_model.py (pid …,
   since …)」，或在 CUDA 上服務模型時的「GPU: inference (this service); stop it with Stop
   inference on Diagnosis」；無論哪種情況，job runner 都會自己拒絕啟動）。
-- **🔒 Start、🔒 Continue…、🔒 Stop。** Stop 會先詢問：「Stop training now? The job stops. The
+- **Start、Continue…、Stop。** Stop 會先詢問：「Stop training now? The job stops. The
   checkpoints it has saved are kept and progress not yet saved is lost; if it has saved none
   yet, this run cannot be continued. Once it has stopped, the page says where it can be
   continued from.」，按鈕為 **■ Stop training** 與 **Keep training**。詢問不提任何 epoch：
@@ -3365,7 +3368,7 @@ resume 的一組仍寫明它開始時的下游權重（Models › Results 的 Co
 包括暫停後再 resume（`L7.disease_frozen`）；凍結下的混合精度與 `torch.compile` 不在這個檢查的
 範圍內，也仍然可用。抽屜打開
 期間，run bar 顯示 Start（停用：「close Continue… to start a new run」）、
-**🔒 Continue Training**（資料集不同時停用，並附原因）與 **Cancel**。從清單選的
+**Continue Training**（資料集不同時停用，並附原因）與 **Cancel**。從清單選的
 checkpoint 會在伺服器的清單中重新找到。**繼續訓練所用的就是所顯示的模型指紋**（於根因修正輪
 實作）。從清單選的 checkpoint，Check checkpoint 與 Continue Training 都送出清單上的指紋；手動
 輸入的路徑，則由 Check checkpoint 讀取檔案並顯示它的指紋，Continue Training 再送出所顯示的那個。
@@ -3482,7 +3485,7 @@ split）上量測模型、保留報告並登錄它。共有三個面板：
   顯示，並停用 Start；KG 邊集合或 generated split 以灰色 ○ 顯示「Not applicable」與原因（R10 屬於
   supplied cohort），不論該設定如何，執行都不會取得任何證據目錄。接著是 **Register the result**、
   **Deterministic execution**，以及由伺服器固定的 batch size 與裝置（量測程式的預設值；
-  `SHEPHERD_DEVICE`）。**🔒 Start test** 透過 job runner（§4.11）啟動真正的
+  `SHEPHERD_DEVICE`）。**Start test** 透過 job runner（§4.11）啟動真正的
   `measure_scorer.py`，使用伺服器在自己的清單中重新找到的 workspace、版本與 checkpoint，並以
   **頁面顯示過的完整模型指紋與版本 digest 作為預期值**：執行時讀到的檔案或版本若是其他位元組，
   會在量測之前拒絕。Start 會說明它為何不可用：先說持有 GPU 的是什麼，用 GPU chip 的字眼，
@@ -3492,7 +3495,7 @@ split）上量測模型、保留報告並登錄它。共有三個面板：
   Failed、灰色的 Cancelled：失敗或取消的執行從不顯示為綠色）、已經過的時間、執行收到的輸入、
   以 UTC 表示的開始與結束時間（與報告列命名執行的方式相同），以及其輸出的最後 12 行（取消後
   會收合，其最後一行說明執行已被取消，沒有 traceback；量測拒絕訊息中提到的病患 id 會被略去，
-  D7）；狀態旁的 **🔒 Cancel** 只停止測試執行，從不停止訓練工作。在寬螢幕上，Start、其原因與工作卡片固定在
+  D7）；狀態旁的 **Cancel** 只停止測試執行，從不停止訓練工作。在寬螢幕上，Start、其原因與工作卡片固定在
   面板底部（上方的選擇會捲動），輸出則在卡片內、Cancel 所在那一行之下捲動，所以兩者都保持
   可見。執行結束後，卡片顯示 job runner 在執行結束當時從磁碟讀到的結果（標為「When the run
   ended:」）：是否保留了報告、當時是否已登錄，並附上 job runner 的說明（執行沒有寫出 outcome
@@ -3511,7 +3514,7 @@ split）上量測模型、保留報告並登錄它。共有三個面板：
   幾行說明；讀取器無法讀取的紀錄會附原因顯示（只指名欄位，從不顯示其值），而不當作結果顯示。
   有紀錄以其他位元組寫明這次執行（報告在登錄之後被替換），或那份帳本無法判斷時，Result 會列出
   登錄給的原因。
-  **🔒 Register this report** 透過唯一的登錄函式（§4.9）登錄一份任何種類（supplied cohort、KG 邊集合
+  **Register this report** 透過唯一的登錄函式（§4.9）登錄一份任何種類（supplied cohort、KG 邊集合
   或 generated split）的已保留報告：伺服器在版本的
   store 中找到報告、確認其位元組就是顯示過的那些、從它自己的 checkpoint 清單找出帳本應在的
   位置（以完整 digest 找到持有該權重的已列出檔案，從不使用報告記錄的路徑：若執行讀取的那個
@@ -3524,21 +3527,21 @@ split）上量測模型、保留報告並登錄它。共有三個面板：
   保留報告、這次執行已登錄，或這次執行自己的報告無法建立（附它自己的原因）或清單沒有讀到它。存放處
   無法列出時會說明這一點，並指向 `record_evaluation.py --report …`。其他執行、結果不同的群組，以及
   別處無法讀取的報告，從不讓它不可用。當報告所屬群組的執行結果不同、或比較不完整時，頁面加以描述，並
-  列出與新增 **investigation notes**（誰、何時、發現了什麼；🔒 Add note），與該群組的報告保存在一起。
+  列出與新增 **investigation notes**（誰、何時、發現了什麼；Add note），與該群組的報告保存在一起。
   筆記記錄發現了什麼，不改變任何東西。登錄的訊息附上群組說明與歷史說明。在寬螢幕上，筆記表單（Who、What was
-  found、🔒 Add note）固定在面板底部、Register 之上，所以無論報告或筆記多長都保持可見（What
+  found、Add note）固定在面板底部、Register 之上，所以無論報告或筆記多長都保持可見（What
   was found 最多長到四行，之後在框內捲動）。筆記檔案無法讀取時，頁面會說明這一點（可能缺少某
   則筆記），從不顯示「沒有保存筆記」。
 
-**🔒 Import a new version…** 會在 Run 與 Result 上方打開一個抽屜：intake 目錄中的檔案
+**Import a new version…** 會在 Run 與 Result 上方打開一個抽屜：intake 目錄中的檔案
 （`SHEPHERD_INTAKE_DIR`，§4.12：其中的 `*.json` 檔案，依名稱、大小與修改時間列出；連結到目錄
 之外的檔案會列出但不提供選擇；不會從瀏覽器上傳任何東西）、版本標籤、role（版本宣告的用途，例如
-mygene2、research_selection 或 institutional_acceptance）以及遺失 term 的政策。**🔒 Preview** 在服務內以 CPU 執行匯入程式（它會讀取 workspace 的圖譜），
+mygene2、research_selection 或 institutional_acceptance）以及遺失 term 的政策。**Preview** 在服務內以 CPU 執行匯入程式（它會讀取 workspace 的圖譜），
 不寫入任何東西。預覽顯示各項數量、排除原因及其數量、無法映射的 term 及列出每個 term 的案例數，
 以及版本綁定的內容；**案例 id 不會傳送到瀏覽器**（機器上的命令列預覽會列出它們，提交後的版本
 會記錄它們）。不符合 `shepherd-cases/1` 的檔案會被拒絕，其問題依案例索引列出（最多 10 項），
 從不依案例 id；機器上的命令列預覽（`scripts/import_cohort.py`）會連同案例 id 列出每一項。
-**🔒 Commit as version …** 以相同的輸入重新準備，並在顯示過的 preview id 下提交：
+**Commit as version …** 以相同的輸入重新準備，並在顯示過的 preview id 下提交：
 預覽之後表單有變更，或之後來源或圖譜有變更，都會被拒絕。一次只執行一個預覽或提交；提交之後
 抽屜會關閉，並選取新的版本。寬度或高度低於 1400 × 760 時，抽屜是右側的覆蓋層，在其內部捲動，
 鍵盤焦點會移到它的標題。
@@ -3654,7 +3657,7 @@ Lineage 欄。沒有任何排列方式依測試分數為模型排名：依測試
   請求不讀取也不列出任何東西，並說明原因。在此頁面跨 workspace 比較結果尚未建置；在機器上，
   `scripts/export_results.py` 可合併多個 workspace。
 
-**🔒 Load this model** 是共用的 Load（與 Diagnosis 的「Change model…」相同的確認；確認開啟時會蓋住
+**Load this model** 是共用的 Load（與 Diagnosis 的「Change model…」相同的確認；確認開啟時會蓋住
 細節區，不論視窗多矮，它的按鈕都留在表格下方的可見範圍內；按 Close 回到細節區，且仍選取同一個
 checkpoint）。對 base 以及紀錄無法讀取的檔案，它在讀取任何東西之前就是停用的，原因寫在旁邊（沒有
 model spec 的檔案為「Record not readable: written before the model spec: not readable by this

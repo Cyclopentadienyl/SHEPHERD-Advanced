@@ -518,7 +518,7 @@ def test_no_model_loaded_turns_run_off_and_offers_a_load(root):
     assert card.run_blocked(state)
     assert "Not loaded" in card.body_html(state)
     button = card.change_button(state)
-    assert button["value"] == "🔒 Load a model…" and button["variant"] == "primary"
+    assert button["value"] == "Load a model…" and button["variant"] == "primary"   # no lock
     assert not card.details_visible(state)
 
 
@@ -827,7 +827,7 @@ def test_stop_inference_is_offered_while_a_model_serves_and_locked_for_a_read_on
     operator = card.stop_button(_state(root, status=serving))
     assert operator == {"value": "■ Stop inference", "visible": True, "interactive": True}
     read_only = card.stop_button(_state(root, status=serving, operator=False))
-    assert read_only == {"value": "🔒 Stop inference", "visible": True, "interactive": False}
+    assert read_only == {"value": "🔒 ■ Stop inference", "visible": True, "interactive": False}
     nothing = card.stop_button(_state(root, status={"initialized": False}))
     assert nothing["visible"] is False
     failed = card.advance(_state(root, status=serving), None, "timed out (5 s)", now=NOW,
