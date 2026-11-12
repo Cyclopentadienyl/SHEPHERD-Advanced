@@ -3064,6 +3064,51 @@ def test_a_read_only_request_cannot_type_a_note(site, monkeypatch):
     assert "Operator controls only" in note_reason
 
 
+#: Each gated button of the page and the element that holds its reason beside it.
+GATED_REASONS = {"shep-test-import-open": "shep-test-import-reason",
+                 "shep-test-model-reload": "shep-test-model-info",
+                 "shep-test-start": "shep-test-start-reason",
+                 "shep-test-cancel": "shep-test-cancel-reason",
+                 "shep-test-note-add": "shep-test-note-reason",
+                 "shep-test-register": "shep-test-register-reason"}
+
+
+@pytest.mark.parametrize("status", ["idle", "running"])
+def test_every_gated_button_is_locked_only_when_refused_and_then_says_why(site, monkeypatch,
+                                                                          status):
+    """The one gated-button rule on each of the page's gated buttons (the WebUI
+    skill's §3): for an operator, no lock and no "Operator controls only"; for
+    a read-only request, disabled with the lock and D8's short reason beside
+    it, whatever the job's state or the selection (B0a review: Cancel with no
+    job running and Register with no report chosen showed the lock alone)."""
+    monkeypatch.setattr(tp, "read_job", lambda **k: {"status": status, "inputs": None,
+                                                    "outcome": None, "log": []})
+    monkeypatch.setattr(tp, "gpu_line", lambda **k: ("none", "GPU jobs: none"))
+    demo, _ctx, _registry = _page_component()
+    refresh = _named(demo, "_refresh")
+    assert set(GATED_REASONS) == {f"shep-test-{x}" for x in (
+        "import-open", "model-reload", "start", "cancel", "note-add", "register")}
+    assert {by for by in GATED_REASONS} <= {b.elem_id for b in refresh.outputs}
+    for operator in (True, False):
+        request = operator_request(monkeypatch) if operator else _readonly()
+        out = dict(zip([b.elem_id for b in refresh.outputs],
+                       refresh.fn(None, None, None, None, {}, None, request)))
+        for button, beside in GATED_REASONS.items():
+            label, reason = out[button]["value"], out[beside]
+            if operator:
+                assert tp.LOCK not in label and "Operator controls only" not in reason, button
+            else:
+                assert label.startswith(f"{tp.LOCK} ") and out[button]["interactive"] is False
+                assert "Operator controls only: " in reason and tp.LOCK in reason, button
+        if operator:
+            assert out["shep-test-cancel"]["interactive"] is (status == "running")
+    # No report chosen (none kept yet): Register's reason is still D8's.
+    refused = {"access": {"allowed": False, "condition": "not_loopback"}}
+    assert tp.register_state(refused, {"runs": []}, None) == (
+        False, "Operator controls only: request not local.")
+    assert tp.register_state({"access": {"allowed": True}}, {"runs": []}, None) == (False, None)
+
+
 def test_the_answer_asked_for_a_chosen_report_stays_with_it(site, monkeypatch):
     """A row whose place needs another workspace's listing is asked when it is
     chosen; the answer is kept in the session's reports, so choosing another

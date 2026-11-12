@@ -2177,15 +2177,17 @@ def register_state(page: Mapping[str, Any], reports: Mapping[str, Any],
     it."""
     access = page.get("access") or {}
     roots = page.get("roots") or []
+    # D8 first, whatever is chosen: a refused request's button shows the lock,
+    # and the lock is never without its reason (the one gated-button rule).
+    if not access.get("allowed"):
+        return False, operator_only(access)
     run = find(reports.get("runs") or [], "run_id", run_id)
     if run is None:
         # The version was read but its store's runs could not be listed.
         listing = reports.get("problem") if reports.get("version_sha256") else None
-        if listing and not reports.get("runs") and access.get("allowed"):
+        if listing and not reports.get("runs"):
             return False, _store_not_listed(listing, roots, "a run")
         return False, None
-    if not access.get("allowed"):
-        return False, operator_only(access)
     state = run.get("state") or {}
     if state.get("kept") != "kept":
         return False, "Disabled: no report was kept in this run."
@@ -2912,8 +2914,9 @@ def create_test_page(ctx: Any) -> None:
         allowed = bool((page.get("access") or {}).get("allowed"))
         status = job.get("status") or "idle"
         can_cancel = allowed and status == "running"
-        cancel_why = (operator_only(page.get("access") or {})
-                      if not allowed and status == "running" else None)
+        # Refused, Cancel shows the lock whatever the job's state, so its
+        # reason is beside it whatever the job's state (`chips.gated`).
+        cancel_why = None if allowed else operator_only(page.get("access") or {})
         return [job_head_html(job), job_body_html(job, roots, gpu),
                 gated_update("cancel", page, interactive=can_cancel),
                 _reason_html(cancel_why, kind="lock")]
@@ -2957,7 +2960,7 @@ def create_test_page(ctx: Any) -> None:
             result_html(reports, run_id, roots, job=job, notes=reports.get("notes"),
                         notes_problems=reports.get("notes_problems") or ()),
             gated_update("register", page, interactive=can),
-            _reason_html(why, kind="lock" if not allowed and why else ""),
+            _reason_html(why, kind="lock" if not allowed else ""),
             gr.update(visible=show_notes),
             gated_update("note", page),
             gr.update(interactive=allowed),

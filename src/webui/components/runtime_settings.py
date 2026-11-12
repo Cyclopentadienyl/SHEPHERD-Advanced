@@ -21,10 +21,12 @@ Apply model:
 Operator controls (D8, M5-1):
     Restart Backend and Apply Settings each check their own Gradio request
     first (`src/webui/operator_access.py`) and are refused, changing nothing,
-    unless D8 allows it. For a request D8 refuses, both buttons are greyed out
-    with D8's reason as visible text when the page is opened and on its timer
-    (M5-2, the general D8 rule); like the restart lock, the greyed-out buttons
-    are a display, never the control.
+    unless D8 allows it. Both are labelled by the one gated-button rule
+    (`chips.gated`, the WebUI skill's §3) when the page is opened and on its
+    timer: no lock while D8 allows the request; for a request D8 refuses,
+    disabled, with the lock and the visible "Operator controls only: …"
+    reason under them (`chips.operator_only`). Like the restart lock, the
+    disabled buttons are a display, never the control.
 """
 from __future__ import annotations
 
@@ -41,6 +43,7 @@ from src.config.runtime_presets import (
     load_runtime_settings,
     save_runtime_settings,
 )
+from src.webui.components.chips import LOCK, gated, operator_only
 from src.webui.operator_access import operator_access
 from src.webui.shell import SETTINGS as SETTINGS_PAGE
 
@@ -160,18 +163,27 @@ def _on_apply(alloc, compile_on, request: gr.Request):
     return "  ".join(parts)
 
 
+#: The two operator controls' words, shown with no lock while D8 allows the
+#: request (`chips.gated`).
+APPLY_LABEL = "Apply Settings"
+RESTART_LABEL = "Restart Backend"
+
+
 def _refresh_restart_lock(request: gr.Request):
-    """Apply and Restart as this request may use them: both greyed out with
-    D8's reason for a refused request; Restart also while training runs (the
-    lock note). A display: each button's handler checks its own request."""
+    """Apply and Restart as this request may use them, by the one
+    gated-button rule (`chips.gated`): for a refused request, both disabled
+    with the lock and D8's short reason under them (`chips.operator_only`;
+    the header chip's ⓘ gives D8's whole reason); Restart also off while
+    training runs (the lock note). A display: each button's handler checks
+    its own request."""
     locked = is_training_active()
     access = operator_access(request)
     reason = ("" if access.allowed else
-              '<div class="shep-reason shep-reason-grey">Apply Settings and Restart Backend are '
-              f'operator controls, off for this request: {html.escape(access.reason)}</div>')
+              f'<div class="shep-reason shep-reason-grey">{LOCK} '
+              f'{html.escape(operator_only(access.condition))}.</div>')
     return (
-        gr.update(interactive=access.allowed),
-        gr.update(interactive=access.allowed and not locked),
+        gr.update(**gated(APPLY_LABEL, access.allowed)),
+        gr.update(**gated(RESTART_LABEL, access.allowed, interactive=not locked)),
         gr.update(visible=locked, value=_RESTART_LOCKED_HTML if locked else ""),
         gr.update(visible=not access.allowed, value=reason),
     )
@@ -251,13 +263,15 @@ def create_runtime_settings_tab(ctx: Any) -> None:
     # mirrors the natural workflow (change allocator → Apply → Restart).
     _locked_now = is_training_active()
     with gr.Row():
-        apply_btn = gr.Button("Apply Settings", variant="primary", elem_id="runtime_apply")
+        apply_btn = gr.Button(APPLY_LABEL, variant="primary", elem_id="runtime_apply")
         restart_btn = gr.Button(
-            "Restart Backend",
+            RESTART_LABEL,
             variant="secondary",
             interactive=not _locked_now,
             elem_id="runtime_restart",
         )
+    # Read-only: why both buttons are disabled, under them (D8's short words).
+    access_note = gr.HTML("", visible=False, elem_id="runtime_access_reason")
     status = gr.Markdown(
         f"Applied: allocator **{current_alloc}**, "
         f"torch.compile **{'on' if current_compile else 'off'}**.",
@@ -273,8 +287,6 @@ def create_runtime_settings_tab(ctx: Any) -> None:
         padding=True,
     )
     restart_status = gr.Markdown("", elem_id="runtime_restart_status")
-    # Read-only: why both buttons are greyed out (D8's reason for this request).
-    access_note = gr.HTML("", visible=False, elem_id="runtime_access_reason")
     gr.Markdown(
         "**Restart Backend** relaunches the backend (REST API + this UI) so a "
         "newly applied **Memory Allocator** takes effect. Locked while training is "

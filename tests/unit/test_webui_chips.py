@@ -320,6 +320,19 @@ def test_both_chips_render_with_their_i_and_its_hidden_text():
     assert "free" not in html.lower()
 
 
+@pytest.mark.parametrize("condition", sorted(c.D8_SHORT))
+def test_only_a_read_only_d8_chip_leads_with_the_lock(condition):
+    """A lock means refused (the WebUI skill's §3): the D8 chip leads with it
+    only while D8 refuses the request; on, it leads with the dot, as the GPU
+    chip always does."""
+    on = c.chip_html(c.d8_chip(ENABLED), which="d8")
+    assert c._LOCK_SVG not in on and '<span class="shep-dot" aria-hidden="true">' in on
+    refused = c.chip_html(c.d8_chip(OperatorAccess(False, condition, "why")), which="d8")
+    assert c._LOCK_SVG in refused and "shep-dot" not in refused
+    gpu = c.chip_html(c.gpu_chip_from(None, LOCK_FREE, operator=True), which="gpu")
+    assert c._LOCK_SVG not in gpu and "shep-dot" in gpu
+
+
 # --------------------------------------------------------------------------- wiring
 def test_the_chips_are_read_on_load_on_the_slow_timer_and_with_no_queue():
     from src.webui import shell
@@ -358,16 +371,17 @@ def test_a_gated_button_shows_no_lock_while_allowed_and_the_lock_and_reason_when
 def test_every_gated_page_labels_its_buttons_by_the_one_rule():
     """Each page's gated buttons read the rule's words: Training's run bar,
     Fine-tune's Start and Stop, the Test page's, the Diagnosis card's Load or
-    Change model… and Stop inference, the shared list's Load. No page keeps a
-    lock in a label it draws for an operator."""
+    Change model… and Stop inference, the shared list's Load, Settings' Apply
+    and Restart. No page keeps a lock in a label it draws for an operator."""
     from src.webui.components import diagnosis_card as card
     from src.webui.components import finetune_page as fp
     from src.webui.components import model_list as ml
+    from src.webui.components import runtime_settings as rs
     from src.webui.components import test_page as tp
     from src.webui.components import training_console as tc
 
     labels = [*tc.ACTION_LABELS.values(), fp.START_LABEL, fp.STOP_LABEL,
-              *tp.GATED_LABELS.values(), ml.LOAD_LABEL]
+              *tp.GATED_LABELS.values(), ml.LOAD_LABEL, rs.APPLY_LABEL, rs.RESTART_LABEL]
     assert all("🔒" not in label for label in labels)
     for operator in (True, False):
         state = {"ok": True, "status": {"initialized": False}, "operator": operator,

@@ -2654,8 +2654,8 @@ def stop_question_html(sha256: str) -> str:
 
 #: The Stop inference buttons' own classes: each is shown and hidden by a
 #: class (`view_update`), never by ``visible``.
-_STOP_BTN = ("shep-gated",)
-_STOP_NOW = ("shep-gated",)
+_STOP_BTN = ("shep-dx-stop",)
+_STOP_NOW = ("shep-dx-stop-now",)
 _STOP_KEEP = ("shep-dx-stop-keep",)
 
 

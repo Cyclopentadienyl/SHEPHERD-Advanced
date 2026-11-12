@@ -126,7 +126,7 @@ from src.evaluation.caveats import (
 from src.utils.run_environment import native_identity_text
 from src.webui.components import model_list as ml
 from src.webui.components import renderers as r
-from src.webui.components.chips import D8_SHORT
+from src.webui.components.chips import D8_SHORT, LOCK
 from src.webui.components.help import copy_button, help_button
 from src.webui.components.served_status import read_status, served_checkpoint_sha
 from src.webui.operator_access import operator_access
@@ -188,7 +188,8 @@ D8_CONDITIONS = ("Operator controls need this deployment set to M1, a request on
                  "header.")
 LIST_IS_C3 = ("Listing opens checkpoint files, which SPEC_4 classes as checkpoint inspection "
               "(C3), so the list is served only where the operator controls are (D8).")
-LIST_C3_LINE = "🔒 Checkpoint list: operator controls only (D8 · SPEC_4 C3)"
+#: Shown only for a listing D8 refused, so it leads with the lock (a refusal).
+LIST_C3_LINE = f"{LOCK} Checkpoint list: operator controls only (D8 · SPEC_4 C3)"
 NO_LOAD_HERE = ("No validation figures here: they need the checkpoint files; Load is an "
                 "operator control.")
 RECORDS_MODEL_CHANGED = ("The model in use changed while its recorded results were read; open "

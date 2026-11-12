@@ -406,18 +406,21 @@ def running_child(status: Mapping[str, Any]) -> Optional[str]:
 
 def actions_view(status: Mapping[str, Any], *, access: Any,
                  gpu: Optional[Mapping[str, Any]], confirming: bool) -> Dict[str, Any]:
-    """Start and Stop (interactive or not) and the one reason line, beside
-    Start, as one decision for the tick and after every action, in the states
-    the Training run bar uses (`training_console.run_bar_view`): D8, a training
-    job running or stopping, the GPU slot held elsewhere. Stop stops a running
-    Fine-tune child (and so cancels the queued ones), never another page's
-    job. An enabled Start has no reason beside it: Stop, off then, is in the
-    job panel under the card, whose statuses say that nothing runs."""
+    """Start and Stop (interactive or not) and their reason lines, as one
+    decision for the tick and after every action, in the states the Training
+    run bar uses (`training_console.run_bar_view`): D8, a training job running
+    or stopping, the GPU slot held elsewhere. ``reason`` is beside Start;
+    ``stop_reason`` is beside Stop, which is in the job panel under the card:
+    D8's refusal while it refuses (the lock is never without its reason, the
+    one gated-button rule), else nothing, since the card's statuses say
+    whether a child runs. Stop stops a running Fine-tune child (and so
+    cancels the queued ones), never another page's job. An enabled Start has
+    no reason beside it."""
     s = status.get("status") or "idle"
     child_running = running_child(status) is not None
-    view = {"start": False, "stop": False}
+    view = {"start": False, "stop": False, "stop_reason": ""}
     if not access.allowed:
-        view["reason"] = _why(tc.LOCK_ICON, operator_only(access.condition))
+        view["reason"] = view["stop_reason"] = _why(tc.LOCK_ICON, operator_only(access.condition))
     elif s == "stopping":
         view["reason"] = _why(tc.NO_ICON, "Stopping: the job is ending; Start waits for it.")
     elif child_running:
@@ -436,8 +439,8 @@ def actions_view(status: Mapping[str, Any], *, access: Any,
 
 def _card_view(mode: Optional[Mapping[str, Any]], cache: Optional[Mapping[str, Any]],
                request: Any) -> Tuple[Any, ...]:
-    """The card, Start, Stop, the reason line, the stop question's row and
-    the session's cache, read now for this request. The products are read
+    """The card, Start, Stop, Start's and Stop's reason lines, the stop
+    question's row and the session's cache, read now for this request. The products are read
     for an operator only (they open checkpoints)."""
     cache = dict(cache or {})
     access = operator_access(request)
@@ -455,11 +458,12 @@ def _card_view(mode: Optional[Mapping[str, Any]], cache: Optional[Mapping[str, A
     card = job_card_html(status, operator=access.allowed, products=products, scrub=scrub)
     # Start and Stop by the one gated-button rule (`chips.gated`): no lock
     # while D8 allows this request; disabled with the lock while it refuses
-    # it, beside the reason line.
+    # it, each beside its own reason line.
     return (card, gr.update(**gated(START_LABEL, access.allowed, interactive=view["start"])),
             gr.update(**gated(STOP_LABEL, access.allowed, interactive=view["stop"])),
-            f'<div class="shep-ft-reasons">{view["reason"]}</div>', gr.update(visible=asking),
-            cache)
+            f'<div class="shep-ft-reasons">{view["reason"]}</div>',
+            f'<div class="shep-ft-reasons">{view["stop_reason"]}</div>',
+            gr.update(visible=asking), cache)
 
 
 def _refresh_card(mode, cache, request: gr.Request):
@@ -471,12 +475,12 @@ def _poll(location, mode, cache, request: gr.Request):
     """The shell's slow timer (``queue=False``), while Fine-tune is shown: the
     card and the actions; nothing while another page is shown."""
     if location != PAGE:
-        return (gr.update(),) * 6
+        return (gr.update(),) * 7
     try:
         return _card_view(mode, cache, request)
     except Exception:  # noqa: BLE001 - a tick that raises would stop the page's updates
         logger.exception("The Fine-tune job could not be read")
-        return (gr.update(),) * 6
+        return (gr.update(),) * 7
 
 
 # =============================================================================
@@ -746,6 +750,7 @@ def create_finetune_page(ctx: Any) -> None:
                 with gr.Row(elem_classes=["shep-ft-stop-row"]):
                     stop = gr.Button(STOP_LABEL, variant="secondary", interactive=False,
                                      scale=0, elem_id="ft_stop")
+                    stop_reason = plain_html("", elem_id="ft_stop_reason")
                 with gr.Row(visible=False, elem_id="ft_confirm_row") as confirm_row:
                     stop_text = plain_html("", elem_id="ft_stop_text")
                     stop_confirm = gr.Button("■ Stop training", variant="stop", scale=0,
@@ -756,7 +761,7 @@ def create_finetune_page(ctx: Any) -> None:
     # Wiring
     # =========================================================================
     card_step = {"fn": _refresh_card, "inputs": [mode, cache],
-                 "outputs": [card, start, stop, reason, confirm_row, cache],
+                 "outputs": [card, start, stop, reason, stop_reason, confirm_row, cache],
                  "show_progress": "hidden"}
     bases_step = {"fn": _on_finetune_bases, "inputs": [ws, checkpoint],
                   "outputs": [parents, run_select, checkpoint, bases_note],
@@ -772,7 +777,7 @@ def create_finetune_page(ctx: Any) -> None:
         **card_step).then(**ctx.chip_refresh)
     # The shell's slow timer, a read-only poll without the queue.
     ctx.timer_slow.tick(_poll, inputs=[ctx.location, mode, cache],
-                        outputs=[card, start, stop, reason, confirm_row, cache],
+                        outputs=[card, start, stop, reason, stop_reason, confirm_row, cache],
                         queue=False, show_progress="hidden")
 
     dataset.input(_on_dataset, inputs=[dataset, tasks],
@@ -825,9 +830,9 @@ PAGE_CSS = f"""
 {_PAGE} .shep-ft-base .shep-v {{ overflow-wrap: anywhere; min-width: 0; }}
 {_PAGE} #ft_base:not(:has(.shep-ft-base)), {_PAGE} #ft_tasks_note:not(:has(p)), {_PAGE} #ft_freeze_note:not(:has(p)) {{ display: none !important; }}
 {_PAGE} .shep-ft-why {{ margin: 0; font-size: 14px; color: var(--shep-text-2); }}
-{_PAGE} .shep-ft-start-row {{ align-items: center !important; flex-wrap: wrap !important; gap: 8px 14px !important; }}
+{_PAGE} .shep-ft-start-row, {_PAGE} .shep-ft-stop-row {{ align-items: center !important; flex-wrap: wrap !important; gap: 8px 14px !important; }}
 {_PAGE} .shep-ft-start-row > button, {_PAGE} .shep-ft-stop-row > button {{ flex: none !important; width: auto !important; min-width: max-content !important; padding: 0 14px !important; height: 40px; }}
-{_PAGE} #ft_reason {{ flex: 1 1 240px !important; }}
+{_PAGE} #ft_reason, {_PAGE} #ft_stop_reason {{ flex: 1 1 240px !important; }}
 {_PAGE} .shep-ft-reason {{ display: inline-flex; align-items: flex-start; gap: 6px; font-size: 15px; color: var(--shep-text-2); }}
 {_PAGE} .shep-ft-reason > svg {{ flex: none; margin-top: 3px; }}
 {_PAGE} #ft_notice {{ font-size: 15px; color: var(--shep-amber-800); overflow-wrap: anywhere; }}

@@ -483,12 +483,16 @@ def test_start_and_stop_follow_the_training_run_bars_states():
     # No reason beside an enabled Start (K6 closing smoke: the line beside it
     # spoke of Stop, which is in the job panel; the card says no job runs).
     assert (idle["start"], idle["stop"]) == (True, False) and idle["reason"] == ""
+    assert idle["stop_reason"] == ""
     refused = fp.actions_view({"status": "idle"}, access=_Access(False, "deployment_mode"),
                               gpu=None, confirming=False)
     assert (refused["start"], refused["stop"]) == (False, False)
     assert "Operator controls only" in refused["reason"] and "shep-lock" in refused["reason"]
+    # Stop is in the job panel, apart from Start: refused, it has the reason
+    # beside it too (the lock is never without it, skill §3).
+    assert refused["stop_reason"] == refused["reason"]
     running = fp.actions_view(_status(child), access=_Access(True), gpu=None, confirming=False)
-    assert (running["start"], running["stop"]) == (False, True)
+    assert (running["start"], running["stop"]) == (False, True) and running["stop_reason"] == ""
     asking = fp.actions_view(_status(child), access=_Access(True), gpu=None, confirming=True)
     assert asking["stop"] is False
     other = fp.actions_view({"status": "running"}, access=_Access(True), gpu=None,
@@ -501,6 +505,28 @@ def test_start_and_stop_follow_the_training_run_bars_states():
     held = fp.actions_view({"status": "idle"}, access=_Access(True),
                            gpu={"text": f"GPU job: test run {TAG}"}, confirming=False)
     assert held["start"] is False and "<img" not in held["reason"]
+
+
+def test_start_and_stop_are_labelled_by_the_one_gated_rule(monkeypatch):
+    """`_card_view` labels Start and Stop by `chips.gated` from this
+    request's D8 answer: no lock while allowed; refused, disabled with the
+    lock and D8's short reason beside each (Start's under the form, Stop's
+    in the job panel)."""
+    status = _status(_child("disease", "running", "r"))
+    monkeypatch.setattr(fp.training_manager, "get_status", lambda: status)
+    operator_mode(monkeypatch)
+    card, start, stop, reason, stop_reason, confirm, _cache = fp._card_view({}, {},
+                                                                            gradio_request())
+    assert start["value"] == fp.START_LABEL and "🔒" not in start["value"]
+    assert stop["value"] == fp.STOP_LABEL and stop["interactive"] is True
+    assert "Operator controls only" not in reason + stop_reason
+    monkeypatch.delenv("SHEPHERD_DEPLOYMENT_MODE")
+    card, start, stop, reason, stop_reason, confirm, _cache = fp._card_view({}, {},
+                                                                            gradio_request())
+    assert (start["value"], start["interactive"]) == (f"🔒 {fp.START_LABEL}", False)
+    assert (stop["value"], stop["interactive"]) == (f"🔒 {fp.STOP_LABEL}", False)
+    for line in (reason, stop_reason):
+        assert "Operator controls only: deployment mode not set to M1" in line, line
 
 
 def test_stop_asks_with_the_training_pages_stop_logic(monkeypatch):
@@ -566,7 +592,7 @@ def test_the_page_polls_on_the_slow_timer_without_the_queue_only_when_shown(monk
     assert tick.inputs[0] is ctx.location and tick.show_progress == "hidden"
     monkeypatch.setattr(fp.training_manager, "get_status",
                         lambda: pytest.fail("a tick on another page read the status"))
-    assert fp._poll("training", {}, {}, gradio_request()) == (gr.update(),) * 6
+    assert fp._poll("training", {}, {}, gradio_request()) == (gr.update(),) * 7
     assert not [b for b in demo.blocks.values() if isinstance(b, gr.Timer)
                 and b not in (ctx.timer_fast, ctx.timer_slow)]
 

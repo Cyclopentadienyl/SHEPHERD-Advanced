@@ -54,25 +54,29 @@ def test_selecting_runtime_settings_refreshes_the_restart_lock(monkeypatch):
     apply, button, note, reason = on_select[0].fn(operator_request(monkeypatch))
     assert apply["interactive"] is True and button["interactive"] is False
     assert note["visible"] is True and reason["visible"] is False
+    # Off while training runs, but not refused: no lock (the WebUI skill's §3).
+    assert (apply["value"], button["value"]) == (rs.APPLY_LABEL, rs.RESTART_LABEL)
     monkeypatch.setattr(rs, "is_training_active", lambda: False)
     apply, button, note, reason = on_select[0].fn(operator_request(monkeypatch))
     assert button["interactive"] is True and note["visible"] is False
 
 
-def test_read_only_settings_grey_out_apply_and_restart_with_the_reason(monkeypatch):
-    """The general D8 rule: a control a read-only request cannot use is
-    greyed out with the reason as visible text (each handler still checks its
-    own request)."""
+def test_read_only_settings_lock_apply_and_restart_with_the_reason(monkeypatch):
+    """The one gated-button rule (`chips.gated`, the WebUI skill's §3): a
+    control a read-only request cannot use is disabled with the lock and the
+    visible "Operator controls only: …" reason beside it, in D8's short words
+    (each handler still checks its own request)."""
     import src.webui.components.runtime_settings as rs
     from tests.fixtures.operator_access import gradio_request
 
     monkeypatch.setattr(rs, "is_training_active", lambda: False)
     monkeypatch.delenv("SHEPHERD_DEPLOYMENT_MODE", raising=False)
     apply, button, note, reason = rs._refresh_restart_lock(gradio_request())
-    assert apply["interactive"] is False and button["interactive"] is False
-    assert reason["visible"] is True and "operator controls, off for this request: " in (
-        reason["value"]) and "SHEPHERD_DEPLOYMENT_MODE is not set" in reason["value"]
-    assert reason["value"].startswith('<div class="shep-reason shep-reason-grey">')
+    assert (apply["value"], apply["interactive"]) == (f"🔒 {rs.APPLY_LABEL}", False)
+    assert (button["value"], button["interactive"]) == (f"🔒 {rs.RESTART_LABEL}", False)
+    assert reason["visible"] is True and reason["value"] == (
+        '<div class="shep-reason shep-reason-grey">🔒 Operator controls only: deployment mode '
+        "not set to M1.</div>")
 
 
 def test_the_restart_lock_is_polled_on_the_shells_slow_timer_only_while_shown(monkeypatch):
