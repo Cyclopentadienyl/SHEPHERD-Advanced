@@ -466,9 +466,11 @@ model spec (versioned, self-describing)
   `HeteroGNNLayer` (`src/models/gnn/layers.py`) and its PyG problems are BACKLOG 20 (Edit 2 waits
   for HGT to be chosen (C1), then for its GB10 comparison). *(2026-11-12: this bullet described the
   milestone as porting the heterogeneous GAT, HGT and SAGE together, and said `segment_matmul` had
-  no fp16 or bf16. Observed on the CPU with PyG 2.8.1 and `pyg-lib` 0.8.0, `HGTConv`,
-  `segment_matmul` and `grouped_matmul` ran in bfloat16 under both kernel policies; the GB10 is
-  unobserved, and its two deploy routes carry `pyg-lib` 0.6.0 and 0.8.0.)*
+  no fp16 or bf16. Observed on the CPU with PyG 2.8.1 and `pyg-lib` 0.8.0, `HGTConv` (with bfloat16
+  parameters and inputs), `segment_matmul` and `grouped_matmul` ran in bfloat16 under both kernel
+  policies; under CPU bfloat16 autocast with float32 parameters, as AMP runs it, `HGTConv` ran with
+  no error and returned float32, so the dtype it computes in under autocast is not observed. The
+  GB10 is unobserved, and its two deploy routes carry `pyg-lib` 0.6.0 and 0.8.0.)*
 
 **Cross-species reasoning replaces OrthologGate** (the reviewer's review of the proposal, accepted).
 The requirement stays; the faulty module goes.

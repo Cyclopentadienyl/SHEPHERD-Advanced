@@ -43,11 +43,14 @@
 >   candidate, not presumed the newest; the HGT items here, BACKLOG 20's Edit 2 among them, wait for
 >   that choice.
 > - **HGT's dtype.** "Float32 only" (the table under "Current Architecture", "HGT 的 AMP 不相容問題"
->   and 方案 3) does not hold for the installed build: observed on the CPU with PyG 2.8.1 and
->   `pyg-lib` 0.8.0, `HGTConv`, `segment_matmul` and `grouped_matmul` ran in bfloat16 under both
->   kernel policies (`torch_geometric.backend.use_segment_matmul` on and off; float16 was not tried).
->   The GB10 is unobserved; its two deploy routes carry `pyg-lib` 0.6.0 and 0.8.0. `hgt-lite`
->   (float16 without `segment_matmul`) stays unverified.
+>   and 方案 3) does not hold for the installed build, as far as its `RuntimeError` goes: observed on
+>   the CPU with PyG 2.8.1 and `pyg-lib` 0.8.0, `HGTConv` (with bfloat16 parameters and inputs),
+>   `segment_matmul` and `grouped_matmul` ran in bfloat16 under both kernel policies
+>   (`torch_geometric.backend.use_segment_matmul` on and off; float16 was not tried). Under CPU
+>   bfloat16 autocast with float32 parameters, as AMP runs it, `HGTConv` ran with no error and
+>   returned float32, so the dtype it computes in under autocast is not observed. The GB10 is
+>   unobserved; its two deploy routes carry `pyg-lib` 0.6.0 and 0.8.0. `hgt-lite` (float16 without
+>   `segment_matmul`) stays unverified.
 
 ---
 

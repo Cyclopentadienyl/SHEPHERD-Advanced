@@ -281,9 +281,10 @@ memory. The memory figures are estimates, not measurements.
 | Licence and local dependencies | MIT; in PyG, installed on both deploy routes | MIT; installed | MIT; installed | MIT; in PyG | MIT; adds packages and a C++/CUDA kernel compiled at import |
 | Shared-boundary changes | `ViewShape` to the builder, triples, a declaration, the norm rule per kind, kernel and dtype recorded, `HeteroGNNLayer`'s order protections reused | As HGT | A declaration and an implementation | A new computation declaration and training strategy; positional encodings as a new derived artefact | Representation, head and protocol extensions |
 
-Observed on the CPU (PyG 2.8.1, `pyg-lib` 0.8.0): `HGTConv`, `segment_matmul` and `grouped_matmul` ran in bfloat16 under
-both kernel policies, so the old "fp32 only" note does not hold for this build; the GB10 is unobserved, and its two
-routes carry `pyg-lib` 0.6.0 and 0.8.0. `HGTConv` leaves a type with no incoming edge out of its output.
+Observed on the CPU (PyG 2.8.1, `pyg-lib` 0.8.0): `HGTConv` (with bfloat16 parameters and inputs), `segment_matmul` and
+`grouped_matmul` ran in bfloat16 under both kernel policies, so the old "fp32 only" note's `RuntimeError` does not hold
+for this build; under CPU bfloat16 autocast with float32 parameters `HGTConv` ran and returned float32, so its dtype
+under autocast is not observed. The GB10 is unobserved, and its two routes carry `pyg-lib` 0.6.0 and 0.8.0. `HGTConv` leaves a type with no incoming edge out of its output.
 
 **Recommendation.** HGT first, if the owner opens C1: it exercises exactly the missing typed-metadata boundary, needs no
 new dependency, fits every existing head, and its remaining risks (kernel policy, dtype on the GB10) are bounded and
