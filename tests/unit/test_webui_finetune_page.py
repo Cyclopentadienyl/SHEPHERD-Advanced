@@ -249,6 +249,13 @@ def test_a_frozen_graph_backbone_reaches_the_start_and_the_note_says_what_trains
     fp._on_finetune_start(operator, ws, parents, key, ["disease"], "cpu", "", 5, 33, "none")
     assert started[-1][0].settings == {"num_epochs": 5}
     assert fp.freeze_note_html("none") == ""
+    # Which values leave parts untrained is the recipe's rule, read from it
+    # (`recipe.FROZEN_PARTS`; review of A2: no value of the page's own).
+    from src.config.recipe import FROZEN_PARTS
+
+    assert [value for value in FROZEN_PARTS if fp.freeze_note_html(value)] == [
+        value for value, parts in FROZEN_PARTS.items() if parts] == ["graph_side"]
+    assert fp.freeze_note_html(None) == fp.freeze_note_html("all") == ""
     note = fp.freeze_note_html("graph_side")
     assert note == (f'<p class="shep-ft-why">{fp.FROZEN_NOTE}</p>')
     assert "only the patient encoder and the task head train" in note

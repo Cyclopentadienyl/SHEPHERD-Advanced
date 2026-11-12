@@ -83,7 +83,7 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 import gradio as gr
 
 from src.api.services.training_manager import FinetuneInputs, training_manager
-from src.config.recipe import FINETUNE, FINETUNE_SOURCES
+from src.config.recipe import FINETUNE, FINETUNE_SOURCES, FROZEN_PARTS
 from src.evaluation.caveats import TASK_NAMES, task_list_text
 from src.models.bundle.spec import TASKS
 from src.webui.components import renderers as r
@@ -274,8 +274,10 @@ def freeze_line_html(finetune: Mapping[str, Any]) -> str:
 
 def freeze_note_html(value: Any) -> str:
     """The note under the fields while a Frozen graph backbone is chosen
-    (`FROZEN_NOTE`): what then trains. Empty for any other value."""
-    if value != "graph_side":
+    (`FROZEN_NOTE`): what then trains. Empty for a value that keeps nothing
+    from training (the recipe's rule, `recipe.FROZEN_PARTS`; no value of the
+    page's own)."""
+    if not isinstance(value, str) or not FROZEN_PARTS.get(value):
         return ""
     return f'<p class="shep-ft-why">{r.e(FROZEN_NOTE)}</p>'
 
