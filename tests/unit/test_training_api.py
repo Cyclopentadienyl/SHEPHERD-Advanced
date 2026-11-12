@@ -926,6 +926,127 @@ class TestTheBaseStartThroughTheRunner:
             _nothing_started(manager, popen, ws)
 
 
+
+# ==============================================================================
+# The branch start through the real route and job runner (ops-wiring round, B2)
+# ==============================================================================
+def _sha256(path):
+    import hashlib
+
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+class TestTheBranchStartThroughTheRunner:
+    def test_a_refused_request_reaches_no_service(self, monkeypatch, tmp_path):
+        """Refused by the request itself (422): a field it does not define, a
+        name in settings that is not a training setting, a device the grammar
+        does not take. The service is never called."""
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from src.api.routes.training import router
+
+        class Untouchable:
+            def __getattr__(self, name):
+                pytest.fail(f"a refused request reached the service ({name})")
+
+        monkeypatch.setattr("src.api.routes.training.training_manager", Untouchable())
+        operator_mode(monkeypatch)
+        app = FastAPI()
+        app.include_router(router, prefix="/api/v1")
+        client = TestClient(app, base_url=OPERATOR_BASE_URL)
+        body = {"data_dir": str(tmp_path), "branch_from": "last.pt"}
+        for sent in ({}, {"data_dir": str(tmp_path)}, {**body, "learning_rate": 1e-3},
+                     {**body, "resume_from": "last.pt"}, {**body, "device": "gpu"},
+                     {**body, "settings": {"run_dir": "/elsewhere"}},
+                     {**body, "settings": {"conv_type": "gat"}},
+                     {**body, "settings": {"extend_epochs": 1}}, {**body, "settings": []}):
+            assert client.post("/api/v1/training/branch", json=sent).status_code == 422, sent
+
+    def test_a_same_settings_branch_starts_bound_to_its_parent(self, paused_base, real_client):
+        """``settings`` {} (decision B1): started through the one start, its
+        stage the parent's, no setting written, the process bound to the
+        parent's digest."""
+        import yaml
+
+        ws, parent = paused_base
+        client, popen, manager = real_client
+        resp = client.post("/api/v1/training/branch", json={
+            "data_dir": str(ws), "branch_from": str(parent), "device": "cpu", "settings": {}})
+        assert resp.status_code == 200, resp.text
+        argv = popen.call_args.args[0]
+        assert argv[4:6] == ["--expect-parent-sha256", _sha256(parent)]
+        written = yaml.safe_load(Path(resp.json()["config_path"]).read_text())
+        assert written == {"data_dir": str(ws), "branch_from": str(parent), "device": "cpu",
+                           "run_name": "", "learning_stage": "base",
+                           "run_dir": resp.json()["run_dir"]}
+        assert "/runs/gatv2/" in resp.json()["run_dir"]
+
+    @pytest.mark.parametrize("settings, fragment", [
+        ({"learning_rate": -1.0}, "learning_rate must be"),
+        ({"split_seed": 9}, "keeps every setting of its parent but those on its list"),
+        ({"task_loss_weight": 0.5}, "task_loss_weight is not a setting a base run reads"),
+        ({"num_neighbors": [4]}, "num_neighbors needs 2 numbers"),
+    ])
+    def test_settings_the_runner_refuses_answer_422(self, paused_base, real_client, settings,
+                                                    fragment):
+        ws, parent = paused_base
+        client, popen, manager = real_client
+        resp = client.post("/api/v1/training/branch", json={
+            "data_dir": str(ws), "branch_from": str(parent), "device": "cpu",
+            "settings": settings})
+        assert resp.status_code == 422 and fragment in resp.text, resp.text
+        _nothing_started(manager, popen, ws)
+
+    def test_a_parent_changed_since_it_was_shown_answers_409(self, paused_base, real_client):
+        ws, parent = paused_base
+        client, popen, manager = real_client
+        resp = client.post(f"/api/v1/training/branch?expected_parent_sha256={'0' * 64}", json={
+            "data_dir": str(ws), "branch_from": str(parent), "device": "cpu"})
+        assert resp.status_code == 409, resp.text
+        assert "The checkpoint changed since it was chosen" in resp.text
+        _nothing_started(manager, popen, ws)
+        assert client.post("/api/v1/training/branch?expected_parent_sha256=abc", json={
+            "data_dir": str(ws), "branch_from": str(parent)}).status_code == 422
+
+    def test_the_route_passes_the_settings_and_both_digests_to_the_service(self, monkeypatch):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from src.api.routes import training as training_routes
+
+        seen = []
+        monkeypatch.setattr(training_routes.training_manager, "start_training",
+                            lambda config, **kwargs: seen.append((config, kwargs))
+                            or {"success": True})
+        operator_mode(monkeypatch)
+        app = FastAPI()
+        app.include_router(training_routes.router, prefix="/api/v1")
+        client = TestClient(app, base_url=OPERATOR_BASE_URL)
+        body = {"data_dir": "data/workspaces/x", "branch_from": "runs/a/checkpoints/last.pt",
+                "settings": {"learning_rate": 1e-3}}
+        assert client.post("/api/v1/training/branch", json=body).status_code == 200
+        assert client.post(f"/api/v1/training/branch?expected_parent_sha256={'b' * 64}"
+                           f"&expected_dataset_fingerprint={'d' * 64}",
+                           json={**body, "settings": {}}).status_code == 200
+        assert seen == [
+            ({"data_dir": "data/workspaces/x", "branch_from": "runs/a/checkpoints/last.pt",
+              "device": "auto", "run_name": "", "learning_rate": 1e-3},
+             {"expected_dataset_fingerprint": None, "expected_parent_sha256": None}),
+            ({"data_dir": "data/workspaces/x", "branch_from": "runs/a/checkpoints/last.pt",
+              "device": "auto", "run_name": ""},
+             {"expected_dataset_fingerprint": "d" * 64, "expected_parent_sha256": "b" * 64})]
+
+    def test_the_branch_route_does_not_run_on_the_event_loop(self):
+        """It reads the whole parent checkpoint: a plain `def`, as the
+        Fine-tune start is."""
+        import inspect
+
+        from src.api.routes.training import start_branch
+
+        assert not inspect.iscoroutinefunction(start_branch)
+
+
 def test_the_services_422_does_not_use_the_name_starlette_deprecated(monkeypatch):
     """The route's own 422 (settings the service refuses): Starlette 1.x, which
     Gradio 6.30 brings, renamed 422 after RFC 9110 and warns on the old

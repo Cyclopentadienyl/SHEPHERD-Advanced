@@ -14,14 +14,18 @@ Purpose:
       process's settings)
     - POST /training/finetune: Start one to three finetune children of a base,
       in order (README §1; contract §9.3 hazard 6)
+    - POST /training/branch: Branch a checkpoint: a new run of its stage and
+      task from its weights, with a new optimizer and schedule, changing the
+      settings given (none: a same-settings branch; contract §9.2,
+      ops-wiring round decisions B1, B2)
     - POST /training/stop: Stop the current training run (and cancel the
       queued finetune children)
     - GET  /training/status: Get current training status
     - GET  /training/metrics: Get full metrics history
     - GET  /training/checkpoints: List model checkpoints
 
-    Start, Fine-tune, stop and the checkpoint list (which opens checkpoint
-    files, SPEC_4 C3) are operator controls: each takes D8's one dependency
+    Start, Fine-tune, branch, stop and the checkpoint list (which opens
+    checkpoint files, SPEC_4 C3) are operator controls: each takes D8's one dependency
     (`src/api/operator_access.py`) and is refused before it runs unless D8
     allows the request. Status and metrics stay open.
 
@@ -56,6 +60,19 @@ router = APIRouter()
 # The WebUI keeps its conservative three-choice Radio; see src/config/training_fields.py
 # (field "device", valid_pattern) which this must stay in step with.
 _DEVICE_RE = re.compile(r"^(auto|cpu|mps|cuda(:\d+)?)$")
+
+
+def _checked_device(value: str) -> str:
+    """**The one device check of the start requests** (a base or a
+    continuation, a Fine-tune start, a branch): `value`, or a ValueError (422).
+    fullmatch, not match: Python's ``$`` also matches just before a trailing
+    newline, so ``match()`` would accept "cuda\\n" — not a valid torch device
+    string, and it would then travel into the YAML and the training
+    subprocess before failing."""
+    if not _DEVICE_RE.fullmatch(value):
+        raise ValueError(
+            f"device must be 'auto', 'cpu', 'mps', 'cuda' or 'cuda:N' (got {value!r}).")
+    return value
 
 
 #: The start request's operational fields for which an explicit null means
@@ -196,14 +213,7 @@ class TrainingStartRequest(BaseModel):
     @field_validator("device")
     @classmethod
     def _validate_device(cls, v: str) -> str:
-        # fullmatch, not match: Python's ``$`` also matches just before a trailing newline, so
-        # ``match()`` would accept "cuda\n" — not a valid torch device string, and it would then
-        # travel into the YAML and the training subprocess before failing.
-        if not _DEVICE_RE.fullmatch(v):
-            raise ValueError(
-                f"device must be 'auto', 'cpu', 'mps', 'cuda' or 'cuda:N' (got {v!r})."
-            )
-        return v
+        return _checked_device(v)
 
     @field_validator(*_CHECKED_BY_THE_SPEC, mode="before")
     @classmethod
@@ -263,8 +273,61 @@ class FinetuneStartRequest(BaseModel):
     @field_validator("device")
     @classmethod
     def _validate_device(cls, value: str) -> str:
-        if not _DEVICE_RE.fullmatch(value):
-            raise ValueError(f"device {value!r} is not auto, cpu, mps, cuda or cuda:N")
+        return _checked_device(value)
+
+
+class BranchStartRequest(BaseModel):
+    """A branch start (contract §9.2, BACKLOG 23; ops-wiring round, decisions
+    B1, B2): a new run of a checkpoint's stage and task from its weights,
+    with a new optimizer and schedule, through the job runner's one start
+    (`TrainingManager.start_training` with `branch_from`), which the branch's
+    one preview decides (`preview_branch`, `run_plan.plan_branch`).
+
+    **A thin projection**: the run (`data_dir`, `branch_from`, `device`,
+    `run_name`) and `settings`, the settings to change, each on the closed
+    list of the parent's stage and task (the preview's `changeable`); `{}` is
+    a same-settings branch, every setting its parent's. The parent's stage,
+    task and architecture are its record's. Strict: a field this request
+    does not define is refused (422), and so is a name in `settings` that is
+    not a setting a run states (a run field, a continuation's or a ShepherdGNN
+    setting). What the runner judges of `settings` against the parent (a
+    setting its stage does not read or a branch keeps, a value its field spec
+    does not take, a rule across settings, a hop list its encoder does not
+    take) is refused with 422; a parent it cannot branch, one changed since
+    it was shown, a dataset changed or a busy slot with 409."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    data_dir: str = Field(..., description="Workspace directory")
+    branch_from: str = Field(..., description="The checkpoint to branch: a training-state "
+                                              "checkpoint of a model bundle run")
+    device: str = Field(default="auto", description="Device: auto, cpu, mps, cuda, or cuda:N")
+    run_name: str = Field(default="", max_length=200,
+                          description="Optional run name, part of the allocated directory's name")
+    settings: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="The settings to change, each on the branch list of the parent's stage and "
+                    "task; {} branches with every setting of the parent")
+
+    @field_validator("device")
+    @classmethod
+    def _validate_device(cls, value: str) -> str:
+        return _checked_device(value)
+
+    @field_validator("settings")
+    @classmethod
+    def _only_settings(cls, value: Dict[str, Any]) -> Dict[str, Any]:
+        # A name that is not a setting a run states (`run_plan.RUN_SETTINGS`)
+        # would reach the start as a run field: refused here, never passed on.
+        from src.utils.run_plan import RUN_SETTINGS
+
+        others = sorted(name for name in value if name not in RUN_SETTINGS)
+        if others:
+            one = len(others) == 1
+            raise ValueError(
+                f"settings holds {', '.join(map(repr, others))}, which "
+                f"{'is not a training setting' if one else 'are not training settings'}; a "
+                "branch's run is named by data_dir, branch_from, device and run_name.")
         return value
 
 
@@ -430,6 +493,41 @@ def start_finetune(
     if not result.get("success"):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT,
                             detail=result.get("error", "Failed to start the finetune"))
+    return result
+
+
+@router.post("/training/branch", response_model=Dict[str, Any], dependencies=OPERATOR_ONLY)
+def start_branch(
+    request: BranchStartRequest,
+    expected_dataset_fingerprint: Annotated[Optional[str], Query(
+        pattern=r"^[0-9a-f]{64}$",
+        description="Refuse the start (409) unless the workspace's dataset fingerprint is "
+                    "still this one")] = None,
+    expected_parent_sha256: Annotated[Optional[str], Query(
+        pattern=r"^[0-9a-f]{64}$",
+        description="Refuse the start (409) unless the parent checkpoint still has this "
+                    "SHA-256 (the model fingerprint shown)")] = None,
+) -> Dict[str, Any]:
+    """Branch a checkpoint through the job runner's one start
+    (`TrainingManager.start_training` with `branch_from`; ops-wiring round,
+    decision B2): its preview of the parent decides the branch as the
+    training process does, and the process is bound to that read's digest
+    (`--expect-parent-sha256`), whether or not ``expected_parent_sha256`` is
+    sent; with it, another parent is refused (409) before anything starts.
+    ``settings`` `{}` is a same-settings branch (decision B1). Invalid
+    settings answer 422, any other refusal 409. **A plain `def`**: the start
+    reads the whole parent checkpoint, so FastAPI runs it in its threadpool,
+    never on the event loop the API and the dashboard share."""
+    config = {"data_dir": request.data_dir, "branch_from": request.branch_from,
+              "device": request.device, "run_name": request.run_name, **request.settings}
+    result = training_manager.start_training(
+        config, expected_dataset_fingerprint=expected_dataset_fingerprint,
+        expected_parent_sha256=expected_parent_sha256)
+    if not result.get("success"):
+        raise HTTPException(
+            status_code=(status.HTTP_422_UNPROCESSABLE_CONTENT if result.get("invalid_settings")
+                         else status.HTTP_409_CONFLICT),
+            detail=result.get("error", "Failed to start the branch"))
     return result
 
 

@@ -3631,6 +3631,7 @@ OPERATOR_ROUTES: Tuple[Tuple[str, str, int], ...] = (
     ("POST", "/api/v1/pipeline/config", 422),
     ("POST", "/api/v1/training/start", 422),
     ("POST", "/api/v1/training/finetune", 422),
+    ("POST", "/api/v1/training/branch", 422),
     ("POST", "/api/v1/training/stop", 409),
     ("GET", "/api/v1/training/checkpoints", 200),
     ("GET", "/api/v1/workspaces/{name}/checkpoints", 200),
