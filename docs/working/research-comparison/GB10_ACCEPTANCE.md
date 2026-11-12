@@ -18,8 +18,9 @@ probe's exit status never counts it, and the check must never require it or judg
   §3).
 - **When it ran.** As O9 says: after integration, the external review and RC-R1's recheck (`e17ffe7`..`e60f23e`), with
   the new probes required. Each deploy route was recorded as it was actually verified. Both routes ran, one after the
-  other, in one existing clone with a new environment each: not O9's isolated new clone or the fresh clones of §4 items
-  1–2. The reviewer's frozen operation sheet planned this reuse (the record §1, §3).
+  other, in the reused candidate slot, each with a new environment, data copy and evidence directory: the owner's A/B
+  slot decision, made before the run, which replaces the new clone of O9 and §4 items 1–2 (the record §1). The
+  reviewer's review of the record passed (the record §5).
 
 ## 1. Where the closing check reads them
 
@@ -337,7 +338,9 @@ K8; `src`, `scripts`, `tests`, `configs`, `pyproject.toml` and `uv.lock` are the
 the external review, as O9 says.
 
 1. **A fresh clone at that head**, checked out detached in a directory of its own. The deployment checkout is not
-   touched, and neither is the real workspace: the probe gets a new copy of it.
+   touched, and neither is the real workspace: the probe gets a new copy of it. *As run, by the owner's decision
+   before the run:* the candidate slot is reused for each route in turn, recycled and checked out detached at the
+   head, in place of a fresh clone here and another clone in item 2 (the record §1).
 2. **Each deploy route in its own environment, with its own run and record** (O5 (ii), O9). One route's pass never
    stands for the other's.
    - **The prebuilt release:** `PYG_ARM_STRATEGY=pull ./deploy.sh`. A failed pull stops with its exit (11–15) and its

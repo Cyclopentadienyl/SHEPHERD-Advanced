@@ -9,9 +9,10 @@ environment.**
   `compile/acceptance-check.txt`).
 - A6 read the route each run was meant to verify: "prebuilt release" for all four PyG extensions on pull, "local build"
   for all four on compile. The pull did not fail, and nothing fell back to a build.
-- Both runs used one existing clone, the K8 candidate clone, one after the other. That is not O9's isolated new clone,
-  nor the fresh clones of `../research-comparison/GB10_ACCEPTANCE.md` §4; the reviewer's frozen operation sheet
-  planned this reuse (§1, §3).
+- Both runs used the reused candidate slot, one after the other, each with a new `.venv`, data copy, work directory
+  and evidence directory. That is the owner's A/B slot decision, made before the run, which replaces the new clone of
+  O9 and `../research-comparison/GB10_ACCEPTANCE.md` §4 (§1).
+- The reviewer reviewed this record and passed it, with no P1 or P2 (§5).
 
 This is a functional acceptance, not a measure of model quality, a clinical test or a merge.
 
@@ -41,8 +42,15 @@ Common to both runs:
 - **Run by:** the owner with the reviewer's session, on the homelab GB10, through a staged runner outside the
   repository (`rc-acceptance.sh`, SHA-256 `58844064…897b`) and the reviewer's frozen control bundle (§4). The notes,
   in Chinese and as written, are `acceptance-conclusion.zh.txt` and `version-review.zh.txt`. Where the conclusion says
-  the whole real-data path ran in fp32, the report records precision for R4 only (§2). Where it says each original
-  report equals its copy byte for byte, see §3. The reviewer's review of this record follows.
+  the whole real-data path ran in fp32, the report records precision for R4 only (§2); the reviewer's review of this
+  record adopts that narrower statement (§5).
+- **The slots (the owner's decision, before the run):** to avoid a new repository and a large `.venv` each round, the
+  owner chose to reuse two slots. Slot A, the deployment checkout, is not changed by an acceptance; it stayed at
+  `773dc4a`. Slot B, the K8 candidate clone, is recycled and checked out detached at the tested head. This replaces
+  the new clone of O9 (`../research-comparison/README.md` §3) and `GB10_ACCEPTANCE.md` §4 items 1–2. The reviewer's
+  frozen operation sheet (`本機驗收操作單.txt`, in each archive's `00-init/control_bundle/`) follows it. Both routes
+  ran in slot B, one after the other, each with a new `.venv`, its own data copy, work directory and evidence
+  directory.
 
 | | Pull 01 | Compile 01 |
 |---|---|---|
@@ -101,13 +109,6 @@ are recorded, not judged (`../BACKLOG.md` 64). The probe times show nothing abou
 
 ## 3. What it does not show
 
-- **The new clones O9 and the run sheet asked for.** O9 (`../research-comparison/README.md` §3) asked for an isolated
-  new clone. `GB10_ACCEPTANCE.md` §4 asked for a fresh clone, and for the local build another clone. The reviewer's
-  frozen operation sheet (`本機驗收操作單.txt`, in each archive's `00-init/control_bundle/`) planned instead to reuse
-  the K8 candidate clone: its `clone` stage fetches `e60f23e` there and checks it out detached. Both runs used it, one
-  after the other (§1). Each run had its own new `.venv`, data copy, work directory and evidence directory, and the
-  checkout was detached and clean. The environments were new; the clone was not. The package's conclusion
-  (`acceptance-conclusion.zh.txt` §六) says no new clone is needed for this round's pass.
 - **The deploy layer's failure paths on the GB10:** a failed pull's stop, the `PYG_ARM_ON_PULL_FAILURE=build`
   fallback, a wrong wheel and a mismatched receipt. These four remain software simulation
   (`tests/unit/test_deploy_pyg_route.py`). The Linux index route and `deploy.cmd` are outside both the GB10 run and
@@ -127,11 +128,8 @@ are recorded, not judged (`../BACKLOG.md` 64). The probe times show nothing abou
 - **cuVS:** installed by the deploy scripts but without `cupy`, so not part of the pass. The required Voyager backend
   is checked.
 - **Model quality, capacity, other hardware, an institutional test.**
-- **What the handoff cannot show here.** The package states that each handed-over `probe-report.json` equals its run's
-  `work/k8_report.json` byte for byte, and that each archive's 123 files equal the evidence on the GB10; `work/` stays
-  there. TA-10 read the original (`rc-acceptance.sh`, line 511). The reviewer's replay gave byte-identical outputs
-  (§4), but the package does not say which of the two files it read. The deployment checkout was clean at `773dc4a`
-  when the package was made; the runs' evidence holds no before-and-after record of it.
+- **A continuous audit of the deployment checkout.** Slot A was recorded clean at `773dc4a` before the run and after
+  it (§5), not watched throughout.
 
 The probe's ERROR lines belong to its injected faults (E5, M6, M11.serving, R2), each refused as required. PyTorch's
 build lists `sm_80`–`sm_120` and `compute_120` PTX, not 12.1 natively (A3). That is kept in the record; every CUDA step
@@ -161,14 +159,35 @@ here passed.
   - K8's unmodified checker passed 110 of 110 on the same report. Its output equals K8's `acceptance-check.txt`;
   - 26 cases of the checker (6 expected to pass, 20 to fail) and 6 cases of the clone's recycle guard all came out as
     expected.
-- **The reviewer's replay** of TA-10 on both runs' reports gave `ta10.json` and logs byte-identical to the runs' own.
-  The package does not say whether it read the originals or the handed-over copies (§3).
+- **The reviewer's replay** of TA-10 read each run's handed-over copy, `probe-report.json`, on the GB10, and gave
+  `ta10.json` and logs byte-identical to the runs' own. The runs' TA-10 read the original, `work/k8_report.json`
+  (`rc-acceptance.sh`, line 511).
 
-## 5. Files here
+## 5. The reviewer's review of this record
+
+The reviewer reviewed this record at `d43d812` (2026-11-12) and passed it, with no P1 or P2. It found no product
+change after `e60f23e`, so no hardware run needs repeating. On the GB10 it also checked what the handoff alone could
+not show:
+
+- each committed `probe-report.json` equals both its run's `work/k8_report.json` and the handed-over copy, byte for
+  byte; the 18 files in `SHA256SUMS` equal the local originals;
+- its TA-10 replay read the handed-over copies (`/home/user/rc-acceptance-e60f23e-pull-01/probe-report.json` and
+  `/home/user/rc-acceptance-e60f23e-compile-01/probe-report.json`);
+- slot A was clean at `773dc4a` before the run (the preparation inventory, 2026-11-11), after it (the package's
+  summary, 2026-11-12) and at the review. These are before-and-after records, not a continuous audit.
+
+It accepted the slot reuse as the owner's decision, the narrower precision statement (R4 only), the CUDA claims limited
+to L2, L3, L5, L6 and L7, the missing source identity of the three registry builds, and TA-10's stricter reading as a
+check of the evidence's completeness. It did not rerun the test suite or the GB10 run. Its package,
+`SHEPHERD_RC_GB10_record_review_d43d812_20261112_evidence.zip` (1,183,661 bytes, SHA-256
+`59ca5ee566ebb7e3fee73277f4a376ae8cf2672547f759634385a11f9fe3e9d0`), holds its review, its checks and the two checkout
+records.
+
+## 6. Files here
 
 | File | What it is |
 |---|---|
-| `pull/probe-report.json`, `compile/probe-report.json` | The handed-over copy of each run's report (`work/k8_report.json`), byte for byte as handed over (§3). Neither names a local path |
+| `pull/probe-report.json`, `compile/probe-report.json` | Each run's report (`work/k8_report.json`) as handed over, byte for byte; the reviewer checked it against the original on the GB10 (§5). Neither names a local path |
 | `pull/ta10.json`, `compile/ta10.json` | TA-10's result: 182 checks, each with its value, and the INFO lines |
 | `pull/acceptance-check.txt`, `compile/acceptance-check.txt` | TA-10's console output and the count |
 | `pull/exit.txt`, `pull/exit-both.txt` and the same in `compile/` | The probe's exit status, and the probe's and its `tee`'s |
