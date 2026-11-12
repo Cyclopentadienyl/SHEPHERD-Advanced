@@ -1186,10 +1186,10 @@ routes and `train_model.py` with that root:
 - diagnoses sent by eight clients across `POST /api/v1/pipeline/stop`: each is answered by the
   model or refused (503) with the stopping or stopped reason, every client's diagnosis sent after
   the stop answered is refused, and the stop says released only with nothing in flight and the
-  lock free. Diagnoses run one at a time (in worker threads, under one run lock), so a stop finds
-  one still running only some of the time; W12 loads the child again and stops again (twelve stops at
-  most) until a stop counts at least one accepted diagnosis that finished first, so the stop's
-  wait for it is observed, not assumed. The resources reading then is recorded, not judged;
+  lock free. Diagnoses run one at a time (in worker threads, under one run lock; a diagnosis
+  waiting for it is already accepted, and a stop waits for it too). W12 loads the child again and
+  stops again (twelve stops at most) until a stop counts at least one accepted diagnosis that
+  finished first, so the stop's wait for it is observed, not assumed. The resources reading then is recorded, not judged;
 - a short training then runs to its end, and the child loads again;
 - on CUDA, a reload on the CPU gives the lock back and one on CUDA takes it again.
 
@@ -2792,7 +2792,8 @@ button is only a display, and a direct call, to the API or to a dashboard event 
 HTTP API (`/ui/gradio_api/...`, as `gradio_client` makes one), meets the same check. The
 dashboard's controls call the services in process; they never call the API over HTTP. The
 dashboard's Load (Change model… and Research › Models) runs the API's reload function in
-process, where the API's reload runs, so it waits behind a running diagnosis as before. A
+process, in a worker thread as the API's reload does, so the server keeps answering while it
+builds, and a diagnosis accepted on the served model meanwhile finishes on that model. A
 reload still running after 180 s is no longer shown as failed: the page says "The page stopped
 waiting after 180 s; the server may still finish the reload." with Read again, and "The reload
 finished after the page stopped waiting." if its answer arrives later.

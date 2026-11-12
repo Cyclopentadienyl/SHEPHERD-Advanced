@@ -1573,8 +1573,8 @@ workspaces root（因此有自己的 GPU 鎖），設定裝置，啟動時不設
 - reload 指名一個損壞的 checkpoint 會被拒絕，使用中的模型（以及在 CUDA 上的鎖）維持不變；
 - 八個用戶端在 `POST /api/v1/pipeline/stop` 前後送出診斷：每個診斷不是由該模型回答，就是以
   stopping 或 stopped 的原因被拒絕（503）；每個用戶端在停止回應之後送出的診斷都被拒絕；停止只在沒有
-  請求仍在執行、鎖已釋放時才說 released。診斷一次執行一個（在工作執行緒中，由同一把執行鎖排序），所以停止開始時只有
-  部分時候會遇到仍在執行的診斷；W12 會再次載入子模型並再次停止（最多十二次），直到某次停止算到至少
+  請求仍在執行、鎖已釋放時才說 released。診斷一次執行一個（在工作執行緒中，由同一把執行鎖排序；
+  等待執行鎖的診斷已被接受，停止也會等待它）。W12 會再次載入子模型並再次停止（最多十二次），直到某次停止算到至少
   一個先完成的已接受診斷，因此停止等待它這件事是觀察到的，而不是假設的。當時的資源讀數只記錄、
   不判定；
 - 接著一個短的訓練跑到結束，子模型可以再次載入；
@@ -2899,8 +2899,9 @@ workspace 與 cohort 清單、已記錄的結果，以及系統頁面。
 無法讀取抵達資訊的請求一律拒絕。檢查在後端：反灰的按鈕只是顯示，直接呼叫 API，或透過 Gradio 的
 HTTP API（`/ui/gradio_api/...`，像 `gradio_client` 那樣）直接呼叫儀表板事件，都會遇到同一個檢查。
 儀表板的控制項在行程內呼叫服務，從不透過 HTTP 呼叫 API。儀表板的 Load（Change model… 與
-Research › Models）在行程內執行 API 的 reload 函式，與 API 的 reload 在同一處執行，因此和以前
-一樣會排在正在執行的診斷之後。180 秒後仍在執行的重新載入不再被顯示為失敗：頁面顯示 "The page
+Research › Models）在行程內執行 API 的 reload 函式，與 API 的 reload 一樣在工作執行緒中執行，
+因此建置期間伺服器仍會回應，而在此期間已被接受、使用目前模型的診斷會在該模型上完成。180 秒後
+仍在執行的重新載入不再被顯示為失敗：頁面顯示 "The page
 stopped waiting after 180 s; the server may still finish the reload." 並提供 Read again；若回應
 之後才抵達，則顯示 "The reload finished after the page stopped waiting."。
 
