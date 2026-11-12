@@ -28,6 +28,7 @@ import dataclasses
 import hashlib
 import importlib.util
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -130,6 +131,55 @@ def test_the_serving_phase_passes_and_identifies_what_it_serves(trained, served_
     assert str(trained[0]) not in json.dumps(identity), "the identity carries a path"
     assert probes["E5"].facts == {"served_identity_unchanged": True}
     assert probes["E7"].facts["served_identity_is_the_built_pipelines"] is True
+
+
+def test_the_serving_phase_serves_through_the_lifecycle_and_stops_at_its_end(
+        trained, served_state, monkeypatch):
+    """The ops round's A3b: E4's live model is loaded through the reload
+    route's handler (the lifecycle: on CUDA it holds the GPU lock, here on the
+    CPU it takes none), under the probe's own GPU lock root, never the
+    operator's, and the phase stops what it served at its end, so a later
+    phase's in-process CLIs find that lock free. The operator's root is put
+    back after."""
+    import src.api.routes.pipeline as routes
+
+    probe = _probe()
+    work = trained[0]
+    monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", "/the/operators/root")
+    roots = []
+    real_reload = routes.reload_pipeline
+
+    async def seen(request):
+        roots.append(os.environ.get("SHEPHERD_WORKSPACES_ROOT"))
+        return await real_reload(request)
+
+    monkeypatch.setattr(routes, "reload_pipeline", seen)
+
+    probes = _phase(probe, trained)
+
+    assert {k: p.status for k, p in probes.items()} == dict.fromkeys(E_PROBES, "passed")
+    assert set(roots) == {str(work / probe.PROBE_GPU_LOCK_ROOT)}
+    assert probes["E4"].facts["live_holds_gpu_lock"] is False
+    assert served_state.app_state.pipeline is None, "the phase left a model served"
+    assert served_state.app_state.not_serving.kind == "stopped"
+    assert os.environ["SHEPHERD_WORKSPACES_ROOT"] == "/the/operators/root"
+
+
+def test_a_phase_under_the_probes_own_lock_stops_its_serving_when_it_fails(tmp_path,
+                                                                           monkeypatch):
+    """The stop is in a ``finally``: a phase that fails still gives back what
+    it served, and its own failure is the one raised."""
+    probe = _probe()
+    stopped = []
+    monkeypatch.setattr(probe, "_stop_serving_in_process", lambda: stopped.append(True))
+
+    @probe._under_the_probes_own_gpu_lock
+    def phase(report, work):
+        raise RuntimeError("the phase's own failure")
+
+    with pytest.raises(RuntimeError, match="the phase's own failure"):
+        phase(probe.Report(), tmp_path)
+    assert stopped == [True]
 
 
 def test_e1_fails_when_the_identity_names_another_checkpoint(trained, served_state,

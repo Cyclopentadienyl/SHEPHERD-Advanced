@@ -238,10 +238,14 @@ route.
     M5's probes begin, and state whether a job holds it then. **The earlier
     measurement probes** (M3, M7, M11.measurement, T2, T4, R5, RT2) run
     measure_scorer in this process, which refuses without a configured GPU
-    lock (P2-4), so phases M and R name a lock of the probe's own, under a
+    lock (P2-4), so phases E, M and R name a lock of the probe's own, under a
     workspaces root of its own, `<work>/probe-gpu-lock/`
     (`_probes_own_gpu_lock`); they therefore do not exclude a deployment job
-    that runs meanwhile. The research comparison's probes (L1-L8, below) run
+    that runs meanwhile. E4, T5 and RT3 serve through the service's lifecycle
+    in this process, which holds that lock for a CUDA model, so each of the
+    three phases stops what it served at its end (`run_stop`,
+    `_under_the_probes_own_gpu_lock`) and the next one's in-process CLIs find
+    the lock free. The research comparison's probes (L1-L8, below) run
     under settings of their own the same way (`_rc_demo`), their lock under
     the workspaces root of their own deployment. **The training probes take
     no GPU lock at all**, not even the probe's own (D1, M2, M9, R3, R4,
@@ -1918,11 +1922,60 @@ def phase_training(
 
 
 # =============================================================================
+# The probe's own GPU lock, for the phases that run the formal entry points
+# =============================================================================
+def _under_the_probes_own_gpu_lock(phase: Callable[..., None]) -> Callable[..., None]:
+    """`phase(report, work, ...)` run with the lock under `<work>/probe-gpu-lock/`
+    as the GPU lock in effect (`_probes_own_gpu_lock`), the operator's setting
+    put back after. **What the phase served in this process is stopped at its
+    end** (`_stop_serving_in_process`), so the lock is free when the phase
+    ends: phases E, M and R serve through the lifecycle in this process (E4,
+    T5, RT3), a model on CUDA holds that lock until it is stopped, and the next
+    phase's in-process CLIs (measure_scorer, under the same lock) would
+    otherwise be refused, naming this process's inference."""
+    @functools.wraps(phase)
+    def run(report: Report, work: Path, *args: Any, **kwargs: Any) -> None:
+        with _probes_own_gpu_lock(work):
+            try:
+                phase(report, work, *args, **kwargs)
+            finally:
+                _stop_serving_in_process()
+
+    return run
+
+
+def _stop_serving_in_process() -> None:
+    """The model this process serves, stopped through the one stop
+    (`run_stop`, as Stop inference and POST /api/v1/pipeline/stop call it):
+    the accepted requests finish, then the model and the GPU lock it holds
+    on CUDA are given back. Nothing loaded is nothing to stop. Said on the
+    console when it is not released, never raised: it runs in a ``finally``."""
+    from src.api.routes.pipeline import PipelineStopRequest, run_stop
+
+    try:
+        stopped = run_stop(PipelineStopRequest())
+    except Exception as exc:  # noqa: BLE001 - a finally never hides the phase's own failure
+        print(f"   the probe's in-process serving could not be stopped: {exc}", file=sys.stderr)
+        return
+    if stopped.success and not stopped.released:
+        print(f"   the probe's in-process serving was not released: {stopped.message}",
+              file=sys.stderr)
+    elif not stopped.success and stopped.status.initialized:
+        print(f"   the probe's in-process serving was not stopped: {stopped.message}",
+              file=sys.stderr)
+
+
+# =============================================================================
 # Phase E — serving on this machine, attacked
 # =============================================================================
+@_under_the_probes_own_gpu_lock
 def phase_serving(
     report: Report, work: Path, sound: Path, checkpoint: Path, device: str
 ) -> None:
+    """E1-E8 on D1's disease child. **Under the probe's own GPU lock**
+    (`_under_the_probes_own_gpu_lock`): E4 serves through the lifecycle, which
+    holds the GPU lock for a CUDA model, so the phase names the probe's own,
+    never the deployment's, and stops what it served at its end."""
     print("\nE. Serving, attacked")
     print("   (E5 and E6 provoke refusals; the ERROR lines they log are the "
           "evidence that they worked)")
@@ -2025,11 +2078,23 @@ def phase_serving(
 
         from fastapi.encoders import jsonable_encoder
 
-        import src.api.main as api
         from src.api.routes.pipeline import PipelineReloadRequest, reload_pipeline
 
-        api.publish_pipeline(state["bundle"])
-        facts: Dict[str, Any] = {}
+        # **The live pipeline is served through the lifecycle**, as an operator
+        # loads one: the reload route's handler with D1's child named
+        # explicitly, bound to the digest E1 verified. On CUDA it holds the GPU
+        # lock (the probe's own, `_under_the_probes_own_gpu_lock`) from before
+        # the candidate is read; on the CPU it takes none. A direct publication
+        # is refused for a CUDA model (`publish_pipeline`).
+        live = asyncio.run(reload_pipeline(PipelineReloadRequest(
+            data_dir=str(sound), checkpoint_path=str(checkpoint), task="disease",
+            device=device,
+            expected_checkpoint_sha256=state["bundle"].config["served_identity"]["checkpoint"][
+                "sha256"])))
+        assert live.success, f"the lifecycle did not serve D1's child: {live.message}"
+        assert live.status.holds_gpu_lock is (device == "cuda"), (
+            f"serving on {device} says it holds the GPU lock: {live.status.holds_gpu_lock}")
+        facts: Dict[str, Any] = {"live_holds_gpu_lock": live.status.holds_gpu_lock}
         parameters = sum(
             p.numel() for p in state["bundle"].pipeline.model.parameters()
         )
@@ -7251,7 +7316,9 @@ def _served_readings(report: Report, work: Path, sound: Path, checkpoint: Path,
     started as the launcher starts it (`_ProbeServer`) with the pipeline
     configured at startup (`SHEPHERD_KG_PATH`, `SHEPHERD_DATA_DIR`,
     `SHEPHERD_CHECKPOINT_PATH`, `SHEPHERD_DEVICE`), its files under
-    <work>/served-readings. Readiness is asserted before anything counts:
+    <work>/served-readings, and a workspaces root of its own there
+    (`SHEPHERD_WORKSPACES_ROOT`), so its CUDA start-up load holds a GPU lock
+    of its own (the ops round's I2). Readiness is asserted before anything counts:
     /ready answers 200 and the status's served identity names the child, the
     workspace and its dataset record by the digests this probe read, the
     disease task and the device asked for, in effect (`_assert_served_identity`).
@@ -7275,11 +7342,16 @@ def _served_readings(report: Report, work: Path, sound: Path, checkpoint: Path,
         _, _, reads, record = verify_workspace(sound)
         query, asked = _workspace_query(checkpoint, sound, reads)
         checkpoint_sha256 = _read_run_checkpoint(checkpoint)["sha256"]
+        # **A workspaces root of its own**, so a GPU lock of its own: a CUDA
+        # start-up load holds the lock it names and is refused without one.
+        root = work / "served-readings" / "workspaces"
+        root.mkdir(parents=True, exist_ok=True)
         server = _ProbeServer(SERVED_READINGS_PROBE, work / "served-readings", {
             "SHEPHERD_KG_PATH": str(sound / GRAPH_ARTIFACTS["kg"]),
             "SHEPHERD_DATA_DIR": str(sound),
             "SHEPHERD_CHECKPOINT_PATH": str(checkpoint),
             "SHEPHERD_DEVICE": device,
+            "SHEPHERD_WORKSPACES_ROOT": str(root),
         })
         try:
             server.start()
@@ -7331,18 +7403,6 @@ def _served_readings(report: Report, work: Path, sound: Path, checkpoint: Path,
                "M1's served readings of D1's disease child: cold start, warm-up and "
                "steady-state request times and the server's memory (informational: never "
                "required, never judged, outside the exit status)", _read)
-
-
-def _under_the_probes_own_gpu_lock(phase: Callable[..., None]) -> Callable[..., None]:
-    """`phase(report, work, ...)` run with the lock under `<work>/probe-gpu-lock/`
-    as the GPU lock in effect (`_probes_own_gpu_lock`), the operator's setting
-    put back after."""
-    @functools.wraps(phase)
-    def run(report: Report, work: Path, *args: Any, **kwargs: Any) -> None:
-        with _probes_own_gpu_lock(work):
-            phase(report, work, *args, **kwargs)
-
-    return run
 
 
 @_under_the_probes_own_gpu_lock

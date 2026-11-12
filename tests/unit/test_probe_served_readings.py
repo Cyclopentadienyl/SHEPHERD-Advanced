@@ -417,6 +417,33 @@ def test_a_service_that_never_answers_health_has_no_cold_start_figure(trained, t
     assert service.sent == []
 
 
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
+def test_s1_s_service_names_a_workspaces_root_of_its_own(trained, tmp_path, monkeypatch,
+                                                         device):
+    """The ops round's A3b: a CUDA start-up load holds the GPU lock its root
+    names (I2) and is refused with none, so S1's service is started with a
+    root of its own under its directory, an existing empty one, never the
+    operator's or another probe's."""
+    probe = _probe()
+    sound, checkpoint = trained
+    started = []
+    service = _ScriptedService(health=AssertionError("not asked to serve here"))
+    _no_request(monkeypatch, probe)
+    monkeypatch.setattr(probe, "_ProbeServer",
+                        lambda name, directory, settings: started.append(
+                            (directory, dict(settings))) or service)
+    monkeypatch.setattr(probe, "_assert_served_identity", lambda identity, **_: identity)
+    monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(tmp_path / "the-operators"))
+
+    probe._served_readings(probe.Report(), tmp_path, sound, checkpoint, device)
+
+    ((directory, settings),) = started
+    root = Path(settings["SHEPHERD_WORKSPACES_ROOT"])
+    assert root == tmp_path / "served-readings" / "workspaces" and root.parent == directory
+    assert root.is_dir() and not any(root.iterdir())
+    assert settings["SHEPHERD_DEVICE"] == device
+
+
 def test_a_phase_with_nothing_counted_has_no_summary_figure():
     probe = _probe()
     assert probe._seconds_summary([]) == {"state": "not_obtainable",
