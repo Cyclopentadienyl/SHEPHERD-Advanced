@@ -120,12 +120,11 @@ _VALIDATION_NOTE = "selection metric on val, not an independent test"
 #: ``max``.
 SELECTION_DIRECTIONS = {"max": "higher is better", "min": "lower is better"}
 
-_CHECK = ('<svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true" focusable="false">'
-          '<path d="M3.2 8.6l3 3 6.6-7.4" fill="none" stroke="currentColor" stroke-width="2.2" '
-          'stroke-linecap="round" stroke-linejoin="round"/></svg>')
 #: The dashboard's check mark (an inline svg that stays on its line), for a
 #: page's own "✓ …" (M5-3 review ARCH-4: pages used the private name).
-CHECK = _CHECK
+CHECK = ('<svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true" focusable="false">'
+         '<path d="M3.2 8.6l3 3 6.6-7.4" fill="none" stroke="currentColor" stroke-width="2.2" '
+         'stroke-linecap="round" stroke-linejoin="round"/></svg>')
 
 # ---------------------------------------------------------------------------
 # State words and status marks (the WebUI skill's §6)
@@ -457,14 +456,12 @@ def record_words(item: Any) -> Tuple[str, str]:
 
 
 def record_chip(item: Any) -> str:
-    """"✓ record verified" (the dataset record checked), else the record's
-    own state as a chip (`record_words`): "record not recorded" apart from
+    """A workspace's dataset record as a chip by the one status mark
+    (`status_mark`, `record_words`): "● record verified" (the dataset record
+    checked), else the record's own state, "record not recorded" apart from
     "record cannot be verified", "record does not match" and "record
     unknown"."""
-    kind, words = record_words(item)
-    if kind == "ok":
-        return f'<span class="shep-tag shep-tag-ok">{_CHECK} {e(words)}</span>'
-    return status_mark(kind, words, as_chip=True)
+    return status_mark(*record_words(item), as_chip=True)
 
 
 def count_text(value: Any) -> str:

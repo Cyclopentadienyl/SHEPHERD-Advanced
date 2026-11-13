@@ -764,6 +764,12 @@ def test_each_missing_state_has_its_own_word_and_a_dash_never_stands_for_not_rec
                       None: ("neutral", "record unknown")}
     assert r.record_chip(workspace(binding="unrecorded")) == r.status_mark(
         "neutral", "record not recorded", as_chip=True)
+    # Verified is the shared OK mark too (the WebUI skill's §6; review of the
+    # ops-wiring round's B3: it was the old "✓" svg chip beside "● Bound to
+    # this graph" on the Test page's Data panel and Models' workspace line).
+    verified = r.record_chip(workspace(binding="verified"))
+    assert verified == r.status_mark("ok", "record verified", as_chip=True)
+    assert r.CHECK not in verified and r.CHECK not in r.dataset_identity_html(workspace())
 
 
 # --------------------------------------------------------------------------- shared details
