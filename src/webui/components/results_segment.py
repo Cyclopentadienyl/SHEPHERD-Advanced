@@ -1160,11 +1160,13 @@ def _hidden_note(alike: int, unknown: int) -> str:
 #: scrollbar: a bar of the table's width that scrolls with it, under a line
 #: saying so, shown only while the table is wider than the panel
 #: (`COMPARE_JS` sizes and syncs it; hidden until then, so a table that fits
-#: shows none). Hidden from a screen reader: the table itself scrolls by
-#: keyboard and pointer.
+#: shows none). Hidden from a screen reader and out of the Tab order (a
+#: browser makes a scrolling box with nothing focusable in it a Tab stop of
+#: its own): the table itself scrolls by keyboard and pointer.
 SCROLL_CUE = ('<div class="shep-rs-cue" hidden aria-hidden="true"><span class="shep-sub">'
               'Wider than the panel: scroll sideways; the Field column stays.</span>'
-              '<div class="shep-rs-top"><div class="shep-rs-top-w"></div></div></div>')
+              '<div class="shep-rs-top" tabindex="-1"><div class="shep-rs-top-w"></div></div>'
+              '</div>')
 #: Keeps the cue's bar the table's width and both scrolled together, whatever
 #: Compare draws next (event delegation on the component, `js_on_load`).
 COMPARE_JS = r"""

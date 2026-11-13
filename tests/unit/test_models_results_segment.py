@@ -1257,6 +1257,9 @@ def test_compare_keeps_numbers_and_run_ids_whole_and_scrolls_inside_its_wrapper(
     # and syncs its bar), and given to the compare component.
     assert markup.index(rs.SCROLL_CUE) < markup.index('<div class="shep-tbl-wrap shep-rs-wrap">')
     assert '<div class="shep-rs-cue" hidden aria-hidden="true">' in rs.SCROLL_CUE
+    # Its bar is out of the Tab order: the browser check found the bare
+    # scrolling bar a Tab stop of its own, a 1 px focus inside aria-hidden.
+    assert '<div class="shep-rs-top" tabindex="-1">' in rs.SCROLL_CUE
     for part in (".shep-rs-wrap", ".shep-rs-top", "scrollWidth", "scrollLeft",
                  "cue.hidden = !wider", "ResizeObserver", "MutationObserver"):
         assert part in rs.COMPARE_JS, part
