@@ -124,7 +124,7 @@ def test_the_page_is_the_run_bar_the_parameters_the_drawer_and_the_run_view():
                     "shep-train-continue", "shep-train-stop", "shep-train-resume",
                     "shep-train-cancel", "shep-train-stop-confirm", "shep-train-stop-keep",
                     "shep-train-banner", "shep-train-params", "shep-train-drawer",
-                    "shep-train-runview", "shep-train-run-head", "shep-train-run-snap",
+                    "shep-train-runview", "shep-train-run-head", "shep-train-view-run",
                     "shep-train-charts", "resource_display"):
         assert elem_id in by_id, elem_id
     # What M5-2 retired: the Data Paths section, the Epoch Window, the native plots.
@@ -266,7 +266,7 @@ def test_a_tick_while_another_page_is_shown_reads_nothing(monkeypatch):
                         lambda: pytest.fail("a tick on another page read the status"))
     monkeypatch.setattr(tc.training_manager, "get_system_resources",
                         lambda: pytest.fail("a tick on another page read the resources"))
-    out = tc._poll("clinical", {}, {}, {}, [], {}, gradio_request())
+    out = tc._poll("clinical", {}, {}, {}, [], {}, {}, gradio_request())
     assert len(out) == len(tc.POLL_KEYS) + 3 and all(u == gr.update() for u in out)
     assert tc._poll_resources("datasets") == gr.update()
 
@@ -337,7 +337,7 @@ def test_the_select_names_the_servers_workspaces_and_leaves_their_identity_to_th
     assert any(label != name for label, name in state["choices"])      # a reason kept
     assert "dataset fingerprint" in tc.chip_html(state)
     assert state["name"] == "demo" and r.is_digest(state["row"]["dataset_fingerprint"])
-    assert state["latest_run"] == "gatv2/20261018-142000_run_d41f8b"
+    assert state["runs"] == ["gatv2/20261018-142000_run_d41f8b"]
     assert tc.workspace_state("not-listed")["row"] is None
 
 
@@ -757,7 +757,7 @@ def test_the_chart_token_counts_rows_again_only_when_the_log_changed(root, monke
     log = run["path"] / "logs" / "train_20261018_142000.json"
     log.write_text(json.dumps(_metrics(7)))
     assert tc._chart_token(run, cache)["rev"] == 14 and len(reads) == 2
-    assert tc._chart_token(None, cache) == {"run": None, "rev": 0, "empty": "No run to show yet."}
+    assert tc._chart_token(None, cache) == {"run": None, "rev": 0, "empty": tc.NO_RUN_YET}
 
 
 def test_the_used_dataset_fingerprint_is_an_operators_and_compared_in_full():
@@ -794,7 +794,7 @@ def test_the_used_dataset_fingerprint_is_an_operators_and_compared_in_full():
 
 def test_the_snapshot_sentence_names_no_path_to_a_read_only_request(root):
     run = tc.RunRef(id="demo/gatv2/r", label="gatv2/r", path=root / "demo" / "runs" / "gatv2" / "r",
-                    workspace="demo", latest=False)
+                    workspace="demo", job=True, latest=False)
     (run["path"] / "checkpoints").mkdir(parents=True)       # a run that saved its last.pt
     snapshot = {"checkpoint": str(run["path"] / "checkpoints" / "last.pt"), "readable": True,
                 "completed_epochs": 60, "target_epochs": 60, "end": "finished"}
@@ -848,7 +848,7 @@ def _rendered(**pieces):
     base.update(dataset=((("a", "a"),), "a", True), start=_action("start", True),
                 cont=_action("cont", True), stop=_action("stop", False),
                 resume=_action("resume", False), runbar=("shep-runbar",), page=("shep-page",),
-                run_name=True,
+                run_name=True, view=((("r", "a/gatv2/r"),), "a/gatv2/r"),
                 charts={"run": None, "rev": 0}, ws={"name": "a"}, training_workspace="a")
     base.update(pieces)
     return {"pieces": base, "cache": {}, "ws_changed": False}
@@ -894,14 +894,14 @@ def test_a_tick_writes_only_the_pill_and_hands_every_other_change_over(
     assert not {by_id[k] for k in ("shep-train-dataset", "shep-train-chip", "shep-train-start",
                                    "shep-train-charts", "shep-train-run-head")} & set(poll.outputs)
     ws = tc.workspace_state("demo")
-    cache = tc._render_view(ws, {}, {}, [], operator)[-1]
-    pill, handoff, _chips, polled = tc._poll(shell.TRAINING, ws, {}, cache, [], {}, operator)
+    cache = tc._render_view(ws, {}, {}, [], {}, operator)[-1]
+    pill, handoff, _chips, polled = tc._poll(shell.TRAINING, ws, {}, cache, [], {}, {}, operator)
     assert pill.startswith('<div class="shep-pill') and handoff == gr.update()
-    again = tc._poll(shell.TRAINING, ws, {}, cache, [], polled, operator)
+    again = tc._poll(shell.TRAINING, ws, {}, cache, [], {}, polled, operator)
     assert again[0] == pill and again[1] == gr.update()       # the pill on every tick
     log = root / "demo" / "runs" / "gatv2" / "20261018-142000_run_d41f8b" / "logs" / "train_20261018_142000.json"
     log.write_text(json.dumps(_metrics(7)))                    # a new epoch, nobody acted
-    _pill, handoff, _chips, _polled = tc._poll(shell.TRAINING, ws, {}, cache, [], polled, operator)
+    _pill, handoff, _chips, _polled = tc._poll(shell.TRAINING, ws, {}, cache, [], {}, polled, operator)
     assert handoff["changed"] == ["charts"]
 
 
@@ -912,15 +912,15 @@ def test_the_handed_over_render_sends_what_changed_and_everything_every_few(
     sends everything and starts the count again."""
     monkeypatch.setattr(tc, "_get_pyg_warning", lambda: None)
     ws = tc.workspace_state("demo")
-    cache = tc._render_view(ws, {}, {}, [], operator)[-1]
+    cache = tc._render_view(ws, {}, {}, [], {}, operator)[-1]
     sent_whole = []
     for _ in range(tc.FULL_SEND_TICKS * 2):
-        out = tc._render_changed(ws, {}, cache, [], {}, operator)
+        out = tc._render_changed(ws, {}, cache, [], {}, {}, operator)
         cache = out[-1]
         sent_whole.append(dict(zip(tc.VIEW_KEYS, out[:-1], strict=True))["chip"] != gr.update())
     assert [i + 1 for i, whole in enumerate(sent_whole) if whole] == [
         tc.FULL_SEND_TICKS, tc.FULL_SEND_TICKS * 2]
-    cache = tc._render_view(ws, {}, cache, [], operator)[-1]
+    cache = tc._render_view(ws, {}, cache, [], {}, operator)[-1]
     assert cache["handed"] == 0
 
 
@@ -944,15 +944,15 @@ def test_the_header_chips_follow_the_gpu_slot_on_the_tick_that_sees_it_change(
     poll_fn = next(fn for fn in demo.fns.values() if fn.fn is tc._poll)
     assert poll_fn.outputs[2] is ctx.chips
     ws = tc.workspace_state("demo")
-    first = tc._poll(shell.TRAINING, ws, {}, {}, [], {}, operator)
+    first = tc._poll(shell.TRAINING, ws, {}, {}, [], {}, {}, operator)
     assert first[2] == "<chips>" and len(read) == 1         # nothing seen before: read
-    same = tc._poll(shell.TRAINING, ws, {}, {}, [], first[-1], operator)
+    same = tc._poll(shell.TRAINING, ws, {}, {}, [], {}, first[-1], operator)
     assert same[2] == gr.update() and len(read) == 1         # unchanged: nothing sent
     status["gpu"] = {"job": {"job_type": "test", "status": "running",
                              "start_time": "2026-10-21T18:25:13"}}
-    started = tc._poll(shell.TRAINING, ws, {}, {}, [], same[-1], operator)
+    started = tc._poll(shell.TRAINING, ws, {}, {}, [], {}, same[-1], operator)
     assert started[2] == "<chips>" and len(read) == 2        # a test run took the slot
-    later = tc._poll(shell.TRAINING, ws, {}, {}, [], started[-1], operator)
+    later = tc._poll(shell.TRAINING, ws, {}, {}, [], {}, started[-1], operator)
     assert later[2] == gr.update() and len(read) == 2        # its elapsed time is no change
 
 
@@ -1084,7 +1084,7 @@ def test_every_write_of_the_run_bars_workspace_is_in_one_queued_group_of_one():
     drawn = {by_id[elem_id] for elem_id in (
         "shep-train-dataset", "shep-train-chip", "shep-train-reason", "shep-train-start",
         "shep-train-continue", "shep-train-stop", "shep-train-resume", "shep-train-runbar",
-        "shep-train-page", "shep-train-run-head", "shep-train-run-snap", "shep-train-charts",
+        "shep-train-page", "shep-train-run-head", "shep-train-view-run", "shep-train-charts",
         "shep-train-drawer-why")}
     cache = poll.inputs[3]
     projection = [fn for fn in demo.fns.values() if (drawn | {cache}) & set(fn.outputs)]
@@ -1120,23 +1120,23 @@ def test_the_poll_hands_a_running_jobs_workspace_over_and_writes_no_selection(
     render writes no selection."""
     job = _job_in_resampled(root, monkeypatch)
     ws = tc.workspace_state("demo")
-    cache = tc._render_view(ws, {}, {}, [], operator)[-1]
+    cache = tc._render_view(ws, {}, {}, [], {}, operator)[-1]
     job.status = dict(RUNNING)
-    out = tc._poll(shell.TRAINING, ws, {}, cache, [], {}, operator)
+    out = tc._poll(shell.TRAINING, ws, {}, cache, [], {}, {}, operator)
     assert len(out) == len(tc.POLL_KEYS) + 3 and "ws" not in tc.POLL_KEYS
     assert "training_workspace" not in tc.POLL_KEYS
     handoff = out[1]
     assert "ws" in handoff["changed"] and "dataset" in handoff["changed"]
-    again = tc._poll(shell.TRAINING, ws, {}, cache, [], out[-1], operator)
+    again = tc._poll(shell.TRAINING, ws, {}, cache, [], {}, out[-1], operator)
     assert again[1]["at"] != handoff["at"], "each hand-off is a new value"
-    view = dict(zip(tc.VIEW_KEYS, tc._render_changed(ws, {}, cache, [], out[-1], operator)[:-1],
+    view = dict(zip(tc.VIEW_KEYS, tc._render_changed(ws, {}, cache, [], {}, out[-1], operator)[:-1],
                     strict=True))
     assert view["ws"]["name"] == "resampled" == view["training_workspace"]
     job.status = dict(ENDED)
-    rendered = tc._render_view(ws, {}, {}, [], operator)
+    rendered = tc._render_view(ws, {}, {}, [], {}, operator)
     view = dict(zip(tc.VIEW_KEYS, rendered[:-1], strict=True))
     assert view["ws"] == gr.update() and view["training_workspace"] == gr.update()
-    assert tc._poll(shell.TRAINING, ws, {}, rendered[-1], [], {}, operator)[1] == gr.update()
+    assert tc._poll(shell.TRAINING, ws, {}, rendered[-1], [], {}, {}, operator)[1] == gr.update()
 
 
 def test_a_late_tick_never_writes_back_the_workspace_it_started_from(root, monkeypatch):
@@ -1164,7 +1164,7 @@ def test_a_late_tick_never_writes_back_the_workspace_it_started_from(root, monke
     with served(demo) as base:
         browser = ServedSession(base, demo)
         assert browser.wait(browser.join(opened, [None, None]))
-        assert browser.wait(browser.join(_after(demo, opened, "_render_view"), [None] * 4))
+        assert browser.wait(browser.join(_after(demo, opened, "_render_view"), [None] * 5))
         assert browser.wait(browser.join(choose, ["demo", None]))
         assert browser.state(ws)["name"] == "demo"
         browser.set_state(ctx.location, shell.TRAINING)
@@ -1187,7 +1187,7 @@ def test_a_late_tick_never_writes_back_the_workspace_it_started_from(root, monke
         assert browser.wait(browser.join(use, [None, None]))
         assert browser.state(ctx.training_workspace) == "other"
         assert browser.wait(browser.join(from_datasets, [None, None, None]))
-        assert browser.wait(browser.join(_after(demo, from_datasets, "_render_view"), [None] * 4))
+        assert browser.wait(browser.join(_after(demo, from_datasets, "_render_view"), [None] * 5))
         assert browser.state(ws)["name"] == "other"
         job.release.set()
         ticking.join(30)
@@ -1251,7 +1251,7 @@ def test_a_workspace_chosen_while_a_render_waits_is_applied_after_it(root, monke
         assert browser.wait(render, chosen)
         # The change of the session's workspace that the choice's answer makes.
         assert browser.wait(browser.join(from_datasets, [None, None, None]))
-        assert browser.wait(browser.join(_after(demo, from_datasets, "_render_view"), [None] * 4))
+        assert browser.wait(browser.join(_after(demo, from_datasets, "_render_view"), [None] * 5))
         browser.close()
         assert browser.state(ctx.training_workspace) == "other"
         assert browser.state(ws)["name"] == "other", \
@@ -1530,7 +1530,7 @@ def test_a_read_only_request_sees_every_action_disabled_and_no_checkpoint(root, 
         assert pieces[key] == {"value": f"🔒 {label}", "interactive": False}, key
     assert "Operator controls only: deployment mode not set to M1" in pieces["reason"]
     assert "dataset not shown · operator control" in pieces["head"]
-    assert "last.pt" not in pieces["snap"] and "runs/" not in pieces["snap"]
+    assert "runs/" not in pieces["head"]
     assert "last.pt" not in pieces["head"]
 
 
@@ -1644,12 +1644,13 @@ def test_a_run_with_no_run_directory_is_not_called_no_longer_listed(root):
     """M5-3: the run view said "This run is no longer listed" of a run that
     never made its directory (refused before it made its run directory)."""
     run = tc.RunRef(id="demo/gatv2/never", label="gatv2/never",
-                    path=root / "demo" / "runs" / "gatv2" / "never", workspace="demo", latest=False)
+                    path=root / "demo" / "runs" / "gatv2" / "never", workspace="demo", job=True,
+                    latest=False)
     ended = tc._chart_token(run, {}, live=False)
     assert ended == {"run": None, "rev": 0, "empty": tc.NO_RUN_DIR_ENDED}
     assert "no longer listed" not in tc.NO_RUN_DIR_ENDED and "no run directory" in tc.NO_RUN_DIR_ENDED
     assert tc._chart_token(run, {}, live=True) == {"run": None, "rev": 0,
-                                                   "empty": tc.NO_RUN_DIR_LIVE}
+                                                   "empty": tc.WAITING_FOR_EPOCH}
     failed = {"status": "failed"}
     for operator in (True, False):
         snap = tc.run_snapshot_html(run, failed, operator=operator, snapshot=None)
@@ -1658,7 +1659,7 @@ def test_a_run_with_no_run_directory_is_not_called_no_longer_listed(root):
     # Running before the run made its directory: no logs pointed to yet, and
     # the header's Details says no checkpoint is written yet.
     live = tc.run_snapshot_html(run, {"status": "running"}, operator=True, snapshot=None)
-    assert live == '<p class="shep-rv-snap">Running</p>'
+    assert live == '<span class="shep-rv-snap">Running</span>'
     head = tc.run_head_html(run, {}, operator=True, snapshot=None, live=True)
     assert "Newest checkpoint" in head and "none written yet" in head
 
@@ -1671,7 +1672,7 @@ def test_an_ended_run_with_no_checkpoint_is_headed_as_its_snapshot_says(root, mo
     directory) or "No checkpoint was saved…" (a directory, no last.pt)."""
     ws = {"row": {"dataset_fingerprint": "a" * 64}, "digits": 12}
     run = tc.RunRef(id="demo/gatv2/r", label="gatv2/r", path=root / "demo" / "runs" / "gatv2" / "r",
-                    workspace="demo", latest=False)
+                    workspace="demo", job=True, latest=False)
     ended = tc.run_head_html(run, ws, operator=True, snapshot=None)
     assert "dataset not recorded (no checkpoint)" in ended
     assert "first checkpoint" not in ended
@@ -1703,8 +1704,8 @@ def test_an_ended_run_with_no_checkpoint_is_headed_as_its_snapshot_says(root, mo
                 assert "none written yet" in pieces["head"]          # its Details
             else:
                 assert "dataset not recorded (no checkpoint)" in pieces["head"]
-                assert ("it has no checkpoint" in pieces["snap"] if not made
-                        else "No checkpoint saved, so nothing can be continued" in pieces["snap"])
+                assert ("it has no checkpoint" in pieces["head"] if not made
+                        else "No checkpoint saved, so nothing can be continued" in pieces["head"])
 
 
 def test_a_read_only_banner_keeps_the_tails_indentation(root, monkeypatch):
@@ -1996,11 +1997,11 @@ def test_the_run_view_lists_the_workspaces_runs_again_while_the_page_stays_open(
     later = time.time() + 5
     os.utime(new / "checkpoints" / "model-1-0.0100.pt", (later, later))
     listings = []
-    original = tc._latest_run
-    monkeypatch.setattr(tc, "_latest_run", lambda d: listings.append(d) or original(d))
+    original = tc._listed_runs
+    monkeypatch.setattr(tc, "_listed_runs", lambda d: listings.append(d) or original(d))
     assert tc._current_run({"status": "idle"}, ws, cache)["id"] == old["id"]   # within the interval
     assert listings == []
-    cache["latest"][1] -= tc.LATEST_READ_SECONDS                                 # the interval passed
+    cache["runs"][1] -= tc.LATEST_READ_SECONDS                                 # the interval passed
     run = tc._current_run({"status": "idle"}, ws, cache)
     assert run["id"] == "demo/gatv2/20261021-150000_run_dddddd" and run["latest"] is True
     assert len(listings) == 1
@@ -2396,7 +2397,7 @@ def test_the_page_styles_hold_the_reviewed_layout():
     assert ".shep-banner-tail {{ max-height: none; overflow: visible; }}".replace(
         "{{", "{").replace("}}", "}") in narrow
     wide = css[css.index("@media (min-width: 1400px) and (min-height: 760px)"):]
-    assert "#shep-train-runview > #shep-train-charts { flex: 1 1 0 !important; min-height: 0 !important; overflow-y: auto !important;" in wide
+    assert "#shep-train-runview > #shep-train-charts { flex: 1 1 0 !important; min-height: 0 !important; overflow: hidden !important;" in wide
     # A failed run's banner takes height: the plots keep their minimum then too
     # (M5-3: one minimum per plot box replaced the charts' 240/370 px).
     assert "min-height: 370px" not in wide and "min-height: 240px" not in wide
@@ -2487,11 +2488,15 @@ def test_the_plots_keep_a_usable_minimum_and_the_resources_line_its_own_row():
     """M5-3: at 1536 x 760 the plots were 70 to 100 px tall; each plot box keeps
     room for a plot area of PLOT_MIN_HEIGHT px. The GB10 WebUI recheck: the
     resources line, kept over the scrolling plots (sticky), hid the last axis
-    and its label. The run view is now three rows, and only the charts' row
+    and its label. The run view is now three rows, and only the plots' body
     scrolls when their minimum does not fit: the header and the resources
-    line are rows of their own, nothing is drawn over an axis, and no axis
-    label is hidden to make room."""
-    assert tc.PLOT_MIN_HEIGHT >= 140
+    line are rows of their own, the chart toolbar a row of its own above the
+    body (B1b: it was sticky over the top row's titles and plots once
+    scrolled), nothing is drawn over an axis, and no drawn chart's axis label
+    is hidden to make room (an empty chart's goes with its plot: BACKLOG 69).
+    The floor was raised from 140 with the room B1b took back (measured in a
+    browser: all four plots and their axes in view at 1850 x 960)."""
+    assert tc.PLOT_MIN_HEIGHT >= 170
     css = tc.PAGE_CSS
     wide = css[css.index("@media (min-width: 1400px) and (min-height: 760px) {"):]
     wide = wide[:wide.index("\n}\n")]
@@ -2500,10 +2505,13 @@ def test_the_plots_keep_a_usable_minimum_and_the_resources_line_its_own_row():
     assert "#shep-train-charts .shep-charts-grid { grid-auto-rows: minmax(min-content, 1fr); }" in wide
     # Only !important beats the inline "overflow: visible" Gradio writes on the block.
     assert ("#shep-train-runview > #shep-train-charts { flex: 1 1 0 !important; min-height: 0 "
-            "!important; overflow-y: auto !important;") in wide
+            "!important; overflow: hidden !important;") in wide
     assert "#shep-train-runview > #resource_display { flex: none !important; }" in wide
     assert "position: sticky; bottom" not in css and "#shep-train-runview { overflow-y" not in css
-    assert ".shep-charts-bar { position: sticky; top: 0;" in wide
+    assert "#shep-train-charts .shep-charts-bar { flex: none; min-height: 34px; padding-bottom: 4px; }" in wide
+    assert ("#shep-train-charts .shep-charts-body { flex: 1 1 0; min-height: 0; overflow-y: auto; }"
+            in wide)
+    assert not [b for _s, b in _rules(css, "shep-charts-bar") if "sticky" in b]
     # The boxes inside the row take its height, the cards keep their content's minimum.
     assert "#shep-train-charts .shep-charts-grid { min-height: 0; }" in wide
     assert "#shep-train-charts .shep-chart { min-height: auto; }" in wide

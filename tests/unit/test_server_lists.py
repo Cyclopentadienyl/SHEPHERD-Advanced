@@ -722,7 +722,7 @@ class TestCheckpointsInAndOut:
         assert not_read == [unlisted.problem]
         assert select_auto_run_checkpoint(ws, accept=lambda p: False)[2] == (
             f"no run has a checkpoint; not read: {unlisted.problem}")
-        assert tc._latest_run(ws) == f"gatv2/{run.parent.name}"
+        assert tc._listed_runs(ws)[0] == f"gatv2/{run.parent.name}"
         with pytest.raises(sl.ServerListRefused, match="is listed"):
             sl.resolve_checkpoint("demo", unlisted.architecture, unlisted.run,
                                   unlisted.filename, environ=_roots(root))
@@ -823,7 +823,7 @@ class TestCheckpointsInAndOut:
         path, _key, reason = select_auto_run_checkpoint(ws, not_read=not_read)
         assert path == run / "last.pt" and not_read == [problem]
         assert answers(reason) == f"auto: latest run 'gatv2/{run.parent.name}'; not read: {problem}"
-        assert tc._latest_run(ws) == f"gatv2/{run.parent.name}"
+        assert tc._listed_runs(ws)[0] == f"gatv2/{run.parent.name}"
         with pytest.raises(sl.ServerListRefused, match="is listed"):
             sl.resolve_checkpoint("demo", bad, hidden.parent.name, "last.pt", environ=_roots(root))
 
@@ -930,7 +930,7 @@ class TestCheckpointsInAndOut:
         assert path == newer / "last.pt" and not_read == [run_problem, file_problem]
         assert answers(reason) == (f"auto: latest run 'gatv2/{newer.parent.name}'; not read: "
                                    f"{run_problem}; {file_problem}")
-        assert tc._latest_run(ws) == f"gatv2/{newer.parent.name}"
+        assert tc._listed_runs(ws)[0] == f"gatv2/{newer.parent.name}"
         for run, filename in ((r"20261021-000000_y_\xff", "last.pt"),
                               (newer.parent.name, r"bad\xff.pt")):
             with pytest.raises(sl.ServerListRefused, match="is listed"):
@@ -1095,7 +1095,7 @@ class TestCheckpointsInAndOut:
         the newest run inside the workspace, as `resolve_run` finds one; a
         newer run behind a link out of it, in any directory under runs/, is
         not it (it named that run, which `resolve_run` refuses, so the page
-        showed no run)."""
+        showed no run), nor among the runs its Viewing select offers."""
         import os
 
         from src.webui.components import training_console as tc
@@ -1110,7 +1110,7 @@ class TestCheckpointsInAndOut:
         os.utime(far / "last.pt", (1_700_000_900, 1_700_000_900))
         (ws / "runs" / "elsewhere").symlink_to(far.parent.parent, target_is_directory=True)
 
-        assert tc._latest_run(ws) == f"gatv2/{inside.parent.name}"
+        assert tc._listed_runs(ws) == [f"gatv2/{inside.parent.name}"]
 
     def test_the_training_services_list_never_reads_a_run_linked_out(
             self, demo_workspace, tmp_path, monkeypatch):

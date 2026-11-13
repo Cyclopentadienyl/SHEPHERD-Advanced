@@ -80,20 +80,38 @@ listed parent is resolved by the server from its list again (never a client
 path) and its bytes compared with the digest listed; the runner and the
 training process still decide at start.
 
-**The run view**: the run the job runner started last (a Fine-tune child
-included), or, before any since the server started, the latest run of the run
-bar's workspace; its header says which dataset fingerprint the run used (from
-its checkpoint: operators only; a read-only request sees "not shown"), the
-snapshot sentence (operators: where it can be continued from), the shared
-chart component (`src/webui/components/charts.py`: Loss, the Trainer's
-validation figure and its companions, chosen by the keys the run's log holds
-(a base's LP accuracy, ROC-AUC and AP; a task model's pooled MRR and pooled
-top-k; titles that say no figure is charted for a log that holds neither),
-and the learning rate on a log axis, one 2×2 figure sharing the epoch axis; the data from the run's
-metrics log through the component's server function) and the resources line.
+**The run view** (three rows: its header, the charts, the resources line)
+shows the run chosen in its **Viewing** select: the run bar's workspace's
+runs, latest first, each named by the one rule of a run's option
+(`model_list.run_options`: short, name first) and valued by the run
+resolver's full id (`resolve_run`); without a choice, or once a job starts
+or the run bar's workspace changes (`_chosen_run`), the run the job runner
+started last (a Fine-tune child included), or, before any since the server
+started, the workspace's latest run (`viewed_run`). **The training job and
+the run viewed are kept apart**: the run bar, its status pill, its reason
+line, its actions and a failed job's banner are always the job's; only the
+header, the chart token and Export CSV follow the run viewed, and the header
+says how it stands to the job (the running job, the last job, a past run
+while another runs, the latest run: `view_relation`). Beside it the header
+says which dataset fingerprint the run used (from its checkpoint: operators
+only; a read-only request sees "not shown"), the run's state in a few words
+(operators: where it can be continued from; the job's state only of the
+job's own run) and its Details; then the shared chart component
+(`src/webui/components/charts.py`: Loss, the Trainer's validation figure and
+its companions, chosen by the keys the run's log holds (a base's LP
+accuracy, ROC-AUC and AP; a task model's pooled MRR and pooled top-k; titles
+that say no figure is charted for a log that holds neither), and the
+learning rate on a log axis, one figure sharing the epoch axis, 2 × 2 from
+about 1000 px of its width; the data from the run's metrics log through the
+component's server functions), each plot at least `PLOT_MIN_HEIGHT` px, the
+plots' body scrolling under the toolbar's own row when they do not fit. An
+empty region says what will appear and the next step (`NO_RUN_YET`,
+`WAITING_FOR_EPOCH`, `NO_EPOCH_LOGGED`, …), and an empty chart its own line
+in place of its plot.
 
-**Per browser session, no module state:** the selection, the drawer, the last
-values sent and the banners a session dismissed are ``gr.State``. The page is
+**Per browser session, no module state:** the selection, the run viewed's
+choice, the drawer, the last values sent and the banners a session dismissed
+are ``gr.State``. The page is
 refreshed when it is shown (``ctx.on_page_open``) and by the shell's timers
 (outside ``gr.Tabs``: ``ctx.timer_fast`` for the run bar and the run view,
 ``ctx.timer_slow`` for the resources line), both ``queue=False``, doing no work
@@ -101,15 +119,17 @@ while another page is shown (``ctx.location``).
 **The run bar and the run view are one projection of the session's
 selection, written only by a queued render** (`render`, the pieces of
 `VIEW_KEYS`: the run bar's workspace, ``ws`` and ``ctx.training_workspace``;
-the select's value, the chip, the run shown and its chart token, Start,
-Continue…, Stop and their reason, the drawer's line): every listener that
-writes them is in one queued group of one (``ctx.training_workspace_writes``),
+the select's value, the chip, the run viewed's header, its Viewing select
+and its chart token, Start, Continue…, Stop and their reason, the drawer's
+line): every listener that writes them, or the selection they are drawn
+from, is in one queued group of one (``ctx.training_workspace_writes``),
 first asked first run, each from what the one before it wrote: the page open,
-then its render; the select; Datasets' "Use for training ›" and the change of
-``ctx.training_workspace`` it makes; the render after every action, and the
-render the fast poll hands a change over to. So a workspace chosen while a
-render waits is applied after it, and no piece drawn from an older selection
-is applied after one drawn from a newer. **The fast poll writes only the
+then its render; the select; the Viewing select's choice (``viewing``, which
+only it writes), then its render; Datasets' "Use for training ›" and the
+change of ``ctx.training_workspace`` it makes; the render after every action,
+and the render the fast poll hands a change over to. So a workspace or a run
+chosen while a render waits is applied after it, and no piece drawn from an
+older selection is applied after one drawn from a newer. **The fast poll writes only the
 status pill** (`POLL_KEYS`, the job runner's state alone, on every tick, as
 the renders do), the header's chips and a hand-off: it renders the page as it
 is now and compares it with
@@ -220,7 +240,7 @@ FULL_SEND_TICKS = 8
 #: The GPU lock is read at most this often per session (seconds).
 LOCK_READ_SECONDS = 5.0
 #: The run bar's workspace's runs are listed again at most this often per
-#: session (seconds), for the run view's "latest" run.
+#: session (seconds), for the run view's Viewing select and the run it follows.
 LATEST_READ_SECONDS = 10.0
 #: Lines of a failed run's output the banner shows.
 BANNER_TAIL_LINES = 12
@@ -820,32 +840,33 @@ def _on_base_reset() -> Tuple[Any, ...]:
 # =============================================================================
 def empty_workspace() -> Dict[str, Any]:
     return {"name": None, "row": None, "facts": None, "choices": [], "listed": [],
-            "digits": r.SHORT_HEX, "problem": None, "latest_run": None}
+            "digits": r.SHORT_HEX, "problem": None, "runs": []}
 
 
-def _latest_run(directory: Optional[Path]) -> Optional[str]:
-    """The newest run directory of a workspace, as "<arch>/<run>", from the
-    run layout's one listing (most recently trained first); None for none.
-    Only a run inside the workspace, as `resolve_run` finds one: a newer run
-    behind a link out of it is never named, so the page never names a run it
-    then cannot show."""
+def _listed_runs(directory: Optional[Path]) -> List[str]:
+    """A workspace's run directories, as "<arch>/<run>", from the run
+    layout's one listing (`list_runs`: most recently trained first); none
+    when it lists none. Only the runs inside the workspace, as `resolve_run`
+    finds one: a run behind a link out of it is never named, so the page
+    never names a run it then cannot show."""
     if directory is None:
-        return None
+        return []
     from src.utils.checkpoint_paths import list_runs, run_architecture
 
     try:
         runs = list_runs(directory)
         home = Path(directory).resolve()
     except (OSError, RuntimeError):  # a link loop: RuntimeError before 3.13
-        return None
+        return []
+    named = []
     for run in runs:
         try:
             inside = home in run.resolve().parents
         except (OSError, RuntimeError):
             inside = False
         if inside:
-            return f"{run_architecture(run)}/{run.name}"
-    return None
+            named.append(f"{run_architecture(run)}/{run.name}")
+    return named
 
 
 def workspace_state(name: Optional[str], listed: Optional[Mapping[str, Any]] = None
@@ -854,8 +875,8 @@ def workspace_state(name: Optional[str], listed: Optional[Mapping[str, Any]] = N
     `read_workspaces` answer just read): the server's list (the dashboard's one
     reader, every reason without an absolute path) with the options' labels,
     the selected item, what its manifest binds, the listed fingerprints (to say
-    what a parent trained on) and its latest run. The full fingerprint kept
-    here is the one Start sends."""
+    what a parent trained on) and its runs, latest first (`_listed_runs`). The
+    full fingerprint kept here is the one Start sends."""
     listed = listed if listed is not None else read_workspaces()
     rows = listed["rows"]
     state = empty_workspace()
@@ -873,7 +894,7 @@ def workspace_state(name: Optional[str], listed: Optional[Mapping[str, Any]] = N
         directory = listed["directories"].get(row["name"])
         if row.get("manifest") == "read" and directory is not None:
             state["facts"], _problem = manifest_facts(directory, listed["root"])
-        state["latest_run"] = _latest_run(directory)
+        state["runs"] = _listed_runs(directory)
     return state
 
 
@@ -1430,10 +1451,12 @@ def _snapshot_sentence(snapshot: Optional[Dict[str, Any]]) -> str:
 
 
 class RunRef(Dict[str, Any]):
-    """The run the view shows: ``id`` (what the chart's token and server
-    function name it by), ``label`` ("gat/<run>"), ``path``, ``workspace``
-    and ``latest`` (True for a workspace's latest run, before any job since
-    the server started)."""
+    """A run the view can show: ``id`` (what the chart's token, its server
+    functions and the Viewing select name it by: ``<workspace>/<arch>/<run>``,
+    `resolve_run`'s ids), ``label`` ("gatv2/<run>"), ``path``, ``workspace``,
+    ``job`` (True for the run the job runner started last, the run bar's
+    training job) and ``latest`` (True for its workspace's latest listed run,
+    when it is not that job's)."""
 
 
 def workspace_of_run(run_dir: Any) -> Optional[str]:
@@ -1469,47 +1492,136 @@ def _runner_run(status: Mapping[str, Any], cache: Dict[str, Any]) -> Optional[Ru
     arch = Path(run_dir).parent.name
     label = f"{arch}/{Path(run_dir).name}"
     run_id = f"{named[1]}/{label}" if named[1] else f"job:{status.get('job_id')}"
-    return RunRef(id=run_id, label=label, path=Path(run_dir), workspace=named[1], latest=False)
+    return RunRef(id=run_id, label=label, path=Path(run_dir), workspace=named[1], job=True,
+                  latest=False)
 
 
-def _latest_of(ws: Mapping[str, Any], cache: Dict[str, Any]) -> Optional[str]:
-    """The run bar's workspace's latest run ("<arch>/<run>"): first as its
-    selection read it, then listed again at most every `LATEST_READ_SECONDS`
-    per session, so a run started elsewhere (the CLI, the API, another
-    browser) is shown once it writes a checkpoint, while the page stays
-    open."""
+def _runs_of(ws: Mapping[str, Any], cache: Dict[str, Any]) -> List[str]:
+    """The run bar's workspace's runs ("<arch>/<run>", latest first): first
+    as its selection read them, then listed again at most every
+    `LATEST_READ_SECONDS` per session, so a run started elsewhere (the CLI,
+    the API, another browser) is offered and shown once it writes a
+    checkpoint, while the page stays open."""
     name = ws.get("name")
     if not name:
-        return None
+        return []
     now = datetime.now().timestamp()
-    held = cache.get("latest")
+    held = cache.get("runs")
     if held and held[0] == name and now - held[1] < LATEST_READ_SECONDS:
-        return held[2]
+        return list(held[2])
     if held and held[0] == name:
         from src.api.services.server_lists import ServerListRefused
 
         try:
-            latest = _latest_run(_workspace_path(name))
+            runs = _listed_runs(_workspace_path(name))
         except ServerListRefused:
-            latest = None
+            runs = []
     else:
-        latest = ws.get("latest_run")
-    cache["latest"] = [name, now, latest]
-    return latest
+        runs = list(ws.get("runs") or [])
+    cache["runs"] = [name, now, runs]
+    return list(runs)
+
+
+def _listed_run(ws: Mapping[str, Any], label: str, runs: Sequence[str]) -> Optional[RunRef]:
+    """The run bar's workspace's run `label` ("<arch>/<run>"), as the server
+    finds it again (`resolve_run`), or None when it is no longer listed."""
+    name = ws.get("name")
+    path = resolve_run(f"{name}/{label}") if name else None
+    if path is None:
+        return None
+    return RunRef(id=f"{name}/{label}", label=label, path=path, workspace=name, job=False,
+                  latest=bool(runs) and runs[0] == label)
 
 
 def _current_run(status: Mapping[str, Any], ws: Mapping[str, Any],
                  cache: Dict[str, Any]) -> Optional[RunRef]:
+    """The run the view follows unless the session chose another: the run
+    the job runner started last (a Fine-tune child included), or, before any
+    since the server started, the run bar's workspace's latest run."""
     runner = _runner_run(status, cache)
     if runner is not None:
         return runner
-    latest = _latest_of(ws, cache)
-    if latest and ws.get("name"):
-        path = resolve_run(f"{ws['name']}/{latest}")
-        if path is not None:
-            return RunRef(id=f"{ws['name']}/{latest}", label=latest, path=path,
-                          workspace=ws["name"], latest=True)
-    return None
+    runs = _runs_of(ws, cache)
+    return _listed_run(ws, runs[0], runs) if runs else None
+
+
+def _job_id(status: Mapping[str, Any]) -> Optional[str]:
+    """The training job the run bar shows (None before any since the server
+    started)."""
+    return status.get("job_id") if (status.get("status") or "idle") != "idle" else None
+
+
+def _chosen_run(viewing: Optional[Mapping[str, Any]], status: Mapping[str, Any],
+                ws: Mapping[str, Any]) -> Optional[str]:
+    """The run id the session chose in the Viewing select (`_on_view_run`),
+    while the choice holds: made for the run bar's workspace of now, with no
+    training job started since (a job started is shown as it starts, from
+    this page or any other entry); else None, and the view follows the run
+    it would show without a choice (`_current_run`)."""
+    viewing = viewing or {}
+    run = viewing.get("run")
+    if not isinstance(run, str) or not run:
+        return None
+    if viewing.get("ws") != ws.get("name") or viewing.get("job") != _job_id(status):
+        return None
+    return run
+
+
+def viewed_run(viewing: Optional[Mapping[str, Any]], status: Mapping[str, Any],
+               ws: Mapping[str, Any], cache: Dict[str, Any]) -> Optional[RunRef]:
+    """**The run the view shows**: the session's choice while it holds
+    (`_chosen_run`) and its run is still listed (or is the job runner's),
+    else the run it follows (`_current_run`). Only the view's pieces are drawn
+    from it: the header, the chart token and Export CSV; the run bar and its
+    status pill are always the training job's."""
+    chosen = _chosen_run(viewing, status, ws)
+    if chosen is not None:
+        runner = _runner_run(status, cache)
+        if runner is not None and chosen == runner["id"]:
+            return runner
+        prefix = f"{ws.get('name')}/"
+        if chosen.startswith(prefix):
+            ref = _listed_run(ws, chosen[len(prefix):], _runs_of(ws, cache))
+            if ref is not None:
+                return ref
+    return _current_run(status, ws, cache)
+
+
+def view_choices(ws: Mapping[str, Any], runs: Sequence[str],
+                 run: Optional[RunRef]) -> List[Tuple[str, str]]:
+    """The Viewing select's options: the run bar's workspace's runs, latest
+    first, each named by the one rule of a run's option (`model_list.run_options`:
+    short, name first) and valued by its full id; the run shown first when it
+    is not among them (the training job's run before it is listed, or in a
+    workspace the run bar no longer shows)."""
+    entries: Dict[str, Tuple[str, str]] = {}
+    if run is not None and run["id"] not in {f"{ws.get('name')}/{label}" for label in runs}:
+        entries[run["id"]] = tuple(str(run["label"]).split("/", 1))
+    for label in runs:
+        entries[f"{ws.get('name')}/{label}"] = tuple(label.split("/", 1))
+    return _model_list().run_options(entries)
+
+
+#: How the run viewed stands to the run bar's training job (`view_relation`):
+#: said once, beside the Viewing select; the run bar and its pill always show
+#: the job.
+RELATION_RUNNING = "the running job"
+RELATION_LAST_JOB = "the last job"
+RELATION_PAST_WHILE = "a past run, while another runs"
+RELATION_LATEST = "the latest run"
+RELATION_PAST = "a past run"
+
+
+def view_relation(run: RunRef, live: bool) -> str:
+    """How the run viewed stands to the training job: it is the running job,
+    or the last job once that ended; another run is a past run, said "while
+    another runs" while a job runs, else "the latest run" when it is its
+    workspace's latest."""
+    if run.get("job"):
+        return RELATION_RUNNING if live else RELATION_LAST_JOB
+    if live:
+        return RELATION_PAST_WHILE
+    return RELATION_LATEST if run.get("latest") else RELATION_PAST
 
 
 def resolve_run(run_id: Any) -> Optional[Path]:
@@ -1636,28 +1748,30 @@ def _dataset_relation(ws: Mapping[str, Any], *, operator: bool,
 
 def run_head_html(run: Optional[RunRef], ws: Mapping[str, Any], *, operator: bool,
                   snapshot: Optional[Mapping[str, Any]], live: bool = False,
+                  relation: Optional[str] = None, state: str = "",
                   continuing: Optional[str] = None) -> str:
-    """The run view's header, one line: "Run shown" and the run as a person
-    names it (`model_list.run_words`), whether it is the workspace's latest, how its
-    recorded dataset stands to the run bar's (`_dataset_relation`), and, while
-    Continue… is open with a listed checkpoint chosen, whether this is the run
-    continued from (`continuing`, its "<architecture>/<run>"): the drawer's
-    parent and the run shown are different runs unless chosen so. The rest,
-    read less often (the run's directory, its checkpoint and logs, the dataset
-    fingerprint it used; its workspace when it is not the run bar's), is in
-    Details."""
+    """The run view's header, beside its Viewing select (which names the run,
+    short and name first: `view_choices`), one line where it fits: how the
+    run viewed stands to the training job (`relation`, `view_relation`'s
+    words; the run bar and its pill always show that job), how its recorded
+    dataset stands to the run bar's (`_dataset_relation`), while Continue… is
+    open with a listed checkpoint chosen whether this is the run continued
+    from (`continuing`, its "<architecture>/<run>": the drawer's parent and
+    the run viewed are different runs unless chosen so), the run's state
+    (`state`, `run_snapshot_html`), and Details ›. The rest, read less often
+    (the run's directory, its checkpoint and logs, the dataset fingerprint it
+    used; its workspace when it is not the run bar's), is in Details. `live`:
+    the run viewed is the training job, running. With no run, nothing: the
+    chart region says what will appear and how (`NO_RUN_YET`)."""
     if run is None:
-        return ('<div class="shep-panel-hd shep-rv-hd"><h2>Run shown</h2><span class="shep-muted">'
-                'none yet</span></div>')
+        return ""
     label = str(run["label"])
-    arch, _, directory = label.partition("/")
     tag, used = _dataset_relation(ws, operator=operator, snapshot=snapshot, live=live)
-    latest = '<span class="shep-muted">latest</span>' if run.get("latest") else ""
-    relation = ""
+    said = f'<span class="shep-rv-rel">{r.e(relation)}</span>' if relation else ""
     if continuing:
-        relation = ('<span class="shep-tag shep-tag-accent">the run continued from</span>'
-                    if continuing == label else
-                    '<span class="shep-tag shep-tag-grey">not the run continued from</span>')
+        said += ('<span class="shep-tag shep-tag-accent">the run continued from</span>'
+                 if continuing == label else
+                 '<span class="shep-tag shep-tag-grey">not the run continued from</span>')
     rows = [("Run", f"<code>{r.e(label)}</code>")]
     if run.get("workspace") and run.get("workspace") != ws.get("name"):
         # Said here only when it is not the run bar's (which names its own).
@@ -1679,9 +1793,7 @@ def run_head_html(run: Optional[RunRef], ws: Mapping[str, Any], *, operator: boo
                '<button type="button" class="shep-pop-x" data-act="close" '
                f'aria-label="Close the run details">×</button></div>{r.summary_list(rows)}'
                '</div>')
-    return (f'<div class="shep-panel-hd shep-rv-hd"><h2><span class="shep-rv-k">Run shown</span> '
-            f'<span class="shep-rv-name" title="{r.e(label)}">'
-            f'{r.e(_model_list().run_words(arch, directory))}</span></h2>{latest}{tag}{relation}'
+    return (f'<div class="shep-rv-hd">{said}{tag}{state}'
             f'<span class="shep-rv-tools">{details}</span></div>')
 
 
@@ -1691,16 +1803,22 @@ def _epochs_done(snapshot: Mapping[str, Any]) -> str:
     return f"{done} of {target} epochs completed" if target else f"{done} epochs completed"
 
 
+def _state(text: str) -> str:
+    return f'<span class="shep-rv-snap">{text}</span>'
+
+
 def run_snapshot_html(run: Optional[RunRef], status: Mapping[str, Any], *, operator: bool,
                       snapshot: Optional[Mapping[str, Any]]) -> str:
-    """The run's state in one short line under the header: how far it got and
-    whether it can be continued, for an operator from its checkpoint's record;
-    for a read-only request its state and that the rest is an operator's. The
-    checkpoint's and the logs' paths are in the header's Details."""
+    """The run's state in a few words, in the header's line (`run_head_html`;
+    the space it took as a row of its own went to the charts): how far it got
+    and whether it can be continued, for an operator from its checkpoint's
+    record; for a read-only request its state and that the rest is an
+    operator's. The training job's state (`status`) is said only of the job's
+    own run; a past run's is its checkpoint's. The checkpoint's and the logs'
+    paths are in the header's Details. With no run, nothing."""
     if run is None:
-        return ('<p class="shep-rv-snap">No training job since the server started, and the run '
-                'bar’s dataset has no runs yet: start one with the parameters on the left.</p>')
-    s = (status.get("status") or "idle") if not run.get("latest") else "latest"
+        return ""
+    s = (status.get("status") or "idle") if run.get("job") else "past"
     live = s in ("running", "stopping")
     try:
         exists = Path(run["path"]).is_dir()
@@ -1714,21 +1832,20 @@ def run_snapshot_html(run: Optional[RunRef], status: Mapping[str, Any], *, opera
         # existence is not checkpoint inspection).
         state = (f"{ended} ({_epochs(status)}). " if _epochs(status) else f"{ended}. ") \
             if s in ("completed", "stopped", "failed") else ""
-        return (f'<p class="shep-rv-snap">{r.e(state)}No run directory exists for this run, so '
-                'it has no checkpoint and no log.</p>')
+        return _state(f'{r.e(state)}No run directory exists for this run, so it has no '
+                      'checkpoint and no log.')
     if live:
         epochs = _epochs(status)
-        return f'<p class="shep-rv-snap">Running{" · " + r.e(epochs) if epochs else ""}</p>'
+        return _state(f'Running{" · " + r.e(epochs) if epochs else ""}')
     if not operator:
         state = (f"{ended} · {_epochs(status)}" if s in ("completed", "stopped", "failed")
                  and _epochs(status) else "")
-        return (f'<p class="shep-rv-snap">{r.e(state)}{" · " if state else ""}'
-                'checkpoint details are an operator control</p>')
+        return _state(f'{r.e(state)}{" · " if state else ""}checkpoint details are an '
+                      'operator control')
     if not snapshot:
-        return '<p class="shep-rv-snap">No checkpoint saved, so nothing can be continued</p>'
+        return _state("No checkpoint saved, so nothing can be continued")
     if not snapshot.get("readable", True):
-        return (f'<p class="shep-rv-snap">The latest checkpoint cannot be read '
-                f'({r.e(snapshot.get("reason"))})</p>')
+        return _state(f'The latest checkpoint cannot be read ({r.e(snapshot.get("reason"))})')
     end = snapshot.get("end")
     if end == "finished":
         line = f"Finished · {_epochs_done(snapshot)} · to train further, use Continue…"
@@ -1739,7 +1856,7 @@ def run_snapshot_html(run: Optional[RunRef], status: Mapping[str, Any], *, opera
     else:
         line = _epochs_done(snapshot) + (" · can be continued" if snapshot.get("resumable", True)
                                          else "")
-    return f'<p class="shep-rv-snap">{r.e(line)}</p>'
+    return _state(r.e(line))
 
 
 # =============================================================================
@@ -1820,6 +1937,17 @@ def _has_value(values: Sequence[Any]) -> bool:
     return any(charts.rounded(v) is not None for v in values)
 
 
+#: A chart's own line when it has nothing to draw, in place of its plot and
+#: axis label (BACKLOG 69: it kept its whole height, its axis label alone
+#: under an empty box): before the run's first validation, what its two
+#: validation charts will draw and when; a figure this run's log does not
+#: hold, that it is not recorded there. The whole figure's line, when no
+#: chart has anything, is the chart region's (`_chart_token`,
+#: `training_chart_series`).
+WAITING_FOR_VALIDATION = "Drawn once the run logs its first validation."
+NOT_IN_THE_LOG = f"{r.NOT_RECORDED} in this run’s log."
+
+
 def training_charts(history: Mapping[str, Any]) -> List[Dict[str, Any]]:
     """The four chart specs from a metrics history (`get_metrics_history`):
     Loss (train, and validation where the run logs one: ``val_loss``, a
@@ -1828,29 +1956,34 @@ def training_charts(history: Mapping[str, Any]) -> List[Dict[str, Any]]:
     accuracy, then its ROC-AUC and AP; a task model's pooled MRR, then its
     pooled top-k; for a log holding neither, titles that say no figure is
     charted), and the learning rate on a log axis. A series with no value yet
-    is left out, so no chart draws a figure the run does not log."""
+    is left out, so no chart draws a figure the run does not log; a chart
+    left with none says why in its own line (`WAITING_FOR_VALIDATION`,
+    `NOT_IN_THE_LOG`; the generic state's titles say it themselves)."""
     train = [e for e in history.get("train") or [] if isinstance(e, Mapping)]
     val = [e for e in history.get("validation") or [] if isinstance(e, Mapping)]
     specs = []
 
-    def spec(chart_id, title, columns, *, y_scale="linear", x_label=None):
+    def spec(chart_id, title, columns, *, y_scale="linear", x_label=None, empty=NOT_IN_THE_LOG):
         epochs = sorted(set().union(*[set(c) for _label, c in columns])) if columns else []
         series = [(label, [col.get(x) for x in epochs]) for label, col in columns]
         series = [(label, values) for label, values in series if _has_value(values)]
         return charts.chart_spec(chart_id, title, epochs if series else [],
-                                 series, y_scale=y_scale, x_label=x_label)
+                                 series, y_scale=y_scale, x_label=x_label,
+                                 empty=None if series else empty)
 
     def columns(pairs):
         return [(label, _by_epoch(val, key)) for label, key in pairs]
 
-    figure_title, figure, others_title, others = VALIDATION_CHARTS[validation_kind(val)]
+    kind = validation_kind(val)
+    figure_title, figure, others_title, others = VALIDATION_CHARTS[kind]
     if not isinstance(others, tuple):
         others = _k_series(val, others, "top-")
+    waiting = {"none": WAITING_FOR_VALIDATION, "other": None}.get(kind, NOT_IN_THE_LOG)
     specs.append(spec("loss", CHART_TITLES["loss"],
                       [("train", _by_epoch(train, "total", "train_loss")),
                        ("validation", _by_epoch(val, "val_loss", "val_lp_loss"))]))
-    specs.append(spec("mrr", figure_title, columns(figure)))
-    specs.append(spec("hits", others_title, columns(others), x_label=SHARED_AXIS))
+    specs.append(spec("mrr", figure_title, columns(figure), empty=waiting))
+    specs.append(spec("hits", others_title, columns(others), x_label=SHARED_AXIS, empty=waiting))
     specs.append(spec("lr", CHART_TITLES["lr"],
                       [("learning rate", _by_epoch(train, "learning_rate"))],
                       y_scale="log", x_label=SHARED_AXIS))
@@ -1861,19 +1994,47 @@ def _rows(history: Mapping[str, Any]) -> int:
     return len(history.get("train") or []) + len(history.get("validation") or [])
 
 
+#: **The chart region's line when it has nothing to draw**, by cause (the
+#: skill's §9: what will appear and the next step, one action at most): no
+#: run yet in the run bar's workspace; the training job's run before its first
+#: epoch is logged; a run that ended without logging one, or without making
+#: its run directory (refused first); a run the server no longer lists.
+NO_RUN_YET = ("No run in this workspace yet: its curves appear here after its first epoch. "
+              "Start one with ▸ Start.")
+WAITING_FOR_EPOCH = "No epoch logged yet: the curves appear here when the run’s first epoch ends."
+NO_EPOCH_LOGGED = "This run logged no epoch, so it has no curves: choose another run in Viewing."
+NO_RUN_DIR_ENDED = ("This run has no run directory, so it logged no epoch: choose another run "
+                    "in Viewing.")
+NO_LONGER_LISTED = "This run is no longer listed: choose another run in Viewing."
+
+
+def _logging_now(path: Path) -> bool:
+    """Whether `path` is the run of the training job, running now (its log
+    still grows)."""
+    if training_manager.get_job_status_word("training") not in ("running", "stopping"):
+        return False
+    try:
+        return training_manager.run_dir is not None and \
+            Path(training_manager.run_dir).resolve() == Path(path).resolve()
+    except OSError:
+        return False
+
+
 def training_chart_series(data: Any) -> Dict[str, Any]:
     """The chart component's server function: the figure for the run its
     token names, if the server lists that run (`resolve_run`; never a path),
-    read from the run's metrics log. Not an operator control: the metrics log
-    is not checkpoint inspection."""
+    read from the run's metrics log; when it logged no epoch, the region's
+    line says whether one is still to come (`WAITING_FOR_EPOCH`) or not
+    (`NO_EPOCH_LOGGED`). Not an operator control: the metrics log is not
+    checkpoint inspection."""
     t = charts.token_from(data)
     run_id = t.get("run")
     path = resolve_run(run_id)
     if path is None:
-        return charts.figure_payload(None, 0, [], empty="This run is no longer listed.")
+        return charts.figure_payload(None, 0, [], empty=NO_LONGER_LISTED)
     history = training_manager.get_metrics_history(path)
     return charts.figure_payload(run_id, _rows(history), training_charts(history),
-                                 empty="No epochs logged yet.")
+                                 empty=WAITING_FOR_EPOCH if _logging_now(path) else NO_EPOCH_LOGGED)
 
 
 def _metrics_csv_text(history: Mapping[str, Any]) -> str:
@@ -1909,27 +2070,23 @@ def training_chart_csv(data: Any) -> Dict[str, Any]:
             "csv": _metrics_csv_text(training_manager.get_metrics_history(path))}
 
 
-#: The chart's line for a run with no run directory: a live one has not made
-#: it yet; an ended one has none (a run refused before it made its run directory).
-NO_RUN_DIR_LIVE = "No epochs logged yet."
-NO_RUN_DIR_ENDED = "This run has no run directory, so it logged no epochs to chart."
-
-
 def _chart_token(run: Optional[RunRef], cache: Dict[str, Any], *,
                  live: bool = False) -> Dict[str, Any]:
-    """The component's token for the run shown: its id and how many rows its
+    """The component's token for the run viewed: its id and how many rows its
     metrics log holds, counted again only when the log file changed (a stat).
-    A run whose directory does not exist is not asked for (the component
-    would say "no longer listed" of a run that was never listed): its line
-    says why there is nothing, `live` or ended."""
+    No run, and a run whose directory does not exist, are not asked for (the
+    component would say "no longer listed" of a run that was never listed):
+    the token's line says why there is nothing and what comes next
+    (`NO_RUN_YET`; `WAITING_FOR_EPOCH` while the training job, `live`, has
+    not made it yet; `NO_RUN_DIR_ENDED`)."""
     if run is None:
-        return charts.token(None, 0, empty="No run to show yet.")
+        return charts.token(None, 0, empty=NO_RUN_YET)
     try:
         exists = Path(run["path"]).is_dir()
     except OSError:
         exists = False
     if not exists:
-        return charts.token(None, 0, empty=NO_RUN_DIR_LIVE if live else NO_RUN_DIR_ENDED)
+        return charts.token(None, 0, empty=WAITING_FOR_EPOCH if live else NO_RUN_DIR_ENDED)
     log = training_manager.metrics_log_file(run["path"])
     try:
         stat = log.stat() if log is not None else None
@@ -1967,7 +2124,7 @@ def _poll_resources(location: Any = TRAINING) -> Any:
 # =============================================================================
 #: The view's pieces, in output order (`create_training_tab` lists the same).
 VIEW_KEYS = ("ws", "dataset", "chip", "pill", "reason", "start", "cont", "stop", "resume",
-             "runbar", "page", "run_name", "banner", "head", "snap", "charts", "drawer_reason",
+             "runbar", "page", "run_name", "banner", "head", "view", "charts", "drawer_reason",
              "training_workspace")
 #: The pieces that are the session's selection (the run bar's workspace):
 #: written by a render only when it changed them (a running job's dataset:
@@ -1979,10 +2136,12 @@ SELECTION_KEYS = ("ws", "training_workspace")
 #: until the next tick.
 POLL_KEYS = ("pill",)
 #: Every other piece but the selection's own, which a queued render alone
-#: writes (they are drawn from the session's selection, ``ws``, and ``mode``
+#: writes (they are drawn from the session's selection, ``ws``, ``mode``
 #: where it shapes them: the drawer, Stop's confirmation; the banner and the
-#: run name with them): when the poll finds one of them not what the session
-#: was last sent, it hands the change over (`CHANGED_ID`).
+#: run name with them; and the run view's choice, ``viewing``, for the
+#: Viewing select, the header and the chart token): when the poll finds one
+#: of them not what the session was last sent, it hands the change over
+#: (`CHANGED_ID`).
 HANDED_KEYS = tuple(key for key in VIEW_KEYS if key not in SELECTION_KEYS + POLL_KEYS)
 #: The reads a render keeps per session that are throttled by time, not by a
 #: file's change (the GPU lock's probe, `LOCK_READ_SECONDS`; the workspace's
@@ -1990,7 +2149,7 @@ HANDED_KEYS = tuple(key for key in VIEW_KEYS if key not in SELECTION_KEYS + POLL
 #: only it writes), so it reads them no more often than a render does; the
 #: poll and the render it hands a change over to take each from there when it
 #: is newer than the last render's (`_with_polled`).
-POLL_READS = ("lock", "latest")
+POLL_READS = ("lock", "runs")
 #: The hidden component the fast poll hands a change over through (`_poll`),
 #: whose ``.change`` runs the queued render (`_render_changed`): not a
 #: ``gr.State``, because the answer to a ``queue=False`` request dispatches a
@@ -2018,9 +2177,13 @@ def gpu_view(active, cache: Dict[str, Any], operator: bool) -> Optional[Dict[str
 
 def render(ws: Optional[Mapping[str, Any]], mode: Optional[Mapping[str, Any]],
            cache: Optional[Mapping[str, Any]], dismissed: Optional[Sequence[str]],
-           request: Optional[gr.Request]) -> Dict[str, Any]:
+           request: Optional[gr.Request],
+           viewing: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
     """Every piece of the run bar and the run view, computed now for this
-    request, as plain values (`VIEW_KEYS`) plus the session's new cache."""
+    request, as plain values (`VIEW_KEYS`) plus the session's new cache. The
+    run bar (its pill, its reason line, its actions, a failed job's banner) is
+    the training job's; the run view is the run viewed (`viewed_run`: the
+    session's choice in the Viewing select, `viewing`, while it holds)."""
     ws = dict(ws or empty_workspace())
     mode = dict(mode or {})
     cache = dict(cache or {})
@@ -2030,12 +2193,16 @@ def render(ws: Optional[Mapping[str, Any]], mode: Optional[Mapping[str, Any]],
     s = status.get("status") or "idle"
 
     # While a training job runs, the select shows that job's dataset.
-    run = _current_run(status, ws, cache)
+    job_run = _runner_run(status, cache)
     in_use = s in ("running", "stopping")
     ws_changed = False
-    if in_use and run is not None and run.get("workspace") and run["workspace"] != ws.get("name"):
-        ws = workspace_state(run["workspace"])
+    if in_use and job_run is not None and job_run.get("workspace") \
+            and job_run["workspace"] != ws.get("name"):
+        ws = workspace_state(job_run["workspace"])
         ws_changed = True
+    run = viewed_run(viewing, status, ws, cache)
+    # The run viewed is the training job's, running: its log and record grow.
+    live = in_use and run is not None and bool(run.get("job"))
     gpu = None if in_use else gpu_view(active, cache, access.allowed)
     view = run_bar_view(status, ws, mode, access=access, active=active, gpu=gpu)
     # What this render read of the GPU slot, for the header's chips
@@ -2050,16 +2217,17 @@ def render(ws: Optional[Mapping[str, Any]], mode: Optional[Mapping[str, Any]],
     # the job runner's run is live, its recorded fingerprint only, once.
     if run is None or not access.allowed:
         snapshot = None
-    elif in_use and not run.get("latest"):
+    elif live:
         snapshot = _used_while_live(run, cache)
     else:
         snapshot = _snapshot_for(run, cache)
-    # A read-only request sees no absolute path: each printed text is redacted
-    # before it is escaped (redacting the built markup took its closing tags
-    # for paths: "</span>" became "<a path outside the workspaces root").
+    # The banner is the failed job's, whatever run is viewed. A read-only
+    # request sees no absolute path: each printed text is redacted before it
+    # is escaped (redacting the built markup took its closing tags for paths:
+    # "</span>" became "<a path outside the workspaces root").
     banner_html, banner_key = _build_error_banner_payload(
-        status if s == "failed" else {}, _get_pyg_warning(), run=run["label"] if run else None,
-        run_dir=run["path"] if run else None,
+        status if s == "failed" else {}, _get_pyg_warning(),
+        run=job_run["label"] if job_run else None, run_dir=job_run["path"] if job_run else None,
         scrub=_as_is if access.allowed else read_only_scrub(workspaces_root()[0]))
     if banner_key is None or banner_key in (dismissed or ()):
         banner_html = ""
@@ -2090,12 +2258,17 @@ def render(ws: Optional[Mapping[str, Any]], mode: Optional[Mapping[str, Any]],
         "page": tuple(page),
         "run_name": bool(access.allowed),
         "banner": banner_html or "",
-        "head": run_head_html(run, ws, operator=access.allowed, snapshot=snapshot,
-                              live=in_use and run is not None and not run.get("latest"),
-                              continuing=((mode.get("parent") or {}).get("run_label")
-                                          if mode.get("drawer") else None)),
-        "snap": run_snapshot_html(run, status, operator=access.allowed, snapshot=snapshot),
-        "charts": _chart_token(run, cache, live=in_use),
+        "head": run_head_html(
+            run, ws, operator=access.allowed, snapshot=snapshot, live=live,
+            relation=view_relation(run, in_use) if run is not None else None,
+            state=run_snapshot_html(run, status, operator=access.allowed, snapshot=snapshot),
+            continuing=((mode.get("parent") or {}).get("run_label")
+                        if mode.get("drawer") else None)),
+        # The Viewing select: its options and the run viewed (any request:
+        # listing a workspace's runs is not checkpoint inspection).
+        "view": (tuple(view_choices(ws, _runs_of(ws, cache), run)),
+                 run["id"] if run is not None else None),
+        "charts": _chart_token(run, cache, live=live),
         "drawer_reason": (f'<div class="shep-drawer-why">{view["drawer_reason"]}</div>'
                           if view["drawer_reason"] else ""),
         "training_workspace": ws.get("name"),
@@ -2110,6 +2283,10 @@ def _update_for(key: str, value: Any) -> Any:
         return gr.update(choices=[tuple(c) for c in choices], value=name, interactive=interactive)
     if key in ACTION_LABELS:
         return gr.update(**value)
+    if key == "view":
+        choices, run = value
+        return gr.update(choices=[tuple(c) for c in choices], value=run,
+                         interactive=bool(choices))
     if key in ("runbar", "page"):
         return gr.update(elem_classes=list(value))
     if key == "run_name":
@@ -2149,10 +2326,10 @@ def view_updates(rendered: Mapping[str, Any], cache_before: Optional[Mapping[str
     return (*out, cache)
 
 
-def _render_view(ws, mode, cache, dismissed, request: gr.Request):
+def _render_view(ws, mode, cache, dismissed, viewing, request: gr.Request):
     """Every action's last step: the run bar and the run view as they are now,
     whole (an action changed what they show)."""
-    rendered = render(ws, mode, cache, dismissed, request)
+    rendered = render(ws, mode, cache, dismissed, request, viewing)
     rendered["cache"]["handed"] = 0
     return view_updates(rendered, cache, full=True)
 
@@ -2161,9 +2338,9 @@ def _with_polled(cache: Optional[Mapping[str, Any]], polled: Optional[Mapping[st
                  ) -> Dict[str, Any]:
     """The session's cache with each of the fast poll's own reads kept by
     time (`POLL_READS`) in place of the last render's only when it is newer:
-    the lock's (``[when, lock]``); the latest run's (``[workspace, when,
-    run]``) when it is of the same workspace too (another workspace's is not
-    comparable, and the render's stays: `_latest_of` reads a workspace the
+    the lock's (``[when, lock]``); the workspace's runs (``[workspace, when,
+    runs]``) when they are of the same workspace too (another workspace's are
+    not comparable, and the render's stay: `_runs_of` reads a workspace the
     renders have not drawn yet from its selection); and either when the
     render kept none. So neither a tick nor the render it hands over to
     draws an older read than the last render drew. The render after an
@@ -2175,13 +2352,13 @@ def _with_polled(cache: Optional[Mapping[str, Any]], polled: Optional[Mapping[st
     lock, held = own.get("lock"), merged.get("lock")
     if lock and (not held or lock[0] > held[0]):
         merged["lock"] = lock
-    latest, held = own.get("latest"), merged.get("latest")
-    if latest and (not held or (latest[0] == held[0] and latest[1] > held[1])):
-        merged["latest"] = latest
+    runs, held = own.get("runs"), merged.get("runs")
+    if runs and (not held or (runs[0] == held[0] and runs[1] > held[1])):
+        merged["runs"] = runs
     return merged
 
 
-def _render_changed(ws, mode, cache, dismissed, polled, request: gr.Request):
+def _render_changed(ws, mode, cache, dismissed, viewing, polled, request: gr.Request):
     """The render the fast poll hands a change over to (`CHANGED_ID`), at its
     turn in the run bar's workspace group: the run bar and the run view from
     the session's selection and the job as they are now, what changed since
@@ -2189,13 +2366,13 @@ def _render_changed(ws, mode, cache, dismissed, polled, request: gr.Request):
     hand-offs. The reads kept by time (`POLL_READS`) are the newer of the
     poll's own and the last render's (`_with_polled`), so it draws what the
     poll found, never an older read than the last render drew."""
-    rendered = render(ws, mode, _with_polled(cache, polled), dismissed, request)
+    rendered = render(ws, mode, _with_polled(cache, polled), dismissed, request, viewing)
     handed = int((cache or {}).get("handed") or 0) + 1
     rendered["cache"]["handed"] = handed
     return view_updates(rendered, cache, full=handed % FULL_SEND_TICKS == 0)
 
 
-def _poll(location, ws, mode, cache, dismissed, polled, request: gr.Request):
+def _poll(location, ws, mode, cache, dismissed, viewing, polled, request: gr.Request):
     """The shell's fast timer (``queue=False``), while Training is shown: the
     status pill (`POLL_KEYS`) on every tick, the header's chips on the tick
     that sees the GPU slot change (`chips_on_change`), the hand-off, and its
@@ -2224,7 +2401,7 @@ def _poll(location, ws, mode, cache, dismissed, polled, request: gr.Request):
         return idle
     before = cache or {}
     try:
-        rendered = render(ws, mode, _with_polled(before, polled), dismissed, request)
+        rendered = render(ws, mode, _with_polled(before, polled), dismissed, request, viewing)
     except Exception:  # noqa: BLE001 - a tick that raises would stop the page's updates
         logger.exception("The Training page could not be read")
         return idle
@@ -2296,6 +2473,16 @@ def _on_dataset(name, mode, request: gr.Request):
     if mode.get("parent"):
         mode["parent"] = {}
     return state, chip_html(state), state.get("name"), mode, ""
+
+
+def _on_view_run(choice, ws):
+    """A run chosen in the Viewing select: the session's view choice, held
+    for the run bar's workspace and the training job of now (`_chosen_run`:
+    a job started later is shown as it starts). Only the run view follows it
+    (its header, the chart token, Export CSV), never the run bar or its pill.
+    Nothing is read or changed on the server but the job's id."""
+    return {"run": choice if isinstance(choice, str) else None, "ws": (ws or {}).get("name"),
+            "job": _job_id(training_manager.get_status())}
 
 
 def _on_training_workspace(name, ws, mode):
@@ -3189,6 +3376,15 @@ FIELD_HELP = {
         "Extend a finished run by this many epochs, trained at the fixed rate shown in the "
         "check result.",
     ),
+    "shep-train-view-run": (
+        "Viewing",
+        "The run whose curves and Export CSV the run view shows: the run bar's dataset's runs, "
+        "latest first, each led by its name or start time.\n\n"
+        "• Choosing one changes only the view. The run bar and its status pill always show the "
+        "training job.\n"
+        "• Beside it, how the run stands to that job: the running job, or a past run.\n"
+        "• A job started later is shown as it starts. Its directory is in Details.",
+    ),
 }
 
 #: The ⓘ inside the page's rendered HTML.
@@ -3236,6 +3432,9 @@ def create_training_tab(ctx: Any) -> None:
     polled = gr.State({})
     dismissed = gr.State([])
     parents = gr.State({})
+    # The run view's choice in its Viewing select (`_on_view_run`; read by
+    # every render, `viewed_run`): only the select's input writes it.
+    viewing = gr.State({})
 
     with gr.Column(elem_id="shep-train", elem_classes=["shep-train"]):
         # ------------------------------------------------------------- run bar
@@ -3395,16 +3594,18 @@ def create_training_tab(ctx: Any) -> None:
 
             # ------------------------------------------------------- run view
             with gr.Column(elem_id="shep-train-runview", elem_classes=["shep-panel"], scale=22):
-                # The header and the state line: the run view's first row; the
-                # charts and the resources line are the others (`PAGE_CSS`).
-                with gr.Column(elem_id="shep-train-rv-top"):
-                    run_head = plain_html(run_head_html(None, {}, operator=False, snapshot=None),
-                                          elem_id="shep-train-run-head", js_on_load=_POPOVER_JS)
-                    run_snap = plain_html("", elem_id="shep-train-run-snap")
+                # Three rows (`PAGE_CSS`): the header (the Viewing select, the
+                # run viewed's relation to the training job, its state and
+                # Details), the charts, and the resources line.
+                with gr.Row(elem_id="shep-train-rv-top", elem_classes=["shep-panel-hd"]):
+                    view_run = gr.Dropdown(label="Viewing", choices=[], value=None,
+                                           interactive=False, elem_id="shep-train-view-run",
+                                           scale=0, min_width=240, container=False)
+                    run_head = plain_html("", elem_id="shep-train-run-head",
+                                          js_on_load=_POPOVER_JS)
                 figure = charts.chart_figure(
                     key="training", elem_id="shep-train-charts", series_fn=training_chart_series,
-                    csv_fn=training_chart_csv, help_key="training-charts",
-                    empty="No run to show yet.")
+                    csv_fn=training_chart_csv, help_key="training-charts", empty=NO_RUN_YET)
                 resources = plain_html(_IDLE_RESOURCE_HTML, elem_id="resource_display")
 
     # =========================================================================
@@ -3433,9 +3634,9 @@ def create_training_tab(ctx: Any) -> None:
           inputs=[fields[name] for name in guards],
           outputs=[fields[name] for name in dependent], queue=False, show_progress="hidden")
     view_outputs = [ws, dataset, chip, pill, reason, start_btn, cont_btn, stop_btn, resume_btn,
-                    runbar, page, run_name, banner, run_head, run_snap, figure, drawer_reason,
+                    runbar, page, run_name, banner, run_head, view_run, figure, drawer_reason,
                     ctx.training_workspace, cache]
-    view_inputs = [ws, mode, cache, dismissed]
+    view_inputs = [ws, mode, cache, dismissed, viewing]
     # Every render writes the run bar and the run view drawn from the session's
     # selection, and may write the workspace itself (a running job's dataset),
     # so every one is in the group of the workspace's writers
@@ -3478,6 +3679,11 @@ def create_training_tab(ctx: Any) -> None:
     dataset.input(_on_dataset, inputs=[dataset, mode],
                   outputs=[ws, chip, ctx.training_workspace, mode, notice],
                   show_progress="hidden", **in_order, **every_one).then(**view_step)
+    # The run view's run (the session's view choice, then the render that
+    # draws it), in the same group: a render drawn from an older choice is
+    # never applied after a newer one's.
+    view_run.input(_on_view_run, inputs=[view_run, ws], outputs=[viewing],
+                   show_progress="hidden", **in_order, **every_one).then(**view_step)
     # The session's workspace changed (a hand choice above writes it, and so
     # do Datasets' "Use for training ›" and a render that follows a job
     # running in another workspace): with Continue… open, the parent list
@@ -3590,8 +3796,12 @@ _PAGE = f"#shep-page-{TRAINING}"
 
 #: The smallest plot area the run view draws at a wide size (M5-3: about 70 to
 #: 100 px at 1536 x 760), and the room uPlot takes around it in the plot's box
-#: (the epoch axis, 30 px, and its margins).
-PLOT_MIN_HEIGHT = 140
+#: (the epoch axis, 30 px, and its margins). 140 until B1b; raised toward the
+#: skill's 200 with the room the state line's own row and the run bar's blank
+#: took: the most at which the owner's window (1850 x 960) still shows all
+#: four plots with their axes (its chart body holds 519 px; 200 needs 566), so
+#: only a smaller window, or a banner, scrolls the plots.
+PLOT_MIN_HEIGHT = 170
 PLOT_AXIS_ROOM = 47
 
 #: This page's style sheet (the page contract: listed in `src/webui/app.py`'s
@@ -3602,22 +3812,25 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} .shep-rb-row {{ align-items: center !important; gap: 10px 14px !important; flex-wrap: wrap !important; }}
 {_PAGE} .shep-rb-row > * {{ min-width: 0; }}
 {_PAGE} .shep-rb-row > .block {{ width: auto !important; }}
-{_PAGE} #shep-train-dataset, {_PAGE} #run_name {{ flex: 0 0 auto !important; width: auto !important; }}
-{_PAGE} #shep-train-dataset > div:not(.wrap), {_PAGE} #run_name > label {{ display: flex !important; align-items: center; gap: 8px; }}
-{_PAGE} #shep-train-dataset span[id^="shep-lbl-"], {_PAGE} #run_name span[id^="shep-lbl-"] {{ position: static !important; display: block !important; width: 96px !important; height: auto !important; overflow: visible !important; clip: auto !important; clip-path: none !important; margin: 0 !important; padding: 0 !important; background: none !important; border: 0 !important; white-space: nowrap; font-size: 14px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--shep-text-2) !important; }}
+{_PAGE} #shep-train-dataset, {_PAGE} #run_name, {_PAGE} #shep-train-view-run {{ flex: 0 0 auto !important; width: auto !important; }}
+{_PAGE} #shep-train-dataset > div:not(.wrap), {_PAGE} #run_name > label, {_PAGE} #shep-train-view-run > div:not(.wrap) {{ display: flex !important; align-items: center; gap: 8px; }}
+{_PAGE} #shep-train-dataset span[id^="shep-lbl-"], {_PAGE} #run_name span[id^="shep-lbl-"], {_PAGE} #shep-train-view-run span[id^="shep-lbl-"] {{ position: static !important; display: block !important; width: 96px !important; height: auto !important; overflow: visible !important; clip: auto !important; clip-path: none !important; margin: 0 !important; padding: 0 !important; background: none !important; border: 0 !important; white-space: nowrap; font-size: 14px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--shep-text-2) !important; }}
+{_PAGE} #shep-train-view-run span[id^="shep-lbl-"] {{ width: auto !important; }}
 {_PAGE} #shep-train-dataset .wrap {{ width: clamp(220px, 16vw, 320px); min-width: 0 !important; }}
-{_PAGE} #shep-train-dataset input {{ flex: 1 1 auto !important; width: 0 !important; min-width: 0 !important; }}
-{_PAGE} #shep-train-dataset .secondary-wrap {{ min-width: 0 !important; }}
-{_PAGE} #shep-train-dataset .icon-wrap {{ flex: none !important; }}
+/* A run's option is 40 characters at most (`model_list.run_options`): its box holds one whole. */
+{_PAGE} #shep-train-view-run .wrap {{ width: clamp(300px, 19vw, 360px); min-width: 0 !important; }}
+{_PAGE} #shep-train-dataset input, {_PAGE} #shep-train-view-run input {{ flex: 1 1 auto !important; width: 0 !important; min-width: 0 !important; }}
+{_PAGE} #shep-train-dataset .secondary-wrap, {_PAGE} #shep-train-view-run .secondary-wrap {{ min-width: 0 !important; }}
+{_PAGE} #shep-train-dataset .icon-wrap, {_PAGE} #shep-train-view-run .icon-wrap {{ flex: none !important; }}
 /* The two selects drawn as fields: a border, the text clear of the chevron, grey while disabled
    (a value too long ends in the shell's titled ellipsis, the rule for every select). */
-{_PAGE} #shep-train-dataset .wrap:has(> .wrap-inner), {_PAGE} #continue_run .wrap:has(> .wrap-inner), {_PAGE} #checkpoint_dropdown .wrap:has(> .wrap-inner) {{ border: 1px solid var(--shep-border-2) !important; border-radius: 8px !important; background: #fff !important; box-shadow: none !important; }}
-{_PAGE} #shep-train-dataset .wrap:has(> .wrap-inner):focus-within, {_PAGE} #continue_run .wrap:has(> .wrap-inner):focus-within, {_PAGE} #checkpoint_dropdown .wrap:has(> .wrap-inner):focus-within {{ border-color: var(--shep-accent) !important; }}
-{_PAGE} #shep-train-dataset input, {_PAGE} #continue_run input, {_PAGE} #checkpoint_dropdown input {{ padding-right: 30px !important; }}
-{_PAGE} #shep-train-dataset .icon-wrap, {_PAGE} #continue_run .icon-wrap, {_PAGE} #checkpoint_dropdown .icon-wrap {{ color: var(--shep-text-2) !important; }}
-{_PAGE} #shep-train-dataset .wrap:has(input:disabled), {_PAGE} #continue_run .wrap:has(input:disabled), {_PAGE} #checkpoint_dropdown .wrap:has(input:disabled) {{ background: var(--shep-grey-50) !important; border-color: var(--shep-grey-200) !important; }}
-{_PAGE} #shep-train-dataset input:disabled, {_PAGE} #continue_run input:disabled, {_PAGE} #checkpoint_dropdown input:disabled {{ color: var(--shep-grey-600) !important; -webkit-text-fill-color: var(--shep-grey-600); cursor: not-allowed; }}
-{_PAGE} #shep-train-dataset .wrap:has(input:disabled) .icon-wrap {{ color: var(--shep-grey-600) !important; }}
+{_PAGE} #shep-train-dataset .wrap:has(> .wrap-inner), {_PAGE} #shep-train-view-run .wrap:has(> .wrap-inner), {_PAGE} #continue_run .wrap:has(> .wrap-inner), {_PAGE} #checkpoint_dropdown .wrap:has(> .wrap-inner) {{ border: 1px solid var(--shep-border-2) !important; border-radius: 8px !important; background: #fff !important; box-shadow: none !important; }}
+{_PAGE} #shep-train-dataset .wrap:has(> .wrap-inner):focus-within, {_PAGE} #shep-train-view-run .wrap:has(> .wrap-inner):focus-within, {_PAGE} #continue_run .wrap:has(> .wrap-inner):focus-within, {_PAGE} #checkpoint_dropdown .wrap:has(> .wrap-inner):focus-within {{ border-color: var(--shep-accent) !important; }}
+{_PAGE} #shep-train-dataset input, {_PAGE} #shep-train-view-run input, {_PAGE} #continue_run input, {_PAGE} #checkpoint_dropdown input {{ padding-right: 30px !important; }}
+{_PAGE} #shep-train-dataset .icon-wrap, {_PAGE} #shep-train-view-run .icon-wrap, {_PAGE} #continue_run .icon-wrap, {_PAGE} #checkpoint_dropdown .icon-wrap {{ color: var(--shep-text-2) !important; }}
+{_PAGE} #shep-train-dataset .wrap:has(input:disabled), {_PAGE} #shep-train-view-run .wrap:has(input:disabled), {_PAGE} #continue_run .wrap:has(input:disabled), {_PAGE} #checkpoint_dropdown .wrap:has(input:disabled) {{ background: var(--shep-grey-50) !important; border-color: var(--shep-grey-200) !important; }}
+{_PAGE} #shep-train-dataset input:disabled, {_PAGE} #shep-train-view-run input:disabled, {_PAGE} #continue_run input:disabled, {_PAGE} #checkpoint_dropdown input:disabled {{ color: var(--shep-grey-600) !important; -webkit-text-fill-color: var(--shep-grey-600); cursor: not-allowed; }}
+{_PAGE} #shep-train-dataset .wrap:has(input:disabled) .icon-wrap, {_PAGE} #shep-train-view-run .wrap:has(input:disabled) .icon-wrap {{ color: var(--shep-grey-600) !important; }}
 {_PAGE} #run_name .input-container {{ width: 260px; }}
 {_PAGE} #run_name input {{ border: 1px solid var(--shep-border-2) !important; border-radius: 8px; padding: 6px 10px !important; background: #fff; }}
 {_PAGE} #run_name input:disabled {{ background: var(--shep-grey-50); color: var(--shep-muted); }}
@@ -3710,7 +3923,7 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} .shep-cmp-ok {{ background: var(--shep-green-50); color: var(--shep-green-800); }}
 {_PAGE} .shep-cmp-grey {{ background: var(--shep-grey-50); color: var(--shep-grey-800); }}
 {_PAGE} .shep-check-h {{ font-weight: 600; margin-bottom: 4px; }}
-{_PAGE} .shep-check code, {_PAGE} .shep-rv-snap code {{ overflow-wrap: anywhere; word-break: normal; }}
+{_PAGE} .shep-check code {{ overflow-wrap: anywhere; word-break: normal; }}
 /* The check's model spec and settings (`_check_html`): summary lists and one closed disclosure in
    the check, none a bordered box of its own (the skill's §2), at the check's own size (15 px; the
    dense drawer below sets the whole check at 14 px to fit). */
@@ -3720,16 +3933,20 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} .shep-drawer-why {{ font-size: 15px; color: var(--shep-text-2); }}
 {_PAGE} .shep-drawer-why .shep-rb-why {{ text-align: left; flex-wrap: nowrap; align-items: flex-start; }}
 {_PAGE} #shep-train-drawer-why:not(:has(.shep-drawer-why)) {{ display: none !important; }}
-{_PAGE} #shep-train-rv-top {{ gap: 0 !important; flex: none !important; }}
-{_PAGE} .shep-rv-hd {{ gap: 6px 10px !important; }}
-{_PAGE} .shep-rv-k {{ font-size: 14px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--shep-text-2); margin-right: 6px; }}
-{_PAGE} .shep-rv-name {{ overflow-wrap: anywhere; }}
-{_PAGE} .shep-rv-hd > .shep-muted {{ font-size: 14px; }}
+/* The run view's header row: the Viewing select, then how the run viewed stands to the training
+   job, its dataset's relation, its state and Details, wrapping as one line of words. */
+{_PAGE} #shep-train-rv-top {{ flex: none !important; align-items: center !important; flex-wrap: wrap !important; gap: 6px 14px !important; padding: 6px 16px !important; }}
+{_PAGE} #shep-train-rv-top > * {{ min-width: 0; }}
+{_PAGE} #shep-train-run-head {{ flex: 1 1 320px !important; }}
+{_PAGE} .shep-rv-hd {{ display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }}
+{_PAGE} .shep-rv-rel {{ font-size: 15px; font-weight: 600; color: var(--shep-text); }}
+{_PAGE} #shep-train-view-run .options {{ min-width: min(28rem, calc(100vw - 48px)); }}
+{_PAGE} #shep-train-view-run .options li {{ min-width: 100%; }}
 /* Details, at the header's end: its popover opens under it, aligned to the right. */
 {_PAGE} .shep-rv-tools {{ margin-left: auto; position: relative; }}
 {_PAGE} .shep-rv-pop {{ left: auto; right: 0; width: min(560px, calc(100vw - 48px)); }}
 {_PAGE} .shep-rv-pop .shep-kv {{ font-size: 14px; gap: 4px 14px; }}
-{_PAGE} .shep-rv-snap {{ margin: 0; padding: 8px 16px 0; font-size: 15px; color: var(--shep-text-2); overflow-wrap: anywhere; }}
+{_PAGE} .shep-rv-snap {{ font-size: 15px; color: var(--shep-text-2); overflow-wrap: anywhere; }}
 {_PAGE} #shep-train-charts {{ padding: 8px 16px 6px !important; }}
 {_PAGE} .shep-rv-res {{ display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 6px; padding: 8px 16px; border-top: 1px solid var(--shep-border); font-size: 15px; color: var(--shep-text-2); }}
 {_PAGE} .shep-rv-res b {{ color: var(--shep-text); margin-right: 8px; }}
@@ -3811,39 +4028,40 @@ PAGE_CSS = charts.CHART_CSS + f"""
   {_PAGE} #shep-train-drawer-bd .shep-inherit {{ margin-top: 4px; }}
   /* Never clipped, and never cramped: each of the four plots keeps a plot area of at least
      PLOT_MIN_HEIGHT px whatever its title's keys take (the minimum is the plot box's, and each
-     box around it grows to hold its content). The run view is three rows: its header and
-     state line, the charts, and the resources line. The charts take what the other two leave
-     (the GB10 WebUI recheck: the resources line, kept over the plots, hid the last axis); when
-     their minimum does not fit, the charts scroll inside their own row, the toolbar staying at
-     its top, and nothing is ever drawn over an axis. */
+     box around it grows to hold its content). The run view is three rows: its header, the
+     charts, and the resources line. The charts take what the other two leave (the GB10 WebUI
+     recheck: the resources line, kept over the plots, hid the last axis). In their row the
+     toolbar is a row of its own, never over a plot (it was sticky over the top row's titles
+     and plots once scrolled), and when the plots' minimum does not fit, only the plots' body
+     under it scrolls: nothing is ever drawn over an axis. */
   /* (Gradio writes "overflow: visible" on the block itself, inline: only !important wins.) */
-  {_PAGE} #shep-train-runview > #shep-train-charts {{ flex: 1 1 0 !important; min-height: 0 !important; overflow-y: auto !important; display: flex; flex-direction: column; }}
+  {_PAGE} #shep-train-runview > #shep-train-charts {{ flex: 1 1 0 !important; min-height: 0 !important; overflow: hidden !important; display: flex; flex-direction: column; }}
   {_PAGE} #shep-train-charts .shep-chart-plot {{ min-height: {PLOT_MIN_HEIGHT + PLOT_AXIS_ROOM}px; }}
   /* The boxes between the charts' row and the grid take the row's height (min-height 0), so
      the grid's two rows share it, each at least what its own cards need (a card keeps its
      content's minimum: title, keys, the plot's minimum, the axis label); rows that need more
-     than the row has overflow it, and the row scrolls. */
-  {_PAGE} #shep-train-charts .shep-charts, {_PAGE} #shep-train-charts .shep-charts-body, {_PAGE} #shep-train-charts .shep-charts-grid {{ min-height: 0; }}
+     than the body has overflow it, and the body scrolls. */
+  {_PAGE} #shep-train-charts .shep-charts, {_PAGE} #shep-train-charts .shep-charts-grid {{ min-height: 0; }}
+  /* The toolbar's row as dense as drawn (its buttons 30 px tall, the skill's §10 asks 24) and
+     the grid's rows closer, so the room goes to the plots. */
+  {_PAGE} #shep-train-charts {{ padding-top: 6px !important; padding-bottom: 4px !important; }}
+  {_PAGE} #shep-train-charts .shep-charts-bar {{ flex: none; min-height: 34px; padding-bottom: 4px; }}
+  {_PAGE} #shep-train-charts .shep-charts-btn {{ height: 30px; }}
+  {_PAGE} #shep-train-charts .shep-charts-icon {{ height: 28px; }}
+  {_PAGE} #shep-train-charts .shep-charts-grid {{ row-gap: 6px; }}
+  {_PAGE} #shep-train-charts .shep-charts-body {{ flex: 1 1 0; min-height: 0; overflow-y: auto; }}
   {_PAGE} #shep-train-charts .shep-chart {{ min-height: auto; }}
   {_PAGE} #shep-train-charts .shep-charts-grid {{ grid-auto-rows: minmax(min-content, 1fr); }}
   {_PAGE} #shep-train-runview > #shep-train-rv-top {{ position: relative; z-index: 6; }}
   {_PAGE} #shep-train-runview > #resource_display {{ flex: none !important; }}
-  {_PAGE} #shep-train-charts .shep-charts-bar {{ position: sticky; top: 0; z-index: 5; background: var(--shep-panel); }}
   {_PAGE} #shep-train-charts > .html-container {{ flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }}
   {_PAGE} #shep-train-charts > .html-container > div {{ flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }}
   {_PAGE} .shep-rb-row1 {{ flex-wrap: nowrap !important; }}
   {_PAGE} #shep-train-chip {{ flex: 1 1 auto !important; }}
   {_PAGE} #shep-train-charts .shep-charts {{ flex: 1 1 auto; }}
-  {_PAGE} #shep-train-runview {{ container-type: inline-size; container-name: shep-runview; }}
 }}
 @media (min-width: 1400px) and (min-height: 760px) and (max-height: 899px) {{
-  {_PAGE} .shep-rv-hd {{ min-height: 40px; padding-top: 6px; padding-bottom: 6px; }}
-  {_PAGE} .shep-rv-snap {{ padding-top: 6px; }}
-  {_PAGE} #shep-train-charts {{ padding-top: 6px !important; padding-bottom: 4px !important; }}
-  {_PAGE} .shep-charts-bar {{ min-height: 34px; padding-bottom: 4px; }}
-  {_PAGE} .shep-charts-btn {{ height: 30px; }}
-  {_PAGE} .shep-charts-icon {{ height: 28px; }}
-  {_PAGE} .shep-charts-grid {{ row-gap: 6px; }}
+  {_PAGE} #shep-train-rv-top {{ min-height: 40px; padding-top: 4px !important; padding-bottom: 4px !important; }}
   {_PAGE} .shep-rv-res {{ padding-top: 6px; padding-bottom: 6px; }}
 }}
 @media (max-width: 1399px), (max-height: 759px) {{

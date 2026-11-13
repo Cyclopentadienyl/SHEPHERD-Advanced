@@ -58,7 +58,7 @@ def test_delayed_full_poll_cannot_restore_the_old_dataset_label(root, operator, 
             assert browser.wait(browser.join(opened, [None, None]))
             first = browser.join(choose, ['demo', None])
             assert browser.wait(first)
-            drawn_demo = browser.join(render_after_choice, [None] * 4)
+            drawn_demo = browser.join(render_after_choice, [None] * len(render_after_choice.inputs))
             assert browser.wait(drawn_demo)
             browser.set_state(ctx.location, shell.TRAINING)
             before = browser.state(cache)
@@ -73,7 +73,7 @@ def test_delayed_full_poll_cannot_restore_the_old_dataset_label(root, operator, 
             assert job.entered.wait(20)
             second = browser.join(choose, ['resampled', None])
             assert browser.wait(second)
-            drawn_resampled = browser.join(render_after_choice, [None] * 4)
+            drawn_resampled = browser.join(render_after_choice, [None] * len(render_after_choice.inputs))
             assert browser.wait(drawn_resampled)
             assert browser.state(ws)['name'] == 'resampled'
             job.release.set()

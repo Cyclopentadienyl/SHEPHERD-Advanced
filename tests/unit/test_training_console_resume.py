@@ -299,7 +299,7 @@ def test_a_path_inside_the_root_is_shown_whole_whatever_its_names_hold(workspace
     assert f"<code>{r.e(inside)}</code>" in refused, refused
     assert f"<p>{r.e(inside)} does not exist.</p>" in refused, refused
     ref = tc.RunRef(id=f"{workspace}/gatv2/{run.name}", label=f"gatv2/{run.name}", path=run,
-                    workspace=workspace, latest=False)
+                    workspace=workspace, job=True, latest=False)
     monkeypatch.setattr(tc, "_newest_checkpoint", lambda _run: checkpoint)
     for head in (tc.run_head_html(ref, {}, operator=True, snapshot=None, live=True),
                  tc.run_head_html(ref, {}, operator=True, snapshot={"checkpoint": str(checkpoint)})):

@@ -112,7 +112,9 @@ finished after the page stopped waiting.").
 
 **Run → Checkpoint** (`run_choices`, `checkpoint_choices`, `parents_update`,
 `on_run_chosen`): the one pair of cascading selects by which a page chooses a
-listed checkpoint, Training's Continue… and Fine-tune's parent alike. Each
+listed checkpoint, Training's Continue… and Fine-tune's parent alike; a run's
+option is the one rule (`run_options`), which Training's run view also names
+its runs by. Each
 option is short (the WebUI skill §8: `renderers.fit_option`, at most 40
 characters, one separator), the distinguishing token first (a run's name, or
 its start time; what a file is), and **its value is the listing's key**
@@ -336,16 +338,26 @@ def runs_of(parents: Mapping[str, Any]) -> Dict[str, List[str]]:
     return runs
 
 
+def run_options(runs: Mapping[Any, Tuple[Any, Any]]) -> List[Tuple[str, Any]]:
+    """**Runs as a select's options**, in `runs`' order (latest first), from
+    ``{value: (architecture, run directory's name)}``: each run's words
+    (`run_words`); runs that would read alike get their start time to the
+    second, then their own id (`renderers.distinct_names`), and are numbered
+    only where nothing recorded tells them apart. Each value is its key,
+    whatever the words: the Run select's run identity (`run_choices`), the
+    Training run view's run id."""
+    names = r.distinct_names(runs, lambda parts, level: r.fit_option(*_run_parts(
+        parts[0], parts[1], level)))
+    return r.fit_options([(names[key], None, key) for key in runs])
+
+
 def run_choices(parents: Mapping[str, Any]) -> List[Tuple[str, str]]:
-    """The Run select's options, latest run first (`runs_of`): each run's
-    words (`run_words`); runs that would read alike get their start time to
-    the second, then their own id (`renderers.distinct_names`), and are
-    numbered only where nothing recorded tells them apart. Each value is the
-    run's identity (`item_run_key`), whatever the words."""
+    """The Run select's options, latest run first (`runs_of`), by the one
+    rule of a run's option (`run_options`); each value is the run's identity
+    (`item_run_key`), whatever the words."""
     first = {run: parents[keys[0]] for run, keys in runs_of(parents).items()}
-    names = r.distinct_names(first, lambda item, level: r.fit_option(*_run_parts(
-        item.get("architecture"), item.get("run"), level)))
-    return r.fit_options([(names[run], None, run) for run in first])
+    return run_options({run: (item.get("architecture"), item.get("run"))
+                        for run, item in first.items()})
 
 
 def _checkpoint_parts(item: Mapping[str, Any], best: bool) -> Tuple[str, str]:
