@@ -266,7 +266,8 @@ def test_every_registered_help_target_exists_in_the_built_app(built):
 def test_no_component_keeps_ordinary_help_in_info(built):
     """``info=`` holds only text that must stay visible (the WebUI skill's §7):
     a state set at runtime, and a field's format, unit or "off", set at build
-    time only on the Training page's base form (`FIELD_FORMATS`, by its
+    time only on the Training page's base form and its Continue drawer's
+    Branch fields, the one field of each setting (`FIELD_FORMATS`, by its
     setting or its model spec field); no ordinary help is kept there."""
     from src.webui.components import training_console as tc
 
@@ -275,7 +276,10 @@ def test_no_component_keeps_ordinary_help_in_info(built):
                  if getattr(b, "info", None)}
     elem_ids = {name: name for name in tc.BASE_FIELDS}
     elem_ids.update({field.path: field.elem_id for field in tc.spec_form_fields()})
-    assert with_info == {elem_ids[key]: text for key, text in tc.FIELD_FORMATS.items()}
+    expected = {elem_ids[key]: text for key, text in tc.FIELD_FORMATS.items()}
+    expected.update({f"branch_{name}": text for name, text in tc.FIELD_FORMATS.items()
+                     if name in tc.BRANCH_FIELDS})
+    assert with_info == expected
 
 
 def test_the_hidden_container_holds_every_registered_text(built):

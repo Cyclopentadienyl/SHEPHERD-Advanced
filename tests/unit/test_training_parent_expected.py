@@ -447,14 +447,29 @@ def console(case, monkeypatch):
             "started": started}
 
 
-def _check(c, source, typed="", mode=None):
-    return c["tc"]._on_check_continue(source, c["key"], typed, "cpu", None, c["state"],
-                                      c["listed"], mode or {}, OP)
+def _values(tc):
+    """The drawer's Branch fields as they hold before a check: none edited."""
+    return [tc.form_value(tc._branch_field_value(name)) for name in tc.BRANCH_FIELDS]
 
 
-def _continue(c, source, typed="", mode=None):
-    return c["tc"]._on_resume(c["state"], "cpu", source, c["key"], typed, None, c["listed"],
-                              mode or {}, OP)
+def _check(c, source, typed="", mode=None, operation=None):
+    """Check checkpoint for the drawer's operation (Continue unless given):
+    its text, Extra epochs update, mode and comparison."""
+    tc = c["tc"]
+    text, extend, _rate, mode, compare, *_branch = tc._on_check_continue(
+        OP, operation or tc.CONTINUE, source, c["key"], typed, "cpu", None, None, c["state"],
+        c["listed"], mode or {}, [], *_values(tc))
+    return text, extend, mode, compare
+
+
+def _continue(c, source, typed="", mode=None, operation=None):
+    """The drawer's start (Continue Training, or Start branch): its notice, the
+    check's text, the Extra epochs update and the mode."""
+    tc = c["tc"]
+    said, text, extend, _rate, mode, *_branch = tc._on_resume(
+        OP, operation or tc.CONTINUE, c["state"], "cpu", source, c["key"], typed, None, None,
+        c["listed"], mode or {}, [], *_values(tc))
+    return said, text, extend, mode
 
 
 @pytest.mark.parametrize("source", ["list", "typed"])
@@ -530,8 +545,7 @@ def test_a_listed_parent_refused_as_changed_is_shown_again_by_refresh(console):
     refreshed, _problem = tc._list_parents(console["state"])
     now = _sha(console["parents"]["a"])
     assert refreshed[console["key"]]["sha256"] == now
-    text, _e, mode, _c = tc._on_check_continue(tc.CONTINUE_FROM_LIST, console["key"], "", "cpu",
-                                               None, console["state"], refreshed, {}, OP)
+    text, _e, mode, _c = _check({**console, "listed": refreshed}, tc.CONTINUE_FROM_LIST)
     assert "Checkpoint read; it can continue" in text and mode["parent"]["sha256"] == now
 
 
@@ -562,8 +576,115 @@ def test_a_typed_parent_changed_after_the_consoles_check_is_refused_by_the_start
     monkeypatch.setattr(manager, "preview_continuation", preview)
     shown = _sha(case["parents"]["a"])
     with patch.object(tm.subprocess, "Popen") as popen:
-        said, *_rest = tc._on_resume(ws, "cpu", tc.CONTINUE_FROM_PATH, key,
-                                     str(case["parents"]["a"]), None, parents, {}, OP)
+        said, *_rest = tc._on_resume(OP, tc.CONTINUE, ws, "cpu", tc.CONTINUE_FROM_PATH, key,
+                                     str(case["parents"]["a"]), None, None, parents, {}, [],
+                                     *_values(tc))
     assert sent == [None, shown]
     assert CHANGED in said and CHECK_AGAIN in said, said
     popen.assert_not_called()
+
+
+# --------------------------------------------------------------------------- the console's Branch
+# Ops-wiring round B1c (decisions B1, B2): the drawer's Branch through the
+# same run list, parent path, check and start as Continue, the digest shown
+# sent and compared alike.
+@pytest.mark.parametrize("source", ["list", "typed"])
+def test_start_branch_sends_the_parent_shown_and_the_preview_refuses_another(console, source):
+    """As Continue: the run list's digest, or a typed path's Check, is what
+    was shown; Start branch sends it, the runner's branch preview compares it
+    on its read, and another file at the path starts nothing, with the
+    action for where it was shown."""
+    tc = console["tc"]
+    src = tc.CONTINUE_FROM_LIST if source == "list" else tc.CONTINUE_FROM_PATH
+    typed = str(console["parents"]["a"]) if source == "typed" else ""
+    shown = _sha(console["parents"]["a"])
+
+    text, _extend, mode, _compare = _check(console, src, typed, operation=tc.BRANCH)
+    assert "Checkpoint read; it can be branched" in text and mode["parent"]["sha256"] == shown
+
+    said, *_rest = _continue(console, src, typed, mode, operation=tc.BRANCH)
+    assert said == tc.notice_html("")
+    assert console["started"][-1]["branch_from"] == str(console["parents"]["a"])
+    assert console["started"][-1]["__kwargs__"] == {
+        "expected_dataset_fingerprint": console["dataset"], "expected_parent_sha256": shown}
+
+    _swap(console, "same")()
+    said, text, _extend, mode = _continue(console, src, typed, mode, operation=tc.BRANCH)
+    assert len(console["started"]) == 1, "another parent was branched"
+    assert "this checkpoint cannot be branched" in said
+    assert "Cannot branch." in text and CHANGED in text and f"(chosen: {shown[:12]}...)" in text
+    assert (REFRESH if source == "list" else CHECK_AGAIN) in text
+    assert mode["parent"]["refused"] is True and mode["parent"]["sha256"] == shown
+
+
+def test_a_typed_branch_parent_changed_after_the_consoles_check_is_refused_by_the_start(
+        case, monkeypatch):
+    """Start branch on a typed path without a Check first: the console's own
+    check reads and records the file, and the start's branch preview
+    compares that digest. A file replaced between the two is refused by the
+    start, with the typed path's action, and nothing is spawned."""
+    from src.webui.components import training_console as tc
+
+    operator_mode(monkeypatch)
+    ws = tc.workspace_state("data")
+    parents, _problem = tc._list_parents(ws)
+    key = next(k for k in parents if "_a_" in k and k.endswith("/last.pt"))
+    manager = tm.TrainingManager()
+    monkeypatch.setattr(tc, "training_manager", manager)
+    real = manager.preview_branch
+    sent = []
+
+    def preview(parent, **kwargs):
+        sent.append(kwargs.get("expected_sha256"))
+        result = real(parent, **kwargs)
+        if len(sent) == 1:
+            _swap(case, "same")()
+        return result
+
+    monkeypatch.setattr(manager, "preview_branch", preview)
+    shown = _sha(case["parents"]["a"])
+    with patch.object(tm.subprocess, "Popen") as popen:
+        said, *_rest = tc._on_resume(OP, tc.BRANCH, ws, "cpu", tc.CONTINUE_FROM_PATH, key,
+                                     str(case["parents"]["a"]), None, None, parents, {}, [],
+                                     *_values(tc))
+    assert sent == [None, shown]
+    assert CHANGED in said and CHECK_AGAIN in said, said
+    popen.assert_not_called()
+
+
+def test_a_same_settings_branch_from_the_page_is_a_new_run_from_its_parent(case, monkeypatch):
+    """Decisions B1, B2, end to end on the CPU: Start branch with no field
+    edited, through the real job runner and the real training process. The
+    run is a new one under the parent's architecture, records operation
+    branch, its parent's digest (the one shown) and ``changes`` ``{}``, a new
+    optimizer, and the shared list shows it under its parent with no setting
+    changed; the parent's bytes are as they were."""
+    import torch
+
+    from src.api.services.server_lists import list_checkpoints
+    from src.webui.components import training_console as tc
+
+    operator_mode(monkeypatch)
+    ws = tc.workspace_state("data")
+    parents, _problem = tc._list_parents(ws)
+    key = next(k for k in parents if "_a_" in k and k.endswith("/last.pt"))
+    manager = tm.TrainingManager()
+    monkeypatch.setattr(tc, "training_manager", manager)
+    shown = _sha(case["parents"]["a"])
+    said, text, *_rest = tc._on_resume(OP, tc.BRANCH, ws, "cpu", tc.CONTINUE_FROM_LIST, key, "",
+                                       None, None, parents, {}, [], *_values(tc))
+    assert said == tc.notice_html(""), said
+    assert "no setting changed" in text
+    job, log = _wait(manager)
+    assert job.status == "completed", log[-3000:]
+    run = Path(manager.run_dir)
+    assert run.parent.name == "gatv2"
+    record = torch.load(run / "checkpoints" / "last.pt", weights_only=True, map_location="cpu")
+    assert (record["operation"], record["parent"]["sha256"], record["parent"]["changes"]) == (
+        "branch", shown, {})
+    assert record["weight_transfer"]["optimizer"] == "new"
+    assert _sha(case["parents"]["a"]) == shown, "the parent's bytes changed"
+    listed = {item.key: item for item in list_checkpoints("data").items}
+    child = listed[f"gatv2/{run.name}/last.pt"]
+    assert child.operation == "branch" and child.parent_sha256 == shown
+    assert child.parent_changes == {}

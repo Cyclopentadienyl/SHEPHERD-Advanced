@@ -82,7 +82,7 @@ def test_the_parent_list_is_the_run_bars_workspaces_model_records_only(tmp_path,
 
     child_files = on_run_chosen("gatv2/20261002-000000_b_222222", parents, None)
     assert [key for _label, key in child_files["choices"]] == [child_key]
-    assert "Fine-tune · Gene" in tc.parent_details_html(parents[child_key])
+    assert ">Kind</dt><dd class=\"shep-v\">Gene<" in tc.parent_details_html(parents[child_key])
     assert "2 runs, 2 checkpoints" in note
     # No client path anywhere: the values are keys the server resolves again.
     assert all(str(root) not in value for value in (*labels, *run_labels))
@@ -174,14 +174,46 @@ def checkpoints(trained, monkeypatch):
             "done_key": f"gatv2/{DONE_RUN}/last.pt"}
 
 
-def _check(c, source, listed, manual, device="cpu", extend=None, mode=None):
-    return tc._on_check_continue(source, listed, manual, device, extend, c["state"],
-                                 c["parents"], mode or {}, OP)
+def _values(**edited):
+    """The Branch fields' values as the drawer holds them before a check
+    (`_branch_field_value`), each edit in `edited` in its field's form."""
+    return [edited.get(name, tc.form_value(tc._branch_field_value(name)))
+            for name in tc.BRANCH_FIELDS]
 
 
-def _resume(c, source, listed, manual, extend=None, mode=None, device="cpu"):
-    return tc._on_resume(c["state"], device, source, listed, manual, extend, c["parents"],
-                         mode or {}, OP)
+def _check_all(c, source, listed, manual, device="cpu", extend=None, mode=None, *,
+               operation=tc.CONTINUE, rate=None, touched=(), parents=None, **edited):
+    """Check checkpoint, every output: the check's text, the Extra epochs and
+    Extra-epoch rate updates, the mode, the comparison, the Branch box and
+    each Branch field (`BRANCH_FIELDS`)."""
+    return tc._on_check_continue(OP, operation, source, listed, manual, device, extend, rate,
+                                 c["state"], parents or c["parents"], mode or {},
+                                 sorted({*touched, *edited}), *_values(**edited))
+
+
+def _check(c, source, listed, manual, device="cpu", extend=None, mode=None, **kwargs):
+    """Check checkpoint's text, Extra epochs update, mode and comparison."""
+    text, extend, _rate, mode, compare, *_branch = _check_all(
+        c, source, listed, manual, device, extend, mode, **kwargs)
+    return text, extend, mode, compare
+
+
+def _resume_all(c, source, listed, manual, extend=None, mode=None, device="cpu", *,
+                operation=tc.CONTINUE, rate=None, touched=(), state=None, **edited):
+    """The drawer's start, every output: its notice, the check's text, the
+    Extra epochs and Extra-epoch rate updates, the mode, the Branch box and
+    each Branch field."""
+    return tc._on_resume(OP, operation, state or c["state"], device, source, listed, manual,
+                         extend, rate, c["parents"], mode or {}, sorted({*touched, *edited}),
+                         *_values(**edited))
+
+
+def _resume(c, source, listed, manual, extend=None, mode=None, device="cpu", **kwargs):
+    """The drawer's start's notice, the check's text, the Extra epochs update
+    and the mode."""
+    said, text, extend, _rate, mode, *_branch = _resume_all(c, source, listed, manual, extend,
+                                                           mode, device, **kwargs)
+    return said, text, extend, mode
 
 
 def _starts(started):
@@ -201,7 +233,9 @@ def test_the_listed_and_the_typed_checkpoint_go_through_one_check(checkpoints):
     for text in (from_list, typed):
         assert "Resume the original training (1/2 done, 1 left)" in text
         assert '<dt class="shep-k" title="learning_rate">Learning rate</dt>' in text
-        assert "start a new run" in text
+        # The settings cannot change when continuing: the note points to
+        # Branch (ops-wiring round B1c).
+        assert "to train with other settings, choose Branch above" in text
     # The listed parent was resolved by the server from its list: the file
     # read is the one listed (its run and name; its fingerprint is in the
     # chosen checkpoint's details, not repeated here).
@@ -321,9 +355,8 @@ def test_a_listed_parent_whose_bytes_changed_since_it_was_listed_is_refused(chec
     is read again."""
     parents = {key: dict(item) for key, item in checkpoints["parents"].items()}
     parents[checkpoints["paused_key"]]["sha256"] = "0" * 64
-    text, _e, mode, _c = tc._on_check_continue(
-        tc.CONTINUE_FROM_LIST, checkpoints["paused_key"], "", "cpu", None, checkpoints["state"],
-        parents, {}, OP)
+    text, _e, mode, _c = _check(checkpoints, tc.CONTINUE_FROM_LIST, checkpoints["paused_key"],
+                                "", parents=parents)
     assert "The checkpoint changed since it was chosen." in text
     assert "Refresh the list, then choose it again." in text
     assert mode["parent"]["refused"] is True
@@ -390,7 +423,9 @@ def test_a_typed_path_of_a_listed_checkpoint_is_found_again_from_the_list(checkp
 def test_a_finished_checkpoint_offers_extend_and_says_why_it_cannot_resume(checkpoints):
     path = str(checkpoints["finished"])
     text, extend, _mode, _compare = _check(checkpoints, tc.CONTINUE_FROM_PATH, None, path)
-    assert "Cannot continue" in text and "extend_epochs" in text
+    # The plan's refusal names the field by the drawer's own words (B1c).
+    assert "Cannot continue" in text and "extend it at a fixed rate with Extra epochs" in text
+    assert "extend_epochs" not in text
     assert extend["visible"] is True
 
     text, *_rest = _check(checkpoints, tc.CONTINUE_FROM_PATH, None, path, extend=3)
@@ -428,8 +463,8 @@ def test_continue_training_is_refused_when_the_parents_dataset_is_not_the_worksp
     monkeypatch.setattr(training_manager, "start_training", _starts(started))
     other = dict(checkpoints["state"])
     other["row"] = {**other["row"], "dataset_fingerprint": "e" * 64}
-    out = tc._on_resume(other, "cpu", tc.CONTINUE_FROM_LIST, checkpoints["paused_key"], "", None,
-                        checkpoints["parents"], {}, OP)
+    out = _resume(checkpoints, tc.CONTINUE_FROM_LIST, checkpoints["paused_key"], "",
+                  state=other)
     assert started == []
     assert out[0] == tc.notice_html(
         "Not started: the parent’s dataset is not this workspace’s current one.")
@@ -561,7 +596,7 @@ def test_extra_epochs_left_from_a_finished_checkpoint_never_block_a_resume(
 
     # The operator picks the unfinished checkpoint: the change event fires.
     listed, manual = chosen("paused")
-    update, preview = tc._on_continue_selection_changed()
+    update, _rate, preview, *_rest = tc._on_continue_selection_changed()
     _apply(extra, update)
     assert extra == {"value": None, "visible": False} and preview == tc._CONTINUE_PROMPT
 
@@ -605,7 +640,10 @@ def test_the_service_still_refuses_extend_epochs_for_an_unfinished_parent(checkp
 def test_every_selection_change_clears_the_check_and_extra_epochs():
     """Each component that is part of the check is wired to clear it: the
     source, the run list and the typed path (each only when it is the source),
-    and the drawer's own device (the check only)."""
+    the operation (ops-wiring round B1c), and the drawer's own device (the
+    check only). What is cleared is everything entered for the old one:
+    Extra epochs and its rate, the start's last notice, the Branch fields'
+    record of what was edited and their box."""
     import gradio as gr
 
     with gr.Blocks() as demo:
@@ -614,17 +652,22 @@ def test_every_selection_change_clears_the_check_and_extra_epochs():
     wiring = {}
     for fn in demo.fns.values():
         if fn.fn in (tc._on_continue_selection_changed, tc._on_listed_changed,
-                     tc._on_manual_changed, tc._on_continue_device_changed):
+                     tc._on_manual_changed, tc._on_continue_device_changed, tc._on_operation):
             for block, event in fn.targets:
                 wiring[(by_id[block], event)] = (
                     fn.fn.__name__, [getattr(o, "elem_id", None) for o in fn.outputs])
-    both = ["extend_epochs", "continue_preview"]
+    cleared = ["extend_epochs", "extend_lr", "continue_preview", "shep-train-drawer-notice",
+               "shep-train-branch-touched", "shep-train-branch"]
     assert wiring == {
-        ("continue_source", "change"): ("_on_continue_selection_changed", both),
-        ("checkpoint_dropdown", "change"): ("_on_listed_changed", both),
-        ("manual_checkpoint", "change"): ("_on_manual_changed", both),
+        ("continue_source", "change"): ("_on_continue_selection_changed", cleared),
+        ("checkpoint_dropdown", "change"): ("_on_listed_changed", cleared),
+        ("manual_checkpoint", "change"): ("_on_manual_changed", cleared),
+        ("continue_operation", "change"): ("_on_operation", [None, *cleared]),
         ("continue_device", "change"): ("_on_continue_device_changed", ["continue_preview"]),
     }
+    assert tc._on_continue_selection_changed() == (
+        gr_update(visible=False, value=None), gr_update(visible=False, value=None),
+        tc._CONTINUE_PROMPT, "", [], gr_update(visible=False))
 
 
 def test_a_refreshed_run_list_does_not_clear_a_typed_paths_check():
@@ -633,21 +676,19 @@ def test_a_refreshed_run_list_does_not_clear_a_typed_paths_check():
     verification round after the P2-2 fix)."""
     untouched = tc._on_listed_changed(tc.CONTINUE_FROM_PATH)
     assert all(update == gr_update() for update in untouched)
-    extend, preview = tc._on_listed_changed(tc.CONTINUE_FROM_LIST)
-    assert extend["value"] is None and preview == tc._CONTINUE_PROMPT
+    assert tc._on_listed_changed(tc.CONTINUE_FROM_LIST) == tc._cleared_check()
 
     untouched = tc._on_manual_changed(tc.CONTINUE_FROM_LIST)
     assert all(update == gr_update() for update in untouched)
-    extend, preview = tc._on_manual_changed(tc.CONTINUE_FROM_PATH)
-    assert extend["value"] is None and preview == tc._CONTINUE_PROMPT
+    assert tc._on_manual_changed(tc.CONTINUE_FROM_PATH) == tc._cleared_check()
 
     assert tc._on_continue_device_changed() == tc._CONTINUE_PROMPT
 
 
-def gr_update():
+def gr_update(**kwargs):
     import gradio as gr
 
-    return gr.update()
+    return gr.update(**kwargs)
 
 
 def test_continue_without_check_on_a_finished_checkpoint_shows_extra_epochs(
@@ -721,3 +762,252 @@ def test_a_stop_after_the_child_ended_on_its_own_says_nothing_was_stopped(monkey
     assert "Stopped." not in notice and mode["confirm"] is None
     assert ("Nothing was stopped: the job had already ended on its own (completed). "
             "The queued Fine-tune children (Gene) were cancelled.") in notice
+
+
+# --------------------------------------------------------------- Branch and the Extra-epoch rate (B1c)
+def _fields(outputs):
+    """The Branch box's update and each Branch field's, by name, from a
+    Check's or a start's outputs (they end with the box, then the fields)."""
+    box, *fields = outputs[-1 - len(tc.BRANCH_FIELDS):]
+    return box, dict(zip(tc.BRANCH_FIELDS, fields, strict=True))
+
+
+def _plain(text):
+    import html as html_lib
+    import re
+
+    return html_lib.unescape(re.sub(r"<[^>]+>", " ", text))
+
+
+@pytest.fixture
+def zero_rate(checkpoints, tmp_path, monkeypatch):
+    """The trained workspace copied, with a finished base whose optimizer
+    ended at a rate of 0 in every parameter group beside the others (a
+    schedule that decayed to 0): its own run, listed by the server."""
+    import shutil
+
+    import torch
+
+    root = tmp_path / "root"
+    shutil.copytree(checkpoints["root"], root)
+    ws = root / "data"
+    run = ws / "runs" / "gatv2" / "20261004-000000_zero_dddddd" / "checkpoints"
+    run.mkdir(parents=True)
+    payload = torch.load(ws / "runs" / "gatv2" / DONE_RUN / "checkpoints" / "last.pt",
+                         map_location="cpu", weights_only=True)
+    for group in payload["optimizer_state_dict"]["param_groups"]:
+        group["lr"] = 0.0
+    torch.save(payload, run / "last.pt")
+    monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(root))
+    state = tc.workspace_state("data")
+    parents, _problem = tc._list_parents(state)
+    return {**checkpoints, "root": root, "ws": ws, "state": state, "parents": parents,
+            "zero": run / "last.pt", "zero_key": "gatv2/20261004-000000_zero_dddddd/last.pt",
+            "done_key": f"gatv2/{DONE_RUN}/last.pt",
+            "groups": len(payload["optimizer_state_dict"]["param_groups"])}
+
+
+def test_the_extra_epoch_rate_shows_only_for_a_parent_whose_rate_ended_at_zero(zero_rate,
+                                                                               monkeypatch):
+    """Ops-wiring round B1c: the drawer sent no extend_lr, so a finished parent
+    whose schedule decayed to 0 could not be extended from the page. The
+    preview names the groups whose rate ended at 0 (`zero_rate_groups`); the
+    Extra-epoch rate field shows for such a parent only, its value is the
+    plan's extend_lr, and the start sends the rate the check judged. A parent
+    with no rate at 0 says its rates in the plan's own sentence, and a value
+    left in the hidden field is no request."""
+    started = []
+    monkeypatch.setattr(training_manager, "start_training", _starts(started))
+    c = zero_rate
+    # A finished parent with its rates: no rate field; the plan says them.
+    text, extend, rate, *_rest = _check_all(c, tc.CONTINUE_FROM_LIST, c["done_key"], "",
+                                            extend=2)
+    assert "Extend training by 2 epochs at a fixed rate of" in _plain(text)
+    assert extend["visible"] is True and rate == {"__type__": "update", "visible": False,
+                                                 "value": None}
+    # The zero-rate parent: refused without the rate, in the drawer's words,
+    # with the rate field shown.
+    text, extend, rate, *_rest = _check_all(c, tc.CONTINUE_FROM_LIST, c["zero_key"], "",
+                                            extend=2)
+    assert "Cannot continue." in text and "Give Extra-epoch rate for those groups" in text
+    assert "extend_lr" not in text and rate["visible"] is True
+    text, extend, rate, *_rest = _check_all(c, tc.CONTINUE_FROM_LIST, c["zero_key"], "",
+                                            extend=2, rate=1e-4)
+    assert "Extend training by 2 epochs at a fixed rate of 0.0001" in _plain(text)
+    assert rate["visible"] is True
+    said, *_rest = _resume_all(c, tc.CONTINUE_FROM_LIST, c["zero_key"], "", extend=2, rate=1e-4)
+    assert said == tc.notice_html("")
+    assert started[-1]["extend_epochs"] == 2 and started[-1]["extend_lr"] == 1e-4
+    assert started[-1]["resume_from"] == str(c["zero"])
+    # A rate left in the hidden field is not sent for a parent with no rate
+    # at 0, nor for an unfinished one.
+    _resume_all(c, tc.CONTINUE_FROM_LIST, c["done_key"], "", extend=2, rate=1e-4)
+    assert started[-1]["extend_epochs"] == 2 and "extend_lr" not in started[-1]
+    _resume_all(c, tc.CONTINUE_FROM_LIST, c["paused_key"], "", rate=1e-4)
+    assert "extend_lr" not in started[-1] and "extend_epochs" not in started[-1]
+    # The service still refuses a rate sent for a parent with none at 0.
+    preview = training_manager.preview_continuation(str(c["finished"]), device="cpu",
+                                                    extend_epochs=2,
+                                                    requested={"extend_lr": 1e-4})
+    assert preview["ok"] is False and "none did" in preview["reason"]
+
+
+def test_a_same_settings_branch_checks_and_starts_from_the_page(checkpoints, monkeypatch):
+    """Ops-wiring round B1c, decisions B1, B2: Branch from the drawer with no
+    setting edited. The check is the job runner's branch preview: no setting
+    changed, in the page's words; the fields are the settings the parent's
+    stage and task may change (the preview's `changeable`), each at the
+    parent's value; the start is the runner's one start with `branch_from`,
+    nothing else of the fields, and the digest shown."""
+    started = []
+    monkeypatch.setattr(training_manager, "start_training", _starts(started))
+    c = checkpoints
+    outputs = _check_all(c, tc.CONTINUE_FROM_LIST, c["paused_key"], "", operation=tc.BRANCH)
+    text, extend, rate, mode, _compare = outputs[:5]
+    words = _plain(text)
+    assert "Checkpoint read; it can be branched on this workspace." in words
+    assert ("Plan read from the checkpoint: no setting changed: a new run from these weights "
+            "with a new optimizer.") in words
+    for repr_mark in ("'", "None", "True", "False", "{", "->"):
+        assert repr_mark not in words, repr_mark
+    assert extend["visible"] is False and rate["visible"] is False
+    preview = training_manager.preview_branch(str(c["paused"]), device="cpu")
+    assert mode["operation"] == tc.BRANCH
+    assert sorted(mode["parent"]["changeable"]) == sorted(preview["changeable"])
+    box, fields = _fields(outputs)
+    assert box["visible"] is True
+    for name in tc.BRANCH_FIELDS:
+        shown = fields[name]["visible"]
+        if name not in preview["changeable"]:
+            assert shown is False, name                     # a task's own, on a base
+        elif name in preview["inherited"] and shown:
+            assert fields[name]["value"] == tc.form_value(preview["inherited"][name]), name
+    assert fields["num_neighbors"]["value"] == "4, 4" and fields["num_epochs"]["value"] == 2
+    assert fields["candidate_sample_size"]["visible"] is False
+    # Kept settings, not offered: in the check's own disclosure, none of the fields.
+    keeps = text[text.index("Settings this branch keeps"):]
+    assert "Split seed" in keeps and "Learning rate" not in keeps
+    said, text, *_rest = _resume_all(c, tc.CONTINUE_FROM_LIST, c["paused_key"], "",
+                                     operation=tc.BRANCH)
+    assert said == tc.notice_html("")
+    assert set(started[-1]) - {"__kwargs__"} == {"data_dir", "run_name", "device", "compile",
+                                                 "branch_from"}
+    assert started[-1]["branch_from"] == str(c["paused"])
+    assert started[-1]["__kwargs__"] == {
+        "expected_dataset_fingerprint": c["state"]["row"]["dataset_fingerprint"],
+        "expected_parent_sha256": c["parents"][c["paused_key"]]["sha256"]}
+
+
+def test_a_branch_sends_only_the_fields_edited_and_says_its_changes_in_words(checkpoints,
+                                                                            monkeypatch):
+    """Only a field the operator edited is sent (decision S2), whatever its
+    value; a value other than the parent's is the branch's change, said by
+    the setting's words with its parent's value and its own in the one value
+    words (`renderers.change_value`), never repr; one edited at the parent's
+    own value is sent and is no change. An edited field keeps the operator's
+    value after the check."""
+    started = []
+    monkeypatch.setattr(training_manager, "start_training", _starts(started))
+    c = checkpoints
+    outputs = _check_all(c, tc.CONTINUE_FROM_LIST, c["paused_key"], "", operation=tc.BRANCH,
+                         learning_rate=0.0005, scheduler_type="cosine")
+    text = outputs[0]
+    assert "Plan read from the checkpoint: 2 settings changed: a new run from these weights " \
+        "with a new optimizer." in _plain(text)
+    assert ('<dt class="shep-k" title="learning_rate">Learning rate</dt><dd class="shep-v">'
+            '<code>0.0001</code> → <code>0.0005</code></dd>') in text
+    assert ('<dt class="shep-k" title="scheduler_type">Scheduler</dt><dd class="shep-v">'
+            '<code>none</code> → <code>cosine</code></dd>') in text
+    assert "'" not in _plain(text) and "->" not in _plain(text)
+    _box, fields = _fields(outputs)
+    assert "value" not in fields["learning_rate"] and "value" not in fields["scheduler_type"]
+    # Warmup is read under cosine: shown now; untouched, at the parent's value.
+    assert fields["warmup_steps"]["visible"] is True and fields["warmup_steps"]["value"] == 0
+    _resume_all(c, tc.CONTINUE_FROM_LIST, c["paused_key"], "", operation=tc.BRANCH,
+                learning_rate=0.0005, scheduler_type="cosine")
+    sent = {k: v for k, v in started[-1].items()
+            if k not in ("data_dir", "run_name", "device", "compile", "branch_from", "__kwargs__")}
+    assert sent == {"learning_rate": 0.0005, "scheduler_type": "cosine"}
+    # Stated at the parent's value: sent, and no setting changed.
+    seed = training_manager.preview_branch(str(c["paused"]), device="cpu")["inherited"]["seed"]
+    outputs = _check_all(c, tc.CONTINUE_FROM_LIST, c["paused_key"], "", operation=tc.BRANCH,
+                         seed=seed)
+    assert "no setting changed" in _plain(outputs[0])
+    _resume_all(c, tc.CONTINUE_FROM_LIST, c["paused_key"], "", operation=tc.BRANCH, seed=seed)
+    assert started[-1]["seed"] == seed
+
+
+def test_an_invalid_or_off_list_branch_edit_is_refused_with_the_plans_words(checkpoints,
+                                                                           monkeypatch):
+    """A value its field spec does not take is refused by that check, the one
+    the plan makes (`value_problem`), named by the field's label; a setting
+    the parent's stage does not read, and a rule across settings the edit
+    breaks, are refused by the job runner's preview in the plan's own words
+    (`run_plan.stated_problem`, `cross_field_problems`). Nothing starts, and
+    the fields keep the edit to fix."""
+    from src.config.training_fields import cross_field_problems, value_problem
+    from src.utils.run_plan import new_run_values, stated_problem
+
+    started = []
+    monkeypatch.setattr(training_manager, "start_training", _starts(started))
+    c = checkpoints
+    bad = _check_all(c, tc.CONTINUE_FROM_LIST, c["paused_key"], "", operation=tc.BRANCH,
+                     learning_rate=-1.0)
+    words = tc._named("learning_rate", value_problem("learning_rate", -1.0), "Learning rate")
+    assert "Cannot branch." in bad[0] and r.e(words) in bad[0], bad[0]
+    assert bad[3]["parent"]["refused"] is True
+    assert all(update == gr_update() for update in bad[-1 - len(tc.BRANCH_FIELDS):])
+    off = _check_all(c, tc.CONTINUE_FROM_LIST, c["paused_key"], "", operation=tc.BRANCH,
+                     candidate_sample_size=5)
+    assert "Cannot branch." in off[0]
+    assert r.e(stated_problem("base", (None,), {"candidate_sample_size": 5})) in off[0], off[0]
+    rule = _check_all(c, tc.CONTINUE_FROM_LIST, c["paused_key"], "", operation=tc.BRANCH,
+                      scheduler_type="onecycle", min_lr_ratio=0.0)
+    settings = {"scheduler_type": "onecycle", "min_lr_ratio": 0.0}
+    [problem] = cross_field_problems(new_run_values("base", None, settings), settings)
+    assert "Cannot branch." in rule[0] and r.e(problem) in rule[0], rule[0]
+    for edit in ({"learning_rate": -1.0}, {"candidate_sample_size": 5},
+                 {"scheduler_type": "onecycle", "min_lr_ratio": 0.0}):
+        said, *_rest = _resume_all(c, tc.CONTINUE_FROM_LIST, c["paused_key"], "",
+                                   operation=tc.BRANCH, **edit)
+        assert "Not started: this checkpoint cannot be branched" in said
+    assert started == []
+    # An edit after a refused check: the check is stale and no longer
+    # disables Start branch, which checks what it sends first.
+    text, mode = tc._on_branch_edited({"parent": {**bad[3]["parent"]}})
+    assert "A setting changed since the check" in text and mode["parent"]["refused"] is False
+
+
+def test_the_branch_fields_are_the_settings_a_branch_may_change_through_the_one_field():
+    """One field per setting any stage's branch may change
+    (`recipe.branch_settings`), the one field of its setting
+    (`setting_field`: label, kind, format), hidden until a check names it;
+    the freeze, the split seed and the model spec, which a branch keeps, are
+    none of them (decision B3: early stopping's patience is one)."""
+    import gradio as gr
+
+    from src.config.recipe import FINETUNE_TASKS, branch_settings
+
+    every = set(branch_settings("base")).union(*(branch_settings("finetune", task)
+                                                  for task in FINETUNE_TASKS))
+    assert set(tc.BRANCH_FIELDS) == every
+    assert {"frozen_parts", "split_seed", "model_spec"}.isdisjoint(tc.BRANCH_FIELDS)
+    assert "early_stopping_patience" in tc.BRANCH_FIELDS
+    with gr.Blocks() as demo:
+        tc.create_training_tab(standalone_context(demo))
+    by_id = {getattr(block, "elem_id", None): block for block in demo.blocks.values()}
+    for name in tc.BRANCH_FIELDS:
+        field = by_id[f"branch_{name}"]
+        assert field.label == r.SETTING_LABELS[name] and field.visible is False, name
+        assert f"branch_{name}" in tc.FIELD_HELP
+    assert isinstance(by_id["branch_early_stopping_patience"], gr.Textbox)  # "off" or a number
+    assert by_id["shep-train-branch"].visible is False
+    assert by_id["continue_operation"].choices == [
+        ("Continue: resume or extend", "continue"),
+        ("Branch: a new run from these weights", "branch")]
+    assert all(len(label) <= 40 for label, _value in tc.OPERATION_CHOICES)
+    # Steps, numbered in the order they are taken (the skill's §4).
+    assert by_id["continue_run"].label == tc.STEP_RUN == "1. Run"
+    assert by_id["checkpoint_dropdown"].label == tc.STEP_CHECKPOINT == "2. Checkpoint"
+    assert "3. Check" in by_id["shep-train-step-check"].value
+    assert "4. Start" in by_id["shep-train-step-start"].value

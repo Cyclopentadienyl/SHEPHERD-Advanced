@@ -2609,9 +2609,14 @@ class TrainingManager:
         would, and the plan judges the run on the device it would have.
 
         `extend_if_finished` is the console's: its Extra epochs field belongs to
-        a finished parent, so for any other parent the value is not sent
-        (`training_console._preview_for`). Every other caller leaves it off, and
-        an `extend_epochs` given for an unfinished parent is refused.
+        a finished parent, and its Extra-epoch rate (`extend_lr`) to a
+        finished parent with a parameter group whose rate ended at 0 (this
+        read's ``zero_rate_groups``, the groups the rate replaces), so for any
+        other parent the value is not sent (`training_console._preview_for`):
+        a value left in a field the parent does not take is not a request.
+        Every other caller leaves it off, and an `extend_epochs` given for an
+        unfinished parent, or an `extend_lr` for a parent with no rate at 0, is
+        refused.
 
         **The same decision the training process makes**
         (`src.utils.run_plan.plan_continuation`), on the parent's own
@@ -2631,9 +2636,11 @@ class TrainingManager:
             return facts
         path = Path(facts["parent"])
         record = read.checkpoint
+        explicit = dict(requested or {})
         if extend_if_finished and facts["end"] != "finished":
             extend_epochs = None
-        explicit = dict(requested or {})
+        if extend_if_finished and not (facts["end"] == "finished" and facts["zero_rate_groups"]):
+            explicit.pop("extend_lr", None)
         request = self._plan_request(record, explicit, resume_from=str(path),
                                      extend_epochs=extend_epochs,
                                      extend_lr=explicit.get("extend_lr"), device=device)

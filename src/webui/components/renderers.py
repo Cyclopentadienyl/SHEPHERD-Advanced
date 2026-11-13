@@ -1316,7 +1316,9 @@ def fingerprint_value(digest: Any, *, what: str = "fingerprint", digits: int = S
 
 #: **The label of each learning setting a form offers**, one name per setting:
 #: the Training page's base form (`training_console.BASE_FIELDS`, what a new
-#: base takes) and the Fine-tune page's (`finetune_page.FINETUNE_FIELDS`).
+#: base takes), its Continue drawer's Branch (`training_console.BRANCH_FIELDS`,
+#: what a branch may change) and the Fine-tune page's
+#: (`finetune_page.FINETUNE_FIELDS`).
 #: Every other page names a learning setting by it too (`field_words`), so a
 #: label carries the setting's subject and, where it has one, its unit
 #: ("Epochs per validation"; the skill's §5: units said once, in the key),
@@ -1344,6 +1346,13 @@ SETTING_LABELS: Dict[str, str] = {
     "eval_every_n_epochs": "Epochs per validation",
     "save_top_k": "Top-k saves kept",
     "frozen_parts": "Graph backbone",
+    # A task model's own settings, which the Continue drawer's Branch offers
+    # for a task model's parent (`recipe.branch_settings`).
+    "task_loss_weight": "Task loss weight",
+    "lp_loss_weight": "LP loss weight",
+    "candidate_sample_size": "Candidate sample size",
+    "sparse_sample_size": "Sparse sample size",
+    "candidate_upsample_size": "Candidate upsample size",
 }
 #: **The words of a setting's closed values**, keyed by its field spec's
 #: ``choices`` (`training_fields.FieldSpec`): its radio shows the words and

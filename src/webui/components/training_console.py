@@ -65,20 +65,36 @@ by its own validation and the hop list against the encoder it builds, a
 problem named by its label. A base's task models are trained on
 Research › Fine-tune (`src/webui/components/finetune_page.py`).
 
-**Continue…** opens a drawer over the parameters column: the parent list is
-the run bar's workspace's model records only (bases and task models; a file
-without a model spec is never continued from the dashboard, decision 1),
-from `server_lists.list_checkpoints` (an operator control since it opens
-every checkpoint) in the shared Run → Checkpoint selects (`model_list`'s, as
-Fine-tune's parent: short options whose values are the listing's keys), or a
-typed path that locates one of them; Check checkpoint
-shows what continuing does (the shared run plan) and compares the parent's
-recorded dataset fingerprint with the workspace's current one. While it is
-open the run bar's actions are Start (disabled, with the reason), Continue
-Training (disabled while the datasets differ, with the reason) and Cancel. A
-listed parent is resolved by the server from its list again (never a client
-path) and its bytes compared with the digest listed; the runner and the
-training process still decide at start.
+**Continue…** opens a drawer over the parameters column, "Continue or branch
+a run", in numbered steps (the skill's §4): its operation, **Continue**
+(resume a paused run or extend a finished one, every setting its own) or
+**Branch** (a new run from the checkpoint's weights with a new optimizer;
+ops-wiring round, decisions B1-B4); 1. Run and 2. Checkpoint, the parent
+list being the run bar's workspace's model records only (bases and task
+models; a file without a model spec is never continued or branched from the
+dashboard, decision 1), from `server_lists.list_checkpoints` (an operator
+control since it opens every checkpoint) in the shared Run → Checkpoint
+selects (`model_list`'s, as Fine-tune's parent: short options whose values
+are the listing's keys), or a typed path that locates one of them; the
+chosen checkpoint's details (its kind by `renderers.model_kind_text`, a
+frozen-backbone child named so); 3. Check, which shows what the operation
+does (the shared run plan, through the job runner's one preview of each,
+`preview_continuation` or `preview_branch`) and compares the parent's
+recorded dataset fingerprint with the workspace's current one; 4. Start in
+the drawer's footer, Continue Training or Start branch and Cancel beside
+the start's reason (the skill's §9), while the run bar's Start is disabled
+("close Continue… to start a new run"). Extending a parent whose rate ended
+at 0 asks its Extra-epoch rate (the preview's `zero_rate_groups`), sent as
+`extend_lr`. **A branch's fields are the settings its parent's stage and
+task may change** (the preview's `changeable`), each the one field of its
+setting (`setting_field`), shown after a check at the parent's value; only
+the fields the operator edits are sent (`branch_sent`, decision S2), none a
+same-settings branch ("no setting changed: a new run from these weights
+with a new optimizer", decision B1), and the start is the job runner's one
+(`start_training` with `branch_from`). A listed parent is resolved by the
+server from its list again (never a client path) and its bytes compared
+with the digest listed; the start sends the digest the preview read, and
+the runner and the training process still decide at start.
 
 **The run view** (three rows: its header, the charts, the resources line)
 shows the run chosen in its **Viewing** select: the run bar's workspace's
@@ -148,8 +164,9 @@ render keeps, have the renders as their one writer (the poll keeps its own
 record, its reads throttled by time, `POLL_READS`, and the GPU slot it saw,
 in a State only it writes).
 
-**D8:** Start, Continue…, Continue Training, Check checkpoint, the parent list
-and Stop (its confirmation reads the run's checkpoint) call the Gradio helper
+**D8:** Start, Continue…, Continue Training and Start branch, Check
+checkpoint, the parent list and Stop (its confirmation reads the run's
+checkpoint) call the Gradio helper
 first, on their own request, then the shared service in process; each is
 followed by the chips' read. A read-only request sees every action disabled
 with D8's reason as text, and no checkpoint path, snapshot or recorded
@@ -181,7 +198,7 @@ from typing import (Any, Callable, Collection, Dict, List, Mapping, Optional, Se
 import gradio as gr
 
 from src.api.services.training_manager import training_manager
-from src.config.recipe import reference_settings
+from src.config.recipe import FINETUNE_TASKS, branch_settings, reference_settings
 from src.config.runtime_presets import load_runtime_settings
 from src.config.training_fields import (CROSS_FIELD_RULES, bound_words, by_name,
                                         cross_field_problems, names as field_names,
@@ -792,15 +809,16 @@ def spec_facts_html() -> str:
     return r.summary_list(rows, classes="shep-train-spec-facts")
 
 
-def _rule_fields() -> Tuple[Tuple[str, ...], Tuple[str, ...]]:
-    """The base form's settings a rule across settings reads only under its
-    guard (`CROSS_FIELD_RULES`' ``read_only_when``), and the settings of
-    those guards, each in the form's order."""
+def _rule_fields(fields: Sequence[str] = BASE_FIELDS) -> Tuple[Tuple[str, ...], Tuple[str, ...]]:
+    """A form's settings (`fields`, in its order: the base form's, or the
+    Continue drawer's Branch fields) that a rule across settings reads only
+    under its guard (`CROSS_FIELD_RULES`' ``read_only_when``), and the
+    settings of those guards, each in the form's order."""
     rules = [rule for rule in CROSS_FIELD_RULES if rule.kind == "read_only_when"]
     subjects = {rule.subject for rule in rules}
     guards = {name for rule in rules for name in (rule.when or {})}
-    return (tuple(name for name in BASE_FIELDS if name in subjects),
-            tuple(name for name in BASE_FIELDS if name in guards))
+    return (tuple(name for name in fields if name in subjects),
+            tuple(name for name in fields if name in guards))
 
 
 def _on_base_guards(*values: Any) -> List[Any]:
@@ -1174,23 +1192,56 @@ def _gpu_line(active: Optional[Mapping[str, Any]], lock: Optional[Mapping[str, A
     return None
 
 
+#: **The Continue drawer's two operations from a parent checkpoint**
+#: (ops-wiring round, decisions B1-B4), each through the same run list, parent
+#: path, check and start: **continue** it (resume a paused run or extend a
+#: finished one, every setting its own) or **branch** it (a new run from its
+#: weights with a new optimizer and schedule, its settings the parent's but
+#: those changed on its stage's list, or none).
+CONTINUE = "continue"
+BRANCH = "branch"
+#: The drawer's operation choice, each by what it does (a radio of two, the
+#: skill's §8; each 40 characters or fewer) and sent as the operation.
+OPERATION_CHOICES = [("Continue: resume or extend", CONTINUE),
+                     ("Branch: a new run from these weights", BRANCH)]
+#: The drawer's start by the operation, the one button in its footer.
+START_LABELS = {CONTINUE: "▸ Continue Training", BRANCH: "▸ Start branch"}
+#: What a check says the operation does to a checkpoint: its verb, and its
+#: past participle ("cannot be branched").
+OPERATION_VERBS = {CONTINUE: ("continue", "continued"), BRANCH: ("branch", "branched")}
+
 #: The run bar's gated actions (the render's keys) and their words, shown with
-#: no lock while the operator may use them (`chips.gated`).
+#: no lock while the operator may use them (`chips.gated`). ``resume`` is the
+#: drawer's start, labelled by its operation (`start_label`).
 ACTION_LABELS = {"start": "▸ Start", "cont": "Continue…", "stop": "■ Stop",
-                 "resume": "▸ Continue Training"}
+                 "resume": START_LABELS[CONTINUE]}
+
+
+def operation_of(mode: Optional[Mapping[str, Any]]) -> str:
+    """The drawer's operation as the session records it (`CONTINUE` unless
+    Branch is chosen)."""
+    return BRANCH if (mode or {}).get("operation") == BRANCH else CONTINUE
+
+
+def start_label(mode: Optional[Mapping[str, Any]]) -> str:
+    """The drawer's start button's words for the session's operation."""
+    return START_LABELS[operation_of(mode)]
 
 
 def run_bar_view(status: Mapping[str, Any], ws: Mapping[str, Any], mode: Mapping[str, Any],
                  *, access: Any, active: Optional[Mapping[str, Any]],
                  gpu: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
-    """What the run bar's actions are and why, as one decision for the tick
-    and every action: ``start``, ``cont``, ``stop`` and ``resume`` (interactive
-    or not), ``reason`` (escaped HTML: one line), ``drawer_reason`` and
-    ``progress`` (a fraction while running, else None)."""
+    """What the run bar's actions and the drawer's start are and why, as one
+    decision for the tick and every action: ``start``, ``cont``, ``stop`` and
+    ``resume`` (interactive or not), ``reason`` (the run bar's, escaped HTML:
+    one line), ``drawer_reason`` (the drawer footer's, beside its start, in
+    its words: "Start branch disabled: …"; the skill's §9) and ``progress``
+    (a fraction while running, else None)."""
     s = status.get("status") or "idle"
     training_busy = s in ("running", "stopping")
     drawer = bool(mode.get("drawer"))
     row = ws.get("row") or {}
+    action = start_label(mode).removeprefix("▸ ")
     view: Dict[str, Any] = {"start": False, "cont": False, "stop": False, "resume": False,
                             "progress": None, "drawer_reason": ""}
     epoch, total = status.get("current_epoch"), status.get("total_epochs")
@@ -1200,52 +1251,53 @@ def run_bar_view(status: Mapping[str, Any], ws: Mapping[str, Any], mode: Mapping
     def line(icon: str, text: str, extra: str = "") -> str:
         return f'<span class="shep-rb-why">{icon}<span>{r.e(text)}</span>{extra}</span>'
 
+    def disabled(cause: str) -> None:
+        """One cause, said for the run bar's actions and the drawer's start."""
+        view["reason"] = line(NO_ICON, f"Start and Continue… disabled: {cause}")
+        view["drawer_reason"] = line(NO_ICON, f"{action} disabled: {cause}")
+
     if not access.allowed:
         view["reason"] = line(LOCK_ICON, operator_only(access.condition))
         view["drawer_reason"] = view["reason"]
         return view
     if training_busy:
         view["stop"] = s == "running" and not confirming(status, mode)
-        view["reason"] = line(NO_ICON, "Start and Continue… disabled: a training job is running."
-                              if s == "running" else
-                              "Stopping: the job is ending; Start and Continue… wait for it.")
-        view["drawer_reason"] = view["reason"]
+        if s == "running":
+            disabled("a training job is running.")
+        else:
+            view["reason"] = line(NO_ICON, "Stopping: the job is ending; Start and Continue… "
+                                           "wait for it.")
+            view["drawer_reason"] = line(NO_ICON, f"Stopping: the job is ending; {action} "
+                                                  "waits for it.")
         return view
     if gpu:
         open_test = ('<button type="button" class="shep-link" data-act="open-test">Open Test ›</button>'
                      if gpu.get("test") else "")
-        # The sentence ends with its period, or with "· Open Test ›" instead.
-        view["reason"] = (f'<span class="shep-rb-why"><span class="shep-tag shep-tag-accent">GPU</span>'
+        tag = '<span class="shep-tag shep-tag-accent">GPU</span>'
+        # The sentence ends with its period, or with "· Open Test ›" instead
+        # (the run bar's link; the drawer's reason ends with its period).
+        view["reason"] = (f'<span class="shep-rb-why">{tag}'
                           f'<span>Start and Continue… disabled — {r.e(gpu["text"])}'
                           f'{" · " + open_test if open_test else "."}</span></span>')
-        view["drawer_reason"] = view["reason"]
+        view["drawer_reason"] = (f'<span class="shep-rb-why">{tag}<span>{r.e(action)} '
+                                 f'disabled — {r.e(gpu["text"])}.</span></span>')
         return view
     if not row:
-        view["reason"] = line(NO_ICON, "Start and Continue… disabled: select a dataset.")
-        view["drawer_reason"] = view["reason"]
+        disabled("select a dataset.")
         return view
     if not row.get("trainable"):
-        view["reason"] = line(NO_ICON, f"Start and Continue… disabled: {row.get('name')} is not "
-                                   f"trainable: {r.not_trainable_short(row)}.")
-        view["drawer_reason"] = view["reason"]
+        disabled(f"{row.get('name')} is not trainable: {r.not_trainable_short(row)}.")
         return view
     if not drawer:
         view["start"] = view["cont"] = True
         view["reason"] = line(NO_ICON, "Stop disabled: no training is running.")
         return view
-    parent = mode.get("parent") or {}
-    why = continue_refusal(parent, ws)
+    # The drawer is open: its start's reason is beside it, in its footer.
+    why = continue_refusal(mode.get("parent") or {}, ws, operation=operation_of(mode))
     view["resume"] = why is None
-    text = "Start disabled: close Continue… to start a new run."
+    view["reason"] = line(NO_ICON, "Start disabled: close Continue… to start a new run.")
     if why:
-        # One word group per sentence (`renderers.word_groups`): a line breaks
-        # between the two sentences, never leaving the last word of the second
-        # alone on a line under the first ("…cannot be" / "continued.").
-        view["reason"] = (f'<span class="shep-rb-why">{NO_ICON}<span>'
-                          f'{r.word_groups(text, f"Continue Training disabled: {why}")}</span></span>')
-        view["drawer_reason"] = line(NO_ICON, f"Continue Training, in the run bar above, is disabled: {why}")
-    else:
-        view["reason"] = line(NO_ICON, text)
+        view["drawer_reason"] = line(NO_ICON, f"{action} disabled: {why}")
     return view
 
 
@@ -1259,15 +1311,19 @@ def _other_workspace(item: Mapping[str, Any], ws: Mapping[str, Any]) -> Optional
             "(Refresh beside it).")
 
 
-def continue_refusal(parent: Mapping[str, Any], ws: Mapping[str, Any]) -> Optional[str]:
-    """Why Continue Training is disabled for the chosen parent, or None."""
+def continue_refusal(parent: Mapping[str, Any], ws: Mapping[str, Any], *,
+                     operation: str = CONTINUE) -> Optional[str]:
+    """Why the drawer's start (Continue Training, or Start branch for the
+    `operation` Branch) is disabled for the chosen parent, or None. A
+    branch's data is its parent's as a continued run's is (BACKLOG 23), so
+    another dataset is refused for both."""
     if not parent.get("chosen"):
         return "choose a checkpoint first."
     other = _other_workspace(parent, ws) if parent.get("source") == CONTINUE_FROM_LIST else None
     if other:
         return other
     if parent.get("refused"):
-        return "the check says this checkpoint cannot be continued."
+        return f"the check says this checkpoint cannot be {OPERATION_VERBS[operation][1]}."
     recorded, current = parent.get("fingerprint"), workspace_fingerprint(ws)
     if r.is_digest(recorded) and current and recorded != current:
         return "the parent’s dataset is not this workspace’s current one."
@@ -1757,15 +1813,16 @@ def _dataset_relation(ws: Mapping[str, Any], *, operator: bool,
 def run_head_html(run: Optional[RunRef], ws: Mapping[str, Any], *, operator: bool,
                   snapshot: Optional[Mapping[str, Any]], live: bool = False,
                   relation: Optional[str] = None, state: str = "",
-                  continuing: Optional[str] = None) -> str:
+                  continuing: Optional[str] = None, operation: str = CONTINUE) -> str:
     """The run view's header, beside its Viewing select (which names the run,
     short and name first: `view_choices`), one line where it fits: how the
     run viewed stands to the training job (`relation`, `view_relation`'s
     words; the run bar and its pill always show that job), how its recorded
     dataset stands to the run bar's (`_dataset_relation`), while Continue… is
     open with a listed checkpoint chosen whether this is the run continued
-    from (`continuing`, its "<architecture>/<run>": the drawer's parent and
-    the run viewed are different runs unless chosen so), the run's state
+    (or, for the drawer's `operation` Branch, branched) from (`continuing`,
+    its "<architecture>/<run>": the drawer's parent and the run viewed are
+    different runs unless chosen so), the run's state
     (`state`, `run_snapshot_html`), and Details ›. The rest, read less often
     (the run's directory, its checkpoint and logs, the dataset fingerprint it
     used; its workspace when it is not the run bar's), is in Details. `live`:
@@ -1777,9 +1834,10 @@ def run_head_html(run: Optional[RunRef], ws: Mapping[str, Any], *, operator: boo
     tag, used = _dataset_relation(ws, operator=operator, snapshot=snapshot, live=live)
     said = f'<span class="shep-rv-rel">{r.e(relation)}</span>' if relation else ""
     if continuing:
-        said += ('<span class="shep-tag shep-tag-accent">the run continued from</span>'
+        done = OPERATION_VERBS[operation][1]
+        said += (f'<span class="shep-tag shep-tag-accent">the run {done} from</span>'
                  if continuing == label else
-                 '<span class="shep-tag shep-tag-grey">not the run continued from</span>')
+                 f'<span class="shep-tag shep-tag-grey">not the run {done} from</span>')
     rows = [("Run", f"<code>{r.e(label)}</code>")]
     if run.get("workspace") and run.get("workspace") != ws.get("name"):
         # Said here only when it is not the run bar's (which names its own).
@@ -2272,8 +2330,10 @@ def render(ws: Optional[Mapping[str, Any]], mode: Optional[Mapping[str, Any]],
         "reason": f'<div class="shep-rb-reason">{bar}{view["reason"]}</div>',
         # The gated actions by the one rule (`chips.gated`): no lock while D8
         # allows this request; disabled with the lock while it refuses it,
-        # beside the reason line's "Operator controls only: …".
-        **{key: gated(label, access.allowed, interactive=view[key])
+        # beside the reason line's "Operator controls only: …". The drawer's
+        # start is labelled by its operation.
+        **{key: gated(start_label(mode) if key == "resume" else label, access.allowed,
+                      interactive=view[key])
            for key, label in ACTION_LABELS.items()},
         "runbar": tuple(classes),
         "page": tuple(page),
@@ -2284,7 +2344,8 @@ def render(ws: Optional[Mapping[str, Any]], mode: Optional[Mapping[str, Any]],
             relation=view_relation(run, in_use) if run is not None else None,
             state=run_snapshot_html(run, status, operator=access.allowed, snapshot=snapshot),
             continuing=((mode.get("parent") or {}).get("run_label")
-                        if mode.get("drawer") else None)),
+                        if mode.get("drawer") else None),
+            operation=operation_of(mode)),
         # The Viewing select: its options and the run viewed (any request:
         # listing a workspace's runs is not checkpoint inspection).
         "view": (tuple(view_choices(ws, _runs_of(ws, cache), run)),
@@ -2752,12 +2813,102 @@ def _on_stop(request: gr.Request, mode):
 CONTINUE_FROM_LIST = "From run list"
 CONTINUE_FROM_PATH = "Manual path"
 
-#: The continue block's prompt before a check, and after the selection changes.
+#: The drawer's title: what it does from a checkpoint (`OPERATION_CHOICES`).
+DRAWER_TITLE = "Continue or branch a run"
+#: The drawer's numbered steps (the skill's §4), each a control's label (the
+#: run and checkpoint selects, and their help's title) or a step's own words
+#: (the check row, the footer).
+STEP_RUN, STEP_CHECKPOINT, STEP_CHECK, STEP_START = (
+    "1. Run", "2. Checkpoint", "3. Check", "4. Start")
+
+#: The check's prompt before a check, and after what it would check changed.
 _CONTINUE_PROMPT = "Select a checkpoint, then click <b>Check checkpoint</b>."
+#: The check's prompt once a Branch field was edited after the last check.
+_BRANCH_EDITED = ("A setting changed since the check: click <b>Check checkpoint</b> to see the "
+                  "plan again, or <b>Start branch</b>, which checks first.")
 
 
 #: What a checkpoint file holds, as its record says (`checkpoint_kind`).
 CHECKPOINT_KINDS = {"training_state": "training state", "weights": "weights only"}
+
+#: **The drawer's own fields of an extension**, by their names in a request
+#: (the CLI's and the API's): each field's label, and the words the drawer
+#: names it by in a plan's sentence (`page_words`).
+EXTEND_WORDS = {"extend_epochs": "Extra epochs", "extend_lr": "Extra-epoch rate"}
+_EXTEND_NAMES = re.compile(r"\b(" + "|".join(EXTEND_WORDS) + r")\b")
+
+
+def page_words(text: Any) -> str:
+    """A plan's sentence (the shared run plan's action or refusal, which names
+    a request's fields as the CLI and the API do) with the drawer's extension
+    fields named as the drawer labels them (`EXTEND_WORDS`): "To train
+    further, extend it at a fixed rate with Extra epochs", beside the field so
+    labelled, never `extend_epochs`. Plain text: the caller escapes it."""
+    return _EXTEND_NAMES.sub(lambda match: EXTEND_WORDS[match.group(1)], str(text or ""))
+
+
+def _branch_field_names() -> Tuple[str, ...]:
+    """**The settings a branch may change, of any stage and task**: the
+    closed lists a branch is judged by (`recipe.branch_settings`) of a base
+    and of each task, one drawer field each, built once; a checked parent's
+    preview names those its own stage and task may change (`changeable`),
+    and only those show. In the base form's order, then a task model's own
+    settings in the field spec's."""
+    every = set(branch_settings("base")).union(
+        *(branch_settings("finetune", task) for task in FINETUNE_TASKS))
+    return (tuple(name for name in BASE_FIELDS if name in every)
+            + tuple(name for name in field_names() if name in every and name not in BASE_FIELDS))
+
+
+#: **The drawer's Branch fields** (decisions B1-B4), in its order.
+BRANCH_FIELDS = _branch_field_names()
+
+
+def _branch_field_value(name: str) -> Any:
+    """A Branch field's value before a check: the one fill's of the first
+    run that reads the setting (a base's, else a task model's:
+    `run_plan.new_run_values`), which decides its field's kind (`value_field`:
+    an optional number None there, early stopping's patience, is a text box
+    reading "off"). A check writes the parent's value (`_branch_updates`)."""
+    for stage, task in (("base", None), *(("finetune", task) for task in FINETUNE_TASKS)):
+        values = new_run_values(stage, task, {})
+        if name in values:
+            return values[name]
+    return None
+
+
+def branch_setting_help(name: str) -> Tuple[str, str]:
+    """A Branch field's help, ``(title, text)``: its label, what it is (its
+    field spec's description, as the base form's help says it), and where
+    its value starts and what is sent."""
+    return (r.SETTING_LABELS[name],
+            f"{by_name(name).description}\n\n"
+            "It starts at the parent's value once Check checkpoint has read it. Only a field "
+            "you edit is sent; a value other than the parent's is the branch's change, and "
+            "its record keeps it.")
+
+
+def branch_sent(item: Optional[Mapping[str, Any]], touched: Any, values: Sequence[Any]
+                ) -> Tuple[Dict[str, Any], List[str]]:
+    """**What a branch sends of the drawer's fields** (decisions S2, B1):
+    ``(settings, problems)``, by the one rule a form's settings are sent by
+    (`sent_settings`): each field the operator touched (`touched`, the
+    drawer's record of its fields' input), whatever its value, parsed and
+    checked by its field spec, None taken where the parent's stage and task
+    take it without the operator (`run_plan.new_run_values`: early stopping
+    off); a touched field the run would not read on the form's values is
+    hidden and not sent (a rule across settings). None touched is a
+    same-settings branch (decision B1). `item` is the chosen parent as the
+    run list has it (its stage and task), `values` the fields', in
+    `BRANCH_FIELDS` order. The plan judges what is sent again, by name and
+    by value, at the check and at the start."""
+    item = item or {}
+    try:
+        references = new_run_values(item.get("learning_stage"), item.get("task"), {})
+    except ValueError:
+        references = {}
+    return sent_settings(dict(zip(BRANCH_FIELDS, values, strict=True)), touched_keys(touched),
+                         references)
 
 
 def _run_label(item: Mapping[str, Any]) -> str:
@@ -2784,7 +2935,7 @@ def _list_parents(ws: Mapping[str, Any]) -> Tuple[Dict[str, Any], Optional[str]]
     opens every checkpoint: the caller checked D8): ``({key: item},
     problem)``. **Only a model record is offered** (K6 decision 1): a file
     without a model spec, or one whose record cannot be read, is never
-    continued from the dashboard; Research › Models lists it."""
+    continued or branched from the dashboard; Research › Models lists it."""
     from src.api.services.server_lists import list_checkpoints
 
     name = ws.get("name")
@@ -2809,23 +2960,20 @@ def _parents_note(ws: Mapping[str, Any], parents: Mapping[str, Any], problem: Op
             f'{len(parents)} checkpoint{"s" if len(parents) != 1 else ""} · latest first</span>')
 
 
-def stage_words(item: Mapping[str, Any]) -> str:
-    """A listed model's stage, in its record's words: "Base", or "Fine-tune ·
-    Gene" (`renderers.record_kind_text`, built on `caveats.TASK_NAMES`)."""
-    kind = r.record_kind_text(item)
-    return f"Fine-tune · {kind}" if item.get("learning_stage") == "finetune" else kind
-
-
-def parent_details_html(item: Optional[Mapping[str, Any]]) -> str:
+def parent_details_html(item: Optional[Mapping[str, Any]], operation: str = CONTINUE) -> str:
     """The chosen checkpoint's details, as the one summary list
     (`renderers.summary_list`), saying what its option does not
     (`model_list.checkpoint_words` gives what it is and its progress): its
-    file, its stage, what it holds, how its stage ended where that limits
-    continuing, its Trainer validation figure (never a test result), what its
-    run's saves were ranked by (`renderers.selection_value`: the recorded
-    monitor and direction, or not recorded), its model fingerprint (copyable)
-    and its run's directory. A file that cannot be read says why, beside the
-    ▲ of a condition to watch. Empty when none is chosen from the list."""
+    file, its kind in the words every page describes a model by
+    (`renderers.model_kind_text`: "Base", a task's name, "Disease · frozen
+    graph backbone" for the frozen-backbone control; decision F1), what it
+    holds, how its stage ended where that limits continuing (for the
+    `operation` Continue; a branch is a new run, whatever its parent's end),
+    its Trainer validation figure (never a test result), what its run's saves
+    were ranked by (`renderers.selection_value`: the recorded monitor and
+    direction, or not recorded), its model fingerprint (copyable) and its
+    run's directory. A file that cannot be read says why, beside the ▲ of a
+    condition to watch. Empty when none is chosen from the list."""
     if not item:
         return ""
     filename = str(item.get("filename") or "")
@@ -2834,13 +2982,13 @@ def parent_details_html(item: Optional[Mapping[str, Any]]) -> str:
         why = item.get("problem") or "it records no metadata"
         rows.append(("Cannot be read", r.status_mark("warn", why)))
         return f'<div class="shep-ckpt">{r.summary_list(rows)}</div>'
-    rows.append(("Stage", r.e(stage_words(item))))
+    rows.append(("Kind", r.e(r.model_kind_text(item))))
     kind = item.get("checkpoint_kind")
-    rows.append(("Holds", "weights only (cannot be continued)" if kind == "weights" else
-                 r.e(CHECKPOINT_KINDS.get(kind or "", "not recorded"))))
+    rows.append(("Holds", "weights only (cannot be continued or branched)" if kind == "weights"
+                 else r.e(CHECKPOINT_KINDS.get(kind or "", "not recorded"))))
     going_on = {"finished": "extends it by the Extra epochs you enter",
                 "stopped_early": "not possible: it stopped early"}.get(item.get("end") or "")
-    if going_on and kind != "weights":
+    if going_on and kind != "weights" and operation == CONTINUE:
         rows.append(("Continuing", r.e(going_on)))
     rows.append(("Validation", r.e(r.validation_value(r.validation_figure(item),
                                                       read=r.record_read(item)))))
@@ -2851,25 +2999,38 @@ def parent_details_html(item: Optional[Mapping[str, Any]]) -> str:
     return f'<div class="shep-ckpt">{r.summary_list(rows)}</div>'
 
 
+def _cleared_check() -> Tuple[Any, ...]:
+    """**The check's outputs once what it described changed** (the
+    checkpoint, its source, the operation, the workspace; contract M3a review
+    of `094b90d`, P2-2): Extra epochs and the Extra-epoch rate hidden and
+    cleared, the prompt, the start's last notice gone, the Branch fields'
+    record of what was edited emptied and their box hidden, so nothing
+    entered for one parent or operation is sent for another. In the order of
+    the page's ``check_cleared`` outputs."""
+    hidden = gr.update(visible=False, value=None)
+    return hidden, hidden, _CONTINUE_PROMPT, "", [], gr.update(visible=False)
+
+
 def _on_continue_open(request: gr.Request, ws, mode):
     """Continue…: the drawer over the parameters, listing the run bar's
     workspace's checkpoints (an operator control: D8 first; refused, the
-    drawer stays closed and nothing is opened).
+    drawer stays closed and nothing is opened), its operation Continue.
 
     Returns the notice, the session's mode, the parents (state), the run and
-    checkpoint selects, their note, and the check's text."""
+    checkpoint selects, their note, the operation, and the check's outputs
+    cleared (`_cleared_check`)."""
     access = operator_access(request)
     mode = dict(mode or {})
     if not access.allowed:
-        return (notice_html(access.refusal), mode, gr.update(), gr.update(), gr.update(),
-                gr.update(), gr.update())
+        return (notice_html(access.refusal), mode, *(gr.update(),) * 5,
+                *(gr.update(),) * len(_cleared_check()))
     parents, problem = _list_parents(ws or {})
-    mode.update(drawer=True, confirm=None, parent={})
+    mode.update(drawer=True, confirm=None, parent={}, operation=CONTINUE)
     runs, checkpoints = _model_list().parents_update(parents)
     first = checkpoints.get("value") if isinstance(checkpoints, dict) else None
     mode["parent"] = _chosen(CONTINUE_FROM_LIST, first, "", parents, ws)
     return ("", mode, parents, runs, checkpoints, _parents_note(ws or {}, parents, problem),
-            _CONTINUE_PROMPT)
+            CONTINUE, *_cleared_check())
 
 
 def _refresh_checkpoints(request: gr.Request, ws, mode, current):
@@ -2899,18 +3060,17 @@ def _relist_parents(request: gr.Request, ws, mode):
     Continue… is open: the parent list becomes the new workspace's runs,
     through the Refresh's path (it opens every checkpoint, so D8 first, on
     this event's own request; refused, the list is emptied and the note says
-    why), and the last check, the comparison and the Extra epochs, which were
-    about the old list, are cleared. With the drawer closed nothing is listed
-    (it lists when opened).
+    why), and the comparison and the check's outputs, which were about the
+    old list, are cleared (`_cleared_check`). With the drawer closed nothing
+    is listed (it lists when opened).
 
     Returns the parents (state), the run and checkpoint selects, their note,
-    the comparison, the check's text and the Extra epochs field."""
+    the comparison and the check's outputs."""
     access = operator_access(request)
     if not (mode or {}).get("drawer"):
-        return (gr.update(),) * 7
+        return (gr.update(),) * (5 + len(_cleared_check()))
     parents, runs, checkpoints, note = _parents_listed(access, ws, None)
-    return (parents, runs, checkpoints, note, "",
-            f'<p class="shep-note">{_CONTINUE_PROMPT}</p>', gr.update(visible=False, value=None))
+    return (parents, runs, checkpoints, note, "", *_cleared_check())
 
 
 def _on_continue_close(mode):
@@ -2940,8 +3100,10 @@ def _chosen(source: str, listed: Any, manual: Any, parents: Mapping[str, Any],
 
 def compare_html(parent: Mapping[str, Any], ws: Mapping[str, Any]) -> str:
     """The parent's recorded dataset fingerprint against the workspace's
-    current one: ✓ the same, amber when it differs ("matches no listed
-    workspace", or the listed workspace it matches), or what is not known yet."""
+    current one: ✓ the same; when it differs, the ✕ of a refusal (the start
+    refuses another dataset, so the drawer's start is disabled: the shared
+    status mark, `renderers.status_mark`) with the listed workspace it
+    matches, or "matches no listed workspace"; or what is not known yet."""
     if not parent.get("chosen"):
         return ""
     recorded, current = parent.get("fingerprint"), workspace_fingerprint(ws)
@@ -2963,23 +3125,32 @@ def compare_html(parent: Mapping[str, Any], ws: Mapping[str, Any]) -> str:
     built = r.built_text((ws.get("row") or {}).get("build"))
     rebuilt = (f"<p>It was {r.e(built)}. The start refuses a different dataset.</p>"
                if built else "<p>The start refuses a different dataset.</p>")
-    return ('<div class="shep-cmp shep-cmp-amber"><b>⚠ The parent’s dataset is not this '
-            f'workspace’s current one</b><p>parent {trained}</p><p>{now}</p>{rebuilt}</div>')
+    head = r.status_mark("error", "The parent’s dataset is not this workspace’s current one")
+    return (f'<div class="shep-cmp shep-cmp-red"><div class="shep-check-h">{head}</div>'
+            f'<p>parent {trained}</p><p>{now}</p>{rebuilt}</div>')
 
 
 def _check_html(preview: Mapping[str, Any], source: str, *, differs: bool = False,
-                listed: Optional[str] = None) -> str:
-    """The check result, what continuing does, and the settings taken from the
-    checkpoint, as a read-only summary (contract M3a-3; not disabled inputs,
-    which screen readers skip), each in the one summary list
-    (`renderers.summary_list`): the model spec by its differences from its
-    stage's reference, the full spec one click away
-    (`renderers.model_spec_html`), and the other settings in a closed
-    disclosure, each named in words (`renderers.field_words`, its record name
-    the title) and its value in the one value-words rule
+                listed: Optional[str] = None, operation: str = CONTINUE) -> str:
+    """The check result of the drawer's `operation`, what it does, and the
+    settings taken from the checkpoint, as a read-only summary (contract
+    M3a-3; not disabled inputs, which screen readers skip), each in the one
+    summary list (`renderers.summary_list`) and the one value-words rule
     (`renderers.setting_words`, by the parent's stage and task), never
-    Python's repr (BACKLOG 72). One level each, beside the other: no
-    disclosure inside another."""
+    Python's repr (BACKLOG 72): a refusal and a dataset the start refuses by
+    the ✕ of a refusal (`renderers.status_mark`), the plan's sentence in the
+    drawer's words (`page_words`: "Extra epochs", never `extend_epochs`);
+    for a branch, the plan as its changes, each its parent's value and its
+    own (`renderers.change_value`), or "no setting changed: a new run from
+    these weights with a new optimizer" (decision B1); the model spec by its
+    differences from its stage's reference, the full spec one click away
+    (`renderers.model_spec_html`); and the other settings in a closed
+    disclosure, each named in words (`renderers.field_words`, its record name
+    the title): a continuation's every one, fixed (to train with others, the
+    note points to Branch), a branch's those it keeps (the ones it may change
+    are its fields, under the check, each at the parent's value). One level
+    each, beside the other: no disclosure inside another."""
+    verb, done = OPERATION_VERBS[operation]
     # The file read: named in full for a typed path; for a listed one by its
     # key in the server's list (`listed`, "<architecture>/<run>/<file>"), which
     # the server resolved to the file it read, its details shown above.
@@ -2997,24 +3168,48 @@ def _check_html(preview: Mapping[str, Any], source: str, *, differs: bool = Fals
         # The service's reason names the file it read ("/srv/…/x.pt does not
         # exist."): shown only as the shared redaction gives it, as the
         # path line above is (D7).
-        reason = redact(preview.get("reason"), workspaces_root()[0])
-        return ('<div class="shep-check shep-check-amber"><div class="shep-check-h">⚠ Cannot '
-                f'continue.</div>{"".join(lines)}<p>{r.e(reason)}</p></div>')
+        reason = page_words(redact(preview.get("reason"), workspaces_root()[0]))
+        head = r.status_mark("error", f"Cannot {verb}.")
+        return (f'<div class="shep-check shep-check-red"><div class="shep-check-h">{head}</div>'
+                f'{"".join(lines)}<p>{r.e(reason)}</p></div>')
     # The plan is said once, in the line under the headline (M5-3: the
     # headline repeated it, two lines more in a drawer that must fit).
-    head = ('<div class="shep-check-h">⚠ Checkpoint read; cannot continue on the current '
-            'dataset.</div>' if differs else
-            f'<div class="shep-check-h shep-ok-t">{r.CHECK} Checkpoint read; it can continue '
-            'on this workspace.</div>')
-    # A rate such as 3e-05 is never split at its hyphen.
-    action = re.sub(r"(\d(?:\.\d+)?e-\d+)", r'<span class="shep-nowrap">\1</span>',
-                    r.e(preview["action"]))
-    lines.append(f"<p>Plan read from the checkpoint: {action}.</p>")
+    able = "it can continue" if operation == CONTINUE else "it can be branched"
+    head = (r.status_mark("error", f"Checkpoint read; cannot {verb} on the current dataset.")
+            if differs else f'<span class="shep-ok-t">{r.CHECK} Checkpoint read; {able} on '
+                            'this workspace.</span>')
+    head = f'<div class="shep-check-h">{head}</div>'
     inherited = dict(preview.get("inherited") or {})
     # A setting the checkpoint's record does not hold, which the settings
     # decode gave (a rules-1 parent's freeze), is listed once, with the
     # decode's own words as its value: where it came from is the fact shown.
     decoded = preview.get("decoded") or {}
+    order = {name: index for index, name in enumerate(field_names())}
+
+    def ordered(names: Collection[str]) -> List[str]:
+        return sorted(names, key=lambda name: (order.get(name, len(order)), name))
+
+    if operation == BRANCH:
+        changes = preview.get("changes") or {}
+        count = len(changes)
+        said = (f"{count} setting{'s' if count != 1 else ''} changed" if changes
+                else "no setting changed")
+        lines.append(f"<p>Plan read from the checkpoint: {said}: a new run from these weights "
+                     "with a new optimizer.</p>")
+        if changes:
+            names = ordered(changes)
+            lines.append(r.summary_list(
+                [(r.field_words(name), r.change_value(name, changes[name])) for name in names],
+                titles={r.field_words(name): name for name in names},
+                classes="shep-check-changes"))
+        # The settings it may change are its fields, at the parent's value.
+        changeable = set(preview.get("changeable") or ())
+        inherited = {name: value for name, value in inherited.items() if name not in changeable}
+    else:
+        # A rate such as 3e-05 is never split at its hyphen.
+        action = re.sub(r"(\d(?:\.\d+)?e-\d+)", r'<span class="shep-nowrap">\1</span>',
+                        r.e(page_words(preview["action"])))
+        lines.append(f"<p>Plan read from the checkpoint: {action}.</p>")
     if "model_spec" in inherited:
         # Its every field in the list took about 3,000 px (BACKLOG 72): said
         # by its differences, the whole spec behind its own Details ›.
@@ -3024,16 +3219,23 @@ def _check_html(preview: Mapping[str, Any], source: str, *, differs: bool = Fals
                                     classes="shep-check-spec"))
     if inherited or decoded:
         stage, task = preview.get("learning_stage"), preview.get("task")
-        order = {name: index for index, name in enumerate(field_names())}
-        shown = sorted({*inherited, *decoded}, key=lambda name: (order.get(name, len(order)), name))
+        shown = ordered({*inherited, *decoded})
         rows = [(r.field_words(name), r.e(decoded[name]) if name in decoded else
                  r.e(r.setting_words(name, inherited[name], stage=stage, task=task)))
                 for name in shown]
+        if operation == BRANCH:
+            summary, note = ("Settings this branch keeps", "They stay the parent’s in a branch; "
+                             "the ones it may change are the fields below.")
+            fixed = ""
+        else:
+            summary, note = ("Settings taken from this checkpoint",
+                             "They cannot be changed when continuing; to train with other "
+                             "settings, choose Branch above.")
+            fixed = "; fixed when continuing"
         lines.append(
-            f'<details class="shep-inherit"><summary>Settings taken from this checkpoint '
-            f'<span class="shep-muted">({len(rows)}; fixed when continuing)</span></summary>'
-            '<p class="shep-note">They cannot be changed when continuing; to train with other '
-            'settings, start a new run.</p>'
+            f'<details class="shep-inherit"><summary>{summary} '
+            f'<span class="shep-muted">({len(rows)}{fixed})</span></summary>'
+            f'<p class="shep-note">{note}</p>'
             + r.summary_list(rows, titles={r.field_words(name): name for name in shown})
             + '</details>')
     if not differs:
@@ -3041,23 +3243,65 @@ def _check_html(preview: Mapping[str, Any], source: str, *, differs: bool = Fals
         # start refuses (M5-3: one line less, so the drawer fits).
         lines.append('<p class="shep-note">The start checks again against this workspace’s '
                      'data and graph.</p>')
-    kind = "amber" if differs else "ok"
+    kind = "red" if differs else "ok"
     return f'<div class="shep-check shep-check-{kind}">{head}{"".join(lines)}</div>'
 
 
-def _extra_epochs_update(preview: Mapping[str, Any]):
-    """The Extra epochs field belongs to a finished checkpoint: shown for one,
-    and hidden and cleared for any other, so no value is left behind for a
-    checkpoint it does not apply to (contract M3a review of `094b90d`, P2-2)."""
-    if preview.get("end") == "finished":
+def _extra_epochs_update(preview: Mapping[str, Any], operation: str = CONTINUE):
+    """The Extra epochs field belongs to continuing a finished checkpoint:
+    shown for one, and hidden and cleared for any other (and for a branch),
+    so no value is left behind for a checkpoint it does not apply to
+    (contract M3a review of `094b90d`, P2-2)."""
+    if operation == CONTINUE and preview.get("end") == "finished":
         return gr.update(visible=True)
     return gr.update(visible=False, value=None)
 
 
+def _extend_lr_update(preview: Mapping[str, Any], operation: str = CONTINUE):
+    """**The Extra-epoch rate belongs to extending a finished checkpoint whose
+    rate ended at 0** in a parameter group (the preview's
+    ``zero_rate_groups``, the groups `extend_lr` replaces, and only those;
+    an extension of such a parent refuses without it and no rate is
+    guessed): shown for one, hidden and cleared for any other, whose
+    extension's rates are the plan's own sentence."""
+    if operation == CONTINUE and preview.get("end") == "finished" \
+            and preview.get("zero_rate_groups"):
+        return gr.update(visible=True)
+    return gr.update(visible=False, value=None)
+
+
+def _branch_updates(preview: Mapping[str, Any], operation: str, touched: Any,
+                    values: Sequence[Any]) -> Tuple[Any, ...]:
+    """**The Branch fields after a check** (`BRANCH_FIELDS`, after their box):
+    for a branch the preview read (its ``changeable`` and ``inherited``),
+    the box shown, each field the parent's stage and task may change shown
+    unless its run would not read it on the form's values (a rule across
+    settings: the base form hides it so), and each one not edited
+    (`touched`) holding the parent's value (`form_value`); every other field
+    hidden. Otherwise (Continue, a refused check) the box and the fields as
+    they were: a refusal of an edit leaves the edit to fix."""
+    if operation != BRANCH or not preview.get("ok") or "changeable" not in preview:
+        return (gr.update(),) * (1 + len(BRANCH_FIELDS))
+    changeable = set(preview["changeable"])
+    inherited = preview.get("inherited") or {}
+    edited = touched_keys(touched)
+    given = dict(zip(BRANCH_FIELDS, values, strict=True)) if values else {}
+    prefilled = {name for name in BRANCH_FIELDS if name in inherited and name not in edited}
+    now = {name: form_value(inherited[name]) if name in prefilled else given.get(name)
+           for name in BRANCH_FIELDS}
+    unread = not_read_by_rules({name: parse_value(by_name(name).kind, value)[0]
+                                for name, value in now.items()})
+    return (gr.update(visible=True),
+            *(gr.update(visible=name in changeable and name not in unread,
+                        **({"value": now[name]} if name in prefilled else {}))
+              for name in BRANCH_FIELDS))
+
+
 def _on_continue_selection_changed():
     """The chosen checkpoint, or where it comes from, changed: the last check
-    and the Extra epochs entered for it no longer apply, and are cleared."""
-    return gr.update(visible=False, value=None), _CONTINUE_PROMPT
+    and what was entered for it no longer apply, and are cleared
+    (`_cleared_check`)."""
+    return _cleared_check()
 
 
 def _on_listed_changed(source):
@@ -3065,7 +3309,7 @@ def _on_listed_changed(source):
     is the run list: a Refresh repopulates it even while a typed path is the
     source, and must not clear that path's check."""
     if source == CONTINUE_FROM_PATH:
-        return gr.update(), gr.update()
+        return (gr.update(),) * len(_cleared_check())
     return _on_continue_selection_changed()
 
 
@@ -3073,8 +3317,48 @@ def _on_manual_changed(source):
     """The typed path changed; it is the chosen checkpoint only when the
     source is the typed path."""
     if source != CONTINUE_FROM_PATH:
-        return gr.update(), gr.update()
+        return (gr.update(),) * len(_cleared_check())
     return _on_continue_selection_changed()
+
+
+def _on_operation(operation, mode):
+    """The operation chosen (Continue or Branch): the session records it (the
+    drawer's start, its reason, the run bar's line and the run view's
+    header follow it), and the last check, which was the other operation's,
+    is cleared with what was entered for it (`_cleared_check`). Returns the
+    session's mode, then the check's outputs."""
+    mode = dict(mode or {})
+    mode["operation"] = BRANCH if operation == BRANCH else CONTINUE
+    return (mode, *_cleared_check())
+
+
+def _on_branch_edited(mode):
+    """A Branch field edited by the operator: the last check no longer
+    describes what Start branch sends (its plan, its changes), so the check
+    says so, and the last check's refusal no longer disables Start branch,
+    which checks what it sends first. Returns the check's text and the
+    session's mode."""
+    mode = dict(mode or {})
+    parent = dict(mode.get("parent") or {})
+    if parent.get("refused"):
+        parent["refused"] = False
+        mode["parent"] = parent
+    return f'<p class="shep-note">{_BRANCH_EDITED}</p>', mode
+
+
+def _on_branch_guards(mode, *values):
+    """A Branch field that a rule across settings reads another by changed
+    (the scheduler, mixed precision; by the operator or by a check's
+    prefill): each field read only under its guard shows while the parent's
+    stage and task may change it (the last check's ``changeable``, which the
+    session's parent record keeps) and the run would read it
+    (`not_read_by_rules`), as the base form's do (`_on_base_guards`).
+    `values` are the guards', in `_rule_fields(BRANCH_FIELDS)` order."""
+    dependent, guards = _rule_fields(BRANCH_FIELDS)
+    changeable = set(((mode or {}).get("parent") or {}).get("changeable") or ())
+    unread = not_read_by_rules({name: parse_value(by_name(name).kind, value)[0]
+                                for name, value in zip(guards, values, strict=True)})
+    return [gr.update(visible=name in changeable and name not in unread) for name in dependent]
 
 
 def _continue_device(device):
@@ -3084,21 +3368,23 @@ def _continue_device(device):
 
 def _on_continue_device_changed():
     """The device is part of the check (mixed precision takes effect only on
-    CUDA): the last check no longer describes what Continue will do. The Extra
-    epochs entered stay; they belong to the checkpoint, not the device."""
+    CUDA): the last check no longer describes what the start will do. What
+    was entered stays; it belongs to the checkpoint, not the device."""
     return _CONTINUE_PROMPT
 
 
 def _on_parent_chosen(source, listed, manual, parents, ws, mode):
-    """The session records the chosen parent (for the run bar's actions and
-    the dataset comparison), and the chosen listed checkpoint's details are
-    shown (none for a typed path, whose Check shows what it read)."""
+    """The session records the chosen parent (for the drawer's start and the
+    dataset comparison), and the chosen listed checkpoint's details are
+    shown for the drawer's operation (none for a typed path, whose Check
+    shows what it read)."""
     mode = dict(mode or {})
     if not mode.get("drawer"):
         return gr.update(), gr.update(), gr.update()
     mode["parent"] = _chosen(source, listed, manual, parents, ws)
     item = (parents or {}).get(listed) if source != CONTINUE_FROM_PATH and listed else None
-    return mode, compare_html(mode["parent"], ws or {}), parent_details_html(item)
+    return (mode, compare_html(mode["parent"], ws or {}),
+            parent_details_html(item, operation_of(mode)))
 
 
 def _strip_display_prefix(path: str) -> str:
@@ -3134,8 +3420,9 @@ def _parent_path(source: str, listed: Any, manual: Any, ws: Mapping[str, Any],
             return None, redact(exc, workspaces_root()[0]), None
         item = (parents or {}).get(listing_key((architecture, run, filename)))
         if not item:
-            # Only a model record the run list offers is continued (K6
-            # decision 1), so a file without a model spec is refused unopened.
+            # Only a model record the run list offers is continued or
+            # branched (K6 decision 1), so a file without a model spec is
+            # refused unopened.
             return None, ("the typed path is not a model record the run list offers (a file "
                           "without a model spec is never continued here); refresh the list if "
                           "its run is new"), None
@@ -3155,18 +3442,27 @@ def _parent_path(source: str, listed: Any, manual: Any, ws: Mapping[str, Any],
     return str(path), None, item
 
 
-def _preview_for(parent: str, device: Optional[str], extend_epochs,
+def _preview_for(operation: str, parent: str, device: Optional[str], *, extend_epochs=None,
+                 extend_lr=None, settings: Optional[Mapping[str, Any]] = None,
                  expected_sha256: Optional[str] = None) -> Dict[str, Any]:
-    """The service's preview, with Extra epochs only for a finished
-    checkpoint: the field is the console's, and for any other checkpoint a
-    value in it is one left from an earlier selection, not a request. The API
-    and the CLI send `extend_epochs` as given and are refused as before.
-    `expected_sha256` is the model fingerprint shown, which the service
-    compares on its read."""
+    """The service's preview of the drawer's `operation`; `expected_sha256` is
+    the model fingerprint shown, which the service compares on its read. A
+    branch's (`preview_branch`) with the `settings` the drawer sends
+    (`branch_sent`; none, a same-settings branch). A continuation's
+    (`preview_continuation`) with Extra epochs and the Extra-epoch rate only
+    where the parent takes them (`extend_if_finished`): the fields are the
+    console's, and a value left in one from an earlier selection is not a
+    request. Empty or 0 in either is none. The API and the CLI send them as
+    given and are refused as before."""
+    if operation == BRANCH:
+        return training_manager.preview_branch(parent, device=device or "auto",
+                                               requested=dict(settings or {}),
+                                               expected_sha256=expected_sha256)
     epochs = int(extend_epochs) if extend_epochs else None
     return training_manager.preview_continuation(
-        parent, device=device or "auto", extend_epochs=epochs, extend_if_finished=True,
-        expected_sha256=expected_sha256)
+        parent, device=device or "auto", extend_epochs=epochs,
+        requested={"extend_lr": float(extend_lr)} if extend_lr else {},
+        extend_if_finished=True, expected_sha256=expected_sha256)
 
 
 def _changed_parent_action(source: str) -> str:
@@ -3179,137 +3475,208 @@ def _changed_parent_action(source: str) -> str:
     return "Refresh the list, then choose it again."
 
 
-def _checked(source, listed, manual, device, extend_epochs, ws, parents, mode, *,
-             starting: bool = False):
-    """The check every Check and Continue Training runs: the parent resolved,
-    the preview of the parent shown, the dataset compared. Returns (preview or
-    None, why_not, the session's parent record).
+def _checked(operation: str, source, listed, manual, device, ws, parents, mode, *,
+             extend_epochs=None, extend_lr=None, touched: Any = None,
+             values: Sequence[Any] = (), starting: bool = False):
+    """The check every Check checkpoint and the drawer's start run, for the
+    drawer's `operation`: the parent resolved, the preview of the parent
+    shown, the dataset compared. Returns (preview or None, why_not, the
+    session's parent record, the settings a branch sends).
 
     **The model fingerprint shown goes to the service's preview, which
     compares it on its read** (root-cause round, P22-S1; no comparison here):
     the run list's, which its option names, for a listed parent; for a typed
     path, the one its last Check read and showed for that same file, when
-    Continue Training (`starting`) follows it (a Check is what shows it). The
-    record keeps the digest shown, which Continue Training sends to the start.
-    A refusal as changed gets the action for that source
-    (`_changed_parent_action`)."""
+    the start (`starting`) follows it (a Check is what shows it). The record
+    keeps the digest shown, which the start sends. A refusal as changed gets
+    the action for that source (`_changed_parent_action`).
+
+    **A branch sends what the operator edited of its fields** (`branch_sent`:
+    the Branch fields `values`, `touched` their record): each value its field
+    spec does not take is refused here, by its label, before the parent is
+    read, as the plan would refuse it; the rest the preview judges by the
+    plan (`preview_branch`), which names the settings the parent's stage and
+    task may change (kept in the record as ``changeable``, for the fields a
+    rule shows)."""
     path, why, item = _parent_path(source, listed, manual, ws or {}, parents or {})
     record = dict((mode or {}).get("parent") or _chosen(source, listed, manual, parents, ws))
     if path is None:
         record.update(refused=True, checked=True)
-        return None, why, record
+        return None, why, record, {}
     if source == CONTINUE_FROM_PATH:
         shown = record.get("sha256") if starting and record.get("path") == path else None
     else:
         shown = (item or {}).get("sha256")
-    preview = _preview_for(path, device, extend_epochs, expected_sha256=shown)
+    settings: Dict[str, Any] = {}
+    if operation == BRANCH:
+        settings, problems = branch_sent(item, touched, values)
+        if problems:
+            record.update(chosen=True, checked=True, refused=True)
+            return ({"ok": False, "invalid_settings": True, "parent": path,
+                     "reason": " ".join(problems)}, None, record, settings)
+    preview = _preview_for(operation, path, device, extend_epochs=extend_epochs,
+                           extend_lr=extend_lr, settings=settings, expected_sha256=shown)
     if preview.get("changed"):
         preview = {**preview, "reason": f"{preview['reason']} {_changed_parent_action(source)}"}
     recorded = preview.get("dataset_fingerprint") or (item or {}).get("dataset_fingerprint")
     record.update(chosen=True, checked=True, refused=not preview.get("ok"), fingerprint=recorded,
                   sha256=shown or preview.get("sha256"), path=path)
-    return preview, None, record
+    if operation == BRANCH and preview.get("ok"):
+        record["changeable"] = list(preview.get("changeable") or ())
+    return preview, None, record, settings
 
 
-def _on_check_continue(source, listed, manual, device, extend_epochs, ws, parents, mode,
-                       request: gr.Request):
-    """Check checkpoint: preview what continuing from the chosen checkpoint
-    does. It opens the checkpoint (SPEC_4 C3), so D8 is checked first, on
-    this event's own request; refused, nothing is opened.
+def _on_check_continue(request: gr.Request, operation, source, listed, manual, device,
+                       extend_epochs, extend_lr, ws, parents, mode, touched, *values):
+    """Check checkpoint: preview what the drawer's operation does from the
+    chosen checkpoint (continuing it, or branching it with the settings
+    edited, `values` the Branch fields', `touched` their record). It opens
+    the checkpoint (SPEC_4 C3), so D8 is checked first, on this event's own
+    request; refused, nothing is opened.
 
-    Returns the check's text, the extend-epochs input's update (shown only
-    for a finished checkpoint, where extending is the only way on), the
-    session's mode and the dataset comparison.
+    Returns the check's text, the Extra epochs and Extra-epoch rate updates
+    (each shown only where continuing the checkpoint takes it), the
+    session's mode, the dataset comparison, and the Branch box and fields
+    (`_branch_updates`).
     """
+    keep = (gr.update(),) * (1 + len(BRANCH_FIELDS))
     access = operator_access(request)
     if not access.allowed:
-        return f'<div class="shep-reason">{r.e(access.refusal)}</div>', gr.update(), gr.update(), gr.update()
+        return (f'<div class="shep-reason">{r.e(access.refusal)}</div>', gr.update(),
+                gr.update(), gr.update(), gr.update(), *keep)
+    op = BRANCH if operation == BRANCH else CONTINUE
     mode = dict(mode or {})
-    preview, why, record = _checked(source, listed, manual, device, extend_epochs, ws, parents, mode)
+    mode["operation"] = op
+    preview, why, record, _settings = _checked(
+        op, source, listed, manual, device, ws, parents, mode, extend_epochs=extend_epochs,
+        extend_lr=extend_lr, touched=touched, values=values)
     mode["parent"] = record
     if preview is None:
-        return (f'<div class="shep-reason">Nothing to check: {r.e(why)}.</div>',
-                gr.update(visible=False, value=None), mode, compare_html(record, ws or {}))
-    differs = continue_refusal(record, ws or {}) is not None and preview.get("ok")
-    text = _check_html(preview, source, differs=bool(differs), listed=listed)
-    if preview.get("end") == "finished" and not preview.get("ok") and not extend_epochs:
+        hidden = gr.update(visible=False, value=None)
+        return (f'<div class="shep-reason">Nothing to check: {r.e(why)}.</div>', hidden, hidden,
+                mode, compare_html(record, ws or {}), *keep)
+    differs = continue_refusal(record, ws or {}, operation=op) is not None and preview.get("ok")
+    text = _check_html(preview, source, differs=bool(differs), listed=listed, operation=op)
+    if op == CONTINUE and preview.get("end") == "finished" and not preview.get("ok") \
+            and not extend_epochs:
         text += '<p class="shep-note">Enter <b>Extra epochs</b> above, then click <b>Check checkpoint</b> again.</p>'
-    return text, _extra_epochs_update(preview), mode, compare_html(record, ws or {})
+    return (text, _extra_epochs_update(preview, op), _extend_lr_update(preview, op), mode,
+            compare_html(record, ws or {}), *_branch_updates(preview, op, touched, values))
 
 
-def _on_resume(ws, device, source, listed, manual, extend_epochs, parents, mode,
-               request: gr.Request):
-    """Continue Training: an operator control (D8, checked first on this
-    event's own request; refused, nothing is opened or started), then the same
-    check as the preview, the dataset comparison, then the job runner's start
-    with the full dataset fingerprint and the parent's model fingerprint this
-    session showed.
+def _on_resume(request: gr.Request, operation, ws, device, source, listed, manual,
+               extend_epochs, extend_lr, parents, mode, touched, *values):
+    """The drawer's start, Continue Training or Start branch: an operator
+    control (D8, checked first on this event's own request; refused, nothing
+    is opened or started), then the same check as the preview, the dataset
+    comparison, then the job runner's start with the full dataset
+    fingerprint and the parent's model fingerprint this session showed.
 
-    Only operational fields are sent (contract M3a-3): every learning setting
-    comes from the checkpoint, so the training form's values are not used.
-    The job runner and the training process each check again, the process on
-    the parent the runner decided on (P22-S1).
+    A continuation sends only operational fields (contract M3a-3): every
+    learning setting comes from the checkpoint, so the training form's values
+    are not used; an extension its Extra epochs and, for a parent whose rate
+    ended at 0, its Extra-epoch rate, as the check judged them. A branch
+    sends ``branch_from`` and the settings the operator edited of its fields
+    (`branch_sent`), none for a same-settings branch (decision B1). The job
+    runner and the training process each check again, the process on the
+    parent the runner decided on (P22-S1; decision B2).
 
-    Returns the notice (`notice_html`), the check's text, the extend-epochs
-    update and the session's mode (the drawer closed once started).
+    Returns the start's notice (`notice_html`, in the drawer's footer beside
+    the start), the check's text, the Extra epochs and Extra-epoch rate
+    updates, the session's mode (the drawer closed once started) and the
+    Branch box and fields.
     """
     access = operator_access(request)
     if not access.allowed:
-        return notice_html(access.refusal), gr.update(), gr.update(), gr.update()
-    said, text, extend, mode = _resume(ws, device, source, listed, manual, extend_epochs,
-                                       parents, mode)
-    return notice_html(said), text, extend, mode
+        return (notice_html(access.refusal), gr.update(), gr.update(), gr.update(), gr.update(),
+                *(gr.update(),) * (1 + len(BRANCH_FIELDS)))
+    said, text, extend, rate, mode, branch = _resume(
+        operation, ws, device, source, listed, manual, extend_epochs, extend_lr, parents, mode,
+        touched, values)
+    return notice_html(said), text, extend, rate, mode, *branch
 
 
-def _resume(ws, device, source, listed, manual, extend_epochs, parents, mode):
-    """Continue Training's work after D8: ``(sentence, check text, Extra
-    epochs update, mode)``, the sentence plain text ("" once started)."""
+def _resume(operation, ws, device, source, listed, manual, extend_epochs, extend_lr, parents,
+            mode, touched=None, values: Sequence[Any] = ()):
+    """The drawer's start's work after D8: ``(sentence, check text, Extra
+    epochs update, Extra-epoch rate update, mode, Branch box and fields)``,
+    the sentence plain text ("" once started)."""
+    op = BRANCH if operation == BRANCH else CONTINUE
     mode = dict(mode or {})
+    mode["operation"] = op
+    keep = (gr.update(),) * (1 + len(BRANCH_FIELDS))
     row = (ws or {}).get("row") or {}
     fingerprint = workspace_fingerprint(ws)
     if not row or not fingerprint:
-        return "Not started: select a dataset first.", gr.update(), gr.update(), mode
-    preview, why, record = _checked(source, listed, manual, device, extend_epochs, ws, parents,
-                                    mode, starting=True)
+        return "Not started: select a dataset first.", gr.update(), gr.update(), gr.update(), \
+            mode, keep
+    preview, why, record, settings = _checked(
+        op, source, listed, manual, device, ws, parents, mode, extend_epochs=extend_epochs,
+        extend_lr=extend_lr, touched=touched, values=values, starting=True)
     mode["parent"] = record
+    hidden = gr.update(visible=False, value=None)
     if preview is None:
-        return f"Not started: {why}.", gr.update(), gr.update(visible=False, value=None), mode
-    refusal = continue_refusal(record, ws)
+        return f"Not started: {why}.", gr.update(), hidden, hidden, mode, keep
+    refusal = continue_refusal(record, ws, operation=op)
     text = _check_html(preview, source, differs=preview.get("ok") and refusal is not None,
-                       listed=listed)
+                       listed=listed, operation=op)
+    shown = (_extra_epochs_update(preview, op), _extend_lr_update(preview, op))
+    branch = _branch_updates(preview, op, touched, values)
     if not preview.get("ok"):
-        if preview.get("end") == "finished" and not extend_epochs:
+        if op == CONTINUE and preview.get("end") == "finished" and not extend_epochs:
             text += ('<p class="shep-note">Enter <b>Extra epochs</b> above, then click '
                      '<b>Continue Training</b> again.</p>')
-        return ("Not started: this checkpoint cannot be continued; the reason is in the check.",
-                text, _extra_epochs_update(preview), mode)
+        return (f"Not started: this checkpoint cannot be {OPERATION_VERBS[op][1]}; the reason "
+                "is in the check.", text, *shown, mode, branch)
     if refusal:
-        return f"Not started: {refusal}", text, _extra_epochs_update(preview), mode
+        return f"Not started: {refusal}", text, *shown, mode, branch
     from src.api.services.server_lists import ServerListRefused
 
     try:
         directory = _workspace_path(row["name"])
     except ServerListRefused:
-        return (f"Not started: {row['name']} is no longer listed by the server.", text,
-                _extra_epochs_update(preview), mode)
+        return (f"Not started: {row['name']} is no longer listed by the server.", text, *shown,
+                mode, branch)
     config: Dict[str, Any] = {
         "data_dir": str(directory),
         "run_name": "",
         "device": device or "auto",
-        "resume_from": preview["parent"],
         "compile": bool(load_runtime_settings().get("torch_compile", False)),
     }
-    if preview["mode"] == "extend":
-        config["extend_epochs"] = preview["stage"]["target_epochs"]
+    if op == BRANCH:
+        config.update(settings, branch_from=preview["parent"])
+    else:
+        config["resume_from"] = preview["parent"]
+        if preview["mode"] == "extend":
+            # What the check judged: its epochs, and the rate it set for
+            # the groups at 0 when the parent has one.
+            config["extend_epochs"] = preview["stage"]["target_epochs"]
+            rate = (preview["stage"].get("schedule") or {}).get("extend_lr")
+            if rate is not None:
+                config["extend_lr"] = rate
     result = training_manager.start_training(config, expected_dataset_fingerprint=fingerprint,
                                              expected_parent_sha256=record["sha256"])
     if result.get("success"):
         mode.update(drawer=False, parent={}, confirm=None)
-        return "", text, _extra_epochs_update(preview), mode
-    said = not_started(result.get("error"))
+        return "", text, *shown, mode, branch
+    said = page_words(not_started(result.get("error")))
     if result.get("parent_changed"):  # changed after this check's own read
         said = f"{said} {_changed_parent_action(source)}"
-    return said, text, _extra_epochs_update(preview), mode
+    return said, text, *shown, mode, branch
+
+
+def continues_html(mode: Optional[Mapping[str, Any]]) -> str:
+    """The run bar's line for the run the drawer would start (while it is
+    open): a new run of its own (contract M3a-2), continued or branched, by
+    the drawer's operation, from the checkpoint the drawer shows chosen
+    (named there once; the run view's header says whether the run it shows
+    is that one)."""
+    done = OPERATION_VERBS[operation_of(mode)][1]
+    chosen = ((mode or {}).get("parent") or {}).get("chosen")
+    return (f'<span class="shep-rb-k">Run</span> a new one, {done} from the checkpoint chosen '
+            f'in {DRAWER_TITLE}' if chosen else
+            '<span class="shep-rb-k">Run</span> <span class="shep-muted">a new one, once a '
+            f'checkpoint is chosen in {DRAWER_TITLE}</span>')
 
 
 def _toggle_continue_source(source):
@@ -3319,7 +3686,6 @@ def _toggle_continue_source(source):
     return (gr.update(visible=from_list), gr.update(visible=from_list),
             gr.update(visible=from_list), gr.update(visible=from_list),
             gr.update(visible=not from_list))
-
 
 # =============================================================================
 # Help
@@ -3352,9 +3718,18 @@ FIELD_HELP = {
         "- cpu: for development, recorded as asked.\n"
         "- Continue… has its own Device, which starts from this one.",
     ),
+    "continue_operation": (
+        "Operation",
+        "What the drawer does from the chosen checkpoint. Both train a new run of their own; "
+        "the checkpoint is not changed.\n\n"
+        "• Continue: resume a paused run, or extend a finished one by Extra epochs. Every "
+        "setting stays the checkpoint's.\n"
+        "• Branch: a new run from its weights, with a new optimizer and schedule. Change the "
+        "settings its stage allows, or none for the same settings.",
+    ),
     "continue_source": (
         "Checkpoint source",
-        "Where the checkpoint to continue from comes from.\n\n"
+        "Where the checkpoint to continue or branch from comes from.\n\n"
         "• From run list: the run bar's dataset's model records (bases and task models), as "
         "the server lists them.\n"
         "• Manual path: a typed path. It only finds a checkpoint that list has; any other "
@@ -3363,13 +3738,14 @@ FIELD_HELP = {
         "Listing opens each checkpoint, so it is an operator control.",
     ),
     "continue_run": (
-        "Run",
-        "The run to continue from, latest first, each led by its name or start time.\n\n"
-        "Its architecture and start time follow; its directory is in the table. Continuing "
-        "trains a new run of its own; the run chosen here is not changed.",
+        STEP_RUN,
+        "The run to continue or branch from, latest first, each led by its name or start "
+        "time.\n\n"
+        "Its architecture and start time follow; its directory is in the table. Either trains "
+        "a new run of its own; the run chosen here is not changed.",
     ),
     "checkpoint_dropdown": (
-        "Checkpoint",
+        STEP_CHECKPOINT,
         "The chosen run's checkpoints, newest first.\n\n"
         "• Latest save: last.pt, the run's last training state.\n"
         "• Best (its metric named): the run's best value of the selection metric its files "
@@ -3387,17 +3763,26 @@ FIELD_HELP = {
     ),
     "continue_device": (
         "Device",
-        "Where the continued run trains: auto is the GPU (CUDA), and with no CUDA device "
-        "visible the start is refused; choose cpu for development.\n\n"
-        "Check checkpoint and Continue Training both use it. Mixed precision works only on "
-        "CUDA; the check says when the checkpoint's setting would not hold here.\n\n"
+        "Where the new run trains: auto is the GPU (CUDA), and with no CUDA device visible "
+        "the start is refused; choose cpu for development.\n\n"
+        "Check checkpoint and the start (Continue Training or Start branch) both use it. Mixed "
+        "precision works only on CUDA; the check says when the checkpoint's setting would not "
+        "hold here.\n\n"
         "It starts from the Parameters' Device each time Continue… opens.",
     ),
     "extend_epochs": (
-        "Extra epochs",
+        EXTEND_WORDS["extend_epochs"],
         "Extend a finished run by this many epochs, trained at the fixed rate shown in the "
         "check result.",
     ),
+    "extend_lr": (
+        EXTEND_WORDS["extend_lr"],
+        "The rate the Extra epochs train at in the parameter groups whose rate ended at 0.\n\n"
+        "Shown only for such a checkpoint: extending at 0 would not train those groups, and "
+        "no rate is guessed. The other groups keep the rate they ended at.",
+    ),
+    # The Branch fields: each setting's label, what it is, where it starts.
+    **{f"branch_{name}": branch_setting_help(name) for name in BRANCH_FIELDS},
     "shep-train-view-run": (
         "Viewing",
         "The run whose curves and Export CSV the run view shows: the run bar's dataset's runs, "
@@ -3486,11 +3871,6 @@ def create_training_tab(ctx: Any) -> None:
                 stop_btn = gr.Button(ACTION_LABELS["stop"], variant="secondary",
                                      interactive=False, scale=0, elem_id="shep-train-stop",
                                      elem_classes=["shep-stop"])
-                resume_btn = gr.Button(ACTION_LABELS["resume"], variant="primary",
-                                       interactive=False, scale=0, elem_id="shep-train-resume",
-                                       elem_classes=["shep-drawer-only"])
-                cancel_btn = gr.Button("Cancel", scale=0, elem_id="shep-train-cancel",
-                                       elem_classes=["shep-drawer-only"])
             # Stop asks first, in the code's words (contract M3a). The
             # question and Check (in the drawer) are reached only through a
             # Stop or a Continue… D8 allowed, so they show no lock (the
@@ -3565,14 +3945,22 @@ def create_training_tab(ctx: Any) -> None:
                 base_fields = [fields[key] for key in base_form_keys()]
 
             # ------------------------------------------------- Continue… drawer
+            # Numbered steps (the skill's §4): what to do (Continue or Branch),
+            # 1. Run, 2. Checkpoint, 3. Check, then 4. Start in the footer, the
+            # start beside its reason (the skill's §9); the body scrolls above
+            # it when it does not fit, the footer never.
             with gr.Column(elem_id="shep-train-drawer", elem_classes=["shep-panel"], scale=10,
                            min_width=360):
                 with gr.Row(elem_classes=["shep-panel-hd", "shep-drawer-hd"]):
-                    plain_html('<h2>Continue a run</h2><span class="shep-muted">replaces the '
-                               'parameters until closed</span>', elem_id="shep-train-drawer-title")
+                    plain_html(f'<h2>{r.e(DRAWER_TITLE)}</h2><span class="shep-muted">replaces '
+                               'the parameters until closed</span>',
+                               elem_id="shep-train-drawer-title")
                     close_btn = gr.Button("Close", scale=0, elem_id="shep-train-drawer-close",
                                           elem_classes=["shep-x-btn"])
                 with gr.Column(elem_id="shep-train-drawer-bd", elem_classes=["shep-train-bd"]):
+                    continue_operation = gr.Radio(choices=OPERATION_CHOICES, value=CONTINUE,
+                                                  label="Operation",
+                                                  elem_id="continue_operation")
                     continue_source = gr.Radio(choices=[CONTINUE_FROM_LIST, CONTINUE_FROM_PATH],
                                                value=CONTINUE_FROM_LIST, label="Checkpoint source",
                                                elem_id="continue_source")
@@ -3582,12 +3970,12 @@ def create_training_tab(ctx: Any) -> None:
                     # the run, then its checkpoint, each in a few words; the chosen
                     # file's details in a table under them.
                     with gr.Row(elem_classes=["shep-train-parent-row"]):
-                        continue_run = gr.Dropdown(label="Run", choices=[], value=None,
+                        continue_run = gr.Dropdown(label=STEP_RUN, choices=[], value=None,
                                                    elem_id="continue_run")
                         refresh_ckpt_btn = gr.Button("Refresh", size="sm", scale=0,
                                                      elem_id="shep-train-refresh")
-                    checkpoint_dropdown = gr.Dropdown(label="Checkpoint", choices=[], value=None,
-                                                      elem_id="checkpoint_dropdown")
+                    checkpoint_dropdown = gr.Dropdown(label=STEP_CHECKPOINT, choices=[],
+                                                      value=None, elem_id="checkpoint_dropdown")
                     parent_details = plain_html("", elem_id="shep-train-parent-details")
                     manual_checkpoint = gr.Textbox(label="Checkpoint path", value="", max_lines=1,
                                                    visible=False, elem_id="manual_checkpoint")
@@ -3595,24 +3983,52 @@ def create_training_tab(ctx: Any) -> None:
                     # in the parameters the drawer covers.
                     continue_device = gr.Radio(label="Device", choices=["auto", "cuda", "cpu"],
                                                value="auto", elem_id="continue_device")
-                    # Extra epochs (shown for a finished checkpoint) beside Check
-                    # checkpoint, above what the check says (M5-3: under a long
-                    # result it fell below the fold at 1920 x 1080).
+                    # Extra epochs (shown for a finished checkpoint) and its rate
+                    # (for one whose rate ended at 0) beside Check checkpoint,
+                    # above what the check says (M5-3: under a long result it
+                    # fell below the fold at 1920 x 1080).
                     with gr.Row(elem_classes=["shep-train-check-row"]):
+                        plain_html(f'<span class="shep-step">{STEP_CHECK}</span>',
+                                   elem_id="shep-train-step-check")
                         # No widget minimum: hidden and empty, a Number is sent as
                         # 0, which a minimum would reject before any handler runs.
-                        # Empty or 0 means "not extending"; the run plan refuses
-                        # below 1.
-                        extend_epochs = gr.Number(label="Extra epochs", value=None, precision=0,
-                                                  visible=False, elem_id="extend_epochs",
-                                                  scale=0, min_width=0)
+                        # Empty or 0 means "not extending" (and "no rate"); the
+                        # run plan refuses below 1 (and a rate of 0 or less).
+                        extend_epochs = gr.Number(label=EXTEND_WORDS["extend_epochs"],
+                                                  value=None, precision=0, visible=False,
+                                                  elem_id="extend_epochs", scale=0, min_width=0)
+                        extend_lr = gr.Number(label=EXTEND_WORDS["extend_lr"], value=None,
+                                              visible=False, elem_id="extend_lr", scale=0,
+                                              min_width=0)
                         check_continue_btn = gr.Button("Check checkpoint", size="sm", scale=0,
                                                        elem_id="shep-train-check")
                     compare = plain_html("", elem_id="shep-train-compare")
                     continue_preview = plain_html(f'<p class="shep-note">{_CONTINUE_PROMPT}</p>',
                                                   elem_id="continue_preview")
-                drawer_reason = plain_html("", elem_id="shep-train-drawer-why",
-                                           elem_classes=["shep-panel-ft"])
+                    # Branch: the settings its parent's stage and task may
+                    # change, each the one field of its setting, shown after a
+                    # check at the parent's value (`_branch_updates`).
+                    with gr.Column(visible=False, elem_id="shep-train-branch") as branch_box:
+                        plain_html('<h3 class="shep-train-sub">Settings to change</h3>'
+                                   '<p class="shep-note">Each starts at the parent’s value; '
+                                   'only a field you edit is sent. Edit none for the same '
+                                   'settings.</p>', elem_id="shep-train-branch-hd")
+                        with gr.Group(elem_classes=["shep-train-grid"]):
+                            branch_fields = [setting_field(name, _branch_field_value(name),
+                                                           elem_id=f"branch_{name}",
+                                                           visible=False)
+                                             for name in BRANCH_FIELDS]
+                with gr.Row(elem_id="shep-train-drawer-ft", elem_classes=["shep-panel-ft"]):
+                    plain_html(f'<span class="shep-step">{STEP_START}</span>',
+                               elem_id="shep-train-step-start")
+                    # Labelled by the render's one gated-button rule
+                    # (`ACTION_LABELS`, by the operation: `start_label`).
+                    resume_btn = gr.Button(ACTION_LABELS["resume"], variant="primary",
+                                           interactive=False, scale=0,
+                                           elem_id="shep-train-resume")
+                    cancel_btn = gr.Button("Cancel", scale=0, elem_id="shep-train-cancel")
+                    drawer_reason = plain_html("", elem_id="shep-train-drawer-why")
+                    drawer_notice = plain_html("", elem_id="shep-train-drawer-notice")
 
             # ------------------------------------------------------- run view
             with gr.Column(elem_id="shep-train-runview", elem_classes=["shep-panel"], scale=22):
@@ -3716,12 +4132,18 @@ def create_training_tab(ctx: Any) -> None:
                    "inputs": [continue_source, checkpoint_dropdown, manual_checkpoint, parents, ws,
                               mode], "outputs": [mode, compare, parent_details],
                    "show_progress": "hidden"}
+    # The drawer's record of the Branch fields the operator edited, the
+    # browser's, as the base form's (`touched_record`).
+    branch_touched = touched_record("shep-train-branch-touched")
+    # What a check leaves once what it described changed (`_cleared_check`).
+    check_cleared = [extend_epochs, extend_lr, continue_preview, drawer_notice, branch_touched,
+                     branch_box]
     ctx.training_workspace.change(_on_training_workspace, inputs=[ctx.training_workspace, ws, mode],
                                   outputs=[ws, dataset, chip, mode],
                                   show_progress="hidden", **in_order, **every_one).then(
         _relist_parents, inputs=[ws, mode],
         outputs=[parents, continue_run, checkpoint_dropdown, parents_note, compare,
-                 continue_preview, extend_epochs], show_progress="hidden").then(**chosen_step).then(
+                 *check_cleared], show_progress="hidden").then(**chosen_step).then(
         **view_step).then(**ctx.chip_refresh)
     def _on_chip_click(evt: gr.EventData):
         """The chip's "All datasets ›": Research › Datasets."""
@@ -3750,10 +4172,10 @@ def create_training_tab(ctx: Any) -> None:
     stop_keep_btn.click(close_stop_question, inputs=[mode], outputs=[mode],
                         show_progress="hidden").then(**view_step)
 
-    # Continue…
+    # Continue… (its operation Continue each time it opens).
     cont_btn.click(_on_continue_open, inputs=[ws, mode],
                    outputs=[notice, mode, parents, continue_run, checkpoint_dropdown,
-                            parents_note, continue_preview],
+                            parents_note, continue_operation, *check_cleared],
                    show_progress="hidden").then(
         _continue_device, inputs=[device], outputs=[continue_device],
         show_progress="hidden").then(**chosen_step).then(**view_step).then(**ctx.chip_refresh)
@@ -3767,51 +4189,69 @@ def create_training_tab(ctx: Any) -> None:
     # clears the last check and records the parent, as for any choice).
     continue_run.change(_model_list().on_run_chosen, inputs=[continue_run, parents, checkpoint_dropdown],
                         outputs=[checkpoint_dropdown], show_progress="hidden")
+    # Check checkpoint and the start take the operation, the parent, the
+    # device, what continuing takes (Extra epochs and its rate) and what a
+    # branch takes (the Branch fields and the record of those edited).
+    taken = [extend_epochs, extend_lr, ws, parents, mode, branch_touched, *branch_fields]
+    branch_shown = [branch_box, *branch_fields]
     check_continue_btn.click(
         _on_check_continue,
-        inputs=[continue_source, checkpoint_dropdown, manual_checkpoint, continue_device,
-                extend_epochs, ws, parents, mode],
-        outputs=[continue_preview, extend_epochs, mode, compare],
+        inputs=[continue_operation, continue_source, checkpoint_dropdown, manual_checkpoint,
+                continue_device, *taken],
+        outputs=[continue_preview, extend_epochs, extend_lr, mode, compare, *branch_shown],
         show_progress="hidden").then(**view_step).then(**ctx.chip_refresh)
     resume_btn.click(
         _on_resume,
-        inputs=[ws, continue_device, continue_source, checkpoint_dropdown, manual_checkpoint,
-                extend_epochs, parents, mode],
-        outputs=[notice, continue_preview, extend_epochs, mode],
+        inputs=[continue_operation, ws, continue_device, continue_source, checkpoint_dropdown,
+                manual_checkpoint, extend_epochs, extend_lr, parents, mode, branch_touched,
+                *branch_fields],
+        outputs=[drawer_notice, continue_preview, extend_epochs, extend_lr, mode,
+                 *branch_shown],
         show_progress="hidden").then(**view_step).then(**ctx.chip_refresh)
     continue_source.change(fn=_toggle_continue_source, inputs=[continue_source],
                            outputs=[continue_run, checkpoint_dropdown, refresh_ckpt_btn,
                                     parent_details, manual_checkpoint])
-    # A changed selection, or source, makes the last check and its Extra
-    # epochs stale: both are cleared (contract M3a review of 094b90d, P2-2).
-    # `.change` fires on updates from other events too (Refresh), so the run
-    # list and the typed path clear only when they are the source.
+    # A changed selection, source or operation makes the last check, and what
+    # was entered for it, stale: it is cleared (contract M3a review of
+    # 094b90d, P2-2). `.change` fires on updates from other events too
+    # (Refresh), so the run list and the typed path clear only when they are
+    # the source.
     continue_source.change(fn=_on_continue_selection_changed, inputs=[],
-                           outputs=[extend_epochs, continue_preview])
+                           outputs=check_cleared)
     checkpoint_dropdown.change(fn=_on_listed_changed, inputs=[continue_source],
-                               outputs=[extend_epochs, continue_preview])
+                               outputs=check_cleared)
     manual_checkpoint.change(fn=_on_manual_changed, inputs=[continue_source],
-                             outputs=[extend_epochs, continue_preview])
+                             outputs=check_cleared)
     continue_device.change(fn=_on_continue_device_changed, inputs=[], outputs=[continue_preview])
-    # The session's record of the chosen parent (the run bar's actions).
+    # The session's record of the chosen parent (the drawer's start).
     chosen_inputs = [continue_source, checkpoint_dropdown, manual_checkpoint, parents, ws, mode]
     for component in (continue_source, checkpoint_dropdown, manual_checkpoint):
         component.change(_on_parent_chosen, inputs=chosen_inputs,
                          outputs=[mode, compare, parent_details],
                          show_progress="hidden").then(**view_step)
+    # The operation chosen: the session's record, then the chosen parent's
+    # record and details for it, then the drawer's start and the run bar.
+    continue_operation.change(_on_operation, inputs=[continue_operation, mode],
+                              outputs=[mode, *check_cleared], show_progress="hidden").then(
+        **chosen_step).then(**view_step)
+    # The Branch fields: each edit recorded in the browser first (decision
+    # S2: what is sent is what the operator touched), then the check says it
+    # is stale and the start checks again; a guard of a rule across settings
+    # shows or hides what it guards, as on the base form.
+    for name, field in zip(BRANCH_FIELDS, branch_fields, strict=True):
+        record_touches(field, name, branch_touched)
+    gr.on(triggers=[field.input for field in branch_fields], fn=_on_branch_edited,
+          inputs=[mode], outputs=[continue_preview, mode], show_progress="hidden",
+          trigger_mode="always_last").then(**view_step)
+    branch_by_name = dict(zip(BRANCH_FIELDS, branch_fields, strict=True))
+    branch_dependent, branch_guards = _rule_fields(BRANCH_FIELDS)
+    gr.on(triggers=[branch_by_name[name].change for name in branch_guards],
+          fn=_on_branch_guards, inputs=[mode, *(branch_by_name[name] for name in branch_guards)],
+          outputs=[branch_by_name[name] for name in branch_dependent], queue=False,
+          show_progress="hidden")
 
-    # The run bar's line for a continued run (while the drawer is open): a new
-    # run of its own (contract M3a-2), continued from the checkpoint the drawer
-    # shows chosen (named there once; the run view's header says whether the
-    # run it shows is that one).
-    def _continues(mode_value):
-        chosen = ((mode_value or {}).get("parent") or {}).get("chosen")
-        return ('<span class="shep-rb-k">Run</span> a new one, continued from the checkpoint '
-                'chosen in Continue a run' if chosen else
-                '<span class="shep-rb-k">Run</span> <span class="shep-muted">a new one, once a '
-                'checkpoint is chosen in Continue a run</span>')
-
-    mode.change(_continues, inputs=[mode], outputs=[continues], show_progress="hidden")
+    # The run bar's line for the run the drawer would start (`continues_html`).
+    mode.change(continues_html, inputs=[mode], outputs=[continues], show_progress="hidden")
 
 
 #: This page's element id (`shell.page_elem_id`), the scope of `PAGE_CSS`.
@@ -3906,8 +4346,7 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} button.primary:not(:disabled):hover {{ background: var(--shep-accent-600) !important; border-color: var(--shep-accent-600) !important; }}
 {_PAGE} #shep-train-stop:not(:disabled) {{ color: var(--shep-red-700) !important; border-color: var(--shep-red-200) !important; background: #fff !important; }}
 {_PAGE} .shep-rb-row > button:disabled {{ background: var(--shep-grey-50) !important; border: 1px solid var(--shep-grey-200) !important; color: var(--shep-grey-600) !important; opacity: 1 !important; box-shadow: none !important; cursor: not-allowed; }}
-{_PAGE} .shep-drawer-only, {_PAGE} #shep-train-continues {{ display: none !important; }}
-{_PAGE} .shep-rb-drawer .shep-drawer-only {{ display: inline-flex !important; }}
+{_PAGE} #shep-train-continues {{ display: none !important; }}
 {_PAGE} .shep-rb-drawer #shep-train-continue, {_PAGE} .shep-rb-drawer #shep-train-stop, {_PAGE} .shep-rb-drawer #run_name {{ display: none !important; }}
 {_PAGE} .shep-rb-drawer #shep-train-continues {{ display: block !important; flex: 0 1 auto !important; }}
 {_PAGE} .shep-rb-k {{ font-size: 14px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--shep-text-2); margin-right: 8px; }}
@@ -3948,7 +4387,8 @@ PAGE_CSS = charts.CHART_CSS + f"""
    §2: no bordered box inside a box). A result that can continue has no tint. */
 {_PAGE} .shep-cmp, {_PAGE} .shep-check {{ border-radius: 8px; padding: 10px 12px; font-size: 15px; }}
 {_PAGE} .shep-cmp p, {_PAGE} .shep-check p {{ margin: 4px 0 0; }}
-{_PAGE} .shep-cmp-amber, {_PAGE} .shep-check-amber {{ background: var(--shep-amber-50); color: var(--shep-amber-800); }}
+/* A refusal (the ✕ of the shared status mark: the start refuses it) is tinted red, the skill's §6. */
+{_PAGE} .shep-cmp-red, {_PAGE} .shep-check-red {{ background: var(--shep-red-50); color: var(--shep-red-700); }}
 {_PAGE} .shep-cmp-ok {{ background: var(--shep-green-50); color: var(--shep-green-800); }}
 {_PAGE} .shep-cmp-grey {{ background: var(--shep-grey-50); color: var(--shep-grey-800); }}
 {_PAGE} .shep-check-h {{ font-weight: 600; margin-bottom: 4px; }}
@@ -3959,9 +4399,21 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} .shep-check .shep-kv {{ font-size: inherit; gap: 4px 14px; margin-top: 6px; }}
 {_PAGE} .shep-inherit {{ margin-top: 8px; }}
 {_PAGE} .shep-inherit > summary {{ cursor: pointer; font-weight: 600; min-height: 24px; }}
+/* The drawer's footer, under its body and never scrolled with it: the step, the start and Cancel,
+   then the start's reason (the render's) and its last notice, each taking the line's rest, wrapping
+   under the buttons when narrow; an empty one takes no room. */
+{_PAGE} #shep-train-drawer-ft {{ flex: none !important; }}
+{_PAGE} #shep-train-drawer-ft > button {{ flex: none !important; width: auto !important; min-width: max-content !important; padding: 0 14px !important; height: 40px; white-space: nowrap; }}
+{_PAGE} #shep-train-drawer-ft > button:disabled {{ background: var(--shep-grey-50) !important; border: 1px solid var(--shep-grey-200) !important; color: var(--shep-grey-600) !important; opacity: 1 !important; box-shadow: none !important; cursor: not-allowed; }}
+{_PAGE} #shep-train-drawer-ft > .block {{ width: auto !important; }}
+{_PAGE} #shep-train-drawer-why, {_PAGE} #shep-train-drawer-notice {{ flex: 1 1 240px !important; min-width: 0 !important; }}
 {_PAGE} .shep-drawer-why {{ font-size: 15px; color: var(--shep-text-2); }}
 {_PAGE} .shep-drawer-why .shep-rb-why {{ text-align: left; flex-wrap: nowrap; align-items: flex-start; }}
-{_PAGE} #shep-train-drawer-why:not(:has(.shep-drawer-why)) {{ display: none !important; }}
+{_PAGE} #shep-train-drawer-why:not(:has(.shep-drawer-why)), {_PAGE} #shep-train-drawer-notice:not(:has(.shep-notice-t)) {{ display: none !important; }}
+{_PAGE} #shep-train-drawer-notice {{ font-size: 15px; color: var(--shep-amber-800); overflow-wrap: anywhere; }}
+/* A step's number and name (the skill's §4: numbered steps), as a field's label reads. */
+{_PAGE} .shep-step {{ font-size: 14px; font-weight: 600; color: var(--shep-text-2); white-space: nowrap; }}
+{_PAGE} #shep-train-step-check, {_PAGE} #shep-train-step-start {{ flex: none !important; width: auto !important; align-self: center; }}
 /* The run view's header row: the Viewing select, then how the run viewed stands to the training
    job, its dataset's relation, its state and Details, wrapping as one line of words: beside the
    select while they need two lines there at most (about 540 px: a state line and Details ›), else
@@ -4000,17 +4452,20 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} .shep-train-check-row {{ align-items: flex-end !important; flex-wrap: wrap !important; gap: 8px 12px !important; }}
 {_PAGE} .shep-train-check-row > * {{ flex: 0 0 auto !important; width: auto !important; }}
 {_PAGE} .shep-train-check-row > .form {{ background: none !important; border: 0 !important; box-shadow: none !important; }}
-/* Its label beside its box, one line with the button: "Extra epochs ⓘ [ 10 ]  Check checkpoint". */
-{_PAGE} #extend_epochs {{ padding: 0 !important; background: none !important; border: 0 !important; box-shadow: none !important; flex: none !important; min-width: max-content !important; }}
-{_PAGE} #extend_epochs label.container {{ display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; }}
-{_PAGE} #extend_epochs [data-testid="block-info"] {{ margin: 0 !important; }}
-{_PAGE} #extend_epochs input[type="number"] {{ width: 96px; }}
+/* Each label beside its box, one line with the button: "Extra epochs ⓘ [ 10 ]  Check checkpoint". */
+{_PAGE} #extend_epochs, {_PAGE} #extend_lr {{ padding: 0 !important; background: none !important; border: 0 !important; box-shadow: none !important; flex: none !important; min-width: max-content !important; }}
+{_PAGE} #extend_epochs label.container, {_PAGE} #extend_lr label.container {{ display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; }}
+{_PAGE} #extend_epochs [data-testid="block-info"], {_PAGE} #extend_lr [data-testid="block-info"] {{ margin: 0 !important; }}
+{_PAGE} #extend_epochs input[type="number"], {_PAGE} #extend_lr input[type="number"] {{ width: 96px; }}
 {_PAGE} #shep-train-check {{ align-self: flex-end; width: auto !important; min-width: max-content !important; }}
 {_PAGE} #shep-train-parents-note {{ margin-top: -4px; }}
-/* The base form's fields in columns of at least 240 px (one in a narrow panel), the group drawn
-   as no box of its own (the skill's §2: one container per region, the panel). */
-{_PAGE} #shep-train-params-bd .gr-group, {_PAGE} #shep-train-params-bd .gr-group > .styler, {_PAGE} #shep-train-params-bd .gr-group .styler > .form {{ background: transparent !important; border: 0 !important; box-shadow: none !important; }}
-{_PAGE} #shep-train-params-bd .gr-group .styler > .form {{ display: grid !important; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px 16px !important; border: 0 !important; }}
+/* The base form's fields, and the drawer's Branch fields, in columns of at least 240 px (one in a
+   narrow panel), the group drawn as no box of its own (the skill's §2: one container per region,
+   the panel). */
+{_PAGE} #shep-train-params-bd .gr-group, {_PAGE} #shep-train-params-bd .gr-group > .styler, {_PAGE} #shep-train-params-bd .gr-group .styler > .form, {_PAGE} #shep-train-branch .gr-group, {_PAGE} #shep-train-branch .gr-group > .styler, {_PAGE} #shep-train-branch .gr-group .styler > .form {{ background: transparent !important; border: 0 !important; box-shadow: none !important; }}
+{_PAGE} #shep-train-params-bd .gr-group .styler > .form, {_PAGE} #shep-train-branch .gr-group .styler > .form {{ display: grid !important; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px 16px !important; border: 0 !important; }}
+{_PAGE} #shep-train-branch {{ gap: 4px !important; }}
+{_PAGE} #shep-train-branch-hd .shep-note {{ margin: 2px 0 0; font-size: 14px; color: var(--shep-text-2); }}
 /* Device's three choices on one line: the row is its own. */
 {_PAGE} #shep-train-params-bd .gr-group #device {{ grid-column: 1 / -1; }}
 /* The Model accordion: its note and facts, then each section's heading over its fields. */
@@ -4047,13 +4502,13 @@ PAGE_CSS = charts.CHART_CSS + f"""
   /* In every check result at 1920 x 1080 (M5-3: the first check of a finished parent and a
      parent whose dataset differs overflowed by 20 and 118 px): the source's label beside its
      choices, and the results' lines closer. */
-  {_PAGE} #continue_source, {_PAGE} #continue_device {{ display: flex !important; flex-wrap: wrap; align-items: center; gap: 2px 10px; }}
-  {_PAGE} #continue_source > [data-testid="block-info"], {_PAGE} #continue_device > [data-testid="block-info"] {{ margin: 0 !important; }}
+  {_PAGE} #continue_operation, {_PAGE} #continue_source, {_PAGE} #continue_device {{ display: flex !important; flex-wrap: wrap; align-items: center; gap: 2px 10px; }}
+  {_PAGE} #continue_operation > [data-testid="block-info"], {_PAGE} #continue_source > [data-testid="block-info"], {_PAGE} #continue_device > [data-testid="block-info"] {{ margin: 0 !important; }}
   /* The run and checkpoint selects keep their labels above them, so each box has the drawer's
      width for its option's few words (the run's Refresh beside its box). */
   {_PAGE} #shep-train-drawer-bd {{ gap: 6px !important; }}
-  {_PAGE} #shep-train-drawer-why {{ padding: 8px 16px !important; }}
-  {_PAGE} #shep-train-drawer-why .html-container, {_PAGE} #shep-train-drawer-why .shep-html {{ padding: 0 !important; }}
+  {_PAGE} #shep-train-drawer-ft {{ padding: 8px 16px !important; }}
+  {_PAGE} #shep-train-drawer-ft .html-container, {_PAGE} #shep-train-drawer-ft .shep-html {{ padding: 0 !important; }}
   {_PAGE} #shep-train-drawer-bd .shep-cmp, {_PAGE} #shep-train-drawer-bd .shep-check {{ font-size: 14px; line-height: 1.4; }}
   {_PAGE} #shep-train-drawer-bd .shep-cmp p, {_PAGE} #shep-train-drawer-bd .shep-check p {{ margin-top: 2px; }}
   {_PAGE} #shep-train-drawer-bd .shep-check-h {{ margin-bottom: 2px; }}

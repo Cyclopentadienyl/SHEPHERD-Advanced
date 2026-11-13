@@ -492,19 +492,35 @@ def test_the_run_bars_actions_and_their_one_reason():
 
 
 def test_with_the_drawer_open_continue_training_follows_the_chosen_parent():
+    """The drawer's start (Continue Training, or Start branch for Branch)
+    follows the chosen parent, and its reason is beside it, in the drawer's
+    footer, in its own words (ops-wiring round B1c; the skill's §9): the run
+    bar says only why its Start waits."""
     ws = {"row": {"name": "demo", "trainable": True, "dataset_fingerprint": "a" * 64}}
     nothing = _view(ws=ws, mode={"drawer": True, "parent": {}})
     assert nothing["start"] is False and nothing["resume"] is False
     assert "close Continue… to start a new run" in nothing["reason"]
+    assert "Continue Training disabled: choose a checkpoint first." in nothing["drawer_reason"]
     same = _view(ws=ws, mode={"drawer": True, "parent": {"chosen": True, "fingerprint": "a" * 64}})
-    assert same["resume"] is True
+    assert same["resume"] is True and same["drawer_reason"] == ""
     differs = _view(ws=ws, mode={"drawer": True,
                                  "parent": {"chosen": True, "fingerprint": "e" * 64}})
     assert differs["resume"] is False
-    assert "the parent’s dataset is not this workspace’s current one" in differs["reason"]
-    assert "Continue Training, in the run bar above, is disabled" in differs["drawer_reason"]
+    assert "the parent’s dataset" not in differs["reason"]            # not in the run bar
+    assert ("Continue Training disabled: the parent’s dataset is not this workspace’s current "
+            "one.") in differs["drawer_reason"]
+    assert "run bar above" not in differs["drawer_reason"]
     refused = _view(ws=ws, mode={"drawer": True, "parent": {"chosen": True, "refused": True}})
     assert refused["resume"] is False
+    assert "cannot be continued" in refused["drawer_reason"]
+    branch = _view(ws=ws, mode={"drawer": True, "operation": "branch",
+                                "parent": {"chosen": True, "refused": True}})
+    assert ("Start branch disabled: the check says this checkpoint cannot be branched."
+            in branch["drawer_reason"])
+    # A cause before the drawer's own names the drawer's start too.
+    busy = _view({"status": "running"}, ws=ws, mode={"drawer": True, "operation": "branch"})
+    assert "Start branch disabled: a training job is running." in busy["drawer_reason"]
+    assert "Start and Continue… disabled: a training job is running." in busy["reason"]
 
 
 def test_the_gpu_line_comes_from_the_runner_and_the_lock_holder():
@@ -1798,9 +1814,9 @@ def test_the_notice_escapes_the_server_text_it_carries(root, monkeypatch, operat
     parents = {"gatv2/r/last.pt": {"workspace": ODD, "architecture": "gatv2", "run": "r",
                                  "filename": "last.pt", "sha256": "c" * 64,
                                  "dataset_fingerprint": fp}}
-    notice, _text, _extend, _mode = tc._on_resume(
-        tc.workspace_state(ODD), "cpu", tc.CONTINUE_FROM_LIST, "gatv2/r/last.pt", "", None,
-        parents, {}, operator)
+    notice, *_rest = tc._on_resume(
+        operator, tc.CONTINUE, tc.workspace_state(ODD), "cpu", tc.CONTINUE_FROM_LIST,
+        "gatv2/r/last.pt", "", None, None, parents, {}, [])
     assert "no longer listed" in notice and "&lt;b&gt;odd&amp;name" in notice and _no_tag(notice)
 
 
@@ -1928,10 +1944,11 @@ def test_the_parent_list_follows_the_run_bars_workspace_while_the_drawer_is_open
                             [_item(name), _item(name, run="h", record="refused"),
                              _item(name, run="x", record=None)]))
     ws = tc.workspace_state("resampled")
-    assert tc._relist_parents(operator, ws, {"drawer": False}) == (gr.update(),) * 7
+    assert tc._relist_parents(operator, ws, {"drawer": False}) == (gr.update(),) * 11
     assert listed == []
-    parents, runs, select, note, compare, preview, extend = tc._relist_parents(
+    parents, runs, select, note, compare, *cleared = tc._relist_parents(
         operator, ws, {"drawer": True})
+    extend, rate, preview, notice, touched, branch = cleared
     # Only the model record is offered (K6 decision 1): a refused record (a
     # file without a model spec among them) and one not read are never
     # continued from here.
@@ -1940,7 +1957,8 @@ def test_the_parent_list_follows_the_run_bars_workspace_while_the_drawer_is_open
     assert runs["value"] == "gatv2/r" and select["value"] == "gatv2/r/last.pt"
     assert "1 run, 1 checkpoint" in note
     assert compare == "" and tc._CONTINUE_PROMPT in preview
-    assert extend == gr.update(visible=False, value=None)
+    assert extend == rate == gr.update(visible=False, value=None)
+    assert notice == "" and touched == [] and branch == gr.update(visible=False)
     monkeypatch.delenv("SHEPHERD_DEPLOYMENT_MODE", raising=False)    # read-only from here
     refused = tc._relist_parents(READ_ONLY, ws, {"drawer": True})
     assert refused[0] == {} and refused[1] == refused[2] == gr.update(choices=[], value=None)
@@ -2301,7 +2319,7 @@ def test_the_chosen_checkpoints_details_say_what_its_option_does_not():
     html = tc.parent_details_html(item)
     assert ("Selection</dt><dd class=\"shep-v\">by validation LP accuracy (Trainer), "
             "higher is better<") in html
-    for words in ("File", "last.pt", "Stage", "Base", "Holds", "training state", "Continuing",
+    for words in ("File", "last.pt", "Kind", "Base", "Holds", "training state", "Continuing",
                   "extends it by the Extra epochs you enter", "Validation",
                   "LP accuracy (Trainer) 0.8123", "Model fingerprint", "cccccccccccc",
                   'data-copy="' + "c" * 64, "gatv2/20261024-163856_run_559817"):
@@ -2316,9 +2334,22 @@ def test_the_chosen_checkpoints_details_say_what_its_option_does_not():
     assert "not possible: it stopped early" in stopped
     child = tc.parent_details_html({**item, "learning_stage": "finetune", "task": "gene",
                                     "validation": None})
-    assert "Fine-tune · Gene" in child and "not recorded in this checkpoint" in child
+    assert "<dt class=\"shep-k\">Kind</dt><dd class=\"shep-v\">Gene<" in child
+    assert "not recorded in this checkpoint" in child
+    # A frozen-backbone child is named so (decision F1: `model_kind_text`),
+    # never by its stage words alone.
+    from tests.unit.test_webui_renderers import GRAPH_SIDE_FROZEN
+
+    frozen = tc.parent_details_html({**item, "learning_stage": "finetune", "task": "disease",
+                                     "weight_transfer": GRAPH_SIDE_FROZEN})
+    assert ("<dt class=\"shep-k\">Kind</dt><dd class=\"shep-v\">Disease · frozen graph "
+            "backbone<") in frozen
     weights = tc.parent_details_html(_item("demo", kind="weights").__dict__)
-    assert "weights only (cannot be continued)" in weights and "Continuing" not in weights
+    assert ("weights only (cannot be continued or branched)" in weights
+            and "Continuing" not in weights)
+    # A branch is a new run whatever its parent's end: no "Continuing" row.
+    assert "Continuing" not in tc.parent_details_html({**item, "end": "stopped_early"},
+                                                      tc.BRANCH)
     unread = tc.parent_details_html({**_item("demo").__dict__, "problem": "ValueError: <b>x"})
     assert "Cannot be read" in unread and "&lt;b&gt;x" in unread
     assert '<span class="shep-st shep-st-warn">' in unread    # ▲ and its words, no amber box
@@ -2409,9 +2440,12 @@ def test_the_page_styles_hold_the_reviewed_layout():
 def test_the_continue_drawer_fits_and_says_the_plan_once():
     """M5-3: at 1920 x 1080 the drawer scrolled (821 px in 684) with Extra
     epochs off screen: an empty footer took room, the fields were looser than
-    the parameters', and the check's headline repeated the plan line."""
-    assert "#shep-train-drawer-why:not(:has(.shep-drawer-why)) { display: none !important; }" \
-        in tc.PAGE_CSS
+    the parameters', and the check's headline repeated the plan line. (B1c:
+    the footer holds the start beside its reason; an empty reason or notice
+    takes no room in it.)"""
+    assert ("#shep-train-drawer-why:not(:has(.shep-drawer-why)), "
+            f"{tc._PAGE} #shep-train-drawer-notice:not(:has(.shep-notice-t)) "
+            "{ display: none !important; }") in tc.PAGE_CSS
     assert "#shep-train-drawer-bd .block.padded { padding-top: 4px !important;" in tc.PAGE_CSS
     preview = {"parent": "/w/demo/runs/gatv2/r/checkpoints/last.pt", "ok": True,
                "action": "Extend training by 30 epochs at a fixed rate of 1e-05 (epochs 151-180, "
@@ -2419,6 +2453,34 @@ def test_the_continue_drawer_fits_and_says_the_plan_once():
     check = tc._check_html(preview, tc.CONTINUE_FROM_LIST)
     assert check.count("Extend training by 30 epochs") == 1
     assert "Checkpoint read; it can continue on this workspace." in check
+
+
+def test_the_drawers_refusals_lead_with_the_shared_status_mark():
+    """Ops-wiring round B1c (B0c's leftover): the check's and the dataset
+    comparison's heads drew a page glyph, "⚠", for what refuses the start.
+    Each is the shared mark's ✕ of a refusal (`renderers.status_mark`, the
+    skill's §6), its words beside it, tinted red; none is a page glyph."""
+    import inspect
+
+    refused = tc._check_html({"ok": False, "parent": "/w/x.pt", "reason": "no"},
+                             tc.CONTINUE_FROM_PATH)
+    assert r.status_mark("error", "Cannot continue.") in refused
+    assert "shep-check-red" in refused
+    branch = tc._check_html({"ok": False, "parent": "/w/x.pt", "reason": "no"},
+                            tc.CONTINUE_FROM_PATH, operation=tc.BRANCH)
+    assert r.status_mark("error", "Cannot branch.") in branch
+    preview = {"parent": "/w/demo/runs/gatv2/r/checkpoints/last.pt", "ok": True,
+               "action": "Resume the original training (1/2 done, 1 left)", "sha256": "c" * 64,
+               "inherited": {}}
+    differs = tc._check_html(preview, tc.CONTINUE_FROM_LIST, differs=True)
+    assert r.status_mark("error", "Checkpoint read; cannot continue on the current dataset.") \
+        in differs
+    ws = {"name": "demo", "row": {"name": "demo", "dataset_fingerprint": "a" * 64}, "listed": []}
+    compare = tc.compare_html({"chosen": True, "fingerprint": "e" * 64}, ws)
+    assert r.status_mark("error", "The parent’s dataset is not this workspace’s current one") \
+        in compare and "shep-cmp-red" in compare
+    assert "⚠" not in inspect.getsource(tc)
+    assert "shep-cmp-amber" not in tc.PAGE_CSS and "shep-check-amber" not in tc.PAGE_CSS
 
 
 def test_extra_epochs_sits_above_every_check_result():
@@ -2441,9 +2503,10 @@ def test_extra_epochs_sits_above_every_check_result():
         by_id["continue_preview"])
     wide = tc.PAGE_CSS[tc.PAGE_CSS.index("@media (min-width: 1400px) and (min-height: 760px) {"):]
     wide = wide.replace(f"{tc._PAGE} ", "")
-    assert "#continue_source, #continue_device { display: flex !important;" in wide
+    assert ("#continue_operation, #continue_source, #continue_device { display: flex "
+            "!important;") in wide
     assert "#checkpoint_dropdown .container { display: flex;" not in wide   # labels above
-    assert "#shep-train-drawer-why { padding: 8px 16px !important; }" in wide
+    assert "#shep-train-drawer-ft { padding: 8px 16px !important; }" in wide
     # When the datasets differ, the comparison says the start refuses; the
     # check does not add its general line, and a rate is never split.
     preview = {"parent": "/w/demo/runs/gatv2/r/checkpoints/last.pt", "ok": True,
@@ -2471,18 +2534,39 @@ def test_the_details_popover_is_drawn_over_the_parameter_labels():
             f"z-index: {tc.CHIP_Z_INDEX}; }}") in tc.PAGE_CSS
 
 
-def test_a_two_sentence_reason_breaks_between_its_sentences():
-    """M5-3: in the Continue states the run bar's reason left one word alone
-    on its second line ("…cannot be" / "continued."): each sentence is a word
-    group, so the line breaks between them."""
+def test_the_drawers_start_sits_in_its_footer_beside_its_reason():
+    """Ops-wiring round B1c (the skill's §9: a refusal beside what it
+    disables): Continue Training, or Start branch, and Cancel sat in the run
+    bar above the drawer, the drawer saying "Continue Training, in the run
+    bar above, is disabled: …", and the run bar's reason said two sentences
+    (M5-3 broke them between their word groups). Now they are the drawer's
+    footer, under its body, with the start's reason and its last notice; the
+    run bar says one sentence, why its own Start waits."""
+    _demo, _ctx, by_id = _page()
+    footer = by_id["shep-train-drawer-ft"]
+    assert [getattr(child, "elem_id", None) for child in footer.children] == [
+        "shep-train-step-start", "shep-train-resume", "shep-train-cancel",
+        "shep-train-drawer-why", "shep-train-drawer-notice"]
+    drawer = by_id["shep-train-drawer"]
+    assert drawer.children.index(by_id["shep-train-drawer-bd"]) < drawer.children.index(footer)
+    runbar = by_id["shep-train-runbar"]
+
+    def inside(block, parent):
+        while block is not None:
+            if block is parent:
+                return True
+            block = getattr(block, "parent", None)
+        return False
+
+    assert not inside(by_id["shep-train-resume"], runbar)
+    assert not inside(by_id["shep-train-cancel"], runbar)
+    assert "shep-drawer-only" not in tc.PAGE_CSS
     ws = {"row": {"name": "demo", "trainable": True, "dataset_fingerprint": "a" * 64}}
     refused = _view(ws=ws, mode={"drawer": True, "parent": {"chosen": True, "refused": True}})
-    reason = refused["reason"]
-    assert reason.count('class="shep-wg"') == 2
-    assert ('<span class="shep-wg">Start disabled: close Continue… to start a new run.</span> '
-            '<span class="shep-wg">Continue Training disabled: the check says this checkpoint '
-            'cannot be continued.</span>') in reason
-    assert ".shep-rb-why .shep-wg { text-wrap: pretty; }" in tc.PAGE_CSS.replace(f"{tc._PAGE} ", "")
+    assert 'class="shep-wg"' not in refused["reason"]
+    assert "<span>Start disabled: close Continue… to start a new run.</span>" in refused["reason"]
+    assert ("<span>Continue Training disabled: the check says this checkpoint cannot be "
+            "continued.</span>") in refused["drawer_reason"]
 
 
 def test_the_plots_keep_a_usable_minimum_and_the_resources_line_its_own_row():

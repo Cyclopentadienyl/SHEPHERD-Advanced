@@ -714,6 +714,7 @@ def _dashboard_calls():
     from src.webui.components import training_console as tc
 
     path = tc.CONTINUE_FROM_PATH
+    branch = [tc.form_value(tc._branch_field_value(name)) for name in tc.BRANCH_FIELDS]
     every = ["all"] * 4
     # The Training page's handlers take the session's state (its run-bar
     # workspace, the drawer, the parent list): a fresh API session has no
@@ -737,9 +738,12 @@ def _dashboard_calls():
         (tc._on_stop_request, [{}], None),                 # asks, reading nothing
         (tc._on_continue_open, [{}, {}], None),
         (tc._refresh_checkpoints, [{}, {}, None], None),
-        (tc._on_check_continue, [path, None, "/srv/x.pt", "cpu", None, {"name": "ws"}, {},
-                                 {}], None),
-        (tc._on_resume, [{}, "cpu", path, None, "/srv/x.pt", None, {}, {}], None),
+        # The Continue drawer's Check and start take its operation and, after
+        # what continuing takes, the Branch fields' record and values.
+        (tc._on_check_continue, [tc.CONTINUE, path, None, "/srv/x.pt", "cpu", None, None,
+                                 {"name": "ws"}, {}, {}, [], *branch], None),
+        (tc._on_resume, [tc.CONTINUE, {}, "cpu", path, None, "/srv/x.pt", None, None, {}, {}, [],
+                         *branch], None),
         # Fine-tune: a fresh session has no dataset, so the base list and
         # Start stop before their service when allowed.
         (fp._on_finetune_bases, [{}, None], None),

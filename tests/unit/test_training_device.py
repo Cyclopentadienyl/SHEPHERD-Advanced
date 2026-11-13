@@ -191,7 +191,9 @@ def test_a_preview_resolves_its_device_as_the_start_does(no_cuda, trained_diseas
     child = str(trained_disease_child["disease"])
     for preview in (manager.preview_continuation(child, device="auto", extend_epochs=1),
                     manager.preview_branch(child, device="auto"),
-                    training_console._preview_for(child, "auto", 1),
+                    training_console._preview_for(training_console.CONTINUE, child, "auto",
+                                                  extend_epochs=1),
+                    training_console._preview_for(training_console.BRANCH, child, "auto"),
                     manager.preview_continuation(str(tmp_path / "missing.pt"), device="auto")):
         assert preview == {"ok": False, "reason": said}, preview
     started = manager.start_training({"data_dir": str(trained_disease_child["data_dir"]),
