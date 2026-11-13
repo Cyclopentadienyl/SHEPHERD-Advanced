@@ -358,7 +358,7 @@ def test_a_listed_parent_whose_bytes_changed_since_it_was_listed_is_refused(chec
     text, _e, mode, _c = _check(checkpoints, tc.CONTINUE_FROM_LIST, checkpoints["paused_key"],
                                 "", parents=parents)
     assert "The checkpoint changed since it was chosen." in text
-    assert "Refresh the list, then choose it again." in text
+    assert "Refresh the list, then check it again." in text
     assert mode["parent"]["refused"] is True
 
 
@@ -674,6 +674,29 @@ def test_every_selection_change_clears_the_check_and_extra_epochs():
     assert tc._on_continue_selection_changed() == (
         gr_update(visible=False, value=None), gr_update(visible=False, value=None),
         tc._CONTINUE_PROMPT, "", [], gr_update(visible=False))
+
+
+def test_refresh_is_followed_by_the_chosen_options_file():
+    """The B1c review: Refresh kept the chosen option's key, so Gradio ran no
+    selection event, and the record, the details and the check stayed the
+    old file's. Refresh's next step is `_on_refreshed`, writing what a
+    selection writes (the record, the comparison, the details) and the
+    check's outputs (`check_cleared`); its cases are in
+    test_training_parent_expected.py."""
+    import gradio as gr
+
+    with gr.Blocks() as demo:
+        tc.create_training_tab(standalone_context(demo))
+    fns = {fn._id: fn for fn in demo.fns.values()}
+    [refresh] = [fn for fn in fns.values() if fn.fn is tc._refresh_checkpoints]
+    [follow] = [fn for fn in fns.values() if fn.fn is tc._on_refreshed]
+    assert follow.trigger_after == refresh._id
+    assert [getattr(o, "elem_id", None) for o in follow.outputs] == [
+        None, "shep-train-compare", "shep-train-parent-details", "extend_epochs", "extend_lr",
+        "continue_preview", "shep-train-drawer-notice", "shep-train-branch-touched",
+        "shep-train-branch"]
+    assert [getattr(i, "elem_id", None) for i in follow.inputs] == [
+        "continue_source", "checkpoint_dropdown", "manual_checkpoint", None, None, None]
 
 
 def test_a_refreshed_run_list_does_not_clear_a_typed_paths_check():

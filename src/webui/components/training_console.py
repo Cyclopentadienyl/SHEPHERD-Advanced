@@ -93,8 +93,10 @@ same-settings branch ("no setting changed: a new run from these weights
 with a new optimizer", decision B1), and the start is the job runner's one
 (`start_training` with `branch_from`). A listed parent is resolved by the
 server from its list again (never a client path) and its bytes compared
-with the digest listed; the start sends the digest the preview read, and
-the runner and the training process still decide at start.
+with the digest listed; a Refresh that lists another file under the chosen
+option shows it and clears the check (`_on_refreshed`), so the start sends
+the digest the details show and the preview read, and the runner and the
+training process still decide at start.
 
 **The run view** (three rows: its header, the charts, the resources line)
 shows the run chosen in its **Viewing** select: the run bar's workspace's
@@ -3054,9 +3056,35 @@ def _refresh_checkpoints(request: gr.Request, ws, mode, current):
     from the server's list. It opens every checkpoint (SPEC_4 C3), so D8 is
     checked first, on this event's own request, as for the checkpoint
     routes; refused, the list is emptied, nothing is opened, and the note says
-    why."""
+    why. The chosen option stays while it is listed (`_on_refreshed` then
+    follows the file under it)."""
     access = operator_access(request)
     return _parents_listed(access, ws, current)
+
+
+def _on_refreshed(source, listed, manual, parents, ws, mode):
+    """**After a Refresh, the chosen listed checkpoint is the file the list
+    holds now** (the B1c review: the option kept its key, so no selection
+    event ran, and the session's record, the details and the check stayed
+    the old file's while the start read the new list's digest, so it started
+    from bytes no check read and no detail showed). When the file under the
+    chosen option is not the one the session recorded (another fingerprint,
+    or another option), the selection's path records it and shows its
+    details (`_on_parent_chosen`), and the check, which read the old file,
+    is cleared with what was entered for it (`_cleared_check`); the start
+    then sends the fingerprint the details show. The same file: nothing
+    changes, the check stands. A typed path's source is not the list's.
+
+    Returns the session's mode, the dataset comparison, the details, then
+    the check's outputs."""
+    keep = (gr.update(),) * (3 + len(_cleared_check()))
+    if source == CONTINUE_FROM_PATH or not (mode or {}).get("drawer"):
+        return keep
+    record = (mode or {}).get("parent") or {}
+    item = (parents or {}).get(listed) if listed else None
+    if record.get("key") == listed and record.get("sha256") == (item or {}).get("sha256"):
+        return keep
+    return (*_on_parent_chosen(source, listed, manual, parents, ws, mode), *_cleared_check())
 
 
 def _parents_listed(access: Any, ws: Optional[Mapping[str, Any]], current: Any):
@@ -3487,11 +3515,12 @@ def _preview_for(operation: str, parent: str, device: Optional[str], *, extend_e
 def _changed_parent_action(source: str) -> str:
     """What to do when the service refuses the parent as changed (its
     ``changed``), for where its fingerprint was shown: a listed parent's is
-    the run list's, which choosing the same option sends again until the list
-    is read again; a typed path's is its last Check's."""
+    the run list's, sent again until the list is read again, and a Refresh
+    shows the file there now under the same option (`_on_refreshed`), which
+    the check then reads; a typed path's is its last Check's."""
     if source == CONTINUE_FROM_PATH:
         return "Click Check checkpoint to read the file there now."
-    return "Refresh the list, then choose it again."
+    return "Refresh the list, then check it again."
 
 
 def _checked(operation: str, source, listed, manual, device, ws, parents, mode, *,
@@ -4206,9 +4235,15 @@ def create_training_tab(ctx: Any) -> None:
     for closer in (cancel_btn, close_btn):
         closer.click(_on_continue_close, inputs=[mode], outputs=[mode],
                      show_progress="hidden").then(**view_step)
+    # Refresh, then the chosen option's file as the list holds it now: a
+    # kept option fires no selection event, so the record, the details and
+    # the check follow it here (`_on_refreshed`), then the drawer's start.
     refresh_ckpt_btn.click(_refresh_checkpoints, inputs=[ws, mode, checkpoint_dropdown],
                            outputs=[parents, continue_run, checkpoint_dropdown, parents_note],
-                           show_progress="hidden").then(**ctx.chip_refresh)
+                           show_progress="hidden").then(
+        _on_refreshed, inputs=chosen_step["inputs"],
+        outputs=[*chosen_step["outputs"], *check_cleared], show_progress="hidden").then(
+        **view_step).then(**ctx.chip_refresh)
     # A run chosen: its checkpoints (the checkpoint select's change then
     # clears the last check and records the parent, as for any choice).
     continue_run.change(_model_list().on_run_chosen, inputs=[continue_run, parents, checkpoint_dropdown],

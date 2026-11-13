@@ -67,9 +67,10 @@ CHANGED = "The checkpoint changed since it was chosen"
 #: The training process's refusal: the lead, its action, then the reader's facts.
 PROCESS_CHANGED = f"train_model: refused: {CHANGED}; choose it again."
 #: The console's action, for where the fingerprint was shown: the run list's
-#: digest is sent again until the list is read again; a typed path's is its
-#: last Check's (verification of the root-cause round, P3-3).
-REFRESH = "Refresh the list, then choose it again."
+#: digest is sent again until the list is read again (a Refresh shows the
+#: file there now under the same option); a typed path's is its last Check's
+#: (verification of the root-cause round, P3-3).
+REFRESH = "Refresh the list, then check it again."
 CHECK_AGAIN = "Click Check checkpoint to read the file there now."
 #: Three paused bases on one workspace, by seed: ``same`` of the first one's
 #: model spec, ``other`` of another (a wider encoder; a bundle's one buildable
@@ -534,22 +535,76 @@ def test_a_listed_parent_whose_bytes_changed_since_it_was_listed_is_refused(cons
 def test_a_listed_parent_refused_as_changed_is_shown_again_by_refresh(console):
     """The action said is the one that helps (verification P3-3): choosing
     the same option from the same list sends the list's digest again and is
-    refused again; Refresh reads the list again, and the file there now is
-    checked and shown."""
+    refused again; Refresh reads the list again, the chosen option's record
+    and details follow the file there now (`_on_refreshed`), and that file
+    is checked and shown."""
     tc = console["tc"]
     _swap(console, "same")()
-    text, _e, mode, _c = _check(console, tc.CONTINUE_FROM_LIST)
+    text, _e, mode, _c = _check(console, tc.CONTINUE_FROM_LIST, mode={"drawer": True})
     assert CHANGED in text and REFRESH in text
     mode, _compare, _details = tc._on_parent_chosen(tc.CONTINUE_FROM_LIST, console["key"], "",
                                                     console["listed"], console["state"],
                                                     {**mode, "drawer": True})
     again, _e, mode, _c = _check(console, tc.CONTINUE_FROM_LIST, mode=mode)
     assert CHANGED in again and REFRESH in again
-    refreshed, _problem = tc._list_parents(console["state"])
+    refreshed, _runs, kept, _note = tc._refresh_checkpoints(OP, console["state"], mode,
+                                                            console["key"])
+    assert kept["value"] == console["key"]                  # the same option: no selection event
     now = _sha(console["parents"]["a"])
     assert refreshed[console["key"]]["sha256"] == now
-    text, _e, mode, _c = _check({**console, "listed": refreshed}, tc.CONTINUE_FROM_LIST)
+    mode, _compare, details, *cleared = tc._on_refreshed(
+        tc.CONTINUE_FROM_LIST, console["key"], "", refreshed, console["state"], mode)
+    assert mode["parent"]["sha256"] == now and not mode["parent"].get("refused")
+    assert now[:12] in details and tuple(cleared) == tc._cleared_check()
+    text, _e, mode, _c = _check({**console, "listed": refreshed}, tc.CONTINUE_FROM_LIST,
+                                mode=mode)
     assert "Checkpoint read; it can continue" in text and mode["parent"]["sha256"] == now
+
+
+@pytest.mark.parametrize("operation", ["continue", "branch"])
+def test_a_refresh_between_check_and_start_never_starts_bytes_no_check_read(console,
+                                                                            operation):
+    """The B1c review: after a check, the file under the chosen option was
+    replaced and the list refreshed. The option kept its key, so Gradio ran
+    no selection event: the session's record, the details' fingerprint and
+    the check stayed the old file's, while the start read the refreshed
+    list's digest and started from bytes no check read and no detail
+    showed. Now the Refresh's own step records the file the list holds now,
+    shows its fingerprint and clears the check, so the start sends the
+    digest the details show; the same file leaves the check as it was."""
+    tc = console["tc"]
+    op = tc.BRANCH if operation == "branch" else tc.CONTINUE
+    shown = _sha(console["parents"]["a"])
+    _text, _e, mode, _c = _check(console, tc.CONTINUE_FROM_LIST, mode={"drawer": True},
+                                 operation=op)
+    assert mode["parent"]["sha256"] == shown
+    # A Refresh with nothing changed: the check stands.
+    same, _runs, _kept, _note = tc._refresh_checkpoints(OP, console["state"], mode,
+                                                        console["key"])
+    unchanged = tc._on_refreshed(tc.CONTINUE_FROM_LIST, console["key"], "", same,
+                                 console["state"], mode)
+    assert all(update == tc.gr.update() for update in unchanged)
+    _swap(console, "same")()
+    refreshed, _runs, kept, _note = tc._refresh_checkpoints(OP, console["state"], mode,
+                                                            console["key"])
+    assert kept["value"] == console["key"]
+    now = _sha(console["parents"]["a"])
+    assert now != shown and refreshed[console["key"]]["sha256"] == now
+    mode, compare, details, *cleared = tc._on_refreshed(
+        tc.CONTINUE_FROM_LIST, console["key"], "", refreshed, console["state"], mode)
+    # The details show the file the list holds now; the old check is gone.
+    assert mode["parent"]["sha256"] == now and now[:12] in details and shown[:12] not in details
+    assert not mode["parent"].get("checked") and tuple(cleared) == tc._cleared_check()
+    said, _text, _e, mode = _continue({**console, "listed": refreshed}, tc.CONTINUE_FROM_LIST,
+                                      mode=mode, operation=op)
+    assert said == tc.notice_html("")
+    assert console["started"][-1]["__kwargs__"]["expected_parent_sha256"] == now
+    assert mode["parent"].get("sha256") in (None, now)
+    # A typed path's source is not the list's: a Refresh leaves its record.
+    typed = {"drawer": True, "parent": {"chosen": True, "source": tc.CONTINUE_FROM_PATH,
+                                        "sha256": shown, "path": "x"}}
+    assert all(update == tc.gr.update() for update in tc._on_refreshed(
+        tc.CONTINUE_FROM_PATH, console["key"], "x", refreshed, console["state"], typed))
 
 
 def test_a_typed_parent_changed_after_the_consoles_check_is_refused_by_the_start(case,
