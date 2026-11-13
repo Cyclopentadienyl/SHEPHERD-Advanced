@@ -390,6 +390,21 @@ def test_the_research_table_row_has_its_columns_and_escapes():
     unverified = r.model_table_row_html({**checkpoint(), "trained_on_this_dataset": None},
                                         [workspace()])
     assert "Dataset cannot be verified" in unverified
+    # The details' Dataset row says a missing dataset once (the skill's §1.2;
+    # review of B3: its exception, then trained_on_html's own "not recorded").
+    for current in (None, False):
+        row = r.dataset_relation_html({**checkpoint(fingerprint=None),
+                                       "trained_on_this_dataset": current}, [workspace()])
+        assert row == r.status_mark("neutral", "Dataset not recorded")
+    other = r.dataset_relation_html({**checkpoint(fingerprint=FP_B),
+                                     "trained_on_this_dataset": False}, [workspace()])
+    assert "Another dataset" in other and FP_B[:12] in other
+    assert r.dataset_relation_html({**checkpoint(), "trained_on_this_dataset": True},
+                                   [workspace()]) == r.e(r.CURRENT_DATASET)
+    # A relation this build has no words for reads its recorded name once.
+    rows = r.relation_rows({"R3": "verified", "R9": "verified", "cohort_graph": "not_applicable"})
+    assert [label for label, _ in rows] == ["R3 model trained on this graph",
+                                            "Data version bound to this graph", "R9"]
     broken = r.model_table_row_html(checkpoint(sha=None, problem="bad"), [])
     assert 'aria-disabled="true"' in broken and "metadata not readable · cannot be loaded" in broken
     # Its recorded tests are found by its digest, which was not read: Unknown, never a dash.

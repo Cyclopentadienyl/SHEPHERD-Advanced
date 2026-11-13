@@ -1124,11 +1124,16 @@ def dataset_relation_html(item: Any, workspaces: Sequence[Any]) -> str:
     dataset; elsewhere its exception (`dataset_exception`) and which dataset
     it is (`trained_on_html`: the listed workspaces holding it, its
     fingerprint), with "synthetic" where a listed synthetic workspace holds
-    it."""
+    it; a file that records no dataset fingerprint, its exception alone ("○
+    Dataset not recorded", said once)."""
     exception = dataset_exception(item)
     if not exception:
         return e(CURRENT_DATASET)
     fingerprint = _get(item, "dataset_fingerprint")
+    if not is_digest(fingerprint):
+        # Nothing to name: the exception says the state, once (the skill's
+        # §1.2), never again as trained_on_html's own "not recorded".
+        return exception
     return (f"{exception} {trained_on_html(fingerprint, workspaces)}"
             + (" " + chip("synthetic", "amber")
                if is_synthetic_training(fingerprint, workspaces) else ""))
@@ -1744,7 +1749,7 @@ def relation_rows(relations: Any) -> List[Tuple[str, str]]:
     Models' recorded results): one ``(label, escaped HTML)`` row each, its
     name visible whole ("R3 model trained on this graph", "Data version bound
     to this graph": `caveats.RELATION_DISPLAY_NAMES`, in that order, then any
-    other by its recorded name), its state a status mark with its word
+    other by its recorded name, once), its state a status mark with its word
     (`RELATION_STATE_MARKS`; any other state as recorded). A record that
     holds none reads one "Relations" row, "Not recorded"."""
     if not isinstance(relations, Mapping):
@@ -1753,9 +1758,14 @@ def relation_rows(relations: Any) -> List[Tuple[str, str]]:
              *(n for n in relations if n not in RELATION_DISPLAY_NAMES)]
     rows = []
     for name in names:
-        display = RELATION_DISPLAY_NAMES.get(name, str(name))
-        label = (f"{name} {display}" if re.fullmatch(r"R\d+", str(name))
-                 else display[:1].upper() + display[1:])
+        display = RELATION_DISPLAY_NAMES.get(name)
+        if display is None:
+            # A relation this build has no words for: its recorded name, once.
+            label = str(name)
+        elif re.fullmatch(r"R\d+", str(name)):
+            label = f"{name} {display}"
+        else:
+            label = display[:1].upper() + display[1:]
         state = relations[name]
         mark = RELATION_STATE_MARKS.get(state) if isinstance(state, str) else None
         rows.append((label, status_mark(*mark) if mark else e(state)))
