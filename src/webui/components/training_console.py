@@ -1098,17 +1098,20 @@ def pill_details(status: Mapping[str, Any]) -> Optional[str]:
 
 
 def pill_html(status: Mapping[str, Any]) -> str:
+    """The run bar's status pill: the training job's state by the one status
+    rule (`job_status_html`: its shape and word with its colour, a grey ○
+    while idle or stopped, the blue spinner only while it runs, a red ✕ only
+    for a failure), then its details (`pill_details`). Always the job
+    runner's job, whatever run the run view shows."""
     state, words = pill_state(status)
     kind = PILL_KIND.get(state, "grey")
-    mark = {"ok": r.CHECK, "red": '<span class="shep-dot-r" aria-hidden="true"></span>',
-            "running": '<span class="shep-dot-w" aria-hidden="true"></span>'}.get(kind, "")
     details = pill_details(status)
     # The details follow the words after a comma only its text carries (the
     # pill's gap shows it): a role="status" region is read as one text.
     more = (f'<span class="shep-pill-sub"><span class="shep-vh">, </span>{r.e(details)}</span>'
             if details else "")
     return (f'<div class="shep-pill shep-pill-{kind}" data-state="{r.e(state)}" role="status">'
-            f'{mark}<span>{r.e(words)}</span>{more}</div>')
+            f'{job_status_html(state, words)}{more}</div>')
 
 
 def _gpu_line(active: Optional[Mapping[str, Any]], lock: Optional[Mapping[str, Any]],
@@ -1351,18 +1354,21 @@ def _render_error_block(message: str, *, headline: str = "Training failed",
             f'<span class="shep-banner-n">({count})</span></summary>'
             f'<pre class="shep-banner-tail">{r.e(chr(10).join(lines))}</pre></details>'
             if lines else "")
+    # The condition first, by the shared mark (an error's ✕, red: the skill's §6).
+    said = r.status_mark("error", f"{headline}: {scrub(first.strip())}")
     return ('<div class="shep-banner shep-banner-red" role="alert">'
-            f'<div class="shep-banner-hd"><span class="shep-banner-h">⚠ {r.e(headline)}: '
-            f'{r.e(scrub(first.strip()))}</span>{_log_where(run, run_dir)}'
+            f'<div class="shep-banner-hd"><span class="shep-banner-h">{said}</span>'
+            f'{_log_where(run, run_dir)}'
             '<button type="button" class="shep-btn shep-banner-x" data-act="dismiss">× Dismiss</button>'
             f'</div>{cause_html}{body}</div>')
 
 
 def _render_warning_block(message: str, scrub: Callable[[str], str] = _as_is) -> str:
-    """The amber block for a non-fatal advisory."""
+    """The amber block for a non-fatal advisory: the condition first, by the
+    shared mark (a condition to watch's ▲: the skill's §6)."""
     return ('<div class="shep-banner shep-banner-amber" role="status">'
-            f'<div class="shep-banner-hd"><span class="shep-banner-h">⚠ Warning: '
-            f'{r.e(scrub(str(message)))}</span>'
+            f'<div class="shep-banner-hd"><span class="shep-banner-h">'
+            f'{r.status_mark("warn", scrub(str(message)))}</span>'
             '<button type="button" class="shep-btn shep-banner-x" data-act="dismiss">× Dismiss</button>'
             '</div></div>')
 
@@ -3637,13 +3643,12 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} #shep-train-pill {{ margin-left: auto; flex: none !important; }}
 {_PAGE} .shep-pill {{ display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border-radius: 999px; font-size: 14px; font-weight: 600; white-space: nowrap; border: 1px solid var(--shep-border-2); background: var(--shep-panel-2); color: var(--shep-text-2); }}
 {_PAGE} .shep-pill-sub {{ font-weight: 400; }}
-{_PAGE} .shep-pill-running {{ background: var(--shep-accent); border-color: var(--shep-accent); color: #fff; }}
-{_PAGE} .shep-pill-accent {{ background: var(--shep-accent-50); border-color: var(--shep-accent-100); color: var(--shep-accent-text); }}
+/* The pill's tint by its kind; its mark and word are the shared status mark's (`job_status_html`),
+   so a running job's spinner stays blue on the light tint, as every page draws it. */
+{_PAGE} .shep-pill-running, {_PAGE} .shep-pill-accent {{ background: var(--shep-accent-50); border-color: var(--shep-accent-100); color: var(--shep-accent-text); }}
 {_PAGE} .shep-pill-ok {{ background: var(--shep-green-50); border-color: var(--shep-green-200); color: var(--shep-green-800); }}
 {_PAGE} .shep-pill-grey {{ background: var(--shep-grey-50); border-color: var(--shep-grey-200); color: var(--shep-grey-800); }}
 {_PAGE} .shep-pill-red {{ background: var(--shep-red-50); border-color: var(--shep-red-200); color: var(--shep-red-700); }}
-{_PAGE} .shep-dot-r, {_PAGE} .shep-dot-w {{ width: 8px; height: 8px; border-radius: 50%; background: var(--shep-red-700); }}
-{_PAGE} .shep-dot-w {{ background: #fff; }}
 {_PAGE} #shep-train-reason {{ flex: 1 1 260px !important; }}
 {_PAGE} .shep-rb-reason {{ display: flex; align-items: center; justify-content: flex-end; gap: 12px; flex-wrap: wrap; }}
 {_PAGE} .shep-rb-why {{ display: inline-flex; align-items: flex-start; gap: 6px; flex-wrap: nowrap; font-size: 15px; color: var(--shep-text-2); text-align: right; }}

@@ -419,17 +419,30 @@ def test_the_status_pill(status, kind, words, details):
     §5: it read "RUNNING · epoch 12/100 · batch 340/812 · 00:14:32", three);
     the batch and the time are the pill's details, after its words with no
     second separator. The pill is a role="status" region, read as one text:
-    its words and details never run together ("epoch 12/100batch …")."""
+    its words and details never run together ("epoch 12/100batch …"). Its
+    mark is the shared status rule's (`renderers.status_mark`, through
+    `job_status_html`): the shape and the word with the colour, a grey ○
+    while idle or stopped, the blue spinner only while it runs, a red ✕ only
+    for a failure; no page glyph of its own."""
     state, said = tc.pill_state(status)
     assert said == words and tc.PILL_KIND[state] == kind
     assert said.count(" · ") <= 1 and tc.pill_details(status) == details
     html = tc.pill_html(status)
     assert f"shep-pill-{kind}" in html
-    text = re.sub(r"<[^>]+>", "", html)
+    assert tc.job_status_html(state, words) in html
+    read = re.sub(r'<span class="shep-st-shape" aria-hidden="true">[^<]*</span>', "", html)
+    text = re.sub(r"<[^>]+>", "", read)
     assert text == (f"{words}, {details}" if details else words), text
     assert text.count(" · ") <= 1
     if not details:
         assert "shep-pill-sub" not in html
+    marks = {"idle": "○", "grey": "○", "ok": "●", "red": "✕", "accent": "■"}
+    if kind == "running":
+        assert '<span class="shep-spinner" aria-hidden="true"></span>' in html
+    else:
+        assert f'<span class="shep-st-shape" aria-hidden="true">{marks[kind]}</span>' in html
+        assert "shep-spinner" not in html
+    assert "shep-dot" not in html and r.CHECK not in html
 
 
 def test_a_failed_or_stopped_run_is_never_green():
@@ -1727,6 +1740,21 @@ def test_the_banner_escapes_the_output():
         {"error_message": "Process exited\n\n--- Last output ---\n<script>alert(1)</script>"},
         "<img src=x>")
     assert "<script>" not in html and "&lt;script&gt;" in html and "<img" not in html
+
+
+def test_the_banners_lead_with_their_condition_by_the_shared_mark():
+    """The skill's §6: a failure is an error's ✕ in red and an advisory a
+    condition to watch's ▲ in amber, each with its words (the condition
+    first: no "Warning:" before it), by `renderers.status_mark`, never a page
+    glyph (it read "⚠ Training failed …" and "⚠ Warning: …")."""
+    warning = "PyG native extensions missing: torch_scatter. Training and inference still run"
+    html, _key = tc._build_error_banner_payload(
+        {"error_message": "Process exited with code 1", "current_epoch": 7, "total_epochs": 60},
+        warning)
+    assert r.status_mark("error", "Training failed at epoch 7 of 60: Process exited with code 1") \
+        in html
+    assert r.status_mark("warn", warning) in html
+    assert "⚠" not in html and "Warning:" not in html
 
 
 # --------------------------------------------------------------------------- M5-2 review fixes
