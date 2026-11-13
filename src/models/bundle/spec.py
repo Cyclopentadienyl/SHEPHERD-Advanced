@@ -750,8 +750,9 @@ def hops_problem(num_neighbors: Sequence[Any], encoder: EncoderSpec) -> Optional
     (`training_manager._new_bundle_run`), the Fine-tune start's of each
     child against its base's encoder, before any child starts
     (`TrainingManager.start_finetune`), the Training page's base form
-    (`training_console.setting_problem`) and the training process
-    (`scripts/train_model.py`) all ask it. No hop list fits an encoder a run
+    (`training_console._base_reading`, the hop list against the encoder its
+    spec builds) and the training process (`scripts/train_model.py`) all ask
+    it. No hop list fits an encoder a run
     cannot sample, so the run is refused before it starts: one whose kind this
     build does not implement, in the builder's own sentence
     (`encoder_not_built`), and one whose declaration offers no sampled

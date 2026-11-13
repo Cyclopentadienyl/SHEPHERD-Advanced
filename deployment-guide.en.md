@@ -3285,19 +3285,23 @@ value the run takes without it (the reference recipe's, `src/config/recipe.py` B
 build's default where the recipe sets none). Epochs, Learning rate, Batch size, Seed, Split seed
 and Device show; the rest sit under "More training settings", closed. A setting the run reads
 only under another one shows only while it applies: Warmup steps with the cosine scheduler,
-Minimum rate ratio with any scheduler, Mixed precision dtype with Mixed precision on.
+Final learning-rate ratio with any scheduler, Mixed precision dtype with Mixed precision on.
 Early stopping patience reads "off" when it is off (the reference); a whole number turns it on. A
 field's format or unit is written under it (the hop list's commas and "-1 takes all", warmup in
-optimizer steps). Beside them, "Model", closed: the architecture (GATv2, the one this build
-implements; a choice once there are more), the reference spec's text fields as facts, and its
-input, encoder and LP head numbers and switches to change. **Start sends what you touched**: a
+optimizer steps, the final learning-rate ratio's "more than 0 with onecycle"). Beside them,
+"Model", closed: the architecture (GATv2, the one this build implements; a choice once there are
+more), the reference spec's text fields as facts, and its input, encoder and LP head numbers and
+switches to change. **Start sends what you touched**: a
 field you edited is sent, even at its reference value, and recorded as yours; one you did not
 touch is not, and the run fills and records it. A changed model field sends the whole spec,
 checked first (its own rules, and Neighbours per hop against its layers). A line under the form
-says "Set by you: Epochs 5 (reference 200)", or that nothing is set, and names a value Start
-would refuse ("Not valid: …"); **Reset to reference** puts every field back and clears what you
-set. Task models are trained from a base on Research › Prepare › Fine-tune, whose Epochs, Seed
-and Graph backbone are sent the same way: when you touched them. **Data Paths and its Save Path are gone**: the workspace
+says "Set by you: Epochs 5 (reference 200)", or that nothing is set; past three settings it names
+the first three, counts the rest and lists every one under its "Details ›". It names a value
+Start would refuse ("Not valid: …"): a single field's value, or a combination the rules across
+settings refuse (onecycle with a final learning-rate ratio of 0); **Reset to reference** puts
+every field back and clears what you set. Task models are trained from a base on Research ›
+Prepare › Fine-tune, whose Epochs, Seed and Graph backbone are sent the same way: when you
+touched them. **Data Paths and its Save Path are gone**: the workspace
 is the run bar's choice, and the dashboard no longer reads or writes
 `.shepherd_training_config.json` in the server's working directory (a file left there is
 ignored; whether to offer "Save as the default dataset" is an owner question). When the

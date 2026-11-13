@@ -3324,16 +3324,17 @@ Training Console 現在是分成三部分的一個頁面：上方橫跨整頁的
 值開始（參考 recipe 的值，`src/config/recipe.py` 的 BASE；recipe 未設定者則為本版本的預設值）。
 Epochs、Learning rate、Batch size、Seed、Split seed 與 Device 直接顯示，其餘收在預設收合的
 「More training settings」之下。只在另一項設定成立時才會被讀取的設定，只在適用時顯示：Warmup
-steps 僅在 cosine scheduler 時、Minimum rate ratio 僅在有 scheduler 時、Mixed precision
+steps 僅在 cosine scheduler 時、Final learning-rate ratio 僅在有 scheduler 時、Mixed precision
 dtype 僅在 Mixed precision 開啟時。Early stopping patience 關閉時（參考值）顯示「off」，填入整數即
 開啟。欄位的格式或單位寫在欄位下方（hop 清單以逗號分隔、「-1 takes all」，warmup 以 optimizer
-steps 計）。旁邊是預設收合的「Model」：架構（GATv2，本版本唯一實作的架構；有更多架構時才是選項）、
-參考 spec 的文字欄位以事實列出，以及可修改的 input、encoder 與 LP head 數值與開關。**Start 送出你
+steps 計，final learning-rate ratio 的「more than 0 with onecycle」）。旁邊是預設收合的「Model」：
+架構（GATv2，本版本唯一實作的架構；有更多架構時才是選項）、參考 spec 的文字欄位以事實列出，以及可修改的 input、encoder 與 LP head 數值與開關。**Start 送出你
 動過的欄位**：你編輯過的欄位一定送出，即使等於參考值，並記錄為你的設定；沒動過的不送出，由 run 補上
 並記錄。改動任一 Model 欄位會送出整份 spec，並先檢查（spec 自己的規則，以及 Neighbours per hop 是否
-符合其層數）。表單下方一行顯示「Set by you: Epochs 5 (reference 200)」或尚未設定任何值，並指出
-Start 會拒絕的值（「Not valid: …」）；**Reset to reference** 把每一欄還原並清除你設定的內容。任務
-模型由 base 在 Research › Prepare › Fine-tune 訓練，其 Epochs、Seed 與 Graph backbone 也以同樣
+符合其層數）。表單下方一行顯示「Set by you: Epochs 5 (reference 200)」或尚未設定任何值；超過三項時
+只列出前三項、其餘計數，全部列在它的「Details ›」之下。這一行也指出 Start 會拒絕的值（「Not valid:
+…」）：單一欄位的值，或跨設定規則拒絕的組合（onecycle 搭配 final learning-rate ratio 0）；
+**Reset to reference** 把每一欄還原並清除你設定的內容。任務模型由 base 在 Research › Prepare › Fine-tune 訓練，其 Epochs、Seed 與 Graph backbone 也以同樣
 方式送出：你動過才送出。
 **Data Paths 與它的 Save Path 已移除**：workspace 由 run bar 選擇，儀表板不再
 讀取或寫入伺服器工作目錄中的 `.shepherd_training_config.json`（留在那裡的檔案會被忽略；是否

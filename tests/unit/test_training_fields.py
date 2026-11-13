@@ -9,7 +9,8 @@ Groups:
 Parity groups are importorskip-guarded so they skip where fastapi/pydantic/gradio/torch are
 absent and pin reality where those are installed.
 The WebUI collect parity group went with the retired ShepherdGNN form (K6): the base form
-reads `recipe.BASE` and checks values with `value_problem` (tests/unit/test_training_page.py).
+starts from `run_plan.new_run_values` and checks values with `value_problem`
+(tests/unit/test_training_console_config.py).
 """
 import ast
 import dataclasses
