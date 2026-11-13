@@ -2756,7 +2756,7 @@ the read-only lists keep working.
 | Where | Controls |
 |---|---|
 | API | `POST /api/v1/pipeline/reload`, `POST /api/v1/pipeline/stop`, `POST /api/v1/training/start`, `POST /api/v1/training/finetune`, `POST /api/v1/training/branch`, `POST /api/v1/training/stop`, `GET /api/v1/training/checkpoints`, `GET /api/v1/workspaces/{name}/checkpoints`, `GET /api/v1/workspaces/{name}/family` |
-| Dashboard | Diagnosis: Change model… (its list of checkpoints and its Load; since M5-2) and Stop inference (its question and its confirmation; since the ops-wiring round). ⚙ Settings (Runtime Settings): Restart Backend and Apply Settings. Research › Training: Start, Stop (its confirmation reads the run's last checkpoint), Continue… (it lists the parents), the parent list's Refresh, Check checkpoint and Continue Training |
+| Dashboard | Diagnosis: Change model… (its list of checkpoints and its Load; since M5-2) and Stop inference (its question and its confirmation; since the ops-wiring round). ⚙ Settings (Runtime Settings): Restart Backend and Apply Settings. Research › Training: Start, Stop (its confirmation reads the run's last checkpoint), Continue… (it lists the parents), the parent list's Refresh, Check checkpoint, and Continue Training or Start branch |
 
 The three checkpoint lists (the family view among them), and Check checkpoint, open checkpoint files, which SPEC_4 classes as
 checkpoint inspection (C3), so they are checked like the controls. So are the reads that open a
@@ -3270,7 +3270,8 @@ a run.
   with 422; a parent it cannot branch (weights only or no weights, a record or rules this build
   does not read, mixed precision that would not take effect as it did for the parent), one
   changed since it was shown (`expected_parent_sha256`) or a busy slot with 409. The process is
-  bound to the parent the preview read, and the lists show what each branch changed.
+  bound to the parent the preview read, and the lists show what each branch changed. The Training
+  page branches through the same preview and start (the Continue drawer's Branch, below).
 - A failed run's **error banner** spans the page, the training job's whatever run the run view
   shows. Its headline leads with the condition by the dashboard's status mark ("✕ Training failed:
   Process exited with code 1"; PyG's slow-fallback advisory is amber, "▲ PyG native extensions
@@ -3323,16 +3324,21 @@ plot's box is sized by the layout alone, never by the canvas drawn in it, so the
 gives the same plots whether the page was opened there, reloaded, or came back from a narrow
 window.
 
-**Continue…** opens a drawer in place of the parameters: the model records of the run bar's
-workspace, bases and task models (since K6 a file without a model spec is never continued from the
-dashboard; the server's list: an operator control, since listing opens every checkpoint), chosen
-in two steps, or the path of one of those checkpoints typed by hand. **Run**: the runs, latest
+**Continue…** opens a drawer in place of the parameters, "Continue or branch a run", in
+numbered steps. Its **Operation** comes first: **Continue** (resume a paused run, or extend a
+finished one; every setting stays the checkpoint's) or **Branch** (a new run from the
+checkpoint's weights with a new optimizer and schedule, below; since the ops-wiring round's B1c).
+The checkpoint is one of the model records of the run bar's
+workspace, bases and task models (since K6 a file without a model spec is never continued or
+branched from the dashboard; the server's list: an operator control, since listing opens every
+checkpoint), chosen in two steps, or the path of one of those checkpoints typed by hand. **1.
+Run**: the runs, latest
 first, from every directory under `runs/` (since K8-7b, 2026-11-08), each in at most 40
 characters with one " · ", led by what tells it apart: its name, then its directory and start
 time ("base-a · GATv2 2026-10-28 13:57": the directory's name, upper-cased but `gatv2`, which
 reads "GATv2", a long one shortened in its middle; a location, not the model's architecture,
 which its record names); an unnamed run is its start time, then its directory ("2026-10-24 16:38
-· GATv2"); runs alike to the minute add the second, then their own id. **Checkpoint**: that run's
+· GATv2"); runs alike to the minute add the second, then their own id. **2. Checkpoint**: that run's
 files, newest first, each in at most 40 characters with one " · ", saying what it is and how far
 it trained: "Latest save · 195 epochs completed"; "Best LP accuracy · 21 epochs completed" for the
 run's best save by the selection its files record (`callbacks.model_checkpoint`'s metric and
@@ -3345,17 +3351,38 @@ without one says the epoch it records, "recorded epoch 194", never a count made 
 file that holds weights only or cannot be read says so ("weights only", "cannot be read"). The
 option's value is the file's listing key whatever its words. Choosing another run offers its
 files with its latest save chosen. Under the two, a table says what the option does not: the
-file, its stage, what it holds, what continuing does when its stage ended ("not possible: it
-stopped early" for an early-stopped one), the Trainer's validation figure ("LP accuracy (Trainer)
+file, its kind in the words every page describes a model by ("Base", "Disease", or "Disease ·
+frozen graph backbone" for the frozen-backbone control), what it holds, what continuing does
+when its stage ended, with Continue ("not possible: it stopped early" for an early-stopped one;
+a branch is a new run whatever its parent's end), the Trainer's validation figure ("LP accuracy (Trainer)
 0.5000" for a base; the Trainer's, not a test result), the **Selection** its files record ("by
 validation LP accuracy (Trainer), higher is better", or "not recorded" for an older file, which no
 option then calls best), its model fingerprint (Copy gives all 64) and its run's directory. The
 Fine-tune page's base select is this same pair, and its job card names each child's best save by
 the selection its files record. Since M5-3
 a typed path only finds a checkpoint that list holds, and any other file is refused without being
-opened (`PLAN_TEST_RESULTS.md` D8). **Check checkpoint** shows what continuing would do, and the
-dataset fingerprint the parent recorded against the workspace's current one: ✓ the same, or amber
-when it differs (with the listed workspace it matches, or "matches no listed workspace"). Since
+opened (`PLAN_TEST_RESULTS.md` D8). **3. Check** (Check checkpoint) shows what the operation would
+do, and the dataset fingerprint the parent recorded against the workspace's current one: ✓ the
+same, or the red ✕ of a refusal when it differs, since the start refuses another dataset (with
+the listed workspace it matches, or "matches no listed workspace"); a refused check leads with
+the same ✕ ("Cannot continue.", "Cannot branch."). Each setting and value is said in words, never
+as the code's own form. **With Continue** the check gives the plan's sentence, naming the
+drawer's fields by their labels ("… extend it at a fixed rate with Extra epochs"), and lists the
+settings taken from the checkpoint, which cannot be changed when continuing (its note points to
+Branch). A finished checkpoint shows **Extra epochs**; one whose rate ended at 0 in a parameter
+group (a schedule that decayed to 0: the preview's `zero_rate_groups`) also shows **Extra-epoch
+rate**, sent as `extend_lr` for those groups (no rate is guessed; any other checkpoint's
+extension keeps the rates its plan names). **With Branch** the check is the job runner's branch
+preview: "no setting changed: a new run from these weights with a new optimizer" when none
+changed, else "2 settings changed: …" and each change as its parent's value → its own
+("Learning rate 0.0001 → 0.0005"); under it, **Settings to change**, the settings the
+parent's stage and task may change (the preview's list: never the freeze, the split seed or the
+model spec), each at the parent's value, a setting read only under another one shown while it
+applies, as on the parameters; the settings a branch keeps are listed in the check. Only a field
+you edit is sent, recorded as yours, so editing none starts a same-settings branch; a value a
+field does not take, a setting the parent's stage does not read and a rule across settings are
+refused in the check's words, and an edit after a check asks for the check again (Start branch
+checks first). Since
 K8-7 (2026-11-08) a continued run inherits only the settings this version has: a setting the
 parent recorded that this version no longer has (`num_workers`, the old model settings such as
 `conv_type`) is neither inherited nor a reason to refuse, a parent missing a current setting is
@@ -3384,19 +3411,24 @@ Frozen, and the model lists, the Models details and the Results table name such 
 frozen graph backbone", a task model, never the base's score. The acceptance probe checks it in
 fp32, paused and resumed (`L7.disease_frozen`); mixed precision and `torch.compile` with a freeze
 are not verified by that check, and stay available. While
-the drawer is open the run bar shows Start (disabled: "close Continue… to start a new run"),
-**Continue Training** (disabled while the datasets differ, with the reason) and **Cancel**.
+the drawer is open the run bar's Start is disabled ("close Continue… to start a new run"); **4.
+Start**, the drawer's footer under its fields, holds **Continue Training** (or **Start branch**)
+and **Cancel**, with the start's reason beside them ("Start branch disabled: the parent’s
+dataset is not this workspace’s current one."), said once: a start the check refuses adds no
+notice of its own, and one the job runner refuses after the check (a parent changed since) says
+so there. In a wide window the footer stays in view while the drawer's body scrolls.
 A listed checkpoint is found again in the server's list. **The model fingerprint shown is the one
-continued from** (implemented in the root-cause round). For a listed checkpoint, Check checkpoint
-and Continue Training send the list's fingerprint; for a typed path, Check checkpoint reads the
-file and shows its fingerprint, and Continue Training sends the one shown. The job runner's
+continued or branched from** (implemented in the root-cause round). For a listed checkpoint,
+Check checkpoint and the start send the list's fingerprint; for a typed path, Check checkpoint
+reads the file and shows its fingerprint, and the start sends the one shown. The job runner's
 preview compares it on its read of the file, before loading it: another file is refused with
 "The checkpoint changed since it was chosen. It holds … now (chosen: …)." and what to do for
 where it was shown: "Refresh the list, then choose it again." for a listed checkpoint (the same
 option sends the list's fingerprint again until the list is read again), "Click Check checkpoint
 to read the file there now." for a typed path. The job runner then gives the
 training process the digest of the parent it decided on (`train_model.py
---expect-resume-sha256`, always, for every continued run): the run's placement under the
+--expect-resume-sha256`, always, for every continued run; `--expect-parent-sha256` for a
+branch): the run's placement under the
 parent's architecture and its settings come from that read, and a file replaced after the start
 is refused by the process before it is loaded (`train_model: refused: The checkpoint changed
 since it was chosen; choose it again. …`, exit 1, no run directory; Continue… lists the
@@ -3408,9 +3440,10 @@ else at start. Check checkpoint names the listed file it read ("Checked gatv2/<r
 the run list"; a typed path's check gives its path and fingerprint), and a matching dataset is said
 once, as "✓ Trained on the dataset selected in the run bar" (the fingerprint is the run bar's).
 While the drawer is open the run bar's line reads "Run: a new one, continued from the checkpoint
-chosen in Continue a run": a continued run trains in a run directory of its own. The drawer has
+chosen in Continue or branch a run" ("branched from" with Branch): either trains in a run
+directory of its own. The drawer has
 its own **Device** (auto, cuda or cpu), which starts from the
-parameters' Device each time it opens and is what Check checkpoint and Continue Training use.
+parameters' Device each time it opens and is what Check checkpoint and the start use.
 When the run bar's dataset changes while the drawer is open (by hand, with Datasets'
 "Use for training ›", or to follow a training job started on another dataset), the list
 becomes that workspace's runs, read again the same way.
@@ -3432,7 +3465,8 @@ the job ("the running job", "the last job", "a past run, while another runs", "t
 ("✓ same dataset as the run bar", amber "▲ not the selected dataset", "dataset recorded at the
 first checkpoint" while it runs without one yet, or "dataset not recorded (no checkpoint)" once
 it has ended without one); while Continue… is open with a listed checkpoint chosen, whether this
-is "the run continued from" or "not the run continued from" (the curves are the run viewed's,
+is "the run continued from" or "not the run continued from" ("branched from" with Branch; the
+curves are the run viewed's,
 whatever the drawer chose); and the run's state in a few words: "195 of 1000 epochs completed ·
 can be continued", "Finished · 5000 of 5000 epochs completed · to train further, use Continue…",
 "Stopped early (…) · … · cannot be continued", "Running · epoch 12 of 100" (said only of the

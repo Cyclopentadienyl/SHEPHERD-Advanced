@@ -2871,7 +2871,7 @@ M5 在 SPEC_4 的部署模式 **M1** 下執行：由 owner 或指定的技術人
 | 位置 | 控制項 |
 |---|---|
 | API | `POST /api/v1/pipeline/reload`、`POST /api/v1/pipeline/stop`、`POST /api/v1/training/start`、`POST /api/v1/training/finetune`、`POST /api/v1/training/branch`、`POST /api/v1/training/stop`、`GET /api/v1/training/checkpoints`、`GET /api/v1/workspaces/{name}/checkpoints`、`GET /api/v1/workspaces/{name}/family` |
-| 儀表板 | Diagnosis：Change model…（其 checkpoint 清單與它的 Load；自 M5-2 起）與 Stop inference（它的詢問與確認；自 ops-wiring 這一輪起）。⚙ Settings（Runtime Settings）：Restart Backend 與 Apply Settings。Research › Training：Start、Stop（它的確認會讀取該 run 最後的 checkpoint）、Continue…（它列出 parent）、parent 清單的 Refresh、Check checkpoint 與 Continue Training |
+| 儀表板 | Diagnosis：Change model…（其 checkpoint 清單與它的 Load；自 M5-2 起）與 Stop inference（它的詢問與確認；自 ops-wiring 這一輪起）。⚙ Settings（Runtime Settings）：Restart Backend 與 Apply Settings。Research › Training：Start、Stop（它的確認會讀取該 run 最後的 checkpoint）、Continue…（它列出 parent）、parent 清單的 Refresh、Check checkpoint，以及 Continue Training 或 Start branch |
 
 三份 checkpoint 清單（含家族檢視）與 Check checkpoint 會開啟 checkpoint 檔案，SPEC_4 將此歸類為 checkpoint 檢視
 （C3），因此它們與控制項一樣受檢查。為了顯示而開啟 checkpoint 的讀取也一樣：Diagnosis 卡片的
@@ -3312,7 +3312,7 @@ Training Console 現在是分成三部分的一個頁面：上方橫跨整頁的
   422 拒絕；無法分支的 parent（只有權重或沒有權重、本版本讀不了的紀錄或規則、混合精度無法像在
   parent 上那樣生效）、顯示後已變更的 parent
   （`expected_parent_sha256`）或忙碌的名額，以 409 拒絕。行程綁定預覽讀到的 parent，清單會顯示
-  每個分支改了什麼。
+  每個分支改了什麼。Training 頁經由同一個預覽與啟動分支（Continue 抽屜的 Branch，見下文）。
 - 失敗的 run 的**錯誤橫幅**橫跨整頁，不論 run 檢視顯示哪個 run，它都是訓練工作的。標題以儀表板
   的狀態標記先說狀況（"✕ Training failed: Process exited with code 1"；PyG 退回較慢 kernel 的提醒
   是琥珀色的 "▲ PyG native extensions missing: …"），其下是 run 印出的最後一行錯誤（"Last error printed: TrainingDeviceUnavailable: --device auto
@@ -3350,14 +3350,18 @@ steps 計，final learning-rate ratio 的「more than 0 with onecycle」）。�
 只由版面決定，不受畫在裡面的 canvas 影響，所以同一個視窗大小下，不論是直接開啟、重新載入，
 還是從窄視窗恢復，圖表大小都相同。
 
-**Continue…** 會打開一個取代參數欄的抽屜：run bar 所選 workspace 的模型紀錄，也就是 base 與任務
-模型（自 K6 起，沒有 model spec 的檔案永遠不會從儀表板繼續訓練；伺服器的清單：列出時會開啟每個
-checkpoint，所以是操作者控制項），分兩步選擇，或手動輸入其中某個 checkpoint 的路徑。**Run**：
+**Continue…** 會打開一個取代參數欄的抽屜「Continue or branch a run」，依編號的步驟操作。最先是
+它的 **Operation**：**Continue**（resume 暫停的 run，或 extend 已完成的 run；每個設定都維持
+checkpoint 的）或 **Branch**（從 checkpoint 的權重開始一個新 run，使用新的 optimizer 與
+schedule，見下文；自 ops-wiring 輪 B1c 起）。checkpoint 是 run bar 所選 workspace 的模型紀錄之一，
+也就是 base 與任務模型（自 K6 起，沒有 model spec 的檔案永遠不會從儀表板繼續訓練或分支；伺服器
+的清單：列出時會開啟每個 checkpoint，所以是操作者控制項），分兩步選擇，或手動輸入其中某個
+checkpoint 的路徑。**1. Run**：
 各個 run，最新的在前，來自 `runs/` 之下的每一個目錄（自 K8-7b，2026-11-08 起），每個最多 40 個
 字元、一個 " · "，以區分它的部分開頭：先是名稱，再是目錄與開始時間（「base-a · GATv2 2026-10-28
 13:57」：目錄名稱轉成大寫，`gatv2` 則寫成「GATv2」，太長時從中間截短；它是位置，不是模型的架構，
 架構由紀錄指明）；沒有命名的 run 是開始時間，再是目錄（「2026-10-24 16:38 · GATv2」）；到分鐘都
-相同的 run 加上秒，再加上它自己的 id。**Checkpoint**：該 run 的檔案，最新的在前，每個最多 40 個
+相同的 run 加上秒，再加上它自己的 id。**2. Checkpoint**：該 run 的檔案，最新的在前，每個最多 40 個
 字元、一個 " · "，說明它是什麼以及訓練到哪裡：「Latest save · 195 epochs completed」；依檔案記錄的
 選擇方式（`callbacks.model_checkpoint` 的指標與方向：base 為 validation LP accuracy，任務模型為
 validation pooled MRR，即「Best pooled MRR」，兩者都是越高越好）而為該 run 最佳存檔的，寫成「Best
@@ -3367,16 +3371,31 @@ run 的某筆紀錄列為訓練器 best-k 存檔之一的檔案（依其檔名�
 紀錄（沒有進度紀錄的檔案只說它記錄的 epoch，「recorded epoch 194」，從不由此推算完成數），只保存
 權重或無法讀取的檔案會直接說明（「weights only」、「cannot be read」）。不論選項的文字為何，它的值
 都是檔案在清單中的 key。改選另一個 run 時，會列出它的檔案並選好它的 Latest save。兩個選單下方有
-一張表，列出選項沒說的部分：檔案、階段、保存的內容、階段已結束時繼續訓練會做什麼（提前停止的
-檔案為「not possible: it stopped early」）、Trainer 的驗證數值（base 為「LP accuracy (Trainer)
+一張表，列出選項沒說的部分：檔案、它的種類（以每個頁面描述模型的用語：「Base」、「Disease」，凍結
+主幹的對照則為「Disease · frozen graph backbone」）、保存的內容、選 Continue 時階段已結束時繼續訓練
+會做什麼（提前停止的檔案為「not possible: it stopped early」；分支不論 parent 如何結束都是新 run）、
+Trainer 的驗證數值（base 為「LP accuracy (Trainer)
 0.5000」；是 Trainer 的數字，不是測試結果）、檔案記錄的 **Selection**（「by validation LP accuracy
 (Trainer), higher is better」，舊檔案則為「not recorded」，此時沒有選項稱它為最佳）、模型指紋
 （Copy 會複製完整的 64 個）與 run 的目錄名稱。Fine-tune 頁面選擇 base 用的就是這同一組選單，它的
 工作卡片也依檔案記錄的選擇方式指出每個子 run 的最佳存檔。
 自 M5-3 起，手動輸入的路徑只會找到該清單中的 checkpoint，其他任何檔案都會在開啟之前被拒絕（`PLAN_TEST_RESULTS.md` D8）。
-**Check checkpoint** 顯示繼續訓練會做什麼，並比較 parent 記錄的資料集指紋與 workspace 目前的
-指紋：相同時為 ✓，不同時為琥珀色（附上相符的已列出 workspace，或「matches no listed
-workspace」）。自 K8-7（2026-11-08）起，續接的執行只繼承本版仍有的設定：parent 記錄了、但本版
+**3. Check**（Check checkpoint）顯示所選操作會做什麼，並比較 parent 記錄的資料集指紋與
+workspace 目前的指紋：相同時為 ✓，不同時為表示拒絕的紅色 ✕，因為啟動會拒絕不同的資料集（附上
+相符的已列出 workspace，或「matches no listed workspace」）；被拒絕的檢查同樣以 ✕ 開頭
+（「Cannot continue.」、「Cannot branch.」）。每個設定與值都以文字說明，絕不顯示程式碼本身的形式。
+**選 Continue** 時，檢查列出計畫的句子，抽屜的欄位以其標籤稱呼（「… extend it at a fixed rate
+with Extra epochs」），並列出取自 checkpoint 的設定，繼續訓練時不能更改（說明指向 Branch）。已完成
+的 checkpoint 會顯示 **Extra epochs**；某個參數群的學習率已降到 0 的（衰減到 0 的 schedule：預覽的
+`zero_rate_groups`）還會顯示 **Extra-epoch rate**，以 `extend_lr` 送給那些參數群（不猜測任何學習率；
+其他 checkpoint 的 extend 沿用計畫所說的學習率）。**選 Branch** 時，檢查是 job runner 的分支預覽：
+沒有改變時為「no setting changed: a new run from these weights with a new optimizer」，否則為
+「2 settings changed: …」，並把每項改變寫成 parent 的值 → 新的值（「Learning rate 0.0001 →
+0.0005」）；其下是 **Settings to change**，即 parent 的 stage 與任務可以改的設定（預覽的清單：
+絕不包括 freeze、split seed 或 model spec），每個都從 parent 的值開始，只在另一個設定下才讀取的
+設定，與參數欄一樣只在適用時顯示；分支保留的設定列在檢查中。只會送出你編輯過的欄位，並記錄為你
+設定的，所以完全不編輯就是相同設定的分支；欄位不接受的值、parent 的 stage 不讀取的設定，以及
+跨設定規則，都以檢查的用語拒絕；檢查之後再編輯，會要求重新檢查（Start branch 會先檢查）。自 K8-7（2026-11-08）起，續接的執行只繼承本版仍有的設定：parent 記錄了、但本版
 已沒有的設定（`num_workers`、舊的模型設定如 `conv_type`）既不繼承，也不構成拒絕的理由；缺少
 目前某個設定的 parent 會被拒絕；Check checkpoint 與訓練行程的判斷相同，用語也相同。自 research
 comparison Stage 9a（2026-11-10）起，新的 checkpoint 記錄 training rules 2，新增一個設定
@@ -3399,17 +3418,20 @@ resume 的一組仍寫明它開始時的下游權重（Models › Results 的 Co
 「Disease · frozen graph backbone」，是任務模型，絕不是 base 的分數。驗收 probe 以 fp32 檢查它，
 包括暫停後再 resume（`L7.disease_frozen`）；凍結下的混合精度與 `torch.compile` 不在這個檢查的
 範圍內，也仍然可用。抽屜打開
-期間，run bar 顯示 Start（停用：「close Continue… to start a new run」）、
-**Continue Training**（資料集不同時停用，並附原因）與 **Cancel**。從清單選的
-checkpoint 會在伺服器的清單中重新找到。**繼續訓練所用的就是所顯示的模型指紋**（於根因修正輪
-實作）。從清單選的 checkpoint，Check checkpoint 與 Continue Training 都送出清單上的指紋；手動
-輸入的路徑，則由 Check checkpoint 讀取檔案並顯示它的指紋，Continue Training 再送出所顯示的那個。
+期間，run bar 的 Start 停用（「close Continue… to start a new run」）；**4. Start** 是抽屜欄位下方
+的頁尾，放著 **Continue Training**（或 **Start branch**）與 **Cancel**，旁邊是啟動的原因（「Start
+branch disabled: the parent’s dataset is not this workspace’s current one.」），只說一次：被檢查
+拒絕的啟動不另加自己的通知，檢查之後被 job runner 拒絕的（之後 parent 已改變）則在那裡說明。在寬的
+視窗中，抽屜內容捲動時頁尾仍留在畫面上。從清單選的
+checkpoint 會在伺服器的清單中重新找到。**繼續訓練或分支所用的就是所顯示的模型指紋**（於根因修正輪
+實作）。從清單選的 checkpoint，Check checkpoint 與啟動都送出清單上的指紋；手動輸入的路徑，則由
+Check checkpoint 讀取檔案並顯示它的指紋，啟動再送出所顯示的那個。
 job runner 的預覽在讀取檔案時、載入之前比對：不是那個檔案就以「The checkpoint changed since it
 was chosen. It holds … now (chosen: …).」拒絕，並依指紋顯示的地方說明該怎麼做：從清單選的是
 「Refresh the list, then choose it again.」（在清單重新讀取之前，同一個選項送出的仍是清單上的
 指紋），手動輸入的路徑是「Click Check checkpoint to read the file there now.」。接著 job runner 把它
 所決定的 parent 的 digest 交給訓練行程（`train_model.py --expect-resume-sha256`，每個繼續訓練的
-run 都會帶）：run 放在 parent 架構之下的位置與它的設定都來自那次讀取，啟動之後才被替換的檔案
+run 都會帶；分支則是 `--expect-parent-sha256`）：run 放在 parent 架構之下的位置與它的設定都來自那次讀取，啟動之後才被替換的檔案
 會在載入之前被訓練行程拒絕（`train_model: refused: The checkpoint changed since it was
 chosen; choose it again. …`，結束碼 1，不建立 run 目錄；Continue… 打開時會重新列出
 checkpoint）。API 也以選用的查詢參數接受 parent 的 digest，
@@ -3418,9 +3440,9 @@ checkpoint）。API 也以選用的查詢參數接受 parent 的 digest，
 行程在啟動時仍會檢查其他一切。Check checkpoint 會說明它讀取的是清單上的哪個檔案（「Checked
 gatv2/<run>/<file> from the run list」；手動輸入的路徑則顯示路徑與指紋），資料集相符時只說一次
 「✓ Trained on the dataset selected in the run bar」（指紋在 run bar）。抽屜打開期間，run bar 的
-那一行是「Run: a new one, continued from the checkpoint chosen in Continue a run」：繼續訓練的
-run 會在自己的 run 目錄中訓練。抽屜有自己的 **Device**（auto、cuda 或 cpu），每次打開時
-從參數的 Device 開始，Check checkpoint 與 Continue Training 使用的就是它。抽屜打開期間若 run
+那一行是「Run: a new one, continued from the checkpoint chosen in Continue or branch a run」（選
+Branch 時為「branched from」）：兩者都在自己的 run 目錄中訓練。抽屜有自己的 **Device**（auto、
+cuda 或 cpu），每次打開時從參數的 Device 開始，Check checkpoint 與啟動使用的就是它。抽屜打開期間若 run
 bar 的資料集改變（手動選擇、從 Datasets 的「Use for training ›」，或跟隨在另一個資料集上啟動的
 訓練工作），清單會以同樣的方式重新讀取，改為該 workspace 的 run。
 
@@ -3437,7 +3459,8 @@ another runs」、「the latest run」、「a past run」）；從 checkpoint �
 run bar 所選資料集的關係（「✓ same dataset as the run bar」、琥珀色的「▲ not the selected
 dataset」、執行中還沒有 checkpoint 時的「dataset recorded at the first checkpoint」，或已結束而沒有
 checkpoint 時的「dataset not recorded (no checkpoint)」）；Continue… 打開且選了清單上的 checkpoint
-時，這是「the run continued from」還是「not the run continued from」（曲線屬於所檢視的 run，與抽屜
+時，這是「the run continued from」還是「not the run continued from」（選 Branch 時為「branched
+from」；曲線屬於所檢視的 run，與抽屜
 選了什麼無關）；以及 run 的狀態：「195 of 1000 epochs completed · can be continued」、「Finished ·
 5000 of 5000 epochs completed · to train further, use Continue…」、「Stopped early (…) · … ·
 cannot be continued」、「Running · epoch 12 of 100」（只用於工作自己的 run）或「No checkpoint saved,
