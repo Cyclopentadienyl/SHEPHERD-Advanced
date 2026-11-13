@@ -628,6 +628,101 @@ def test_the_lists_show_a_bundle_run_and_resolve_it_by_its_key(tmp_path):
         "refused", WRITTEN_BEFORE_SPEC)
 
 
+def _selected(payload, monitor, mode, best_k):
+    """`payload` with the selection state the Trainer records
+    (`checkpoint_payload._callback_state`'s ``model_checkpoint``)."""
+    return {**payload, "callbacks": {
+        "early_stopping": None, "best_weights_source": None,
+        "model_checkpoint": {"monitor": monitor, "mode": mode, "save_top_k": 3,
+                             "best_k": best_k}}}
+
+
+def test_the_listing_reads_the_selection_and_the_best_k_from_the_records(tmp_path,
+                                                                          monkeypatch):
+    """B0b (the skill's §8): each file's recorded selection, its monitor and
+    mode, and whether a record of its own run names it among the run's best-k,
+    by its name and the SHA-256 it was written with: a top-k file is written
+    before it is listed, so its run's last.pt names it. Never from a name: a
+    file named like a top-k file that no record names is no member, nor is
+    one whose bytes are not the ones named, nor a parent's file a continued
+    run's record names by a path into the parent's run. An older file without
+    the state says it records none (`None`), and a state that is not of its
+    kind lists that file alone with the reason. The workspace's list carries
+    both over HTTP (the same dataclass)."""
+    from collections import OrderedDict
+
+    from fastapi.testclient import TestClient
+
+    import src.utils.checkpoint_paths as cp
+    from src.api.main import app
+    from src.api.services import server_lists as sl
+    from src.config import server_settings as ss
+    from tests.fixtures.operator_access import OPERATOR_BASE_URL, operator_mode
+
+    monkeypatch.setattr(cp, "_READS", OrderedDict())
+    monkeypatch.setattr(cp, "SETTLED_NS", 0)
+    root = tmp_path / "root"
+    ws = root / "ws"
+    child, base, older, odd = ("20261002-000000_disease_bbbbbb", BASE_RUN,
+                               "20260901-000000_old_cccccc", "20261003-000000_odd_dddddd")
+    mrr = ("val_pooled_mrr", "max")
+
+    def entry(path, value, epoch):
+        return {"file": path if isinstance(path, str) else path.name, "value": value,
+                "epoch": epoch, "sha256": None if isinstance(path, str) else file_sha256(path)}
+
+    # The base: one top-k file its last.pt names; a file named like one, never named.
+    base_top = _put(ws, "gatv2", base, _selected(_record_payload(logs={"val_lp_accuracy": 0.7}),
+                                                 "val_lp_accuracy", "max", []),
+                    100, name="model-03-0.7000.pt")
+    _put(ws, "gatv2", base, _selected(_record_payload(logs={"val_lp_accuracy": 0.6}),
+                                      "val_lp_accuracy", "max", [entry(base_top, 0.7, 3)]),
+         110, name="last.pt")
+    _put(ws, "gatv2", base, _record_payload(logs={"val_lp_accuracy": 0.9}), 90,
+         name="model-09-0.9000.pt")
+    # The child names its own top-k file, one by a stale digest, and the
+    # parent's file by a path into the parent's run.
+    top = _put(ws, "gatv2", child, _selected(
+        _record_payload("disease", logs={"val_pooled_mrr": 0.4}), *mrr, []), 200,
+        name="model-01-0.4000.pt")
+    stale = _put(ws, "gatv2", child, _selected(
+        _record_payload("disease", logs={"val_pooled_mrr": 0.3}), *mrr, []), 210,
+        name="model-02-0.3000.pt")
+    named = [entry(top, 0.4, 1), {**entry(stale, 0.3, 2), "sha256": "0" * 64},
+             entry(f"../../{base}/checkpoints/model-09-0.9000.pt", 0.9, 9)]
+    _put(ws, "gatv2", child, _selected(
+        _record_payload("disease", logs={"val_pooled_mrr": 0.35}), *mrr, named), 220)
+    # An older run: no selection state at all.
+    _put(ws, "gatv2", older, _record_payload(logs={"val_lp_accuracy": 0.5}), 50)
+    # A state that is not of its kind.
+    _put(ws, "gatv2", odd, _selected(_record_payload(), 7, "max", []), 300)
+    environ = {ss.ENV_WORKSPACES_ROOT: str(root)}
+    listing = sl.list_checkpoints("ws", environ=environ)
+    assert listing.available, listing.problem
+    items = {(i.run, i.filename): i for i in listing.items}
+    lp = {"monitor": "val_lp_accuracy", "mode": "max"}
+    assert (items[base, "model-03-0.7000.pt"].selection, items[base, "last.pt"].selection) == (
+        lp, lp)
+    assert items[child, "last.pt"].selection == {"monitor": "val_pooled_mrr", "mode": "max"}
+    assert {name: items[run, name].in_best_k for run, name in items if run in (base, child)} == {
+        "model-03-0.7000.pt": True, "last.pt": False, "model-09-0.9000.pt": False,
+        "model-01-0.4000.pt": True, "model-02-0.3000.pt": False}
+    assert (items[older, "last.pt"].selection, items[older, "last.pt"].in_best_k) == (None, None)
+    unread = items[odd, "last.pt"]
+    assert unread.problem == ("its callbacks.model_checkpoint.monitor is a int, not text, so "
+                              "none of its metadata is shown")
+    assert unread.selection is None and unread.in_best_k is None
+    # Over HTTP, the same fields from the same scan.
+    operator_mode(monkeypatch)
+    monkeypatch.setenv(ss.ENV_WORKSPACES_ROOT, str(root))
+    body = TestClient(app, base_url=OPERATOR_BASE_URL).get(
+        "/api/v1/workspaces/ws/checkpoints").json()
+    by_api = {(c["run"], c["filename"]): c for c in body["checkpoints"]}
+    for key, item in items.items():
+        assert (by_api[key]["selection"], by_api[key]["in_best_k"]) == (
+            item.selection, item.in_best_k), key
+
+
 # ---------------------------------------------------------------------------
 # Automatic selection never reads test results (D4)
 # ---------------------------------------------------------------------------

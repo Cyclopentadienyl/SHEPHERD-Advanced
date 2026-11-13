@@ -212,6 +212,16 @@ def test_a_branch_with_its_parents_settings_is_a_new_run(tmp_path, monkeypatch, 
         changes = {entry["run"]: entry["parent_changes"] for entry in answer
                    if entry["filename"] == "last.pt"}
         assert changes == {branch_run.name: {}, parent_run.name: None}
+    # The selection each file the Trainer wrote records, and its run's best-k
+    # as the run's own records name it (B0b): a base's validation LP
+    # accuracy, higher is better; every saved top-k file named by last.pt,
+    # never by its name; in the workspace's list as in its answer over HTTP.
+    for answer in (listing.items, workspace_list):
+        def field(entry, name):
+            return entry[name] if isinstance(entry, dict) else getattr(entry, name)
+        for entry in answer:
+            assert field(entry, "selection") == {"monitor": "val_lp_accuracy", "mode": "max"}
+            assert field(entry, "in_best_k") is (field(entry, "filename") != "last.pt"), entry
 
 
 def _other_spec():

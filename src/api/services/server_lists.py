@@ -222,6 +222,17 @@ class CheckpointItem:
     filled from this build's recipe; `None` for a file that was not read
     (research comparison Stage 8).
 
+    `selection` is the selection the file records, ``{"monitor", "mode"}``
+    (``callbacks.model_checkpoint``: the metric the run's saves were ranked by
+    and its direction, a base's ``val_lp_accuracy`` and a task model's
+    ``val_pooled_mrr``, both ``max``), `None` where it records none (a
+    weights-only file, an older format: "selection not recorded"); `in_best_k`
+    whether a record of its own run names this file, by its name and digest,
+    among the run's best-k files (`ListedCheckpoint.in_best_k`), `None` where
+    no file of its run records a best-k list. Both are read from the files'
+    records in the same scan, never from a file's name; a page names the best
+    save from them and `validation` (`renderers.best_saves`).
+
     `architecture`, `run` and `filename` are text as every answer shows them,
     a name that is not text with backslash escapes; `key` is the entry's
     identity, apart from those names (`checkpoint_paths.listing_key`, BACKLOG
@@ -266,6 +277,8 @@ class CheckpointItem:
     spec: Optional[Dict[str, Any]] = None
     weight_transfer: Optional[Dict[str, Any]] = None
     loss_identity: Optional[Dict[str, Any]] = None
+    selection: Optional[Dict[str, str]] = None
+    in_best_k: Optional[bool] = None
 
     def __post_init__(self) -> None:
         from src.utils.checkpoint_paths import listing_key
@@ -709,6 +722,9 @@ def list_checkpoints(
             end=entry.end,
             training_settings=(recorded_training_settings(entry.training)
                                if read and entry.training is not None else None),
+            selection=({"monitor": entry.selection[0], "mode": entry.selection[1]}
+                       if entry.selection is not None else None),
+            in_best_k=entry.in_best_k,
             **summary,
         ))
     return Listing(tuple(item for item in items if record_matches(item, task, learning_stage)))

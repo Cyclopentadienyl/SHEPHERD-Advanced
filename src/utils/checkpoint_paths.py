@@ -653,6 +653,21 @@ class ListedCheckpoint(NamedTuple):
     `None` where the file records none (a weights-only file has no
     configuration). `None` for a file whose metadata was not read. A caller
     reads it through `run_plan.recorded_training_settings`.
+
+    `selection` is the selection the file records (``callbacks.model_checkpoint``'s
+    ``monitor`` and ``mode``: the metric the run's saves were ranked by and its
+    direction, a base's ``val_lp_accuracy`` and a task model's
+    ``val_pooled_mrr``, both ``max``), `None` where the file records none (a
+    weights-only file, an older format); `best_k` the best-k files the same
+    state names, as ``(file, sha256)`` pairs (`file` relative to the run's
+    checkpoint directory: a bare name for the run's own), `None` where it names
+    none. `in_best_k` is whether a record of the file's own run names it,
+    by its name and the SHA-256 it was written with, among its best-k files
+    (`_with_best_k`, across the run's entries of one listing: a best-k file is
+    written before it is listed, so it is named by a later record of its run,
+    `last.pt`'s); `None` where no file of its run records a best-k list, or
+    for a file not read. Never from a file's name: the number in
+    ``model-<epoch>-<value>.pt`` has no stable meaning.
     """
 
     run_dir: Path
@@ -670,6 +685,9 @@ class ListedCheckpoint(NamedTuple):
     model_record: Optional[Dict[str, Any]] = None
     under: Optional[Tuple[str, ...]] = None
     training: Optional[Dict[str, Any]] = None
+    selection: Optional[Tuple[str, str]] = None
+    best_k: Optional[Tuple[Tuple[str, Optional[str]], ...]] = None
+    in_best_k: Optional[bool] = None
 
     @property
     def names(self) -> Tuple[str, str, str]:
@@ -954,14 +972,66 @@ def _figure_problem(value: Any) -> Optional[str]:
     return f"is a {type(value).__name__}, not a number"
 
 
+def _model_checkpoint_state(meta: Dict[str, Any]) -> Dict[str, Any]:
+    """The selection state a checkpoint records (``callbacks.model_checkpoint``:
+    ``monitor``, ``mode``, ``save_top_k``, ``best_k``), or ``{}`` where it
+    records none, as `logs` and `progress` are read."""
+    callbacks = meta.get("callbacks") if isinstance(meta.get("callbacks"), dict) else {}
+    state = callbacks.get("model_checkpoint")
+    return state if isinstance(state, dict) else {}
+
+
+def _recorded_selection(state: Dict[str, Any]
+                        ) -> Tuple[Optional[Tuple[str, str]],
+                                   Optional[Tuple[Tuple[str, Optional[str]], ...]]]:
+    """``(selection, best_k)`` of a selection state `_unshown` passed
+    (`ListedCheckpoint`): ``(monitor, mode)`` where both are recorded, and the
+    best-k files it names as ``(file, sha256)``, each `None` where it records
+    none."""
+    monitor, mode = state.get("monitor"), state.get("mode")
+    selection = (monitor, mode) if isinstance(monitor, str) and isinstance(mode, str) else None
+    best_k = state.get("best_k")
+    named = (tuple((entry["file"], entry.get("sha256")) for entry in best_k)
+             if isinstance(best_k, list) else None)
+    return selection, named
+
+
+def _selection_problem(state: Dict[str, Any]) -> Optional[str]:
+    """Why a recorded selection state cannot be read as `ListedCheckpoint`
+    shows it (its monitor and mode text; its best-k a list of entries, each
+    naming its file as text and its SHA-256 as text or not at all), as the
+    words a reason goes on from, or None."""
+    for name in ("monitor", "mode"):
+        value = state.get(name)
+        why = text_problem(value) if value is not None else None
+        if why is not None:
+            return f"its callbacks.model_checkpoint.{name} {why}"
+    best_k = state.get("best_k")
+    if best_k is None:
+        return None
+    if not isinstance(best_k, list):
+        return f"its callbacks.model_checkpoint.best_k is a {type(best_k).__name__}, not a list"
+    for entry in best_k:
+        if not isinstance(entry, dict):
+            return (f"its callbacks.model_checkpoint.best_k holds a {type(entry).__name__}, "
+                    "not an entry")
+        for name in ("file", "sha256"):
+            value = entry.get(name)
+            why = text_problem(value) if value is not None or name == "file" else None
+            if why is not None:
+                return f"its callbacks.model_checkpoint.best_k entry's {name} {why}"
+    return None
+
+
 def _unshown(meta: Dict[str, Any], logs: Dict[str, Any], progress: Dict[str, Any],
              fingerprint: Any) -> Optional[str]:
     """Why the metadata a listing shows of a read file cannot be shown as its
     fields' kinds say (`ListedCheckpoint`), naming the first field that is not
-    (`text_problem`, a whole number, a logged figure), or None. A list puts
-    these values in its answer as they are, so one that is not of its kind,
-    or not text, made the whole list fail (a lone surrogate, an epoch of 1.5,
-    a tensor among the logs); now that file alone is listed with the reason."""
+    (`text_problem`, a whole number, a logged figure, the selection state's
+    `_selection_problem`), or None. A list puts these values in its answer as
+    they are, so one that is not of its kind, or not text, made the whole list
+    fail (a lone surrogate, an epoch of 1.5, a tensor among the logs); now that
+    file alone is listed with the reason."""
     for name, value, problem in (
             ("checkpoint_kind", meta.get("checkpoint_kind"), text_problem),
             ("epoch", meta.get("epoch"), whole_number_problem),
@@ -972,6 +1042,9 @@ def _unshown(meta: Dict[str, Any], logs: Dict[str, Any], progress: Dict[str, Any
         why = problem(value) if value is not None else None
         if why is not None:
             return f"its {name} {why}"
+    why = _selection_problem(_model_checkpoint_state(meta))
+    if why is not None:
+        return why
     for key, value in logs.items():
         why = text_problem(key)
         if why is not None:
@@ -1193,6 +1266,7 @@ def _read_one(run: Path, path: Path, within: Optional[Path]
     config = meta.get("config") if isinstance(meta.get("config"), dict) else {}
     training = {"rules": meta.get("training_rules"), "requested": config.get("requested"),
                 "effective": config.get("effective")}
+    selection, best_k = _recorded_selection(_model_checkpoint_state(meta))
     return ListedCheckpoint(
         run, path, sha256=read.identity.sha256,
         checkpoint_kind=meta.get("checkpoint_kind"),
@@ -1205,7 +1279,35 @@ def _read_one(run: Path, path: Path, within: Optional[Path]
         end=progress.get("end"),
         model_record=record,
         training=training,
+        selection=selection,
+        best_k=best_k,
     ), opened
+
+
+def _with_best_k(entries: List[ListedCheckpoint]) -> List[ListedCheckpoint]:
+    """`entries` with each read file's `in_best_k`: whether a record of its own
+    run (its run directory's entries in this listing) names it among the run's
+    best-k files, by its name (a bare name: a parent's file, which a continued
+    run's records name by a path into the parent's run, is not this run's) and
+    the SHA-256 it was written with where the record holds one. A run none of
+    whose files records a best-k list leaves it `None`, as does a file not
+    read. Membership is never kept with a file's read (`_remember`): it is the
+    run's, read again with every listing."""
+    named: Dict[Path, set] = {}
+    for entry in entries:
+        if entry.best_k is not None:
+            named.setdefault(entry.run_dir, set()).update(entry.best_k)
+    out = []
+    for entry in entries:
+        listed = named.get(entry.run_dir)
+        if (listed is None or entry.under is not None or entry.problem is not None
+                or entry.sha256 is None):
+            out.append(entry)
+            continue
+        name = Path(entry.path).name
+        out.append(entry._replace(in_best_k=any(
+            file == name and sha256 in (None, entry.sha256) for file, sha256 in listed)))
+    return out
 
 
 def read_run_checkpoints(
@@ -1219,9 +1321,10 @@ def read_run_checkpoints(
     (tensors and plain data only, contract decision 10) on the CPU, and what
     the entry shows and its digest come from that one read (BACKLOG 19.3), so
     a file rewritten while it is listed is never shown with another file's
-    digest. Reading opens every checkpoint, which SPEC_4 classes as checkpoint
-    inspection (C3): a caller that offers this list over the network is gated
-    as D8 says. `list_run_checkpoints` stays the read-free form, for a caller
+    digest; whether a file is among its run's best-k is read from the records
+    of its run's entries in the same listing (`_with_best_k`). Reading opens
+    every checkpoint, which SPEC_4 classes as checkpoint inspection (C3): a
+    caller that offers this list over the network is gated as D8 says. `list_run_checkpoints` stays the read-free form, for a caller
     that only needs to know which files exist.
 
     **A file is not read again while it is unchanged** (M5-3 review, UI-2:
@@ -1291,7 +1394,7 @@ def read_run_checkpoints(
                                     under=path.relative_to(base).parts if path == run_dir
                                     else None)
                    for run_dir, path, problem in unlisted)
-    return entries
+    return _with_best_k(entries)
 
 
 def _first_run_holding(runs: List[Path], accept: Optional[AcceptFn], within: Path
