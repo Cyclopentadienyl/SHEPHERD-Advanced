@@ -211,6 +211,25 @@ def test_a_rule_refuses_only_what_the_operator_set(rule):
     assert tf.cross_field_problems(new_run_values("base", None, taken), set(taken)) == []
 
 
+@pytest.mark.parametrize("rule", sorted(rule.name for rule in tf.CROSS_FIELD_RULES
+                                         if rule.kind == "read_only_when"))
+def test_what_a_form_leaves_out_is_what_a_start_refuses(rule):
+    """`not_read_by_rules` reads each rule's own guard: a setting it says the
+    run would not read is the one `cross_field_problems` refuses once the
+    operator sets it, and one it says the run reads is taken (the Training
+    page's base form hides the first and sends the second). A guard the
+    values do not hold is not judged."""
+    refused, taken = RULES[rule]
+    subject = next(r.subject for r in tf.CROSS_FIELD_RULES if r.name == rule)
+    values = new_run_values("base", None, refused)
+    assert subject in tf.not_read_by_rules(values)
+    assert tf.cross_field_problems(values, {subject})
+    values = new_run_values("base", None, taken)
+    assert subject not in tf.not_read_by_rules(values)
+    assert tf.cross_field_problems(values, {subject}) == []
+    assert tf.not_read_by_rules({subject: refused[subject]}) == frozenset()
+
+
 @pytest.mark.parametrize("rule", sorted(RULES))
 def test_the_cli_refuses_a_rule_in_its_sentence_before_anything_is_read(rule, tmp_path):
     """`train()`: the illegal case is refused by the rule before the

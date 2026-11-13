@@ -210,6 +210,28 @@ def _rule_by_name(name: str) -> CrossFieldRule:
     raise KeyError(name)
 
 
+def _guard_holds(rule: CrossFieldRule, values: Mapping[str, Any]) -> bool:
+    """Whether `rule`'s guard (``when``) holds on `values`, which hold every
+    field of it."""
+    return all(values[name] in allowed for name, allowed in (rule.when or {}).items())
+
+
+def not_read_by_rules(values: Mapping[str, Any]) -> frozenset:
+    """**The settings a run would not read, by the rules across settings**:
+    the subject of each ``read_only_when`` rule (`CROSS_FIELD_RULES`) whose
+    guard does not hold on `values`, a run's settings as it would train with
+    them (warmup_steps unless the scheduler is cosine). A rule whose guard
+    `values` does not hold every field of is not judged. The same guard
+    `rule_problem` refuses an explicit setting by (`cross_field_problems`), so
+    what a form leaves out is what a start would refuse: the Training page's
+    base form neither offers nor sends a setting its run would not read
+    (decision S3)."""
+    return frozenset(rule.subject for rule in CROSS_FIELD_RULES
+                     if rule.kind == "read_only_when"
+                     and all(name in values for name in (rule.when or {}))
+                     and not _guard_holds(rule, values))
+
+
 def rule_problem(rule: Any, values: Mapping[str, Any]) -> Optional[str]:
     """Why `values`, a run's settings as it would train with them, break the
     rule `rule` (a `CrossFieldRule` or its name), in the rule's one sentence,
@@ -221,7 +243,7 @@ def rule_problem(rule: Any, values: Mapping[str, Any]) -> Optional[str]:
     fields = (rule.subject, *(rule.when or {}))
     if any(name not in values for name in fields):
         return None
-    holds = all(values[name] in allowed for name, allowed in (rule.when or {}).items())
+    holds = _guard_holds(rule, values)
     subject = values[rule.subject]
     if rule.kind == "min_exclusive":
         if not holds or subject is None or isinstance(subject, bool) \
