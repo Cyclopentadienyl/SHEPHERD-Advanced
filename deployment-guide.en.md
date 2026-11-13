@@ -3624,9 +3624,9 @@ it. Three panels:
   graph. The job card shows the state (Running, Completed, Failed in red, Cancelled in grey:
   never green for a failed or cancelled run), the elapsed time, what the run was given as one
   list, a row each (its version and its model by their own fingerprints, whatever is chosen
-  now; its measurement in its report's words; its workspace; Register, Deterministic algorithms
-  and Device; its R10 evidence; its start), its start and end times in UTC (as the report rows
-  name runs) and the last 12 lines of its output
+  now; its measurement in its report's words; its start in UTC, as the report rows name runs;
+  under **Details ›** its workspace, Register, Deterministic algorithms, Device and R10
+  evidence), its end time and the last 12 lines of its output
   (folded after a cancel, whose last line says the run was cancelled, with no traceback; a
   patient id a measurement refusal names is left out, D7); **Cancel**, beside the state,
   stops the test run only, never a training job. On a wide screen, Start, its reason and the job card stay at the foot of the panel (the

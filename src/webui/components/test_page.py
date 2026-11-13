@@ -56,7 +56,8 @@ docstring. Three panels, as the mockup draws them (``test-wide.png``,
   capabilities do not meet (its task head among them), and a measurement
   needing genes the version does not list are refused with their reason; then the job: its state, elapsed time,
   inputs (one summary list, a row each, the run's own whatever is chosen
-  now, `job_inputs_html`), output tail, "Cancel" (the runner's stop for test runs only), and
+  now, its settings one "Details ›" away: `job_inputs_html`), output tail,
+  "Cancel" (the runner's stop for test runs only), and
   once it has ended, **what it left, from the runner** (its outcome file, kept
   and registered read from disk by WP4's helper; "no report was published"
   when there is no outcome file; a cancel says what was left);
