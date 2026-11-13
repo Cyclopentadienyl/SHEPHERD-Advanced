@@ -251,6 +251,12 @@ def test_the_family_is_said_once_in_the_family_scope(world, monkeypatch):
         named, scope, shown = _shown(state, scope=scope_value)
         text = _text(rs.tables_html(named, scope, shown))
         assert ("family from" in text) is rows_say, scope_value
+    # The family scope's line names its run whole (the review of B0c: an
+    # option's 40-character cut there named it nowhere whole).
+    run = "20261024-173909_heads-ablation-relation-aware-frozen-backbone-control_c1d9cf"
+    assert rs.scope_words({"scope": rs.FAMILY, "family": run, "workspace": "demo"}) == (
+        "the family from run heads-ablation-relation-aware-frozen-backbone-control · "
+        "2026-10-24 17:39 in workspace demo")
 
 
 def test_a_figure_the_group_differs_on_is_shown_unrounded(world, monkeypatch):

@@ -1108,14 +1108,14 @@ def parent_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]]) -> st
     """Where the exact parent file a model's record names is (its 12-hex and
     run; listed here, in another listed workspace, or not available and why,
     from the family view's row); "none: a new run" for a file with no parent.
-    The run is named by the one run words (`model_list.run_words`; the record
-    names its directory alone, so no layout), where it is, after a semicolon,
-    so the row keeps the words' one " · "."""
+    The run is named whole by the one run words (`model_list.run_words`,
+    `fit` False: the record names its directory alone, so no layout), where
+    it is, after a semicolon, so the row keeps the words' one " · "."""
     sha = item.get("parent_sha256")
     if not r.is_digest(sha):
         return "none: a new run"
     where = (f'<code class="shep-fpv">{r.e(r.short_hex(sha))}</code> of run '
-             f'{r.e(ml.run_words(None, item.get("parent_run")))}')
+             f'{r.e(ml.run_words(None, item.get("parent_run"), fit=False))}')
     state = (row or {}).get("parent_state")
     if state == "listed":
         return f"{where}; listed here"
@@ -1353,7 +1353,7 @@ def identity_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]]) -> 
                  ("Parent", parent_html(item, row)),
                  *([("Settings changed", changes_html(item.get("parent_changes")))]
                    if operation == "branch" else []),
-                 ("Family", r.e(f'run {ml.run_words(None, item.get("family_id"))}')),
+                 ("Family", r.e(f'run {ml.run_words(None, item.get("family_id"), fit=False)}')),
                  ("Encoder", r.e(r.architecture_label(item.get("encoder")))),
                  ("Relation to the paper", relation)]
     return r.summary_list(rows, classes="shep-mp-ident")

@@ -2052,6 +2052,13 @@ def test_a_run_reads_as_its_name_architecture_and_start_time():
         "ui-live-stop-02 · 2026-10-24 17:39"
     assert ml.run_words(None, "20261024-163856_run_559817") == "2026-10-24 16:38"
     assert ml.run_words(None, "my-old-run") == "my-old-run"
+    # The same parts whole where the details name a run (`fit` False: the
+    # review of B0c), the architecture too; the option keeps its cut.
+    assert ml.run_words(layout, "20261024-173909_a_very_long_run_name_for_october_c1d9cf",
+                        fit=False) == f"a_very_long_run_name_for_october · {layout.upper()} " \
+                                      "2026-10-24 17:39"
+    assert ml.run_words(None, "my-very-long-old-run-directory-name-past-forty",
+                        fit=False) == "my-very-long-old-run-directory-name-past-forty"
     from src.webui.components import models_page
 
     assert not hasattr(models_page, "run_words")     # its own words retired into these

@@ -294,7 +294,7 @@ def _criteria(scope: Mapping[str, Any]) -> Dict[str, List[str]]:
 
 def scope_words(scope: Mapping[str, Any]) -> str:
     if scope.get("scope") == FAMILY:
-        return (f"the family from run {ml.run_words(None, scope.get('family'))} in "
+        return (f"the family from run {ml.run_words(None, scope.get('family'), fit=False)} in "
                 f"workspace {scope.get('workspace')}")
     return f"workspace {scope.get('workspace')}"
 

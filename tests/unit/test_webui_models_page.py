@@ -1329,6 +1329,21 @@ def test_the_detail_says_what_the_model_is_and_its_relation_to_the_paper(world, 
     assert '▲</span><span class="shep-st-w">parent unavailable: &lt;img' in html
     assert EVIL not in html
     assert "none: a new run" in mp.identity_html({**item, "parent_sha256": None}, None)
+    # A run's name past an option's 40 characters is named whole in the
+    # details (the review of B0c: the Parent and Family rows took the
+    # option's middle cut, "heads-abla…ne-control", with no way to read it
+    # whole), as it was before B0c for a directory not named by its time; the
+    # By family titles keep the option's short form, the Family row says it.
+    named = "20261024-173909_heads-ablation-relation-aware-frozen-backbone-control_c1d9cf"
+    legacy = "legacy-experiment-relation-aware-heads-ablation-v2-final"
+    for run, words in ((named, "heads-ablation-relation-aware-frozen-backbone-control · "
+                               "2026-10-24 17:39"), (legacy, legacy)):
+        long = mp.identity_html({**item, "family_id": run, "parent_run": run},
+                                {"parent_state": "listed"})
+        assert f"of run {words}; listed here</dd>" in long, long
+        assert f'Family</dt><dd class="shep-v">run {words}</dd>' in long, long
+        assert "…" not in long
+        assert len(ml.run_words(None, run)) <= r.OPTION_CHARS and "…" in ml.run_words(None, run)
     # The frozen-backbone control is a task model with a frozen graph
     # backbone (ops-wiring round, decision F1), from its record's transfer.
     frozen = {**item, "task": "disease", "weight_transfer": {

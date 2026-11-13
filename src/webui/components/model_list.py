@@ -277,18 +277,19 @@ _RUN_ID = re.compile(r"_([0-9a-f]{6})$")
 _ARCHITECTURE_CHARS = 8
 
 
-def _run_parts(architecture: Any, run: Any, level: int = 0) -> Tuple[str, Optional[str]]:
+def _run_parts(architecture: Any, run: Any, level: int = 0, *,
+               fit: bool = True) -> Tuple[str, Optional[str]]:
     """A run as an option's two parts, the distinguishing token first: its
     name when it was given one, else its start time, else (a directory not
-    named by its start time) its whole name; then the architecture (past
-    `_ARCHITECTURE_CHARS` shortened in its middle; whole in the details), and
-    the start time after a name. An `architecture` of None is a run a record
-    names by its directory alone (a parent's, a family's root run): nothing
-    is said in its place. `level` tells alike runs apart
-    (`renderers.distinct_names`): 1 gives the time to the second, 2 adds the
-    run's own 6-hex id."""
-    arch = ("" if architecture is None
-            else r.middle_cut(r.architecture_label(architecture), _ARCHITECTURE_CHARS))
+    named by its start time) its whole name; then the architecture (for an
+    option, `fit`, past `_ARCHITECTURE_CHARS` shortened in its middle; whole
+    in the details), and the start time after a name. An `architecture` of
+    None is a run a record names by its directory alone (a parent's, a
+    family's root run): nothing is said in its place. `level` tells alike
+    runs apart (`renderers.distinct_names`): 1 gives the time to the second,
+    2 adds the run's own 6-hex id."""
+    label = "" if architecture is None else r.architecture_label(architecture)
+    arch = r.middle_cut(label, _ARCHITECTURE_CHARS) if fit else label
     started = r.run_started(run, seconds=level >= 1)
     if not started:
         return str(run), arch or None
@@ -300,7 +301,7 @@ def _run_parts(architecture: Any, run: Any, level: int = 0) -> Tuple[str, Option
     return started, f"{arch}{rid}".strip() or None
 
 
-def run_words(architecture: Any, run: Any) -> str:
+def run_words(architecture: Any, run: Any, *, fit: bool = True) -> str:
     """**A run as a person names it, its distinguishing token first**, on
     every page that names a run by its directory (the Run select, the
     Fine-tune base, the Training run view, a model's parent and family on
@@ -311,11 +312,18 @@ def run_words(architecture: Any, run: Any) -> str:
     directory not named by its start time is its whole name, "my-old-run ·
     HGT". A run a record names without its layout (`architecture` None: a
     parent's or a family's root run) is the same words without one,
-    "ui-live-stop-02 · 2026-10-24 17:39", "2026-10-24 16:38". One separator,
-    at most `renderers.OPTION_CHARS` characters (a long name or architecture
-    shortened in its middle); the run's directory is in the chosen item's
-    details."""
-    return r.fit_option(*_run_parts(architecture, run))
+    "ui-live-stop-02 · 2026-10-24 17:39", "2026-10-24 16:38". One separator.
+
+    Two lengths of the one rule: as an option or a list's title (`fit`, the
+    default), at most `renderers.OPTION_CHARS` characters, a long name or
+    architecture shortened in its middle, the run's directory in the chosen
+    item's details; in those details and a sentence naming the run (`fit`
+    False: Models' Parent and Family rows, Results' family scope), the same
+    parts whole, never an option's cut (the skill's §5, §8)."""
+    what, rest = _run_parts(architecture, run, fit=fit)
+    if fit:
+        return r.fit_option(what, rest)
+    return f"{what} · {rest}" if rest else what
 
 
 def runs_of(parents: Mapping[str, Any]) -> Dict[str, List[str]]:
