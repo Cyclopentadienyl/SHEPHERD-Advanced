@@ -15,8 +15,10 @@ Research › Prepare › Training: the run view (the ops-wiring round's B1b).
 - **the header says how the run viewed stands to the job**: the running
   job, the last job, a past run (while another runs), the latest run;
 - **empty states say what will appear and the next step** (the skill's §9;
-  BACKLOG 69): the chart region's line by cause, and an empty chart's own
-  line in place of its plot (the component's own rule: `test_webui_charts`).
+  BACKLOG 69): the chart region's line by cause (who starts a first run, to
+  a read-only request), and an empty chart's own line in place of its plot,
+  by cause too: a running job waits for its first validation, an ended run
+  logged none (the component's own rule: `test_webui_charts`).
 
 Module: tests/unit/test_training_console_runview.py
 """
@@ -34,6 +36,7 @@ from src.webui.components import model_list as ml  # noqa: E402
 from src.webui.components import renderers as r  # noqa: E402
 from src.webui.components import training_console as tc  # noqa: E402
 from tests.unit.test_training_page import (  # noqa: E402,F401 - fixtures
+    READ_ONLY,
     _metrics,
     _page,
     built,
@@ -259,17 +262,30 @@ def test_the_chart_regions_line_says_what_will_appear_and_the_next_step(runs, ro
     """The skill's §9, by cause: no run yet in the workspace; the job's run
     before its first epoch; a run that ended with no epoch, or with no run
     directory; a run no longer listed. Each says what will appear, or what to
-    do instead, with one action at most."""
+    do instead, with one action at most; with no run yet, the action is said
+    to an operator, and who takes it to a read-only request (whose Start is
+    locked: a refusal says who can act). The figure's own line before the
+    page's first render is the same for every viewer: it loads."""
     empty = tc.workspace_state("scratch_ws")
     assert empty["runs"] == [] and tc._current_run({"status": "idle"}, empty, {}) is None
-    assert tc._chart_token(None, {}) == {"run": None, "rev": 0, "empty": tc.NO_RUN_YET}
-    assert "Start" in tc.NO_RUN_YET and "appear here" in tc.NO_RUN_YET
+    assert tc._chart_token(None, {}, operator=True) == {"run": None, "rev": 0,
+                                                        "empty": tc.NO_RUN_YET}
+    assert tc._chart_token(None, {}, operator=False) == {"run": None, "rev": 0,
+                                                         "empty": tc.NO_RUN_YET_READ_ONLY}
+    assert "Start one with ▸ Start" in tc.NO_RUN_YET and "appear here" in tc.NO_RUN_YET
+    assert tc.NO_RUN_YET_READ_ONLY.endswith("An operator starts one with ▸ Start.")
+    assert "Start one" not in tc.NO_RUN_YET_READ_ONLY and "appear here" in tc.NO_RUN_YET_READ_ONLY
+    monkeypatch.delenv("SHEPHERD_DEPLOYMENT_MODE", raising=False)
+    refused = _pieces(empty, {}, READ_ONLY)
+    assert refused["charts"]["empty"] == tc.NO_RUN_YET_READ_ONLY
+    assert refused["start"] == {"value": f"🔒 {tc.ACTION_LABELS['start']}", "interactive": False}
     _demo, _ctx, by_id = _page()
-    assert f'data-empty="{r.e(tc.NO_RUN_YET)}"' in by_id["shep-train-charts"].html_template
+    template = by_id["shep-train-charts"].html_template
+    assert f'data-empty="{r.e(tc.charts.LOADING)}"' in template and "Start" not in template
     never = tc.RunRef(id="demo/gatv2/never", label="gatv2/never", path=runs / "never",
                       workspace="demo", job=True, latest=False)
-    assert tc._chart_token(never, {}, live=True)["empty"] == tc.WAITING_FOR_EPOCH
-    assert tc._chart_token(never, {}, live=False)["empty"] == tc.NO_RUN_DIR_ENDED
+    assert tc._chart_token(never, {}, operator=True, live=True)["empty"] == tc.WAITING_FOR_EPOCH
+    assert tc._chart_token(never, {}, operator=True, live=False)["empty"] == tc.NO_RUN_DIR_ENDED
     quiet = runs / "20261024-000000_quiet_dddddd"
     (quiet / "logs").mkdir(parents=True)
     (quiet / "logs" / "train_20261024_000000.json").write_text(
@@ -290,11 +306,18 @@ def test_an_empty_chart_says_its_own_line_and_draws_no_plot_or_axis_label():
     """BACKLOG 69: an empty chart kept its full height, an axis label alone
     under a blank box. Each spec without a series carries its line, which the
     module shows in place of the plot and its axis label (the chart
-    component's tests); a drawn chart carries none."""
-    waiting = {c["id"]: c for c in tc.training_charts(
-        {"train": _metrics(2)["train"], "validation": []})}
+    component's tests); a drawn chart carries none. Before a first
+    validation, the line is the cause's: the running job's two validation
+    charts wait for it; a run that ended without one (stopped or failed
+    first, or validating less often than it trained) logged none, and no
+    promise is made of it."""
+    no_validation = {"train": _metrics(2)["train"], "validation": []}
+    waiting = {c["id"]: c for c in tc.training_charts(no_validation, live=True)}
     assert waiting["mrr"]["empty"] == waiting["hits"]["empty"] == tc.WAITING_FOR_VALIDATION
     assert "empty" not in waiting["loss"] and "empty" not in waiting["lr"]
+    ended = {c["id"]: c for c in tc.training_charts(no_validation, live=False)}
+    assert ended["mrr"]["empty"] == ended["hits"]["empty"] == tc.NO_VALIDATION_LOGGED
+    assert "once" not in tc.NO_VALIDATION_LOGGED
     no_lr = {c["id"]: c for c in tc.training_charts(
         {"train": [{"epoch": 0, "train_loss": 1.0}], "validation": []})}
     assert no_lr["lr"]["empty"] == tc.NOT_IN_THE_LOG == "Not recorded in this run’s log."
@@ -303,3 +326,25 @@ def test_an_empty_chart_says_its_own_line_and_draws_no_plot_or_axis_label():
     assert "empty" not in other["mrr"] and "charted" in other["mrr"]["title"]  # its title says it
     drawn = {c["id"]: c for c in tc.training_charts(_metrics(3))}
     assert not [c for c in drawn.values() if "empty" in c]
+
+
+def test_a_listed_run_that_ended_before_its_first_validation_says_it_logged_none(
+        runs, monkeypatch):
+    """B1b makes any listed run viewable: one that ended with train entries
+    and no validation entry draws its Loss and learning rate, and its two
+    validation charts say it logged none; the training job's run, while it
+    logs, says they are drawn once it validates (`_logging_now`, the
+    region's own test)."""
+    run = runs / "20261010-000000_novalid_eeeeee"
+    (run / "logs").mkdir(parents=True)
+    (run / "logs" / "train_20261010_000000.json").write_text(
+        json.dumps({"train": _metrics(2)["train"], "validation": []}))
+    token = {"run": f"demo/gatv2/{run.name}", "rev": 2}
+    _job(monkeypatch, runs, {**RUNNING, "status": "completed"})
+    ended = {c["id"]: c for c in tc.training_chart_series(token)["charts"]}
+    assert ended["mrr"]["empty"] == ended["hits"]["empty"] == tc.NO_VALIDATION_LOGGED
+    assert ended["loss"]["series"] and ended["lr"]["series"]
+    _job(monkeypatch, runs, RUNNING)
+    monkeypatch.setattr(tc.training_manager, "run_dir", run)
+    live = {c["id"]: c for c in tc.training_chart_series(token)["charts"]}
+    assert live["mrr"]["empty"] == live["hits"]["empty"] == tc.WAITING_FOR_VALIDATION

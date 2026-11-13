@@ -106,9 +106,11 @@ the wide layout and, in the narrow one, from about 1000 px of its own width
 (`charts.TWO_COLUMNS_FROM`); the data from the run's metrics log through the
 component's server functions), each plot at least `PLOT_MIN_HEIGHT` px, the
 plots' body scrolling under the toolbar's own row when they do not fit. An
-empty region says what will appear and the next step (`NO_RUN_YET`,
-`WAITING_FOR_EPOCH`, `NO_EPOCH_LOGGED`, …), and an empty chart its own line
-in place of its plot.
+empty region says what will appear and the next step (`NO_RUN_YET`, or who
+takes it to a read-only request, `NO_RUN_YET_READ_ONLY`; `WAITING_FOR_EPOCH`,
+`NO_EPOCH_LOGGED`, …), and an empty chart its own line in place of its plot
+(`WAITING_FOR_VALIDATION` while the job's run logs, `NO_VALIDATION_LOGGED`
+once a run ended without one).
 
 **Per browser session, no module state:** the selection, the run viewed's
 choice, the drawer, the last values sent and the banners a session dismissed
@@ -1763,7 +1765,7 @@ def run_head_html(run: Optional[RunRef], ws: Mapping[str, Any], *, operator: boo
     (the run's directory, its checkpoint and logs, the dataset fingerprint it
     used; its workspace when it is not the run bar's), is in Details. `live`:
     the run viewed is the training job, running. With no run, nothing: the
-    chart region says what will appear and how (`NO_RUN_YET`)."""
+    chart region says what will appear and how (`NO_RUN_YET`, `NO_RUN_YET_READ_ONLY`)."""
     if run is None:
         return ""
     label = str(run["label"])
@@ -1940,16 +1942,19 @@ def _has_value(values: Sequence[Any]) -> bool:
 
 #: A chart's own line when it has nothing to draw, in place of its plot and
 #: axis label (BACKLOG 69: it kept its whole height, its axis label alone
-#: under an empty box): before the run's first validation, what its two
-#: validation charts will draw and when; a figure this run's log does not
-#: hold, that it is not recorded there. The whole figure's line, when no
-#: chart has anything, is the chart region's (`_chart_token`,
+#: under an empty box), by cause: before the running job's first validation,
+#: what its two validation charts will draw and when; a run that ended with
+#: no validation logged (stopped or failed before its first, or validating
+#: less often than it trained), that it logged none; a figure this run's log
+#: does not hold, that it is not recorded there. The whole figure's line,
+#: when no chart has anything, is the chart region's (`_chart_token`,
 #: `training_chart_series`).
 WAITING_FOR_VALIDATION = "Drawn once the run logs its first validation."
+NO_VALIDATION_LOGGED = "This run logged no validation."
 NOT_IN_THE_LOG = f"{r.NOT_RECORDED} in this run’s log."
 
 
-def training_charts(history: Mapping[str, Any]) -> List[Dict[str, Any]]:
+def training_charts(history: Mapping[str, Any], *, live: bool = False) -> List[Dict[str, Any]]:
     """The four chart specs from a metrics history (`get_metrics_history`):
     Loss (train, and validation where the run logs one: ``val_loss``, a
     base's ``val_lp_loss``), the Trainer's validation figure and its
@@ -1958,8 +1963,10 @@ def training_charts(history: Mapping[str, Any]) -> List[Dict[str, Any]]:
     pooled top-k; for a log holding neither, titles that say no figure is
     charted), and the learning rate on a log axis. A series with no value yet
     is left out, so no chart draws a figure the run does not log; a chart
-    left with none says why in its own line (`WAITING_FOR_VALIDATION`,
-    `NOT_IN_THE_LOG`; the generic state's titles say it themselves)."""
+    left with none says why in its own line (`WAITING_FOR_VALIDATION` while
+    the run is `live`, the training job's run still logging, else
+    `NO_VALIDATION_LOGGED`; `NOT_IN_THE_LOG`; the generic state's titles say
+    it themselves)."""
     train = [e for e in history.get("train") or [] if isinstance(e, Mapping)]
     val = [e for e in history.get("validation") or [] if isinstance(e, Mapping)]
     specs = []
@@ -1979,7 +1986,8 @@ def training_charts(history: Mapping[str, Any]) -> List[Dict[str, Any]]:
     figure_title, figure, others_title, others = VALIDATION_CHARTS[kind]
     if not isinstance(others, tuple):
         others = _k_series(val, others, "top-")
-    waiting = {"none": WAITING_FOR_VALIDATION, "other": None}.get(kind, NOT_IN_THE_LOG)
+    waiting = {"none": WAITING_FOR_VALIDATION if live else NO_VALIDATION_LOGGED,
+               "other": None}.get(kind, NOT_IN_THE_LOG)
     specs.append(spec("loss", CHART_TITLES["loss"],
                       [("train", _by_epoch(train, "total", "train_loss")),
                        ("validation", _by_epoch(val, "val_loss", "val_lp_loss"))]))
@@ -1997,11 +2005,15 @@ def _rows(history: Mapping[str, Any]) -> int:
 
 #: **The chart region's line when it has nothing to draw**, by cause (the
 #: skill's §9: what will appear and the next step, one action at most): no
-#: run yet in the run bar's workspace; the training job's run before its first
-#: epoch is logged; a run that ended without logging one, or without making
-#: its run directory (refused first); a run the server no longer lists.
+#: run yet in the run bar's workspace (its next step said to an operator, and
+#: who takes it to a read-only request, whose Start is locked); the training
+#: job's run before its first epoch is logged; a run that ended without
+#: logging one, or without making its run directory (refused first); a run the
+#: server no longer lists.
 NO_RUN_YET = ("No run in this workspace yet: its curves appear here after its first epoch. "
               "Start one with ▸ Start.")
+NO_RUN_YET_READ_ONLY = ("No run in this workspace yet: its curves appear here after its first "
+                        "epoch. An operator starts one with ▸ Start.")
 WAITING_FOR_EPOCH = "No epoch logged yet: the curves appear here when the run’s first epoch ends."
 NO_EPOCH_LOGGED = "This run logged no epoch, so it has no curves: choose another run in Viewing."
 NO_RUN_DIR_ENDED = ("This run has no run directory, so it logged no epoch: choose another run "
@@ -2026,7 +2038,8 @@ def training_chart_series(data: Any) -> Dict[str, Any]:
     token names, if the server lists that run (`resolve_run`; never a path),
     read from the run's metrics log; when it logged no epoch, the region's
     line says whether one is still to come (`WAITING_FOR_EPOCH`) or not
-    (`NO_EPOCH_LOGGED`). Not an operator control: the metrics log is not
+    (`NO_EPOCH_LOGGED`), and so do its validation charts before a first
+    validation (`training_charts`). Not an operator control: the metrics log is not
     checkpoint inspection."""
     t = charts.token_from(data)
     run_id = t.get("run")
@@ -2034,8 +2047,9 @@ def training_chart_series(data: Any) -> Dict[str, Any]:
     if path is None:
         return charts.figure_payload(None, 0, [], empty=NO_LONGER_LISTED)
     history = training_manager.get_metrics_history(path)
-    return charts.figure_payload(run_id, _rows(history), training_charts(history),
-                                 empty=WAITING_FOR_EPOCH if _logging_now(path) else NO_EPOCH_LOGGED)
+    live = _logging_now(path)
+    return charts.figure_payload(run_id, _rows(history), training_charts(history, live=live),
+                                 empty=WAITING_FOR_EPOCH if live else NO_EPOCH_LOGGED)
 
 
 def _metrics_csv_text(history: Mapping[str, Any]) -> str:
@@ -2072,16 +2086,17 @@ def training_chart_csv(data: Any) -> Dict[str, Any]:
 
 
 def _chart_token(run: Optional[RunRef], cache: Dict[str, Any], *,
-                 live: bool = False) -> Dict[str, Any]:
+                 operator: bool, live: bool = False) -> Dict[str, Any]:
     """The component's token for the run viewed: its id and how many rows its
     metrics log holds, counted again only when the log file changed (a stat).
     No run, and a run whose directory does not exist, are not asked for (the
     component would say "no longer listed" of a run that was never listed):
     the token's line says why there is nothing and what comes next
-    (`NO_RUN_YET`; `WAITING_FOR_EPOCH` while the training job, `live`, has
-    not made it yet; `NO_RUN_DIR_ENDED`)."""
+    (`NO_RUN_YET` to an `operator`, `NO_RUN_YET_READ_ONLY` to a request D8
+    refuses; `WAITING_FOR_EPOCH` while the training job, `live`, has not made
+    it yet; `NO_RUN_DIR_ENDED`)."""
     if run is None:
-        return charts.token(None, 0, empty=NO_RUN_YET)
+        return charts.token(None, 0, empty=NO_RUN_YET if operator else NO_RUN_YET_READ_ONLY)
     try:
         exists = Path(run["path"]).is_dir()
     except OSError:
@@ -2269,7 +2284,7 @@ def render(ws: Optional[Mapping[str, Any]], mode: Optional[Mapping[str, Any]],
         # listing a workspace's runs is not checkpoint inspection).
         "view": (tuple(view_choices(ws, _runs_of(ws, cache), run)),
                  run["id"] if run is not None else None),
-        "charts": _chart_token(run, cache, live=live),
+        "charts": _chart_token(run, cache, operator=access.allowed, live=live),
         "drawer_reason": (f'<div class="shep-drawer-why">{view["drawer_reason"]}</div>'
                           if view["drawer_reason"] else ""),
         "training_workspace": ws.get("name"),
@@ -3606,7 +3621,8 @@ def create_training_tab(ctx: Any) -> None:
                                           js_on_load=_POPOVER_JS)
                 figure = charts.chart_figure(
                     key="training", elem_id="shep-train-charts", series_fn=training_chart_series,
-                    csv_fn=training_chart_csv, help_key="training-charts", empty=NO_RUN_YET)
+                    csv_fn=training_chart_csv, help_key="training-charts",
+                    empty=charts.LOADING)
                 resources = plain_html(_IDLE_RESOURCE_HTML, elem_id="resource_display")
 
     # =========================================================================

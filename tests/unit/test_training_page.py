@@ -751,13 +751,14 @@ def test_the_chart_token_counts_rows_again_only_when_the_log_changed(root, monke
         return original(run_dir)
 
     monkeypatch.setattr(tc.training_manager, "get_metrics_history", counted)
-    assert tc._chart_token(run, cache) == {"run": run["id"], "rev": 12}
-    assert tc._chart_token(run, cache) == {"run": run["id"], "rev": 12}
+    assert tc._chart_token(run, cache, operator=True) == {"run": run["id"], "rev": 12}
+    assert tc._chart_token(run, cache, operator=False) == {"run": run["id"], "rev": 12}
     assert len(reads) == 1
     log = run["path"] / "logs" / "train_20261018_142000.json"
     log.write_text(json.dumps(_metrics(7)))
-    assert tc._chart_token(run, cache)["rev"] == 14 and len(reads) == 2
-    assert tc._chart_token(None, cache) == {"run": None, "rev": 0, "empty": tc.NO_RUN_YET}
+    assert tc._chart_token(run, cache, operator=True)["rev"] == 14 and len(reads) == 2
+    assert tc._chart_token(None, cache, operator=True) == {"run": None, "rev": 0,
+                                                           "empty": tc.NO_RUN_YET}
 
 
 def test_the_used_dataset_fingerprint_is_an_operators_and_compared_in_full():
@@ -1646,11 +1647,11 @@ def test_a_run_with_no_run_directory_is_not_called_no_longer_listed(root):
     run = tc.RunRef(id="demo/gatv2/never", label="gatv2/never",
                     path=root / "demo" / "runs" / "gatv2" / "never", workspace="demo", job=True,
                     latest=False)
-    ended = tc._chart_token(run, {}, live=False)
+    ended = tc._chart_token(run, {}, operator=True, live=False)
     assert ended == {"run": None, "rev": 0, "empty": tc.NO_RUN_DIR_ENDED}
     assert "no longer listed" not in tc.NO_RUN_DIR_ENDED and "no run directory" in tc.NO_RUN_DIR_ENDED
-    assert tc._chart_token(run, {}, live=True) == {"run": None, "rev": 0,
-                                                   "empty": tc.WAITING_FOR_EPOCH}
+    assert tc._chart_token(run, {}, operator=True, live=True) == {
+        "run": None, "rev": 0, "empty": tc.WAITING_FOR_EPOCH}
     failed = {"status": "failed"}
     for operator in (True, False):
         snap = tc.run_snapshot_html(run, failed, operator=operator, snapshot=None)

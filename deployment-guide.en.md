@@ -3452,9 +3452,11 @@ gone), and its Loss and learning-rate charts are drawn as for any run. Each plot
 area of at least 170 px: at 1850 × 960 the four fit with their axes; a smaller window scrolls
 the plots under the chart toolbar, which is a row of its own and never covers a plot. An empty
 chart says its own line in place of its plot and axis label ("Drawn once the run logs its first
-validation." before the first validation; "Not recorded in this run's log." for a figure the log
-does not hold), and a figure with nothing to draw says what will appear and what to do: "No run
-in this workspace yet: its curves appear here after its first epoch. Start one with ▸ Start.",
+validation." while the running job has not validated yet; "This run logged no validation." for a
+run that ended without one; "Not recorded in this run's log." for a figure the log does not
+hold), and a figure with nothing to draw says what will appear and what to do: "No run in this
+workspace yet: its curves appear here after its first epoch. Start one with ▸ Start." (to a
+read-only browser, "… An operator starts one with ▸ Start."),
 "No epoch logged yet: the curves appear here when the run's first epoch ends.", "This run logged
 no epoch, so it has no curves: choose another run in Viewing.", or that the run has no run
 directory, or is no longer listed. Under it, the resources line (GPU and memory).

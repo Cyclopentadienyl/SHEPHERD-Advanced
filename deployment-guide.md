@@ -3453,10 +3453,12 @@ LP accuracy，再畫 ROC-AUC 與 AP；任務模型畫 pooled MRR，再畫 pooled
 Export CSV has every logged figure」與「No further figure charted」（自 K8-7b，2026-11-08 起；
 它的 MRR 與 Hits@K 圖已移除），它的 Loss 與 learning rate 圖則與任何 run 一樣畫出。每張圖的繪圖區
 至少 170 px：在 1850 × 960 下四張圖連同座標軸都放得下；較小的視窗則讓圖在圖表工具列下方捲動，
-工具列自成一列，從不蓋住任何圖。沒有資料的圖以自己的一行文字取代繪圖區與座標軸標籤（第一次驗證
-之前是「Drawn once the run logs its first validation.」；日誌裡沒有的數值是「Not recorded in this
-run's log.」），整個圖區沒有可畫的東西時，說明會出現什麼、下一步做什麼：「No run in this workspace
-yet: its curves appear here after its first epoch. Start one with ▸ Start.」、「No epoch logged
+工具列自成一列，從不蓋住任何圖。沒有資料的圖以自己的一行文字取代繪圖區與座標軸標籤（執行中的工作
+還沒驗證時是「Drawn once the run logs its first validation.」；已結束而沒有驗證的 run 是「This run
+logged no validation.」；日誌裡沒有的數值是「Not recorded in this run's log.」），整個圖區沒有可畫的
+東西時，說明會出現什麼、下一步做什麼：「No run in this workspace yet: its curves appear here after
+its first epoch. Start one with ▸ Start.」（唯讀瀏覽器看到的是「… An operator starts one with ▸
+Start.」）、「No epoch logged
 yet: the curves appear here when the run's first epoch ends.」、「This run logged no epoch, so it
 has no curves: choose another run in Viewing.」，或該 run 沒有 run 目錄、已不在清單上。圖下是
 資源列（GPU 與記憶體）。
