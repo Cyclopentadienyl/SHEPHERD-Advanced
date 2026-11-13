@@ -550,7 +550,8 @@ def _on_finetune_start(request: gr.Request, ws, parents, key, tasks, device, run
     """Start: an operator control (D8), checked first on this event's own
     request; then the Fine-tune start (`_start`) with the settings' fields'
     `values`, in `FINETUNE_FIELDS` order, and `touched`, the form's record of
-    the fields the operator touched.
+    the fields the operator touched, as this click's own request carries it
+    (`training_console.touched_record`).
 
     Returns the notice: the refusal, inline and escaped, or nothing once
     started (the card shows the job).
@@ -606,7 +607,7 @@ def _start(ws, parents, key, tasks, device, run_name, values: Mapping[str, Any],
     if not chosen:
         return "Not started: choose at least one task."
     settings, problems = tc.sent_settings(
-        {name: values[name] for name in FINETUNE_FIELDS}, touched or (),
+        {name: values[name] for name in FINETUNE_FIELDS}, tc.touched_keys(touched),
         {name: FINETUNE[name] for name in FINETUNE_FIELDS})
     if problems:
         return "Not started: " + " ".join(problems)
@@ -719,8 +720,6 @@ def create_finetune_page(ctx: Any) -> None:
     parents = gr.State({})
     mode = gr.State({})
     cache = gr.State({})
-    # The form's record of the fields the operator touched (decision S2).
-    touched = gr.State([])
 
     with gr.Row(elem_id="shep-ft-row", elem_classes=["shep-page", "shep-ft"], equal_height=False):
         # ------------------------------------------------------------- the form
@@ -812,11 +811,12 @@ def create_finetune_page(ctx: Any) -> None:
     checkpoint.change(**base_step)
     fields["frozen_parts"].change(freeze_note_html, inputs=[fields["frozen_parts"]],
                                   outputs=[freeze_note], show_progress="hidden")
-    # Explicit is what the operator touched (decision S2): each field's input
-    # records it, and Start sends what is recorded.
+    # Explicit is what the operator touched (decision S2): the form's record,
+    # the browser's (`training_console.touched_record`), which Start's own
+    # request carries; each field's input adds it there.
+    touched = tc.touched_record("ft_touched")
     for name in FINETUNE_FIELDS:
-        fields[name].input(tc.touch_listener(name), inputs=[touched], outputs=[touched],
-                           queue=False, show_progress="hidden")
+        tc.record_touches(fields[name], name, touched)
 
     start.click(_on_finetune_start,
                 inputs=[ws, parents, checkpoint, tasks, device, run_name, touched,

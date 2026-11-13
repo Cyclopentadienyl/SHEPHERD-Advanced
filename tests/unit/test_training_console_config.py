@@ -221,23 +221,58 @@ def test_start_takes_compile_from_the_runtime_settings(listed, started, monkeypa
     assert started[-1]["compile"] is True
 
 
-def test_each_fields_input_records_it_and_reset_clears_the_record():
+def test_each_fields_input_says_the_line_and_reset_clears_the_record():
     """Decision S2: a field's input (never a page's write) adds it to the
-    form's record and says the line again; Reset to reference clears the
-    record, writes every field's starting value and says the line again."""
+    form's record, in the browser (`TOUCH_JS`), and says the line from the
+    record with it; Reset to reference clears the record, writes every
+    field's starting value and says the line again."""
     listener = tc._base_input_listener("num_epochs")
-    touched, line = listener(["seed"], *_form(num_epochs=5))
-    assert touched == ["num_epochs", "seed"]
-    assert line == tc.set_by_you_html(_values(num_epochs=5), touched)
+    line = listener(["seed"], *_form(num_epochs=5))
+    assert line == tc.set_by_you_html(_values(num_epochs=5), ["num_epochs", "seed"])
     assert "Epochs 5 (reference 200)" in line and "Seed 1 (reference 1)" in line
+    # The record already holding the key (the browser added it first): the same line.
+    assert listener(["num_epochs", "seed"], *_form(num_epochs=5)) == line
     assert tc.touched_with(None, "encoder.layers") == ["encoder.layers"]
     assert tc.touched_with(["a"], "a") == ["a"]
-    assert tc.touch_listener("seed")(["num_epochs"]) == ["num_epochs", "seed"]
     reset = tc._on_base_reset()
     assert reset[0] == [] and reset[1] == tc.set_by_you_html(_values(), [])
     assert "Set by you: nothing" in reset[1]
     assert [update["value"] for update in reset[2:]] == list(tc.base_form_defaults())
     assert len(reset[2:]) == len(tc.base_form_keys())
+
+
+def test_the_record_is_read_as_data_from_the_request(listed, started):
+    """The record is the browser's (`touched_record`), carried by Start's own
+    request: a list's strings are its keys; anything else is no key, so a
+    request the page did not send cannot make a substring or a mapping
+    "touched"."""
+    assert tc.touched_keys(["num_epochs", "seed", 3, None]) == {"num_epochs", "seed"}
+    for odd in (None, "num_epochs, seed", {"num_epochs": True}, 5):
+        assert tc.touched_keys(odd) == set()
+        assert tc._on_start(OP, WS, "", "cpu", odd, *_form(num_epochs=5, seed=3)) == ""
+        assert _sent(started[-1]) == {}
+    assert tc.touched_with("num_epochs", "seed") == ["seed"]
+
+
+def test_the_touch_script_adds_the_key_once_in_the_browser():
+    """`TOUCH_JS` (a field's input, run in the browser before Start's click is
+    sent): the record's keys and the key, each once, in order, returned as
+    the listener's one output; a record that is not a list starts empty."""
+    import json
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    script = tc.TOUCH_JS.replace("{key}", json.dumps("num_epochs"))
+    program = (f"const f = {script};"
+               "console.log(JSON.stringify([f(['seed']), f(['num_epochs', 'a']), f(null),"
+               " f('x')]));")
+    result = subprocess.run([node, "-e", program], capture_output=True, text=True, timeout=30,
+                            check=True)
+    assert json.loads(result.stdout) == [[["num_epochs", "seed"]], [["a", "num_epochs"]],
+                                         [["num_epochs"]], [["num_epochs"]]]
 
 
 def test_the_line_says_what_the_operator_set_with_the_value_the_run_takes_without_it():

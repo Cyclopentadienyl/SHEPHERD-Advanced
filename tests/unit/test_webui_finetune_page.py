@@ -29,6 +29,7 @@ Module: tests/unit/test_webui_finetune_page.py
 """
 from __future__ import annotations
 
+import json
 import re
 import shutil
 
@@ -682,12 +683,16 @@ def test_the_page_follows_the_contract():
     assert start.inputs[-len(fp.FINETUNE_FIELDS):] == [
         by_id[f"ft_{name}"] for name in fp.FINETUNE_FIELDS]
     # Explicit is what the operator touched (decision S2): each field's input
-    # (never its change) adds it to the form's record, which Start takes.
+    # (never its change) adds it to the form's record in the browser (the
+    # shared `record_touches`), which Start's own request carries.
     touched = start.inputs[-len(fp.FINETUNE_FIELDS) - 1]
+    assert touched is by_id["ft_touched"] and isinstance(touched, gr.JSON)
+    assert touched.visible is False and touched.value == []
     for name in fp.FINETUNE_FIELDS:
         field = by_id[f"ft_{name}"]
         (listener,) = [fn for fn in fns if (field._id, "input") in fn.targets]
-        assert listener.inputs == [touched] and listener.outputs == [touched]
-        assert listener.fn(["x"]) == sorted({"x", name}) and listener.queue is False
+        assert listener.fn is None and listener.inputs == [touched] == listener.outputs
+        assert listener.js == tc.TOUCH_JS.replace("{key}", json.dumps(name))
+        assert listener.queue is False
     for gone in ("ft_learning_rate", "ft_batch_size", "ft_task_loss_weight"):
         assert gone not in by_id

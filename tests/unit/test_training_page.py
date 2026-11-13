@@ -204,24 +204,32 @@ def test_the_form_is_what_a_new_base_takes_common_settings_first():
 
 def test_each_fields_input_records_it_and_reset_and_the_guards_are_wired():
     """Decision S2: each field's ``.input`` (never ``.change``, which a page's
-    own write fires too) records it in the session's record and says the
-    line; Reset writes the record, the line and every field; the guards'
-    change shows what depends on them; Start takes the record and every
-    field. None of these waits for the queue."""
+    own write fires too) adds it to the form's record in the browser first
+    (`record_touches`: no request), then says the line, its last input always
+    said ("always_last"); the record is a hidden JSON that Start's own
+    request carries with every field, so what Start sends is read from the
+    click's payload alone. Reset writes the record, the line and every
+    field; the guards' change shows what depends on them. None of these
+    waits for the queue."""
+    import json
+
     demo, _ctx, by_id = _page()
     keys = tc.base_form_keys()
     fields = [by_id[key] if key in by_id else by_id[f"spec-{key.replace('.', '-')}"]
               for key in keys]
     fns = list(demo.fns.values())
-    inputs = {target[0]: fn for fn in fns for target in fn.targets if target[1] == "input"}
     setby = by_id["shep-train-setby"]
-    touched = None
+    touched = by_id["shep-train-touched"]
+    assert isinstance(touched, gr.JSON) and touched.visible is False and touched.value == []
     for key, field in zip(keys, fields, strict=True):
-        fn = inputs[field._id]
-        assert fn.outputs[1] is setby and fn.inputs[1:] == fields and fn.queue is False
-        touched = touched or fn.inputs[0]
-        assert fn.inputs[0] is touched and fn.outputs[0] is touched
-        assert fn.fn(["x"], *tc.base_form_defaults())[0] == sorted({"x", key})
+        record, line = [fn for fn in fns if (field._id, "input") in fn.targets]
+        assert record.fn is None and record.inputs == [touched] == record.outputs
+        assert record.js == tc.TOUCH_JS.replace("{key}", json.dumps(key))
+        assert record.queue is False and record.trigger_mode == "multiple"
+        assert line.outputs == [setby] and line.inputs == [touched, *fields]
+        assert line.queue is False and line.trigger_mode == "always_last"
+        assert line.fn(["x"], *tc.base_form_defaults()) == tc.set_by_you_html(
+            dict(zip(keys, tc.base_form_defaults(), strict=True)), sorted({"x", key}))
     assert not [fn for fn in fns if any(target[1] == "change" and target[0] in
                                         {f._id for f in fields} for target in fn.targets)
                 and fn.fn is not tc._on_base_guards]
@@ -234,6 +242,9 @@ def test_each_fields_input_records_it_and_reset_and_the_guards_are_wired():
     assert {target[1] for target in guards.targets} == {"change"}
     (start,) = [fn for fn in fns if fn.fn is tc._on_start]
     assert start.inputs[3] is touched and start.inputs[4:] == fields
+    # No record on the server: no State is written by a field's input.
+    assert not [fn for fn in fns if any(isinstance(block, gr.State) for block in fn.outputs)
+                and any((f._id, "input") in fn.targets for f in fields)]
 
 
 def test_the_page_uses_the_shells_timers_without_the_queue_and_none_of_its_own():
@@ -917,7 +928,7 @@ def test_the_header_chips_follow_the_gpu_slot_on_the_tick_that_sees_it_change(
     monkeypatch.setattr(tc.training_manager, "get_test_status",
                         lambda: {"status": "running", "inputs": {"version_label": "v"}})
     demo, ctx, _by_id = _page()
-    poll_fn = next(fn for fn in demo.fns.values() if fn.fn.__name__ == "_poll")
+    poll_fn = next(fn for fn in demo.fns.values() if fn.fn is tc._poll)
     assert poll_fn.outputs[2] is ctx.chips
     ws = tc.workspace_state("demo")
     first = tc._poll(shell.TRAINING, ws, {}, {}, [], {}, operator)

@@ -53,8 +53,10 @@ field's help is behind the shared ⓘ (`FIELD_HELP`: its field spec's
 description, the value the run takes without it and its source); a format,
 a unit or "off" is said under the field (`FIELD_FORMATS`). **Explicit is what
 the operator touched** (decision S2): each field's input records it in the
-session's ``touched`` state, Reset to reference clears it, and the line
-under the form says what is set ("Set by you: Epochs 5 (reference 200)").
+form's record, held in the browser and carried by Start's own request
+(`touched_record`), Reset to reference clears it, and the line under the
+form says what is set ("Set by you: Epochs 5 (reference 200)", the first
+few named and every one under its Details).
 Start sends ``learning_stage="base"``, the settings touched that the run
 reads, whatever their value, and the model spec whole when a field of it was
 touched (`base_start_settings`); each value is checked first by its field
@@ -428,22 +430,53 @@ def setting_problem(name: str, value: Any, reference: Any) -> Tuple[Any, Optiona
     return parsed, (_named(name, problem, label) if problem else None)
 
 
+def touched_keys(touched: Any) -> frozenset:
+    """**A form's record of the fields the operator touched, as a request
+    carries it** (decision S2: explicit is what the operator touched): its
+    keys, each a setting or a model spec field's path. The record is the
+    browser's (`touched_record`), so it is read as data: a list's strings;
+    anything else is no key."""
+    if not isinstance(touched, (list, tuple)):
+        return frozenset()
+    return frozenset(key for key in touched if isinstance(key, str))
+
+
 def touched_with(touched: Any, key: str) -> List[str]:
-    """A form's record of the fields the operator touched (decision S2:
-    explicit is what the operator touched), with `key`, a setting or a model
-    spec field's path, added: what a field's input adds (`.input`: the
-    operator's own edit, never a value a page writes, such as Reset's)."""
-    return sorted({*(touched or ()), key})
+    """A form's record (`touched_keys`) with `key` added: the record a
+    field's input leaves (`TOUCH_JS`), which the base form's line on what the
+    operator set is said from (`_base_input_listener`)."""
+    return sorted({*touched_keys(touched), key})
 
 
-def touch_listener(key: str) -> Callable[[Any], List[str]]:
-    """The input listener of `key`'s field on a form whose record of what
-    the operator touched is all it keeps (the Fine-tune page's): the record
-    with `key` added (`touched_with`)."""
-    def on_input(touched: Any) -> List[str]:
-        return touched_with(touched, key)
+#: **A field's input adds its key to its form's record, in the browser**
+#: (`record_touches`; ``{key}`` is the key as a JSON string): the record's
+#: keys and the key, each once, in order. Returned in a list, the listener's
+#: one output (Gradio reads a returned array as the outputs).
+TOUCH_JS = ("(touched) => [[...new Set([...(Array.isArray(touched) ? touched : []), {key}])]"
+            ".sort()]")
 
-    return on_input
+
+def touched_record(elem_id: str) -> Any:
+    """**A form's record of the fields the operator touched** (decision S2),
+    held in the browser: a hidden JSON list, empty at first and again after
+    Reset, that each field's input adds its key to there (`record_touches`),
+    with no request of its own, and that Start's own request carries beside
+    the fields' values. What Start sends is therefore read from the click's
+    own payload alone, never from a state another request writes on the
+    server (the base form's and the Fine-tune page's)."""
+    return gr.JSON(value=[], visible=False, elem_id=elem_id)
+
+
+def record_touches(field: Any, key: str, record: Any) -> None:
+    """`field`'s input (the operator's own edit: ``.input``, never
+    ``.change``, which a page's own write fires too) adds `key` to `record`
+    (`touched_record`) in the browser (`TOUCH_JS`), before any later click is
+    sent; every input does ("multiple"). Wire it before any other input
+    listener of `field`: the browser runs an event's listeners in order, so
+    they read the record with `key`."""
+    field.input(None, inputs=[record], outputs=[record],
+                js=TOUCH_JS.replace("{key}", json.dumps(key)), queue=False,
+                trigger_mode="multiple", show_progress="hidden")
 
 
 def sent_settings(values: Mapping[str, Any], touched: Collection[str],
@@ -757,25 +790,26 @@ def _on_base_guards(*values: Any) -> List[Any]:
     return [gr.update(visible=name not in unread) for name in dependent]
 
 
-def _base_input_listener(key: str) -> Callable[..., Tuple[List[str], str]]:
-    """The input listener of the base form's field `key`: the form's record
-    of what the operator touched with `key` added (`touched_with`), and the
-    line on what the operator set again (`set_by_you_html`). Its values are
-    the form's, in `base_form_keys` order."""
-    def on_input(touched: Any, *values: Any) -> Tuple[List[str], str]:
-        touched = touched_with(touched, key)
-        return touched, set_by_you_html(dict(zip(base_form_keys(), values, strict=True)),
-                                        touched)
+def _base_input_listener(key: str) -> Callable[..., str]:
+    """The line listener of the base form's field `key` (`set_by_you_html`),
+    on the field's input after the record has `key` (`record_touches`, wired
+    first; `touched_with` adds it all the same). Its values are the form's,
+    in `base_form_keys` order. It writes only the line, never the record,
+    which is the browser's: an answer that arrives late cannot undo a later
+    touch."""
+    def on_input(touched: Any, *values: Any) -> str:
+        return set_by_you_html(dict(zip(base_form_keys(), values, strict=True)),
+                               touched_with(touched, key))
 
     return on_input
 
 
 def _on_base_reset() -> Tuple[Any, ...]:
-    """Reset to reference: nothing touched, the line again, and every field
-    back at the value the run takes without it (`base_form_defaults`). The
-    values are a page's writes, so no field's input fires and none is
-    recorded as touched; the guards' change shows or hides what depends on
-    them."""
+    """Reset to reference: the form's record empty (`touched_record`), the
+    line again, and every field back at the value the run takes without it
+    (`base_form_defaults`). The values are a page's writes, so no field's
+    input fires and none is recorded as touched; the guards' change shows or
+    hides what depends on them."""
     defaults = base_form_defaults()
     return ([], set_by_you_html(dict(zip(base_form_keys(), defaults, strict=True)), []),
             *(gr.update(value=value) for value in defaults))
@@ -2305,7 +2339,8 @@ def _workspace_path(name: Any) -> Path:
 def _on_start(request: gr.Request, ws, run_name, device, touched, *values):
     """Start: an operator control (D8), checked first on this event's own
     request; then a new base run (`_start`). `touched` is the form's record
-    of the fields the operator touched; ``values`` are the base form's, in
+    of the fields the operator touched, as this click's own request carries
+    it (`touched_record`); ``values`` are the base form's, in
     `base_form_keys` order.
 
     Returns the notice (`notice_html`): the refusal, inline, or nothing once
@@ -2333,7 +2368,7 @@ def _start(ws, run_name, device, values, touched) -> str:
     if not row.get("trainable"):
         return f"Not started: {row.get('name')} is not trainable: {r.not_trainable_short(row)}."
     settings, problems = base_start_settings(
-        dict(zip(base_form_keys(), values, strict=True)), touched or ())
+        dict(zip(base_form_keys(), values, strict=True)), touched_keys(touched))
     if problems:
         return "Not started: " + " ".join(problems)
     from src.api.services.server_lists import ServerListRefused
@@ -3195,9 +3230,6 @@ def create_training_tab(ctx: Any) -> None:
     polled = gr.State({})
     dismissed = gr.State([])
     parents = gr.State({})
-    # The base form's record of the fields the operator touched (decision S2):
-    # only their input writes it, and Reset to reference.
-    touched = gr.State([])
 
     with gr.Column(elem_id="shep-train", elem_classes=["shep-train"]):
         # ------------------------------------------------------------- run bar
@@ -3367,12 +3399,19 @@ def create_training_tab(ctx: Any) -> None:
     # =========================================================================
     # Wiring
     # =========================================================================
-    # Explicit is what the operator touched (decision S2): each field's input
-    # (never a value a page writes) records it and says the line again; Reset
-    # to reference clears the record and writes every field's starting value.
+    # Explicit is what the operator touched (decision S2): the base form's
+    # record, the browser's (`touched_record`), which Start's own request
+    # carries. Each field's input (never a value a page writes) adds it there,
+    # then says the line again; the line's last input is always said
+    # ("always_last": an input while the one before is answered is sent after
+    # it, never dropped). Reset to reference clears the record and writes every
+    # field's starting value.
+    touched = touched_record("shep-train-touched")
     for key, field in zip(base_form_keys(), base_fields, strict=True):
+        record_touches(field, key, touched)
         field.input(_base_input_listener(key), inputs=[touched, *base_fields],
-                    outputs=[touched, set_by], queue=False, show_progress="hidden")
+                    outputs=[set_by], queue=False, trigger_mode="always_last",
+                    show_progress="hidden")
     reset_btn.click(_on_base_reset, inputs=None, outputs=[touched, set_by, *base_fields],
                     queue=False, show_progress="hidden")
     # A setting a rule across settings reads only under its guard is shown while
