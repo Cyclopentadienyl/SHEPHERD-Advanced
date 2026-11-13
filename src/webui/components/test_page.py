@@ -1256,20 +1256,36 @@ def _why_not_kept(state: Mapping[str, Any]) -> str:
     return str(state.get("why_kept") or "the registration's helper gave no reason")
 
 
-def _row_mode(run: Mapping[str, Any]) -> str:
-    """A report row's Measurement cell: its record's mode in this page's words
+def measurement_words(mode: Optional[str]) -> str:
+    """**A measurement as a run or its result names it** (the reports table's
+    report and job rows, the job card): its mode in this page's words
     (`_RESULT_WORDS`: "Disease task", "KG link prediction"), a mode this
-    version does not describe by its recorded code, "Mode not recorded" for a
-    record that names none; Unknown for a run whose record was not built (no
+    version does not describe by its recorded code, "Mode not recorded" for
+    none. The Measurement radio's options are the short `measurement_label`
+    ("Disease"), a choice's words."""
+    return _RESULT_WORDS.get(mode) or (
+        f"Mode {mode}, not described by this version" if mode else "Mode not recorded")
+
+
+def _row_mode(run: Mapping[str, Any]) -> str:
+    """A report row's Measurement cell: its record's mode
+    (`measurement_words`); Unknown for a run whose record was not built (no
     report kept, or one the scan could not read: the Result says why)."""
     record = run.get("record") if isinstance(run.get("record"), Mapping) else None
     if record is None:
         return r.status_mark("neutral", r.UNKNOWN)
     scoring = record.get("scoring") if isinstance(record.get("scoring"), Mapping) else {}
     mode = scoring.get("mode")
-    mode = mode if isinstance(mode, str) and mode.strip() else None
-    return e(_RESULT_WORDS.get(mode) or (
-        f"Mode {mode}, not described by this version" if mode else "Mode not recorded"))
+    return e(measurement_words(mode if isinstance(mode, str) and mode.strip() else None))
+
+
+def _job_measurement(protocol: Any) -> str:
+    """The measurement a test run was asked for (`inputs["protocol"]`, which
+    can differ from the model's task), in the words its report's row will
+    carry (`measurement_words`), or Not recorded."""
+    if isinstance(protocol, str) and protocol.strip():
+        return e(measurement_words(protocol))
+    return r.status_mark("neutral", r.NOT_RECORDED)
 
 
 def _listed_model(digest: Any, models: Mapping[str, Any]) -> Optional[Mapping[str, Any]]:
@@ -1369,9 +1385,7 @@ def _job_row(job: Mapping[str, Any], label: Any, run_ids: Sequence[str],
         css = "shep-test-rep-ended"
     else:
         return ""
-    protocol = inputs.get("protocol")
-    measured = (e(measurement_label(protocol)) if isinstance(protocol, str) and protocol.strip()
-                else r.status_mark("neutral", r.NOT_RECORDED))
+    measured = _job_measurement(inputs.get("protocol"))
     model = _model_cell(str(inputs.get("checkpoint_sha256") or "") or None, models, selection,
                         words)
     return (f'<tr class="{css}" aria-disabled="true"><td>{e(what)}</td><td>{model}</td>'
@@ -1729,38 +1743,54 @@ def job_head_html(job: Mapping[str, Any]) -> str:
     return head + "</div>"
 
 
+def job_inputs_html(job: Mapping[str, Any]) -> str:
+    """**What a test run was given, as its inputs recorded them**, in the one
+    summary list (the skill's §4, §5: a fact a row, never a chain of " · "):
+    its version (label and fingerprint), its model (its fingerprint, the one
+    digest value), its measurement (`_job_measurement`), its workspace, and
+    its register, determinism and device settings, its R10 evidence (by its
+    own kind, the runner's choice: none for a KG edge set or a generated
+    split) and its start. Drawn from the job alone, never from the selection
+    (the poll writes the card, `_card_outputs`), so a run keeps its own
+    identity while another model or version is chosen: these rows are the
+    run's, which can differ from the selection's (the skill's §1.2)."""
+    inputs = job.get("inputs") or {}
+    started = utc_time(job.get("start_time"))
+    evidence = inputs.get("evidence_dirs") or []
+    label = inputs.get("version_label")
+    version = (e(label) + " " + r.fingerprint_value(inputs.get("version_sha256"),
+                                                     what="version fingerprint", copy=False)
+               if label else r.status_mark("neutral", r.NOT_RECORDED))
+    workspace = Path(str(inputs.get("workspace") or "")).name
+    takes = protocols.takes_training_evidence(inputs.get("version_kind", protocols.SUPPLIED))
+    rows = [("Version", version),
+            ("Model", r.fingerprint_value(inputs.get("checkpoint_sha256"),
+                                          what="model fingerprint", copy=False)),
+            ("Measurement", _job_measurement(inputs.get("protocol"))),
+            ("Workspace", e(workspace) if workspace
+             else r.status_mark("neutral", r.NOT_RECORDED)),
+            ("Register", e(r.setting_words("record", bool(inputs.get("record"))))),
+            ("Deterministic algorithms",
+             e(r.setting_words("deterministic_algorithms", bool(inputs.get("deterministic"))))),
+            ("Device", f"<code>{e(inputs.get('device') or 'auto')}</code>"),
+            ("R10 evidence", e("the workspace" + (
+                f" + {len(evidence)} director{'ies' if len(evidence) != 1 else 'y'}"
+                if evidence else "")) if takes else r.status_mark("neutral", r.NOT_APPLICABLE))]
+    if started:
+        rows.append(("Started", e(started)))
+    return r.summary_list(rows, classes="shep-test-ident-rows")
+
+
 def job_body_html(job: Mapping[str, Any], roots: Sequence[Tuple[str, str]],
                   gpu: Tuple[str, str]) -> str:
-    """The job card's body: what the run was given, once it has ended what it
-    left (the runner's outcome), its output tail, and while it runs the GPU
-    line."""
+    """The job card's body: what the run was given (`job_inputs_html`), once
+    it has ended what it left (the runner's outcome), its output tail, and
+    while it runs the GPU line."""
     status = job.get("status") or "idle"
     if status == "idle":
         return ('<div class="shep-test-job-bd"><span class="shep-sub">No test run since the '
                 "server started.</span></div>")
-    inputs = job.get("inputs") or {}
-    started = utc_time(job.get("start_time"))
-    evidence = inputs.get("evidence_dirs") or []
-    # The run's own measurement, which can differ from the one chosen now.
-    protocol = inputs.get("protocol")
-    parts = [e(inputs.get("version_label") or "—"),
-             f"model <code>{e(str(inputs.get('checkpoint_sha256') or '')[:12])}</code>",
-             e(f"{measurement_label(protocol)} measurement"
-               if isinstance(protocol, str) and protocol.strip() else "measurement not recorded"),
-             f"workspace {e(Path(str(inputs.get('workspace') or '')).name or '—')}",
-             f"register {'on' if inputs.get('record') else 'off'}",
-             f"deterministic {'on' if inputs.get('deterministic') else 'off'}",
-             f"device {e(inputs.get('device') or 'auto')}",
-             # The run's own kind, as its inputs recorded it (the runner's
-             # choice): no R10 evidence for a KG edge set or a generated split.
-             ("R10 evidence: the workspace"
-              + (f" + {len(evidence)} director{'ies' if len(evidence) != 1 else 'y'}"
-                 if evidence else "")
-              if protocols.takes_training_evidence(inputs.get("version_kind", protocols.SUPPLIED))
-              else "R10 evidence: not applicable")]
-    if started:
-        parts.append(f"started {e(started)}")
-    body = [f'<div class="shep-sub">{" · ".join(parts)}</div>']
+    body = [job_inputs_html(job)]
     outcome = job.get("outcome")
     if status not in _BUSY and isinstance(outcome, Mapping):
         body.append(outcome_html(outcome, roots))

@@ -115,7 +115,7 @@ def test_a_run_started_from_the_page_is_kept_shown_and_registered(site, monkeypa
     assert job["outcome"]["kept"] is True and job["outcome"]["registered"] is False
     card = tp.job_html(job, tp.path_roots(), ("none", "GPU jobs: none"))
     assert 'data-status="completed"' in card and "Report kept" in card
-    assert "Disease measurement" in card
+    assert "<dd class=\"shep-v\">Disease task</dd>" in card
     assert "Not registered" in card and str(registry) not in card
 
     reports = tp.read_reports(LABEL)

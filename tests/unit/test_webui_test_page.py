@@ -319,7 +319,7 @@ def test_the_job_card_shows_the_tail_redacted_and_the_failure():
     html = tp.job_html(job, [("/srv/ws", "<workspaces>")], ("none", ""))
     assert "&lt;workspaces&gt;/demo/kg.json" in html and "/srv/ws" not in html
     assert "<script>" not in html and "Process exited with code 1" in html
-    assert "No report kept" in html and "workspace demo" in html
+    assert "No report kept" in html and _identity_rows(html)["Workspace"] == "demo"
 
 
 def test_the_import_form_offers_the_versions_own_roles_and_asks_for_one():
@@ -2853,7 +2853,8 @@ def test_the_jobs_times_are_utc_as_the_report_rows_are():
                "end_time": "2026-10-21T10:07:30", "outcome": None,
                "inputs": {"version_label": LABEL, "checkpoint_sha256": "a" * 64}}
         assert "ended 02:07:30 UTC" in tp.job_head_html(job)
-        assert "started 02:06:07 UTC" in tp.job_body_html(job, [], ("none", ""))
+        assert _identity_rows(tp.job_body_html(job, [], ("none", "")))["Started"] == (
+            "02:06:07 UTC")
         running = dict(job, status="running", end_time=None)
         assert "started 02:06:07 UTC" in tp.reports_html({"label": LABEL, "runs": []}, None,
                                                           job=running)
@@ -4013,7 +4014,10 @@ def test_the_measurement_radio_sits_in_the_run_panel_for_an_operator():
 
 def test_the_job_card_names_the_runs_protocol_escaped():
     """The card names the measurement the run was asked for (`inputs["protocol"]`),
-    not the model's task: the two can differ."""
+    not the model's task: the two can differ. In the words its report's row
+    will carry (`measurement_words`: review of B3, the job row said
+    "Disease" beside its report's "Disease task"), a row of the card's one
+    summary list, never a chain of " · " (the skill's §5)."""
     import html as html_lib
 
     job = {"status": "running", "inputs": {"version_label": LABEL, "protocol": "gene",
@@ -4021,17 +4025,31 @@ def test_the_job_card_names_the_runs_protocol_escaped():
                                            "checkpoint_sha256": "c" * 64, "workspace": "/w/ws"},
            "log": []}
     body = tp.job_body_html(job, [], ("busy", "GPU job: test run"))
-    assert "Gene measurement" in body
+    rows = _identity_rows(body)
+    assert rows["Measurement"] == "Gene task" and " · " not in "".join(rows.values())
+    assert rows["Model"] == "c" * 12 and f'title="{"c" * 64}"' in body
+    assert list(rows) == ["Version", "Model", "Measurement", "Workspace", "Register",
+                          "Deterministic algorithms", "Device", "R10 evidence"]
     other = dict(job, inputs={**job["inputs"], "protocol": "p2", "task": "disease"})
     body = tp.job_body_html(other, [], ("busy", ""))
-    assert "p2 measurement" in body and "Disease" not in body
+    assert _identity_rows(body)["Measurement"] == "Mode p2, not described by this version"
+    assert "Disease" not in body
     hostile = dict(job, inputs={**job["inputs"], "protocol": HOSTILE})
     body = tp.job_body_html(hostile, [], ("busy", ""))
-    assert HOSTILE not in body and f"{html_lib.escape(HOSTILE)} measurement" in body
+    assert HOSTILE not in body and f"Mode {html_lib.escape(HOSTILE)}, not described" in body
     for missing in (None, "", 7):
         body = tp.job_body_html(dict(job, inputs={**job["inputs"], "protocol": missing}), [],
                                 ("busy", ""))
-        assert "measurement not recorded" in body
+        assert _identity_rows(body)["Measurement"] == "○ Not recorded"
+    # The running row and the kept report's row of one protocol: one cell.
+    run = {"run_id": f"20261113T213218Z-{'c' * 12}-743716b1", "when": "2026-11-13 21:32 UTC",
+           "record": {"checkpoint_digest": "c" * 64, "scoring": {"mode": "disease"}},
+           "state": {"kept": "kept", "registered": "registered", "sequence": 2}}
+    running = dict(job, inputs={**job["inputs"], "protocol": "disease"})
+    table = tp.reports_html({"label": LABEL, "runs": [run]}, None, job=running)
+    cells = [" ".join(html_lib.unescape(re.sub(r"<[^>]+>", " ", c)).split())
+             for c in re.findall(r"<td[^>]*>(.*?)</td>", table)]
+    assert cells[2] == cells[6] == "Disease task", cells
 
 
 def test_the_help_says_what_the_measurement_options_are():
@@ -4133,7 +4151,7 @@ def test_a_listed_disease_child_offers_the_test_only_protocols_and_starts_one(
     assert (inputs.protocol, inputs.learning_stage, inputs.task) == ("p2", "finetune", "disease")
     card = tp.job_body_html({"status": "running", "inputs": inputs.summary(), "log": []}, [],
                             ("busy", ""))
-    assert "p2 measurement" in card
+    assert _identity_rows(card)["Measurement"] == "Mode p2, not described by this version"
 
     version = tp.find(page["versions"], "label", LABEL)
     reason = protocols.refusal("p1", tp.find_model(models, base)["capabilities"],
@@ -4463,7 +4481,7 @@ def test_a_kg_or_generated_start_needs_no_evidence_setting_and_is_given_none(
         assert "Refused" not in row and "relative/evidence" not in row
         card = tp.job_body_html({"status": "running", "inputs": inputs.summary(), "log": []},
                                 [], ("busy", ""))
-        assert "R10 evidence: not applicable" in card
+        assert _identity_rows(card)["R10 evidence"] == "○ Not applicable"
     supplied = tp.find(page["versions"], "label", LABEL)
     allowed, why = tp.start_state(page, models, "demo", LABEL, site.key, binding, ("none", ""),
                                   protocol="disease")
@@ -4510,12 +4528,12 @@ def test_the_r10_row_renders_each_state_escaped():
     assert tp.run_evidence(named, {"kind": "supplied"}).dirs == (tp.Path(f"/srv/{HOSTILE}"),)
     assert tp.run_evidence(named, {"kind": protocols.KG_EDGES}).dirs == ()
     # A run's card says what its own inputs recorded, whatever is chosen now.
-    for kind, said in (("supplied", "R10 evidence: the workspace"),
-                       (protocols.KG_EDGES, "R10 evidence: not applicable"),
-                       (protocols.GENERATED, "R10 evidence: not applicable")):
+    for kind, said in (("supplied", "the workspace"),
+                       (protocols.KG_EDGES, "○ Not applicable"),
+                       (protocols.GENERATED, "○ Not applicable")):
         card = tp.job_body_html({"status": "running", "inputs": {"version_kind": kind},
                                  "log": []}, [], ("busy", ""))
-        assert said in card, kind
+        assert _identity_rows(card)["R10 evidence"] == said, kind
 
 
 def test_register_takes_a_kept_report_of_every_kind_through_the_one_registration(
@@ -4688,3 +4706,20 @@ def test_one_screen_says_the_models_fingerprint_once(site, monkeypatch):
     # (The fixture's version role is "demo" too: its Role row, not the workspace.)
     assert not re.search(r"(?<!Role )\bdemo\b(?!-)", without_run_id), without_run_id
     assert tp.run_header_html() == '<div class="shep-panel-hd"><h2>Run</h2></div>'
+    # With a test run of the chosen model on the card (review of B3): the
+    # card says its own inputs, once each, a row each, drawn from the job
+    # alone (the poll writes it without the selection, so it holds while
+    # another model or version is chosen: the two can differ, the skill's
+    # §1.2), so the model's and the version's 12 hex digits and the
+    # workspace's name each appear once more, never more.
+    job = {"status": "running", "start_time": None, "log": [],
+           "inputs": {"version_label": LABEL, "version_sha256": version["manifest_sha256"],
+                      "checkpoint_sha256": site.sha, "workspace": str(site.demo),
+                      "protocol": "disease", "record": True, "deterministic": False,
+                      "device": "cpu", "version_kind": "supplied"}}
+    card = _plain(tp.job_head_html(job) + tp.job_body_html(job, [], ("busy", "GPU job")))
+    with_card = without_run_id + " " + card
+    assert card.count(site.sha[:12]) == 1 and with_card.count(site.sha[:12]) == 2
+    assert with_card.count(version["manifest_sha256"][:12]) == 2
+    assert with_card.count(dataset[:12]) == 1
+    assert len(re.findall(r"(?<!Role )\bdemo\b(?!-)", card)) == 1
