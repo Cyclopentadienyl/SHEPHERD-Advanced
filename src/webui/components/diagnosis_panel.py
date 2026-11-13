@@ -116,6 +116,7 @@ from src.webui.exports import export_dir, file_slug
 from src.webui.components.renderers import summary_list as _summary_list
 from src.webui.components.renderers import short_hex as _short_hex
 from src.webui.operator_access import operator_access
+from src.webui.style import sticky_room_js
 
 logger = logging.getLogger(__name__)
 
@@ -3274,24 +3275,12 @@ def create_diagnosis_tab(ctx: Any) -> None:
 # The page's style sheet (the page contract: listed in `src/webui/app.py`)
 # =============================================================================
 #: The sticky block's height as ``--shep-dx-sticky-h`` on the input column's
-#: scroll region, kept by a ResizeObserver (as the shell keeps
-#: ``--shep-chips-h``): the region's ``scroll-padding-bottom`` (`PAGE_CSS`), so
-#: a control focused in the region scrolls above the Model-in-use card and the
-#: Run row instead of under them (K6 closing smoke, 1536 x 760). Run by a
-#: component inside the block (its title), once per mount.
-STICKY_JS = r"""
-(function find(tries) {
-  var sticky = element.closest('#shep-dx-sticky');
-  var body = sticky ? sticky.closest('#shep-dx-input-bd') : null;
-  if (!sticky || !body) {
-    if (tries > 0) { requestAnimationFrame(function () { find(tries - 1); }); }
-    return;
-  }
-  var fit = function () { body.style.setProperty('--shep-dx-sticky-h', sticky.offsetHeight + 'px'); };
-  if (window.ResizeObserver) { new ResizeObserver(fit).observe(sticky); }
-  fit();
-})(20);
-"""
+#: scroll region (`style.sticky_room_js`, the one script for a sticky block's
+#: room): the region's ``scroll-padding-bottom`` (`PAGE_CSS`), so a control
+#: focused in the region scrolls above the Model-in-use card and the Run row
+#: instead of under them (K6 closing smoke, 1536 x 760). Run by a component
+#: inside the block (its title), once per mount.
+STICKY_JS = sticky_room_js("#shep-dx-sticky", "#shep-dx-input-bd", "--shep-dx-sticky-h")
 
 #: The page's tab (`src.webui.shell.tab_elem_id(CLINICAL)`).
 _TAB = "#shep-tab-clinical"

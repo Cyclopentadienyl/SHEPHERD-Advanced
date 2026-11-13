@@ -1946,12 +1946,30 @@ def test_the_list_panels_title_stays_while_the_panel_scrolls():
     """M5-3: at 1440 x 900 the Models title scrolled away with the controls and
     the rows. The header row draws no box at a wide size (its items are the
     panel's grid items), so the title sticks to the panel's top, and the
-    table's header sticks under it."""
+    table's header sticks under it. The ops-wiring round's B1b: the sticky
+    title never covers a field focused in the panel: the panel's scroll
+    region keeps a scroll padding as tall as the title, which the one script
+    for a sticky block's room writes (`style.sticky_room_js`, as Diagnosis'
+    sticky block's), and the table's header sticks under the same height."""
+    from src.webui.style import sticky_room_js
+
     wide = mp.PAGE_CSS[mp.PAGE_CSS.index("@media (min-width: 1400px) and (min-height: 760px) {"):]
     assert "> .shep-model-main > .shep-model-head {{ display: contents !important; }}".replace(
         "{{", "{").replace("}}", "}") in wide
     assert "#shep-mp-hd { position: sticky; top: 0; z-index: 45;" in wide
-    assert "#shep-models-research-rows .shep-tbl th { top: 48px; }" in wide
+    assert ("> .shep-model-main { height: 100%; overflow-y: auto; "
+            "scroll-padding-top: var(--shep-mp-hd-h, 48px); }") in wide
+    assert "#shep-models-research-rows .shep-tbl th { top: var(--shep-mp-hd-h, 48px); }" in wide
+    assert mp.HEADER_ROOM_JS == sticky_room_js("#shep-mp-hd", ".shep-model-main", "--shep-mp-hd-h")
+    js = mp.HEADER_ROOM_JS
+    assert "element.closest('#shep-mp-hd')" in js and "sticky.closest('.shep-model-main')" in js
+    assert "body.style.setProperty('--shep-mp-hd-h', sticky.offsetHeight + 'px')" in js
+    from src.webui.shell import standalone_context
+
+    with gr.Blocks() as demo:
+        mp.create_models_page(standalone_context(demo))
+    (host,) = [b for b in demo.blocks.values() if getattr(b, "js_on_load", None) == js]
+    assert host.elem_id == "shep-mp-hd"
 
 
 def test_the_table_fits_its_frame_beside_a_classic_scrollbar():

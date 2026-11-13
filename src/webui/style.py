@@ -454,4 +454,33 @@ button.shep-row {
 }
 """.replace("__BRAND__", str(BRAND_WIDTH))
 
-__all__ = ["BRAND_WIDTH", "SHELL_CSS"]
+
+def sticky_room_js(sticky: str, region: str, var: str) -> str:
+    """**The room a sticky block takes in its scroll region**, for the
+    region's scroll padding (the layout rule: nothing sticky covers a focused
+    control): a component's ``js_on_load`` that writes the height of the
+    block `sticky` (a selector of the component or an ancestor of it) as the
+    CSS variable `var` on the region `region` (a selector of an ancestor of
+    the block), kept by a ResizeObserver, as the shell keeps
+    ``--shep-chips-h``. The page's style sheet gives the region
+    ``scroll-padding-top`` or ``-bottom`` from it, so a control focused in
+    the region scrolls clear of the block. Diagnosis' sticky Model-in-use
+    block and the Models list's header use it. Once per mount; the block may
+    be drawn a frame later than the component, so it is looked for again a
+    few times."""
+    return r"""
+(function find(tries) {
+  var sticky = element.closest('__STICKY__');
+  var body = sticky ? sticky.closest('__REGION__') : null;
+  if (!sticky || !body) {
+    if (tries > 0) { requestAnimationFrame(function () { find(tries - 1); }); }
+    return;
+  }
+  var fit = function () { body.style.setProperty('__VAR__', sticky.offsetHeight + 'px'); };
+  if (window.ResizeObserver) { new ResizeObserver(fit).observe(sticky); }
+  fit();
+})(20);
+""".replace("__STICKY__", sticky).replace("__REGION__", region).replace("__VAR__", var)
+
+
+__all__ = ["BRAND_WIDTH", "SHELL_CSS", "sticky_room_js"]

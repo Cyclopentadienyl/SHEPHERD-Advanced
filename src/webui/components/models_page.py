@@ -132,6 +132,7 @@ from src.webui.components.help import copy_button, help_button
 from src.webui.components.served_status import read_status, served_checkpoint_sha
 from src.webui.operator_access import operator_access
 from src.webui.shell import page_elem_id, plain_html
+from src.webui.style import sticky_room_js
 
 logger = logging.getLogger(__name__)
 
@@ -245,6 +246,13 @@ USAGE_SHOWN = 200
 #: In the detail's header, shown only narrow (`SCROLL_JS`): back to the selected row.
 BACK_BUTTON = ('<button type="button" class="shep-btn shep-mp-back">↑ Back to the list'
                '</button>')
+
+#: The list panel's sticky header (``#shep-mp-hd``, wide layout) as
+#: ``--shep-mp-hd-h`` on the panel's scroll region (`style.sticky_room_js`):
+#: its scroll padding, so a field focused in the panel (the workspace, the
+#: task, the order) scrolls clear of the header, and the table's sticky
+#: header's place under it.
+HEADER_ROOM_JS = sticky_room_js("#shep-mp-hd", ".shep-model-main", "--shep-mp-hd-h")
 
 #: Narrow (the layout rule's stacked sizes), the detail is below the whole list:
 #: choosing a row (click, Enter or Space, as the shared list's own script takes
@@ -1627,7 +1635,11 @@ def create_models_page(ctx: Any) -> None:
     parts: Dict[str, Any] = {}
 
     def head() -> Dict[str, Any]:
-        parts["lhd"] = plain_html(left_header_html({}, {}), elem_id="shep-mp-hd")
+        # The header's height on the list panel's scroll region, its scroll
+        # padding (`PAGE_CSS`): a field focused there scrolls clear of the
+        # sticky header (the one script for a sticky block's room).
+        parts["lhd"] = plain_html(left_header_html({}, {}), elem_id="shep-mp-hd",
+                                  js_on_load=HEADER_ROOM_JS)
         parts["wsline"] = plain_html("", elem_id="shep-mp-wsline")
         parts["task"] = gr.Dropdown(label="Task", choices=TASK_CHOICES, value=ALL_TASKS,
                                     interactive=True, elem_id="shep-mp-task")
@@ -1969,7 +1981,8 @@ PAGE_CSS = f"""
   {_PAGE} > .column {{ height: 100%; }}
   {_PAGE} .shep-models {{ height: 100%; min-height: 0; }}
   {_PAGE} {_LIST} {{ height: 100%; min-height: 0; }}
-  {_PAGE} {_LIST} > .shep-model-main {{ height: 100%; overflow-y: auto; }}
+  /* The sticky header's room (`HEADER_ROOM_JS`): a field focused in the panel scrolls clear of it. */
+  {_PAGE} {_LIST} > .shep-model-main {{ height: 100%; overflow-y: auto; scroll-padding-top: var(--shep-mp-hd-h, 48px); }}
   {_PAGE} #shep-mp-detail {{ overflow: hidden; display: flex !important; flex-direction: column; flex-wrap: nowrap !important; }}
   {_PAGE} #shep-mp-detail-bd {{ flex: 1 1 auto !important; overflow: auto !important; }}
   /* The table's header sticks to the top of the region the rows scroll in. */
@@ -2011,7 +2024,7 @@ PAGE_CSS = f"""
 }}
 @media (min-width: 1400px) and (min-height: 760px) and (max-height: 999px) {{
   /* The panel scrolls as one region: the table's header sticks under the title. */
-  {_PAGE} #shep-models-research-rows .shep-tbl th {{ top: 48px; }}
+  {_PAGE} #shep-models-research-rows .shep-tbl th {{ top: var(--shep-mp-hd-h, 48px); }}
 }}
 @media (min-width: 1400px) and (min-height: 1000px) {{
   /* Room for both: the header stays whole and the rows scroll in the region
