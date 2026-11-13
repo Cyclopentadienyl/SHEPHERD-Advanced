@@ -1167,8 +1167,12 @@ SCROLL_CUE = ('<div class="shep-rs-cue" hidden aria-hidden="true"><span class="s
               'Wider than the panel: scroll sideways; the Field column stays.</span>'
               '<div class="shep-rs-top" tabindex="-1"><div class="shep-rs-top-w"></div></div>'
               '</div>')
-#: Keeps the cue's bar the table's width and both scrolled together, whatever
-#: Compare draws next (event delegation on the component, `js_on_load`).
+#: Keeps the cue's bar scrolling as far as the table and both scrolled
+#: together, whatever Compare draws next (event delegation on the component,
+#: `js_on_load`). The bar's content is sized so its scroll range equals the
+#: wrapper's (the wrapper's border makes the bar wider than the wrapper's
+#: client box): sized to the table's width alone, the bar stopped 2 px short
+#: and its echo pulled the table back from its right end.
 COMPARE_JS = r"""
 var sync = function () {
   var wrap = element.querySelector('.shep-rs-wrap');
@@ -1177,8 +1181,10 @@ var sync = function () {
   var wider = wrap.scrollWidth > wrap.clientWidth + 1;
   cue.hidden = !wider;
   var inner = cue.querySelector('.shep-rs-top-w');
-  if (inner) { inner.style.width = wrap.scrollWidth + 'px'; }
   var top = cue.querySelector('.shep-rs-top');
+  if (inner && top) {
+    inner.style.width = (wrap.scrollWidth - wrap.clientWidth + top.clientWidth) + 'px';
+  }
   if (top && top.scrollLeft !== wrap.scrollLeft) { top.scrollLeft = wrap.scrollLeft; }
 };
 element.addEventListener('scroll', function (e) {

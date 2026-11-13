@@ -1263,6 +1263,14 @@ def test_compare_keeps_numbers_and_run_ids_whole_and_scrolls_inside_its_wrapper(
     for part in (".shep-rs-wrap", ".shep-rs-top", "scrollWidth", "scrollLeft",
                  "cue.hidden = !wider", "ResizeObserver", "MutationObserver"):
         assert part in rs.COMPARE_JS, part
+    # The bar scrolls as far as the table: its content is sized to the
+    # wrapper's scroll range plus the bar's own width (review of B3: sized
+    # to the table alone, the bordered wrapper's 2 px made the bar stop
+    # short, and its echo kept the table's last 2 px out of reach; measured
+    # in headless Chromium, settled 108 / 108 of 110 before, 110 / 110 after).
+    assert ("inner.style.width = (wrap.scrollWidth - wrap.clientWidth + top.clientWidth) + 'px'"
+            in rs.COMPARE_JS)
+    assert "inner.style.width = wrap.scrollWidth + 'px'" not in rs.COMPARE_JS
     assert "overflow-x: auto" in _css_rule("#shep-page-models .shep-rs-top")
     assert "display: none" in _css_rule("#shep-page-models .shep-rs-cue[hidden]")
 
