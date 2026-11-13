@@ -349,16 +349,18 @@ def test_datasets_use_for_training_reaches_the_run_bar():
 def test_the_status_pill(status, kind, words, details):
     """The state and how far it got, with at most one " · " (the WebUI skill
     §5: it read "RUNNING · epoch 12/100 · batch 340/812 · 00:14:32", three);
-    the batch and the time are the pill's details, after its words, with no
-    separator."""
+    the batch and the time are the pill's details, after its words with no
+    second separator. The pill is a role="status" region, read as one text:
+    its words and details never run together ("epoch 12/100batch …")."""
     state, said = tc.pill_state(status)
     assert said == words and tc.PILL_KIND[state] == kind
     assert said.count(" · ") <= 1 and tc.pill_details(status) == details
     html = tc.pill_html(status)
     assert f"shep-pill-{kind}" in html
-    if details:
-        assert f'<span class="shep-pill-sub">{details}</span>' in html
-    else:
+    text = re.sub(r"<[^>]+>", "", html)
+    assert text == (f"{words}, {details}" if details else words), text
+    assert text.count(" · ") <= 1
+    if not details:
         assert "shep-pill-sub" not in html
 
 

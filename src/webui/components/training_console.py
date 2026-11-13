@@ -128,7 +128,6 @@ import json
 import logging
 import re
 import time
-from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
@@ -728,9 +727,11 @@ def pill_state(status: Mapping[str, Any]) -> Tuple[str, str]:
 
 
 def pill_details(status: Mapping[str, Any]) -> Optional[str]:
-    """The pill's details after its words, with no separator: the batch while
-    an epoch runs and how long the job has run (or ran), "batch 340/812,
-    00:14:32 elapsed"; None when it has neither (idle)."""
+    """The pill's details after its words, with no second " · " (its text
+    reads "RUNNING · epoch 12/100, batch 340/812, 00:14:32 elapsed",
+    `pill_html`): the batch while an epoch runs and how long the job has run
+    (or ran), "batch 340/812, 00:14:32 elapsed"; None when it has neither
+    (idle)."""
     s = status.get("status") or "idle"
     if s == "idle":
         return None
@@ -751,7 +752,10 @@ def pill_html(status: Mapping[str, Any]) -> str:
     mark = {"ok": r.CHECK, "red": '<span class="shep-dot-r" aria-hidden="true"></span>',
             "running": '<span class="shep-dot-w" aria-hidden="true"></span>'}.get(kind, "")
     details = pill_details(status)
-    more = f'<span class="shep-pill-sub">{r.e(details)}</span>' if details else ""
+    # The details follow the words after a comma only its text carries (the
+    # pill's gap shows it): a role="status" region is read as one text.
+    more = (f'<span class="shep-pill-sub"><span class="shep-vh">, </span>{r.e(details)}</span>'
+            if details else "")
     return (f'<div class="shep-pill shep-pill-{kind}" data-state="{r.e(state)}" role="status">'
             f'{mark}<span>{r.e(words)}</span>{more}</div>')
 
