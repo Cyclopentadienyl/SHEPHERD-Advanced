@@ -768,6 +768,21 @@ def test_the_value_words_say_each_setting_by_its_meaning_never_by_repr():
         assert "'" not in text and "None" not in text and "True" not in text, (value, text)
 
 
+def test_a_nones_words_are_what_the_field_spec_says_it_means():
+    """The words of an unset setting (`SETTING_UNSET_WORDS`) are the field
+    spec's, never a page's own: each setting whose spec says "Unset is the
+    task's reference" reads so, the one whose spec says none "is no early
+    stopping" reads "off", and no other setting has words of its own (an
+    unset seed is "not set")."""
+    from src.config.training_fields import FIELDS
+
+    reference = {f.name for f in FIELDS if "Unset is the task's reference" in f.divergence_note}
+    no_stopping = {f.name for f in FIELDS if "is no early stopping" in f.description}
+    assert reference and no_stopping == {"early_stopping_patience"}
+    assert r.SETTING_UNSET_WORDS == {**{name: "the task's reference" for name in reference},
+                                     "early_stopping_patience": "off"}
+
+
 def _spec(stage="base", task=None, **changes):
     from src.models.bundle.spec import reference_spec
 
