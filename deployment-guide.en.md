@@ -3567,29 +3567,26 @@ it. Three panels:
   cohort's role and cases; a KG edge set's pairs and edges; a generated split's patients,
   diseases and fixture rows, each with the unit its manifest records under **Counts and units**;
   a KG edge set's or a generated split's kind and role are its option's, not repeated), its
-  version digest and whether it was mapped against this workspace's graph ("bound to this graph",
-  or "mapped against another graph", which a run would refuse; never in the option). With no KG
+  version digest and whether it was mapped against this workspace's graph ("● Bound to this
+  graph", or "▲ Mapped against another graph" with its refusal beside the version, "✕ Not
+  measured on this workspace: …", which Start's reason points to; never in the option; since
+  the ops-wiring round's B3). With no KG
   edge set in the registry, a line under it names the command that imports one on the machine (the
   importer's `--kind kg_edges` with `--from-checkpoint`, §4.9); the page's Import makes supplied
-  cohorts only. Below them, every run
-  directory of the version's report store, newest first: when it ran, on which model, whether a
-  report was kept, whether it is registered, and "runs under these conditions differ" when the
-  runs of its group differ (in amber with "— investigate" only when the group records
-  deterministic algorithms on), or "comparison incomplete". A run that kept no
-  report says so; a test running now is the top
-  row, and the last test run on this server that ended with nothing in the store (cancelled
-  before its run directory, or failed) stays a row until the next start or a restart. The
-  newest 8 reports are listed, and the selected one; **Show all N reports** lists the rest
-  (this browser tab keeps the choice). For an operator, each row's registration is checked in
-  the ledger beside the listed checkpoint, in the workspace shown, that holds the weights it
-  measured, so a report left to register reads "not registered" whichever row is selected; one
-  whose checkpoint is listed only in another workspace says "registration cannot be checked
-  from the list" until it is selected.
-- **Run.** The model: the workspace's checkpoints from the server's list, by what each is, how
-  far it trained (in the words every page uses, "6 epochs completed" or "recorded epoch 5"), run,
-  model fingerprint and file. Listing them opens every checkpoint, so it is an operator control: a
-  read-only browser is not shown it, and the page lists them once per workspace (↻ reads the
-  list again). Then **Measurement** (since K8-6a), the protocol the run passes as
+  cohorts only.
+- **Run.** The model, chosen as **Run → Checkpoint** (since the ops-wiring round's B3; one select
+  of every checkpoint before, each option up to 91 characters): the two cascading selects
+  Training's Continue… and Fine-tune use, the runs latest first by their name or start time, the
+  chosen run's checkpoints by what the file is and how far it trained ("Latest save · 6 epochs
+  completed", "Best pooled MRR · 4 epochs completed"), each option at most 40 characters, its
+  value the listing's key. Choosing a run chooses its latest save; nothing is chosen until you
+  pick a run. Under them, the chosen model's details: what its record says it is (Base,
+  Disease, "Disease · frozen graph backbone" for the frozen-backbone control, "Record not
+  readable"), its file, the Trainer's validation figure, its model fingerprint (12 hex digits,
+  Copy) and its dataset by its relation to the workspace ("the selected workspace's current
+  dataset", or which one it is). Listing them opens every checkpoint, so it is an operator
+  control: a read-only browser is not shown it, and the page lists them once per workspace (↻
+  reads the list again). Then **Measurement** (since K8-6a), the protocol the run passes as
   `--mode <protocol>` (§4.9): the options are the protocols this build implements whose needs
   the chosen model's listed capabilities meet and that measure the chosen version's kind (since
   research comparison Stage 7): a task head's measurement of a finetuned model (Disease, Gene or
@@ -3607,7 +3604,7 @@ it. Three panels:
   operator control. Mode C and Mode D are not
   protocols, so no page or command runs them. Then the **R10 evidence**, chosen by the runner once
   by the chosen version's kind (since research comparison Stage 7): for a supplied cohort, the
-  directories the run will look in (the measured workspace, and
+  directories the run will look in (the selected workspace, and
   `SHEPHERD_TRAINING_EVIDENCE_DIRS`), and a refused setting in red with ✕ and "Refused:" and
   its reason, which turns Start off; for a KG edge set or a generated split, "Not applicable"
   in grey with ○ and why (R10 is a supplied cohort's), and the run is given no evidence
@@ -3639,13 +3636,34 @@ it. Three panels:
   just ended is selected, once for that run. A choice made while the page reads the version's
   store again (after the job changed, an act or an import) applies once that read has ended;
   the read never undoes it, and of several choices made meanwhile the last one stays.
-- **Result.** The selected report as the record the ledger would hold, by one display for every
+- **Result.** At its top (since the ops-wiring round's B3; in Data before), the version's report
+  store as a compact table, **Reports**, newest first, one row per run directory, selected by a
+  click or Enter: **Report** (when it ran; the time to the second, then the run id's last part,
+  where two would read alike), **Model** ("the selected model" for the checkpoint chosen in Run,
+  another listed file by its run and progress, weights not listed by their 12 hex digits),
+  **Measurement** (its record's mode in words) and **State** (registered #N, not registered, no
+  report kept, runs differ, comparison incomplete; amber with ▲ only when the group records
+  deterministic algorithms on). A test running now is the top row, and the last test run on
+  this server that ended with nothing in the store (cancelled before its run directory, or
+  failed) stays a row until the next start or a restart. The newest 8 reports are listed, and
+  the selected one; **Show all N reports** lists the rest (this browser tab keeps the choice).
+  For an operator, each row's registration is checked in the ledger beside the listed
+  checkpoint, in the workspace shown, that holds the weights it measured, so a report left to
+  register reads "not registered" whichever row is selected; one whose checkpoint is listed
+  only in another workspace says "registration not checked" until it is selected. Under the
+  table, in the panel's one scroll region, the selected report as the record the ledger would
+  hold. What it is of is said by its relation to what is chosen now, "the selected workspace",
+  "the selected model", "the selected version", and in full when it is not (its model's run,
+  progress and fingerprint, its version's label, role and fingerprint, the listed workspaces
+  holding the dataset record it measured), so a past result keeps its own identity after
+  another checkpoint or version is chosen; its run id once. Then, by one display for every
   mode (since K8-6e.2): a task's tiles and figures in words, with every metric as recorded one
   click away ("Recorded metrics (N)"); a report of a mode this version does not describe, a kept
   Mode C or Mode D report included, under "Mode <mode> (a measurement mode this version does not
   describe)", with one "Recorded metrics" row listing every metric by its recorded name and
-  value; the score semantics exactly as recorded; coverage with each exclusion, the relations,
-  R10 in words (*unverifiable* is never a 0), the environment, the dataset origin, and whether it is registered (for an
+  value; the score semantics exactly as recorded; coverage with each exclusion, each relation a
+  row of its own by its full name, R10 in words (*unverifiable* is never a 0), the environment,
+  the dataset origin, and whether it is registered (for an
   operator, checked in the ledger beside the listed checkpoint holding the weights it
   measured). Since research comparison Stage 8b the report is read by the one reader the results
   service and Models read with (its data kind's result view, registered or not): a KG edge set's
@@ -3715,15 +3733,19 @@ Every run is shown, newest first, from every directory under the workspace's `ru
 its name (since K8-7b). Columns:
 
 - **Model**: what the file is first (Base, Disease, Gene, Patients-like-me, "Record not readable"
-  or "Record not read"; a file without a model spec is "Record not readable", with "written
-  before the model spec: not readable by this build; start a new run", and no longer "History ·
-  never run" since K8-7b), then the run's directory (upper-cased, "GATv2" for `gatv2`: a location,
-  not the architecture, which the record names), the run's start time, how far the file
-  trained ("6 epochs completed", or "recorded epoch 5" for an older file); **In use
-  (Diagnosis)** on the checkpoint being served (matched by its full model fingerprint);
-- **Fingerprints: model · dataset trained on**: the model fingerprint (12 hex digits of the
-  checkpoint's SHA-256) over the listed workspace whose full dataset fingerprint the checkpoint
-  records, or "matches no listed workspace"; `synthetic` in amber;
+  or "Record unknown", for a file that could not be read; a file without a model spec is
+  "Record not readable", with "written before the model spec: not readable by this build; start
+  a new run", and no longer "History · never run" since K8-7b), then its run in the words every
+  page names a run by (since the ops-wiring round's B3: its name, then its directory's layout,
+  "GATv2" for `gatv2`, a location, not the architecture, which the record names, and its start
+  time; an unnamed run its start time first), how far the file trained ("6 epochs completed",
+  or "recorded epoch 5" for an older file); **In use (Diagnosis)** on the checkpoint being
+  served (matched by its full model fingerprint);
+- **Fingerprint**: the model fingerprint only (12 hex digits of the checkpoint's SHA-256; since
+  the ops-wiring round's B3, "Fingerprints: model · dataset trained on" before). The dataset is
+  said once, under the workspace select: a row trained on another dataset than the workspace's
+  current one says "▲ Another dataset" there (`synthetic` in amber where a listed synthetic
+  workspace holds it), one that records none "○ Dataset not recorded";
 - **Validation (Trainer)**: the Trainer's own figure on the val samples, the metric training
   selects by, named under its value (a base's LP accuracy, a task model's pooled MRR), read from
   the file's logs whatever its record says; none when the logs hold neither, as for a file
@@ -3754,9 +3776,12 @@ retired in K8-6d, with its role setting, its Mode C rule and its one record per 
 record stays readable in the detail below, and no model is ever chosen automatically by its test
 score.
 
-**Selecting a row** shows its full model fingerprint with Copy, what it was trained on (and
-whether that is this workspace's current dataset), the Trainer's validation figure in its own
-card, any warning, and three segments:
+**Selecting a row** shows its details as one list (since the ops-wiring round's B3): its model
+fingerprint (12 hex digits, Copy), its dataset by its relation to the workspace ("the selected
+workspace's current dataset", or which one it is), what it is, its operation, parent, family,
+encoder and relation to the reference recipe, the Trainer's validation figure as a row (never a
+box of its own), and under **Details ›** its run directory, file and whole fingerprint; any
+warning, with ▲; and three segments:
 
 - **Recorded results** ("Recorded test results" until research comparison Stage 6): every
   record the ledger holds for these weights, of any data kind and role, each named by its
@@ -3773,7 +3798,9 @@ card, any warning, and three segments:
   as agreeing),
   deterministic on or off, the reports merged into it before each run had its own record when
   there are any, and "possible overlap with record N (not recorded)" between such a record and a
-  named run; then the relations, a task record's other metrics in words, R10 as states
+  named run; then each relation a row of its own by its full name ("R3 model trained on this
+  graph: ● Verified"; since the ops-wiring round's B3), a task record's other metrics in words,
+  R10 as states
   (*unverifiable* is a reason, never 0), "Score semantics: …" exactly as recorded, a task
   record's every metric as recorded behind "Recorded metrics (N)", the environment, the dataset
   and the registration with its run ("not recorded" for a record written before each run had its
@@ -3833,8 +3860,10 @@ card, any warning, and three segments:
   field the result's records do not hold "not recorded", and a field that does not apply to the
   result's data kind "not applicable" (a KG edge set's exposure definition and counts, R10, and
   an entry of the data's identity, counts or content references that only another data kind
-  records). Five is this view's
-  cap only: the choice is not capped. **Export** writes every chosen result or every shown row
+  records). Five columns wider than the panel scroll sideways inside the table, the Field column
+  pinned, with a cue and a bar that scrolls it at the table's top as well as its scrollbar at
+  the foot (since the ops-wiring round's B3); each group of rows is its own row group. Five is
+  this view's cap only: the choice is not capped. **Export** writes every chosen result or every shown row
   (the unreadable items among them), uncapped, as CSV or JSON through the export's one
   serializer (the columns and bytes of `scripts/export_results.py`), as a new file to
   download. Reading the results opens every
