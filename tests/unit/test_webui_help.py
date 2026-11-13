@@ -266,9 +266,11 @@ def test_every_registered_help_target_exists_in_the_built_app(built):
 def test_no_component_keeps_ordinary_help_in_info(built):
     """``info=`` holds only text that must stay visible (the WebUI skill's §7):
     a state set at runtime, and a field's format, unit or "off", set at build
-    time only on the Training page's base form and its Continue drawer's
-    Branch fields, the one field of each setting (`FIELD_FORMATS`, by its
-    setting or its model spec field); no ordinary help is kept there."""
+    time only on the Training page's base form, its Continue drawer's
+    Branch fields and the Fine-tune page's fields, the one field of each
+    setting (`FIELD_FORMATS`, by its setting or its model spec field); no
+    ordinary help is kept there."""
+    from src.webui.components import finetune_page as fp
     from src.webui.components import training_console as tc
 
     demo, _registry, _texts = built
@@ -279,6 +281,8 @@ def test_no_component_keeps_ordinary_help_in_info(built):
     expected = {elem_ids[key]: text for key, text in tc.FIELD_FORMATS.items()}
     expected.update({f"branch_{name}": text for name, text in tc.FIELD_FORMATS.items()
                      if name in tc.BRANCH_FIELDS})
+    expected.update({f"ft_{name}": text for name, text in tc.FIELD_FORMATS.items()
+                     if name in fp.FINETUNE_FIELDS})
     assert with_info == expected
 
 
