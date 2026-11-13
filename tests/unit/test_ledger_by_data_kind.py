@@ -754,7 +754,7 @@ def test_the_test_page_says_a_kg_edge_set_and_a_generated_split_in_their_words()
         shown = tp._record_html(record, {}, {})
         models = mp.kind_html(view)
         for label, value in data_kind_lines(view):
-            assert f'<span class="shep-k">{label}</span><span class="shep-v">{value}</span>' \
+            assert f'<dt class="shep-k">{label}</dt><dd class="shep-v">{value}</dd>' \
                 in shown, (kind, label)
             assert f"<b>{label}:</b> {value}" in models, (kind, label)
     assert "5 generated patients of 1 disease" in generated
