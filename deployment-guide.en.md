@@ -3422,7 +3422,7 @@ was chosen. Refresh the list, then check it again.", "… the typed path is not 
 run list holds. …" or "… the check says this checkpoint cannot be branched." (the check says
 why). It is said once: a start the check refuses, a path the list does not hold included, adds
 no notice of its own, and one the job runner refuses after the check (a parent changed since) says so there,
-led by the red ✕ of a refusal. In a wide window the footer stays in view while the drawer's body scrolls.
+led by the red ✕ of a refusal. In a wide window the footer stays in view while the drawer's body scrolls, and after a check the body scrolls to show its answer.
 A listed checkpoint is found again in the server's list. **The model fingerprint shown is the one
 continued or branched from** (implemented in the root-cause round). For a listed checkpoint,
 Check checkpoint and the start send the list's fingerprint; for a typed path, Check checkpoint

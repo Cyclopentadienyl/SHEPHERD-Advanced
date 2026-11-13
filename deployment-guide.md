@@ -3429,7 +3429,7 @@ path is not a checkpoint the run list holds. …」或「… the check says this
 branched.」（原因寫在檢查中）。只說一次：被檢查拒絕的啟動（包括清單中沒有的路徑）不另加自己的
 通知，檢查之後被 job runner 拒絕的（之後 parent 已改變）則在那裡說明，以表示拒絕的紅色 ✕
 開頭。在寬的
-視窗中，抽屜內容捲動時頁尾仍留在畫面上。從清單選的
+視窗中，抽屜內容捲動時頁尾仍留在畫面上；檢查之後，抽屜內容會捲動到顯示其結果的位置。從清單選的
 checkpoint 會在伺服器的清單中重新找到。**繼續訓練或分支所用的就是所顯示的模型指紋**（於根因修正輪
 實作）。從清單選的 checkpoint，Check checkpoint 與啟動都送出清單上的指紋；手動輸入的路徑，則由
 Check checkpoint 讀取檔案並顯示它的指紋，啟動再送出所顯示的那個。

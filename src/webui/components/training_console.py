@@ -2901,6 +2901,14 @@ STEP_RUN, STEP_CHECKPOINT, STEP_CHECK, STEP_START = (
 
 #: The check's prompt before a check, and after what it would check changed.
 _CONTINUE_PROMPT = "Select a checkpoint, then click <b>Check checkpoint</b>."
+#: **Step 3's answer brought into view** once a check (Check checkpoint, or
+#: the start, which checks first) has written it: the drawer's body, the one
+#: region that scrolls (the skill's §1.1), scrolls the least that shows the
+#: check result (the B1c review: at 1850 x 960 the run, checkpoint and
+#: details above it left the answer under the body's fold). Nothing moves
+#: when it already shows, or when the drawer has closed (a start that ran).
+SHOW_CHECK_JS = ("() => { const el = document.getElementById('continue_preview'); "
+                 "if (el && el.offsetParent) el.scrollIntoView({block: 'nearest'}); }")
 #: The check's prompt once a Branch field was edited after the last check.
 _BRANCH_EDITED = ("A setting changed since the check: click <b>Check checkpoint</b> to see the "
                   "plan again, or <b>Start branch</b>, which checks first.")
@@ -4357,7 +4365,8 @@ def create_training_tab(ctx: Any) -> None:
         inputs=[continue_operation, continue_source, checkpoint_dropdown, manual_checkpoint,
                 continue_device, *taken],
         outputs=[continue_preview, extend_epochs, extend_lr, mode, compare, *branch_shown],
-        show_progress="hidden").then(**view_step).then(**ctx.chip_refresh)
+        show_progress="hidden").then(**view_step).then(
+        None, js=SHOW_CHECK_JS, queue=False).then(**ctx.chip_refresh)
     resume_btn.click(
         _on_resume,
         inputs=[continue_operation, ws, continue_device, continue_source, checkpoint_dropdown,
@@ -4365,7 +4374,8 @@ def create_training_tab(ctx: Any) -> None:
                 *branch_fields],
         outputs=[drawer_notice, continue_preview, extend_epochs, extend_lr, mode,
                  *branch_shown],
-        show_progress="hidden").then(**view_step).then(**ctx.chip_refresh)
+        show_progress="hidden").then(**view_step).then(
+        None, js=SHOW_CHECK_JS, queue=False).then(**ctx.chip_refresh)
     continue_source.change(fn=_toggle_continue_source, inputs=[continue_source],
                            outputs=[continue_run, checkpoint_dropdown, refresh_ckpt_btn,
                                     parent_details, manual_checkpoint])

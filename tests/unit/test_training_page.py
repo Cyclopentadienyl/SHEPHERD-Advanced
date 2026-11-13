@@ -307,7 +307,8 @@ def test_every_gated_act_checks_d8_and_reads_the_chips_after():
             current = after.get(current._id)
             if current is None:
                 return False
-            if current.fn.__name__ == "read_chips":
+            # A step may be the browser's alone (fn None: SHOW_CHECK_JS).
+            if getattr(current.fn, "__name__", None) == "read_chips":
                 return True
         return False
 

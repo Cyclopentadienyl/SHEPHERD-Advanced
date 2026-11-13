@@ -714,6 +714,30 @@ def test_refresh_is_followed_by_the_chosen_options_file():
         "continue_source", "checkpoint_dropdown", "manual_checkpoint", None, None, None]
 
 
+def test_a_check_brings_its_answer_into_view():
+    """The B1c review: at 1850 x 960, after Check checkpoint the check's
+    answer opened under the drawer body's fold. Check checkpoint and the
+    start (which checks first) end, after the render, with the one step
+    that scrolls the body the least that shows the check result
+    (`SHOW_CHECK_JS`), before the chips are read again."""
+    import gradio as gr
+
+    with gr.Blocks() as demo:
+        tc.create_training_tab(standalone_context(demo))
+    fns = {fn._id: fn for fn in demo.fns.values()}
+    for act in (tc._on_check_continue, tc._on_resume):
+        [fn] = [f for f in fns.values() if f.fn is act]
+        chain = []
+        for _ in range(3):
+            [fn] = [f for f in fns.values() if f.trigger_after == fn._id]
+            chain.append(fn)
+        assert chain[0].fn is tc._render_view
+        assert chain[1].fn is None and chain[1].js == tc.SHOW_CHECK_JS
+        assert getattr(chain[2].fn, "__name__", None) == "read_chips"
+    assert "getElementById('continue_preview')" in tc.SHOW_CHECK_JS
+    assert "block: 'nearest'" in tc.SHOW_CHECK_JS
+
+
 def test_a_refreshed_run_list_does_not_clear_a_typed_paths_check():
     """A Refresh repopulates the run list, whose change event fires whatever
     the source; it clears only when the run list is the source (found by the
