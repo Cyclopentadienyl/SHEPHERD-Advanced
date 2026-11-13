@@ -806,3 +806,114 @@ def test_a_model_spec_is_said_by_its_differences_its_whole_one_click_away():
     assert r.model_spec_html(None) == (r.status_mark(
         "neutral", "Unknown: the record holds no model spec"), "")
 
+
+#: A Python repr in shown text: a quoted value ('none', ['a']) or a bare
+#: None, True or False (an apostrophe inside a word, "task's", is English).
+_REPR = re.compile(r"(?<!\w)'[^'\n]*'(?!\w)|\bNone\b|\bTrue\b|\bFalse\b")
+
+
+def _bordered_classes(css: str) -> set:
+    """The classes a rule draws a border around (``border:`` not 0/none),
+    by the last compound of each selector."""
+    bordered = set()
+    for selectors, body in re.findall(r"([^{}]+)\{([^{}]*)\}", css):
+        if not re.search(r"(?<![-\w])border\s*:(?!\s*(?:0|none)\b)", body):
+            continue
+        for selector in selectors.split(","):
+            parts = selector.split()
+            if parts:
+                bordered.update(re.findall(r"\.([\w-]+)", parts[-1].split(":")[0]))
+    return bordered
+
+
+def _nested_boxes(html_: str, bordered: set) -> list:
+    """Each container (div, dl, details, section, table) with a bordered
+    class inside another such container: a bordered box inside a box."""
+    from html.parser import HTMLParser
+
+    containers = {"div", "dl", "details", "section", "table"}
+    found: list = []
+    stack: list = []
+
+    class Walk(HTMLParser):
+        def handle_starttag(self, tag, attrs):
+            if tag not in containers:
+                return
+            boxed = set((dict(attrs).get("class") or "").split()) & bordered
+            if boxed and any(stack):
+                found.append(sorted(boxed))
+            stack.append(bool(boxed))
+
+        def handle_endtag(self, tag):
+            if tag in containers and stack:
+                stack.pop()
+
+    Walk().feed(html_)
+    return found
+
+
+def test_every_details_list_escapes_keeps_words_says_no_repr_and_draws_one_box():
+    """The details B0c routes through the one summary list, each rendered
+    from a value that is hostile markup and one in Chinese with emoji: the
+    markup is literal text, the Chinese and emoji unchanged, no Python repr
+    quote or bare None is shown, and no bordered box sits inside another
+    (the skill's §2, §5, §6)."""
+    from src.config.recipe import BASE
+    from src.models.bundle.spec import reference_spec
+    from src.webui.components import finetune_page as ft
+    from src.webui.components import models_page as mp
+    from src.webui.components import test_page as tp
+    from src.webui.components import training_console as tc
+    from src.webui.style import SHELL_CSS
+
+    bordered = _bordered_classes(SHELL_CSS + tc.PAGE_CSS + ft.PAGE_CSS + tp.PAGE_CSS
+                                 + mp.PAGE_CSS)
+    assert {"shep-check", "shep-card"} <= bordered
+    assert not {"shep-kv", "shep-more", "shep-inherit", "shep-ckpt", "shep-ft-base"} & bordered
+    item = {**checkpoint(sha=SHA), "filename": HOSTILE, "run": WORLDLY, "architecture": HOSTILE,
+            "record": "model", "learning_stage": "base", "task": None, "operation": "branch",
+            "encoder": "gatv2", "differences": (), "family_id": WORLDLY,
+            "parent_sha256": "d" * 64, "parent_run": HOSTILE,
+            "parent_changes": {"scheduler_type": {"parent": WORLDLY, "new": HOSTILE},
+                               "early_stopping_patience": {"parent": 10, "new": None}},
+            "checkpoint_kind": "training_state", "end": "paused",
+            "selection": {"monitor": "val_lp_accuracy", "mode": "max"}}
+    inherited = {**dict(BASE),
+                 "scheduler_type": HOSTILE, "task": None, "task_loss_weight": None,
+                 "early_stopping_patience": None, "seed": None, "use_amp": False,
+                 "model_spec": reference_spec("base").to_dict()}
+    preview = {"ok": True, "parent": "/elsewhere/x.pt", "sha256": SHA, "architecture": "gatv2",
+               "action": f"Resume the original training ({WORLDLY})", "inherited": inherited,
+               "decoded": {}, "learning_stage": "base", "task": None}
+    version = {"label": "v1", "role": WORLDLY, "kind": "supplied", "manifest_sha256": FP_A,
+               "counts": {"source_cases": 3, "ranked_eligible": 2,
+                          "excluded": {HOSTILE: 1}}, "imported_at": "2026-11-01T10:00:00Z",
+               "source_format": HOSTILE}
+    page = {"workspaces": [{"name": WORLDLY, "dataset_fingerprint": FP_A}],
+            "versions": [version], "roots": []}
+    models = {"items": [item], "workspace": WORLDLY}
+    facts = r.facts_from_checkpoint(item, page["workspaces"])
+    shown = {
+        "parent details": tc.parent_details_html(item),
+        "check": tc._check_html(preview, tc.CONTINUE_FROM_PATH),
+        "base summary": ft.base_summary_html(item),
+        "Test model": tp.model_html(page, models, tp.item_key(item)),
+        "Test version": tp.version_html(page, "v1", None),
+        "Models identity": mp.identity_html(item, {"parent_state": "elsewhere",
+                                                   "parent_workspace": WORLDLY}),
+        "Model Facts": r.model_facts_html(facts),
+    }
+    for where, html_ in shown.items():
+        assert "<dl class=\"shep-kv" in html_, where
+        assert HOSTILE not in html_ and "&lt;img src=x onerror=alert(1)&gt;" in html_, where
+        assert WORLDLY in html_, where
+        text = _shown_text(html_)
+        assert not _REPR.search(text), (where, _REPR.search(text).group(0))
+        assert not _nested_boxes(html_, bordered), (where, _nested_boxes(html_, bordered))
+    check = shown["check"]
+    assert "/elsewhere" not in check and "a path outside the workspaces root" in check
+    rows = dict(re.findall(r'title="(\w+)">[^<]*</dt><dd class="shep-v">([^<]*)</dd>', check))
+    assert rows["early_stopping_patience"] == "off" and rows["seed"] == "not set"
+    assert rows["task"] == rows["task_loss_weight"] == "not taken by a base"
+    assert rows["use_amp"] == "off" and rows["num_neighbors"] == "15, 10, 5"
+    assert "Reference GATv2 spec" in check
