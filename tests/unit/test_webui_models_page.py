@@ -445,7 +445,7 @@ def test_newest_first_gives_the_load_no_ordering(world, monkeypatch):
     assert view == {"task": "all", "note": mp.LOAD_NOTE}
     html = ml.list_html(listing, None, ml.PRESETS["research"], view=view)
     for key, kind in ((_key(world, "model-05.pt"), "Record not readable"),
-                      (_key(world, "broken.pt"), "Record not read"),
+                      (_key(world, "broken.pt"), "Record unknown"),
                       (bundle_key("base"), "Base"), (bundle_key("gene"), "Gene")):
         row = html[html.index(f'data-key="{key}"'):]
         assert row.split("</tr>")[0].count(f'<div class="shep-sub shep-row-kind">{kind}</div>') \
@@ -761,8 +761,9 @@ def test_a_usage_row_lists_its_metrics_as_recorded_or_says_there_are_none():
 
 # --------------------------------------------------------------------------- the detail
 def test_the_detail_keeps_validation_and_mode_c_apart(world, monkeypatch):
-    """The Trainer's validation figure in its own card, the recorded test
-    results in theirs, never together (the world's records are disease task
+    """The Trainer's validation figure in its own row of the detail's summary
+    list (never a box of its own inside the panel: the skill's §2; the
+    ops-wiring round's B3), the recorded test results in theirs, never together (the world's records are disease task
     records since K8-6d); the records newest registration first, a contested
     one with what its runs say, and no role note (By test score retired)."""
     listing, data = _read(world, monkeypatch)
@@ -776,10 +777,19 @@ def test_the_detail_keeps_validation_and_mode_c_apart(world, monkeypatch):
     assert world["shas"]["model-12.pt"][:12] in detail["header"]
     top, records = detail["top"], detail["records"]
     assert world["shas"]["model-05.pt"] in top                  # the full fingerprint, Copy
-    assert "Validation pooled MRR (Trainer) 0.2410" in top and "Disease pooled MRR" not in top
+    assert ('<dt class="shep-k">Validation<button' in top
+            and "pooled MRR (Trainer) 0.2410 — " in top and "Disease pooled MRR" not in top)
+    assert "Validation Validation" not in _text(top) and "shep-card" not in top
     assert ("Validation pooled MRR" not in records and "(Trainer)" not in records
             and "0.2410" not in records)
     assert e(mode_label("disease")) in records and "Disease pooled MRR" in records
+    # Each relation a row of its own under its record, its name visible whole
+    # (`renderers.relation_rows`; never a chain of short names with the full
+    # ones in a title: BACKLOG 72, the ops-wiring round's B3).
+    assert '<dl class="shep-kv shep-mp-rel">' in records
+    assert ('<dt class="shep-k">R3 model trained on this graph</dt><dd class="shep-v">'
+            + r.status_mark("ok", "Verified")) in records
+    assert "Relations:" not in records and "version↔graph" not in records
     # newest registration first: no record is picked or put ahead of the others
     assert records.index("registered #3") < records.index("registered #2")
     assert records.index("registered #2") < records.index("runs differ #1")
@@ -1198,8 +1208,8 @@ def test_by_family_draws_each_family_parent_first_with_its_lineage(world, monkey
     view = mp.shape(listing, data, ctl)
     assert view["column"] == mp.LINEAGE_COLUMN
     titles = [g["title"] for g in view["groups"]]
-    # A file whose record was never read is under its own word, "Record not
-    # read" (`record_kind_text`), never under "Record not readable"; the files
+    # A file whose record was never read is under its own word, "Record
+    # unknown" (`record_kind_text`), never under "Record not readable"; the files
     # without a model spec, refused by the record reader, under the word each
     # of their rows leads with (K6 closing review: no page word of its own).
     refused_word = r.record_kind_text({"record": "refused"})
@@ -1207,7 +1217,7 @@ def test_by_family_draws_each_family_parent_first_with_its_lineage(world, monkey
     # its name first, as the Run select names it), one " · ".
     assert titles == ["Family from run base · 2026-10-01 00:00 (3 files)",
                       "Family from run disease · 2026-10-04 00:00 (1 file)",
-                      refused_word, "Record not read"]
+                      refused_word, "Record unknown"]
     assert not hasattr(mp, "GROUP_HISTORY")
     assert {r.record_kind_text(ml.find_item(listing, key))
             for key in view["groups"][2]["keys"]} == {refused_word}
@@ -1218,9 +1228,12 @@ def test_by_family_draws_each_family_parent_first_with_its_lineage(world, monkey
     cells = view["cells"]
     child = cells[bundle_key("disease")]
     # The kind is the row's own (the shared list's Model cell), never said
-    # again in the Lineage cell; a file with no lineage has no value there.
+    # again in the Lineage cell; a file with no lineage says its state's own
+    # word (the skill's §6: Unknown for a record not read or not readable),
+    # never a bare dash. The parent's digest is the one digest value.
     assert child.startswith('<div class="shep-mp-lin shep-mp-d1"><div class="shep-sub">Finetune')
-    assert f"Finetune of <code class=\"shep-fpv\">{shas['base'][:12]}</code>" in child
+    assert (f"Finetune of {r.fingerprint_value(shas['base'], what='parent fingerprint', copy=False)}"
+            in child)
     assert 'class="shep-mp-lin shep-mp-d0"' in cells[bundle_key("base")]
     assert "New run" in cells[bundle_key("base")]
     orphan = cells["gatv2/20261004-000000_disease_dddddd/last.pt"]
@@ -1228,7 +1241,8 @@ def test_by_family_draws_each_family_parent_first_with_its_lineage(world, monkey
             in orphan)
     assert EVIL not in orphan and html_lib.escape(EVIL) in orphan
     assert cells[_key(world, "model-05.pt")] == (
-        '<div class="shep-mp-lin shep-mp-d0"><span class="shep-muted">—</span></div>')
+        f'<div class="shep-mp-lin shep-mp-d0">{r.status_mark("neutral", r.UNKNOWN)}</div>')
+    assert "—" not in cells[_key(world, "model-05.pt")]
     # The shared list draws them: groups in order, the Lineage column.
     html = ml.list_html(listing, None, ml.PRESETS["research"], view=view)
     assert ">Lineage</th>" in html and EVIL not in html
@@ -1243,7 +1257,7 @@ def test_by_family_draws_each_family_parent_first_with_its_lineage(world, monkey
     both = {**listing, "items": [*listing["items"], refused],
             "family": {**listing["family"], "all": [*listing["family"]["all"], row]}}
     groups = {g["title"]: g["keys"] for g in mp.family_view(both, mp.ALL_TASKS)["groups"]}
-    assert groups["Record not read"] == [_key(world, "broken.pt")]
+    assert groups["Record unknown"] == [_key(world, "broken.pt")]
     assert groups["Record not readable"][-1] == ml.item_key(refused)
     assert _key(world, "broken.pt") not in groups["Record not readable"]
     # A task's view: its base as a context row, grey, ○ and its words.
@@ -1303,8 +1317,11 @@ def test_the_detail_says_what_the_model_is_and_its_relation_to_the_paper(world, 
     top = mp.detail_parts(listing, data, bundle_key("disease"), ctl)["top"]
     ident = top[top.index('<dl class="shep-kv shep-mp-ident">'):]
     ident = ident[:ident.index("</dl>") + 5]
-    keys = re.findall(r'<dt class="shep-k">([^<]*)</dt>', ident)
-    assert keys == ["Kind", "Operation", "Parent", "Family", "Encoder", "Relation to the paper"]
+    keys = re.findall(r'<dt class="shep-k[^"]*"[^>]*>([^<]*)', ident)
+    # One summary list: the fingerprint and the dataset by its relation, what
+    # the model is, and the Trainer's figure as a row (the ops-wiring B3).
+    assert keys == ["Fingerprint", "Dataset", "Kind", "Operation", "Parent", "Family", "Encoder",
+                    "Relation to the paper", "Validation"]
     text = _text(ident)
     assert "Disease" in text and "Finetune" in text and "GATv2" in text
     # The parent's and the family's run in the one run words, its name first
@@ -1319,7 +1336,8 @@ def test_the_detail_says_what_the_model_is_and_its_relation_to_the_paper(world, 
     specless = mp.detail_parts(listing, data, _key(world, "model-05.pt"), ctl)["top"]
     ident = specless[specless.index('<dl class="shep-kv shep-mp-ident">'):]
     ident = ident[:ident.index("</dl>") + 5]
-    assert re.findall(r'<dt class="shep-k">([^<]*)</dt>', ident) == ["Kind"]
+    assert re.findall(r'<dt class="shep-k[^"]*"[^>]*>([^<]*)', ident) == [
+        "Fingerprint", "Dataset", "Kind", "Validation"]
     assert "Record not readable" in ident
     # Axis 2 for a reference spec, and for a parent elsewhere or unavailable.
     item = {"record": "model", "learning_stage": "finetune", "task": "gene",
@@ -1351,7 +1369,7 @@ def test_the_detail_says_what_the_model_is_and_its_relation_to_the_paper(world, 
         assert f"of run {words}; listed here</dd>" in long, long
         assert f'Family</dt><dd class="shep-v">run {words}</dd>' in long, long
         assert "…" not in long
-        assert len(ml.run_words(None, run)) <= r.OPTION_CHARS and "…" in ml.run_words(None, run)
+        assert len(r.run_words(None, run)) <= r.OPTION_CHARS and "…" in r.run_words(None, run)
     # The frozen-backbone control is a task model with a frozen graph
     # backbone (ops-wiring round, decision F1), from its record's transfer.
     frozen = {**item, "task": "disease", "weight_transfer": {
@@ -1366,9 +1384,11 @@ def test_the_detail_says_what_the_model_is_and_its_relation_to_the_paper(world, 
     # family's Lineage; text from a record is escaped.
     branch = {**item, "operation": "branch", "parent_changes": {}}
     html = mp.identity_html(branch, None)
-    keys = re.findall(r'<dt class="shep-k">([^<]*)</dt>', html)
-    assert keys == ["Kind", "Operation", "Parent", "Settings changed", "Family", "Encoder",
-                    "Relation to the paper"]
+    keys = re.findall(r'<dt class="shep-k[^"]*"[^>]*>([^<]*)', html)
+    assert keys == ["Fingerprint", "Dataset", "Kind", "Operation", "Parent", "Settings changed",
+                    "Family", "Encoder", "Relation to the paper", "Validation",
+                    # the run directory, file and whole fingerprint one Details › away
+                    "Run directory", "File", "Whole fingerprint"]
     assert mp.SAME_SETTINGS in _text(html)
     row = {"depth": 1, "parent_state": "listed"}
     assert mp.SAME_SETTINGS in _text(mp.lineage_cell_html(branch, row))
@@ -1383,7 +1403,9 @@ def test_the_detail_says_what_the_model_is_and_its_relation_to_the_paper(world, 
     assert "Seed 1 → 5" in _text(html) and EVIL not in html
     assert "Scheduler cosine → none" in _text(html)
     assert "Early stopping patience 10 → off" in _text(html)
-    assert "'" not in _text(html) and "None" not in _text(html)
+    settings = _text(html[html.index(">Settings changed<"):])
+    settings = settings[:settings.index("Family")]
+    assert "'" not in settings and "None" not in _text(html)
     lineage = mp.lineage_cell_html(changed, row)
     assert "Changed: " in _text(lineage) and "Seed" in _text(lineage) and EVIL not in lineage
     assert "Settings changed" not in mp.identity_html(item, None)
@@ -2175,3 +2197,55 @@ def test_an_old_corroborated_usage_entry_is_shown_as_recorded():
                                "sequence": 2})
     assert "#1 · corroborated" in old and "report of run r-old" in old
     assert "#2 · registered" in new and "report of run r-new" in new
+
+
+# --------------------------------------------------------------------------- one fact once (B3)
+def _visible_words(markup):
+    """A screen's visible words: a closed disclosure's body is not shown, so
+    it is left out (its summary stays); every tag a space."""
+    shown = re.sub(r'<details class="shep-more">.*?</details>', " ", markup, flags=re.S)
+    return " ".join(_text(re.sub(r"<[^>]+>", " ", shown)).split())
+
+
+def test_one_screen_says_each_fingerprint_and_the_dataset_once(world, monkeypatch):
+    """The skill's §1.2 and §12 (the ops-wiring round's B3): counted in the
+    visible text of one screen, the workspace line, the table and the
+    selected row's detail. The table's Fingerprint column shows each model's
+    12 hex digits only (never the dataset's, nor a second digest); the
+    workspace's dataset fingerprint is said once, under its select; a row and
+    its detail trained on that dataset say nothing more of it ("the selected
+    workspace's current dataset"). The selected model's 12 hex digits are
+    said twice, with a reason: the table compares every row by them, and the
+    detail is the one place to copy them from (`renderers.fingerprint_value`
+    with its Copy); its whole value is one "Details ›" away. Its run is its
+    row's and its title's words (a list and the detail it opens), never its
+    directory, which is in the detail's provenance."""
+    listing, data = _read(world, monkeypatch)
+    key = _key(world, "model-05.pt")
+    item = ml.find_item(listing, key)
+    view = mp.shape(listing, data, NEWEST_CTL)
+    table = ml.list_html(listing, key, ml.PRESETS["research"], view=view)
+    detail = mp.detail_parts(listing, data, key, NEWEST_CTL)
+    screen = _visible_words(mp.workspace_line_html(listing) + table + detail["header"]
+                            + detail["top"])
+    sha = item["sha256"]
+    dataset = next(w["dataset_fingerprint"] for w in listing["workspaces"]
+                   if w["name"] == "demo")
+    assert screen.count(sha[:12]) == 2, screen          # its row and its detail's Copy
+    assert sha not in screen                             # the whole value one click away
+    assert sha in detail["top"] and "Whole fingerprint" in detail["top"]
+    digits = r.distinguishing_digits(w.get("dataset_fingerprint") for w in listing["workspaces"])
+    assert screen.count(dataset[:digits]) == 1, screen   # the workspace line, once
+    assert r.CURRENT_DATASET in screen and "trained on demo" not in screen
+    assert item["run"] not in screen                     # the directory: provenance only
+    words = r.run_words(item["architecture"], item["run"])
+    row = re.search(rf'<tr [^>]*data-key="{re.escape(key)}".*?</tr>', table, re.S).group(0)
+    # its row and the detail's title (the run's other files each name it in their own rows)
+    assert _visible_words(row + detail["header"] + detail["top"]).count(words) == 2
+    # The table's Fingerprint column: a model's 12 hex only, the header one word.
+    assert ">Fingerprint</th>" in table and "Fingerprints:" not in table
+    cell = re.search(rf'data-key="{re.escape(key)}"[^>]*>.*?</td><td>(.*?)</td>', table,
+                     re.S).group(1)
+    assert cell == r.fingerprint_value(sha, what="model fingerprint", copy=False,
+                                       digits=r.distinguishing_digits(
+                                           i.get("sha256") for i in listing["items"]))

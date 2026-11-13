@@ -13,8 +13,10 @@ its one record per checkpoint: no order ranks a model by a test score.
 (`ctx.create_model_list("research")`, `src/webui/components/model_list.py`): the
 workspace select (its options are the names; the chosen workspace's dataset
 identity is said once, under it, by the shared renderer, `workspace_line_html`),
-the table ("Fingerprints: model · dataset trained on", the Trainer's validation
-figure, the recorded tests' state),
+the table (each row its run by the one run words and how far it trained,
+its model fingerprint's 12 hex digits only, the dataset only as an exception
+mark where it is not the workspace's current one, `renderers.dataset_exception`,
+the Trainer's validation figure, the recorded tests' state),
 "In use (Diagnosis)" on the served row, and the one gated Load with its
 confirmation. This module never
 lists a checkpoint, never reloads and never writes a usage history entry itself:
@@ -40,14 +42,19 @@ build describes).
 Load is refused for a base or a record not readable before
 anything is read (`model_list.load_refusal`), its reason beside the button.
 
-**The detail** of the selected checkpoint: its full model fingerprint (Copy), what
-it was trained on, what it is (kind, operation, parent, family, encoder and its
-relation to the paper, README §5 axis 2: "matches the reference recipe" or the
-fields that differ), the Trainer's validation figure in its own card (a selection
-metric on val, never beside a test result), Model Facts' warnings, and three
+**The detail** of the selected checkpoint, one summary list (`identity_html`):
+its model fingerprint (12 hex, Copy), its dataset by its relation to the
+workspace's ("the selected workspace's current dataset", or which one it is),
+what it is (kind, operation, parent, family, encoder and its relation to the
+paper, README §5 axis 2: "matches the reference recipe" or the fields that
+differ), the Trainer's validation figure as a row (a selection metric on val,
+never beside a test result, never a box of its own), its run directory, file
+and whole fingerprint one "Details ›" away; Model Facts' warnings by the
+shared mark, and three
 in-page segments: "Recorded results" (every record its ledger holds, one
 table per mode in the order first shown, as the API's record view shows a record
-by **one display for every mode** (R2, K8-6e.2): its mode's label, a described
+by **one display for every mode** (R2, K8-6e.2): each relation a row of its own,
+its name visible whole (`renderers.relation_rows`); its mode's label, a described
 measurement's two columns in words with every metric as recorded one click away,
 any other mode's metrics as recorded in one column, its score semantics as
 recorded, coverage with every
@@ -115,7 +122,6 @@ from src.api.services.record_states import CohortVersions, key_text
 from src.evaluation.caveats import (
     R10_LABEL_TEXT,
     RECORD_ABSENCE,
-    RELATION_DISPLAY_NAMES,
     TASK_NAMES,
     metric_text,
     mode_label,
@@ -167,7 +173,7 @@ RECORDS, USAGE, RESULTS = "records", "usage", "results"
 #: never read are each grouped under their own `record_kind_text` word, the
 #: one their rows lead with).
 #: A family's group title on Models' By family order: its root run in the
-#: one run words (`model_list.run_words`, which hold the title's one " · ").
+#: one run words (`renderers.run_words`, which hold the title's one " · ").
 FAMILY_TITLE = "Family from run {run} ({count} file{s})"
 LINEAGE_COLUMN = "Lineage"
 FAMILY_NOT_READ = "the family view was not read with this list"
@@ -177,6 +183,8 @@ OPERATION_WORDS = {"new": "New run", "resume": "Resumed run", "extend": "Extende
 #: A branch that changed no setting of its parent (`parent_changes` `{}`;
 #: ops-wiring round, decisions B1, B4): a new run from its parent's weights.
 SAME_SETTINGS = "Same settings as its parent"
+#: A model whose family is its own run (the family's root).
+OWN_FAMILY = "its own run (the family's root)"
 #: The reference recipe as README §5 axis 2 has it read, never "identical to upstream".
 REFERENCE_ANCHOR = ("The reference recipe is anchored on e95433a, with corrections "
                     "(Ref: README §2.4).")
@@ -204,11 +212,6 @@ ORIGIN_MEANING = {
     "synthetic": "a generated stand-in, not a clinical knowledge graph",
     "files": "built from identified source files",
 }
-#: A relation's short name in a record's Relations line, its full words
-#: (`caveats.RELATION_DISPLAY_NAMES`) in the tooltip: `cohort_graph` binds a
-#: data version of any kind, so it is the version's, never "cohort".
-_RELATION_SHORT = {"cohort_graph": "version↔graph"}
-
 #: The help texts this page's ⓘ name (registered through `ctx.help`).
 PAGE_HELP = {
     "models-ordering": (
@@ -673,25 +676,6 @@ def coverage_html(view: Mapping[str, Any]) -> str:
             'they are is not described for this mode</div>')
 
 
-def relations_html(relations: Any) -> str:
-    """Each relation's state: ✓ verified, "not applicable"; the full names in
-    the tooltip."""
-    if not isinstance(relations, Mapping):
-        return "Relations: not reported"
-    names = [*(n for n in RELATION_DISPLAY_NAMES if n in relations),
-             *(n for n in relations if n not in RELATION_DISPLAY_NAMES)]
-    short, full = [], []
-    for name in names:
-        label = _RELATION_SHORT.get(name, str(name))
-        state = relations[name]
-        mark = "✓" if state == "verified" else ("not applicable" if state == "not_applicable"
-                                                else str(state))
-        short.append(f"{label} {mark}")
-        full.append(f"{label} {RELATION_DISPLAY_NAMES.get(name, name)}: {mark}")
-    return (f'<span title="{r.e(" · ".join(full))}">Relations: '
-            f'{r.e(" · ".join(short))}</span>')
-
-
 def _counts_fold(title: str, counts: Any, units: Any) -> str:
     """A version's or a run's counts, each with its unit as recorded, one
     click away: a closed disclosure, "<title> (N)"."""
@@ -922,9 +906,10 @@ def _mode_table(mode: Optional[str], views: Sequence[Mapping[str, Any]],
         # A version of another kind is named by its kind and role, never as
         # a cohort (`role_text`).
         role_line = role_text(view)
+        version = r.fingerprint_value(cohort.get("version_manifest_sha256"),
+                                      what="version fingerprint", copy=False)
         cohort_cell = (f'<div class="shep-w600">{r.e(cohort.get("label"))}</div>'
-                       f'<div class="shep-sub">(version <code>'
-                       f'{r.e(r.short_hex(cohort.get("version_manifest_sha256")))}</code>) '
+                       f'<div class="shep-sub">(version {version}) '
                        f'{synthetic}</div><div class="shep-sub">'
                        + (r.e(role_line) if role_line else f"role {r.ident_html(role)}")
                        + '</div>')
@@ -960,10 +945,12 @@ def _mode_table(mode: Optional[str], views: Sequence[Mapping[str, Any]],
         registration = (f"Registered #{_get(view, 'registration', 'sequence')} at "
                         f"{_utc_text(_get(view, 'registration', 'registered_at'))} from "
                         f"{run_text(view)}, report {r.short_hex(view.get('source'))}")
-        more = (f'<tr class="shep-mp-more"><td colspan="5">'
-                f'<span class="shep-mp-ln">{relations_html(view.get("relations"))}'
-                f'{" · " + r.e(" · ".join(others)) if others else ""}</span>'
-                f'{kind_html(view)}{semantics_html(view)}{fold}'
+        # Each relation a row of its own, its name visible whole (the one
+        # rendering, `renderers.relation_rows`), never a chain in a title.
+        relations = r.summary_list(r.relation_rows(view.get("relations")), classes="shep-mp-rel")
+        more = (f'<tr class="shep-mp-more"><td colspan="5">{relations}'
+                + (f'<span class="shep-mp-ln">{r.e(" · ".join(others))}</span>' if others else "")
+                + f'{kind_html(view)}{semantics_html(view)}{fold}'
                 f'<span class="shep-mp-ln">Environment: {r.e(environment)} · Dataset: '
                 f'<b>{r.e(origin)}</b> · {r.e(registration)}</span>'
                 f'<span class="shep-mp-ln">Native build: {r.e(native)}</span></td></tr>')
@@ -1082,8 +1069,8 @@ def unreadable_html(items: Sequence[Mapping[str, Any]]) -> str:
         digest = item.get("source_artifact_digest")
         registration = (f"#{sequence}" if _number(sequence) else
                         '<span class="shep-muted">not readable</span>')
-        report = (f'<code>{r.e(r.short_hex(digest))}</code>' if r.is_digest(digest) else
-                  '<span class="shep-muted">not readable</span>')
+        report = r.fingerprint_value(digest, what="report fingerprint", copy=False,
+                                     missing="not readable")
         rows.append(f'<tr><td class="shep-num">{r.e(item.get("index"))}</td>'
                     f'<td class="shep-nowrap">{registration}</td><td>{report}</td>'
                     f'<td>{r.e(item.get("reason"))}</td></tr>')
@@ -1163,8 +1150,9 @@ def lineage_cell_html(item: Mapping[str, Any], row: Mapping[str, Any]) -> str:
     file (or that the parent is not available, in amber, or that it is only a
     context row), and for a branch what it changed, by name, or that it kept
     its parent's settings (`changes_html`), indented by its depth in the
-    family; "—" for a file with no lineage (a record not readable or not
-    read). Its kind is the row's own line (the shared list's Model cell)."""
+    family; a state's own word for a file with no lineage (a record not readable or not
+    read: Unknown; a model record naming no operation: Not recorded). Its
+    kind is the row's own line (the shared list's Model cell)."""
     depth = min(int(row.get("depth") or 0), 3)
     lines = []
     operation = item.get("operation")
@@ -1173,7 +1161,8 @@ def lineage_cell_html(item: Mapping[str, Any], row: Mapping[str, Any]) -> str:
         where = (f' in workspace <b>{r.e(row.get("parent_workspace"))}</b>'
                  if row.get("parent_state") == "elsewhere" else "")
         lines.append(f'<div class="shep-sub">{r.e(OPERATION_WORDS.get(operation, operation))} of '
-                     f'<code class="shep-fpv">{r.e(r.short_hex(sha))}</code>{where}</div>')
+                     f'{r.fingerprint_value(sha, what="parent fingerprint", copy=False)}'
+                     f'{where}</div>')
     elif operation:
         lines.append(f'<div class="shep-sub">{r.e(OPERATION_WORDS.get(operation, operation))}'
                      '</div>')
@@ -1187,7 +1176,11 @@ def lineage_cell_html(item: Mapping[str, Any], row: Mapping[str, Any]) -> str:
     if row.get("context"):
         lines.append('<div class="shep-sub">'
                      + r.status_mark("neutral", "Context: parent of a shown file") + '</div>')
-    body = "".join(lines) or '<span class="shep-muted">—</span>'
+    # No lineage to show: a record not readable or not read holds none this
+    # build reads (Unknown); a model record that names no operation, none
+    # recorded (the skill's §6, never a bare dash).
+    body = "".join(lines) or r.status_mark(
+        "neutral", r.NOT_RECORDED if item.get("record") == "model" else r.UNKNOWN)
     return f'<div class="shep-mp-lin shep-mp-d{depth}">{body}</div>'
 
 
@@ -1327,24 +1320,38 @@ def _served_line(listing: Mapping[str, Any]) -> str:
         return "in use for diagnosis: not read yet"
     served = listing.get("served_sha")
     if served:
-        return (f'in use for diagnosis: model <code class="shep-fpv" title="{r.e(served)}">'
-                f'{r.e(served[:12])}</code>')
+        return ("in use for diagnosis: model "
+                + r.fingerprint_value(served, what="model fingerprint", copy=False))
     if listing.get("status_problem"):
         return "in use for diagnosis: not read"
     return "nothing is in use for diagnosis"
 
 
-def identity_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]]) -> str:
-    """What the selected checkpoint is, as one key-value list (README §5):
-    its kind (`renderers.model_kind_text`: a task model with a frozen graph
-    backbone says so); for a model record its operation, the exact parent file and
-    where it is (`parent_html`), for a branch the settings it changed from
-    its parent, each with both values, or that it kept them all
-    (`changes_html`), its family, its encoder and its relation to
-    the paper (axis 2: "matches the reference recipe" with what that recipe
-    is, or the fields that differ). Model Facts' Task and Configuration rows
-    say the kind and axis 1 elsewhere; neither is repeated here."""
-    rows = [("Kind", r.e(r.model_kind_text(item)))]
+def identity_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]], *,
+                  workspaces: Sequence[Mapping[str, Any]] = ()) -> str:
+    """**The selected checkpoint's details, as one summary list** (the
+    skill's §4, README §5): its model fingerprint (12 hex with its Copy: the
+    table shows each row's, this is the chosen one's to copy); its dataset by
+    its relation to the workspace chosen above, whose identity that line says
+    once (`renderers.dataset_relation_html`: "the selected workspace's
+    current dataset", or which dataset, its fingerprint and "synthetic" where
+    it is another); its kind
+    (`renderers.model_kind_text`: a task model with a frozen graph backbone
+    says so); for a model record its operation, the exact parent file and
+    where it is (`parent_html`), for a branch the settings it changed from its
+    parent, each with both values, or that it kept them all (`changes_html`),
+    its family (its own run where it is the family's root), its encoder and
+    its relation to the paper (axis 2: "matches the reference recipe" with
+    what that recipe is, or the fields that differ); and the Trainer's
+    validation figure, a row like every details list's (`renderers.validation_value`),
+    never a box of its own. Its run directory, file and whole fingerprint are
+    one "Details ›" away (the skill's §5: the full provenance one click
+    away). Model Facts' Task and Configuration rows say the kind and axis 1
+    elsewhere; neither is repeated here."""
+    sha = item.get("sha256")
+    rows = [("Fingerprint", r.fingerprint_value(sha, what="model fingerprint")),
+            ("Dataset", r.dataset_relation_html(item, workspaces)),
+            ("Kind", r.e(r.model_kind_text(item)))]
     if item.get("record") == "model":
         operation = item.get("operation")
         differences = item.get("differences")
@@ -1356,15 +1363,29 @@ def identity_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]]) -> 
             relation = (f'matches the reference recipe<div class="shep-sub">'
                         f'{r.e(REFERENCE_ANCHOR)}</div>')
         else:
-            relation = '<span class="shep-muted">not read</span>'
+            relation = r.status_mark("neutral", r.UNKNOWN)
+        family = item.get("family_id")
         rows += [("Operation", r.e(OPERATION_WORDS.get(operation, operation or "not read"))),
                  ("Parent", parent_html(item, row)),
                  *([("Settings changed", changes_html(item.get("parent_changes")))]
                    if operation == "branch" else []),
-                 ("Family", r.e(f'run {ml.run_words(None, item.get("family_id"), fit=False)}')),
+                 ("Family", r.e(OWN_FAMILY if family == item.get("run")
+                                else f'run {r.run_words(None, family, fit=False)}')),
                  ("Encoder", r.e(r.architecture_label(item.get("encoder")))),
                  ("Relation to the paper", relation)]
-    return r.summary_list(rows, classes="shep-mp-ident")
+    rows.append(("Validation", r.e(r.validation_value(r.validation_figure(item),
+                                                      read=r.record_read(item)))))
+    architecture, run, filename = (item.get("architecture"), item.get("run"),
+                                   item.get("filename"))
+    unknown = r.status_mark("neutral", r.UNKNOWN)
+    provenance = [("Run directory", r.ident_html(f"{architecture}/{run}") if architecture and run
+                   else unknown),
+                  ("File", r.ident_html(filename) if filename else unknown),
+                  ("Whole fingerprint", r.fingerprint_value(sha, full=True, copy=False))]
+    return (r.summary_list(rows, classes="shep-mp-ident",
+                           helps={"Fingerprint": ("model-fingerprint", "Model fingerprint"),
+                                  "Validation": ("validation-trainer", "Validation (Trainer)")})
+            + r.details_list(provenance))
 
 
 def detail_parts(listing: Mapping[str, Any], data: Mapping[str, Any], key: Any,
@@ -1383,44 +1404,27 @@ def detail_parts(listing: Mapping[str, Any], data: Mapping[str, Any], key: Any,
                         'its validation figure and its recorded results.</p>'),
                 "records": "", "usage": "", "seg": None}
     in_use = bool(listing.get("served_sha")) and item.get("sha256") == listing.get("served_sha")
+    # In use: its tag says so, and what is served is this model, said once;
+    # not in use: the model that is, by its own fingerprint (another fact).
     tag = r.chip("In use (Diagnosis)", "accent") if in_use else r.chip("not in use", "grey")
+    served = "" if in_use else f'<span class="shep-panel-right">{_served_line(listing)}</span>'
     # The title names the row (`SCROLL_JS` waits for it) and takes the focus.
     header = (f'<div class="shep-panel-hd"><h2 tabindex="-1" data-key="{r.e(ml.item_key(item))}">'
-              f'{r.e(r.model_name_line(item))}</h2>{tag}<span class="shep-panel-right">'
-              f'{_served_line(listing)}</span>{BACK_BUTTON}</div>')
+              f'{r.e(r.model_name_line(item))}</h2>{tag}{served}{BACK_BUTTON}</div>')
     workspaces = listing.get("workspaces") or []
     if not ml.loadable(item):
         why = item.get("problem") or "its digest was not read"
         top = (f'<div class="shep-reason">{r.e(item.get("filename"))} · metadata not readable · '
                f'cannot be loaded: {r.e(why)}</div>')
         return {"header": header, "top": top, "records": "", "usage": "", "seg": None}
-    sha = item["sha256"]
-    run_ident = r.ident_html(f'{item.get("architecture")}/{item.get("run")}')
-    ident = (f'<div class="shep-digest"><span class="shep-dl">Model fingerprint (checkpoint '
-             f'sha256) · {run_ident} · {r.ident_html(item.get("filename"))}'
-             f'{help_button("model-fingerprint", "Model fingerprint")}'
-             f'</span><code class="shep-full">{r.e(sha)}</code>'
-             f'{copy_button(sha, "the full model fingerprint")}</div>')
-    trained = r.trained_on_html(item.get("dataset_fingerprint"), workspaces)
-    marks = []
-    if item.get("trained_on_this_dataset") is True:
-        marks.append(r.chip("✓ this workspace's current dataset", "ok"))
-    elif item.get("trained_on_this_dataset") is False:
-        marks.append(r.chip("not this workspace's current dataset", "amber"))
-    if r.is_synthetic_training(item.get("dataset_fingerprint"), workspaces):
-        marks.append(r.chip("synthetic", "amber"))
     facts = r.facts_from_checkpoint(item, workspaces)
-    validation = (f'<div class="shep-card shep-mp-val"><div class="shep-mp-valbd"><b>Validation '
-                  f'(Trainer)</b>{help_button("validation-trainer", "Validation (Trainer)")} '
-                  f'<span>{r.e(r.validation_text(facts.validation, read=facts.validation_read))}'
-                  '</span></div></div>')
     # Model Facts' warnings, but its synthetic banner: that one speaks of "the
-    # served workspace", which a listed checkpoint need not be; the amber chip
-    # above and the records' dataset line say synthetic for this checkpoint.
-    warnings = "".join(f'<p class="shep-warn"><b>⚠ {r.e(h)}</b> <span>{r.e(d)}</span></p>'
-                       for h, d in facts.warnings if (h, d) != r.IDENTITY_BANNERS["synthetic"])
-    top = (ident + f'<div class="shep-mp-trained">{trained} {" ".join(marks)}</div>'
-           + identity_html(item, family_row(listing, ml.item_key(item))) + validation + warnings)
+    # served workspace", which a listed checkpoint need not be; the workspace
+    # line and the Dataset row say synthetic for this checkpoint.
+    warnings = "".join(r.warning_html(h, d) for h, d in facts.warnings
+                       if (h, d) != r.IDENTITY_BANNERS["synthetic"])
+    top = (identity_html(item, family_row(listing, ml.item_key(item)), workspaces=workspaces)
+           + warnings)
     ledger = (data.get("ledgers") or {}).get(ml.item_key(item))
     records, count, contested, unreadable = _records_for_item(ledger, data)
     usage, n_usage = usage_html(item, data)
@@ -1888,9 +1892,6 @@ PAGE_CSS = f"""
 {_PAGE} .shep-mp-back {{ display: none; }}
 {_PAGE} .shep-mp-p {{ margin: 0; font-size: 15px; color: var(--shep-text-2); line-height: 1.45; }}
 {_PAGE} .shep-mp-p.shep-amber-t {{ color: var(--shep-amber-800); }}
-{_PAGE} .shep-mp-trained {{ display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; font-size: 15px; }}
-{_PAGE} .shep-mp-val {{ padding: 10px 12px; }}
-{_PAGE} .shep-mp-valbd {{ display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; font-size: 15px; }}
 {_PAGE} .shep-mp-recwrap {{ margin: 0 !important; }}
 {_PAGE} .shep-mp-recwrap + .shep-mp-p {{ margin-top: 16px; }}
 {_PAGE} .shep-note + .shep-mp-unread-p {{ margin-top: 16px; }}
@@ -1965,6 +1966,8 @@ PAGE_CSS = f"""
 {_PAGE} .shep-mp-lin.shep-mp-d2 {{ padding-left: 24px; }}
 {_PAGE} .shep-mp-lin.shep-mp-d3 {{ padding-left: 36px; }}
 {_PAGE} .shep-mp-ident {{ font-size: 15px; }}
+/* A record's relations, a row each under its detail row's words (`renderers.relation_rows`). */
+{_PAGE} .shep-mp-rel {{ margin: 0 0 6px; font-size: 14px; }}
 /* Read-only: no list, no workspace, no order; the reason is the header's. */
 {_PAGE} {_LIST}:has(.shep-mp-ro) .shep-model-head > .form,
 {_PAGE} {_LIST}:has(.shep-mp-ro) #shep-mp-wsline,
