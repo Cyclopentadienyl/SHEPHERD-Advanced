@@ -733,7 +733,8 @@ def test_one_file_reads_the_same_completed_epochs_on_every_page(root):
         assert r.model_name_line(item) == line                       # Models' detail header
         assert f'<div class="shep-sub">{words}</div>' in r.model_table_row_html(item, [])  # row
         assert ml.checkpoint_words(item) == f"Latest save · {words}"  # Training, Fine-tune
-        _run, checkpoint = tp.model_selects({"items": [item]}, tp.item_key(item))  # Test
+        _run, checkpoint = ml.parents_update(tp.model_parents({"items": [item]}),  # Test
+                                             tp.item_key(item), first=False)
         assert checkpoint["choices"] == [(f"Latest save · {words}", tp.item_key(item))]
 
 
