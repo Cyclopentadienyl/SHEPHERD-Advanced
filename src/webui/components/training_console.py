@@ -1350,8 +1350,10 @@ def _other_workspace(item: Mapping[str, Any], ws: Mapping[str, Any]) -> Optional
 #: (the page's own value check, or the preview's ``invalid_settings``: a
 #: setting not read or off the list, a value, a rule across settings, the hop
 #: list), the parent changed since its fingerprint was shown (the preview's
-#: ``changed``), or the parent itself (the plan, its record, the device).
+#: ``changed``), the parent itself (the plan, its record, the device), or no
+#: parent the run list holds (`_parent_path` found none to read).
 REFUSED_SETTINGS, REFUSED_CHANGED, REFUSED_PARENT = "settings", "changed", "parent"
+REFUSED_UNLISTED = "unlisted"
 
 
 def _refusal_kind(preview: Mapping[str, Any]) -> Optional[str]:
@@ -1373,9 +1375,10 @@ def continue_refusal(parent: Mapping[str, Any], ws: Mapping[str, Any], *,
     refused). A refused check by what it refused (`_refusal_kind`): a setting
     the operator edited, to change and check again; the parent changed since
     its fingerprint was shown, with the action for where it was shown
-    (`_changed_parent_action`); else the parent itself, which the check says
-    why. A branch's data is its parent's as a continued run's is (BACKLOG
-    23), so another dataset is refused for both."""
+    (`_changed_parent_action`); no checkpoint the run list holds, with what
+    to do for where it was chosen; else the parent itself, which the check
+    says why. A branch's data is its parent's as a continued run's is
+    (BACKLOG 23), so another dataset is refused for both."""
     if not parent.get("chosen"):
         return "choose a checkpoint first."
     other = _other_workspace(parent, ws) if parent.get("source") == CONTINUE_FROM_LIST else None
@@ -1387,6 +1390,11 @@ def continue_refusal(parent: Mapping[str, Any], ws: Mapping[str, Any], *,
     if refused == REFUSED_CHANGED:
         return (f"the checkpoint changed since it was chosen. "
                 f"{_changed_parent_action(parent.get('source'))}")
+    if refused == REFUSED_UNLISTED:
+        return ("the typed path is not a checkpoint the run list holds. Type one it holds, or "
+                "Refresh the list if its run is new." if parent.get("source") == CONTINUE_FROM_PATH
+                else "the checkpoint is no longer in the run list. Refresh the list, then "
+                     "choose one.")
     if refused:
         return f"the check says this checkpoint cannot be {OPERATION_VERBS[operation][1]}."
     recorded, current = parent.get("fingerprint"), workspace_fingerprint(ws)
@@ -3629,7 +3637,7 @@ def _checked(operation: str, source, listed, manual, device, ws, parents, mode, 
     path, why, item = _parent_path(source, listed, manual, ws or {}, parents or {})
     record = dict((mode or {}).get("parent") or _chosen(source, listed, manual, parents, ws))
     if path is None:
-        record.update(refused=REFUSED_PARENT, checked=True)
+        record.update(refused=REFUSED_UNLISTED, checked=True)
         return None, why, record, {}
     if source == CONTINUE_FROM_PATH:
         shown = record.get("sha256") if starting and record.get("path") == path else None
@@ -3653,6 +3661,13 @@ def _checked(operation: str, source, listed, manual, device, ws, parents, mode, 
     if operation == BRANCH and preview.get("ok"):
         record["changeable"] = list(preview.get("changeable") or ())
     return preview, None, record, settings
+
+
+def _nothing_to_check_html(why: Any) -> str:
+    """The check's text when the drawer's check found no checkpoint the run
+    list holds to read (`_parent_path`'s reason), for Check checkpoint and
+    for the start, which checks first."""
+    return f'<div class="shep-reason">Nothing to check: {r.e(why)}.</div>'
 
 
 def _on_check_continue(request: gr.Request, operation, source, listed, manual, device,
@@ -3682,8 +3697,8 @@ def _on_check_continue(request: gr.Request, operation, source, listed, manual, d
     mode["parent"] = record
     if preview is None:
         hidden = gr.update(visible=False, value=None)
-        return (f'<div class="shep-reason">Nothing to check: {r.e(why)}.</div>', hidden, hidden,
-                mode, compare_html(record, ws or {}), *_branch_updates({}, op, touched, values))
+        return (_nothing_to_check_html(why), hidden, hidden, mode, compare_html(record, ws or {}),
+                *_branch_updates({}, op, touched, values))
     differs = continue_refusal(record, ws or {}, operation=op) is not None and preview.get("ok")
     text = _check_html(preview, source, differs=bool(differs), listed=listed, operation=op)
     if op == CONTINUE and preview.get("end") == "finished" and not preview.get("ok") \
@@ -3733,9 +3748,11 @@ def _resume(operation, ws, device, source, listed, manual, extend_epochs, extend
     check refuses it, whose refusal the drawer's footer says beside the start
     from the same record, by its cause and what to do (`continue_refusal`:
     "Start branch disabled: the check refuses a setting you edited; …", the
-    dataset comparison's) and the check says why: the fact said once (the
-    skill's §1.2); a refusal nothing else says (no dataset, a path the list
-    does not hold, the job runner's own) is the sentence."""
+    dataset comparison's) and the check says why, a checkpoint the run list
+    does not hold included ("Nothing to check: …"): the fact said once (the
+    skill's §1.2; the B1c review measured the footer at 174 px when a generic
+    reason and this notice said one refusal twice); a refusal nothing else
+    says (no dataset, the job runner's own) is the sentence."""
     op = BRANCH if operation == BRANCH else CONTINUE
     mode = dict(mode or {})
     mode["operation"] = op
@@ -3751,7 +3768,7 @@ def _resume(operation, ws, device, source, listed, manual, extend_epochs, extend
     mode["parent"] = record
     hidden = gr.update(visible=False, value=None)
     if preview is None:
-        return (f"Not started: {why}.", gr.update(), hidden, hidden, mode,
+        return ("", _nothing_to_check_html(why), hidden, hidden, mode,
                 _branch_updates({}, op, touched, values))
     refusal = continue_refusal(record, ws, operation=op)
     text = _check_html(preview, source, differs=preview.get("ok") and refusal is not None,

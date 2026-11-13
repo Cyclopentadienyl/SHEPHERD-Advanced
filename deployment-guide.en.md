@@ -3418,9 +3418,10 @@ Start**, the drawer's footer under its fields, holds **Continue Training** (or *
 and **Cancel**, with the start's reason beside them, which says what stops it and what to do:
 "Start branch disabled: the parent’s dataset is not this workspace’s current one.", "… the check
 refuses a setting you edited; change it, then check again.", "… the checkpoint changed since it
-was chosen. Refresh the list, then check it again." or "… the check says this checkpoint cannot
-be branched." (the check says why). It is said once: a start the check refuses adds no notice of
-its own, and one the job runner refuses after the check (a parent changed since) says so there,
+was chosen. Refresh the list, then check it again.", "… the typed path is not a checkpoint the
+run list holds. …" or "… the check says this checkpoint cannot be branched." (the check says
+why). It is said once: a start the check refuses, a path the list does not hold included, adds
+no notice of its own, and one the job runner refuses after the check (a parent changed since) says so there,
 led by the red ✕ of a refusal. In a wide window the footer stays in view while the drawer's body scrolls.
 A listed checkpoint is found again in the server's list. **The model fingerprint shown is the one
 continued or branched from** (implemented in the root-cause round). For a listed checkpoint,

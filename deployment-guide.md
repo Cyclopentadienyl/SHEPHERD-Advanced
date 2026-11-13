@@ -3424,9 +3424,10 @@ resume 的一組仍寫明它開始時的下游權重（Models › Results 的 Co
 的頁尾，放著 **Continue Training**（或 **Start branch**）與 **Cancel**，旁邊是啟動的原因，說明
 擋住它的是什麼、該怎麼做：「Start branch disabled: the parent’s dataset is not this workspace’s
 current one.」、「… the check refuses a setting you edited; change it, then check again.」、「… the
-checkpoint changed since it was chosen. Refresh the list, then check it again.」或「… the check
-says this checkpoint cannot be branched.」（原因寫在檢查中）。只說一次：被檢查拒絕的啟動不另加
-自己的通知，檢查之後被 job runner 拒絕的（之後 parent 已改變）則在那裡說明，以表示拒絕的紅色 ✕
+checkpoint changed since it was chosen. Refresh the list, then check it again.」、「… the typed
+path is not a checkpoint the run list holds. …」或「… the check says this checkpoint cannot be
+branched.」（原因寫在檢查中）。只說一次：被檢查拒絕的啟動（包括清單中沒有的路徑）不另加自己的
+通知，檢查之後被 job runner 拒絕的（之後 parent 已改變）則在那裡說明，以表示拒絕的紅色 ✕
 開頭。在寬的
 視窗中，抽屜內容捲動時頁尾仍留在畫面上。從清單選的
 checkpoint 會在伺服器的清單中重新找到。**繼續訓練或分支所用的就是所顯示的模型指紋**（於根因修正輪

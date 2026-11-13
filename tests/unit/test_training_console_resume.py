@@ -371,6 +371,10 @@ def test_a_parent_the_list_no_longer_has_is_not_opened(checkpoints, monkeypatch)
                         lambda *a, **k: opened.append(a) or {"ok": False})
     text, *_rest = _check(checkpoints, tc.CONTINUE_FROM_LIST, "gat/../../etc/last.pt", "")
     assert "Nothing to check" in text and opened == []
+    # A listed file gone since the list was read: its option's reason.
+    gone = {"chosen": True, "source": tc.CONTINUE_FROM_LIST, "refused": tc.REFUSED_UNLISTED}
+    assert tc.continue_refusal(gone, checkpoints["state"], operation=tc.BRANCH) == (
+        "the checkpoint is no longer in the run list. Refresh the list, then choose one.")
 
 
 @pytest.mark.parametrize("where", ["copy_outside", "server_file", "other_workspace"])
@@ -400,8 +404,16 @@ def test_a_typed_path_only_locates_a_checkpoint_the_server_lists(checkpoints, mo
     text, *_rest = _check(checkpoints, tc.CONTINUE_FROM_PATH, None, str(typed))
     assert "Nothing to check" in text and "not a checkpoint the server lists" in text
     assert str(typed) not in text
-    said, *_rest = _resume(checkpoints, tc.CONTINUE_FROM_PATH, None, str(typed))
-    assert "Not started: the typed path is not a checkpoint the server lists" in said
+    # The start checks first: the check says why, the reason beside the start
+    # its cause and what to do; no notice says it again (the B1c review
+    # measured a 174 px footer when a generic reason and the notice did).
+    said, text, _extend, mode = _resume(checkpoints, tc.CONTINUE_FROM_PATH, None, str(typed))
+    assert said == tc.notice_html("")
+    assert "Nothing to check" in text and "not a checkpoint the server lists" in text
+    assert mode["parent"]["refused"] == tc.REFUSED_UNLISTED
+    assert tc.continue_refusal(mode["parent"], checkpoints["state"]) == (
+        "the typed path is not a checkpoint the run list holds. Type one it holds, or Refresh "
+        "the list if its run is new.")
     assert opened == [] and started == []
 
 
@@ -748,8 +760,9 @@ def test_a_file_without_a_model_spec_is_never_continued_from_the_dashboard(check
     typed = str(checkpoints["history"])
     text, *_rest = _check(checkpoints, tc.CONTINUE_FROM_PATH, None, typed)
     assert "Nothing to check" in text and "not a model record the run list offers" in text
-    said, *_rest = _resume(checkpoints, tc.CONTINUE_FROM_PATH, None, typed)
-    assert "Not started: the typed path is not a model record" in said
+    said, text, *_rest = _resume(checkpoints, tc.CONTINUE_FROM_PATH, None, typed)
+    assert said == tc.notice_html("")
+    assert "Nothing to check: the typed path is not a model record" in text
     assert opened == [] and started == []
 
 

@@ -1825,15 +1825,18 @@ def test_the_notice_escapes_the_server_text_it_carries(root, monkeypatch, operat
                                      "completed_epochs": 3, "target_epochs": 10, "end": None}})
     notice, _mode = tc._on_stop(operator, {})
     assert _no_tag(notice) and "&lt;b&gt;odd&amp;name/runs/gatv2/r/checkpoints/last.pt" in notice
-    # Continue Training: a listed parent the server no longer lists, in that workspace.
+    # Continue Training: a listed parent the server no longer lists, in that
+    # workspace, said by the check the start runs first (no notice says it
+    # again, B1c review), escaped alike.
     fp = odd["row"]["dataset_fingerprint"]
     parents = {"gatv2/r/last.pt": {"workspace": ODD, "architecture": "gatv2", "run": "r",
                                  "filename": "last.pt", "sha256": "c" * 64,
                                  "dataset_fingerprint": fp}}
-    notice, *_rest = tc._on_resume(
+    notice, text, *_rest = tc._on_resume(
         operator, tc.CONTINUE, tc.workspace_state(ODD), "cpu", tc.CONTINUE_FROM_LIST,
         "gatv2/r/last.pt", "", None, None, parents, {}, [])
-    assert "no longer listed" in notice and "&lt;b&gt;odd&amp;name" in notice and _no_tag(notice)
+    assert notice == ""
+    assert "no longer listed" in text and "&lt;b&gt;odd&amp;name" in text and _no_tag(text)
 
 
 def test_the_run_view_and_drawer_builders_escape_names_and_paths(root):
