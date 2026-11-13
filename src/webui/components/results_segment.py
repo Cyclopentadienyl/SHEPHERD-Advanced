@@ -67,7 +67,9 @@ words under a sub-heading row that says its path once. **Values side by
 side, as recorded; no difference is computed;** a number and a run id are
 never broken inside (a run id only after one of its hyphens), and five
 columns wider than the panel scroll sideways in the table's own wrapper, its
-Field column pinned. Each metric row is one protocol's (in
+Field column pinned, with a cue and a bar that scrolls it at the table's top
+as well as its scrollbar at the foot (`SCROLL_CUE`); each group a row group
+of its own under a real ``<colgroup>``. Each metric row is one protocol's (in
 the protocol tables' words, `caveats.metric_text`): a result of another
 protocol reads "another protocol" there, so two protocols' metrics are never
 one row as one scale. Each missing value keeps its own words: a field
@@ -402,12 +404,6 @@ def compare_state_html(state: Mapping[str, Any], chosen: Any, differences_only: 
 # ---------------------------------------------------------------------------
 # The tables (pure HTML)
 # ---------------------------------------------------------------------------
-def _digest_html(value: Any) -> str:
-    if not r.is_digest(value):
-        return '<span class="shep-muted">Unknown</span>'
-    return f'<code class="shep-fpv" title="{r.e(value)}">{r.e(r.short_hex(value))}</code>'
-
-
 def _model_cell(row: Mapping[str, Any], *, family: bool = True) -> str:
     """The result's model: its fingerprint and what it is, and its family
     where `family` (not in the family scope, whose status line names the one
@@ -1131,8 +1127,7 @@ def _cell_html(value: Any, why: Optional[str], *, full: bool, run: bool = False,
     if run and isinstance(value, str):
         return f"<td>{_run_id_html(value)}</td>"
     if r.is_digest(value):
-        shown = value if full else r.short_hex(value)
-        return f'<td><code class="shep-fpv" title="{r.e(value)}">{r.e(shown)}</code></td>'
+        return f'<td>{r.fingerprint_value(value, full=full, copy=False)}</td>'
     if isinstance(value, bool) or isinstance(value, (dict, list, tuple)):
         text = json.dumps(value, sort_keys=True, ensure_ascii=False, default=str,
                           separators=(", ", ": "))
@@ -1161,6 +1156,42 @@ def _hidden_note(alike: int, unknown: int) -> str:
     return "Differences only: every row differs."
 
 
+#: **The sideways scroll cue at Compare's top**, beside its foot's own
+#: scrollbar: a bar of the table's width that scrolls with it, under a line
+#: saying so, shown only while the table is wider than the panel
+#: (`COMPARE_JS` sizes and syncs it; hidden until then, so a table that fits
+#: shows none). Hidden from a screen reader: the table itself scrolls by
+#: keyboard and pointer.
+SCROLL_CUE = ('<div class="shep-rs-cue" hidden aria-hidden="true"><span class="shep-sub">'
+              'Wider than the panel: scroll sideways; the Field column stays.</span>'
+              '<div class="shep-rs-top"><div class="shep-rs-top-w"></div></div></div>')
+#: Keeps the cue's bar the table's width and both scrolled together, whatever
+#: Compare draws next (event delegation on the component, `js_on_load`).
+COMPARE_JS = r"""
+var sync = function () {
+  var wrap = element.querySelector('.shep-rs-wrap');
+  var cue = element.querySelector('.shep-rs-cue');
+  if (!wrap || !cue) { return; }
+  var wider = wrap.scrollWidth > wrap.clientWidth + 1;
+  cue.hidden = !wider;
+  var inner = cue.querySelector('.shep-rs-top-w');
+  if (inner) { inner.style.width = wrap.scrollWidth + 'px'; }
+  var top = cue.querySelector('.shep-rs-top');
+  if (top && top.scrollLeft !== wrap.scrollLeft) { top.scrollLeft = wrap.scrollLeft; }
+};
+element.addEventListener('scroll', function (e) {
+  var t = e.target;
+  if (!t || !t.classList) { return; }
+  var other = t.classList.contains('shep-rs-top') ? element.querySelector('.shep-rs-wrap')
+    : t.classList.contains('shep-rs-wrap') ? element.querySelector('.shep-rs-top') : null;
+  if (other && other.scrollLeft !== t.scrollLeft) { other.scrollLeft = t.scrollLeft; }
+}, true);
+if (window.ResizeObserver) { new ResizeObserver(sync).observe(element); }
+new MutationObserver(sync).observe(element, {childList: true, subtree: true});
+sync();
+"""
+
+
 def compare_html(rows: Sequence[Mapping[str, Any]], differences_only: bool, *,
                  asked: int = 0, names: Optional[Sequence[Any]] = None) -> str:
     """The chosen results side by side (at most `COMPARE_CAP`, a cap of this
@@ -1175,11 +1206,13 @@ def compare_html(rows: Sequence[Mapping[str, Any]], differences_only: bool, *,
     front-load): the path above it is said once, as a sub-heading row under
     its group, shown where one of its entries is shown and not again while
     the rows shown next share it; the row's whole name (`_label`) is its
-    accessible name and its record key its title. The sub-heading is a plain
-    cell, not a header: every row is in the table's one row group, where a
-    row-group header would head every later cell of the table, under later
-    paths and groups too (HTML's table model), and each entry's accessible
-    name already says its whole path. Values
+    accessible name and its record key its title. Each group is a row group
+    of its own (a ``<tbody>`` headed by its name, ``scope="rowgroup"``: by
+    HTML's table model its header heads its own rows, never a later group's),
+    under a real ``<colgroup>`` of the Field column and the results'. The
+    sub-heading is a plain cell, not a header: a header there would head
+    every later cell of its group, under later paths too, and each entry's
+    accessible name already says its whole path. Values
     as recorded (a closed setting's after its field's words, `_cell_html`):
     nothing is computed from two of them. A metric row is one
     protocol's; a result of another protocol reads "another protocol" there,
@@ -1188,7 +1221,9 @@ def compare_html(rows: Sequence[Mapping[str, Any]], differences_only: bool, *,
     row is left out while each head says its report's 12 hex digits (shown,
     with every digit, when two reports share their first 12). `asked` is how
     many were chosen (more than the cap: the first five are shown, saying
-    so)."""
+    so). A table wider than the panel scrolls sideways inside its own
+    wrapper, the Field column pinned, with its cue at the top as well as its
+    scrollbar at the foot (`SCROLL_CUE`)."""
     if not rows:
         return ('<p class="shep-mp-p shep-muted">Choose results above to compare them side by '
                 f'side ({COMPARE_CAP} at a time).</p>')
@@ -1197,7 +1232,13 @@ def compare_html(rows: Sequence[Mapping[str, Any]], differences_only: bool, *,
                                          else row_names(columns))[:COMPARE_CAP]]
     many = len(columns) > 1
     span = len(columns) + 1
-    body, hidden, unknown_hidden, group_shown, path_shown = [], 0, 0, None, None
+    # Each field group is a row group of its own (`<tbody>`), headed by its
+    # name (`scope="rowgroup"`), so a group's header heads its own rows only
+    # and never a later group's; the table's columns are a real `<colgroup>`
+    # (the Field column, then one per result).
+    groups: List[List[str]] = []
+    body: List[str] = []
+    hidden, unknown_hidden, group_shown, path_shown = 0, 0, None, None
     for group, parts, ref, values, whys in _rows(columns):
         digests = {value for value in values if r.is_digest(value)}
         full = len({r.short_hex(value) for value in digests}) < len(digests)
@@ -1215,8 +1256,9 @@ def compare_html(rows: Sequence[Mapping[str, Any]], differences_only: bool, *,
             continue
         if group != group_shown:
             # Its words stay in view when the table scrolls sideways (`shep-rs-pin`).
-            body.append(f'<tr class="shep-rs-grp"><th scope="colgroup" colspan="{span}">'
-                        f'<span class="shep-rs-pin">{r.e(group)}</span></th></tr>')
+            body = [f'<tr class="shep-rs-grp"><th scope="rowgroup" colspan="{span}">'
+                    f'<span class="shep-rs-pin">{r.e(group)}</span></th></tr>']
+            groups.append(body)
             group_shown, path_shown = group, None
         path = parts[:-1]
         if path and path != path_shown:
@@ -1248,12 +1290,15 @@ def compare_html(rows: Sequence[Mapping[str, Any]], differences_only: bool, *,
     notes.append("Values as recorded, side by side; no difference is computed, and each "
                  "metric row is one protocol's.")
     note_html = "".join(f'<p class="shep-mp-p shep-sub">{r.e(n)}</p>' for n in notes)
-    if not body:
-        body.append(f'<tr><td colspan="{span}" class="shep-muted">Every row is '
-                    'recorded alike in every column.</td></tr>')
-    return (f'{note_html}<div class="shep-tbl-wrap shep-rs-wrap"><table class="shep-tbl '
-            f'shep-rs-cmp" aria-label="Compare results"><thead><tr><th scope="col">Field</th>'
-            f'{heads}</tr></thead><tbody>{"".join(body)}</tbody></table></div>')
+    if not groups:
+        groups.append([f'<tr><td colspan="{span}" class="shep-muted">Every row is '
+                       'recorded alike in every column.</td></tr>'])
+    tbodies = "".join(f'<tbody>{"".join(rows_)}</tbody>' for rows_ in groups)
+    cols = (f'<colgroup><col class="shep-rs-cfield"></colgroup>'
+            f'<colgroup span="{len(columns)}" class="shep-rs-cvals"></colgroup>')
+    return (f'{note_html}{SCROLL_CUE}<div class="shep-tbl-wrap shep-rs-wrap"><table class="shep-tbl '
+            f'shep-rs-cmp" aria-label="Compare results">{cols}<thead><tr><th scope="col">Field</th>'
+            f'{heads}</tr></thead>{tbodies}</table></div>')
 
 
 # ---------------------------------------------------------------------------
@@ -1432,7 +1477,8 @@ def create_results_segment() -> Dict[str, Any]:
                                           interactive=True, elem_id="shep-rs-chosen")
             parts["differences"] = gr.Checkbox(value=True, label="Differences only",
                                                elem_id="shep-rs-differences")
-        parts["compare"] = plain_html(compare_html([], True), elem_id="shep-rs-compare")
+        parts["compare"] = plain_html(compare_html([], True), elem_id="shep-rs-compare",
+                                      js_on_load=COMPARE_JS)
         with gr.Row(elem_classes=["shep-rs-row"]):
             parts["which"] = gr.Radio(choices=EXPORT_ROWS, value=SHOWN, label="Export",
                                       elem_id="shep-rs-which")

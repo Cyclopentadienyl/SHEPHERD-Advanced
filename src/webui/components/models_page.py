@@ -1948,6 +1948,14 @@ PAGE_CSS = f"""
 {_PAGE} .shep-rs-cmp tr.shep-rs-grp th {{ text-align: left; font-weight: 600; background: var(--shep-panel-2); }}
 {_PAGE} .shep-rs-cmp tr.shep-rs-sub td {{ text-align: left; font-size: 14px; font-weight: 600; color: var(--shep-text-2); line-height: inherit; padding: 12px 10px 4px; border-bottom: 0; }}
 {_PAGE} .shep-rs-cmp .shep-rs-pin {{ position: sticky; left: 10px; display: inline-block; }}
+/* Compare's sideways scroll cue at its top (`results_segment.SCROLL_CUE`): a line
+   and a bar of the table's width that scrolls with it, as the foot's scrollbar
+   does, shown only while the table is wider than the panel. */
+{_PAGE} .shep-rs-cue {{ display: flex; flex-direction: column; gap: 2px; margin: 0 0 2px; }}
+{_PAGE} .shep-rs-cue[hidden] {{ display: none; }}
+{_PAGE} .shep-rs-top {{ overflow-x: auto; overflow-y: hidden; }}
+{_PAGE} .shep-rs-top-w {{ height: 1px; }}
+{_PAGE} .shep-rs-cmp col.shep-rs-cfield {{ width: 14em; }}
 /* Every metric as recorded (R2): a closed native disclosure, its summary a 24 px
    target that shows the keyboard focus (skill §10). */
 {_PAGE} .shep-mp-fold > summary {{ cursor: pointer; min-height: 24px; line-height: 24px; width: max-content; max-width: 100%; }}

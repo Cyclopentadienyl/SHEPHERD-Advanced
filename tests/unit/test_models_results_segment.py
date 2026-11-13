@@ -406,7 +406,7 @@ def test_compare_never_puts_two_protocols_metrics_on_one_row_and_caps_at_five(
     # split from the first's by References (Stage 8b review).
     for every in (rs.compare_html([disease, odd], False), markup):
         heads = [_text(head) for head in
-                 re.findall(r'<th scope="colgroup"[^>]*>(.*?)</th>', every)]
+                 re.findall(r'<th scope="rowgroup"[^>]*>(.*?)</th>', every)]
         assert heads
         assert len(heads) == len(set(heads))
         assert heads == [group for group in rs.COMPARE_GROUPS if group in heads]
@@ -1244,8 +1244,24 @@ def test_compare_keeps_numbers_and_run_ids_whole_and_scrolls_inside_its_wrapper(
     assert "background: var(--shep-panel)" in _css_rule(
         '#shep-page-models .shep-rs-cmp th[scope="row"]')
     assert "position: sticky" in _css_rule("#shep-page-models .shep-rs-cmp .shep-rs-pin")
-    assert '<tr class="shep-rs-grp"><th scope="colgroup" colspan="3"><span class="shep-rs-pin">' \
-           'Result</span></th></tr>' in markup
+    # Each group its own row group, headed by its name (`scope="rowgroup"`:
+    # its header heads its own rows only), under a real `<colgroup>` of the
+    # Field column and the results' (the ops-wiring round's B3; BACKLOG 72).
+    assert '<tbody><tr class="shep-rs-grp"><th scope="rowgroup" colspan="3"><span ' \
+           'class="shep-rs-pin">Result</span></th></tr>' in markup
+    assert ('<colgroup><col class="shep-rs-cfield"></colgroup>'
+            '<colgroup span="2" class="shep-rs-cvals"></colgroup><thead>') in markup
+    assert 'scope="colgroup"' not in markup
+    # The sideways scroll cue at the top as well as the foot's scrollbar:
+    # hidden until the table is wider than its wrapper (`COMPARE_JS` sizes
+    # and syncs its bar), and given to the compare component.
+    assert markup.index(rs.SCROLL_CUE) < markup.index('<div class="shep-tbl-wrap shep-rs-wrap">')
+    assert '<div class="shep-rs-cue" hidden aria-hidden="true">' in rs.SCROLL_CUE
+    for part in (".shep-rs-wrap", ".shep-rs-top", "scrollWidth", "scrollLeft",
+                 "cue.hidden = !wider", "ResizeObserver", "MutationObserver"):
+        assert part in rs.COMPARE_JS, part
+    assert "overflow-x: auto" in _css_rule("#shep-page-models .shep-rs-top")
+    assert "display: none" in _css_rule("#shep-page-models .shep-rs-cue[hidden]")
 
 
 def _layers(declarations):
@@ -1342,15 +1358,17 @@ def test_compare_names_a_nested_entry_by_its_own_words_under_its_path(world, mon
     # says its words and has no sub-heading of its own.
     for differences in (True, False):
         markup = rs.compare_html([first, second], differences)
-        # The sub-heading heads nothing: no row-group header (in the table's
-        # one row group it would head every later cell), no sub-heading as a
-        # header cell, and no header cell without a scope (HTML's auto scope
-        # makes one alone in its row a column header over the rows below).
-        body = re.search(r"<tbody>(.*)</tbody>", markup).group(1)
-        assert 'scope="rowgroup"' not in markup and "<tbody" not in body
+        # The sub-heading heads nothing: each group is a row group of its own
+        # headed by its name (its header heads its own rows, never a later
+        # group's), no sub-heading is a header cell, and no header cell is
+        # without a scope (HTML's auto scope makes one alone in its row a
+        # column header over the rows below).
+        bodies = re.findall(r"<tbody>(.*?)</tbody>", markup)
+        assert bodies and all(body.startswith('<tr class="shep-rs-grp"><th scope="rowgroup"')
+                              and body.count('scope="rowgroup"') == 1 for body in bodies)
         assert '<tr class="shep-rs-sub"><th' not in markup
-        assert set(re.findall(r'<th(?=[ >])( scope="[a-z]+")?', body)) == {
-            ' scope="row"', ' scope="colgroup"'}
+        assert set(re.findall(r'<th(?=[ >])( scope="[a-z]+")?', "".join(bodies))) == {
+            ' scope="row"', ' scope="rowgroup"'}
         assert len(re.findall(r'<tr class="shep-rs-sub">', markup)) == len(
             re.findall(r'<tr class="shep-rs-sub"><td colspan="3"><span class="shep-rs-pin">'
                        r'[^<]*</span></td></tr>', markup)) > 0
