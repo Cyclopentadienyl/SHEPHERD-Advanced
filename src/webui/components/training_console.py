@@ -3233,7 +3233,12 @@ def create_training_tab(ctx: Any) -> None:
 
     with gr.Column(elem_id="shep-train", elem_classes=["shep-train"]):
         # ------------------------------------------------------------- run bar
-        with gr.Column(elem_id="shep-train-runbar", elem_classes=["shep-runbar"]) as runbar:
+        # Its own height, never a share of the page's (scale 0: Gradio writes
+        # a column's scale inline as its flex-grow, which the style sheet does
+        # not outrank; at 1 the run bar took half the room the run view left
+        # and drew it blank under its rows, BACKLOG 52 F).
+        with gr.Column(elem_id="shep-train-runbar", elem_classes=["shep-runbar"],
+                       scale=0) as runbar:
             with gr.Row(elem_classes=["shep-rb-row", "shep-rb-row1"]):
                 dataset = gr.Dropdown(label="Dataset", choices=[], value=None,
                                       elem_id="shep-train-dataset", scale=0, min_width=240,
