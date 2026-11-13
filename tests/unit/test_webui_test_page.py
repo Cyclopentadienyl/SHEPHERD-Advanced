@@ -3629,6 +3629,20 @@ def test_a_task_record_shows_its_own_tiles_coverage_and_figures(mode):
     assert HOSTILE not in raw and html_lib.escape(HOSTILE, quote=False) in raw
 
 
+def test_a_results_determinism_reads_by_the_one_value_words_rule():
+    """The review of B0c: the Result identity kept a page copy of the on/off
+    rule. It is `renderers.setting_words`' (on, off); a record without the
+    flag holds none, "not recorded", never "not set"."""
+    from src.webui.components import renderers as r
+
+    record = _task_record("disease")
+    for flag, words in ((True, "on"), (False, "off")):
+        record["regime"]["deterministic_algorithms"] = flag
+        assert (f'Deterministic algorithms</dt><dd class="shep-v">{words}</dd>'
+                in tp._record_html(record, {}, {}))
+        assert words == r.setting_words("deterministic_algorithms", flag)
+
+
 def _kept_record(report):
     """The record the ledger would hold for `report`, as the Test page's
     Result reads it (`build_record`, through the store's scan)."""

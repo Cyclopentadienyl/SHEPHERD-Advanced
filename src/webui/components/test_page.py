@@ -1983,8 +1983,10 @@ def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
     kind = cohort["kind"]
     role = (f'role {r.ident_html(cohort["role"])}' if kind == "supplied"
             else e(version_words(kind, cohort["role"])))
-    determinism = ("on" if deterministic is True else "off" if deterministic is False
-                   else "not recorded")
+    # The one value-words rule (on / off); a record without the flag holds
+    # none: "not recorded", never "not set".
+    determinism = (r.setting_words("deterministic_algorithms", deterministic)
+                   if deterministic is not None else r.NOT_RECORDED.lower())
     # What the result is of, as the record holds it: one row per fact in the
     # one summary list (the skill's §4, §5: never a chain of " · ").
     identity = r.summary_list([
