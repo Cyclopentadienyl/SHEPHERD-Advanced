@@ -58,8 +58,9 @@ under the form says what is set ("Set by you: Epochs 5 (reference 200)").
 Start sends ``learning_stage="base"``, the settings touched that the run
 reads, whatever their value, and the model spec whole when a field of it was
 touched (`base_start_settings`); each value is checked first by its field
-spec, the spec by its own validation and the hop list against the encoder
-it builds, a problem named by its label. A base's task models are trained on
+spec, the settings by the rules across settings the start applies, the spec
+by its own validation and the hop list against the encoder it builds, a
+problem named by its label. A base's task models are trained on
 Research › Fine-tune (`src/webui/components/finetune_page.py`).
 
 **Continue…** opens a drawer over the parameters column: the parent list is
@@ -156,7 +157,8 @@ from src.api.services.training_manager import training_manager
 from src.config.recipe import reference_settings
 from src.config.runtime_presets import load_runtime_settings
 from src.config.training_fields import (CROSS_FIELD_RULES, bound_words, by_name,
-                                        names as field_names, not_read_by_rules, value_problem)
+                                        cross_field_problems, names as field_names,
+                                        not_read_by_rules, value_problem)
 from src.evaluation.caveats import TASK_NAMES
 from src.models.bundle.spec import (ENCODER_DECLARATIONS, SpecError, declared_fields,
                                     hops_problem, reference_spec)
@@ -621,13 +623,21 @@ def _base_reading(values: Mapping[str, Any], touched: Collection[str]
                   ) -> Tuple[Dict[str, Any], Optional[Any], List[str]]:
     """The base form read once: ``(settings, spec, problems)``, the settings
     Start sends (`sent_settings`; the model spec among them, whole, when a
-    field of it was touched: `edited_spec`), that spec, and every problem;
-    with the hop list the run would sample (the one sent, else the
-    reference's) checked against the encoder it would build (`hops_problem`,
-    the start's own check), so a changed encoder is checked with the hops."""
+    field of it was touched: `edited_spec`), that spec, and every problem
+    the start's own checks would find, each named by its label: each value's
+    (`sent_settings`), **the rules across settings** on the run's settings as
+    the start fills them, for what the form sends (`cross_field_problems` on
+    `new_run_values`, as `run_plan.new_run_problem` asks them: onecycle needs
+    a minimum ratio above 0), the spec's own (`edited_spec`), and the hop
+    list the run would sample (the one sent, else the reference's) against
+    the encoder it would build (`hops_problem`), so a changed encoder is
+    checked with the hops."""
     references, _ = base_references()
     settings, problems = sent_settings({name: values[name] for name in BASE_FIELDS},
                                        touched, references)
+    for problem in cross_field_problems(new_run_values("base", None, settings), settings):
+        subject = problem.split(" ", 1)[0]
+        problems.append(_named(subject, problem, r.SETTING_LABELS.get(subject, subject)))
     spec, problem = edited_spec(values, touched)
     if problem:
         problems.append(problem)

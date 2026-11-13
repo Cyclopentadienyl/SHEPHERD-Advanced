@@ -290,6 +290,32 @@ def test_a_value_its_field_spec_refuses_starts_nothing_and_is_named(listed, star
     assert "Not valid" not in tc.set_by_you_html(_values(**{name: value}), [])
 
 
+def test_a_rule_across_settings_refuses_in_the_line_and_starts_nothing(listed, started):
+    """The form's check is the start's: the rules across settings, on the
+    run's settings as the start fills them (`cross_field_problems` on
+    `new_run_values`, as `run_plan.new_run_problem` asks them), for what the
+    form sends. Onecycle needs a minimum ratio above 0: named by its label in
+    the line, before any Start, and Start starts nothing; the same ratio with
+    cosine, or untouched under onecycle (the build's 0.01), is taken."""
+    from src.api.services.training_manager import _new_bundle_run
+
+    touched = ["scheduler_type", "min_lr_ratio"]
+    values = _values(scheduler_type="onecycle", min_lr_ratio=0.0)
+    words = "Final learning-rate ratio must be more than 0 when scheduler_type is 'onecycle', not 0.0"
+    settings, problems = tc.base_start_settings(values, touched)
+    assert [problem for problem in problems if problem.startswith(words)] == problems != []
+    # The runner refuses what the form would have sent, by the same rule.
+    assert "min_lr_ratio must be more than 0" in _new_bundle_run(
+        {"learning_stage": "base", **settings})[1]
+    assert f"Not valid: {r.e(words)}" in tc.set_by_you_html(values, touched)
+    notice = _start(touched, scheduler_type="onecycle", min_lr_ratio=0.0)
+    assert started == [] and r.e(words) in notice
+    assert _start(touched, scheduler_type="cosine", min_lr_ratio=0.0) == ""
+    assert _sent(started[-1]) == {"scheduler_type": "cosine", "min_lr_ratio": 0.0}
+    assert _start(["scheduler_type"], scheduler_type="onecycle", min_lr_ratio=0.0) == ""
+    assert _sent(started[-1]) == {"scheduler_type": "onecycle"}
+
+
 def test_an_optional_setting_reads_off_and_what_the_browser_sends_is_the_recipes_none(
         listed, started):
     """K6 closing smoke: patience's reference is None (off). A number box showed
