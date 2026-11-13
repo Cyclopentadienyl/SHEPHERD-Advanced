@@ -945,8 +945,13 @@ def test_every_details_list_escapes_keeps_words_says_no_repr_and_draws_one_box()
 
     bordered = _bordered_classes(SHELL_CSS + tc.PAGE_CSS + ft.PAGE_CSS + tp.PAGE_CSS
                                  + mp.PAGE_CSS)
-    assert {"shep-check", "shep-card"} <= bordered
+    assert {"shep-panel", "shep-card"} <= bordered
     assert not {"shep-kv", "shep-more", "shep-inherit", "shep-ckpt", "shep-ft-base"} & bordered
+    # The check result and the dataset comparison sit in the Continue drawer,
+    # a bordered panel (`.shep-panel`), so neither draws a border of its own
+    # (the review of B0c: both were bordered boxes inside it).
+    assert not {"shep-check", "shep-cmp", "shep-check-ok", "shep-check-amber", "shep-cmp-ok",
+                "shep-cmp-amber", "shep-cmp-grey"} & bordered
     item = {**checkpoint(sha=SHA), "filename": HOSTILE, "run": WORLDLY, "architecture": HOSTILE,
             "record": "model", "learning_stage": "base", "task": None, "operation": "branch",
             "encoder": "gatv2", "differences": (), "family_id": WORLDLY,

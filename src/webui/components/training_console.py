@@ -3241,16 +3241,18 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} #shep-train-drawer-title h2 {{ font-size: 16px; font-weight: 600; margin: 0; }}
 {_PAGE} .shep-x-btn {{ font-size: 0 !important; width: 32px; height: 32px; min-width: 0 !important; padding: 0 !important; background: none !important; border: 0 !important; box-shadow: none !important; }}
 {_PAGE} .shep-x-btn::before {{ content: "×"; font-size: 22px; color: var(--shep-muted); }}
-{_PAGE} .shep-cmp, {_PAGE} .shep-check {{ border-radius: 8px; padding: 10px 12px; font-size: 15px; border: 1px solid var(--shep-border); }}
+/* The dataset comparison and the check result sit in the drawer's one container, the panel:
+   a tint and the status mark's lead set them apart, never a border of their own (the skill's
+   §2: no bordered box inside a box). A result that can continue has no tint. */
+{_PAGE} .shep-cmp, {_PAGE} .shep-check {{ border-radius: 8px; padding: 10px 12px; font-size: 15px; }}
 {_PAGE} .shep-cmp p, {_PAGE} .shep-check p {{ margin: 4px 0 0; }}
-{_PAGE} .shep-cmp-amber, {_PAGE} .shep-check-amber {{ background: var(--shep-amber-50); border-color: var(--shep-amber-300); color: var(--shep-amber-800); }}
-{_PAGE} .shep-cmp-ok {{ background: var(--shep-green-50); border-color: var(--shep-green-200); color: var(--shep-green-800); }}
-{_PAGE} .shep-cmp-grey {{ background: var(--shep-grey-50); border-color: var(--shep-grey-200); color: var(--shep-grey-800); }}
-{_PAGE} .shep-check-ok {{ background: #fff; }}
+{_PAGE} .shep-cmp-amber, {_PAGE} .shep-check-amber {{ background: var(--shep-amber-50); color: var(--shep-amber-800); }}
+{_PAGE} .shep-cmp-ok {{ background: var(--shep-green-50); color: var(--shep-green-800); }}
+{_PAGE} .shep-cmp-grey {{ background: var(--shep-grey-50); color: var(--shep-grey-800); }}
 {_PAGE} .shep-check-h {{ font-weight: 600; margin-bottom: 4px; }}
 {_PAGE} .shep-check code, {_PAGE} .shep-rv-snap code {{ overflow-wrap: anywhere; word-break: normal; }}
 /* The check's model spec and settings (`_check_html`): summary lists and one closed disclosure in
-   the check's one box, none a bordered box of its own (the skill's §2). */
+   the check, none a bordered box of its own (the skill's §2). */
 {_PAGE} .shep-check .shep-kv {{ font-size: 14px; gap: 4px 14px; margin-top: 6px; }}
 {_PAGE} .shep-inherit {{ margin-top: 8px; }}
 {_PAGE} .shep-inherit > summary {{ cursor: pointer; font-weight: 600; min-height: 24px; }}
