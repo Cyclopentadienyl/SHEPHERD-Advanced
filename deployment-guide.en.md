@@ -3312,12 +3312,17 @@ backbone** shown, the rest under "More settings", and under "Disease settings" (
 name) a task's own settings (its learning rate, sample sizes, loss weights and candidate
 size), each starting at that task's reference, only while exactly one task is chosen; with
 several, a line says each child takes its own task's reference. **Neighbours per hop** is
-offered for any set of tasks: left untouched, each child takes its task's reference; when
-that reference does not fit the chosen base's encoder (the demo's two-layer base, for example),
-the section opens with the start's own sentence beside the field, so you can set a hop list
-that fits. The base's split seed and its configuration are facts of its summary, not fields:
-a finetune trains on its base's split and keeps its graph side. A refusal of the start (a
-value, or the runner's check against the base) is shown beside Start in the runner's words.
+offered for any set of tasks, in a row of its own under Epochs, Seed and Graph backbone:
+untouched, each child takes its task's reference; when that reference does not fit the chosen
+base's encoder (the demo's two-layer base, for example), the start's own sentence is beside
+the field and a pointer to it beside Start, so you can set a hop list that fits. The same
+line as the Training form's says what you set, and **Reset to reference** puts every field
+back where it starts for the chosen tasks and clears what you set (with several tasks, each
+child then takes its own task's reference again). The base's split seed and its configuration
+are facts of its summary, not fields (the whole spec under its "Details ›", each field that
+differs from the reference with the reference's value): a finetune trains on its base's split
+and keeps its graph side. A refusal of the start (a value, or the runner's check against the
+base) is shown beside Start in the runner's words, each setting by its field's name.
 **Data Paths and its Save Path are gone**: the workspace
 is the run bar's choice, and the dashboard no longer reads or writes
 `.shepherd_training_config.json` in the server's working directory (a file left there is

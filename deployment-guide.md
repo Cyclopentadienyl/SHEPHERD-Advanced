@@ -3342,11 +3342,14 @@ steps 計，final learning-rate ratio 的「more than 0 with onecycle」）。�
 **Epochs**、**Seed** 與 **Graph backbone**，其餘在「More settings」下；只選一個任務時，「Disease
 settings」（任務名稱）下有該任務自己的設定（learning rate、sample size、loss weight 與 candidate
 size），各自從該任務的參考值開始；選多個任務時，一行文字說明每個子模型採用自己任務的參考值。
-**Neighbours per hop** 不論選幾個任務都提供：不動它，每個子模型採用其任務的參考值；當該參考值不符合
-所選 base 的 encoder（例如 demo 的兩層 base）時，這一區會展開，欄位旁顯示 start 自己的句子，讓你
-設定符合的 hop list。base 的 split seed 與它的 configuration 是 base 摘要中的事實，不是欄位：finetune
-在其 base 的 split 上訓練，並保留其 graph side。start 的拒絕（一個值，或 runner 對 base 的檢查）以
-runner 的原話顯示在 Start 旁。
+**Neighbours per hop** 不論選幾個任務都提供，獨立一列，位在 Epochs、Seed 與 Graph backbone 之下：
+不動它，每個子模型採用其任務的參考值；當該參考值不符合所選 base 的 encoder（例如 demo 的兩層
+base）時，欄位旁顯示 start 自己的句子，Start 旁另有一個指向該欄位的提示，讓你設定符合的 hop list。
+與 Training 表單相同的一行說明你設定了什麼；**Reset to reference** 把每一欄還原到所選任務的起始值
+並清除你設定的內容（選多個任務時，每個子模型便再次採用自己任務的參考值）。base 的 split seed 與它的
+configuration 是 base 摘要中的事實，不是欄位（完整的 spec 在其「Details ›」之下，與參考值不同的欄位
+附上參考值）：finetune 在其 base 的 split 上訓練，並保留其 graph side。start 的拒絕（一個值，或 runner
+對 base 的檢查）以 runner 的原話顯示在 Start 旁，每個設定以其欄位名稱稱呼。
 **Data Paths 與它的 Save Path 已移除**：workspace 由 run bar 選擇，儀表板不再
 讀取或寫入伺服器工作目錄中的 `.shepherd_training_config.json`（留在那裡的檔案會被忽略；是否
 提供「Save as the default dataset」是擁有者要決定的問題）。參數放不進視窗時（兩個收合區都收合時，

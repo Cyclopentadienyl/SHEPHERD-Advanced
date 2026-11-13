@@ -146,11 +146,12 @@ here builds `shortest_paths.pt`, and the GB10 acceptance probe accepts a workspa
    chosen task reads is under "More settings", and with one task its own
    settings (learning rate, sample sizes, loss weights, candidate size) are
    under "<Task> settings", from its reference. **Neighbours per hop** is
-   offered for any set of tasks, and opens with the start's sentence when the
-   reference does not fit the base's encoder (the demo's two-layer base: set
-   two numbers). Start sends what you touched and trains one child run per
-   task, in order. The job card shows the start's graph backbone, each
-   child's status and, once it has ended, its best save by the selection its
+   offered for any set of tasks, under Epochs, with the start's sentence
+   beside it (and a pointer beside Start) when the reference does not fit the
+   base's encoder (the demo's two-layer base: set two numbers). Start sends
+   what you touched, as the line "Set by you: …" says (Reset to reference
+   clears it), and trains one child run per task, in order. The job card
+   shows the start's graph backbone, each child's status and, once it has ended, its best save by the selection its
    files record (a task model's validation pooled MRR, higher is better),
    named under it; **Stop** there names the queued children it cancels.
 7. **The frozen-backbone control** (since research comparison Stage 9b,
