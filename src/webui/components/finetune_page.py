@@ -297,7 +297,7 @@ def hops_problems(tasks: Any, item: Optional[Mapping[str, Any]], touched: Any = 
     task or base is chosen, the base's spec is not read or the text typed is
     not a list (the start then says why)."""
     chosen = chosen_tasks(tasks)
-    spec = listed_spec((item or {}).get("spec"))
+    spec, _unread = listed_spec((item or {}).get("spec"))
     if spec is None or not chosen:
         return []
     if "num_neighbors" in tc.touched_keys(touched):
@@ -418,7 +418,12 @@ def base_summary_html(item: Optional[Mapping[str, Any]]) -> str:
     (`renderers.summary_list`), saying what the two selects above do not:
     its run's directory (the Run select gives its name, architecture and
     time), file, configuration (its model, a fact the children keep, never a
-    field: `BASE_FACTS`), what it holds, its Trainer validation figure, what
+    field: `BASE_FACTS`: its configuration line, `renderers.configuration_text`,
+    and beside it its whole spec under "Details ›", each field that differs
+    from the reference base spec with the reference's value, the encoder's
+    layers the hop list must fit among them: the one renderer of a recorded
+    spec, `renderers.model_spec_html`, which reads a listed spec), what it
+    holds, its Trainer validation figure, what
     its run's saves were ranked by (`renderers.selection_value`), how its
     dataset stands to the one selected (the shared status mark), the split
     seed its record names, which every child trains on (a fact too), and the
@@ -441,7 +446,7 @@ def base_summary_html(item: Optional[Mapping[str, Any]]) -> str:
     rows = [
         ("Run", f"<code>{r.e(item.get('architecture'))}/{r.e(item.get('run'))}</code>"),
         ("File", f"<code>{r.e(item.get('filename'))}</code>"),
-        ("Configuration", r.e(r.configuration_text(item))),
+        ("Configuration", r.e(r.configuration_text(item)) + r.model_spec_html(item.get("spec"))[1]),
         ("Holds", r.e(tc.CHECKPOINT_KINDS.get(kind or "", "not recorded"))),
         ("Validation", r.e(r.validation_value(r.validation_figure(item),
                                               read=r.record_read(item)))),
@@ -1232,6 +1237,9 @@ PAGE_CSS = f"""
 {_PAGE} .shep-ft-start-row, {_PAGE} .shep-ft-stop-row {{ align-items: center !important; flex-wrap: wrap !important; gap: 8px 14px !important; }}
 {_PAGE} .shep-ft-start-row > button, {_PAGE} .shep-ft-stop-row > button {{ flex: none !important; width: auto !important; min-width: max-content !important; padding: 0 14px !important; height: 40px; }}
 {_PAGE} #ft_reason, {_PAGE} #ft_stop_reason, {_PAGE} #ft_notice, {_PAGE} #ft_stop_notice {{ flex: 1 1 240px !important; min-width: 0 !important; }}
+/* The configuration's "Details ›" beside its line (`base_summary_html`); opened, the spec's list
+   takes the lines under it. */
+{_PAGE} .shep-ft-base .shep-v > .shep-more {{ display: inline-block; margin-left: 8px; vertical-align: top; }}
 {_PAGE} .shep-ft-reason {{ display: inline-flex; align-items: flex-start; gap: 6px; font-size: 15px; color: var(--shep-text-2); }}
 {_PAGE} .shep-ft-reason > svg {{ flex: none; margin-top: 3px; }}
 /* Start's and Stop's notices, each beside its button: a refusal carries the shared mark of a

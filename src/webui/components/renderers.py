@@ -1573,17 +1573,25 @@ def model_spec_html(data: Any) -> Tuple[str, str]:
     its dotted path as the title, each that differs with "reference …" beside
     it; one level, never inside another disclosure or a popover. Every value
     in its words (`_spec_value_html`); a part its stage or task has not
-    (`_SPEC_PARTS`), "not taken by a base" or by its task."""
-    from src.models.bundle.spec import ModelSpec, SpecError
+    (`_SPEC_PARTS`), "not taken by a base" or by its task. `data` is a
+    recorded spec, with its reference notes or as a list holds it without
+    them (`listed_record`'s `spec`), read by the one reader of a listed spec
+    (`record.listed_spec`)."""
+    from src.models.bundle.record import listed_spec
+    from src.models.bundle.spec import SpecError
 
     if not isinstance(data, Mapping):
         return (status_mark("neutral", f"{UNKNOWN}: the record holds no model spec"), "")
-    try:
-        spec = ModelSpec.from_dict(data)
-        differences = spec.differences_from_reference()
-    except (SpecError, TypeError, ValueError, KeyError) as exc:
+    spec, problem = listed_spec(data)
+    differences: Dict[str, Any] = {}
+    if spec is not None:
+        try:
+            differences = spec.differences_from_reference()
+        except (SpecError, TypeError, ValueError, KeyError) as exc:
+            spec, problem = None, str(exc)
+    if spec is None:
         return (status_mark("neutral", f"{UNKNOWN}: not read as a model spec "
-                                       f"({short_reason(exc, 120)})"), "")
+                                       f"({short_reason(problem, 120)})"), "")
     name = f"reference {architecture_label(spec.encoder.kind)} spec"
     if differences:
         words = f"Differs from the {name}: " + named_words(

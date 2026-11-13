@@ -577,20 +577,22 @@ def listed_record(payload: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
     return summary
 
 
-def listed_spec(spec: Any) -> Optional[ModelSpec]:
+def listed_spec(spec: Any) -> Tuple[Optional[ModelSpec], Optional[str]]:
     """**A listed model's spec read back** (`listed_record`'s `spec`: every
     value as its record holds it, without the reference recipe's provenance
     notes, which say nothing of this model's) by the one spec reader
-    (`ModelSpec.from_dict`), with no notes; None when the list holds no spec
-    or it is not read as one. The Fine-tune page reads a listed base's
-    encoder from it, which the start's hop check of each child asks
-    (`spec.hops_problem`)."""
+    (`ModelSpec.from_dict`), with no notes: ``(spec, None)``, or ``(None,
+    why)`` when it holds no mapping or is not read as one. A recorded spec
+    that keeps its notes reads alike, its notes left out. The Fine-tune page
+    reads a listed base's encoder from it, which the start's hop check of
+    each child asks (`spec.hops_problem`), and the one renderer of a recorded
+    spec reads its spec by it (`renderers.model_spec_html`)."""
     if not isinstance(spec, Mapping):
-        return None
+        return None, "the record holds no model spec"
     try:
-        return ModelSpec.from_dict({**spec, "sources": {}})
-    except (SpecError, TypeError, ValueError, KeyError):
-        return None
+        return ModelSpec.from_dict({**spec, "sources": {}}), None
+    except (SpecError, TypeError, ValueError, KeyError) as exc:
+        return None, str(exc)
 
 
 def load_bundle(payload: Mapping[str, Any], *, learning_stage: Optional[str] = None,

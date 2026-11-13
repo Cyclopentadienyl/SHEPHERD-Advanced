@@ -153,7 +153,8 @@ def test_the_chosen_bases_summary_says_what_start_sends_escaped(root, operator):
     item = parents[f"gatv2/{BASE_RUN}/model-03-0.8300.pt"]
     html = fp._on_base_chosen(f"gatv2/{BASE_RUN}/model-03-0.8300.pt", parents)
     for words in ("Run", f"<code>gatv2/{BASE_RUN}</code>", "model-03-0.8300.pt", "Configuration",
-                  "GATv2 · recipe changed in", "Holds", "Validation", "LP accuracy (Trainer)",
+                  "GATv2 · recipe changed in", '<summary>Details ›</summary>',
+                  "Holds", "Validation", "LP accuracy (Trainer)",
                   "0.8300", "Selection", "Trained on", "not recorded", "Split seed",
                   "Model fingerprint", item["sha256"][:12], f'data-copy="{item["sha256"]}"'):
         assert words in html, words
@@ -188,6 +189,17 @@ def test_the_bases_split_seed_and_model_are_facts_of_its_summary_never_fields(ro
     seeded = fp.base_summary_html({**item, "split_seed": 7})
     assert "7 (every child trains on this split)" in seeded
     assert seeded.count("Split seed") == 1 and "Configuration" in seeded
+    # Its model: the one configuration line, and beside it the whole spec
+    # under its Details by the one renderer of a recorded spec, read from the
+    # list's spec (`record.listed_spec`, without the recipe's notes), each
+    # field that differs with the reference's value, the encoder's layers the
+    # hop list must fit among them (review of B2).
+    words, details = r.model_spec_html(item["spec"])
+    assert "Unknown" not in words and details
+    assert (f"<dt class=\"shep-k\">Configuration</dt><dd class=\"shep-v\">"
+            f"{r.e(r.configuration_text(item))}{details}</dd>") in seeded
+    assert ('<dt class="shep-k" title="encoder.layers">Encoder › Layers</dt>'
+            '<dd class="shep-v">1 (reference 3)</dd>') in details
     for tasks in ([], ["disease"], ["gene"], ["disease", "gene", "patients_like_me"]):
         assert not set(fp.offered_settings(tasks)) & {"split_seed", "model_spec"}
     assert not set(fp.FINETUNE_FIELDS) & fp.BASE_FACTS
@@ -397,7 +409,7 @@ def test_the_runners_refusal_of_the_settings_is_said_beside_start_in_its_words(
     key = f"gatv2/{BASE_RUN}/last.pt"
     # The runner's own check against the base (the fixture's base has one
     # encoder layer): the reference hop list cannot run on it.
-    base = SimpleNamespace(model_spec=listed_spec(parents[key]["spec"]), data_roles={})
+    base = SimpleNamespace(model_spec=listed_spec(parents[key]["spec"])[0], data_roles={})
     why = _finetune_base_problem({}, ("disease",), base)
     assert why and "does not fit its base's encoder: num_neighbors needs 1 numbers" in why
     # The setting leads the clause after the colon: named by its label, as

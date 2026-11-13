@@ -862,6 +862,13 @@ def test_a_model_spec_is_said_by_its_differences_its_whole_one_click_away():
     assert HOSTILE not in unread and "&lt;img" in unread
     assert r.model_spec_html(None) == (r.status_mark(
         "neutral", "Unknown: the record holds no model spec"), "")
+    # A listed spec (`record.listed_record`'s, without the recipe's notes)
+    # is read by the one reader of a listed spec (`record.listed_spec`) and
+    # said alike (review of B2: it was "Unknown ... lacks ['sources']").
+    for data in (_spec(), _spec(encoder__layers=2, input__dim=8), disease):
+        listed = {key: value for key, value in data.items() if key != "sources"}
+        assert r.model_spec_html(listed) == r.model_spec_html(data)
+        assert "Unknown" not in r.model_spec_html(listed)[0]
 
 
 #: A Python repr in shown text: a quoted value ('none', ['a']) or a bare
