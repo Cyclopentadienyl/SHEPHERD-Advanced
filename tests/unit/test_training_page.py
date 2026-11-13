@@ -2499,6 +2499,28 @@ def test_the_drawers_refusals_lead_with_the_shared_status_mark():
     assert "shep-cmp-amber" not in tc.PAGE_CSS and "shep-check-amber" not in tc.PAGE_CSS
 
 
+def test_the_drawers_notice_is_a_refusal_with_the_shared_mark():
+    """The B1c review: the drawer's footer notice, which says only refusals
+    (the job runner's "The checkpoint changed since it was chosen…", "Not
+    started: …", D8's), was amber text with no mark, the colour of a
+    condition that does not block. It is the shared mark's ✕ of a refusal
+    (`renderers.status_mark`, the skill's §6), its words beside it, red; no
+    amber is drawn for it."""
+    said = "Not started: the job runner refused it."
+    assert tc.notice_html(said, mark="error") == (
+        f'<span class="shep-notice-t">{r.status_mark("error", said)}</span>')
+    assert tc.notice_html("", mark="error") == ""
+    rule = [b for sel, b in _rules(tc.PAGE_CSS, "#shep-train-drawer-notice")
+            if sel == f"{tc._PAGE} #shep-train-drawer-notice"]
+    assert rule and not any("amber" in body for body in rule)
+    # D8's refusal of the start, should one reach it, is the same mark's.
+    notice, *_rest = tc._on_resume(READ_ONLY, tc.BRANCH, {}, "cpu", tc.CONTINUE_FROM_LIST,
+                                   None, "", None, None, {}, {}, [],
+                                   *(None,) * len(tc.BRANCH_FIELDS))
+    refusal = tc.operator_access(READ_ONLY).refusal
+    assert notice == f'<span class="shep-notice-t">{r.status_mark("error", refusal)}</span>'
+
+
 def test_extra_epochs_sits_above_every_check_result():
     """M5-3: on the first Check of a finished parent and when the parent's
     dataset differs, Extra epochs fell below the fold at 1920 x 1080 (under the

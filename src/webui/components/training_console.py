@@ -2629,13 +2629,18 @@ def event_act(evt: Any) -> Optional[str]:
     return data.get("act") if isinstance(data, Mapping) else None
 
 
-def notice_html(text: Any) -> str:
-    """The run bar's notice (an HTML component): the one place a handler's
-    sentence becomes markup. The sentence carries server text (a workspace or
-    run name, a path, the job runner's error), so it is escaped whole; ``""``
-    for no notice."""
+def notice_html(text: Any, *, mark: Optional[str] = None) -> str:
+    """A handler's notice (an HTML component: the run bar's, the drawer's,
+    Fine-tune's): the one place a handler's sentence becomes markup. The
+    sentence carries server text (a workspace or run name, a path, the job
+    runner's error), so it is escaped whole; ``""`` for no notice. With
+    `mark`, a `renderers.STATUS_MARKS` row, it is that state's mark and
+    colour with its words (`renderers.status_mark`, the skill's §6): the
+    drawer's notice says only refusals, so its is the ✕ of a refusal."""
     said = "" if text is None else str(text)
-    return f'<span class="shep-notice-t">{r.e(said)}</span>' if said else ""
+    if not said:
+        return ""
+    return f'<span class="shep-notice-t">{r.status_mark(mark, said) if mark else r.e(said)}</span>'
 
 
 def _on_banner_click(dismissed, cache, evt: gr.EventData):
@@ -3679,18 +3684,18 @@ def _on_resume(request: gr.Request, operation, ws, device, source, listed, manua
     parent the runner decided on (P22-S1; decision B2).
 
     Returns the start's notice (`notice_html`, in the drawer's footer beside
-    the start), the check's text, the Extra epochs and Extra-epoch rate
-    updates, the session's mode (the drawer closed once started) and the
-    Branch box and fields.
+    the start: only a refusal, so led by the ✕ of a refusal), the check's
+    text, the Extra epochs and Extra-epoch rate updates, the session's mode
+    (the drawer closed once started) and the Branch box and fields.
     """
     access = operator_access(request)
     if not access.allowed:
-        return (notice_html(access.refusal), gr.update(), gr.update(), gr.update(), gr.update(),
-                *(gr.update(),) * (1 + len(BRANCH_FIELDS)))
+        return (notice_html(access.refusal, mark="error"), gr.update(), gr.update(), gr.update(),
+                gr.update(), *(gr.update(),) * (1 + len(BRANCH_FIELDS)))
     said, text, extend, rate, mode, branch = _resume(
         operation, ws, device, source, listed, manual, extend_epochs, extend_lr, parents, mode,
         touched, values)
-    return notice_html(said), text, extend, rate, mode, *branch
+    return notice_html(said, mark="error"), text, extend, rate, mode, *branch
 
 
 def _resume(operation, ws, device, source, listed, manual, extend_epochs, extend_lr, parents,
@@ -4519,7 +4524,7 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} .shep-drawer-why {{ font-size: 15px; color: var(--shep-text-2); }}
 {_PAGE} .shep-drawer-why .shep-rb-why {{ text-align: left; flex-wrap: nowrap; align-items: flex-start; }}
 {_PAGE} #shep-train-drawer-why:not(:has(.shep-drawer-why)), {_PAGE} #shep-train-drawer-notice:not(:has(.shep-notice-t)) {{ display: none !important; }}
-{_PAGE} #shep-train-drawer-notice {{ font-size: 15px; color: var(--shep-amber-800); overflow-wrap: anywhere; }}
+{_PAGE} #shep-train-drawer-notice {{ font-size: 15px; overflow-wrap: anywhere; }}
 /* A step's number and name (the skill's §4: numbered steps), as a field's label reads. */
 {_PAGE} .shep-step {{ font-size: 14px; font-weight: 600; color: var(--shep-text-2); white-space: nowrap; }}
 {_PAGE} #shep-train-step-check, {_PAGE} #shep-train-step-start {{ flex: none !important; width: auto !important; align-self: center; }}
