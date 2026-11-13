@@ -1393,7 +1393,8 @@ def read_again() -> str:
 # The component
 # ---------------------------------------------------------------------------
 #: The page side: row clicks (and Enter or Space on a focused table row) and
-#: "Read again" become the component's ``click`` event with ``{"key": …}``.
+#: "Read again" become the component's ``click`` event with ``{"key": …}``;
+#: a row focused under its table's sticky header scrolls clear of it.
 MODEL_LIST_JS = r"""
 element.addEventListener('click', function (e) {
   if (e.target.closest && e.target.closest('button.shep-copy, button.shep-i')) { return; }
@@ -1406,6 +1407,21 @@ element.addEventListener('keydown', function (e) {
   if (!row || e.target !== row || row.getAttribute('aria-disabled') === 'true') { return; }
   if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); trigger('click', {key: row.getAttribute('data-key')}); }
 });
+// A row focused under its table's sticky header scrolls clear of it (the
+// layout rule: nothing sticky covers a focused row): the header's height,
+// kept on the component as `--shep-tbl-head-h`, is the rows' scroll margin
+// (`style.SHELL_CSS`), 0 where the header does not stick. It is in place
+// before a row takes focus (a margin set on focus comes too late for the
+// browser's scroll), and a redrawn header that changes height changes the
+// component's. The region's scroll padding keeps the room of what sticks
+// above the table (the Models list's title).
+var headRoom = function () {
+  var cell = element.querySelector('table > thead th');
+  var stuck = cell && getComputedStyle(cell).position === 'sticky';
+  element.style.setProperty('--shep-tbl-head-h', stuck ? cell.closest('thead').offsetHeight + 'px' : '0px');
+};
+if (window.ResizeObserver) { new ResizeObserver(headRoom).observe(element); }
+headRoom();
 """
 
 _START_WAIT_JS = r"""

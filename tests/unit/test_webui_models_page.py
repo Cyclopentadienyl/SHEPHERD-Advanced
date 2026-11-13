@@ -1972,6 +1972,35 @@ def test_the_list_panels_title_stays_while_the_panel_scrolls():
     assert host.elem_id == "shep-mp-hd"
 
 
+def test_a_row_focused_under_the_tables_sticky_header_scrolls_clear_of_it():
+    """B1b: with the panel scrolling as one region (760-999 px high), the
+    table's header sticks under the title; the title's scroll padding alone
+    let Shift+Tab focus a row in the header's band without scrolling it
+    (1536 x 760: rows focused at 165 px under a header from 165 to 225 px).
+    The shared list script keeps the header's height on the component, 0
+    where it does not stick, and the shared table's rows take it as their
+    scroll margin, in place before a row takes focus (one set on focus came
+    too late for the browser's scroll: the rows still landed at 165 px), so a
+    focused row lands under both."""
+    from src.webui.components import model_list as ml
+    from src.webui.shell import standalone_context
+    from src.webui.style import SHELL_CSS
+
+    js = ml.MODEL_LIST_JS
+    room = js[js.index("var headRoom = function () {"):]
+    assert "element.querySelector('table > thead th')" in room
+    assert "getComputedStyle(cell).position === 'sticky'" in room
+    assert ("element.style.setProperty('--shep-tbl-head-h', stuck ? "
+            "cell.closest('thead').offsetHeight + 'px' : '0px');") in room
+    assert "new ResizeObserver(headRoom).observe(element);" in room and "focusin" not in js
+    assert (".shep-tbl tbody tr[data-key] { cursor: pointer; "
+            "scroll-margin-top: var(--shep-tbl-head-h, 0px); }") in SHELL_CSS
+    with gr.Blocks() as demo:
+        mp.create_models_page(standalone_context(demo))
+    (rows,) = [b for b in demo.blocks.values() if getattr(b, "elem_id", None) == "shep-models-research-rows"]
+    assert rows.js_on_load == js
+
+
 def test_the_table_fits_its_frame_beside_a_classic_scrollbar():
     """M5-3: at 1440 x 900 with a classic (non-overlay) 15 px scrollbar the
     table (602 px: its columns' longest words and 10 px a side) ran 13 px past

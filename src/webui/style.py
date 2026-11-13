@@ -359,7 +359,7 @@ body { color: var(--shep-text); }
 .shep-tbl th { position: sticky; top: 0; z-index: 1; background: var(--shep-panel-2); font-size: 14px; font-weight: 600; color: var(--shep-text-2); text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--shep-border); }
 .shep-tbl td { padding: 8px 10px; border-bottom: 1px solid #edf0f3; font-size: 15px; vertical-align: top; line-height: 1.35; }
 .shep-tbl tr:last-child td { border-bottom: 0; }
-.shep-tbl tbody tr[data-key] { cursor: pointer; }
+.shep-tbl tbody tr[data-key] { cursor: pointer; scroll-margin-top: var(--shep-tbl-head-h, 0px); }
 .shep-tbl tbody tr[data-key]:hover td { background: var(--shep-panel-2); }
 .shep-tbl tbody tr.shep-on td { background: var(--shep-accent-50); }
 .shep-tbl tbody tr.shep-on td:first-child { box-shadow: inset 4px 0 0 var(--shep-accent); }
