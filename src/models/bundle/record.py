@@ -491,7 +491,7 @@ LISTED_RECORD_FIELDS = ("record", "record_problem", "learning_stage", "task", "o
                         "family_id", "parent_sha256", "parent_run", "parent_changes",
                         "encoder", "reference",
                         "differences", "capabilities", "spec", "weight_transfer",
-                        "loss_identity")
+                        "loss_identity", "split_seed")
 #: The parts of a record a list shows as the record holds them (`listed_record`),
 #: each read as plain data first (`_plain`).
 _SHOWN_AS_RECORDED = ("weight_transfer", "loss_identity")
@@ -531,8 +531,12 @@ def listed_record(payload: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
     from; none for a base, which loads nothing) and its loss (its terms and
     coefficients, and the terms without a trainable parameter), so two arms
     of one base are checked to start alike where they are listed and
-    compared. A part that is not plain data (`_plain`) refuses the summary as
-    a whole, with why, never half shown."""
+    compared. `split_seed` is the seed of the edge split its record names
+    (``data_roles["split"]["seed"]``, None where it names none), the split a
+    finetune of it trains on: the Fine-tune page's summary of a base says
+    it, and a finetune stating another is refused against the same field
+    (`run_plan.finetune_split_seed_problem`). A part that is not plain data
+    (`_plain`) refuses the summary as a whole, with why, never half shown."""
     from src.utils.run_plan import shown_value
 
     summary: Dict[str, Any] = dict.fromkeys(LISTED_RECORD_FIELDS)
@@ -542,6 +546,9 @@ def listed_record(payload: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
             _plain(name, getattr(record, name), "so a list does not show the record")
         changes = (record.parent or {}).get("changes") if record.operation == "branch" else None
         _plain("parent.changes", changes, "so a list does not show the record", finite=False)
+        split = record.data_roles.get("split")
+        split_seed = split.get("seed") if isinstance(split, Mapping) else None
+        _plain("data_roles.split.seed", split_seed, "so a list does not show the record")
     except ModelRecordError as exc:
         summary.update(record="refused", record_problem=str(exc))
         return summary
@@ -555,8 +562,25 @@ def listed_record(payload: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
                    differences=differences, capabilities=record.capabilities,
                    spec={name: value for name, value in record.model_spec.to_dict().items()
                          if name != "sources"},
+                   split_seed=split_seed,
                    **{name: copy.deepcopy(getattr(record, name)) for name in _SHOWN_AS_RECORDED})
     return summary
+
+
+def listed_spec(spec: Any) -> Optional[ModelSpec]:
+    """**A listed model's spec read back** (`listed_record`'s `spec`: every
+    value as its record holds it, without the reference recipe's provenance
+    notes, which say nothing of this model's) by the one spec reader
+    (`ModelSpec.from_dict`), with no notes; None when the list holds no spec
+    or it is not read as one. The Fine-tune page reads a listed base's
+    encoder from it, which the start's hop check of each child asks
+    (`spec.hops_problem`)."""
+    if not isinstance(spec, Mapping):
+        return None
+    try:
+        return ModelSpec.from_dict({**spec, "sources": {}})
+    except (SpecError, TypeError, ValueError, KeyError):
+        return None
 
 
 def load_bundle(payload: Mapping[str, Any], *, learning_stage: Optional[str] = None,
@@ -602,6 +626,7 @@ __all__ = [
     "finetune_parent_problem",
     "has_model_spec",
     "listed_record",
+    "listed_spec",
     "load_bundle",
     "read_model_record",
     "recorded_graph_use",

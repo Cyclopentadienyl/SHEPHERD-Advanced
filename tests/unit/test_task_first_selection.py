@@ -445,7 +445,9 @@ def test_the_listed_record_states():
                      "reference": False, "differences": SMALL_SPEC_DIFFERENCES,
                      "capabilities": model_capabilities(spec), "spec": structure,
                      "weight_transfer": None,
-                     "loss_identity": {"terms": ["lp"], "lp_loss_weight": 1.0}}
+                     "loss_identity": {"terms": ["lp"], "lp_loss_weight": 1.0},
+                     # The record names its split by a digest alone: no seed.
+                     "split_seed": None}
     # The weight transfer and the loss identity as the record holds them
     # (research comparison Stage 9b fixes), copies; a part that is not plain
     # data refuses the summary as a whole, with why, never half shown.
@@ -474,6 +476,23 @@ def test_the_listed_record_states():
     assert refused["differences"] is None and refused["reference"] is None
     assert refused["capabilities"] is None, "a refused record offers nothing to judge"
     assert refused["spec"] is None
+
+
+def test_the_listing_carries_the_split_seed_its_record_names():
+    """The one list summary of a record (`listed_record`) carries the seed of
+    the split its record names, the field a finetune's split seed is checked
+    against (`run_plan.finetune_split_seed_problem`); None where the record
+    names none (a split recorded by its digest alone)."""
+    payload = _listed_form(_record_payload())
+    assert "split_seed" in LISTED_RECORD_FIELDS
+    assert listed_record(payload)["split_seed"] is None
+    payload["data_roles"] = {**payload["data_roles"], "split": {"seed": 3, "digest": "d" * 64}}
+    assert listed_record(payload)["split_seed"] == 3
+    # A seed that is not plain data refuses the summary as a whole, with why.
+    payload["data_roles"]["split"] = {"seed": float("nan")}
+    unplain = listed_record(payload)
+    assert unplain["record"] == "refused" and unplain["split_seed"] is None
+    assert "data_roles.split.seed" in unplain["record_problem"]
 
 
 def test_the_listed_record_says_what_a_branch_changed():

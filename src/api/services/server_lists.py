@@ -222,6 +222,10 @@ class CheckpointItem:
     filled from this build's recipe; `None` for a file that was not read
     (research comparison Stage 8).
 
+    `split_seed` is the seed of the edge split its model record names, the
+    split a finetune of it trains on (`listed_record`), `None` where the
+    record names none or was not read.
+
     `selection` is the selection the file records, ``{"monitor", "mode"}``
     (``callbacks.model_checkpoint``: the metric the run's saves were ranked by
     and its direction, a base's ``val_lp_accuracy`` and a task model's
@@ -280,6 +284,7 @@ class CheckpointItem:
     loss_identity: Optional[Dict[str, Any]] = None
     selection: Optional[Dict[str, str]] = None
     in_best_k: Optional[bool] = None
+    split_seed: Optional[int] = None
 
     def __post_init__(self) -> None:
         from src.utils.checkpoint_paths import listing_key

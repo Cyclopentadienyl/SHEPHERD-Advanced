@@ -465,7 +465,8 @@ class CheckpointInfo(BaseModel):
     # model or refused (with why); a model's stage, task, operation, family and
     # parent, what a branch changed from its parent ({} when nothing), encoder
     # kind, the spec fields that differ from the reference recipe, whether
-    # there are none, and its capability description.
+    # there are none, its capability description, and the seed of the edge
+    # split its record names (the split a finetune of it trains on).
     record: Optional[str] = None
     record_problem: Optional[str] = None
     learning_stage: Optional[str] = None
@@ -479,6 +480,7 @@ class CheckpointInfo(BaseModel):
     reference: Optional[bool] = None
     differences: Optional[List[str]] = None
     capabilities: Optional[Dict[str, Any]] = None
+    split_seed: Optional[int] = None
 
 
 # =============================================================================
