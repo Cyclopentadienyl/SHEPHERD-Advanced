@@ -79,6 +79,10 @@ class PipelineStatusResponse(BaseModel):
     kg_nodes: int = 0
     kg_edges: int = 0
     has_model: bool = False
+    #: What the served checkpoint records of itself, read once at its load:
+    #: its epoch index and completed epochs, parameters, device, the
+    #: Trainer's logged metrics and `weight_transfer` (its record's, as the
+    #: model lists show it: a page names a frozen-backbone task model by it).
     checkpoint_meta: Dict[str, Any] = Field(default_factory=dict)
     current_data_dir: Optional[str] = None
     current_checkpoint_path: Optional[str] = None
@@ -96,6 +100,13 @@ class PipelineStatusResponse(BaseModel):
     #: start-up refused, nothing loaded), None while one is: the reason
     #: `/diagnose` and `/ready` refuse with. Names no path.
     not_serving_reason: Optional[str] = None
+    #: The same, as its parts (`AppState.not_serving_words`), None while a
+    #: diagnosis is admitted: `state` ("stopping", "loading", "not_loaded",
+    #: "stopped", "load_refused" or "startup_refused"), `lead` (the reason's
+    #: first words: who stopped it, why a load was refused, the GPU lock's
+    #: holder), `at` (the record's ISO time) and `model_sha12`, the last two
+    #: None where the record names none. Names no path.
+    not_serving: Optional[Dict[str, Optional[str]]] = None
 
 
 class PipelineReloadRequest(BaseModel):
@@ -241,7 +252,8 @@ def _check_files(data_dir: str, checkpoint_path: Optional[str] = None) -> Dict[s
 # Endpoints
 # =============================================================================
 #: The status fields the lifecycle fills (`AppState.snapshot`).
-_LIFECYCLE_FIELDS = ("serving", "loading", "in_flight", "holds_gpu_lock", "not_serving_reason")
+_LIFECYCLE_FIELDS = ("serving", "loading", "in_flight", "holds_gpu_lock",
+                     "not_serving_reason", "not_serving")
 
 
 def _lifecycle_of(snapshot: Dict[str, Any]) -> Dict[str, Any]:

@@ -841,6 +841,15 @@ class DiagnosisPipeline:
             "params": int(sum(p.numel() for p in model.parameters())),
             "device": str(device),
         }
+        # **Its weight transfer as the lists show it** (`listed_record`, the one
+        # reader of what a list shows of a record: each part trainable or
+        # frozen, as plain data; None where the record names none), read here
+        # once from the checkpoint this build read, so a page names a served
+        # task model with a frozen graph backbone as such (ops-wiring round,
+        # decision F1: `renderers.freeze_words`) without opening the file again.
+        from src.models.bundle.record import listed_record
+
+        self._checkpoint_meta["weight_transfer"] = listed_record(checkpoint)["weight_transfer"]
         # Extract best metrics from logs if available
         logs = checkpoint.get("logs", {})
         if isinstance(logs, dict):

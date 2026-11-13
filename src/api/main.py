@@ -150,6 +150,37 @@ class NotServingRecord:
     model_sha12: Optional[str] = None
 
 
+class NotServingWords(NamedTuple):
+    """**Why no diagnosis is admitted, said once** (`AppState.
+    not_serving_words`): `state`, the lifecycle's word for it (`STOPPING`,
+    `LOADING`, `NOT_LOADED` for nothing loaded since the service started,
+    `STOPPED`, `LOAD_REFUSED`, `STARTUP_REFUSED`); `lead`, its first words, the
+    ones a page shows beside the state (who stopped it, why a load was refused
+    and the GPU lock's holder that refused it, a load in progress); `reason`,
+    the whole sentence `/diagnose` and `/ready` refuse with (the load hint,
+    the start-up settings), of which `lead` is the gist; `at` and
+    `model_sha12`, the not-serving record's time and model, where it names
+    them. None of it names a path: the status route is open."""
+
+    state: str
+    lead: str
+    reason: str
+    at: Optional[str] = None
+    model_sha12: Optional[str] = None
+
+    def status(self) -> Dict[str, Optional[str]]:
+        """What a status carries of it beside `reason` (primitives only)."""
+        return {"state": self.state, "lead": self.lead, "at": self.at,
+                "model_sha12": self.model_sha12}
+
+
+def _capital(words: str) -> str:
+    """`words` with a capital first letter and no closing full stop: a lead
+    shown as a line of its own."""
+    text = words.strip().rstrip(".")
+    return text[:1].upper() + text[1:]
+
+
 class StopOutcome(NamedTuple):
     """What a stop did (`AppState.stop_serving`): `released` only once the
     model, its graph and the GPU lock are given back."""
@@ -309,45 +340,71 @@ class AppState:
         that loading is an operator control. **No reason names a path**: the
         routes that carry it are open.
         """
-        with self._admission:
-            return self._reason_locked()
+        words = self.not_serving_words
+        return words.reason if words is not None else None
 
-    def _reason_locked(self) -> Optional[str]:
+    @property
+    def not_serving_words(self) -> Optional[NotServingWords]:
+        """`not_serving_reason` with its state and lead (`NotServingWords`),
+        or None while a diagnosis is admitted: the one definition the reason,
+        the status's `not_serving` and every page read."""
+        with self._admission:
+            return self._not_serving_locked()
+
+    def _not_serving_locked(self) -> Optional[NotServingWords]:
         if self.transition == STOPPING:
-            return ("Inference is stopping: the diagnoses already accepted finish, and new ones "
-                    f"are refused; then no model is loaded. {LOAD_HINT} once the stop has "
-                    "ended.")
+            return NotServingWords(
+                STOPPING, "The diagnoses already accepted finish; new ones are refused",
+                "Inference is stopping: the diagnoses already accepted finish, and new ones "
+                f"are refused; then no model is loaded. {LOAD_HINT} once the stop has ended.")
         if self.pipeline is not None:
             return None
         if self.transition == LOADING:
-            return ("No model is loaded yet: a load is in progress, and no diagnosis can be "
-                    f"produced until it publishes one. {LOAD_HINT} if it is refused.")
+            return NotServingWords(
+                LOADING, "No diagnosis can be produced until the load publishes a model",
+                "No model is loaded yet: a load is in progress, and no diagnosis can be "
+                f"produced until it publishes one. {LOAD_HINT} if it is refused.")
         record = self.not_serving
         if record is None:
-            return ("No model is loaded, so no diagnosis can be produced. An operator loads one "
-                    "with “Load a model…” on the Diagnosis page or POST /api/v1/pipeline/reload, "
-                    "or starts the service with SHEPHERD_KG_PATH, SHEPHERD_DATA_DIR and "
-                    "SHEPHERD_CHECKPOINT_PATH naming a workspace and a model trained on it.")
+            return NotServingWords(
+                NOT_LOADED, "Nothing has been loaded since the service started",
+                "No model is loaded, so no diagnosis can be produced. An operator loads one "
+                "with “Load a model…” on the Diagnosis page or POST /api/v1/pipeline/reload, "
+                "or starts the service with SHEPHERD_KG_PATH, SHEPHERD_DATA_DIR and "
+                "SHEPHERD_CHECKPOINT_PATH naming a workspace and a model trained on it.")
         model = f"model {record.model_sha12}" if record.model_sha12 else "the model"
         if record.kind == STOPPED:
-            return (f"Inference was stopped {record.reason} at {record.at}: {model} is no "
-                    f"longer loaded, so no diagnosis can be produced. {LOAD_HINT}.")
+            # Who stopped it (`STOPPED_BY`'s words) leads; the page says when.
+            return NotServingWords(
+                STOPPED, _capital(record.reason),
+                f"Inference was stopped {record.reason} at {record.at}: {model} is no longer "
+                f"loaded, so no diagnosis can be produced. {LOAD_HINT}.",
+                record.at, record.model_sha12)
         if record.kind == STARTUP_REFUSED:
-            return ("A pipeline is configured for this deployment's start-up but none is being "
-                    f"served: {record.reason.rstrip('.')}. {LOAD_HINT}, or restarts the "
-                    "service to try again.")
+            return NotServingWords(
+                STARTUP_REFUSED, f"At start-up: {record.reason.rstrip('.')}",
+                "A pipeline is configured for this deployment's start-up but none is being "
+                f"served: {record.reason.rstrip('.')}. {LOAD_HINT}, or restarts the service "
+                "to try again.", record.at, record.model_sha12)
+        # Why the load was refused leads: the GPU lock's holder that refused
+        # it, or where the operator reads why.
         of = f" of model {record.model_sha12}" if record.model_sha12 else ""
-        return (f"No model is loaded: the last load{of} was refused at {record.at}: "
-                f"{record.reason.rstrip('.')}. {LOAD_HINT}.")
+        return NotServingWords(
+            LOAD_REFUSED, _capital(record.reason),
+            f"No model is loaded: the last load{of} was refused at {record.at}: "
+            f"{record.reason.rstrip('.')}. {LOAD_HINT}.", record.at, record.model_sha12)
 
     def snapshot(self) -> Dict[str, Any]:
         """What is served and the lifecycle around it, read in one step under
         admission, so the pipeline and the paths it was built from are one
         publication's: `pipeline`, `data_dir`, `checkpoint_path`, `serving`
         (`NOT_LOADED`, `SERVING` or `STOPPING`), `loading`, `in_flight` (the
-        accepted requests still running), `holds_gpu_lock` and
-        `not_serving_reason`. No lock path: the status route is open."""
+        accepted requests still running), `holds_gpu_lock`,
+        `not_serving_reason` and, with it, `not_serving` (its state, lead,
+        time and model: `NotServingWords.status`). No lock path: the status
+        route is open."""
         with self._admission:
+            words = self._not_serving_locked()
             return {
                 "pipeline": self.pipeline,
                 "data_dir": self._current_data_dir,
@@ -357,7 +414,8 @@ class AppState:
                 "loading": self.transition == LOADING,
                 "in_flight": sum(self._leases.values()),
                 "holds_gpu_lock": self.gpu_lock is not None and self.gpu_lock.held,
-                "not_serving_reason": self._reason_locked(),
+                "not_serving_reason": words.reason if words is not None else None,
+                "not_serving": words.status() if words is not None else None,
             }
 
     def lifecycle_busy(self) -> bool:
@@ -390,7 +448,7 @@ class AppState:
         with self._admission:
             pipeline = self.pipeline
             if not self.accepting:
-                raise NotServing(self._reason_locked())
+                raise NotServing(self._not_serving_locked().reason)
             key = id(pipeline)
             self._leases[key] = self._leases.get(key, 0) + 1
         try:

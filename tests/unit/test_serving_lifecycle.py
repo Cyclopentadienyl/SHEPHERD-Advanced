@@ -132,6 +132,7 @@ def test_a_load_is_refused_while_another_process_holds_the_lock(service, tmp_pat
     try:
         refused = reload(workspace, checkpoint(workspace, "a"), "cuda")
         reason = api.app_state.not_serving_reason
+        said = api.app_state.snapshot()["not_serving"]
         still_held = lock_state()["held_by"]
     finally:
         holder.kill()
@@ -143,6 +144,12 @@ def test_a_load_is_refused_while_another_process_holds_the_lock(service, tmp_pat
     assert still_held and api.app_state.gpu_lock is None
     assert reason.startswith("No model is loaded: the last load was refused")
     assert "a training job (lock_holder.py" in reason and str(tmp_path) not in reason
+    # The same record as its parts (B4): the state, and the lead a page shows
+    # beside it naming the holder, with no load hint and no path.
+    assert said["state"] == "load_refused" and said["at"] and said["model_sha12"] is None
+    assert said["lead"].startswith("CUDA inference is refused: the GPU is in use by a training "
+                                   "job (lock_holder.py")
+    assert "Load a model" not in said["lead"] and str(tmp_path) not in said["lead"]
 
 
 def test_a_busy_gpu_refuses_a_task_reload_before_any_candidate_is_read(service, tmp_path,
@@ -326,6 +333,14 @@ def test_a_stop_refuses_new_requests_waits_for_the_accepted_one_then_releases(se
     assert stopped.status.not_serving_reason.startswith(
         "Inference was stopped by an operator at ")
     assert sha_of(model)[:12] in stopped.status.not_serving_reason
+    # Its parts (B4): who stopped it leads, with when and which model.
+    said = stopped.status.not_serving
+    assert said == {"state": "stopped", "lead": "By an operator", "at": said["at"],
+                    "model_sha12": sha_of(model)[:12]}
+    assert said["at"] in stopped.status.not_serving_reason
+    assert status["not_serving"]["state"] == "stopping"
+    assert status["not_serving"]["lead"] == (
+        "The diagnoses already accepted finish; new ones are refused")
 
 
 def test_a_stop_clears_the_reference_sample_cache(service, monkeypatch):
@@ -346,6 +361,12 @@ def test_a_stop_with_nothing_loaded_is_nothing_to_stop(service):
     assert (stopped.success, stopped.released) == (False, False)
     assert stopped.message == "Nothing to stop: no model is loaded."
     assert api.app_state.not_serving is None
+    # Nothing loaded since the start: its own state and lead (B4), apart from
+    # a stopped or refused model's.
+    assert stopped.status.not_serving == {
+        "state": "not_loaded", "lead": "Nothing has been loaded since the service started",
+        "at": None, "model_sha12": None}
+    assert stopped.status.not_serving_reason.startswith("No model is loaded, so no diagnosis")
 
 
 def test_a_stop_bound_to_a_model_refuses_another(service):

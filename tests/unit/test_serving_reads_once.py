@@ -226,6 +226,13 @@ def test_the_checkpoint_replaced_after_its_read_builds_the_model_read(
     # names the file in the lists' words (`renderers.epoch_words`).
     assert bundle.config["checkpoint_meta"]["completed_epochs"] == (
         contents["progress"]["completed_epochs"])
+    # Its weight transfer as the lists show it (B4, decision F1), from the
+    # same read: a page names a frozen-backbone child without opening it.
+    from src.models.bundle.record import listed_record
+
+    transfer = bundle.config["checkpoint_meta"]["weight_transfer"]
+    assert transfer == listed_record(contents)["weight_transfer"] == contents["weight_transfer"]
+    assert transfer is not None
 
 
 def test_a_tensor_file_that_does_not_parse_is_refused_naming_it(api, workspace):
