@@ -340,6 +340,32 @@ def test_the_warmup_help_says_what_the_trainer_does():
     assert "0 takes a tenth" in shown and "at most half" in shown
 
 
+@pytest.mark.parametrize("requested, effective", [
+    (10_000, 20),   # a number far above the run's steps: at most half of them (40 // 2)
+    (0, 4),         # 0: a tenth of them (int(40 * 0.1))
+    (7, 7),         # a number under the cap: as asked
+])
+def test_the_warmup_words_are_what_a_real_trainer_does(tmp_path, requested, effective):
+    """The words under Warmup steps ("at most half the run's; 0 takes a
+    tenth of them") held to a real cosine Trainer's schedule: 10 epochs of 4
+    batches, 40 steps, as its record states them (`schedule_record`)."""
+    torch = pytest.importorskip("torch")
+    from src.training.trainer import Trainer, TrainerConfig
+    from tests.unit.test_model_record import _stored_task
+
+    trainer = Trainer(model=torch.nn.Linear(2, 1), train_dataloader=[{}] * 4,
+                      config=TrainerConfig(device="cpu", scheduler_type="cosine",
+                                           warmup_steps=requested, use_amp=False, num_epochs=10,
+                                           checkpoint_dir=str(tmp_path / "ckpt"),
+                                           log_dir=str(tmp_path / "logs"),
+                                           early_stopping_monitor="val_pooled_mrr"),
+                      task=_stored_task())
+    schedule = trainer.schedule_record
+    assert schedule["total_steps"] == 40
+    assert schedule["warmup_steps_requested"] == requested
+    assert schedule["warmup_steps_effective"] == effective
+
+
 # ---------------------------------------------------------------------------
 # S6: the start request over HTTP
 # ---------------------------------------------------------------------------

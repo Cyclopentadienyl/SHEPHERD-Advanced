@@ -155,8 +155,8 @@ import gradio as gr
 from src.api.services.training_manager import training_manager
 from src.config.recipe import reference_settings
 from src.config.runtime_presets import load_runtime_settings
-from src.config.training_fields import (CROSS_FIELD_RULES, by_name, names as field_names,
-                                        not_read_by_rules, value_problem)
+from src.config.training_fields import (CROSS_FIELD_RULES, bound_words, by_name,
+                                        names as field_names, not_read_by_rules, value_problem)
 from src.evaluation.caveats import TASK_NAMES
 from src.models.bundle.spec import (ENCODER_DECLARATIONS, SpecError, declared_fields,
                                     hops_problem, reference_spec)
@@ -268,14 +268,32 @@ BASE_FIELDS: Tuple[str, ...] = (
     "early_stopping_patience", "eval_every_n_epochs", "save_top_k")
 BASE_SHOWN = 5
 
+
+def _rule_bound_words(name: str) -> str:
+    """The bound a rule across settings adds to the setting `name`'s own,
+    in words, read from the rules themselves (`CROSS_FIELD_RULES`'
+    ``min_exclusive``, its guard's values by their words): "more than 0 with
+    onecycle"; empty for none."""
+    return "; ".join(
+        f"more than {rule.threshold:g} with " + " or ".join(
+            r.setting_words(guard, value) for guard, allowed in (rule.when or {}).items()
+            for value in allowed)
+        for rule in CROSS_FIELD_RULES if rule.kind == "min_exclusive" and rule.subject == name)
+
+
 #: A field's format, unit or "off", said under it as visible text (``info=``;
 #: the WebUI skill's §7: never only in a bubble), by its setting or its model
 #: spec field's dotted path. A field not named here takes a plain number, a
-#: switch or one of its choices.
+#: switch or one of its choices. A bound is read from its root (the field
+#: spec's, `bound_words`, and a rule's, `_rule_bound_words`); the warmup words
+#: are the Trainer's (`Trainer._create_scheduler`: a number capped at half the
+#: steps, 0 the warmup ratio of a tenth), which a test holds to a real Trainer.
 FIELD_FORMATS: Dict[str, str] = {
     "num_neighbors": "Whole numbers separated by commas, one per encoder layer; -1 takes all.",
     "warmup_steps": "Optimizer steps, at most half the run's; 0 takes a tenth of them.",
-    "min_lr_ratio": "A fraction of the peak rate, from 0 to 1.",
+    "min_lr_ratio": "; ".join(filter(None, (
+        f"A fraction of the peak rate, {bound_words(by_name('min_lr_ratio').valid)}",
+        _rule_bound_words("min_lr_ratio")))) + ".",
     "gradient_accumulation_steps": "Batches per optimizer step.",
     "eval_every_n_epochs": "Epochs between the Trainer's validations.",
     "early_stopping_patience": 'Epochs, or "off": no early stopping.',

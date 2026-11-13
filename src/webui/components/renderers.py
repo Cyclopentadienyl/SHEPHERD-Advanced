@@ -1287,9 +1287,14 @@ def fingerprint_value(digest: Any, *, what: str = "fingerprint", digits: int = S
 #: **The label of each learning setting a form offers**, one name per setting:
 #: the Training page's base form (`training_console.BASE_FIELDS`, what a new
 #: base takes) and the Fine-tune page's (`finetune_page.FINETUNE_FIELDS`).
-#: Every other page names a learning setting by it too (`field_words`). Short
-#: enough for a form's column with its ⓘ (24 characters or fewer); a unit is
-#: said under the field (`training_console.FIELD_FORMATS`).
+#: Every other page names a learning setting by it too (`field_words`), so a
+#: label carries the setting's subject and, where it has one, its unit
+#: ("Epochs per validation"; the skill's §5: units said once, in the key),
+#: which every page then says where it names the setting. Short enough for a
+#: form's column with its ⓘ (25 characters or fewer: the grid's narrowest
+#: column leaves about 188 px of a label's line beside its ⓘ, and "Final
+#: learning-rate ratio" takes 177 at 14 px); the form says a field's format
+#: under it too (`training_console.FIELD_FORMATS`).
 SETTING_LABELS: Dict[str, str] = {
     "num_epochs": "Epochs",
     "learning_rate": "Learning rate",
@@ -1300,13 +1305,13 @@ SETTING_LABELS: Dict[str, str] = {
     "max_grad_norm": "Gradient clip",
     "scheduler_type": "Scheduler",
     "warmup_steps": "Warmup steps",
-    "min_lr_ratio": "Minimum rate ratio",
+    "min_lr_ratio": "Final learning-rate ratio",
     "weight_decay": "Weight decay",
     "gradient_accumulation_steps": "Gradient accumulation",
     "use_amp": "Mixed precision",
     "amp_dtype": "Mixed precision dtype",
     "early_stopping_patience": "Early stopping patience",
-    "eval_every_n_epochs": "Validation interval",
+    "eval_every_n_epochs": "Epochs per validation",
     "save_top_k": "Top-k saves kept",
     "frozen_parts": "Graph backbone",
 }

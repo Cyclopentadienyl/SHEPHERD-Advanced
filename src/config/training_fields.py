@@ -553,7 +553,7 @@ FIELDS: Tuple[FieldSpec, ...] = (
     FieldSpec("early_stopping_patience", "int", 10, "trainer", projects_to="TrainerConfig.early_stopping_patience",
               valid={"ge": 1},
               current_api={"ge": 1},
-              description=("Epochs with no better validation figure before the run stops; none "
+              description=("Epochs with no better validation figure before stopping; off (unset) "
                            "is no early stopping.")),
     FieldSpec("save_top_k", "int", 3, "trainer", projects_to="TrainerConfig.save_top_k",
               valid={"ge": 1}, current_api={"ge": 1},

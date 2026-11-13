@@ -120,9 +120,9 @@ def test_the_form_offers_what_a_new_base_takes():
     references, sources = tc.base_references()
     assert references == new_run_values("base", None, {})
     assert {name for name in tc.BASE_FIELDS if name in sources} == set(BASE)
-    # Each labelled once, short enough for a column with its ⓘ.
+    # Each labelled once, short enough for a column with its ⓘ (`SETTING_LABELS`).
     for name in tc.BASE_FIELDS:
-        assert len(r.SETTING_LABELS[name]) <= 24, name
+        assert len(r.SETTING_LABELS[name]) <= 25, name
     for field in tc.spec_form_fields():
         assert len(r.field_words(field.path.split(".", 1)[1])) <= 24, field.path
 
@@ -273,7 +273,7 @@ def test_the_line_says_what_the_operator_set_with_the_value_the_run_takes_withou
     ("weight_decay", -0.1, "Weight decay must be 0 or more, not -0.1."),
     ("max_grad_norm", 0.0, "Gradient clip must be more than 0, not 0.0."),
     ("gradient_accumulation_steps", 0, "Gradient accumulation must be 1 or more, not 0."),
-    ("eval_every_n_epochs", 0, "Validation interval must be 1 or more, not 0."),
+    ("eval_every_n_epochs", 0, "Epochs per validation must be 1 or more, not 0."),
     ("save_top_k", 0, "Top-k saves kept must be 1 or more, not 0."),
     # What the browser sends for patience is text (`value_field`).
     ("early_stopping_patience", "0", "Early stopping patience must be 1 or more, not 0."),
@@ -466,6 +466,17 @@ def test_each_settings_help_leads_with_its_field_specs_description():
     assert not hasattr(tc, "_SETTING_LEADS")
 
 
+def test_the_patience_lead_names_the_forms_word_for_none():
+    """The lead is the field spec's description, shared with the API: it
+    names the form's word for None ("off", the field's own) beside unset,
+    never "none", which the field refuses."""
+    lead = tc.FIELD_HELP["early_stopping_patience"][1].split("\n", 1)[0]
+    assert f"{r.OFF.lower()} (unset) is no early stopping" in lead and "none" not in lead
+    assert tc.base_start_settings(_values(early_stopping_patience=r.OFF.lower()),
+                                  ["early_stopping_patience"]) == (
+        {"early_stopping_patience": None}, [])
+
+
 def test_a_fields_format_unit_or_off_is_visible_under_it():
     """The skill's §7: formats, units and "off" are visible text (``info=``),
     not only a bubble; a field with nothing to say has none."""
@@ -478,10 +489,13 @@ def test_a_fields_format_unit_or_off_is_visible_under_it():
     edge = tc.value_field("int", "Relation edge dimension", None, elem_id="e",
                           info=tc.FIELD_FORMATS["encoder.relation_edge_dim"])
     assert isinstance(edge, gr.Textbox) and edge.value == "off" and '"off"' in edge.info
-    # The warmup words are true to the trainer: 0 takes a tenth of the steps,
-    # a number at most half of them (Trainer._create_scheduler).
-    assert "0 takes a tenth" in tc.FIELD_FORMATS["warmup_steps"]
-    assert "at most half" in tc.FIELD_FORMATS["warmup_steps"]
+    # A bound is read from its root: the field spec's, and the rule across
+    # settings that adds one (onecycle's ratio above 0). The warmup words are
+    # held to a real Trainer (test_settings_projection).
+    assert tc.FIELD_FORMATS["min_lr_ratio"] == (
+        f"A fraction of the peak rate, {tf.bound_words(tf.by_name('min_lr_ratio').valid)}; "
+        "more than 0 with onecycle.")
+    assert tf.bound_words(tf.by_name("min_lr_ratio").valid) == "between 0 and 1"
 
 
 # --------------------------------------------------------------------------- the freeze's field
