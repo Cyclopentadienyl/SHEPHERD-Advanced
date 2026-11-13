@@ -569,6 +569,21 @@ def _finetune(base, *tasks, **settings):
     return result, calls.calls
 
 
+def test_the_hop_list_a_run_samples_is_said_once():
+    """Review of B2: which hop list a new run samples (the one stated, else
+    the one fill's: the stage's and task's reference) is
+    `run_plan.new_run_hops`, the fill the training process makes
+    (`new_run_values`), which the runner's base start, its Fine-tune check of
+    each child against its base and the pages ask, none restating it."""
+    from src.utils.run_plan import new_run_hops, new_run_values
+
+    for stage, task in (("base", None), *(("finetune", t) for t in recipe.FINETUNE_TASKS)):
+        reference = recipe.reference_settings(stage, task)[0]["num_neighbors"]
+        assert new_run_hops(stage, task, {}) == new_run_values(stage, task, {})[
+            "num_neighbors"] == reference, (stage, task)
+        assert new_run_hops(stage, task, {"num_neighbors": [4, 2], "seed": 3}) == [4, 2]
+
+
 def test_a_fine_tune_whose_hops_contradict_its_base_is_refused_before_any_child(base):
     result, calls = _finetune(base, "disease")
     assert result["success"] is False and result["invalid_settings"] is True and calls == []

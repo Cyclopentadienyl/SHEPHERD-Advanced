@@ -528,13 +528,13 @@ def _new_bundle_run(config: Mapping[str, Any]) -> Tuple[Optional[str], Optional[
     the training process makes too (`run_plan.new_run_problem`: each value
     one its field spec takes, the rules across settings holding), its model
     spec a base's (`run_spec_problem`), and its hop list one number per hop
-    the spec's encoder declares (`hops_problem`, the recipe's list when it
-    names none; GATv2: one per layer), so a spec whose encoder this build
+    the spec's encoder declares (`hops_problem`, on the list the run samples,
+    `run_plan.new_run_hops`: the recipe's when it names none; GATv2: one per
+    layer), so a spec whose encoder this build
     cannot build or sample is refused here too; a setting outside them is
     refused, never passed on for the process to refuse."""
-    from src.config.recipe import reference_settings
     from src.models.bundle.spec import hops_problem, reference_spec, run_spec_problem
-    from src.utils.run_plan import new_run_identity_problem, new_run_problem
+    from src.utils.run_plan import new_run_hops, new_run_identity_problem, new_run_problem
 
     stage = config.get("learning_stage")
     if stage is None:
@@ -545,11 +545,10 @@ def _new_bundle_run(config: Mapping[str, Any]) -> Tuple[Optional[str], Optional[
                       "base: POST /api/v1/training/finetune), not as a training run.")
     if stage != "base":
         return None, f"{stage!r} is not a learning stage a new run starts; a new run is a base."
-    references = reference_settings("base")[0]
+    settings = {name: value for name, value in config.items()
+                if name not in _NEW_RUN_KEYS | _NEW_RUN_IDENTITY}
     problem = (new_run_identity_problem("base", config.get("task"), config.get("finetune_from"))
-               or new_run_problem("base", (None,),
-                                  {name: value for name, value in config.items()
-                                   if name not in _NEW_RUN_KEYS | _NEW_RUN_IDENTITY}))
+               or new_run_problem("base", (None,), settings))
     if problem:
         return None, problem
     if config.get("model_spec") is None:
@@ -560,7 +559,7 @@ def _new_bundle_run(config: Mapping[str, Any]) -> Tuple[Optional[str], Optional[
             problem = run_spec_problem(spec, "base", None)
         if problem:
             return None, f"{problem}."
-    problem = hops_problem(config.get("num_neighbors", references["num_neighbors"]), spec.encoder)
+    problem = hops_problem(new_run_hops("base", None, settings), spec.encoder)
     if problem:
         return None, problem
     return spec.encoder.kind, None
@@ -578,11 +577,11 @@ def _finetune_base_problem(settings: Mapping[str, Any], tasks: Sequence[str],
       several) of the finetune stage and task, its graph side the base's
       (`run_spec_problem`);
     - each child's hop list, the one stated or its task's reference, one
-      number per hop of the base's encoder (`hops_problem`);
+      number per hop of the base's encoder (`hops_problem`; the list by
+      `run_plan.new_run_hops`, as the process fills it);
     - a stated split seed, the base's (`finetune_split_seed_problem`)."""
-    from src.config.recipe import reference_settings
     from src.models.bundle.spec import hops_problem, run_spec_problem
-    from src.utils.run_plan import finetune_split_seed_problem
+    from src.utils.run_plan import finetune_split_seed_problem, new_run_hops
 
     encoder = base.model_spec.encoder
     if settings.get("model_spec") is not None:
@@ -592,8 +591,7 @@ def _finetune_base_problem(settings: Mapping[str, Any], tasks: Sequence[str],
         if problem:
             return f"{problem}."
     for task in tasks:
-        hops = settings.get("num_neighbors",
-                            reference_settings("finetune", task)[0]["num_neighbors"])
+        hops = new_run_hops("finetune", task, settings)
         problem = hops_problem(hops, encoder)
         if problem:
             whose = "stated" if "num_neighbors" in settings else "its task's reference"

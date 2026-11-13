@@ -278,6 +278,19 @@ def new_run_values(learning_stage: str, task: Optional[str],
             for name in new_run_settings(learning_stage, task)}
 
 
+def new_run_hops(learning_stage: str, task: Optional[str],
+                 given: Mapping[str, Any]) -> Any:
+    """**The hop list a new run of `learning_stage` and `task` samples**,
+    given the settings its start states (`given`): the one stated, else the
+    one fill's (`new_run_values`: the stage's and task's reference, else this
+    build's default), the list the training process fills its configuration
+    with and checks against its encoder (`spec.hops_problem`). The job
+    runner's check of a new base and of each Fine-tune child against its base,
+    the Training base form and the Fine-tune page's hop note ask it, so none
+    of them restates which list a run samples."""
+    return new_run_values(learning_stage, task, given)["num_neighbors"]
+
+
 def finetune_split_seed_problem(split_seed: Any, base_split: Any) -> Optional[str]:
     """Why a finetune stating `split_seed` cannot train on its base's split,
     recorded as `base_split` (the base's ``data_roles["split"]``), or None:
@@ -1152,6 +1165,7 @@ __all__ = [
     "decode_learning_settings",
     "decoded_sentence",
     "finetune_split_seed_problem",
+    "new_run_hops",
     "new_run_problem",
     "new_run_settings",
     "new_run_values",

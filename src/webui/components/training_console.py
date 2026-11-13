@@ -209,7 +209,7 @@ from src.config.training_fields import (CROSS_FIELD_RULES, bound_words, by_name,
 from src.evaluation.caveats import TASK_NAMES
 from src.models.bundle.spec import (ENCODER_DECLARATIONS, SpecError, declared_fields,
                                     hops_problem, reference_spec)
-from src.utils.run_plan import new_run_values
+from src.utils.run_plan import new_run_hops, new_run_values
 from src.utils.gpu_lock import lock_state
 from src.webui.components import charts
 from src.webui.components import renderers as r
@@ -746,7 +746,7 @@ def _base_reading(values: Mapping[str, Any], touched: Collection[str]
     the start fills them, for what the form sends (`cross_field_problems` on
     `new_run_values`, as `run_plan.new_run_problem` asks them: onecycle needs
     a minimum ratio above 0), the spec's own (`edited_spec`), and the hop
-    list the run would sample (the one sent, else the reference's) against
+    list the run would sample (`run_plan.new_run_hops`) against
     the encoder it would build (`hops_problem`), so a changed encoder is
     checked with the hops."""
     references, _ = base_references()
@@ -761,7 +761,7 @@ def _base_reading(values: Mapping[str, Any], touched: Collection[str]
     if spec is not None:
         settings["model_spec"] = spec.to_dict()
     if not ("num_neighbors" in touched and "num_neighbors" not in settings):
-        hops = hops_problem(settings.get("num_neighbors", references["num_neighbors"]),
+        hops = hops_problem(new_run_hops("base", None, settings),
                             (spec or reference_spec("base")).encoder)
         if hops:
             problems.append(_named("num_neighbors", hops, r.SETTING_LABELS["num_neighbors"]))
