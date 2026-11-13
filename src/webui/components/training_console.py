@@ -532,6 +532,20 @@ TOUCH_JS = ("(touched) => [[...new Set([...(Array.isArray(touched) ? touched : [
             ".sort()]")
 
 
+#: **Keys leave a form's record, in the browser** (`record_drops`; ``{keys}``
+#: is the keys as a JSON list): the record's keys but those, in order.
+#: Returned in a list, the listener's one output, as `TOUCH_JS`.
+DROP_JS = ("(touched) => [(Array.isArray(touched) ? touched : [])"
+           ".filter((key) => !{keys}.includes(key))]")
+
+
+def touched_without(touched: Any, keys: Collection[str]) -> List[str]:
+    """A form's record (`touched_keys`) without `keys`: the record a
+    listener leaves that drops them (`DROP_JS`), which a line said in the
+    same event is said from."""
+    return sorted(touched_keys(touched) - set(keys))
+
+
 def touched_record(elem_id: str) -> Any:
     """**A form's record of the fields the operator touched** (decision S2),
     held in the browser: a hidden JSON list, empty at first and again after
@@ -553,6 +567,19 @@ def record_touches(field: Any, key: str, record: Any) -> None:
     field.input(None, inputs=[record], outputs=[record],
                 js=TOUCH_JS.replace("{key}", json.dumps(key)), queue=False,
                 trigger_mode="multiple", show_progress="hidden")
+
+
+def record_drops(control: Any, keys: Collection[str], record: Any) -> None:
+    """`control`'s input (the operator's own change of what a form's fields
+    mean: the Fine-tune page's tasks) drops `keys` from `record`
+    (`touched_record`) in the browser (`DROP_JS`), as `record_touches` adds
+    one: the record is never written by an answer of the server, so one
+    that arrives late cannot undo a touch made since. Wire it before any
+    other input listener of `control`, which reads the record without them
+    (`touched_without` drops them all the same)."""
+    control.input(None, inputs=[record], outputs=[record],
+                  js=DROP_JS.replace("{keys}", json.dumps(sorted(keys))), queue=False,
+                  trigger_mode="multiple", show_progress="hidden")
 
 
 def sent_settings(values: Mapping[str, Any], touched: Collection[str],
@@ -783,49 +810,81 @@ def _spec_words(key: str, value: Any) -> str:
     return r.architecture_label(value) if key == ARCHITECTURE else r.setting_words(key, value)
 
 
-#: How many of the settings the operator set the line names (`set_by_you_html`);
-#: the rest are counted, and every one is in its Details.
+#: How many of the settings the operator set a form's line names
+#: (`set_by_line_html`); the rest are counted, and every one is in its Details.
 SET_BY_SHOWN = 3
 
 
+def without_words(name: str, value: Any, sourced: bool) -> str:
+    """**The value a run takes without the setting `name`**, in a form's
+    line on what the operator set (`set_by_line_html`): "reference 200",
+    `value` the reference's (`sourced`: the recipe gives it a source), else
+    "default 0", this build's."""
+    return f"{'reference' if sourced else 'default'} {r.setting_words(name, value)}"
+
+
+def set_by_line_html(rows: Sequence[Tuple[str, str, str]], problems: Sequence[str],
+                     nothing: str) -> str:
+    """**A form's one line on what the operator set** (decision S2), under its
+    fields (the base form's, `set_by_you_html`, and the Fine-tune page's):
+    "Set by you: Epochs 5 (reference 200), Encoder › Layers 2 (reference 3)",
+    each of `rows` (``(name, value, without)``: what Start sends, by the
+    form's name of it, its value's words and the words of the value the run
+    takes without it, `without_words`), in the form's order. The first
+    `SET_BY_SHOWN` are named and the rest counted ("and 4 more";
+    `renderers.named_words`), every one a row of its "Details ›"
+    (`renderers.details_list`). With none: "Set by you: nothing; " and
+    `nothing`, what the run then takes. Then "Not valid: …", `problems`, what
+    Start would refuse, each by its label. Escaped. Beside it, Reset to
+    reference (`reset_outputs`) brings the form back to "nothing"."""
+    if rows:
+        text = "Set by you: " + r.named_words([f"{key} {value} ({without})"
+                                               for key, value, without in rows], SET_BY_SHOWN)
+    else:
+        text = f"Set by you: nothing; {nothing}"
+    details = (r.details_list([(key, r.e(f"{value} ({without})")) for key, value, without in rows],
+                              classes="shep-setby-kv")
+               if len(rows) > SET_BY_SHOWN else "")
+    refused = (f'<p class="shep-amber-t">Not valid: {r.e(" ".join(problems))}</p>'
+               if problems else "")
+    return f'<div class="shep-setby"><p>{r.e(text)}</p>{details}{refused}</div>'
+
+
+def reset_outputs(starts: Sequence[Any], line: str) -> Tuple[Any, ...]:
+    """**Reset to reference, a form's** (decision S2): its record empty
+    (`touched_record`), its line (`set_by_line_html`, said for an empty
+    record) and each field back at `starts`, the value it starts at, in the
+    form's order. The values are a page's writes, so no field's input fires
+    and none is recorded as touched; a guard's change shows or hides what
+    depends on it. The base form's Reset (`_on_base_reset`) and the Fine-tune
+    page's answer by it."""
+    return ([], line, *(gr.update(value=value) for value in starts))
+
+
 def set_by_you_html(values: Mapping[str, Any], touched: Collection[str]) -> str:
-    """**The base form's one line on what the operator set** (decision S2),
-    under its fields: "Set by you: Epochs 5 (reference 200), Encoder ›
-    Layers 2 (reference 3)", each setting and spec field Start sends, in the
-    form's order, by the form's name of it, with the value the run takes
-    without it in brackets (the reference's; "default" where the recipe sets
-    none and the run takes this build's). The first `SET_BY_SHOWN` are named
-    and the rest counted ("and 4 more"; `renderers.named_words`), every one
-    a row of its "Details ›" (`renderers.details_list`). With none: "Set by
-    you: nothing; the run takes the reference values", and this build's
-    defaults where the recipe sets some. Then "Not valid: …", what Start
-    would refuse (`_base_reading`), by its label. Escaped."""
+    """**The base form's line on what the operator set** (`set_by_line_html`):
+    each setting and spec field Start sends (`_base_reading`), in the form's
+    order, by the form's name of it, with the value the run takes without it
+    (the reference's; "default" where the recipe sets none and the run takes
+    this build's). With none: "the run takes the reference values", and this
+    build's defaults where the recipe sets some. Its "Not valid: …" is what
+    Start would refuse (`_base_reading`)."""
     references, sources = base_references()
     settings, spec, problems = _base_reading(values, touched)
-    rows = [(r.SETTING_LABELS[name], f"{r.setting_words(name, settings[name])} "
-             f"({'reference' if name in sources else 'default'} "
-             f"{r.setting_words(name, references[name])})")
+    rows = [(r.SETTING_LABELS[name], r.setting_words(name, settings[name]),
+             without_words(name, references[name], name in sources))
             for name in BASE_FIELDS if name in settings]
     if spec is not None:
         for key in _spec_keys():
             if key in touched:
                 section, name = key.split(".", 1)
                 rows.append((spec_key_words(key),
-                             f"{_spec_words(key, getattr(getattr(spec, section), name))} "
-                             f"(reference {_spec_words(key, _spec_reference(key))})"))
-    if rows:
-        text = "Set by you: " + r.named_words([f"{key} {value}" for key, value in rows],
-                                              SET_BY_SHOWN)
-    else:
-        defaults = any(name not in sources for name in BASE_FIELDS)
-        text = ("Set by you: nothing; the run takes the reference values"
-                + (" and this build's defaults." if defaults else "."))
-    details = (r.details_list([(key, r.e(value)) for key, value in rows],
-                              classes="shep-setby-kv")
-               if len(rows) > SET_BY_SHOWN else "")
-    refused = (f'<p class="shep-amber-t">Not valid: {r.e(" ".join(problems))}</p>'
-               if problems else "")
-    return f'<div class="shep-setby"><p>{r.e(text)}</p>{details}{refused}</div>'
+                             _spec_words(key, getattr(getattr(spec, section), name)),
+                             f"reference {_spec_words(key, _spec_reference(key))}"))
+    defaults = any(name not in sources for name in BASE_FIELDS)
+    nothing = ("the run takes the reference values"
+               + (" and this build's defaults." if defaults else "."))
+    return set_by_line_html(rows, problems, nothing)
 
 
 def spec_facts_html() -> str:
@@ -900,14 +959,12 @@ def _base_input_listener(key: str) -> Callable[..., str]:
 
 
 def _on_base_reset() -> Tuple[Any, ...]:
-    """Reset to reference: the form's record empty (`touched_record`), the
-    line again, and every field back at the value the run takes without it
-    (`base_form_defaults`). The values are a page's writes, so no field's
-    input fires and none is recorded as touched; the guards' change shows or
-    hides what depends on them."""
+    """The base form's Reset to reference (`reset_outputs`): every field back
+    at the value the run takes without it (`base_form_defaults`), the line
+    said for nothing set."""
     defaults = base_form_defaults()
-    return ([], set_by_you_html(dict(zip(base_form_keys(), defaults, strict=True)), []),
-            *(gr.update(value=value) for value in defaults))
+    return reset_outputs(defaults, set_by_you_html(
+        dict(zip(base_form_keys(), defaults, strict=True)), []))
 
 
 # =============================================================================
@@ -4659,15 +4716,11 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} #shep-train-spec-facts .shep-note {{ margin: 0 0 6px; font-size: 14px; color: var(--shep-text-2); }}
 {_PAGE} .shep-train-spec-facts {{ font-size: 14px; gap: 2px 14px; }}
 {_PAGE} .shep-train-sub {{ margin: 6px 0 0; font-size: 15px; font-weight: 600; }}
-/* The base form's line on what the operator set (decision S2) beside Reset to reference, and a
-   value Start would refuse. */
+/* The base form's line on what the operator set (decision S2) beside Reset to reference (the
+   line's text is the shared `.shep-setby`, `src/webui/style.py`). */
 {_PAGE} .shep-train-setby-row {{ align-items: flex-start !important; flex-wrap: nowrap !important; gap: 8px 12px !important; }}
 {_PAGE} #shep-train-setby {{ flex: 1 1 auto !important; min-width: 0 !important; }}
 {_PAGE} #shep-train-reset {{ flex: none !important; width: auto !important; min-width: max-content !important; }}
-{_PAGE} .shep-setby p {{ margin: 0; font-size: 14px; color: var(--shep-text-2); overflow-wrap: anywhere; }}
-{_PAGE} .shep-setby p.shep-amber-t {{ margin-top: 4px; color: var(--shep-amber-800); }}
-{_PAGE} .shep-setby .shep-more {{ margin-top: 2px; font-size: 14px; }}
-{_PAGE} .shep-setby-kv {{ font-size: 14px; }}
 @media (min-width: 1400px) and (min-height: 760px) {{
   {_PAGE} > .column {{ height: 100%; min-height: 0 !important; }}
   {_PAGE} #shep-train {{ flex: 1 1 auto; min-height: 0; height: 100%; flex-wrap: nowrap !important; }}

@@ -45,17 +45,24 @@ Module: src/webui/components/finetune_page.py
   chosen, each starting from that task's reference (`task_starts`); with
   several, a visible line says each child takes its own task's reference
   (`several_note_html`). **Neighbours per hop** is offered for any task set
-  (`ANY_TASKS`): its length is the base's encoder's to decide, so a base
-  whose encoder another hop count takes than a task's reference can be
-  fine-tuned from here; untouched, each child takes its task's reference.
-  When the start's own check (`spec.hops_problem`, on the base's listed
-  spec) says the reference, or the list typed, cannot run on the chosen base,
-  the task settings open and that sentence is beside the field
-  (`hops_note_html`). **Start sends what the operator touched** (decision S2:
-  `training_console.sent_settings`, the form's record of its fields' input,
-  `touched_record`), whatever its value, of the settings the chosen tasks
+  (`ANY_TASKS`), in a row of its own under the common settings: its length
+  is the base's encoder's to decide, so a base whose encoder another hop
+  count takes than a task's reference can be fine-tuned from here;
+  untouched, each child takes its task's reference. When the start's own
+  check (`spec.hops_problem`, on the base's listed spec, of the list each
+  child samples, `run_plan.new_run_hops`) says the reference, or the list
+  typed, cannot run on the chosen base, that sentence is beside the field
+  (`hops_note_html`), in view without opening anything. **Start sends what
+  the operator touched** (decision S2: `sent_settings`, the form's record of
+  its fields' input, `training_console.touched_record`, held in the
+  browser; a change of tasks drops a task's own settings from it there,
+  `record_drops`), whatever its value, of the settings the chosen tasks
   take; untouched, the run fills it (the recipe's or this build's default)
-  and records it so.
+  and records it so. Under the settings, **the base form's one line on what
+  the operator set** ("Set by you: Epochs 5 (reference 100)",
+  `set_by_html`, `training_console.set_by_line_html`) and **Reset to
+  reference** (`training_console.reset_outputs`), which empties the record
+  and puts every field where it starts for the chosen tasks.
 - Device and Run name; **Start**, its reason line, and any refusal beside it
   (the shared mark of a refusal, escaped): the page's own check of a value,
   or the job runner's refusal in its words, a setting it names first by the
@@ -107,13 +114,14 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 import gradio as gr
 
 from src.api.services.training_manager import FinetuneInputs, training_manager
-from src.config.recipe import FINETUNE, FINETUNE_SOURCES, FINETUNE_TASKS, FROZEN_PARTS
+from src.config.recipe import (FINETUNE, FINETUNE_SOURCES, FINETUNE_TASKS, FROZEN_PARTS,
+                               reference_settings)
 from src.config.training_fields import by_name, not_read_by_rules
 from src.config.training_fields import names as field_names
 from src.evaluation.caveats import TASK_NAMES, task_list_text
 from src.models.bundle.record import listed_spec
 from src.models.bundle.spec import TASKS, hops_problem
-from src.utils.run_plan import new_run_settings, new_run_values
+from src.utils.run_plan import new_run_hops, new_run_settings, new_run_values
 from src.webui.components import model_list as ml
 from src.webui.components import renderers as r
 from src.webui.components import training_console as tc
@@ -172,9 +180,14 @@ MORE_FIELDS = _ordered(_takes(TASKS) - TASK_OWN - set(COMMON_SHOWN))
 TASK_FIELDS = ANY_TASKS + _ordered(
     (frozenset().union(*(_takes((task,)) for task in TASKS)) & TASK_OWN) - set(ANY_TASKS))
 #: **Every field of the page, in the order its handlers take their values**
-#: (Start's, the guards'), each the one field of its setting
+#: (Start's, the guards', the line's), each the one field of its setting
 #: (`training_console.setting_field`).
 FINETUNE_FIELDS = COMMON_SHOWN + MORE_FIELDS + TASK_FIELDS
+#: **The task settings a change of tasks starts again** (`_on_tasks_input`):
+#: a task's own, whose reference is the task's, so they leave the form's
+#: record (`training_console.record_drops`, in the browser); the hop list set
+#: stays, the operator's for every child of any task set (`ANY_TASKS`).
+TASK_OWN_FIELDS = tuple(name for name in TASK_FIELDS if name not in ANY_TASKS)
 #: What a Frozen graph backbone leaves to train, said under the fields while
 #: it is chosen (the WebUI skill §7: a fact that changes what happens is
 #: visible text, not only a bubble).
@@ -285,31 +298,96 @@ def task_starts(tasks: Any) -> Dict[str, Any]:
     return starts
 
 
+def start_values(tasks: Any) -> List[Any]:
+    """**Where every field starts for the chosen `tasks`**, in
+    `FINETUNE_FIELDS` order, as its field holds it
+    (`training_console.form_value`): the page's built value
+    (`built_values`), each task setting's from the tasks (`task_starts`).
+    Reset to reference writes them (`_on_finetune_reset`)."""
+    starts = task_starts(tasks)
+    built = built_values()
+    return [starts[name] if name in starts else tc.form_value(built[name])
+            for name in FINETUNE_FIELDS]
+
+
+def sent_settings(tasks: Any, values: Mapping[str, Any], touched: Any
+                  ) -> Tuple[Dict[str, Any], List[str]]:
+    """**What Start sends of the form** (decisions S1, S2): ``(settings,
+    problems)``, of the settings the chosen `tasks` take (`offered_settings`)
+    those whose field the operator touched (`touched`, the form's record),
+    whatever their value, each checked by its field spec, as the base form
+    sends its own (`training_console.sent_settings`). `values` are the
+    fields', by name. Nothing for no task. Start (`_start`) and the line on
+    what the operator set (`set_by_html`) read it alike."""
+    chosen = chosen_tasks(tasks)
+    if not chosen:
+        return {}, []
+    return tc.sent_settings({name: values[name] for name in offered_settings(chosen)},
+                            tc.touched_keys(touched), new_run_values("finetune", chosen[0], {}))
+
+
+#: The value the run takes without a setting whose reference is each chosen
+#: task's own and differs between them (the hop list for Disease and Gene).
+EACH_OWN = "each task’s own reference"
+
+
+def _without(name: str, chosen: Tuple[str, ...]) -> str:
+    """What every child of `chosen` takes without the setting `name`, in the
+    line's words (`training_console.without_words`): the one value the tasks'
+    fills share (`run_plan.new_run_values`), a reference where the recipe
+    gives each a source; else `EACH_OWN`."""
+    fills = [new_run_values("finetune", task, {})[name] for task in chosen]
+    if any(fill != fills[0] for fill in fills):
+        return EACH_OWN
+    return tc.without_words(name, fills[0], all(name in reference_settings("finetune", task)[1]
+                                                for task in chosen))
+
+
+def set_by_html(tasks: Any, values: Mapping[str, Any], touched: Any) -> str:
+    """**The Fine-tune form's line on what the operator set** (decision S2;
+    the base form's one line, `training_console.set_by_line_html`): each
+    setting Start sends for the chosen `tasks` (`sent_settings`), in the
+    form's order, by its label, with what the children take without it
+    (`_without`: "reference 100", "default 0", or each task's own); with
+    none, that each child takes its task's reference values (and this
+    build's defaults where the recipe sets none); then what Start would
+    refuse of a value. Escaped. Reset to reference, beside it, brings it
+    back to nothing (`_on_finetune_reset`)."""
+    chosen = chosen_tasks(tasks)
+    settings, problems = sent_settings(chosen, values, touched)
+    rows = [(r.SETTING_LABELS[name], r.setting_words(name, settings[name]),
+             _without(name, chosen)) for name in FINETUNE_FIELDS if name in settings]
+    defaults = any(name not in reference_settings("finetune", task)[1]
+                   for task in chosen for name in offered_settings(chosen))
+    nothing = ("each child takes its task’s reference values"
+               + (" and this build’s defaults." if defaults else "."))
+    return tc.set_by_line_html(rows, problems, nothing)
+
+
 def hops_problems(tasks: Any, item: Optional[Mapping[str, Any]], touched: Any = (),
                   value: Any = None) -> List[str]:
     """**Why the hop lists the chosen tasks' children would sample cannot
     run on the base `item`** (a listed base, its encoder read from its listed
     spec, `record.listed_spec`), by the start's own check of each child
-    against its base (`spec.hops_problem`): the list typed (`value`) when the
-    operator touched the field (`touched`), else each task's reference
-    (`run_plan.new_run_values`); each sentence once, the field named by its
-    label (`training_console.labelled_problem`). Empty when every one fits, no
-    task or base is chosen, the base's spec is not read or the text typed is
-    not a list (the start then says why)."""
+    against its base (`spec.hops_problem`) on the list each child samples
+    (`run_plan.new_run_hops`, as the job runner asks it), given what Start
+    sends of the hop field (`value`, sent when the operator touched it:
+    `touched`; `training_console.sent_settings`); each sentence once, the
+    field named by its label (`training_console.labelled_problem`). Empty
+    when every one fits, no task or base is chosen, the base's spec is not
+    read or the text typed is no value Start sends (the line on what the
+    operator set says why)."""
     chosen = chosen_tasks(tasks)
     spec, _unread = listed_spec((item or {}).get("spec"))
     if spec is None or not chosen:
         return []
-    if "num_neighbors" in tc.touched_keys(touched):
-        typed, why = tc.parse_value(by_name("num_neighbors").kind, value)
-        if why:
-            return []
-        lists = [typed]
-    else:
-        lists = [new_run_values("finetune", task, {})["num_neighbors"] for task in chosen]
+    settings, refused = tc.sent_settings({"num_neighbors": value}, tc.touched_keys(touched),
+                                         new_run_values("finetune", chosen[0], {}))
+    if refused:
+        return []
     out: List[str] = []
-    for hops in lists:
-        problem = hops_problem(hops, spec.encoder)
+    for task in chosen:
+        problem = hops_problem(new_run_hops("finetune", task, settings), spec.encoder)
         if problem and tc.labelled_problem(problem) not in out:
             out.append(tc.labelled_problem(problem))
     return out
@@ -326,8 +404,9 @@ def hops_note_html(tasks: Any, item: Optional[Mapping[str, Any]], touched: Any =
     sentence beside the ▲ of a condition to watch, led by
     `HOPS_REFERENCE_LEAD` while it is a task's reference; else, with several
     tasks whose references differ and the field untouched, each child's
-    ("Left empty, each child takes its task's reference: Disease 15, 10, 5;
-    Gene all neighbours, 10, 5."); else empty."""
+    ("Untouched, each child takes its task's reference: Disease 15, 10, 5;
+    Gene all neighbours, 10, 5."; once touched, Reset to reference makes it
+    so again); else empty."""
     problems = hops_problems(tasks, item, touched, value)
     touched_hops = "num_neighbors" in tc.touched_keys(touched)
     if problems:
@@ -336,13 +415,29 @@ def hops_note_html(tasks: Any, item: Optional[Mapping[str, Any]], touched: Any =
             words = f"{HOPS_REFERENCE_LEAD}: {words}"
         return f'<p class="shep-ft-hops">{r.status_mark("warn", words)}</p>'
     chosen = chosen_tasks(tasks)
-    references = {task: new_run_values("finetune", task, {})["num_neighbors"] for task in chosen}
+    references = {task: new_run_hops("finetune", task, {}) for task in chosen}
     if touched_hops or len({tuple(hops) for hops in references.values()}) < 2:
         return ""
     each = "; ".join(f"{TASK_NAMES[task]} {r.setting_words('num_neighbors', hops)}"
                      for task, hops in references.items())
-    text = f"Left empty, each child takes its task’s reference: {each}."
+    text = f"Untouched, each child takes its task’s reference: {each}."
     return f'<p class="shep-ft-why">{r.e(text)}</p>'
+
+
+def hops_warning_html(tasks: Any, item: Optional[Mapping[str, Any]], touched: Any = (),
+                      value: Any = None) -> str:
+    """**The hop note's pointer beside Start** (review of B2: in view at the
+    deployment window, where the field and its sentence may be under the
+    form's fold): while the hop list a child would sample cannot run on the
+    chosen base (`hops_problems`), the ▲ of a condition to watch and where
+    the field is, the sentence itself said once, beside the field
+    (`hops_note_html`); else empty. Start stays enabled: the start's own
+    check refuses it, in its words."""
+    if not hops_problems(tasks, item, touched, value):
+        return ""
+    words = (f"{r.SETTING_LABELS['num_neighbors']} does not fit this base: see the field under "
+             f"{r.SETTING_LABELS[COMMON_SHOWN[0]]}.")
+    return f'<span class="shep-ft-hops-warn">{r.status_mark("warn", words)}</span>'
 
 
 def several_note_html(tasks: Any) -> str:
@@ -362,29 +457,29 @@ def several_note_html(tasks: Any) -> str:
 
 
 def task_settings_label(tasks: Any) -> str:
-    """The task settings' title: "Disease settings" for one task, "Task
-    settings" for several."""
+    """The task's own settings' title: "Disease settings" (one task)."""
     chosen = chosen_tasks(tasks)
     return f"{TASK_NAMES[chosen[0]]} settings" if len(chosen) == 1 else "Task settings"
 
 
 def task_settings_view(tasks: Any, item: Optional[Mapping[str, Any]], touched: Any = (),
                        value: Any = None) -> List[Any]:
-    """**The task settings for the chosen `tasks` and base `item`**: their
-    section (shown for any task, titled by `task_settings_label`, and opened
-    when the hop list cannot run on the base, so its field and its sentence
-    are in view without opening anything: `hops_problems`), each task field
-    shown while the tasks take it (`offered_settings`), the hop note and the
-    several-task line. `touched` and `value` are the form's record and the
-    hop field's text."""
+    """**The task settings for the chosen `tasks` and base `item`**: the
+    section of a task's own settings (shown with exactly one task, titled by
+    `task_settings_label`), the hop row under the common settings (shown for
+    any task), each task field shown while the tasks take it
+    (`offered_settings`: Neighbours per hop for any), the hop note
+    (`hops_note_html`, beside the hop field, not behind an accordion), the
+    several-task line and the hop note's pointer beside Start
+    (`hops_warning_html`, in view at the deployment window). `touched` and
+    `value` are the form's record and the hop field's text."""
     chosen = chosen_tasks(tasks)
     offered = set(offered_settings(chosen))
-    section = {"visible": bool(chosen), "label": task_settings_label(chosen)}
-    if hops_problems(chosen, item, touched, value):
-        section["open"] = True
-    return [gr.update(**section),
+    return [gr.update(visible=len(chosen) == 1, label=task_settings_label(chosen)),
+            gr.update(visible=bool(chosen)),
             *(gr.update(visible=name in offered) for name in TASK_FIELDS),
-            hops_note_html(chosen, item, touched, value), several_note_html(chosen)]
+            hops_note_html(chosen, item, touched, value), several_note_html(chosen),
+            hops_warning_html(chosen, item, touched, value)]
 
 
 def identity_html(ws: Mapping[str, Any]) -> str:
@@ -785,21 +880,50 @@ def _on_task_view(tasks, key, parents, touched, hops):
     return task_settings_view(tasks, (parents or {}).get(key) if key else None, touched, hops)
 
 
-def _on_tasks_input(tasks, touched):
-    """**The operator changed the tasks**: each task setting's field starts
-    again for them (`task_starts`: one task's reference, or for several the
-    hop list they share) and leaves the form's record of what was touched
-    (`training_console.touched_record`), so a value set for one task is never
-    sent for another; a hop list the operator set stays, theirs for every
-    child of any task set (`ANY_TASKS`). A page's write, as Reset to reference
-    is on the Training page: no field's input fires. Returns the record, then
-    each task field's update in `TASK_FIELDS` order."""
+def _on_tasks_input(tasks, touched, *values):
+    """**The operator changed the tasks**: each of a task's own settings
+    starts again for them (`task_starts`: one task's reference, or for
+    several the hop list they share), having left the form's record in the
+    browser (`TASK_OWN_FIELDS`, `training_console.record_drops`, wired first;
+    `touched_without` drops them all the same), so a value set for one task
+    is never sent for another; a hop list the operator set stays, theirs for
+    every child of any task set (`ANY_TASKS`). A page's write: no field's
+    input fires. It never writes the record, which is the browser's: an
+    answer that arrives late cannot undo a touch made since. `values` are
+    the fields', in `FINETUNE_FIELDS` order. Returns each task field's update
+    in `TASK_FIELDS` order, then the line on what the operator set
+    (`set_by_html`)."""
     starts = task_starts(tasks)
-    keys = tc.touched_keys(touched)
-    kept = {name for name in ANY_TASKS if name in keys}
-    record = sorted(key for key in keys if key not in TASK_FIELDS or key in kept)
-    return [record, *(gr.update(value=starts[name]) if name in starts and name not in kept
-                      else gr.update() for name in TASK_FIELDS)]
+    record = tc.touched_without(touched, TASK_OWN_FIELDS)
+    kept = {name for name in ANY_TASKS if name in record}
+    written = {name: value for name, value in starts.items() if name not in kept}
+    fields = {**dict(zip(FINETUNE_FIELDS, values, strict=True)), **written}
+    return [*(gr.update(value=written[name]) if name in written else gr.update()
+              for name in TASK_FIELDS), set_by_html(tasks, fields, record)]
+
+
+def _input_listener(key: str):
+    """The line listener of the field `key` (`set_by_html`), on the field's
+    input after the record has `key` (`training_console.record_touches`,
+    wired first; `touched_with` adds it all the same), as the base form's
+    fields say their line. Its values are the fields', in `FINETUNE_FIELDS`
+    order. It writes only the line, never the record, which is the
+    browser's."""
+    def on_input(tasks: Any, touched: Any, *values: Any) -> str:
+        return set_by_html(tasks, dict(zip(FINETUNE_FIELDS, values, strict=True)),
+                           tc.touched_with(touched, key))
+
+    return on_input
+
+
+def _on_finetune_reset(tasks):
+    """**Reset to reference** (`training_console.reset_outputs`, the base
+    form's): the record empty, so with several tasks each child takes its own
+    task's reference again; every field back where it starts for the chosen
+    tasks (`start_values`); the line said for nothing set."""
+    starts = start_values(tasks)
+    return tc.reset_outputs(starts, set_by_html(tasks, dict(zip(FINETUNE_FIELDS, starts,
+                                                                strict=True)), []))
 
 
 def _on_guards(*values):
@@ -809,13 +933,23 @@ def _on_guards(*values):
     return tc.guard_updates(FINETUNE_FIELDS, values)
 
 
-def _on_hops_input(tasks, key, parents, touched, hops):
+def _on_hops_input(tasks, key, parents, touched, *values):
     """The hop field's input, after the record has its key
     (`training_console.record_touches`, wired first; `touched_with` adds it
-    all the same): its note again, for the list typed (`hops_note_html`). It
-    writes only the note, never the record, which is the browser's."""
-    return hops_note_html(tasks, (parents or {}).get(key) if key else None,
-                          tc.touched_with(touched, "num_neighbors"), hops)
+    all the same), its one listener besides it: the line on what the operator
+    set (`set_by_html`, as every field's listener says it), the hop note and
+    its pointer beside Start, for the list typed (`hops_note_html`,
+    `hops_warning_html`). `values` are the fields', in `FINETUNE_FIELDS`
+    order. It writes only them, never the record, which is the browser's.
+    One listener, not two: two listeners of one input that each send its
+    last value ("always_last") retrigger each other in the browser without
+    end (seen on the page while it had two)."""
+    item = (parents or {}).get(key) if key else None
+    record = tc.touched_with(touched, "num_neighbors")
+    fields = dict(zip(FINETUNE_FIELDS, values, strict=True))
+    hops = fields["num_neighbors"]
+    return (set_by_html(tasks, fields, record), hops_note_html(tasks, item, record, hops),
+            hops_warning_html(tasks, item, record, hops))
 
 
 def _on_finetune_start(request: gr.Request, ws, parents, key, tasks, device, run_name,
@@ -862,8 +996,8 @@ def _start(ws, parents, key, tasks, device, run_name, values: Mapping[str, Any],
     """Start's work after D8, as a plain sentence ("" once started): the
     chosen base and tasks (in `TASKS` order), the settings the chosen tasks
     take (`offered_settings`) of `values` (the fields', by `FINETUNE_FIELDS`)
-    that the operator touched (`touched`; decision S2:
-    `training_console.sent_settings`), whatever their value, sent as the
+    that the operator touched (`touched`; decision S2: `sent_settings`),
+    whatever their value, sent as the
     start's settings (`FinetuneInputs.settings`, which the runner checks; a
     field the tasks do not take, a task setting hidden with several tasks, is
     never sent), the workspace and the parent resolved by the server from its
@@ -885,9 +1019,7 @@ def _start(ws, parents, key, tasks, device, run_name, values: Mapping[str, Any],
     chosen = chosen_tasks(tasks)
     if not chosen:
         return "Not started: choose at least one task."
-    settings, problems = tc.sent_settings(
-        {name: values[name] for name in offered_settings(chosen)}, tc.touched_keys(touched),
-        new_run_values("finetune", chosen[0], {}))
+    settings, problems = sent_settings(chosen, values, touched)
     if problems:
         return "Not started: " + " ".join(problems)
     from src.api.services.server_lists import (
@@ -931,7 +1063,8 @@ def task_setting_help(name: str) -> Tuple[str, str]:
                      for values in [new_run_values("finetune", task, {})] if name in values)
     if name in ANY_TASKS:
         where = ("With one task it starts at that task's reference. With several, left "
-                 "untouched each child takes its own; a value you set is every child's.")
+                 "untouched each child takes its own; a value you set is every child's, until "
+                 "Reset to reference.")
     else:
         where = ("Offered with one task, starting at its reference; with several, each child "
                  "takes its own.")
@@ -1065,28 +1198,38 @@ def create_finetune_page(ctx: Any) -> None:
                         fields[name] = tc.setting_field(name, values[name], elem_id=f"ft_{name}")
                 freeze_note = plain_html(freeze_note_html(values["frozen_parts"]),
                                          elem_id="ft_freeze_note")
+                # The hop list, offered for any task set, under the common
+                # settings with its note beside it (`task_settings_view`): the
+                # start's sentence when the reference does not fit the base is
+                # in view without opening anything (2b).
+                with gr.Row(visible=False, elem_id="ft_hops_row",
+                            elem_classes=["shep-ft-settings", "shep-ft-hops-row"]) as hops_row:
+                    for name in ANY_TASKS:
+                        fields[name] = tc.setting_field(name, values[name],
+                                                        elem_id=f"ft_{name}", visible=False)
+                    hops_note = plain_html("", elem_id="ft_hops_note")
                 with gr.Accordion("More settings", open=False, elem_id="ft_more"):
                     with gr.Row(elem_classes=["shep-ft-settings", "shep-ft-grid"]):
                         for name in MORE_FIELDS:
                             fields[name] = tc.setting_field(name, values[name],
                                                             elem_id=f"ft_{name}",
                                                             visible=name not in unread)
-                # The task settings (`task_settings_view`): shown once a task is
-                # chosen, the hop list beside its note, a task's own with one.
+                # A task's own settings (`task_settings_view`), with one task.
                 with gr.Accordion(task_settings_label(()), open=False, visible=False,
                                   elem_id="ft_task_more") as task_more:
-                    with gr.Row(elem_classes=["shep-ft-settings", "shep-ft-hops-row"]):
-                        for name in ANY_TASKS:
+                    with gr.Row(elem_classes=["shep-ft-settings", "shep-ft-grid"]):
+                        for name in TASK_OWN_FIELDS:
                             fields[name] = tc.setting_field(name, values[name],
                                                             elem_id=f"ft_{name}", visible=False)
-                        hops_note = plain_html("", elem_id="ft_hops_note")
-                    with gr.Row(elem_classes=["shep-ft-settings", "shep-ft-grid"]):
-                        for name in TASK_FIELDS:
-                            if name not in fields:
-                                fields[name] = tc.setting_field(name, values[name],
-                                                                elem_id=f"ft_{name}",
-                                                                visible=False)
                 several_note = plain_html("", elem_id="ft_several_note")
+                # What the operator set (decision S2), and Reset to reference:
+                # the base form's one line and Reset.
+                with gr.Row(elem_classes=["shep-ft-setby-row"]):
+                    set_by = plain_html(set_by_html((), {name: tc.form_value(values[name])
+                                                         for name in FINETUNE_FIELDS}, []),
+                                        elem_id="ft_setby")
+                    reset = gr.Button("Reset to reference", size="sm", scale=0,
+                                      elem_id="ft_reset")
                 with gr.Row(elem_classes=["shep-ft-settings"]):
                     device = gr.Radio(label="Device", choices=["auto", "cuda", "cpu"],
                                       value="auto", elem_id="ft_device")
@@ -1099,6 +1242,7 @@ def create_finetune_page(ctx: Any) -> None:
                     start = gr.Button(START_LABEL, variant="primary", interactive=False,
                                       scale=0, elem_id="ft_start")
                     reason = plain_html("", elem_id="ft_reason")
+                    hops_warn = plain_html("", elem_id="ft_hops_warn")
                     notice = plain_html("", elem_id="ft_notice")
         # ------------------------------------------------------------- the job
         with gr.Column(elem_id="shep-ft-job", elem_classes=["shep-panel"], scale=12,
@@ -1133,12 +1277,14 @@ def create_finetune_page(ctx: Any) -> None:
                  "show_progress": "hidden"}
     # Explicit is what the operator touched (decision S2): the form's record,
     # the browser's (`training_console.touched_record`), which Start's own
-    # request carries; each field's input adds it there.
+    # request carries; each field's input adds it there, and a change of
+    # tasks drops a task's own settings from it, there too.
     touched = tc.touched_record("ft_touched")
+    field_list = [fields[name] for name in FINETUNE_FIELDS]
     hops = fields[ANY_TASKS[0]]
     task_view_step = {"fn": _on_task_view, "inputs": [tasks, checkpoint, parents, touched, hops],
-                      "outputs": [task_more, *(fields[name] for name in TASK_FIELDS), hops_note,
-                                  several_note],
+                      "outputs": [task_more, hops_row, *(fields[name] for name in TASK_FIELDS),
+                                  hops_note, several_note, hops_warn],
                       "show_progress": "hidden"}
 
     # The page shown: the list and the tasks, the bases (gated), the task
@@ -1166,17 +1312,31 @@ def create_finetune_page(ctx: Any) -> None:
     tasks.change(**task_view_step)
     fields["frozen_parts"].change(freeze_note_html, inputs=[fields["frozen_parts"]],
                                   outputs=[freeze_note], show_progress="hidden")
+    # Each field's input records it (first), then says the line again, as the
+    # base form's do; its last input is always said ("always_last"). The hop
+    # list's one listener says its note and the note's pointer too.
     for name in FINETUNE_FIELDS:
         tc.record_touches(fields[name], name, touched)
-    # The operator's own change of the tasks: each task setting starts again
-    # at their reference and leaves the record, a hop list set kept.
-    tasks.input(_on_tasks_input, inputs=[tasks, touched],
-                outputs=[touched, *(fields[name] for name in TASK_FIELDS)], queue=False,
+        if name in ANY_TASKS:
+            fields[name].input(_on_hops_input,
+                               inputs=[tasks, checkpoint, parents, touched, *field_list],
+                               outputs=[set_by, hops_note, hops_warn], queue=False,
+                               trigger_mode="always_last", show_progress="hidden")
+        else:
+            fields[name].input(_input_listener(name), inputs=[tasks, touched, *field_list],
+                               outputs=[set_by], queue=False, trigger_mode="always_last",
+                               show_progress="hidden")
+    # The operator's own change of the tasks: a task's own settings leave the
+    # record in the browser (first), then start again at their reference, a
+    # hop list set kept; the line again.
+    tc.record_drops(tasks, TASK_OWN_FIELDS, touched)
+    tasks.input(_on_tasks_input, inputs=[tasks, touched, *field_list],
+                outputs=[*(fields[name] for name in TASK_FIELDS), set_by], queue=False,
                 show_progress="hidden")
-    # The hop list typed: its note again, for the list typed.
-    hops.input(_on_hops_input, inputs=[tasks, checkpoint, parents, touched, hops],
-               outputs=[hops_note], queue=False, trigger_mode="always_last",
-               show_progress="hidden")
+    # Reset to reference: the record empty, every field where it starts for
+    # the tasks, the line; then the hop note for them.
+    reset.click(_on_finetune_reset, inputs=[tasks], outputs=[touched, set_by, *field_list],
+                queue=False, show_progress="hidden").then(**task_view_step)
     # A setting a rule across settings reads only under its guard is shown while
     # the run would read it (decision S3), as on the base form.
     dependent, guards = tc.rule_fields(FINETUNE_FIELDS)
@@ -1185,8 +1345,7 @@ def create_finetune_page(ctx: Any) -> None:
           outputs=[fields[name] for name in dependent], queue=False, show_progress="hidden")
 
     start.click(_on_finetune_start,
-                inputs=[ws, parents, checkpoint, tasks, device, run_name, touched,
-                        *(fields[name] for name in FINETUNE_FIELDS)],
+                inputs=[ws, parents, checkpoint, tasks, device, run_name, touched, *field_list],
                 outputs=[notice, stop_notice], show_progress="hidden").then(
         tc.close_stop_question, inputs=[mode], outputs=[mode], show_progress="hidden").then(
         **card_step).then(**ctx.chip_refresh)
@@ -1225,6 +1384,11 @@ PAGE_CSS = f"""
    (`base_summary_html`; the skill's §2). */
 {_PAGE} .shep-ft-base .shep-kv {{ font-size: 14px; gap: 2px 14px; }}
 {_PAGE} #ft_base:not(:has(.shep-ft-base)), {_PAGE} #ft_tasks_note:not(:has(p)), {_PAGE} #ft_freeze_note:not(:has(p)), {_PAGE} #ft_hops_note:not(:has(p)), {_PAGE} #ft_several_note:not(:has(p)) {{ display: none !important; }}
+/* The line on what the operator set beside Reset to reference (the base form's; its text is the
+   shared `.shep-setby`). */
+{_PAGE} .shep-ft-setby-row {{ align-items: flex-start !important; flex-wrap: nowrap !important; gap: 8px 12px !important; }}
+{_PAGE} #ft_setby {{ flex: 1 1 auto !important; min-width: 0 !important; }}
+{_PAGE} #ft_reset {{ flex: none !important; width: auto !important; min-width: max-content !important; }}
 {_PAGE} .shep-ft-why {{ margin: 0; font-size: 14px; color: var(--shep-text-2); }}
 /* The hop list and its note beside it (`hops_note_html`): the note takes the rest of the row and
    wraps under the field when the row is narrow. */
@@ -1236,7 +1400,11 @@ PAGE_CSS = f"""
 {_PAGE} .shep-ft-hops {{ margin: 0; font-size: 14px; overflow-wrap: anywhere; }}
 {_PAGE} .shep-ft-start-row, {_PAGE} .shep-ft-stop-row {{ align-items: center !important; flex-wrap: wrap !important; gap: 8px 14px !important; }}
 {_PAGE} .shep-ft-start-row > button, {_PAGE} .shep-ft-stop-row > button {{ flex: none !important; width: auto !important; min-width: max-content !important; padding: 0 14px !important; height: 40px; }}
-{_PAGE} #ft_reason, {_PAGE} #ft_stop_reason, {_PAGE} #ft_notice, {_PAGE} #ft_stop_notice {{ flex: 1 1 240px !important; min-width: 0 !important; }}
+{_PAGE} #ft_reason, {_PAGE} #ft_stop_reason, {_PAGE} #ft_notice, {_PAGE} #ft_stop_notice, {_PAGE} #ft_hops_warn {{ flex: 1 1 240px !important; min-width: 0 !important; }}
+/* The hop note's pointer beside Start (`hops_warning_html`); it, and Start's reason, take no room
+   while empty, so whichever is said sits next to Start. */
+{_PAGE} #ft_hops_warn {{ font-size: 15px; }}
+{_PAGE} #ft_hops_warn:not(:has(.shep-ft-hops-warn)), {_PAGE} #ft_reason:not(:has(.shep-ft-reason)) {{ display: none !important; }}
 /* The configuration's "Details ›" beside its line (`base_summary_html`); opened, the spec's list
    takes the lines under it. */
 {_PAGE} .shep-ft-base .shep-v > .shep-more {{ display: inline-block; margin-left: 8px; vertical-align: top; }}

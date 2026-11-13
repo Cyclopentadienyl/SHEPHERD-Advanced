@@ -339,6 +339,12 @@ body { color: var(--shep-text); }
 .shep-more > summary:hover { text-decoration: underline; }
 .shep-more > summary:focus-visible { outline: 2px solid var(--shep-accent); outline-offset: 2px; }
 .shep-more > .shep-kv { gap: 2px 12px; }
+/* A form's one line on what the operator set (`training_console.set_by_line_html`: the
+   Training base form's and the Fine-tune page's), and a value Start would refuse. */
+.shep-setby p { margin: 0; font-size: 14px; color: var(--shep-text-2); overflow-wrap: anywhere; }
+.shep-setby p.shep-amber-t { margin-top: 4px; color: var(--shep-amber-800); }
+.shep-setby .shep-more { margin-top: 2px; font-size: 14px; }
+.shep-setby-kv { font-size: 14px; }
 /* A digest row (`renderers.summary_list`'s wide rows): its label on a line of
    its own over the whole list, its full value with an icon-only Copy on the
    line under it. */
