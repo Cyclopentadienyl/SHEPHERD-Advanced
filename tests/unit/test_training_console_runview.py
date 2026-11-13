@@ -10,8 +10,10 @@ Research › Prepare › Training: the run view (the ops-wiring round's B1b).
   option (short, name first, valued by the run resolver's full id); choosing
   one changes only the run view (the chart token, Export CSV, the header),
   never the run bar or its status pill, which always show the training job;
-  the choice holds until a job starts or the workspace changes; its writer
-  is in the run bar's ordered group (the render/poll single-writer contract);
+  the choice holds while the run bar shows the workspace it was made for and
+  no job has started since (back on its workspace, it is shown again); its
+  writer is in the run bar's ordered group (the render/poll single-writer
+  contract);
 - **the header says how the run viewed stands to the job**: the running
   job, the last job, a past run (while another runs), the latest run;
 - **empty states say what will appear and the next step** (the skill's §9;
@@ -176,11 +178,14 @@ def test_choosing_a_past_run_changes_only_the_view_and_the_job_drives_the_pill(
     assert tc.training_chart_series(chosen["charts"])["run"] == f"demo/gatv2/{PAST}"
 
 
-def test_the_choice_holds_until_a_job_starts_or_the_workspace_changes(runs, monkeypatch,
-                                                                       operator):  # noqa: F811
-    """A past run chosen stays viewed when the job it was chosen beside ends;
-    a job started since is shown as it starts (from this page or any other
-    entry), and another workspace in the run bar shows its own latest run."""
+def test_the_choice_holds_while_its_workspace_is_shown_and_no_job_has_started(
+        runs, monkeypatch, operator):  # noqa: F811
+    """A past run chosen stays viewed when the job it was chosen beside ends.
+    Another workspace in the run bar shows its own run; back on the workspace
+    the choice was made for, with no job started since, the choice is shown
+    again (it is compared with the workspace shown, and only the select
+    writes it). A job started since is shown as it starts (from this page or
+    any other entry), on any workspace."""
     _job(monkeypatch, runs, RUNNING)
     ws = tc.workspace_state("demo")
     viewing = tc._on_view_run(f"demo/gatv2/{PAST}", ws)
@@ -189,12 +194,18 @@ def test_the_choice_holds_until_a_job_starts_or_the_workspace_changes(runs, monk
     assert ended["charts"]["run"] == f"demo/gatv2/{PAST}"
     assert tc.RELATION_PAST in ended["head"] and tc.RELATION_PAST_WHILE not in ended["head"]
     assert "Completed" in ended["pill"]
+    other = tc.workspace_state("resampled")
+    assert tc._chosen_run(viewing, {**RUNNING, "status": "completed"}, other) is None
+    away = _pieces(other, viewing, operator)
+    assert away["charts"]["run"] != f"demo/gatv2/{PAST}" and away["view"][1] != f"demo/gatv2/{PAST}"
+    back = _pieces(tc.workspace_state("demo"), viewing, operator)
+    assert back["charts"]["run"] == back["view"][1] == f"demo/gatv2/{PAST}"
     _job(monkeypatch, runs, {**RUNNING, "job_id": "j8"})                   # a new job
     started = _pieces(ws, viewing, operator)
     assert started["charts"]["run"] == f"demo/gatv2/{JOB}"
     assert tc.RELATION_RUNNING in started["head"]
-    other = tc.workspace_state("resampled")
-    assert tc._chosen_run(viewing, {**RUNNING, "status": "completed"}, other) is None
+    _job(monkeypatch, runs, {**RUNNING, "job_id": "j8", "status": "completed"})
+    assert _pieces(ws, viewing, operator)["charts"]["run"] == f"demo/gatv2/{JOB}"   # not back
     # A choice of a run no longer listed falls back to the run followed.
     gone = {**viewing, "run": "demo/gatv2/20991231-000000_gone_ffffff", "job": "j8"}
     assert _pieces(ws, gone, operator)["charts"]["run"] == f"demo/gatv2/{JOB}"

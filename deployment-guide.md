@@ -3430,7 +3430,8 @@ run，最新的在前（頁面開著時每 10 秒重新列出一次，所以從 
 選項的值是 run 的完整 id，所以文字永遠不會改變讀取哪個 run。選擇一個 run 會顯示它的曲線與 Export
 CSV，其他一概不變：run bar、它的狀態標籤、原因行、動作按鈕，以及失敗工作的橫幅，永遠顯示訓練工作。
 沒有選擇時，檢視跟隨 job runner 最後啟動的 run；伺服器啟動後還沒有啟動過時，跟隨 workspace 最新的
-run。選擇會一直保留，直到有工作啟動（新工作一啟動就顯示它）或 run bar 的 workspace 改變。選單旁的
+run。只要 run bar 顯示的是做出選擇時的 workspace，而且之後沒有工作啟動，選擇就會保留（新工作一啟動
+就顯示它；中途改看另一個 workspace 不會結束選擇，回到原本的 workspace 時會再次顯示所選的 run）。選單旁的
 標題說明所檢視的 run 與訓練工作的關係（「the running job」、「the last job」、「a past run, while
 another runs」、「the latest run」、「a past run」）；從 checkpoint 讀到的、這個 run 使用的資料集與
 run bar 所選資料集的關係（「✓ same dataset as the run bar」、琥珀色的「▲ not the selected

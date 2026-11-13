@@ -3423,8 +3423,10 @@ value is the run's full id, so the words never change which run is read. Choosin
 run's curves and Export CSV, and nothing else changes: the run bar, its status pill, its reason
 line, its actions and a failed job's banner always show the training job. Without a choice, the
 view follows the run the job runner started last or, before one since the server started, the
-workspace's latest run; a choice holds until a job starts (the new job is shown as it starts) or
-the run bar's workspace changes. Beside the select, the header says how the run viewed stands to
+workspace's latest run; a choice holds while the run bar shows the workspace it was made for and
+no job has started since (a new job is shown as it starts; another workspace shown in between does
+not end it, and back on its workspace the choice is shown again). Beside the select, the header
+says how the run viewed stands to
 the job ("the running job", "the last job", "a past run, while another runs", "the latest run",
 "a past run"); how the dataset the run used, read from its checkpoint, stands to the run bar's
 ("✓ same dataset as the run bar", amber "▲ not the selected dataset", "dataset recorded at the

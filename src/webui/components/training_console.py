@@ -84,10 +84,12 @@ training process still decide at start.
 shows the run chosen in its **Viewing** select: the run bar's workspace's
 runs, latest first, each named by the one rule of a run's option
 (`model_list.run_options`: short, name first) and valued by the run
-resolver's full id (`resolve_run`); without a choice, or once a job starts
-or the run bar's workspace changes (`_chosen_run`), the run the job runner
-started last (a Fine-tune child included), or, before any since the server
-started, the workspace's latest run (`viewed_run`). **The training job and
+resolver's full id (`resolve_run`). A choice holds while the run bar shows
+the workspace it was made for and no job has started since (`_chosen_run`:
+another workspace shown in between does not end it, and back on its own it
+is shown again); without one, the run the job runner started last (a
+Fine-tune child included), or, before any since the server started, the
+workspace's latest run (`viewed_run`). **The training job and
 the run viewed are kept apart**: the run bar, its status pill, its reason
 line, its actions and a failed job's banner are always the job's; only the
 header, the chart token and Export CSV follow the run viewed, and the header
@@ -1560,7 +1562,10 @@ def _chosen_run(viewing: Optional[Mapping[str, Any]], status: Mapping[str, Any],
     while the choice holds: made for the run bar's workspace of now, with no
     training job started since (a job started is shown as it starts, from
     this page or any other entry); else None, and the view follows the run
-    it would show without a choice (`_current_run`)."""
+    it would show without a choice (`_current_run`). The choice is compared
+    with the workspace shown now, not ended by another shown in between: back
+    on the workspace it was made for, with no job started since, it is shown
+    again (only `_on_view_run` writes it)."""
     viewing = viewing or {}
     run = viewing.get("run")
     if not isinstance(run, str) or not run:
@@ -2493,8 +2498,9 @@ def _on_dataset(name, mode, request: gr.Request):
 
 def _on_view_run(choice, ws):
     """A run chosen in the Viewing select: the session's view choice, held
-    for the run bar's workspace and the training job of now (`_chosen_run`:
-    a job started later is shown as it starts). Only the run view follows it
+    while the run bar shows the workspace of now and no job has started
+    since (`_chosen_run`: a job started later is shown as it starts). Only
+    the run view follows it
     (its header, the chart token, Export CSV), never the run bar or its pill.
     Nothing is read or changed on the server but the job's id."""
     return {"run": choice if isinstance(choice, str) else None, "ws": (ws or {}).get("name"),
