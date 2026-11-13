@@ -185,6 +185,9 @@ OPERATION_WORDS = {"new": "New run", "resume": "Resumed run", "extend": "Extende
 SAME_SETTINGS = "Same settings as its parent"
 #: A model whose family is its own run (the family's root).
 OWN_FAMILY = "its own run (the family's root)"
+#: A model whose family is its parent's run, which the Parent row names
+#: (rule 1.2: the run is said once; the browser check of B3 found it twice).
+PARENT_FAMILY = "its parent's run (the family's root)"
 #: The reference recipe as README §5 axis 2 has it read, never "identical to upstream".
 REFERENCE_ANCHOR = ("The reference recipe is anchored on e95433a, with corrections "
                     "(Ref: README §2.4).")
@@ -1340,7 +1343,8 @@ def identity_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]], *,
     says so); for a model record its operation, the exact parent file and
     where it is (`parent_html`), for a branch the settings it changed from its
     parent, each with both values, or that it kept them all (`changes_html`),
-    its family (its own run where it is the family's root), its encoder and
+    its family (its own run where it is the family's root, its parent's
+    where the Parent row names that run, else the run by name), its encoder and
     its relation to the paper (axis 2: "matches the reference recipe" with
     what that recipe is, or the fields that differ); and the Trainer's
     validation figure, a row like every details list's (`renderers.validation_value`),
@@ -1370,6 +1374,8 @@ def identity_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]], *,
                  *([("Settings changed", changes_html(item.get("parent_changes")))]
                    if operation == "branch" else []),
                  ("Family", r.e(OWN_FAMILY if family == item.get("run")
+                                else PARENT_FAMILY if family == item.get("parent_run")
+                                and r.is_digest(item.get("parent_sha256"))
                                 else f'run {r.run_words(None, family, fit=False)}')),
                  ("Encoder", r.e(r.architecture_label(item.get("encoder")))),
                  ("Relation to the paper", relation)]

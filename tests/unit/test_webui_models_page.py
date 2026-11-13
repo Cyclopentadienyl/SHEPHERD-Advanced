@@ -1324,10 +1324,13 @@ def test_the_detail_says_what_the_model_is_and_its_relation_to_the_paper(world, 
                     "Relation to the paper", "Validation"]
     text = _text(ident)
     assert "Disease" in text and "Finetune" in text and "GATv2" in text
-    # The parent's and the family's run in the one run words, its name first
-    # (the review of B0b: "run 2026-10-01 00:00" dropped it), one " · ".
+    # The parent's run in the one run words, its name first (the review of
+    # B0b: "run 2026-10-01 00:00" dropped it), one " · "; the family, the
+    # same run, by its relation to the Parent row (rule 1.2: the browser
+    # check of B3 found the run said in both rows).
     assert f"{shas['base'][:12]} of run base · 2026-10-01 00:00; listed here" in text
-    assert "Familyrun base · 2026-10-01 00:00Encoder" in text
+    assert f"Family{mp.PARENT_FAMILY}Encoder" in text
+    assert text.count("base · 2026-10-01 00:00") == 1
     # A shrunk test spec: each field that differs in words, its record path
     # its title (skill §5; the review of B0c named them by their paths).
     assert "differs in: " in text and "Encoder › Hidden" in text
@@ -1367,6 +1370,11 @@ def test_the_detail_says_what_the_model_is_and_its_relation_to_the_paper(world, 
         long = mp.identity_html({**item, "family_id": run, "parent_run": run},
                                 {"parent_state": "listed"})
         assert f"of run {words}; listed here</dd>" in long, long
+        assert f'Family</dt><dd class="shep-v">{r.e(mp.PARENT_FAMILY)}</dd>' in long, long
+        assert "…" not in long
+        # A family root other than the parent's run is named whole.
+        long = mp.identity_html({**item, "family_id": run, "parent_run": BASE_RUN},
+                                {"parent_state": "listed"})
         assert f'Family</dt><dd class="shep-v">run {words}</dd>' in long, long
         assert "…" not in long
         assert len(r.run_words(None, run)) <= r.OPTION_CHARS and "…" in r.run_words(None, run)
