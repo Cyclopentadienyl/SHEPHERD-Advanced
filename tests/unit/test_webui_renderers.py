@@ -237,20 +237,62 @@ def test_model_facts_escape_names(name):
 
 
 # --------------------------------------------------------------------------- shared by several pages
+def _option_rules(choices, values):
+    """The WebUI skill §8 for one select: unique labels, at most 40
+    characters and one separator each, and each value the full key."""
+    labels = [label for label, _value in choices]
+    assert len(set(labels)) == len(labels), labels
+    for label in labels:
+        assert len(label) <= r.OPTION_CHARS and label.count(" · ") <= 1, label
+    assert [value for _label, value in choices] == list(values)
+
+
 def test_the_workspace_options_are_one_label_for_every_page():
-    """Diagnosis' drawer, Models, Test and Training's run bar label a listed
-    workspace the same way: name, the fingerprint's distinguishing digits,
-    synthetic; or why it has none."""
+    """Diagnosis' drawer, Models, Test, Fine-tune and Training's run bar label
+    a listed workspace the same way, its name first (the skill's §8): a
+    trainable workspace by its name, its identity (fingerprint, synthetic) the
+    one beside the select; one that cannot be trained adds why in a few
+    words. It read "demo · dataset fingerprint <16 hex> · synthetic", 55
+    characters and two separators."""
     twin = FP_A[:12] + "f" * 52
-    choices = r.workspace_choices([
-        workspace("demo"), workspace("twin", fingerprint=twin, origin="files"),
-        {**workspace("scratch", fingerprint=None, trainable=False), "manifest": "absent"},
-        workspace("broken", fingerprint=None, trainable=False)])
-    assert choices == [
-        (f"demo · dataset fingerprint {FP_A[:16]} · synthetic", "demo"),
-        (f"twin · dataset fingerprint {twin[:16]}", "twin"),
-        ("scratch · no split manifest", "scratch"),
-        ("broken · no readable split manifest", "broken")]
+    listed = [workspace("demo"), workspace("twin", fingerprint=twin, origin="files"),
+              {**workspace("scratch", fingerprint=None, trainable=False), "manifest": "absent"},
+              workspace("broken", fingerprint=None, trainable=False),
+              {**workspace("far", fingerprint=None, trainable=False), "manifest": "not_checked",
+               "not_trainable": "far resolves outside the workspaces root"}]
+    choices = r.workspace_choices(listed)
+    assert choices == [("demo", "demo"), ("twin", "twin"),
+                       ("scratch · no split manifest", "scratch"),
+                       ("broken · no readable split manifest", "broken"),
+                       ("far · not trainable", "far")]
+    _option_rules(choices, [w["name"] for w in listed])
+
+
+def test_alike_workspace_names_get_their_distinguishing_digits_and_no_more():
+    """A long name is shortened in its middle; only two that would then read
+    alike get the synthetic flag where it applies and their fingerprints'
+    distinguishing digits (more than 12 where those share 12), and two copies
+    of one dataset, alike still, are numbered; each value stays the full
+    name."""
+    head, tail = "hospital-cohort-build-", "-for-the-research-comparison-round"
+    names = [f"{head}{x}{tail}" for x in ("alpha", "bravo", "charlie", "delta")]
+    twin = FP_A[:12] + "f" * 52
+    listed = [workspace(names[0], fingerprint=FP_A),                       # synthetic
+              workspace(names[1], fingerprint=twin, origin="files"),
+              workspace(names[2], fingerprint=FP_B, origin="files"),
+              workspace(names[3], fingerprint=FP_B, origin="files"),
+              workspace("short"), workspace("hospital-cohort-1")]
+    choices = r.workspace_choices(listed)
+    _option_rules(choices, [w["name"] for w in listed])
+    labels = [label for label, _value in choices]
+    digits = r.distinguishing_digits([FP_A, twin, FP_B])
+    assert digits == 16
+    assert all(label.startswith("hospi") and "…" in label for label in labels[:4]), labels
+    assert labels[0].endswith(f" · synthetic {FP_A[:digits]}"), labels
+    assert labels[1].endswith(f" · {twin[:digits]}"), labels
+    assert labels[2].endswith(f"(1) · {FP_B[:digits]}"), labels
+    assert labels[3].endswith(f"(2) · {FP_B[:digits]}"), labels
+    assert labels[4:] == ["short", "hospital-cohort-1"]
 
 
 def test_not_trainable_tells_an_absent_manifest_from_an_unreadable_one():

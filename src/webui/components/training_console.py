@@ -16,8 +16,9 @@ the dataset chip shows them (`renderers.dataset_identity_html`) with a
 the split, the sources, the path relative to the workspace root, "All
 datasets ›"). While a training job runs the select is disabled and shows that
 job's dataset ("in use by the running job"). Then the status pill (idle,
-starting, running with epoch, batch and time, stopping, completed, stopped,
-failed in red; never green for a failed or stopped run), the run name, one
+starting, running with its epoch, then its batch and time as the pill's
+details, stopping, completed, stopped, failed in red; never green for a failed
+or stopped run), the run name, one
 reason line saying why an action is disabled (D8's short words for a read-only
 request; the GPU job holding the slot, from the job runner and the GPU lock's
 holder record, with "Open Test ›" for a test run), and Start, Continue… and
@@ -508,12 +509,10 @@ def workspace_state(name: Optional[str], listed: Optional[Mapping[str, Any]] = N
     listed = listed if listed is not None else read_workspaces()
     rows = listed["rows"]
     state = empty_workspace()
-    # The options name the workspace; its identity (fingerprint, synthetic) is
-    # the chip's, beside the select (said once on the page). A workspace that
-    # cannot be trained keeps its reason in its option, read before choosing.
-    trainable = {x["name"] for x in rows if r.is_digest(x.get("dataset_fingerprint"))}
-    state["choices"] = [[name if name in trainable else label, name]
-                        for label, name in r.workspace_choices(rows)]
+    # The options are every page's (`renderers.workspace_choices`: the name
+    # first); the identity (fingerprint, record, why it cannot be trained) is
+    # the chip's, beside the select.
+    state["choices"] = [[label, name] for label, name in r.workspace_choices(rows)]
     state["listed"] = [{"name": x["name"], "dataset_fingerprint": x.get("dataset_fingerprint"),
                         "dataset_record": x.get("dataset_record")} for x in rows]
     state["digits"] = r.distinguishing_digits(x.get("dataset_fingerprint") for x in rows)
@@ -708,31 +707,42 @@ def job_status_html(status: str, words: Optional[str] = None) -> str:
 
 
 def pill_state(status: Mapping[str, Any]) -> Tuple[str, str]:
-    """(kind, words) for the status pill."""
+    """``(kind, words)`` for the status pill: the job's state and, after at
+    most one " · " (the WebUI skill §5), how far it got ("RUNNING · epoch
+    12/100", "Completed · epoch 60 of 60"; a start's phase). The rest, its
+    batch and how long it has run, is the pill's details (`pill_details`)."""
     s = status.get("status") or "idle"
-    elapsed = _elapsed(status)
     if s == "idle":
         return "idle", "Idle · no training job since the server started"
     if s == "running":
         if status.get("current_epoch") is None:
             phase = ("loading data and the model" if status.get("phase") == "initializing"
                      else "the process is starting")
-            return "starting", " · ".join(p for p in ("Starting", phase, elapsed) if p)
-        parts = ["RUNNING", _epochs(status, "/")]
-        batch, batches = status.get("batch"), status.get("total_batches")
-        if batch is not None and batches:
-            parts.append(f"batch {batch}/{batches}")
-        parts.append(elapsed)
-        return "running", " · ".join(p for p in parts if p)
-    if s == "stopping":
-        return "stopping", " · ".join(p for p in ("Stopping", _epochs(status), elapsed) if p)
-    if s == "completed":
-        return "completed", " · ".join(p for p in ("Completed", _epochs(status), elapsed) if p)
-    if s == "stopped":
-        return "stopped", " · ".join(p for p in ("Stopped", _epochs(status), elapsed) if p)
-    if s == "failed":
-        return "failed", " · ".join(p for p in ("FAILED", _epochs(status), elapsed) if p)
-    return "stopped", str(s)
+            return "starting", f"Starting · {phase}"
+        return "running", " · ".join(p for p in ("RUNNING", _epochs(status, "/")) if p)
+    words = {"stopping": "Stopping", "completed": "Completed", "stopped": "Stopped",
+             "failed": "FAILED"}.get(s)
+    if words is None:
+        return "stopped", str(s)
+    return s, " · ".join(p for p in (words, _epochs(status)) if p)
+
+
+def pill_details(status: Mapping[str, Any]) -> Optional[str]:
+    """The pill's details after its words, with no separator: the batch while
+    an epoch runs and how long the job has run (or ran), "batch 340/812,
+    00:14:32 elapsed"; None when it has neither (idle)."""
+    s = status.get("status") or "idle"
+    if s == "idle":
+        return None
+    parts = []
+    batch, batches = status.get("batch"), status.get("total_batches")
+    if s == "running" and status.get("current_epoch") is not None and batch is not None \
+            and batches:
+        parts.append(f"batch {batch}/{batches}")
+    elapsed = _elapsed(status)
+    if elapsed:
+        parts.append(f"{elapsed} elapsed")
+    return ", ".join(parts) or None
 
 
 def pill_html(status: Mapping[str, Any]) -> str:
@@ -740,8 +750,10 @@ def pill_html(status: Mapping[str, Any]) -> str:
     kind = PILL_KIND.get(state, "grey")
     mark = {"ok": r.CHECK, "red": '<span class="shep-dot-r" aria-hidden="true"></span>',
             "running": '<span class="shep-dot-w" aria-hidden="true"></span>'}.get(kind, "")
+    details = pill_details(status)
+    more = f'<span class="shep-pill-sub">{r.e(details)}</span>' if details else ""
     return (f'<div class="shep-pill shep-pill-{kind}" data-state="{r.e(state)}" role="status">'
-            f'{mark}<span>{r.e(words)}</span></div>')
+            f'{mark}<span>{r.e(words)}</span>{more}</div>')
 
 
 def _gpu_line(active: Optional[Mapping[str, Any]], lock: Optional[Mapping[str, Any]],
@@ -3200,6 +3212,7 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} .shep-pop .shep-link {{ align-self: flex-start; }}
 {_PAGE} #shep-train-pill {{ margin-left: auto; flex: none !important; }}
 {_PAGE} .shep-pill {{ display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border-radius: 999px; font-size: 14px; font-weight: 600; white-space: nowrap; border: 1px solid var(--shep-border-2); background: var(--shep-panel-2); color: var(--shep-text-2); }}
+{_PAGE} .shep-pill-sub {{ font-weight: 400; }}
 {_PAGE} .shep-pill-running {{ background: var(--shep-accent); border-color: var(--shep-accent); color: #fff; }}
 {_PAGE} .shep-pill-accent {{ background: var(--shep-accent-50); border-color: var(--shep-accent-100); color: var(--shep-accent-text); }}
 {_PAGE} .shep-pill-ok {{ background: var(--shep-green-50); border-color: var(--shep-green-200); color: var(--shep-green-800); }}

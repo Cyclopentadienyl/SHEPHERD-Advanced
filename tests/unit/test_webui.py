@@ -74,9 +74,9 @@ class TestTrainingConsoleHelpers:
         assert "shep-pill-idle" in pill_html({"status": "idle"})
 
     def test_the_status_pill_running(self):
-        from src.webui.components.training_console import pill_state
+        from src.webui.components.training_console import pill_details, pill_state
 
-        kind, words = pill_state({
+        status = {
             "status": "running",
             "pid": 12345,
             "current_epoch": 5,
@@ -84,9 +84,11 @@ class TestTrainingConsoleHelpers:
             "batch": 340,
             "total_batches": 812,
             "elapsed_seconds": 3661,
-        })
+        }
+        kind, words = pill_state(status)
         assert kind == "running"
-        assert words == "RUNNING · epoch 5/100 · batch 340/812 · 01:01:01"
+        assert words == "RUNNING · epoch 5/100"
+        assert pill_details(status) == "batch 340/812, 01:01:01 elapsed"
 
     def test_resources_html_no_gpu(self):
         from src.webui.components.renderers import resources_html

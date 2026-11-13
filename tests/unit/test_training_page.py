@@ -251,18 +251,20 @@ def test_every_gated_act_checks_d8_and_reads_the_chips_after():
 
 # --------------------------------------------------------------------------- the run bar's workspace
 def test_the_select_names_the_servers_workspaces_and_leaves_their_identity_to_the_chip(root):
-    """The server's list, in the shared order; a trainable workspace's option
-    is its name, its identity (fingerprint, synthetic) the chip's beside it
-    (the GB10 WebUI recheck: said twice side by side); one that cannot be
-    trained keeps its reason in its option, read before choosing."""
+    """The server's list, in the shared order, with every page's options
+    (`renderers.workspace_choices`, no option rule of the run bar's own): a
+    trainable workspace's option is its name, its identity (fingerprint,
+    synthetic) the chip's beside it (the GB10 WebUI recheck: said twice side
+    by side); one that cannot be trained keeps its reason in its option, read
+    before choosing."""
     from src.webui.components import renderers as r
     from src.webui.components.workspaces import read_workspaces
 
     state = tc.workspace_state("demo")
     rows = read_workspaces()["rows"]
     trainable = {x["name"] for x in rows if r.is_digest(x.get("dataset_fingerprint"))}
-    assert [tuple(c) for c in state["choices"]] == [
-        (name if name in trainable else label, name) for label, name in r.workspace_choices(rows)]
+    assert [tuple(c) for c in state["choices"]] == r.workspace_choices(rows)
+    assert all(label == name for label, name in state["choices"] if name in trainable)
     assert ("demo", "demo") in [tuple(c) for c in state["choices"]]
     assert any(label != name for label, name in state["choices"])      # a reason kept
     assert "dataset fingerprint" in tc.chip_html(state)
@@ -326,28 +328,38 @@ def test_datasets_use_for_training_reaches_the_run_bar():
 
 
 # --------------------------------------------------------------------------- the pill and the reason line
-@pytest.mark.parametrize("status, kind, words", [
-    ({"status": "idle"}, "idle", "Idle · no training job since the server started"),
+@pytest.mark.parametrize("status, kind, words, details", [
+    ({"status": "idle"}, "idle", "Idle · no training job since the server started", None),
     ({"status": "running", "phase": "initializing", "elapsed_seconds": 4}, "accent",
-     "Starting · loading data and the model · 00:00:04"),
+     "Starting · loading data and the model", "00:00:04 elapsed"),
     ({"status": "running", "current_epoch": 12, "total_epochs": 100, "batch": 340,
       "total_batches": 812, "elapsed_seconds": 872}, "running",
-     "RUNNING · epoch 12/100 · batch 340/812 · 00:14:32"),
+     "RUNNING · epoch 12/100", "batch 340/812, 00:14:32 elapsed"),
     ({"status": "stopping", "current_epoch": 3, "total_epochs": 10}, "accent",
-     "Stopping · epoch 3 of 10"),
+     "Stopping · epoch 3 of 10", None),
     ({"status": "completed", "current_epoch": 60, "total_epochs": 60,
       "start_time": "2026-10-18T14:20:00", "end_time": "2026-10-18T15:01:07"}, "ok",
-     "Completed · epoch 60 of 60 · 00:41:07"),
+     "Completed · epoch 60 of 60", "00:41:07 elapsed"),
     ({"status": "stopped", "current_epoch": 7, "total_epochs": 60}, "grey",
-     "Stopped · epoch 7 of 60"),
+     "Stopped · epoch 7 of 60", None),
     ({"status": "failed", "current_epoch": 7, "total_epochs": 60,
       "start_time": "2026-10-19T08:15:00", "end_time": "2026-10-19T08:24:12"}, "red",
-     "FAILED · epoch 7 of 60 · 00:09:12"),
+     "FAILED · epoch 7 of 60", "00:09:12 elapsed"),
 ])
-def test_the_status_pill(status, kind, words):
+def test_the_status_pill(status, kind, words, details):
+    """The state and how far it got, with at most one " · " (the WebUI skill
+    §5: it read "RUNNING · epoch 12/100 · batch 340/812 · 00:14:32", three);
+    the batch and the time are the pill's details, after its words, with no
+    separator."""
     state, said = tc.pill_state(status)
     assert said == words and tc.PILL_KIND[state] == kind
-    assert f"shep-pill-{kind}" in tc.pill_html(status)
+    assert said.count(" · ") <= 1 and tc.pill_details(status) == details
+    html = tc.pill_html(status)
+    assert f"shep-pill-{kind}" in html
+    if details:
+        assert f'<span class="shep-pill-sub">{details}</span>' in html
+    else:
+        assert "shep-pill-sub" not in html
 
 
 def test_a_failed_or_stopped_run_is_never_green():

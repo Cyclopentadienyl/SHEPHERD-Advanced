@@ -4108,6 +4108,25 @@ def _visible(html: str) -> str:
     return " ".join(html_lib.unescape(re.sub(r"<[^>]+>", " ", html)).split())
 
 
+def test_a_long_version_label_is_shortened_in_its_option_never_in_its_value():
+    """The skill's §8 for the version select: a label past the option's room
+    keeps its start and end, alike ones are numbered, an unreadable version
+    says so; each value is the full label, whatever the words."""
+    long = "hospital-cohort-2026-09-wide-phenotype-set-"
+    versions = [{"label": f"{long}a", "kind": "supplied", "role": "test", "counts": {}},
+                {"label": f"{long}b", "kind": "supplied", "role": "test", "counts": {}},
+                {"label": "kg-x", "kind": "kg_edges", "role": "test", "counts": {}},
+                {"label": "torn", "problem": "it cannot be read"}]
+    choices = tp.version_choices({"versions": versions})
+    labels = [label for label, _value in choices]
+    assert [value for _label, value in choices] == [f"{long}a", f"{long}b", "torn", "kg-x"]
+    assert len(set(labels)) == len(labels), labels
+    for label in labels:
+        assert len(label) <= renderers.OPTION_CHARS and label.count(" · ") == 1, label
+    assert labels[0].startswith("hospital") and labels[0].endswith("-a · role test")
+    assert labels[2:] == ["torn · cannot be read", "kg-x · KG edge set (test)"]
+
+
 def test_the_data_panel_lists_every_kind_by_kind_and_role_with_its_counts(
         site, kinds, monkeypatch):
     """The version select lists the supplied cohort as it always read, then
@@ -4126,9 +4145,13 @@ def test_the_data_panel_lists_every_kind_by_kind_and_role_with_its_counts(
     labels = dict((value, label) for label, value in choices)
     assert labels[KG_LABEL] == "kg-test · KG edge set (test)"
     assert labels[GEN_LABEL] == "gen-val · Generated split (val)"
-    for value in (KG_LABEL, GEN_LABEL):
-        assert len(labels[value]) <= 40 and labels[value].count(" · ") == 1
-    assert labels[LABEL].startswith(f"{LABEL} · role ")
+    # One rule for the select (skill §8): every option, the supplied cohort's
+    # too ("label · role R", its counts its details), unique, at most 40
+    # characters and one separator, its value the full label.
+    assert len(set(labels.values())) == len(labels)
+    for value, label in labels.items():
+        assert len(label) <= 40 and label.count(" · ") == 1 and label.startswith(value), label
+    assert labels[LABEL].startswith(f"{LABEL} · role ") and "ranked-eligible" not in labels[LABEL]
     # The version chosen is the first option, whatever order the registry
     # lists versions in (the review of Stage 7: it was the registry's first).
     for versions in (page["versions"], list(reversed(page["versions"]))):

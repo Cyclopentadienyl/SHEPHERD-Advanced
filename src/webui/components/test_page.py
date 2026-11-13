@@ -996,28 +996,23 @@ def _by_kind(versions: Sequence[Mapping[str, Any]]) -> List[Mapping[str, Any]]:
 
 
 def version_choices(page: Mapping[str, Any]) -> List[Tuple[str, str]]:
-    """The version select's options, by kind (`_KIND_ORDER`) and role: a
-    supplied cohort as it always read ("label · role R · n of N
-    ranked-eligible"); a KG edge set or a generated split by its kind and
-    role ("kg-test · KG edge set (test)", "gen-val · Generated split (val)"),
-    its counts in its own units in the chosen version's details
-    (`version_html`); one that cannot be read says so. Whether a version was
-    mapped against this workspace's graph is the chosen version's detail
-    (its tag in `version_html`, and Start's reason), never its option's
-    text (skill §8). The values are the labels, whatever the words."""
-    choices = []
+    """The version select's options, by kind (`_KIND_ORDER`) and role, each
+    its label first and at most 40 characters with one separator (skill §8:
+    `renderers.fit_options`): a supplied cohort by its role ("mygene2-2026-09
+    · role test"), a KG edge set or a generated split by its kind and role
+    ("kg-test · KG edge set (test)", "gen-val · Generated split (val)"); one
+    that cannot be read says so. Its counts, in its own units, are the chosen
+    version's details (`version_html`), as is whether it was mapped against
+    this workspace's graph (its tag there, and Start's reason), never its
+    option's text. The values are the labels, whatever the words."""
+    entries = []
     for version in _by_kind(page.get("versions") or []):
         label = str(version.get("label"))
         if version.get("problem"):
-            choices.append((f"{label} · cannot be read", label))
+            entries.append((label, "cannot be read", label))
             continue
-        counts = version.get("counts") or {}
-        kind_words = _kind_words(version)
-        choices.append((f"{label} · {kind_words}" if kind_words else
-                        f"{label} · role {version.get('role')} · "
-                        f"{_count(counts.get('ranked_eligible'))} of "
-                        f"{_count(counts.get('source_cases'))} ranked-eligible", label))
-    return choices
+        entries.append((label, _kind_words(version) or f"role {version.get('role')}", label))
+    return r.fit_options(entries)
 
 
 def find(rows: Sequence[Mapping[str, Any]], field: str, value: Any) -> Optional[Mapping[str, Any]]:

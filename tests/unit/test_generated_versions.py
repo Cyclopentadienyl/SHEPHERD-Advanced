@@ -555,10 +555,13 @@ def test_the_test_page_names_it_by_kind_and_role_never_in_a_cohort_s_words(liste
     page = {"versions": [version_row(item) for item in listing.items]}
     options = {value: label for label, value in tp.version_choices(page)}
     assert options["gen-val"] == "gen-val · Generated split (val)"
+    # A supplied cohort's option is its label and role, one separator (skill
+    # §8); its case counts are its details.
     counts = supplied.manifest["counts"]
-    assert options["cases-1"] == (f"cases-1 · role {supplied.manifest['role']} · "
-                                  f"{counts['ranked_eligible']} of {counts['source_cases']} "
-                                  "ranked-eligible")
+    assert options["cases-1"] == f"cases-1 · role {supplied.manifest['role']}"
+    assert (f"{counts['source_cases']} source cases · {counts['ranked_eligible']} "
+            "ranked-eligible") in unescape(re.sub(r"<[^>]+>", "", tp.version_html(
+                page, "cases-1", None)))
     # The version's own details, apart from the KG edge sets' empty state
     # under them (this registry holds none).
     html = tp.version_html(page, "gen-val", None)

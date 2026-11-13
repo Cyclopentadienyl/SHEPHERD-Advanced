@@ -566,24 +566,43 @@ def not_trainable_short(item: Any, limit: int = 80) -> str:
     return short_reason(_get(item, "not_trainable") or "not trainable", limit)
 
 
-def workspace_choices(workspaces: Sequence[Any]) -> list:
-    """The options of a workspace select, one way on every page (Diagnosis'
-    drawer, Models, Test, Training's run bar): ``(label, name)`` with the label
-    "name · dataset fingerprint <12 hex> · synthetic" (more digits when two
-    listed fingerprints share 12), or "name · no (readable) split manifest" (a
-    name that does not resolve inside the root: its own reason, shortened)."""
-    digits = distinguishing_digits(_get(w, "dataset_fingerprint") for w in workspaces)
-    choices = []
-    for w in workspaces:
-        name = str(_get(w, "name"))
-        if not is_digest(_get(w, "dataset_fingerprint")):
-            label = f"{name} · {not_trainable_short(w, 48)}"
-        else:
-            label = f"{name} · dataset fingerprint {short_hex(_get(w, 'dataset_fingerprint'), digits)}"
-            if origin_of(w) == "synthetic":
-                label += " · synthetic"
-        choices.append((label, name))
-    return choices
+def _workspace_rest(item: Any, digits: int = 0) -> Optional[str]:
+    """What a workspace's option says after its name (`workspace_choices`): a
+    workspace without a readable manifest in a few words, "no split manifest",
+    "no readable split manifest" or "not trainable", read before choosing
+    (its whole reason is beside the select); given `digits` (two names that
+    would read alike), "synthetic" where it applies and that many of its
+    fingerprint's hex digits; else nothing."""
+    fingerprint = _get(item, "dataset_fingerprint")
+    if not is_digest(fingerprint):
+        short = not_trainable_short(item)
+        return short if short in (NO_SPLIT_MANIFEST, NO_READABLE_SPLIT_MANIFEST) else "not trainable"
+    if not digits:
+        return None
+    return " ".join([*(["synthetic"] if origin_of(item) == "synthetic" else []),
+                     fingerprint[:digits]])
+
+
+def workspace_choices(workspaces: Sequence[Any]) -> List[Tuple[str, str]]:
+    """**The options of a workspace select, one way on every page** (Diagnosis'
+    drawer, Models, Test, Fine-tune and Training's run bar): ``(label,
+    name)``, the name first, at most `OPTION_CHARS` characters with one
+    separator (the skill's §8; a long name shortened in its middle). A
+    trainable workspace is its name: its identity (fingerprint, synthetic,
+    record) is shown beside the select, said once (the GB10 WebUI recheck:
+    said twice side by side). One that cannot be trained adds why in a few
+    words ("name · no split manifest"), read before choosing. Only where two
+    names would read alike do they add the synthetic flag where it applies
+    and their fingerprints' distinguishing digits (`distinguishing_digits`),
+    then a number where nothing recorded tells them apart. The value is the
+    listed name, whatever the words."""
+    names = [str(_get(w, "name")) for w in workspaces]
+    labels = [fit_option(name, _workspace_rest(w)) for name, w in zip(names, workspaces)]
+    seen = Counter(labels)
+    digits = distinguishing_digits(_get(w, "dataset_fingerprint")
+                                   for w, label in zip(workspaces, labels) if seen[label] > 1)
+    return fit_options([(name, _workspace_rest(w, digits if seen[label] > 1 else 0), name)
+                        for name, w, label in zip(names, workspaces, labels)])
 
 
 # ---------------------------------------------------------------------------
