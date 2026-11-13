@@ -495,7 +495,10 @@ def test_continue_sends_the_parent_shown_and_the_preview_refuses_another(console
     _swap(console, "same")()
     said, text, _extend, mode = _continue(console, src, typed, mode)
     assert len(console["started"]) == 1, "another parent was started"
-    assert "this checkpoint cannot be continued" in said
+    # The check says why and the footer's reason that it is disabled (B1c).
+    assert said == tc.notice_html("")
+    assert tc.continue_refusal(mode["parent"], console["state"]) == (
+        "the check says this checkpoint cannot be continued.")
     assert CHANGED in text and f"(chosen: {shown[:12]}...)" in text
     assert (REFRESH if source == "list" else CHECK_AGAIN) in text
     assert mode["parent"]["refused"] is True and mode["parent"]["sha256"] == shown
@@ -611,7 +614,9 @@ def test_start_branch_sends_the_parent_shown_and_the_preview_refuses_another(con
     _swap(console, "same")()
     said, text, _extend, mode = _continue(console, src, typed, mode, operation=tc.BRANCH)
     assert len(console["started"]) == 1, "another parent was branched"
-    assert "this checkpoint cannot be branched" in said
+    assert said == tc.notice_html("")
+    assert tc.continue_refusal(mode["parent"], console["state"], operation=tc.BRANCH) == (
+        "the check says this checkpoint cannot be branched.")
     assert "Cannot branch." in text and CHANGED in text and f"(chosen: {shown[:12]}...)" in text
     assert (REFRESH if source == "list" else CHECK_AGAIN) in text
     assert mode["parent"]["refused"] is True and mode["parent"]["sha256"] == shown

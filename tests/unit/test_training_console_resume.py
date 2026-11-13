@@ -439,7 +439,11 @@ def test_continue_sends_only_operational_fields_and_never_bypasses_the_check(
     monkeypatch.setattr(training_manager, "start_training", _starts(started))
     refused = _resume(checkpoints, tc.CONTINUE_FROM_PATH, None, str(checkpoints["finished"]))
     assert started == [], "a refused checkpoint was started"
-    assert "Not started" in refused[0] and "Cannot continue" in refused[1]
+    # Said once (B1c): the check says why, the footer's reason beside the
+    # start that it is disabled; no notice repeats it.
+    assert refused[0] == tc.notice_html("") and "Cannot continue" in refused[1]
+    assert tc.continue_refusal(refused[3]["parent"], checkpoints["state"]) == (
+        "the check says this checkpoint cannot be continued.")
 
     _resume(checkpoints, tc.CONTINUE_FROM_LIST, checkpoints["paused_key"], "")
     assert started and set(started[0]) - {"__kwargs__"} == {
@@ -466,10 +470,12 @@ def test_continue_training_is_refused_when_the_parents_dataset_is_not_the_worksp
     out = _resume(checkpoints, tc.CONTINUE_FROM_LIST, checkpoints["paused_key"], "",
                   state=other)
     assert started == []
-    assert out[0] == tc.notice_html(
-        "Not started: the parent’s dataset is not this workspace’s current one.")
+    # The footer's reason says it beside the start (B1c), and the check: no
+    # notice repeats it.
+    assert out[0] == tc.notice_html("")
     assert "cannot continue on the current dataset" in out[1]
-    assert tc.continue_refusal(out[3]["parent"], other) is not None
+    assert tc.continue_refusal(out[3]["parent"], other) == (
+        "the parent’s dataset is not this workspace’s current one.")
     compare = tc.compare_html(out[3]["parent"], other)
     assert "The parent’s dataset is not this workspace’s current one" in compare
 
@@ -697,7 +703,7 @@ def test_continue_without_check_on_a_finished_checkpoint_shows_extra_epochs(
     started = []
     monkeypatch.setattr(training_manager, "start_training", _starts(started))
     result = _resume(checkpoints, tc.CONTINUE_FROM_PATH, None, str(checkpoints["finished"]))
-    assert started == [] and "Not started" in result[0]
+    assert started == [] and result[3]["parent"]["refused"] is True
     assert "Enter <b>Extra epochs</b> above" in result[1]           # the field is above the check
     assert result[2]["visible"] is True
 
@@ -1000,9 +1006,11 @@ def test_an_invalid_or_off_list_branch_edit_is_refused_with_the_plans_words(chec
     assert "Cannot branch." in rule[0] and r.e(problem) in rule[0], rule[0]
     for edit in ({"learning_rate": -1.0}, {"candidate_sample_size": 5},
                  {"scheduler_type": "onecycle", "min_lr_ratio": 0.0}):
-        said, *_rest = _resume_all(c, tc.CONTINUE_FROM_LIST, c["paused_key"], "",
-                                   operation=tc.BRANCH, **edit)
-        assert "Not started: this checkpoint cannot be branched" in said
+        said, text, _extend, _rate, mode, *_rest = _resume_all(
+            c, tc.CONTINUE_FROM_LIST, c["paused_key"], "", operation=tc.BRANCH, **edit)
+        assert said == tc.notice_html("") and "Cannot branch." in text
+        assert tc.continue_refusal(mode["parent"], c["state"], operation=tc.BRANCH) == (
+            "the check says this checkpoint cannot be branched.")
     assert started == []
     # An edit after a refused check: the check is stale and no longer
     # disables Start branch, which checks what it sends first.

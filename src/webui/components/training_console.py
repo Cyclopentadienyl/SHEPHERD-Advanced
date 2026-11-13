@@ -3619,7 +3619,13 @@ def _resume(operation, ws, device, source, listed, manual, extend_epochs, extend
             mode, touched=None, values: Sequence[Any] = ()):
     """The drawer's start's work after D8: ``(sentence, check text, Extra
     epochs update, Extra-epoch rate update, mode, Branch box and fields)``,
-    the sentence plain text ("" once started)."""
+    the sentence plain text: "" once started, and "" when the start's own
+    check refuses it, whose refusal the drawer's footer says beside the start
+    from the same record ("Start branch disabled: the check says this
+    checkpoint cannot be branched.", the dataset comparison's) and the check
+    says why: the fact said once (the skill's §1.2); a refusal nothing else
+    says (no dataset, a path the list does not hold, the job runner's own)
+    is the sentence."""
     op = BRANCH if operation == BRANCH else CONTINUE
     mode = dict(mode or {})
     mode["operation"] = op
@@ -3645,10 +3651,9 @@ def _resume(operation, ws, device, source, listed, manual, extend_epochs, extend
         if op == CONTINUE and preview.get("end") == "finished" and not extend_epochs:
             text += ('<p class="shep-note">Enter <b>Extra epochs</b> above, then click '
                      '<b>Continue Training</b> again.</p>')
-        return (f"Not started: this checkpoint cannot be {OPERATION_VERBS[op][1]}; the reason "
-                "is in the check.", text, *shown, mode, branch)
+        return "", text, *shown, mode, branch
     if refusal:
-        return f"Not started: {refusal}", text, *shown, mode, branch
+        return "", text, *shown, mode, branch
     from src.api.services.server_lists import ServerListRefused
 
     try:
