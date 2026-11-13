@@ -197,7 +197,7 @@ def base_summary_html(item: Optional[Mapping[str, Any]]) -> str:
     its run's directory (the Run select gives its name, architecture and
     time), file, configuration, what it holds, its Trainer validation
     figure, what its run's saves were ranked by
-    (`renderers.selection_words`), how its dataset stands to the one
+    (`renderers.selection_value`), how its dataset stands to the one
     selected, and the model fingerprint Start sends (copyable). Escaped;
     empty when none is chosen."""
     if not item:
@@ -218,7 +218,7 @@ def base_summary_html(item: Optional[Mapping[str, Any]]) -> str:
         ("Holds", r.e(tc.CHECKPOINT_KINDS.get(kind or "", "not recorded"))),
         ("Validation", r.e(r.validation_value(r.validation_figure(item),
                                               read=r.record_read(item)))),
-        ("Selection", r.e(r.selection_words(item).removeprefix("Selection "))),
+        ("Selection", r.e(r.selection_value(item))),
         ("Trained on", on),
         ("Model fingerprint", r.fingerprint_value(item.get("sha256"), what="model fingerprint")),
     ]

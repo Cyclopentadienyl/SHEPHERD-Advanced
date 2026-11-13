@@ -30,6 +30,7 @@ Module: tests/unit/test_webui_renderers.py
 """
 from __future__ import annotations
 
+import inspect
 import re
 
 import pytest
@@ -953,6 +954,46 @@ def test_every_details_lists_validation_row_reads_the_one_way():
     assert rows({**figure, "validation": None}) == {"not recorded in this checkpoint"}
     assert rows({**figure, "validation": None, "record": "refused"}) == {
         "not read (record not readable)"}
+
+
+def test_every_details_lists_selection_row_reads_the_one_way():
+    """Ops-wiring round B1c (B0c's leftover): Continue's chosen checkpoint and
+    Fine-tune's base each cut "Selection " off `selection_words` themselves.
+    Every details list's Selection row is `selection_value`, beside
+    `validation_value`: the recorded monitor and direction, or "not
+    recorded", never "Selection Selection …"."""
+    from src.webui.components import finetune_page as ft
+    from src.webui.components import training_console as tc
+
+    def rows(item):
+        shown = (tc.parent_details_html(item), ft.base_summary_html(item))
+        return {re.search(r'Selection</dt><dd class="shep-v[^"]*">([^<]*)', html_).group(1)
+                for html_ in shown}
+
+    figure = {**checkpoint(), "checkpoint_kind": "training_state",
+              "selection": {"monitor": "val_pooled_mrr", "mode": "max"}}
+    assert rows(figure) == {r.selection_value(figure)} == {
+        "by validation pooled MRR (Trainer), higher is better"}
+    assert rows({**figure, "selection": None}) == {r.selection_value({})} == {"not recorded"}
+    for module in (tc, ft):
+        assert 'removeprefix("Selection ")' not in inspect.getsource(module)
+
+
+def test_a_branch_change_reads_in_the_one_value_words_rule():
+    """`change_value`: a setting a branch changes, its parent's value and its
+    own, each by `setting_words` (never repr), escaped; Models' "Settings
+    changed" and the Continue drawer's check say it so."""
+    from src.webui.components import models_page as mp
+
+    assert r.change_value("learning_rate", {"parent": 0.0001, "new": 0.0005}) == (
+        "<code>0.0001</code> → <code>0.0005</code>")
+    assert r.change_value("early_stopping_patience", {"parent": None, "new": 3}) == (
+        "<code>off</code> → <code>3</code>")
+    assert r.change_value("scheduler_type", {"parent": "<b>x", "new": "none"}) == (
+        "<code>&lt;b&gt;x</code> → <code>none</code>")
+    assert r.change_value("seed", None) == "<code>not set</code> → <code>not set</code>"
+    assert mp.changes_html({"learning_rate": {"parent": 0.0001, "new": 0.0005}}) == (
+        "Learning rate " + r.change_value("learning_rate", {"parent": 0.0001, "new": 0.0005}))
 
 
 def test_every_details_list_escapes_keeps_words_says_no_repr_and_draws_one_box():

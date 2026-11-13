@@ -2822,7 +2822,7 @@ def parent_details_html(item: Optional[Mapping[str, Any]]) -> str:
     (`model_list.checkpoint_words` gives what it is and its progress): its
     file, its stage, what it holds, how its stage ended where that limits
     continuing, its Trainer validation figure (never a test result), what its
-    run's saves were ranked by (`renderers.selection_words`: the recorded
+    run's saves were ranked by (`renderers.selection_value`: the recorded
     monitor and direction, or not recorded), its model fingerprint (copyable)
     and its run's directory. A file that cannot be read says why, beside the
     ▲ of a condition to watch. Empty when none is chosen from the list."""
@@ -2844,7 +2844,7 @@ def parent_details_html(item: Optional[Mapping[str, Any]]) -> str:
         rows.append(("Continuing", r.e(going_on)))
     rows.append(("Validation", r.e(r.validation_value(r.validation_figure(item),
                                                       read=r.record_read(item)))))
-    rows.append(("Selection", r.e(r.selection_words(item).removeprefix("Selection "))))
+    rows.append(("Selection", r.e(r.selection_value(item))))
     rows.append(("Model fingerprint", r.fingerprint_value(item["sha256"],
                                                           what="model fingerprint")))
     rows.append(("Run", f"<code>{r.e(_run_label(item))}</code>"))

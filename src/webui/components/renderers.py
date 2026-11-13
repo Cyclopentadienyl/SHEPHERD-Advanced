@@ -1233,6 +1233,15 @@ def validation_value(validation: Optional[Tuple[str, float]], *, read: bool = Tr
             .removeprefix("Validation (Trainer): ").removeprefix("Validation "))
 
 
+def selection_value(item: Any) -> str:
+    """**The value of every details list's "Selection" row**, beside its
+    "Validation" row (`validation_value`; Continue's chosen checkpoint,
+    Fine-tune's base): `selection_words` without the key's word ("by
+    validation LP accuracy (Trainer), higher is better", "not recorded"), so
+    the row never reads "Selection Selection …"."""
+    return selection_words(item).removeprefix("Selection ")
+
+
 # ---------------------------------------------------------------------------
 # Details: the one summary list and the words of a value (the skill's §4, §5)
 # ---------------------------------------------------------------------------
@@ -1427,6 +1436,19 @@ def setting_words(name: Any, value: Any, *, stage: Any = None, task: Any = None)
     if isinstance(value, (int, float)):
         return recorded_value_text(value)
     return str(value)
+
+
+def change_value(name: Any, change: Any) -> str:
+    """**The value of a setting a branch changes** (ops-wiring round,
+    decisions B1, B4), wherever a page says one, a recorded branch's
+    (Models' "Settings changed") or a planned one's (the Continue drawer's
+    check): its parent's value, then its own, each in the one value-words
+    rule (`setting_words`, never Python's repr), "<code>0.0001</code> →
+    <code>0.001</code>". `change` is the record's ``{"parent", "new"}``;
+    anything else reads as two unset values. Escaped."""
+    change = change if isinstance(change, Mapping) else {}
+    return (f'<code>{e(setting_words(name, change.get("parent")))}</code> → '
+            f'<code>{e(setting_words(name, change.get("new")))}</code>')
 
 
 #: The words of record keys the setting labels (`SETTING_LABELS`) do not name;
@@ -1838,6 +1860,7 @@ __all__ = [
     "SHORT_HEX",
     "SYNTHETIC_FOR_TESTING",
     "built_text",
+    "change_value",
     "chip",
     "configuration_text",
     "data_kind_lines",
@@ -1883,6 +1906,7 @@ __all__ = [
     "run_started",
     "run_suffix",
     "run_time",
+    "selection_value",
     "selection_words",
     "setting_words",
     "short_hex",
