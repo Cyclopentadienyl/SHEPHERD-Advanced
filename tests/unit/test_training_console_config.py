@@ -241,6 +241,22 @@ def test_each_fields_input_says_the_line_and_reset_clears_the_record():
     assert len(reset[2:]) == len(tc.base_form_keys())
 
 
+def test_a_setting_leading_a_clause_is_named_by_its_label():
+    """Review of B2: a check's sentence that names a setting first, at the
+    text's start, after another sentence or after the colon that leads a
+    clause (the runner's check of a Fine-tune child against its base), is
+    said by the field's label (`labelled_problem`), on the Fine-tune and
+    Branch pages alike; a setting named inside a clause stays as written."""
+    why = ("The Disease child's hop list [15, 10, 5] (its task's reference) does not fit its "
+           "base's encoder: num_neighbors needs 2 numbers, one hop per encoder layer, not 3.")
+    assert tc.labelled_problem(why) == why.replace(": num_neighbors needs",
+                                                   ": Neighbours per hop needs")
+    assert tc.labelled_problem("min_lr_ratio must be more than 0. num_epochs must be set.") == (
+        "Final learning-rate ratio must be more than 0. Epochs must be set.")
+    inside = "warmup_steps is read only when scheduler_type is cosine."
+    assert tc.labelled_problem(inside) == "Warmup steps is read only when scheduler_type is cosine."
+
+
 def test_the_record_is_read_as_data_from_the_request(listed, started):
     """The record is the browser's (`touched_record`), carried by Start's own
     request: a list's strings are its keys; anything else is no key, so a

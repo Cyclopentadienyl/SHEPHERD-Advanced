@@ -469,12 +469,14 @@ def _named(name: str, problem: str, label: str) -> str:
     return label + problem[len(name):] if problem.startswith(name) else f"{label}: {problem}"
 
 
-#: A sentence of a check that names a setting first by its record name, at
-#: the text's start or after another sentence's end (a check's sentences are
-#: joined by one space): "min_lr_ratio must be more than 0 when …".
+#: A sentence or clause of a check that names a setting first by its record
+#: name: at the text's start, after another sentence's end (a check's
+#: sentences are joined by one space), or after a colon that leads a clause
+#: ("… does not fit its base's encoder: num_neighbors needs 2 numbers …"):
+#: "min_lr_ratio must be more than 0 when …".
 _LEADING_SETTING = re.compile(
-    r"(?:^|(?<=\. ))(" + "|".join(sorted(map(re.escape, r.SETTING_LABELS), key=len,
-                                         reverse=True)) + r")(?= )")
+    r"(?:^|(?<=\. )|(?<=: ))(" + "|".join(sorted(map(re.escape, r.SETTING_LABELS), key=len,
+                                                 reverse=True)) + r")(?= )")
 
 
 def labelled_problem(problem: Any) -> str:

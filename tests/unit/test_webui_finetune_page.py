@@ -400,9 +400,14 @@ def test_the_runners_refusal_of_the_settings_is_said_beside_start_in_its_words(
     base = SimpleNamespace(model_spec=listed_spec(parents[key]["spec"]), data_roles={})
     why = _finetune_base_problem({}, ("disease",), base)
     assert why and "does not fit its base's encoder: num_neighbors needs 1 numbers" in why
+    # The setting leads the clause after the colon: named by its label, as
+    # the hop note beside the field names it (review of B2: one fact, one
+    # name on the screen), on the Branch page alike (`labelled_problem`).
+    labelled = why.replace(": num_neighbors needs", ": Neighbours per hop needs")
+    assert tc.labelled_problem(why) == labelled
     for refusal, words in (
             ({"error": f"{why} Nothing was started."},
-             r.e(f"{why} Nothing was started.")),
+             r.e(f"{labelled} Nothing was started.")),
             ({"error": "min_lr_ratio must be more than 0 when scheduler_type is onecycle. "
                        "Nothing was started."},
              "Final learning-rate ratio must be more than 0 when scheduler_type is onecycle.")):
@@ -412,6 +417,7 @@ def test_the_runners_refusal_of_the_settings_is_said_beside_start_in_its_words(
         said, _stop = _start_with(operator, ws, parents, key, ["disease"], [])
         assert words in said, said
         assert said.count("Nothing was started.") == 1 and "shep-st-error" in said
+        assert "num_neighbors" not in said and "min_lr_ratio" not in said
 
 
 def test_start_is_refused_for_a_read_only_request(root, started):
