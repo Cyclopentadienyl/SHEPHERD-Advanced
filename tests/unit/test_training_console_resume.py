@@ -936,7 +936,8 @@ def test_a_checks_branch_values_are_what_each_field_takes(checkpoints):
     hidden for a base; Gradio's Number refused the text and the whole check
     failed. A check writes only the fields it shows, each value in its
     field's form, so every value goes through its component as Gradio sends
-    it, for a base and for a task model's parent."""
+    it: here for a base parent, and for a task model's in
+    test_a_task_models_branch_offers_its_own_settings_at_its_values."""
     import gradio as gr
 
     with gr.Blocks() as demo:
@@ -1104,6 +1105,102 @@ def test_an_edit_never_dismisses_a_refusal_of_the_parent_itself(checkpoints):
     assert "Nothing to check" in nothing[0] and _fields(nothing)[0] == gr_update(visible=False)
     # Continue leaves the Branch box as it is.
     assert tc._branch_updates({"ok": False}, tc.CONTINUE, [], _values())[0] == gr_update()
+
+
+def test_a_task_models_branch_offers_its_own_settings_at_its_values(trained_disease_child):
+    """The B1c review: no test branched a task model's parent through the
+    drawer (the fixture's parents are bases). A disease child's check shows
+    its stage's list (`changeable`: its task's own settings among them),
+    each at the child's value in its field's form, and every written value
+    goes through its built component as Gradio sends it; one edited task
+    setting is sent alone and is the branch's one change, said in words."""
+    import gradio as gr
+
+    from src.config.recipe import branch_settings
+
+    child = str(trained_disease_child["disease"])
+    preview = training_manager.preview_branch(child, device="cpu")
+    assert preview["ok"], preview.get("reason")
+    assert (preview["learning_stage"], preview["task"]) == ("finetune", "disease")
+    changeable = set(preview["changeable"])
+    assert changeable == set(branch_settings("finetune", "disease"))
+    task_own = {"task_loss_weight", "lp_loss_weight", "candidate_sample_size",
+                "sparse_sample_size"}
+    assert task_own <= changeable and "candidate_upsample_size" not in changeable
+    box, *updates = tc._branch_updates(preview, tc.BRANCH, [], _values())
+    fields = dict(zip(tc.BRANCH_FIELDS, updates, strict=True))
+    assert box["visible"] is True
+    inherited = preview["inherited"]
+    for name in task_own:
+        assert fields[name]["visible"] is True, name
+        assert fields[name]["value"] == tc._branch_form_value(name, inherited[name]), name
+    assert fields["candidate_upsample_size"]["visible"] is False
+    with gr.Blocks() as demo:
+        tc.create_training_tab(standalone_context(demo))
+    by_id = {getattr(block, "elem_id", None): block for block in demo.blocks.values()}
+    written = {name for name, update in fields.items() if "value" in update}
+    assert written <= changeable and task_own <= written
+    for name in written:
+        by_id[f"branch_{name}"].postprocess(fields[name]["value"])      # raises if not taken
+    # One task setting edited: sent alone, the one change, in words.
+    new = 0.5 if inherited["task_loss_weight"] != 0.5 else 0.25
+    item = {"learning_stage": "finetune", "task": "disease"}
+    settings, problems = tc.branch_sent(item, ["task_loss_weight"],
+                                        _values(task_loss_weight=new))
+    assert (settings, problems) == ({"task_loss_weight": new}, [])
+    changed = training_manager.preview_branch(child, device="cpu", requested=settings)
+    assert changed["ok"] and changed["changes"] == {
+        "task_loss_weight": {"parent": inherited["task_loss_weight"], "new": new}}
+    text = tc._check_html(changed, tc.CONTINUE_FROM_PATH, operation=tc.BRANCH)
+    assert "1 setting changed: a new run from these weights with a new optimizer." in _plain(text)
+    assert ('<dt class="shep-k" title="task_loss_weight">Task loss weight</dt>'
+            f'<dd class="shep-v">{r.change_value("task_loss_weight", changed["changes"]["task_loss_weight"])}'
+            '</dd>') in text
+
+
+def test_a_branch_guard_shows_what_it_guards_only_where_the_parent_may_change_it():
+    """`_on_branch_guards`: a Branch field read only under another
+    (warmup under cosine, the final rate ratio under a schedule, mixed
+    precision's dtype with mixed precision on) shows while its guard holds
+    and the last check's list (`changeable`) has it, as the base form's do;
+    hidden otherwise, whatever the guard."""
+    dependent, guards = tc._rule_fields(tc.BRANCH_FIELDS)
+    assert (dependent, guards) == (("warmup_steps", "min_lr_ratio", "amp_dtype"),
+                                   ("scheduler_type", "use_amp"))
+    every = {"parent": {"changeable": list(tc.BRANCH_FIELDS)}}
+
+    def shown(mode, scheduler, amp):
+        return {name: update["visible"] for name, update in
+                zip(dependent, tc._on_branch_guards(mode, scheduler, amp), strict=True)}
+
+    assert shown(every, "none", False) == {"warmup_steps": False, "min_lr_ratio": False,
+                                           "amp_dtype": False}
+    assert shown(every, "cosine", True) == {"warmup_steps": True, "min_lr_ratio": True,
+                                            "amp_dtype": True}
+    assert shown(every, "linear", False) == {"warmup_steps": False, "min_lr_ratio": True,
+                                             "amp_dtype": False}
+    no_dtype = {"parent": {"changeable": [n for n in tc.BRANCH_FIELDS if n != "amp_dtype"]}}
+    assert shown(no_dtype, "cosine", True)["amp_dtype"] is False
+    assert not any(shown({}, "cosine", True).values())         # no check yet: none shown
+
+
+def test_the_run_bar_and_the_run_view_say_branched_for_branch():
+    """With Branch the run bar's line says the new run is branched from the
+    chosen checkpoint, and the run view's header whether the run viewed is
+    the one branched from (`continues_html`, `run_head_html`)."""
+    chosen = {"operation": tc.BRANCH, "parent": {"chosen": True}}
+    assert "a new one, branched from the checkpoint chosen in Continue or branch a run" in (
+        tc.continues_html(chosen))
+    assert "continued from" in tc.continues_html({"parent": {"chosen": True}})
+    assert "once a checkpoint is chosen" in tc.continues_html({"operation": tc.BRANCH})
+    run = tc.RunRef(id="demo/gatv2/r1", label="gatv2/r1", path=Path("/nowhere/r1"),
+                    workspace="demo", job=False, latest=True)
+    same = tc.run_head_html(run, {"name": "demo"}, operator=False, snapshot=None,
+                            continuing="gatv2/r1", operation=tc.BRANCH)
+    other = tc.run_head_html(run, {"name": "demo"}, operator=False, snapshot=None,
+                             continuing="gatv2/r0", operation=tc.BRANCH)
+    assert ">the run branched from<" in same and ">not the run branched from<" in other
+    assert "continued" not in same + other
 
 
 def test_the_branch_fields_are_the_settings_a_branch_may_change_through_the_one_field():
