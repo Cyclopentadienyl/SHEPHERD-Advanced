@@ -1231,10 +1231,13 @@ def _gpu_line(active: Optional[Mapping[str, Any]], lock: Optional[Mapping[str, A
 #: those changed on its stage's list, or none).
 CONTINUE = "continue"
 BRANCH = "branch"
-#: The drawer's operation choice, each by what it does (a radio of two, the
-#: skill's §8; each 40 characters or fewer) and sent as the operation.
-OPERATION_CHOICES = [("Continue: resume or extend", CONTINUE),
-                     ("Branch: a new run from these weights", BRANCH)]
+#: The drawer's operation choice, a radio of two (the skill's §8), each by its
+#: verb, sent as the operation: one line beside its label in the drawer's
+#: width (the B1c review: "Continue: resume or extend" and "Branch: a new run
+#: from these weights" wrapped to three rows at 1850 x 960 and pushed the
+#: check's plan below the fold). What each does is the drawer's title, its
+#: help (`FIELD_HELP`) and the check's plan.
+OPERATION_CHOICES = [("Continue", CONTINUE), ("Branch", BRANCH)]
 #: The drawer's start by the operation, the one button in its footer.
 START_LABELS = {CONTINUE: "▸ Continue Training", BRANCH: "▸ Start branch"}
 #: What a check says the operation does to a checkpoint: its verb, and its

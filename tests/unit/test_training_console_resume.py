@@ -1130,10 +1130,14 @@ def test_the_branch_fields_are_the_settings_a_branch_may_change_through_the_one_
         assert f"branch_{name}" in tc.FIELD_HELP
     assert isinstance(by_id["branch_early_stopping_patience"], gr.Textbox)  # "off" or a number
     assert by_id["shep-train-branch"].visible is False
-    assert by_id["continue_operation"].choices == [
-        ("Continue: resume or extend", "continue"),
-        ("Branch: a new run from these weights", "branch")]
-    assert all(len(label) <= 40 for label, _value in tc.OPERATION_CHOICES)
+    # Each by its verb, so the choice is one line beside its label (the B1c
+    # review: two long options wrapped to three rows at 1850 x 960); what
+    # each does is the help's.
+    assert by_id["continue_operation"].choices == [("Continue", "continue"),
+                                                   ("Branch", "branch")]
+    title, text = tc.FIELD_HELP["continue_operation"]
+    assert "• Continue: resume a paused run, or extend a finished one" in text
+    assert "• Branch: a new run from its weights, with a new optimizer" in text
     # Steps, numbered in the order they are taken (the skill's §4).
     assert by_id["continue_run"].label == tc.STEP_RUN == "1. Run"
     assert by_id["checkpoint_dropdown"].label == tc.STEP_CHECKPOINT == "2. Checkpoint"
