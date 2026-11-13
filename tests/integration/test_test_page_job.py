@@ -124,7 +124,9 @@ def test_a_run_started_from_the_page_is_kept_shown_and_registered(site, monkeypa
     assert run["record"]["scoring"]["mode"] == "disease"
     result = tp.result_html(reports, run["run_id"], tp.path_roots())
     assert "Disease pooled MRR" in result and "Mode C" not in result
-    assert "disease task: report kept" in tp.reports_html(reports, None)
+    # The reports table's row: its measurement in the page's words, its state.
+    row = tp.reports_html(reports, None)
+    assert "<td>Disease task</td>" in row and "registration not checked" in row
     allowed, _why = tp.register_state(page, reports, run["run_id"])
     assert allowed is True
     done, said = tp.register_selected(page, reports, models, "demo", run["run_id"], request)
@@ -175,12 +177,15 @@ def test_a_base_and_a_file_without_a_model_spec_are_listed_and_never_started(sit
     page = tp.read_page(request)
     models = tp.read_models("demo", request)
     binding = tp.workspace_binding(demo, tp.find(page["workspaces"], "name", "demo"))
-    labels = dict((key, label) for label, key in tp.model_choices(models))
     base = _key(models, "gatv2", BASE_RUN)
     history = _key(models, "hgt", HISTORY_RUN, "best.pt")
     child = _key(models, "gatv2", CHILD_RUNS["disease"])
-    assert labels[base].startswith("Base · ") and labels[child].startswith("Disease · ")
-    assert labels[history].startswith("Record not readable · ")
+    # Each is listed under its run (Run → Checkpoint) and says what it is in
+    # its details (`renderers.model_kind_text`).
+    for key, kind in ((base, "Base"), (child, "Disease"), (history, "Record not readable")):
+        _run, checkpoint = tp.model_selects(models, key)
+        assert key in [value for _label, value in checkpoint["choices"]]
+        assert f'<dd class="shep-v">{kind}</dd>' in tp.model_html(page, models, key)
 
     class Unasked:
         def start_test(self, inputs):

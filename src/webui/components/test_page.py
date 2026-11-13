@@ -13,23 +13,23 @@ docstring. Three panels, as the mockup draws them (``test-wide.png``,
   the data version (the registry's list by kind and role: a supplied cohort
   by its role and case counts, "KG edge set (test)", "Generated split (val)",
   each with its counts in its own units, `version_choices`, `version_html`;
-  with whether it is mapped against this workspace's graph; when the registry
-  holds no KG edge set, the command that imports one on the machine,
-  `kg_edges_empty_html`), "Import a new version…" (a supplied cohort),
-  and the version's report store: every run directory, newest first (the
-  newest `ROWS_SHOWN` and the selected one shown, "Show all N reports" for
-  the rest), with what it kept
-  and whether its report is registered (the registration's one helper,
-  `server_lists.stored_report_state`, asked again for an operator beside the
-  listed checkpoint Register would use: `refine_rows`, `ledger_checkpoint`)
-  and how its condition group reads ("runs under these conditions differ",
-  "comparison incomplete"), both from the server's one run listing that
-  ``GET /api/v1/cohorts`` shares (`server_lists.version_item`); a running
-  test, or the last one that ended with nothing in the store, is the top row;
-- **Run**: the model (WP1's checkpoint list of the workspace, every checkpoint,
-  each option led by what its model record says it is,
-  `renderers.record_kind_text`: listing opens every checkpoint, so it is an
-  operator control and a read-only request is not shown it), the measurement
+  with whether it is mapped against this workspace's graph, a shared mark:
+  ▲ with the refusal beside the version when it was mapped against another
+  graph, which Start's reason then points to, `ANOTHER_GRAPH`; when the
+  registry holds no KG edge set, the command that imports one on the
+  machine, `kg_edges_empty_html`), and "Import a new version…" (a supplied
+  cohort);
+- **Run**: the model as **Run → Checkpoint**, the shared cascading pair
+  (`model_selects`: `model_list.run_choices` and `checkpoint_choices`, each
+  option at most 40 characters, the run's name or start time first, a file
+  by what it is and how far it trained; each value the listing's key; WP1's
+  checkpoint list of the workspace, every checkpoint: listing opens every
+  checkpoint, so it is an operator control and a read-only request is not
+  shown it), the chosen model's details under them (`model_html`: what its
+  record says it is, `renderers.model_kind_text`, "Disease · frozen graph
+  backbone" for the control, its file, the Trainer's figure, its
+  fingerprint and its dataset by its relation to the workspace's), the
+  measurement
   (a radio of the protocols this build implements that the chosen model's
   listed capabilities admit and that measure the chosen version's kind,
   `protocols.available`: the only one is chosen, of several none is until the
@@ -57,17 +57,34 @@ docstring. Three panels, as the mockup draws them (``test-wide.png``,
   once it has ended, **what it left, from the runner** (its outcome file, kept
   and registered read from disk by WP4's helper; "no report was published"
   when there is no outcome file; a cancel says what was left);
-- **Result**: the selected report as the record the ledger would hold
+- **Result**: at its top, the version's report store as a **compact
+  single-select table** (`reports_html`), newest first (the newest
+  `ROWS_SHOWN` and the selected one shown, "Show all N reports" for the
+  rest): each run's time, its model by its relation to the chosen one ("the
+  selected model", or the other file's title or fingerprint), its
+  measurement and its state (kept, registered by the registration's one
+  helper, `server_lists.stored_report_state`, asked again for an operator
+  beside the listed checkpoint Register would use: `refine_rows`,
+  `ledger_checkpoint`; how its condition group reads, "runs differ",
+  "comparison incomplete"), all from the server's one run listing that
+  ``GET /api/v1/cohorts`` shares (`server_lists.version_item`); a running
+  test, or the last one that ended with nothing in the store, is a row no
+  click selects. Under it, in the panel's one scroll region, the selected report as the record the ledger would hold
   (`build_record`, through the store's scan), read by the one reader as its
   data kind's result view (`record_views.result_view`, the results service's
   reading of a kept report, registered or not; a record it cannot read is
-  shown with its reason, not as a result), its kind's lines in the rendering
+  shown with its reason, not as a result), **what it is of said by its
+  relation to what is chosen now** (`result_identity_rows`: "the selected
+  workspace", "the selected model", "the selected version" when they are
+  the same, each in full when it is not, so a past result keeps its own
+  identity after the selection changes; its run id once), its kind's lines in the rendering
   Models shares (`renderers.data_kind_lines`), by **one display for every
   mode** (R2, K8-6e.2): a measurement this build describes in its tiles and
   words (`caveats.metric_text`) with every metric as recorded one click away;
   any other mode's metrics, a kept report's included, as recorded
   (`caveats.recorded_metric_lines`); the score semantics as recorded,
-  coverage with every exclusion, relations, R10 in the
+  coverage with every exclusion, each relation a row of its own
+  (`renderers.relation_rows`), R10 in the
   caveats' words (*unverifiable* is a word, never a 0), environment, dataset
   origin, whether it is kept and registered; "Register this report" through the one
   registration function (`register_report`, the ledger beside the listed
@@ -126,10 +143,10 @@ The poll writes the job card and what the session saw of the job
 what is drawn from it (Start and its reason included). Nothing here is module
 state.
 **Every write of the selection** (the checkpoint listing, the version's
-reports, the report shown, and the list, the result, Start and its reason
+reports, the report shown, and the table, the result, Start and its reason
 drawn from them) runs in one queued group of one (`SELECTION_CONCURRENCY`):
-page open, the workspace, the version, the model, the measurement, a report's
-row, ↻, the read after an act or an import, and the read after the poll saw
+page open, the workspace, the version, the run, the checkpoint, the
+measurement, a report's row, ↻, the read after an act or an import, and the read after the poll saw
 the job or the GPU line change (the poll hands that over through a hidden
 component's ``.change``, naming what it saw before and what it sees now). Every choice
 joins it, also one made while an earlier one waits. So each starts from the
@@ -158,7 +175,6 @@ from src.evaluation import protocols
 from src.evaluation.caveats import (
     MEASUREMENT_NAMES,
     R10_LABEL_TEXT,
-    RELATION_DISPLAY_NAMES,
     TASK_NAMES,
     label_words,
     metric_text,
@@ -172,6 +188,7 @@ from src.webui.components import renderers as r
 from src.webui.components.chips import LOCK, chips_on_change, gated
 from src.webui.components.chips import operator_only as _operator_only
 from src.webui.components.help import help_button
+from src.webui.components import model_list as ml
 from src.webui.components.model_list import item_key
 from src.utils.path_redaction import redact_paths
 from src.webui.components.workspaces import (
@@ -245,13 +262,6 @@ _RESULT_WORDS = {mode: f"{name} task" if mode in TASK_NAMES else name
 #: The ⓘ beside a described measurement's label, holding its note
 #: (`caveats.mode_note`).
 _MODE_HELP = {mode: f"test-mode-{mode}" for mode in _RESULT_WORDS}
-#: Each report row's mode, first in its state line, in plain words: a task's
-#: in lower case ("gene task"), the KG link-prediction measurement's as written
-#: ("KG link prediction"). A report of another mode is named by its recorded
-#: code as one this version does not describe; one whose mode cannot be read
-#: says so.
-_MODE_ROW_WORDS = {mode: words.lower() if mode in TASK_NAMES else words
-                   for mode, words in _RESULT_WORDS.items()}
 #: The job's statuses, as its pill shows them: never green for failed,
 #: stopped or cancelled.
 _PILLS = {
@@ -278,13 +288,19 @@ FIELD_HELP = {
         "Immutable, identified by its cohort.json's digest. Measured only on the workspace "
         "whose graph it was mapped against; the run checks the bytes again.",
     ),
+    "shep-test-model-run": (
+        "Run",
+        "The workspace's training runs, latest first, each by its name or its start time: "
+        "the runs whose checkpoints the server lists.\n"
+        "• Choosing a run offers its checkpoints and chooses its latest save.\n"
+        "• Listing opens every checkpoint, so it is an operator control.",
+    ),
     "shep-test-model": (
-        "Model",
-        "The workspace's checkpoints from the server's list, each led by what its record "
-        "says it is.\n"
+        "Checkpoint",
+        "The chosen run's checkpoints, each by what the file is and how far it trained.\n"
+        "• What its record says it is shows under it.\n"
         "• A model is measured by what its capabilities meet: its task head, or its LP head "
         "on a KG edge set (Measurement); a file without a model spec is listed only.\n"
-        "• Listing opens every checkpoint, so it is an operator control.\n"
         "• The run is given the model fingerprint shown here and refuses before measuring if "
         "the file it reads holds other bytes.",
     ),
@@ -544,7 +560,6 @@ def _pill(status: str) -> str:
 
 
 #: A check mark that stays on its line (Gradio's base style makes an svg a block).
-OK_MARK = f'<span class="shep-ok-t">{r.CHECK}</span>'
 
 
 def said(text: Any, tail: str) -> str:
@@ -946,25 +961,34 @@ def gpu_line(*, manager: Any = None, operator: bool = False) -> Tuple[str, str]:
 # ---------------------------------------------------------------------------
 # Choices
 # ---------------------------------------------------------------------------
-def model_choices(models: Mapping[str, Any]) -> List[Tuple[str, str]]:
-    """The model select's options: what the checkpoint is first, from its model
-    record (`renderers.record_kind_text`: "Disease", "Base", "Record not
-    readable", …, K6 decision 13: every checkpoint is listed, only a task model is
-    measured), then how far it trained (`renderers.epoch_words`, as every page
-    says it; what tells a run's checkpoints apart when the select is narrow
-    and its text ends in an ellipsis), the run, the model
-    fingerprint or why a checkpoint cannot be tested, then the file name. The
-    values are the listing's keys, whatever the words."""
-    choices = []
-    for item in models.get("items") or []:
-        label = (f"{r.record_kind_text(item)} · {r.epoch_words(item)} · "
-                 f"{r.run_label(item.get('architecture'), item.get('run'))}")
-        if item.get("problem") or not r.is_digest(item.get("sha256")):
-            label += " · metadata not readable"
-        else:
-            label += f" · model fingerprint {item['sha256'][:12]}"
-        choices.append((f"{label} · {item.get('filename')}", item_key(item)))
-    return choices
+def model_parents(models: Mapping[str, Any]) -> Dict[str, Mapping[str, Any]]:
+    """The session's checkpoint listing by its keys (`item_key`, the list's
+    identity), as the shared Run → Checkpoint selects take it."""
+    return {item_key(item): item for item in models.get("items") or []}
+
+
+def model_selects(models: Mapping[str, Any], key: Any, *,
+                  interactive: bool = True) -> Tuple[Any, Any]:
+    """**The model, chosen as a Run → Checkpoint pair** by the shared
+    cascading selects (`model_list.run_choices`, `checkpoint_choices`: each
+    option at most 40 characters with one separator, the run's name or start
+    time first, a file by what it is and how far it trained; every
+    checkpoint of the workspace listed, K6 decision 13), each value the
+    listing's key (`item_run_key`, `item_key`), whatever the words. The
+    chosen checkpoint `key` sets its run and its run's checkpoints; with none
+    chosen, no run is either, until the operator picks one (`chosen_in_run`
+    then takes the run's latest save): the page never measures a model it
+    picked itself. What the file is, its record's kind first, is the chosen
+    model's details (`model_html`), never its option."""
+    parents = model_parents(models)
+    item = parents.get(key) if isinstance(key, str) else None
+    run = ml.item_run_key(item) if item is not None else None
+    keys = ml.runs_of(parents).get(run, []) if run else []
+    return (gr.update(choices=ml.run_choices(parents), value=run,
+                      interactive=interactive and bool(parents)),
+            gr.update(choices=ml.checkpoint_choices(parents, keys),
+                      value=key if item is not None else None,
+                      interactive=interactive and bool(keys)))
 
 
 def _kind_words(version: Mapping[str, Any]) -> Optional[str]:
@@ -1154,9 +1178,12 @@ def version_html(page: Mapping[str, Any], label: Optional[str],
                             + redact(version["problem"], roots)) + empty
     counts = version.get("counts") or {}
     state, words = binding_state(version, binding)
-    kind = {"bound": "ok", "another": "amber", "unknown": "grey"}[state]
-    chip = r.chip(words, kind) if state != "bound" else (
-        f'<span class="shep-tag shep-tag-ok">{e(words)} {OK_MARK}</span>')
+    # The binding's state by the shared mark (the skill's §6): bound a filled
+    # mark; mapped against another graph a condition with ▲ and, under the
+    # list, the refusal it brings (`ANOTHER_GRAPH`), beside the version;
+    # not checked a hollow one.
+    mark = r.status_mark({"bound": "ok", "another": "warn", "unknown": "neutral"}[state],
+                         words[:1].upper() + words[1:])
     excluded = counts.get("excluded") if isinstance(counts.get("excluded"), Mapping) else {}
     reasons = "; ".join(f"{str(k).replace('_', ' ')} {_count(v)}" for k, v in excluded.items())
     imported = str(version.get("imported_at") or "").replace("T", " ").replace("Z", " UTC")
@@ -1168,13 +1195,34 @@ def version_html(page: Mapping[str, Any], label: Optional[str],
                             f'{_count(counts.get("ranked_eligible"))} ranked-eligible'
                             + (f" ({reasons} excluded)" if reasons else "")))]
     fingerprint = r.fingerprint_value(version.get("manifest_sha256"), what="version fingerprint")
-    rows.append(("Version fingerprint", f"{fingerprint} {chip}"))
+    rows.append(("Version fingerprint", fingerprint))
+    rows.append(("Graph", mark))
     rows.append(("Imported", e(imported) if imported
                  else f'<span class="shep-muted">{e(r.NOT_RECORDED.lower())}</span>'))
     source_format = version.get("source_format")
     if source_format:
         rows.append(("Format", e(source_format)))
-    return f'<div class="shep-test-vd">{r.summary_list(rows)}</div>{empty}'
+    refusal = (r.status_mark("error", ANOTHER_GRAPH) if state == "another" else "")
+    reason = f'<div class="shep-reason shep-test-vd-why">{refusal}</div>' if refusal else ""
+    return f'<div class="shep-test-vd">{r.summary_list(rows)}{reason}</div>{empty}'
+
+
+#: **The words of a result's or a model's relation to what is chosen now**
+#: (the skill's §1.2: a fact said once, elsewhere by its relation): the
+#: chosen model, workspace and version are said by their selects and
+#: details; a past result that measured the same says so, and one that did
+#: not says its own in full (`result_identity_rows`), so it keeps its identity
+#: after the selection changes.
+SELECTED_MODEL = "the selected model"
+SELECTED_WORKSPACE = "the selected workspace"
+SELECTED_VERSION = "the selected version"
+
+#: **Why a run on a version mapped against another graph is refused**, said
+#: beside the version (`version_html`) and named by Start's reason
+#: (`start_state`), which points here: the run would refuse it.
+ANOTHER_GRAPH = ("Not measured on this workspace: the version was mapped against another "
+                 "graph, so a run would refuse it. Choose a workspace with its graph, or "
+                 "import the source again against this one.")
 
 
 def _row_chip(run: Mapping[str, Any]) -> str:
@@ -1193,8 +1241,8 @@ def _row_chip(run: Mapping[str, Any]) -> str:
                       "grey")
     if state.get("registered") == "registered":
         seq = state.get("sequence")
-        return (f'<span class="shep-tag shep-tag-ok">Registered {OK_MARK}'
-                f'{" #" + str(seq) if isinstance(seq, int) else ""}</span>')
+        return r.status_mark("ok", "Registered" + (f" #{seq}" if isinstance(seq, int) else ""),
+                             as_chip=True)
     if contest.get("state") == "contested":
         return r.chip("runs differ", "grey")
     if contest.get("state") == "cannot_be_checked":
@@ -1208,200 +1256,204 @@ def _why_not_kept(state: Mapping[str, Any]) -> str:
     return str(state.get("why_kept") or "the registration's helper gave no reason")
 
 
-def _row_state(run: Mapping[str, Any], roots: Sequence[Tuple[str, str]]) -> str:
-    """The row's state line, true to what the disk says. A run that kept no
-    report says why in the registration helper's own words (`report_state`'s
-    ``why_kept``, redacted): no report.json, one that is not a report, or
-    bytes other than the run published. A file that is there is never said
-    to be absent (K8-6e.1, policy rev 16)."""
-    if run.get("problem"):
-        return e(redact(run["problem"], roots))
-    state = run.get("state") or {}
-    contest = run.get("contest") or {}
-    kept = state.get("kept")
-    if kept == "not_kept":
-        return f"no report kept: {e(redact(_why_not_kept(state), roots))}"
-    if kept != "kept":
-        return f"whether a report was kept cannot be checked: {e(redact(state.get('why_kept'), roots))}"
-    registered = state.get("registered")
-    parts = ["report kept"]
+def _row_mode(run: Mapping[str, Any]) -> str:
+    """A report row's Measurement cell: its record's mode in this page's words
+    (`_RESULT_WORDS`: "Disease task", "KG link prediction"), a mode this
+    version does not describe by its recorded code, "Mode not recorded" for a
+    record that names none; Unknown for a run whose record was not built (no
+    report kept, or one the scan could not read: the Result says why)."""
     record = run.get("record") if isinstance(run.get("record"), Mapping) else None
-    lead = ""
-    if record is not None:
-        scoring = record.get("scoring") if isinstance(record.get("scoring"), Mapping) else {}
-        mode = scoring.get("mode")
-        mode = mode if isinstance(mode, str) and mode.strip() else None
-        # The mode leads with a colon, so the row keeps one " · " (the skill's §5).
-        lead = e(_MODE_ROW_WORDS.get(mode) or (
-            f"mode {mode}, not described by this version" if mode else "mode not recorded"))
-        lead += ": "
-    if registered == "registered":
-        seq = state.get("sequence")
-        parts.append(f"registered{' #' + str(seq) if isinstance(seq, int) else ''}")
-    elif registered == "not_registered":
-        parts.append("not registered" + (" (its report was replaced after it was registered)"
-                                         if state.get("replaced_after_registration") else ""))
-    else:
-        parts.append("registration cannot be checked from the list")
-    line = lead + " · ".join(parts)
-    # The group's description, after a semicolon: the row keeps one " · "
-    # (the skill's §5), and it describes, never disables. In neutral words,
-    # unless the group records deterministic algorithms on: its runs were
-    # expected to agree, so the difference is flagged (amber, ▲, "investigate").
-    if contest.get("state") == "contested":
-        others = [x for x in contest.get("disagreeing_runs") or [] if x != run.get("run_id")]
-        what = (f'runs under these conditions differ on '
-                f'{e(", ".join(contest.get("differing") or ()))}'
-                f'{" (with " + e(", ".join(run_time(x) or x for x in others)) + ")" if others else ""}')
-        line += ("; " + r.status_mark("warn", f"{what} — investigate: deterministic runs were "
-                                              "expected to agree", words_html=True)
-                 if _deterministic_group(run) else f"; {what}")
-    elif contest.get("state") == "cannot_be_checked":
-        line += "; comparison incomplete"
-    return line
+    if record is None:
+        return r.status_mark("neutral", r.UNKNOWN)
+    scoring = record.get("scoring") if isinstance(record.get("scoring"), Mapping) else {}
+    mode = scoring.get("mode")
+    mode = mode if isinstance(mode, str) and mode.strip() else None
+    return e(_RESULT_WORDS.get(mode) or (
+        f"Mode {mode}, not described by this version" if mode else "Mode not recorded"))
 
 
-def _model_words(sha12: Optional[str], models: Mapping[str, Any]) -> str:
-    item = next((i for i in models.get("items") or []
-                 if r.is_digest(i.get("sha256")) and sha12 and i["sha256"].startswith(sha12)),
-                None)
+def _listed_model(digest: Any, models: Mapping[str, Any]) -> Optional[Mapping[str, Any]]:
+    """The listed checkpoint holding the weights `digest` names (its full
+    SHA-256, or the first 12 hex digits a report's run id gives), or None."""
+    if not isinstance(digest, str) or not digest:
+        return None
+    return next((i for i in models.get("items") or []
+                 if r.is_digest(i.get("sha256")) and i["sha256"].startswith(digest)), None)
+
+
+def _is_selected(digest: Any, selection: Optional["Selection"]) -> bool:
+    """Whether `digest` (whole, or its first 12 digits) names the chosen
+    checkpoint's weights."""
+    chosen = (selection.model or {}).get("sha256") if selection is not None else None
+    return (isinstance(digest, str) and bool(digest) and r.is_digest(chosen)
+            and chosen.startswith(digest))
+
+
+def _model_cell(digest: Any, models: Mapping[str, Any],
+                selection: Optional["Selection"]) -> str:
+    """A report row's Model cell: "the selected model" for the chosen
+    checkpoint's weights (`SELECTED_MODEL`); another listed file by its title
+    (`renderers.model_name_line`: its run, how far it trained); weights the
+    list does not hold by their fingerprint (`renderers.fingerprint_value`,
+    12 hex digits)."""
+    if _is_selected(digest, selection):
+        return e(SELECTED_MODEL)
+    item = _listed_model(digest, models)
     if item is not None:
-        return f"{e(r.run_label(item.get('architecture'), item.get('run')))} · model <code>{e(sha12)}</code>"
-    return f"model <code>{e(sha12 or '—')}</code>"
+        return e(r.model_name_line(item))
+    return r.fingerprint_value(digest, what="model fingerprint", copy=False)
 
 
-def _row_names(runs: Sequence[Mapping[str, Any]], models: Mapping[str, Any]) -> Dict[str, str]:
-    """Each report row's visible name, by run id: its time and model. Rows that
-    would read the same (one model run twice in a minute) get the seconds, and
-    if those match too, the run id's own last part (`renderers.distinct_names`,
-    as Models › Results names its rows). A row still selects and registers by
+def _row_names(runs: Sequence[Mapping[str, Any]]) -> Dict[str, str]:
+    """Each report row's Report cell, by run id: its run's time. Rows that
+    would read the same (two runs in a minute) get the seconds, and if those
+    match too, the run id's own last part (`renderers.distinct_names`, as
+    Models › Results names its rows). A row still selects and registers by
     its full run id (``data-key``)."""
     def name(run: Mapping[str, Any], level: int) -> str:
         run_id = str(run["run_id"])
         when = (run_time(run_id, seconds=True) if level else None) or run.get("when") or run_id
-        tail = f" · run …{run_id[-8:]}" if level > 1 else ""
-        return f"{e(when)} · {_model_words(run.get('sha12'), models)}{e(tail)}"
+        return f"{when} · run …{run_id[-8:]}" if level > 1 else str(when)
 
     return r.distinct_names({str(run["run_id"]): run for run in runs}, name)
 
 
-def _ended_row(job: Mapping[str, Any], label: Any, run_ids: Sequence[str],
-               models: Mapping[str, Any]) -> str:
-    """The latest test run of this version as a row when it ended with no report
-    the store lists (cancelled before its run directory, failed, or kept
-    nothing): the runner remembers it until the next start or a restart."""
+def _job_row(job: Mapping[str, Any], label: Any, run_ids: Sequence[str],
+             models: Mapping[str, Any], selection: Optional["Selection"]) -> str:
+    """The latest test run of this version as a row no click selects: while it
+    runs ("started …", Running), or when it ended with no report the store
+    lists (cancelled before its run directory, failed, or kept nothing; the
+    runner remembers it until the next start or a restart). "" otherwise."""
     status = job.get("status")
     inputs = job.get("inputs") or {}
+    if inputs.get("version_label") != label:
+        return ""
     outcome = job.get("outcome") if isinstance(job.get("outcome"), Mapping) else {}
-    if status not in ("cancelled", "failed", "completed") or inputs.get("version_label") != label:
+    if status in _BUSY:
+        started = utc_time(job.get("start_time"))
+        what = "started " + started if started else "running"
+        state = ("registers when it completes" if inputs.get("record")
+                 else "kept, not registered, when it completes")
+        css = "shep-test-rep-running"
+    elif status in ("cancelled", "failed", "completed"):
+        report_dir = outcome.get("report_dir")
+        if outcome.get("kept") is True or (report_dir and Path(str(report_dir)).name in run_ids):
+            return ""
+        how = {"cancelled": "interrupted: cancelled", "failed": "failed"}.get(status, "ended")
+        if status == "failed" and job.get("exit_meaning"):
+            how += f" ({job['exit_meaning']})"
+        kept = ("no report kept" if outcome.get("kept") is False
+                else "whether a report was kept cannot be checked (see Run)")
+        when = utc_time(job.get("end_time")) or utc_time(job.get("start_time"))
+        what = "ended " + when if when else "ended"
+        state = f"{how}; {kept}; the last test run on this server, not in the report store"
+        css = "shep-test-rep-ended"
+    else:
         return ""
-    report_dir = outcome.get("report_dir")
-    if outcome.get("kept") is True or (report_dir and Path(str(report_dir)).name in run_ids):
-        return ""
-    how = {"cancelled": "interrupted: cancelled", "failed": "failed"}.get(status, "ended")
-    if status == "failed" and job.get("exit_meaning"):
-        how += f" ({job['exit_meaning']})"
-    kept = ("no report kept" if outcome.get("kept") is False
-            else "whether a report was kept cannot be checked (see Run)")
-    when = utc_time(job.get("end_time")) or utc_time(job.get("start_time"))
-    sha = str(inputs.get("checkpoint_sha256") or "")[:12]
-    return ('<div class="shep-test-rep shep-test-rep-ended" aria-disabled="true">'
-            f'<span class="shep-test-rep-main">{e("ended " + when) if when else "ended"} · '
-            f'{_model_words(sha, models)}</span>'
-            f'<span class="shep-test-rep-chip">{_pill(str(status))}</span>'
-            f'<span class="shep-test-rep-sub"><span class="shep-amber-t">{e(how)}</span> · '
-            f'{e(kept)} · the last test run on this server, not in the report store</span></div>')
+    protocol = inputs.get("protocol")
+    measured = (e(measurement_label(protocol)) if isinstance(protocol, str) and protocol.strip()
+                else r.status_mark("neutral", r.NOT_RECORDED))
+    model = _model_cell(str(inputs.get("checkpoint_sha256") or "") or None, models, selection)
+    return (f'<tr class="{css}" aria-disabled="true"><td>{e(what)}</td><td>{model}</td>'
+            f'<td>{measured}</td><td>{_pill(str(status))}'
+            f'<div class="shep-sub">{e(state)}</div></td></tr>')
+
+
+#: The reports table's columns (the skill's §8: one or two words each).
+REPORT_COLUMNS = ("Report", "Model", "Measurement", "State")
+
+
+def reports_header_html(reports: Mapping[str, Any]) -> str:
+    """The Result panel's title: the reports of the version chosen in Data
+    (named there, so here by its relation, `SELECTED_VERSION`), with their
+    count (the skill's §8: a table's title with its count)."""
+    label = reports.get("label")
+    count = len(reports.get("runs") or [])
+    right = (f"{count} of {SELECTED_VERSION}, kept in the registry's report store"
+             if label else "choose a data version")
+    return (f'<div class="shep-panel-hd"><h2>Reports</h2><span class="shep-panel-right">'
+            f'{e(right)}</span></div>')
 
 
 def reports_html(reports: Mapping[str, Any], selected: Optional[str], *,
                  models: Optional[Mapping[str, Any]] = None, job: Optional[Mapping[str, Any]] = None,
-                 roots: Sequence[Tuple[str, str]] = ()) -> str:
-    """The version's report store as a list (newest first); each row selects
-    the report in the Result panel. The newest `ROWS_SHOWN` rows are shown,
-    with the running row, the selected report and "Show all N reports" (a
-    version with hundreds of runs would otherwise push Run and Result a page
-    long down at narrow sizes): the older rows are sent marked and shown by
-    that control in the browser, so the choice survives the list's updates.
-    The list holds the runs only, each a list item (a report a button inside
-    one; the head, "Show all" and the notes are outside it), and an older
-    report's item is hidden with it, so the list counts what it shows."""
+                 roots: Sequence[Tuple[str, str]] = (),
+                 selection: Optional["Selection"] = None) -> str:
+    """**The version's report store as a compact single-select table** at the
+    top of the Result panel (the skill's §4: many things, the same fields;
+    §8: a row selects the report, shown under the table), newest first: each
+    row its run's time (`_row_names`), its model by its relation to the
+    chosen one (`_model_cell`), its measurement (`_row_mode`) and its state
+    (`_row_chip`: kept, registered, how its condition group compares); what
+    the state means for the chosen report, and why, is the Result's. A
+    running test, or the last one that ended with nothing in the store, is a
+    row of its own that no click selects. The newest `ROWS_SHOWN` rows are
+    shown, with the running row, the selected report and "Show all N reports"
+    (a version with hundreds of runs would otherwise push the result a page
+    long down): the older rows are sent marked and shown by that control in
+    the browser, so the choice survives the list's updates. A plain table's
+    selected row is ``aria-current`` (the skill's §8)."""
     label = reports.get("label")
     if not label:
         return ""
     models = models or {}
-    job = job or {}
     runs = reports.get("runs") or []
-    rows = []
-    inputs = job.get("inputs") or {}
-    if job.get("status") in _BUSY and inputs.get("version_label") == label:
-        sha = str(inputs.get("checkpoint_sha256") or "")[:12]
-        started = utc_time(job.get("start_time"))
-        rows.append(
-            '<div class="shep-test-rep shep-test-rep-running" aria-disabled="true">'
-            f'<span class="shep-test-rep-main">{e("started " + started) if started else "running"} · '
-            f'{_model_words(sha, models)}</span>'
-            f'<span class="shep-test-rep-chip">{_pill(job["status"])}</span>'
-            f'<span class="shep-test-rep-sub">running · '
-            f'{"registers when it completes" if inputs.get("record") else "kept, not registered, when it completes"}'
-            '</span></div>')
-    else:
-        rows.append(_ended_row(job, label, [x["run_id"] for x in runs], models))
+    rows = [_job_row(job or {}, label, [x["run_id"] for x in runs], models, selection)]
     hidden = 0
-    names = _row_names(runs, models)
+    names = _row_names(runs)
     for index, run in enumerate(runs):
         run_id = run["run_id"]
         on = run_id == selected
         old = index >= ROWS_SHOWN and not on
         hidden += old
+        classes = " ".join(c for c, yes in (("shep-on", on), ("shep-test-rep-old", old)) if yes)
+        digest = ((run.get("record") or {}).get("checkpoint_digest")
+                  if isinstance(run.get("record"), Mapping) else None) or run.get("sha12")
+        current = ' aria-current="true"' if on else ""
         rows.append(
-            f'<button type="button" class="shep-test-rep{" shep-on" if on else ""}'
-            f'{" shep-test-rep-old" if old else ""}" '
-            f'data-key="{e(run_id)}" aria-pressed="{"true" if on else "false"}">'
-            f'<span class="shep-test-rep-main">{names[str(run_id)]}</span>'
-            f'<span class="shep-test-rep-chip">{_row_chip(run)}</span>'
-            f'<span class="shep-test-rep-sub">{_row_state(run, roots)}</span></button>')
+            f'<tr class="{classes}" data-key="{e(run_id)}" tabindex="0"{current}>'
+            f'<td class="shep-test-rep-name">{e(names[str(run_id)])}</td>'
+            f'<td>{_model_cell(digest, models, selection)}</td>'
+            f'<td>{_row_mode(run)}</td><td>{_row_chip(run)}</td></tr>')
+    entries = [row for row in rows if row]
     more = ('<div class="shep-test-more">'
             f'<button type="button" class="shep-test-more-all" data-more="all">Show all '
             f'{len(runs)} reports ›</button>'
             f'<span class="shep-sub shep-test-more-all">{hidden} older not shown</span>'
             f'<button type="button" class="shep-test-more-fewer" data-more="fewer">Show the newest '
             f'{ROWS_SHOWN} only</button></div>') if hidden else ""
-    problem = reports.get("problem")
-    count = len(runs)
-    head = (f'<div class="shep-list-hd"><b>Reports of {e(label)}</b> · {count} · kept in the '
-            "registry's report store</div>")
-    # The list holds its entries only, each a list item (a report a button
-    # inside one; the skill's §10, correct roles): the head, the "Show all"
-    # control and the notes are outside it, so it counts the runs it shows.
-    entries = [row for row in rows if row]
-    listed = ("" if not entries else
-              f'<div role="list" aria-label="Reports of {e(label)}">'
-              + "".join(f'<div role="listitem">{entry}</div>' for entry in entries) + "</div>")
+    heads = "".join(f'<th scope="col">{e(head)}</th>' for head in REPORT_COLUMNS)
+    table = ("" if not entries else
+             '<div class="shep-tbl-wrap shep-test-repwrap"><table class="shep-tbl shep-test-reps" '
+             f'aria-label="Reports of {e(label)}"><thead><tr>{heads}</tr></thead>'
+             f'<tbody>{"".join(entries)}</tbody></table></div>')
     notes = ("" if entries else
              '<div class="shep-list-note">No run has kept a report on this version yet.</div>')
+    problem = reports.get("problem")
     if problem:
         notes += f'<div class="shep-list-note">{e(redact(problem, roots))}</div>'
-    return f'<div class="shep-list shep-test-reps">{head}{listed}{more}{notes}</div>'
+    return f'<div class="shep-test-replist">{table}{more}{notes}</div>'
 
 
 # ---------------------------------------------------------------------------
 # Rendering: Run
 # ---------------------------------------------------------------------------
-def run_header_html(workspace: Optional[str], label: Optional[str]) -> str:
-    parts = []
-    if workspace:
-        parts.append(f"workspace <b>{e(workspace)}</b>")
-    if label:
-        parts.append(f"version <b>{e(label)}</b>")
-    return (f'<div class="shep-panel-hd"><h2>Run</h2><span class="shep-panel-right">'
-            f'{" · ".join(parts)}</span></div>')
+def run_header_html() -> str:
+    """The Run panel's title. The workspace and the version are said once,
+    by their selects in Data (the skill's §1.2), never again here."""
+    return '<div class="shep-panel-hd"><h2>Run</h2></div>'
 
 
 def model_html(page: Mapping[str, Any], models: Mapping[str, Any], key: Optional[str]) -> str:
-    """The chosen model, by the shared renderers in the one summary list
-    (`renderers.summary_list`): its name line, file, Trainer validation
-    figure, model fingerprint (copyable) and the dataset it was trained on;
-    or why there is no list."""
+    """The chosen model's details, by the shared renderers in the one summary
+    list (`renderers.summary_list`), each a fact its options do not say: what
+    it is (`renderers.model_kind_text`: "Disease · frozen graph backbone"
+    for a task model whose graph backbone kept its base's weights), its
+    file, the Trainer's validation figure, its model fingerprint (12 hex,
+    copyable) and how its dataset stands to the chosen workspace's
+    (`renderers.dataset_relation_html`: "the selected workspace's current
+    dataset", which Data says once; which one and its fingerprint where it is
+    another); or why there is no list."""
     roots = page.get("roots") or []
     if models.get("refused"):
         return _reason_html("Not shown · listing checkpoints opens them, which is an operator "
@@ -1413,17 +1465,16 @@ def model_html(page: Mapping[str, Any], models: Mapping[str, Any], key: Optional
         if not models.get("items"):
             return _reason_html("This workspace has no checkpoint to test." if models.get("workspace")
                                 else "")
-        return '<div class="shep-sub">Choose the model to test.</div>'
+        return '<div class="shep-sub">Choose the run, then the checkpoint to test.</div>'
     if item.get("problem") or not r.is_digest(item.get("sha256")):
         return _reason_html(f"{item.get('filename')}: metadata not readable · cannot be tested "
                             f"({redact(item.get('problem') or 'no digest was read', roots)})")
-    workspaces = page.get("workspaces") or []
-    rows = [("Model", f'<span class="shep-w600">{e(r.model_name_line(item))}</span>'),
-            ("File", f'<code>{e(item.get("filename"))}</code>'),
+    rows = [("Model", e(r.model_kind_text(item))),
+            ("File", r.ident_html(item.get("filename"))),
             ("Validation", e(r.validation_value(r.validation_figure(item),
                                                 read=r.record_read(item)))),
             ("Model fingerprint", r.fingerprint_value(item["sha256"], what="model fingerprint")),
-            ("Dataset", r.trained_on_html(item.get("dataset_fingerprint"), workspaces))]
+            ("Dataset", r.dataset_relation_html(item, page.get("workspaces") or []))]
     return ('<div class="shep-test-model">'
             + r.summary_list(rows, helps={"Model fingerprint": ("model-fingerprint",
                                                                 "Model fingerprint")})
@@ -1463,7 +1514,8 @@ def evidence_html(page: Mapping[str, Any], workspace: Optional[str],
     hollow ○, then why (R10 is a supplied cohort's; how that kind stands to
     a model's training), whatever the setting says, since a run on it is
     given no evidence directory. For a supplied cohort version (and before a
-    version is chosen): the measured workspace, then the setting's
+    version is chosen): the measured workspace (by its relation, "the
+    selected workspace": its name is its select's), then the setting's
     directories, or, when the setting is refused, which turns Start off, a red
     ✕ with "Refused:" and why (BACKLOG 68's R10 row; the skill's §6). A
     directory the server cannot check stays in the list and does not block
@@ -1478,7 +1530,9 @@ def evidence_html(page: Mapping[str, Any], workspace: Optional[str],
     evidence = page.get("evidence") or {}
     names = evidence.get("names") or []
     roots = page.get("roots") or []
-    measured = f"{e(workspace)} (measured, always)" if workspace else "the measured workspace (always)"
+    # The workspace by its relation: its name is its select's, said once.
+    measured = (f"{e(SELECTED_WORKSPACE)} (measured, always)" if workspace
+                else "the measured workspace (always)")
     note = ""
     if choice.problem:
         extra = " · " + r.status_mark("error", "Refused: " + redact(choice.problem, roots))
@@ -1619,9 +1673,8 @@ def start_state(page: Mapping[str, Any], models: Mapping[str, Any], workspace: O
     if version.get("problem"):
         return False, "Disabled: this data version cannot be read."
     if binding_state(version, binding)[0] == "another":
-        return False, ("Disabled: this data version was mapped against another graph than "
-                       "this workspace's; the run would refuse it. Choose a workspace with its "
-                       "graph, or import the source again against this workspace.")
+        # Its refusal is said beside the version (`ANOTHER_GRAPH`), once.
+        return False, "Disabled: the data version is mapped against another graph (see Data)."
     item = find_model(models, key)
     if item is None:
         return False, "Disabled: choose a model."
@@ -1730,11 +1783,11 @@ def outcome_html(outcome: Mapping[str, Any], roots: Sequence[Tuple[str, str]]) -
     2026-10-25)."""
     kept, registered = outcome.get("kept"), outcome.get("registered")
     chips = ['<span class="shep-sub">When the run ended:</span>']
-    chips.append(f'<span class="shep-tag shep-tag-ok">Report kept {OK_MARK}</span>' if kept is True
+    chips.append(r.status_mark("ok", "Report kept", as_chip=True) if kept is True
                  else r.chip("No report kept", "grey") if kept is False
                  else r.chip("Kept: cannot be checked", "grey"))
     if kept is not False:
-        chips.append(f'<span class="shep-tag shep-tag-ok">Registered {OK_MARK}</span>'
+        chips.append(r.status_mark("ok", "Registered", as_chip=True)
                      if registered is True
                      else r.chip("Not registered", "neutral") if registered is False
                      else r.chip("Registered: cannot be checked", "grey"))
@@ -1748,22 +1801,6 @@ def outcome_html(outcome: Mapping[str, Any], roots: Sequence[Tuple[str, str]]) -
 # ---------------------------------------------------------------------------
 # Rendering: Result
 # ---------------------------------------------------------------------------
-def _relations(relations: Any) -> str:
-    if not isinstance(relations, Mapping):
-        return "not reported"
-    parts = []
-    for name, state in relations.items():
-        display = RELATION_DISPLAY_NAMES.get(name, name)
-        label = f"{name} {display}" if re.fullmatch(r"R\d+", str(name)) else display
-        if state == "verified":
-            parts.append(f"{e(label)} {OK_MARK}")
-        elif state == "not_applicable":
-            parts.append(f"{e(label)}: not applicable")
-        else:
-            parts.append(f"{e(label)}: {e(state)}")
-    return " · ".join(parts)
-
-
 def _environment(view: Mapping[str, Any]) -> str:
     """The view's environment class (`sidecar.environment_class`, as the one
     reader classified it) and, for a run on CUDA, its GPU and driver."""
@@ -1786,19 +1823,91 @@ def _native_build(view: Mapping[str, Any]) -> str:
                    for line in native_identity_lines(view["native_identity"]))
 
 
+class Selection(NamedTuple):
+    """**What is chosen now**, which a report's identity is said against
+    (`result_identity_rows`, `reports_html`): the chosen workspace's name and
+    its verified dataset record's digest (`workspace_binding`), the chosen
+    checkpoint's listing entry (None while none is chosen, or for a request
+    that is not shown the list) and the chosen version's manifest digest."""
+
+    workspace: Optional[str]
+    record_sha256: Optional[str]
+    model: Optional[Mapping[str, Any]]
+    version_sha256: Optional[str]
+
+
+def selection_of(page: Mapping[str, Any], models: Mapping[str, Any],
+                 binding: Optional[Mapping[str, Any]], workspace: Any, label: Any,
+                 key: Any) -> Selection:
+    """The page's selection as `Selection` holds it, from the session's
+    listings (nothing is read again)."""
+    version = find(page.get("versions") or [], "label", label) or {}
+    return Selection(workspace if isinstance(workspace, str) else None,
+                     (binding or {}).get("record_sha256"), find_model(models, key),
+                     version.get("manifest_sha256"))
+
+
+def result_identity_rows(record: Mapping[str, Any], view: Mapping[str, Any],
+                         selection: Optional[Selection], models: Mapping[str, Any],
+                         workspaces: Sequence[Mapping[str, Any]]) -> List[Tuple[str, str]]:
+    """**What a result is of, by its relation to what is chosen now** (the
+    skill's §1.2: a fact once, elsewhere by its relation; repeated only where
+    the two can differ): its workspace (the dataset record its report
+    measured, `dataset_record.sha256`), its model (`checkpoint_digest`) and
+    its version (the version manifest's digest). Each that is what is chosen
+    reads so, "the selected workspace", "the selected model", "the selected
+    version"; one that is not reads in full: the listed workspaces holding
+    its dataset record, its model's title (`renderers.model_name_line`,
+    whole) and fingerprint, its version's label, role and fingerprint. So a
+    past result keeps its own identity when the selection changes: it is
+    drawn again from the record each time, never from the selects."""
+    selection = selection or Selection(None, None, None, None)
+    dataset = (record.get("dataset_record") or {}).get("sha256") if isinstance(
+        record.get("dataset_record"), Mapping) else None
+    if r.is_digest(dataset) and dataset == selection.record_sha256:
+        workspace = e(SELECTED_WORKSPACE)
+    else:
+        names = [str(w.get("name")) for w in workspaces if r.is_digest(dataset)
+                 and ((w.get("dataset_record") or {}).get("sha256") == dataset)]
+        workspace = (", ".join(f"<b>{e(name)}</b>" for name in names) if names
+                     else r.status_mark("neutral", "No listed workspace holds its dataset record")
+                     if r.is_digest(dataset) else r.status_mark("neutral", r.NOT_RECORDED))
+    digest = record.get("checkpoint_digest")
+    if _is_selected(digest, selection):
+        model = e(SELECTED_MODEL)
+    else:
+        item = _listed_model(digest, models) if r.is_digest(digest) else None
+        fingerprint = r.fingerprint_value(digest, what="model fingerprint")
+        model = (f"{e(r.model_name_line(item, fit=False))}<div>{fingerprint}</div>"
+                 if item is not None else fingerprint)
+    cohort = view["cohort"]
+    if cohort["version_manifest_sha256"] == selection.version_sha256:
+        version = e(SELECTED_VERSION)
+    else:
+        kind = cohort["kind"]
+        role = (f'role {r.ident_html(cohort["role"])}' if kind == "supplied"
+                else e(version_words(kind, cohort["role"])))
+        version = (f'{e(cohort["label"])} ({role})<div>'
+                   + r.fingerprint_value(cohort["version_manifest_sha256"],
+                                         what="version fingerprint") + "</div>")
+    return [("Workspace", workspace), ("Model", model), ("Version", version)]
+
+
 def result_html(reports: Mapping[str, Any], run_id: Optional[str],
                 roots: Sequence[Tuple[str, str]], *, job: Optional[Mapping[str, Any]] = None,
                 notes: Optional[List[Mapping[str, Any]]] = None,
-                notes_problems: Sequence[str] = ()) -> str:
-    """The selected report as the record the ledger would hold: aggregates and
-    states only, never a case or a path."""
+                notes_problems: Sequence[str] = (), selection: Optional[Selection] = None,
+                models: Optional[Mapping[str, Any]] = None,
+                workspaces: Sequence[Mapping[str, Any]] = ()) -> str:
+    """The report selected in the table, under it, as the record the ledger
+    would hold: aggregates and states only, never a case or a path. What it
+    is of is said by its relation to what is chosen now (`selection`;
+    `result_identity_rows`), its own run id once."""
     run = find(reports.get("runs") or [], "run_id", run_id)
     if run is None:
-        return ('<div class="shep-panel-hd"><h2>Result</h2></div><div class="shep-test-pad">'
-                '<p class="shep-muted">Select a report of the version to see its result.</p></div>')
-    when = run.get("when") or run_id
-    head = (f'<div class="shep-panel-hd"><h2>Result</h2><span class="shep-muted">report of '
-            f'{e(when)}</span><span class="shep-panel-right"><code>{e(run_id)}</code></span></div>')
+        return ('<div class="shep-test-pad"><p class="shep-muted">Select a report in the table '
+                'to see its result.</p></div>' if reports.get("runs") else "")
+    head = '<div class="shep-test-res-hd"><h3>Result</h3></div>'
     state = run.get("state") or {}
     record = run.get("record")
     chips = []
@@ -1806,14 +1915,14 @@ def result_html(reports: Mapping[str, Any], run_id: Optional[str],
     if job_outcome.get("report_dir") and Path(str(job_outcome["report_dir"])).name == run_id:
         chips.append(_pill(str((job or {}).get("status"))))
     if state.get("kept") == "kept":
-        chips.append(f'<span class="shep-tag shep-tag-ok">Report kept {OK_MARK}</span>')
+        chips.append(r.status_mark("ok", "Report kept", as_chip=True))
     else:
         chips.append(r.chip("No report kept" if state.get("kept") == "not_kept"
                             else "Kept: cannot be checked", "grey"))
     if state.get("registered") == "registered":
         seq = state.get("sequence")
-        chips.append(f'<span class="shep-tag shep-tag-ok">Registered {OK_MARK}'
-                     f'{" record " + str(seq) if isinstance(seq, int) else ""}</span>')
+        chips.append(r.status_mark("ok", "Registered" + (f" record {seq}" if isinstance(seq, int)
+                                                         else ""), as_chip=True))
     elif state.get("kept") == "kept":
         chips.append(r.chip("Not registered" if state.get("registered") == "not_registered"
                             else "Registration: cannot be checked from the list", "neutral"))
@@ -1825,6 +1934,8 @@ def result_html(reports: Mapping[str, Any], run_id: Optional[str],
     if run.get("problem"):
         parts.append(_reason_html(redact(run["problem"], roots)))
     if record is None:
+        parts.append(r.summary_list([("Report", r.ident_html(run_id))],
+                                    classes="shep-test-ident-rows"))
         if state.get("kept") == "kept":
             why = run.get("unbuilt") or reports.get("store_problem") or (
                 "the report store's listing did not read it")
@@ -1839,10 +1950,11 @@ def result_html(reports: Mapping[str, Any], run_id: Optional[str],
                 "point, which an interrupted, cancelled or refused run never writes; nothing "
                 "here can be registered."))
     else:
-        parts.append(_record_html(record, run, state))
+        parts.append(_record_html(record, run, state, selection=selection, models=models or {},
+                                  workspaces=workspaces))
     parts.append(_registration_reason_html(state, roots))
     parts.append(block_html(run, roots, notes or [], notes_problems))
-    return head + f'<div class="shep-test-pad shep-test-result">{"".join(parts)}</div>'
+    return f'<div class="shep-test-pad shep-test-result">{head}{"".join(parts)}</div>'
 
 
 def _registration_reason_html(state: Mapping[str, Any], roots: Sequence[Tuple[str, str]]) -> str:
@@ -1938,7 +2050,9 @@ def _semantics_text(raw: Any) -> str:
 
 
 def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
-                 state: Mapping[str, Any]) -> str:
+                 state: Mapping[str, Any], *, selection: Optional[Selection] = None,
+                 models: Optional[Mapping[str, Any]] = None,
+                 workspaces: Sequence[Mapping[str, Any]] = ()) -> str:
     """The selected report's record (`build_record`'s, through the store's
     scan) as the one reader reads it (research comparison Stage 8b): its data
     kind's result view (`record_views.result_view`, the one the results
@@ -1981,20 +2095,16 @@ def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
     # its kind and role, and read by its own counts and exposure, never a
     # cohort's or R10's words.
     kind = cohort["kind"]
-    role = (f'role {r.ident_html(cohort["role"])}' if kind == "supplied"
-            else e(version_words(kind, cohort["role"])))
     # The one value-words rule (on / off); a record without the flag holds
     # none: "not recorded", never "not set".
     determinism = (r.setting_words("deterministic_algorithms", deterministic)
                    if deterministic is not None else r.NOT_RECORDED.lower())
-    # What the result is of, as the record holds it: one row per fact in the
-    # one summary list (the skill's §4, §5: never a chain of " · ").
+    # What the result is of, as the record holds it, by its relation to what
+    # is chosen now: one row per fact in the one summary list (the skill's
+    # §4, §5: never a chain of " · "), the report's run id once.
     identity = r.summary_list([
-        ("Data", f'{e(cohort["label"])} ({role})'),
-        ("Data version", r.fingerprint_value(cohort["version_manifest_sha256"],
-                                             what="version fingerprint")),
-        ("Model", r.fingerprint_value(record.get("checkpoint_digest"),
-                                      what="model fingerprint")),
+        ("Report", r.ident_html(run.get("run_id"))),
+        *result_identity_rows(record, view, selection, models or {}, workspaces),
         ("Deterministic algorithms", e(determinism)),
         ("Device", f"<code>{e(device)}</code>" if device
          else f'<span class="shep-muted">{e(r.NOT_RECORDED.lower())}</span>'),
@@ -2040,7 +2150,7 @@ def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
         ("Coverage", coverage),
         *figures,
         ("Score semantics", _semantics_text(view["score_semantics"])),
-        ("Relations", _relations(view["relations"])),
+        *r.relation_rows(view["relations"]),
         *(r.r10_rows(view["r10"]) if kind == "supplied" else r.data_kind_lines(view)),
         ("Environment", _environment(view)),
         ("Native build", _native_build(view)),
@@ -2685,8 +2795,13 @@ element.addEventListener('click', function (e) {
     if (other) { other.focus(); }
     return;
   }
-  var row = e.target.closest ? e.target.closest('button[data-key]') : null;
+  var row = e.target.closest ? e.target.closest('tr[data-key]') : null;
   if (row) { trigger('click', {key: row.getAttribute('data-key')}); }
+});
+element.addEventListener('keydown', function (e) {
+  var row = e.target.closest ? e.target.closest('tr[data-key]') : null;
+  if (!row || e.target !== row) { return; }
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); trigger('click', {key: row.getAttribute('data-key')}); }
 });
 """
 
@@ -2730,6 +2845,14 @@ def create_test_page(ctx: Any) -> None:
     # input twice, and the first event can empty the radio), and Gradio would
     # refuse that event with an error before the page's own handling ran.
     measurement_state = gr.State(None)
+    # The chosen checkpoint's key as it was last written (`_run_outputs`), which
+    # the selection's listeners read in place of the Checkpoint select, for the
+    # radio's reason: a run's choice sets the select's choices to that run's
+    # checkpoints, so a value an event was asked with can be one the event
+    # before it took away from them, and Gradio would refuse that event with an
+    # error before the page's own handling ran (the run's own pick is asked
+    # twice). The select's own pick, and Start, read the select itself.
+    model_state = gr.State(None)
     # What this session saw of the job: the poll's alone (`_poll`).
     job_state = gr.State({})
     preview_state = gr.State(None)
@@ -2737,7 +2860,7 @@ def create_test_page(ctx: Any) -> None:
     with gr.Row(elem_classes=["shep-page", "shep-test"], elem_id="shep-test-row", equal_height=False):
         # ------------------------------------------------------------ Cohort
         with gr.Column(elem_classes=["shep-panel", "shep-test-col"], elem_id="shep-test-cohort",
-                       scale=11, min_width=320):
+                       scale=9, min_width=300):
             cohort_hd = plain_html(cohort_header_html({}), elem_id="shep-test-cohort-hd")
             with gr.Column(elem_classes=["shep-test-bd"]):
                 workspace = gr.Dropdown(label="Workspace", choices=[], value=None,
@@ -2754,7 +2877,6 @@ def create_test_page(ctx: Any) -> None:
                                             scale=0)
                 import_reason = plain_html("", elem_id="shep-test-import-reason")
                 import_msg = plain_html("", elem_id="shep-test-import-msg")
-                reports_list = plain_html("", elem_id="shep-test-reports", js_on_load=_REPORTS_JS)
         # ------------------------------------------------------------ Import (a drawer)
         with gr.Column(visible=False, elem_classes=["shep-panel", "shep-test-drawer"],
                        elem_id="shep-test-import") as drawer:
@@ -2792,16 +2914,23 @@ def create_test_page(ctx: Any) -> None:
         # ------------------------------------------------------------ Run
         with gr.Column(elem_classes=["shep-panel", "shep-test-col"], elem_id="shep-test-run",
                        scale=10, min_width=320):
-            run_hd = plain_html(run_header_html(None, None), elem_id="shep-test-run-hd")
+            plain_html(run_header_html(), elem_id="shep-test-run-hd")
             with gr.Column(elem_classes=["shep-test-bd"]):
+                # The model as Run → Checkpoint, the shared cascading pair
+                # (`model_selects`), one under the other so each 40-character
+                # option shows whole in the column; ↻ lists the workspace's
+                # checkpoints again.
                 with gr.Row(elem_classes=["shep-test-model-row"]):
-                    model = gr.Dropdown(label="Model", choices=[], value=None,
-                                        elem_id="shep-test-model", interactive=False,
-                                        elem_classes=["shep-test-select"])
+                    run_select = gr.Dropdown(label="Run", choices=[], value=None,
+                                             elem_id="shep-test-model-run", interactive=False,
+                                             elem_classes=["shep-test-select"])
                     model_reload = gr.Button(GATED_LABELS["reload"], variant="secondary",
                                              size="sm", scale=0,
                                              elem_id="shep-test-model-reload",
                                              interactive=False)
+                model = gr.Dropdown(label="Checkpoint", choices=[], value=None,
+                                    elem_id="shep-test-model", interactive=False,
+                                    elem_classes=["shep-test-select"])
                 model_info = plain_html("", elem_id="shep-test-model-info")
                 # The protocols the chosen model's listed capabilities admit (`measurement_choices`).
                 measurement = gr.Radio(label="Measurement", choices=[], value=None,
@@ -2834,9 +2963,14 @@ def create_test_page(ctx: Any) -> None:
                     job_out = plain_html(job_body_html({}, [], ("none", "")),
                                          elem_id="shep-test-job")
         # ------------------------------------------------------------ Result
+        # The reports as a compact single-select table at the panel's top, the
+        # chosen report's result under it, both in the panel's one scroll
+        # region; the title, the note form and Register are in flow.
         with gr.Column(elem_classes=["shep-panel", "shep-test-col"], elem_id="shep-test-result",
-                       scale=14, min_width=360):
+                       scale=16, min_width=360):
+            reports_hd = plain_html(reports_header_html({}), elem_id="shep-test-reports-hd")
             with gr.Column(elem_classes=["shep-test-bd", "shep-test-bd-flush"]):
+                reports_list = plain_html("", elem_id="shep-test-reports", js_on_load=_REPORTS_JS)
                 result_out = plain_html(result_html({}, None, []), elem_id="shep-test-result-body")
             # The investigation note form (shown while the runs of the report's
             # condition group differ, or their comparison is incomplete) is
@@ -2933,8 +3067,7 @@ def create_test_page(ctx: Any) -> None:
         allowed = bool((page.get("access") or {}).get("allowed"))
         radio, protocol = _measurement_outputs(page, models, label, key, protocol)
         return [
-            run_header_html(ws, label),
-            _dd(model_choices(models), key, interactive=allowed and bool(models.get("items"))),
+            *model_selects(models, key, interactive=allowed),
             gated_update("reload", page, interactive=bool(ws)),
             model_html(page, models, key),
             radio,
@@ -2945,6 +3078,7 @@ def create_test_page(ctx: Any) -> None:
             gr.update(interactive=allowed),
             gr.update(interactive=allowed),
             protocol,
+            key if find_model(models, key) is not None else None,
         ]
 
     # Start and its reason depend on the selection: only the selection's group
@@ -2952,21 +3086,26 @@ def create_test_page(ctx: Any) -> None:
     # writes them too.
     start_outputs = [start, start_reason]
     card_outputs = [job_head, job_out, cancel, cancel_reason]
-    run_outputs = [run_hd, model, model_reload, model_info, measurement, evidence, fixed,
-                   *start_outputs, *card_outputs, record, deterministic, measurement_state]
+    run_outputs = [run_select, model, model_reload, model_info, measurement, evidence, fixed,
+                   *start_outputs, *card_outputs, record, deterministic, measurement_state,
+                   model_state]
 
-    def _result_outputs(page, reports, models, run_id, job):
-        """The list, the result and its controls for `reports` as this session
-        keeps them (`_reports` and a row's click ask the shown report's
-        registration first)."""
+    def _result_outputs(page, reports, models, run_id, job, binding, ws, label, key):
+        """The table, the result and its controls for `reports` as this
+        session keeps them (`_reports` and a row's click ask the shown report's
+        registration first), each report said against the selection
+        (`selection_of`: the workspace, version and checkpoint chosen now)."""
         roots = page.get("roots") or []
         can, why = register_state(page, reports, run_id)
         show_notes = notes_visible(reports, run_id)
         allowed = bool((page.get("access") or {}).get("allowed"))
+        chosen = selection_of(page, models, binding, ws, label, key)
         return [
-            reports_html(reports, run_id, models=models, job=job, roots=roots),
+            reports_header_html(reports),
+            reports_html(reports, run_id, models=models, job=job, roots=roots, selection=chosen),
             result_html(reports, run_id, roots, job=job, notes=reports.get("notes"),
-                        notes_problems=reports.get("notes_problems") or ()),
+                        notes_problems=reports.get("notes_problems") or (), selection=chosen,
+                        models=models, workspaces=page.get("workspaces") or []),
             gated_update("register", page, interactive=can),
             _reason_html(why, kind="lock" if not allowed else ""),
             gr.update(visible=show_notes),
@@ -2977,8 +3116,8 @@ def create_test_page(ctx: Any) -> None:
                          kind="lock"),
         ]
 
-    result_outputs = [reports_list, result_out, register, register_reason, note_form, note_btn,
-                      note_who, note_what, note_reason]
+    result_outputs = [reports_hd, reports_list, result_out, register, register_reason, note_form,
+                      note_btn, note_who, note_what, note_reason]
 
     def _reports(page, models, label, current_report, job, request, *, prefer_outcome=False):
         """The version's reports as this session shows them: read again, every
@@ -3065,12 +3204,13 @@ def create_test_page(ctx: Any) -> None:
         return [page, models, binding, reports, run_id,
                 *_cohort_outputs(page, binding, ws, label),
                 *_run_outputs(page, models, binding, ws, label, key, protocol, job, gpu),
-                *_result_outputs(page, reports, models, run_id, job)]
+                *_result_outputs(page, reports, models, run_id, job, binding, ws, label, key)]
 
     state_outputs = [page_state, models_state, binding_state_, reports_state, selected_report]
     ctx.on_page_open(PAGE, {
         "fn": _refresh,
-        "inputs": [workspace, version, model, measurement_state, models_state, selected_report],
+        "inputs": [workspace, version, model_state, measurement_state, models_state,
+                   selected_report],
         "outputs": [*state_outputs, *cohort_outputs, *run_outputs, *result_outputs],
         "show_progress": "hidden",
         **one_at_a_time,
@@ -3091,10 +3231,10 @@ def create_test_page(ctx: Any) -> None:
         return [models, binding, reports, run_id, None, gr.update(visible=False),
                 *_cohort_outputs(page, binding, ws, label),
                 *_run_outputs(page, models, binding, ws, label, key, protocol, job, _gpu(page)),
-                *_result_outputs(page, reports, models, run_id, job)]
+                *_result_outputs(page, reports, models, run_id, job, binding, ws, label, key)]
 
     workspace.input(_on_workspace,
-                    inputs=[page_state, workspace, version, model, measurement_state,
+                    inputs=[page_state, workspace, version, model_state, measurement_state,
                             models_state, selected_report],
                     outputs=[models_state, binding_state_, reports_state, selected_report,
                              preview_state, drawer, *cohort_outputs, *run_outputs,
@@ -3115,26 +3255,43 @@ def create_test_page(ctx: Any) -> None:
                     interactive=not page.get("registry_problem")),
                 version_html(page, label, binding),
                 *_run_outputs(page, models, binding, ws, label, key, protocol, job, _gpu(page)),
-                *_result_outputs(page, reports, models, run_id, job)]
+                *_result_outputs(page, reports, models, run_id, job, binding, ws, label, key)]
 
     version.input(_on_version,
-                  inputs=[page_state, binding_state_, models_state, workspace, version, model,
+                  inputs=[page_state, binding_state_, models_state, workspace, version,
+                          model_state,
                           measurement_state, selected_report],
                   outputs=[reports_state, selected_report, version, version_info, *run_outputs,
                            *result_outputs],
                   show_progress="hidden", **one_at_a_time, **every_one)
 
-    def _on_model(page, models, binding, ws, label, key, protocol):
+    def _on_model(page, models, binding, ws, label, key, protocol, reports, run_id):
+        """A checkpoint chosen: the Run panel for it, and the reports table and
+        result said again against it (a report of the model chosen now reads
+        "the selected model", any other its own model in full)."""
         if not page:
-            return [gr.update()] * len(run_outputs)
-        return _run_outputs(page, models, binding, ws, label, key, protocol, read_job(),
-                            _gpu(page))
+            return [gr.update()] * (len(run_outputs) + len(result_outputs))
+        job = read_job()
+        return [*_run_outputs(page, models, binding, ws, label, key, protocol, job, _gpu(page)),
+                *_result_outputs(page, reports, models, run_id, job, binding, ws, label, key)]
+
+    def _on_run(page, models, binding, ws, label, run, key, protocol, reports, run_id):
+        """A run chosen: its checkpoint the shared pair chooses
+        (`model_list.chosen_in_run`: the one chosen while it is this run's,
+        else its latest save), then as a checkpoint chosen."""
+        key = ml.chosen_in_run(model_parents(models or {}), run, key)
+        return _on_model(page, models, binding, ws, label, key, protocol, reports, run_id)
 
     # In the selection's group: Start and its reason are written there only,
     # so a read handed over before this choice cannot write them back after it.
-    model.input(_on_model, inputs=[page_state, models_state, binding_state_, workspace, version,
-                                   model, measurement_state],
-                outputs=run_outputs, show_progress="hidden", **one_at_a_time, **every_one)
+    model_inputs = [page_state, models_state, binding_state_, workspace, version, model,
+                    measurement_state, reports_state, selected_report]
+    model.input(_on_model, inputs=model_inputs, outputs=[*run_outputs, *result_outputs],
+                show_progress="hidden", **one_at_a_time, **every_one)
+    run_select.input(_on_run, inputs=[*model_inputs[:5], run_select, model_state,
+                                      *model_inputs[6:]],
+                     outputs=[*run_outputs, *result_outputs], show_progress="hidden",
+                     **one_at_a_time, **every_one)
 
     def _on_measurement(page, models, binding, ws, label, key, protocol):
         """A measurement picked: the radio (written back, as the version select
@@ -3150,41 +3307,48 @@ def create_test_page(ctx: Any) -> None:
 
     # In the selection's group, for the same reason as the model's.
     measurement.input(_on_measurement,
-                      inputs=[page_state, models_state, binding_state_, workspace, version, model,
+                      inputs=[page_state, models_state, binding_state_, workspace, version,
+                              model_state,
                               measurement],
                       outputs=[measurement, *start_outputs, measurement_state],
                       show_progress="hidden", **one_at_a_time, **every_one)
 
-    def _on_model_reload(page, binding, ws, label, key, protocol, current_models,
-                         request: gr.Request):
+    def _on_model_reload(page, binding, ws, label, key, protocol, current_models, reports,
+                         run_id, request: gr.Request):
         if not page:
-            return [gr.update()] * (1 + len(run_outputs))
+            return [gr.update()] * (1 + len(run_outputs) + len(result_outputs))
         models = _models_for(page, current_models, ws, request, again=True)
         key = key if find_model(models, key) is not None else None
-        return [models, *_run_outputs(page, models, binding, ws, label, key, protocol, read_job(),
-                                      _gpu(page))]
+        job = read_job()
+        return [models, *_run_outputs(page, models, binding, ws, label, key, protocol, job,
+                                      _gpu(page)),
+                *_result_outputs(page, reports, models, run_id, job, binding, ws, label, key)]
 
     # In the selection's group: the listing it writes is the one the rows'
     # registration and Start are asked from. A second ↻ while one waits is
     # dropped (a click's "once"), which loses nothing: the one waiting lists
     # when it runs.
     model_reload.click(_on_model_reload,
-                       inputs=[page_state, binding_state_, workspace, version, model,
-                               measurement_state, models_state],
-                       outputs=[models_state, *run_outputs], show_progress="minimal",
+                       inputs=[page_state, binding_state_, workspace, version, model_state,
+                               measurement_state, models_state, reports_state, selected_report],
+                       outputs=[models_state, *run_outputs, *result_outputs],
+                       show_progress="minimal",
                        **one_at_a_time) \
         .then(**ctx.chip_refresh)
 
-    def _on_report(page, reports, models, evt: gr.EventData, request: gr.Request):
+    def _on_report(page, reports, models, binding, ws, label, model_key, evt: gr.EventData,
+                   request: gr.Request):
         raw = getattr(evt, "_data", None)
         key = raw.get("key") if isinstance(raw, Mapping) else None
         if not page or find(reports.get("runs") or [], "run_id", key) is None:
             return [gr.update()] * (2 + len(result_outputs))
         # The answer asked for this report stays with it when another is chosen.
         reports = refine_registration(page, reports, key, models, request=request)
-        return [key, reports, *_result_outputs(page, reports, models, key, read_job())]
+        return [key, reports, *_result_outputs(page, reports, models, key, read_job(), binding,
+                                               ws, label, model_key)]
 
-    reports_list.click(_on_report, inputs=[page_state, reports_state, models_state],
+    reports_list.click(_on_report, inputs=[page_state, reports_state, models_state,
+                                           binding_state_, workspace, version, model_state],
                        outputs=[selected_report, reports_state, *result_outputs],
                        show_progress="hidden", **one_at_a_time, **every_one)
 
@@ -3215,11 +3379,12 @@ def create_test_page(ctx: Any) -> None:
         return [reports, run_id,
                 *_start_outputs(page, models, binding, ws, label, key, protocol, gpu),
                 *_card_outputs(page, job, gpu),
-                *_result_outputs(page, reports, models, run_id, job)]
+                *_result_outputs(page, reports, models, run_id, job, binding, ws, label, key)]
 
     after_outputs = [reports_state, selected_report, *start_outputs, *card_outputs,
                      *result_outputs]
-    after_inputs = [page_state, models_state, binding_state_, workspace, model, measurement_state,
+    after_inputs = [page_state, models_state, binding_state_, workspace, model_state,
+                    measurement_state,
                     selected_report, reports_state]
 
     def _on_start(page, models, ws, label, key, protocol, rec, det, request: gr.Request):
@@ -3307,10 +3472,10 @@ def create_test_page(ctx: Any) -> None:
                                                       request, ended=ended)
         return [reports, run_id,
                 *_start_outputs(page, models, binding, ws, label, key, protocol, _gpu(page)),
-                *_result_outputs(page, reports, models, run_id, job)]
+                *_result_outputs(page, reports, models, run_id, job, binding, ws, label, key)]
 
     job_changed.change(_after_job_change,
-                       inputs=[page_state, models_state, binding_state_, workspace, model,
+                       inputs=[page_state, models_state, binding_state_, workspace, model_state,
                                measurement_state, selected_report, reports_state, job_changed],
                        outputs=[reports_state, selected_report, *start_outputs, *result_outputs],
                        show_progress="hidden", **one_at_a_time, **every_one)
@@ -3415,7 +3580,7 @@ def create_test_page(ctx: Any) -> None:
                               import_msg],
                      show_progress="minimal", concurrency_id="shep-test-import",
                      concurrency_limit=1) \
-        .then(_after_commit, inputs=[committed_label, workspace, version, model,
+        .then(_after_commit, inputs=[committed_label, workspace, version, model_state,
                                      measurement_state, models_state, selected_report],
               outputs=[*state_outputs, *cohort_outputs, *run_outputs, *result_outputs],
               show_progress="hidden", **one_at_a_time) \
@@ -3428,6 +3593,10 @@ _PAGE = "#" + page_elem_id(PAGE)
 #: ``PAGE_CSS``), scoped to its own ids. ``.shep-test-recm``: a described
 #: measurement's metrics as recorded (R2), one click away under its figures, its
 #: summary a 24 px target that shows the keyboard focus (skill §10).
+#: ``.shep-test-replist``: the reports, a compact single-select table at the
+#: Result panel's top (32-40 px rows, the skill's §8), in the panel's one scroll
+#: region with the result under it; its header does not stick (the region
+#: scrolls the table away under the result, and nothing sticky covers a row).
 PAGE_CSS = f"""
 {_PAGE} #shep-test-row {{ position: relative; gap: 12px; }}
 {_PAGE} .shep-test-bd {{ padding: 12px 16px !important; gap: 10px !important; }}
@@ -3443,19 +3612,15 @@ PAGE_CSS = f"""
 {_PAGE} .shep-test-model-row > button {{ flex: none !important; min-width: 40px; margin-bottom: 4px; }}
 {_PAGE} .shep-test-checks {{ gap: 18px !important; flex-wrap: wrap !important; }}
 {_PAGE} .shep-test-checks > .block {{ flex: 0 1 auto !important; min-width: 0 !important; width: auto !important; }}
-{_PAGE} .shep-test-reps {{ margin-top: 4px; }}
-{_PAGE} .shep-test-rep {{
-  display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; align-items: center; width: 100%;
-  text-align: left; padding: 9px 12px; border: 0; border-bottom: 1px solid #edf0f3; background: #fff;
-  font: inherit; font-size: 15px; color: inherit; cursor: pointer;
-}}
-{_PAGE} .shep-test-reps > [role="list"]:last-child > [role="listitem"]:last-child > .shep-test-rep {{ border-bottom: 0; }}
-{_PAGE} .shep-test-rep:hover {{ background: var(--shep-panel-2); }}
-{_PAGE} .shep-test-rep.shep-on {{ background: var(--shep-accent-50); box-shadow: inset 4px 0 0 var(--shep-accent); }}
-{_PAGE} .shep-test-rep-running {{ cursor: default; }}
-{_PAGE} .shep-test-rep-main {{ font-weight: 500; overflow-wrap: anywhere; min-width: 0; }}
-{_PAGE} .shep-test-rep-chip {{ grid-row: 1 / span 2; grid-column: 2; }}
-{_PAGE} .shep-test-rep-sub {{ font-size: 14px; color: var(--shep-text-2); overflow-wrap: anywhere; min-width: 0; }}
+{_PAGE} .shep-test-replist {{ padding: 12px 16px 0; }}
+{_PAGE} .shep-test-repwrap {{ margin: 0 !important; overflow: visible; }}
+{_PAGE} .shep-test-reps th {{ position: static; }}
+{_PAGE} .shep-test-reps td {{ padding: 7px 10px; overflow-wrap: anywhere; }}
+{_PAGE} .shep-test-reps td.shep-test-rep-name {{ white-space: nowrap; }}
+{_PAGE} .shep-test-reps tr[aria-disabled="true"] td {{ cursor: default; background: var(--shep-panel-2); }}
+{_PAGE} .shep-test-res-hd {{ display: flex; align-items: baseline; gap: 10px; }}
+{_PAGE} .shep-test-res-hd h3 {{ margin: 0; font-size: 15px; font-weight: 600; }}
+{_PAGE} .shep-test-vd-why {{ margin-top: 6px; }}
 {_PAGE} .shep-test-job {{ border: 1px solid var(--shep-border) !important; border-radius: 10px !important; background: var(--shep-panel-2) !important; padding: 0 0 8px !important; gap: 4px !important; }}
 {_PAGE} .shep-test-job-top {{ align-items: center !important; flex-wrap: nowrap !important; gap: 8px !important; padding-right: 14px; }}
 {_PAGE} .shep-test-job-top > .block {{ flex: 1 1 auto !important; min-width: 0 !important; }}
@@ -3499,14 +3664,11 @@ PAGE_CSS = f"""
 {_PAGE} #shep-test-start {{ width: 100%; }}
 {_PAGE} .shep-test-runft {{ padding: 0 16px 12px !important; gap: 10px !important; }}
 {_PAGE} .shep-test-select input {{ padding-right: 26px !important; }}
-{_PAGE} .shep-test-rep-ended {{ cursor: default; }}
 {_PAGE} .shep-test-rep-old, {_PAGE} .shep-test-more-fewer {{ display: none !important; }}
-{_PAGE} .shep-test-all .shep-test-rep-old {{ display: grid !important; }}
-{_PAGE} .shep-test-reps [role="listitem"]:has(> .shep-test-rep-old) {{ display: none; }}
-{_PAGE} .shep-test-all .shep-test-reps [role="listitem"]:has(> .shep-test-rep-old) {{ display: block; }}
+{_PAGE} .shep-test-all .shep-test-rep-old {{ display: table-row !important; }}
 {_PAGE} .shep-test-all .shep-test-more-fewer {{ display: inline-flex !important; }}
 {_PAGE} .shep-test-all .shep-test-more-all {{ display: none !important; }}
-{_PAGE} .shep-test-more {{ display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 12px; border-top: 1px solid #edf0f3; }}
+{_PAGE} .shep-test-more {{ display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 0 0; }}
 {_PAGE} .shep-test-more button {{ font: inherit; font-size: 15px; color: var(--shep-accent-text); background: none; border: 0; padding: 2px 0; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }}
 {_PAGE} .shep-panel-ft > button, {_PAGE} .shep-test-actions > button {{ white-space: nowrap; flex: none !important; }}
 {_PAGE} .shep-panel-ft > .block {{ flex: 1 1 200px !important; min-width: 0 !important; }}

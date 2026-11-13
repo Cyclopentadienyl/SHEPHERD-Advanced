@@ -708,8 +708,8 @@ def test_one_file_reads_the_same_completed_epochs_on_every_page(root):
     """B0b: how far one checkpoint trained is said in one wording wherever it
     is named (`renderers.epoch_words`): the epochs its progress record says it
     completed, the served status carrying them as the lists do. The card's
-    line, Models' row and detail header, Training's and Fine-tune's options
-    and Test's option read alike; an older file without the record says the
+    line, Models' row and detail header, Training's, Fine-tune's and Test's
+    checkpoint options read alike; an older file without the record says the
     epoch index it records on each of them, never a count made from it."""
     from src.webui.components import model_list as ml
     from src.webui.components import renderers as r
@@ -731,10 +731,10 @@ def test_one_file_reads_the_same_completed_epochs_on_every_page(root):
                 "validation": None, "dataset_fingerprint": None, "problem": None,
                 "record": "model", "learning_stage": "finetune", "task": "disease", **meta}
         assert r.model_name_line(item) == line                       # Models' detail header
-        assert f'<div class="shep-sub">{words} · ' in r.model_table_row_html(item, [])  # row
+        assert f'<div class="shep-sub">{words}</div>' in r.model_table_row_html(item, [])  # row
         assert ml.checkpoint_words(item) == f"Latest save · {words}"  # Training, Fine-tune
-        ((label, _key),) = tp.model_choices({"items": [item]})        # Test
-        assert label.startswith(f"Disease · {words} · "), label
+        _run, checkpoint = tp.model_selects({"items": [item]}, tp.item_key(item))  # Test
+        assert checkpoint["choices"] == [(f"Latest save · {words}", tp.item_key(item))]
 
 
 @pytest.mark.parametrize("mode", ["disease_task", "gene_task", "patients_like_me"])

@@ -966,7 +966,7 @@ class TestCheckpointsInAndOut:
         assert r"20261021-000000_y_\xff" in html and r"bad\xff.pt" in html
         assert answers(listing_ui["family"])
         assert len(answers(tc.checkpoint_items(sl.list_checkpoints("demo"))[0])) == 4
-        assert len({value for _label, value in answers(tp.model_choices(listing_ui))}) == 4
+        assert len(answers(sorted(_checkpoint_values(listing_ui)))) == 4
 
     def test_names_shown_alike_keep_their_own_identity_and_selection(
             self, demo_workspace, tmp_path, monkeypatch):
@@ -1021,7 +1021,7 @@ class TestCheckpointsInAndOut:
         for item in items:
             assert ml.find_item(listing_ui, item["key"])["sha256"] == item["sha256"]
             assert tp.find_model(listing_ui, item["key"])["problem"] == item["problem"]
-        assert len({value for _label, value in tp.model_choices(listing_ui)}) == 4
+        assert len(_checkpoint_values(listing_ui)) == 4
         console = tc.checkpoint_items(listing)[0]
         assert sorted(console) == sorted(keys)
         assert console[text_file["key"]]["sha256"] == text_file["sha256"]
@@ -1636,3 +1636,15 @@ class TestRoutes:
         assert [d.dependency for d in gated.dependencies] == [require_operator_access]
         for open_path in ("/api/v1/workspaces", "/api/v1/cohorts"):
             assert routes[open_path].dependencies == []
+
+
+def _checkpoint_values(listing):
+    """Every checkpoint the Test page's Run → Checkpoint pair offers for a
+    listing, by its option's value (the listing's key): each run's options
+    (`model_list.checkpoint_choices`, over `test_page.model_parents`)."""
+    from src.webui.components import model_list as ml
+    from src.webui.components import test_page as tp
+
+    parents = tp.model_parents(listing)
+    return {value for keys in ml.runs_of(parents).values()
+            for _label, value in ml.checkpoint_choices(parents, keys)}
