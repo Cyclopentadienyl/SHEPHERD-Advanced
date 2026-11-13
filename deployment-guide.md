@@ -2754,6 +2754,12 @@ export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
   - Trainer 的驗證數字：Trainer 記錄的、該階段的選擇指標（base 為 LP accuracy，任務模型為
     pooled MRR），不論檔案的紀錄如何，都從檔案的 logs 讀取，絕不是測試結果；檔案未被讀取、或其
     logs 兩者皆無時為無（沒有 model spec 的檔案記錄的是 `val_mrr`，它不會被讀取）；
+  - 自 ops-wiring round 的 B0b（2026-11-12）起，`selection`：檔案記錄的、該 run 用來排序存檔的方式
+    （`callbacks.model_checkpoint` 的 `{"monitor", "mode"}`：base 為 `val_lp_accuracy`，任務模型為
+    `val_pooled_mrr`，兩者都是 `max`），檔案沒有記錄、或記錄的不是這種形式時（只保存權重的檔案或
+    舊檔案）為 null；以及 `in_best_k`：它自己 run 的某筆紀錄是否把這個檔案列為訓練器 best-k 存檔
+    之一，依其檔名與寫入時的 SHA-256 判斷（絕不取自檔名），該 run 沒有任何檔案記錄 best-k 清單時為
+    null。形式不對的選擇紀錄不會遮住檔案的其他資訊。頁面依這兩者與驗證數值指出一個 run 的最佳存檔；
   - 其模型紀錄的摘要：`record` 為 `model`，或為附原因的 `refused`（沒有 model spec 的檔案：
     "written before the model spec: not readable by this build; start a new run"），檔案的紀錄
     未被讀取時（其 `problem` 說明原因）則為 null；自 K8-7b 起不再有 `history` 紀錄值、History 群組或
@@ -3089,8 +3095,9 @@ Matching phenotypes · Paths）。選取一列（點擊，或在聚焦的列上�
 - 標題列 "MODEL IN USE ⓘ · checked HH:MM:SS ↻"：目前服務的內容會為這個瀏覽器讀取——頁面打開
   時、Diagnosis 顯示期間每 5 秒、每次診斷之後、更換模型之後，以及按 ↻ 時；超過 5 秒的讀取顯示
   為 "timed out (5 s)"；
-- 模型 "GAT · run 2026-10-17 09:15 · epoch 5"，以及 "model fingerprint <12 hex> ✓ verified"
-  （所服務之 checkpoint 檔的 SHA-256）；
+- 模型 "GAT · run 2026-10-17 09:15 · 6 epochs completed"（檔案訓練到哪裡，取自它的進度紀錄，
+  用語與每個頁面相同；沒有進度紀錄的舊檔案說它記錄的 epoch，"recorded epoch 5"），以及
+  "model fingerprint <12 hex> ✓ verified"（所服務之 checkpoint 檔的 SHA-256）；
 - "trained on <workspace> · dataset fingerprint <12 hex>"：checkpoint 記錄的訓練所用 dataset
   （`training_input_digests.split_manifest`），以具有相同完整 fingerprint 的已列出 workspace
   命名，或 "matches no listed workspace"；絕不是所服務 workspace 自己的 manifest。讀取它需要打開
@@ -3234,9 +3241,10 @@ Training Console 現在是分成三部分的一個頁面：上方橫跨整頁的
   否則是這個分頁先前的選擇，否則是執行中工作的，否則是 serving 讀取的那一個（它可訓練時），
   否則是第一個可訓練的。訓練工作執行期間，選單會停用並顯示該工作的資料集：「in use by the
   running job」。
-- **狀態標籤**：`Idle`、`Starting`、`RUNNING · epoch 12/100 · batch 340/812 · 00:14:32`、
-  `Stopping`、`Completed`、`Stopped`（灰色）或 `FAILED`（紅色）。失敗或停止的 run 永遠不會是
-  綠色。
+- **狀態標籤**：`Idle`、`Starting`、`RUNNING · epoch 12/100`、`Stopping`、`Completed`、
+  `Stopped`（灰色）或 `FAILED`（紅色），最多一個 " · "：狀態與進行到哪裡；其後以較淡的字顯示
+  epoch 執行中的 batch 與工作已執行的時間（「batch 340/812, 00:14:32 elapsed」）。失敗或停止的
+  run 永遠不會是綠色。
 - **Run name**，接著是**一行原因**，說明某個動作為何停用：「Stop disabled: no training is
   running.」、對唯讀瀏覽器顯示 D8 的原因（「Operator controls only: request not local」），或
   占用 GPU 的工作（「GPU job: test run (…) · Open Test ›」、「GPU job: train_model.py (pid …,
@@ -3332,17 +3340,26 @@ reference settings: Epochs 5 (200)」；欄位拒絕的值會在這一行指出�
 **Continue…** 會打開一個取代參數欄的抽屜：run bar 所選 workspace 的模型紀錄，也就是 base 與任務
 模型（自 K6 起，沒有 model spec 的檔案永遠不會從儀表板繼續訓練；伺服器的清單：列出時會開啟每個
 checkpoint，所以是操作者控制項），分兩步選擇，或手動輸入其中某個 checkpoint 的路徑。**Run**：
-各個 run，最新的在前，來自 `runs/` 之下的每一個目錄（自 K8-7b，2026-11-08 起），每個以名稱、
-目錄與開始時間表示（「base-a · GATv2 · 2026-10-28 13:57」：目錄名稱轉成大寫，`gatv2` 則寫成
-「GATv2」；它是位置，不是模型的架構，架構由紀錄指明；沒有命名的 run 只有目錄與時間）。
-**Checkpoint**：該 run 的檔案，最新的在前，每個最多 40 個字元，
-說明它是什麼以及訓練到哪裡：「Latest save · 195 epochs completed」，或「Top-k save · 21 epochs
-completed」（訓練器因驗證數值保留的檔案）；epoch 數取自檔案的進度紀錄（沒有進度紀錄的檔案只說它
-記錄的 epoch，從不由此推算完成數），只保存權重或無法讀取的檔案會直接說明（「weights only」、
-「cannot be read」）。改選另一個 run 時，會列出它的檔案並選好它的 Latest save。兩個選單下方有一張
-表，列出選項沒說的部分：檔案、階段、保存的內容、階段已結束時繼續訓練會做什麼（提前停止的檔案為
-「not possible: it stopped early」）、Trainer 的驗證數值（base 為「LP accuracy (Trainer) 0.5000」；
-是 Trainer 的數字，不是測試結果）、模型指紋（Copy 會複製完整的 64 個）與 run 的目錄名稱。
+各個 run，最新的在前，來自 `runs/` 之下的每一個目錄（自 K8-7b，2026-11-08 起），每個最多 40 個
+字元、一個 " · "，以區分它的部分開頭：先是名稱，再是目錄與開始時間（「base-a · GATv2 2026-10-28
+13:57」：目錄名稱轉成大寫，`gatv2` 則寫成「GATv2」，太長時從中間截短；它是位置，不是模型的架構，
+架構由紀錄指明）；沒有命名的 run 是開始時間，再是目錄（「2026-10-24 16:38 · GATv2」）；到分鐘都
+相同的 run 加上秒，再加上它自己的 id。**Checkpoint**：該 run 的檔案，最新的在前，每個最多 40 個
+字元、一個 " · "，說明它是什麼以及訓練到哪裡：「Latest save · 195 epochs completed」；依檔案記錄的
+選擇方式（`callbacks.model_checkpoint` 的指標與方向：base 為 validation LP accuracy，任務模型為
+validation pooled MRR，即「Best pooled MRR」，兩者都是越高越好）而為該 run 最佳存檔的，寫成「Best
+LP accuracy · 21 epochs completed」，數值相同的檔案都這樣寫；絕不是測試結果，也絕不取自檔名；該
+run 的某筆紀錄列為訓練器 best-k 存檔之一的檔案（依其檔名與寫入時的 SHA-256，絕不依檔名的
+`model-<epoch>-<value>.pt` 模式），寫成「Top-k save · 20 epochs completed」；epoch 數取自檔案的進度
+紀錄（沒有進度紀錄的檔案只說它記錄的 epoch，「recorded epoch 194」，從不由此推算完成數），只保存
+權重或無法讀取的檔案會直接說明（「weights only」、「cannot be read」）。不論選項的文字為何，它的值
+都是檔案在清單中的 key。改選另一個 run 時，會列出它的檔案並選好它的 Latest save。兩個選單下方有
+一張表，列出選項沒說的部分：檔案、階段、保存的內容、階段已結束時繼續訓練會做什麼（提前停止的
+檔案為「not possible: it stopped early」）、Trainer 的驗證數值（base 為「LP accuracy (Trainer)
+0.5000」；是 Trainer 的數字，不是測試結果）、檔案記錄的 **Selection**（「by validation LP accuracy
+(Trainer), higher is better」，舊檔案則為「not recorded」，此時沒有選項稱它為最佳）、模型指紋
+（Copy 會複製完整的 64 個）與 run 的目錄名稱。Fine-tune 頁面選擇 base 用的就是這同一組選單，它的
+工作卡片也依檔案記錄的選擇方式指出每個子 run 的最佳存檔。
 自 M5-3 起，手動輸入的路徑只會找到該清單中的 checkpoint，其他任何檔案都會在開啟之前被拒絕（`PLAN_TEST_RESULTS.md` D8）。
 **Check checkpoint** 顯示繼續訓練會做什麼，並比較 parent 記錄的資料集指紋與 workspace 目前的
 指紋：相同時為 ✓，不同時為琥珀色（附上相符的已列出 workspace，或「matches no listed
@@ -3396,8 +3413,9 @@ bar 的資料集改變（手動選擇、從 Datasets 的「Use for training ›�
 
 **run 檢視**顯示 job runner 最後啟動的 run；伺服器啟動後還沒有啟動過時，顯示 run bar 所選
 workspace 最新的 run（頁面開著時每 10 秒重新列出一次，所以從 CLI 啟動的 run 在寫下第一個
-checkpoint 後就會出現）。標題只有一行：「Run shown」與 run 的易讀名稱（「ui-live-stop-02 · GAT ·
-2026-10-24 17:39」）、workspace 最新的 run 標「latest」，以及從 checkpoint 讀到的、這個 run 使用的
+checkpoint 後就會出現）。標題只有一行：「Run shown」與 run 的易讀名稱，與 Run 選單相同
+（「ui-live-stop-02 · GAT 2026-10-24 17:39」）、workspace 最新的 run 標「latest」，以及從 checkpoint
+讀到的、這個 run 使用的
 資料集與 run bar 所選資料集的關係：「✓ same dataset as the run bar」、琥珀色的「≠ not the
 selected dataset」、執行中還沒有 checkpoint 時的「dataset recorded at the first checkpoint」，或
 已結束而沒有 checkpoint 時的「dataset not recorded (no checkpoint)」。Continue… 打開且選了清單上的
@@ -3447,11 +3465,13 @@ checkpoint：run 標題的標籤顯示「dataset not shown · operator control�
 §4.9 流程的頁面：匯入 cohort 版本、在任何種類的資料版本（supplied cohort、KG 邊集合或 generated
 split）上量測模型、保留報告並登錄它。共有三個面板：
 
-- **Data**（自 research comparison Stage 7 起；之前為「Cohort」）。workspace（伺服器的清單，與
-  Datasets 相同以資料集指紋顯示）與 **Data version**（registry 的清單，`SHEPHERD_REGISTRY`），依種類
-  與 role 列出：先是 supplied cohort，與以前相同（「label · role R · n of N ranked-eligible」），接著是
-  KG 邊集合（「kg-test · KG edge set (test)」），然後是 generated split（「gen-val · Generated split
-  (val)」）。所選版本顯示它的計數（supplied cohort 的 role 與案例；KG 邊集合的 pair 與邊；generated
+- **Data**（自 research comparison Stage 7 起；之前為「Cohort」）。workspace（伺服器的清單，以
+  名稱列出；所選 workspace 的資料集指紋與 Datasets 相同，顯示在選單下方）與 **Data version**
+  （registry 的清單，`SHEPHERD_REGISTRY`），依種類與 role 列出，每個選項以標籤開頭、一個 " · "：先是
+  supplied cohort（「label · role R」；可排名的案例數是所選版本的細節），接著是 KG 邊集合（「kg-test ·
+  KG edge set (test)」），然後是 generated split（「gen-val · Generated split (val)」）；太長的標籤從
+  中間截短，選項的值是完整的標籤。所選版本顯示它的計數（supplied cohort 的 role 與案例；KG 邊集合
+  的 pair 與邊；generated
   split 的病人、疾病與 fixture 列，每一項在 **Counts and units** 之下附上其 manifest 記錄的單位；KG
   邊集合或 generated split 的種類與 role 由選項本身說明，不再重複）、版本 digest，以及它是否對照這個
   workspace 的圖譜映射（「bound to this graph」，或「mapped against another graph」，執行時會被拒絕；
@@ -3467,7 +3487,8 @@ split）上量測模型、保留報告並登錄它。共有三個面板：
   登錄狀態都是在所顯示的 workspace 中、持有它所量測權重的已列出 checkpoint 旁的帳本中檢查，因此
   尚待登錄的報告無論選取哪一列都顯示「not registered」；其 checkpoint 只列在另一個 workspace 的
   報告，在被選取之前顯示「registration cannot be checked from the list」。
-- **Run。** 模型：伺服器清單中該 workspace 的 checkpoint，依執行、epoch、檔案與模型指紋列出。
+- **Run。** 模型：伺服器清單中該 workspace 的 checkpoint，依它是什麼、訓練到哪裡（用語與每個
+  頁面相同，「6 epochs completed」或「recorded epoch 5」）、執行、模型指紋與檔案列出。
   列出它們會開啟每一個 checkpoint，因此這是操作者控制項：唯讀的瀏覽器不會看到它，而且頁面對
   每個 workspace 只列出一次（↻ 會重新讀取清單）。接著是 **Measurement**（自 K8-6a 起），即執行
   以 `--mode <protocol>` 傳入的協定（§4.9）：選項是這個 build 所實作、所選模型列出的能力符合其
@@ -3558,7 +3579,7 @@ repository 之下的路徑以其名稱書寫（`<registry>/versions/…`），�
 這是 Diagnosis 分頁「Change model…」所用的同一份模型清單的研究檢視，列出伺服器為某一個 workspace
 列出的 checkpoint（選擇 **Workspace**；自 K6 起以 **Task** 縮小清單：All、Base、Disease、Gene 或
 Patients-like-me；History 以及它所選的「history」紀錄已於 K8-7b，2026-11-08 移除，所以紀錄無法讀取的
-檔案只列在 All 之下）。Workspace 選單下方會再次列出所選
+檔案只列在 All 之下）。Workspace 選單的選項是名稱；選單下方列出一次所選
 workspace 的資料集識別（建置時間、資料集指紋、`synthetic`、紀錄的狀態），因此即使選單截斷了很長的
 workspace 名稱，這些資訊也不會被遮住。所有 run 都會顯示，最新的在前，來自 workspace 的 `runs/`
 之下的每一個目錄，不論其名稱（自 K8-7b 起）。各欄：
@@ -3567,8 +3588,8 @@ workspace 名稱，這些資訊也不會被遮住。所有 run 都會顯示，�
   「Record not read」；沒有 model spec 的檔案為「Record not readable」，附上 "written before the
   model spec: not readable by this build; start a new run"，自 K8-7b 起不再是「History · never
   run」），然後是 run 的目錄（轉成大寫，`gatv2` 寫成「GATv2」：它是位置，不是架構，架構由紀錄
-  指明）、run 的開始時間、epoch；正在提供服務的 checkpoint 標示 **In use (Diagnosis)**（以完整的
-  模型指紋比對）；
+  指明）、run 的開始時間、檔案訓練到哪裡（「6 epochs completed」，舊檔案為「recorded epoch 5」）；
+  正在提供服務的 checkpoint 標示 **In use (Diagnosis)**（以完整的模型指紋比對）；
 - **Fingerprints: model · dataset trained on**：模型指紋（checkpoint 的 SHA-256 的前 12 個十六進位
   數字），下方是 checkpoint 所記錄的完整資料集指紋所對應的已列出 workspace，或「matches no listed
   workspace」；`synthetic` 以琥珀色顯示；

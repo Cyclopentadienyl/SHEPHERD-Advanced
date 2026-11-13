@@ -2615,6 +2615,14 @@ and a file, or a label, and the server finds that name in its own list again.
     LP accuracy, a task model's pooled MRR), read from the file's logs whatever its record says,
     never a test result; none when the file was not read or its logs hold neither (a file
     without a model spec logs `val_mrr`, which is not read);
+  - since the ops-wiring round's B0b (2026-11-12), `selection`: what the run's saves were ranked
+    by, as the file records it (`callbacks.model_checkpoint`'s `{"monitor", "mode"}`, a base's
+    `val_lp_accuracy` and a task model's `val_pooled_mrr`, both `max`), or null where it records
+    none or none of its kind (a weights-only or older file); and `in_best_k`: whether a record of
+    its own run names this file among the trainer's best-k saves, by its name and the SHA-256 it
+    was written with (never from the file's name), or null where no file of its run records a
+    best-k list. A selection state not of its kind hides nothing else of the file. The pages name
+    a run's best save from these and the validation figure;
   - its model record's summary: `record` is `model`, or `refused` with the reason (a file
     without a model spec: "written before the model spec: not readable by this build; start a
     new run"), or null when the file's record was not read (its `problem` says why); since
@@ -3005,8 +3013,10 @@ it: both follow Options, and stay pinned at the panel's bottom when the inputs n
 - the title row "MODEL IN USE ⓘ · checked HH:MM:SS ↻": what is served is read for this browser
   when the page opens, every 5 seconds while Diagnosis is shown, after each diagnosis, after a
   model change and with ↻; a read that takes more than 5 seconds is "timed out (5 s)";
-- the model, "GAT · run 2026-10-17 09:15 · epoch 5", and "model fingerprint <12 hex> ✓ verified"
-  (the SHA-256 of the checkpoint file served);
+- the model, "GAT · run 2026-10-17 09:15 · 6 epochs completed" (how far the file trained, from
+  its progress record, in the words every page uses; an older file without one says the epoch it
+  records, "recorded epoch 5"), and "model fingerprint <12 hex> ✓ verified" (the SHA-256 of the
+  checkpoint file served);
 - "trained on <workspace> · dataset fingerprint <12 hex>": the dataset the checkpoint records it
   was trained on (`training_input_digests.split_manifest`), named by the listed workspaces with
   that full fingerprint, or "matches no listed workspace"; never the served workspace's own
@@ -3176,9 +3186,10 @@ a run.
   else this tab's earlier choice, else the running job's, else the one serving reads (when it is
   trainable), else the first trainable one. While a training job runs, the select is disabled and
   shows that job's dataset: "in use by the running job".
-- **The status pill**: `Idle`, `Starting`, `RUNNING · epoch 12/100 · batch 340/812 · 00:14:32`,
-  `Stopping`, `Completed`, `Stopped` (grey) or `FAILED` (red). A failed or stopped run is never
-  green.
+- **The status pill**: `Idle`, `Starting`, `RUNNING · epoch 12/100`, `Stopping`, `Completed`,
+  `Stopped` (grey) or `FAILED` (red), with at most one " · ": the state and how far it got; after
+  it, in lighter type, the batch while an epoch runs and how long the job has run ("batch 340/812,
+  00:14:32 elapsed"). A failed or stopped run is never green.
 - **Run name**, then **one reason line** saying why an action is disabled: "Stop disabled: no
   training is running.", D8's reason for a read-only browser ("Operator controls only: request
   not local"), or the GPU job holding the slot ("GPU job: test run (…) · Open Test ›",
@@ -3295,19 +3306,31 @@ window.
 workspace, bases and task models (since K6 a file without a model spec is never continued from the
 dashboard; the server's list: an operator control, since listing opens every checkpoint), chosen
 in two steps, or the path of one of those checkpoints typed by hand. **Run**: the runs, latest
-first, from every directory under `runs/` (since K8-7b, 2026-11-08), each as its name, directory
-and start time ("base-a · GATv2 · 2026-10-28 13:57": the directory's name, upper-cased but
-`gatv2`, which reads "GATv2"; a location, not the model's architecture, which its record names;
-an unnamed run is its directory and time). **Checkpoint**: that run's files, newest first, each in
-at most 40 characters saying what it is and how far it trained: "Latest save · 195 epochs
-completed", or "Top-k save · 21 epochs completed" (a file the trainer kept for its validation
-figure); the epochs are the file's progress record (a file without one says the epoch it records,
-never a count made from it), and a file that holds weights only or cannot be read says so
-("weights only", "cannot be read"). Choosing another run offers its files with its latest save
-chosen. Under the two, a table says what the option does not: the file, its stage, what it holds,
-what continuing does when its stage ended ("not possible: it stopped early" for an early-stopped
-one), the Trainer's validation figure ("LP accuracy (Trainer) 0.5000" for a base; the Trainer's,
-not a test result), its model fingerprint (Copy gives all 64) and its run's directory. Since M5-3
+first, from every directory under `runs/` (since K8-7b, 2026-11-08), each in at most 40
+characters with one " · ", led by what tells it apart: its name, then its directory and start
+time ("base-a · GATv2 2026-10-28 13:57": the directory's name, upper-cased but `gatv2`, which
+reads "GATv2", a long one shortened in its middle; a location, not the model's architecture,
+which its record names); an unnamed run is its start time, then its directory ("2026-10-24 16:38
+· GATv2"); runs alike to the minute add the second, then their own id. **Checkpoint**: that run's
+files, newest first, each in at most 40 characters with one " · ", saying what it is and how far
+it trained: "Latest save · 195 epochs completed"; "Best LP accuracy · 21 epochs completed" for the
+run's best save by the selection its files record (`callbacks.model_checkpoint`'s metric and
+direction: a base's validation LP accuracy, a task model's validation pooled MRR, "Best pooled
+MRR", both higher is better; files that tie all read so; never a test result, never from a file's
+name); or "Top-k save · 20 epochs completed" for a file a record of its run names among the
+trainer's best-k saves (by its name and the SHA-256 it was written with, never by the
+`model-<epoch>-<value>.pt` pattern of its name); the epochs are the file's progress record (a file
+without one says the epoch it records, "recorded epoch 194", never a count made from it), and a
+file that holds weights only or cannot be read says so ("weights only", "cannot be read"). The
+option's value is the file's listing key whatever its words. Choosing another run offers its
+files with its latest save chosen. Under the two, a table says what the option does not: the
+file, its stage, what it holds, what continuing does when its stage ended ("not possible: it
+stopped early" for an early-stopped one), the Trainer's validation figure ("LP accuracy (Trainer)
+0.5000" for a base; the Trainer's, not a test result), the **Selection** its files record ("by
+validation LP accuracy (Trainer), higher is better", or "not recorded" for an older file, which no
+option then calls best), its model fingerprint (Copy gives all 64) and its run's directory. The
+Fine-tune page's base select is this same pair, and its job card names each child's best save by
+the selection its files record. Since M5-3
 a typed path only finds a checkpoint that list holds, and any other file is refused without being
 opened (`PLAN_TEST_RESULTS.md` D8). **Check checkpoint** shows what continuing would do, and the
 dataset fingerprint the parent recorded against the workspace's current one: ✓ the same, or amber
@@ -3374,8 +3397,9 @@ becomes that workspace's runs, read again the same way.
 **The run view** shows the run the job runner started last or, before one since the server
 started, the latest run of the run bar's workspace (listed again every 10 seconds while the page
 is open, so a run started from the CLI appears once it writes its first checkpoint). Its header
-is one line: "Run shown" and the run as a person names it ("ui-live-stop-02 · GAT · 2026-10-24
-17:39"), "latest" for the workspace's latest run, and how the dataset the run used, read from its
+is one line: "Run shown" and the run as a person names it, as the Run select does
+("ui-live-stop-02 · GAT 2026-10-24 17:39"), "latest" for the workspace's latest run, and how the
+dataset the run used, read from its
 checkpoint, stands to the run bar's: "✓ same dataset as the run bar", amber "≠ not the selected
 dataset", "dataset recorded at the first checkpoint" while it runs without one yet, or "dataset
 not recorded (no checkpoint)" once it has ended without one. While Continue… is open with a
@@ -3435,10 +3459,12 @@ any kind (a supplied cohort, a KG edge set or a generated split), keep its repor
 it. Three panels:
 
 - **Data** (since research comparison Stage 7; "Cohort" before). The workspace (the server's
-  list, shown by its dataset fingerprint as on Datasets) and the **Data version** (the registry's
-  list, `SHEPHERD_REGISTRY`), by kind and role: supplied cohorts first, as before ("label · role R
-  · n of N ranked-eligible"), then KG edge sets ("kg-test · KG edge set (test)"), then generated
-  splits ("gen-val · Generated split (val)"). The chosen version shows its counts (a supplied
+  list, by name; the chosen one's dataset fingerprint shown under it, as on Datasets) and the
+  **Data version** (the registry's list, `SHEPHERD_REGISTRY`), by kind and role, each option its
+  label first with one " · ": supplied cohorts first ("label · role R"; its ranked-eligible count
+  is the chosen version's details), then KG edge sets ("kg-test · KG edge set (test)"), then
+  generated splits ("gen-val · Generated split (val)"); a long label is shortened in its middle,
+  the option's value its full label. The chosen version shows its counts (a supplied
   cohort's role and cases; a KG edge set's pairs and edges; a generated split's patients,
   diseases and fixture rows, each with the unit its manifest records under **Counts and units**;
   a KG edge set's or a generated split's kind and role are its option's, not repeated), its
@@ -3460,8 +3486,9 @@ it. Three panels:
   measured, so a report left to register reads "not registered" whichever row is selected; one
   whose checkpoint is listed only in another workspace says "registration cannot be checked
   from the list" until it is selected.
-- **Run.** The model: the workspace's checkpoints from the server's list, by run, epoch, file
-  and model fingerprint. Listing them opens every checkpoint, so it is an operator control: a
+- **Run.** The model: the workspace's checkpoints from the server's list, by what each is, how
+  far it trained (in the words every page uses, "6 epochs completed" or "recorded epoch 5"), run,
+  model fingerprint and file. Listing them opens every checkpoint, so it is an operator control: a
   read-only browser is not shown it, and the page lists them once per workspace (↻ reads the
   list again). Then **Measurement** (since K8-6a), the protocol the run passes as
   `--mode <protocol>` (§4.9): the options are the protocols this build implements whose needs
@@ -3582,9 +3609,9 @@ The research view of the same model list the Diagnosis tab's "Change model…" u
 checkpoints the server lists for one workspace (choose the **Workspace**; since K6 **Task**
 narrows the list: All, Base, Disease, Gene or Patients-like-me; History, and the "history" record
 it chose, went in K8-7b, 2026-11-08, so a file whose record cannot be read is listed under All
-only). Under the workspace
-select, the chosen workspace's dataset identity is said again (build time, dataset fingerprint,
-`synthetic`, the record's state), so a long workspace name that the select cuts never hides it.
+only). The workspace select's options are the names; under it, the chosen workspace's dataset
+identity is said once (build time, dataset fingerprint, `synthetic`, the record's state), so a
+long workspace name that the select cuts never hides it.
 Every run is shown, newest first, from every directory under the workspace's `runs/` whatever
 its name (since K8-7b). Columns:
 
@@ -3592,7 +3619,8 @@ its name (since K8-7b). Columns:
   or "Record not read"; a file without a model spec is "Record not readable", with "written
   before the model spec: not readable by this build; start a new run", and no longer "History ·
   never run" since K8-7b), then the run's directory (upper-cased, "GATv2" for `gatv2`: a location,
-  not the architecture, which the record names), the run's start time, the epoch; **In use
+  not the architecture, which the record names), the run's start time, how far the file
+  trained ("6 epochs completed", or "recorded epoch 5" for an older file); **In use
   (Diagnosis)** on the checkpoint being served (matched by its full model fingerprint);
 - **Fingerprints: model · dataset trained on**: the model fingerprint (12 hex digits of the
   checkpoint's SHA-256) over the listed workspace whose full dataset fingerprint the checkpoint
