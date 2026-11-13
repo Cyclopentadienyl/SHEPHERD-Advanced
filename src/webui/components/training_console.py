@@ -150,6 +150,7 @@ from src.webui.components.workspaces import (
     manifest_facts,
     read_workspaces,
     redact,
+    shown_path,
     workspaces_root,
 )
 from src.webui.operator_access import operator_access
@@ -1003,19 +1004,11 @@ def _build_error_banner_payload(
 # =============================================================================
 def _shown_path(path: Any) -> str:
     """A server path as an operator sees it here, only as the shared
-    redaction gives it (`workspaces.redact`, `path_redaction.redact_paths`;
-    D7): relative to the workspaces root when it is inside it
-    (``<workspace>/runs/…``), and any other absolute path as "a path outside
-    the workspaces root", never the path itself. An absolute path is resolved
-    first, so a link into the root reads as the file it names there."""
-    root, _problem = workspaces_root()
-    text = str(path)
-    if root is not None and Path(text).is_absolute():
-        try:
-            text = str(Path(text).resolve())
-        except (OSError, RuntimeError):
-            pass
-    return redact(text, root)
+    redaction gives one path (`workspaces.shown_path`; D7): relative to the
+    workspaces root when it is inside it (``<workspace>/runs/…``, its names
+    whole), and any other absolute path as "a path outside the workspaces
+    root", never the path itself."""
+    return shown_path(path, workspaces_root()[0])
 
 
 def _snapshot_sentence(snapshot: Optional[Dict[str, Any]]) -> str:

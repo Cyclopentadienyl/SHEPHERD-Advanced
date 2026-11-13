@@ -43,6 +43,9 @@ OUTSIDE_PATH = "a path outside the workspaces root"
 ROOT_REFUSED = ("The workspaces root setting (SHEPHERD_WORKSPACES_ROOT) is refused, so the "
                 "server lists no workspace until it is corrected on the server.")
 
+#: The whitespace `redact` joins: plain spaces, tabs and line breaks (a line
+#: or record separator among them), never a space a name may hold.
+_JOINED = re.compile("[\t\n\x0b\x0c\r\x1c-\x1f \x85\u2028\u2029]+")
 #: WP1's words for a link whose target is outside the root.
 _RESOLVES_OUTSIDE = re.compile(r"resolves to .+?, outside the workspaces root")
 
@@ -51,8 +54,10 @@ def redact(text: Any, root: Optional[Path]) -> str:
     """`text` on one line with no absolute path left: a path under the
     workspaces root is cut to the part inside it, the root itself is "the
     workspaces root", and any other absolute path becomes "a path outside the
-    workspaces root" (`redact_paths`)."""
-    flat = " ".join(str(text or "").split())
+    workspaces root" (`redact_paths`). Its lines and runs of plain
+    whitespace are joined into one space (`_JOINED`); any other space is a
+    name's own and stays as it is (a no-break space, an ideographic space)."""
+    flat = _JOINED.sub(" ", str(text or "")).strip(" ")
     roots: List[Tuple[str, str]] = []
     if root is not None:
         prefix = str(root)
@@ -61,6 +66,28 @@ def redact(text: Any, root: Optional[Path]) -> str:
         flat = re.sub(re.escape(prefix) + r"[/\\]", "", flat)
         roots.append((prefix, "the workspaces root"))
     return redact_paths(flat, roots, other=OUTSIDE_PATH)
+
+
+def shown_path(path: Any, root: Optional[Path]) -> str:
+    """**One server path as a page shows it** (D7), a path and not a text
+    that may name one (that is `redact`'s): inside the workspaces root, its
+    path there as it is, every name whole ("demo (copy)/runs/…", an emoji, a
+    no-break space); the root itself "the workspaces root"; any other
+    absolute path `OUTSIDE_PATH`, never the path itself. It is resolved
+    first, so a link into the root reads as the file it names there and a
+    link out of it as outside. A relative path names no server place of its
+    own and is shown as it is."""
+    text = str(path if path is not None else "")
+    if not text or not Path(text).is_absolute():
+        return text
+    if root is not None:
+        try:
+            resolved, base = Path(text).resolve(), Path(root).resolve()
+            return ("the workspaces root" if resolved == base
+                    else resolved.relative_to(base).as_posix())
+        except (OSError, RuntimeError, ValueError):
+            pass
+    return OUTSIDE_PATH
 
 
 def workspaces_root(environ: Optional[Mapping[str, str]] = None
@@ -229,6 +256,7 @@ __all__ = [
     "manifest_state",
     "read_workspaces",
     "redact",
+    "shown_path",
     "version_row",
     "workspace_binding",
     "workspaces_root",

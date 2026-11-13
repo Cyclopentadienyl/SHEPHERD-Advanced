@@ -3229,6 +3229,38 @@ def test_a_path_with_spaces_outside_every_root_is_replaced_whole(text, kept):
     assert tp.SERVER_PATH in out and kept in out, out
 
 
+@pytest.mark.parametrize("name", ["demo (copy)", "ws🧬", "ws+", "a\xa0b", "工作 区"])
+def test_a_path_under_a_root_keeps_every_name_whole(name):
+    """The review of B0c: the one pattern started a new absolute path at any
+    slash after a character that is no word's, so the rest of a path under a
+    root ("<workspaces>/demo (copy)/runs/…", an emoji or a "+" ending a name)
+    was cut and called a server path. A path starts only where a word could
+    (`path_redaction._START`), so each name stays whole, here and through the
+    dashboard's redaction, which joins plain whitespace only."""
+    from pathlib import Path
+
+    from src.webui.components import workspaces
+
+    text = f"/srv/ws/{name}/runs/gatv2/r/checkpoints/last.pt does not exist."
+    assert tp.redact(text, [("/srv/ws", "<workspaces>")]) == (
+        f"<workspaces>/{name}/runs/gatv2/r/checkpoints/last.pt does not exist.")
+    assert workspaces.redact(text, Path("/srv/ws")) == (
+        f"{name}/runs/gatv2/r/checkpoints/last.pt does not exist.")
+
+
+@pytest.mark.parametrize("text, kept", [
+    ("/data/MRN(0012345)/cases.json does not exist.", " does not exist."),
+    ("/srv/x/(0012345)/z.pt and (/srv/q)", " and ("),
+    ("the cohort's set (/srv/MRN 0012345/y.json) is not the one", "the cohort's set ("),
+])
+def test_a_bracketed_name_in_a_path_outside_every_root_is_replaced_whole(text, kept):
+    """A bracketed part with no space inside a name is the path's own; a
+    bracket around a path is not (the closing one stays)."""
+    out = tp.redact(text, [("/srv/registry", "<registry>")])
+    assert "0012345" not in out and "MRN" not in out and "/srv" not in out, out
+    assert tp.SERVER_PATH in out and kept in out, out
+
+
 def test_the_words_after_a_path_stay_and_two_paths_are_two():
     roots = [("/srv/registry", "<registry>")]
     assert tp.redact("/x/model.pt in 3.2 s", roots) == f"{tp.SERVER_PATH} in 3.2 s"

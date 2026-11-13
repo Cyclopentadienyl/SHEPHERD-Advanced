@@ -22,6 +22,7 @@ pytest.importorskip("gradio")
 from src.api.services.training_manager import training_manager  # noqa: E402
 from src.webui.components import renderers as r  # noqa: E402
 from src.webui.components import training_console as tc  # noqa: E402
+from src.webui.components.workspaces import OUTSIDE_PATH  # noqa: E402
 from src.webui.shell import standalone_context  # noqa: E402
 from tests.fixtures.operator_access import gradio_request, operator_mode  # noqa: E402
 
@@ -272,6 +273,43 @@ def test_a_refused_checks_reason_names_no_server_path(checkpoints, monkeypatch, 
                               str(checkpoints["paused"]))
         assert "Cannot continue." in text and shown in text, text
         assert str(tmp_path) not in text and str(checkpoints["root"]) not in text
+
+
+@pytest.mark.parametrize("workspace", ["demo (copy)", "ws🧬", "a\xa0b", "工作 区"])
+def test_a_path_inside_the_root_is_shown_whole_whatever_its_names_hold(workspace, tmp_path,
+                                                                       monkeypatch):
+    """The review of B0c: a path inside the workspaces root went through the
+    free-text redaction, whose pattern started a new absolute path at any
+    slash after a character that is no word's, so "demo (copy)/runs/…" read
+    "demo (copy)a path outside the workspaces root", an emoji name alike, and
+    its joining of whitespace turned a no-break space into a plain one. A
+    path is one value (`workspaces.shown_path`): inside the root, its path
+    there whole, on the check's path line, the run view's Details rows and a
+    refused check's reason; outside, never shown."""
+    root = tmp_path / "root"
+    run = root / workspace / "runs" / "gatv2" / "20261113-124624_a\xa0b_8c0e70"
+    checkpoint = run / "checkpoints" / "last.pt"
+    checkpoint.parent.mkdir(parents=True)
+    checkpoint.write_bytes(b"x")
+    monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(root))
+    inside = checkpoint.relative_to(root).as_posix()
+    refused = tc._check_html({"ok": False, "parent": str(checkpoint),
+                              "reason": f"{checkpoint} does not exist."}, tc.CONTINUE_FROM_PATH)
+    assert f"<code>{r.e(inside)}</code>" in refused, refused
+    assert f"<p>{r.e(inside)} does not exist.</p>" in refused, refused
+    ref = tc.RunRef(id=f"{workspace}/gatv2/{run.name}", label=f"gatv2/{run.name}", path=run,
+                    workspace=workspace, latest=False)
+    monkeypatch.setattr(tc, "_newest_checkpoint", lambda _run: checkpoint)
+    for head in (tc.run_head_html(ref, {}, operator=True, snapshot=None, live=True),
+                 tc.run_head_html(ref, {}, operator=True, snapshot={"checkpoint": str(checkpoint)})):
+        assert f"<code>{r.e(inside)}</code>" in head, head
+    for page in (refused, head):
+        assert str(root) not in page and OUTSIDE_PATH not in page
+    # A path outside the root is never shown, in the line or the reason.
+    outside = tmp_path / "elsewhere" / f"{workspace}/last.pt"
+    elsewhere = tc._check_html({"ok": False, "parent": str(outside),
+                                "reason": f"{outside} does not exist."}, tc.CONTINUE_FROM_PATH)
+    assert str(tmp_path) not in elsewhere and elsewhere.count(OUTSIDE_PATH) == 2, elsewhere
 
 
 def test_a_listed_parent_whose_bytes_changed_since_it_was_listed_is_refused(checkpoints):
