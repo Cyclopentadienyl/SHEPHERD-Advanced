@@ -12,8 +12,8 @@ its one record per checkpoint: no order ranks a model by a test score.
 **One list, one Load.** The page places the research preset of the shared list
 (`ctx.create_model_list("research")`, `src/webui/components/model_list.py`): the
 workspace select (its options are the names; the chosen workspace's dataset
-identity is said once, under it, by the shared renderer, `workspace_line_html`),
-the table (each row its run by the one run words and how far it trained,
+identity is said once, under it, by the shared list's line,
+`model_list.workspace_line_html`), the table (each row its run by the one run words and how far it trained,
 its model fingerprint's 12 hex digits only, the dataset only as an exception
 mark where it is not the workspace's current one, `renderers.dataset_exception`,
 the Trainer's validation figure, the recorded tests' state),
@@ -1297,24 +1297,6 @@ def options_html(data: Mapping[str, Any], refused: Optional[str] = None) -> str:
             f'first: {r.e(r.short_reason(refused, 240))}</div>')
 
 
-def workspace_line_html(listing: Mapping[str, Any]) -> str:
-    """Under the workspace select: the chosen workspace's dataset identity
-    without its name (the shared renderer, `dataset_identity_html`: the dataset
-    fingerprint with the digits that tell the listed fingerprints apart,
-    "synthetic", the record's state), said once here: the select's option is
-    the name (`renderers.workspace_choices`). Nothing for a read-only request
-    (no workspace is chosen there)."""
-    if listing.get("refused"):
-        return ""
-    rows = listing.get("workspaces") or []
-    row = next((w for w in rows if w.get("name") == listing.get("workspace")), None)
-    if row is None:
-        return ""
-    digits = r.distinguishing_digits(w.get("dataset_fingerprint") for w in rows)
-    return (f'<div class="shep-mp-wsline">'
-            f'{r.dataset_identity_html(row, digits=digits, name=False)}</div>')
-
-
 def _served_line(listing: Mapping[str, Any]) -> str:
     """What is served for diagnosis, as the listing's status read says it; "not
     read yet" before any read (the page as built, before its first listing),
@@ -1715,7 +1697,7 @@ def create_models_page(ctx: Any) -> None:
             gr.update(value=ctl["order"], interactive=not data.get("readonly")),
             options_html(data, view.get("refused")),
             left_header_html(listing, data, condition),
-            workspace_line_html(listing),
+            ml.workspace_line_html(listing),
             *detail_updates(listing, data, selected, ctl, seg_value),
         )
 
@@ -1858,7 +1840,6 @@ PAGE_CSS = f"""
 {_PAGE} #shep-models-research-workspace input, {_PAGE} #shep-mp-task input {{
   padding-right: 24px !important;
 }}
-{_PAGE} .shep-mp-wsline {{ display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; font-size: 14px; color: var(--shep-text-2); }}
 {_PAGE} #shep-mp-controls {{ grid-area: ctl; gap: 8px !important; }}
 {_PAGE} #shep-models-research-count {{ grid-area: count; font-size: 14px; color: var(--shep-text-2); }}
 {_PAGE} {_LIST} > .shep-model-main > .shep-model-body {{

@@ -65,10 +65,12 @@ scrolls.
   phenotypes · Paths (in-page segments) for a disease; a gene's or a reference
   patient's values as one key-value list (no segment: no path is discovered).
 - **Two drawers**, one open at a time: the identity drawer ("Model in use |
-  This result") over the details column, and "Change model…" (the clinical
-  preset of the shared model list and its Load, with a Task control: All
-  tasks, Disease, Gene, Patients-like-me) over the candidates and the
-  details. A request D8 refuses gets Change model… disabled with the reason;
+  This result") over the details column, and "Load for inference" (opened by
+  the card's "Load a model…" or "Change model…": the clinical preset of the
+  shared model list and its Load, with a Task control: All tasks, Disease,
+  Gene, Patients-like-me, and the chosen workspace's identity once under its
+  select, `model_list.workspace_line_html`; each run named once, by its
+  heading) over the candidates and the details. A request D8 refuses gets Change model… disabled with the reason;
   the list is never shown to it.
 
 **Architecture note.** The diagnosis itself goes through the shared API over
@@ -2440,11 +2442,10 @@ def diagnose(phenotype_text: str, patient_id: str, top_k: Any, explanations: boo
     view = view if isinstance(view, Mapping) else {}
     hpo_ids = _parse_hpo_ids(phenotype_text)
     if not hpo_ids:
-        out = _no_result_outputs((
+        return _no_result_outputs(
             '<p class="shep-dx-warn"><b>No valid HPO terms found.</b> Enter HPO ids like '
             '<code>HP:0001250</code> — one per line, or comma/space-separated; names are '
-            'optional.</p>'))
-        return out
+            'optional.</p>')
     task = card.served_task(state.get("status"))
     genes = _parse_gene_list(genes_text) if task == "gene" else None
     if task == "gene" and not genes:
@@ -2810,7 +2811,7 @@ def create_diagnosis_tab(ctx: Any) -> None:
     is shown, on the shell's slow timer while it is shown, after a diagnosis
     and after a model change; its help and the fields' go behind the shared
     ⓘ."""
-    from src.webui.components.model_list import MODEL_LIST_JS
+    from src.webui.components.model_list import MODEL_LIST_JS, workspace_line_html
     from src.webui.shell import plain_html
 
     ctx.help.fields(FIELD_HELP)
@@ -2939,8 +2940,10 @@ def create_diagnosis_tab(ctx: Any) -> None:
         with gr.Column(visible=False, elem_id="shep-dx-change",
                        elem_classes=["shep-panel", "shep-dx-drawer"], min_width=0) as change_drawer:
             with gr.Row(elem_classes=["shep-dx-drawer-hd"], elem_id="shep-dx-change-hd"):
-                plain_html('<h2>Change model</h2><span class="shep-dx-drawer-note">operator '
-                           'controls · one model is served to every session</span>',
+                # Load for inference: the one drawer for a first load and a
+                # change alike (the card's "Load a model…" / "Change model…").
+                plain_html('<h2>Load for inference</h2><span class="shep-dx-drawer-note">'
+                           'operator controls · one model is served to every session</span>',
                            elem_id="shep-dx-change-title")
                 change_close = plain_html(_close_html("change-model drawer"),
                                           elem_id="shep-dx-change-close", js_on_load=MODEL_LIST_JS)
@@ -2959,6 +2962,10 @@ def create_diagnosis_tab(ctx: Any) -> None:
                         f'<button type="button" class="shep-dx-link" data-key="models">'
                         f'{COMPARE_LINK}</button>', elem_id="shep-dx-compare",
                         js_on_load=MODEL_LIST_JS)
+                    # The chosen workspace's identity, once, under the select,
+                    # as Training, Fine-tune, Models and Test say theirs (the
+                    # shared list's line, `model_list.workspace_line_html`).
+                    links["wsline"] = plain_html("", elem_id="shep-dx-change-ws")
                     return links["compare"]
 
                 def _foot() -> Any:
@@ -3154,6 +3161,10 @@ def create_diagnosis_tab(ctx: Any) -> None:
     card_body.click(_to_research, inputs=None, outputs=ctx.nav_outputs, show_progress="hidden")
     links["compare"].click(_to_models, inputs=None, outputs=ctx.nav_outputs,
                            show_progress="hidden")
+
+    # The workspace line follows the list's listing, whichever event read it.
+    handle.listing.change(workspace_line_html, inputs=[handle.listing],
+                          outputs=[links["wsline"]], show_progress="hidden")
 
     # The drawer's Task control: the shared list redraws on its view's change.
     links["task"].input(task_view, inputs=[links["task"]], outputs=[handle.view],
@@ -3391,6 +3402,8 @@ PAGE_CSS = f"""
 {_TAB} .shep-dx-ref code {{ font-family: var(--shep-mono); }}
 {_TAB} .shep-dx-task-box {{ gap: 0 !important; }}
 {_TAB} #shep-dx-change-task {{ flex: 0 0 auto !important; width: auto !important; }}
+{_TAB} #shep-dx-change-ws {{ flex: 1 1 100% !important; margin-top: -4px; }}
+{_TAB} #shep-dx-change-ws:not(:has(.shep-ws-line)) {{ display: none !important; }}
 {_TAB} .shep-dx-kind {{ margin: 0 0 8px; font-size: 14px; color: var(--shep-text-2); }}
 {_TAB} .shep-dx-tbl tbody tr[data-key] {{ cursor: pointer; }}
 {_TAB} .shep-dx-tbl tbody tr.shep-on td.shep-dx-dis {{ color: var(--shep-accent-text); font-weight: 600; }}

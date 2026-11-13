@@ -28,9 +28,14 @@ file is (`renderers.model_kind_text`: "Disease", "Base", "Disease · frozen
 graph backbone", "Record not readable" …), under every view and order:
 
 - ``clinical`` (the drawer): rows (`renderers.model_row_html`), "In use now"
-  pinned on top, the latest 4 runs, then "Show older runs"; **models
-  finetuned for a task only** (``Preset.rows``; README §5, "a base offers no
-  diagnosis"), whatever view the page, or a direct call, gives;
+  pinned on top (its whole name line), the latest 4 runs, each under a
+  heading naming it by the one run words (`renderers.run_words`), its rows
+  then saying what each file is and how far it trained (`file_line`), so a
+  run is said once; then "Show older runs"; **models finetuned for a task
+  only** (``Preset.rows``; README §5, "a base offers no diagnosis"),
+  whatever view the page, or a direct call, gives; the chosen workspace's
+  identity once under the select (`workspace_line_html`), as Models says
+  it;
 - ``research`` (Models): a table (`renderers.model_table_row_html`: model,
   its fingerprint's 12 hex digits, the dataset only where it is not the
   workspace's current one, the Trainer's validation figure, recorded tests),
@@ -333,6 +338,16 @@ def checkpoint_words(item: Mapping[str, Any], *, best: bool = False) -> str:
     its selection, what it holds and its model fingerprint are the chosen
     file's details."""
     return r.fit_option(*_checkpoint_parts(item, best))
+
+
+def file_line(item: Mapping[str, Any], *, best: bool = False) -> str:
+    """**A listed file under a heading that names its run** (the clinical
+    list's rows): what the file is (`checkpoint_words`' first part: "Latest
+    save", "Best pooled MRR", "Top-k save", else its name) and how far it
+    trained (`renderers.epoch_words`) after a comma, as `model_name_line`
+    says a file after its run: "Latest save, 6 epochs completed". The run is
+    the heading's, said once."""
+    return f"{_checkpoint_parts(item, best)[0]}, {r.epoch_words(item)}"
 
 
 def checkpoint_choices(parents: Mapping[str, Any], keys: Sequence[str]) -> List[Tuple[str, str]]:
@@ -733,6 +748,7 @@ def list_html(listing: Mapping[str, Any], selected: Optional[str], preset: Prese
 
     pinned = [i for i in items if is_served(i)][:1] if preset.pin_in_use else []
     groups = _groups(items, view)
+    named_by_run = False
     if groups is not None:
         sections = groups
         hidden = 0
@@ -743,21 +759,27 @@ def list_html(listing: Mapping[str, Any], selected: Optional[str], preset: Prese
         if preset.layout == "table":
             sections = [("", [i for _, run_items in shown for i in run_items])]
         else:
-            sections = []
-            for run, run_items in shown:
-                started = r.run_started(run_items[0].get("run"))
-                sections.append((f"Run {run}" + (f" · started {started}" if started else ""),
-                                 run_items))
+            # Each run's heading names it by the one run words, whole (its
+            # name first, then its architecture and start); its rows then say
+            # only what each file is and how far it trained (`file_line`), so
+            # the run is said once per group.
+            sections = [("Run " + r.run_words(items_[0].get("architecture"),
+                                              items_[0].get("run"), fit=False), items_)
+                        for _run, items_ in shown]
+            named_by_run = True
 
     if preset.layout == "table":
         return _table_html(sections, pinned, listing, selected, preset, workspaces, digits,
                            served, cells, column, hidden)
 
-    def row(item: Mapping[str, Any], *, in_use: bool) -> str:
+    best = r.best_saves({item_key(i): i for i in items}) if named_by_run else set()
+
+    def row(item: Mapping[str, Any], *, in_use: bool, in_run: bool = False) -> str:
         key = item_key(item)
         html_ = r.model_row_html(item, workspaces, recorded=_recorded(listing, key),
                                  in_use=in_use, selected=key == selected, digits=digits,
-                                 key=key, in_use_label=preset.in_use_label)
+                                 key=key, in_use_label=preset.in_use_label,
+                                 name=file_line(item, best=key in best) if in_run else None)
         # The row leads with what its file is (the drawer lists every task's
         # models together, and its name line does not say the task).
         html_ = html_.replace('<span class="shep-row-main">', f'{_kind_line(item, "span")}'
@@ -789,7 +811,7 @@ def list_html(listing: Mapping[str, Any], selected: Optional[str], preset: Prese
                                f'model fingerprint {r.e(r.short_hex(served, digits))} — in use, '
                                'pinned above</div>')
                 continue
-            entries.append(row(item, in_use=not pinned and is_served(item)))
+            entries.append(row(item, in_use=not pinned and is_served(item), in_run=named_by_run))
         heading = f'<div class="shep-list-hd"><b>{r.e(title)}</b></div>' if title else ""
         parts.append(group(heading, title or "Checkpoints", entries))
     if hidden > 0:
@@ -956,6 +978,27 @@ def facts_html(listing: Mapping[str, Any], key: Any) -> str:
     title = (f'<div class="shep-facts-title"><b>{r.e(facts.name_line)}</b> '
              f'{r.chip("selected", "neutral")}</div>')
     return title + r.model_facts_html(facts)
+
+
+def workspace_line_html(listing: Mapping[str, Any]) -> str:
+    """**The chosen workspace's identity, once, under the list's workspace
+    select**, on every page that places the shared list (Diagnosis' Change
+    model drawer, Models), as Training, Fine-tune and Test say theirs: the
+    one dataset identity renderer (`renderers.dataset_identity_html`, its
+    name left out, since the select's option is the name,
+    `renderers.workspace_choices`: the dataset fingerprint with the digits
+    that tell the listed fingerprints apart, "synthetic", the record's
+    state). Nothing for a request D8 refuses (no workspace is chosen there)
+    or a workspace the listing does not hold."""
+    if listing.get("refused"):
+        return ""
+    rows = listing.get("workspaces") or []
+    row = next((w for w in rows if w.get("name") == listing.get("workspace")), None)
+    if row is None:
+        return ""
+    digits = r.distinguishing_digits(w.get("dataset_fingerprint") for w in rows)
+    return (f'<div class="shep-ws-line">'
+            f'{r.dataset_identity_html(row, digits=digits, name=False)}</div>')
 
 
 def note_html(view: Any) -> str:
@@ -1864,6 +1907,7 @@ __all__ = [
     "create_model_list",
     "facts_html",
     "family_views",
+    "file_line",
     "find_item",
     "finish_load",
     "item_key",
@@ -1889,4 +1933,5 @@ __all__ = [
     "start_wait_js",
     "task_filter",
     "view_for_listing",
+    "workspace_line_html",
 ]

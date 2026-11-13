@@ -1033,11 +1033,12 @@ def is_synthetic_training(fingerprint: Any, workspaces: Sequence[Any]) -> bool:
 def model_row_html(item: Any, workspaces: Sequence[Any], *,
                    recorded: Optional[RecordedTests] = None, in_use: bool = False,
                    selected: bool = False, digits: int = SHORT_HEX, key: str = "",
-                   in_use_label: str = "In use") -> str:
-    """One checkpoint as a row of the shared model list: the name line, "model
-    fingerprint" 12 hex, what it was trained on, the synthetic chip and the
-    recorded tests' state. An unreadable checkpoint is greyed: "metadata not
-    readable · cannot be loaded"."""
+                   in_use_label: str = "In use", name: Optional[str] = None) -> str:
+    """One checkpoint as a row of the shared model list: its name (`name`,
+    where a heading above names its run: the file's own words; else the name
+    line, `model_name_line`), "model fingerprint" 12 hex, what it was trained
+    on, the synthetic chip and the recorded tests' state. An unreadable
+    checkpoint is greyed: "metadata not readable · cannot be loaded"."""
     problem = _get(item, "problem")
     unreadable = problem is not None or not is_digest(_get(item, "sha256"))
     classes = ["shep-row"]
@@ -1046,7 +1047,8 @@ def model_row_html(item: Any, workspaces: Sequence[Any], *,
     if unreadable:
         classes.append("shep-row-dis")
     tag = f' {chip(in_use_label, "accent")}' if in_use else ""
-    head = f'<span class="shep-row-main">{e(model_name_line(item))}</span>{tag}'
+    head = (f'<span class="shep-row-main">{e(name if name is not None else model_name_line(item))}'
+            f'</span>{tag}')
     if unreadable:
         why = problem or "its digest was not read"
         body = (f'<span class="shep-row-sub">{e(_get(item, "filename"))} · '

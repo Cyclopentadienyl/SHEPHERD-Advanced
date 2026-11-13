@@ -455,6 +455,24 @@ def test_after_a_stop_the_card_points_back_to_research(monkeypatch):
     assert handler.fn(Event("refresh")) == ctx.no_nav()
 
 
+def test_the_load_drawer_says_the_chosen_workspace_once_by_the_shared_line(monkeypatch):
+    """B4 (b): the drawer's workspace select has the identity line Training,
+    Fine-tune, Models and Test show, the shared list's one line
+    (`model_list.workspace_line_html`), following the listing whichever
+    event read it."""
+    from src.webui.components import model_list as ml
+
+    demo, _ctx = _build_tab(monkeypatch)
+    line = next(b for b in demo.blocks.values()
+                if getattr(b, "elem_id", None) == "shep-dx-change-ws")
+    (follows,) = [fn for fn in demo.fns.values()
+                  if fn.fn is ml.workspace_line_html and line in fn.outputs]
+    assert [t[1] for t in follows.targets] == ["change"]
+    title = next(b for b in demo.blocks.values()
+                 if getattr(b, "elem_id", None) == "shep-dx-change-title")
+    assert "<h2>Load for inference</h2>" in title.value
+
+
 def test_the_card_is_read_on_load_when_shown_after_a_load_and_on_the_timer(monkeypatch):
     demo, ctx = _build_tab(monkeypatch)
     refreshes = _named(demo, "_card_refresh")

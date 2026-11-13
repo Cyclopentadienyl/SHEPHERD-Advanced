@@ -213,6 +213,19 @@ def test_an_operator_lists_the_serving_workspace_with_in_use_pinned(root, servin
     assert html[first_row:].startswith('class="shep-row"') or "epoch 5" in html[first_row:first_row + 400]
     assert html.count('shep-tag-accent">In use<') == 1
     assert "in use, pinned above" in html
+    # Each run is named once, by its heading in the one run words (B4,
+    # BACKLOG 72's record of B3); its rows say what each file is and how far
+    # it trained (`file_line`), the pinned row its whole name line.
+    from src.webui.components import renderers as r
+
+    headings = re.findall(r'<div class="shep-list-hd"><b>(Run [^<]*)</b></div>', html)
+    mains = re.findall(r'<span class="shep-row-main">([^<]*)</span>', html)
+    runs = {r.run_words(i["architecture"], i["run"], fit=False) for i in listing["items"]}
+    assert headings and {h.removeprefix("Run ") for h in headings} <= runs, headings
+    pinned, *in_runs = mains
+    assert any(words in pinned for words in runs)              # the pinned row: whole
+    assert not [m for m in in_runs if any(words in m for words in runs)], in_runs
+    assert "model-12.pt, recorded epoch 12" in in_runs and "model-12.pt · " not in "".join(mains)
     # the clinical preset: models finetuned for a task only (a base offers no
     # diagnosis; refused and unreadable files are never run), the latest four
     # runs, then the rest on request
@@ -1449,7 +1462,9 @@ def test_a_direct_call_through_gradios_api_meets_the_same_check(root, serving, m
     _state, _selected, workspace, count, rows = listed[:5]
     assert workspace["value"] == "demo"
     assert "5 checkpoints (of 6 in 5 runs)" in count and "listed" not in count
-    assert "2026-10-18 09:12, recorded epoch 12" in rows
+    # The run named once, by its heading (B4), its file by what it is.
+    assert "<b>Run disease · GATv2 2026-10-18 09:12</b>" in rows
+    assert "model-12.pt, recorded epoch 12" in rows
     assert handle.load_button is not None and handle.refresh["fn"] is refresh.fn
 
 

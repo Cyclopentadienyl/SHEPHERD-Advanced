@@ -1703,7 +1703,7 @@ def test_the_page_is_read_when_shown_and_shapes_the_shared_list(world, monkeypat
     assert views and views[0]["column"] == mp.LINEAGE_COLUMN
     assert by_output[id(by_id["shep-mp-order"])]["interactive"] is True
     assert by_output[id(stale)] is False                   # read now: nothing is stale
-    assert by_output[id(by_id["shep-mp-wsline"])] == mp.workspace_line_html(listing)
+    assert by_output[id(by_id["shep-mp-wsline"])] == mp.ml.workspace_line_html(listing)
     # Shown while a Load runs: read now, and again once the Load has finished.
     out = opened.fn("demo", False, None, None, None, mp.NEWEST, None, mp.RECORDS, "loading",
                     operator_request(monkeypatch))
@@ -1717,13 +1717,15 @@ def test_the_workspace_line_shows_the_dataset_identity_under_the_select(world, m
 
     listing, _data = _read(world, monkeypatch)
     row = next(w for w in listing["workspaces"] if w["name"] == "demo")
-    html = mp.workspace_line_html(listing)
-    assert html == (f'<div class="shep-mp-wsline">'
+    # The shared list's one line (B4: Diagnosis' drawer says it too).
+    html = mp.ml.workspace_line_html(listing)
+    assert html == (f'<div class="shep-ws-line">'
                     f'{dataset_identity_html(row, name=False)}</div>')
     assert row["dataset_fingerprint"][:12] in html and "synthetic" in html
     assert "shep-ds-name" not in html                          # the select names it
-    assert mp.workspace_line_html({**listing, "workspace": "gone"}) == ""
-    assert mp.workspace_line_html({**listing, "refused": True}) == ""
+    assert mp.ml.workspace_line_html({**listing, "workspace": "gone"}) == ""
+    assert mp.ml.workspace_line_html({**listing, "refused": True}) == ""
+    assert not hasattr(mp, "workspace_line_html")
 
 
 def _sync_states(demo):
@@ -1908,7 +1910,7 @@ def test_the_page_registers_its_help_and_every_i_it_draws(world, monkeypatch):
     detail = mp.detail_parts(listing, data, _key(world, "model-05.pt"), ctl)
     rendered = ("".join(detail[k] for k in ("top", "records", "usage"))
                 + mp.options_html(data, view.get("refused"))
-                + "".join(view["cells"].values()) + mp.workspace_line_html(listing))
+                + "".join(view["cells"].values()) + mp.ml.workspace_line_html(listing))
     assert 'data-help="models-contested"' in rendered         # the contested record's ⓘ
     from src.webui.components.renderers import RENDERER_HELP
 
@@ -2238,7 +2240,7 @@ def test_one_screen_says_each_fingerprint_and_the_dataset_once(world, monkeypatc
     view = mp.shape(listing, data, NEWEST_CTL)
     table = ml.list_html(listing, key, ml.PRESETS["research"], view=view)
     detail = mp.detail_parts(listing, data, key, NEWEST_CTL)
-    screen = _visible_words(mp.workspace_line_html(listing) + table + detail["header"]
+    screen = _visible_words(mp.ml.workspace_line_html(listing) + table + detail["header"]
                             + detail["top"])
     sha = item["sha256"]
     dataset = next(w["dataset_fingerprint"] for w in listing["workspaces"]

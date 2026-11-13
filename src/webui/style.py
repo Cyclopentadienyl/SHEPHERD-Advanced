@@ -385,6 +385,8 @@ button.shep-row {
 .shep-row-on { background: var(--shep-accent-50) !important; box-shadow: inset 4px 0 0 var(--shep-accent); }
 .shep-row-dis { background: var(--shep-grey-50); color: var(--shep-muted); cursor: default; }
 .shep-row-main { font-weight: 600; }
+/* The shared list's line under its workspace select (`model_list.workspace_line_html`). */
+.shep-ws-line { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; font-size: 14px; color: var(--shep-text-2); }
 .shep-row-sub { font-size: 14px; color: var(--shep-text-2); }
 .shep-row-more { align-items: center; color: var(--shep-accent-text); font-weight: 500; }
 .shep-mtbl-wrap { margin: 0; }
