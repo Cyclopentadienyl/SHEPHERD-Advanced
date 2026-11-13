@@ -469,6 +469,27 @@ def _named(name: str, problem: str, label: str) -> str:
     return label + problem[len(name):] if problem.startswith(name) else f"{label}: {problem}"
 
 
+#: A sentence of a check that names a setting first by its record name, at
+#: the text's start or after another sentence's end (a check's sentences are
+#: joined by one space): "min_lr_ratio must be more than 0 when …".
+_LEADING_SETTING = re.compile(
+    r"(?:^|(?<=\. ))(" + "|".join(sorted(map(re.escape, r.SETTING_LABELS), key=len,
+                                         reverse=True)) + r")(?= )")
+
+
+def labelled_problem(problem: Any) -> str:
+    """**A check's sentences, each that names a setting first led by the
+    setting's label instead** (`r.SETTING_LABELS`, as `_named` names a
+    value's problem: "Final learning-rate ratio must be more than 0 when …"),
+    as the form names its field; any other as it is. The base form's rules
+    across settings and a Branch check's refusal of the settings it sends
+    (the job runner's ``invalid_settings``, its sentences joined) are said by
+    it, so one rule reads alike on the page (the B1c review). Plain text: the
+    caller escapes it."""
+    return _LEADING_SETTING.sub(lambda match: r.SETTING_LABELS[match.group(1)],
+                                str(problem or ""))
+
+
 def setting_problem(name: str, value: Any, reference: Any) -> Tuple[Any, Optional[str]]:
     """A field's value parsed (`parse_value`) and checked by its field spec
     (`value_problem`, the one check the start makes again): ``(value,
@@ -731,9 +752,8 @@ def _base_reading(values: Mapping[str, Any], touched: Collection[str]
     references, _ = base_references()
     settings, problems = sent_settings({name: values[name] for name in BASE_FIELDS},
                                        touched, references)
-    for problem in cross_field_problems(new_run_values("base", None, settings), settings):
-        subject = problem.split(" ", 1)[0]
-        problems.append(_named(subject, problem, r.SETTING_LABELS.get(subject, subject)))
+    problems.extend(labelled_problem(problem) for problem in
+                    cross_field_problems(new_run_values("base", None, settings), settings))
     spec, problem = edited_spec(values, touched)
     if problem:
         problems.append(problem)
@@ -3248,8 +3268,12 @@ def _check_html(preview: Mapping[str, Any], source: str, *, differs: bool = Fals
     if not preview.get("ok"):
         # The service's reason names the file it read ("/srv/…/x.pt does not
         # exist."): shown only as the shared redaction gives it, as the
-        # path line above is (D7).
+        # path line above is (D7). A refusal of the settings sent names each
+        # setting it leads with by its field's label, as the base form does
+        # (`labelled_problem`).
         reason = page_words(redact(preview.get("reason"), workspaces_root()[0]))
+        if preview.get("invalid_settings"):
+            reason = labelled_problem(reason)
         head = r.status_mark("error", f"Cannot {verb}.")
         return (f'<div class="shep-check shep-check-red"><div class="shep-check-h">{head}</div>'
                 f'{"".join(lines)}<p>{r.e(reason)}</p></div>')

@@ -1007,8 +1007,11 @@ def test_an_invalid_or_off_list_branch_edit_is_refused_with_the_plans_words(chec
     the plan makes (`value_problem`), named by the field's label; a setting
     the parent's stage does not read, and a rule across settings the edit
     breaks, are refused by the job runner's preview in the plan's own words
-    (`run_plan.stated_problem`, `cross_field_problems`). Nothing starts, and
-    the fields keep the edit to fix. The reason beside
+    (`run_plan.stated_problem`, `cross_field_problems`), each setting it
+    leads with named by its label, as the base form names it
+    (`labelled_problem`; the B1c review: the rule read "min_lr_ratio must
+    be …" here and "Final learning-rate ratio must be …" on the base form).
+    Nothing starts, and the fields keep the edit to fix. The reason beside
     Start branch says the check refused a setting edited, and what to do,
     never that the checkpoint cannot be branched (the B1c review)."""
     from src.config.training_fields import cross_field_problems, value_problem
@@ -1025,13 +1028,21 @@ def test_an_invalid_or_off_list_branch_edit_is_refused_with_the_plans_words(chec
     assert all(update == gr_update() for update in bad[-1 - len(tc.BRANCH_FIELDS):])
     off = _check_all(c, tc.CONTINUE_FROM_LIST, c["paused_key"], "", operation=tc.BRANCH,
                      candidate_sample_size=5)
+    unread = stated_problem("base", (None,), {"candidate_sample_size": 5})
+    assert unread.startswith("candidate_sample_size is not a setting")
     assert "Cannot branch." in off[0]
-    assert r.e(stated_problem("base", (None,), {"candidate_sample_size": 5})) in off[0], off[0]
+    assert r.e("Candidate sample size" + unread[len("candidate_sample_size"):]) in off[0], off[0]
     rule = _check_all(c, tc.CONTINUE_FROM_LIST, c["paused_key"], "", operation=tc.BRANCH,
                       scheduler_type="onecycle", min_lr_ratio=0.0)
     settings = {"scheduler_type": "onecycle", "min_lr_ratio": 0.0}
     [problem] = cross_field_problems(new_run_values("base", None, settings), settings)
-    assert "Cannot branch." in rule[0] and r.e(problem) in rule[0], rule[0]
+    base_words = tc.base_start_settings(
+        {**dict(zip(tc.base_form_keys(), tc.base_form_defaults(), strict=True)), **settings},
+        list(settings))[1]
+    assert base_words == [tc.labelled_problem(problem)]              # one rule, one reading
+    assert base_words[0].startswith("Final learning-rate ratio must be more than 0 when")
+    assert "Cannot branch." in rule[0] and r.e(base_words[0]) in rule[0], rule[0]
+    assert "min_lr_ratio must" not in rule[0]
     for edit in ({"learning_rate": -1.0}, {"candidate_sample_size": 5},
                  {"scheduler_type": "onecycle", "min_lr_ratio": 0.0}):
         said, text, _extend, _rate, mode, *_rest = _resume_all(
