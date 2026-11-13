@@ -247,6 +247,26 @@ def _option_rules(choices, values):
     assert [value for _label, value in choices] == list(values)
 
 
+def test_an_option_is_never_longer_than_the_rule_and_never_lengthens_its_token():
+    """`fit_option`, under every select (the skill's §8): at most
+    `OPTION_CHARS` characters and one separator whatever the lengths of its
+    two parts and its mark; the distinguishing token is cut in its middle and
+    never made longer than it was ("a" never reads "a…a"); past the room that
+    leaves it at least a few characters, what follows it is cut in its middle
+    too, never kept whole while the token alone is cut away."""
+    assert r.fit_option("ab", "x" * 37) == "ab · " + "x" * 17 + "…" + "x" * 17
+    assert r.fit_option("a", "EXPERIMENTS_FROM_OCTOBER 2026-10-24 17:39").startswith("a · ")
+    assert r.fit_option("a" * 30, "x" * 80).startswith("aa…aa · ")
+    assert r.middle_cut("abc", 1) == "…" and r.middle_cut("abc", 3) == "abc"
+    for what in ("", "a", "ab", "w" * 12, "w" * 70):
+        for rest in (None, "r", "r" * 20, "r" * 37, "r" * 70):
+            for mark in ("", " (2)", " (13)"):
+                option = r.fit_option(what, rest, mark)
+                assert len(option) <= r.OPTION_CHARS and option.count(" · ") <= 1, option
+                token = option.split(" · ")[0].removesuffix(mark)
+                assert len(token) <= len(what) or token == what, option
+
+
 def test_the_workspace_options_are_one_label_for_every_page():
     """Diagnosis' drawer, Models, Test, Fine-tune and Training's run bar label
     a listed workspace the same way, its name first (the skill's §8): a

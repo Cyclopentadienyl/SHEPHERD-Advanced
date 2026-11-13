@@ -271,16 +271,21 @@ def item_run_key(item: Mapping[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 #: A run directory's own id, after its name (`propose_run_dir`'s 6 hex).
 _RUN_ID = re.compile(r"_([0-9a-f]{6})$")
+#: The longest architecture label a run's option carries (`_run_parts`): a
+#: layout directory is listed whatever its name (K8-7b), and the label every
+#: run of it shares never crowds out the name or time that tells runs apart.
+_ARCHITECTURE_CHARS = 8
 
 
 def _run_parts(architecture: Any, run: Any, level: int = 0) -> Tuple[str, Optional[str]]:
     """A run as an option's two parts, the distinguishing token first: its
     name when it was given one, else its start time, else (a directory not
-    named by its start time) its whole name; then the architecture, and the
-    start time after a name. `level` tells alike runs apart
+    named by its start time) its whole name; then the architecture (past
+    `_ARCHITECTURE_CHARS` shortened in its middle; whole in the details), and
+    the start time after a name. `level` tells alike runs apart
     (`renderers.distinct_names`): 1 gives the time to the second, 2 adds the
     run's own 6-hex id."""
-    arch = r.architecture_label(architecture)
+    arch = r.middle_cut(r.architecture_label(architecture), _ARCHITECTURE_CHARS)
     started = r.run_started(run, seconds=level >= 1)
     if not started:
         return str(run), arch
@@ -300,8 +305,8 @@ def run_words(architecture: Any, run: Any) -> str:
     is its start time and architecture, "2026-10-24 16:38 · GATv2"; a
     directory not named by its start time is its whole name, "my-old-run ·
     HGT". One separator, at most `renderers.OPTION_CHARS` characters (a long
-    name shortened in its middle); the run's directory is in the chosen
-    item's details."""
+    name or architecture shortened in its middle); the run's directory is in
+    the chosen item's details."""
     return r.fit_option(*_run_parts(architecture, run))
 
 

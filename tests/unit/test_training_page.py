@@ -2025,7 +2025,24 @@ def test_a_run_reads_as_its_name_architecture_and_start_time():
     assert ml.run_words("gatv2", "20261028-100000_run_abcdef") == "2026-10-28 10:00 · GATv2"
     long = ml.run_words("gatv2", "20261028-100000_smoke-ft-patients_like_me_abcdef")
     assert long.endswith(" · GATv2 2026-10-28 10:00") and long.startswith("smoke") and "…" in long
-    _option_rules([long])
+    # A layout directory is listed whatever its name (K8-7b): its label, the
+    # part every run of it shares, is what gets shortened; the name and the
+    # start time that tell its runs apart stay, never made longer.
+    layout = "experiments_from_october"
+    assert ml.run_words(layout, "20261024-173909_a_c1d9cf") == "a · EXP…OBER 2026-10-24 17:39"
+    assert ml.run_words(layout, "20261024-173909_run_c1d9cf") == "2026-10-24 17:39 · EXP…OBER"
+    named = ml.run_words(layout, "20261024-173909_a_very_long_run_name_for_october_c1d9cf")
+    assert named.startswith("a_ver") and named.endswith(" · EXP…OBER 2026-10-24 17:39"), named
+    twins = {f"{layout}_v2/20261024-173909_a_c1d9c{i}/last.pt":
+             {**_item("demo", run=f"20261024-173909_a_c1d9c{i}").__dict__,
+              "architecture": f"{layout}_v2", "run_key": f"{layout}_v2/20261024-173909_a_c1d9c{i}"}
+             for i in range(2)}
+    chosen = ml.run_choices(twins)
+    assert [label for label, _key in chosen] == [
+        "a · EXP…R_V2 2026-10-24 17:39:09 c1d9c0", "a · EXP…R_V2 2026-10-24 17:39:09 c1d9c1"]
+    _option_rules([long, named, *(ml.run_words(layout, run) for run in (
+        "20261024-173909_a_c1d9cf", "20261024-173909_run_c1d9cf", "my-very-long-old-run-dir-x"))],
+        chosen, [item["run_key"] for item in twins.values()])
 
 
 def test_the_drawer_lists_runs_then_the_chosen_runs_checkpoints():

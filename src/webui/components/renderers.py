@@ -313,18 +313,37 @@ def fingerprint_html(label: str, digest: Any, *, digits: int = SHORT_HEX, copy: 
 OPTION_CHARS = 40
 
 
+#: The fewest characters an option's distinguishing token keeps before what
+#: follows it is cut too (`fit_option`): two of its start and two of its end
+#: around the ellipsis.
+_WHAT_ROOM = 5
+
+
+def middle_cut(text: str, room: int) -> str:
+    """`text` in at most `room` characters: whole where it fits, else cut in
+    its middle with an ellipsis, so its start and its end stay (where a copy
+    or a version differs: "…copy_b.pt", "…67-v1.pt"). Never longer than
+    `text`."""
+    if len(text) <= room:
+        return text
+    keep = max(room, 1) - 1
+    head = keep // 2
+    return text[:head] + "…" + text[len(text) - (keep - head):]
+
+
 def fit_option(what: str, rest: Optional[str], mark: str = "") -> str:
     """"<what><mark> · <rest>" in at most `OPTION_CHARS` characters with one
     separator: `what` (the distinguishing token: a name, a file's name) is
-    shortened in its middle with an ellipsis, so its start and its end stay
-    (where a copy or a version differs: "…copy_b.pt", "…67-v1.pt"); `rest`
-    is kept whole, so a caller keeps it short."""
-    room = OPTION_CHARS - (len(rest) + 3 if rest else 0) - len(mark)
-    if len(what) > room:
-        keep = max(room - 1, 2)
-        head = keep // 2
-        what = what[:head] + "…" + what[len(what) - (keep - head):]
-    what += mark
+    shortened in its middle (`middle_cut`); `rest` stays whole while `what`
+    keeps at least `_WHAT_ROOM` characters (or all of its own, if fewer), and
+    past that is cut in its middle too, so neither is ever the only part cut
+    and the option never runs past `OPTION_CHARS`."""
+    room = OPTION_CHARS - len(mark)
+    if rest:
+        room -= 3
+        rest = middle_cut(rest, room - min(len(what), _WHAT_ROOM))
+        room -= len(rest)
+    what = middle_cut(what, room) + mark
     return f"{what} · {rest}" if rest else what
 
 
