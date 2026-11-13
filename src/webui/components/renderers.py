@@ -39,6 +39,7 @@ from src.evaluation.caveats import (
     EXPOSURE_CAVEAT,
     GENERATED_EXPOSURE_NOTE,
     R10_LABEL_TEXT,
+    RELATION_DISPLAY_NAMES,
     R10_STATE_TEXT,
     R10_UNVERIFIABLE_REASON,
     TASK_NAMES,
@@ -183,6 +184,9 @@ def status_mark(kind: str, words: Any, *, words_html: bool = False,
     return f'<span class="{classes}">{mark}<span class="shep-st-w">{text}</span></span>'
 
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
+_HEX12 = re.compile(r"^[0-9a-f]{12}$")
+#: The title of a digest known by its first 12 hex digits alone (`fingerprint_value`).
+PREFIX_TITLE = "the first 12 hex digits, as the report's run id names them"
 _RUN_TIME = re.compile(r"^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})")
 #: A report store run id (`cohort_registry.create_report_dir`, its
 #: `RUN_ID_PATTERN`): its UTC time, then the checkpoint's 12 hex digits and the
@@ -689,25 +693,6 @@ def architecture_label(architecture: Any) -> str:
     return _ARCHITECTURE_NAMES.get(key, key.upper()) or "MODEL"
 
 
-def run_label(architecture: Any, run: Any) -> str:
-    """"GATv2 · run 2026-10-17 09:15" from a run directory named by its start
-    time; the run's own name when it is not."""
-    started = run_started(run)
-    return f"{architecture_label(architecture)} · run {started if started else run}"
-
-
-def run_label_html(architecture: Any, run: Any) -> str:
-    """`run_label` as HTML for a narrow cell: the run's start time ("run
-    2026-10-17 09:15") in one no-wrap span, so a line breaks after "GAT ·" and
-    never inside the date; a run not named by its start time is its escaped
-    name, free to wrap."""
-    started = run_started(run)
-    if not started:
-        return e(run_label(architecture, run))
-    return (f'{e(architecture_label(architecture))} · '
-            f'<span class="shep-nowrap">run {e(started)}</span>')
-
-
 def run_started(run: Any, *, seconds: bool = False) -> Optional[str]:
     """"2026-10-17 09:15" (with `seconds`, "2026-10-17 09:15:00") from a run
     directory named by its start time, else None."""
@@ -721,7 +706,7 @@ def run_started(run: Any, *, seconds: bool = False) -> Optional[str]:
 def run_suffix(run: Any) -> Optional[str]:
     """"run_3fa9c1" from a run directory named "20261017-091500_run_3fa9c1"
     (what follows its start time); None when it is not named by its start time
-    (`run_label` then names it whole)."""
+    (`run_words` then names it whole)."""
     text = str(run or "")
     match = _RUN_TIME.match(text)
     if not match:
@@ -736,6 +721,63 @@ def run_name(run: Any) -> Optional[str]:
     time and its 6-hex id; None when it is not named by its start time."""
     rest = run_suffix(run)
     return re.sub(r"_[0-9a-f]{6}$", "", rest) if rest else None
+
+
+#: A run directory's own id, after its name (`propose_run_dir`'s 6 hex).
+_RUN_ID = re.compile(r"_([0-9a-f]{6})$")
+#: The longest architecture label a run's option carries (`run_parts`): a
+#: layout directory is listed whatever its name (K8-7b), and the label every
+#: run of it shares never crowds out the name or time that tells runs apart.
+_ARCHITECTURE_CHARS = 8
+
+
+def run_parts(architecture: Any, run: Any, level: int = 0, *,
+              fit: bool = True) -> Tuple[str, Optional[str]]:
+    """A run as an option's two parts, the distinguishing token first: its
+    name when it was given one, else its start time, else (a directory not
+    named by its start time) its whole name; then the architecture (for an
+    option, `fit`, past `_ARCHITECTURE_CHARS` shortened in its middle; whole
+    in the details), and the start time after a name. An `architecture` of
+    None is a run a record names by its directory alone (a parent's, a
+    family's root run): nothing is said in its place. `level` tells alike
+    runs apart (`distinct_names`; `model_list.run_options`): 1 gives the time
+    to the second, 2 adds the run's own 6-hex id."""
+    label = "" if architecture is None else architecture_label(architecture)
+    arch = middle_cut(label, _ARCHITECTURE_CHARS) if fit else label
+    started = run_started(run, seconds=level >= 1)
+    if not started:
+        return str(run), arch or None
+    found = _RUN_ID.search(str(run))
+    rid = f" {found.group(1)}" if level >= 2 and found else ""
+    name = run_name(run)
+    if name and name != "run":
+        return name, f"{arch} {started}{rid}".strip()
+    return started, f"{arch}{rid}".strip() or None
+
+
+def run_words(architecture: Any, run: Any, *, fit: bool = True) -> str:
+    """**A run as a person names it, its distinguishing token first**, on
+    every page that names a run (the Run selects, the Fine-tune base, the
+    Training run view, a model's title and details on Models, Test and the
+    Diagnosis card (`model_name_line`), a model's parent and family on Models
+    and in Results): its name, then the architecture and its start time,
+    "ui-live-stop-02 · GATv2 2026-10-24 17:39" from
+    ``gatv2/20261024-173909_ui-live-stop-02_c1d9cf``; an unnamed run ("run")
+    is its start time and architecture, "2026-10-24 16:38 · GATv2"; a
+    directory not named by its start time is its whole name, "my-old-run ·
+    HGT". A run a record names without its layout (`architecture` None: a
+    parent's or a family's root run) is the same words without one,
+    "ui-live-stop-02 · 2026-10-24 17:39", "2026-10-24 16:38". One separator.
+
+    Two lengths of the one rule: as an option or a title (`fit`, the
+    default), at most `OPTION_CHARS` characters, a long name or architecture
+    shortened in its middle, the run's directory in the chosen item's
+    details; in those details and a sentence naming the run (`fit` False),
+    the same parts whole, never an option's cut (the skill's §5, §8)."""
+    what, rest = run_parts(architecture, run, fit=fit)
+    if fit:
+        return fit_option(what, rest)
+    return f"{what} · {rest}" if rest else what
 
 
 def run_time(run_id: Any, *, seconds: bool = False) -> Optional[str]:
@@ -773,9 +815,9 @@ def record_kind_text(item: Any) -> str:
     (K6 decision 6), from its model record (`listed_record`): "Base", the task's
     name (`caveats.TASK_NAMES`: "Disease", "Gene", "Patients-like-me"),
     "Record not readable" for a record this build refused (a file without a
-    model spec among them, its reason the record's), or "Record not read" for
-    a file whose record was never read (skill §6: missing states keep their
-    own words)."""
+    model spec among them, its reason the record's), or "Record unknown" for
+    a file whose record was never read (its file could not be read: the
+    skill's §6 Unknown, a state with its own word, never a dash)."""
     record = _get(item, "record")
     if record == "model":
         if _get(item, "learning_stage") == "base":
@@ -784,7 +826,7 @@ def record_kind_text(item: Any) -> str:
         if task in TASK_NAMES:
             return TASK_NAMES[task]
     elif record is None:
-        return "Record not read"
+        return f"Record {UNKNOWN.lower()}"
     return "Record not readable"
 
 
@@ -862,9 +904,17 @@ def epoch_words(item: Any) -> str:
     return f"epochs {NOT_RECORDED.lower()}"
 
 
-def model_name_line(item: Any) -> str:
-    """"GATv2 · run 2026-10-17 09:15 · 6 epochs completed" (`epoch_words`)."""
-    return f"{run_label(_get(item, 'architecture'), _get(item, 'run'))} · {epoch_words(item)}"
+def model_name_line(item: Any, *, fit: bool = True) -> str:
+    """**A listed file by its run and how far it trained**, the one line every
+    page titles a model by (the shared list's rows, Models' detail header,
+    the Diagnosis card, the load plan's From and To) and its details say
+    whole (Model Facts, the Test page's model): its run by the one run words
+    (`run_words`; `fit` for a title or a row, whole in details), then its
+    progress (`epoch_words`) after a comma, so the line keeps the run words'
+    one " · ": "ui-live-stop-02 · GATv2 2026-10-24 17:39, 6 epochs
+    completed"."""
+    run = run_words(_get(item, "architecture"), _get(item, "run"), fit=fit)
+    return f"{run}, {epoch_words(item)}"
 
 
 # ---------------------------------------------------------------------------
@@ -1039,29 +1089,84 @@ def validation_cell(validation: Any, *, read: bool = True) -> str:
 
 
 #: The research table's fixed columns (Models): an extra column a page fills
-#: goes before the recorded tests.
-MODEL_TABLE_COLUMNS = ("Model", "Fingerprints: model · dataset trained on",
-                       "Validation (Trainer)", "Recorded results")
+#: goes before the recorded tests. One or two words each (the skill's §8).
+MODEL_TABLE_COLUMNS = ("Model", "Fingerprint", "Validation (Trainer)", "Recorded results")
+
+
+def dataset_exception(item: Any) -> str:
+    """**A listed file's dataset, said only where it is not the workspace's
+    current one** (the skill's §1.2: the workspace's dataset is said once,
+    under its select, and a row trained on it says nothing of it): "▲ Another
+    dataset" where the file records a dataset the workspace no longer holds
+    (`trained_on_this_dataset` False), with "synthetic" where a listed
+    synthetic workspace holds it; "○ Dataset not recorded" where the file
+    records none; "○ Dataset cannot be verified" where it records one the
+    workspace's own fingerprint could not be compared with. "" for a file
+    trained on the workspace's current dataset. Which dataset it is, its
+    fingerprint and the workspaces holding it are the file's details
+    (`trained_on_html`)."""
+    if _get(item, "trained_on_this_dataset") is True:
+        return ""
+    if not is_digest(_get(item, "dataset_fingerprint")):
+        return status_mark("neutral", f"Dataset {NOT_RECORDED.lower()}")
+    if _get(item, "trained_on_this_dataset") is False:
+        return status_mark("warn", "Another dataset")
+    return status_mark("neutral", f"Dataset {CANNOT_BE_VERIFIED.lower()}")
+
+
+#: **A listed file trained on the chosen workspace's current dataset**, by
+#: its relation (`dataset_relation_html`): that dataset is said once, under
+#: the workspace's select.
+CURRENT_DATASET = "the selected workspace's current dataset"
+
+
+def dataset_relation_html(item: Any, workspaces: Sequence[Any]) -> str:
+    """**A listed file's dataset in its details**, by its relation to the
+    chosen workspace (the Models detail's Dataset row, the Test page's
+    chosen model): `CURRENT_DATASET` where it is that workspace's current
+    dataset; elsewhere its exception (`dataset_exception`) and which dataset
+    it is (`trained_on_html`: the listed workspaces holding it, its
+    fingerprint), with "synthetic" where a listed synthetic workspace holds
+    it."""
+    exception = dataset_exception(item)
+    if not exception:
+        return e(CURRENT_DATASET)
+    fingerprint = _get(item, "dataset_fingerprint")
+    return (f"{exception} {trained_on_html(fingerprint, workspaces)}"
+            + (" " + chip("synthetic", "amber")
+               if is_synthetic_training(fingerprint, workspaces) else ""))
+
+
+def warning_html(head: str, detail: str) -> str:
+    """**A warning's line**: its heading as a condition to watch, by the
+    shared mark (`status_mark`, ▲ with the words: the skill's §6), then what
+    it means; both escaped. Model Facts' Warnings and the Models detail."""
+    return (f'<p class="shep-warn"><b>{status_mark("warn", head)}</b> '
+            f'<span>{e(detail)}</span></p>')
 
 
 def model_table_row_html(item: Any, workspaces: Sequence[Any], *,
                          recorded: Optional[RecordedTests] = None, in_use: bool = False,
                          selected: bool = False, digits: int = SHORT_HEX, key: str = "",
                          in_use_label: str = "In use", extra: Optional[str] = None) -> str:
-    """One checkpoint as a row of the research table (Models): the name line
-    and run, "model <12 hex>" over "dataset <listed workspace> · <12 hex>" (or
-    "· matches no listed workspace"), the synthetic chip, the Trainer's
-    validation figure, an optional cell the page fills (`extra`, HTML it built
-    with these renderers) and the recorded tests' state. An unreadable
-    checkpoint is greyed: "metadata not readable · cannot be loaded"."""
+    """One checkpoint as a row of the research table (Models): its run by the
+    one run words (`run_words`, an option's length) over how far it trained
+    (`epoch_words`); its model fingerprint's 12 hex digits (`fingerprint_value`,
+    the whole value its title; its Copy is in the file's details), and under
+    them its dataset only where it is not the workspace's current one
+    (`dataset_exception`, with "synthetic" where a listed synthetic workspace
+    holds it); the Trainer's validation figure, an optional cell the page
+    fills (`extra`, HTML it built with these renderers) and the recorded
+    tests' state. An unreadable checkpoint is greyed: "metadata not readable ·
+    cannot be loaded", its recorded tests Unknown (its digest, by which they
+    are found, was not read)."""
     problem = _get(item, "problem")
     unreadable = problem is not None or not is_digest(_get(item, "sha256"))
     classes = [c for c, on in (("shep-on", selected), ("shep-row-dis", unreadable)) if on]
     tag = f' {chip(in_use_label, "accent")}' if in_use else ""
-    suffix = run_suffix(_get(item, "run"))
-    name = run_label_html(_get(item, "architecture"), _get(item, "run"))
-    model = (f'<div class="shep-w600">{name}</div><div class="shep-sub">{e(epoch_words(item))}'
-             f'{" · " + e(suffix) if suffix else ""}</div>{tag}')
+    name = e(run_words(_get(item, "architecture"), _get(item, "run")))
+    model = (f'<div class="shep-w600">{name}</div><div class="shep-sub">'
+             f'{e(epoch_words(item))}</div>{tag}')
     # A plain table's selected row is `aria-current`, never `aria-selected`
     # (the skill's §8).
     attrs = (f'class="{" ".join(classes)}" data-key="{e(key)}" tabindex="0"'
@@ -1072,24 +1177,15 @@ def model_table_row_html(item: Any, workspaces: Sequence[Any], *,
         why = problem or "its digest was not read"
         return (f'<tr {attrs}><td>{model}</td><td colspan="2"><span class="shep-sub">'
                 f'{e(_get(item, "filename"))} · <span title="{e(why)}">metadata not readable · '
-                f'cannot be loaded</span></span></td>{extra_cell}<td>—</td></tr>')
-    fingerprint = _get(item, "dataset_fingerprint")
-    names = trained_on(fingerprint, workspaces)
-    if not is_digest(fingerprint):
-        dataset = 'dataset <span class="shep-muted">not recorded</span>'
-    elif names:
-        dataset = (f'dataset {", ".join(f"<b>{e(n)}</b>" for n in names)} · '
-                   f'<code class="shep-fpv" title="{e(fingerprint)}">{e(fingerprint[:digits])}</code>')
-    else:
-        dataset = (f'dataset <code class="shep-fpv" title="{e(fingerprint)}">'
-                   f'{e(fingerprint[:digits])}</code> · '
-                   '<span class="shep-amber-t">matches no listed workspace</span>')
-    if is_synthetic_training(fingerprint, workspaces):
-        dataset += " " + chip("synthetic", "amber")
-    sha = _get(item, "sha256")
-    fingerprints = (f'<div>model <code class="shep-fpv" title="{e(sha)}">{e(sha[:digits])}</code>'
-                    f'</div><div class="shep-sub">{dataset}</div>')
-    return (f'<tr {attrs}><td>{model}</td><td>{fingerprints}</td>'
+                f'cannot be loaded</span></span></td>{extra_cell}'
+                f'<td>{status_mark("neutral", UNKNOWN)}</td></tr>')
+    exception = dataset_exception(item)
+    if exception and is_synthetic_training(_get(item, "dataset_fingerprint"), workspaces):
+        exception += " " + chip("synthetic", "amber")
+    dataset = f'<div class="shep-sub">{exception}</div>' if exception else ""
+    fingerprint = fingerprint_value(_get(item, "sha256"), what="model fingerprint",
+                                    digits=digits, copy=False)
+    return (f'<tr {attrs}><td>{model}</td><td>{fingerprint}{dataset}</td>'
             f'<td class="shep-num">{validation_cell(_get(item, "validation"), read=record_read(item))}'
             f'</td>{extra_cell}'
             f'<td>{e(recorded_tests_cell(recorded))}</td></tr>')
@@ -1306,7 +1402,13 @@ def fingerprint_value(digest: Any, *, what: str = "fingerprint", digits: int = S
     icon Copy named for `what` (none with `copy` False, where the same digest
     is copyable once elsewhere, or in its own object's details); when there
     is none, `missing`, the state's own word ("not recorded" where the record
-    holds none, "not read" where nothing was read: the skill's §6)."""
+    holds none, "not read" where nothing was read: the skill's §6). A value
+    known by its first 12 digits alone (a report's run id names its model so)
+    is those digits, titled so, with no Copy."""
+    if isinstance(digest, str) and _HEX12.match(digest):
+        # Only its first 12 digits are known (a report's run id names its
+        # model so): shown as they are, with nothing whole to copy.
+        return f'<code class="shep-fpv" title="{e(PREFIX_TITLE)}">{e(digest)}</code>'
     if not is_digest(digest):
         return f'<span class="shep-muted">{e(missing)}</span>'
     shown, cls = (digest, "shep-full") if full else (digest[:digits], "shep-fpv")
@@ -1634,6 +1736,35 @@ R10_EVIDENCE_WORDS = {
 }
 
 
+#: **A relation's state in words** (`measurement.RELATION_STATES`: what a
+#: registered result's relations hold): verified a filled mark, not applicable
+#: a hollow one (the skill's §6).
+RELATION_STATE_MARKS = {"verified": ("ok", "Verified"), "not_applicable": ("neutral", NOT_APPLICABLE)}
+
+
+def relation_rows(relations: Any) -> List[Tuple[str, str]]:
+    """**The one rendering of a record's relations** (the Test page's result,
+    Models' recorded results): one ``(label, escaped HTML)`` row each, its
+    name visible whole ("R3 model trained on this graph", "Data version bound
+    to this graph": `caveats.RELATION_DISPLAY_NAMES`, in that order, then any
+    other by its recorded name), its state a status mark with its word
+    (`RELATION_STATE_MARKS`; any other state as recorded). A record that
+    holds none reads one "Relations" row, "Not recorded"."""
+    if not isinstance(relations, Mapping):
+        return [("Relations", status_mark("neutral", NOT_RECORDED))]
+    names = [*(n for n in RELATION_DISPLAY_NAMES if n in relations),
+             *(n for n in relations if n not in RELATION_DISPLAY_NAMES)]
+    rows = []
+    for name in names:
+        display = RELATION_DISPLAY_NAMES.get(name, str(name))
+        label = (f"{name} {display}" if re.fullmatch(r"R\d+", str(name))
+                 else display[:1].upper() + display[1:])
+        state = relations[name]
+        mark = RELATION_STATE_MARKS.get(state) if isinstance(state, str) else None
+        rows.append((label, status_mark(*mark) if mark else e(state)))
+    return rows
+
+
 def r10_state_text(label: str, part: Any, evidence: Any) -> str:
     """One R10 label's state in the caveats' words, as text: a count with its
     denominator only where the state has one; *unverifiable* is a reason
@@ -1827,9 +1958,7 @@ def model_facts_html(facts: ModelFacts, *, open_section: str = "identity") -> st
          e(recorded_tests_text(facts.recorded).removeprefix("Recorded results: "))),
     ], helps={"Validation": ("validation-trainer", "Validation (Trainer)")}) + facts.evidence_more
     if facts.warnings:
-        warnings = "".join(
-            f'<p class="shep-warn"><b>⚠ {e(h)}</b> <span>{e(d)}</span></p>'
-            for h, d in facts.warnings)
+        warnings = "".join(warning_html(h, d) for h, d in facts.warnings)
     else:
         warnings = '<p class="shep-muted">No warnings.</p>'
     return (
@@ -1847,6 +1976,7 @@ def model_facts_html(facts: ModelFacts, *, open_section: str = "identity") -> st
 
 __all__ = [
     "CHECK",
+    "CURRENT_DATASET",
     "FACTS_MODEL_FP",
     "FACTS_TRAINED_FP",
     "FROZEN_BACKBONE_WORDS",
@@ -1860,6 +1990,7 @@ __all__ = [
     "NO_READABLE_SPLIT_MANIFEST",
     "NO_SPLIT_MANIFEST",
     "R10_EVIDENCE_WORDS",
+    "RELATION_STATE_MARKS",
     "RENDERER_HELP",
     "RecordedTests",
     "OPTION_CHARS",
@@ -1881,6 +2012,8 @@ __all__ = [
     "chip",
     "configuration_text",
     "data_kind_lines",
+    "dataset_exception",
+    "dataset_relation_html",
     "dataset_identity_html",
     "distinct_names",
     "distinguishing_digits",
@@ -1913,16 +2046,17 @@ __all__ = [
     "record_kind_text",
     "record_read",
     "record_verified",
+    "relation_rows",
     "recorded_count_text",
     "recorded_tests_cell",
     "recorded_tests_text",
     "resources_html",
-    "run_label",
-    "run_label_html",
     "run_name",
+    "run_parts",
     "run_started",
     "run_suffix",
     "run_time",
+    "run_words",
     "selection_value",
     "selection_words",
     "setting_words",
@@ -1936,6 +2070,7 @@ __all__ = [
     "validation_text",
     "validation_figure",
     "validation_value",
+    "warning_html",
     "word_groups",
     "workspace_choices",
 ]

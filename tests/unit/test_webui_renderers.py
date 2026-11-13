@@ -121,14 +121,25 @@ def test_a_name_with_markup_is_escaped():
 
 # --------------------------------------------------------------------------- the model row
 def test_the_name_line_comes_from_the_run_id_and_the_epoch():
-    """How far it trained in the one wording (`epoch_words`): the epochs its
-    progress record says it completed; an older file without one, the epoch
-    index it records, never a count made from it."""
+    """A file's title is its run by the one run words (`run_words`, what the
+    Run selects say) and how far it trained in the one wording
+    (`epoch_words`): the epochs its progress record says it completed; an
+    older file without one, the epoch index it records, never a count made
+    from it. One " · " (the run words'), the progress after a comma."""
     assert r.model_name_line({**checkpoint(), "completed_epochs": 6}) == (
-        "GATv2 · run 2026-10-17 09:15 · 6 epochs completed")
-    assert r.model_name_line(checkpoint()) == "GATv2 · run 2026-10-17 09:15 · recorded epoch 5"
+        "2026-10-17 09:15 · GATv2, 6 epochs completed")
+    assert r.model_name_line(checkpoint()) == "2026-10-17 09:15 · GATv2, recorded epoch 5"
     assert r.model_name_line(checkpoint(epoch=None, run="odd")) == (
-        "GATv2 · run odd · epochs not recorded")
+        "odd · GATv2, epochs not recorded")
+    named = checkpoint(run="20261024-173909_ui-live-stop-02_c1d9cf")
+    assert r.model_name_line(named) == "ui-live-stop-02 · GATv2 2026-10-24 17:39, recorded epoch 5"
+    assert r.run_words("gatv2", named["run"]) in r.model_name_line(named)
+    # A title fits an option's length; the details say a long name whole.
+    long = checkpoint(run="20261028-100000_smoke-ft-patients_like_me-very-long-name_abcdef")
+    assert "…" in r.model_name_line(long)
+    assert "smoke-ft-patients_like_me-very-long-name" in r.model_name_line(long, fit=False)
+    for line in (r.model_name_line(named), r.model_name_line(long, fit=False)):
+        assert line.count(" · ") == 1, line
 
 
 def test_trained_on_every_listed_workspace_with_the_full_digest():
@@ -349,28 +360,58 @@ def test_the_research_table_row_has_its_columns_and_escapes():
     assert chosen.startswith('<tr class="shep-on" data-key="k" tabindex="0" aria-current="true">')
     cells = re.findall(r"<td[^>]*>(.*?)</td>", row)
     assert len(cells) == 5
-    assert 'GATv2 · <span class="shep-nowrap">run 2026-10-17 09:15</span>' in cells[0]
-    assert "recorded epoch 5 · &lt;b&gt;x" in cells[0]
+    # The run by the one run words (what the Run selects say), then how far it trained.
+    assert '<div class="shep-w600">&lt;b&gt;x · GATv2 2026-10-17 09:15</div>' in cells[0]
+    assert '<div class="shep-sub">recorded epoch 5</div>' in cells[0]
     assert "In use (Diagnosis)" in cells[0] and "<b>x" not in row
-    assert f'model <code class="shep-fpv" title="{SHA}">{SHA[:12]}</code>' in cells[1]
-    assert "dataset <b>demo</b>" in cells[1] and "synthetic" in cells[1]
+    # The fingerprint column: the model's 12 hex only, by the one digest value;
+    # a row trained on the workspace's current dataset says nothing of it (the
+    # workspace line says that dataset once).
+    assert cells[1] == r.fingerprint_value(SHA, what="model fingerprint", copy=False)
+    assert cells[1] == f'<code class="shep-fpv" title="{SHA}">{SHA[:12]}</code>'
+    assert "dataset" not in cells[1].lower() and "synthetic" not in cells[1]
     assert cells[2] == '0.3180<div class="shep-sub">Validation pooled MRR (Trainer)</div>'
     assert cells[3] == "<span>regime</span>"
     assert cells[4] == "3 · runs differ for 1"
-    unmatched = r.model_table_row_html(checkpoint(fingerprint=FP_B), [workspace()])
-    assert "matches no listed workspace" in unmatched and unmatched.count("<td") == 4
+    assert r.MODEL_TABLE_COLUMNS == ("Model", "Fingerprint", "Validation (Trainer)",
+                                     "Recorded results")
+    # A dataset that is not the workspace's current one is the row's exception mark.
+    other = r.model_table_row_html({**checkpoint(fingerprint=FP_B),
+                                    "trained_on_this_dataset": False}, [workspace()])
+    assert "Another dataset" in other and "▲" in other and other.count("<td") == 4
+    assert FP_B[:12] not in other
+    synthetic = r.model_table_row_html({**checkpoint(fingerprint=FP_B),
+                                        "trained_on_this_dataset": False},
+                                       [workspace(), workspace("other", FP_B)])
+    assert "Another dataset" in synthetic and "synthetic" in synthetic
+    unrecorded = r.model_table_row_html({**checkpoint(fingerprint=None),
+                                         "trained_on_this_dataset": None}, [workspace()])
+    assert "Dataset not recorded" in unrecorded and "○" in unrecorded
+    unverified = r.model_table_row_html({**checkpoint(), "trained_on_this_dataset": None},
+                                        [workspace()])
+    assert "Dataset cannot be verified" in unverified
     broken = r.model_table_row_html(checkpoint(sha=None, problem="bad"), [])
     assert 'aria-disabled="true"' in broken and "metadata not readable · cannot be loaded" in broken
+    # Its recorded tests are found by its digest, which was not read: Unknown, never a dash.
+    assert broken.endswith(f"<td>{r.status_mark('neutral', r.UNKNOWN)}</td></tr>")
 
 
-def test_a_runs_start_time_is_kept_on_one_line_in_the_table():
-    """Models at 1440x900 broke "GAT · run 2026-10-" / "17 09:15": the start
-    time is one no-wrap span, so a line breaks after "GAT ·" only; a run not
-    named by its start time is its escaped name, free to wrap."""
-    assert r.run_label_html("gat", "20261017-091500_run_3fa9c1") == (
-        'GAT · <span class="shep-nowrap">run 2026-10-17 09:15</span>')
-    assert r.run_label_html(None, "my<run>") == "MODEL · run my&lt;run&gt;"
-    assert r.run_label("gat", "20261017-091500_run_3fa9c1") == "GAT · run 2026-10-17 09:15"
+def test_one_run_reads_one_way_on_every_page():
+    """The ops-wiring round's B3 (BACKLOG 72): one run words for every page
+    (`run_words`), so a run is never "GATv2 · run …" in one place and its
+    name in another; the run-label helpers retired with it."""
+    from src.webui.components import model_list as ml
+
+    run = "20261024-173909_ui-live-stop-02_c1d9cf"
+    item = {**checkpoint(run=run), "completed_epochs": 6}
+    words = r.run_words("gatv2", run)
+    assert words == "ui-live-stop-02 · GATv2 2026-10-24 17:39"
+    assert r.model_name_line(item).startswith(words)                       # titles, rows
+    assert f'<div class="shep-w600">{words}</div>' in r.model_table_row_html(item, [])  # Models
+    assert words in r.model_row_html(item, [])                             # the drawer's rows
+    assert ml.run_choices({"k": item})[0][0] == words                       # the Run selects
+    assert not hasattr(r, "run_label") and not hasattr(r, "run_label_html")
+    assert not hasattr(ml, "run_words") and not hasattr(ml, "_run_parts")
 
 
 def test_an_identifier_is_kept_whole_with_its_value_as_title_and_is_escaped():
@@ -473,9 +514,10 @@ def test_a_listed_checkpoint_leads_with_its_kind_word():
         "Disease", "Gene", "Patients-like-me"]
     # A file without a model spec is a refused record, in the refused word.
     assert r.record_kind_text(_record("refused")) == "Record not readable"
-    # A record never read keeps its own word (skill §6), apart from a refused one.
+    # A record never read (its file was not read) is Unknown, the skill's §6
+    # word for a fact asked for and not read, apart from a refused one.
     assert r.record_kind_text({**checkpoint(problem="torn"), "record": None}) == (
-        "Record not read")
+        "Record unknown")
 
 
 #: A record's weight transfer, by arm (`train_model._transfer_parent_weights`'s
@@ -536,7 +578,7 @@ def test_the_model_kind_text_fits_an_option_for_every_task_and_keeps_other_words
     assert r.model_kind_text(_record(stage="base", task=None)) == "Base"
     assert r.model_kind_text(_record("refused")) == "Record not readable"
     assert r.model_kind_text({**checkpoint(problem="torn"), "record": None}) == (
-        "Record not read")
+        "Record unknown")
 
 
 def test_a_task_metric_is_named_by_its_task_never_as_a_mode():
@@ -570,10 +612,9 @@ def test_a_task_metric_is_named_by_its_task_never_as_a_mode():
 
 
 def test_a_bundle_run_reads_gatv2_and_a_shepherdgnn_run_its_upper_case():
-    assert r.run_label("gatv2", "20261017-091500_run_3fa9c1") == "GATv2 · run 2026-10-17 09:15"
-    assert r.run_label_html("gatv2", "20261017-091500_run_3fa9c1") == (
-        'GATv2 · <span class="shep-nowrap">run 2026-10-17 09:15</span>')
-    assert r.model_name_line(_record()) == "GATv2 · run 2026-10-17 09:15 · recorded epoch 5"
+    assert r.run_words("gatv2", "20261017-091500_run_3fa9c1") == "2026-10-17 09:15 · GATv2"
+    assert r.run_words("gat", "20261017-091500_run_3fa9c1") == "2026-10-17 09:15 · GAT"
+    assert r.model_name_line(_record()) == "2026-10-17 09:15 · GATv2, recorded epoch 5"
     assert (r.architecture_label("gat"), r.architecture_label("hgt"),
             r.architecture_label(None)) == ("GAT", "HGT", "MODEL")
 
@@ -1063,7 +1104,10 @@ def test_every_details_list_escapes_keeps_words_says_no_repr_and_draws_one_box()
         "parent details": tc.parent_details_html(item),
         "check": tc._check_html(preview, tc.CONTINUE_FROM_PATH),
         "base summary": ft.base_summary_html(item),
-        "Test model": tp.model_html(page, models, tp.item_key(item)),
+        # A model whose dataset is not shown as the workspace's current one
+        # names the listed workspace that holds it.
+        "Test model": tp.model_html(page, {**models, "items": [
+            {**item, "trained_on_this_dataset": None}]}, tp.item_key(item)),
         "Test version": tp.version_html(page, "v1", None),
         "Models identity": mp.identity_html(item, {"parent_state": "elsewhere",
                                                    "parent_workspace": WORLDLY}),

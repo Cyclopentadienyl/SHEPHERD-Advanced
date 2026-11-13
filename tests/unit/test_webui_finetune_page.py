@@ -160,7 +160,7 @@ def test_the_chosen_bases_summary_says_what_start_sends_escaped(root, operator):
         assert words in html, words
     # The run is named by its directory, a fact the Run select above does not
     # give; never its option's words again (the WebUI skill §1.2).
-    assert ml.run_words("gatv2", BASE_RUN) not in html
+    assert r.run_words("gatv2", BASE_RUN) not in html
     assert fp._on_base_chosen(None, parents) == ""
     odd = fp.base_summary_html({**item, "filename": TAG, "trained_on_this_dataset": False})
     assert "<img" not in odd and "&lt;img" in odd and "another dataset" in odd

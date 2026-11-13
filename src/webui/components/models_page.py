@@ -1119,14 +1119,14 @@ def parent_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]]) -> st
     The parent's fingerprint is the one digest value
     (`renderers.fingerprint_value`, its whole value its title; its Copy is in
     the parent's own details), its run named whole by the one run words
-    (`model_list.run_words`, `fit` False: the record names its directory
+    (`renderers.run_words`, `fit` False: the record names its directory
     alone, so no layout), where it is, after a semicolon, so the row keeps
     the words' one " · "."""
     sha = item.get("parent_sha256")
     if not r.is_digest(sha):
         return "none: a new run"
     where = (f'{r.fingerprint_value(sha, what="parent fingerprint", copy=False)} of run '
-             f'{r.e(ml.run_words(None, item.get("parent_run"), fit=False))}')
+             f'{r.e(r.run_words(None, item.get("parent_run"), fit=False))}')
     state = (row or {}).get("parent_state")
     if state == "listed":
         return f"{where}; listed here"
@@ -1223,7 +1223,7 @@ def family_view(listing: Mapping[str, Any], task: str) -> Optional[Dict[str, Any
     for group in groups.values():
         kind, name = group.pop("group")
         count = len(group["keys"])
-        group["title"] = (FAMILY_TITLE.format(run=ml.run_words(None, name), count=count,
+        group["title"] = (FAMILY_TITLE.format(run=r.run_words(None, name), count=count,
                                               s="s" if count != 1 else "")
                           if kind == "family" else name)
     ordered = list(groups.values())

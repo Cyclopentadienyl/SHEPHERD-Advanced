@@ -2105,9 +2105,14 @@ def test_the_run_checkpoint_helpers_have_one_home():
                  "parents_update", "on_run_chosen", "runs_of", "OPTION_CHARS", "_fit",
                  "_choices", "_progress_words", "validation_words", "_TOP_K_FILE"):
         assert not hasattr(tc, name) and not hasattr(ft, name), name
-    for name in ("run_words", "checkpoint_words", "run_choices", "checkpoint_choices",
-                 "parents_update", "on_run_chosen", "runs_of"):
+    for name in ("checkpoint_words", "run_choices", "checkpoint_choices",
+                 "parents_update", "on_run_chosen", "chosen_in_run", "runs_of"):
         assert callable(getattr(ml, name)), name
+    # A run's words are the shared renderers' (every page names a run by
+    # them, a file's title too: `renderers.model_name_line`), not a page's.
+    from src.webui.components import renderers as r
+
+    assert callable(r.run_words) and not hasattr(ml, "run_words")
 
 
 def test_a_checkpoints_option_says_what_it_is_and_how_far_it_trained():
@@ -2155,22 +2160,25 @@ def test_a_checkpoints_option_says_what_it_is_and_how_far_it_trained():
 def test_a_run_reads_as_its_name_architecture_and_start_time():
     """The distinguishing token first (the WebUI skill §8): a run's name, then
     its architecture and start time; an unnamed run's start time, never the
-    "GATv2 · " every run shares; one separator."""
-    assert ml.run_words("gat", "20261024-173909_ui-live-stop-02_c1d9cf") == \
+    "GATv2 · " every run shares; one separator (`renderers.run_words`, every
+    page's)."""
+    from src.webui.components import renderers as r
+
+    assert r.run_words("gat", "20261024-173909_ui-live-stop-02_c1d9cf") == \
         "ui-live-stop-02 · GAT 2026-10-24 17:39"
-    assert ml.run_words("gat", "20261024-163856_run_559817") == "2026-10-24 16:38 · GAT"
-    assert ml.run_words("hgt", "my-old-run") == "my-old-run · HGT"
+    assert r.run_words("gat", "20261024-163856_run_559817") == "2026-10-24 16:38 · GAT"
+    assert r.run_words("hgt", "my-old-run") == "my-old-run · HGT"
     # A model bundle's run reads as Models reads it (`renderers.architecture_label`).
-    assert ml.run_words("gatv2", "20261028-100000_run_abcdef") == "2026-10-28 10:00 · GATv2"
-    long = ml.run_words("gatv2", "20261028-100000_smoke-ft-patients_like_me_abcdef")
+    assert r.run_words("gatv2", "20261028-100000_run_abcdef") == "2026-10-28 10:00 · GATv2"
+    long = r.run_words("gatv2", "20261028-100000_smoke-ft-patients_like_me_abcdef")
     assert long.endswith(" · GATv2 2026-10-28 10:00") and long.startswith("smoke") and "…" in long
     # A layout directory is listed whatever its name (K8-7b): its label, the
     # part every run of it shares, is what gets shortened; the name and the
     # start time that tell its runs apart stay, never made longer.
     layout = "experiments_from_october"
-    assert ml.run_words(layout, "20261024-173909_a_c1d9cf") == "a · EXP…OBER 2026-10-24 17:39"
-    assert ml.run_words(layout, "20261024-173909_run_c1d9cf") == "2026-10-24 17:39 · EXP…OBER"
-    named = ml.run_words(layout, "20261024-173909_a_very_long_run_name_for_october_c1d9cf")
+    assert r.run_words(layout, "20261024-173909_a_c1d9cf") == "a · EXP…OBER 2026-10-24 17:39"
+    assert r.run_words(layout, "20261024-173909_run_c1d9cf") == "2026-10-24 17:39 · EXP…OBER"
+    named = r.run_words(layout, "20261024-173909_a_very_long_run_name_for_october_c1d9cf")
     assert named.startswith("a_ver") and named.endswith(" · EXP…OBER 2026-10-24 17:39"), named
     twins = {f"{layout}_v2/20261024-173909_a_c1d9c{i}/last.pt":
              {**_item("demo", run=f"20261024-173909_a_c1d9c{i}").__dict__,
@@ -2179,22 +2187,22 @@ def test_a_run_reads_as_its_name_architecture_and_start_time():
     chosen = ml.run_choices(twins)
     assert [label for label, _key in chosen] == [
         "a · EXP…R_V2 2026-10-24 17:39:09 c1d9c0", "a · EXP…R_V2 2026-10-24 17:39:09 c1d9c1"]
-    _option_rules([long, named, *(ml.run_words(layout, run) for run in (
+    _option_rules([long, named, *(r.run_words(layout, run) for run in (
         "20261024-173909_a_c1d9cf", "20261024-173909_run_c1d9cf", "my-very-long-old-run-dir-x"))],
         chosen, [item["run_key"] for item in twins.values()])
     # A run a record names by its directory alone (a parent's, a family's
     # root run: ops-wiring round B0c, where Models said "run 2026-10-01
     # 00:00" and dropped the name): the same words, with no layout said.
-    assert ml.run_words(None, "20261024-173909_ui-live-stop-02_c1d9cf") == \
+    assert r.run_words(None, "20261024-173909_ui-live-stop-02_c1d9cf") == \
         "ui-live-stop-02 · 2026-10-24 17:39"
-    assert ml.run_words(None, "20261024-163856_run_559817") == "2026-10-24 16:38"
-    assert ml.run_words(None, "my-old-run") == "my-old-run"
+    assert r.run_words(None, "20261024-163856_run_559817") == "2026-10-24 16:38"
+    assert r.run_words(None, "my-old-run") == "my-old-run"
     # The same parts whole where the details name a run (`fit` False: the
     # review of B0c), the architecture too; the option keeps its cut.
-    assert ml.run_words(layout, "20261024-173909_a_very_long_run_name_for_october_c1d9cf",
+    assert r.run_words(layout, "20261024-173909_a_very_long_run_name_for_october_c1d9cf",
                         fit=False) == f"a_very_long_run_name_for_october · {layout.upper()} " \
                                       "2026-10-24 17:39"
-    assert ml.run_words(None, "my-very-long-old-run-directory-name-past-forty",
+    assert r.run_words(None, "my-very-long-old-run-directory-name-past-forty",
                         fit=False) == "my-very-long-old-run-directory-name-past-forty"
     from src.webui.components import models_page
 

@@ -499,7 +499,7 @@ def test_a_queued_refresh_reads_the_recorded_tests_again_without_opening_the_che
 def test_the_normal_card_names_the_model_its_fingerprint_and_its_states(root):
     body = card.body_html(_state(root))
     assert ('<p class="shep-dx-name">Disease task model</p><p class="shep-dx-line shep-dx-sub">'
-            "GATv2 · run 2026-10-17 09:15 · recorded epoch 5</p>") in body
+            "2026-10-17 09:15 · GATv2, recorded epoch 5</p>") in body
     assert f'>{root["shas"]["model-05.pt"][:12]}</code>' in body and "verified</span>" in body
     # A disease model uses no SP table, so it is not missing one.
     assert "synthetic data" in body and "no SP table" not in body
@@ -694,8 +694,8 @@ def test_a_task_model_is_named_by_its_task_once(root, mode, name):
     assert card.served_task(status) == SCORING_MODE_TASKS[mode]
     assert card.served_task({"initialized": False}) is None
     body = card.body_html(_state(root, status=status))
-    assert (f'<p class="shep-dx-name">{name}</p><p class="shep-dx-line shep-dx-sub">GATv2 · '
-            f"run 2026-10-21 09:00 · recorded epoch 5</p>") in body
+    assert (f'<p class="shep-dx-name">{name}</p><p class="shep-dx-line shep-dx-sub">run_bundle '
+            f"· GATv2 2026-10-21 09:00, recorded epoch 5</p>") in body
     assert body.count("task model") == 1 and "Task:" not in body and "GATV2" not in body
     # Not in the served runs: the task still names it, the reason under it.
     lost = card.body_html(_state(root, status=_bundle_status(root, mode, served=False)))
@@ -720,7 +720,7 @@ def test_one_file_reads_the_same_completed_epochs_on_every_page(root):
         status = _bundle_status(root, "disease_task")
         status["checkpoint_meta"] = {**status["checkpoint_meta"], **meta}
         body = card.body_html(_state(root, status=status))
-        line = f"GATv2 · run 2026-10-21 09:00 · {words}"
+        line = f"run_bundle · GATv2 2026-10-21 09:00, {words}"
         assert f'<p class="shep-dx-line shep-dx-sub">{line}</p>' in body
         lost = _bundle_status(root, "disease_task", served=False)
         lost["checkpoint_meta"] = {**lost["checkpoint_meta"], **meta}

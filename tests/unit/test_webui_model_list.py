@@ -407,7 +407,7 @@ def test_load_shows_one_confirmation_from_to_with_the_changed_rows_marked(
     assert f"Reload the pipeline with <code>{new}</code> for every session?" in html
     assert ml.REPLACES_NOTE in html
     assert _changed_rows(html) == ["Model", "Model fingerprint"]
-    assert "GATv2 · run 2026-10-17 09:15 · recorded epoch 5" in html and old in html
+    assert "disease · GATv2 2026-10-17 09:15, recorded epoch 5" in html and old in html
     assert "same dataset" in html and ">same<" in html
     # The task and its scoring mode from the one table, on both sides; the
     # disease task uses no shortest-path table, said as such on both sides.
@@ -520,7 +520,7 @@ def test_a_model_in_use_that_changed_since_is_said_never_reloaded_over(root, ser
     # The From column is read as the confirmation reads it, from the plan's
     # own listing: the served workspace is named, the model and what it was
     # trained on are known, and an unchanged row is not marked.
-    assert step.plan["from"]["model"] == "GATv2 · run 2026-10-18 09:12 · recorded epoch 8"
+    assert step.plan["from"]["model"] == "disease · GATv2 2026-10-18 09:12, recorded epoch 8"
     assert "not a listed workspace" not in step.confirm_html
     assert "not in this workspace's list" not in step.confirm_html
     assert _changed_rows(step.confirm_html) == ["Model", "Model fingerprint"]
@@ -905,8 +905,7 @@ def test_the_research_preset_is_a_table_with_in_use_on_its_own_row(root, serving
     listing = _listing(root, monkeypatch)
     research = ml.list_html(listing, None, ml.PRESETS["research"])
     assert '<table class="shep-tbl shep-mtbl"' in research and "In use now" not in research
-    for column in ("Model", "Fingerprints: model · dataset trained on",
-                   "Validation (Trainer)", "Recorded results"):
+    for column in ("Model", "Fingerprint", "Validation (Trainer)", "Recorded results"):
         assert f">{column}</th>" in research, column
     served_row = next(row for row in research.split("<tr") if "disease_3fa9c1" in row)
     assert "In use (Diagnosis)" in served_row and "0.3500" in served_row
@@ -1123,7 +1122,7 @@ def test_every_row_says_what_its_file_is_in_both_presets(root, serving, monkeypa
             "column": "A page column", "cells": {}}
     table = ml.list_html(listing, None, ml.PRESETS["research"], view=view)
     for name, kind in (("base.pt", "Base"), ("model-07.pt", "Record not readable"),
-                       ("broken.pt", "Record not read"), ("model-03.pt", "Gene")):
+                       ("broken.pt", "Record unknown"), ("model-03.pt", "Gene")):
         row = _row_of(table, name)
         assert f'"><td><div class="shep-sub shep-row-kind">{kind}</div>' in row, (name, row)
 
@@ -1449,7 +1448,7 @@ def test_a_direct_call_through_gradios_api_meets_the_same_check(root, serving, m
     _state, _selected, workspace, count, rows = listed[:5]
     assert workspace["value"] == "demo"
     assert "5 checkpoints (of 6 in 5 runs)" in count and "listed" not in count
-    assert "run 2026-10-18 09:12 · recorded epoch 12" in rows
+    assert "2026-10-18 09:12, recorded epoch 12" in rows
     assert handle.load_button is not None and handle.refresh["fn"] is refresh.fn
 
 

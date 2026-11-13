@@ -571,7 +571,7 @@ def parent_line_html(finetune: Mapping[str, Any]) -> str:
     parent = Path(str(finetune.get("parent") or ""))
     parts = parent.parts
     if len(parts) >= 4 and parts[-2] == "checkpoints":
-        named = (f'{r.e(ml.run_words(parts[-4], parts[-3]))} '
+        named = (f'{r.e(r.run_words(parts[-4], parts[-3]))} '
                  f'<code>{r.e(parent.name)}</code>')
     else:
         named = f"<code>{r.e(parent.name)}</code>"

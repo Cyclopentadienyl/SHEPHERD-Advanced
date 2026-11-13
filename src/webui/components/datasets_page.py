@@ -186,9 +186,8 @@ def table_html(data: Mapping[str, Any], run_bar: Optional[str], selected: Option
                       if when.endswith(" UTC") else r.e(when) if when
                       else '<span class="shep-muted">not recorded</span>')
         sources = r.sources_text(row.get("declared_releases"))
-        fp_cell = (f'<code class="shep-fpv" title="{r.e(fingerprint)}">{r.e(fingerprint[:digits])}'
-                   f'</code> ' + r.copy_button(fingerprint, f"the full dataset fingerprint of {name}",
-                                               icon_only=True)
+        fp_cell = (r.fingerprint_value(fingerprint, what=f"dataset fingerprint of {name}",
+                                       digits=digits)
                    if r.is_digest(fingerprint) else _fingerprint_missing(row))
         on = name == selected
         body.append(

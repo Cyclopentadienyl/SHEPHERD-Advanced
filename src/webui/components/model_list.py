@@ -32,7 +32,9 @@ graph backbone", "Record not readable" …), under every view and order:
   finetuned for a task only** (``Preset.rows``; README §5, "a base offers no
   diagnosis"), whatever view the page, or a direct call, gives;
 - ``research`` (Models): a table (`renderers.model_table_row_html`: model,
-  fingerprints, the Trainer's validation figure, recorded tests), every run,
+  its fingerprint's 12 hex digits, the dataset only where it is not the
+  workspace's current one, the Trainer's validation figure, recorded tests),
+  every run,
   "In use (Diagnosis)" on its own row, not pinned; its listing carries the
   family view too (``listing["family"]``, `family_views`).
 
@@ -111,8 +113,9 @@ status read). When the reload's answer arrives later, it says so ("The reload
 finished after the page stopped waiting.").
 
 **Run → Checkpoint** (`run_choices`, `checkpoint_choices`, `parents_update`,
-`on_run_chosen`): the one pair of cascading selects by which a page chooses a
-listed checkpoint, Training's Continue… and Fine-tune's parent alike; a run's
+`on_run_chosen`, `chosen_in_run`): the one pair of cascading selects by which a
+page chooses a listed checkpoint, Training's Continue…, Fine-tune's parent and
+the Test page's model alike; a run's
 option is the one rule (`run_options`), which Training's run view also names
 its runs by. Each
 option is short (the WebUI skill §8: `renderers.fit_option`, at most 40
@@ -133,7 +136,6 @@ from __future__ import annotations
 
 import contextlib
 import logging
-import re
 from collections import Counter
 from dataclasses import asdict, dataclass
 from datetime import datetime
@@ -271,63 +273,6 @@ def item_run_key(item: Mapping[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 # Run → Checkpoint: the two cascading selects' options
 # ---------------------------------------------------------------------------
-#: A run directory's own id, after its name (`propose_run_dir`'s 6 hex).
-_RUN_ID = re.compile(r"_([0-9a-f]{6})$")
-#: The longest architecture label a run's option carries (`_run_parts`): a
-#: layout directory is listed whatever its name (K8-7b), and the label every
-#: run of it shares never crowds out the name or time that tells runs apart.
-_ARCHITECTURE_CHARS = 8
-
-
-def _run_parts(architecture: Any, run: Any, level: int = 0, *,
-               fit: bool = True) -> Tuple[str, Optional[str]]:
-    """A run as an option's two parts, the distinguishing token first: its
-    name when it was given one, else its start time, else (a directory not
-    named by its start time) its whole name; then the architecture (for an
-    option, `fit`, past `_ARCHITECTURE_CHARS` shortened in its middle; whole
-    in the details), and the start time after a name. An `architecture` of
-    None is a run a record names by its directory alone (a parent's, a
-    family's root run): nothing is said in its place. `level` tells alike
-    runs apart (`renderers.distinct_names`): 1 gives the time to the second,
-    2 adds the run's own 6-hex id."""
-    label = "" if architecture is None else r.architecture_label(architecture)
-    arch = r.middle_cut(label, _ARCHITECTURE_CHARS) if fit else label
-    started = r.run_started(run, seconds=level >= 1)
-    if not started:
-        return str(run), arch or None
-    found = _RUN_ID.search(str(run))
-    rid = f" {found.group(1)}" if level >= 2 and found else ""
-    name = r.run_name(run)
-    if name and name != "run":
-        return name, f"{arch} {started}{rid}".strip()
-    return started, f"{arch}{rid}".strip() or None
-
-
-def run_words(architecture: Any, run: Any, *, fit: bool = True) -> str:
-    """**A run as a person names it, its distinguishing token first**, on
-    every page that names a run by its directory (the Run select, the
-    Fine-tune base, the Training run view, a model's parent and family on
-    Models and in Results): its name, then the architecture and its start
-    time, "ui-live-stop-02 · GATv2 2026-10-24 17:39" from
-    ``gatv2/20261024-173909_ui-live-stop-02_c1d9cf``; an unnamed run ("run")
-    is its start time and architecture, "2026-10-24 16:38 · GATv2"; a
-    directory not named by its start time is its whole name, "my-old-run ·
-    HGT". A run a record names without its layout (`architecture` None: a
-    parent's or a family's root run) is the same words without one,
-    "ui-live-stop-02 · 2026-10-24 17:39", "2026-10-24 16:38". One separator.
-
-    Two lengths of the one rule: as an option or a list's title (`fit`, the
-    default), at most `renderers.OPTION_CHARS` characters, a long name or
-    architecture shortened in its middle, the run's directory in the chosen
-    item's details; in those details and a sentence naming the run (`fit`
-    False: Models' Parent and Family rows, Results' family scope), the same
-    parts whole, never an option's cut (the skill's §5, §8)."""
-    what, rest = _run_parts(architecture, run, fit=fit)
-    if fit:
-        return r.fit_option(what, rest)
-    return f"{what} · {rest}" if rest else what
-
-
 def runs_of(parents: Mapping[str, Any]) -> Dict[str, List[str]]:
     """The listed checkpoints by run, in the list's order (latest run first,
     newest file first): ``{run identity: [key, ...]}`` (`item_run_key`:
@@ -341,12 +286,12 @@ def runs_of(parents: Mapping[str, Any]) -> Dict[str, List[str]]:
 def run_options(runs: Mapping[Any, Tuple[Any, Any]]) -> List[Tuple[str, Any]]:
     """**Runs as a select's options**, in `runs`' order (latest first), from
     ``{value: (architecture, run directory's name)}``: each run's words
-    (`run_words`); runs that would read alike get their start time to the
+    (`renderers.run_words`); runs that would read alike get their start time to the
     second, then their own id (`renderers.distinct_names`), and are numbered
     only where nothing recorded tells them apart. Each value is its key,
     whatever the words: the Run select's run identity (`run_choices`), the
     Training run view's run id."""
-    names = r.distinct_names(runs, lambda parts, level: r.fit_option(*_run_parts(
+    names = r.distinct_names(runs, lambda parts, level: r.fit_option(*r.run_parts(
         parts[0], parts[1], level)))
     return r.fit_options([(names[key], None, key) for key in runs])
 
@@ -423,12 +368,21 @@ def parents_update(parents: Mapping[str, Any], keep: Optional[str] = None) -> Tu
             gr.update(choices=checkpoint_choices(parents, keys), value=value))
 
 
+def chosen_in_run(parents: Mapping[str, Any], run: Any, current: Any) -> Optional[str]:
+    """**The checkpoint a run's choice selects**: `current` while it is one of
+    the run's, else the run's first in the list's order (its latest save);
+    None for a run not listed."""
+    keys = runs_of(parents or {}).get(run or "", [])
+    return current if current in keys else (keys[0] if keys else None)
+
+
 def on_run_chosen(run, parents, current):
     """A run chosen: its checkpoints, the latest save first. The checkpoint
-    chosen stays when it is this run's (opening the drawer sets both)."""
+    chosen stays when it is this run's (opening the drawer sets both;
+    `chosen_in_run`)."""
     keys = runs_of(parents or {}).get(run or "", [])
-    value = current if current in keys else (keys[0] if keys else None)
-    return gr.update(choices=checkpoint_choices(parents or {}, keys), value=value)
+    return gr.update(choices=checkpoint_choices(parents or {}, keys),
+                     value=chosen_in_run(parents, run, current))
 
 
 def recorded_tests(ledgers: Mapping[str, Mapping[str, Any]],

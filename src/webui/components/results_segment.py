@@ -294,7 +294,7 @@ def _criteria(scope: Mapping[str, Any]) -> Dict[str, List[str]]:
 
 def scope_words(scope: Mapping[str, Any]) -> str:
     if scope.get("scope") == FAMILY:
-        return (f"the family from run {ml.run_words(None, scope.get('family'), fit=False)} in "
+        return (f"the family from run {r.run_words(None, scope.get('family'), fit=False)} in "
                 f"workspace {scope.get('workspace')}")
     return f"workspace {scope.get('workspace')}"
 
@@ -423,9 +423,11 @@ def _model_cell(row: Mapping[str, Any], *, family: bool = True) -> str:
     else:
         words_html = r.e(words)
     family_id = model.get("family_id")
-    sub = (f'<div class="shep-sub">family from run {r.e(ml.run_words(None, family_id))}</div>'
+    sub = (f'<div class="shep-sub">family from run {r.e(r.run_words(None, family_id))}</div>'
            if family and isinstance(family_id, str) else "")
-    return f'<div>{_digest_html(model.get("checkpoint_sha256"))} {words_html}</div>{sub}'
+    digest = r.fingerprint_value(model.get("checkpoint_sha256"), what="model fingerprint",
+                                 copy=False, missing=r.UNKNOWN)
+    return f'<div>{digest} {words_html}</div>{sub}'
 
 
 def _data_cell(row: Mapping[str, Any]) -> str:
