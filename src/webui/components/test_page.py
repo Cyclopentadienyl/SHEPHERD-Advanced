@@ -20,9 +20,11 @@ docstring. Three panels, as the mockup draws them (``test-wide.png``,
   machine, `kg_edges_empty_html`), and "Import a new version…" (a supplied
   cohort);
 - **Run**: the model as **Run → Checkpoint**, the shared cascading pair
-  (`model_selects`: `model_list.run_choices` and `checkpoint_choices`, each
-  option at most 40 characters, the run's name or start time first, a file
-  by what it is and how far it trained; each value the listing's key; WP1's
+  (`model_list.parents_update` over `model_parents`, nothing chosen until
+  the operator picks a run: `model_list.run_choices` and
+  `checkpoint_choices`, each option at most 40 characters, the run's name or
+  start time first, a file by what it is and how far it trained; each value
+  the listing's key; WP1's
   checkpoint list of the workspace, every checkpoint: listing opens every
   checkpoint, so it is an operator control and a read-only request is not
   shown it), the chosen model's details under them (`model_html`: what its
@@ -965,30 +967,6 @@ def model_parents(models: Mapping[str, Any]) -> Dict[str, Mapping[str, Any]]:
     """The session's checkpoint listing by its keys (`item_key`, the list's
     identity), as the shared Run → Checkpoint selects take it."""
     return {item_key(item): item for item in models.get("items") or []}
-
-
-def model_selects(models: Mapping[str, Any], key: Any, *,
-                  interactive: bool = True) -> Tuple[Any, Any]:
-    """**The model, chosen as a Run → Checkpoint pair** by the shared
-    cascading selects (`model_list.run_choices`, `checkpoint_choices`: each
-    option at most 40 characters with one separator, the run's name or start
-    time first, a file by what it is and how far it trained; every
-    checkpoint of the workspace listed, K6 decision 13), each value the
-    listing's key (`item_run_key`, `item_key`), whatever the words. The
-    chosen checkpoint `key` sets its run and its run's checkpoints; with none
-    chosen, no run is either, until the operator picks one (`chosen_in_run`
-    then takes the run's latest save): the page never measures a model it
-    picked itself. What the file is, its record's kind first, is the chosen
-    model's details (`model_html`), never its option."""
-    parents = model_parents(models)
-    item = parents.get(key) if isinstance(key, str) else None
-    run = ml.item_run_key(item) if item is not None else None
-    keys = ml.runs_of(parents).get(run, []) if run else []
-    return (gr.update(choices=ml.run_choices(parents), value=run,
-                      interactive=interactive and bool(parents)),
-            gr.update(choices=ml.checkpoint_choices(parents, keys),
-                      value=key if item is not None else None,
-                      interactive=interactive and bool(keys)))
 
 
 def _kind_words(version: Mapping[str, Any]) -> Optional[str]:
@@ -2971,9 +2949,9 @@ def create_test_page(ctx: Any) -> None:
             plain_html(run_header_html(), elem_id="shep-test-run-hd")
             with gr.Column(elem_classes=["shep-test-bd"]):
                 # The model as Run → Checkpoint, the shared cascading pair
-                # (`model_selects`), one under the other so each 40-character
-                # option shows whole in the column; ↻ lists the workspace's
-                # checkpoints again.
+                # (`model_list.parents_update`), one under the other so each
+                # 40-character option shows whole in the column; ↻ lists the
+                # workspace's checkpoints again.
                 with gr.Row(elem_classes=["shep-test-model-row"]):
                     run_select = gr.Dropdown(label="Run", choices=[], value=None,
                                              elem_id="shep-test-model-run", interactive=False,
@@ -3121,7 +3099,10 @@ def create_test_page(ctx: Any) -> None:
         allowed = bool((page.get("access") or {}).get("allowed"))
         radio, protocol = _measurement_outputs(page, models, label, key, protocol)
         return [
-            *model_selects(models, key, interactive=allowed),
+            # The shared pair; nothing chosen until the operator picks a run
+            # (`chosen_in_run` then takes its latest save): the page never
+            # measures a model it picked itself.
+            *ml.parents_update(model_parents(models), key, first=False, interactive=allowed),
             gated_update("reload", page, interactive=bool(ws)),
             model_html(page, models, key),
             radio,

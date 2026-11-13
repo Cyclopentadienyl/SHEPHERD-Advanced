@@ -170,6 +170,7 @@ def test_a_base_and_a_file_without_a_model_spec_are_listed_and_never_started(sit
     asked. The child is offered its task's measurement and the KG
     link-prediction one."""
     from src.evaluation import protocols
+    from src.webui.components import model_list as ml
     from src.webui.components import test_page as tp
 
     _registry, demo, _child = site
@@ -183,7 +184,7 @@ def test_a_base_and_a_file_without_a_model_spec_are_listed_and_never_started(sit
     # Each is listed under its run (Run → Checkpoint) and says what it is in
     # its details (`renderers.model_kind_text`).
     for key, kind in ((base, "Base"), (child, "Disease"), (history, "Record not readable")):
-        _run, checkpoint = tp.model_selects(models, key)
+        _run, checkpoint = ml.parents_update(tp.model_parents(models), key, first=False)
         assert key in [value for _label, value in checkpoint["choices"]]
         assert f'<dd class="shep-v">{kind}</dd>' in tp.model_html(page, models, key)
 

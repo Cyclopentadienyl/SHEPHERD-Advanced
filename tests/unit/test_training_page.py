@@ -2271,6 +2271,19 @@ def test_the_drawer_lists_runs_then_the_chosen_runs_checkpoints():
     assert kept["value"] == f"gatv2/{old}/model-01-0.2160.pt"
     assert ml.parents_update(parents, f"gatv2/{old}/model-02-0.2160.pt")[0]["value"] == \
         f"gatv2/{old}"
+    # The Test page's use of the one pair (review of B3: its own copy
+    # retired): nothing chosen until the operator picks a run, a listed
+    # choice kept with its run, and each select interactive for an operator
+    # while it has options; no flag given leaves interactivity as it is.
+    runs, files = ml.parents_update(parents, None, first=False, interactive=True)
+    assert (runs["value"], files["value"], files["choices"]) == (None, None, [])
+    assert (runs["interactive"], files["interactive"]) == (True, False)
+    assert runs["choices"] == ml.parents_update(parents)[0]["choices"]
+    runs, files = ml.parents_update(parents, f"gatv2/{old}/last.pt", first=False,
+                                    interactive=False)
+    assert (runs["value"], files["value"]) == (f"gatv2/{old}", f"gatv2/{old}/last.pt")
+    assert (runs["interactive"], files["interactive"]) == (False, False)
+    assert "interactive" not in ml.parents_update(parents)[0]
     # Runs alike to the minute: their time to the second; alike to the second
     # (two layouts' runs, or one second's two ids): their own id too.
     twin_runs = {

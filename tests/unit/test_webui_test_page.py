@@ -472,12 +472,12 @@ def test_an_operator_lists_the_workspaces_checkpoints(site, monkeypatch):
     # the child is copied with its training time kept.
     assert [tp.item_key(i) for i in models["items"]] == [site.history_key, site.key]
     assert [i["sha256"] for i in models["items"]] == [site.history_sha, site.sha]
-    # The model as Run → Checkpoint, the shared pair (`model_selects`): the
+    # The model as Run → Checkpoint, the shared pair (`parents_update`): the
     # runs latest first, each valued by its run's key; the chosen run's
     # checkpoints, each valued by the listing's key (never a 91-character
     # option: the skill's §8, at most 40 characters and one separator).
     by_key = {tp.item_key(i): i for i in models["items"]}
-    runs, checkpoints = tp.model_selects(models, site.key)
+    runs, checkpoints = ml.parents_update(tp.model_parents(models), site.key, first=False)
     assert [value for _label, value in runs["choices"]] == [
         ml.item_run_key(by_key[site.history_key]), ml.item_run_key(by_key[site.key])]
     assert runs["value"] == ml.item_run_key(by_key[site.key])
@@ -489,7 +489,7 @@ def test_an_operator_lists_the_workspaces_checkpoints(site, monkeypatch):
                for label in labels), labels
     assert len(set(labels)) == len(labels)
     # Nothing chosen: no run either, until the operator picks one.
-    none_run, none_checkpoint = tp.model_selects(models, None)
+    none_run, none_checkpoint = ml.parents_update(tp.model_parents(models), None, first=False)
     assert none_run["value"] is None and none_checkpoint["choices"] == []
     # What each file is leads its details, never its option: the fixture's
     # file without a model spec a record not readable, its trained child by
@@ -3108,7 +3108,7 @@ def test_a_long_choice_ends_in_an_ellipsis_with_its_whole_text_as_title():
     item = {"architecture": "gatv2", "run": RUN, "filename": "best.pt", "epoch": 12,
             "sha256": "c" * 64}
     models = {"items": [item]}
-    runs, checkpoints = tp.model_selects(models, tp.item_key(item))
+    runs, checkpoints = ml.parents_update(tp.model_parents(models), tp.item_key(item), first=False)
     assert runs["choices"] == [("2026-10-17 09:15 · GATv2", ml.item_run_key(item))]
     assert checkpoints["choices"] == [("best.pt · recorded epoch 12", tp.item_key(item))]
     # A record never read says its state's own word in the details.
@@ -3638,12 +3638,12 @@ def test_every_checkpoint_is_listed_led_by_what_it_is(site, monkeypatch):
     page, request = _page(monkeypatch)
     models = tp.read_models("demo", request)
     keys = []
-    runs, _checkpoints = tp.model_selects(models, None)
+    runs, _checkpoints = ml.parents_update(tp.model_parents(models), None, first=False)
     run_labels = [label for label, _value in runs["choices"]]
     assert len(set(run_labels)) == len(run_labels)
     for _label, run in runs["choices"]:
         key = ml.chosen_in_run(tp.model_parents(models), run, None)
-        _runs, checkpoints = tp.model_selects(models, key)
+        _runs, checkpoints = ml.parents_update(tp.model_parents(models), key, first=False)
         assert checkpoints["value"] == key
         keys += [value for _label, value in checkpoints["choices"]]
         for label, _value in runs["choices"] + checkpoints["choices"]:

@@ -373,16 +373,27 @@ def pair_words(parents: Mapping[str, Any]) -> Dict[str, Tuple[str, str]]:
     return words
 
 
-def parents_update(parents: Mapping[str, Any], keep: Optional[str] = None) -> Tuple[Any, Any]:
+def parents_update(parents: Mapping[str, Any], keep: Optional[str] = None, *,
+                   first: bool = True, interactive: Optional[bool] = None) -> Tuple[Any, Any]:
     """The two selects for `parents`: the runs, and the chosen run's
-    checkpoints. `keep` (a checkpoint's key) stays chosen while it is listed;
-    otherwise the first run and its first checkpoint (its latest save)."""
+    checkpoints. `keep` (a checkpoint's key) stays chosen while it is listed,
+    and sets its run; otherwise the first run and its first checkpoint (its
+    latest save), or with `first` False nothing until the operator picks a
+    run (the Test page, which never measures a model it picked itself).
+    `interactive`, when given, makes each select interactive while it has
+    options (an operator's), else neither (None leaves them as they are)."""
     runs = runs_of(parents)
-    run = item_run_key(parents[keep]) if keep in parents else next(iter(runs), None)
+    listed = isinstance(keep, str) and keep in parents
+    run = item_run_key(parents[keep]) if listed else (next(iter(runs), None) if first else None)
     keys = runs.get(run, []) if run else []
     value = keep if keep in keys else (keys[0] if keys else None)
-    return (gr.update(choices=run_choices(parents), value=run),
-            gr.update(choices=checkpoint_choices(parents, keys), value=value))
+
+    def allowed(has: bool) -> Dict[str, Any]:
+        return {} if interactive is None else {"interactive": bool(interactive) and has}
+
+    return (gr.update(choices=run_choices(parents), value=run, **allowed(bool(parents))),
+            gr.update(choices=checkpoint_choices(parents, keys), value=value,
+                      **allowed(bool(keys))))
 
 
 def chosen_in_run(parents: Mapping[str, Any], run: Any, current: Any) -> Optional[str]:
