@@ -8,7 +8,7 @@ Research › Prepare › Fine-tune (K6 decisions 2, 9, 11).
 - **the checkpoint and task options follow the skill §8** (unique, at most
   40 characters, one separator), the tasks' carrying their readiness, why not
   under them; the Run options are the identity label the Training page's
-  Continue drawer shares (`model_list.run_words`: the name or start time
+  Continue drawer shares (`renderers.run_words`: the name or start time
   first, then the architecture and time, one separator), unique;
 - **Start** sends the base's listed digest, the dataset fingerprint shown, the
   tasks in `TASKS` order and the settings the operator touched, whatever their
@@ -116,7 +116,7 @@ def test_only_listed_bases_are_offered_as_parents(root, operator):
         f"gatv2/{BASE_RUN}/last.pt")
     assert "3 base checkpoints in 2 runs" in note
     # Each select checked on its own: the Run options are the identity label
-    # (`model_list.run_words`, shared with the Continue drawer), unique; the
+    # (`renderers.run_words`, shared with the Continue drawer), unique; the
     # checkpoint options follow §8; each value is the listing's key.
     run_labels = [label for label, _key in runs["choices"]]
     assert run_labels == ["base · GATv2 2026-10-01 00:00", "old · GATv2 2026-09-01 00:00"]

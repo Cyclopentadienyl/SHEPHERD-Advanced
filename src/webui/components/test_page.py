@@ -561,9 +561,6 @@ def _pill(status: str) -> str:
     return f'<span class="shep-tag shep-tag-{kind} shep-test-pill" data-status="{e(status)}">{e(text)}</span>'
 
 
-#: A check mark that stays on its line (Gradio's base style makes an svg a block).
-
-
 def said(text: Any, tail: str) -> str:
     """`text` as a sentence, then `tail` ("Nothing was started.")."""
     body = " ".join(str(text or "").split()).rstrip()

@@ -1213,7 +1213,7 @@ def test_by_family_draws_each_family_parent_first_with_its_lineage(world, monkey
     # without a model spec, refused by the record reader, under the word each
     # of their rows leads with (K6 closing review: no page word of its own).
     refused_word = r.record_kind_text({"record": "refused"})
-    # A family by its root run in the one run words (`model_list.run_words`:
+    # A family by its root run in the one run words (`renderers.run_words`:
     # its name first, as the Run select names it), one " · ".
     assert titles == ["Family from run base · 2026-10-01 00:00 (3 files)",
                       "Family from run disease · 2026-10-04 00:00 (1 file)",
