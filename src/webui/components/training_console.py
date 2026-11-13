@@ -493,6 +493,8 @@ def base_references() -> Tuple[Dict[str, Any], Dict[str, str]]:
 SPEC_SECTIONS = ("input", "encoder", "lp_head")
 #: The architecture: the encoder's kind (`architecture_choices`).
 ARCHITECTURE = "encoder.kind"
+#: The form's one name of the architecture (`spec_key_words`).
+ARCHITECTURE_LABEL = "Architecture"
 #: The Model accordion's first line: what Start sends of it.
 MODEL_NOTE = ("A new base builds the reference spec; Start sends it whole, with the fields you "
               "change, and checks it first.")
@@ -572,6 +574,14 @@ def _spec_reference(key: str) -> Any:
     return getattr(getattr(reference_spec("base"), section), name)
 
 
+def spec_key_words(key: str) -> str:
+    """**The base form's one name of a spec field**, wherever the form names
+    it (its field, its facts, the line on what the operator set, a refusal):
+    the architecture by `ARCHITECTURE_LABEL`, any other by its path's words
+    (`renderers.field_path_words`: "Encoder › Layers")."""
+    return ARCHITECTURE_LABEL if key == ARCHITECTURE else r.field_path_words(key)
+
+
 def base_form_defaults() -> Tuple[Any, ...]:
     """The base form's starting values, in `base_form_keys` order: what a new
     base trains with when the operator sets nothing (`base_references`, and
@@ -594,8 +604,8 @@ def edited_spec(values: Mapping[str, Any], touched: Collection[str]
     each touched field replaced by its value (`parse_value`, by its kind),
     checked by the spec's own validation (`ModelSpec.validate`: each field's
     declared type, each section's rules and its kind's declaration's), which
-    the start makes again; or None and why not, each field named in words
-    (`renderers.field_path_words`)."""
+    the start makes again; or None and why not, each field named by the
+    form's name of it (`spec_key_words`)."""
     keys = [key for key in _spec_keys() if key in touched]
     if not keys:
         return None, None
@@ -606,7 +616,7 @@ def edited_spec(values: Mapping[str, Any], touched: Collection[str]
         parsed, why = parse_value(field.kind if field else "fact", values[key],
                                   optional=field is not None and field.reference is None)
         if why:
-            return None, f"{r.field_path_words(key)} {why}"
+            return None, f"{spec_key_words(key)} {why}"
         section, name = key.split(".", 1)
         changes.setdefault(section, {})[name] = parsed
     reference = reference_spec("base")
@@ -615,7 +625,7 @@ def edited_spec(values: Mapping[str, Any], touched: Collection[str]
     try:
         spec.validate()
     except SpecError as exc:
-        return None, _SPEC_PATH.sub(lambda match: r.field_path_words(match.group(0)), str(exc))
+        return None, _SPEC_PATH.sub(lambda match: spec_key_words(match.group(0)), str(exc))
     return spec, None
 
 
@@ -665,44 +675,61 @@ def _spec_words(key: str, value: Any) -> str:
     return r.architecture_label(value) if key == ARCHITECTURE else r.setting_words(key, value)
 
 
+#: How many of the settings the operator set the line names (`set_by_you_html`);
+#: the rest are counted, and every one is in its Details.
+SET_BY_SHOWN = 3
+
+
 def set_by_you_html(values: Mapping[str, Any], touched: Collection[str]) -> str:
     """**The base form's one line on what the operator set** (decision S2),
     under its fields: "Set by you: Epochs 5 (reference 200), Encoder ›
     Layers 2 (reference 3)", each setting and spec field Start sends, in the
-    form's order, with the value the run takes without it in brackets (the
-    reference's; "default" where the recipe sets none and the run takes this
-    build's); or "Set by you: nothing; the run takes the reference values.";
-    then "Not valid: …", what Start would refuse, by its label. Escaped."""
+    form's order, by the form's name of it, with the value the run takes
+    without it in brackets (the reference's; "default" where the recipe sets
+    none and the run takes this build's). The first `SET_BY_SHOWN` are named
+    and the rest counted ("and 4 more"; `renderers.named_words`), every one
+    a row of its "Details ›" (`renderers.details_list`). With none: "Set by
+    you: nothing; the run takes the reference values", and this build's
+    defaults where the recipe sets some. Then "Not valid: …", what Start
+    would refuse (`_base_reading`), by its label. Escaped."""
     references, sources = base_references()
     settings, spec, problems = _base_reading(values, touched)
-    named = [f"{r.SETTING_LABELS[name]} {r.setting_words(name, settings[name])} "
+    rows = [(r.SETTING_LABELS[name], f"{r.setting_words(name, settings[name])} "
              f"({'reference' if name in sources else 'default'} "
-             f"{r.setting_words(name, references[name])})"
-             for name in BASE_FIELDS if name in settings]
+             f"{r.setting_words(name, references[name])})")
+            for name in BASE_FIELDS if name in settings]
     if spec is not None:
         for key in _spec_keys():
             if key in touched:
                 section, name = key.split(".", 1)
-                named.append(f"{r.field_path_words(key)} "
+                rows.append((spec_key_words(key),
                              f"{_spec_words(key, getattr(getattr(spec, section), name))} "
-                             f"(reference {_spec_words(key, _spec_reference(key))})")
-    text = ("Set by you: " + ", ".join(named) if named
-            else "Set by you: nothing; the run takes the reference values.")
+                             f"(reference {_spec_words(key, _spec_reference(key))})"))
+    if rows:
+        text = "Set by you: " + r.named_words([f"{key} {value}" for key, value in rows],
+                                              SET_BY_SHOWN)
+    else:
+        defaults = any(name not in sources for name in BASE_FIELDS)
+        text = ("Set by you: nothing; the run takes the reference values"
+                + (" and this build's defaults." if defaults else "."))
+    details = (r.details_list([(key, r.e(value)) for key, value in rows],
+                              classes="shep-setby-kv")
+               if len(rows) > SET_BY_SHOWN else "")
     refused = (f'<p class="shep-amber-t">Not valid: {r.e(" ".join(problems))}</p>'
                if problems else "")
-    return f'<div class="shep-setby"><p>{r.e(text)}</p>{refused}</div>'
+    return f'<div class="shep-setby"><p>{r.e(text)}</p>{details}{refused}</div>'
 
 
 def spec_facts_html() -> str:
     """The Model accordion's facts (decision S5), one summary list (the
     skill's §4): the architecture, when this build implements one
     (`architecture_choices`; with more it is a choice), and each text field
-    of the reference base spec (`spec_form_fields`), named in words
-    (`renderers.field_path_words`), its value kept whole in code style."""
+    of the reference base spec (`spec_form_fields`), each by the form's name
+    of it (`spec_key_words`), its value kept whole in code style."""
     choices = architecture_choices()
-    rows = [("Architecture", r.e(choices[0][0]))] if len(choices) == 1 else []
-    rows += [(r.field_path_words(field.path), r.ident_html(r.setting_words(field.path,
-                                                                           field.reference)))
+    rows = [(spec_key_words(ARCHITECTURE), r.e(choices[0][0]))] if len(choices) == 1 else []
+    rows += [(spec_key_words(field.path), r.ident_html(r.setting_words(field.path,
+                                                                       field.reference)))
              for field in spec_form_fields() if not field.editable]
     return r.summary_list(rows, classes="shep-train-spec-facts")
 
@@ -3245,7 +3272,8 @@ def create_training_tab(ctx: Any) -> None:
                                    f'{spec_facts_html()}', elem_id="shep-train-spec-facts")
                         if len(architecture_choices()) > 1:
                             fields[ARCHITECTURE] = gr.Radio(
-                                label="Architecture", choices=architecture_choices(),
+                                label=spec_key_words(ARCHITECTURE),
+                                choices=architecture_choices(),
                                 value=_spec_reference(ARCHITECTURE),
                                 elem_id="spec-encoder-kind")
                         for section in SPEC_SECTIONS:
@@ -3698,6 +3726,8 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} #shep-train-reset {{ flex: none !important; width: auto !important; min-width: max-content !important; }}
 {_PAGE} .shep-setby p {{ margin: 0; font-size: 14px; color: var(--shep-text-2); overflow-wrap: anywhere; }}
 {_PAGE} .shep-setby p.shep-amber-t {{ margin-top: 4px; color: var(--shep-amber-800); }}
+{_PAGE} .shep-setby .shep-more {{ margin-top: 2px; font-size: 14px; }}
+{_PAGE} .shep-setby-kv {{ font-size: 14px; }}
 @media (min-width: 1400px) and (min-height: 760px) {{
   {_PAGE} > .column {{ height: 100%; min-height: 0 !important; }}
   {_PAGE} #shep-train {{ flex: 1 1 auto; min-height: 0; height: 100%; flex-wrap: nowrap !important; }}

@@ -791,16 +791,22 @@ def test_the_value_words_say_each_setting_by_its_meaning_never_by_repr():
 def test_a_nones_words_are_what_the_field_spec_says_it_means():
     """The words of an unset setting (`SETTING_UNSET_WORDS`) are the field
     spec's, never a page's own: each setting whose spec says "Unset is the
-    task's reference" reads so, the one whose spec says none "is no early
-    stopping" reads "off", and no other setting has words of its own (an
-    unset seed is "not set")."""
+    task's reference" reads so, the one whose spec says unset "is no early
+    stopping" reads "off", and so does the one model spec field whose None
+    is a state the form says "off" under the field (the relation edge
+    dimension: edges carry no relation), so a record view and the form say
+    one word; no other has words of its own (an unset seed is "not set")."""
     from src.config.training_fields import FIELDS
+    from src.webui.components import training_console as tc
 
     reference = {f.name for f in FIELDS if "Unset is the task's reference" in f.divergence_note}
     no_stopping = {f.name for f in FIELDS if "is no early stopping" in f.description}
     assert reference and no_stopping == {"early_stopping_patience"}
+    off = {key for key, words in tc.FIELD_FORMATS.items() if '"off"' in words}
+    assert off == {"early_stopping_patience", "encoder.relation_edge_dim"}
     assert r.SETTING_UNSET_WORDS == {**{name: "the task's reference" for name in reference},
-                                     "early_stopping_patience": "off"}
+                                     **{key: r.OFF.lower() for key in off}}
+    assert r.setting_words("encoder.relation_edge_dim", None) == "off"
 
 
 def _spec(stage="base", task=None, **changes):

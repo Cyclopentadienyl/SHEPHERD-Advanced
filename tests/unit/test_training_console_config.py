@@ -176,6 +176,11 @@ def test_the_architecture_options_are_the_encoder_declarations(monkeypatch):
     choice = by_id["spec-encoder-kind"]
     assert isinstance(choice, gr.Radio) and choice.choices == tc.architecture_choices()
     assert "Architecture" not in tc.spec_facts_html()
+    # One name on the form: the radio's label is the line's (and a refusal's).
+    assert choice.label == tc.spec_key_words(tc.ARCHITECTURE) == "Architecture"
+    line = tc.set_by_you_html(_values(encoder__kind="gatv2"), [tc.ARCHITECTURE])
+    assert "Set by you: Architecture GATv2 (reference GATv2)" in line
+    assert "Kind" not in line
 
 
 # --------------------------------------------------------------------------- what Start sends
@@ -241,16 +246,46 @@ def test_the_line_says_what_the_operator_set_with_the_value_the_run_takes_withou
     the recipe sets none; a value equal to the reference is still listed."""
     assert tc.set_by_you_html(_values(), []) == (
         '<div class="shep-setby"><p>Set by you: nothing; the run takes the reference '
-        'values.</p></div>')
+        "values and this build&#x27;s defaults.</p></div>")
+    line = tc.set_by_you_html(
+        _values(num_epochs=5, split_seed=0, num_neighbors="20, 10, 5"),
+        ["num_epochs", "num_neighbors", "split_seed"])
+    assert ("<p>Set by you: Epochs 5 (reference 200), Split seed 0 (default 0), Neighbours per "
+            "hop 20, 10, 5 (reference 15, 10, 5)</p>" in line)
+    assert "Details" not in line and "Not valid" not in line
+    # The relation edge dimension's None is "off", the field's own word, and
+    # its reference's too (never "not set").
+    off = tc.set_by_you_html(_values(encoder__relation_edge_dim="off"),
+                             ["encoder.relation_edge_dim"])
+    assert "Encoder › Relation edge dimension off (reference off)" in off
+    assert "not set" not in off
+    assert "Relation edge dimension 8 (reference off)" in tc.set_by_you_html(
+        _values(encoder__relation_edge_dim="8"), ["encoder.relation_edge_dim"])
+
+
+def test_the_line_names_the_first_few_and_every_one_is_in_its_details():
+    """The skill's §4: past two lines a text gets structure. The line names
+    the first `SET_BY_SHOWN` in the form's order and counts the rest
+    (`named_words`); every one is a row of its Details (`details_list`),
+    whose key is the label and whose value says the reference."""
+    touched = ["num_epochs", "use_amp", "early_stopping_patience", "num_neighbors",
+               "split_seed", "encoder.hidden", "weight_decay"]
     line = tc.set_by_you_html(
         _values(num_epochs=5, use_amp=True, early_stopping_patience="10",
-                num_neighbors="20, 10, 5", split_seed=0, encoder__hidden=64),
-        ["num_epochs", "use_amp", "early_stopping_patience", "num_neighbors", "split_seed",
-         "encoder.hidden"])
-    assert ("Set by you: Epochs 5 (reference 200), Split seed 0 (default 0), Neighbours per "
-            "hop 20, 10, 5 (reference 15, 10, 5), Mixed precision on (reference off), Early "
-            "stopping patience 10 (reference off), Encoder › Hidden 64 (reference 256)"
-            in line)
+                num_neighbors="20, 10, 5", split_seed=0, encoder__hidden=64,
+                weight_decay=0.01), touched)
+    assert tc.SET_BY_SHOWN == 3
+    assert ("<p>Set by you: Epochs 5 (reference 200), Split seed 0 (default 0), Neighbours per "
+            "hop 20, 10, 5 (reference 15, 10, 5) and 4 more</p>" in line)
+    assert '<details class="shep-more"><summary>Details ›</summary>' in line
+    details = line[line.index("<details"):line.index("</details>")]
+    rows = [("Epochs", "5 (reference 200)"), ("Split seed", "0 (default 0)"),
+            ("Neighbours per hop", "20, 10, 5 (reference 15, 10, 5)"),
+            ("Weight decay", "0.01 (reference 0.0)"),
+            ("Mixed precision", "on (reference off)"),
+            ("Early stopping patience", "10 (reference off)"),
+            ("Encoder › Hidden", "64 (reference 256)")]
+    assert details == r.details_list(rows, classes="shep-setby-kv").removesuffix("</details>")
     assert "Not valid" not in line
 
 

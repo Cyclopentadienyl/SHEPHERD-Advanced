@@ -1266,6 +1266,27 @@ def summary_list(rows: Iterable[Tuple[str, str]], *, wide: Iterable[str] = (),
     return f'<dl class="shep-kv{more}">{"".join(cells)}</dl>'
 
 
+def details_list(rows: Iterable[Tuple[str, str]], *,
+                 titles: Optional[Mapping[str, str]] = None, classes: str = "") -> str:
+    """**The one "Details ›" disclosure of a summary list** (the skill's
+    §1.5: low-priority detail one click away, one level, never inside another
+    disclosure or a popover): a closed ``<details class="shep-more">`` over
+    `summary_list`'s rows (`titles` and `classes` as there), wherever a line
+    names a few of many (`named_words`) and the rest are one click away."""
+    return ('<details class="shep-more"><summary>Details ›</summary>'
+            f'{summary_list(rows, titles=titles, classes=classes)}</details>')
+
+
+def named_words(named: Sequence[str], shown: int) -> str:
+    """**A line naming a few of many** (the skill's §4: past two lines a text
+    gets structure): the first `shown` of `named` joined by commas, the rest
+    counted ("Epochs 5 (reference 200), Seed 3 (reference 1) and 4 more"),
+    each one then in its Details (`details_list`). A spec's differences
+    (`model_spec_html`) and the Training page's "Set by you" line say them so."""
+    more = len(named) - shown
+    return ", ".join(named[:shown]) + (f" and {more} more" if more > 0 else "")
+
+
 def fingerprint_value(digest: Any, *, what: str = "fingerprint", digits: int = SHORT_HEX,
                       full: bool = False, missing: str = NOT_RECORDED.lower(),
                       copy: bool = True) -> str:
@@ -1325,13 +1346,16 @@ SETTING_LABELS: Dict[str, str] = {
 SETTING_CHOICE_WORDS: Dict[str, Dict[str, str]] = {
     "frozen_parts": {"none": "Trained", "graph_side": "Frozen"},
 }
-#: **What a setting left unset (None) means**, as its field spec says
-#: (`training_fields.FIELDS`: early stopping's patience "none … is no early
-#: stopping"; a task setting "unset is the task's reference"). Any other None
-#: reads "not set" (an unset seed); one the run's stage or task does not read
-#: reads so first (`setting_words`).
+#: **What a setting or a model spec field left unset (None) means**, as its
+#: field spec says (`training_fields.FIELDS`: early stopping's patience "off
+#: (unset) is no early stopping"; a task setting "unset is the task's
+#: reference") or its spec field does (`spec.EncoderSpec.relation_edge_dim`:
+#: None, edges carry no relation, the form's "off"). Any other None reads "not
+#: set" (an unset seed); one the run's stage or task does not read reads so
+#: first (`setting_words`).
 SETTING_UNSET_WORDS: Dict[str, str] = {
     "early_stopping_patience": OFF.lower(),
+    "encoder.relation_edge_dim": OFF.lower(),
     "task_loss_weight": "the task's reference",
     "lp_loss_weight": "the task's reference",
     "candidate_sample_size": "the task's reference",
@@ -1531,12 +1555,10 @@ def model_spec_html(data: Any) -> Tuple[str, str]:
                                        f"({short_reason(exc, 120)})"), "")
     name = f"reference {architecture_label(spec.encoder.kind)} spec"
     if differences:
-        named = [f"{field_path_words(path)} {setting_words(path, mine)} "
-                 f"({setting_words(path, reference)})"
-                 for path, (reference, mine) in list(differences.items())[:_SPEC_WORDS_SHOWN]]
-        more = len(differences) - len(named)
-        words = (f"Differs from the {name}: " + ", ".join(named)
-                 + (f" and {more} more" if more else ""))
+        words = f"Differs from the {name}: " + named_words(
+            [f"{field_path_words(path)} {setting_words(path, mine)} "
+             f"({setting_words(path, reference)})"
+             for path, (reference, mine) in differences.items()], _SPEC_WORDS_SHOWN)
     else:
         words = name[:1].upper() + name[1:]
     rows, titles = [], {}
@@ -1550,9 +1572,7 @@ def model_spec_html(data: Any) -> Tuple[str, str]:
         key = field_path_words(path)
         rows.append((key, shown))
         titles[key] = path
-    details = ('<details class="shep-more"><summary>Details ›</summary>'
-               f'{summary_list(rows, titles=titles, classes="shep-kv-spec")}</details>')
-    return e(words), details
+    return e(words), details_list(rows, titles=titles, classes="shep-kv-spec")
 
 
 def recorded_count_text(value: Any) -> str:
@@ -1814,6 +1834,7 @@ __all__ = [
     "clock_utc",
     "count_text",
     "dataset_details_html",
+    "details_list",
     "SHORT_HEX",
     "SYNTHETIC_FOR_TESTING",
     "built_text",
@@ -1840,6 +1861,7 @@ __all__ = [
     "model_kind_text",
     "model_spec_html",
     "model_name_line",
+    "named_words",
     "model_row_html",
     "model_table_row_html",
     "not_trainable_short",
