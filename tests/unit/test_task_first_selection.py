@@ -646,9 +646,12 @@ def test_the_listing_reads_the_selection_and_the_best_k_from_the_records(tmp_pat
     file named like a top-k file that no record names is no member, nor is
     one whose bytes are not the ones named, nor a parent's file a continued
     run's record names by a path into the parent's run. An older file without
-    the state says it records none (`None`), and a state that is not of its
-    kind lists that file alone with the reason. The workspace's list carries
-    both over HTTP (the same dataclass)."""
+    the state says it records none (`None`). A part of the state that is not
+    of its kind is that part not shown, never the file's other metadata or
+    its Load (a monitor that is not text, a mode holding a lone surrogate, a
+    best-k entry naming no file): the run's membership rests on its other
+    records. The workspace's list carries both over HTTP (the same
+    dataclass)."""
     from collections import OrderedDict
 
     from fastapi.testclient import TestClient
@@ -657,6 +660,7 @@ def test_the_listing_reads_the_selection_and_the_best_k_from_the_records(tmp_pat
     from src.api.main import app
     from src.api.services import server_lists as sl
     from src.config import server_settings as ss
+    from src.webui.components import model_list as ml
     from src.webui.components import renderers as r
     from tests.fixtures.operator_access import OPERATOR_BASE_URL, operator_mode
 
@@ -695,8 +699,15 @@ def test_the_listing_reads_the_selection_and_the_best_k_from_the_records(tmp_pat
         _record_payload("disease", logs={"val_pooled_mrr": 0.35}), *mrr, named), 220)
     # An older run: no selection state at all.
     _put(ws, "gatv2", older, _record_payload(logs={"val_lp_accuracy": 0.5}), 50)
-    # A state that is not of its kind.
-    _put(ws, "gatv2", odd, _selected(_record_payload(), 7, "max", []), 300)
+    # Parts of the state not of their kind: a monitor that is not text and a
+    # best-k entry naming no file; a mode holding a lone surrogate beside a
+    # best-k list that names the first file.
+    odd_top = _put(ws, "gatv2", odd, _selected(
+        _record_payload("disease", logs={"val_pooled_mrr": 0.2}), 7, "max",
+        [{"file": None, "value": 0.2, "epoch": 1}]), 300, name="model-01-0.2000.pt")
+    _put(ws, "gatv2", odd, _selected(
+        _record_payload("disease", logs={"val_pooled_mrr": 0.1}), "val_pooled_mrr",
+        "max\udc80", [entry(odd_top, 0.2, 1)]), 310)
     environ = {ss.ENV_WORKSPACES_ROOT: str(root)}
     listing = sl.list_checkpoints("ws", environ=environ)
     assert listing.available, listing.problem
@@ -714,10 +725,13 @@ def test_the_listing_reads_the_selection_and_the_best_k_from_the_records(tmp_pat
         "Selection by validation LP accuracy (Trainer), higher is better")
     assert r.selection_words(items[child, "last.pt"]) == (
         "Selection by validation pooled MRR (Trainer), higher is better")
-    unread = items[odd, "last.pt"]
-    assert unread.problem == ("its callbacks.model_checkpoint.monitor is a int, not text, so "
-                              "none of its metadata is shown")
-    assert unread.selection is None and unread.in_best_k is None
+    for name, figure, member in (("model-01-0.2000.pt", 0.2, True), ("last.pt", 0.1, False)):
+        kept = items[odd, name]
+        assert (kept.problem, kept.selection, kept.in_best_k) == (None, None, member), name
+        assert (kept.record, kept.task) == ("model", "disease"), name
+        assert kept.validation == {"metric": "val_pooled_mrr", "value": figure}, name
+        assert ml.can_load(dataclasses.asdict(kept)), name
+        assert r.selection_words(kept) == "Selection not recorded"
     # The best saves, by each run's recorded selection, from the list alone.
     keyed = {i.key: dataclasses.asdict(i) for i in listing.items}
     best = r.best_saves(keyed)

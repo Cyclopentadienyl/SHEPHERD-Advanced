@@ -226,7 +226,8 @@ class CheckpointItem:
     (``callbacks.model_checkpoint``: the metric the run's saves were ranked by
     and its direction, a base's ``val_lp_accuracy`` and a task model's
     ``val_pooled_mrr``, both ``max``), `None` where it records none (a
-    weights-only file, an older format: "selection not recorded"); `in_best_k`
+    weights-only file, an older format: "selection not recorded") or none of
+    its kind, which hides nothing else of the file; `in_best_k`
     whether a record of its own run names this file, by its name and digest,
     among the run's best-k files (`ListedCheckpoint.in_best_k`), `None` where
     no file of its run records a best-k list. Both are read from the files'
