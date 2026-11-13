@@ -113,7 +113,7 @@ from src.webui.components.renderers import e as _e
 from src.webui.components.renderers import is_digest as _is_digest
 from src.webui.components.renderers import resources_html as _resources_html
 from src.webui.exports import export_dir, file_slug
-from src.webui.components.renderers import kv_cells as _kv_cells
+from src.webui.components.renderers import summary_list as _summary_list
 from src.webui.components.renderers import short_hex as _short_hex
 from src.webui.operator_access import operator_access
 
@@ -1821,7 +1821,7 @@ def paths_html(candidate: Mapping[str, Any]) -> str:
 def task_details_html(candidate: Mapping[str, Any], kind: str,
                       result: Mapping[str, Any]) -> str:
     """A gene's or a reference patient's values beyond the header's, as one
-    key-value list (`renderers.kv_cells`), every value escaped: a gene's model
+    key-value list (`renderers.summary_list`), every value escaped: a gene's model
     and SP similarities, its mean hop distance and the model's SP bounds; a
     reference patient's recorded diagnosis, causal genes and every recorded HPO
     term, with the note that they are reference context, never an input."""
@@ -1832,7 +1832,7 @@ def task_details_html(candidate: Mapping[str, Any], kind: str,
                 ("SP similarity", _num(candidate.get("sp_similarity"))),
                 ("Mean hop distance", _num(candidate.get("mean_distance"))),
                 ("SP bounds (the model's own)", f"{_num(bounds[0])} to {_num(bounds[1])}")]
-        return f'<div class="shep-kv">{_kv_cells(rows)}</div>'
+        return _summary_list(rows)
     genes = [str(g) for g in candidate.get("causal_genes") or [] if str(g).strip()]
     terms = [str(t) for t in candidate.get("phenotypes") or [] if str(t).strip()]
     rows = [("Recorded diagnosis", _diagnosis_html(candidate)
@@ -1842,8 +1842,8 @@ def task_details_html(candidate: Mapping[str, Any], kind: str,
              .strip() or _not_recorded()),
             (f"Recorded HPO terms ({len(terms)})",
              " ".join(f"<code>{_e(t)}</code>" for t in terms) or _not_recorded())]
-    return (f'<div class="shep-kv">{_kv_cells(rows)}</div>'
-            f'<p class="shep-note">{_e(REFERENCE_CONTEXT_NOTE)}</p>')
+    return (_summary_list(rows)
+            + f'<p class="shep-note">{_e(REFERENCE_CONTEXT_NOTE)}</p>')
 
 
 def details_footer_html(result: Optional[Mapping[str, Any]], rank: Any) -> str:
@@ -3467,10 +3467,8 @@ PAGE_CSS = f"""
 {_TAB} #shep-dx-id-result code {{ display: inline; white-space: normal; word-break: normal;
   overflow-wrap: anywhere; -webkit-box-decoration-break: clone; box-decoration-break: clone; }}
 {_TAB} #shep-dx-id-result p {{ font-size: 15px; }}
-/* The labels of the drawers' Model Facts are short (a digest's long label takes a
-   line of its own, `renderers.kv_cells`), so the values get the width. */
-{_TAB} .shep-dx-drawer .shep-kv {{ grid-template-columns: minmax(6em, max-content) minmax(0, 1fr); }}
-{_TAB} .shep-dx-drawer .shep-k, {_TAB} .shep-dx-drawer .shep-v {{ min-width: 0; overflow-wrap: anywhere; }}
+/* The drawers' Model Facts take the one summary list's columns
+   (`renderers.summary_list`: a digest's long label on a line of its own). */
 {_TAB} .shep-dx-drawer .shep-facts-sum {{ overflow-wrap: anywhere; }}
 {_TAB} #shep-dx-change button.shep-row {{ display: block; }}
 {_TAB} #shep-dx-change button.shep-row > .shep-row-sub {{ display: block; margin-top: 2px; }}

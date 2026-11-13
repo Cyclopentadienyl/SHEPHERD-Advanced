@@ -101,7 +101,6 @@ from src.core.types import SCORING_MODE_TASKS
 from src.evaluation.caveats import TASK_NAMES
 from src.webui.components import renderers as r
 from src.webui.components.chips import D8_SHORT, LOCK, OPERATOR_ONLY, gated
-from src.webui.components.help import copy_button
 from src.webui.components.served_status import (
     STATUS_NOT_READ,
     read_status,
@@ -836,14 +835,12 @@ def details_visible(state: Mapping[str, Any]) -> bool:
 # ---------------------------------------------------------------------------
 # Details: the identity drawer's "Model in use"
 # ---------------------------------------------------------------------------
-_ID_ANCHOR = "</div></div></details>"
-
-
 def _insert_after_section(html_: str, section: str, extra: str, closing: str) -> str:
     """Put `extra` at the end of one Model Facts section's body (before its
-    closing markup), found by its ``data-sec``. Model Facts has no slot for
-    what only a served model has (`renderers.model_facts_html`); the smallest
-    extension is here, and the tests pin the markup it relies on."""
+    closing markup), found by its ``data-sec``: Evidence's link to the full
+    records, which Model Facts (`renderers.model_facts_html`) has no slot for;
+    what the served model adds to Identity is its own slot
+    (`ModelFacts.served_rows`). The tests pin the markup it relies on."""
     start = html_.find(f'data-sec="{section}"')
     if start < 0:
         return html_
@@ -866,21 +863,6 @@ def _replace_in_section(html_: str, section: str, old: str, new: str) -> str:
     end = html_.find("</details>", start)
     end = len(html_) if end < 0 else end
     return html_[:start] + html_[start:end].replace(old, new) + html_[end:]
-
-
-def _kv_rows(rows: List[Tuple[str, str]], *, wide: bool = False) -> str:
-    """Model Facts' label/value cells (`renderers.kv_cells`); `wide`, for the
-    digest rows: each label on its own line over its full value."""
-    return r.kv_cells(rows, wide=[k for k, _v in rows] if wide else ())
-
-
-def _full(digest: Any, what: str) -> str:
-    """A full digest with an icon-only Copy, so it keeps one line in the
-    identity drawer (M5-3: Model Facts fits at 1920 x 1080)."""
-    if not r.is_digest(digest):
-        return '<span class="shep-muted">none</span>'
-    return f'<code class="shep-full">{r.e(digest)}</code> ' + copy_button(digest, what,
-                                                                         icon_only=True)
 
 
 def served_warnings(status: Mapping[str, Any]) -> List[Tuple[str, str]]:
@@ -933,12 +915,16 @@ def served_facts_html(state: Mapping[str, Any], *, open_section: str = "identity
     if kind == "unknown":
         return note + ('<div class="shep-reason shep-reason-grey">The status did not say what is '
                        'served.</div>')
+    # Each digest in full with an icon-only Copy, so it keeps one line in the
+    # identity drawer (M5-3: Model Facts fits at 1920 x 1080).
     served_rows = [
-        ("Knowledge graph served (kg.json)", _full(_part(identity, "graph", "kg_sha256"),
-                                                   "the full knowledge graph digest")),
+        ("Knowledge graph served (kg.json)",
+         r.fingerprint_value(_part(identity, "graph", "kg_sha256"), full=True,
+                             what="knowledge graph digest", missing="none")),
         ("Dataset record served (kg.provenance.json) · origin "
          f"{_part(identity, 'dataset_record', 'origin') or 'none'}",
-         _full(_part(identity, "dataset_record", "sha256"), "the full dataset record digest")),
+         r.fingerprint_value(_part(identity, "dataset_record", "sha256"), full=True,
+                             what="dataset record digest", missing="none")),
     ]
     warnings = served_warnings(status)
     item = dict(facts.get("item") or {})
@@ -969,7 +955,7 @@ def served_facts_html(state: Mapping[str, Any], *, open_section: str = "identity
     if isinstance(params, int) and not isinstance(params, bool):
         name_line += f" · {params:,} params"
     model_facts = model_facts._replace(
-        name_line=name_line, warnings=(*warnings, *item_warnings),
+        name_line=name_line, warnings=(*warnings, *item_warnings), served_rows=tuple(served_rows),
         serving_note=_serving_note(status, facts,
                                    trained.get("fingerprint") if shown else None))
     html_ = r.model_facts_html(model_facts, open_section=open_section)
@@ -987,8 +973,6 @@ def served_facts_html(state: Mapping[str, Any], *, open_section: str = "identity
                                     f"Trained on: {r.e(words)}")
         html_ = _replace_in_section(html_, "data", _NOT_RECORDED,
                                     f'<span class="shep-muted">{r.e(short)}</span>')
-    html_ = _insert_after_section(html_, "identity", _kv_rows(served_rows, wide=True),
-                                  _ID_ANCHOR)
     html_ = _insert_after_section(
         html_, "evidence",
         ' · <button type="button" class="shep-dx-link" data-key="models">Full records: '

@@ -1130,13 +1130,15 @@ def _version_counts(version: Mapping[str, Any]) -> str:
 
 def version_html(page: Mapping[str, Any], label: Optional[str],
                  binding: Optional[Mapping[str, Any]]) -> str:
-    """The chosen version: its counts, its digest, and whether it was mapped
-    against this workspace's graph. A supplied cohort by its role and its
-    case counts; a KG edge set or a generated split by its counts in its own
-    units (`_version_counts`), never in a supplied cohort's words: its kind
-    and role are its option's (`version_choices`), not repeated under it
-    (skill §1.2). Under it, the KG edge sets' empty state when the registry
-    holds none (`kg_edges_empty_html`)."""
+    """The chosen version, in the one summary list
+    (`renderers.summary_list`): its counts, its digest, and whether it was
+    mapped against this workspace's graph, when it was imported and from
+    what format. A supplied cohort by its role and its case counts; a KG
+    edge set or a generated split by its counts in its own units
+    (`_version_counts`), never in a supplied cohort's words: its kind and
+    role are its option's (`version_choices`), not repeated under it (skill
+    §1.2). Under it, the KG edge sets' empty state when the registry holds
+    none (`kg_edges_empty_html`)."""
     if page.get("registry_problem"):
         return ""
     empty = kg_edges_empty_html(page)
@@ -1156,22 +1158,23 @@ def version_html(page: Mapping[str, Any], label: Optional[str],
     chip = r.chip(words, kind) if state != "bound" else (
         f'<span class="shep-tag shep-tag-ok">{e(words)} {OK_MARK}</span>')
     excluded = counts.get("excluded") if isinstance(counts.get("excluded"), Mapping) else {}
-    reasons = " · ".join(f"{str(k).replace('_', ' ')} {_count(v)}" for k, v in excluded.items())
+    reasons = "; ".join(f"{str(k).replace('_', ' ')} {_count(v)}" for k, v in excluded.items())
     imported = str(version.get("imported_at") or "").replace("T", " ").replace("Z", " UTC")
     if _kind_words(version):
-        what = _version_counts(version)
+        rows = [("Holds", _version_counts(version))]
     else:
-        what = (f'<div>role {r.ident_html(version.get("role"))} · '
-                f'{_count(counts.get("source_cases"))} source cases · '
-                f'{_count(counts.get("ranked_eligible"))} ranked-eligible'
-                f'{" (" + e(reasons) + " excluded)" if reasons else ""}</div>')
+        rows = [("Role", r.ident_html(version.get("role"))),
+                ("Cases", e(f'{_count(counts.get("source_cases"))} source cases, '
+                            f'{_count(counts.get("ranked_eligible"))} ranked-eligible'
+                            + (f" ({reasons} excluded)" if reasons else "")))]
+    fingerprint = r.fingerprint_value(version.get("manifest_sha256"), what="version fingerprint")
+    rows.append(("Version fingerprint", f"{fingerprint} {chip}"))
+    rows.append(("Imported", e(imported) if imported
+                 else f'<span class="shep-muted">{e(r.NOT_RECORDED.lower())}</span>'))
     source_format = version.get("source_format")
-    return (
-        '<div class="shep-test-vd">'
-        f'{what}'
-        f'<div>{r.fingerprint_html("version", version.get("manifest_sha256"))} {chip}</div>'
-        f'<div class="shep-sub">Imported {e(imported or "—")}'
-        f'{" · " + e(source_format) if source_format else ""}</div></div>{empty}')
+    if source_format:
+        rows.append(("Format", e(source_format)))
+    return f'<div class="shep-test-vd">{r.summary_list(rows)}</div>{empty}'
 
 
 def _row_chip(run: Mapping[str, Any]) -> str:
@@ -1395,7 +1398,10 @@ def run_header_html(workspace: Optional[str], label: Optional[str]) -> str:
 
 
 def model_html(page: Mapping[str, Any], models: Mapping[str, Any], key: Optional[str]) -> str:
-    """The chosen model, by the shared renderers; or why there is no list."""
+    """The chosen model, by the shared renderers in the one summary list
+    (`renderers.summary_list`): its name line, file, Trainer validation
+    figure, model fingerprint (copyable) and the dataset it was trained on;
+    or why there is no list."""
     roots = page.get("roots") or []
     if models.get("refused"):
         return _reason_html("Not shown · listing checkpoints opens them, which is an operator "
@@ -1416,13 +1422,18 @@ def model_html(page: Mapping[str, Any], models: Mapping[str, Any], key: Optional
     figure = ((str(validation.get("metric")), float(validation["value"]))
               if isinstance(validation, Mapping) and isinstance(validation.get("value"), (int, float))
               else None)
-    return (
-        '<div class="shep-test-model">'
-        f'<div class="shep-w600">{e(r.model_name_line(item))} '
-        f'<span class="shep-muted">· {e(item.get("filename"))}</span></div>'
-        f'<div class="shep-sub">{e(r.validation_text(figure, read=r.record_read(item)))}</div>'
-        f'<div>{r.fingerprint_html("model fingerprint", item["sha256"], help_key="model-fingerprint")}'
-        f' · {r.trained_on_html(item.get("dataset_fingerprint"), workspaces)}</div></div>')
+    rows = [("Model", f'<span class="shep-w600">{e(r.model_name_line(item))}</span>'),
+            ("File", f'<code>{e(item.get("filename"))}</code>'),
+            # The figure's words without the key's ("pooled MRR (Trainer) 0.2867 — …",
+            # "not recorded in this checkpoint").
+            ("Validation", e(r.validation_text(figure, read=r.record_read(item))
+                             .removeprefix("Validation (Trainer): ").removeprefix("Validation "))),
+            ("Model fingerprint", r.fingerprint_value(item["sha256"], what="model fingerprint")),
+            ("Dataset", r.trained_on_html(item.get("dataset_fingerprint"), workspaces))]
+    return ('<div class="shep-test-model">'
+            + r.summary_list(rows, helps={"Model fingerprint": ("model-fingerprint",
+                                                                "Model fingerprint")})
+            + "</div>")
 
 
 def run_evidence(page: Mapping[str, Any], version: Optional[Mapping[str, Any]]) -> Any:
@@ -1466,12 +1477,10 @@ def evidence_html(page: Mapping[str, Any], workspace: Optional[str],
     amber with ▲ (needs attention, does not block), redacted as the problem
     is."""
     choice = run_evidence(page, version)
-    key = (f'<span class="shep-k">R10 evidence'
-           f'{help_button("test-evidence", "R10 evidence")}</span>')
+    helps = {"R10 evidence": ("test-evidence", "R10 evidence")}
     if choice.not_applicable:
-        return (f'<div class="shep-test-kv">{key}<span>'
-                f'{r.status_mark("neutral", r.NOT_APPLICABLE)} · '
-                f'{e(choice.not_applicable)}</span></div>')
+        return r.summary_list([("R10 evidence", f'{r.status_mark("neutral", r.NOT_APPLICABLE)} · '
+                                                f'{e(choice.not_applicable)}')], helps=helps)
     evidence = page.get("evidence") or {}
     names = evidence.get("names") or []
     roots = page.get("roots") or []
@@ -1482,10 +1491,10 @@ def evidence_html(page: Mapping[str, Any], workspace: Optional[str],
     elif names:
         extra = " · " + ", ".join(f"<code>{e(n)}</code>" for n in names) + " (the server's setting)"
         if choice.note:
-            note = "<span></span>" + r.status_mark("warn", redact(choice.note, roots))
+            note = f'<div>{r.status_mark("warn", redact(choice.note, roots))}</div>'
     else:
         extra = " · no other evidence directory is set on the server"
-    return f'<div class="shep-test-kv">{key}<span>{measured}{extra}</span>{note}</div>'
+    return r.summary_list([("R10 evidence", f"{measured}{extra}{note}")], helps=helps)
 
 
 def fixed_html(page: Mapping[str, Any]) -> str:
@@ -1498,10 +1507,9 @@ def fixed_html(page: Mapping[str, Any]) -> str:
     else:
         value = device.get("value") or "auto"
         shown = (f"<code>{e(value)}</code>" + (" (requires CUDA)" if value == "auto" else ""))
-    return (f'<div class="shep-test-kv"><span class="shep-k">Batch size'
-            f'{help_button("test-fixed", "Fixed by the server")}</span>'
-            f'<span>{BATCH_SIZE_SHOWN} · fixed by the server</span>'
-            f'<span class="shep-k">Device</span><span>{shown} · fixed by the server</span></div>')
+    return r.summary_list([("Batch size", f"{BATCH_SIZE_SHOWN} · fixed by the server"),
+                           ("Device", f"{shown} · fixed by the server")],
+                          helps={"Batch size": ("test-fixed", "Fixed by the server")})
 
 
 def measurement_label(name: Any) -> str:
@@ -1983,10 +1991,18 @@ def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
             else e(version_words(kind, cohort["role"])))
     determinism = ("on" if deterministic is True else "off" if deterministic is False
                    else "not recorded")
-    line = (f'{e(cohort["label"])} (version '
-            f'<code>{e(cohort["version_manifest_sha256"][:12])}</code>, {role}) · model '
-            f'<code>{e(str(record.get("checkpoint_digest") or "")[:12])}</code> · '
-            f'deterministic {determinism} · device <code>{e(device)}</code>')
+    # What the result is of, as the record holds it: one row per fact in the
+    # one summary list (the skill's §4, §5: never a chain of " · ").
+    identity = r.summary_list([
+        ("Data", f'{e(cohort["label"])} ({role})'),
+        ("Data version", r.fingerprint_value(cohort["version_manifest_sha256"],
+                                             what="version fingerprint")),
+        ("Model", r.fingerprint_value(record.get("checkpoint_digest"),
+                                      what="model fingerprint")),
+        ("Deterministic algorithms", e(determinism)),
+        ("Device", f"<code>{e(device)}</code>" if device
+         else f'<span class="shep-muted">{e(r.NOT_RECORDED.lower())}</span>'),
+    ], classes="shep-test-ident-rows")
     tiles = "".join(
         f'<div class="shep-test-tile"><div class="shep-test-tile-l">{e(metric_text(mode, name))}</div>'
         f'<div class="shep-test-tile-v">{e(_number(metrics.get(name)))}</div>'
@@ -2058,18 +2074,17 @@ def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
                         "read (a registration beside another copy of the weights is looked for only "
                         "with the checkpoint list, an operator control)") + e(overlap)))
     # The R10 labels' ⓘ sits beside the first R10 line, which it explains.
-    kv = "".join(f'<span class="shep-k">{e(k)}'
-                 f'{help_button("test-r10", "R10 labels") if k == "R10, training" else ""}</span>'
-                 f'<span class="shep-v">{v}</span>' for k, v in lines)
+    kv = r.summary_list(lines, helps={"R10, training": ("test-r10", "R10 labels")},
+                        classes="shep-test-lines")
     topic = _MODE_HELP.get(mode)
     mode_help = help_button(topic, TOPIC_HELP[topic][0]) if topic else ""
     fold = (f'<details class="shep-test-fold shep-test-recm"><summary>Recorded metrics '
             f'({len(metrics)})</summary>{recorded_metrics_html(metrics)}</details>'
             if task and metrics else
             '<div class="shep-sub shep-test-recm">no metric recorded</div>' if task else "")
-    return (f'<div class="shep-sub">{line}</div>'
+    return (f'{identity}'
             f'<div class="shep-test-label">{e(label)}{mode_help}</div>'
-            f'<div class="shep-test-tiles">{tiles}</div><div class="shep-kv shep-test-lines">{kv}</div>'
+            f'<div class="shep-test-tiles">{tiles}</div>{kv}'
             f'{fold}')
 
 
@@ -2354,7 +2369,6 @@ def preview_html(preview: Optional[Mapping[str, Any]]) -> str:
                            + f", sha256 <code>{e(str(record.get('sha256') or '')[:12])}</code>…"),
         ("HPO · MONDO", f"HPO {_source_entry(record.get('hpo'))} · MONDO {_source_entry(record.get('mondo'))}"),
     ]
-    kv = "".join(f'<span class="shep-k">{e(k)}</span><span class="shep-v">{v}</span>' for k, v in rows)
     warn = ""
     if record.get("origin") == "synthetic":
         warn += ('<div class="shep-notice shep-notice-amber"><b>SYNTHETIC WORKSPACE:</b> this '
@@ -2366,7 +2380,7 @@ def preview_html(preview: Optional[Mapping[str, Any]]) -> str:
             f'<code>{e(preview.get("preview_id"))}</code> {r.chip("nothing written", "grey")}'
             f'{help_button("test-preview-id", "Preview id")}'
             f'<span class="shep-muted"> label {e(preview.get("label"))} · role {e(preview.get("role"))}'
-            f'</span></div><div class="shep-kv">{kv}</div>{warn}</div>')
+            f'</span></div>{r.summary_list(rows)}{warn}</div>')
 
 
 # ---------------------------------------------------------------------------
@@ -3427,9 +3441,8 @@ PAGE_CSS = f"""
 {_PAGE} .shep-test-reason {{ margin: 2px 0; }}
 {_PAGE} .shep-test-actions {{ gap: 10px !important; align-items: center !important; flex-wrap: wrap !important; }}
 {_PAGE} .shep-test-actions > button {{ flex: none !important; }}
-{_PAGE} .shep-test-ident, {_PAGE} .shep-test-vd, {_PAGE} .shep-test-model {{ font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; }}
-{_PAGE} .shep-test-vd > div, {_PAGE} .shep-test-model > div {{ margin: 1px 0; }}
-{_PAGE} .shep-test-kv {{ display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; font-size: 15px; align-items: baseline; overflow-wrap: anywhere; }}
+{_PAGE} .shep-test-ident {{ font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; }}
+{_PAGE} .shep-test-ident > div {{ margin: 1px 0; }}
 {_PAGE} .shep-test-model-row {{ align-items: flex-end !important; gap: 8px !important; }}
 {_PAGE} .shep-test-model-row > button {{ flex: none !important; min-width: 40px; margin-bottom: 4px; }}
 {_PAGE} .shep-test-checks {{ gap: 18px !important; flex-wrap: wrap !important; }}
@@ -3474,8 +3487,6 @@ PAGE_CSS = f"""
 {_PAGE} .shep-test-tile-l {{ font-size: 14px; color: var(--shep-text-2); }}
 {_PAGE} .shep-test-tile-v {{ font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }}
 {_PAGE} .shep-test-tile-n {{ font-size: 14px; color: var(--shep-text-2); }}
-{_PAGE} .shep-test-lines {{ overflow-wrap: anywhere; }}
-{_PAGE} .shep-test-lines .shep-v {{ min-width: 0; }}
 {_PAGE} .shep-test-notes ul {{ margin: 4px 0 0; padding-left: 18px; font-size: 15px; }}
 {_PAGE} .shep-test-noteform {{ padding: 10px 16px 8px !important; gap: 6px !important; border-top: 1px solid var(--shep-border); }}
 {_PAGE} .shep-test-noterow {{ gap: 10px !important; flex-wrap: wrap !important; align-items: flex-start !important; }}

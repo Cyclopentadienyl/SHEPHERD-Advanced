@@ -320,11 +320,19 @@ body { color: var(--shep-text); }
 .shep-card { border: 1px solid var(--shep-border); border-radius: 8px; background: #fff; }
 .shep-card-hd .shep-muted { font-weight: 400; font-size: 14px; }
 .shep-card-hd { padding: 9px 12px; border-bottom: 1px solid var(--shep-border); font-weight: 600; font-size: 15px; }
-.shep-kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; font-size: 15px; align-items: baseline; }
+/* The one key-value summary list (`renderers.summary_list`, the skill's §4): a
+   dl, its key column 8 to 12em (a longer key wraps), keys at 14 px, values at
+   15 px; no border of its own (one container level per region). */
+.shep-kv { display: grid; grid-template-columns: fit-content(12em) minmax(0, 1fr); gap: 6px 14px; font-size: 15px; align-items: baseline; margin: 0; }
+.shep-kv > dt, .shep-kv > dd { margin: 0; }
+.shep-kv:not(.shep-kv-2) > .shep-k { min-width: 8em; }
+.shep-kv > .shep-k { font-size: 14px; overflow-wrap: anywhere; }
+.shep-kv > .shep-v { min-width: 0; overflow-wrap: anywhere; }
 .shep-card .shep-kv { padding: 10px 12px; }
 .shep-kv-2 { grid-template-columns: max-content max-content max-content max-content; }
-/* A digest row (`renderers.kv_cells`): its label on a line of its own over the
-   whole grid, its full value with an icon-only Copy on the line under it. */
+/* A digest row (`renderers.summary_list`'s wide rows): its label on a line of
+   its own over the whole list, its full value with an icon-only Copy on the
+   line under it. */
 .shep-kv > .shep-kv-wide { grid-column: 1 / -1; min-width: 0; }
 .shep-kv > .shep-k.shep-kv-wide { font-size: 14px; font-weight: 600; margin-bottom: -4px; }
 .shep-kv > .shep-v.shep-kv-wide { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; }

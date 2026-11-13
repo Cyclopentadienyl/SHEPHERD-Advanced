@@ -1299,9 +1299,9 @@ def test_the_detail_says_what_the_model_is_and_its_relation_to_the_paper(world, 
     listing, data = _read(world, monkeypatch)
     ctl = mp.controls(data, mp.NEWEST, None)
     top = mp.detail_parts(listing, data, bundle_key("disease"), ctl)["top"]
-    ident = top[top.index('<div class="shep-kv shep-mp-ident">'):]
-    ident = ident[:ident.index("</div></div>") + 12]
-    keys = re.findall(r'<span class="shep-k">([^<]*)</span>', ident)
+    ident = top[top.index('<dl class="shep-kv shep-mp-ident">'):]
+    ident = ident[:ident.index("</dl>") + 5]
+    keys = re.findall(r'<dt class="shep-k">([^<]*)</dt>', ident)
     assert keys == ["Kind", "Operation", "Parent", "Family", "Encoder", "Relation to the paper"]
     text = _text(ident)
     assert "Disease" in text and "Finetune" in text and "GATv2" in text
@@ -1310,9 +1310,9 @@ def test_the_detail_says_what_the_model_is_and_its_relation_to_the_paper(world, 
     assert "differs in: " in text and "encoder.hidden" in text   # a shrunk test spec
     assert "Configuration" not in top and ">Task<" not in top
     specless = mp.detail_parts(listing, data, _key(world, "model-05.pt"), ctl)["top"]
-    ident = specless[specless.index('<div class="shep-kv shep-mp-ident">'):]
-    ident = ident[:ident.index("</span></div>") + 13]
-    assert re.findall(r'<span class="shep-k">([^<]*)</span>', ident) == ["Kind"]
+    ident = specless[specless.index('<dl class="shep-kv shep-mp-ident">'):]
+    ident = ident[:ident.index("</dl>") + 5]
+    assert re.findall(r'<dt class="shep-k">([^<]*)</dt>', ident) == ["Kind"]
     assert "Record not readable" in ident
     # Axis 2 for a reference spec, and for a parent elsewhere or unavailable.
     item = {"record": "model", "learning_stage": "finetune", "task": "gene",
@@ -1331,15 +1331,15 @@ def test_the_detail_says_what_the_model_is_and_its_relation_to_the_paper(world, 
         "trainable": ["patient_encoder", "task_head"],
         "parts": {"input": "frozen", "encoder": "frozen", "lp_head": "frozen",
                   "patient_encoder": "trainable", "task_head": "trainable"}}}
-    assert ('<span class="shep-k">Kind</span><span class="shep-v">Disease · frozen graph '
-            'backbone</span>') in mp.identity_html(frozen, None)
-    assert '<span class="shep-v">Gene</span>' in mp.identity_html(item, None)
+    assert ('<dt class="shep-k">Kind</dt><dd class="shep-v">Disease · frozen graph '
+            'backbone</dd>') in mp.identity_html(frozen, None)
+    assert '<dd class="shep-v">Gene</dd>' in mp.identity_html(item, None)
     # A branch says what it changed from its parent, or that it changed
     # nothing (decision B4): every value in the details, the names in By
     # family's Lineage; text from a record is escaped.
     branch = {**item, "operation": "branch", "parent_changes": {}}
     html = mp.identity_html(branch, None)
-    keys = re.findall(r'<span class="shep-k">([^<]*)</span>', html)
+    keys = re.findall(r'<dt class="shep-k">([^<]*)</dt>', html)
     assert keys == ["Kind", "Operation", "Parent", "Settings changed", "Family", "Encoder",
                     "Relation to the paper"]
     assert mp.SAME_SETTINGS in _text(html)

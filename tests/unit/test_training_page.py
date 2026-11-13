@@ -2173,17 +2173,17 @@ def test_a_runs_best_save_is_its_recorded_selections_best_never_a_file_name():
 
 
 def test_the_chosen_checkpoints_details_say_what_its_option_does_not():
-    """A table: the file, its stage, what it holds, what continuing does when
+    """A summary list: the file, its stage, what it holds, what continuing does when
     its stage ended, its Trainer validation figure (named as the Trainer's),
     its model fingerprint (copyable) and its run's directory; its progress is
     its option's, not repeated. What its run's saves were ranked by is its
     record's selection, named with its direction, or not recorded."""
     item = {**_item("demo", run="20261024-163856_run_559817").__dict__, "completed_epochs": 11,
             "end": "finished", "validation": {"metric": "val_lp_accuracy", "value": 0.8123}}
-    assert "Selection</span><span class=\"shep-v\">not recorded<" in tc.parent_details_html(item)
+    assert "Selection</dt><dd class=\"shep-v\">not recorded<" in tc.parent_details_html(item)
     item["selection"] = {"monitor": "val_lp_accuracy", "mode": "max"}
     html = tc.parent_details_html(item)
-    assert ("Selection</span><span class=\"shep-v\">by validation LP accuracy (Trainer), "
+    assert ("Selection</dt><dd class=\"shep-v\">by validation LP accuracy (Trainer), "
             "higher is better<") in html
     for words in ("File", "last.pt", "Stage", "Base", "Holds", "training state", "Continuing",
                   "extends it by the Extra epochs you enter", "Validation",
@@ -2199,7 +2199,8 @@ def test_the_chosen_checkpoints_details_say_what_its_option_does_not():
     weights = tc.parent_details_html(_item("demo", kind="weights").__dict__)
     assert "weights only (cannot be continued)" in weights and "Continuing" not in weights
     unread = tc.parent_details_html({**_item("demo").__dict__, "problem": "ValueError: <b>x"})
-    assert "shep-ckpt-amber" in unread and "Cannot be read" in unread and "&lt;b&gt;x" in unread
+    assert "Cannot be read" in unread and "&lt;b&gt;x" in unread
+    assert '<span class="shep-st shep-st-warn">' in unread    # ▲ and its words, no amber box
     assert tc.parent_details_html(None) == ""
 
 

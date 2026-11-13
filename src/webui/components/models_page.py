@@ -1357,7 +1357,7 @@ def identity_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]]) -> 
                  ("Family", r.e(run_words(item.get("family_id")))),
                  ("Encoder", r.e(r.architecture_label(item.get("encoder")))),
                  ("Relation to the paper", relation)]
-    return f'<div class="shep-kv shep-mp-ident">{r.kv_cells(rows)}</div>'
+    return r.summary_list(rows, classes="shep-mp-ident")
 
 
 def detail_parts(listing: Mapping[str, Any], data: Mapping[str, Any], key: Any,

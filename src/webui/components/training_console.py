@@ -145,7 +145,7 @@ from src.webui.components import charts
 from src.webui.components import renderers as r
 from src.webui.components.chips import (busy_words, chips_on_change, gated, gpu_chip_from,
                                          operator_only)
-from src.webui.components.help import copy_button, help_button
+from src.webui.components.help import help_button
 from src.webui.components.workspaces import (
     manifest_facts,
     read_workspaces,
@@ -1204,15 +1204,6 @@ def _newest_checkpoint(run_dir: Path) -> Optional[Path]:
     return best
 
 
-def digest_html(digest: Any, digits: int = r.SHORT_HEX, what: str = "fingerprint") -> str:
-    """A digest's short form in bold monospace, the full value in its title
-    and on an icon Copy; "not recorded" when there is none."""
-    if not r.is_digest(digest):
-        return '<span class="shep-muted">not recorded</span>'
-    return (f'<code class="shep-fpv" title="{r.e(digest)}">{r.e(str(digest)[:digits])}</code> '
-            + copy_button(str(digest), f"the full {what}", icon_only=True))
-
-
 def _dataset_relation(ws: Mapping[str, Any], *, operator: bool,
                       snapshot: Optional[Mapping[str, Any]], live: bool) -> Tuple[str, str]:
     """How the run's recorded dataset stands to the run bar's: ``(tag, row)``,
@@ -1232,7 +1223,8 @@ def _dataset_relation(ws: Mapping[str, Any], *, operator: bool,
         return (r.warn_chip("checkpoint cannot be read"),
                 '<span class="shep-muted">not read (the checkpoint cannot be read)</span>')
     recorded, current = snapshot.get("dataset_fingerprint"), workspace_fingerprint(ws)
-    row = digest_html(recorded, ws.get("digits") or r.SHORT_HEX, "dataset fingerprint")
+    row = r.fingerprint_value(recorded, digits=ws.get("digits") or r.SHORT_HEX,
+                              what="dataset fingerprint")
     # The skill's §6: "not recorded" only when the run recorded none; a run
     # that recorded one beside a run-bar dataset without a fingerprint cannot
     # be compared, which is another state.
@@ -1284,14 +1276,13 @@ def run_head_html(run: Optional[RunRef], ws: Mapping[str, Any], *, operator: boo
     rows.append(("Logs", "the run directory’s <code>logs/</code>"))
     rows.append(("Dataset used", used + help_button("training-used-dataset",
                                                     "Used dataset fingerprint")))
-    cells = "".join(f'<span class="shep-k">{k}</span><span class="shep-v">{v}</span>' for k, v in rows)
     details = ('<button type="button" class="shep-link shep-rv-details" data-act="details" '
                'aria-expanded="false" aria-controls="shep-train-run-details">Details ›</button>'
                '<div class="shep-pop shep-rv-pop" id="shep-train-run-details" role="dialog" '
                'aria-label="Run details" hidden><div class="shep-pop-hd"><b>Run details</b>'
                '<button type="button" class="shep-pop-x" data-act="close" '
-               f'aria-label="Close the run details">×</button></div><div class="shep-kv">{cells}'
-               '</div></div>')
+               f'aria-label="Close the run details">×</button></div>{r.summary_list(rows)}'
+               '</div>')
     return (f'<div class="shep-panel-hd shep-rv-hd"><h2><span class="shep-rv-k">Run shown</span> '
             f'<span class="shep-rv-name" title="{r.e(label)}">'
             f'{r.e(_model_list().run_words(arch, directory))}</span></h2>{latest}{tag}{relation}'
@@ -2217,24 +2208,23 @@ def stage_words(item: Mapping[str, Any]) -> str:
 
 
 def parent_details_html(item: Optional[Mapping[str, Any]]) -> str:
-    """The chosen checkpoint's details, as a two-column table, saying what its
-    option does not (`model_list.checkpoint_words` gives what it is and its
-    progress): its file, its stage, what it holds, how its stage ended where
-    that limits continuing, its Trainer validation figure (never a test
-    result), what its run's saves were ranked by (`renderers.selection_words`:
-    the recorded monitor and direction, or not recorded), its model
-    fingerprint (copyable) and its run's directory. A file that cannot be read
-    says why, in amber. Empty when none is chosen from the list."""
+    """The chosen checkpoint's details, as the one summary list
+    (`renderers.summary_list`), saying what its option does not
+    (`model_list.checkpoint_words` gives what it is and its progress): its
+    file, its stage, what it holds, how its stage ended where that limits
+    continuing, its Trainer validation figure (never a test result), what its
+    run's saves were ranked by (`renderers.selection_words`: the recorded
+    monitor and direction, or not recorded), its model fingerprint (copyable)
+    and its run's directory. A file that cannot be read says why, beside the
+    ▲ of a condition to watch. Empty when none is chosen from the list."""
     if not item:
         return ""
     filename = str(item.get("filename") or "")
     rows = [("File", f"<code>{r.e(filename)}</code>")]
     if item.get("problem") or not r.is_digest(item.get("sha256")):
         why = item.get("problem") or "it records no metadata"
-        return (f'<div class="shep-ckpt shep-ckpt-amber"><div class="shep-kv">'
-                f'<span class="shep-k">File</span><span class="shep-v"><code>{r.e(filename)}</code></span>'
-                f'<span class="shep-k">Cannot be read</span><span class="shep-v">{r.e(why)}</span>'
-                '</div></div>')
+        rows.append(("Cannot be read", r.status_mark("warn", why)))
+        return f'<div class="shep-ckpt">{r.summary_list(rows)}</div>'
     rows.append(("Stage", r.e(stage_words(item))))
     kind = item.get("checkpoint_kind")
     rows.append(("Holds", "weights only (cannot be continued)" if kind == "weights" else
@@ -2247,10 +2237,10 @@ def parent_details_html(item: Optional[Mapping[str, Any]]) -> str:
     rows.append(("Validation", r.e(figure.removeprefix("Validation ") if figure
                                    else "not recorded in this file")))
     rows.append(("Selection", r.e(r.selection_words(item).removeprefix("Selection "))))
-    rows.append(("Model fingerprint", digest_html(item["sha256"], what="model fingerprint")))
+    rows.append(("Model fingerprint", r.fingerprint_value(item["sha256"],
+                                                          what="model fingerprint")))
     rows.append(("Run", f"<code>{r.e(_run_label(item))}</code>"))
-    cells = "".join(f'<span class="shep-k">{k}</span><span class="shep-v">{v}</span>' for k, v in rows)
-    return f'<div class="shep-ckpt"><div class="shep-kv">{cells}</div></div>'
+    return f'<div class="shep-ckpt">{r.summary_list(rows)}</div>'
 
 
 def _on_continue_open(request: gr.Request, ws, mode):
@@ -3269,12 +3259,10 @@ PAGE_CSS = charts.CHART_CSS + f"""
    and kept inside the window. */
 {_PAGE} #continue_run .options, {_PAGE} #checkpoint_dropdown .options {{ min-width: min(28rem, calc(100vw - 48px)); }}
 {_PAGE} #continue_run .options li, {_PAGE} #checkpoint_dropdown .options li {{ min-width: 100%; }}
-/* The chosen checkpoint's details: a two-column table (`parent_details_html`). */
+/* The chosen checkpoint's details: the one summary list in the drawer's panel, no box of its own
+   (`parent_details_html`). */
 {_PAGE} #shep-train-parent-details:not(:has(.shep-ckpt)) {{ display: none !important; }}
-{_PAGE} .shep-ckpt {{ border: 1px solid var(--shep-border); border-radius: 8px; background: #fff; padding: 8px 12px; }}
 {_PAGE} .shep-ckpt .shep-kv {{ font-size: 14px; gap: 4px 14px; }}
-{_PAGE} .shep-ckpt .shep-v {{ overflow-wrap: anywhere; min-width: 0; }}
-{_PAGE} .shep-ckpt-amber {{ background: var(--shep-amber-50); border-color: var(--shep-amber-300); color: var(--shep-amber-800); }}
 {_PAGE} #shep-train-refresh {{ flex: none !important; width: auto !important; min-width: max-content !important; }}
 /* Extra epochs (when shown) beside Check checkpoint, above what the check says. */
 {_PAGE} .shep-train-check-row {{ align-items: flex-end !important; flex-wrap: wrap !important; gap: 8px 12px !important; }}

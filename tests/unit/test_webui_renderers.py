@@ -435,11 +435,12 @@ def test_model_facts_digest_rows_take_a_line_over_their_full_value():
         trained_on_names=("demo",), synthetic=True, sources="", validation=None, recorded=None,
         warnings=())
     html_ = r.model_facts_html(facts)
-    assert (f'<span class="shep-k shep-kv-wide">{r.FACTS_MODEL_FP}</span>'
-            f'<span class="shep-v shep-kv-wide"><code class="shep-full">{"a" * 64}</code>') in html_
-    assert f'<span class="shep-k shep-kv-wide">{r.e(r.FACTS_TRAINED_FP)} · demo</span>' in html_
+    assert (f'<dt class="shep-k shep-kv-wide">{r.FACTS_MODEL_FP}</dt>'
+            f'<dd class="shep-v shep-kv-wide"><code class="shep-full" title="{"a" * 64}">'
+            f'{"a" * 64}</code>') in html_
+    assert f'<dt class="shep-k shep-kv-wide">{r.e(r.FACTS_TRAINED_FP)} · demo</dt>' in html_
     assert html_.count("shep-copy shep-copy-icon") == 2
-    assert '<span class="shep-k">Model</span>' in html_       # short labels keep the grid
+    assert '<dt class="shep-k">Model</dt>' in html_       # short labels keep the grid
     from src.webui.style import SHELL_CSS
 
     assert ".shep-kv > .shep-kv-wide { grid-column: 1 / -1;" in SHELL_CSS
@@ -709,6 +710,25 @@ def _shown_text(html_: str) -> str:
     import html as html_lib
 
     return " ".join(html_lib.unescape(re.sub(r"<[^>]+>", " ", html_)).split())
+
+
+def test_the_summary_list_is_one_dl_its_keys_escaped_its_values_as_built():
+    html_ = r.summary_list([("Run", "<code>gatv2/r</code>"), (HOSTILE, r.e(HOSTILE)),
+                            (r.FACTS_MODEL_FP, r.fingerprint_value("a" * 64, full=True))],
+                           wide=(r.FACTS_MODEL_FP,), titles={"Run": "run_dir"},
+                           helps={"Run": ("model-fingerprint", "Run")}, classes="shep-x")
+    assert html_.startswith('<dl class="shep-kv shep-x">') and html_.endswith("</dl>")
+    assert '<dt class="shep-k" title="run_dir">Run<button' in html_
+    assert '<dd class="shep-v"><code>gatv2/r</code></dd>' in html_
+    assert HOSTILE not in html_ and html_.count("&lt;img src=x onerror=alert(1)&gt;") == 2
+    assert f'<dt class="shep-k shep-kv-wide">{r.FACTS_MODEL_FP}</dt>' in html_
+    # A digest: its 12 hex (all 64 when full) and an icon Copy; the missing
+    # state's own word, never a dash.
+    short = r.fingerprint_value("b" * 64, what="model fingerprint")
+    assert f'<code class="shep-fpv" title="{"b" * 64}">{"b" * 12}</code>' in short
+    assert 'aria-label="Copy the full model fingerprint"' in short or "the full model" in short
+    assert r.fingerprint_value(None) == '<span class="shep-muted">not recorded</span>'
+    assert r.fingerprint_value("x", missing="not read") == '<span class="shep-muted">not read</span>'
 
 
 def test_the_value_words_say_each_setting_by_its_meaning_never_by_repr():

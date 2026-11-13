@@ -198,7 +198,7 @@ def test_the_details_show_what_the_manifest_binds(root, monkeypatch):
     assert fingerprint in html and f'data-copy="{fingerprint}"' in html
     for label in ("kg", "node_features", "edge_indices", "num_nodes", "train_samples",
                   "val_samples", "record"):
-        assert f'<span class="shep-k">{label}</span><code>' in html, label
+        assert f'<dt class="shep-k">{label}</dt><dd class="shep-v"><code>' in html, label
     assert "allocation seed 42" in html and "feature seed" in html
     assert "train 20 · val 5" in html
     assert "<code>demo</code>" in html and "in the server’s workspace root" in html

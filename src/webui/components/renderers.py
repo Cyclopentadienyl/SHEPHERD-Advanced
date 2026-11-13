@@ -492,11 +492,11 @@ def dataset_details_html(row: Mapping[str, Any], facts: Optional[Mapping[str, An
             f'{copy_button(fingerprint, "the full dataset fingerprint of " + name)}</div>')
     rows_kv = []
     if facts is not None:
-        bound = "".join(f'<span class="shep-k">{e(label)}</span><code>{e(short_hex(digest))}</code>'
-                        for label, digest in facts["bound"])
+        bound = summary_list([(label, f"<code>{e(short_hex(digest))}</code>")
+                              for label, digest in facts["bound"]], classes="shep-kv-2")
         parts.append('<div class="shep-card"><div class="shep-card-hd">What the manifest binds '
                      '<span class="shep-muted">sha256, first 12 · full values in the manifest'
-                     f'</span></div><div class="shep-kv shep-kv-2">{bound}</div></div>')
+                     f'</span></div>{bound}</div>')
         split = []
         if facts.get("allocation_seed") is not None:
             split.append(f"allocation seed {facts['allocation_seed']}")
@@ -521,9 +521,7 @@ def dataset_details_html(row: Mapping[str, Any], facts: Optional[Mapping[str, An
     ]
     if not row.get("trainable"):
         rows_kv.append(("Not trainable", e(row.get("not_trainable") or "not trainable")))
-    cells = "".join(f'<span class="shep-k">{e(k)}</span><span class="shep-v">{v}</span>'
-                    for k, v in rows_kv)
-    parts.append(f'<div class="shep-kv">{cells}</div>')
+    parts.append(summary_list(rows_kv))
     return "".join(parts)
 
 
@@ -1127,6 +1125,10 @@ class ModelFacts(NamedTuple):
     #: refuses or a file not read, whose missing figure is "not read", never
     #: "not recorded" (`validation_text`).
     validation_read: bool = True
+    #: What only a served model has (the Diagnosis card's: the graph and the
+    #: dataset record it serves), as ``(label, escaped HTML)`` rows, each a
+    #: wide row at the end of Identity.
+    served_rows: Tuple[Tuple[str, str], ...] = ()
 
 
 def facts_from_checkpoint(item: Any, workspaces: Sequence[Any], *,
@@ -1213,6 +1215,51 @@ def validation_text(validation: Optional[Tuple[str, float]], *, read: bool = Tru
 # ---------------------------------------------------------------------------
 # Details: the one summary list and the words of a value (the skill's §4, §5)
 # ---------------------------------------------------------------------------
+def summary_list(rows: Iterable[Tuple[str, str]], *, wide: Iterable[str] = (),
+                 helps: Optional[Mapping[str, Tuple[str, str]]] = None,
+                 titles: Optional[Mapping[str, str]] = None, classes: str = "") -> str:
+    """**The one key-value summary list** (the skill's §4: one thing, several
+    attributes), wherever a page shows one thing's details: a
+    ``<dl class="shep-kv">``, each row its key (``dt``, plain text, escaped
+    here) and its value (``dd``: HTML these renderers built, every value read
+    escaped with `e` and said in its words, `setting_words`; a fingerprint by
+    `fingerprint_value`, with its icon Copy). The key column is 8 to 12em wide
+    (``.shep-kv``, `src/webui/style.py`); a key in `wide` (a digest's, whose
+    full value is long, or a value that needs the width) takes a line of its
+    own over the whole list and its value the line under it, as Model Facts
+    draws its digests. `helps` gives a key its ⓘ (`help_button`'s topic and
+    title), `titles` its title (a setting's record name beside its words).
+    `classes` adds a page's own classes for its spacing.
+
+    The list draws no border: it sits in its region's one container, never in
+    a bordered box of its own inside one (the skill's §2)."""
+    wide, helps, titles = set(wide), helps or {}, titles or {}
+    cells = []
+    for key, value in rows:
+        extra = " shep-kv-wide" if key in wide else ""
+        help_html = help_button(*helps[key]) if key in helps else ""
+        title = f' title="{e(titles[key])}"' if key in titles else ""
+        cells.append(f'<dt class="shep-k{extra}"{title}>{e(key)}{help_html}</dt>'
+                     f'<dd class="shep-v{extra}">{value}</dd>')
+    more = f" {classes}" if classes else ""
+    return f'<dl class="shep-kv{more}">{"".join(cells)}</dl>'
+
+
+def fingerprint_value(digest: Any, *, what: str = "fingerprint", digits: int = SHORT_HEX,
+                      full: bool = False, missing: str = NOT_RECORDED.lower()) -> str:
+    """**A digest as a summary list's value** (`summary_list`): its 12 hex
+    digits (`full`: all 64, as Model Facts' digest rows show them, so the long
+    value keeps one line) in bold monospace, the whole value in its title and
+    on an icon Copy named for `what`; when there is none, `missing`, the
+    state's own word ("not recorded" where the record holds none, "not read"
+    where nothing was read: the skill's §6)."""
+    if not is_digest(digest):
+        return f'<span class="shep-muted">{e(missing)}</span>'
+    shown, cls = (digest, "shep-full") if full else (digest[:digits], "shep-fpv")
+    return (f'<code class="{cls}" title="{e(digest)}">{e(shown)}</code> '
+            + copy_button(digest, f"the full {what}", icon_only=True))
+
+
 #: **The label of each recipe setting a form offers**, one name per setting:
 #: the Training page's base form (`training_console.BASE_FIELDS`) and the
 #: Fine-tune page's (`finetune_page.FINETUNE_FIELDS`). Every other page names a
@@ -1373,22 +1420,6 @@ def field_words(key: Any) -> str:
     return " ".join(words)
 
 
-def kv_cells(rows: Iterable[Tuple[str, str]], *, wide: Iterable[str] = ()) -> str:
-    """Label/value cells for a ``.shep-kv`` grid; a label in `wide` (a digest's,
-    whose full value is long) takes its own line over the whole grid, and its
-    value the line under it, as the mockup's Model Facts draws digests: a long
-    label folded into the label column took four or five lines (M5-3)."""
-    wide = set(wide)
-    return "".join(
-        f'<span class="shep-k shep-kv-wide">{e(k)}</span><span class="shep-v shep-kv-wide">{v}</span>'
-        if k in wide else f'<span class="shep-k">{e(k)}</span><span class="shep-v">{v}</span>'
-        for k, v in rows)
-
-
-def _kv(rows: Iterable[Tuple[str, str]], *, wide: Iterable[str] = ()) -> str:
-    return f'<div class="shep-kv">{kv_cells(rows, wide=wide)}</div>'
-
-
 def recorded_count_text(value: Any) -> str:
     """A count as its record holds it (the integer as written, with no
     separator), or "not recorded" where the record holds no integer (the
@@ -1537,7 +1568,7 @@ def data_kind_lines(view: Mapping[str, Any]) -> list:
     return rows
 
 
-#: The labels of Model Facts' digest rows (`kv_cells`' wide rows).
+#: The labels of Model Facts' digest rows (`summary_list`'s wide rows).
 FACTS_MODEL_FP = "Model fingerprint (checkpoint sha256)"
 FACTS_TRAINED_FP = ("Trained on: dataset fingerprint (split_manifest.json, from the checkpoint's "
                     "record)")
@@ -1558,18 +1589,15 @@ def model_facts_html(facts: ModelFacts, *, open_section: str = "identity") -> st
         location = (f'<code>{e(facts.checkpoint_file)}</code>'
                     + (f' <span class="shep-muted">(workspace {e(facts.workspace)})</span>'
                        if facts.workspace else ""))
-    model_fp = (f'<code class="shep-full">{e(facts.model_fingerprint)}</code> '
-                + copy_button(facts.model_fingerprint, "the full model fingerprint", icon_only=True)
-                if facts.model_fingerprint else '<span class="shep-muted">not read</span>')
-    data_fp = (f'<code class="shep-full">{e(facts.trained_on_fingerprint)}</code> '
-               + copy_button(facts.trained_on_fingerprint, "the full dataset fingerprint",
-                             icon_only=True)
-               if facts.trained_on_fingerprint else '<span class="shep-muted">not recorded</span>')
+    model_fp = fingerprint_value(facts.model_fingerprint, what="model fingerprint", full=True,
+                                 missing="not read")
+    data_fp = fingerprint_value(facts.trained_on_fingerprint, what="dataset fingerprint",
+                                full=True)
     # The listed workspaces holding that dataset follow the label, as the
     # mockup draws it, so the full fingerprint and its Copy keep one line.
     trained_label = FACTS_TRAINED_FP + (f" · {', '.join(facts.trained_on_names)}"
                                         if facts.trained_on_names else "")
-    identity = _kv([
+    identity = summary_list([
         ("Model", e(facts.name_line)),
         *([("Task", e(facts.task))] if facts.task else []),
         *([("Configuration", e(facts.configuration))] if facts.configuration else []),
@@ -1577,7 +1605,8 @@ def model_facts_html(facts: ModelFacts, *, open_section: str = "identity") -> st
         ("Checkpoint file", location or "—"),
         (FACTS_MODEL_FP, model_fp),
         (trained_label, data_fp),
-    ], wide=(FACTS_MODEL_FP, trained_label))
+        *facts.served_rows,
+    ], wide=(FACTS_MODEL_FP, trained_label, *(label for label, _value in facts.served_rows)))
     uses_text = f"{NOT_A_MEDICAL_DEVICE} {SYNTHETIC_FOR_TESTING}"
     trained = (", ".join(facts.trained_on_names) if facts.trained_on_names
                else "matches no listed workspace" if facts.trained_on_fingerprint
@@ -1656,12 +1685,12 @@ __all__ = [
     "facts_from_checkpoint",
     "field_words",
     "fingerprint_html",
+    "fingerprint_value",
     "fit_option",
     "fit_options",
     "freeze_words",
     "ident_html",
     "is_digest",
-    "kv_cells",
     "metric_words",
     "model_facts_html",
     "model_kind_text",
@@ -1692,6 +1721,7 @@ __all__ = [
     "short_hex",
     "short_reason",
     "sources_text",
+    "summary_list",
     "trained_on",
     "trained_on_html",
     "validation_cell",

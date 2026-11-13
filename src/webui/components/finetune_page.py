@@ -191,10 +191,11 @@ def bases_note_html(parents: Mapping[str, Any], problem: Optional[str]) -> str:
 
 
 def base_summary_html(item: Optional[Mapping[str, Any]]) -> str:
-    """The chosen base's summary as key-value rows, saying what the two
-    selects above do not: its run's directory (the Run select gives its
-    name, architecture and time), file, configuration, what it holds, its
-    Trainer validation figure, what its run's saves were ranked by
+    """The chosen base's summary in the one summary list
+    (`renderers.summary_list`), saying what the two selects above do not:
+    its run's directory (the Run select gives its name, architecture and
+    time), file, configuration, what it holds, its Trainer validation
+    figure, what its run's saves were ranked by
     (`renderers.selection_words`), how its dataset stands to the one
     selected, and the model fingerprint Start sends (copyable). Escaped;
     empty when none is chosen."""
@@ -218,9 +219,9 @@ def base_summary_html(item: Optional[Mapping[str, Any]]) -> str:
         ("Validation", r.e(figure.removeprefix("Validation ") if figure else "not recorded")),
         ("Selection", r.e(r.selection_words(item).removeprefix("Selection "))),
         ("Trained on", on),
-        ("Model fingerprint", tc.digest_html(item.get("sha256"), what="model fingerprint")),
+        ("Model fingerprint", r.fingerprint_value(item.get("sha256"), what="model fingerprint")),
     ]
-    return f'<div class="shep-ft-base"><div class="shep-kv">{r.kv_cells(rows)}</div></div>'
+    return f'<div class="shep-ft-base">{r.summary_list(rows)}</div>'
 
 
 # =============================================================================
@@ -840,9 +841,9 @@ PAGE_CSS = f"""
 {_PAGE} #ft_refresh {{ flex: none !important; width: auto !important; min-width: max-content !important; }}
 {_PAGE} .shep-ft-settings {{ flex-wrap: wrap !important; gap: 8px 16px !important; }}
 {_PAGE} .shep-ft-ds {{ font-size: 15px; display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; }}
-{_PAGE} .shep-ft-base {{ border: 1px solid var(--shep-border); border-radius: 8px; background: var(--shep-panel); padding: 8px 12px; }}
+/* The chosen base's details: the one summary list in the parameters' panel, no box of its own
+   (`base_summary_html`; the skill's §2). */
 {_PAGE} .shep-ft-base .shep-kv {{ font-size: 14px; gap: 4px 14px; }}
-{_PAGE} .shep-ft-base .shep-v {{ overflow-wrap: anywhere; min-width: 0; }}
 {_PAGE} #ft_base:not(:has(.shep-ft-base)), {_PAGE} #ft_tasks_note:not(:has(p)), {_PAGE} #ft_freeze_note:not(:has(p)) {{ display: none !important; }}
 {_PAGE} .shep-ft-why {{ margin: 0; font-size: 14px; color: var(--shep-text-2); }}
 {_PAGE} .shep-ft-start-row, {_PAGE} .shep-ft-stop-row {{ align-items: center !important; flex-wrap: wrap !important; gap: 8px 14px !important; }}
