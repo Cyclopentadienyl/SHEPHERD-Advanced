@@ -222,6 +222,10 @@ def test_the_checkpoint_replaced_after_its_read_builds_the_model_read(
         assert torch.equal(served[name].cpu(), value)
     assert bundle.config["checkpoint_meta"]["epoch"] == contents["epoch"] != 9, (
         "the metadata is A's too")
+    # How far it trained, as its progress record says (B0b): the served status
+    # names the file in the lists' words (`renderers.epoch_words`).
+    assert bundle.config["checkpoint_meta"]["completed_epochs"] == (
+        contents["progress"]["completed_epochs"])
 
 
 def test_a_tensor_file_that_does_not_parse_is_refused_naming_it(api, workspace):

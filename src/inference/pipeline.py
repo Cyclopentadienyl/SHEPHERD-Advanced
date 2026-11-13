@@ -829,8 +829,15 @@ class DiagnosisPipeline:
         # rule again here, so a caller of this method cannot reach the move
         # below with an unresolved `auto`.
         device = resolve_serving_device(device)
+        # The epochs its progress record says it completed, beside the
+        # record's epoch index (an older file records only the index), so a
+        # page names the served file as the lists name it
+        # (`renderers.epoch_words`).
+        progress = checkpoint.get("progress")
         self._checkpoint_meta = {
             "epoch": _as_int(checkpoint.get("epoch")),
+            "completed_epochs": _as_int(progress.get("completed_epochs")
+                                        if isinstance(progress, dict) else None),
             "params": int(sum(p.numel() for p in model.parameters())),
             "device": str(device),
         }
