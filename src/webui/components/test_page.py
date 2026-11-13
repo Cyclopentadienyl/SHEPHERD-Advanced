@@ -1424,10 +1424,7 @@ def model_html(page: Mapping[str, Any], models: Mapping[str, Any], key: Optional
               else None)
     rows = [("Model", f'<span class="shep-w600">{e(r.model_name_line(item))}</span>'),
             ("File", f'<code>{e(item.get("filename"))}</code>'),
-            # The figure's words without the key's ("pooled MRR (Trainer) 0.2867 — …",
-            # "not recorded in this checkpoint").
-            ("Validation", e(r.validation_text(figure, read=r.record_read(item))
-                             .removeprefix("Validation (Trainer): ").removeprefix("Validation "))),
+            ("Validation", e(r.validation_value(figure, read=r.record_read(item)))),
             ("Model fingerprint", r.fingerprint_value(item["sha256"], what="model fingerprint")),
             ("Dataset", r.trained_on_html(item.get("dataset_fingerprint"), workspaces))]
     return ('<div class="shep-test-model">'

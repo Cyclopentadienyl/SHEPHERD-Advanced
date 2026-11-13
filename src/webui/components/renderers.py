@@ -1129,6 +1129,15 @@ class ModelFacts(NamedTuple):
     #: dataset record it serves), as ``(label, escaped HTML)`` rows, each a
     #: wide row at the end of Identity.
     served_rows: Tuple[Tuple[str, str], ...] = ()
+    #: Why the dataset it was trained on is not shown, where its checkpoint
+    #: was not read (the Diagnosis card's: D8, or a refresh not run yet), as
+    #: ``(words, short)``: `words` on the Trained on rows, `short` in the
+    #: dataset fingerprint's place, instead of "not recorded", which says the
+    #: checkpoint was read and holds none (the skill's §6). None: it was read.
+    trained_on_unread: Optional[Tuple[str, str]] = None
+    #: HTML under Evidence's rows (the Diagnosis card's link to the full
+    #: records on Models), escaped by its builder.
+    evidence_more: str = ""
 
 
 def facts_from_checkpoint(item: Any, workspaces: Sequence[Any], *,
@@ -1212,6 +1221,16 @@ def validation_text(validation: Optional[Tuple[str, float]], *, read: bool = Tru
     return f"{label} {value:.4f} — {_VALIDATION_NOTE}"
 
 
+def validation_value(validation: Optional[Tuple[str, float]], *, read: bool = True) -> str:
+    """`validation_text` as a summary list's "Validation" value
+    (`summary_list`): its words without the key's ("pooled MRR (Trainer)
+    0.2867 — selection metric on val, not an independent test", "not
+    recorded in this checkpoint", "not read (record not readable)"), so the
+    row never reads "Validation Validation …"."""
+    return (validation_text(validation, read=read)
+            .removeprefix("Validation (Trainer): ").removeprefix("Validation "))
+
+
 # ---------------------------------------------------------------------------
 # Details: the one summary list and the words of a value (the skill's §4, §5)
 # ---------------------------------------------------------------------------
@@ -1246,18 +1265,20 @@ def summary_list(rows: Iterable[Tuple[str, str]], *, wide: Iterable[str] = (),
 
 
 def fingerprint_value(digest: Any, *, what: str = "fingerprint", digits: int = SHORT_HEX,
-                      full: bool = False, missing: str = NOT_RECORDED.lower()) -> str:
+                      full: bool = False, missing: str = NOT_RECORDED.lower(),
+                      copy: bool = True) -> str:
     """**A digest as a summary list's value** (`summary_list`): its 12 hex
     digits (`full`: all 64, as Model Facts' digest rows show them, so the long
     value keeps one line) in bold monospace, the whole value in its title and
-    on an icon Copy named for `what`; when there is none, `missing`, the
-    state's own word ("not recorded" where the record holds none, "not read"
-    where nothing was read: the skill's §6)."""
+    on an icon Copy named for `what` (none with `copy` False, where the same
+    digest is copyable once elsewhere in the same details); when there is
+    none, `missing`, the state's own word ("not recorded" where the record
+    holds none, "not read" where nothing was read: the skill's §6)."""
     if not is_digest(digest):
         return f'<span class="shep-muted">{e(missing)}</span>'
     shown, cls = (digest, "shep-full") if full else (digest[:digits], "shep-fpv")
-    return (f'<code class="{cls}" title="{e(digest)}">{e(shown)}</code> '
-            + copy_button(digest, f"the full {what}", icon_only=True))
+    code = f'<code class="{cls}" title="{e(digest)}">{e(shown)}</code>'
+    return code + (" " + copy_button(digest, f"the full {what}", icon_only=True) if copy else "")
 
 
 #: **The label of each recipe setting a form offers**, one name per setting:
@@ -1655,7 +1676,11 @@ FACTS_TRAINED_FP = ("Trained on: dataset fingerprint (split_manifest.json, from 
 
 def model_facts_html(facts: ModelFacts, *, open_section: str = "identity") -> str:
     """Model Facts: 1 Identity, 2 Uses, 3 Data, 4 Evidence (each a disclosure
-    with a one-line summary) and 5 Warnings, always open."""
+    with a one-line summary) and 5 Warnings, always open. Identity, Data and
+    Evidence are each one summary list (`summary_list`: one row per fact,
+    the skill's §4, §5); a trained-on dataset whose
+    checkpoint was not read says why (`ModelFacts.trained_on_unread`), never
+    "not recorded"."""
     def section(key: str, number: int, title: str, summary: str, body: str) -> str:
         opened = " open" if key == open_section else ""
         return (f'<details class="shep-facts-sec" data-sec="{key}"{opened}>'
@@ -1668,10 +1693,11 @@ def model_facts_html(facts: ModelFacts, *, open_section: str = "identity") -> st
         location = (f'<code>{e(facts.checkpoint_file)}</code>'
                     + (f' <span class="shep-muted">(workspace {e(facts.workspace)})</span>'
                        if facts.workspace else ""))
+    unread = facts.trained_on_unread
     model_fp = fingerprint_value(facts.model_fingerprint, what="model fingerprint", full=True,
                                  missing="not read")
     data_fp = fingerprint_value(facts.trained_on_fingerprint, what="dataset fingerprint",
-                                full=True)
+                                full=True, missing=unread[0] if unread else NOT_RECORDED.lower())
     # The listed workspaces holding that dataset follow the label, as the
     # mockup draws it, so the full fingerprint and its Copy keep one line.
     trained_label = FACTS_TRAINED_FP + (f" · {', '.join(facts.trained_on_names)}"
@@ -1687,22 +1713,26 @@ def model_facts_html(facts: ModelFacts, *, open_section: str = "identity") -> st
         *facts.served_rows,
     ], wide=(FACTS_MODEL_FP, trained_label, *(label for label, _value in facts.served_rows)))
     uses_text = f"{NOT_A_MEDICAL_DEVICE} {SYNTHETIC_FOR_TESTING}"
-    trained = (", ".join(facts.trained_on_names) if facts.trained_on_names
+    trained = (unread[0] if unread
+               else ", ".join(facts.trained_on_names) if facts.trained_on_names
                else "matches no listed workspace" if facts.trained_on_fingerprint
-               else "not recorded")
-    data_parts = [f"Trained on {e(trained)}",
-                  fingerprint_html("dataset fingerprint", facts.trained_on_fingerprint,
-                                   copy=False)]
-    if facts.synthetic:
-        data_parts.append(chip("synthetic", "amber"))
+               else NOT_RECORDED.lower())
+    # The dataset fingerprint once more, short and without its Copy: Identity
+    # shows it whole with its Copy.
+    data_rows = [("Trained on", e(trained) + (" " + chip("synthetic", "amber")
+                                              if facts.synthetic else "")),
+                 ("Dataset fingerprint",
+                  fingerprint_value(facts.trained_on_fingerprint, copy=False,
+                                    missing=unread[1] if unread else NOT_RECORDED.lower()))]
     if facts.sources:
-        data_parts.append(e(facts.sources))
+        data_rows.append(("Sources", e(facts.sources)))
     if facts.serving_note:
-        data_parts.append(e(facts.serving_note))
-    data_line = " · ".join(data_parts)
-    evidence_line = (f"{e(validation_text(facts.validation, read=facts.validation_read))}"
-                     f"{help_button('validation-trainer', 'Validation (Trainer)')}"
-                     f'<br>{e(recorded_tests_text(facts.recorded))}')
+        data_rows.append(("Serving", e(facts.serving_note)))
+    evidence = summary_list([
+        ("Validation", e(validation_value(facts.validation, read=facts.validation_read))),
+        ("Recorded results",
+         e(recorded_tests_text(facts.recorded).removeprefix("Recorded results: "))),
+    ], helps={"Validation": ("validation-trainer", "Validation (Trainer)")}) + facts.evidence_more
     if facts.warnings:
         warnings = "".join(
             f'<p class="shep-warn"><b>⚠ {e(h)}</b> <span>{e(d)}</span></p>'
@@ -1713,8 +1743,8 @@ def model_facts_html(facts: ModelFacts, *, open_section: str = "identity") -> st
         '<div class="shep-facts">'
         + section("identity", 1, "Identity", "", identity)
         + section("uses", 2, "Uses", f" · {e(uses_text)}", f"<p>{e(uses_text)}</p>")
-        + section("data", 3, "Data", "", f"<p>{data_line}</p>")
-        + section("evidence", 4, "Evidence", "", f"<p>{evidence_line}</p>")
+        + section("data", 3, "Data", "", summary_list(data_rows))
+        + section("evidence", 4, "Evidence", "", evidence)
         + '<section class="shep-facts-sec shep-facts-warn" data-sec="warnings">'
           '<h4><span class="shep-facts-n">5</span> Warnings</h4>'
           f'<div class="shep-facts-bd">{warnings}</div></section>'
@@ -1806,6 +1836,7 @@ __all__ = [
     "trained_on_html",
     "validation_cell",
     "validation_text",
+    "validation_value",
     "validation_words",
     "word_groups",
     "workspace_choices",

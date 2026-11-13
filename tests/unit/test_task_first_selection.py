@@ -1038,11 +1038,14 @@ def test_a_file_without_a_model_spec_is_listed_refused_by_every_list_and_never_u
         facts = r.facts_from_checkpoint(item, [])
         assert facts.validation is None and facts.validation_read is False
         not_read = "Validation (Trainer): not read (record not readable)"
-        assert not_read in r.model_facts_html(facts)
         assert r.validation_text(None, read=r.record_read(item)) == not_read
+        # The details' "Validation" row says it without the key's words.
+        assert r.validation_value(None, read=r.record_read(item)) == "not read (record not readable)"
+        value = '<dd class="shep-v">not read (record not readable)</dd>'
         page = {"roots": [], "workspaces": [], "access": {}}
         models = {"workspace": "ws", "items": [item]}
-        assert not_read in tp.model_html(page, models, tp.item_key(item))
+        for shown in (r.model_facts_html(facts), tp.model_html(page, models, tp.item_key(item))):
+            assert '<dt class="shep-k">Validation' in shown and value in shown
         assert "not recorded in this checkpoint" not in tp.model_html(page, models,
                                                                      tp.item_key(item))
     assert sl.FAMILY_GROUPS == ("family", "refused") and "history" not in ml.TASK_FILTERS

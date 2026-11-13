@@ -203,9 +203,14 @@ def test_model_facts_has_its_five_sections_and_warnings_always_open():
     plain = text_of(html)
     assert ("Not a certified medical device; decision support for a qualified clinician. "
             "Synthetic workspaces are for testing only.") in plain
-    assert ("Validation pooled MRR (Trainer) 0.3180 — selection metric on val, not an "
+    # Data and Evidence are summary lists too: a row per fact, one " · " at
+    # most (the skill's §4, §5), the words kept.
+    assert ("Validationpooled MRR (Trainer) 0.3180 — selection metric on val, not an "
             "independent test") in plain
-    assert "Recorded results: none in ledger" in plain
+    assert "Recorded resultsnone in ledger" in plain
+    data = html[html.index('data-sec="data"'):html.index('data-sec="evidence"')]
+    assert '<dl class="shep-kv">' in data and "Trained ondemo" in text_of(data)
+    assert "Servingserving reads workspace demo: the same dataset" in text_of(data)
     assert "SYNTHETIC WORKSPACE: not a clinical result." in plain
     assert "serving reads workspace demo: the same dataset" in plain
     assert "runs/gatv2/20261017-091500_run_3fa9c1/checkpoints/model-05-0.2410.pt" in plain
@@ -217,7 +222,7 @@ def test_model_facts_warns_of_a_dataset_no_listed_workspace_holds():
                                     [workspace()])
     plain = text_of(r.model_facts_html(facts))
     assert "TRAINED ON A DATASET NO LISTED WORKSPACE HOLDS." in plain
-    assert "Trained on matches no listed workspace" in plain
+    assert "Trained onmatches no listed workspace" in plain
     facts = r.facts_from_checkpoint(checkpoint(fingerprint=FP_B), [workspace("o", FP_B, "files")])
     assert "No warnings." in text_of(r.model_facts_html(facts))
 

@@ -835,36 +835,6 @@ def details_visible(state: Mapping[str, Any]) -> bool:
 # ---------------------------------------------------------------------------
 # Details: the identity drawer's "Model in use"
 # ---------------------------------------------------------------------------
-def _insert_after_section(html_: str, section: str, extra: str, closing: str) -> str:
-    """Put `extra` at the end of one Model Facts section's body (before its
-    closing markup), found by its ``data-sec``: Evidence's link to the full
-    records, which Model Facts (`renderers.model_facts_html`) has no slot for;
-    what the served model adds to Identity is its own slot
-    (`ModelFacts.served_rows`). The tests pin the markup it relies on."""
-    start = html_.find(f'data-sec="{section}"')
-    if start < 0:
-        return html_
-    end = html_.find(closing, start)
-    if end < 0:
-        return html_
-    return html_[:end] + extra + html_[end:]
-
-
-#: Model Facts' words for a dataset fingerprint the checkpoint does not record.
-_NOT_RECORDED = '<span class="shep-muted">not recorded</span>'
-
-
-def _replace_in_section(html_: str, section: str, old: str, new: str) -> str:
-    """Replace every `old` inside one Model Facts disclosure (found by its
-    ``data-sec``, up to its ``</details>``), and nowhere else."""
-    start = html_.find(f'data-sec="{section}"')
-    if start < 0:
-        return html_
-    end = html_.find("</details>", start)
-    end = len(html_) if end < 0 else end
-    return html_[:start] + html_[start:end].replace(old, new) + html_[end:]
-
-
 def served_warnings(status: Mapping[str, Any]) -> List[Tuple[str, str]]:
     """The served state's warnings in the banners' words: synthetic data."""
     identity = status.get("served_identity") or {}
@@ -954,30 +924,23 @@ def served_facts_html(state: Mapping[str, Any], *, open_section: str = "identity
         f"Checkpoint · {r.epoch_words(item)}"
     if isinstance(params, int) and not isinstance(params, bool):
         name_line += f" · {params:,} params"
-    model_facts = model_facts._replace(
-        name_line=name_line, warnings=(*warnings, *item_warnings), served_rows=tuple(served_rows),
-        serving_note=_serving_note(status, facts,
-                                   trained.get("fingerprint") if shown else None))
-    html_ = r.model_facts_html(model_facts, open_section=open_section)
+    # The trained-on dataset of a checkpoint not read here (D8, or not yet)
+    # is said so, in Identity and in Data, never "not recorded": Model
+    # Facts' own slot for it (`ModelFacts.trained_on_unread`).
+    unread = None
     if not shown:
-        # Model Facts reads an unknown trained-on dataset as "not recorded"
-        # (in Identity, and twice in Data); here it was not read (D8, or not
-        # yet), which is said instead, everywhere in both sections.
         words = TRAINED_NOT_SHOWN if trained.get("state") == "not_shown" else \
             (TRAINED_NOT_READ_YET if trained.get("state") == "pending"
              else f"not read · {trained.get('problem') or 'not read'}")
-        short = _FINGERPRINT_NOT_READ.get(trained.get("state"), "not read")
-        html_ = _replace_in_section(html_, "identity", _NOT_RECORDED,
-                                    f'<span class="shep-muted">{r.e(words)}</span>')
-        html_ = _replace_in_section(html_, "data", "Trained on not recorded",
-                                    f"Trained on: {r.e(words)}")
-        html_ = _replace_in_section(html_, "data", _NOT_RECORDED,
-                                    f'<span class="shep-muted">{r.e(short)}</span>')
-    html_ = _insert_after_section(
-        html_, "evidence",
-        ' · <button type="button" class="shep-dx-link" data-key="models">Full records: '
-        'Research › Models ›</button>', "</p></div></details>")
-    return note + html_
+        unread = (words, _FINGERPRINT_NOT_READ.get(trained.get("state"), "not read"))
+    model_facts = model_facts._replace(
+        name_line=name_line, warnings=(*warnings, *item_warnings), served_rows=tuple(served_rows),
+        serving_note=_serving_note(status, facts,
+                                   trained.get("fingerprint") if shown else None),
+        trained_on_unread=unread,
+        evidence_more=('<p><button type="button" class="shep-dx-link" '
+                       'data-key="models">Full records: Research › Models ›</button></p>'))
+    return note + r.model_facts_html(model_facts, open_section=open_section)
 
 
 __all__ = [

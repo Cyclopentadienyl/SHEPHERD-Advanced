@@ -553,12 +553,17 @@ def test_details_add_what_a_served_model_has_to_model_facts(root):
     for text in ("Knowledge graph served (kg.json)", "Dataset record served (kg.provenance.json)",
                  "origin synthetic", "6,569 params", root["recorded"]):
         assert text in identity
-    assert "Validation pooled MRR (Trainer) 0.2410" in html
+    assert ('<dt class="shep-k">Validation' in html
+            and "pooled MRR (Trainer) 0.2410 — selection metric on val" in html)
     # The card reads no model record: no Task or Configuration row claims one
     # is unreadable (K6 decision 4 names the task in the name line instead).
     assert "Record not" not in html and 'class="shep-k">Task<' not in identity
     assert 'class="shep-k">Configuration<' not in identity
-    assert 'data-key="models">Full records: Research › Models ›' in html
+    # The link to the full records is Model Facts' own slot under Evidence's
+    # rows (`ModelFacts.evidence_more`), never spliced into its markup.
+    evidence = _section(html, "evidence")
+    assert 'data-key="models">Full records: Research › Models ›' in evidence
+    assert evidence.index("</dl>") < evidence.index('data-key="models"')
     # The structural fingerprint is compared by nothing at load (K8-4): no line.
     assert "structural fingerprint" not in html
     warnings = html[html.index('data-sec="warnings"'):]
@@ -583,8 +588,13 @@ def test_details_for_a_read_only_request_say_not_shown_never_not_recorded(root,
     for key in ("identity", "data"):
         assert "not recorded" not in _section(html, key), key
     data = _section(html, "data")
-    assert f"Trained on: {card.TRAINED_NOT_SHOWN}" in data
-    assert 'dataset fingerprint</span> <span class="shep-muted">not shown</span>' in data
+    assert (f'<dt class="shep-k">Trained on</dt><dd class="shep-v">'
+            f'{r.e(card.TRAINED_NOT_SHOWN)}</dd>') in data
+    assert ('<dt class="shep-k">Dataset fingerprint</dt><dd class="shep-v">'
+            '<span class="shep-muted">not shown</span></dd>') in data
+    # Identity's full fingerprint row says the same, in its long words.
+    assert f'<span class="shep-muted">{r.e(card.TRAINED_NOT_SHOWN)}</span>' in _section(
+        html, "identity")
 
 
 def test_details_before_the_checkpoint_is_read_say_not_read_yet(root, no_checkpoint_opened):
@@ -592,8 +602,10 @@ def test_details_before_the_checkpoint_is_read_say_not_read_yet(root, no_checkpo
     for key in ("identity", "data"):
         assert "not recorded" not in _section(html, key), key
     data = _section(html, "data")
-    assert f"Trained on: {card.TRAINED_NOT_READ_YET}" in data
-    assert 'dataset fingerprint</span> <span class="shep-muted">not read yet</span>' in data
+    assert (f'<dt class="shep-k">Trained on</dt><dd class="shep-v">'
+            f'{r.e(card.TRAINED_NOT_READ_YET)}</dd>') in data
+    assert ('<dt class="shep-k">Dataset fingerprint</dt><dd class="shep-v">'
+            '<span class="shep-muted">not read yet</span></dd>') in data
     assert "DATASET NOT RECORDED" not in html
 
 
