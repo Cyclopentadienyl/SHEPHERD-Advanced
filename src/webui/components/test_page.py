@@ -1290,18 +1290,19 @@ def _is_selected(digest: Any, selection: Optional["Selection"]) -> bool:
 
 
 def _model_cell(digest: Any, models: Mapping[str, Any],
-                selection: Optional["Selection"]) -> str:
+                selection: Optional["Selection"], *, prefix: bool = False) -> str:
     """A report row's Model cell: "the selected model" for the chosen
     checkpoint's weights (`SELECTED_MODEL`); another listed file by its title
     (`renderers.model_name_line`: its run, how far it trained); weights the
     list does not hold by their fingerprint (`renderers.fingerprint_value`,
-    12 hex digits)."""
+    12 hex digits; with `prefix`, a digest the report's run id names by its
+    first 12 digits alone, for a run whose record was not built)."""
     if _is_selected(digest, selection):
         return e(SELECTED_MODEL)
     item = _listed_model(digest, models)
     if item is not None:
         return e(r.model_name_line(item))
-    return r.fingerprint_value(digest, what="model fingerprint", copy=False)
+    return r.fingerprint_value(digest, what="model fingerprint", copy=False, prefix=prefix)
 
 
 def _row_names(runs: Sequence[Mapping[str, Any]]) -> Dict[str, str]:
@@ -1407,13 +1408,15 @@ def reports_html(reports: Mapping[str, Any], selected: Optional[str], *,
         old = index >= ROWS_SHOWN and not on
         hidden += old
         classes = " ".join(c for c, yes in (("shep-on", on), ("shep-test-rep-old", old)) if yes)
-        digest = ((run.get("record") or {}).get("checkpoint_digest")
-                  if isinstance(run.get("record"), Mapping) else None) or run.get("sha12")
+        # The record's model, else the first 12 digits its run id names.
+        recorded = ((run.get("record") or {}).get("checkpoint_digest")
+                    if isinstance(run.get("record"), Mapping) else None)
+        digest = recorded or run.get("sha12")
         current = ' aria-current="true"' if on else ""
         rows.append(
             f'<tr class="{classes}" data-key="{e(run_id)}" tabindex="0"{current}>'
             f'<td class="shep-test-rep-name">{e(names[str(run_id)])}</td>'
-            f'<td>{_model_cell(digest, models, selection)}</td>'
+            f'<td>{_model_cell(digest, models, selection, prefix=not recorded)}</td>'
             f'<td>{_row_mode(run)}</td><td>{_row_chip(run)}</td></tr>')
     entries = [row for row in rows if row]
     more = ('<div class="shep-test-more">'

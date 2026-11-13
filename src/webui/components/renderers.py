@@ -1396,7 +1396,7 @@ def named_words(named: Sequence[str], shown: int) -> str:
 
 def fingerprint_value(digest: Any, *, what: str = "fingerprint", digits: int = SHORT_HEX,
                       full: bool = False, missing: str = NOT_RECORDED.lower(),
-                      copy: bool = True) -> str:
+                      copy: bool = True, prefix: bool = False) -> str:
     """**The one digest value**, a summary list's (`summary_list`) and a line's
     (`fingerprint_html` puts its label before it): its 12 hex digits
     (`full`: all 64, as Model Facts' digest rows show them, so the long value
@@ -1404,10 +1404,13 @@ def fingerprint_value(digest: Any, *, what: str = "fingerprint", digits: int = S
     icon Copy named for `what` (none with `copy` False, where the same digest
     is copyable once elsewhere, or in its own object's details); when there
     is none, `missing`, the state's own word ("not recorded" where the record
-    holds none, "not read" where nothing was read: the skill's §6). A value
-    known by its first 12 digits alone (a report's run id names its model so)
-    is those digits, titled so, with no Copy."""
-    if isinstance(digest, str) and _HEX12.match(digest):
+    holds none, "not read" where nothing was read: the skill's §6). With
+    `prefix`, where the caller's value is a digest known by its first 12
+    digits alone (a report's run id names its model so: the Test page's
+    reports table), 12 hex digits are those digits, titled so, with no Copy;
+    any other caller's 12 hex digits are no digest, so a malformed value read
+    from a record says its missing state, never a valid-looking prefix."""
+    if prefix and isinstance(digest, str) and _HEX12.match(digest):
         # Only its first 12 digits are known (a report's run id names its
         # model so): shown as they are, with nothing whole to copy.
         return f'<code class="shep-fpv" title="{e(PREFIX_TITLE)}">{e(digest)}</code>'

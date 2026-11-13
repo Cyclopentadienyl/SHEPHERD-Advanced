@@ -817,6 +817,13 @@ def test_the_summary_list_is_one_dl_its_keys_escaped_its_values_as_built():
     assert 'aria-label="Copy the full model fingerprint"' in short or "the full model" in short
     assert r.fingerprint_value(None) == '<span class="shep-muted">not recorded</span>'
     assert r.fingerprint_value("x", missing="not read") == '<span class="shep-muted">not read</span>'
+    # 12 hex digits are a known prefix only where the caller says the value
+    # is one (a report's run id names its model so); from any other caller
+    # they are no digest, its missing state (review of B3).
+    assert r.fingerprint_value("c" * 12) == '<span class="shep-muted">not recorded</span>'
+    assert r.fingerprint_value("c" * 12, prefix=True) == (
+        f'<code class="shep-fpv" title="{r.e(r.PREFIX_TITLE)}">{"c" * 12}</code>')
+    assert r.fingerprint_value("c" * 64, prefix=True) == r.fingerprint_value("c" * 64)
 
 
 def test_the_value_words_say_each_setting_by_its_meaning_never_by_repr():
