@@ -1311,7 +1311,10 @@ def test_the_detail_says_what_the_model_is_and_its_relation_to_the_paper(world, 
     # (the review of B0b: "run 2026-10-01 00:00" dropped it), one " · ".
     assert f"{shas['base'][:12]} of run base · 2026-10-01 00:00; listed here" in text
     assert "Familyrun base · 2026-10-01 00:00Encoder" in text
-    assert "differs in: " in text and "encoder.hidden" in text   # a shrunk test spec
+    # A shrunk test spec: each field that differs in words, its record path
+    # its title (skill §5; the review of B0c named them by their paths).
+    assert "differs in: " in text and "Encoder › Hidden" in text
+    assert '<span title="encoder.hidden">Encoder › Hidden</span>' in ident
     assert "Configuration" not in top and ">Task<" not in top
     specless = mp.detail_parts(listing, data, _key(world, "model-05.pt"), ctl)["top"]
     ident = specless[specless.index('<dl class="shep-kv shep-mp-ident">'):]

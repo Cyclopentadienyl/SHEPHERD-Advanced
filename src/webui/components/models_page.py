@@ -1346,7 +1346,9 @@ def identity_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]]) -> 
         operation = item.get("operation")
         differences = item.get("differences")
         if differences:
-            relation = f'differs in: {r.e(", ".join(str(d) for d in differences))}'
+            relation = "differs in: " + ", ".join(
+                f'<span title="{r.e(d)}">{r.e(r.field_path_words(d))}</span>'
+                for d in differences)
         elif differences is not None:
             relation = (f'matches the reference recipe<div class="shep-sub">'
                         f'{r.e(REFERENCE_ANCHOR)}</div>')

@@ -1444,6 +1444,25 @@ def field_words(key: Any) -> str:
     return " ".join(words)
 
 
+def field_path_words(path: Any) -> str:
+    """**A record field's dotted path in words** (skill §5): each part's
+    words (`field_words`) joined by " › ", as Compare names a nested entry
+    ("encoder.heads" → "Encoder › Heads", "lp_head.relation_init" → "LP
+    head › Relation initialisation"). Where a page shows them, the path
+    itself is their title (`summary_list`'s `titles`), the record's name
+    beside its plain label."""
+    return " › ".join(field_words(part) for part in str(path).split("."))
+
+
+def _spec_value_html(path: str, value: Any) -> str:
+    """A model spec field's value, escaped: in its words (`setting_words`),
+    and a text recorded as it is (an identifier: "graph_layer_norm+batch_norm",
+    "reference/v1") kept whole in code style (`ident_html`), never broken
+    inside its name."""
+    words = setting_words(path, value)
+    return ident_html(words) if isinstance(value, str) and words == value else e(words)
+
+
 def _spec_rows(data: Mapping[str, Any], prefix: str = "") -> List[Tuple[str, Any]]:
     """A model spec's plain data as ``(dotted path, value)`` rows, every
     field of every section in its recorded order (a mapping's entries one row
@@ -1474,16 +1493,17 @@ def model_spec_html(data: Any) -> Tuple[str, str]:
     §4; ops-wiring round B0c): ``(words, details)``, escaped HTML. `words` says
     the spec by its relation to the reference recipe of its own stage and task
     (`ModelSpec.differences_from_reference`): "Reference GATv2 spec", or
-    "Differs from the reference GATv2 spec: encoder.layers 2 (3), …", each
-    field that differs with its value and the reference's in brackets, as the
-    base form's line names a setting (`training_console.differs_html`), the
-    first `_SPEC_WORDS_SHOWN` of them and the others counted; a spec this build
-    cannot read says why ("Unknown: …") and has no details. `details` is the
-    full spec one click away: a "Details ›" disclosure over every field as
-    recorded (`_spec_rows`, without the reference recipe's notes), each that
-    differs with "reference …" beside it;
-    one level, never inside another disclosure or a popover. Every value in
-    its words (`setting_words`); a part its stage or task has not
+    "Differs from the reference GATv2 spec: Encoder › Layers 2 (3), …", each
+    field that differs named in words (`field_path_words`) with its value and
+    the reference's in brackets, as the base form's line names a setting
+    (`training_console.differs_html`), the first `_SPEC_WORDS_SHOWN` of them
+    and the others counted; a spec this build cannot read says why
+    ("Unknown: …") and has no details. `details` is the full spec one click
+    away: a "Details ›" disclosure over every field as recorded (`_spec_rows`,
+    without the reference recipe's notes), each named in the same words with
+    its dotted path as the title, each that differs with "reference …" beside
+    it; one level, never inside another disclosure or a popover. Every value
+    in its words (`_spec_value_html`); a part its stage or task has not
     (`_SPEC_PARTS`), "not taken by a base" or by its task."""
     from src.models.bundle.spec import ModelSpec, SpecError
 
@@ -1497,24 +1517,27 @@ def model_spec_html(data: Any) -> Tuple[str, str]:
                                        f"({short_reason(exc, 120)})"), "")
     name = f"reference {architecture_label(spec.encoder.kind)} spec"
     if differences:
-        named = [f"{path} {setting_words(path, mine)} ({setting_words(path, reference)})"
+        named = [f"{field_path_words(path)} {setting_words(path, mine)} "
+                 f"({setting_words(path, reference)})"
                  for path, (reference, mine) in list(differences.items())[:_SPEC_WORDS_SHOWN]]
         more = len(differences) - len(named)
         words = (f"Differs from the {name}: " + ", ".join(named)
                  + (f" and {more} more" if more else ""))
     else:
         words = name[:1].upper() + name[1:]
-    rows = []
+    rows, titles = [], {}
     for path, value in _spec_rows(data):
         if value is None and path in _SPEC_PARTS:
-            text = _not_taken_words(spec.learning_stage, spec.task)
+            shown = e(_not_taken_words(spec.learning_stage, spec.task))
         else:
-            text = setting_words(path, value)
+            shown = _spec_value_html(path, value)
         if path in differences:
-            text += f" (reference {setting_words(path, differences[path][0])})"
-        rows.append((path, e(text)))
+            shown += f" (reference {_spec_value_html(path, differences[path][0])})"
+        key = field_path_words(path)
+        rows.append((key, shown))
+        titles[key] = path
     details = ('<details class="shep-more"><summary>Details ›</summary>'
-               f'{summary_list(rows, classes="shep-kv-spec")}</details>')
+               f'{summary_list(rows, titles=titles, classes="shep-kv-spec")}</details>')
     return e(words), details
 
 
@@ -1790,6 +1813,7 @@ __all__ = [
     "e",
     "epoch_words",
     "facts_from_checkpoint",
+    "field_path_words",
     "field_words",
     "fingerprint_html",
     "fingerprint_value",

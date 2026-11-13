@@ -243,7 +243,8 @@ def test_the_checks_settings_are_said_in_words_and_the_spec_by_its_differences(c
     assert rows["Model spec"].startswith("Differs from the reference GATv2 spec: ")
     spec = text[text.index('title="model_spec"'):text.index('<details class="shep-inherit">')]
     assert spec.count("<summary>Details ›</summary>") == 1
-    assert '<dt class="shep-k">encoder.layers</dt>' in spec and "(reference 3)" in spec
+    assert ('<dt class="shep-k" title="encoder.layers">Encoder › Layers</dt>' in spec
+            and "(reference 3)" in spec)
     assert "sources" not in spec and "not taken by a base" in spec
     assert text.count("<details") == 2                          # Details ›, Settings taken
     inherit = text[text.index('<details class="shep-inherit">'):]
