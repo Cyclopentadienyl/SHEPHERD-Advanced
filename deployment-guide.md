@@ -3243,8 +3243,10 @@ Training Console 現在是分成三部分的一個頁面：上方橫跨整頁的
   running job」。
 - **狀態標籤**：`Idle`、`Starting`、`RUNNING · epoch 12/100`、`Stopping`、`Completed`、
   `Stopped`（灰色）或 `FAILED`（紅色），最多一個 " · "：狀態與進行到哪裡；其後以較淡的字顯示
-  epoch 執行中的 batch 與工作已執行的時間（「batch 340/812, 00:14:32 elapsed」）。失敗或停止的
-  run 永遠不會是綠色。
+  epoch 執行中的 batch 與工作已執行的時間（「batch 340/812, 00:14:32 elapsed」）。它的標記是儀表板
+  共用的狀態標記，形狀與文字搭配顏色：閒置或停止時是灰色 ○，只有工作執行中才是藍色的轉圈，
+  啟動或停止中是 ■，完成是綠色 ●，只有失敗才是紅色 ✕。失敗或停止的 run 永遠不會是綠色。不論
+  run 檢視顯示哪個 run，狀態標籤永遠是訓練工作的。
 - **Run name**，接著是**一行原因**，說明某個動作為何停用：「Stop disabled: no training is
   running.」、對唯讀瀏覽器顯示 D8 的原因（「Operator controls only: request not local」），或
   占用 GPU 的工作（「GPU job: test run (…) · Open Test ›」、「GPU job: train_model.py (pid …,
@@ -3311,8 +3313,9 @@ Training Console 現在是分成三部分的一個頁面：上方橫跨整頁的
   parent 上那樣生效）、顯示後已變更的 parent
   （`expected_parent_sha256`）或忙碌的名額，以 409 拒絕。行程綁定預覽讀到的 parent，清單會顯示
   每個分支改了什麼。
-- 失敗的 run 的**錯誤橫幅**橫跨整頁。標題（"Training failed: Process exited with code 1"）
-  之下是 run 印出的最後一行錯誤（"Last error printed: TrainingDeviceUnavailable: --device auto
+- 失敗的 run 的**錯誤橫幅**橫跨整頁，不論 run 檢視顯示哪個 run，它都是訓練工作的。標題以儀表板
+  的狀態標記先說狀況（"✕ Training failed: Process exited with code 1"；PyG 退回較慢 kernel 的提醒
+  是琥珀色的 "▲ PyG native extensions missing: …"），其下是 run 印出的最後一行錯誤（"Last error printed: TrainingDeviceUnavailable: --device auto
   requires CUDA, …"），對唯讀瀏覽器與輸出一樣經過遮蔽。run 旁邊只在有日誌時說明日誌在哪裡（它的
   `logs/train_….json`），否則說明沒有日誌（在建立 run 目錄之前就被拒絕的 run 顯示 "no run
   directory, so no log"）。接著是輸出的最後幾行，放在「Last output (N lines)」之下：視窗高度至少 1000 px 時展開，較矮的視窗則收合成這一行，讓圖表保有空間（你展開或收合
@@ -3339,10 +3342,10 @@ steps 計，final learning-rate ratio 的「more than 0 with onecycle」）。�
 **Data Paths 與它的 Save Path 已移除**：workspace 由 run bar 選擇，儀表板不再
 讀取或寫入伺服器工作目錄中的 `.shepherd_training_config.json`（留在那裡的檔案會被忽略；是否
 提供「Save as the default dataset」是擁有者要決定的問題）。參數放不進視窗時（兩個收合區都收合時，
-約 1850 × 960 放得下），參數在自己的欄內捲動；run bar 永遠不捲動。run 檢視分成三列：標題與狀態行、圖表、
-資源列。圖表使用另外兩列剩下的高度，四張圖各自至少保留 140 px 的繪圖區：視窗太矮放不下時
-（例如 1536 × 760），只有圖表那一列在內部捲動，工具列固定在它的頂端；資源列是它下方獨立的一列，
-所以任何座標軸都不會被蓋住（在 1920 × 1080 與約 1850 × 960 下，四張圖、座標軸與標籤以及資源列
+約 1850 × 960 放得下），參數在自己的欄內捲動；run bar 永遠不捲動，高度就是它各列的高度。run 檢視
+分成三列：標題（Viewing 選單、run 與訓練工作的關係及它的狀態）、圖表、資源列。圖表使用另外兩列
+剩下的高度，四張圖各自至少保留 170 px 的繪圖區：視窗太矮放不下時（例如 1536 × 760），只有圖在
+圖表工具列那一列之下捲動；資源列是它下方獨立的一列，所以任何座標軸都不會被蓋住（在 1920 × 1080 與約 1850 × 960 下，四張圖、座標軸與標籤以及資源列
 會同時完整顯示）。繪圖區的大小
 只由版面決定，不受畫在裡面的 canvas 影響，所以同一個視窗大小下，不論是直接開啟、重新載入，
 還是從窄視窗恢復，圖表大小都相同。
@@ -3421,29 +3424,41 @@ run 會在自己的 run 目錄中訓練。抽屜有自己的 **Device**（auto�
 bar 的資料集改變（手動選擇、從 Datasets 的「Use for training ›」，或跟隨在另一個資料集上啟動的
 訓練工作），清單會以同樣的方式重新讀取，改為該 workspace 的 run。
 
-**run 檢視**顯示 job runner 最後啟動的 run；伺服器啟動後還沒有啟動過時，顯示 run bar 所選
-workspace 最新的 run（頁面開著時每 10 秒重新列出一次，所以從 CLI 啟動的 run 在寫下第一個
-checkpoint 後就會出現）。標題只有一行：「Run shown」與 run 的易讀名稱，與 Run 選單相同
-（「ui-live-stop-02 · GAT 2026-10-24 17:39」）、workspace 最新的 run 標「latest」，以及從 checkpoint
-讀到的、這個 run 使用的
-資料集與 run bar 所選資料集的關係：「✓ same dataset as the run bar」、琥珀色的「≠ not the
-selected dataset」、執行中還沒有 checkpoint 時的「dataset recorded at the first checkpoint」，或
-已結束而沒有 checkpoint 時的「dataset not recorded (no checkpoint)」。Continue… 打開且選了清單上的
-checkpoint 時，標題也會說明這是「the run continued from」還是「not the run continued from」：曲線
-屬於顯示中的 run，與抽屜選了什麼無關。**Details ›** 收著較少看的資訊：run 的目錄名稱、它的
+**run 檢視**分成三列：標題、圖表與資源列。它的 **Viewing** 選單列出 run bar 所選 workspace 的
+run，最新的在前（頁面開著時每 10 秒重新列出一次，所以從 CLI 啟動的 run 在寫下第一個 checkpoint
+後就會出現），每個選項與 Run 選單的命名方式相同（「ui-live-stop-02 · GATv2 2026-10-24 17:39」）；
+選項的值是 run 的完整 id，所以文字永遠不會改變讀取哪個 run。選擇一個 run 會顯示它的曲線與 Export
+CSV，其他一概不變：run bar、它的狀態標籤、原因行、動作按鈕，以及失敗工作的橫幅，永遠顯示訓練工作。
+沒有選擇時，檢視跟隨 job runner 最後啟動的 run；伺服器啟動後還沒有啟動過時，跟隨 workspace 最新的
+run。選擇會一直保留，直到有工作啟動（新工作一啟動就顯示它）或 run bar 的 workspace 改變。選單旁的
+標題說明所檢視的 run 與訓練工作的關係（「the running job」、「the last job」、「a past run, while
+another runs」、「the latest run」、「a past run」）；從 checkpoint 讀到的、這個 run 使用的資料集與
+run bar 所選資料集的關係（「✓ same dataset as the run bar」、琥珀色的「▲ not the selected
+dataset」、執行中還沒有 checkpoint 時的「dataset recorded at the first checkpoint」，或已結束而沒有
+checkpoint 時的「dataset not recorded (no checkpoint)」）；Continue… 打開且選了清單上的 checkpoint
+時，這是「the run continued from」還是「not the run continued from」（曲線屬於所檢視的 run，與抽屜
+選了什麼無關）；以及 run 的狀態：「195 of 1000 epochs completed · can be continued」、「Finished ·
+5000 of 5000 epochs completed · to train further, use Continue…」、「Stopped early (…) · … ·
+cannot be continued」、「Running · epoch 12 of 100」（只用於工作自己的 run）或「No checkpoint saved,
+so nothing can be continued」；沒有 run 目錄的 run（在建立 run 目錄之前就被拒絕）會如實說明：沒有
+checkpoint、沒有日誌，也沒有可畫的圖。**Details ›** 收著較少看的資訊：run 的目錄名稱、它的
 checkpoint（相對於 workspace 根目錄；執行中為最新的一個）、日誌，以及它使用的資料集指紋（Copy 會
-複製完整的 64 個）；run 所在的 workspace 不是 run bar 所選的時候也列在這裡。標題下是一行狀態：
-「195 of 1000 epochs completed · can be continued」、「Finished · 5000 of 5000 epochs completed ·
-to train further, use Continue…」、「Stopped early (…) · … · cannot be continued」、「Running ·
-epoch 12 of 100」或「No checkpoint saved, so nothing can be continued」；沒有 run 目錄的 run（在
-建立 run 目錄之前就被拒絕）會如實說明：沒有 checkpoint、沒有日誌，也沒有可畫的圖。下方是一張共用 epoch 軸的四格圖：Loss（train，以及以虛線表示的
+複製完整的 64 個）；run 所在的 workspace 不是 run bar 所選的時候也列在這裡。標題下是一張共用 epoch
+軸的四格圖，圖區本身寬度約 1000 px 以上時排成 2 × 2，較窄時排成一欄：Loss（train，以及以虛線表示的
 validation：記錄下來的 `val_loss` 或 `val_lp_loss`，不論是哪種 run）、該 run 的驗證值與其伴隨
 指標，以及對數軸的 learning rate（0 或缺少的值為空隙）。中間兩張依 run 記錄的內容而定：base 畫
 LP accuracy，再畫 ROC-AUC 與 AP；任務模型畫 pooled MRR，再畫 pooled top-k。驗證項目兩種數值都
 沒有的日誌（例如沒有 model spec 的檔案）在那裡不畫任何序列，標題為「No other figure charted:
 Export CSV has every logged figure」與「No further figure charted」（自 K8-7b，2026-11-08 起；
-它的 MRR 與 Hits@K 圖已移除），它的 Loss 與 learning rate 圖則與任何 run 一樣畫出；第一次驗證之前，
-這兩張圖照舊等待。圖下是資源列（GPU 與記憶體）。
+它的 MRR 與 Hits@K 圖已移除），它的 Loss 與 learning rate 圖則與任何 run 一樣畫出。每張圖的繪圖區
+至少 170 px：在 1850 × 960 下四張圖連同座標軸都放得下；較小的視窗則讓圖在圖表工具列下方捲動，
+工具列自成一列，從不蓋住任何圖。沒有資料的圖以自己的一行文字取代繪圖區與座標軸標籤（第一次驗證
+之前是「Drawn once the run logs its first validation.」；日誌裡沒有的數值是「Not recorded in this
+run's log.」），整個圖區沒有可畫的東西時，說明會出現什麼、下一步做什麼：「No run in this workspace
+yet: its curves appear here after its first epoch. Start one with ▸ Start.」、「No epoch logged
+yet: the curves appear here when the run's first epoch ends.」、「This run logged no epoch, so it
+has no curves: choose another run in Viewing.」，或該 run 沒有 run 目錄、已不在清單上。圖下是
+資源列（GPU 與記憶體）。
 
 - **縮放與平移**：在圖上滾動滾輪會以指標為中心縮放；在 epoch 軸上只縮放 epoch（四張圖一起），
   在數值軸上只縮放該圖的數值。拖曳可平移；雙擊或 **Reset view** 會重新容納全部資料；+ 與 −
@@ -3454,7 +3469,7 @@ Export CSV has every logged figure」與「No further figure charted」（自 K8
   0 以下的檢視（縮小、平移、之前保留的檢視）會保持寬度向右移；數值軸沒有這個下限。窄視窗中滾輪
   同樣會縮放；不在圖表繪圖區或座標軸上時，滾輪捲動頁面；窄視窗中在圖表上觸控是捲動頁面。操作方式
   列在 Reset view 旁的 ⓘ 中，不再常駐於工具列。
-- **Export CSV** 由瀏覽器把 run 的 metrics log（epoch、split 與每個記錄的值）存成
+- **Export CSV** 由瀏覽器把所檢視 run 的 metrics log（epoch、split 與每個記錄的值）存成
   `training_metrics_<architecture>_<run>.csv`。
 - 圖表經由頁面自己的 server function 讀取 run 的 metrics log，只針對伺服器列出的 run（從不
   使用路徑），而且只在有新資料列時讀取。頁面顯示期間每 1.5 秒重新讀取一次，在其他頁面時完全
@@ -3466,8 +3481,8 @@ Export CSV has every logged figure」與「No further figure charted」（自 K8
   run 在重新要求較新 epoch 的期間保留它的圖表。
 
 **唯讀的瀏覽器**看到同一個頁面，每個動作都停用並附上 D8 的原因，而且不會為它開啟任何
-checkpoint：run 標題的標籤顯示「dataset not shown · operator control」，狀態行只給出 run 的
-狀態，也不顯示 parent 清單。metrics、圖表與資料集紀錄對它的讀取方式與對操作者
+checkpoint：run 標題的標籤顯示「dataset not shown · operator control」，狀態只給出 run 的
+狀態，也不顯示 parent 清單。Viewing 選單、metrics、圖表與資料集紀錄對它的讀取方式與對操作者
 相同。
 
 ### Research › Evaluate › Test

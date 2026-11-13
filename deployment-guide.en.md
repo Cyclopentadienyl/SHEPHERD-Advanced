@@ -3189,7 +3189,10 @@ a run.
 - **The status pill**: `Idle`, `Starting`, `RUNNING · epoch 12/100`, `Stopping`, `Completed`,
   `Stopped` (grey) or `FAILED` (red), with at most one " · ": the state and how far it got; after
   it, in lighter type, the batch while an epoch runs and how long the job has run ("batch 340/812,
-  00:14:32 elapsed"). A failed or stopped run is never green.
+  00:14:32 elapsed"). Its mark is the dashboard's one status mark, the shape and the word with the
+  colour: a grey ○ while idle or stopped, the blue spinner only while a job runs, ■ while it starts
+  or stops, a green ● when it completed, the red ✕ only when it failed. A failed or stopped run is
+  never green. The pill is always the training job's, whatever run the run view shows.
 - **Run name**, then **one reason line** saying why an action is disabled: "Stop disabled: no
   training is running.", D8's reason for a read-only browser ("Operator controls only: request
   not local"), or the GPU job holding the slot ("GPU job: test run (…) · Open Test ›",
@@ -3268,8 +3271,10 @@ a run.
   does not read, mixed precision that would not take effect as it did for the parent), one
   changed since it was shown (`expected_parent_sha256`) or a busy slot with 409. The process is
   bound to the parent the preview read, and the lists show what each branch changed.
-- A failed run's **error banner** spans the page. Under its headline ("Training failed: Process
-  exited with code 1") is the last error line the run printed ("Last error printed:
+- A failed run's **error banner** spans the page, the training job's whatever run the run view
+  shows. Its headline leads with the condition by the dashboard's status mark ("✕ Training failed:
+  Process exited with code 1"; PyG's slow-fallback advisory is amber, "▲ PyG native extensions
+  missing: …"). Under it is the last error line the run printed ("Last error printed:
   TrainingDeviceUnavailable: --device auto requires CUDA, …"), redacted for a read-only browser
   as the output is. Beside the run it says where the run's log is only when there is one (its
   `logs/train_….json`), else that there is none ("no run directory, so no log" for a run refused
@@ -3306,12 +3311,14 @@ is the run bar's choice, and the dashboard no longer reads or writes
 `.shepherd_training_config.json` in the server's working directory (a file left there is
 ignored; whether to offer "Save as the default dataset" is an owner question). When the
 parameters do not fit the window (with both accordions closed they fit at about 1850 × 960), they
-scroll inside their column; the run bar never scrolls. The run view is three rows: its header and state line, the
-charts, and the resources line. The charts take what the other two leave, and each of the four
-plots keeps a plot area of at least 140 px: when the window is too short for that (1536 × 760,
-for example), only the charts' row scrolls, its toolbar staying at its top; the resources line is
-a row of its own under it, so nothing is ever drawn over an axis (at 1920 × 1080 and at about
-1850 × 960 the four charts, their axes and labels and the resources line all show at once). A
+scroll inside their column; the run bar never scrolls, and it is as tall as its rows. The run
+view is three rows: its header (the Viewing select, the run's relation to the job and its state),
+the charts, and the resources line. The charts take what the other two leave, and each of the
+four plots keeps a plot area of at least 170 px: when the window is too short for that
+(1536 × 760, for example), only the plots scroll, under the chart toolbar's own row; the
+resources line is a row of its own under them, so nothing is ever drawn over an axis (at
+1920 × 1080 and at about 1850 × 960 the four charts, their axes and labels and the resources line
+all show at once). A
 plot's box is sized by the layout alone, never by the canvas drawn in it, so the same window size
 gives the same plots whether the page was opened there, reloaded, or came back from a narrow
 window.
@@ -3408,34 +3415,48 @@ When the run bar's dataset changes while the drawer is open (by hand, with Datas
 "Use for training ›", or to follow a training job started on another dataset), the list
 becomes that workspace's runs, read again the same way.
 
-**The run view** shows the run the job runner started last or, before one since the server
-started, the latest run of the run bar's workspace (listed again every 10 seconds while the page
-is open, so a run started from the CLI appears once it writes its first checkpoint). Its header
-is one line: "Run shown" and the run as a person names it, as the Run select does
-("ui-live-stop-02 · GAT 2026-10-24 17:39"), "latest" for the workspace's latest run, and how the
-dataset the run used, read from its
-checkpoint, stands to the run bar's: "✓ same dataset as the run bar", amber "≠ not the selected
-dataset", "dataset recorded at the first checkpoint" while it runs without one yet, or "dataset
-not recorded (no checkpoint)" once it has ended without one. While Continue… is open with a
-listed checkpoint chosen, it also says whether this is "the run continued from" or "not the run
-continued from": the curves are the run shown's, whatever the drawer chose. **Details ›** holds
-what is read less often: the run's directory, its checkpoint (relative to the workspaces root;
-the newest one while it runs), its logs and the dataset fingerprint it used (Copy gives all 64);
-its workspace when it is not the run bar's. Under the header, one state line: "195 of 1000
-epochs completed · can be continued", "Finished · 5000 of 5000 epochs completed · to train
-further, use Continue…", "Stopped early (…) · … · cannot be continued", "Running · epoch 12 of
-100", or "No checkpoint saved, so nothing can be continued"; a run that has no run directory
-(refused before it made its run directory) says so, with no checkpoint, no log and nothing to
-chart. Below them, one figure of four charts sharing the epoch
-axis: Loss (train, and validation dashed: a logged `val_loss` or `val_lp_loss`, whatever the run),
-the run's validation figure and its companions, and the learning rate on a log axis (a 0 or a
-missing value is a gap). The middle two follow what the run logged: a base charts LP accuracy,
-then ROC-AUC and AP; a task model pooled MRR, then pooled top-k. A log whose validation entries
-hold neither figure (a file without a model spec, say) draws no series there, under the titles
-"No other figure charted: Export CSV has every logged figure" and "No further figure charted"
-(since K8-7b, 2026-11-08; its MRR and Hits@K charts are gone), and its Loss and learning-rate
-charts are drawn as for any run; before the first validation the two wait, as before.
-Under it, the resources line (GPU and memory).
+**The run view** is three rows: its header, the charts and the resources line. Its **Viewing**
+select lists the run bar's workspace's runs, latest first (listed again every 10 seconds while the
+page is open, so a run started from the CLI appears once it writes its first checkpoint), each
+named as the Run select names a run ("ui-live-stop-02 · GATv2 2026-10-24 17:39"); the option's
+value is the run's full id, so the words never change which run is read. Choosing one shows that
+run's curves and Export CSV, and nothing else changes: the run bar, its status pill, its reason
+line, its actions and a failed job's banner always show the training job. Without a choice, the
+view follows the run the job runner started last or, before one since the server started, the
+workspace's latest run; a choice holds until a job starts (the new job is shown as it starts) or
+the run bar's workspace changes. Beside the select, the header says how the run viewed stands to
+the job ("the running job", "the last job", "a past run, while another runs", "the latest run",
+"a past run"); how the dataset the run used, read from its checkpoint, stands to the run bar's
+("✓ same dataset as the run bar", amber "▲ not the selected dataset", "dataset recorded at the
+first checkpoint" while it runs without one yet, or "dataset not recorded (no checkpoint)" once
+it has ended without one); while Continue… is open with a listed checkpoint chosen, whether this
+is "the run continued from" or "not the run continued from" (the curves are the run viewed's,
+whatever the drawer chose); and the run's state in a few words: "195 of 1000 epochs completed ·
+can be continued", "Finished · 5000 of 5000 epochs completed · to train further, use Continue…",
+"Stopped early (…) · … · cannot be continued", "Running · epoch 12 of 100" (said only of the
+job's own run), or "No checkpoint saved, so nothing can be continued"; a run that has no run
+directory (refused before it made its run directory) says so, with no checkpoint, no log and
+nothing to chart. **Details ›** holds what is read less often: the run's directory, its
+checkpoint (relative to the workspaces root; the newest one while it runs), its logs and the
+dataset fingerprint it used (Copy gives all 64); its workspace when it is not the run bar's.
+Below the header, one figure of four charts sharing the epoch axis, 2 × 2 from about 1000 px of
+its own width and one column below: Loss (train, and validation dashed: a logged `val_loss` or
+`val_lp_loss`, whatever the run), the run's validation figure and its companions, and the
+learning rate on a log axis (a 0 or a missing value is a gap). The middle two follow what the
+run logged: a base charts LP accuracy, then ROC-AUC and AP; a task model pooled MRR, then pooled
+top-k. A log whose validation entries hold neither figure (a file without a model spec, say)
+draws no series there, under the titles "No other figure charted: Export CSV has every logged
+figure" and "No further figure charted" (since K8-7b, 2026-11-08; its MRR and Hits@K charts are
+gone), and its Loss and learning-rate charts are drawn as for any run. Each plot keeps a plot
+area of at least 170 px: at 1850 × 960 the four fit with their axes; a smaller window scrolls
+the plots under the chart toolbar, which is a row of its own and never covers a plot. An empty
+chart says its own line in place of its plot and axis label ("Drawn once the run logs its first
+validation." before the first validation; "Not recorded in this run's log." for a figure the log
+does not hold), and a figure with nothing to draw says what will appear and what to do: "No run
+in this workspace yet: its curves appear here after its first epoch. Start one with ▸ Start.",
+"No epoch logged yet: the curves appear here when the run's first epoch ends.", "This run logged
+no epoch, so it has no curves: choose another run in Viewing.", or that the run has no run
+directory, or is no longer listed. Under it, the resources line (GPU and memory).
 
 - **Zoom and pan**: the wheel over a chart zooms around the pointer; over the epoch axis it zooms
   only the epochs (the four charts follow), over a value axis only that chart's values. Drag pans;
@@ -3449,8 +3470,8 @@ Under it, the resources line (GPU and memory).
   anything but a chart's plot or axes it scrolls the page, and in a narrow window a touch on a
   chart scrolls the page. The gestures are listed in the ⓘ beside Reset view, not kept on the
   toolbar.
-- **Export CSV** saves the run's metrics log (epoch, split and each logged value) from the browser
-  as `training_metrics_<architecture>_<run>.csv`.
+- **Export CSV** saves the metrics log of the run viewed (epoch, split and each logged value) from
+  the browser as `training_metrics_<architecture>_<run>.csv`.
 - The charts read the run's metrics log through the page's own server function, for a run the
   server lists (never a path), and only when it has new rows. The page is read again every 1.5 s
   while it is shown, and not at all on another page. The chart library is uPlot 1.6.32, served by
@@ -3464,7 +3485,8 @@ Under it, the resources line (GPU and memory).
 
 **A read-only browser** sees the same page with every action disabled and D8's reason, and no
 checkpoint is opened for it: the run header's tag says "dataset not shown · operator control",
-the state line gives only the run's state, and the parent list is not shown. The metrics, the charts and the dataset records are read for it as for an operator.
+its state gives only the run's state, and the parent list is not shown. The Viewing select, the
+metrics, the charts and the dataset records are read for it as for an operator.
 
 ### Research › Evaluate › Test
 
