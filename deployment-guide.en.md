@@ -3013,10 +3013,11 @@ it: both follow Options, and stay pinned at the panel's bottom when the inputs n
 - the title row "MODEL IN USE ⓘ · checked HH:MM:SS ↻": what is served is read for this browser
   when the page opens, every 5 seconds while Diagnosis is shown, after each diagnosis, after a
   model change and with ↻; a read that takes more than 5 seconds is "timed out (5 s)";
-- the model, "GAT · run 2026-10-17 09:15 · 6 epochs completed" (how far the file trained, from
-  its progress record, in the words every page uses; an older file without one says the epoch it
-  records, "recorded epoch 5"), and "model fingerprint <12 hex> ✓ verified" (the SHA-256 of the
-  checkpoint file served);
+- the model, "2026-10-17 09:15 · GATv2, 6 epochs completed" (its run in the one run words, a
+  named run's name first, "smoke-ft · GATv2 2026-10-17 09:15, 6 epochs completed"; how far the
+  file trained, from its progress record, in the words every page uses; an older file without one
+  says the epoch it records, "recorded epoch 5"), and "model fingerprint <12 hex> ✓ verified"
+  (the SHA-256 of the checkpoint file served);
 - "trained on <workspace> · dataset fingerprint <12 hex>": the dataset the checkpoint records it
   was trained on (`training_input_digests.split_manifest`), named by the listed workspaces with
   that full fingerprint, or "matches no listed workspace"; never the served workspace's own
@@ -3621,8 +3622,11 @@ it. Three panels:
   enables it while that lasts,
   then a choice missing or another
   graph. The job card shows the state (Running, Completed, Failed in red, Cancelled in grey:
-  never green for a failed or cancelled run), the elapsed time, what the run was given, its
-  start and end times in UTC (as the report rows name runs) and the last 12 lines of its output
+  never green for a failed or cancelled run), the elapsed time, what the run was given as one
+  list, a row each (its version and its model by their own fingerprints, whatever is chosen
+  now; its measurement in its report's words; its workspace; Register, Deterministic algorithms
+  and Device; its R10 evidence; its start), its start and end times in UTC (as the report rows
+  name runs) and the last 12 lines of its output
   (folded after a cancel, whose last line says the run was cancelled, with no traceback; a
   patient id a measurement refusal names is left out, D7); **Cancel**, beside the state,
   stops the test run only, never a training job. On a wide screen, Start, its reason and the job card stay at the foot of the panel (the
@@ -3640,10 +3644,13 @@ it. Three panels:
   store as a compact table, **Reports**, newest first, one row per run directory, selected by a
   click or Enter: **Report** (when it ran; the time to the second, then the run id's last part,
   where two would read alike), **Model** ("the selected model" for the checkpoint chosen in Run,
-  another listed file by its run and progress, weights not listed by their 12 hex digits),
-  **Measurement** (its record's mode in words) and **State** (registered #N, not registered, no
-  report kept, runs differ, comparison incomplete; amber with ▲ only when the group records
-  deterministic algorithms on). A test running now is the top row, and the last test run on
+  another listed file by what it is, "Disease · frozen graph backbone" for the frozen control,
+  then its run and its file in the words of its Run and Checkpoint options, so two files of one
+  run never read alike; weights not listed by their 12 hex digits), **Measurement** (its
+  record's mode in words, "Disease task", the running row's in the same words) and **State**
+  (registered #N, not registered, no report kept, runs differ, comparison incomplete; amber
+  with ▲ only when the group records deterministic algorithms on). A test running now is the
+  top row, and the last test run on
   this server that ended with nothing in the store (cancelled before its run directory, or
   failed) stays a row until the next start or a restart. The newest 8 reports are listed, and
   the selected one; **Show all N reports** lists the rest (this browser tab keeps the choice).
@@ -3653,9 +3660,9 @@ it. Three panels:
   only in another workspace says "registration not checked" until it is selected. Under the
   table, in the panel's one scroll region, the selected report as the record the ledger would
   hold. What it is of is said by its relation to what is chosen now, "the selected workspace",
-  "the selected model", "the selected version", and in full when it is not (its model's run,
-  progress and fingerprint, its version's label, role and fingerprint, the listed workspaces
-  holding the dataset record it measured), so a past result keeps its own identity after
+  "the selected model", "the selected version", and in full when it is not (what its model is,
+  its run, its file and its fingerprint, its version's label, role and fingerprint, the listed
+  workspaces holding the dataset record it measured), so a past result keeps its own identity after
   another checkpoint or version is chosen; its run id once. Then, by one display for every
   mode (since K8-6e.2): a task's tiles and figures in words, with every metric as recorded one
   click away ("Recorded metrics (N)"); a report of a mode this version does not describe, a kept
@@ -3777,10 +3784,11 @@ record stays readable in the detail below, and no model is ever chosen automatic
 score.
 
 **Selecting a row** shows its details as one list (since the ops-wiring round's B3): its model
-fingerprint (12 hex digits, Copy), its dataset by its relation to the workspace ("the selected
+fingerprint (12 hex digits, Copy), its file (the title names its run, which two files of one run
+share), its dataset by its relation to the workspace ("the selected
 workspace's current dataset", or which one it is), what it is, its operation, parent, family,
 encoder and relation to the reference recipe, the Trainer's validation figure as a row (never a
-box of its own), and under **Details ›** its run directory, file and whole fingerprint; any
+box of its own), and under **Details ›** its run directory and whole fingerprint; any
 warning, with ▲; and three segments:
 
 - **Recorded results** ("Recorded test results" until research comparison Stage 6): every

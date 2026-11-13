@@ -38,13 +38,14 @@ it is shown, after each diagnosis, after a Load ("served model changed") and on
 
 **What the card names, and where each fact comes from:**
 
-- the name line ("GATv2 · run 2026-10-17 09:15 · 6 epochs completed",
+- the name line ("2026-10-17 09:15 · GATv2, 6 epochs completed", a named
+  run's name first, "smoke-ft · GATv2 2026-10-17 09:15, 6 epochs completed":
   `renderers.model_name_line`, the words every page names a file by) from
   the checkpoint's place in the serving workspace's runs (the status's served
   paths, found again in the server's list by `resolve_checkpoint`, which
   reads no file) and the status's ``checkpoint_meta``. **A task model is
   named by its task** (K6 decision 4, the one place the card names it):
-  "Disease task model", with "GATv2 · run … · 6 epochs completed" on the line
+  "Disease task model", with "… · GATv2 …, 6 epochs completed" on the line
   under it; the task is read from the served identity's scoring mode through
   the one task table
   (`served_task`, `src.core.types.SCORING_MODE_TASKS`);

@@ -55,7 +55,8 @@ docstring. Three panels, as the mockup draws them (``test-wide.png``,
   that does not measure the version's data kind, a measurement whose needs the model's
   capabilities do not meet (its task head among them), and a measurement
   needing genes the version does not list are refused with their reason; then the job: its state, elapsed time,
-  inputs, output tail, "Cancel" (the runner's stop for test runs only), and
+  inputs (one summary list, a row each, the run's own whatever is chosen
+  now, `job_inputs_html`), output tail, "Cancel" (the runner's stop for test runs only), and
   once it has ended, **what it left, from the runner** (its outcome file, kept
   and registered read from disk by WP4's helper; "no report was published"
   when there is no outcome file; a cancel says what was left);
@@ -63,9 +64,11 @@ docstring. Three panels, as the mockup draws them (``test-wide.png``,
   single-select table** (`reports_html`), newest first (the newest
   `ROWS_SHOWN` and the selected one shown, "Show all N reports" for the
   rest): each run's time, its model by its relation to the chosen one ("the
-  selected model", or the other file's title or fingerprint), its
-  measurement and its state (kept, registered by the registration's one
-  helper, `server_lists.stored_report_state`, asked again for an operator
+  selected model", or another listed file by what it is, its run and its
+  file in its Run → Checkpoint options' words, `_other_model_html`, or its
+  fingerprint), its measurement (`measurement_words`) and its state (kept,
+  registered by the registration's one helper,
+  `server_lists.stored_report_state`, asked again for an operator
   beside the listed checkpoint Register would use: `refine_rows`,
   `ledger_checkpoint`; how its condition group reads, "runs differ",
   "comparison incomplete"), all from the server's one run listing that

@@ -3095,8 +3095,9 @@ Matching phenotypes · Paths）。選取一列（點擊，或在聚焦的列上�
 - 標題列 "MODEL IN USE ⓘ · checked HH:MM:SS ↻"：目前服務的內容會為這個瀏覽器讀取——頁面打開
   時、Diagnosis 顯示期間每 5 秒、每次診斷之後、更換模型之後，以及按 ↻ 時；超過 5 秒的讀取顯示
   為 "timed out (5 s)"；
-- 模型 "GAT · run 2026-10-17 09:15 · 6 epochs completed"（檔案訓練到哪裡，取自它的進度紀錄，
-  用語與每個頁面相同；沒有進度紀錄的舊檔案說它記錄的 epoch，"recorded epoch 5"），以及
+- 模型 "2026-10-17 09:15 · GATv2, 6 epochs completed"（其 run 以唯一的 run 用語表示，有名稱的 run
+  名稱在前，"smoke-ft · GATv2 2026-10-17 09:15, 6 epochs completed"；檔案訓練到哪裡，取自它的進度
+  紀錄，用語與每個頁面相同；沒有進度紀錄的舊檔案說它記錄的 epoch，"recorded epoch 5"），以及
   "model fingerprint <12 hex> ✓ verified"（所服務之 checkpoint 檔的 SHA-256）；
 - "trained on <workspace> · dataset fingerprint <12 hex>"：checkpoint 記錄的訓練所用 dataset
   （`training_input_digests.split_manifest`），以具有相同完整 fingerprint 的已列出 workspace
@@ -3584,7 +3585,9 @@ split）上量測模型、保留報告並登錄它。共有三個面板：
   與 Training 及 Fine-tune 的 Start 說法相同（「Disabled: GPU job: training (job runner).」；在 CUDA
   上服務模型時是「Disabled: GPU: inference (this service); stop it with Stop inference on
   Diagnosis.」），因為那期間任何選擇都無法讓它可用，然後才是缺少某個選擇或另一個圖譜。工作卡片顯示狀態（Running、Completed、紅色的
-  Failed、灰色的 Cancelled：失敗或取消的執行從不顯示為綠色）、已經過的時間、執行收到的輸入、
+  Failed、灰色的 Cancelled：失敗或取消的執行從不顯示為綠色）、已經過的時間、執行收到的輸入（一份
+  清單，每項一列：其版本與模型以它們自己的指紋表示，不論目前選擇什麼；其量測以其報告的用語表示；
+  其 workspace；Register、Deterministic algorithms 與 Device；其 R10 證據；其開始時間）、
   以 UTC 表示的開始與結束時間（與報告列命名執行的方式相同），以及其輸出的最後 12 行（取消後
   會收合，其最後一行說明執行已被取消，沒有 traceback；量測拒絕訊息中提到的病患 id 會被略去，
   D7）；狀態旁的 **Cancel** 只停止測試執行，從不停止訓練工作。在寬螢幕上，Start、其原因與工作卡片固定在
@@ -3598,8 +3601,10 @@ split）上量測模型、保留報告並登錄它。共有三個面板：
 - **Result。** 最上方（自 ops-wiring 回合的 B3 起；之前位於 Data）是該版本 report store 的精簡表格
   **Reports**，最新的在前，每個執行目錄一列，以點擊或 Enter 選取：**Report**（何時執行；兩列讀來相同
   時加上秒，再加上 run id 的最後一段）、**Model**（Run 中所選的 checkpoint 讀作「the selected
-  model」，其他已列出的檔案以其 run 與進度，未列出的權重以其 12 個十六進位數字）、**Measurement**
-  （其紀錄的模式，以文字表示）與 **State**（registered #N、not registered、no report kept、runs
+  model」，其他已列出的檔案先說它是什麼，凍結對照為「Disease · frozen graph backbone」，再以其
+  Run 與 Checkpoint 選項的用語說其 run 與檔案，因此同一 run 的兩個檔案從不讀來相同；未列出的權重以其
+  12 個十六進位數字）、**Measurement**（其紀錄的模式，以文字表示，「Disease task」，執行中那一列也用
+  相同用語）與 **State**（registered #N、not registered、no report kept、runs
   differ、comparison incomplete；只有當該群組記錄 deterministic algorithms 開啟時才以琥珀色加 ▲）。
   目前正在執行的測試位於最上方一列，而這台伺服器上最後一次結束時 store 中什麼也沒有的測試執行（在
   建立執行目錄之前就被取消，或失敗）會保留為一列，直到下一次啟動或重新啟動伺服器。表格列出最新的
@@ -3608,7 +3613,7 @@ split）上量測模型、保留報告並登錄它。共有三個面板：
   旁的帳本中檢查，因此尚待登錄的報告無論選取哪一列都顯示「not registered」；其 checkpoint 只列在另一
   個 workspace 的報告，在被選取之前顯示「registration not checked」。表格之下、在面板唯一的捲動區域
   內，是選取的報告：它屬於什麼，依它與目前選擇的關係說明，相同時讀作「the selected workspace」、
-  「the selected model」、「the selected version」，不同時完整寫出（其模型的 run、進度與指紋，其版本的
+  「the selected model」、「the selected version」，不同時完整寫出（其模型是什麼、其 run、檔案與指紋，其版本的
   標籤、role 與指紋，持有它所量測之資料集紀錄的已列出 workspace），因此選擇其他 checkpoint 或版本
   之後，過去的結果仍保有自己的身分；其 run id 只出現一次。接著以帳本將會保存的紀錄形式、由每種模式
   共用的同一種顯示呈現（自 K8-6e.2 起）：
@@ -3706,9 +3711,9 @@ Lineage 欄。沒有任何排列方式依測試分數為模型排名：依測試
 依測試分數自動選擇模型。
 
 **選取一列**會以一份清單顯示其細節（自 ops-wiring 回合的 B3 起）：模型指紋（12 個十六進位數字，可
-Copy）、它的資料集與此 workspace 的關係（「the selected workspace's current dataset」，或說明是哪一
+Copy）、它的檔案（標題說的是它的 run，同一 run 的兩個檔案標題相同）、它的資料集與此 workspace 的關係（「the selected workspace's current dataset」，或說明是哪一
 個）、它是什麼、operation、parent、family、encoder 與參考配方的關係、作為一列的 Trainer 驗證數值
-（從不自成一個方框），以及 **Details ›** 之下的 run 目錄、檔案與完整指紋；任何警告以 ▲ 顯示；以及
+（從不自成一個方框），以及 **Details ›** 之下的 run 目錄與完整指紋；任何警告以 ▲ 顯示；以及
 三個分段：
 
 - **Recorded results**（research comparison Stage 6 之前為 "Recorded test results"）：ledger 為這組
