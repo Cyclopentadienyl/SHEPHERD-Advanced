@@ -82,7 +82,8 @@ does (the shared run plan, through the job runner's one preview of each,
 `preview_continuation` or `preview_branch`) and compares the parent's
 recorded dataset fingerprint with the workspace's current one; 4. Start in
 the drawer's footer, Continue Training or Start branch and Cancel beside
-the start's reason (the skill's §9), while the run bar's Start is disabled
+the start's reason, which says what the check refused and what to do
+(`continue_refusal`; the skill's §9), while the run bar's Start is disabled
 ("close Continue… to start a new run"). Extending a parent whose rate ended
 at 0 asks its Extra-epoch rate (the preview's `zero_rate_groups`), sent as
 `extend_lr`. **A branch's fields are the settings its parent's stage and
@@ -1321,18 +1322,49 @@ def _other_workspace(item: Mapping[str, Any], ws: Mapping[str, Any]) -> Optional
             "(Refresh beside it).")
 
 
+#: **What the last check refused**, as the session's parent record keeps it
+#: (``refused``, `_refusal_kind`): a setting the operator edited or entered
+#: (the page's own value check, or the preview's ``invalid_settings``: a
+#: setting not read or off the list, a value, a rule across settings, the hop
+#: list), the parent changed since its fingerprint was shown (the preview's
+#: ``changed``), or the parent itself (the plan, its record, the device).
+REFUSED_SETTINGS, REFUSED_CHANGED, REFUSED_PARENT = "settings", "changed", "parent"
+
+
+def _refusal_kind(preview: Mapping[str, Any]) -> Optional[str]:
+    """What a refused preview refused (`REFUSED_SETTINGS`, `REFUSED_CHANGED`,
+    `REFUSED_PARENT`), or None when it can go ahead."""
+    if preview.get("ok"):
+        return None
+    if preview.get("invalid_settings"):
+        return REFUSED_SETTINGS
+    return REFUSED_CHANGED if preview.get("changed") else REFUSED_PARENT
+
+
 def continue_refusal(parent: Mapping[str, Any], ws: Mapping[str, Any], *,
                      operation: str = CONTINUE) -> Optional[str]:
     """Why the drawer's start (Continue Training, or Start branch for the
-    `operation` Branch) is disabled for the chosen parent, or None. A
-    branch's data is its parent's as a continued run's is (BACKLOG 23), so
-    another dataset is refused for both."""
+    `operation` Branch) is disabled for the chosen parent, or None: said
+    beside the start, so by its cause and what to do (the skill's §9; the
+    B1c review: one sentence blamed the checkpoint for an edit the check
+    refused). A refused check by what it refused (`_refusal_kind`): a setting
+    the operator edited, to change and check again; the parent changed since
+    its fingerprint was shown, with the action for where it was shown
+    (`_changed_parent_action`); else the parent itself, which the check says
+    why. A branch's data is its parent's as a continued run's is (BACKLOG
+    23), so another dataset is refused for both."""
     if not parent.get("chosen"):
         return "choose a checkpoint first."
     other = _other_workspace(parent, ws) if parent.get("source") == CONTINUE_FROM_LIST else None
     if other:
         return other
-    if parent.get("refused"):
+    refused = parent.get("refused")
+    if refused == REFUSED_SETTINGS:
+        return "the check refuses a setting you edited; change it, then check again."
+    if refused == REFUSED_CHANGED:
+        return (f"the checkpoint changed since it was chosen. "
+                f"{_changed_parent_action(parent.get('source'))}")
+    if refused:
         return f"the check says this checkpoint cannot be {OPERATION_VERBS[operation][1]}."
     recorded, current = parent.get("fingerprint"), workspace_fingerprint(ws)
     if r.is_digest(recorded) and current and recorded != current:
@@ -3324,10 +3356,17 @@ def _branch_updates(preview: Mapping[str, Any], operation: str, touched: Any,
     (`touched`) holding the parent's value in its field's form
     (`_branch_form_value`); every other field hidden and left as it is (a
     base records a task model's settings as unset, which no field of theirs
-    shows). Otherwise (Continue, a refused check) the box and the fields as
-    they were: a refusal of an edit leaves the edit to fix."""
-    if operation != BRANCH or not preview.get("ok") or "changeable" not in preview:
-        return (gr.update(),) * (1 + len(BRANCH_FIELDS))
+    shows). A refusal of the settings sent leaves the box and the fields as
+    they were, the edit to fix; any other refusal of a branch (the parent
+    itself, changed since it was shown, or not found) hides the box, whose
+    values were read from a parent the check no longer reads, so no edit can
+    stand for that refusal's fix (the B1c review). Continue leaves them."""
+    keep = (gr.update(),) * len(BRANCH_FIELDS)
+    if operation != BRANCH:
+        return (gr.update(), *keep)
+    if not preview.get("ok") or "changeable" not in preview:
+        return (gr.update() if _refusal_kind(preview) == REFUSED_SETTINGS
+                else gr.update(visible=False), *keep)
     changeable = set(preview["changeable"])
     inherited = preview.get("inherited") or {}
     edited = touched_keys(touched)
@@ -3382,13 +3421,17 @@ def _on_operation(operation, mode):
 def _on_branch_edited(mode):
     """A Branch field edited by the operator: the last check no longer
     describes what Start branch sends (its plan, its changes), so the check
-    says so, and the last check's refusal no longer disables Start branch,
-    which checks what it sends first. Returns the check's text and the
-    session's mode."""
+    says so, and a refusal of the settings it sent (the edit is the fix) no
+    longer disables Start branch, which checks what it sends first. A
+    refusal of the parent itself is no edit's to dismiss: it stays, said in
+    the check and beside the start (the skill's §9: nothing auto-dismisses;
+    the B1c review). Returns the check's text and the session's mode."""
     mode = dict(mode or {})
     parent = dict(mode.get("parent") or {})
+    if parent.get("refused") and parent.get("refused") != REFUSED_SETTINGS:
+        return gr.update(), mode
     if parent.get("refused"):
-        parent["refused"] = False
+        parent["refused"] = None
         mode["parent"] = parent
     return f'<p class="shep-note">{_BRANCH_EDITED}</p>', mode
 
@@ -3512,7 +3555,7 @@ def _preview_for(operation: str, parent: str, device: Optional[str], *, extend_e
         extend_if_finished=True, expected_sha256=expected_sha256)
 
 
-def _changed_parent_action(source: str) -> str:
+def _changed_parent_action(source: Any) -> str:
     """What to do when the service refuses the parent as changed (its
     ``changed``), for where its fingerprint was shown: a listed parent's is
     the run list's, sent again until the list is read again, and a Refresh
@@ -3545,11 +3588,16 @@ def _checked(operation: str, source, listed, manual, device, ws, parents, mode, 
     read, as the plan would refuse it; the rest the preview judges by the
     plan (`preview_branch`), which names the settings the parent's stage and
     task may change (kept in the record as ``changeable``, for the fields a
-    rule shows)."""
+    rule shows).
+
+    **The record keeps what a refusal refused** (``refused``,
+    `_refusal_kind`), so the reason beside the start says its cause and what
+    to do (`continue_refusal`), and an edit dismisses only a refusal of the
+    settings (`_on_branch_edited`)."""
     path, why, item = _parent_path(source, listed, manual, ws or {}, parents or {})
     record = dict((mode or {}).get("parent") or _chosen(source, listed, manual, parents, ws))
     if path is None:
-        record.update(refused=True, checked=True)
+        record.update(refused=REFUSED_PARENT, checked=True)
         return None, why, record, {}
     if source == CONTINUE_FROM_PATH:
         shown = record.get("sha256") if starting and record.get("path") == path else None
@@ -3559,16 +3607,17 @@ def _checked(operation: str, source, listed, manual, device, ws, parents, mode, 
     if operation == BRANCH:
         settings, problems = branch_sent(item, touched, values)
         if problems:
-            record.update(chosen=True, checked=True, refused=True)
-            return ({"ok": False, "invalid_settings": True, "parent": path,
-                     "reason": " ".join(problems)}, None, record, settings)
+            preview = {"ok": False, "invalid_settings": True, "parent": path,
+                       "reason": " ".join(problems)}
+            record.update(chosen=True, checked=True, refused=_refusal_kind(preview))
+            return preview, None, record, settings
     preview = _preview_for(operation, path, device, extend_epochs=extend_epochs,
                            extend_lr=extend_lr, settings=settings, expected_sha256=shown)
     if preview.get("changed"):
         preview = {**preview, "reason": f"{preview['reason']} {_changed_parent_action(source)}"}
     recorded = preview.get("dataset_fingerprint") or (item or {}).get("dataset_fingerprint")
-    record.update(chosen=True, checked=True, refused=not preview.get("ok"), fingerprint=recorded,
-                  sha256=shown or preview.get("sha256"), path=path)
+    record.update(chosen=True, checked=True, refused=_refusal_kind(preview),
+                  fingerprint=recorded, sha256=shown or preview.get("sha256"), path=path)
     if operation == BRANCH and preview.get("ok"):
         record["changeable"] = list(preview.get("changeable") or ())
     return preview, None, record, settings
@@ -3602,7 +3651,7 @@ def _on_check_continue(request: gr.Request, operation, source, listed, manual, d
     if preview is None:
         hidden = gr.update(visible=False, value=None)
         return (f'<div class="shep-reason">Nothing to check: {r.e(why)}.</div>', hidden, hidden,
-                mode, compare_html(record, ws or {}), *keep)
+                mode, compare_html(record, ws or {}), *_branch_updates({}, op, touched, values))
     differs = continue_refusal(record, ws or {}, operation=op) is not None and preview.get("ok")
     text = _check_html(preview, source, differs=bool(differs), listed=listed, operation=op)
     if op == CONTINUE and preview.get("end") == "finished" and not preview.get("ok") \
@@ -3650,11 +3699,11 @@ def _resume(operation, ws, device, source, listed, manual, extend_epochs, extend
     epochs update, Extra-epoch rate update, mode, Branch box and fields)``,
     the sentence plain text: "" once started, and "" when the start's own
     check refuses it, whose refusal the drawer's footer says beside the start
-    from the same record ("Start branch disabled: the check says this
-    checkpoint cannot be branched.", the dataset comparison's) and the check
-    says why: the fact said once (the skill's §1.2); a refusal nothing else
-    says (no dataset, a path the list does not hold, the job runner's own)
-    is the sentence."""
+    from the same record, by its cause and what to do (`continue_refusal`:
+    "Start branch disabled: the check refuses a setting you edited; …", the
+    dataset comparison's) and the check says why: the fact said once (the
+    skill's §1.2); a refusal nothing else says (no dataset, a path the list
+    does not hold, the job runner's own) is the sentence."""
     op = BRANCH if operation == BRANCH else CONTINUE
     mode = dict(mode or {})
     mode["operation"] = op
@@ -3670,7 +3719,8 @@ def _resume(operation, ws, device, source, listed, manual, extend_epochs, extend
     mode["parent"] = record
     hidden = gr.update(visible=False, value=None)
     if preview is None:
-        return f"Not started: {why}.", gr.update(), hidden, hidden, mode, keep
+        return (f"Not started: {why}.", gr.update(), hidden, hidden, mode,
+                _branch_updates({}, op, touched, values))
     refusal = continue_refusal(record, ws, operation=op)
     text = _check_html(preview, source, differs=preview.get("ok") and refusal is not None,
                        listed=listed, operation=op)

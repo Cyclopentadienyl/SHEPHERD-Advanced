@@ -496,13 +496,16 @@ def test_continue_sends_the_parent_shown_and_the_preview_refuses_another(console
     _swap(console, "same")()
     said, text, _extend, mode = _continue(console, src, typed, mode)
     assert len(console["started"]) == 1, "another parent was started"
-    # The check says why and the footer's reason that it is disabled (B1c).
+    # The check says why and the footer's reason that it is disabled (B1c),
+    # by its cause and what to do (the B1c review).
+    action = REFRESH if source == "list" else CHECK_AGAIN
     assert said == tc.notice_html("")
     assert tc.continue_refusal(mode["parent"], console["state"]) == (
-        "the check says this checkpoint cannot be continued.")
+        f"the checkpoint changed since it was chosen. {action}")
     assert CHANGED in text and f"(chosen: {shown[:12]}...)" in text
-    assert (REFRESH if source == "list" else CHECK_AGAIN) in text
-    assert mode["parent"]["refused"] is True and mode["parent"]["sha256"] == shown
+    assert action in text
+    assert mode["parent"]["refused"] == tc.REFUSED_CHANGED
+    assert mode["parent"]["sha256"] == shown
 
 
 def test_a_typed_paths_check_shows_the_file_again(console):
@@ -529,7 +532,7 @@ def test_a_listed_parent_whose_bytes_changed_since_it_was_listed_is_refused(cons
     text, _e, mode, _c = _check(console, tc.CONTINUE_FROM_LIST)
     assert CHANGED in text and f"(chosen: {shown[:12]}...)" in text and REFRESH in text
     assert console["key"] in text, "the refused check names the file by its list key"
-    assert mode["parent"]["refused"] is True
+    assert mode["parent"]["refused"] == tc.REFUSED_CHANGED
 
 
 def test_a_listed_parent_refused_as_changed_is_shown_again_by_refresh(console):
@@ -669,12 +672,14 @@ def test_start_branch_sends_the_parent_shown_and_the_preview_refuses_another(con
     _swap(console, "same")()
     said, text, _extend, mode = _continue(console, src, typed, mode, operation=tc.BRANCH)
     assert len(console["started"]) == 1, "another parent was branched"
+    action = REFRESH if source == "list" else CHECK_AGAIN
     assert said == tc.notice_html("")
     assert tc.continue_refusal(mode["parent"], console["state"], operation=tc.BRANCH) == (
-        "the check says this checkpoint cannot be branched.")
+        f"the checkpoint changed since it was chosen. {action}")
     assert "Cannot branch." in text and CHANGED in text and f"(chosen: {shown[:12]}...)" in text
-    assert (REFRESH if source == "list" else CHECK_AGAIN) in text
-    assert mode["parent"]["refused"] is True and mode["parent"]["sha256"] == shown
+    assert action in text
+    assert mode["parent"]["refused"] == tc.REFUSED_CHANGED
+    assert mode["parent"]["sha256"] == shown
 
 
 def test_a_typed_branch_parent_changed_after_the_consoles_check_is_refused_by_the_start(

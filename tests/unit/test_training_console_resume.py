@@ -359,7 +359,10 @@ def test_a_listed_parent_whose_bytes_changed_since_it_was_listed_is_refused(chec
                                 "", parents=parents)
     assert "The checkpoint changed since it was chosen." in text
     assert "Refresh the list, then check it again." in text
-    assert mode["parent"]["refused"] is True
+    assert mode["parent"]["refused"] == tc.REFUSED_CHANGED
+    # Beside the start, its cause and what to do (the B1c review).
+    assert tc.continue_refusal(mode["parent"], checkpoints["state"]) == (
+        "the checkpoint changed since it was chosen. Refresh the list, then check it again.")
 
 
 def test_a_parent_the_list_no_longer_has_is_not_opened(checkpoints, monkeypatch):
@@ -726,7 +729,7 @@ def test_continue_without_check_on_a_finished_checkpoint_shows_extra_epochs(
     started = []
     monkeypatch.setattr(training_manager, "start_training", _starts(started))
     result = _resume(checkpoints, tc.CONTINUE_FROM_PATH, None, str(checkpoints["finished"]))
-    assert started == [] and result[3]["parent"]["refused"] is True
+    assert started == [] and result[3]["parent"]["refused"] == tc.REFUSED_PARENT
     assert "Enter <b>Extra epochs</b> above" in result[1]           # the field is above the check
     assert result[2]["visible"] is True
 
@@ -1005,7 +1008,9 @@ def test_an_invalid_or_off_list_branch_edit_is_refused_with_the_plans_words(chec
     the parent's stage does not read, and a rule across settings the edit
     breaks, are refused by the job runner's preview in the plan's own words
     (`run_plan.stated_problem`, `cross_field_problems`). Nothing starts, and
-    the fields keep the edit to fix."""
+    the fields keep the edit to fix. The reason beside
+    Start branch says the check refused a setting edited, and what to do,
+    never that the checkpoint cannot be branched (the B1c review)."""
     from src.config.training_fields import cross_field_problems, value_problem
     from src.utils.run_plan import new_run_values, stated_problem
 
@@ -1016,7 +1021,7 @@ def test_an_invalid_or_off_list_branch_edit_is_refused_with_the_plans_words(chec
                      learning_rate=-1.0)
     words = tc._named("learning_rate", value_problem("learning_rate", -1.0), "Learning rate")
     assert "Cannot branch." in bad[0] and r.e(words) in bad[0], bad[0]
-    assert bad[3]["parent"]["refused"] is True
+    assert bad[3]["parent"]["refused"] == tc.REFUSED_SETTINGS
     assert all(update == gr_update() for update in bad[-1 - len(tc.BRANCH_FIELDS):])
     off = _check_all(c, tc.CONTINUE_FROM_LIST, c["paused_key"], "", operation=tc.BRANCH,
                      candidate_sample_size=5)
@@ -1032,13 +1037,62 @@ def test_an_invalid_or_off_list_branch_edit_is_refused_with_the_plans_words(chec
         said, text, _extend, _rate, mode, *_rest = _resume_all(
             c, tc.CONTINUE_FROM_LIST, c["paused_key"], "", operation=tc.BRANCH, **edit)
         assert said == tc.notice_html("") and "Cannot branch." in text
+        assert mode["parent"]["refused"] == tc.REFUSED_SETTINGS
         assert tc.continue_refusal(mode["parent"], c["state"], operation=tc.BRANCH) == (
-            "the check says this checkpoint cannot be branched.")
+            "the check refuses a setting you edited; change it, then check again.")
+        view = tc.run_bar_view({"status": "idle"}, c["state"],
+                               {"drawer": True, "operation": tc.BRANCH, "parent": mode["parent"]},
+                               access=_allowed(), active=None, gpu=None)
+        assert ("Start branch disabled: the check refuses a setting you edited; change it, then "
+                "check again.") in view["drawer_reason"]
+        assert "cannot be branched" not in view["drawer_reason"]
     assert started == []
-    # An edit after a refused check: the check is stale and no longer
-    # disables Start branch, which checks what it sends first.
+    # An edit after a refused check of the settings: the check is stale and
+    # no longer disables Start branch, which checks what it sends first.
     text, mode = tc._on_branch_edited({"parent": {**bad[3]["parent"]}})
-    assert "A setting changed since the check" in text and mode["parent"]["refused"] is False
+    assert "A setting changed since the check" in text and not mode["parent"]["refused"]
+    assert tc.continue_refusal(mode["parent"], c["state"], operation=tc.BRANCH) is None
+
+
+def _allowed():
+    """D8's answer to an operator's request (`operator_access`)."""
+    return tc.operator_access(OP)
+
+
+def test_an_edit_never_dismisses_a_refusal_of_the_parent_itself(checkpoints):
+    """The B1c review: a check that refused the parent itself (here, a file
+    other than the one shown) left the Branch box with the earlier read's
+    values, and an edit in it replaced the refusal with "A setting changed
+    since the check" and enabled Start branch. A refusal no edit can fix
+    hides the box, and an edit leaves the refusal where it is said; a
+    refusal of the settings keeps the box, the edit to fix (above)."""
+    c = checkpoints
+    ok = _check_all(c, tc.CONTINUE_FROM_LIST, c["paused_key"], "", operation=tc.BRANCH)
+    box, _fields_shown = _fields(ok)
+    assert box["visible"] is True
+    parents = {key: dict(item) for key, item in c["parents"].items()}
+    parents[c["paused_key"]]["sha256"] = "0" * 64             # another file than the one shown
+    refused = _check_all(c, tc.CONTINUE_FROM_LIST, c["paused_key"], "", mode=ok[3],
+                         operation=tc.BRANCH, parents=parents)
+    assert "The checkpoint changed since it was chosen." in refused[0]
+    mode = refused[3]
+    assert mode["parent"]["refused"] == tc.REFUSED_CHANGED
+    box, fields = _fields(refused)
+    assert box == gr_update(visible=False)
+    assert all(update == gr_update() for update in fields.values())
+    text, after = tc._on_branch_edited(mode)
+    assert text == gr_update() and after["parent"]["refused"] == tc.REFUSED_CHANGED
+    assert tc.continue_refusal(after["parent"], c["state"], operation=tc.BRANCH) == (
+        "the checkpoint changed since it was chosen. Refresh the list, then check it again.")
+    # A parent the plan refuses, or one not found: the box hidden alike.
+    for preview in ({"ok": False, "reason": "weights only"}, {}):
+        assert tc._branch_updates(preview, tc.BRANCH, [], _values())[0] == gr_update(
+            visible=False)
+    nothing = _check_all(c, tc.CONTINUE_FROM_LIST, "gatv2/gone/last.pt", "", mode=ok[3],
+                         operation=tc.BRANCH)
+    assert "Nothing to check" in nothing[0] and _fields(nothing)[0] == gr_update(visible=False)
+    # Continue leaves the Branch box as it is.
+    assert tc._branch_updates({"ok": False}, tc.CONTINUE, [], _values())[0] == gr_update()
 
 
 def test_the_branch_fields_are_the_settings_a_branch_may_change_through_the_one_field():

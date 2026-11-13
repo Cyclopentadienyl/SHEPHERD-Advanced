@@ -510,13 +510,29 @@ def test_with_the_drawer_open_continue_training_follows_the_chosen_parent():
     assert ("Continue Training disabled: the parent’s dataset is not this workspace’s current "
             "one.") in differs["drawer_reason"]
     assert "run bar above" not in differs["drawer_reason"]
-    refused = _view(ws=ws, mode={"drawer": True, "parent": {"chosen": True, "refused": True}})
+    # A refused check, by what it refused and what to do (the B1c review: one
+    # sentence blamed the checkpoint for every refusal).
+    refused = _view(ws=ws, mode={"drawer": True,
+                                 "parent": {"chosen": True, "refused": tc.REFUSED_PARENT}})
     assert refused["resume"] is False
     assert "cannot be continued" in refused["drawer_reason"]
     branch = _view(ws=ws, mode={"drawer": True, "operation": "branch",
-                                "parent": {"chosen": True, "refused": True}})
+                                "parent": {"chosen": True, "refused": tc.REFUSED_PARENT}})
     assert ("Start branch disabled: the check says this checkpoint cannot be branched."
             in branch["drawer_reason"])
+    edited = _view(ws=ws, mode={"drawer": True, "operation": "branch",
+                                "parent": {"chosen": True, "refused": tc.REFUSED_SETTINGS}})
+    assert edited["resume"] is False
+    assert ("Start branch disabled: the check refuses a setting you edited; change it, then "
+            "check again.") in edited["drawer_reason"]
+    for source, action in ((tc.CONTINUE_FROM_LIST, "Refresh the list, then check it again."),
+                           (tc.CONTINUE_FROM_PATH,
+                            "Click Check checkpoint to read the file there now.")):
+        changed = _view(ws=ws, mode={"drawer": True, "parent": {
+            "chosen": True, "source": source, "refused": tc.REFUSED_CHANGED}})
+        assert changed["resume"] is False
+        assert (f"Continue Training disabled: the checkpoint changed since it was chosen. "
+                f"{action}") in changed["drawer_reason"]
     # A cause before the drawer's own names the drawer's start too.
     busy = _view({"status": "running"}, ws=ws, mode={"drawer": True, "operation": "branch"})
     assert "Start branch disabled: a training job is running." in busy["drawer_reason"]
