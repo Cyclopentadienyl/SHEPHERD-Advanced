@@ -137,23 +137,26 @@ def test_the_page_is_the_run_bar_the_parameters_the_drawer_and_the_run_view():
         assert not hasattr(tc, name), name
 
 
-def test_the_form_is_exactly_the_recipes_base_settings_at_the_recipes_values():
-    """K6 decision 12: the Parameters are the reference recipe's base settings
-    and nothing else, each starting at the recipe's value; the first four
-    shown, the rest under one closed "More reference settings"; integer
-    settings take whole numbers only. The ShepherdGNN form is gone: no
-    architecture, width, loss-weight, ortholog, randomize or AMP control."""
-    from src.config.recipe import BASE
+def test_the_form_is_what_a_new_base_takes_common_settings_first():
+    """Ops-wiring round, decisions S1, S3, S5: the Parameters are what a new
+    base takes (`run_plan.new_run_settings("base")`), each starting at the
+    value the run takes without it; Epochs, Learning rate, Batch size, Seed,
+    Split seed and Device shown; the rest under one closed "More training
+    settings", a setting a rule reads only under its guard hidden while it
+    does not apply; the model spec's fields under a sibling closed "Model";
+    integer settings take whole numbers only. The ShepherdGNN form stays
+    gone."""
+    from src.utils.run_plan import new_run_settings
 
     demo, _ctx, by_id = _page()
-    assert set(tc.BASE_FIELDS) == set(BASE) and len(tc.BASE_FIELDS) == len(BASE)
+    assert set(tc.BASE_FIELDS) | {"model_spec"} == new_run_settings("base")
+    references, _sources = tc.base_references()
     for name in tc.BASE_FIELDS:
         field = by_id[name]
         assert field.label == r.SETTING_LABELS[name]
-        assert field.value == tc.form_value(name, BASE[name]), name
+        assert field.value == tc.form_value(references[name]), name
         if isinstance(field, gr.Number):
-            assert field.precision == (0 if isinstance(BASE[name], int) or BASE[name] is None
-                                       else None), name
+            assert field.precision == (0 if isinstance(references[name], int) else None), name
     assert by_id["num_neighbors"].value == "15, 10, 5" and by_id["use_amp"].value is False
     # Early stopping off: a text box reading "off", which the browser keeps (a
     # number box showed None as 0 once mounted, K6 closing smoke).
@@ -161,22 +164,76 @@ def test_the_form_is_exactly_the_recipes_base_settings_at_the_recipes_values():
     assert by_id["early_stopping_patience"].value == "off"
     assert by_id["scheduler_type"].choices == [(c, c) for c in ("cosine", "onecycle", "linear",
                                                                 "none")]
+    # Read only under a guard the reference does not hold: hidden.
+    hidden = {name for name in tc.BASE_FIELDS if by_id[name].visible is False}
+    assert hidden == {"warmup_steps", "min_lr_ratio", "amp_dtype"}
     accordions = {b.label: b.open for b in demo.blocks.values() if isinstance(b, gr.Accordion)}
-    assert accordions == {"More reference settings": False}
-    for gone in ("conv_type", "hidden_dim", "num_layers", "dropout", "num_heads",
+    assert accordions == {"More training settings": False, "Model": False}
+    more, model = by_id["shep-train-more"], by_id["shep-train-model"]
+
+    def inside(block, parent):
+        while block is not None:
+            if block is parent:
+                return True
+            block = getattr(block, "parent", None)
+        return False
+
+    common = [*tc.BASE_FIELDS[:tc.BASE_SHOWN], "device"]
+    assert not any(inside(by_id[name], more) or inside(by_id[name], model) for name in common)
+    assert all(inside(by_id[name], more) for name in tc.BASE_FIELDS[tc.BASE_SHOWN:])
+    spec_fields = [field for field in tc.spec_form_fields() if field.editable]
+    assert spec_fields and all(inside(by_id[field.elem_id], model) for field in spec_fields)
+    assert by_id["spec-encoder-relation_edge_dim"].value == "off"
+    assert by_id["spec-encoder-layers"].precision == 0
+    assert "spec-encoder-kind" not in by_id          # one architecture: a fact
+    assert "GATv2" in by_id["shep-train-spec-facts"].value
+    for gone in ("conv_type", "hidden_dim", "num_layers", "num_heads",
                  "diagnosis_weight", "link_prediction_weight", "contrastive_weight",
                  "ortholog_weight", "use_ortholog_gate", "amp_mode", "randomize_seed",
                  "temperature", "label_smoothing", "margin", "num_neighbors_str",
-                 "max_subgraph_nodes", "min_lr_ratio", "gradient_accumulation_steps"):
+                 "max_subgraph_nodes", "shep-train-differs"):
         assert gone not in by_id, gone
     for name in ("_collect_config", "ConfigValidationError", "SEED_PARAM_INDEX", "_random_seed",
-                 "_seed_field_lock", "AMP_HGT_REFUSAL", "_on_conv_type_change", "_MAX_SEED"):
+                 "_seed_field_lock", "AMP_HGT_REFUSAL", "_on_conv_type_change", "_MAX_SEED",
+                 "recipe_differences", "differs_html", "_on_base_changed"):
         assert not hasattr(tc, name), name
-    # One visible line on the reference settings (decision 5), kept by one listener.
-    assert "Uses the reference settings." in by_id["shep-train-differs"].value
-    listeners = [fn for fn in demo.fns.values() if fn.fn is tc._on_base_changed]
-    assert len(listeners) == 1 and len(listeners[0].targets) == len(BASE)
-    assert listeners[0].queue is False
+    # One visible line on what the operator set (decision S2), beside Reset.
+    assert "Set by you: nothing" in by_id["shep-train-setby"].value
+    assert by_id["shep-train-reset"].value == "Reset to reference"
+
+
+def test_each_fields_input_records_it_and_reset_and_the_guards_are_wired():
+    """Decision S2: each field's ``.input`` (never ``.change``, which a page's
+    own write fires too) records it in the session's record and says the
+    line; Reset writes the record, the line and every field; the guards'
+    change shows what depends on them; Start takes the record and every
+    field. None of these waits for the queue."""
+    demo, _ctx, by_id = _page()
+    keys = tc.base_form_keys()
+    fields = [by_id[key] if key in by_id else by_id[f"spec-{key.replace('.', '-')}"]
+              for key in keys]
+    fns = list(demo.fns.values())
+    inputs = {target[0]: fn for fn in fns for target in fn.targets if target[1] == "input"}
+    setby = by_id["shep-train-setby"]
+    touched = None
+    for key, field in zip(keys, fields, strict=True):
+        fn = inputs[field._id]
+        assert fn.outputs[1] is setby and fn.inputs[1:] == fields and fn.queue is False
+        touched = touched or fn.inputs[0]
+        assert fn.inputs[0] is touched and fn.outputs[0] is touched
+        assert fn.fn(["x"], *tc.base_form_defaults())[0] == sorted({"x", key})
+    assert not [fn for fn in fns if any(target[1] == "change" and target[0] in
+                                        {f._id for f in fields} for target in fn.targets)
+                and fn.fn is not tc._on_base_guards]
+    (reset,) = [fn for fn in fns if fn.fn is tc._on_base_reset]
+    assert reset.targets == [(by_id["shep-train-reset"]._id, "click")]
+    assert reset.outputs == [touched, setby, *fields] and reset.queue is False
+    (guards,) = [fn for fn in fns if fn.fn is tc._on_base_guards]
+    assert guards.inputs == [by_id["scheduler_type"], by_id["use_amp"]]
+    assert guards.outputs == [by_id["warmup_steps"], by_id["min_lr_ratio"], by_id["amp_dtype"]]
+    assert {target[1] for target in guards.targets} == {"change"}
+    (start,) = [fn for fn in fns if fn.fn is tc._on_start]
+    assert start.inputs[3] is touched and start.inputs[4:] == fields
 
 
 def test_the_page_uses_the_shells_timers_without_the_queue_and_none_of_its_own():
@@ -1664,8 +1721,9 @@ def test_the_banner_escapes_the_output():
 # --------------------------------------------------------------------------- M5-2 review fixes
 #: Markup a workspace or run name can hold; never sent to the browser as a tag.
 TAG = "<img src=x onerror=window.__xss=1>"
-#: Start's inputs after the workspace: the run name, the device, the base form.
-_FORM = ["", "cpu", *tc.base_form_defaults()]
+#: Start's inputs after the workspace: the run name, the device, the fields
+#: the operator touched (none) and the base form.
+_FORM = ["", "cpu", [], *tc.base_form_defaults()]
 
 
 def _no_tag(html):

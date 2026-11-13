@@ -1284,22 +1284,30 @@ def fingerprint_value(digest: Any, *, what: str = "fingerprint", digits: int = S
     return code + (" " + copy_button(digest, f"the full {what}", icon_only=True) if copy else "")
 
 
-#: **The label of each recipe setting a form offers**, one name per setting:
-#: the Training page's base form (`training_console.BASE_FIELDS`) and the
-#: Fine-tune page's (`finetune_page.FINETUNE_FIELDS`). Every other page names a
-#: learning setting by it too (`field_words`).
+#: **The label of each learning setting a form offers**, one name per setting:
+#: the Training page's base form (`training_console.BASE_FIELDS`, what a new
+#: base takes) and the Fine-tune page's (`finetune_page.FINETUNE_FIELDS`).
+#: Every other page names a learning setting by it too (`field_words`). Short
+#: enough for a form's column with its ⓘ (24 characters or fewer); a unit is
+#: said under the field (`training_console.FIELD_FORMATS`).
 SETTING_LABELS: Dict[str, str] = {
     "num_epochs": "Epochs",
     "learning_rate": "Learning rate",
     "batch_size": "Batch size",
     "seed": "Seed",
+    "split_seed": "Split seed",
     "num_neighbors": "Neighbours per hop",
     "max_grad_norm": "Gradient clip",
     "scheduler_type": "Scheduler",
     "warmup_steps": "Warmup steps",
+    "min_lr_ratio": "Minimum rate ratio",
     "weight_decay": "Weight decay",
+    "gradient_accumulation_steps": "Gradient accumulation",
     "use_amp": "Mixed precision",
+    "amp_dtype": "Mixed precision dtype",
     "early_stopping_patience": "Early stopping patience",
+    "eval_every_n_epochs": "Validation interval",
+    "save_top_k": "Top-k saves kept",
     "frozen_parts": "Graph backbone",
 }
 #: **The words of a setting's closed values**, keyed by its field spec's
@@ -1395,10 +1403,8 @@ def setting_words(name: Any, value: Any, *, stage: Any = None, task: Any = None)
 #: The words of record keys the setting labels (`SETTING_LABELS`) do not name;
 #: any other key reads as its own words (`field_words`).
 _FIELD_WORDS = {
-    "eval_every_n_epochs": "Validation interval (epochs)",
     "frozen_forward": "Frozen parts' forward mode",
     "loaded_from_parent": "Loaded from the parent",
-    "min_lr_ratio": "Minimum learning-rate ratio",
     # What it counts is its mode's (a KG link-prediction run's pairs, another
     # mode's cases): one row of every column, in words of neither.
     "n_ranked": "Number ranked",
@@ -1406,7 +1412,6 @@ _FIELD_WORDS = {
     "n_excluded": "Excluded",
     "augmentation_k": "Augmentation neighbours (K)",
     "val_without_negative": "Validation edges without a negative",
-    "save_top_k": "Top-k saves kept",
     "terms_without_trainable_parameters": "Terms without a trainable parameter",
 }
 #: Abbreviations a key's words keep as they are written.
@@ -1425,8 +1430,8 @@ def field_words(key: Any) -> str:
     """**A record key or a setting in words** (skill §5: sentence case, full
     words), wherever a page names one (Compare's rows, Continue's settings): a
     learning setting by its form's label (`SETTING_LABELS`, the one map of
-    those: "Learning rate"), a few other keys by their words ("Top-k saves
-    kept"), any other by its own words, its abbreviations as written and its
+    those: "Learning rate"), a few other keys by their words ("Number
+    ranked"), any other by its own words, its abbreviations as written and its
     short forms in full ("downstream_initial_sha256" → "Downstream initial
     SHA-256", "base_lr" → "Base learning rate"). A key with a capital letter is
     a name as recorded, as a build flag's environment variable is
@@ -1500,8 +1505,7 @@ def model_spec_html(data: Any) -> Tuple[str, str]:
     (`ModelSpec.differences_from_reference`): "Reference GATv2 spec", or
     "Differs from the reference GATv2 spec: Encoder › Layers 2 (3), …", each
     field that differs named in words (`field_path_words`) with its value and
-    the reference's in brackets, as the base form's line names a setting
-    (`training_console.differs_html`), the first `_SPEC_WORDS_SHOWN` of them
+    the reference's in brackets, the first `_SPEC_WORDS_SHOWN` of them
     and the others counted; a spec this build cannot read says why
     ("Unknown: …") and has no details. `details` is the full spec one click
     away: a "Details ›" disclosure over every field as recorded (`_spec_rows`,

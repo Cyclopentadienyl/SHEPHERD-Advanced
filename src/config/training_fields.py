@@ -9,8 +9,9 @@ surfaces:
                                 start, or a continuation of any run, taking every learning
                                 setting, `run_plan.RUN_SETTINGS`, and the task; a new base
                                 only those a base reads, `run_plan.new_run_settings("base")`)
-    - the WebUI form           (src/webui/components/training_console.py; since K6 the base
-                                form of the reference recipe's base settings, see below)
+    - the WebUI form           (src/webui/components/training_console.py: the base form of
+                                what a new base takes, `run_plan.new_run_settings("base")`,
+                                see below)
     - the CLI + projection hub (scripts/train_model.py :: TrainConfig -> downstream configs)
 
 It is read, not only descriptive: a new run's settings are judged by one check
@@ -71,14 +72,18 @@ Phase status:
       runner judges them against the parent's stage and task (`run_plan.plan_continuation`),
       and a new base still refuses what a base does not read in the one check's sentence.
 
-**The retired WebUI form (K6).** The ShepherdGNN form and its collector (``_collect_config``)
-are gone: the Training page offers exactly the reference recipe's base settings
-(`src.config.recipe.BASE`, starting at the recipe's values, sending only those that differ, with
-``learning_stage="base"``), and the Fine-tune page Epochs, Seed and Graph backbone (the freeze,
-``frozen_parts``; ops-wiring round, decision F1). Their widgets follow each
-field's ``kind`` and ``choices`` (`training_console.setting_field`) and their values are checked
-by `value_problem`. The spec no longer records the retired form's widgets or ranges (removed in
-K7); a divergence note names the WebUI only where a surface in use today differs.
+**The WebUI's forms.** The ShepherdGNN form and its collector (``_collect_config``) retired in
+K6. The Training page's base form offers what a new base takes
+(`run_plan.new_run_settings("base")`: every setting, a setting a rule across settings reads only
+under its guard shown only while it applies, `not_read_by_rules`; and the reference spec's
+fields), each starting at the value the run takes without it; the Fine-tune page offers Epochs,
+Seed and Graph backbone (the freeze, ``frozen_parts``; ops-wiring round, decision F1). Both send
+a setting when the operator touched its field, whatever its value (decision S2), with
+``learning_stage="base"`` on the base form. Their widgets follow each field's ``kind`` and
+``choices`` (`training_console.setting_field`), their help leads are the fields'
+``description``, and their values are checked by `value_problem`. The spec records no form's
+widgets or ranges (removed in K7); a divergence note names the WebUI only where a surface in use
+today differs.
 
 Dependency-light (no torch / pydantic / gradio): any surface can read it and torch-free unit tests
 can exercise it.
@@ -402,16 +407,18 @@ FIELDS: Tuple[FieldSpec, ...] = (
               known_divergence=True,
               divergence_note="Configuration file, POST /training/start and a Fine-tune start "
                               "of one task (its graph side the base's); unset is the stage's "
-                              "reference spec (a finetune's: its base's graph side). Not a "
-                              "WebUI field yet.",
+                              "reference spec (a finetune's: its base's graph side). The "
+                              "WebUI's Training base form sends it whole when a field of its "
+                              "Model accordion was touched.",
               description="The model spec as plain data, read strictly."),
     FieldSpec("split_seed", "int", 0, "dataloader", projects_to="TrainConfig.split_seed",
               valid={"ge": 0}, current_api={"ge": 0},
               known_divergence=True,
-              divergence_note="CLI (--split-seed) and POST /training/start; a finetune takes "
-                              "its base's, and one stated otherwise is refused before any "
-                              "child starts. Not a WebUI field yet.",
-              description="Seed of the graph view's edge split (README F2)."),
+              divergence_note="CLI (--split-seed), POST /training/start and the WebUI's "
+                              "Training base form; a finetune takes its base's, and one stated "
+                              "otherwise is refused before any child starts.",
+              description=("The seed of the graph's edge split: runs on one split validate on the "
+                           "same pairs.")),
     FieldSpec("task", "str", None, "trainer", projects_to="TrainConfig.task",
               choices=("disease", "gene", "patients_like_me"), current_api={},
               current_api_choices=("disease", "gene", "patients_like_me"),
@@ -477,14 +484,14 @@ FIELDS: Tuple[FieldSpec, ...] = (
                               "base with any freeze is refused. POST /training/start takes it "
                               "for a continuation, which keeps its parent's freeze; a new base "
                               "is refused it.",
-              description="Parts of a finetune that do not train: none, or graph_side (the "
-                          "input module, the encoder and the LP head)."),
+              description=("Whether the base's input, encoder and LP head train with the task or "
+                           "stay fixed.")),
 
     # ---- sampling (the stage samplers, from TrainConfig) ------------------------------------
     FieldSpec("batch_size", "int", 32, "dataloader", projects_to="TrainConfig.batch_size",
               valid={"ge": 1, "le": 2048},
               current_api={"ge": 1, "le": 2048},
-              description="Batch size."),
+              description="Training examples per step: larger is faster and needs more memory."),
     FieldSpec("num_neighbors", "list[int]", (15, 10, 5), "dataloader",
               projects_to="TrainConfig.num_neighbors",
               item_valid={"ge": 1}, min_length=1,
@@ -495,62 +502,62 @@ FIELDS: Tuple[FieldSpec, ...] = (
                               "start, the Fine-tune start (against its base's encoder) and by "
                               "the run. The API checks the list by `value_problem`, so -1, "
                               "every neighbour, is legal there as on the CLI.",
-              description="Neighbor fan-out per sampling hop."),
+              description=("Neighbours sampled at each hop, one number per encoder layer; -1 "
+                           "takes all.")),
     # ---- trainer (TrainerConfig) ------------------------------------------------------------
     FieldSpec("num_epochs", "int", 100, "trainer", projects_to="TrainerConfig.num_epochs",
               valid={"ge": 1, "le": 10000},
               current_api={"ge": 1, "le": 10000},
-              description="Number of training epochs."),
+              description="How many passes over the training data the run makes."),
     FieldSpec("learning_rate", "float", 1e-4, "trainer", projects_to="TrainerConfig.learning_rate",
               valid={"gt": 0, "le": 1.0},
               current_api={"gt": 0, "le": 1.0},
-              description="Learning rate."),
+              description="The optimizer's step size; with the scheduler none it stays constant."),
     FieldSpec("weight_decay", "float", 0.01, "trainer", projects_to="TrainerConfig.weight_decay",
               valid={"ge": 0.0},
               current_api={"ge": 0.0},
-              description="Optimizer weight decay."),
+              description="The optimizer's penalty on large weights; 0 is none."),
     FieldSpec("scheduler_type", "str", "cosine", "trainer", projects_to="TrainerConfig.scheduler_type",
               choices=("cosine", "onecycle", "linear", "none"),
               current_api={}, current_api_choices=("cosine", "onecycle", "linear", "none"),
-              description="LR scheduler type."),
+              description="How the learning rate changes over the run; none keeps it constant."),
     FieldSpec("warmup_steps", "int", 500, "trainer", projects_to="TrainerConfig.warmup_steps",
               valid={"ge": 0},
               current_api={"ge": 0},
-              description="The cosine schedule's linear warmup, in steps, read only with "
-                          "cosine; 0 warms up over the Trainer's warmup_ratio (a tenth of the "
-                          "steps)."),
+              description=("Cosine's warmup steps, read only with cosine; 0 warms up over a tenth "
+                           "of the steps.")),
     FieldSpec("min_lr_ratio", "float", 0.01, "trainer", projects_to="TrainerConfig.min_lr_ratio",
               valid={"ge": 0.0, "le": 1.0},
               current_api={"ge": 0.0, "le": 1.0},
-              description="Final LR as a fraction of peak; 0 decays to zero, which onecycle "
-                          "cannot (see CROSS_FIELD_RULES)."),
+              description=("A schedule's final rate as a fraction of its peak; 0 decays to zero "
+                           "(not onecycle).")),
     FieldSpec("gradient_accumulation_steps", "int", 1, "trainer",
               projects_to="TrainerConfig.gradient_accumulation_steps",
               valid={"ge": 1},
               current_api={"ge": 1},
-              description="Micro-batches accumulated per optimizer step."),
+              description="Batches accumulated per optimizer step; 1 steps after every batch."),
     FieldSpec("max_grad_norm", "float", 1.0, "trainer", projects_to="TrainerConfig.max_grad_norm",
               valid={"gt": 0},
               current_api={"gt": 0.0},
-              description="Gradient-norm clip threshold."),
+              description="The largest gradient norm a step takes; a larger one is scaled down."),
     FieldSpec("use_amp", "bool", True, "trainer", projects_to="TrainerConfig.use_amp",
               current_api={},
-              description="Enable automatic mixed precision."),
+              description="16-bit arithmetic on CUDA to save memory and time; off keeps float32."),
     FieldSpec("amp_dtype", "str", "float16", "trainer", projects_to="TrainerConfig.amp_dtype",
               choices=("float16", "bfloat16"),
               current_api={}, current_api_choices=("float16", "bfloat16"),
-              description="AMP compute dtype, read only with use_amp on."),
+              description="Mixed precision's 16-bit type, read only with mixed precision on."),
     FieldSpec("eval_every_n_epochs", "int", 1, "trainer", projects_to="TrainerConfig.eval_every_n_epochs",
               valid={"ge": 1}, current_api={"ge": 1},
-              description="Run validation every N epochs."),
+              description="How often the Trainer validates, in epochs."),
     FieldSpec("early_stopping_patience", "int", 10, "trainer", projects_to="TrainerConfig.early_stopping_patience",
               valid={"ge": 1},
               current_api={"ge": 1},
-              description="Epochs without improvement before stopping; none, the recipes' "
-                          "reference, is no early stopping."),
+              description=("Epochs with no better validation figure before the run stops; none "
+                           "is no early stopping.")),
     FieldSpec("save_top_k", "int", 3, "trainer", projects_to="TrainerConfig.save_top_k",
               valid={"ge": 1}, current_api={"ge": 1},
-              description="Keep the best K checkpoints."),
+              description="How many of the run's best saves, by its selection metric, it keeps."),
     FieldSpec("device", "str", "auto", "trainer", projects_to="TrainerConfig.device",
               valid_pattern=r"^(auto|cpu|mps|cuda(:\d+)?)$",
               current_api={}, current_api_pattern=r"^(auto|cpu|mps|cuda(:\d+)?)$",
@@ -562,7 +569,8 @@ FIELDS: Tuple[FieldSpec, ...] = (
     FieldSpec("seed", "int", 42, "trainer", projects_to="TrainerConfig.seed",
               valid={"ge": 0, "le": 2**32 - 1},
               current_api={"ge": 0, "le": 2**32 - 1},
-              description="Global RNG seed (numpy legal range)."),
+              description=("The random seed of the weights' start and the sampling (the split has "
+                           "its own).")),
 
     # ---- continuing from a parent (contract M3a-3, M3a-4) -----------------------------------
     # The parent is `resume_from`; what happens is decided by its record (src/utils/run_plan).

@@ -190,7 +190,7 @@ class TestTrainingConsoleHelpers:
                                    "trainable": True}}
         for runtime, expected in (({"torch_compile": True}, True), ({}, False)):
             monkeypatch.setattr(tc, "load_runtime_settings", lambda *a, _r=runtime, **k: _r)
-            assert tc._start(ws, "", "cpu", tc.base_form_defaults()) == ""
+            assert tc._start(ws, "", "cpu", tc.base_form_defaults(), []) == ""
             assert sent[-1]["compile"] is expected
 
 

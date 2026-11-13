@@ -30,8 +30,9 @@ Module: src/webui/components/finetune_page.py
 - **Epochs, Seed and Graph backbone** (`FINETUNE_FIELDS`, each the one field
   of its setting, `training_console.setting_field`): settings every task
   shares (`recipe.FINETUNE`), so one value is every child's. Each starts at
-  the recipe's and is sent only when it differs (`training_console.
-  recipe_differences`). Graph backbone is the freeze (Trained or Frozen,
+  the recipe's and is sent when the operator touched it, whatever its value
+  (decision S2: `training_console.sent_settings`, the form's record of its
+  fields' input). Graph backbone is the freeze (Trained or Frozen,
   the field spec's values); with Frozen chosen, a visible note under the
   fields says what then trains (`freeze_note_html`). A task's own settings
   (its learning rate, hop list, sample sizes and loss weights) have a
@@ -545,10 +546,11 @@ def _on_base_chosen(key, parents):
 
 
 def _on_finetune_start(request: gr.Request, ws, parents, key, tasks, device, run_name,
-                       *values):
+                       touched, *values):
     """Start: an operator control (D8), checked first on this event's own
     request; then the Fine-tune start (`_start`) with the settings' fields'
-    `values`, in `FINETUNE_FIELDS` order.
+    `values`, in `FINETUNE_FIELDS` order, and `touched`, the form's record of
+    the fields the operator touched.
 
     Returns the notice: the refusal, inline and escaped, or nothing once
     started (the card shows the job).
@@ -557,7 +559,7 @@ def _on_finetune_start(request: gr.Request, ws, parents, key, tasks, device, run
     if not access.allowed:
         return tc.notice_html(access.refusal)
     return tc.notice_html(_start(ws, parents, key, tasks, device, run_name,
-                                 dict(zip(FINETUNE_FIELDS, values, strict=True))))
+                                 dict(zip(FINETUNE_FIELDS, values, strict=True)), touched))
 
 
 def _on_finetune_stop_request(request: gr.Request, mode):
@@ -578,10 +580,12 @@ def _on_finetune_stop(request: gr.Request, mode):
                            what="Fine-tune child")
 
 
-def _start(ws, parents, key, tasks, device, run_name, values: Mapping[str, Any]) -> str:
+def _start(ws, parents, key, tasks, device, run_name, values: Mapping[str, Any],
+           touched: Any) -> str:
     """Start's work after D8, as a plain sentence ("" once started): the
     chosen base and tasks (in `TASKS` order), the settings of `values` (the
-    fields', by `FINETUNE_FIELDS`) that differ from the recipe's, sent as the
+    fields', by `FINETUNE_FIELDS`) the operator touched (`touched`; decision
+    S2: `training_console.sent_settings`), whatever their value, sent as the
     start's settings (`FinetuneInputs.settings`, which the runner checks), the
     workspace and the parent resolved by the server from its lists again, and
     the runner's Fine-tune start with the parent's listed digest and the
@@ -601,8 +605,8 @@ def _start(ws, parents, key, tasks, device, run_name, values: Mapping[str, Any])
     chosen = tuple(task for task in TASKS if task in (tasks or ()))
     if not chosen:
         return "Not started: choose at least one task."
-    settings, problems = tc.recipe_differences(
-        {name: values[name] for name in FINETUNE_FIELDS},
+    settings, problems = tc.sent_settings(
+        {name: values[name] for name in FINETUNE_FIELDS}, touched or (),
         {name: FINETUNE[name] for name in FINETUNE_FIELDS})
     if problems:
         return "Not started: " + " ".join(problems)
@@ -715,6 +719,8 @@ def create_finetune_page(ctx: Any) -> None:
     parents = gr.State({})
     mode = gr.State({})
     cache = gr.State({})
+    # The form's record of the fields the operator touched (decision S2).
+    touched = gr.State([])
 
     with gr.Row(elem_id="shep-ft-row", elem_classes=["shep-page", "shep-ft"], equal_height=False):
         # ------------------------------------------------------------- the form
@@ -806,9 +812,14 @@ def create_finetune_page(ctx: Any) -> None:
     checkpoint.change(**base_step)
     fields["frozen_parts"].change(freeze_note_html, inputs=[fields["frozen_parts"]],
                                   outputs=[freeze_note], show_progress="hidden")
+    # Explicit is what the operator touched (decision S2): each field's input
+    # records it, and Start sends what is recorded.
+    for name in FINETUNE_FIELDS:
+        fields[name].input(tc.touch_listener(name), inputs=[touched], outputs=[touched],
+                           queue=False, show_progress="hidden")
 
     start.click(_on_finetune_start,
-                inputs=[ws, parents, checkpoint, tasks, device, run_name,
+                inputs=[ws, parents, checkpoint, tasks, device, run_name, touched,
                         *(fields[name] for name in FINETUNE_FIELDS)],
                 outputs=[notice], show_progress="hidden").then(
         tc.close_stop_question, inputs=[mode], outputs=[mode], show_progress="hidden").then(

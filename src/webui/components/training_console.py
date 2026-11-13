@@ -35,16 +35,32 @@ refuses a different one before anything is written or started
 (`TrainingManager.start_training`'s ``expected_dataset_fingerprint``, the one
 start path the API route uses too).
 
-**Parameters "for the next base run"** (K6 decision 12): exactly the
-reference recipe's base settings (`src.config.recipe.BASE`), each field
-starting at the recipe's value (Epochs, Learning rate, Batch size and Seed
-shown; the rest under "More reference settings"), their help behind the
-shared ⓘ (`FIELD_HELP`: what it is, the reference value and its source), and
-one visible line saying which differ from the reference settings (decision
-5). Start sends ``learning_stage="base"`` and only the settings that differ;
-each value is checked by its field spec first, a problem named by its label.
-A base's task models are trained on Research › Fine-tune
-(`src/webui/components/finetune_page.py`).
+**Parameters "for the next base run"** (ops-wiring round, decisions S1, S2,
+S3, S5): what a new base takes (`run_plan.new_run_settings("base")`, in the
+presentation order `BASE_FIELDS`), each field the one of its setting
+(`setting_field`) and starting at the value the run takes without it (the
+one fill, `run_plan.new_run_values`: the recipe's, else this build's
+default). Epochs, Learning rate, Batch size, Seed, Split seed and Device are
+shown; the rest are under "More training settings", where a setting a rule
+across settings reads only under its guard shows only while it applies
+(warmup with the cosine scheduler, the minimum ratio with a scheduler, the
+dtype with mixed precision on: `training_fields.not_read_by_rules`). Beside
+it, "Model": the architecture, a fact read from the encoder declarations (a
+choice once two or more are declared), and the reference base spec's input,
+encoder and LP head fields generated from their dataclasses
+(`spec_form_fields`: numbers and switches to edit, texts as facts). Each
+field's help is behind the shared ⓘ (`FIELD_HELP`: its field spec's
+description, the value the run takes without it and its source); a format,
+a unit or "off" is said under the field (`FIELD_FORMATS`). **Explicit is what
+the operator touched** (decision S2): each field's input records it in the
+session's ``touched`` state, Reset to reference clears it, and the line
+under the form says what is set ("Set by you: Epochs 5 (reference 200)").
+Start sends ``learning_stage="base"``, the settings touched that the run
+reads, whatever their value, and the model spec whole when a field of it was
+touched (`base_start_settings`); each value is checked first by its field
+spec, the spec by its own validation and the hop list against the encoder
+it builds, a problem named by its label. A base's task models are trained on
+Research › Fine-tune (`src/webui/components/finetune_page.py`).
 
 **Continue…** opens a drawer over the parameters column: the parent list is
 the run bar's workspace's model records only (bases and task models; a file
@@ -128,18 +144,23 @@ import json
 import logging
 import re
 import time
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import (Any, Callable, Collection, Dict, List, Mapping, Optional, Sequence, Tuple,
+                    get_args)
 
 import gradio as gr
 
 from src.api.services.training_manager import training_manager
-from src.config.recipe import BASE, BASE_SOURCES
+from src.config.recipe import reference_settings
 from src.config.runtime_presets import load_runtime_settings
-from src.config.training_fields import by_name, names as field_names, value_problem
+from src.config.training_fields import (CROSS_FIELD_RULES, by_name, names as field_names,
+                                        not_read_by_rules, value_problem)
 from src.evaluation.caveats import TASK_NAMES
-from src.models.bundle.spec import hops_problem, reference_spec
+from src.models.bundle.spec import (ENCODER_DECLARATIONS, SpecError, declared_fields,
+                                    hops_problem, reference_spec)
+from src.utils.run_plan import new_run_values
 from src.utils.gpu_lock import lock_state
 from src.webui.components import charts
 from src.webui.components import renderers as r
@@ -232,37 +253,34 @@ def _save_training_config(data_dir: str, request: gr.Request) -> str:
 
 
 # =============================================================================
-# The recipe's settings in a form (K6 decisions 5, 11, 12)
+# A new run's settings in a form (decisions S1, S2, S3, S5)
 # =============================================================================
-#: The base form's fields, in its order: **exactly the reference recipe's base
-#: settings** (`recipe.BASE`), the first `BASE_SHOWN` of them shown, the rest
-#: under "More reference settings".
-BASE_FIELDS: Tuple[str, ...] = ("num_epochs", "learning_rate", "batch_size", "seed",
-                                "num_neighbors", "max_grad_norm", "scheduler_type",
-                                "warmup_steps", "weight_decay", "use_amp",
-                                "early_stopping_patience")
-BASE_SHOWN = 4
+#: **The base form's settings, in its order** (presentation only): what a new
+#: base takes (`run_plan.new_run_settings("base")`) but its model spec, whose
+#: fields the Model accordion offers (`spec_form_fields`); a test holds the two
+#: equal. The first `BASE_SHOWN`, with Device, are the common settings, always
+#: shown; the rest are under "More training settings", each shown only while
+#: the run would read it (`training_fields.not_read_by_rules`).
+BASE_FIELDS: Tuple[str, ...] = (
+    "num_epochs", "learning_rate", "batch_size", "seed", "split_seed",
+    "num_neighbors", "scheduler_type", "warmup_steps", "min_lr_ratio", "weight_decay",
+    "max_grad_norm", "gradient_accumulation_steps", "use_amp", "amp_dtype",
+    "early_stopping_patience", "eval_every_n_epochs", "save_top_k")
+BASE_SHOWN = 5
 
-#: Each setting's help lead (what it is, under 90 characters), before its
-#: reference value and source (`setting_help`).
-_SETTING_LEADS = {
-    "num_epochs": "How many passes over the training data the run makes.",
-    "learning_rate": "The optimizer's step size; with the scheduler none it stays constant.",
-    "batch_size": "Training examples per step: larger is faster and needs more memory.",
-    "seed": "The random seed of the weights' start and the sampling (the split has its own).",
-    "num_neighbors": "Neighbours sampled at each hop, one number per encoder layer; -1 takes all.",
-    "max_grad_norm": "The largest gradient norm a step takes; a larger one is scaled down.",
-    "scheduler_type": "How the learning rate changes over the run; none keeps it constant.",
-    "warmup_steps": "Cosine's warmup steps, read only with cosine; 0 warms up over a tenth of "
-                    "the steps.",
-    "weight_decay": "The optimizer's penalty on large weights; 0 is none.",
-    "use_amp": "16-bit arithmetic on CUDA to save memory and time; off keeps float32.",
-    "early_stopping_patience": "Epochs without a better Trainer validation figure before the "
-                               "run stops; empty is off.",
-    "frozen_parts": "Whether the base's input, encoder and LP head train with the task or stay "
-                    "fixed.",
+#: A field's format, unit or "off", said under it as visible text (``info=``;
+#: the WebUI skill's §7: never only in a bubble), by its setting or its model
+#: spec field's dotted path. A field not named here takes a plain number, a
+#: switch or one of its choices.
+FIELD_FORMATS: Dict[str, str] = {
+    "num_neighbors": "Whole numbers separated by commas, one per encoder layer; -1 takes all.",
+    "warmup_steps": "Optimizer steps, at most half the run's; 0 takes a tenth of them.",
+    "min_lr_ratio": "A fraction of the peak rate, from 0 to 1.",
+    "gradient_accumulation_steps": "Batches per optimizer step.",
+    "eval_every_n_epochs": "Epochs between the Trainer's validations.",
+    "early_stopping_patience": 'Epochs, or "off": no early stopping.',
+    "encoder.relation_edge_dim": 'A whole number, or "off": edges carry no relation.',
 }
-
 
 #: What a setting's help closes with (`setting_help`): a tunable value's
 #: reference is the source's provisional default (`src.config.recipe`), so
@@ -277,67 +295,82 @@ _PROVISIONAL = "A provisional default from the source, not tuned on this data."
 
 def setting_help(name: str, references: Mapping[str, Any], sources: Mapping[str, str]
                  ) -> Tuple[str, str]:
-    """A setting's help, ``(title, text)``: its label, then what it is, its
-    reference value and the source of that value (`src.config.recipe`), and
+    """A setting's help, ``(title, text)``: its label, then what it is (its
+    field spec's description, `training_fields.FieldSpec.description`, the
+    one text of it), then the value a run takes when the operator sets none:
+    the reference's, with the source of that value (`src.config.recipe`) and
     what that reference is (`_SETTING_CLOSINGS`, else a provisional default
-    from the source)."""
+    from the source), or this build's default where the reference recipe
+    sets none (`sources` names no source for it)."""
+    lead = by_name(name).description
+    shown = r.setting_words(name, references[name])
+    if name not in sources:
+        return (r.SETTING_LABELS[name],
+                f"{lead}\n\nDefault: {shown}, this build's; the reference recipe sets none.")
     return (r.SETTING_LABELS[name],
-            f"{_SETTING_LEADS[name]}\n\n"
-            f"Reference: {r.setting_words(name, references[name])}.\n"
+            f"{lead}\n\n"
+            f"Reference: {shown}.\n"
             f"Source: {sources[name]}.\n\n"
             f"{_SETTING_CLOSINGS.get(name, _PROVISIONAL)}")
 
 
-def form_value(name: str, value: Any) -> Any:
-    """A recipe value as its field holds it, the text `_parsed` reads back:
-    the hop list as its numbers separated by commas ("15, 10, 5", a ``-1``
-    as typed), and an optional number's None as "off" (`setting_field`)."""
-    if name == "num_neighbors":
+def form_value(value: Any) -> Any:
+    """A value as its field holds it, the text `parse_value` reads back: a
+    list as its numbers separated by commas ("15, 10, 5", a ``-1`` as typed),
+    and an optional number's None as "off" (`value_field`)."""
+    if isinstance(value, (list, tuple)):
         return ", ".join(str(item) for item in value)
     return r.OFF.lower() if value is None else value
 
 
-def setting_field(name: str, value: Any, *, elem_id: str) -> Any:
-    """**The one field of a recipe setting** (the base form's and the
-    Fine-tune page's), by its field spec: the hop list as text, a switch, the
-    spec's few choices as a radio (each shown by its words, `setting_words`,
-    and sent as the spec's value), else a number box (whole numbers for an
-    integer setting, which `value_problem` refuses as a float). **An optional
-    number whose value is None** (early stopping's patience) is a text box
-    reading "off", a state the browser keeps: a number box shows None as 0
-    once mounted and sends 0 after any edit. Labelled by `r.SETTING_LABELS`, its
-    help behind the ⓘ (never ``info=``)."""
-    label, spec = r.SETTING_LABELS[name], by_name(name)
-    if name == "num_neighbors" or (value is None and spec.kind in ("int", "float")):
-        return gr.Textbox(label=label, value=form_value(name, value), max_lines=1,
-                          elem_id=elem_id)
-    if spec.kind == "bool":
-        return gr.Checkbox(label=label, value=bool(value), elem_id=elem_id)
-    if spec.choices:
-        return gr.Radio(label=label, choices=[(r.setting_words(name, choice), choice)
-                                              for choice in spec.choices],
-                        value=value, elem_id=elem_id)
-    return gr.Number(label=label, value=value, precision=0 if spec.kind == "int" else None,
-                     elem_id=elem_id)
+def value_field(kind: str, label: str, value: Any, *, elem_id: str,
+                choices: Optional[Sequence[Tuple[str, Any]]] = None,
+                info: Optional[str] = None, visible: bool = True) -> Any:
+    """**The one field of a value**, by its kind (a field spec's, or a model
+    spec field's declared type): a list of whole numbers as text, a switch, a
+    few `choices` as a radio (``(words, value)``: each shown by its words and
+    sent as the value), else a number box (whole numbers for an integer,
+    which `value_problem` and the spec's type rule refuse as a float). **An
+    optional number whose value is None** (early stopping's patience, the
+    encoder's relation edge dimension) is a text box reading "off", a state
+    the browser keeps: a number box shows None as 0 once mounted and sends 0
+    after any edit. `info` is its format, unit or "off", said under it
+    (`FIELD_FORMATS`); what it is stays behind its ⓘ."""
+    common = {"label": label, "elem_id": elem_id, "info": info, "visible": visible}
+    if kind == "list[int]" or (value is None and kind in ("int", "float")):
+        return gr.Textbox(value=form_value(value), max_lines=1, **common)
+    if kind == "bool":
+        return gr.Checkbox(value=bool(value), **common)
+    if choices:
+        return gr.Radio(choices=list(choices), value=value, **common)
+    return gr.Number(value=value, precision=0 if kind == "int" else None, **common)
 
 
-def base_form_defaults() -> Tuple[Any, ...]:
-    """The base form's starting values, in `BASE_FIELDS` order: the recipe's."""
-    return tuple(form_value(name, BASE[name]) for name in BASE_FIELDS)
+def setting_field(name: str, value: Any, *, elem_id: str, visible: bool = True) -> Any:
+    """**The one field of a learning setting** (the base form's and the
+    Fine-tune page's), by its field spec (`value_field`): its kind, and its
+    closed values shown by their words (`setting_words`) and sent as the
+    spec's. Labelled by `r.SETTING_LABELS`, its format under it
+    (`FIELD_FORMATS`), its help behind the ⓘ (`setting_help`)."""
+    spec = by_name(name)
+    choices = ([(r.setting_words(name, choice), choice) for choice in spec.choices]
+               if spec.choices else None)
+    return value_field(spec.kind, r.SETTING_LABELS[name], value, elem_id=elem_id,
+                       choices=choices, info=FIELD_FORMATS.get(name), visible=visible)
 
 
-def _parsed(name: str, value: Any) -> Tuple[Any, Optional[str]]:
-    """A field's value as its setting takes it: the hop text as a list of
-    whole numbers; an optional number's text (`setting_field`), "off" or empty
-    as None, else the number it says; a whole float of an integer field (a
-    number box's value) as an int; an int of a float field as a float.
-    ``(value, why not)``."""
-    if name == "num_neighbors":
+def parse_value(kind: str, value: Any, *, optional: bool = False) -> Tuple[Any, Optional[str]]:
+    """A field's value as its kind takes it (`value_field`): a list's text as
+    whole numbers; a number's text (an `optional` number's field is a text
+    box), "off" or empty as None, else the number it says; a whole float of an
+    integer field (a number box's value) as an int; an int of a float field
+    as a float. ``(value, why not)``, why not in the words that follow the
+    field's name, "or "off"" only where None is taken."""
+    if kind == "list[int]":
         try:
             return [int(part) for part in str(value or "").split(",") if part.strip()], None
         except ValueError:
             return None, "must be whole numbers separated by commas, such as 15, 10, 5."
-    kind = by_name(name).kind
     if kind in ("int", "float") and isinstance(value, str):
         text = value.strip()
         if text.lower() in ("", r.OFF.lower()):
@@ -345,8 +378,9 @@ def _parsed(name: str, value: Any) -> Tuple[Any, Optional[str]]:
         try:
             return (int(text) if kind == "int" else float(text)), None
         except ValueError:
-            return None, (f'must be a whole number or "{r.OFF.lower()}".' if kind == "int"
-                          else f'must be a number or "{r.OFF.lower()}".')
+            off = f' or "{r.OFF.lower()}"' if optional else ""
+            return None, (f"must be a whole number{off}." if kind == "int"
+                          else f"must be a number{off}.")
     if kind == "int" and isinstance(value, float) and value.is_integer():
         return int(value), None
     if kind == "float" and isinstance(value, int) and not isinstance(value, bool):
@@ -354,72 +388,342 @@ def _parsed(name: str, value: Any) -> Tuple[Any, Optional[str]]:
     return value, None
 
 
+def _named(name: str, problem: str, label: str) -> str:
+    """A problem whose sentence starts with `name` (a check's words), named
+    by `label` instead; any other led by the label."""
+    return label + problem[len(name):] if problem.startswith(name) else f"{label}: {problem}"
+
+
 def setting_problem(name: str, value: Any, reference: Any) -> Tuple[Any, Optional[str]]:
-    """A field's value parsed and checked by its field spec (`value_problem`,
-    the one check the start makes again): ``(value, problem)``, the problem
-    named by the field's label (`r.SETTING_LABELS`). Empty is taken only where the
-    reference value is (early stopping's patience). The hop list also needs
-    one number per hop the encoder the base form's run builds declares, the
-    reference recipe's GATv2, one per layer (`hops_problem`, which the start
-    asks too: the form offers no encoder setting, and the Fine-tune page no
-    hop list)."""
+    """A field's value parsed (`parse_value`) and checked by its field spec
+    (`value_problem`, the one check the start makes again): ``(value,
+    problem)``, the problem named by the field's label (`r.SETTING_LABELS`).
+    Empty is taken only where the reference value is (early stopping's
+    patience)."""
     label = r.SETTING_LABELS[name]
-    parsed, why = _parsed(name, value)
+    parsed, why = parse_value(by_name(name).kind, value, optional=reference is None)
     if why:
         return None, f"{label} {why}"
     problem = value_problem(name, parsed, allow_none=reference is None)
-    if not problem and name == "num_neighbors":
-        problem = hops_problem(parsed, reference_spec("base").encoder)
-    if problem and problem.startswith(name):
-        problem = label + problem[len(name):]
-    elif problem:
-        problem = f"{label}: {problem}"
-    return parsed, problem
+    return parsed, (_named(name, problem, label) if problem else None)
 
 
-def _same(value: Any, reference: Any) -> bool:
-    return value == reference and isinstance(value, bool) == isinstance(reference, bool)
+def touched_with(touched: Any, key: str) -> List[str]:
+    """A form's record of the fields the operator touched (decision S2:
+    explicit is what the operator touched), with `key`, a setting or a model
+    spec field's path, added: what a field's input adds (`.input`: the
+    operator's own edit, never a value a page writes, such as Reset's)."""
+    return sorted({*(touched or ()), key})
 
 
-def recipe_differences(values: Mapping[str, Any], references: Mapping[str, Any]
-                       ) -> Tuple[Dict[str, Any], List[str]]:
-    """**What a start sends of a form** (K6 decisions 11, 12): ``(settings,
-    problems)``, the settings whose value differs from `references` (the
-    recipe's), each parsed and checked (`setting_problem`), and every problem,
-    named by its label. A setting left at its reference value is not sent, so
-    the run records it as the recipe's, never as the operator's."""
+def touch_listener(key: str) -> Callable[[Any], List[str]]:
+    """The input listener of `key`'s field on a form whose record of what
+    the operator touched is all it keeps (the Fine-tune page's): the record
+    with `key` added (`touched_with`)."""
+    def on_input(touched: Any) -> List[str]:
+        return touched_with(touched, key)
+
+    return on_input
+
+
+def sent_settings(values: Mapping[str, Any], touched: Collection[str],
+                  references: Mapping[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
+    """**What a start sends of a form's settings** (decisions S2, S3):
+    ``(settings, problems)``. A setting is sent **when the operator touched
+    its field** (`touched`, the form's record of its fields' input), whatever
+    its value: the reference's own value typed is sent, and recorded as the
+    operator's; an untouched one is not, and the run fills it (the
+    reference's, or this build's default) and records it so. A touched
+    setting the run would not read on the form's values (a rule across
+    settings, `training_fields.not_read_by_rules`: warmup without cosine) is
+    hidden and not sent. Each one sent is parsed and checked by its field
+    spec (`setting_problem`; `references`, the run's values without it, say
+    where empty is taken), every problem named by its label. The base form
+    and the Fine-tune page send their settings by it."""
+    unread = not_read_by_rules({name: parse_value(by_name(name).kind, value)[0]
+                                for name, value in values.items()})
     settings: Dict[str, Any] = {}
     problems: List[str] = []
     for name, value in values.items():
-        parsed, problem = setting_problem(name, value, references[name])
+        if name not in touched or name in unread:
+            continue
+        parsed, problem = setting_problem(name, value, references.get(name))
         if problem:
             problems.append(problem)
-        elif not _same(parsed, references[name]):
+        else:
             settings[name] = parsed
     return settings, problems
 
 
-def differs_html(values: Mapping[str, Any], references: Mapping[str, Any]) -> str:
-    """The form's one line on the reference settings (decision 5): "Differs
-    from the reference settings: Epochs 5 (200)", each setting that differs
-    with its reference value in brackets, or "Uses the reference settings.";
-    then any value the start would refuse, by its label. Escaped."""
-    settings, problems = recipe_differences(values, references)
-    if settings:
-        text = "Differs from the reference settings: " + ", ".join(
-            f"{r.SETTING_LABELS[name]} {r.setting_words(name, value)} "
-            f"({r.setting_words(name, references[name])})"
-            for name, value in settings.items())
-    else:
-        text = "Uses the reference settings."
+# ----------------------------------------------------------------- the base form
+def base_references() -> Tuple[Dict[str, Any], Dict[str, str]]:
+    """What a new base trains with when the operator sets nothing, and the
+    source of each value the reference recipe gives: **the one fill of a new
+    run** (`run_plan.new_run_values`: the stage's reference, else this
+    build's default, the field spec's) and the recipe's sources
+    (`recipe.reference_settings`); a setting without a source is a build
+    default. Its model spec, None here, is the reference spec
+    (`reference_spec`)."""
+    return new_run_values("base", None, {}), reference_settings("base")[1]
+
+
+#: The model spec's sections the base form offers, in its order: the input
+#: module, the encoder and the LP head (`spec.InputSpec`, `EncoderSpec`,
+#: `LPHeadSpec`). The graph view is not the form's (no relation editor).
+SPEC_SECTIONS = ("input", "encoder", "lp_head")
+#: The architecture: the encoder's kind (`architecture_choices`).
+ARCHITECTURE = "encoder.kind"
+#: The Model accordion's first line: what Start sends of it.
+MODEL_NOTE = ("A new base builds the reference spec; Start sends it whole, with the fields you "
+              "change, and checks it first.")
+#: Each declared type a spec field may hold, as the field kinds name it
+#: (`value_field`); a text, or any other type, is a fact the form shows.
+_SPEC_KINDS = {int: "int", float: "float", bool: "bool"}
+
+
+@dataclass(frozen=True)
+class SpecField:
+    """One field of a model spec section in the base form: its dotted path
+    (``encoder.layers``, as `ModelSpec.differences_from_reference` names a
+    field), its kind (`value_field`'s, or ``"fact"`` for a text the form
+    shows and does not edit), and its value in the reference base spec."""
+
+    path: str
+    kind: str
+    reference: Any
+
+    @property
+    def editable(self) -> bool:
+        return self.kind != "fact"
+
+    @property
+    def elem_id(self) -> str:
+        return "spec-" + self.path.replace(".", "-")
+
+
+def spec_form_fields() -> Tuple[SpecField, ...]:
+    """**The base spec's fields the form shows, generated from each
+    section's dataclass fields** (`SPEC_SECTIONS`) and their declared types
+    (`spec.declared_fields`, what the spec's own type rule reads), in their
+    declared order: a number or a switch is a field the operator may edit
+    (`Optional[int]`, the relation edge dimension, off or a number), a text
+    is a fact (`spec_facts_html`). The encoder's kind is the architecture,
+    offered apart (`architecture_choices`)."""
+    reference = reference_spec("base")
+    out: List[SpecField] = []
+    for section in SPEC_SECTIONS:
+        part = getattr(reference, section)
+        for name, declared in declared_fields(type(part)):
+            path = f"{section}.{name}"
+            if path == ARCHITECTURE:
+                continue
+            members = [arg for arg in get_args(declared) if arg is not type(None)]
+            kind = _SPEC_KINDS.get(members[0] if len(members) == 1 else declared, "fact")
+            out.append(SpecField(path, kind, getattr(part, name)))
+    return tuple(out)
+
+
+def architecture_choices() -> List[Tuple[str, str]]:
+    """**The architectures a new base may build** (decision S5): the encoder
+    kinds this build implements, each by its declaration
+    (`spec.ENCODER_DECLARATIONS`, pinned equal to the builder's
+    implementations), by their words (`renderers.architecture_label`); a name
+    only `ENCODER_KINDS` holds is never offered. With one, the Model accordion
+    states it as a fact (`spec_facts_html`); with two or more it is a choice,
+    sent as the spec's encoder kind (`ARCHITECTURE`)."""
+    return [(r.architecture_label(kind), kind) for kind in ENCODER_DECLARATIONS]
+
+
+def _spec_keys() -> Tuple[str, ...]:
+    """The base form's spec fields an operator may touch, in its order: the
+    architecture, when it is a choice, then each editable spec field."""
+    choice = (ARCHITECTURE,) if len(architecture_choices()) > 1 else ()
+    return choice + tuple(field.path for field in spec_form_fields() if field.editable)
+
+
+def base_form_keys() -> Tuple[str, ...]:
+    """The base form's fields in the order its handlers take their values:
+    its settings (`BASE_FIELDS`), then its spec fields (`_spec_keys`)."""
+    return BASE_FIELDS + _spec_keys()
+
+
+def _spec_reference(key: str) -> Any:
+    section, name = key.split(".", 1)
+    return getattr(getattr(reference_spec("base"), section), name)
+
+
+def base_form_defaults() -> Tuple[Any, ...]:
+    """The base form's starting values, in `base_form_keys` order: what a new
+    base trains with when the operator sets nothing (`base_references`, and
+    the reference base spec's fields), as each field holds it
+    (`form_value`). Reset to reference writes them again."""
+    references, _ = base_references()
+    return tuple(form_value(references[key] if key in references else _spec_reference(key))
+                 for key in base_form_keys())
+
+
+#: A spec field's dotted path at the start of a check's sentence.
+_SPEC_PATH = re.compile(rf"\b(?:{'|'.join(SPEC_SECTIONS)})\.[a-z_]+\b")
+
+
+def edited_spec(values: Mapping[str, Any], touched: Collection[str]
+                ) -> Tuple[Optional[Any], Optional[str]]:
+    """**The model spec Start sends** (decisions S2, S5): ``(spec, problem)``.
+    None and None when the operator touched no spec field: the run builds the
+    reference spec and records it so. Otherwise the reference base spec with
+    each touched field replaced by its value (`parse_value`, by its kind),
+    checked by the spec's own validation (`ModelSpec.validate`: each field's
+    declared type, each section's rules and its kind's declaration's), which
+    the start makes again; or None and why not, each field named in words
+    (`renderers.field_path_words`)."""
+    keys = [key for key in _spec_keys() if key in touched]
+    if not keys:
+        return None, None
+    fields = {field.path: field for field in spec_form_fields()}
+    changes: Dict[str, Dict[str, Any]] = {}
+    for key in keys:
+        field = fields.get(key)
+        parsed, why = parse_value(field.kind if field else "fact", values[key],
+                                  optional=field is not None and field.reference is None)
+        if why:
+            return None, f"{r.field_path_words(key)} {why}"
+        section, name = key.split(".", 1)
+        changes.setdefault(section, {})[name] = parsed
+    reference = reference_spec("base")
+    spec = replace(reference, **{section: replace(getattr(reference, section), **fields)
+                                 for section, fields in changes.items()})
+    try:
+        spec.validate()
+    except SpecError as exc:
+        return None, _SPEC_PATH.sub(lambda match: r.field_path_words(match.group(0)), str(exc))
+    return spec, None
+
+
+def _base_reading(values: Mapping[str, Any], touched: Collection[str]
+                  ) -> Tuple[Dict[str, Any], Optional[Any], List[str]]:
+    """The base form read once: ``(settings, spec, problems)``, the settings
+    Start sends (`sent_settings`; the model spec among them, whole, when a
+    field of it was touched: `edited_spec`), that spec, and every problem;
+    with the hop list the run would sample (the one sent, else the
+    reference's) checked against the encoder it would build (`hops_problem`,
+    the start's own check), so a changed encoder is checked with the hops."""
+    references, _ = base_references()
+    settings, problems = sent_settings({name: values[name] for name in BASE_FIELDS},
+                                       touched, references)
+    spec, problem = edited_spec(values, touched)
+    if problem:
+        problems.append(problem)
+        return settings, None, problems
+    if spec is not None:
+        settings["model_spec"] = spec.to_dict()
+    if not ("num_neighbors" in touched and "num_neighbors" not in settings):
+        hops = hops_problem(settings.get("num_neighbors", references["num_neighbors"]),
+                            (spec or reference_spec("base")).encoder)
+        if hops:
+            problems.append(_named("num_neighbors", hops, r.SETTING_LABELS["num_neighbors"]))
+    return settings, spec, problems
+
+
+def base_start_settings(values: Mapping[str, Any], touched: Collection[str]
+                        ) -> Tuple[Dict[str, Any], List[str]]:
+    """**What Start sends of the base form** (decisions S1, S2, S3, S5):
+    ``(settings, problems)``, `values` by `base_form_keys` and `touched` the
+    form's record of its fields' input (`_base_reading`)."""
+    settings, _spec, problems = _base_reading(values, touched)
+    return settings, problems
+
+
+def _spec_words(key: str, value: Any) -> str:
+    return r.architecture_label(value) if key == ARCHITECTURE else r.setting_words(key, value)
+
+
+def set_by_you_html(values: Mapping[str, Any], touched: Collection[str]) -> str:
+    """**The base form's one line on what the operator set** (decision S2),
+    under its fields: "Set by you: Epochs 5 (reference 200), Encoder ›
+    Layers 2 (reference 3)", each setting and spec field Start sends, in the
+    form's order, with the value the run takes without it in brackets (the
+    reference's; "default" where the recipe sets none and the run takes this
+    build's); or "Set by you: nothing; the run takes the reference values.";
+    then "Not valid: …", what Start would refuse, by its label. Escaped."""
+    references, sources = base_references()
+    settings, spec, problems = _base_reading(values, touched)
+    named = [f"{r.SETTING_LABELS[name]} {r.setting_words(name, settings[name])} "
+             f"({'reference' if name in sources else 'default'} "
+             f"{r.setting_words(name, references[name])})"
+             for name in BASE_FIELDS if name in settings]
+    if spec is not None:
+        for key in _spec_keys():
+            if key in touched:
+                section, name = key.split(".", 1)
+                named.append(f"{r.field_path_words(key)} "
+                             f"{_spec_words(key, getattr(getattr(spec, section), name))} "
+                             f"(reference {_spec_words(key, _spec_reference(key))})")
+    text = ("Set by you: " + ", ".join(named) if named
+            else "Set by you: nothing; the run takes the reference values.")
     refused = (f'<p class="shep-amber-t">Not valid: {r.e(" ".join(problems))}</p>'
                if problems else "")
-    return f'<div class="shep-differs"><p>{r.e(text)}</p>{refused}</div>'
+    return f'<div class="shep-setby"><p>{r.e(text)}</p>{refused}</div>'
 
 
-def _on_base_changed(*values: Any) -> str:
-    """Any base field changed: the line on the reference settings again."""
-    return differs_html(dict(zip(BASE_FIELDS, values)), BASE)
+def spec_facts_html() -> str:
+    """The Model accordion's facts (decision S5), one summary list (the
+    skill's §4): the architecture, when this build implements one
+    (`architecture_choices`; with more it is a choice), and each text field
+    of the reference base spec (`spec_form_fields`), named in words
+    (`renderers.field_path_words`), its value kept whole in code style."""
+    choices = architecture_choices()
+    rows = [("Architecture", r.e(choices[0][0]))] if len(choices) == 1 else []
+    rows += [(r.field_path_words(field.path), r.ident_html(r.setting_words(field.path,
+                                                                           field.reference)))
+             for field in spec_form_fields() if not field.editable]
+    return r.summary_list(rows, classes="shep-train-spec-facts")
+
+
+def _rule_fields() -> Tuple[Tuple[str, ...], Tuple[str, ...]]:
+    """The base form's settings a rule across settings reads only under its
+    guard (`CROSS_FIELD_RULES`' ``read_only_when``), and the settings of
+    those guards, each in the form's order."""
+    rules = [rule for rule in CROSS_FIELD_RULES if rule.kind == "read_only_when"]
+    subjects = {rule.subject for rule in rules}
+    guards = {name for rule in rules for name in (rule.when or {})}
+    return (tuple(name for name in BASE_FIELDS if name in subjects),
+            tuple(name for name in BASE_FIELDS if name in guards))
+
+
+def _on_base_guards(*values: Any) -> List[Any]:
+    """A guard of a rule across settings changed (the scheduler, mixed
+    precision; by the operator or by Reset): each setting a rule reads only
+    under its guard is shown while the run would read it and hidden
+    otherwise (`not_read_by_rules`). `values` are the guards', in
+    `_rule_fields` order."""
+    dependent, guards = _rule_fields()
+    unread = not_read_by_rules({name: parse_value(by_name(name).kind, value)[0]
+                                for name, value in zip(guards, values, strict=True)})
+    return [gr.update(visible=name not in unread) for name in dependent]
+
+
+def _base_input_listener(key: str) -> Callable[..., Tuple[List[str], str]]:
+    """The input listener of the base form's field `key`: the form's record
+    of what the operator touched with `key` added (`touched_with`), and the
+    line on what the operator set again (`set_by_you_html`). Its values are
+    the form's, in `base_form_keys` order."""
+    def on_input(touched: Any, *values: Any) -> Tuple[List[str], str]:
+        touched = touched_with(touched, key)
+        return touched, set_by_you_html(dict(zip(base_form_keys(), values, strict=True)),
+                                        touched)
+
+    return on_input
+
+
+def _on_base_reset() -> Tuple[Any, ...]:
+    """Reset to reference: nothing touched, the line again, and every field
+    back at the value the run takes without it (`base_form_defaults`). The
+    values are a page's writes, so no field's input fires and none is
+    recorded as touched; the guards' change shows or hides what depends on
+    them."""
+    defaults = base_form_defaults()
+    return ([], set_by_you_html(dict(zip(base_form_keys(), defaults, strict=True)), []),
+            *(gr.update(value=value) for value in defaults))
 
 
 # =============================================================================
@@ -1943,10 +2247,11 @@ def _workspace_path(name: Any) -> Path:
     return resolve_workspace(name)
 
 
-def _on_start(request: gr.Request, ws, run_name, device, *values):
+def _on_start(request: gr.Request, ws, run_name, device, touched, *values):
     """Start: an operator control (D8), checked first on this event's own
-    request; then a new base run (`_start`). ``values`` are the base form's,
-    in `BASE_FIELDS` order.
+    request; then a new base run (`_start`). `touched` is the form's record
+    of the fields the operator touched; ``values`` are the base form's, in
+    `base_form_keys` order.
 
     Returns the notice (`notice_html`): the refusal, inline, or nothing once
     started.
@@ -1954,24 +2259,26 @@ def _on_start(request: gr.Request, ws, run_name, device, *values):
     access = operator_access(request)
     if not access.allowed:
         return notice_html(access.refusal)
-    return notice_html(_start(ws, run_name, device, values))
+    return notice_html(_start(ws, run_name, device, values, touched))
 
 
-def _start(ws, run_name, device, values) -> str:
+def _start(ws, run_name, device, values, touched) -> str:
     """Start's work after D8, as a plain sentence ("" once started): **a new
-    base run** (K6 decision 12) on the workspace the server resolves from its
-    list, through the job runner's one start (`start_training`) with
-    ``learning_stage="base"``, the run keys, and only the settings that differ
-    from the recipe's (`recipe_differences`), with the full dataset
+    base run** on the workspace the server resolves from its list, through
+    the job runner's one start (`start_training`) with
+    ``learning_stage="base"``, the run keys, and the settings the operator
+    touched that the run reads, the model spec whole when a field of it was
+    touched (`base_start_settings`; decision S2), with the full dataset
     fingerprint this session showed. The runner checks the settings again
-    (`_new_bundle_run`) and refuses what the recipe does not take."""
+    (`_new_bundle_run`) and refuses what a base does not take."""
     row = (ws or {}).get("row") or {}
     fingerprint = workspace_fingerprint(ws)
     if not row or not fingerprint:
         return "Not started: select a dataset from the server's list first."
     if not row.get("trainable"):
         return f"Not started: {row.get('name')} is not trainable: {r.not_trainable_short(row)}."
-    settings, problems = recipe_differences(dict(zip(BASE_FIELDS, values)), BASE)
+    settings, problems = base_start_settings(
+        dict(zip(base_form_keys(), values, strict=True)), touched or ())
     if problems:
         return "Not started: " + " ".join(problems)
     from src.api.services.server_lists import ServerListRefused
@@ -2730,9 +3037,9 @@ FIELD_HELP = {
         "Letters, digits and hyphens are kept; blank uses \"run\". The run view shows the "
         "name once training starts.",
     ),
-    # The base form: each recipe setting's label, what it is, its reference
-    # value and that value's source (`setting_help`).
-    **{name: setting_help(name, BASE, BASE_SOURCES) for name in BASE_FIELDS},
+    # The base form: each setting's label, what it is, and the value a run
+    # takes without it, with its source (`setting_help`).
+    **{name: setting_help(name, *base_references()) for name in BASE_FIELDS},
     "device": (
         "Device",
         "auto: the GPU (CUDA). With no CUDA device visible, Start is refused: training never "
@@ -2833,6 +3140,9 @@ def create_training_tab(ctx: Any) -> None:
     polled = gr.State({})
     dismissed = gr.State([])
     parents = gr.State({})
+    # The base form's record of the fields the operator touched (decision S2):
+    # only their input writes it, and Reset to reference.
+    touched = gr.State([])
 
     with gr.Column(elem_id="shep-train", elem_classes=["shep-train"]):
         # ------------------------------------------------------------- run bar
@@ -2883,24 +3193,56 @@ def create_training_tab(ctx: Any) -> None:
                            '<span class="shep-panel-right">for the next base run</span></div>',
                            elem_id="shep-train-params-hd")
                 with gr.Column(elem_id="shep-train-params-bd", elem_classes=["shep-train-bd"]):
-                    # Exactly the reference recipe's base settings (decision 12),
-                    # each starting at the recipe's value.
+                    # What a new base takes (decision S1), each field starting at
+                    # the value the run takes without it: the common settings
+                    # first, the rest one click away, a setting the run would not
+                    # read hidden (decision S3); the model spec by its fields.
+                    references, _sources = base_references()
+                    unread = not_read_by_rules(references)
+                    fields: Dict[str, Any] = {}
                     with gr.Group(elem_classes=["shep-train-grid"]):
-                        shown_fields = [setting_field(name, BASE[name], elem_id=name)
-                                        for name in BASE_FIELDS[:BASE_SHOWN]]
+                        for name in BASE_FIELDS[:BASE_SHOWN]:
+                            fields[name] = setting_field(name, references[name], elem_id=name)
                         device = gr.Radio(label="Device", choices=["auto", "cuda", "cpu"],
                                           value="auto", elem_id="device")
-                    with gr.Accordion("More reference settings", open=False,
+                    with gr.Accordion("More training settings", open=False,
                                       elem_id="shep-train-more"):
-                        with gr.Group():
-                            more_fields = [setting_field(name, BASE[name], elem_id=name)
-                                           for name in BASE_FIELDS[BASE_SHOWN:]]
-                    differs = plain_html(
-                        differs_html(dict(zip(BASE_FIELDS, base_form_defaults())), BASE),
-                        elem_id="shep-train-differs")
+                        with gr.Group(elem_classes=["shep-train-grid"]):
+                            for name in BASE_FIELDS[BASE_SHOWN:]:
+                                fields[name] = setting_field(name, references[name],
+                                                             elem_id=name,
+                                                             visible=name not in unread)
+                    with gr.Accordion("Model", open=False, elem_id="shep-train-model"):
+                        plain_html(f'<p class="shep-note">{r.e(MODEL_NOTE)}</p>'
+                                   f'{spec_facts_html()}', elem_id="shep-train-spec-facts")
+                        if len(architecture_choices()) > 1:
+                            fields[ARCHITECTURE] = gr.Radio(
+                                label="Architecture", choices=architecture_choices(),
+                                value=_spec_reference(ARCHITECTURE),
+                                elem_id="spec-encoder-kind")
+                        for section in SPEC_SECTIONS:
+                            plain_html(f'<h3 class="shep-train-sub">'
+                                       f'{r.e(r.field_words(section))}</h3>',
+                                       elem_id=f"shep-train-spec-{section}")
+                            with gr.Group(elem_classes=["shep-train-grid"]):
+                                for spec_field in spec_form_fields():
+                                    if spec_field.editable and spec_field.path.startswith(
+                                            f"{section}."):
+                                        fields[spec_field.path] = value_field(
+                                            spec_field.kind,
+                                            r.field_words(spec_field.path.split(".", 1)[1]),
+                                            spec_field.reference, elem_id=spec_field.elem_id,
+                                            info=FIELD_FORMATS.get(spec_field.path))
+                    # What the operator set (decision S2), and Reset to reference.
+                    with gr.Row(elem_classes=["shep-train-setby-row"]):
+                        set_by = plain_html(set_by_you_html(dict(zip(
+                            base_form_keys(), base_form_defaults(), strict=True)), []),
+                            elem_id="shep-train-setby")
+                        reset_btn = gr.Button("Reset to reference", size="sm", scale=0,
+                                              elem_id="shep-train-reset")
                     # torch.compile is configured in the Runtime Settings tab (it is an
                     # execution/runtime knob, applied per training run).
-                base_fields = [*shown_fields, *more_fields]
+                base_fields = [fields[key] for key in base_form_keys()]
 
             # ------------------------------------------------- Continue… drawer
             with gr.Column(elem_id="shep-train-drawer", elem_classes=["shep-panel"], scale=10,
@@ -2969,9 +3311,21 @@ def create_training_tab(ctx: Any) -> None:
     # =========================================================================
     # Wiring
     # =========================================================================
-    # The line on the reference settings follows every base field (one listener).
-    gr.on(triggers=[field.change for field in base_fields], fn=_on_base_changed,
-          inputs=base_fields, outputs=[differs], queue=False, show_progress="hidden")
+    # Explicit is what the operator touched (decision S2): each field's input
+    # (never a value a page writes) records it and says the line again; Reset
+    # to reference clears the record and writes every field's starting value.
+    for key, field in zip(base_form_keys(), base_fields, strict=True):
+        field.input(_base_input_listener(key), inputs=[touched, *base_fields],
+                    outputs=[touched, set_by], queue=False, show_progress="hidden")
+    reset_btn.click(_on_base_reset, inputs=None, outputs=[touched, set_by, *base_fields],
+                    queue=False, show_progress="hidden")
+    # A setting a rule across settings reads only under its guard is shown while
+    # the run would read it (decision S3): its guards' change, by the operator
+    # or by Reset, shows or hides it.
+    dependent, guards = _rule_fields()
+    gr.on(triggers=[fields[name].change for name in guards], fn=_on_base_guards,
+          inputs=[fields[name] for name in guards],
+          outputs=[fields[name] for name in dependent], queue=False, show_progress="hidden")
     view_outputs = [ws, dataset, chip, pill, reason, start_btn, cont_btn, stop_btn, resume_btn,
                     runbar, page, run_name, banner, run_head, run_snap, figure, drawer_reason,
                     ctx.training_workspace, cache]
@@ -3049,7 +3403,8 @@ def create_training_tab(ctx: Any) -> None:
 
     # Start, Stop.
     # Start also closes a Stop confirmation left from an earlier job.
-    start_btn.click(_on_start, inputs=[ws, run_name, device, *base_fields], outputs=[notice],
+    start_btn.click(_on_start, inputs=[ws, run_name, device, touched, *base_fields],
+                    outputs=[notice],
                     show_progress="hidden").then(
         close_stop_question, inputs=[mode], outputs=[mode], show_progress="hidden").then(
         **view_step).then(**ctx.chip_refresh)
@@ -3298,9 +3653,23 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} #extend_epochs input[type="number"] {{ width: 96px; }}
 {_PAGE} #shep-train-check {{ align-self: flex-end; width: auto !important; min-width: max-content !important; }}
 {_PAGE} #shep-train-parents-note {{ margin-top: -4px; }}
-/* The base form's line on the reference settings (decision 5), and a value Start would refuse. */
-{_PAGE} .shep-differs p {{ margin: 0; font-size: 14px; color: var(--shep-text-2); overflow-wrap: anywhere; }}
-{_PAGE} .shep-differs p.shep-amber-t {{ margin-top: 4px; color: var(--shep-amber-800); }}
+/* The base form's fields in columns of at least 240 px (one in a narrow panel), the group drawn
+   as no box of its own (the skill's §2: one container per region, the panel). */
+{_PAGE} #shep-train-params-bd .gr-group, {_PAGE} #shep-train-params-bd .gr-group > .styler, {_PAGE} #shep-train-params-bd .gr-group .styler > .form {{ background: transparent !important; border: 0 !important; box-shadow: none !important; }}
+{_PAGE} #shep-train-params-bd .gr-group .styler > .form {{ display: grid !important; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px 16px !important; border: 0 !important; }}
+/* Device's three choices on one line: the row is its own. */
+{_PAGE} #shep-train-params-bd .gr-group #device {{ grid-column: 1 / -1; }}
+/* The Model accordion: its note and facts, then each section's heading over its fields. */
+{_PAGE} #shep-train-spec-facts .shep-note {{ margin: 0 0 6px; font-size: 14px; color: var(--shep-text-2); }}
+{_PAGE} .shep-train-spec-facts {{ font-size: 14px; gap: 2px 14px; }}
+{_PAGE} .shep-train-sub {{ margin: 6px 0 0; font-size: 15px; font-weight: 600; }}
+/* The base form's line on what the operator set (decision S2) beside Reset to reference, and a
+   value Start would refuse. */
+{_PAGE} .shep-train-setby-row {{ align-items: flex-start !important; flex-wrap: nowrap !important; gap: 8px 12px !important; }}
+{_PAGE} #shep-train-setby {{ flex: 1 1 auto !important; min-width: 0 !important; }}
+{_PAGE} #shep-train-reset {{ flex: none !important; width: auto !important; min-width: max-content !important; }}
+{_PAGE} .shep-setby p {{ margin: 0; font-size: 14px; color: var(--shep-text-2); overflow-wrap: anywhere; }}
+{_PAGE} .shep-setby p.shep-amber-t {{ margin-top: 4px; color: var(--shep-amber-800); }}
 @media (min-width: 1400px) and (min-height: 760px) {{
   {_PAGE} > .column {{ height: 100%; min-height: 0 !important; }}
   {_PAGE} #shep-train {{ flex: 1 1 auto; min-height: 0; height: 100%; flex-wrap: nowrap !important; }}
@@ -3371,8 +3740,6 @@ PAGE_CSS = charts.CHART_CSS + f"""
   {_PAGE} .shep-rv-res {{ padding-top: 6px; padding-bottom: 6px; }}
 }}
 @media (max-width: 1399px), (max-height: 759px) {{
-  {_PAGE} #shep-train-params-bd .gr-group, {_PAGE} #shep-train-params-bd .gr-group > .styler, {_PAGE} #shep-train-params-bd .gr-group .styler > .form {{ background: transparent !important; border: 0 !important; box-shadow: none !important; }}
-  {_PAGE} #shep-train-params-bd .gr-group .styler > .form {{ display: grid !important; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px 16px !important; border: 0 !important; }}
   {_PAGE} #shep-train-chip {{ flex: 1 1 240px !important; }}
   {_PAGE} .shep-rb-reason {{ justify-content: flex-start; }}
   {_PAGE} .shep-rb-why {{ text-align: left; }}

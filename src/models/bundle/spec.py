@@ -141,8 +141,11 @@ def _shown(value: Any) -> str:
 
 
 @lru_cache(maxsize=None)
-def _declared(cls: type) -> Tuple[Tuple[str, Any], ...]:
-    """`cls`'s fields with their declared types, resolved."""
+def declared_fields(cls: type) -> Tuple[Tuple[str, Any], ...]:
+    """`cls`'s fields with their declared types, resolved: what the one type
+    rule reads (`_require_declared_types`), and what the Training page's base
+    form generates a section's fields from (`training_console.spec_form_fields`),
+    so a field a section declares is a field the form offers."""
     hints = get_type_hints(cls)
     return tuple((f.name, hints[f.name]) for f in fields(cls))
 
@@ -166,7 +169,7 @@ def _require_declared_types(section: Any, prefix: str = "") -> None:
     (the reviewer's K8-1 recheck: `encoder.add_self_loops: "false"` trained
     with self-loops, `encoder.attention_slope: "0.2"` failed in the run's
     first step, `patient_encoder.transformer_layers: true` built one layer)."""
-    for name, declared in _declared(type(section)):
+    for name, declared in declared_fields(type(section)):
         _require_type(f"{prefix}{name}", getattr(section, name), declared)
 
 
@@ -830,6 +833,7 @@ __all__ = [
     "TASKS",
     "TaskHeadSpec",
     "ViewShape",
+    "declared_fields",
     "encoder_declaration",
     "encoder_not_built",
     "finetune_head",

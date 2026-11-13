@@ -260,7 +260,8 @@ def test_the_run_bars_start_sends_what_it_showed_and_the_runner_refuses_a_rebuil
     _rewrite_manifest(workspace)
 
     with patch("subprocess.Popen") as popen:
-        notice = tc._on_start(gradio_request(), state, "", "cpu", *tc.base_form_defaults())
+        notice = tc._on_start(gradio_request(), state, "", "cpu", [],
+                               *tc.base_form_defaults())
     # The runner's sentence says nothing was started; the page does not say it
     # twice (K6 closing review).
     assert notice == tc.notice_html(

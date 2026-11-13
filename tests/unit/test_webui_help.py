@@ -8,7 +8,8 @@ The shared ⓘ (M5-2, UI-A): one help control for every ordinary help text.
   ``aria-describedby``;
 - **the built dashboard**: every registered field exists (by ``elem_id``) and
   its title is the field's label; no component keeps ordinary help in
-  ``info=``; every ⓘ the shared renderers draw names a registered text;
+  ``info=``, which holds only what must stay visible (a field's format, unit
+  or "off"); every ⓘ the shared renderers draw names a registered text;
 - **the browser side** fills the bubble with ``textContent`` and is given to
   the mount's ``head`` (Gradio 6 drops a head given to ``gr.Blocks``); in a
   real headless browser (Node and Playwright, skipped without): a hover
@@ -263,12 +264,18 @@ def test_every_registered_help_target_exists_in_the_built_app(built):
 
 
 def test_no_component_keeps_ordinary_help_in_info(built):
-    """Only state-bearing text travels in ``info=``, and none is set at build
-    time."""
+    """``info=`` holds only text that must stay visible (the WebUI skill's §7):
+    a state set at runtime, and a field's format, unit or "off", set at build
+    time only on the Training page's base form (`FIELD_FORMATS`, by its
+    setting or its model spec field); no ordinary help is kept there."""
+    from src.webui.components import training_console as tc
+
     demo, _registry, _texts = built
-    with_info = [(getattr(b, "elem_id", None), b.info) for b in demo.blocks.values()
-                 if getattr(b, "info", None)]
-    assert with_info == []
+    with_info = {getattr(b, "elem_id", None): b.info for b in demo.blocks.values()
+                 if getattr(b, "info", None)}
+    elem_ids = {name: name for name in tc.BASE_FIELDS}
+    elem_ids.update({field.path: field.elem_id for field in tc.spec_form_fields()})
+    assert with_info == {elem_ids[key]: text for key, text in tc.FIELD_FORMATS.items()}
 
 
 def test_the_hidden_container_holds_every_registered_text(built):

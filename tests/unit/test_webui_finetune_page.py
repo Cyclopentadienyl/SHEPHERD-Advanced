@@ -11,9 +11,9 @@ Research › Prepare › Fine-tune (K6 decisions 2, 9, 11).
   Continue drawer shares (`model_list.run_words`: the name or start time
   first, then the architecture and time, one separator), unique;
 - **Start** sends the base's listed digest, the dataset fingerprint shown, the
-  tasks in `TASKS` order and only the settings that differ from the recipe's,
-  through the server's lists (never a client path); a refusal is the runner's
-  sentence, inline and escaped;
+  tasks in `TASKS` order and the settings the operator touched, whatever their
+  value (decision S2), through the server's lists (never a client path); a
+  refusal is the runner's sentence, inline and escaped;
 - **the job card**: each child's status as colour (the ``--shep-status-*``
   tokens), shape and word; everything escaped; products for an operator only,
   once the child ended, the best save by the selection its files record (the
@@ -215,7 +215,7 @@ def started(monkeypatch):
     return calls
 
 
-def test_start_sends_the_listed_digest_the_fingerprint_shown_and_what_differs(
+def test_start_sends_the_listed_digest_the_fingerprint_shown_and_what_was_touched(
         root, operator, started):
     from src.api.services.server_lists import resolve_checkpoint, resolve_workspace
 
@@ -223,7 +223,7 @@ def test_start_sends_the_listed_digest_the_fingerprint_shown_and_what_differs(
     parents = fp._on_finetune_bases(operator, ws, None)[0]
     key = f"gatv2/{BASE_RUN}/last.pt"
     said = fp._on_finetune_start(operator, ws, parents, key, ["patients_like_me", "disease"],
-                                 "cpu", "  ft  ", 100, 7.0, "none")
+                                 "cpu", "  ft  ", ["seed"], 100, 7.0, "none")
     assert said == ""
     inputs, kwargs = started[-1]
     assert inputs.tasks == ("disease", "patients_like_me")           # TASKS order
@@ -233,9 +233,14 @@ def test_start_sends_the_listed_digest_the_fingerprint_shown_and_what_differs(
     assert inputs.data_dir == str(resolve_workspace("demo"))
     assert (inputs.device, inputs.run_name) == ("cpu", "ft")
     assert kwargs == {"expected_dataset_fingerprint": ws["row"]["dataset_fingerprint"]}
-    # The recipe's own values are not sent.
-    fp._on_finetune_start(operator, ws, parents, key, ["gene"], "auto", "", 100, 33, "none")
+    # Untouched, nothing is sent, whatever the fields hold (decision S2) ...
+    fp._on_finetune_start(operator, ws, parents, key, ["gene"], "auto", "", [], 5, 7, "none")
     assert started[-1][0].settings == {}
+    # ... and touched, the recipe's own values are sent: equal to the
+    # reference is never read as "not set".
+    fp._on_finetune_start(operator, ws, parents, key, ["gene"], "auto", "",
+                          ["num_epochs", "seed"], 100, 33, "none")
+    assert started[-1][0].settings == {"num_epochs": 100, "seed": 33}
 
 
 def test_a_frozen_graph_backbone_reaches_the_start_and_the_note_says_what_trains(
@@ -243,17 +248,18 @@ def test_a_frozen_graph_backbone_reaches_the_start_and_the_note_says_what_trains
     """Ops-wiring round, decision F1: the freeze is a field of the page's
     common settings; Frozen reaches the runner's start as the start's
     settings (`FinetuneInputs.settings`, which the runner alone checks), for
-    every chosen task; Trained, the reference, is not sent. While Frozen is
+    every chosen task; untouched, nothing is sent. While Frozen is
     chosen a visible note says what then trains (skill §7: not only a
     bubble)."""
     ws = tc.workspace_state("demo")
     parents = fp._on_finetune_bases(operator, ws, None)[0]
     key = f"gatv2/{BASE_RUN}/last.pt"
     assert fp._on_finetune_start(operator, ws, parents, key, ["disease", "gene"], "cpu", "",
-                                 100, 33, "graph_side") == ""
+                                 ["frozen_parts"], 100, 33, "graph_side") == ""
     assert started[-1][0].settings == {"frozen_parts": "graph_side"}
     assert started[-1][0].tasks == ("disease", "gene")
-    fp._on_finetune_start(operator, ws, parents, key, ["disease"], "cpu", "", 5, 33, "none")
+    fp._on_finetune_start(operator, ws, parents, key, ["disease"], "cpu", "", ["num_epochs"],
+                          5, 33, "none")
     assert started[-1][0].settings == {"num_epochs": 5}
     assert fp.freeze_note_html("none") == ""
     # Which values leave parts untrained is the recipe's rule, read from it
@@ -286,8 +292,8 @@ def test_start_refuses_what_it_cannot_send_and_starts_nothing(root, operator, st
             "tasks": ["disease"], "epochs": 100, "seed": 33, "frozen_parts": "none"}
     args.update(change)
     said = fp._on_finetune_start(operator, args["ws"], args["parents"], args["key"],
-                                 args["tasks"], "cpu", "", args["epochs"], args["seed"],
-                                 args["frozen_parts"])
+                                 args["tasks"], "cpu", "", list(fp.FINETUNE_FIELDS),
+                                 args["epochs"], args["seed"], args["frozen_parts"])
     assert started == [] and words in said and "Not started" in said
 
 
@@ -296,8 +302,8 @@ def test_a_parent_listed_for_another_workspace_is_not_started(root, operator, st
     parents = fp._on_finetune_bases(operator, ws, None)[0]
     key = f"gatv2/{BASE_RUN}/last.pt"
     parents = {key: {**parents[key], "workspace": "other"}}
-    said = fp._on_finetune_start(operator, ws, parents, key, ["disease"], "cpu", "", 100, 33,
-                                 "none")
+    said = fp._on_finetune_start(operator, ws, parents, key, ["disease"], "cpu", "", [], 100,
+                                 33, "none")
     assert started == [] and "the list shows other’s bases, not demo’s" in said
 
 
@@ -309,7 +315,7 @@ def test_a_refused_start_shows_the_runners_sentence_escaped(root, operator, monk
     ws = tc.workspace_state("demo")
     parents = fp._on_finetune_bases(operator, ws, None)[0]
     said = fp._on_finetune_start(operator, ws, parents, f"gatv2/{BASE_RUN}/last.pt",
-                                 ["disease"], "cpu", "", 100, 33, "none")
+                                 ["disease"], "cpu", "", [], 100, 33, "none")
     assert "<img" not in said and "&lt;img" in said and "another knowledge graph" in said
     # The runner's sentence already says nothing was started: not said twice
     # (K6 closing review: "Not started: … Nothing was started.").
@@ -318,13 +324,13 @@ def test_a_refused_start_shows_the_runners_sentence_escaped(root, operator, monk
     monkeypatch.setattr(fp.training_manager, "start_finetune",
                         lambda inputs, **k: {"success": False, "error": "The slot is busy."})
     said = fp._on_finetune_start(operator, ws, parents, f"gatv2/{BASE_RUN}/last.pt",
-                                 ["disease"], "cpu", "", 100, 33, "none")
+                                 ["disease"], "cpu", "", [], 100, 33, "none")
     assert said == tc.notice_html("Not started: The slot is busy.")
 
 
 def test_start_is_refused_for_a_read_only_request(root, started):
     said = fp._on_finetune_start(READ_ONLY, tc.workspace_state("demo"), {}, None, ["disease"],
-                                 "cpu", "", 100, 33, "none")
+                                 "cpu", "", [], 100, 33, "none")
     assert "Refused" in said and started == []
 
 
@@ -675,5 +681,13 @@ def test_the_page_follows_the_contract():
     (start,) = [fn for fn in fns if fn.fn is fp._on_finetune_start]
     assert start.inputs[-len(fp.FINETUNE_FIELDS):] == [
         by_id[f"ft_{name}"] for name in fp.FINETUNE_FIELDS]
+    # Explicit is what the operator touched (decision S2): each field's input
+    # (never its change) adds it to the form's record, which Start takes.
+    touched = start.inputs[-len(fp.FINETUNE_FIELDS) - 1]
+    for name in fp.FINETUNE_FIELDS:
+        field = by_id[f"ft_{name}"]
+        (listener,) = [fn for fn in fns if (field._id, "input") in fn.targets]
+        assert listener.inputs == [touched] and listener.outputs == [touched]
+        assert listener.fn(["x"]) == sorted({"x", name}) and listener.queue is False
     for gone in ("ft_learning_rate", "ft_batch_size", "ft_task_loss_weight"):
         assert gone not in by_id

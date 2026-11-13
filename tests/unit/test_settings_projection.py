@@ -328,11 +328,16 @@ def test_the_warmup_help_says_what_the_trainer_does():
     from src.training.trainer import TrainerConfig
     from src.webui.components import training_console
 
-    lead = training_console._SETTING_LEADS["warmup_steps"]
+    # The help's lead is the field spec's description (one text of it).
+    lead = training_console.FIELD_HELP["warmup_steps"][1].split("\n", 1)[0]
+    assert lead == tf.by_name("warmup_steps").description
     assert TrainerConfig().warmup_ratio == 0.1
     assert "read only with cosine" in lead and "0 warms up over a tenth of the steps" in lead
     assert "from zero" not in lead and len(lead) <= 90
-    assert "read only with cosine" in tf.by_name("warmup_steps").description
+    # The format under the field says it too, and the cap the Trainer applies
+    # (`Trainer._create_scheduler`: at most half the run's steps).
+    shown = training_console.FIELD_FORMATS["warmup_steps"]
+    assert "0 takes a tenth" in shown and "at most half" in shown
 
 
 # ---------------------------------------------------------------------------
