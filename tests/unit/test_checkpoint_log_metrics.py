@@ -184,9 +184,11 @@ def test_a_current_trainer_checkpoint_shows_its_ranking_metrics(trained_disease_
                          d8_short=None, open_checkpoints=False, facts=_no_listing)
     details = panel.model_identity_html(state)
 
-    # Model Facts' Evidence: the Trainer's selection metric, named as such.
-    assert (f"Validation pooled MRR (Trainer) {logs['val_pooled_mrr']:.4f} — selection metric "
-            "on val, not an independent test") in details
+    # Model Facts' Evidence: the Trainer's selection metric, named as such,
+    # in its Validation row (the summary list's value says it without the key).
+    assert ('<dt class="shep-k">Validation' in details
+            and (f'<dd class="shep-v">pooled MRR (Trainer) {logs["val_pooled_mrr"]:.4f} — '
+                 "selection metric on val, not an independent test</dd>") in details)
 
     # The same status names what the loaded pipeline serves (contract M3c),
     # taken from the pipeline's own served identity: the digest of the
@@ -211,10 +213,10 @@ def _no_listing(status, **kwargs):
 @pytest.mark.parametrize("meta, shown", [
     ({"epoch": 3, "params": 1000, "device": "cpu", "val_loss": 0.25, "train_loss": 0.5,
       "val_pooled_mrr": 0.5, "val_lp_accuracy": 0.75, "val_pooled_top1": 0.25, "flag": True,
-      "note": "not a number"}, "Validation pooled MRR (Trainer) 0.5000"),
+      "note": "not a number"}, "pooled MRR (Trainer) 0.5000"),
     ({"epoch": 3, "val_lp_accuracy": 0.75, "val_pooled_top1": 0.25},
-     "Validation LP accuracy (Trainer) 0.7500"),
-    ({"epoch": 3, "val_loss": 0.25}, "Validation (Trainer): not recorded in this checkpoint"),
+     "LP accuracy (Trainer) 0.7500"),
+    ({"epoch": 3, "val_loss": 0.25}, "not recorded in this checkpoint"),
 ])
 def test_details_show_the_selection_metric_by_the_ranking_keys(meta, shown):
     """The figure is the first of `RANKING_SCORE_KEYS` the status's
@@ -237,5 +239,6 @@ def test_details_show_the_selection_metric_by_the_ranking_keys(meta, shown):
     state = card.advance(None, status, None, now=datetime(2026, 10, 20), operator=True,
                          d8_short=None, open_checkpoints=False, facts=_no_listing)
     details = card.served_facts_html(state)
-    assert shown in details
+    # Evidence's Validation row: the figure's words without the key's.
+    assert f'<dd class="shep-v">{shown}' in details
     assert "Val Loss" not in details and "Train Loss" not in details
