@@ -898,6 +898,38 @@ def test_a_same_settings_branch_checks_and_starts_from_the_page(checkpoints, mon
         "expected_parent_sha256": c["parents"][c["paused_key"]]["sha256"]}
 
 
+def test_a_checks_branch_values_are_what_each_field_takes(checkpoints):
+    """Found in the browser (B1c): a base records a task model's settings as
+    unset, and the check wrote their "off" into those fields, number boxes
+    hidden for a base; Gradio's Number refused the text and the whole check
+    failed. A check writes only the fields it shows, each value in its
+    field's form, so every value goes through its component as Gradio sends
+    it, for a base and for a task model's parent."""
+    import gradio as gr
+
+    with gr.Blocks() as demo:
+        tc.create_training_tab(standalone_context(demo))
+    by_id = {getattr(block, "elem_id", None): block for block in demo.blocks.values()}
+    c = checkpoints
+    outputs = _check_all(c, tc.CONTINUE_FROM_LIST, c["paused_key"], "", operation=tc.BRANCH)
+    _box, fields = _fields(outputs)
+    preview = training_manager.preview_branch(str(c["paused"]), device="cpu")
+    written = {name for name, update in fields.items() if "value" in update}
+    assert written and written <= set(preview["changeable"])
+    assert {"task_loss_weight", "candidate_sample_size"}.isdisjoint(written)
+    for name in written:
+        by_id[f"branch_{name}"].postprocess(fields[name]["value"])      # raises if not taken
+    # Each field's own form of each kind of value: a list and an optional
+    # number as text, a number as a number, None in a number box as empty.
+    assert tc._branch_form_value("num_neighbors", [4, -1]) == "4, -1"
+    assert tc._branch_form_value("early_stopping_patience", None) == "off"
+    assert tc._branch_form_value("early_stopping_patience", 5) == 5      # a text box shows "5"
+    assert tc._branch_form_value("task_loss_weight", None) is None
+    assert tc._branch_form_value("learning_rate", 0.001) == 0.001
+    for name in tc.BRANCH_FIELDS:
+        by_id[f"branch_{name}"].postprocess(tc._branch_form_value(name, None))
+
+
 def test_a_branch_sends_only_the_fields_edited_and_says_its_changes_in_words(checkpoints,
                                                                             monkeypatch):
     """Only a field the operator edited is sent (decision S2), whatever its

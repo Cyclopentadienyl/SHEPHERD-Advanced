@@ -387,6 +387,14 @@ def form_value(value: Any) -> Any:
     return r.OFF.lower() if value is None else value
 
 
+def text_field(kind: str, value: Any) -> bool:
+    """Whether the field of a value of `kind` built at `value` is a text box
+    (`value_field`): a list of whole numbers, and an optional number whose
+    value is None there; every other number is a number box, which takes a
+    number or None, never text."""
+    return kind == "list[int]" or (value is None and kind in ("int", "float"))
+
+
 def value_field(kind: str, label: str, value: Any, *, elem_id: str,
                 choices: Optional[Sequence[Tuple[str, Any]]] = None,
                 info: Optional[str] = None, visible: bool = True) -> Any:
@@ -401,7 +409,7 @@ def value_field(kind: str, label: str, value: Any, *, elem_id: str,
     after any edit. `info` is its format, unit or "off", said under it
     (`FIELD_FORMATS`); what it is stays behind its ⓘ."""
     common = {"label": label, "elem_id": elem_id, "info": info, "visible": visible}
-    if kind == "list[int]" or (value is None and kind in ("int", "float")):
+    if text_field(kind, value):
         return gr.Textbox(value=form_value(value), max_lines=1, **common)
     if kind == "bool":
         return gr.Checkbox(value=bool(value), **common)
@@ -2877,6 +2885,14 @@ def _branch_field_value(name: str) -> Any:
     return None
 
 
+def _branch_form_value(name: str, value: Any) -> Any:
+    """A parent's value as its Branch field holds it, by the field built for
+    the setting (`_branch_field_value`, `text_field`): a text box's text
+    (`form_value`: "4, 4", "off"), a number box's number (None, empty)."""
+    return (form_value(value) if text_field(by_name(name).kind, _branch_field_value(name))
+            else value)
+
+
 def branch_setting_help(name: str) -> Tuple[str, str]:
     """A Branch field's help, ``(title, text)``: its label, what it is (its
     field spec's description, as the base form's help says it), and where
@@ -3276,9 +3292,11 @@ def _branch_updates(preview: Mapping[str, Any], operation: str, touched: Any,
     for a branch the preview read (its ``changeable`` and ``inherited``),
     the box shown, each field the parent's stage and task may change shown
     unless its run would not read it on the form's values (a rule across
-    settings: the base form hides it so), and each one not edited
-    (`touched`) holding the parent's value (`form_value`); every other field
-    hidden. Otherwise (Continue, a refused check) the box and the fields as
+    settings: the base form hides it so), and each of those not edited
+    (`touched`) holding the parent's value in its field's form
+    (`_branch_form_value`); every other field hidden and left as it is (a
+    base records a task model's settings as unset, which no field of theirs
+    shows). Otherwise (Continue, a refused check) the box and the fields as
     they were: a refusal of an edit leaves the edit to fix."""
     if operation != BRANCH or not preview.get("ok") or "changeable" not in preview:
         return (gr.update(),) * (1 + len(BRANCH_FIELDS))
@@ -3286,9 +3304,10 @@ def _branch_updates(preview: Mapping[str, Any], operation: str, touched: Any,
     inherited = preview.get("inherited") or {}
     edited = touched_keys(touched)
     given = dict(zip(BRANCH_FIELDS, values, strict=True)) if values else {}
-    prefilled = {name for name in BRANCH_FIELDS if name in inherited and name not in edited}
-    now = {name: form_value(inherited[name]) if name in prefilled else given.get(name)
-           for name in BRANCH_FIELDS}
+    prefilled = {name for name in BRANCH_FIELDS
+                 if name in changeable and name in inherited and name not in edited}
+    now = {name: _branch_form_value(name, inherited[name]) if name in prefilled
+           else given.get(name) for name in BRANCH_FIELDS}
     unread = not_read_by_rules({name: parse_value(by_name(name).kind, value)[0]
                                 for name, value in now.items()})
     return (gr.update(visible=True),
