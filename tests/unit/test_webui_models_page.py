@@ -1318,10 +1318,12 @@ def test_the_detail_says_what_the_model_is_and_its_relation_to_the_paper(world, 
     ident = top[top.index('<dl class="shep-kv shep-mp-ident">'):]
     ident = ident[:ident.index("</dl>") + 5]
     keys = re.findall(r'<dt class="shep-k[^"]*"[^>]*>([^<]*)', ident)
-    # One summary list: the fingerprint and the dataset by its relation, what
-    # the model is, and the Trainer's figure as a row (the ops-wiring B3).
-    assert keys == ["Fingerprint", "Dataset", "Kind", "Operation", "Parent", "Family", "Encoder",
-                    "Relation to the paper", "Validation"]
+    # One summary list: the fingerprint, the file (the title names its run,
+    # which two files of one run share: review of B3), the dataset by its
+    # relation, what the model is, and the Trainer's figure as a row (the
+    # ops-wiring B3).
+    assert keys == ["Fingerprint", "File", "Dataset", "Kind", "Operation", "Parent", "Family",
+                    "Encoder", "Relation to the paper", "Validation"]
     text = _text(ident)
     assert "Disease" in text and "Finetune" in text and "GATv2" in text
     # The parent's run in the one run words, its name first (the review of
@@ -1340,7 +1342,8 @@ def test_the_detail_says_what_the_model_is_and_its_relation_to_the_paper(world, 
     ident = specless[specless.index('<dl class="shep-kv shep-mp-ident">'):]
     ident = ident[:ident.index("</dl>") + 5]
     assert re.findall(r'<dt class="shep-k[^"]*"[^>]*>([^<]*)', ident) == [
-        "Fingerprint", "Dataset", "Kind", "Validation"]
+        "Fingerprint", "File", "Dataset", "Kind", "Validation"]
+    assert ">model-05.pt<" in ident
     assert "Record not readable" in ident
     # Axis 2 for a reference spec, and for a parent elsewhere or unavailable.
     item = {"record": "model", "learning_stage": "finetune", "task": "gene",
@@ -1393,10 +1396,11 @@ def test_the_detail_says_what_the_model_is_and_its_relation_to_the_paper(world, 
     branch = {**item, "operation": "branch", "parent_changes": {}}
     html = mp.identity_html(branch, None)
     keys = re.findall(r'<dt class="shep-k[^"]*"[^>]*>([^<]*)', html)
-    assert keys == ["Fingerprint", "Dataset", "Kind", "Operation", "Parent", "Settings changed",
-                    "Family", "Encoder", "Relation to the paper", "Validation",
-                    # the run directory, file and whole fingerprint one Details › away
-                    "Run directory", "File", "Whole fingerprint"]
+    assert keys == ["Fingerprint", "File", "Dataset", "Kind", "Operation", "Parent",
+                    "Settings changed", "Family", "Encoder", "Relation to the paper",
+                    "Validation",
+                    # the run directory and whole fingerprint one Details › away
+                    "Run directory", "Whole fingerprint"]
     assert mp.SAME_SETTINGS in _text(html)
     row = {"depth": 1, "parent_state": "listed"}
     assert mp.SAME_SETTINGS in _text(mp.lineage_cell_html(branch, row))

@@ -1334,7 +1334,8 @@ def identity_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]], *,
                   workspaces: Sequence[Mapping[str, Any]] = ()) -> str:
     """**The selected checkpoint's details, as one summary list** (the
     skill's §4, README §5): its model fingerprint (12 hex with its Copy: the
-    table shows each row's, this is the chosen one's to copy); its dataset by
+    table shows each row's, this is the chosen one's to copy) and its file
+    (the title names its run, which two files of one run share); its dataset by
     its relation to the workspace chosen above, whose identity that line says
     once (`renderers.dataset_relation_html`: "the selected workspace's
     current dataset", or which dataset, its fingerprint and "synthetic" where
@@ -1348,12 +1349,15 @@ def identity_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]], *,
     its relation to the paper (axis 2: "matches the reference recipe" with
     what that recipe is, or the fields that differ); and the Trainer's
     validation figure, a row like every details list's (`renderers.validation_value`),
-    never a box of its own. Its run directory, file and whole fingerprint are
-    one "Details ›" away (the skill's §5: the full provenance one click
-    away). Model Facts' Task and Configuration rows say the kind and axis 1
+    never a box of its own. Its run directory and whole fingerprint are one
+    "Details ›" away (the skill's §5: the full provenance one click away). Model Facts' Task and Configuration rows say the kind and axis 1
     elsewhere; neither is repeated here."""
     sha = item.get("sha256")
+    architecture, run, filename = (item.get("architecture"), item.get("run"),
+                                   item.get("filename"))
+    unknown = r.status_mark("neutral", r.UNKNOWN)
     rows = [("Fingerprint", r.fingerprint_value(sha, what="model fingerprint")),
+            ("File", r.ident_html(filename) if filename else unknown),
             ("Dataset", r.dataset_relation_html(item, workspaces)),
             ("Kind", r.e(r.model_kind_text(item)))]
     if item.get("record") == "model":
@@ -1381,12 +1385,8 @@ def identity_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]], *,
                  ("Relation to the paper", relation)]
     rows.append(("Validation", r.e(r.validation_value(r.validation_figure(item),
                                                       read=r.record_read(item)))))
-    architecture, run, filename = (item.get("architecture"), item.get("run"),
-                                   item.get("filename"))
-    unknown = r.status_mark("neutral", r.UNKNOWN)
     provenance = [("Run directory", r.ident_html(f"{architecture}/{run}") if architecture and run
                    else unknown),
-                  ("File", r.ident_html(filename) if filename else unknown),
                   ("Whole fingerprint", r.fingerprint_value(sha, full=True, copy=False))]
     return (r.summary_list(rows, classes="shep-mp-ident",
                            helps={"Fingerprint": ("model-fingerprint", "Model fingerprint"),

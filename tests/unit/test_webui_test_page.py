@@ -2932,7 +2932,9 @@ def test_report_rows_are_named_by_the_shared_run_time_and_distinct_names(monkeyp
     runs = [{"run_id": x, "when": tp.run_time(x), "sha12": sha,
              "state": {"kept": "kept", "registered": "not_registered"}} for x in ids]
     html = tp.reports_html({"label": LABEL, "runs": runs}, ids[0])
-    assert calls == [ids]
+    # The rows' names (the listed models' Run options, `model_list.pair_words`,
+    # are told apart by the same rule, here over no listed run).
+    assert [items for items in calls if items] == [ids]
     assert _report_rows(html)[ids[1]][0] == "2026-10-24 11:10:12 UTC · run …7a7a7a7a"
 
 
@@ -4577,13 +4579,17 @@ def test_a_past_result_keeps_its_own_identity_after_the_selection_changes(site, 
     assert (rows["Workspace"], rows["Model"], rows["Version"]) == (
         tp.SELECTED_WORKSPACE, tp.SELECTED_MODEL, tp.SELECTED_VERSION)
     assert cell == tp.SELECTED_MODEL and rows["Report"] == site.run_id
-    # Another checkpoint chosen: the report's own model, by its title and its
-    # fingerprint, in the Result and in the table.
+    # Another checkpoint chosen: the report's own model, by what it is, its
+    # run and its file (the words of its Run → Checkpoint pair) and, in the
+    # Result, its fingerprint.
     item = tp.find_model(models, site.key)
+    run_option, file_option = ml.pair_words(tp.model_parents(models))[site.key]
     rows, cell = shown("demo", LABEL, other)
-    assert rows["Model"].startswith(renderers.model_name_line(item, fit=False))
+    whole_run = renderers.run_words(item["architecture"], item["run"], fit=False)
+    assert rows["Model"].startswith(
+        f"{renderers.model_kind_text(item)} {whole_run} {file_option}")
     assert site.sha[:12] in rows["Model"] and tp.SELECTED_MODEL not in rows["Model"]
-    assert cell == renderers.model_name_line(item)
+    assert cell == f"{renderers.model_kind_text(item)} {run_option} {file_option}"
     # Nothing chosen: the same, never "the selected model".
     rows, _cell = shown("demo", LABEL, None)
     assert site.sha[:12] in rows["Model"]
@@ -4596,6 +4602,57 @@ def test_a_past_result_keeps_its_own_identity_after_the_selection_changes(site, 
     # dataset record the report measured.
     rows, _cell = shown("copy", LABEL, site.key, {**binding, "record_sha256": "0" * 64})
     assert rows["Workspace"] == "demo"
+
+
+def test_a_model_not_chosen_is_named_by_its_kind_its_run_and_its_file():
+    """Review of B3 (the skill's §1.2, decision F1): a report of a listed
+    model other than the chosen one is named, in the reports table and in
+    the Result, by what it is (`renderers.model_kind_text`) and by the words
+    of its Run → Checkpoint pair (`model_list.pair_words`), so two files of
+    one run, both "1 epoch completed", never read alike, and the
+    frozen-backbone control's past result never reads like the full
+    fine-tune's. Seen in the browser check: two files of one run with
+    identical Model cells, and the frozen child's row without "frozen"."""
+    def item(run, filename, sha, **more):
+        return {"architecture": "gatv2", "run": run, "filename": filename, "sha256": sha,
+                "record": "model", "learning_stage": "finetune", "task": "disease",
+                "completed_epochs": 1, "checkpoint_kind": "full", **more}
+
+    full_run, frozen_run = "20261113-193200_disease_aa11bb", "20261113-193600_disease_cc22dd"
+    frozen_transfer = {"trainable": ["patient_encoder", "task_head"],
+                       "parts": {"input": "frozen", "encoder": "frozen", "lp_head": "frozen",
+                                 "patient_encoder": "trainable", "task_head": "trainable"}}
+    latest = item(full_run, "last.pt", "a" * 64)
+    saved = item(full_run, "model-01-0.2760.pt", "b" * 64)
+    frozen = item(frozen_run, "last.pt", "c" * 64, weight_transfer=frozen_transfer)
+    chosen = item("20261113-194000_other_ee33ff", "last.pt", "d" * 64)
+    models = {"items": [chosen, frozen, latest, saved]}
+    selection = tp.Selection("demo", None, chosen, None)
+    runs = [{"run_id": f"20261113T21{i}000Z-{m['sha256'][:12]}-0000000{i}",
+             "when": f"2026-11-13 21:{i}0 UTC",
+             "record": {"checkpoint_digest": m["sha256"], "scoring": {"mode": "disease"}},
+             "state": {"kept": "kept", "registered": "not_registered"}}
+            for i, m in enumerate((latest, saved, frozen))]
+    cells = {key: row[1] for key, row in _report_rows(tp.reports_html(
+        {"label": LABEL, "runs": runs}, None, models=models, selection=selection)).items()}
+    latest_cell, saved_cell, frozen_cell = (cells[run["run_id"]] for run in runs)
+    assert latest_cell != saved_cell
+    assert latest_cell.startswith("Disease disease · GATv2 2026-11-13 19:32 Latest save")
+    assert "model-01-0.2760.pt" in saved_cell
+    assert frozen_cell.startswith(f"Disease · {renderers.FROZEN_BACKBONE_WORDS} ")
+    assert renderers.FROZEN_BACKBONE_WORDS not in latest_cell
+    view = {"cohort": {"version_manifest_sha256": "e" * 64, "kind": "supplied", "role": "test",
+                       "label": LABEL}}
+
+    def model_row(model):
+        rows = dict(tp.result_identity_rows({"checkpoint_digest": model["sha256"]}, view,
+                                            selection, models, []))
+        return _plain(rows["Model"])
+
+    assert model_row(latest) != model_row(saved)
+    assert model_row(frozen).startswith(f"Disease · {renderers.FROZEN_BACKBONE_WORDS} ")
+    assert "c" * 12 in model_row(frozen) and renderers.FROZEN_BACKBONE_WORDS not in model_row(
+        latest)
 
 
 def test_one_screen_says_the_models_fingerprint_once(site, monkeypatch):

@@ -125,7 +125,8 @@ its start time; what a file is), and **its value is the listing's key**
 file's words come from its own record: how far it trained
 (`renderers.epoch_words`), a best save of its run by the run's recorded
 selection (`renderers.best_saves`), a best-k member by its run's records
-(`CheckpointItem.in_best_k`), never from its name.
+(`CheckpointItem.in_best_k`), never from its name. A page that names a file
+other than the chosen one names it by the same two options (`pair_words`).
 
 **Per browser session**: the listing, the selection, the view and the
 confirmation are `gr.State`; nothing here is module state.
@@ -354,6 +355,22 @@ def checkpoint_choices(parents: Mapping[str, Any], keys: Sequence[str]) -> List[
             what = str(parents[key].get("filename"))
         entries.append((what, rest, key))
     return r.fit_options(entries)
+
+
+def pair_words(parents: Mapping[str, Any]) -> Dict[str, Tuple[str, str]]:
+    """**Each listed checkpoint by the words of its Run → Checkpoint pair**,
+    by its key: its run's option (`run_choices`) and its own option in that
+    run (`checkpoint_choices`). No two listed files share both (each select's
+    options are unique, the WebUI skill's §8), so a page that names a file
+    other than the chosen one, where two files of one run would otherwise
+    read alike (the Test page's reports table), names it by what the
+    operator would choose it by."""
+    runs = {value: label for label, value in run_choices(parents)}
+    words: Dict[str, Tuple[str, str]] = {}
+    for run, keys in runs_of(parents).items():
+        for label, key in checkpoint_choices(parents, keys):
+            words[key] = (runs[run], label)
+    return words
 
 
 def parents_update(parents: Mapping[str, Any], keep: Optional[str] = None) -> Tuple[Any, Any]:

@@ -1289,19 +1289,36 @@ def _is_selected(digest: Any, selection: Optional["Selection"]) -> bool:
             and chosen.startswith(digest))
 
 
-def _model_cell(digest: Any, models: Mapping[str, Any],
-                selection: Optional["Selection"], *, prefix: bool = False) -> str:
+def _other_model_html(item: Mapping[str, Any], words: Mapping[str, Tuple[str, str]], *,
+                      whole: bool = False) -> str:
+    """**A listed model other than the chosen one, named in full** (the
+    skill's §1.2: a result's own identity, which can differ from the
+    selection): what it is first (`renderers.model_kind_text`, decision F1:
+    "Disease · frozen graph backbone" for the frozen-backbone control, never
+    read as the full fine-tune), then its run and its file by the words of
+    its Run → Checkpoint pair (`model_list.pair_words`: no two listed files
+    share both, so two files of one run never read alike), the run whole
+    in details (`whole`; `renderers.run_words`)."""
+    run, file = words.get(ml.item_key(item)) or (r.model_name_line(item), "")
+    if whole:
+        run = r.run_words(item.get("architecture"), item.get("run"), fit=False)
+    return (f'<div class="shep-sub">{e(r.model_kind_text(item))}</div><div>{e(run)}</div>'
+            + (f'<div class="shep-sub">{e(file)}</div>' if file else ""))
+
+
+def _model_cell(digest: Any, models: Mapping[str, Any], selection: Optional["Selection"],
+                words: Mapping[str, Tuple[str, str]], *, prefix: bool = False) -> str:
     """A report row's Model cell: "the selected model" for the chosen
-    checkpoint's weights (`SELECTED_MODEL`); another listed file by its title
-    (`renderers.model_name_line`: its run, how far it trained); weights the
-    list does not hold by their fingerprint (`renderers.fingerprint_value`,
-    12 hex digits; with `prefix`, a digest the report's run id names by its
-    first 12 digits alone, for a run whose record was not built)."""
+    checkpoint's weights (`SELECTED_MODEL`); another listed file by what it
+    is, its run and its file (`_other_model_html`); weights the list does not
+    hold by their fingerprint (`renderers.fingerprint_value`, 12 hex digits;
+    with `prefix`, a digest the report's run id names by its first 12 digits
+    alone, for a run whose record was not built)."""
     if _is_selected(digest, selection):
         return e(SELECTED_MODEL)
     item = _listed_model(digest, models)
     if item is not None:
-        return e(r.model_name_line(item))
+        return _other_model_html(item, words)
     return r.fingerprint_value(digest, what="model fingerprint", copy=False, prefix=prefix)
 
 
@@ -1320,7 +1337,8 @@ def _row_names(runs: Sequence[Mapping[str, Any]]) -> Dict[str, str]:
 
 
 def _job_row(job: Mapping[str, Any], label: Any, run_ids: Sequence[str],
-             models: Mapping[str, Any], selection: Optional["Selection"]) -> str:
+             models: Mapping[str, Any], selection: Optional["Selection"],
+             words: Mapping[str, Tuple[str, str]]) -> str:
     """The latest test run of this version as a row no click selects: while it
     runs ("started …", Running), or when it ended with no report the store
     lists (cancelled before its run directory, failed, or kept nothing; the
@@ -1354,7 +1372,8 @@ def _job_row(job: Mapping[str, Any], label: Any, run_ids: Sequence[str],
     protocol = inputs.get("protocol")
     measured = (e(measurement_label(protocol)) if isinstance(protocol, str) and protocol.strip()
                 else r.status_mark("neutral", r.NOT_RECORDED))
-    model = _model_cell(str(inputs.get("checkpoint_sha256") or "") or None, models, selection)
+    model = _model_cell(str(inputs.get("checkpoint_sha256") or "") or None, models, selection,
+                        words)
     return (f'<tr class="{css}" aria-disabled="true"><td>{e(what)}</td><td>{model}</td>'
             f'<td>{measured}</td><td>{_pill(str(status))}'
             f'<div class="shep-sub">{e(state)}</div></td></tr>')
@@ -1399,7 +1418,8 @@ def reports_html(reports: Mapping[str, Any], selected: Optional[str], *,
         return ""
     models = models or {}
     runs = reports.get("runs") or []
-    rows = [_job_row(job or {}, label, [x["run_id"] for x in runs], models, selection)]
+    words = ml.pair_words(model_parents(models))
+    rows = [_job_row(job or {}, label, [x["run_id"] for x in runs], models, selection, words)]
     hidden = 0
     names = _row_names(runs)
     for index, run in enumerate(runs):
@@ -1416,7 +1436,7 @@ def reports_html(reports: Mapping[str, Any], selected: Optional[str], *,
         rows.append(
             f'<tr class="{classes}" data-key="{e(run_id)}" tabindex="0"{current}>'
             f'<td class="shep-test-rep-name">{e(names[str(run_id)])}</td>'
-            f'<td>{_model_cell(digest, models, selection, prefix=not recorded)}</td>'
+            f'<td>{_model_cell(digest, models, selection, words, prefix=not recorded)}</td>'
             f'<td>{_row_mode(run)}</td><td>{_row_chip(run)}</td></tr>')
     entries = [row for row in rows if row]
     more = ('<div class="shep-test-more">'
@@ -1860,10 +1880,11 @@ def result_identity_rows(record: Mapping[str, Any], view: Mapping[str, Any],
     its version (the version manifest's digest). Each that is what is chosen
     reads so, "the selected workspace", "the selected model", "the selected
     version"; one that is not reads in full: the listed workspaces holding
-    its dataset record, its model's title (`renderers.model_name_line`,
-    whole) and fingerprint, its version's label, role and fingerprint. So a
-    past result keeps its own identity when the selection changes: it is
-    drawn again from the record each time, never from the selects."""
+    its dataset record, its model by what it is, its run (whole) and its file
+    (`_other_model_html`) and its fingerprint, its version's label, role and
+    fingerprint. So a past result keeps its own identity when the selection
+    changes: it is drawn again from the record each time, never from the
+    selects."""
     selection = selection or Selection(None, None, None, None)
     dataset = (record.get("dataset_record") or {}).get("sha256") if isinstance(
         record.get("dataset_record"), Mapping) else None
@@ -1881,8 +1902,8 @@ def result_identity_rows(record: Mapping[str, Any], view: Mapping[str, Any],
     else:
         item = _listed_model(digest, models) if r.is_digest(digest) else None
         fingerprint = r.fingerprint_value(digest, what="model fingerprint")
-        model = (f"{e(r.model_name_line(item, fit=False))}<div>{fingerprint}</div>"
-                 if item is not None else fingerprint)
+        model = (_other_model_html(item, ml.pair_words(model_parents(models)), whole=True)
+                 + f"<div>{fingerprint}</div>" if item is not None else fingerprint)
     cohort = view["cohort"]
     if cohort["version_manifest_sha256"] == selection.version_sha256:
         version = e(SELECTED_VERSION)
