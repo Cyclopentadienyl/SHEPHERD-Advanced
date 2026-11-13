@@ -68,6 +68,12 @@ Its settings left `TrainConfig` in K8-7, and `ShepherdGNNConfig` with
     form and the Fine-tune page send a setting when the operator touched its field, whatever its
     value (decision S2); the K6 rule of sending only what differs from the reference retired.
     The help leads are the field spec's `description`.
+  - *Note (2026-11-13, ops-wiring round B2):* the Fine-tune page offers what every chosen
+    task's run takes (the intersection of `new_run_settings("finetune", task)` over the
+    tasks, as the job runner's start takes it), each field starting at the one fill's value;
+    a task's own settings (`recipe.FINETUNE_TASKS`) only with one task, the hop list with
+    any, checked against the base's encoder by `spec.hops_problem`. The base's split seed and
+    model spec are its summary's facts, never fields.
 
 ## Rationale
 

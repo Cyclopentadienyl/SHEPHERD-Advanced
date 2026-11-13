@@ -142,8 +142,14 @@ here builds `shortest_paths.pt`, and the GB10 acceptance probe accepts a workspa
    checkpoint of it, and one to three **Tasks** (Disease, Gene,
    Patients-like-me; each option says whether it is ready on the dataset),
    then **Epochs**, **Seed** and **Graph backbone** (Trained, the reference,
-   or Frozen: item 7), one value for every child. Start trains one child run
-   per task, in order. The job card shows the start's graph backbone, each
+   or Frozen: item 7), one value for every child; the rest of what every
+   chosen task reads is under "More settings", and with one task its own
+   settings (learning rate, sample sizes, loss weights, candidate size) are
+   under "<Task> settings", from its reference. **Neighbours per hop** is
+   offered for any set of tasks, and opens with the start's sentence when the
+   reference does not fit the base's encoder (the demo's two-layer base: set
+   two numbers). Start sends what you touched and trains one child run per
+   task, in order. The job card shows the start's graph backbone, each
    child's status and, once it has ended, its best save by the selection its
    files record (a task model's validation pooled MRR, higher is better),
    named under it; **Stop** there names the queued children it cancels.

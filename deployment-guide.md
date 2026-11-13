@@ -3012,7 +3012,7 @@ CORS 只決定頁面能讀取什麼。不需要預檢的跨來源請求仍會抵
 | **Diagnosis (clinical)** | 病患表型、結果與選中候選的細節，使用中的模型顯示在一張卡片上（見下文）。它是第一個畫面 |
 | **Research (pre-clinical)** › Prepare › **Datasets** | 伺服器的 workspace，唯讀（見下文） |
 | **Research (pre-clinical)** › Prepare › **Training** | run bar、下一次 run 的參數、Continue… 與附圖表的 run 檢視（見下文）。它是 Research 下最先顯示的頁面 |
-| **Research (pre-clinical)** › Prepare › **Fine-tune** | 一個 base 的任務模型（自 K6 起）：一個已列出的 base、一到三個任務（Disease、Gene、Patients-like-me），每個任務依序各自訓練成一個 run，Epochs、Seed 與 Graph backbone（Trained，或凍結主幹對照的 Frozen）對每個子模型相同；一張 job card 顯示這次啟動的 graph backbone、每個任務的狀態、Stop 與產出 |
+| **Research (pre-clinical)** › Prepare › **Fine-tune** | 一個 base 的任務模型（自 K6 起）：一個已列出的 base、一到三個任務（Disease、Gene、Patients-like-me），每個任務依序各自訓練成一個 run，Epochs、Seed 與 Graph backbone（Trained，或凍結主幹對照的 Frozen）對每個子模型相同；每個所選任務都會讀取的其他設定在 More settings 下，只選一個任務時另有該任務自己的設定（見下文）；一張 job card 顯示這次啟動的 graph backbone、每個任務的狀態、Stop 與產出 |
 | **Research (pre-clinical)** › Evaluate › **Test** | 從伺服器的 intake 目錄匯入 cohort 版本、執行測試、保留並登錄其報告（見下文） |
 | **Research (pre-clinical)** › Evaluate › **Models** | 伺服器為某個 workspace 列出的 checkpoint、它們已記錄的測試結果、最新在前或依 family 排列，以及 Load（見下文）；模型 family 或此 workspace 的結果，可比較與匯出（Results，自 research comparison Stage 8b 起） |
 | 頁首右側的 **⚙ Settings** | Runtime Settings，與以前相同。對唯讀的瀏覽器，Apply Settings 與 Restart Backend 會停用並顯示鎖，"Operator controls only: <原因>" 寫在它們下方 |
@@ -3337,8 +3337,16 @@ steps 計，final learning-rate ratio 的「more than 0 with onecycle」）。�
 符合其層數）。表單下方一行顯示「Set by you: Epochs 5 (reference 200)」或尚未設定任何值；超過三項時
 只列出前三項、其餘計數，全部列在它的「Details ›」之下。這一行也指出 Start 會拒絕的值（「Not valid:
 …」）：單一欄位的值，或跨設定規則拒絕的組合（onecycle 搭配 final learning-rate ratio 0）；
-**Reset to reference** 把每一欄還原並清除你設定的內容。任務模型由 base 在 Research › Prepare › Fine-tune 訓練，其 Epochs、Seed 與 Graph backbone 也以同樣
-方式送出：你動過才送出。
+**Reset to reference** 把每一欄還原並清除你設定的內容。任務模型由 base 在 Research › Prepare › Fine-tune 訓練，其設定也以同樣
+方式送出：你動過才送出。它提供每個所選任務的 run 都會讀取的設定（自 ops-wiring round B2 起）：顯示
+**Epochs**、**Seed** 與 **Graph backbone**，其餘在「More settings」下；只選一個任務時，「Disease
+settings」（任務名稱）下有該任務自己的設定（learning rate、sample size、loss weight 與 candidate
+size），各自從該任務的參考值開始；選多個任務時，一行文字說明每個子模型採用自己任務的參考值。
+**Neighbours per hop** 不論選幾個任務都提供：不動它，每個子模型採用其任務的參考值；當該參考值不符合
+所選 base 的 encoder（例如 demo 的兩層 base）時，這一區會展開，欄位旁顯示 start 自己的句子，讓你
+設定符合的 hop list。base 的 split seed 與它的 configuration 是 base 摘要中的事實，不是欄位：finetune
+在其 base 的 split 上訓練，並保留其 graph side。start 的拒絕（一個值，或 runner 對 base 的檢查）以
+runner 的原話顯示在 Start 旁。
 **Data Paths 與它的 Save Path 已移除**：workspace 由 run bar 選擇，儀表板不再
 讀取或寫入伺服器工作目錄中的 `.shepherd_training_config.json`（留在那裡的檔案會被忽略；是否
 提供「Save as the default dataset」是擁有者要決定的問題）。參數放不進視窗時（兩個收合區都收合時，

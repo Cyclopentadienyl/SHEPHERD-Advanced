@@ -2920,7 +2920,7 @@ help control for every field. Nothing an operator sets changed; what moved is wh
 | **Diagnosis (clinical)** | Patient phenotypes, the results and the selected candidate's details, with the model in use on a card (below). It is the first screen |
 | **Research (pre-clinical)** › Prepare › **Datasets** | The server's workspaces, read-only (below) |
 | **Research (pre-clinical)** › Prepare › **Training** | The run bar, the parameters for the next run, Continue… and the run view with its charts (below). It is the research page shown first |
-| **Research (pre-clinical)** › Prepare › **Fine-tune** | A base's task models (since K6): one listed base, one to three tasks (Disease, Gene, Patients-like-me), each trained as its own run in order, with Epochs, Seed and Graph backbone (Trained, or Frozen for the frozen-backbone control) for every child, and a job card with the start's graph backbone, each task's status, Stop and products |
+| **Research (pre-clinical)** › Prepare › **Fine-tune** | A base's task models (since K6): one listed base, one to three tasks (Disease, Gene, Patients-like-me), each trained as its own run in order, with Epochs, Seed and Graph backbone (Trained, or Frozen for the frozen-backbone control) for every child, the rest of what every chosen task reads under More settings and the task's own settings for one task (below), and a job card with the start's graph backbone, each task's status, Stop and products |
 | **Research (pre-clinical)** › Evaluate › **Test** | Import a cohort version from the server's intake directory, run a test, keep and register its report (below) |
 | **Research (pre-clinical)** › Evaluate › **Models** | The server's checkpoints of a workspace, their recorded test results, newest first or by family, and Load (below); the results of a model's family or the workspace, compared and exported (Results, since research comparison Stage 8b) |
 | **⚙ Settings**, at the right of the header | Runtime Settings, as before. For a read-only browser, Apply Settings and Restart Backend are disabled with the lock, with "Operator controls only: <reason>" written below them |
@@ -3306,8 +3306,19 @@ the first three, counts the rest and lists every one under its "Details ›". It
 Start would refuse ("Not valid: …"): a single field's value, or a combination the rules across
 settings refuse (onecycle with a final learning-rate ratio of 0); **Reset to reference** puts
 every field back and clears what you set. Task models are trained from a base on Research ›
-Prepare › Fine-tune, whose Epochs, Seed and Graph backbone are sent the same way: when you
-touched them. **Data Paths and its Save Path are gone**: the workspace
+Prepare › Fine-tune, whose settings are sent the same way: when you touched them. It offers what
+every chosen task's run reads (since the ops-wiring round, B2): **Epochs**, **Seed** and **Graph
+backbone** shown, the rest under "More settings", and under "Disease settings" (the task's
+name) a task's own settings (its learning rate, sample sizes, loss weights and candidate
+size), each starting at that task's reference, only while exactly one task is chosen; with
+several, a line says each child takes its own task's reference. **Neighbours per hop** is
+offered for any set of tasks: left untouched, each child takes its task's reference; when
+that reference does not fit the chosen base's encoder (the demo's two-layer base, for example),
+the section opens with the start's own sentence beside the field, so you can set a hop list
+that fits. The base's split seed and its configuration are facts of its summary, not fields:
+a finetune trains on its base's split and keeps its graph side. A refusal of the start (a
+value, or the runner's check against the base) is shown beside Start in the runner's words.
+**Data Paths and its Save Path are gone**: the workspace
 is the run bar's choice, and the dashboard no longer reads or writes
 `.shepherd_training_config.json` in the server's working directory (a file left there is
 ignored; whether to offer "Save as the default dataset" is an owner question). When the
