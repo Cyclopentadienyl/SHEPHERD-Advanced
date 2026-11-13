@@ -1043,7 +1043,7 @@ class TestCheckpointsInAndOut:
         # Each group's heading, outside its list (which names it in its
         # aria-label too, since B0a).
         assert html.count(r"<b>Run gatv2/bad\xff</b>") == 2, html
-        assert sorted(len(v) for v in tc.runs_of(console).values()) == [1, 3]
+        assert sorted(len(v) for v in ml.runs_of(console).values()) == [1, 3]
 
     def test_a_directory_entry_never_shares_a_key_with_a_run_or_file_named_alike(
             self, tmp_path, monkeypatch):

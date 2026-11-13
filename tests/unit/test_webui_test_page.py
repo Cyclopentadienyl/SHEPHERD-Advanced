@@ -463,8 +463,11 @@ def test_an_operator_lists_the_workspaces_checkpoints(site, monkeypatch):
     assert f"model fingerprint {site.sha[:12]}" in child
     # Each is listed led by what it is: the fixture's file without a model
     # spec as a record not readable, its trained child by its task.
-    assert history.startswith("Record not readable · epoch ")
-    assert child.startswith("Disease · epoch ")
+    # How far it trained is every page's words (`renderers.epoch_words`).
+    by_key = {tp.item_key(i): i for i in models["items"]}
+    assert history.startswith(
+        f"Record not readable · {renderers.epoch_words(by_key[history_key])} · ")
+    assert child.startswith(f"Disease · {renderers.epoch_words(by_key[child_key])} · ")
 
 
 def test_the_reports_of_a_version_with_their_state_and_record(site):
@@ -3053,7 +3056,7 @@ def test_a_long_choice_ends_in_an_ellipsis_with_its_whole_text_as_title():
     (label, _key), = tp.model_choices({"items": [{
         "architecture": "gatv2", "run": RUN, "filename": "best.pt", "epoch": 12, "sha256": "c" * 64}]})
     # The kind word leads (K6 decision 13); a record never read says so.
-    assert label.startswith("Record not read · epoch 12 · GATv2 · run 2026-10-17 09:15")
+    assert label.startswith("Record not read · recorded epoch 12 · GATv2 · run 2026-10-17 09:15")
     assert label.endswith("· best.pt")
 
 
@@ -3527,8 +3530,8 @@ def test_every_checkpoint_is_listed_led_by_what_it_is(site, monkeypatch):
     labels = [label for label, _key in choices]
     assert len(set(labels)) == len(labels) and len({k for _l, k in choices}) == len(choices)
     for (label, _key), item in zip(choices, models["items"], strict=True):
-        assert label.startswith(r.record_kind_text(item) + " · epoch "), label
-    leads = sorted(label.split(" · epoch ")[0] for label in labels)
+        assert label.startswith(f"{r.record_kind_text(item)} · {r.epoch_words(item)} · "), label
+    leads = sorted(label.split(" · ")[0] for label in labels)
     # Two disease children: the fixture's trained one and the one put here.
     assert leads == sorted(["Base", "Disease", "Disease", "Gene", "Patients-like-me",
                             "Record not readable", "Record not readable"])

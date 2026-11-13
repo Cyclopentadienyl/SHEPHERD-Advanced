@@ -38,13 +38,15 @@ it is shown, after each diagnosis, after a Load ("served model changed") and on
 
 **What the card names, and where each fact comes from:**
 
-- the name line ("GAT · run 2026-10-17 09:15 · epoch 5") from the checkpoint's
-  place in the serving workspace's runs (the status's served paths, found
-  again in the server's list by `resolve_checkpoint`, which reads no file) and
-  the status's ``checkpoint_meta``. **A task model is named by its task**
-  (K6 decision 4, the one place the card names it): "Disease task model",
-  with "GATv2 · run … · epoch 5" on the line under it; the task is read from
-  the served identity's scoring mode through the one task table
+- the name line ("GATv2 · run 2026-10-17 09:15 · 6 epochs completed",
+  `renderers.model_name_line`, the words every page names a file by) from
+  the checkpoint's place in the serving workspace's runs (the status's served
+  paths, found again in the server's list by `resolve_checkpoint`, which
+  reads no file) and the status's ``checkpoint_meta``. **A task model is
+  named by its task** (K6 decision 4, the one place the card names it):
+  "Disease task model", with "GATv2 · run … · 6 epochs completed" on the line
+  under it; the task is read from the served identity's scoring mode through
+  the one task table
   (`served_task`, `src.core.types.SCORING_MODE_TASKS`);
 - "model fingerprint <12 hex> ✓ verified" from the served identity;
 - "trained on <name> · dataset fingerprint <12 hex>" from **the checkpoint's own
@@ -342,10 +344,11 @@ def served_item(status: Mapping[str, Any], serving: Optional[str], *,
                 environ: Optional[Mapping[str, str]] = None
                 ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
     """The served checkpoint as an item of the serving workspace's runs
-    (architecture, run, file, the served digest, the status's epoch and the
-    Trainer's validation figure), or ``(None, why)``. Its place comes from the
-    status's served paths and is found again in the server's list
-    (`resolve_checkpoint`, which reads no file); no checkpoint is opened."""
+    (architecture, run, file, the served digest, the status's epoch index and
+    completed epochs, and the Trainer's validation figure), or ``(None,
+    why)``. Its place comes from the status's served paths and is found again
+    in the server's list (`resolve_checkpoint`, which reads no file); no
+    checkpoint is opened."""
     from src.api.services.server_lists import ServerListRefused, resolve_checkpoint
     from src.utils.checkpoint_paths import RUN_CHECKPOINTS_DIRNAME, RUNS_DIRNAME
 
@@ -369,10 +372,13 @@ def served_item(status: Mapping[str, Any], serving: Optional[str], *,
     except ServerListRefused:
         return None, "the checkpoint in use is not in the serving workspace's list"
     meta = status.get("checkpoint_meta") if isinstance(status.get("checkpoint_meta"), dict) else {}
-    epoch = meta.get("epoch")
+
+    def whole(value: Any) -> Optional[int]:
+        return value if isinstance(value, int) and not isinstance(value, bool) else None
+
     return ({"workspace": serving, "architecture": architecture, "run": run,
-             "filename": filename, "sha256": sha,
-             "epoch": epoch if isinstance(epoch, int) and not isinstance(epoch, bool) else None,
+             "filename": filename, "sha256": sha, "epoch": whole(meta.get("epoch")),
+             "completed_epochs": whole(meta.get("completed_epochs")),
              "validation": _validation(meta), "dataset_fingerprint": None, "problem": None},
             None)
 
@@ -775,8 +781,7 @@ def body_html(state: Mapping[str, Any], produced_at: Any = None) -> str:
             run = r.e(r.model_name_line(item))
         else:
             meta = status.get("checkpoint_meta") or {}
-            epoch = meta.get("epoch") if isinstance(meta, Mapping) else None
-            run = f"Checkpoint · epoch {r.e(epoch if epoch is not None else '—')}"
+            run = f"Checkpoint · {r.e(r.epoch_words(meta if isinstance(meta, Mapping) else {}))}"
             why = r.e(facts.get("item_problem") or "")
         # The task, named once on the card (K6 decision 4); the run under it.
         # Every served model is a finetuned task's (its scoring mode names one).
@@ -941,8 +946,8 @@ def served_facts_html(state: Mapping[str, Any], *, open_section: str = "identity
         sha = served_checkpoint_sha(status)
         meta = status.get("checkpoint_meta") if isinstance(status.get("checkpoint_meta"), dict) else {}
         item = {"architecture": None, "run": None, "filename": None, "sha256": sha,
-                "epoch": meta.get("epoch"), "validation": _validation(meta),
-                "dataset_fingerprint": None, "problem": None}
+                "epoch": meta.get("epoch"), "completed_epochs": meta.get("completed_epochs"),
+                "validation": _validation(meta), "dataset_fingerprint": None, "problem": None}
     trained = facts.get("trained") or {}
     shown = trained.get("state") == "read"
     if shown:
@@ -960,7 +965,7 @@ def served_facts_html(state: Mapping[str, Any], *, open_section: str = "identity
     meta = status.get("checkpoint_meta") if isinstance(status.get("checkpoint_meta"), dict) else {}
     params = meta.get("params")
     name_line = model_facts.name_line if facts.get("item") else \
-        f"Checkpoint · epoch {item.get('epoch') if item.get('epoch') is not None else '—'}"
+        f"Checkpoint · {r.epoch_words(item)}"
     if isinstance(params, int) and not isinstance(params, bool):
         name_line += f" · {params:,} params"
     model_facts = model_facts._replace(

@@ -120,9 +120,14 @@ def test_a_name_with_markup_is_escaped():
 
 # --------------------------------------------------------------------------- the model row
 def test_the_name_line_comes_from_the_run_id_and_the_epoch():
-    assert r.model_name_line(checkpoint()) == "GATv2 · run 2026-10-17 09:15 · epoch 5"
+    """How far it trained in the one wording (`epoch_words`): the epochs its
+    progress record says it completed; an older file without one, the epoch
+    index it records, never a count made from it."""
+    assert r.model_name_line({**checkpoint(), "completed_epochs": 6}) == (
+        "GATv2 · run 2026-10-17 09:15 · 6 epochs completed")
+    assert r.model_name_line(checkpoint()) == "GATv2 · run 2026-10-17 09:15 · recorded epoch 5"
     assert r.model_name_line(checkpoint(epoch=None, run="odd")) == (
-        "GATv2 · run odd · epoch not recorded")
+        "GATv2 · run odd · epochs not recorded")
 
 
 def test_trained_on_every_listed_workspace_with_the_full_digest():
@@ -277,7 +282,7 @@ def test_the_research_table_row_has_its_columns_and_escapes():
     cells = re.findall(r"<td[^>]*>(.*?)</td>", row)
     assert len(cells) == 5
     assert 'GATv2 · <span class="shep-nowrap">run 2026-10-17 09:15</span>' in cells[0]
-    assert "epoch 5 · &lt;b&gt;x" in cells[0]
+    assert "recorded epoch 5 · &lt;b&gt;x" in cells[0]
     assert "In use (Diagnosis)" in cells[0] and "<b>x" not in row
     assert f'model <code class="shep-fpv" title="{SHA}">{SHA[:12]}</code>' in cells[1]
     assert "dataset <b>demo</b>" in cells[1] and "synthetic" in cells[1]
@@ -454,8 +459,7 @@ def test_the_model_kind_text_fits_an_option_for_every_task_and_keeps_other_words
     §8); a base, a refused record and one never read read as their own word,
     whatever a transfer says."""
     from src.models.bundle.spec import TASKS
-    from src.webui.components.training_console import OPTION_CHARS
-
+    OPTION_CHARS = r.OPTION_CHARS
     for task in TASKS:
         text = r.model_kind_text({**_record(task=task), "weight_transfer": GRAPH_SIDE_FROZEN})
         assert text.endswith(" · frozen graph backbone") and text.count(" · ") == 1, text
@@ -500,7 +504,7 @@ def test_a_bundle_run_reads_gatv2_and_a_shepherdgnn_run_its_upper_case():
     assert r.run_label("gatv2", "20261017-091500_run_3fa9c1") == "GATv2 · run 2026-10-17 09:15"
     assert r.run_label_html("gatv2", "20261017-091500_run_3fa9c1") == (
         'GATv2 · <span class="shep-nowrap">run 2026-10-17 09:15</span>')
-    assert r.model_name_line(_record()) == "GATv2 · run 2026-10-17 09:15 · epoch 5"
+    assert r.model_name_line(_record()) == "GATv2 · run 2026-10-17 09:15 · recorded epoch 5"
     assert (r.architecture_label("gat"), r.architecture_label("hgt"),
             r.architecture_label(None)) == ("GAT", "HGT", "MODEL")
 
@@ -515,6 +519,7 @@ def test_a_base_and_a_task_models_validation_figures_are_named(metric, label):
     assert r.validation_cell({"metric": metric, "value": 0.5}) == (
         f'0.5000<div class="shep-sub">{label}</div>')
     assert r.validation_text((metric, 0.5)).startswith(f"{label} 0.5000 — selection metric")
+    from src.webui.components import model_list as ml
     from src.webui.components import training_console as tc
 
     assert not hasattr(tc, "_METRIC_WORDS"), "one map, the renderers'"
@@ -522,8 +527,8 @@ def test_a_base_and_a_task_models_validation_figures_are_named(metric, label):
             "validation": {"metric": metric, "value": 0.5}}
     # The figure is the chosen file's details on Training, not its option (K6b:
     # the skill's 40 characters and one separator).
-    assert tc.validation_words(item) == f"{label} 0.5000"
-    assert tc.checkpoint_words(item) == "Latest save · 1 epoch completed"
+    assert r.validation_words(item) == f"{label} 0.5000"
+    assert ml.checkpoint_words(item) == "Latest save · 1 epoch completed"
 
 
 def test_model_facts_show_the_task_and_the_configuration_escaped():
@@ -618,7 +623,7 @@ def test_each_missing_state_has_its_own_word_and_a_dash_never_stands_for_not_rec
     # A record's count and a manifest's count: one word for the same state.
     assert r.recorded_count_text(None) == r.count_text(None)
     assert r.recorded_count_text(1200) == "1200"
-    assert "epoch not recorded" in r.model_table_row_html(absent, [workspace()])
+    assert "epochs not recorded" in r.model_table_row_html(absent, [workspace()])
     # The record's states, each its own words: absent apart from unverifiable.
     states = {binding: r.record_words(workspace(binding=binding))
               for binding in ("verified", "unrecorded", "unverifiable", "mismatch", None)}

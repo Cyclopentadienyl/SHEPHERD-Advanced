@@ -49,7 +49,9 @@ A base's task models are trained on Research › Fine-tune
 the run bar's workspace's model records only (bases and task models; a file
 without a model spec is never continued from the dashboard, decision 1),
 from `server_lists.list_checkpoints` (an operator control since it opens
-every checkpoint), or a typed path that locates one of them; Check checkpoint
+every checkpoint) in the shared Run → Checkpoint selects (`model_list`'s, as
+Fine-tune's parent: short options whose values are the listing's keys), or a
+typed path that locates one of them; Check checkpoint
 shows what continuing does (the shared run plan) and compares the parent's
 recorded dataset fingerprint with the workspace's current one. While it is
 open the run bar's actions are Start (disabled, with the reason), Continue
@@ -166,6 +168,15 @@ def _shell():
     from src.webui import shell
 
     return shell
+
+
+def _model_list():
+    """The shared model list (`src.webui.components.model_list`: the Run →
+    Checkpoint selects' options), imported where it is used, as the shell is
+    (`_shell`): it imports the shell."""
+    from src.webui.components import model_list
+
+    return model_list
 
 
 def plain_html(value: Any = "", **kwargs: Any) -> Any:
@@ -1266,7 +1277,7 @@ def run_head_html(run: Optional[RunRef], ws: Mapping[str, Any], *, operator: boo
                   snapshot: Optional[Mapping[str, Any]], live: bool = False,
                   continuing: Optional[str] = None) -> str:
     """The run view's header, one line: "Run shown" and the run as a person
-    names it (`run_words`), whether it is the workspace's latest, how its
+    names it (`model_list.run_words`), whether it is the workspace's latest, how its
     recorded dataset stands to the run bar's (`_dataset_relation`), and, while
     Continue… is open with a listed checkpoint chosen, whether this is the run
     continued from (`continuing`, its "<architecture>/<run>"): the drawer's
@@ -1310,7 +1321,7 @@ def run_head_html(run: Optional[RunRef], ws: Mapping[str, Any], *, operator: boo
                '</div></div>')
     return (f'<div class="shep-panel-hd shep-rv-hd"><h2><span class="shep-rv-k">Run shown</span> '
             f'<span class="shep-rv-name" title="{r.e(label)}">'
-            f'{r.e(run_words(arch, directory))}</span></h2>{latest}{tag}{relation}'
+            f'{r.e(_model_list().run_words(arch, directory))}</span></h2>{latest}{tag}{relation}'
             f'<span class="shep-rv-tools">{details}</span></div>')
 
 
@@ -2174,146 +2185,12 @@ _CONTINUE_PROMPT = "Select a checkpoint, then click <b>Check checkpoint</b>."
 
 #: What a checkpoint file holds, as its record says (`checkpoint_kind`).
 CHECKPOINT_KINDS = {"training_state": "training state", "weights": "weights only"}
-#: A file the trainer keeps as one of its top-k by the validation metric
-#: (`ModelCheckpoint`'s ``model-{epoch:02d}-{metric:.4f}.pt``).
-_TOP_K_FILE = re.compile(r"^model-\d+-\d+(?:\.\d+)?\.pt$")
-#: The longest option a select offers (the WebUI skill §8).
-OPTION_CHARS = 40
-
-
-def run_words(architecture: Any, run: Any) -> str:
-    """A run as a person names it: its name (when it was given one), the
-    architecture and its start time, "ui-live-stop-02 · GAT · 2026-10-24 17:39"
-    from ``20261024-173909_ui-live-stop-02_c1d9cf``; an unnamed run ("run") is
-    its architecture and time; a directory not named by its start time is its
-    whole name."""
-    arch = r.architecture_label(architecture)
-    started = r.run_started(run)
-    if not started:
-        return f"{arch} · {run}"
-    name = r.run_name(run)
-    return f"{name} · {arch} · {started}" if name and name != "run" else f"{arch} · {started}"
-
-
-def _run_key(item: Mapping[str, Any]) -> str:
-    """A listed checkpoint's run's identity (`model_list.item_run_key`, the
-    list's `run_key`: ``<architecture>/<run>`` for names that are text), by
-    which the runs are grouped and the run select's value is made."""
-    from src.webui.components.model_list import item_run_key
-
-    return item_run_key(item)
 
 
 def _run_label(item: Mapping[str, Any]) -> str:
     """A listed checkpoint's run as its details show it: its shown names,
     ``<architecture>/<run>``."""
     return f"{item.get('architecture')}/{item.get('run')}"
-
-
-def runs_of(parents: Mapping[str, Any]) -> Dict[str, List[str]]:
-    """The listed checkpoints by run, in the list's order (latest run first,
-    newest file first): ``{run identity: [key, ...]}`` (`_run_key`:
-    ``"<architecture>/<run>"`` for names that are text)."""
-    runs: Dict[str, List[str]] = {}
-    for key, item in parents.items():
-        runs.setdefault(_run_key(item), []).append(key)
-    return runs
-
-
-def _progress_words(item: Mapping[str, Any]) -> Optional[str]:
-    """"195 epochs completed" from the file's progress record; a file with no
-    progress record says the epoch index it records, never a count made from
-    it; None when it records neither."""
-    completed, epoch = item.get("completed_epochs"), item.get("epoch")
-    if isinstance(completed, int) and not isinstance(completed, bool):
-        return f"{completed} epoch{'s' if completed != 1 else ''} completed"
-    if isinstance(epoch, int) and not isinstance(epoch, bool):
-        return f"recorded epoch {epoch}"
-    return None
-
-
-def validation_words(item: Mapping[str, Any]) -> Optional[str]:
-    """"Validation pooled MRR (Trainer) 0.2867": the Trainer's validation
-    figure the file records, in the dashboard's one map of their names
-    (`renderers.VALIDATION_LABELS`), never a test result."""
-    validation = item.get("validation") or {}
-    metric, value = validation.get("metric"), validation.get("value")
-    if metric not in r.VALIDATION_LABELS or not isinstance(value, (int, float)):
-        return None
-    return f"{r.VALIDATION_LABELS[metric]} {value:.4f}"
-
-
-def _fit(what: str, rest: Optional[str], mark: str = "") -> str:
-    """"<what><mark> · <rest>" in at most `OPTION_CHARS` characters with one
-    separator: `what` (a file's name) shortened in its middle with an
-    ellipsis, so its start and its end stay (where a copy or a version
-    differs: "…copy_b.pt", "…67-v1.pt")."""
-    room = OPTION_CHARS - (len(rest) + 3 if rest else 0) - len(mark)
-    if len(what) > room:
-        keep = max(room - 1, 2)
-        head = keep // 2
-        what = what[:head] + "…" + what[len(what) - (keep - head):]
-    what += mark
-    return f"{what} · {rest}" if rest else what
-
-
-def checkpoint_words(item: Mapping[str, Any]) -> str:
-    """A checkpoint's option in its run, in a few words (the WebUI skill §8:
-    at most `OPTION_CHARS` characters, one separator): what it is and how far
-    it trained, "Latest save · 195 epochs completed", "Top-k save · 21 epochs
-    completed"; a file that holds weights only, or cannot be read, says so.
-    How its stage ended, its stage, its Trainer validation figure, what it
-    holds and its model fingerprint are the chosen file's details
-    (`parent_details_html`)."""
-    filename = str(item.get("filename") or "")
-    if item.get("problem") or not r.is_digest(item.get("sha256")):
-        return _fit(filename, "cannot be read")
-    what = ("Latest save" if filename == "last.pt" else
-            "Top-k save" if _TOP_K_FILE.match(filename) else filename)
-    if item.get("checkpoint_kind") == "weights":
-        return _fit(what, "weights only")
-    return _fit(what, _progress_words(item))
-
-
-def _choices(labels: Sequence[Tuple[str, str]], fallback: Mapping[str, str]) -> List[Tuple[str, str]]:
-    """Options whose label another option also has get their own distinct
-    words (`fallback`), so no two options read the same."""
-    seen: Dict[str, int] = {}
-    for label, _key in labels:
-        seen[label] = seen.get(label, 0) + 1
-    return [(f"{label} · {fallback[key]}" if seen[label] > 1 else label, key)
-            for label, key in labels]
-
-
-def run_choices(parents: Mapping[str, Any]) -> List[Tuple[str, str]]:
-    runs = runs_of(parents)
-    first = {run: parents[keys[0]] for run, keys in runs.items()}
-    return _choices([(run_words(item.get("architecture"), item.get("run")), run)
-                     for run, item in first.items()],
-                    {run: str(item.get("run")) for run, item in first.items()})
-
-
-def checkpoint_choices(parents: Mapping[str, Any], keys: Sequence[str]) -> List[Tuple[str, str]]:
-    """A run's checkpoints as options: their words (`checkpoint_words`); two
-    that would read alike are named by their file instead (unique in a run,
-    `_fit` keeping both its ends), and files whose shortened names still read
-    alike are numbered in the list's order, "(2)"; still one separator and
-    `OPTION_CHARS` at most. No two options read the same (the WebUI skill
-    §8); the chosen file's full name is in its details."""
-    def named(key: str, mark: str = "") -> str:
-        return _fit(str(parents[key].get("filename")), _progress_words(parents[key]), mark)
-
-    labels = [checkpoint_words(parents[key]) for key in keys]
-    seen = Counter(labels)
-    labels = [label if seen[label] == 1 else named(key) for label, key in zip(labels, keys)]
-    seen, nth = Counter(labels), Counter()
-    choices = []
-    for label, key in zip(labels, keys):
-        if seen[label] > 1:
-            nth[label] += 1
-            label = named(key, f" ({nth[label]})")
-        choices.append((label, key))
-    return choices
 
 
 def checkpoint_items(listing: Any) -> Tuple[Dict[str, Any], Optional[str]]:
@@ -2351,30 +2228,10 @@ def _list_parents(ws: Mapping[str, Any]) -> Tuple[Dict[str, Any], Optional[str]]
     return parents, None
 
 
-def parents_update(parents: Mapping[str, Any], keep: Optional[str] = None) -> Tuple[Any, Any]:
-    """The two selects for `parents`: the runs, and the chosen run's
-    checkpoints. `keep` (a checkpoint's key) stays chosen while it is listed;
-    otherwise the first run and its first checkpoint (its latest save)."""
-    runs = runs_of(parents)
-    run = _run_key(parents[keep]) if keep in parents else next(iter(runs), None)
-    keys = runs.get(run, []) if run else []
-    value = keep if keep in keys else (keys[0] if keys else None)
-    return (gr.update(choices=run_choices(parents), value=run),
-            gr.update(choices=checkpoint_choices(parents, keys), value=value))
-
-
-def on_run_chosen(run, parents, current):
-    """A run chosen: its checkpoints, the latest save first. The checkpoint
-    chosen stays when it is this run's (opening the drawer sets both)."""
-    keys = runs_of(parents or {}).get(run or "", [])
-    value = current if current in keys else (keys[0] if keys else None)
-    return gr.update(choices=checkpoint_choices(parents or {}, keys), value=value)
-
-
 def _parents_note(ws: Mapping[str, Any], parents: Mapping[str, Any], problem: Optional[str]) -> str:
     if problem:
         return f'<span class="shep-muted">{r.e(problem)}</span>'
-    runs = len(runs_of(parents))
+    runs = len(_model_list().runs_of(parents))
     return (f'<span class="shep-muted">server list · {runs} run{"s" if runs != 1 else ""}, '
             f'{len(parents)} checkpoint{"s" if len(parents) != 1 else ""} · latest first</span>')
 
@@ -2388,9 +2245,11 @@ def stage_words(item: Mapping[str, Any]) -> str:
 
 def parent_details_html(item: Optional[Mapping[str, Any]]) -> str:
     """The chosen checkpoint's details, as a two-column table, saying what its
-    option does not (`checkpoint_words` gives what it is and its progress):
-    its file, its stage, what it holds, how its stage ended where that limits
-    continuing, its Trainer validation figure (never a test result), its model
+    option does not (`model_list.checkpoint_words` gives what it is and its
+    progress): its file, its stage, what it holds, how its stage ended where
+    that limits continuing, its Trainer validation figure (never a test
+    result), what its run's saves were ranked by (`renderers.selection_words`:
+    the recorded monitor and direction, or not recorded), its model
     fingerprint (copyable) and its run's directory. A file that cannot be read
     says why, in amber. Empty when none is chosen from the list."""
     if not item:
@@ -2411,9 +2270,10 @@ def parent_details_html(item: Optional[Mapping[str, Any]]) -> str:
                 "stopped_early": "not possible: it stopped early"}.get(item.get("end") or "")
     if going_on and kind != "weights":
         rows.append(("Continuing", r.e(going_on)))
-    figure = validation_words(item)
+    figure = r.validation_words(item)
     rows.append(("Validation", r.e(figure.removeprefix("Validation ") if figure
                                    else "not recorded in this file")))
+    rows.append(("Selection", r.e(r.selection_words(item).removeprefix("Selection "))))
     rows.append(("Model fingerprint", digest_html(item["sha256"], what="model fingerprint")))
     rows.append(("Run", f"<code>{r.e(_run_label(item))}</code>"))
     cells = "".join(f'<span class="shep-k">{k}</span><span class="shep-v">{v}</span>' for k, v in rows)
@@ -2434,7 +2294,7 @@ def _on_continue_open(request: gr.Request, ws, mode):
                 gr.update(), gr.update())
     parents, problem = _list_parents(ws or {})
     mode.update(drawer=True, confirm=None, parent={})
-    runs, checkpoints = parents_update(parents)
+    runs, checkpoints = _model_list().parents_update(parents)
     first = checkpoints.get("value") if isinstance(checkpoints, dict) else None
     mode["parent"] = _chosen(CONTINUE_FROM_LIST, first, "", parents, ws)
     return ("", mode, parents, runs, checkpoints, _parents_note(ws or {}, parents, problem),
@@ -2458,7 +2318,7 @@ def _parents_listed(access: Any, ws: Optional[Mapping[str, Any]], current: Any):
         return ({}, gr.update(choices=[], value=None), gr.update(choices=[], value=None),
                 f'<span class="shep-muted">{r.e(access.refusal)}</span>')
     parents, problem = _list_parents(ws or {})
-    return (parents, *parents_update(parents, current),
+    return (parents, *_model_list().parents_update(parents, current),
             _parents_note(ws or {}, parents, problem))
 
 
@@ -2911,18 +2771,21 @@ FIELD_HELP = {
     ),
     "continue_run": (
         "Run",
-        "The run to continue from, latest first: its name, directory and start time.\n\n"
-        "Continuing trains a new run of its own; the run chosen here is not changed.",
+        "The run to continue from, latest first, each led by its name or start time.\n\n"
+        "Its architecture and start time follow; its directory is in the table. Continuing "
+        "trains a new run of its own; the run chosen here is not changed.",
     ),
     "checkpoint_dropdown": (
         "Checkpoint",
         "The chosen run's checkpoints, newest first.\n\n"
         "• Latest save: last.pt, the run's last training state.\n"
-        "• Top-k save: kept for its Trainer validation figure (LP accuracy for a base, pooled "
-        "MRR for a task model; not a test result).\n\n"
-        "The table under it shows the file, its stage, what it holds, its Trainer validation "
-        "figure and its model fingerprint. The server finds the file in its list again and "
-        "compares its bytes with that fingerprint. Refresh lists them again.",
+        "• Best (its metric named): the run's best value of the selection metric its files "
+        "record, in their direction; files that tie share it.\n"
+        "• Top-k save: another file the run kept by that metric.\n\n"
+        "The metric is the Trainer's validation figure, not a test result. The table under "
+        "it shows the file, its stage, what it holds, that figure, the selection and the model "
+        "fingerprint. The server finds the file in its list again and compares its bytes with "
+        "that fingerprint. Refresh lists them again.",
     ),
     "manual_checkpoint": (
         "Checkpoint path",
@@ -3231,7 +3094,7 @@ def create_training_tab(ctx: Any) -> None:
                            show_progress="hidden").then(**ctx.chip_refresh)
     # A run chosen: its checkpoints (the checkpoint select's change then
     # clears the last check and records the parent, as for any choice).
-    continue_run.change(on_run_chosen, inputs=[continue_run, parents, checkpoint_dropdown],
+    continue_run.change(_model_list().on_run_chosen, inputs=[continue_run, parents, checkpoint_dropdown],
                         outputs=[checkpoint_dropdown], show_progress="hidden")
     check_continue_btn.click(
         _on_check_continue,

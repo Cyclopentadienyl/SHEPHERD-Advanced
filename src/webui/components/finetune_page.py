@@ -55,9 +55,11 @@ start's graph backbone (`freeze_line_html`, the runner's own record of the
 settings it started with), then one row per child
 (Task | Status | Run | Best save | Validation (Trainer)). Each status is a mark
 of colour, shape and word (`training_console.job_status_html`, the shared
-`renderers.status_mark`). A child's products, the best save by the Trainer
-validation figure its saved files record and that figure (never a test
-result), are read for an operator and only once the child has ended
+`renderers.status_mark`). A child's products, its best saves by the selection
+its saved files record (`renderers.best_saves`: the recorded metric in its
+recorded direction, named under the file, `renderers.selection_words`) and
+that figure (the Trainer's, never a test result), are read for an operator
+and only once the child has ended
 (`list_checkpoints(run=)`, opening that run's files; kept per session by the
 child's run and status). Stop asks first: the Training page's stop logic
 (`training_console.ask_stop`, `confirm_stop`) behind this page's own D8-checked
@@ -86,6 +88,7 @@ from src.api.services.training_manager import FinetuneInputs, training_manager
 from src.config.recipe import FINETUNE, FINETUNE_SOURCES, FROZEN_PARTS
 from src.evaluation.caveats import TASK_NAMES, task_list_text
 from src.models.bundle.spec import TASKS
+from src.webui.components import model_list as ml
 from src.webui.components import renderers as r
 from src.webui.components import training_console as tc
 from src.webui.components.chips import gated, operator_only
@@ -123,7 +126,7 @@ def task_choices(readiness: Mapping[str, Optional[str]]) -> List[Tuple[str, str]
     """The Tasks options, in `TASKS` order: the task's name and whether it is
     ready on the workspace ("Gene · ready", "Gene · not ready"; why not is the
     line under the group, `tasks_note_html`). Each at most
-    `training_console.OPTION_CHARS` characters, one separator. A task the
+    `renderers.OPTION_CHARS` characters, one separator. A task the
     readiness does not name (before a dataset is read) is not ready."""
     def ready(task: str) -> bool:
         return task in readiness and readiness[task] is None
@@ -181,7 +184,7 @@ def bases_note_html(parents: Mapping[str, Any], problem: Optional[str]) -> str:
     if not parents:
         return ('<p class="shep-muted">No base checkpoint in this dataset\'s runs: train one on '
                 'Research › Training.</p>')
-    runs = len(tc.runs_of(parents))
+    runs = len(ml.runs_of(parents))
     return (f'<p class="shep-muted">Server list: {len(parents)} base checkpoint'
             f'{"s" if len(parents) != 1 else ""} in {runs} run{"s" if runs != 1 else ""}, '
             'latest first.</p>')
@@ -191,12 +194,13 @@ def base_summary_html(item: Optional[Mapping[str, Any]]) -> str:
     """The chosen base's summary as key-value rows, saying what the two
     selects above do not: its run's directory (the Run select gives its
     name, architecture and time), file, configuration, what it holds, its
-    Trainer validation figure, how its dataset stands to the one selected,
-    and the model fingerprint Start sends (copyable). Escaped; empty when
-    none is chosen."""
+    Trainer validation figure, what its run's saves were ranked by
+    (`renderers.selection_words`), how its dataset stands to the one
+    selected, and the model fingerprint Start sends (copyable). Escaped;
+    empty when none is chosen."""
     if not item:
         return ""
-    figure = tc.validation_words(item)
+    figure = r.validation_words(item)
     trained = item.get("trained_on_this_dataset")
     if trained is True:
         on = f'<span class="shep-ok-t">{r.CHECK} the dataset selected</span>'
@@ -212,6 +216,7 @@ def base_summary_html(item: Optional[Mapping[str, Any]]) -> str:
         ("Configuration", r.e(r.configuration_text(item))),
         ("Holds", r.e(tc.CHECKPOINT_KINDS.get(kind or "", "not recorded"))),
         ("Validation", r.e(figure.removeprefix("Validation ") if figure else "not recorded")),
+        ("Selection", r.e(r.selection_words(item).removeprefix("Selection "))),
         ("Trained on", on),
         ("Model fingerprint", tc.digest_html(item.get("sha256"), what="model fingerprint")),
     ]
@@ -236,7 +241,7 @@ def parent_line_html(finetune: Mapping[str, Any]) -> str:
     parent = Path(str(finetune.get("parent") or ""))
     parts = parent.parts
     if len(parts) >= 4 and parts[-2] == "checkpoints":
-        named = (f'{r.e(tc.run_words(parts[-4], parts[-3]))} '
+        named = (f'{r.e(ml.run_words(parts[-4], parts[-3]))} '
                  f'<code>{r.e(parent.name)}</code>')
     else:
         named = f"<code>{r.e(parent.name)}</code>"
@@ -270,28 +275,29 @@ def freeze_note_html(value: Any) -> str:
 
 
 def child_products(child: Mapping[str, Any]) -> Dict[str, Any]:
-    """An ended child's products, read once: its run's saved files' best by
-    the Trainer validation figure each records (the list's metadata, never a
-    file's name), ties shared, as ``{"best": [{"words", "validation"}],
-    "problem"}``. It opens that run's files (`list_checkpoints(run=)`): an
+    """An ended child's products, read once: its run's best saves by the
+    selection its files record (`renderers.best_saves`: the recorded monitor,
+    in its recorded direction, from the list's metadata, never a file's name),
+    ties shared, as ``{"best": [{"words", "validation", "selection"}],
+    "recorded", "problem"}``, `recorded` whether any of its files records a
+    selection. It opens that run's files (`list_checkpoints(run=)`): an
     operator's read only."""
     from src.api.services.server_lists import list_checkpoints
 
     architecture, run = _run_parts(child.get("run_dir"))
     workspace = tc.workspace_of_run(child.get("run_dir"))
     if workspace is None or run is None:
-        return {"best": [], "problem": "its workspace is not listed now"}
+        return {"best": [], "recorded": False, "problem": "its workspace is not listed now"}
     items, problem = tc.checkpoint_items(
         list_checkpoints(workspace, architecture, task=child.get("task"), run=run))
     if problem:
-        return {"best": [], "problem": problem}
-    scored = [item for item in items.values()
-              if isinstance((item.get("validation") or {}).get("value"), (int, float))]
-    if not scored:
-        return {"best": [], "problem": None}
-    top = max(item["validation"]["value"] for item in scored)
-    return {"best": [{"words": tc.checkpoint_words(item), "validation": item["validation"]}
-                     for item in scored if item["validation"]["value"] == top],
+        return {"best": [], "recorded": False, "problem": problem}
+    best = r.best_saves(items)
+    return {"best": [{"words": ml.checkpoint_words(item, best=True),
+                      "validation": item["validation"],
+                      "selection": r.selection_words(item)}
+                     for key, item in items.items() if key in best],
+            "recorded": any(item.get("selection") for item in items.values()),
             "problem": None}
 
 
@@ -324,10 +330,12 @@ def _products_cells(child: Mapping[str, Any], *, operator: bool,
         return f'<td colspan="2" class="shep-muted">not read: {r.e(found["problem"])}</td>'
     best = found.get("best") or []
     if not best:
-        return ('<td colspan="2" class="shep-muted">no saved file records a validation '
-                'figure</td>')
+        why = ("no saved file records its selection metric's figure" if found.get("recorded")
+               else f"{r.selection_words({}).lower()} in its saved files")
+        return f'<td colspan="2" class="shep-muted">{r.e(why)}</td>'
     names = "".join(f"<div>{r.e(entry['words'])}</div>" for entry in best)
-    return f"<td>{names}</td><td>{r.validation_cell(best[0]['validation'])}</td>"
+    by = f'<div class="shep-sub">{r.e(best[0]["selection"])}</div>'
+    return f"<td>{names}{by}</td><td>{r.validation_cell(best[0]['validation'])}</td>"
 
 
 def child_row_html(child: Mapping[str, Any], *, operator: bool, products: Mapping[str, Any],
@@ -527,7 +535,7 @@ def _on_finetune_bases(request: gr.Request, ws, current):
     from src.api.services.server_lists import list_checkpoints
 
     parents, problem = tc.checkpoint_items(list_checkpoints(name, learning_stage="base"))
-    return (parents, *tc.parents_update(parents, current), bases_note_html(parents, problem))
+    return (parents, *ml.parents_update(parents, current), bases_note_html(parents, problem))
 
 
 def _on_base_chosen(key, parents):
@@ -635,14 +643,18 @@ FIELD_HELP = {
     ),
     "ft_run": (
         "Run",
-        "The runs holding a base checkpoint, latest first: name, directory and start time.\n\n"
-        "Only bases are offered: a task model is never a parent (children never chain), and a "
-        "file without a model spec is never trained from here.",
+        "The runs holding a base checkpoint, latest first, each led by its name or start "
+        "time.\n\n"
+        "Its architecture and start time follow; its directory is in the summary. Only bases "
+        "are offered: a task model is never a parent (children never chain), and a file "
+        "without a model spec is never trained from here.",
     ),
     "ft_checkpoint": (
         "Checkpoint",
         "The base to fine-tune, from the chosen run, newest first. Its summary is under the "
         "list.\n\n"
+        "• Latest save, Best (by the selection its files record, named by its metric) or "
+        "Top-k save.\n"
         "• A weights-only or early-stopped base can be fine-tuned.\n"
         "• Start sends its model fingerprint; the server reads the file against it.\n"
         "• Listing opens each checkpoint, so it is an operator control.",
@@ -675,11 +687,14 @@ FIELD_HELP = {
 TOPIC_HELP = {
     "finetune-best-save": (
         "Best save",
-        "The saved file of a child's run with the highest Trainer validation figure (pooled "
-        "MRR) its record holds; files that tie share it.\n\n"
-        "It is the Trainer's selection figure on the val samples, not a test result: test the "
-        "model on Research › Test. Shown to the operator once the child has ended (reading it "
-        "opens the run's checkpoints).",
+        "The saved file of a child's run with the best value of the selection metric its "
+        "files record, in the direction they record; files that tie share it.\n\n"
+        "• The metric and its direction are named under the file (a task model selects on "
+        "validation pooled MRR, higher is better).\n"
+        "• It is the Trainer's figure on the val samples, not a test result: test the model "
+        "on Research › Test.\n"
+        "• Shown to the operator once the child has ended (reading it opens the run's "
+        "checkpoints).",
     ),
 }
 
@@ -785,7 +800,7 @@ def create_finetune_page(ctx: Any) -> None:
                   show_progress="hidden").then(**bases_step).then(**base_step).then(
         **ctx.chip_refresh)
     refresh.click(**bases_step).then(**base_step).then(**ctx.chip_refresh)
-    run_select.change(tc.on_run_chosen, inputs=[run_select, parents, checkpoint],
+    run_select.change(ml.on_run_chosen, inputs=[run_select, parents, checkpoint],
                       outputs=[checkpoint], show_progress="hidden")
     checkpoint.change(**base_step)
     fields["frozen_parts"].change(freeze_note_html, inputs=[fields["frozen_parts"]],

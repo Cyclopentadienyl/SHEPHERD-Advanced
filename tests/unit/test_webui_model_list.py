@@ -407,7 +407,7 @@ def test_load_shows_one_confirmation_from_to_with_the_changed_rows_marked(
     assert f"Reload the pipeline with <code>{new}</code> for every session?" in html
     assert ml.REPLACES_NOTE in html
     assert _changed_rows(html) == ["Model", "Model fingerprint"]
-    assert "GATv2 · run 2026-10-17 09:15 · epoch 5" in html and old in html
+    assert "GATv2 · run 2026-10-17 09:15 · recorded epoch 5" in html and old in html
     assert "same dataset" in html and ">same<" in html
     # The task and its scoring mode from the one table, on both sides; the
     # disease task uses no shortest-path table, said as such on both sides.
@@ -520,7 +520,7 @@ def test_a_model_in_use_that_changed_since_is_said_never_reloaded_over(root, ser
     # The From column is read as the confirmation reads it, from the plan's
     # own listing: the served workspace is named, the model and what it was
     # trained on are known, and an unchanged row is not marked.
-    assert step.plan["from"]["model"] == "GATv2 · run 2026-10-18 09:12 · epoch 8"
+    assert step.plan["from"]["model"] == "GATv2 · run 2026-10-18 09:12 · recorded epoch 8"
     assert "not a listed workspace" not in step.confirm_html
     assert "not in this workspace's list" not in step.confirm_html
     assert _changed_rows(step.confirm_html) == ["Model", "Model fingerprint"]
@@ -1449,7 +1449,7 @@ def test_a_direct_call_through_gradios_api_meets_the_same_check(root, serving, m
     _state, _selected, workspace, count, rows = listed[:5]
     assert workspace["value"] == "demo"
     assert "5 checkpoints (of 6 in 5 runs)" in count and "listed" not in count
-    assert "run 2026-10-18 09:12 · epoch 12" in rows
+    assert "run 2026-10-18 09:12 · recorded epoch 12" in rows
     assert handle.load_button is not None and handle.refresh["fn"] is refresh.fn
 
 

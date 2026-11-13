@@ -950,13 +950,14 @@ def model_choices(models: Mapping[str, Any]) -> List[Tuple[str, str]]:
     """The model select's options: what the checkpoint is first, from its model
     record (`renderers.record_kind_text`: "Disease", "Base", "Record not
     readable", …, K6 decision 13: every checkpoint is listed, only a task model is
-    measured), then the epoch (what tells a run's checkpoints apart when the
-    select is narrow and its text ends in an ellipsis), the run, the model
+    measured), then how far it trained (`renderers.epoch_words`, as every page
+    says it; what tells a run's checkpoints apart when the select is narrow
+    and its text ends in an ellipsis), the run, the model
     fingerprint or why a checkpoint cannot be tested, then the file name. The
     values are the listing's keys, whatever the words."""
     choices = []
     for item in models.get("items") or []:
-        label = (f"{r.record_kind_text(item)} · epoch {r.epoch_text(item)} · "
+        label = (f"{r.record_kind_text(item)} · {r.epoch_words(item)} · "
                  f"{r.run_label(item.get('architecture'), item.get('run'))}")
         if item.get("problem") or not r.is_digest(item.get("sha256")):
             label += " · metadata not readable"

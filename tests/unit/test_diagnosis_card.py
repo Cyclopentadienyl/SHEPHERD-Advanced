@@ -498,7 +498,7 @@ def test_a_queued_refresh_reads_the_recorded_tests_again_without_opening_the_che
 def test_the_normal_card_names_the_model_its_fingerprint_and_its_states(root):
     body = card.body_html(_state(root))
     assert ('<p class="shep-dx-name">Disease task model</p><p class="shep-dx-line shep-dx-sub">'
-            "GATv2 · run 2026-10-17 09:15 · epoch 5</p>") in body
+            "GATv2 · run 2026-10-17 09:15 · recorded epoch 5</p>") in body
     assert f'>{root["shas"]["model-05.pt"][:12]}</code>' in body and "verified</span>" in body
     # A disease model uses no SP table, so it is not missing one.
     assert "synthetic data" in body and "no SP table" not in body
@@ -681,13 +681,46 @@ def test_a_task_model_is_named_by_its_task_once(root, mode, name):
     assert card.served_task({"initialized": False}) is None
     body = card.body_html(_state(root, status=status))
     assert (f'<p class="shep-dx-name">{name}</p><p class="shep-dx-line shep-dx-sub">GATv2 · '
-            f"run 2026-10-21 09:00 · epoch 5</p>") in body
+            f"run 2026-10-21 09:00 · recorded epoch 5</p>") in body
     assert body.count("task model") == 1 and "Task:" not in body and "GATV2" not in body
     # Not in the served runs: the task still names it, the reason under it.
     lost = card.body_html(_state(root, status=_bundle_status(root, mode, served=False)))
     assert (f"<p class=\"shep-dx-name\">{name}</p><p class=\"shep-dx-line shep-dx-sub\">"
-            "Checkpoint · epoch 5 · the checkpoint in use is not in the serving workspace&#x27;s "
+            "Checkpoint · recorded epoch 5 · the checkpoint in use is not in the serving workspace&#x27;s "
             "runs</p>") in lost
+
+
+def test_one_file_reads_the_same_completed_epochs_on_every_page(root):
+    """B0b: how far one checkpoint trained is said in one wording wherever it
+    is named (`renderers.epoch_words`): the epochs its progress record says it
+    completed, the served status carrying them as the lists do. The card's
+    line, Models' row and detail header, Training's and Fine-tune's options
+    and Test's option read alike; an older file without the record says the
+    epoch index it records on each of them, never a count made from it."""
+    from src.webui.components import model_list as ml
+    from src.webui.components import renderers as r
+    from src.webui.components import test_page as tp
+
+    for meta, words in (({"epoch": 5, "completed_epochs": 6}, "6 epochs completed"),
+                        ({"epoch": 5}, "recorded epoch 5")):
+        status = _bundle_status(root, "disease_task")
+        status["checkpoint_meta"] = {**status["checkpoint_meta"], **meta}
+        body = card.body_html(_state(root, status=status))
+        line = f"GATv2 · run 2026-10-21 09:00 · {words}"
+        assert f'<p class="shep-dx-line shep-dx-sub">{line}</p>' in body
+        lost = _bundle_status(root, "disease_task", served=False)
+        lost["checkpoint_meta"] = {**lost["checkpoint_meta"], **meta}
+        assert f"Checkpoint · {words} · " in card.body_html(_state(root, status=lost))
+        # The same file as the lists give it to the other pages.
+        item = {"workspace": "demo", "architecture": "gatv2", "run": BUNDLE_RUN,
+                "filename": "last.pt", "sha256": "c" * 64, "checkpoint_kind": "training_state",
+                "validation": None, "dataset_fingerprint": None, "problem": None,
+                "record": "model", "learning_stage": "finetune", "task": "disease", **meta}
+        assert r.model_name_line(item) == line                       # Models' detail header
+        assert f'<div class="shep-sub">{words} · ' in r.model_table_row_html(item, [])  # row
+        assert ml.checkpoint_words(item) == f"Latest save · {words}"  # Training, Fine-tune
+        ((label, _key),) = tp.model_choices({"items": [item]})        # Test
+        assert label.startswith(f"Disease · {words} · "), label
 
 
 @pytest.mark.parametrize("mode", ["disease_task", "gene_task", "patients_like_me"])

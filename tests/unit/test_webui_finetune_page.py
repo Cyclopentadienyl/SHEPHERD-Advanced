@@ -8,16 +8,17 @@ Research › Prepare › Fine-tune (K6 decisions 2, 9, 11).
 - **the checkpoint and task options follow the skill §8** (unique, at most
   40 characters, one separator), the tasks' carrying their readiness, why not
   under them; the Run options are the identity label the Training page's
-  Continue drawer shares (§5: name · architecture · time), unique;
+  Continue drawer shares (`model_list.run_words`: the name or start time
+  first, then the architecture and time, one separator), unique;
 - **Start** sends the base's listed digest, the dataset fingerprint shown, the
   tasks in `TASKS` order and only the settings that differ from the recipe's,
   through the server's lists (never a client path); a refusal is the runner's
   sentence, inline and escaped;
 - **the job card**: each child's status as colour (the ``--shep-status-*``
   tokens), shape and word; everything escaped; products for an operator only,
-  once the child ended, the best save chosen by the Trainer validation figure
-  the list records (never a file name), ties shared; its own words once the
-  Fine-tune status is cleared;
+  once the child ended, the best save by the selection its files record (the
+  recorded monitor in its recorded direction, named under it; never a file
+  name), ties shared; its own words once the Fine-tune status is cleared;
 - **Start and Stop** are decided as the Training run bar's are (D8, a job
   running or stopping, the GPU slot);
 - **the page contract**: its own Dataset select (starting from Training's,
@@ -37,6 +38,8 @@ gr = pytest.importorskip("gradio")
 
 from src.webui import shell  # noqa: E402
 from src.webui.components import finetune_page as fp  # noqa: E402
+from src.webui.components import model_list as ml  # noqa: E402
+from src.webui.components import renderers as r  # noqa: E402
 from src.webui.components import training_console as tc  # noqa: E402
 from tests.fixtures.operator_access import gradio_request, operator_mode  # noqa: E402
 
@@ -93,7 +96,7 @@ def _page():
 def _option_rules(labels):
     assert len(set(labels)) == len(labels), labels
     for label in labels:
-        assert len(label) <= tc.OPTION_CHARS and label.count(" · ") <= 1, label
+        assert len(label) <= r.OPTION_CHARS and label.count(" · ") <= 1, label
 
 
 # --------------------------------------------------------------------------- the parents
@@ -106,12 +109,16 @@ def test_only_listed_bases_are_offered_as_parents(root, operator):
         f"gatv2/{BASE_RUN}/last.pt")
     assert "3 base checkpoints in 2 runs" in note
     # Each select checked on its own: the Run options are the identity label
-    # (`training_console.run_words`, shared with the Continue drawer), unique;
-    # the checkpoint options follow §8.
+    # (`model_list.run_words`, shared with the Continue drawer), unique; the
+    # checkpoint options follow §8; each value is the listing's key.
     run_labels = [label for label, _key in runs["choices"]]
-    assert run_labels == ["base · GATv2 · 2026-10-01 00:00", "old · GATv2 · 2026-09-01 00:00"]
-    assert len(set(run_labels)) == len(run_labels)
+    assert run_labels == ["base · GATv2 2026-10-01 00:00", "old · GATv2 2026-09-01 00:00"]
+    _option_rules(run_labels)
+    assert [key for _label, key in runs["choices"]] == [f"gatv2/{BASE_RUN}",
+                                                       f"gatv2/{OLD_BASE_RUN}"]
     _option_rules([label for label, _key in checkpoints["choices"]])
+    assert [key for _label, key in checkpoints["choices"]] == [
+        f"gatv2/{BASE_RUN}/last.pt", f"gatv2/{BASE_RUN}/model-03-0.8300.pt"]
     # A choice kept by key stays chosen.
     kept = fp._on_finetune_bases(operator, {"name": "demo"}, f"gatv2/{OLD_BASE_RUN}/last.pt")
     assert kept[1]["value"] == f"gatv2/{OLD_BASE_RUN}" and kept[2]["value"] == (
@@ -140,12 +147,12 @@ def test_the_chosen_bases_summary_says_what_start_sends_escaped(root, operator):
     html = fp._on_base_chosen(f"gatv2/{BASE_RUN}/model-03-0.8300.pt", parents)
     for words in ("Run", f"<code>gatv2/{BASE_RUN}</code>", "model-03-0.8300.pt", "Configuration",
                   "GATv2 · recipe changed in", "Holds", "Validation", "LP accuracy (Trainer)",
-                  "0.8300", "Trained on", "not recorded", "Model fingerprint",
+                  "0.8300", "Selection", "Trained on", "not recorded", "Model fingerprint",
                   item["sha256"][:12], f'data-copy="{item["sha256"]}"'):
         assert words in html, words
     # The run is named by its directory, a fact the Run select above does not
     # give; never its option's words again (the WebUI skill §1.2).
-    assert tc.run_words("gatv2", BASE_RUN) not in html
+    assert ml.run_words("gatv2", BASE_RUN) not in html
     assert fp._on_base_chosen(None, parents) == ""
     odd = fp.base_summary_html({**item, "filename": TAG, "trained_on_this_dataset": False})
     assert "<img" not in odd and "&lt;img" in odd and "another dataset" in odd
@@ -378,7 +385,7 @@ def test_the_card_draws_one_row_per_child_escaped_without_a_path(root):
     assert "Disease" in rows[1] and "Gene" in rows[2] and "Patients-like-me" in rows[3]
     assert "gatv2/20261028-1_ft-disease_a" in rows[1] and "not started yet" in rows[3]
     assert "after it ends" in rows[3]
-    assert "GATv2 · 2026-10-01 00:00" in html and "bbbbbbbbbbbb" in html
+    assert "base · GATv2 2026-10-01 00:00" in html and "bbbbbbbbbbbb" in html
     assert "not shown: reading the checkpoints is an operator control" in rows[1]
     assert "Validation (Trainer)" in rows[0] and "Best save" in rows[0]
     cancelled = fp.job_card_html(_status(_child("gene", "cancelled")), operator=True)
@@ -427,41 +434,64 @@ def test_the_cards_run_is_its_name_part_with_the_whole_id_in_its_title():
         _child("disease", "completed", "odd-run"), operator=False, products={})
 
 
-def test_the_best_save_is_the_highest_trainer_figure_never_a_file_name(root, monkeypatch):
-    """The products of an ended child, for an operator: the saved file with
-    the highest Trainer validation figure its record holds, ties shared, read
-    from the list's metadata (the file names here say otherwise)."""
+def test_the_best_save_is_the_runs_recorded_selection_never_a_file_name(root, monkeypatch):
+    """The products of an ended child, for an operator: its run's best saves
+    by the selection its files record (a task model's validation pooled MRR,
+    higher is better), ties shared, read from the list's metadata (the file
+    names here say otherwise), named by that metric with its direction
+    under them; a min-mode monitor's lowest; an older run that records no
+    selection says so, never a best."""
     from src.api.services import server_lists
 
-    def item(filename, value, epochs):
+    def item(filename, value, epochs, *, mode="max", selection=True, top=True):
         return server_lists.CheckpointItem(
             workspace="demo", architecture="gatv2", run="20261028-1_ft-disease_a",
             filename=filename, sha256="c" * 64, size_bytes=1, checkpoint_kind="training_state",
             epoch=epochs - 1, validation={"metric": "val_pooled_mrr", "value": value},
             dataset_fingerprint=None, trained_on_this_dataset=None, problem=None,
-            completed_epochs=epochs, record="model", learning_stage="finetune", task="disease")
+            completed_epochs=epochs, record="model", learning_stage="finetune", task="disease",
+            selection={"monitor": "val_pooled_mrr", "mode": mode} if selection else None,
+            in_best_k=top if selection else None)
+
+    def listed(**kwargs):
+        return server_lists.Listing((item("last.pt", 0.40, 5, top=False, **kwargs),
+                                     item("model-04-0.9000.pt", 0.40, 4, **kwargs),
+                                     item("model-02-0.9500.pt", 0.25, 2, **kwargs)))
 
     seen = []
-    listing = server_lists.Listing((item("last.pt", 0.40, 5), item("model-04-0.9000.pt", 0.40, 4),
-                                    item("model-02-0.9500.pt", 0.25, 2)))
+    listing = [listed()]
     monkeypatch.setattr(server_lists, "list_checkpoints",
-                        lambda *a, **k: seen.append((a, k)) or listing)
+                        lambda *a, **k: seen.append((a, k)) or listing[0])
     monkeypatch.setattr(tc, "workspace_of_run", lambda run_dir: "demo")
     child = _child("disease", "completed", "20261028-1_ft-disease_a")
     products = fp.products_of(_status(child)["finetune"], {})
     assert seen == [(("demo", "gatv2"), {"task": "disease", "run": "20261028-1_ft-disease_a"})]
     (found,) = products.values()
     assert [entry["words"] for entry in found["best"]] == ["Latest save · 5 epochs completed",
-                                                           "Top-k save · 4 epochs completed"]
+                                                           "Best pooled MRR · 4 epochs completed"]
     html = fp.job_card_html(_status(child), operator=True, products=products)
-    assert "Latest save · 5 epochs completed" in html and "Top-k save · 4 epochs" in html
+    assert "Latest save · 5 epochs completed" in html and "Best pooled MRR · 4 epochs" in html
+    assert ("Selection by validation pooled MRR (Trainer), higher is better" in html)
     assert "0.4000" in html and "Validation pooled MRR (Trainer)" in html
+    assert "LP" not in re.sub(r"<[^>]+>", "", html), "a task model's figure is never LP's"
     assert "test" not in re.sub(r"<[^>]+>", "", html).lower().replace("latest", "")
     # Read once per child ending: the session's record is taken next time.
     assert fp.products_of(_status(child)["finetune"], products) == products and len(seen) == 1
     # A running child's products are not read.
     fp.products_of(_status(_child("disease", "running", "r"))["finetune"], {})
     assert len(seen) == 1
+    # A min-mode monitor: the lowest is best, whatever the names say.
+    listing[0] = listed(mode="min")
+    (low,) = fp.products_of(_status(child)["finetune"], {}).values()
+    assert [entry["words"] for entry in low["best"]] == ["Best pooled MRR · 2 epochs completed"]
+    assert low["best"][0]["selection"].endswith("lower is better")
+    # An older run whose files record no selection: no best, said so.
+    listing[0] = listed(selection=False)
+    older = fp.products_of(_status(child)["finetune"], {})
+    (none,) = older.values()
+    assert none["best"] == [] and none["recorded"] is False
+    html = fp.job_card_html(_status(child), operator=True, products=older)
+    assert "selection not recorded in its saved files" in html
 
 
 def test_the_card_says_why_there_is_no_fine_tune_job():

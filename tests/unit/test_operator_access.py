@@ -828,7 +828,7 @@ def test_a_read_only_fine_tune_poll_never_lists_checkpoints(spies, monkeypatch):
     assert cache.get("products") is None
     operator_mode(monkeypatch)
     card, *_rest, cache = fp._poll(fp.PAGE, {}, {}, gradio_request())
-    assert spies == ["list_checkpoints"] and "no saved file records a validation figure" in card
+    assert spies == ["list_checkpoints"] and "selection not recorded in its saved files" in card
     # Read once per child ending: the next tick takes the session's record.
     fp._poll(fp.PAGE, {}, cache, gradio_request())
     assert spies == ["list_checkpoints"]

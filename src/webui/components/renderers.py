@@ -27,6 +27,7 @@ Module: src/webui/components/renderers.py
 from __future__ import annotations
 
 import html
+import math
 import re
 from collections import Counter
 from datetime import datetime, timezone
@@ -112,6 +113,10 @@ VALIDATION_LABELS = {
     "val_lp_accuracy": "Validation LP accuracy (Trainer)",
 }
 _VALIDATION_NOTE = "selection metric on val, not an independent test"
+#: A recorded selection's direction (``callbacks.model_checkpoint.mode``), in
+#: words: the Trainer ranks a run's saves by its monitor, highest first for
+#: ``max``.
+SELECTION_DIRECTIONS = {"max": "higher is better", "min": "lower is better"}
 
 _CHECK = ('<svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true" focusable="false">'
           '<path d="M3.2 8.6l3 3 6.6-7.4" fill="none" stroke="currentColor" stroke-width="2.2" '
@@ -297,6 +302,48 @@ def fingerprint_html(label: str, digest: Any, *, digits: int = SHORT_HEX, copy: 
     return (f'<span class="shep-fp"><span class="shep-fpk">{e(label)}</span> '
             f'<code class="shep-fpv" title="{e(digest)}">{e(digest[:digits])}</code>'
             f'{copy_html}{help_html}</span>')
+
+
+# ---------------------------------------------------------------------------
+# Options (the skill's §5 and §8)
+# ---------------------------------------------------------------------------
+#: **The longest option a select offers** (the skill's §8): every select's
+#: options are at most this long, unique, the distinguishing token first, with
+#: at most one " · ".
+OPTION_CHARS = 40
+
+
+def fit_option(what: str, rest: Optional[str], mark: str = "") -> str:
+    """"<what><mark> · <rest>" in at most `OPTION_CHARS` characters with one
+    separator: `what` (the distinguishing token: a name, a file's name) is
+    shortened in its middle with an ellipsis, so its start and its end stay
+    (where a copy or a version differs: "…copy_b.pt", "…67-v1.pt"); `rest`
+    is kept whole, so a caller keeps it short."""
+    room = OPTION_CHARS - (len(rest) + 3 if rest else 0) - len(mark)
+    if len(what) > room:
+        keep = max(room - 1, 2)
+        head = keep // 2
+        what = what[:head] + "…" + what[len(what) - (keep - head):]
+    what += mark
+    return f"{what} · {rest}" if rest else what
+
+
+def fit_options(entries: Sequence[Tuple[str, Optional[str], Any]]) -> List[Tuple[str, Any]]:
+    """A select's options from ``(what, rest, value)`` entries, in their order:
+    each `fit_option`, and those still alike numbered in that order, "(2)",
+    the last resort for what nothing else tells apart. Unique, at most
+    `OPTION_CHARS` characters and one separator; **each value is its entry's
+    own, whatever the words** (Gradio's ``(label, value)``: the skill's §5, a
+    label never changes what is chosen)."""
+    labels = [fit_option(what, rest) for what, rest, _value in entries]
+    seen, nth = Counter(labels), Counter()
+    choices = []
+    for (what, rest, value), label in zip(entries, labels):
+        if seen[label] > 1:
+            nth[label] += 1
+            label = fit_option(what, rest, f" ({nth[label]})")
+        choices.append((label, value))
+    return choices
 
 
 # ---------------------------------------------------------------------------
@@ -623,13 +670,14 @@ def run_label_html(architecture: Any, run: Any) -> str:
             f'<span class="shep-nowrap">run {e(started)}</span>')
 
 
-def run_started(run: Any) -> Optional[str]:
-    """"2026-10-17 09:15" from a run directory named by its start time, else None."""
+def run_started(run: Any, *, seconds: bool = False) -> Optional[str]:
+    """"2026-10-17 09:15" (with `seconds`, "2026-10-17 09:15:00") from a run
+    directory named by its start time, else None."""
     match = _RUN_TIME.match(str(run or ""))
     if not match:
         return None
-    y, mo, d, h, mi, _s = match.groups()
-    return f"{y}-{mo}-{d} {h}:{mi}"
+    y, mo, d, h, mi, sec = match.groups()
+    return f"{y}-{mo}-{d} {h}:{mi}{':' + sec if seconds else ''}"
 
 
 def run_suffix(run: Any) -> Optional[str]:
@@ -754,18 +802,118 @@ def configuration_text(item: Any) -> str:
             f"field{'s' if count != 1 else ''}")
 
 
-def epoch_text(item: Any) -> str:
-    """A listed checkpoint's recorded epoch, or "not recorded" when its record
-    holds none (never "—", the skill's §6)."""
-    epoch = _get(item, "epoch")
-    return (str(epoch) if isinstance(epoch, int) and not isinstance(epoch, bool)
-            else NOT_RECORDED.lower())
+def _whole(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def epoch_words(item: Any) -> str:
+    """**How far a checkpoint trained, in the one wording of every page**
+    (Training's and Fine-tune's options, the Models row and detail, Model
+    Facts, the Diagnosis card, the Test options): "195 epochs completed" from
+    the file's progress record (`completed_epochs`); a file that records no
+    progress (an older format) says the epoch index it records, "recorded
+    epoch 194", never a count made from it; "epochs not recorded" when it
+    records neither (the skill's §6: never "—"). `item` is a listed
+    checkpoint, or the served status's `checkpoint_meta`, which carry both
+    fields alike."""
+    completed, epoch = _get(item, "completed_epochs"), _get(item, "epoch")
+    if _whole(completed):
+        return f"{completed} epoch{'s' if completed != 1 else ''} completed"
+    if _whole(epoch):
+        return f"recorded epoch {epoch}"
+    return f"epochs {NOT_RECORDED.lower()}"
 
 
 def model_name_line(item: Any) -> str:
-    """"GAT · run 2026-10-17 09:15 · epoch 5" ("epoch not recorded" when its
-    record holds none, `epoch_text`)."""
-    return f"{run_label(_get(item, 'architecture'), _get(item, 'run'))} · epoch {epoch_text(item)}"
+    """"GATv2 · run 2026-10-17 09:15 · 6 epochs completed" (`epoch_words`)."""
+    return f"{run_label(_get(item, 'architecture'), _get(item, 'run'))} · {epoch_words(item)}"
+
+
+# ---------------------------------------------------------------------------
+# The validation figure and the selection (the skill's §8)
+# ---------------------------------------------------------------------------
+def validation_words(item: Any) -> Optional[str]:
+    """"Validation pooled MRR (Trainer) 0.2867": the Trainer's validation
+    figure the file records, in the dashboard's one map of their names
+    (`VALIDATION_LABELS`), never a test result; None when it records none
+    this build reads."""
+    validation = _get(item, "validation") or {}
+    metric, value = validation.get("metric"), validation.get("value")
+    if metric not in VALIDATION_LABELS or not isinstance(value, (int, float)):
+        return None
+    return f"{VALIDATION_LABELS[metric]} {value:.4f}"
+
+
+def _selection_label(monitor: Any) -> str:
+    """A recorded monitor as the validation figures are named
+    (`VALIDATION_LABELS`; any other by its recorded name, as `validation_cell`
+    names it)."""
+    return VALIDATION_LABELS.get(monitor, f"Validation {monitor} (Trainer)")
+
+
+def metric_words(monitor: Any) -> str:
+    """A recorded monitor in an option's few words: "LP accuracy", "pooled
+    MRR" (its `VALIDATION_LABELS` name without "Validation" and "(Trainer)",
+    so an LP figure is never called MRR), any other by its recorded name."""
+    return _selection_label(monitor).removeprefix("Validation ").removesuffix(" (Trainer)")
+
+
+def _selection(item: Any) -> Optional[Tuple[str, str]]:
+    selection = _get(item, "selection")
+    if not isinstance(selection, Mapping):
+        return None
+    monitor, mode = selection.get("monitor"), selection.get("mode")
+    return (monitor, mode) if isinstance(monitor, str) and isinstance(mode, str) else None
+
+
+def selection_words(item: Any) -> str:
+    """**What a run's saves were ranked by, as the file records it**
+    (`CheckpointItem.selection`: ``callbacks.model_checkpoint``'s monitor and
+    mode): "Selection by validation LP accuracy (Trainer), higher is better"
+    for a base, "… validation pooled MRR (Trainer) …" for a task model, "lower
+    is better" for a ``min`` monitor; a validation figure, the Trainer's,
+    never a test result. A file that records none (a weights-only file, an
+    older format) says "Selection not recorded"; a direction this build does
+    not know is "direction unknown"."""
+    selection = _selection(item)
+    if selection is None:
+        return f"Selection {NOT_RECORDED.lower()}"
+    monitor, mode = selection
+    label = _selection_label(monitor)
+    direction = SELECTION_DIRECTIONS.get(mode, f"direction {UNKNOWN.lower()}")
+    return f"Selection by {label[:1].lower()}{label[1:]}, {direction}"
+
+
+def best_saves(items: Mapping[Any, Any]) -> set:
+    """**The keys of the best saves**, by the run's own recorded selection
+    (the skill's §8): within each run (its `run_key`), among the files that
+    record the same selection (`selection_words`) and a validation figure of
+    that monitor (`validation`, `checkpoint_paths.ranking_score_detail`'s
+    read), those whose figure is the best in the recorded direction; files
+    that tie all are. Read from the list's metadata only, never from a file's
+    name; a file that records no selection, no figure of its monitor or a
+    direction this build does not know is none. `items` maps a key to its
+    listed checkpoint."""
+    groups: Dict[Tuple[Any, str, str], List[Tuple[Any, float]]] = {}
+    for key, item in items.items():
+        selection = _selection(item)
+        validation = _get(item, "validation")
+        if selection is None or selection[1] not in SELECTION_DIRECTIONS:
+            continue
+        if not isinstance(validation, Mapping) or validation.get("metric") != selection[0]:
+            continue
+        value = validation.get("value")
+        if (isinstance(value, bool) or not isinstance(value, (int, float))
+                or not math.isfinite(value)):
+            continue
+        run = _get(item, "run_key") or (_get(item, "architecture"), _get(item, "run"))
+        groups.setdefault((run, *selection), []).append((key, float(value)))
+    best = set()
+    for (_run, _monitor, mode), scored in groups.items():
+        values = [value for _key, value in scored]
+        top = max(values) if mode == "max" else min(values)
+        best.update(key for key, value in scored if value == top)
+    return best
 
 
 def trained_on(fingerprint: Any, workspaces: Sequence[Any]) -> Tuple[str, ...]:
@@ -874,7 +1022,7 @@ def model_table_row_html(item: Any, workspaces: Sequence[Any], *,
     tag = f' {chip(in_use_label, "accent")}' if in_use else ""
     suffix = run_suffix(_get(item, "run"))
     name = run_label_html(_get(item, "architecture"), _get(item, "run"))
-    model = (f'<div class="shep-w600">{name}</div><div class="shep-sub">epoch {e(epoch_text(item))}'
+    model = (f'<div class="shep-w600">{name}</div><div class="shep-sub">{e(epoch_words(item))}'
              f'{" · " + e(suffix) if suffix else ""}</div>{tag}')
     # A plain table's selected row is `aria-current`, never `aria-selected`
     # (the skill's §8).
@@ -1274,8 +1422,11 @@ __all__ = [
     "R10_EVIDENCE_WORDS",
     "RENDERER_HELP",
     "RecordedTests",
+    "OPTION_CHARS",
+    "SELECTION_DIRECTIONS",
     "VALIDATION_LABELS",
     "architecture_label",
+    "best_saves",
     "clock_utc",
     "count_text",
     "dataset_details_html",
@@ -1289,12 +1440,16 @@ __all__ = [
     "distinct_names",
     "distinguishing_digits",
     "e",
+    "epoch_words",
     "facts_from_checkpoint",
     "fingerprint_html",
+    "fit_option",
+    "fit_options",
     "freeze_words",
     "ident_html",
     "is_digest",
     "kv_cells",
+    "metric_words",
     "model_facts_html",
     "model_kind_text",
     "model_name_line",
@@ -1319,6 +1474,7 @@ __all__ = [
     "run_started",
     "run_suffix",
     "run_time",
+    "selection_words",
     "short_hex",
     "short_reason",
     "sources_text",
@@ -1326,6 +1482,7 @@ __all__ = [
     "trained_on_html",
     "validation_cell",
     "validation_text",
+    "validation_words",
     "word_groups",
     "workspace_choices",
 ]

@@ -657,6 +657,7 @@ def test_the_listing_reads_the_selection_and_the_best_k_from_the_records(tmp_pat
     from src.api.main import app
     from src.api.services import server_lists as sl
     from src.config import server_settings as ss
+    from src.webui.components import renderers as r
     from tests.fixtures.operator_access import OPERATOR_BASE_URL, operator_mode
 
     monkeypatch.setattr(cp, "_READS", OrderedDict())
@@ -708,10 +709,20 @@ def test_the_listing_reads_the_selection_and_the_best_k_from_the_records(tmp_pat
         "model-03-0.7000.pt": True, "last.pt": False, "model-09-0.9000.pt": False,
         "model-01-0.4000.pt": True, "model-02-0.3000.pt": False}
     assert (items[older, "last.pt"].selection, items[older, "last.pt"].in_best_k) == (None, None)
+    assert r.selection_words(items[older, "last.pt"]) == "Selection not recorded"
+    assert r.selection_words(items[base, "last.pt"]) == (
+        "Selection by validation LP accuracy (Trainer), higher is better")
+    assert r.selection_words(items[child, "last.pt"]) == (
+        "Selection by validation pooled MRR (Trainer), higher is better")
     unread = items[odd, "last.pt"]
     assert unread.problem == ("its callbacks.model_checkpoint.monitor is a int, not text, so "
                               "none of its metadata is shown")
     assert unread.selection is None and unread.in_best_k is None
+    # The best saves, by each run's recorded selection, from the list alone.
+    keyed = {i.key: dataclasses.asdict(i) for i in listing.items}
+    best = r.best_saves(keyed)
+    assert {(keyed[key]["run"], keyed[key]["filename"]) for key in best} == {
+        (base, "model-03-0.7000.pt"), (child, "model-01-0.4000.pt")}
     # Over HTTP, the same fields from the same scan.
     operator_mode(monkeypatch)
     monkeypatch.setenv(ss.ENV_WORKSPACES_ROOT, str(root))

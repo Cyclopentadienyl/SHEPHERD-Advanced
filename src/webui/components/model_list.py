@@ -110,6 +110,18 @@ after 180 s; the server may still finish the reload." with "Read again" (a
 status read). When the reload's answer arrives later, it says so ("The reload
 finished after the page stopped waiting.").
 
+**Run → Checkpoint** (`run_choices`, `checkpoint_choices`, `parents_update`,
+`on_run_chosen`): the one pair of cascading selects by which a page chooses a
+listed checkpoint, Training's Continue… and Fine-tune's parent alike. Each
+option is short (the WebUI skill §8: `renderers.fit_option`, at most 40
+characters, one separator), the distinguishing token first (a run's name, or
+its start time; what a file is), and **its value is the listing's key**
+(`item_run_key`, `item_key`), so its words never change what is chosen. A
+file's words come from its own record: how far it trained
+(`renderers.epoch_words`), a best save of its run by the run's recorded
+selection (`renderers.best_saves`), a best-k member by its run's records
+(`CheckpointItem.in_best_k`), never from its name.
+
 **Per browser session**: the listing, the selection, the view and the
 confirmation are `gr.State`; nothing here is module state.
 
@@ -119,6 +131,8 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import re
+from collections import Counter
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -250,6 +264,138 @@ def item_run_key(item: Mapping[str, Any]) -> str:
     from src.utils.checkpoint_paths import listing_key
 
     return listing_key((str(item.get("architecture")), str(item.get("run"))))
+
+
+# ---------------------------------------------------------------------------
+# Run → Checkpoint: the two cascading selects' options
+# ---------------------------------------------------------------------------
+#: A run directory's own id, after its name (`propose_run_dir`'s 6 hex).
+_RUN_ID = re.compile(r"_([0-9a-f]{6})$")
+
+
+def _run_parts(architecture: Any, run: Any, level: int = 0) -> Tuple[str, Optional[str]]:
+    """A run as an option's two parts, the distinguishing token first: its
+    name when it was given one, else its start time, else (a directory not
+    named by its start time) its whole name; then the architecture, and the
+    start time after a name. `level` tells alike runs apart
+    (`renderers.distinct_names`): 1 gives the time to the second, 2 adds the
+    run's own 6-hex id."""
+    arch = r.architecture_label(architecture)
+    started = r.run_started(run, seconds=level >= 1)
+    if not started:
+        return str(run), arch
+    found = _RUN_ID.search(str(run))
+    rid = f" {found.group(1)}" if level >= 2 and found else ""
+    name = r.run_name(run)
+    if name and name != "run":
+        return name, f"{arch} {started}{rid}"
+    return started, f"{arch}{rid}"
+
+
+def run_words(architecture: Any, run: Any) -> str:
+    """**A run as a person names it, its distinguishing token first**: its
+    name, then the architecture and its start time,
+    "ui-live-stop-02 · GATv2 2026-10-24 17:39" from
+    ``gatv2/20261024-173909_ui-live-stop-02_c1d9cf``; an unnamed run ("run")
+    is its start time and architecture, "2026-10-24 16:38 · GATv2"; a
+    directory not named by its start time is its whole name, "my-old-run ·
+    HGT". One separator, at most `renderers.OPTION_CHARS` characters (a long
+    name shortened in its middle); the run's directory is in the chosen
+    item's details."""
+    return r.fit_option(*_run_parts(architecture, run))
+
+
+def runs_of(parents: Mapping[str, Any]) -> Dict[str, List[str]]:
+    """The listed checkpoints by run, in the list's order (latest run first,
+    newest file first): ``{run identity: [key, ...]}`` (`item_run_key`:
+    ``"<architecture>/<run>"`` for names that are text)."""
+    runs: Dict[str, List[str]] = {}
+    for key, item in parents.items():
+        runs.setdefault(item_run_key(item), []).append(key)
+    return runs
+
+
+def run_choices(parents: Mapping[str, Any]) -> List[Tuple[str, str]]:
+    """The Run select's options, latest run first (`runs_of`): each run's
+    words (`run_words`); runs that would read alike get their start time to
+    the second, then their own id (`renderers.distinct_names`), and are
+    numbered only where nothing recorded tells them apart. Each value is the
+    run's identity (`item_run_key`), whatever the words."""
+    first = {run: parents[keys[0]] for run, keys in runs_of(parents).items()}
+    names = r.distinct_names(first, lambda item, level: r.fit_option(*_run_parts(
+        item.get("architecture"), item.get("run"), level)))
+    return r.fit_options([(names[run], None, run) for run in first])
+
+
+def _checkpoint_parts(item: Mapping[str, Any], best: bool) -> Tuple[str, str]:
+    """A checkpoint as an option's two parts: what the file is and how far it
+    trained (`checkpoint_words`)."""
+    filename = str(item.get("filename") or "")
+    if item.get("problem") or not r.is_digest(item.get("sha256")):
+        return filename, "cannot be read"
+    what = ("Latest save" if filename == "last.pt" else
+            f"Best {r.metric_words((item.get('selection') or {}).get('monitor'))}" if best else
+            "Top-k save" if item.get("in_best_k") else filename)
+    return what, ("weights only" if item.get("checkpoint_kind") == "weights"
+                  else r.epoch_words(item))
+
+
+def checkpoint_words(item: Mapping[str, Any], *, best: bool = False) -> str:
+    """A checkpoint's option in its run, in a few words (the WebUI skill §8:
+    at most `renderers.OPTION_CHARS` characters, one separator): what it is
+    and how far it trained (`renderers.epoch_words`), "Latest save · 195
+    epochs completed" (``last.pt``, the run's last training state), "Best LP
+    accuracy · 21 epochs completed" (`best`: a best save of its run by the
+    selection its record names, `renderers.best_saves`, named by that metric),
+    "Top-k save · 20 epochs completed" (a file a record of its run names among
+    its best-k, `CheckpointItem.in_best_k`: never from a file's name), else
+    the file's own name; a file that holds weights only, or cannot be read,
+    says so. How its stage ended, its stage, its Trainer validation figure,
+    its selection, what it holds and its model fingerprint are the chosen
+    file's details."""
+    return r.fit_option(*_checkpoint_parts(item, best))
+
+
+def checkpoint_choices(parents: Mapping[str, Any], keys: Sequence[str]) -> List[Tuple[str, str]]:
+    """A run's checkpoints as options, in `keys`' order: their words
+    (`checkpoint_words`, the run's best saves by its recorded selection named
+    so, ties all); two that would read alike are named by their file instead
+    (unique in a run, `renderers.fit_option` keeping both its ends), and
+    files whose shortened names still read alike are numbered in the list's
+    order, "(2)"; still one separator and `renderers.OPTION_CHARS` at most.
+    No two options read the same (the WebUI skill §8); each value is the
+    file's key, whatever the words; the chosen file's full name is in its
+    details."""
+    best = r.best_saves({key: parents[key] for key in keys})
+    parts = {key: _checkpoint_parts(parents[key], key in best) for key in keys}
+    seen = Counter(r.fit_option(*part) for part in parts.values())
+    entries = []
+    for key in keys:
+        what, rest = parts[key]
+        if seen[r.fit_option(what, rest)] > 1:
+            what = str(parents[key].get("filename"))
+        entries.append((what, rest, key))
+    return r.fit_options(entries)
+
+
+def parents_update(parents: Mapping[str, Any], keep: Optional[str] = None) -> Tuple[Any, Any]:
+    """The two selects for `parents`: the runs, and the chosen run's
+    checkpoints. `keep` (a checkpoint's key) stays chosen while it is listed;
+    otherwise the first run and its first checkpoint (its latest save)."""
+    runs = runs_of(parents)
+    run = item_run_key(parents[keep]) if keep in parents else next(iter(runs), None)
+    keys = runs.get(run, []) if run else []
+    value = keep if keep in keys else (keys[0] if keys else None)
+    return (gr.update(choices=run_choices(parents), value=run),
+            gr.update(choices=checkpoint_choices(parents, keys), value=value))
+
+
+def on_run_chosen(run, parents, current):
+    """A run chosen: its checkpoints, the latest save first. The checkpoint
+    chosen stays when it is this run's (opening the drawer sets both)."""
+    keys = runs_of(parents or {}).get(run or "", [])
+    value = current if current in keys else (keys[0] if keys else None)
+    return gr.update(choices=checkpoint_choices(parents or {}, keys), value=value)
 
 
 def recorded_tests(ledgers: Mapping[str, Mapping[str, Any]],
@@ -624,7 +770,7 @@ def list_html(listing: Mapping[str, Any], selected: Optional[str], preset: Prese
             # The served file stands in its run as a note pointing above: it
             # is one of the run's checkpoints, listed once.
             if pinned and is_served(item):
-                entries.append(f'<div class="shep-list-note">epoch {r.e(item.get("epoch"))} · '
+                entries.append(f'<div class="shep-list-note">{r.e(r.epoch_words(item))} · '
                                f'model fingerprint {r.e(r.short_hex(served, digits))} — in use, '
                                'pinned above</div>')
                 continue
@@ -831,7 +977,7 @@ def _from_side(status: Optional[Mapping[str, Any]], listing: Mapping[str, Any]) 
     if item is not None:
         model = r.model_name_line(item)
     elif sha:
-        model = f"epoch {meta.get('epoch', '—')} (not in this workspace's list)"
+        model = f"{r.epoch_words(meta)} (not in this workspace's list)"
     else:
         model = "not known" if (status or {}).get("initialized") else "no model loaded"
     sp = identity.get("shortest_paths") or {}
@@ -1005,11 +1151,12 @@ def confirmation_html(plan: Mapping[str, Any], *, notice: Optional[str] = None) 
 
 
 #: **What a plan keeps of a listed checkpoint**, the one tuple for the plan's
-#: listing and its "To" item: its place, bytes and dataset, and the record
-#: fields `load_refusal` checks again and the reload's task comes from.
+#: listing and its "To" item: its place, bytes, how far it trained (both the
+#: fields the name line reads, `renderers.epoch_words`) and dataset, and the
+#: record fields `load_refusal` checks again and the reload's task comes from.
 _ITEM_KEYS = ("workspace", "architecture", "run", "filename", "sha256", "epoch",
-              "dataset_fingerprint", "problem", "record", "record_problem", "learning_stage",
-              "task", "encoder", "reference", "differences")
+              "completed_epochs", "dataset_fingerprint", "problem", "record", "record_problem",
+              "learning_stage", "task", "encoder", "reference", "differences")
 
 
 def _kept(item: Mapping[str, Any]) -> Dict[str, Any]:

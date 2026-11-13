@@ -25,6 +25,7 @@ import pytest
 pytest.importorskip("gradio")
 
 from src.config.recipe import BASE  # noqa: E402
+from src.webui.components import renderers as r  # noqa: E402
 from src.webui.components import training_console as tc  # noqa: E402
 from tests.fixtures.operator_access import gradio_request, operator_mode  # noqa: E402
 
@@ -230,7 +231,7 @@ def test_the_freeze_field_shows_plain_words_and_sends_the_field_specs_values():
     words = [words for words, _value in field.choices]
     assert len(set(words)) == len(words)
     for label in (*words, tc.SETTING_LABELS["frozen_parts"]):
-        assert len(label) <= tc.OPTION_CHARS and " · " not in label, label
+        assert len(label) <= r.OPTION_CHARS and " · " not in label, label
     # The scheduler's values have no words: shown as they are.
     assert tc.setting_field("scheduler_type", "none", elem_id="s").choices == [
         (value, value) for value in by_name("scheduler_type").choices]

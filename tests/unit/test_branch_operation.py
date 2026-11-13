@@ -222,6 +222,15 @@ def test_a_branch_with_its_parents_settings_is_a_new_run(tmp_path, monkeypatch, 
         for entry in answer:
             assert field(entry, "selection") == {"monitor": "val_lp_accuracy", "mode": "max"}
             assert field(entry, "in_best_k") is (field(entry, "filename") != "last.pt"), entry
+    from dataclasses import asdict
+
+    from src.webui.components import renderers as r
+
+    branch_files = {item.key: asdict(item) for item in listing.items
+                    if item.run == branch_run.name}
+    figures = {key: item["validation"]["value"] for key, item in branch_files.items()}
+    assert r.best_saves(branch_files) == {key for key, value in figures.items()
+                                          if value == max(figures.values())}
 
 
 def _other_spec():

@@ -50,6 +50,8 @@ import pytest
 gr = pytest.importorskip("gradio")
 
 from src.webui import shell  # noqa: E402
+from src.webui.components import model_list as ml  # noqa: E402
+from src.webui.components import renderers as r  # noqa: E402
 from src.webui.components import training_console as tc  # noqa: E402
 from tests.fixtures.operator_access import gradio_request, operator_mode  # noqa: E402
 from tests.fixtures.served_page import ServedSession, served  # noqa: E402
@@ -1933,48 +1935,85 @@ def test_the_reason_lines_sentence_ends_once():
     assert re.sub(r"<[^>]+>", "", cli["reason"]).endswith("since 09:58 UTC).")
 
 
-def _option_rules(labels):
-    """The WebUI skill §8: options unique, at most 40 characters, one separator."""
+def _option_rules(labels, choices=None, values=None):
+    """The WebUI skill §8: options unique, at most 40 characters, one
+    separator; given the select's `choices`, each value is the full key."""
     assert len(set(labels)) == len(labels), labels
     for label in labels:
-        assert len(label) <= tc.OPTION_CHARS and label.count(" · ") <= 1, label
+        assert len(label) <= r.OPTION_CHARS and label.count(" · ") <= 1, label
+    if choices is not None:
+        assert [value for _label, value in choices] == list(values)
+
+
+def test_the_run_checkpoint_helpers_have_one_home():
+    """Training's Continue… and Fine-tune's parent choose through one Run →
+    Checkpoint pair (`model_list`'s): no page keeps a copy of its own."""
+    from src.webui.components import finetune_page as ft
+
+    for name in ("run_words", "checkpoint_words", "run_choices", "checkpoint_choices",
+                 "parents_update", "on_run_chosen", "runs_of", "OPTION_CHARS", "_fit",
+                 "_choices", "_progress_words", "validation_words", "_TOP_K_FILE"):
+        assert not hasattr(tc, name) and not hasattr(ft, name), name
+    for name in ("run_words", "checkpoint_words", "run_choices", "checkpoint_choices",
+                 "parents_update", "on_run_chosen", "runs_of"):
+        assert callable(getattr(ml, name)), name
 
 
 def test_a_checkpoints_option_says_what_it_is_and_how_far_it_trained():
     """In a few words, from the file's own record (the WebUI skill §8: at most
-    40 characters, one separator): the latest save or a top-k save and the
-    epochs its progress record says it completed (never epoch + 1 for a file
-    without one). How its stage ended and its Trainer validation figure are
-    the chosen file's details, not its option (the option read "Top-k save ·
-    21 epochs completed · stopped early, cannot continue · Validation LP
-    accuracy (Trainer) 0.8123", 107 characters and three separators)."""
+    40 characters, one separator): the latest save, a best save of its run by
+    the selection its record names, a top-k save by its run's recorded best-k
+    (never by its name), and the epochs its progress record says it completed
+    (never epoch + 1 for a file without one). How its stage ended and its
+    Trainer validation figure are the chosen file's details, not its option
+    (the option read "Top-k save · 21 epochs completed · stopped early, cannot
+    continue · Validation LP accuracy (Trainer) 0.8123", 107 characters and
+    three separators)."""
     item = {**_item("demo").__dict__, "completed_epochs": 195, "end": "paused",
-            "validation": {"metric": "val_lp_accuracy", "value": 0.8123}}
-    assert tc.checkpoint_words(item) == "Latest save · 195 epochs completed"
+            "validation": {"metric": "val_lp_accuracy", "value": 0.8123},
+            "selection": {"monitor": "val_lp_accuracy", "mode": "max"}}
+    assert ml.checkpoint_words(item) == "Latest save · 195 epochs completed"
+    assert ml.checkpoint_words(item, best=True) == "Latest save · 195 epochs completed"
     top = {**item, "filename": "model-20-0.8123.pt", "completed_epochs": 21,
-           "end": "stopped_early"}
-    assert tc.checkpoint_words(top) == "Top-k save · 21 epochs completed"
-    assert tc.checkpoint_words({**item, "end": "finished"}) == "Latest save · 195 epochs completed"
-    weights = _item("demo", filename="model-03-0.2.pt", kind="weights").__dict__
-    assert tc.checkpoint_words(weights) == "Top-k save · weights only"
+           "end": "stopped_early", "in_best_k": True}
+    assert ml.checkpoint_words(top) == "Top-k save · 21 epochs completed"
+    assert ml.checkpoint_words(top, best=True) == "Best LP accuracy · 21 epochs completed"
+    task = {**top, "selection": {"monitor": "val_pooled_mrr", "mode": "max"}}
+    assert ml.checkpoint_words(task, best=True) == "Best pooled MRR · 21 epochs completed"
+    # A top-k file's name is not what makes it one: its run's records are.
+    named_alike = {**top, "in_best_k": False}
+    assert ml.checkpoint_words(named_alike) == "model-20-0.8123.pt · 21 epochs completed"
+    assert ml.checkpoint_words({**top, "in_best_k": None}) == (
+        "model-20-0.8123.pt · 21 epochs completed")
+    assert ml.checkpoint_words({**item, "end": "finished"}) == "Latest save · 195 epochs completed"
+    weights = {**_item("demo", filename="model-03-0.2.pt", kind="weights").__dict__,
+               "in_best_k": True}
+    assert ml.checkpoint_words(weights) == "Top-k save · weights only"
     older = {**_item("demo", epoch=194).__dict__}                     # no progress record
-    assert tc.checkpoint_words(older) == "Latest save · recorded epoch 194"
-    assert tc.checkpoint_words({**older, "problem": "ValueError: x"}) == "last.pt · cannot be read"
+    assert ml.checkpoint_words(older) == "Latest save · recorded epoch 194"
+    assert ml.checkpoint_words({**older, "problem": "ValueError: x"}) == "last.pt · cannot be read"
     other = {**item, "filename": "best.pt", "completed_epochs": 1}
-    assert tc.checkpoint_words(other) == "best.pt · 1 epoch completed"
+    assert ml.checkpoint_words(other) == "best.pt · 1 epoch completed"
     # A long file name is shortened to fit, its progress kept.
-    long = tc.checkpoint_words({**item, "filename": "a-very-long-checkpoint-name-x.pt"})
+    long = ml.checkpoint_words({**item, "filename": "a-very-long-checkpoint-name-x.pt"})
     assert long.endswith(" · 195 epochs completed") and "…" in long
-    _option_rules([tc.checkpoint_words(i) for i in (item, top, weights, older, other)] + [long])
+    _option_rules([ml.checkpoint_words(i) for i in (item, top, weights, older, other)]
+                  + [long, ml.checkpoint_words(top, best=True)])
 
 
 def test_a_run_reads_as_its_name_architecture_and_start_time():
-    assert tc.run_words("gat", "20261024-173909_ui-live-stop-02_c1d9cf") == \
-        "ui-live-stop-02 · GAT · 2026-10-24 17:39"
-    assert tc.run_words("gat", "20261024-163856_run_559817") == "GAT · 2026-10-24 16:38"
-    assert tc.run_words("hgt", "my-old-run") == "HGT · my-old-run"
+    """The distinguishing token first (the WebUI skill §8): a run's name, then
+    its architecture and start time; an unnamed run's start time, never the
+    "GATv2 · " every run shares; one separator."""
+    assert ml.run_words("gat", "20261024-173909_ui-live-stop-02_c1d9cf") == \
+        "ui-live-stop-02 · GAT 2026-10-24 17:39"
+    assert ml.run_words("gat", "20261024-163856_run_559817") == "2026-10-24 16:38 · GAT"
+    assert ml.run_words("hgt", "my-old-run") == "my-old-run · HGT"
     # A model bundle's run reads as Models reads it (`renderers.architecture_label`).
-    assert tc.run_words("gatv2", "20261028-100000_run_abcdef") == "GATv2 · 2026-10-28 10:00"
+    assert ml.run_words("gatv2", "20261028-100000_run_abcdef") == "2026-10-28 10:00 · GATv2"
+    long = ml.run_words("gatv2", "20261028-100000_smoke-ft-patients_like_me_abcdef")
+    assert long.endswith(" · GATv2 2026-10-28 10:00") and long.startswith("smoke") and "…" in long
+    _option_rules([long])
 
 
 def test_the_drawer_lists_runs_then_the_chosen_runs_checkpoints():
@@ -1982,24 +2021,26 @@ def test_the_drawer_lists_runs_then_the_chosen_runs_checkpoints():
     the runs, latest first; the chosen run's files, newest first. Choosing
     another run offers its files with its latest save chosen; a checkpoint
     kept by key stays chosen; two runs that would read alike are told apart
-    by their directory's name, and two files by their names."""
-    def item(run, filename, completed, figure=None):
+    by their start time to the second, then their own id, and two files by
+    their names. Each value is the listing's key, whatever the words."""
+    def item(run, filename, completed, figure=None, top=False):
         return {**_item("demo", run=run, filename=filename).__dict__,
-                "completed_epochs": completed,
+                "completed_epochs": completed, "in_best_k": top or None,
                 "validation": {"metric": "val_lp_accuracy", "value": figure} if figure else None}
     new, old = "20261024-173909_a_c1d9cf", "20261024-163856_run_559817"
     parents = {f"gatv2/{new}/last.pt": item(new, "last.pt", 195),
-               f"gatv2/{new}/model-20-0.2867.pt": item(new, "model-20-0.2867.pt", 21, 0.2867),
+               f"gatv2/{new}/model-20-0.2867.pt": item(new, "model-20-0.2867.pt", 21, 0.2867,
+                                                       True),
                f"gatv2/{old}/last.pt": item(old, "last.pt", 3),
-               f"gatv2/{old}/model-02-0.2160.pt": item(old, "model-02-0.2160.pt", 3, 0.216),
-               f"gatv2/{old}/model-01-0.2160.pt": item(old, "model-01-0.2160.pt", 2, 0.216)}
-    runs, files = tc.parents_update(parents)
-    assert runs["choices"] == [("a · GATv2 · 2026-10-24 17:39", f"gatv2/{new}"),
-                               ("GATv2 · 2026-10-24 16:38", f"gatv2/{old}")]
+               f"gatv2/{old}/model-02-0.2160.pt": item(old, "model-02-0.2160.pt", 3, 0.216, True),
+               f"gatv2/{old}/model-01-0.2160.pt": item(old, "model-01-0.2160.pt", 2, 0.216, True)}
+    runs, files = ml.parents_update(parents)
+    assert runs["choices"] == [("a · GATv2 2026-10-24 17:39", f"gatv2/{new}"),
+                               ("2026-10-24 16:38 · GATv2", f"gatv2/{old}")]
     assert runs["value"] == f"gatv2/{new}" and files["value"] == f"gatv2/{new}/last.pt"
     assert [label for label, _key in files["choices"]] == [
         "Latest save · 195 epochs completed", "Top-k save · 21 epochs completed"]
-    others = tc.on_run_chosen(f"gatv2/{old}", parents, f"gatv2/{new}/last.pt")
+    others = ml.on_run_chosen(f"gatv2/{old}", parents, f"gatv2/{new}/last.pt")
     assert others["value"] == f"gatv2/{old}/last.pt"                     # its latest save
     assert [key for _label, key in others["choices"]] == [k for k in parents if old in k]
     labels = [label for label, _key in others["choices"]]
@@ -2007,11 +2048,11 @@ def test_the_drawer_lists_runs_then_the_chosen_runs_checkpoints():
     # what they are; still unique, short and with one separator.
     assert labels == ["Latest save · 3 epochs completed", "Top-k save · 3 epochs completed",
                       "Top-k save · 2 epochs completed"]
-    twins = {f"gatv2/{old}/model-03-0.1.pt": item(old, "model-03-0.1.pt", 3),
-             f"gatv2/{old}/model-03-0.2.pt": item(old, "model-03-0.2.pt", 3)}
-    told = [label for label, _key in tc.checkpoint_choices(twins, list(twins))]
+    twins = {f"gatv2/{old}/model-03-0.1.pt": item(old, "model-03-0.1.pt", 3, top=True),
+             f"gatv2/{old}/model-03-0.2.pt": item(old, "model-03-0.2.pt", 3, top=True)}
+    told = [label for label, _key in ml.checkpoint_choices(twins, list(twins))]
     assert told == ["model-03-0.1.pt · 3 epochs completed", "model-03-0.2.pt · 3 epochs completed"]
-    _option_rules(labels)
+    _option_rules(labels, others["choices"], [k for k in parents if old in k])
     _option_rules(told)
     # Long names alike at their start keep the end that tells them apart (a
     # copy, a versioned top-k file); names alike at both ends are numbered in
@@ -2022,37 +2063,97 @@ def test_the_drawer_lists_runs_then_the_chosen_runs_checkpoints():
                           (("checkpoint_run1_of_the_final.pt", "checkpoint_run2_of_the_final.pt",
                             "checkpoint_run3_of_the_final.pt"), 3)):
         files = {f"gatv2/{old}/{name}": item(old, name, epochs) for name in names}
-        told = [label for label, _key in tc.checkpoint_choices(files, list(files))]
-        _option_rules(told)
+        chosen = ml.checkpoint_choices(files, list(files))
+        told = [label for label, _key in chosen]
+        _option_rules(told, chosen, list(files))
         assert all(label.endswith(f" · {epochs} epochs completed") for label in told), told
     assert told == ["checkpo…inal.pt (1) · 3 epochs completed",
                     "checkpo…inal.pt (2) · 3 epochs completed",
                     "checkpo…inal.pt (3) · 3 epochs completed"]
     copies = {f"gatv2/{old}/base_model_before_change_epoch10_copy_{x}.pt":
               item(old, f"base_model_before_change_epoch10_copy_{x}.pt", 10) for x in "ab"}
-    assert [label for label, _key in tc.checkpoint_choices(copies, list(copies))] == [
+    assert [label for label, _key in ml.checkpoint_choices(copies, list(copies))] == [
         "base_mod…copy_a.pt · 10 epochs completed", "base_mod…copy_b.pt · 10 epochs completed"]
-    kept = tc.on_run_chosen(f"gatv2/{old}", parents, f"gatv2/{old}/model-01-0.2160.pt")
+    kept = ml.on_run_chosen(f"gatv2/{old}", parents, f"gatv2/{old}/model-01-0.2160.pt")
     assert kept["value"] == f"gatv2/{old}/model-01-0.2160.pt"
-    assert tc.parents_update(parents, f"gatv2/{old}/model-02-0.2160.pt")[0]["value"] == \
+    assert ml.parents_update(parents, f"gatv2/{old}/model-02-0.2160.pt")[0]["value"] == \
         f"gatv2/{old}"
+    # Runs alike to the minute: their time to the second; alike to the second
+    # (two layouts' runs, or one second's two ids): their own id too.
     twin_runs = {
         "gatv2/20261024-163856_run_111111/last.pt": item("20261024-163856_run_111111", "last.pt", 1),
-        "gatv2/20261024-163801_run_222222/last.pt": item("20261024-163801_run_222222", "last.pt", 1)}
-    assert [label for label, _key in tc.run_choices(twin_runs)] == [
-        "GATv2 · 2026-10-24 16:38 · 20261024-163856_run_111111",
-        "GATv2 · 2026-10-24 16:38 · 20261024-163801_run_222222"]
-    assert tc.on_run_chosen(None, {}, None) == gr.update(choices=[], value=None)
+        "gatv2/20261024-163801_run_222222/last.pt": item("20261024-163801_run_222222", "last.pt", 1),
+        "gatv2/20261024-163801_run_333333/last.pt": item("20261024-163801_run_333333", "last.pt", 1)}
+    chosen = ml.run_choices(twin_runs)
+    assert [label for label, _key in chosen] == [
+        "2026-10-24 16:38:56 · GATv2", "2026-10-24 16:38:01 · GATv2 222222",
+        "2026-10-24 16:38:01 · GATv2 333333"]
+    _option_rules([label for label, _key in chosen], chosen,
+                  [f"gatv2/{key.split('/')[1]}" for key in twin_runs])
+    assert ml.on_run_chosen(None, {}, None) == gr.update(choices=[], value=None)
+
+
+def test_a_runs_best_save_is_its_recorded_selections_best_never_a_file_name():
+    """The skill's §8: "best" is the best value of the run's own recorded
+    selection metric, in its recorded direction, among this run's saved files,
+    named by that metric: a base by validation LP accuracy, higher is better;
+    a min-mode monitor, the lowest; ties share it; an older file that records
+    no selection is never best. A label never changes the value."""
+    def item(run, filename, figure, epochs=4, *, metric="val_lp_accuracy", mode="max",
+             top=True):
+        return {**_item("demo", run=run, filename=filename).__dict__,
+                "completed_epochs": epochs, "in_best_k": top,
+                "validation": {"metric": metric, "value": figure},
+                "selection": {"monitor": metric, "mode": mode}}
+    run = "20261024-173909_a_c1d9cf"
+    keys = [f"gatv2/{run}/{name}" for name in ("last.pt", "model-03-0.7000.pt",
+                                               "model-02-0.9000.pt", "model-01-0.9000.pt")]
+    base = dict(zip(keys, (item(run, "last.pt", 0.7, top=False),
+                           item(run, "model-03-0.7000.pt", 0.7),
+                           item(run, "model-02-0.9000.pt", 0.9, 3),
+                           item(run, "model-01-0.9000.pt", 0.9, 2))))
+    assert r.best_saves(base) == set(keys[2:])                          # a tie shares it
+    chosen = ml.checkpoint_choices(base, keys)
+    assert [label for label, _key in chosen] == [
+        "Latest save · 4 epochs completed", "Top-k save · 4 epochs completed",
+        "Best LP accuracy · 3 epochs completed", "Best LP accuracy · 2 epochs completed"]
+    _option_rules([label for label, _key in chosen], chosen, keys)
+    # A task model's: named by validation pooled MRR, never an LP figure's name.
+    task = {key: {**value, "validation": {**value["validation"], "metric": "val_pooled_mrr"},
+                  "selection": {"monitor": "val_pooled_mrr", "mode": "max"}}
+            for key, value in base.items()}
+    assert [label for label, _key in ml.checkpoint_choices(task, keys)][2:] == [
+        "Best pooled MRR · 3 epochs completed", "Best pooled MRR · 2 epochs completed"]
+    # A min-mode monitor: the lowest is best, whatever the file names say.
+    low = {key: {**value, "selection": {"monitor": "val_lp_accuracy", "mode": "min"}}
+           for key, value in base.items()}
+    assert r.best_saves(low) == set(keys[:2])
+    # An older file without the record, or a figure of another metric, is none.
+    older = {key: {**value, "selection": None} for key, value in base.items()}
+    assert r.best_saves(older) == set()
+    other = {keys[2]: {**base[keys[2]], "validation": {"metric": "val_pooled_mrr",
+                                                       "value": 0.99}},
+             keys[3]: base[keys[3]]}
+    assert r.best_saves(other) == {keys[3]}
+    # Two runs are each their own: one best per run.
+    second = "20261023-000000_b_aaaaaa"
+    both = {**base, f"gatv2/{second}/last.pt": item(second, "last.pt", 0.1)}
+    assert r.best_saves(both) == {*keys[2:], f"gatv2/{second}/last.pt"}
 
 
 def test_the_chosen_checkpoints_details_say_what_its_option_does_not():
     """A table: the file, its stage, what it holds, what continuing does when
     its stage ended, its Trainer validation figure (named as the Trainer's),
     its model fingerprint (copyable) and its run's directory; its progress is
-    its option's, not repeated."""
+    its option's, not repeated. What its run's saves were ranked by is its
+    record's selection, named with its direction, or not recorded."""
     item = {**_item("demo", run="20261024-163856_run_559817").__dict__, "completed_epochs": 11,
             "end": "finished", "validation": {"metric": "val_lp_accuracy", "value": 0.8123}}
+    assert "Selection</span><span class=\"shep-v\">not recorded<" in tc.parent_details_html(item)
+    item["selection"] = {"monitor": "val_lp_accuracy", "mode": "max"}
     html = tc.parent_details_html(item)
+    assert ("Selection</span><span class=\"shep-v\">by validation LP accuracy (Trainer), "
+            "higher is better<") in html
     for words in ("File", "last.pt", "Stage", "Base", "Holds", "training state", "Continuing",
                   "extends it by the Extra epochs you enter", "Validation",
                   "LP accuracy (Trainer) 0.8123", "Model fingerprint", "cccccccccccc",

@@ -71,12 +71,14 @@ def test_the_parent_list_is_the_run_bars_workspaces_model_records_only(tmp_path,
     child_key = "gatv2/20261002-000000_b_222222/model-01-0.4000.pt"
     assert set(parents) == {"gatv2/20261001-000000_a_111111/last.pt", child_key}
     run_labels = {value: label for label, value in runs["choices"]}
-    assert run_labels == {"gatv2/20261001-000000_a_111111": "a · GATv2 · 2026-10-01 00:00",
-                          "gatv2/20261002-000000_b_222222": "b · GATv2 · 2026-10-02 00:00"}
+    assert run_labels == {"gatv2/20261001-000000_a_111111": "a · GATv2 2026-10-01 00:00",
+                          "gatv2/20261002-000000_b_222222": "b · GATv2 2026-10-02 00:00"}
     # The chosen run's files only; the chosen run is the first listed.
     labels = dict((value, label) for label, value in update["choices"])
     assert set(labels) == {key for key in parents if key.startswith(runs["value"] + "/")}
-    child_files = tc.on_run_chosen("gatv2/20261002-000000_b_222222", parents, None)
+    from src.webui.components.model_list import on_run_chosen
+
+    child_files = on_run_chosen("gatv2/20261002-000000_b_222222", parents, None)
     assert [key for _label, key in child_files["choices"]] == [child_key]
     assert "Fine-tune · Gene" in tc.parent_details_html(parents[child_key])
     assert "2 runs, 2 checkpoints" in note
