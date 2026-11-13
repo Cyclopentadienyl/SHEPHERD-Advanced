@@ -3817,8 +3817,14 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} #shep-train-dataset span[id^="shep-lbl-"], {_PAGE} #run_name span[id^="shep-lbl-"], {_PAGE} #shep-train-view-run span[id^="shep-lbl-"] {{ position: static !important; display: block !important; width: 96px !important; height: auto !important; overflow: visible !important; clip: auto !important; clip-path: none !important; margin: 0 !important; padding: 0 !important; background: none !important; border: 0 !important; white-space: nowrap; font-size: 14px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--shep-text-2) !important; }}
 {_PAGE} #shep-train-view-run span[id^="shep-lbl-"] {{ width: auto !important; }}
 {_PAGE} #shep-train-dataset .wrap {{ width: clamp(220px, 16vw, 320px); min-width: 0 !important; }}
-/* A run's option is 40 characters at most (`model_list.run_options`): its box holds one whole. */
-{_PAGE} #shep-train-view-run .wrap {{ width: clamp(300px, 19vw, 360px); min-width: 0 !important; }}
+/* A run's option is 40 characters at most (`renderers.OPTION_CHARS`), its end the start time that
+   tells same-name runs apart, and the closed select is the header's one name for the run viewed: its
+   box is sized by those 40 characters, never by the window (19vw cut 33 of them at 1536 x 760). The
+   text has 40ch (40 digits' width: an option of dates, digits and lowercase names fits whole; one of
+   mostly capitals may still end in the shell's titled ellipsis), and the box adds what Gradio draws
+   around it: the chevron's 30 px in the input, its 2 x 4 px margins, the 2 x 12 px padding and the
+   border. The header's words beside it wrap to their own line where it does not fit. */
+{_PAGE} #shep-train-view-run .wrap {{ width: calc({r.OPTION_CHARS}ch + 64px); min-width: 0 !important; }}
 {_PAGE} #shep-train-dataset input, {_PAGE} #shep-train-view-run input {{ flex: 1 1 auto !important; width: 0 !important; min-width: 0 !important; }}
 {_PAGE} #shep-train-dataset .secondary-wrap, {_PAGE} #shep-train-view-run .secondary-wrap {{ min-width: 0 !important; }}
 {_PAGE} #shep-train-dataset .icon-wrap, {_PAGE} #shep-train-view-run .icon-wrap {{ flex: none !important; }}
@@ -3934,10 +3940,13 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} .shep-drawer-why .shep-rb-why {{ text-align: left; flex-wrap: nowrap; align-items: flex-start; }}
 {_PAGE} #shep-train-drawer-why:not(:has(.shep-drawer-why)) {{ display: none !important; }}
 /* The run view's header row: the Viewing select, then how the run viewed stands to the training
-   job, its dataset's relation, its state and Details, wrapping as one line of words. */
+   job, its dataset's relation, its state and Details, wrapping as one line of words: beside the
+   select while they need two lines there at most (about 540 px: a state line and Details ›), else
+   on a line of their own under it, at the row's width (beside a select that holds a whole option,
+   1536 x 760 drew them in three lines over the plots' room). */
 {_PAGE} #shep-train-rv-top {{ flex: none !important; align-items: center !important; flex-wrap: wrap !important; gap: 6px 14px !important; padding: 6px 16px !important; }}
 {_PAGE} #shep-train-rv-top > * {{ min-width: 0; }}
-{_PAGE} #shep-train-run-head {{ flex: 1 1 320px !important; }}
+{_PAGE} #shep-train-run-head {{ flex: 1 1 540px !important; }}
 {_PAGE} .shep-rv-hd {{ display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }}
 {_PAGE} .shep-rv-rel {{ font-size: 15px; font-weight: 600; color: var(--shep-text); }}
 {_PAGE} #shep-train-view-run .options {{ min-width: min(28rem, calc(100vw - 48px)); }}

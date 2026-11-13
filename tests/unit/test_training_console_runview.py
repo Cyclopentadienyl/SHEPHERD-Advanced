@@ -114,6 +114,22 @@ def test_the_select_lists_the_workspaces_runs_latest_first_by_the_one_option_rul
     assert ml.run_choices(parents) == [(labels[2], f"gatv2/{PAST}")]
 
 
+def test_the_viewing_box_holds_a_whole_option_at_any_window_width():
+    """The closed select is the header's one name for the run viewed, and an
+    option's end is the start time that tells same-name runs apart: its box
+    is sized by the option's 40 characters (`renderers.OPTION_CHARS`, as
+    40ch beside Gradio's chevron, margins, padding and border), never by the
+    window (``clamp(300px, 19vw, 360px)`` cut 33 of them at 1536 x 760). The
+    header's words beside it take a line of their own under it where they
+    would need more than two lines (their basis, about a state line and
+    Details ›). The browser check measures both at each size."""
+    rule = tc.PAGE_CSS.split("#shep-train-view-run .wrap {", 1)[1].split("}", 1)[0]
+    assert f"width: calc({r.OPTION_CHARS}ch + 64px);" in rule and "vw" not in rule
+    assert r.OPTION_CHARS == 40
+    head = tc.PAGE_CSS.split("#shep-train-run-head {", 1)[1].split("}", 1)[0]
+    assert "flex: 1 1 540px !important;" in head
+
+
 def test_the_run_viewed_is_offered_first_when_it_is_not_listed(runs, monkeypatch, operator):  # noqa: F811
     """The training job's run before its directory is made, or in a
     workspace the run bar no longer shows, is the run viewed and offered
