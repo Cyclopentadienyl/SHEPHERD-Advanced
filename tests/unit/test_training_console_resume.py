@@ -250,6 +250,30 @@ def test_the_checks_settings_are_said_in_words_and_the_spec_by_its_differences(c
     assert text.index("Model spec") < text.index('<details class="shep-inherit">')
 
 
+def test_a_refused_checks_reason_names_no_server_path(checkpoints, monkeypatch, tmp_path):
+    """Ops-wiring round B0c (D7): a refused check showed the service's reason
+    as it is, and the reason names the file the service looked for ("/srv/…
+    /last.pt does not exist.", a listed file removed since it was listed) or
+    a path a read error names, so a server path was shown on the page. The
+    reason is shown as the shared redaction gives it: a path inside the
+    workspaces root relative to it, any other as "a path outside the
+    workspaces root"."""
+    inside = checkpoints["paused"]
+    outside = tmp_path / "elsewhere" / "x.pt"
+    reasons = iter([f"{inside} does not exist.",
+                    f"last.pt cannot be read as a checkpoint (OSError: {outside})."])
+    monkeypatch.setattr(training_manager, "preview_continuation",
+                        lambda *a, **k: {"ok": False, "parent": str(inside),
+                                         "reason": next(reasons)})
+    relative = inside.relative_to(checkpoints["root"]).as_posix()
+    for shown in (f"{relative} does not exist.",
+                  "(OSError: a path outside the workspaces root)."):
+        text, *_rest = _check(checkpoints, tc.CONTINUE_FROM_PATH, "ignored",
+                              str(checkpoints["paused"]))
+        assert "Cannot continue." in text and shown in text, text
+        assert str(tmp_path) not in text and str(checkpoints["root"]) not in text
+
+
 def test_a_listed_parent_whose_bytes_changed_since_it_was_listed_is_refused(checkpoints):
     """The list carries each file's digest; the check sends it to the
     service's preview, which compares it on its read (a `last.pt` rewritten

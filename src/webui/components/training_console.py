@@ -2390,8 +2390,12 @@ def _check_html(preview: Mapping[str, Any], source: str, *, differs: bool = Fals
         lines.append('<div>' + r.fingerprint_html("model fingerprint", preview["sha256"], copy=False)
                      + (f", architecture <b>{r.e(r.architecture_label(arch))}</b>" if arch else "") + "</div>")
     if not preview.get("ok"):
+        # The service's reason names the file it read ("/srv/…/x.pt does not
+        # exist."): shown only as the shared redaction gives it, as the
+        # path line above is (D7).
+        reason = redact(preview.get("reason"), workspaces_root()[0])
         return ('<div class="shep-check shep-check-amber"><div class="shep-check-h">⚠ Cannot '
-                f'continue.</div>{"".join(lines)}<p>{r.e(preview.get("reason"))}</p></div>')
+                f'continue.</div>{"".join(lines)}<p>{r.e(reason)}</p></div>')
     # The plan is said once, in the line under the headline (M5-3: the
     # headline repeated it, two lines more in a drawer that must fit).
     head = ('<div class="shep-check-h">⚠ Checkpoint read; cannot continue on the current '
