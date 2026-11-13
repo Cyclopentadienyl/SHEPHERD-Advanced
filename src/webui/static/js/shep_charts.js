@@ -407,6 +407,7 @@
   function cardHtml(inst, spec) {
     return '<div class="shep-chart-hd"><span class="shep-chart-title">' + esc(spec.title) + "</span>" +
       '<span class="shep-chart-keys">' + keysHtml(inst, spec) + "</span></div>" +
+      '<div class="shep-chart-none" hidden></div>' +
       '<div class="shep-chart-plot" tabindex="0" role="img"></div>' +
       '<div class="shep-chart-tip" hidden></div>' +
       (spec.xLabel ? '<div class="shep-chart-xl">' + esc(spec.xLabel) + "</div>" : "");
@@ -424,7 +425,8 @@
       card.innerHTML = cardHtml(inst, spec);
       inst.grid.appendChild(card);
       var st = { id: spec.id, card: card, plot: card.querySelector(".shep-chart-plot"),
-                 tip: card.querySelector(".shep-chart-tip"), u: null, y: null, yManual: false,
+                 tip: card.querySelector(".shep-chart-tip"), none: card.querySelector(".shep-chart-none"),
+                 u: null, y: null, yManual: false,
                  data: [[]], labels: [], yLog: false, title: spec.title };
       inst.charts[spec.id] = st;
       inst.order.push(spec.id);
@@ -572,10 +574,16 @@
     return true;
   }
 
+  // A chart with nothing to draw shows its own line in place of its plot and
+  // axis label (CHART_CSS: .shep-chart-empty), so it takes its title and that
+  // line, not a plot's height; when no chart has anything, the cards give way
+  // to the figure's one line (.shep-charts-blank), set before any chart is
+  // drawn so the ones that have data are measured in the grid's layout.
   function apply(inst, d) {
     var specs = (d && d.charts) || [];
     if (!sameSpecs(inst, specs)) { buildCards(inst, specs); }
-    var empty = true;
+    var empty = !specs.some(function (spec) { return (spec.x || []).length > 0; });
+    inst.root.classList.toggle("shep-charts-blank", specs.length > 0 && empty);
     specs.forEach(function (spec) {
       var st = inst.charts[spec.id];
       var log = spec.yScale === "log";
@@ -583,6 +591,10 @@
       var recreate = st.u && (st.yLog !== log || labels.join("\u0001") !== st.labels.join("\u0001"));
       st.yLog = log;
       st.dropped = 0;
+      if (st.title !== spec.title) {                     // another run's kind: its own title
+        var title = st.card.querySelector(".shep-chart-title");
+        if (title) { title.textContent = String(spec.title || ""); }
+      }
       st.title = spec.title;
       st.data = [Array.prototype.slice.call(spec.x || [])].concat((spec.series || []).map(function (s) {
         return sanitize(st, Array.prototype.slice.call(s.values || []));
@@ -591,8 +603,12 @@
         st.labels = labels;
         st.card.querySelector(".shep-chart-keys").innerHTML = keysHtml(inst, spec);
       }
-      if (st.data[0].length) { empty = false; }
       st.card.classList.toggle("shep-chart-empty", !st.data[0].length);
+      if (st.none) {
+        var line = st.data[0].length ? "" : String(spec.empty || "");
+        if (st.none.textContent !== line) { st.none.textContent = line; }
+        st.none.hidden = !line;
+      }
       if (recreate) { st.u.destroy(); destroyed++; st.u = null; }
       if (st.u) { st.u.setData(st.data, false); }
       else { sizeOrCreate(inst, st); }

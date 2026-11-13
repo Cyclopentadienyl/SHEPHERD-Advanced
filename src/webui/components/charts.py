@@ -87,6 +87,11 @@ SIGNIFICANT = 6
 #: mounts, and over the hidden figure while the module marks it busy (`CHART_CSS`).
 LOADING = "Charts loading…"
 
+#: The figure's charts are 2 × 2 from this width of its own, one column below
+#: (the WebUI skill's §2: about 1000 px; a container query, so it follows the
+#: figure, not the window).
+TWO_COLUMNS_FROM = 960
+
 
 def _versioned(relative: str) -> str:
     digest = hashlib.sha256((STATIC_DIR / relative).read_bytes()).hexdigest()[:12]
@@ -121,8 +126,12 @@ def rounded(value: Any) -> Optional[float]:
 
 def chart_spec(chart_id: str, title: str, x: Sequence[Any],
                series: Iterable[tuple], *, y_scale: str = "linear",
-               x_label: Optional[str] = None) -> Dict[str, Any]:
-    """One chart: ``series`` is ``(label, values)`` pairs aligned with `x`."""
+               x_label: Optional[str] = None, empty: Optional[str] = None) -> Dict[str, Any]:
+    """One chart: ``series`` is ``(label, values)`` pairs aligned with `x`.
+    `empty` is the chart's own line while it has nothing to draw (what will
+    appear, or why nothing does): the module shows it in place of the plot
+    and its axis label, so an empty chart takes its title and that line, not
+    a plot's height."""
     if y_scale not in ("linear", "log"):
         raise ValueError(f"y_scale is 'linear' or 'log', not {y_scale!r}")
     spec: Dict[str, Any] = {
@@ -133,6 +142,8 @@ def chart_spec(chart_id: str, title: str, x: Sequence[Any],
     }
     if x_label:
         spec["xLabel"] = x_label
+    if empty:
+        spec["empty"] = empty
     return spec
 
 
@@ -255,7 +266,7 @@ def chart_figure(*, key: str, elem_id: str, series_fn: Callable[[Any], Any],
 #: fits the canvas to the box, in both directions.
 CHART_CSS = """
 .shep-figure > .html-container { padding: 0 !important; }
-.shep-charts { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; }
+.shep-charts { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; container-type: inline-size; }
 .shep-charts-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 0 0 8px; min-height: 40px; }
 .shep-charts-zoom { display: inline-flex; align-items: center; height: 28px; padding: 0 8px; border-radius: 6px; background: var(--shep-accent-50); border: 1px solid var(--shep-accent-100); color: var(--shep-accent-text); font-size: 14px; white-space: nowrap; }
 .shep-charts-zoom[hidden] { display: none; }
@@ -270,6 +281,7 @@ CHART_CSS = """
 .shep-charts-body { position: relative; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .shep-charts-grid { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: minmax(0, 1fr); gap: 10px 22px; }
 .shep-charts-n1 .shep-charts-grid { grid-template-columns: minmax(0, 1fr); }
+@container (max-width: @COLUMNS@px) { .shep-charts-grid { grid-template-columns: minmax(0, 1fr); } }
 .shep-chart { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .shep-chart-hd { display: flex; align-items: center; gap: 4px 14px; flex-wrap: wrap; min-height: 24px; }
 .shep-chart-title { font-weight: 600; font-size: 15px; color: var(--shep-text); }
@@ -280,7 +292,10 @@ CHART_CSS = """
 .shep-chart-plot .u-wrap { cursor: crosshair; touch-action: none; }
 .shep-chart-plot .u-wrap.shep-panning { cursor: grabbing; }
 .shep-chart-xl { text-align: center; font-size: 14px; color: var(--shep-text-2); line-height: 1.3; }
-.shep-chart-empty .shep-chart-plot { visibility: hidden; }
+.shep-chart-none { font-size: 14px; color: var(--shep-text-2); line-height: 1.4; padding: 2px 0 6px; }
+.shep-chart-none[hidden] { display: none; }
+.shep-chart-empty .shep-chart-plot, .shep-chart-empty .shep-chart-xl { display: none; }
+.shep-charts-blank .shep-charts-grid { display: none; }
 .shep-chart-tip { position: absolute; z-index: 3; pointer-events: none; background: #fff; border: 1px solid var(--shep-border-2); border-radius: 6px; box-shadow: 0 4px 14px rgba(20,24,40,.14); padding: 6px 8px; font-size: 14px; line-height: 1.35; color: var(--shep-text); white-space: nowrap; }
 .shep-chart-tip[hidden] { display: none; }
 .shep-chart-tip .shep-tip-hd { font-weight: 600; }
@@ -293,13 +308,13 @@ CHART_CSS = """
 .shep-charts[aria-busy="true"] .shep-charts-body::after { content: "@LOADING@"; position: absolute; inset: 40% 0 auto 0; text-align: center; font-size: 15px; color: var(--shep-muted); pointer-events: none; }
 @media (max-width: 1399px), (max-height: 759px) {
   .shep-charts { height: auto; }
-  .shep-charts-grid { grid-template-columns: minmax(0, 1fr); grid-auto-rows: auto; }
+  .shep-charts-grid { grid-auto-rows: auto; }
   .shep-chart-plot { flex: none; height: 260px; touch-action: pan-y; }
   .shep-chart-plot .u-wrap { touch-action: pan-y; }
   .shep-charts-msg { position: static; padding: 24px 0; }
   .shep-charts[aria-busy="true"] .shep-charts-body { min-height: 72px; }
 }
-""".replace("@LOADING@", LOADING)
+""".replace("@LOADING@", LOADING).replace("@COLUMNS@", str(TWO_COLUMNS_FROM - 1))
 
 
 __all__ = [

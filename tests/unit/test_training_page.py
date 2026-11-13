@@ -2507,7 +2507,8 @@ def test_the_plots_keep_a_usable_minimum_and_the_resources_line_its_own_row():
     # The boxes inside the row take its height, the cards keep their content's minimum.
     assert "#shep-train-charts .shep-charts-grid { min-height: 0; }" in wide
     assert "#shep-train-charts .shep-chart { min-height: auto; }" in wide
-    assert ".shep-chart-xl { display: none; }" not in css.replace(f"{tc._PAGE} ", "")
+    hidden = [sel for sel, b in _rules(css, "shep-chart-xl") if "display: none" in b]
+    assert hidden == [".shep-chart-empty .shep-chart-plot, .shep-chart-empty .shep-chart-xl"], hidden
     _demo, _ctx, by_id = _page()
     assert by_id["shep-train-run-head"].js_on_load == tc._POPOVER_JS
     assert by_id["shep-train-chip"].js_on_load == tc._POPOVER_JS

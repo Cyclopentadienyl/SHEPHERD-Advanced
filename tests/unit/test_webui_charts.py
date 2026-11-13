@@ -460,8 +460,12 @@ REPLY_SCENARIOS = [
     "rejected_call_after_clear_is_ignored", "rejected_call_after_switch_back_is_ignored",
     "failed_switch_does_not_keep_old_run",
     "retry_budget_is_per_token", "failed_new_epochs_keep_the_run", "retry_cancelled_by_switch",
-    # nothing drawn: nothing of the last run stays, and its last view is kept
+    # nothing drawn: nothing of the last run stays, and its last view is kept; an empty
+    # chart says its own line, a figure with nothing its one (BACKLOG 69)
     "cleared_hides_zoom_note", "cleared_keeps_last_zoom_of_run",
+    "empty_chart_says_its_line_and_the_blank_figure_its_one",
+    # another run's charts are titled by its own specs
+    "another_runs_titles_replace_the_last_ones",
 ]
 
 
@@ -496,3 +500,36 @@ def test_the_figures_buttons_keep_their_padding_under_gradios_button_rule():
     for cls in ("shep-charts-btn", "shep-charts-icon", "shep-charts-new"):
         assert re.search(rf"^\.shep-charts \.{cls} \{{", charts.CHART_CSS, re.M), cls
         assert not re.search(rf"^\.{cls} \{{", charts.CHART_CSS, re.M), cls
+
+
+def test_the_charts_are_two_by_two_from_about_1000_px_of_their_own_width_one_column_below():
+    """The WebUI skill's §2: by the figure's own width (a container query), not
+    the window's: two columns from `charts.TWO_COLUMNS_FROM`, one below, wide
+    or narrow; the narrow layout keeps its fixed plot height."""
+    css = charts.CHART_CSS
+    assert 900 <= charts.TWO_COLUMNS_FROM <= 1000
+    assert "container-type: inline-size;" in css.split(".shep-charts {", 1)[1].split("}", 1)[0]
+    assert (f"@container (max-width: {charts.TWO_COLUMNS_FROM - 1}px) "
+            "{ .shep-charts-grid { grid-template-columns: minmax(0, 1fr); } }") in css
+    narrow = css[css.index("@media (max-width: 1399px), (max-height: 759px)"):]
+    assert "grid-template-columns" not in narrow and "height: 260px" in narrow
+    assert (".shep-charts-grid { flex: 1 1 auto; min-height: 0; display: grid; "
+            "grid-template-columns: repeat(2, minmax(0, 1fr));") in css
+
+
+def test_an_empty_chart_gives_its_plot_and_axis_label_way_to_its_own_line():
+    """BACKLOG 69: an empty chart kept its full height, an axis label alone
+    under a blank box. A spec may carry its line (`chart_spec`'s ``empty``),
+    which the module shows in place of the plot and its axis label; a figure
+    with nothing to draw gives its cards way to its one line."""
+    spec = charts.chart_spec("mrr", "Pooled MRR", [], [], empty="Drawn once the run logs one.")
+    assert spec["empty"] == "Drawn once the run logs one."
+    assert "empty" not in charts.chart_spec("loss", "Loss", [1], [("train", [0.5])])
+    css = charts.CHART_CSS
+    assert (".shep-chart-empty .shep-chart-plot, .shep-chart-empty .shep-chart-xl "
+            "{ display: none; }") in css
+    assert ".shep-charts-blank .shep-charts-grid { display: none; }" in css
+    assert ".shep-chart-none[hidden] { display: none; }" in css
+    js = (STATIC / charts.MODULE).read_text(encoding="utf-8")
+    assert '<div class="shep-chart-none" hidden></div>' in js
+    assert 'inst.root.classList.toggle("shep-charts-blank", specs.length > 0 && empty);' in js

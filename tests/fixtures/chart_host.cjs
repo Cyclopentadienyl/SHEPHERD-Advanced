@@ -33,8 +33,11 @@ function el(tag) {
       if (this._html.indexOf("shep-chart-plot") >= 0) {     // a card: its parts
         const card = this, plot = el("div");
         plot.closest = (sel) => (sel === ".shep-chart-plot" ? plot : sel === ".shep-chart" ? card : null);
+        const none = el("div"); none.hidden = true;        // the template's `hidden`
+        const title = el("span"); title._text = (this._html.match(/shep-chart-title">([^<]*)</) || [])[1] || "";
         this.parts = { ".shep-chart-plot": plot, ".shep-chart-tip": el("div"),
-                       ".shep-chart-keys": el("span") };
+                       ".shep-chart-keys": el("span"), ".shep-chart-none": none,
+                       ".shep-chart-title": title };
       }
     },
     querySelector(sel) { return (this.parts && this.parts[sel]) || null; },
@@ -479,6 +482,50 @@ S.retry_cancelled_by_switch = async () => {            // B failed (retry waitin
   return { ok: s.run === "ws/A" && s.message === "" && bAfter === 0 && !s.pending, s, bAfter };
 };
 // ---------------------------------------------------------------- nothing drawn
+S.empty_chart_says_its_line_and_the_blank_figure_its_one = async () => {
+  // BACKLOG 69: a chart with nothing to draw shows its own line (its plot and
+  // axis label go, CHART_CSS's .shep-chart-empty); when no chart has anything
+  // the cards give way to the figure's one line (.shep-charts-blank).
+  const h = makeHost(MODULE, tok("ws/A", 1)); await settle();
+  const partly = payload("ws/A", 1, 1);
+  partly.charts[1] = { id: "lr", title: "Learning rate", x: [], series: [], yScale: "log",
+                       empty: "Not recorded in this run's log." };
+  await h.answer(h.series()[0], partly);
+  const inst = h.win.ShepCharts._inst.training;
+  const card = (id) => ({ empty: inst.charts[id].card.classList.contains("shep-chart-empty"),
+                          line: inst.charts[id].none.hidden ? "" : inst.charts[id].none.textContent });
+  const one = { loss: card("loss"), lr: card("lr"), blank: h.root.classList.contains("shep-charts-blank"),
+                message: h.state().message };
+  h.setToken(tok("ws/A", 2)); await settle();
+  const none = payload("ws/A", 2, 0);
+  none.empty = "No epoch logged yet: the curves appear here when the run's first epoch ends.";
+  await h.answer(h.series()[1], none);
+  const all = { blank: h.root.classList.contains("shep-charts-blank"), message: h.state().message };
+  h.setToken(tok("ws/A", 3)); await settle();
+  await h.answer(h.series()[2], payload("ws/A", 3, 2));
+  const back = { loss: card("loss"), lr: card("lr"), blank: h.root.classList.contains("shep-charts-blank"),
+                 message: h.state().message };
+  return { ok: !one.loss.empty && one.loss.line === "" && one.lr.empty &&
+               one.lr.line === "Not recorded in this run's log." && !one.blank && one.message === "" &&
+               all.blank && all.message === none.empty &&
+               !back.blank && !back.lr.empty && back.lr.line === "" && back.message === "",
+           one, all, back };
+};
+S.another_runs_titles_replace_the_last_ones = async () => {
+  // B1b: the run view shows any listed run, so the next run's charts (the same
+  // ids, another kind's titles: a base's LP accuracy after a waiting task
+  // model) are titled by its own spec, never the last run's.
+  const h = await shown("ws/A", 2, 2);
+  const inst = h.win.ShepCharts._inst.training;
+  const before = inst.charts.lr.card.querySelector(".shep-chart-title").textContent;
+  h.setToken(tok("ws/B", 3)); await settle();
+  const other = payload("ws/B", 3, 3);
+  other.charts[1].title = "Pooled MRR (validation, Trainer)";
+  await h.answer(h.series()[1], other);
+  const after = inst.charts.lr.card.querySelector(".shep-chart-title").textContent;
+  return { ok: before === "Learning rate" && after === "Pooled MRR (validation, Trainer)" &&
+               inst.charts.lr.title === after, before, after };
+};
 S.cleared_hides_zoom_note = async () => {              // zoomed on A, then cleared: no "zoomed" note left
   const h = await shown("ws/A", 9, 9);
   h.key("x");
