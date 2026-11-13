@@ -844,24 +844,31 @@ def served_warnings(status: Mapping[str, Any]) -> List[Tuple[str, str]]:
     return found
 
 
-def _serving_note(status: Mapping[str, Any], facts: Mapping[str, Any],
-                  trained: Optional[str]) -> str:
+def _serving_rows(status: Mapping[str, Any], facts: Mapping[str, Any],
+                  trained: Optional[str]) -> Tuple[Tuple[str, str], ...]:
+    """What serving reads, a row each of Model Facts' Data
+    (`renderers.ModelFacts.serving_rows`; the skill's §5: never a chain of
+    " · "): the workspace it reads and how its dataset stands to the served
+    model's, the graph's state, whether the task reads shortest paths, and
+    the dataset record when it is verified (its origin is Identity's served
+    row, said once)."""
     identity = status.get("served_identity") or {}
     serving = facts.get("serving")
     manifest = _part(identity, "graph", "split_manifest_sha256")
-    parts = []
+    rows = []
     if serving:
         same = ("the same dataset ✓" if trained and trained == manifest
                 else "another dataset" if trained else "dataset not compared")
-        parts.append(f"serving reads workspace {serving}: {same}")
+        rows.append(("Serving", f"reads workspace {serving}: {same}"))
     graph_state = _part(identity, "graph", "state")
-    parts.append("graph ✓" if graph_state == "verified" else f"graph {graph_state or 'not reported'}")
+    rows.append(("Graph", "✓ verified" if graph_state == "verified"
+                 else graph_state or "not reported"))
     sp = _part(identity, "shortest_paths", "state")
-    parts.append("SP from the graph view" if sp == "computed" else "SP not used by this task")
-    origin = _part(identity, "dataset_record", "origin")
+    rows.append(("Shortest paths", "from the graph view" if sp == "computed"
+                 else "not used by this task"))
     if _part(identity, "dataset_record", "state") == "verified":
-        parts.append(f"dataset record ✓ {origin}")
-    return " · ".join(parts)
+        rows.append(("Dataset record", "✓ verified"))
+    return tuple(rows)
 
 
 def served_facts_html(state: Mapping[str, Any], *, open_section: str = "identity") -> str:
@@ -935,7 +942,7 @@ def served_facts_html(state: Mapping[str, Any], *, open_section: str = "identity
         unread = (words, _FINGERPRINT_NOT_READ.get(trained.get("state"), "not read"))
     model_facts = model_facts._replace(
         name_line=name_line, warnings=(*warnings, *item_warnings), served_rows=tuple(served_rows),
-        serving_note=_serving_note(status, facts,
+        serving_rows=_serving_rows(status, facts,
                                    trained.get("fingerprint") if shown else None),
         trained_on_unread=unread,
         evidence_more=('<p><button type="button" class="shep-dx-link" '

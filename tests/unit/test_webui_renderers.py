@@ -210,9 +210,9 @@ def test_model_facts_has_its_five_sections_and_warnings_always_open():
     assert "Recorded resultsnone in ledger" in plain
     data = html[html.index('data-sec="data"'):html.index('data-sec="evidence"')]
     assert '<dl class="shep-kv">' in data and "Trained ondemo" in text_of(data)
-    assert "Servingserving reads workspace demo: the same dataset" in text_of(data)
+    assert ('<dt class="shep-k">Serving</dt><dd class="shep-v">reads workspace demo: the same '
+            'dataset</dd>') in data
     assert "SYNTHETIC WORKSPACE: not a clinical result." in plain
-    assert "serving reads workspace demo: the same dataset" in plain
     assert "runs/gatv2/20261017-091500_run_3fa9c1/checkpoints/model-05-0.2410.pt" in plain
     assert SHA in plain and FP_A in plain           # Identity: the full digests, with Copy
 

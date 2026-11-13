@@ -1115,7 +1115,12 @@ class ModelFacts(NamedTuple):
     validation: Optional[Tuple[str, float]]
     recorded: Optional[RecordedTests]
     warnings: Tuple[Tuple[str, str], ...]
-    serving_note: Optional[str] = None
+    #: What serving reads, as ``(label, words)`` rows of plain text, each a
+    #: row of Data's summary list (the skill's §5: a fact a row, never a chain
+    #: of " · "): the workspace it reads and how its dataset stands to this
+    #: file's (`facts_from_checkpoint`), and on the Diagnosis card the graph,
+    #: the shortest paths and the dataset record it serves.
+    serving_rows: Tuple[Tuple[str, str], ...] = ()
     task: Optional[str] = None
     configuration: Optional[str] = None
     #: Whether the file's record was read: False for a record this build
@@ -1164,12 +1169,12 @@ def facts_from_checkpoint(item: Any, workspaces: Sequence[Any], *,
         warnings.append(("DATASET NOT RECORDED.",
                          "This checkpoint records no dataset fingerprint, so what it was "
                          "trained on cannot be told."))
-    serving_note = None
+    serving_rows: Tuple[Tuple[str, str], ...] = ()
     if serving_workspace is not None:
         same = (is_digest(fingerprint)
                 and _get(serving_workspace, "dataset_fingerprint") == fingerprint)
-        serving_note = (f"serving reads workspace {_get(serving_workspace, 'name')}: "
-                        + ("the same dataset" if same else "another dataset"))
+        serving_rows = (("Serving", f"reads workspace {_get(serving_workspace, 'name')}: "
+                                    + ("the same dataset" if same else "another dataset")),)
     return ModelFacts(
         name_line=model_name_line(item),
         run=f"{architecture}/{run}" if architecture and run else None,
@@ -1184,7 +1189,7 @@ def facts_from_checkpoint(item: Any, workspaces: Sequence[Any], *,
         validation=figure,
         recorded=recorded,
         warnings=tuple(warnings),
-        serving_note=serving_note,
+        serving_rows=serving_rows,
         # Task and Configuration come from the file's model record; an item
         # built without reading one (the Diagnosis card's served item, which
         # names its task in the name line, K6 decision 4) shows neither row.
@@ -1747,8 +1752,7 @@ def model_facts_html(facts: ModelFacts, *, open_section: str = "identity") -> st
                                     missing=unread[1] if unread else NOT_RECORDED.lower()))]
     if facts.sources:
         data_rows.append(("Sources", e(facts.sources)))
-    if facts.serving_note:
-        data_rows.append(("Serving", e(facts.serving_note)))
+    data_rows.extend((label, e(words)) for label, words in facts.serving_rows)
     evidence = summary_list([
         ("Validation", e(validation_value(facts.validation, read=facts.validation_read))),
         ("Recorded results",

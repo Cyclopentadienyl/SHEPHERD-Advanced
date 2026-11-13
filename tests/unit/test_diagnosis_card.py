@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import time
 from datetime import datetime, timedelta
@@ -569,7 +570,8 @@ def test_details_add_what_a_served_model_has_to_model_facts(root):
     warnings = html[html.index('data-sec="warnings"'):]
     # A disease model uses no SP table: no warning that it lacks one.
     assert "SYNTHETIC WORKSPACE" in warnings and "NO SHORTEST-PATH TABLE" not in warnings
-    assert "SP not used by this task" in html
+    assert ('<dt class="shep-k">Shortest paths</dt><dd class="shep-v">not used by this task</dd>'
+            in _section(html, "data"))
     assert "TRAINED ON A DATASET NO LISTED WORKSPACE HOLDS" in warnings
 
 
@@ -743,8 +745,14 @@ def test_a_task_model_misses_no_sp_table(root, mode):
     body = card.body_html(state)
     details = card.served_facts_html(state)
     assert "no SP table" not in body and "NO SHORTEST-PATH TABLE" not in details
-    note = "SP from the graph view" if mode == "gene_task" else "SP not used by this task"
-    assert note in details and "no SP table" not in details
+    note = "from the graph view" if mode == "gene_task" else "not used by this task"
+    # What serving reads, a row each of Data (the review of B0c: a chain of
+    # up to four " · "), its words kept.
+    data = details[details.index('data-sec="data"'):details.index('data-sec="evidence"')]
+    assert (f'<dt class="shep-k">Shortest paths</dt><dd class="shep-v">{note}</dd>' in data
+            and "no SP table" not in details)
+    rows = re.findall(r'<dd class="shep-v">([^<]*)</dd>', data)
+    assert '<dt class="shep-k">Graph</dt>' in data and not [v for v in rows if " · " in v]
     assert "its task" in card.CARD_HELP[1]
 
 
