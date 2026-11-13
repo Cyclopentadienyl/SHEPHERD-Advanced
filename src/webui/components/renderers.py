@@ -293,16 +293,13 @@ def resources_html(resources: Mapping[str, Any]) -> str:
 
 def fingerprint_html(label: str, digest: Any, *, digits: int = SHORT_HEX, copy: bool = True,
                      help_key: Optional[str] = None) -> str:
-    """"<label> <12 hex>" with the label muted and the value bold monospace; the
-    full value in ``title`` and on Copy."""
+    """"<label> <12 hex>" in a line of text, the label muted before the one
+    digest value (`fingerprint_value`: bold monospace, the full value in
+    ``title`` and on Copy, "not recorded" when there is none)."""
     help_html = help_button(help_key, label[:1].upper() + label[1:]) if help_key else ""
-    if not is_digest(digest):
-        return (f'<span class="shep-fp"><span class="shep-fpk">{e(label)}</span> '
-                f'<span class="shep-muted">not recorded</span>{help_html}</span>')
-    copy_html = " " + copy_button(digest, f"the full {label}", icon_only=True) if copy else ""
+    value = fingerprint_value(digest, what=label, digits=digits, copy=copy)
     return (f'<span class="shep-fp"><span class="shep-fpk">{e(label)}</span> '
-            f'<code class="shep-fpv" title="{e(digest)}">{e(digest[:digits])}</code>'
-            f'{copy_html}{help_html}</span>')
+            f'{value}{help_html}</span>')
 
 
 # ---------------------------------------------------------------------------
@@ -1267,12 +1264,13 @@ def summary_list(rows: Iterable[Tuple[str, str]], *, wide: Iterable[str] = (),
 def fingerprint_value(digest: Any, *, what: str = "fingerprint", digits: int = SHORT_HEX,
                       full: bool = False, missing: str = NOT_RECORDED.lower(),
                       copy: bool = True) -> str:
-    """**A digest as a summary list's value** (`summary_list`): its 12 hex
-    digits (`full`: all 64, as Model Facts' digest rows show them, so the long
-    value keeps one line) in bold monospace, the whole value in its title and
-    on an icon Copy named for `what` (none with `copy` False, where the same
-    digest is copyable once elsewhere in the same details); when there is
-    none, `missing`, the state's own word ("not recorded" where the record
+    """**The one digest value**, a summary list's (`summary_list`) and a line's
+    (`fingerprint_html` puts its label before it): its 12 hex digits
+    (`full`: all 64, as Model Facts' digest rows show them, so the long value
+    keeps one line) in bold monospace, the whole value in its title and on an
+    icon Copy named for `what` (none with `copy` False, where the same digest
+    is copyable once elsewhere, or in its own object's details); when there
+    is none, `missing`, the state's own word ("not recorded" where the record
     holds none, "not read" where nothing was read: the skill's §6)."""
     if not is_digest(digest):
         return f'<span class="shep-muted">{e(missing)}</span>'

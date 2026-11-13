@@ -1108,13 +1108,16 @@ def parent_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]]) -> st
     """Where the exact parent file a model's record names is (its 12-hex and
     run; listed here, in another listed workspace, or not available and why,
     from the family view's row); "none: a new run" for a file with no parent.
-    The run is named whole by the one run words (`model_list.run_words`,
-    `fit` False: the record names its directory alone, so no layout), where
-    it is, after a semicolon, so the row keeps the words' one " · "."""
+    The parent's fingerprint is the one digest value
+    (`renderers.fingerprint_value`, its whole value its title; its Copy is in
+    the parent's own details), its run named whole by the one run words
+    (`model_list.run_words`, `fit` False: the record names its directory
+    alone, so no layout), where it is, after a semicolon, so the row keeps
+    the words' one " · "."""
     sha = item.get("parent_sha256")
     if not r.is_digest(sha):
         return "none: a new run"
-    where = (f'<code class="shep-fpv">{r.e(r.short_hex(sha))}</code> of run '
+    where = (f'{r.fingerprint_value(sha, what="parent fingerprint", copy=False)} of run '
              f'{r.e(ml.run_words(None, item.get("parent_run"), fit=False))}')
     state = (row or {}).get("parent_state")
     if state == "listed":

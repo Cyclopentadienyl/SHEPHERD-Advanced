@@ -1329,6 +1329,11 @@ def test_the_detail_says_what_the_model_is_and_its_relation_to_the_paper(world, 
     assert '▲</span><span class="shep-st-w">parent unavailable: &lt;img' in html
     assert EVIL not in html
     assert "none: a new run" in mp.identity_html({**item, "parent_sha256": None}, None)
+    # The parent's digest is the one digest value: its 12 hex with the whole
+    # value as its title (the review of B0c: a bare code without it).
+    assert (f'<dd class="shep-v">{r.fingerprint_value("a" * 64, copy=False)} of run '
+            in mp.identity_html(item, None)) and f'title="{"a" * 64}"' in r.fingerprint_value(
+                "a" * 64, copy=False)
     # A run's name past an option's 40 characters is named whole in the
     # details (the review of B0c: the Parent and Family rows took the
     # option's middle cut, "heads-abla…ne-control", with no way to read it

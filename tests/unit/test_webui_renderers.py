@@ -577,6 +577,21 @@ def test_a_bundle_run_reads_gatv2_and_a_shepherdgnn_run_its_upper_case():
             r.architecture_label(None)) == ("GAT", "HGT", "MODEL")
 
 
+def test_a_fingerprint_in_a_line_is_the_one_digest_value_after_its_label():
+    """The review of B0c: `fingerprint_html` kept its own copy of the digest
+    value's rule beside `fingerprint_value`; it is that value after its label,
+    the markup unchanged, its missing state "not recorded"."""
+    digest = "ab" * 32
+    for value, copy in ((digest, True), (digest, False), (None, True)):
+        assert r.fingerprint_html("model fingerprint", value, copy=copy) == (
+            '<span class="shep-fp"><span class="shep-fpk">model fingerprint</span> '
+            + r.fingerprint_value(value, what="model fingerprint", copy=copy) + "</span>")
+    shown = r.fingerprint_html("model fingerprint", digest)
+    assert f'<code class="shep-fpv" title="{digest}">{digest[:12]}</code> ' in shown
+    assert 'data-copy="' + digest in shown and "the full model fingerprint" in shown
+    assert '<span class="shep-muted">not recorded</span>' in r.fingerprint_html("x", None)
+
+
 @pytest.mark.parametrize("metric, label", [
     ("val_pooled_mrr", "Validation pooled MRR (Trainer)"),
     ("val_lp_accuracy", "Validation LP accuracy (Trainer)"),
