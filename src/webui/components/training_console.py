@@ -137,7 +137,7 @@ import gradio as gr
 from src.api.services.training_manager import training_manager
 from src.config.recipe import BASE, BASE_SOURCES
 from src.config.runtime_presets import load_runtime_settings
-from src.config.training_fields import by_name, value_problem
+from src.config.training_fields import by_name, names as field_names, value_problem
 from src.evaluation.caveats import TASK_NAMES
 from src.models.bundle.spec import hops_problem, reference_spec
 from src.utils.gpu_lock import lock_state
@@ -1002,16 +1002,20 @@ def _build_error_banner_payload(
 # The run view
 # =============================================================================
 def _shown_path(path: Any) -> str:
-    """A server path as an operator sees it here: relative to the workspaces
-    root when it is inside it (``<workspace>/runs/…``), else as it is."""
+    """A server path as an operator sees it here, only as the shared
+    redaction gives it (`workspaces.redact`, `path_redaction.redact_paths`;
+    D7): relative to the workspaces root when it is inside it
+    (``<workspace>/runs/…``), and any other absolute path as "a path outside
+    the workspaces root", never the path itself. An absolute path is resolved
+    first, so a link into the root reads as the file it names there."""
     root, _problem = workspaces_root()
     text = str(path)
-    if root is not None:
+    if root is not None and Path(text).is_absolute():
         try:
-            return Path(text).resolve().relative_to(Path(root).resolve()).as_posix()
-        except (ValueError, OSError):
+            text = str(Path(text).resolve())
+        except (OSError, RuntimeError):
             pass
-    return text
+    return redact(text, root)
 
 
 def _snapshot_sentence(snapshot: Optional[Dict[str, Any]]) -> str:
@@ -2362,8 +2366,16 @@ def compare_html(parent: Mapping[str, Any], ws: Mapping[str, Any]) -> str:
 def _check_html(preview: Mapping[str, Any], source: str, *, differs: bool = False,
                 listed: Optional[str] = None) -> str:
     """The check result, what continuing does, and the settings taken from the
-    checkpoint (a closed disclosure), as a read-only summary (contract M3a-3;
-    not disabled inputs, which screen readers skip)."""
+    checkpoint, as a read-only summary (contract M3a-3; not disabled inputs,
+    which screen readers skip), each in the one summary list
+    (`renderers.summary_list`): the model spec by its differences from its
+    stage's reference, the full spec one click away
+    (`renderers.model_spec_html`), and the other settings in a closed
+    disclosure, each named in words (`renderers.field_words`, its record name
+    the title) and its value in the one value-words rule
+    (`renderers.setting_words`, by the parent's stage and task), never
+    Python's repr (BACKLOG 72). One level each, beside the other: no
+    disclosure inside another."""
     # The file read: named in full for a typed path; for a listed one by its
     # key in the server's list (`listed`, "<architecture>/<run>/<file>"), which
     # the server resolved to the file it read, its details shown above.
@@ -2390,22 +2402,32 @@ def _check_html(preview: Mapping[str, Any], source: str, *, differs: bool = Fals
     action = re.sub(r"(\d(?:\.\d+)?e-\d+)", r'<span class="shep-nowrap">\1</span>',
                     r.e(preview["action"]))
     lines.append(f"<p>Plan read from the checkpoint: {action}.</p>")
-    inherited = preview.get("inherited") or {}
+    inherited = dict(preview.get("inherited") or {})
     # A setting the checkpoint's record does not hold, which the settings
     # decode gave (a rules-1 parent's freeze), is listed once, with the
     # decode's own words as its value: where it came from is the fact shown.
     decoded = preview.get("decoded") or {}
+    if "model_spec" in inherited:
+        # Its every field in the list took about 3,000 px (BACKLOG 72): said
+        # by its differences, the whole spec behind its own Details ›.
+        words, details = r.model_spec_html(inherited.pop("model_spec"))
+        label = r.field_words("model_spec")
+        lines.append(r.summary_list([(label, words + details)], titles={label: "model_spec"},
+                                    classes="shep-check-spec"))
     if inherited or decoded:
-        values = {**{k: f"<code>{r.e(repr(v))}</code>" for k, v in inherited.items()},
-                  **{k: r.e(source) for k, source in decoded.items()}}
-        rows = "".join(f"<tr><td>{r.e(k)}</td><td>{values[k]}</td></tr>" for k in sorted(values))
+        stage, task = preview.get("learning_stage"), preview.get("task")
+        order = {name: index for index, name in enumerate(field_names())}
+        shown = sorted({*inherited, *decoded}, key=lambda name: (order.get(name, len(order)), name))
+        rows = [(r.field_words(name), r.e(decoded[name]) if name in decoded else
+                 r.e(r.setting_words(name, inherited[name], stage=stage, task=task)))
+                for name in shown]
         lines.append(
             f'<details class="shep-inherit"><summary>Settings taken from this checkpoint '
-            f'<span class="shep-muted">({len(values)}; fixed when continuing)</span></summary>'
+            f'<span class="shep-muted">({len(rows)}; fixed when continuing)</span></summary>'
             '<p class="shep-note">They cannot be changed when continuing; to train with other '
             'settings, start a new run.</p>'
-            f'<table class="shep-ftbl"><thead><tr><th>Setting</th><th>Value</th></tr></thead>'
-            f'<tbody>{rows}</tbody></table></details>')
+            + r.summary_list(rows, titles={r.field_words(name): name for name in shown})
+            + '</details>')
     if not differs:
         # When the datasets differ, the comparison above already says the
         # start refuses (M5-3: one line less, so the drawer fits).
@@ -3231,9 +3253,11 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} .shep-check-ok {{ background: #fff; }}
 {_PAGE} .shep-check-h {{ font-weight: 600; margin-bottom: 4px; }}
 {_PAGE} .shep-check code, {_PAGE} .shep-rv-snap code {{ overflow-wrap: anywhere; word-break: normal; }}
-{_PAGE} .shep-inherit {{ margin-top: 8px; border: 1px solid var(--shep-border); border-radius: 8px; background: #fff; }}
-{_PAGE} .shep-inherit > summary {{ padding: 6px 10px; cursor: pointer; font-weight: 600; }}
-{_PAGE} .shep-inherit .shep-ftbl {{ margin: 0 10px 10px; width: calc(100% - 20px); }}
+/* The check's model spec and settings (`_check_html`): summary lists and one closed disclosure in
+   the check's one box, none a bordered box of its own (the skill's §2). */
+{_PAGE} .shep-check .shep-kv {{ font-size: 14px; gap: 4px 14px; margin-top: 6px; }}
+{_PAGE} .shep-inherit {{ margin-top: 8px; }}
+{_PAGE} .shep-inherit > summary {{ cursor: pointer; font-weight: 600; min-height: 24px; }}
 {_PAGE} .shep-drawer-why {{ font-size: 15px; color: var(--shep-text-2); }}
 {_PAGE} .shep-drawer-why .shep-rb-why {{ text-align: left; flex-wrap: nowrap; align-items: flex-start; }}
 {_PAGE} #shep-train-drawer-why:not(:has(.shep-drawer-why)) {{ display: none !important; }}
@@ -3310,7 +3334,6 @@ PAGE_CSS = charts.CHART_CSS + f"""
   {_PAGE} #shep-train-drawer-bd .shep-cmp p, {_PAGE} #shep-train-drawer-bd .shep-check p {{ margin-top: 2px; }}
   {_PAGE} #shep-train-drawer-bd .shep-check-h {{ margin-bottom: 2px; }}
   {_PAGE} #shep-train-drawer-bd .shep-inherit {{ margin-top: 4px; }}
-  {_PAGE} #shep-train-drawer-bd .shep-inherit > summary {{ padding: 4px 10px; }}
   /* Never clipped, and never cramped: each of the four plots keeps a plot area of at least
      PLOT_MIN_HEIGHT px whatever its title's keys take (the minimum is the plot box's, and each
      box around it grows to hold its content). The run view is three rows: its header and

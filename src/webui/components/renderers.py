@@ -1309,6 +1309,11 @@ NOT_TAKEN_BY_A_BASE = "not taken by a base"
 ALL_NEIGHBOURS = "all neighbours"
 #: An empty list or mapping: a value with no item.
 NO_ITEM = "none"
+#: The parts of a model spec that a stage or task has not (`spec.ModelSpec`):
+#: a base's patient encoder and task head, a task head's gene scoring outside
+#: the Gene task, each null in the spec (`model_spec_html`).
+_SPEC_PARTS = ("patient_encoder", "task_head", "task_head.gene")
+
 
 def _not_taken_words(stage: Any, task: Any) -> str:
     """"not taken by a base", or "not taken by the Gene task"."""
@@ -1418,6 +1423,80 @@ def field_words(key: Any) -> str:
     if words[0] not in _ABBREVIATIONS.values():
         words[0] = words[0][:1].upper() + words[0][1:]
     return " ".join(words)
+
+
+def _spec_rows(data: Mapping[str, Any], prefix: str = "") -> List[Tuple[str, Any]]:
+    """A model spec's plain data as ``(dotted path, value)`` rows, every
+    field of every section in its recorded order (a mapping's entries one row
+    each, as `ModelSpec.differences_from_reference` names a field). Its
+    ``sources`` are left out: they are the reference recipe's provenance
+    notes, carried with every spec whatever its values (a changed field keeps
+    the reference's note), so they say nothing of this model's; a model's
+    listed spec leaves them out alike (`record.listed_record`)."""
+    rows: List[Tuple[str, Any]] = []
+    for key, value in data.items():
+        if not prefix and key == "sources":
+            continue
+        path = f"{prefix}.{key}" if prefix else str(key)
+        if isinstance(value, Mapping) and value:
+            rows.extend(_spec_rows(value, path))
+        else:
+            rows.append((path, value))
+    return rows
+
+
+#: How many of a spec's differences its words name (`model_spec_html`); the
+#: rest are counted, each one marked in its Details.
+_SPEC_WORDS_SHOWN = 4
+
+
+def model_spec_html(data: Any) -> Tuple[str, str]:
+    """**A recorded model spec, said by its differences** (the skill's §1.5,
+    §4; ops-wiring round B0c): ``(words, details)``, escaped HTML. `words` says
+    the spec by its relation to the reference recipe of its own stage and task
+    (`ModelSpec.differences_from_reference`): "Reference GATv2 spec", or
+    "Differs from the reference GATv2 spec: encoder.layers 2 (3), …", each
+    field that differs with its value and the reference's in brackets, as the
+    base form's line names a setting (`training_console.differs_html`), the
+    first `_SPEC_WORDS_SHOWN` of them and the others counted; a spec this build
+    cannot read says why ("Unknown: …") and has no details. `details` is the
+    full spec one click away: a "Details ›" disclosure over every field as
+    recorded (`_spec_rows`, without the reference recipe's notes), each that
+    differs with "reference …" beside it;
+    one level, never inside another disclosure or a popover. Every value in
+    its words (`setting_words`); a part its stage or task has not
+    (`_SPEC_PARTS`), "not taken by a base" or by its task."""
+    from src.models.bundle.spec import ModelSpec, SpecError
+
+    if not isinstance(data, Mapping):
+        return (status_mark("neutral", f"{UNKNOWN}: the record holds no model spec"), "")
+    try:
+        spec = ModelSpec.from_dict(data)
+        differences = spec.differences_from_reference()
+    except (SpecError, TypeError, ValueError, KeyError) as exc:
+        return (status_mark("neutral", f"{UNKNOWN}: not read as a model spec "
+                                       f"({short_reason(exc, 120)})"), "")
+    name = f"reference {architecture_label(spec.encoder.kind)} spec"
+    if differences:
+        named = [f"{path} {setting_words(path, mine)} ({setting_words(path, reference)})"
+                 for path, (reference, mine) in list(differences.items())[:_SPEC_WORDS_SHOWN]]
+        more = len(differences) - len(named)
+        words = (f"Differs from the {name}: " + ", ".join(named)
+                 + (f" and {more} more" if more else ""))
+    else:
+        words = name[:1].upper() + name[1:]
+    rows = []
+    for path, value in _spec_rows(data):
+        if value is None and path in _SPEC_PARTS:
+            text = _not_taken_words(spec.learning_stage, spec.task)
+        else:
+            text = setting_words(path, value)
+        if path in differences:
+            text += f" (reference {setting_words(path, differences[path][0])})"
+        rows.append((path, e(text)))
+    details = ('<details class="shep-more"><summary>Details ›</summary>'
+               f'{summary_list(rows, classes="shep-kv-spec")}</details>')
+    return e(words), details
 
 
 def recorded_count_text(value: Any) -> str:
@@ -1694,6 +1773,7 @@ __all__ = [
     "metric_words",
     "model_facts_html",
     "model_kind_text",
+    "model_spec_html",
     "model_name_line",
     "model_row_html",
     "model_table_row_html",

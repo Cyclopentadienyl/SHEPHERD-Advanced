@@ -551,9 +551,12 @@ def test_the_continue_drawer_says_the_plan_and_lists_the_decoded_freeze_once(run
         plan = html.unescape(re.sub(r"<[^>]+>", "", plan))
         assert plan == previews[rules]["action"] == previews[2]["action"]
         assert "frozen_parts" not in plan and "rules" not in plan and len(plan.split()) <= 20
-        assert text.count("frozen_parts") == 1
-        count = len(previews[rules]["inherited"]) + len(previews[rules]["decoded"])
+        # Once, by its words, its record name the row's title (B0c).
+        assert text.count('title="frozen_parts"') == 1 and text.count("Graph backbone") == 1
+        # The model spec has its own row; the disclosure counts the others.
+        count = len(previews[rules]["inherited"]) + len(previews[rules]["decoded"]) - 1
         assert f"({count}; fixed when continuing)" in text
-    assert (f"<tr><td>frozen_parts</td><td>{html.escape(DECODED_FINETUNE, quote=True)}</td></tr>"
-            in shown[1])
-    assert "<tr><td>frozen_parts</td><td><code>&#x27;none&#x27;</code></td></tr>" in shown[2]
+    row = '<dt class="shep-k" title="frozen_parts">Graph backbone</dt><dd class="shep-v">'
+    assert f"{row}{html.escape(DECODED_FINETUNE, quote=True)}</dd>" in shown[1]
+    # A recorded value in the field's words, never Python's repr ('none').
+    assert f"{row}Trained</dd>" in shown[2]

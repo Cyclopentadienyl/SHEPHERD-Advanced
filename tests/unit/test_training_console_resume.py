@@ -20,6 +20,7 @@ import pytest
 pytest.importorskip("gradio")
 
 from src.api.services.training_manager import training_manager  # noqa: E402
+from src.webui.components import renderers as r  # noqa: E402
 from src.webui.components import training_console as tc  # noqa: E402
 from src.webui.shell import standalone_context  # noqa: E402
 from tests.fixtures.operator_access import gradio_request, operator_mode  # noqa: E402
@@ -198,7 +199,8 @@ def test_the_listed_and_the_typed_checkpoint_go_through_one_check(checkpoints):
     assert "from the run list" in from_list and "(manual path)" in typed
     for text in (from_list, typed):
         assert "Resume the original training (1/2 done, 1 left)" in text
-        assert "<td>learning_rate</td>" in text and "start a new run" in text
+        assert '<dt class="shep-k" title="learning_rate">Learning rate</dt>' in text
+        assert "start a new run" in text
     # The listed parent was resolved by the server from its list: the file
     # read is the one listed (its run and name; its fingerprint is in the
     # chosen checkpoint's details, not repeated here).
@@ -209,6 +211,43 @@ def test_the_listed_and_the_typed_checkpoint_go_through_one_check(checkpoints):
     assert mode["parent"]["fingerprint"] == checkpoints["state"]["row"]["dataset_fingerprint"]
     assert "Trained on the dataset selected in the run bar" in compare
     assert tc.continue_refusal(mode["parent"], checkpoints["state"]) is None
+
+
+def test_the_checks_settings_are_said_in_words_and_the_spec_by_its_differences(checkpoints):
+    """BACKLOG 72, ops-wiring round B0c: the check printed each setting taken
+    from the checkpoint as its Python repr under its field name, so one None
+    stood for early stopping off, a setting a base does not take and an unset
+    seed, and its model spec row was the whole spec with its sources (about
+    3,000 px). From a real base's preview: each setting by its words and its
+    value in the one value-words rule (no repr quote, no bare None), each
+    None by its meaning, and the model spec by its differences from the
+    reference, the full spec one click away behind one "Details ›", never a
+    disclosure inside another."""
+    import html as html_lib
+    import re
+
+    text, *_rest = _check(checkpoints, tc.CONTINUE_FROM_LIST, checkpoints["paused_key"], "")
+    words = html_lib.unescape(re.sub(r"<[^>]+>", " ", text))
+    for repr_mark in ("'", "None", "True", "False", "{", "[", "repr"):
+        assert repr_mark not in words, repr_mark
+    rows = dict(re.findall(r'<dt class="shep-k"(?: title="[^"]*")?>([^<]*)</dt>'
+                           r'<dd class="shep-v">(.*?)</dd>', text))
+    assert rows["Early stopping patience"] == "off"            # None: no early stopping
+    assert rows["Task loss weight"] == r.NOT_TAKEN_BY_A_BASE   # None: a base takes none
+    assert rows["Task"] == r.NOT_TAKEN_BY_A_BASE
+    assert rows["Neighbours per hop"] == "4, 4" and rows["Mixed precision"] in ("on", "off")
+    assert rows["Graph backbone"] == "Trained"
+    # The model spec: its own row, by its differences (a shrunk test spec),
+    # its every field one click away; the settings in the other disclosure.
+    assert rows["Model spec"].startswith("Differs from the reference GATv2 spec: ")
+    spec = text[text.index('title="model_spec"'):text.index('<details class="shep-inherit">')]
+    assert spec.count("<summary>Details ›</summary>") == 1
+    assert '<dt class="shep-k">encoder.layers</dt>' in spec and "(reference 3)" in spec
+    assert "sources" not in spec and "not taken by a base" in spec
+    assert text.count("<details") == 2                          # Details ›, Settings taken
+    inherit = text[text.index('<details class="shep-inherit">'):]
+    assert "Model spec" not in inherit and "<details" not in inherit[len("<details"):]
+    assert text.index("Model spec") < text.index('<details class="shep-inherit">')
 
 
 def test_a_listed_parent_whose_bytes_changed_since_it_was_listed_is_refused(checkpoints):

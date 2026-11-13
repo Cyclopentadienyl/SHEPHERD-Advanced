@@ -330,6 +330,13 @@ body { color: var(--shep-text); }
 .shep-kv > .shep-v { min-width: 0; overflow-wrap: anywhere; }
 .shep-card .shep-kv { padding: 10px 12px; }
 .shep-kv-2 { grid-template-columns: max-content max-content max-content max-content; }
+/* A summary list's "Details ›" (`renderers.model_spec_html`): one level, its
+   body under it, never a disclosure inside another nor a bordered box. */
+.shep-more > summary { cursor: pointer; color: var(--shep-accent-text); width: max-content; min-height: 24px; line-height: 24px; list-style: none; }
+.shep-more > summary::-webkit-details-marker { display: none; }
+.shep-more > summary:hover { text-decoration: underline; }
+.shep-more > summary:focus-visible { outline: 2px solid var(--shep-accent); outline-offset: 2px; }
+.shep-more > .shep-kv { font-size: 14px; gap: 2px 12px; }
 /* A digest row (`renderers.summary_list`'s wide rows): its label on a line of
    its own over the whole list, its full value with an icon-only Copy on the
    line under it. */

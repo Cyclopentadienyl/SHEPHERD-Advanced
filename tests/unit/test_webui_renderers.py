@@ -761,3 +761,48 @@ def test_the_value_words_say_each_setting_by_its_meaning_never_by_repr():
     for value in (None, True, [None, "a"], {"k": None}, ("x",), 0.5):
         text = words("x", value)
         assert "'" not in text and "None" not in text and "True" not in text, (value, text)
+
+
+def _spec(stage="base", task=None, **changes):
+    from src.models.bundle.spec import reference_spec
+
+    data = reference_spec(stage, task).to_dict()
+    for path, value in changes.items():
+        section, field = path.split("__")
+        data[section][field] = value
+    return data
+
+
+def test_a_model_spec_is_said_by_its_differences_its_whole_one_click_away():
+    """Continue's spec row (BACKLOG 72: the whole spec with its sources, about
+    3,000 px): "Reference GATv2 spec", or the fields that differ with the
+    reference's values, the first few named and the rest counted; every field
+    behind one "Details ›", one level, the differing ones marked; a part its
+    stage has not is "not taken by a base"; a spec this build cannot read
+    says Unknown and why, escaped."""
+    words, details = r.model_spec_html(_spec())
+    assert words == "Reference GATv2 spec"
+    assert details.count("<details") == 1 and "<summary>Details ›</summary>" in details
+    assert '<dt class="shep-k">encoder.layers</dt><dd class="shep-v">3</dd>' in details
+    assert ('<dt class="shep-k">patient_encoder</dt><dd class="shep-v">not taken by a base</dd>'
+            in details)
+    # The reference recipe's provenance notes are not this model's values.
+    assert "sources" not in details and "mims-harvard" not in details
+    assert "None" not in _shown_text(details) and "'" not in _shown_text(details)
+    words, details = r.model_spec_html(_spec(encoder__layers=2, encoder__hidden=64,
+                                             encoder__heads=2, encoder__output=32,
+                                             input__dim=8))
+    assert words.startswith("Differs from the reference GATv2 spec: input.dim 8 (2048), ")
+    assert words.endswith(" and 1 more") and words.count("(") == 4
+    assert '<dd class="shep-v">2 (reference 3)</dd>' in details
+    disease = _spec("finetune", "disease")
+    words, details = r.model_spec_html(disease)
+    assert words == "Reference GATv2 spec"
+    assert ('<dt class="shep-k">task_head.gene</dt><dd class="shep-v">not taken by the '
+            'Disease task</dd>') in details
+    unread, none = r.model_spec_html(_spec(encoder__kind=HOSTILE))
+    assert none == "" and "Unknown: not read as a model spec" in unread
+    assert HOSTILE not in unread and "&lt;img" in unread
+    assert r.model_spec_html(None) == (r.status_mark(
+        "neutral", "Unknown: the record holds no model spec"), "")
+
