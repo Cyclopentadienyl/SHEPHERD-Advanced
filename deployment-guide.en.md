@@ -3439,8 +3439,9 @@ directory (refused before it made its run directory) says so, with no checkpoint
 nothing to chart. **Details ›** holds what is read less often: the run's directory, its
 checkpoint (relative to the workspaces root; the newest one while it runs), its logs and the
 dataset fingerprint it used (Copy gives all 64); its workspace when it is not the run bar's.
-Below the header, one figure of four charts sharing the epoch axis, 2 × 2 from about 1000 px of
-its own width and one column below: Loss (train, and validation dashed: a logged `val_loss` or
+Below the header, one figure of four charts sharing the epoch axis: 2 × 2 in a window of at least
+1400 × 760, and in a smaller one 2 × 2 from about 1000 px of the figure's own width, one column
+below: Loss (train, and validation dashed: a logged `val_loss` or
 `val_lp_loss`, whatever the run), the run's validation figure and its companions, and the
 learning rate on a log axis (a 0 or a missing value is a gap). The middle two follow what the
 run logged: a base charts LP accuracy, then ROC-AUC and AP; a task model pooled MRR, then pooled

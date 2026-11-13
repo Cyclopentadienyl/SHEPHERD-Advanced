@@ -101,8 +101,9 @@ job's own run) and its Details; then the shared chart component
 its companions, chosen by the keys the run's log holds (a base's LP
 accuracy, ROC-AUC and AP; a task model's pooled MRR and pooled top-k; titles
 that say no figure is charted for a log that holds neither), and the
-learning rate on a log axis, one figure sharing the epoch axis, 2 × 2 from
-about 1000 px of its width; the data from the run's metrics log through the
+learning rate on a log axis, one figure sharing the epoch axis, 2 × 2 in
+the wide layout and, in the narrow one, from about 1000 px of its own width
+(`charts.TWO_COLUMNS_FROM`); the data from the run's metrics log through the
 component's server functions), each plot at least `PLOT_MIN_HEIGHT` px, the
 plots' body scrolling under the toolbar's own row when they do not fit. An
 empty region says what will appear and the next step (`NO_RUN_YET`,

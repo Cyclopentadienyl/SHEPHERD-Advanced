@@ -3444,7 +3444,8 @@ so nothing can be continued」；沒有 run 目錄的 run（在建立 run 目錄
 checkpoint、沒有日誌，也沒有可畫的圖。**Details ›** 收著較少看的資訊：run 的目錄名稱、它的
 checkpoint（相對於 workspace 根目錄；執行中為最新的一個）、日誌，以及它使用的資料集指紋（Copy 會
 複製完整的 64 個）；run 所在的 workspace 不是 run bar 所選的時候也列在這裡。標題下是一張共用 epoch
-軸的四格圖，圖區本身寬度約 1000 px 以上時排成 2 × 2，較窄時排成一欄：Loss（train，以及以虛線表示的
+軸的四格圖：視窗至少 1400 × 760 時排成 2 × 2；較小的視窗中，圖區本身寬度約 1000 px 以上時排成
+2 × 2，較窄時排成一欄：Loss（train，以及以虛線表示的
 validation：記錄下來的 `val_loss` 或 `val_lp_loss`，不論是哪種 run）、該 run 的驗證值與其伴隨
 指標，以及對數軸的 learning rate（0 或缺少的值為空隙）。中間兩張依 run 記錄的內容而定：base 畫
 LP accuracy，再畫 ROC-AUC 與 AP；任務模型畫 pooled MRR，再畫 pooled top-k。驗證項目兩種數值都

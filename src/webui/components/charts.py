@@ -87,9 +87,13 @@ SIGNIFICANT = 6
 #: mounts, and over the hidden figure while the module marks it busy (`CHART_CSS`).
 LOADING = "Charts loading…"
 
-#: The figure's charts are 2 × 2 from this width of its own, one column below
-#: (the WebUI skill's §2: about 1000 px; a container query, so it follows the
-#: figure, not the window).
+#: In the narrow layout (the page scrolls; each plot a fixed height), the
+#: figure's charts are 2 × 2 from this width of its own, one column below (the
+#: WebUI skill's §2: about 1000 px; a container query, so it follows the
+#: figure, not the window). The wide layout's figure (at least about 895 px
+#: wide at 1400 px) has the window's height, not its own: it stays 2 × 2, as
+#: one column there would leave two of the four plots wholly out of view
+#: (1440 x 900: a body of 419 px for 1018 px of one column).
 TWO_COLUMNS_FROM = 960
 
 
@@ -281,7 +285,6 @@ CHART_CSS = """
 .shep-charts-body { position: relative; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .shep-charts-grid { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: minmax(0, 1fr); gap: 10px 22px; }
 .shep-charts-n1 .shep-charts-grid { grid-template-columns: minmax(0, 1fr); }
-@container (max-width: @COLUMNS@px) { .shep-charts-grid { grid-template-columns: minmax(0, 1fr); } }
 .shep-chart { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .shep-chart-hd { display: flex; align-items: center; gap: 4px 14px; flex-wrap: wrap; min-height: 24px; }
 .shep-chart-title { font-weight: 600; font-size: 15px; color: var(--shep-text); }
@@ -309,6 +312,7 @@ CHART_CSS = """
 @media (max-width: 1399px), (max-height: 759px) {
   .shep-charts { height: auto; }
   .shep-charts-grid { grid-auto-rows: auto; }
+  @container (max-width: @COLUMNS@px) { .shep-charts-grid { grid-template-columns: minmax(0, 1fr); } }
   .shep-chart-plot { flex: none; height: 260px; touch-action: pan-y; }
   .shep-chart-plot .u-wrap { touch-action: pan-y; }
   .shep-charts-msg { position: static; padding: 24px 0; }

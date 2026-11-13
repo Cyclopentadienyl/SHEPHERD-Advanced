@@ -502,17 +502,20 @@ def test_the_figures_buttons_keep_their_padding_under_gradios_button_rule():
         assert not re.search(rf"^\.{cls} \{{", charts.CHART_CSS, re.M), cls
 
 
-def test_the_charts_are_two_by_two_from_about_1000_px_of_their_own_width_one_column_below():
-    """The WebUI skill's §2: by the figure's own width (a container query), not
-    the window's: two columns from `charts.TWO_COLUMNS_FROM`, one below, wide
-    or narrow; the narrow layout keeps its fixed plot height."""
+def test_the_charts_are_two_by_two_in_the_wide_layout_and_by_their_width_in_the_narrow():
+    """The WebUI skill's §2. In the narrow layout (the page scrolls, each plot
+    a fixed height) by the figure's own width (a container query), not the
+    window's: two columns from `charts.TWO_COLUMNS_FROM`, one below. The wide
+    layout's figure (at least about 895 px) has the window's height: it stays
+    2 × 2, as before B1b (one column at 1440 x 900 put two of the four plots
+    wholly out of view)."""
     css = charts.CHART_CSS
     assert 900 <= charts.TWO_COLUMNS_FROM <= 1000
     assert "container-type: inline-size;" in css.split(".shep-charts {", 1)[1].split("}", 1)[0]
-    assert (f"@container (max-width: {charts.TWO_COLUMNS_FROM - 1}px) "
-            "{ .shep-charts-grid { grid-template-columns: minmax(0, 1fr); } }") in css
+    one_column = (f"@container (max-width: {charts.TWO_COLUMNS_FROM - 1}px) "
+                  "{ .shep-charts-grid { grid-template-columns: minmax(0, 1fr); } }")
     narrow = css[css.index("@media (max-width: 1399px), (max-height: 759px)"):]
-    assert "grid-template-columns" not in narrow and "height: 260px" in narrow
+    assert css.count(one_column) == 1 and one_column in narrow and "height: 260px" in narrow
     assert (".shep-charts-grid { flex: 1 1 auto; min-height: 0; display: grid; "
             "grid-template-columns: repeat(2, minmax(0, 1fr));") in css
 
