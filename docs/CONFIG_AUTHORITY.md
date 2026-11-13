@@ -60,6 +60,14 @@ Its settings left `TrainConfig` in K8-7, and `ShepherdGNNConfig` with
     and task by `parent_identity_problem`, then the settings stated by `stated_problem`, then
     the parent's settings). The runner resolves the training device by the process's resolver
     (`src/utils/training_device.py`) before any start.
+  - *Note (2026-11-13, ops-wiring round B1a):* the Training page's base form offers what a new
+    base takes (`new_run_settings("base")`), each field starting at the one fill's value
+    (`new_run_values`), and the reference spec's input, encoder and LP head fields generated
+    from their dataclasses; a setting a rule across settings reads only under its guard shows
+    only while it applies (`training_fields.not_read_by_rules`, the rules' own guard). The base
+    form and the Fine-tune page send a setting when the operator touched its field, whatever its
+    value (decision S2); the K6 rule of sending only what differs from the reference retired.
+    The help leads are the field spec's `description`.
 
 ## Rationale
 

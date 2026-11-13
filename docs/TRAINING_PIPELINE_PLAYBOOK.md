@@ -122,12 +122,16 @@ here builds `shortest_paths.pt`, and the GB10 acceptance probe accepts a workspa
    **Research (pre-clinical)** › Prepare › **Training**.
 2. Choose your workspace, `$WS`'s last part (`hpo_2026_v1`), in the run bar's
    **Dataset** list.
-3. The form trains a **base** (link prediction on the knowledge graph) with the
-   reference recipe's base settings, each starting at the recipe's value:
-   **Epochs**, **Learning rate**, **Batch size** and **Seed**, the rest under
-   "More reference settings". The line under the form says which you changed
-   ("Differs from the reference settings: Epochs 5 (200)"); Start sends only
-   those, and the run records the rest as the recipe's.
+3. The form trains a **base** (link prediction on the knowledge graph) with
+   every setting a new base takes, each starting at the value the run takes
+   without it: **Epochs**, **Learning rate**, **Batch size**, **Seed**,
+   **Split seed** and **Device** shown, the rest under "More training
+   settings" (a setting shows only while the run would read it: Warmup steps
+   with the cosine scheduler, for example), and the model spec's fields
+   under "Model". Start sends the fields you touched, even at their
+   reference value; the line under the form names them ("Set by you: Epochs
+   5 (reference 200)"), the run records them as yours and the rest as the
+   recipe's or this build's defaults. **Reset to reference** clears them.
 4. Recommended first run — validate the whole pipeline cheaply: a handful of
    **Epochs** first, to confirm the loss curves move and checkpoints save. On
    Spark you can raise **Batch size** (the reference is the source's 512).

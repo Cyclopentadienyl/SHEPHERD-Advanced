@@ -3320,16 +3320,25 @@ Training Console 現在是分成三部分的一個頁面：上方橫跨整頁的
   瀏覽器分頁中隱藏橫幅。run bar 中的每則通知都把名稱與路徑當作文字顯示，不論 workspace 或 run
   名稱含有什麼字元。
 
-**參數，「for the next run」**（K6：base 的設定）：恰為 base 階段的參考設定（`src/config/recipe.py`
-的 BASE），每一欄都從參考值開始。Epochs、Learning rate、Batch size 與 Seed 直接顯示，其餘七欄
-收在預設收合的「More reference settings」之下。Early stopping patience 關閉時（參考值）顯示
-「off」，填入整數即開啟。表單下方一行顯示「Uses the reference settings.」或「Differs from the
-reference settings: Epochs 5 (200)」；欄位拒絕的值會在這一行指出（「Not valid: …」），Start 也會
-拒絕；Start 只送出與參考值不同的設定。任務模型由 base 在 Research › Prepare › Fine-tune 訓練。
+**參數，「for the next base run」**：新 base 會讀取的每一項設定，每一欄都從不設定時 run 會採用的
+值開始（參考 recipe 的值，`src/config/recipe.py` 的 BASE；recipe 未設定者則為本版本的預設值）。
+Epochs、Learning rate、Batch size、Seed、Split seed 與 Device 直接顯示，其餘收在預設收合的
+「More training settings」之下。只在另一項設定成立時才會被讀取的設定，只在適用時顯示：Warmup
+steps 僅在 cosine scheduler 時、Minimum rate ratio 僅在有 scheduler 時、Mixed precision
+dtype 僅在 Mixed precision 開啟時。Early stopping patience 關閉時（參考值）顯示「off」，填入整數即
+開啟。欄位的格式或單位寫在欄位下方（hop 清單以逗號分隔、「-1 takes all」，warmup 以 optimizer
+steps 計）。旁邊是預設收合的「Model」：架構（GATv2，本版本唯一實作的架構；有更多架構時才是選項）、
+參考 spec 的文字欄位以事實列出，以及可修改的 input、encoder 與 LP head 數值與開關。**Start 送出你
+動過的欄位**：你編輯過的欄位一定送出，即使等於參考值，並記錄為你的設定；沒動過的不送出，由 run 補上
+並記錄。改動任一 Model 欄位會送出整份 spec，並先檢查（spec 自己的規則，以及 Neighbours per hop 是否
+符合其層數）。表單下方一行顯示「Set by you: Epochs 5 (reference 200)」或尚未設定任何值，並指出
+Start 會拒絕的值（「Not valid: …」）；**Reset to reference** 把每一欄還原並清除你設定的內容。任務
+模型由 base 在 Research › Prepare › Fine-tune 訓練，其 Epochs、Seed 與 Graph backbone 也以同樣
+方式送出：你動過才送出。
 **Data Paths 與它的 Save Path 已移除**：workspace 由 run bar 選擇，儀表板不再
 讀取或寫入伺服器工作目錄中的 `.shepherd_training_config.json`（留在那裡的檔案會被忽略；是否
-提供「Save as the default dataset」是擁有者要決定的問題）。三個分組放不進視窗時（1920 × 1080
-放得下），參數在自己的欄內捲動；run bar 永遠不捲動。run 檢視分成三列：標題與狀態行、圖表、
+提供「Save as the default dataset」是擁有者要決定的問題）。參數放不進視窗時（兩個收合區都收合時，
+約 1850 × 960 放得下），參數在自己的欄內捲動；run bar 永遠不捲動。run 檢視分成三列：標題與狀態行、圖表、
 資源列。圖表使用另外兩列剩下的高度，四張圖各自至少保留 140 px 的繪圖區：視窗太矮放不下時
 （例如 1536 × 760），只有圖表那一列在內部捲動，工具列固定在它的頂端；資源列是它下方獨立的一列，
 所以任何座標軸都不會被蓋住（在 1920 × 1080 與約 1850 × 960 下，四張圖、座標軸與標籤以及資源列

@@ -3280,19 +3280,29 @@ a run.
   Dismiss hides the banner for this browser tab. Every notice in the run bar shows names and
   paths as text, whatever characters a workspace or run name holds.
 
-**Parameters, "for the next run"** (K6: a base's settings): exactly the base stage's reference
-settings (`src/config/recipe.py` BASE), each starting at its reference value. Epochs, Learning
-rate, Batch size and Seed show; the other seven sit under "More reference settings", closed.
-Early stopping patience reads "off" when it is off (the reference); a whole number turns it on.
-A line under the form says "Uses the reference settings." or "Differs from the reference
-settings: Epochs 5 (200)", and a value its field refuses is named there ("Not valid: …") and
-refused by Start, which sends only the settings that differ. Task models are trained from a base
-on Research › Prepare › Fine-tune. **Data Paths and its Save Path are gone**: the workspace
+**Parameters, "for the next base run"**: every setting a new base takes, each starting at the
+value the run takes without it (the reference recipe's, `src/config/recipe.py` BASE, or this
+build's default where the recipe sets none). Epochs, Learning rate, Batch size, Seed, Split seed
+and Device show; the rest sit under "More training settings", closed. A setting the run reads
+only under another one shows only while it applies: Warmup steps with the cosine scheduler,
+Minimum rate ratio with any scheduler, Mixed precision dtype with Mixed precision on.
+Early stopping patience reads "off" when it is off (the reference); a whole number turns it on. A
+field's format or unit is written under it (the hop list's commas and "-1 takes all", warmup in
+optimizer steps). Beside them, "Model", closed: the architecture (GATv2, the one this build
+implements; a choice once there are more), the reference spec's text fields as facts, and its
+input, encoder and LP head numbers and switches to change. **Start sends what you touched**: a
+field you edited is sent, even at its reference value, and recorded as yours; one you did not
+touch is not, and the run fills and records it. A changed model field sends the whole spec,
+checked first (its own rules, and Neighbours per hop against its layers). A line under the form
+says "Set by you: Epochs 5 (reference 200)", or that nothing is set, and names a value Start
+would refuse ("Not valid: …"); **Reset to reference** puts every field back and clears what you
+set. Task models are trained from a base on Research › Prepare › Fine-tune, whose Epochs, Seed
+and Graph backbone are sent the same way: when you touched them. **Data Paths and its Save Path are gone**: the workspace
 is the run bar's choice, and the dashboard no longer reads or writes
 `.shepherd_training_config.json` in the server's working directory (a file left there is
-ignored; whether to offer "Save as the default dataset" is an owner question). When the three
-groups do not fit the window (they fit at 1920 × 1080), the parameters scroll inside their
-column; the run bar never scrolls. The run view is three rows: its header and state line, the
+ignored; whether to offer "Save as the default dataset" is an owner question). When the
+parameters do not fit the window (with both accordions closed they fit at about 1850 × 960), they
+scroll inside their column; the run bar never scrolls. The run view is three rows: its header and state line, the
 charts, and the resources line. The charts take what the other two leave, and each of the four
 plots keeps a plot area of at least 140 px: when the window is too short for that (1536 × 760,
 for example), only the charts' row scrolls, its toolbar staying at its top; the resources line is
