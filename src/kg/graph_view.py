@@ -489,7 +489,11 @@ class SplitMismatchError(GraphViewError):
 _SPLIT_SEED_LIMIT = 2**32
 
 
-def _is_seed(value: Any) -> bool:
+def is_split_seed(value: Any) -> bool:
+    """**Whether `value` is a seed a split is rebuilt from** (`split_facts`):
+    a whole number from 0 to 2**32 - 1, never a boolean. The one rule of a
+    recorded split seed: `rebuild_split` refuses any other, and the list
+    summary of a model record (`record.listed_record`) refuses to show one."""
     return (isinstance(value, int) and not isinstance(value, bool)
             and 0 <= value < _SPLIT_SEED_LIMIT)
 
@@ -527,9 +531,9 @@ def rebuild_split(view: GraphView, record: Mapping[str, Any], *,
     if fields.get("rule") != SPLIT_RULE:
         raise refuse("rule", SPLIT_RULE)
     recorded_seed = fields.get("seed")
-    if seed is not None and not (_is_seed(recorded_seed) and recorded_seed == int(seed)):
+    if seed is not None and not (is_split_seed(recorded_seed) and recorded_seed == int(seed)):
         raise refuse("seed", int(seed), requested=True)
-    if not _is_seed(recorded_seed):
+    if not is_split_seed(recorded_seed):
         raise refuse("seed", None)
     if fields.get("view_digest") != view.digest:
         raise refuse("view_digest", view.digest)
@@ -553,6 +557,7 @@ __all__ = [
     "VIEW_RULE",
     "build_graph_view",
     "exact_distances",
+    "is_split_seed",
     "rebuild_split",
     "relation_key",
     "split_facts",

@@ -493,6 +493,58 @@ def test_the_listing_carries_the_split_seed_its_record_names():
     unplain = listed_record(payload)
     assert unplain["record"] == "refused" and unplain["split_seed"] is None
     assert "data_roles.split.seed" in unplain["record_problem"]
+    # Plain data but no seed a split is rebuilt from (the split's own rule,
+    # `graph_view.is_split_seed`): refused alike, never passed on to a list
+    # whose items declare a whole number (review of B2: one such record made
+    # /training/checkpoints answer 500 for every other).
+    from src.kg.graph_view import is_split_seed
+
+    for seed in ("abc", "7", 0.5, 1.5, 3.0, [1, 2], True, -1, 2**32):
+        assert not is_split_seed(seed), seed
+        payload["data_roles"]["split"] = {"seed": seed}
+        refused = listed_record(payload)
+        assert refused["record"] == "refused" and refused["split_seed"] is None, seed
+        assert refused["record_problem"] == (
+            "the record's data_roles.split.seed is not a split's seed (a whole number from 0 "
+            "to 2**32 - 1), so a list does not show the record"), seed
+    for seed in (0, 2**32 - 1):
+        payload["data_roles"]["split"] = {"seed": seed}
+        assert listed_record(payload)["split_seed"] == seed
+
+
+def test_one_record_whose_split_seed_is_no_seed_never_brings_the_list_down(tmp_path,
+                                                                           monkeypatch):
+    """Ops-wiring round §8 (one unreadable item never brings the others
+    down): over HTTP, a record whose split seed is plain data but no seed
+    is listed refused, with why, beside a readable one that says its seed;
+    the list answers 200 (review of B2)."""
+    from fastapi.testclient import TestClient
+
+    from src.api.main import app
+    from src.api.services.training_manager import training_manager
+    from src.config import server_settings as ss
+    from tests.fixtures.operator_access import OPERATOR_BASE_URL, operator_mode
+
+    operator_mode(monkeypatch)
+    root = tmp_path / "root"
+    ws = root / "ws"
+    for run, seed, mtime in (("20261001-000000_good_aaaaaa", 3, 200),
+                             ("20261002-000000_bad_bbbbbb", "abc", 100)):
+        payload = _record_payload()
+        payload["data_roles"] = {**payload["data_roles"], "split": {"seed": seed}}
+        _put(ws, "gatv2", run, payload, mtime)
+    monkeypatch.setattr(training_manager, "_config", {"data_dir": str(ws)})
+    monkeypatch.setenv(ss.ENV_WORKSPACES_ROOT, str(root))
+    client = TestClient(app, base_url=OPERATOR_BASE_URL)
+    for path, rows in (("/api/v1/training/checkpoints", lambda body: body),
+                       ("/api/v1/workspaces/ws/checkpoints", lambda body: body["checkpoints"])):
+        response = client.get(path)
+        assert response.status_code == 200, (path, response.text)
+        by_run = {item["run"]: item for item in rows(response.json())}
+        good, bad = by_run["20261001-000000_good_aaaaaa"], by_run["20261002-000000_bad_bbbbbb"]
+        assert (good["record"], good["split_seed"]) == ("model", 3), path
+        assert (bad["record"], bad["split_seed"]) == ("refused", None), path
+        assert "data_roles.split.seed is not a split's seed" in bad["record_problem"], path
 
 
 def test_the_listed_record_says_what_a_branch_changed():

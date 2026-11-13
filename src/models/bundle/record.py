@@ -535,8 +535,14 @@ def listed_record(payload: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
     (``data_roles["split"]["seed"]``, None where it names none), the split a
     finetune of it trains on: the Fine-tune page's summary of a base says
     it, and a finetune stating another is refused against the same field
-    (`run_plan.finetune_split_seed_problem`). A part that is not plain data
-    (`_plain`) refuses the summary as a whole, with why, never half shown."""
+    (`run_plan.finetune_split_seed_problem`); a seed no split is rebuilt from
+    (the split's own rule, `graph_view.is_split_seed`: a string, a fraction,
+    a boolean) is a part not read. A part that is not plain data (`_plain`),
+    or not read, refuses the summary as a whole, with why, never half shown,
+    so one such record never brings the others' list down (ops-wiring round
+    §8). Called on a checkpoint already read, so the split's module (and its
+    torch) is imported here, never by the record reader's import."""
+    from src.kg.graph_view import is_split_seed
     from src.utils.run_plan import shown_value
 
     summary: Dict[str, Any] = dict.fromkeys(LISTED_RECORD_FIELDS)
@@ -549,6 +555,10 @@ def listed_record(payload: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
         split = record.data_roles.get("split")
         split_seed = split.get("seed") if isinstance(split, Mapping) else None
         _plain("data_roles.split.seed", split_seed, "so a list does not show the record")
+        if split_seed is not None and not is_split_seed(split_seed):
+            raise ModelRecordError("the record's data_roles.split.seed is not a split's seed (a "
+                                   "whole number from 0 to 2**32 - 1), so a list does not show "
+                                   "the record")
     except ModelRecordError as exc:
         summary.update(record="refused", record_problem=str(exc))
         return summary
