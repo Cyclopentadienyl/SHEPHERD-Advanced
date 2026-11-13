@@ -1040,7 +1040,9 @@ class TestCheckpointsInAndOut:
             (r"gatv2/bad\xff", 1), (r"gatv2/bad\xff", 3)]
         by_run = ml.Preset("by_run", None, "In use", layout="rows")  # every row, by run
         html = ml.list_html(listing_ui, None, by_run)
-        assert html.count(r"Run gatv2/bad\xff") == 2, html
+        # Each group's heading, outside its list (which names it in its
+        # aria-label too, since B0a).
+        assert html.count(r"<b>Run gatv2/bad\xff</b>") == 2, html
         assert sorted(len(v) for v in tc.runs_of(console).values()) == [1, 3]
 
     def test_a_directory_entry_never_shares_a_key_with_a_run_or_file_named_alike(
