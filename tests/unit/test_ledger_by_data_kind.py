@@ -676,8 +676,15 @@ def test_models_shows_each_kind_by_the_one_display_with_its_exposure():
                                              identity.problem, list(overlaps)]))
     supplied, kg, generated = (_text(mp.records_table_html([v], {})) for v in views)
 
-    assert "Cohort version" in supplied and "R10, training inputs" in supplied
-    assert "Exposure" not in supplied and "Data version" not in supplied
+    # The version column's header names the kind of table: "Cohort version"
+    # for supplied cohorts' records only. (A relation row names its relation
+    # by its full words, "Data version bound to this graph", for every kind:
+    # `renderers.relation_rows`, the ops-wiring round's B3.)
+    heads = [re.findall(r'<th scope="col">([^<]*)</th>', mp.records_table_html([v], {}))[0]
+             for v in views]
+    assert heads == ["Cohort version", "Data version", "Data version"]
+    assert "R10, training inputs" in supplied
+    assert "Exposure" not in supplied
     assert "Data version" in kg and "A KG edge set (test)" in kg
     assert "Recorded metrics" in kg and "lp_roc_auc 0.625" in kg
     assert ("Exposure: held out relative to the recorded training and validation graph use"

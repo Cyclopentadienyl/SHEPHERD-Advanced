@@ -755,5 +755,11 @@ def test_reports_whose_modes_are_no_protocol_are_read_as_recorded(tmp_path, monk
         assert run["record"]["scoring"]["mode"] == mode and run["unbuilt"] is None
         shown = html.unescape(re.sub(r"<[^>]+>", "", tp.result_html(reports, run["run_id"], [])))
         assert mode_label(mode) in shown
-    assert len(re.findall(r"report kept", html.unescape(
-        re.sub(r"<[^>]+>", "", tp.reports_html(reports, None))))) == len(paths)
+    # The reports table (the ops-wiring round's B3): one row per kept report,
+    # by its run id, its Measurement cell naming its own recorded mode.
+    table = tp.reports_html(reports, None)
+    cells = {key: html.unescape(re.sub(r"<[^>]+>", " ", row)) for key, row in
+             re.findall(r'<tr[^>]*\bdata-key="([^"]+)"[^>]*>(.*?)</tr>', table, flags=re.S)}
+    assert set(cells) == {path.parent.name for path in paths.values()}
+    for mode, path in paths.items():
+        assert f"Mode {mode}, not described by this version" in cells[path.parent.name], mode
