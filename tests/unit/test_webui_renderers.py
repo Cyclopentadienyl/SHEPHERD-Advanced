@@ -609,8 +609,13 @@ def test_a_base_and_a_task_models_validation_figures_are_named(metric, label):
     item = {"filename": "last.pt", "sha256": SHA, "completed_epochs": 1,
             "validation": {"metric": metric, "value": 0.5}}
     # The figure is the chosen file's details on Training, not its option (K6b:
-    # the skill's 40 characters and one separator).
-    assert r.validation_words(item) == f"{label} 0.5000"
+    # the skill's 40 characters and one separator), its Validation row's value
+    # the one rule every details list gives it (the review of B0c).
+    assert r.validation_figure(item) == (metric, 0.5)
+    assert r.validation_value(r.validation_figure(item)) == (
+        f"{label.removeprefix('Validation ')} 0.5000 — selection metric on val, "
+        "not an independent test")
+    assert not hasattr(r, "validation_words")
     assert ml.checkpoint_words(item) == "Latest save · 1 epoch completed"
 
 
@@ -885,6 +890,33 @@ def _nested_boxes(html_: str, bordered: set) -> list:
 
     Walk().feed(html_)
     return found
+
+
+def test_every_details_lists_validation_row_reads_the_one_way():
+    """The review of B0c: Continue's chosen checkpoint and Fine-tune's base
+    cut the figure's prefix themselves, so one fact read three ways ("not
+    recorded in this file", "not recorded", "not recorded in this
+    checkpoint"; the Trainer's note on some pages only). Every details list's
+    Validation row is `validation_value` of the item's `validation_figure`."""
+    from src.webui.components import finetune_page as ft
+    from src.webui.components import test_page as tp
+    from src.webui.components import training_console as tc
+
+    def rows(item):
+        page = {"workspaces": [], "roots": [], "access": {}}
+        models = {"items": [item], "workspace": "demo"}
+        shown = (tc.parent_details_html(item), ft.base_summary_html(item),
+                 tp.model_html(page, models, tp.item_key(item)),
+                 r.model_facts_html(r.facts_from_checkpoint(item, [])))
+        return {re.search(r'Validation(?:<[^>]*>)*</dt><dd class="shep-v[^"]*">([^<]*)',
+                          html_).group(1) for html_ in shown}
+
+    figure = {**checkpoint(), "checkpoint_kind": "training_state"}
+    assert rows(figure) == {"pooled MRR (Trainer) 0.3180 — selection metric on val, "
+                            "not an independent test"}
+    assert rows({**figure, "validation": None}) == {"not recorded in this checkpoint"}
+    assert rows({**figure, "validation": None, "record": "refused"}) == {
+        "not read (record not readable)"}
 
 
 def test_every_details_list_escapes_keeps_words_says_no_repr_and_draws_one_box():

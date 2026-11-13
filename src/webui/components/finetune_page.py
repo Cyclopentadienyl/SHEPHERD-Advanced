@@ -201,7 +201,6 @@ def base_summary_html(item: Optional[Mapping[str, Any]]) -> str:
     empty when none is chosen."""
     if not item:
         return ""
-    figure = r.validation_words(item)
     trained = item.get("trained_on_this_dataset")
     if trained is True:
         on = f'<span class="shep-ok-t">{r.CHECK} the dataset selected</span>'
@@ -216,7 +215,8 @@ def base_summary_html(item: Optional[Mapping[str, Any]]) -> str:
         ("File", f"<code>{r.e(item.get('filename'))}</code>"),
         ("Configuration", r.e(r.configuration_text(item))),
         ("Holds", r.e(tc.CHECKPOINT_KINDS.get(kind or "", "not recorded"))),
-        ("Validation", r.e(figure.removeprefix("Validation ") if figure else "not recorded")),
+        ("Validation", r.e(r.validation_value(r.validation_figure(item),
+                                              read=r.record_read(item)))),
         ("Selection", r.e(r.selection_words(item).removeprefix("Selection "))),
         ("Trained on", on),
         ("Model fingerprint", r.fingerprint_value(item.get("sha256"), what="model fingerprint")),

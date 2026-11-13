@@ -870,16 +870,16 @@ def model_name_line(item: Any) -> str:
 # ---------------------------------------------------------------------------
 # The validation figure and the selection (the skill's §8)
 # ---------------------------------------------------------------------------
-def validation_words(item: Any) -> Optional[str]:
-    """"Validation pooled MRR (Trainer) 0.2867": the Trainer's validation
-    figure the file records, in the dashboard's one map of their names
-    (`VALIDATION_LABELS`), never a test result; None when it records none
-    this build reads."""
-    validation = _get(item, "validation") or {}
-    metric, value = validation.get("metric"), validation.get("value")
-    if metric not in VALIDATION_LABELS or not isinstance(value, (int, float)):
-        return None
-    return f"{VALIDATION_LABELS[metric]} {value:.4f}"
+def validation_figure(item: Any) -> Optional[Tuple[str, float]]:
+    """The Trainer's validation figure a listed checkpoint records, as
+    ``(metric, value)`` (`CheckpointItem.validation`), or None when it
+    records none: what `validation_text` and `validation_value` say, read
+    the one way for every page's details (Model Facts, the Test page's model,
+    Continue's chosen checkpoint, Fine-tune's base)."""
+    validation = _get(item, "validation")
+    if isinstance(validation, Mapping) and isinstance(validation.get("value"), (int, float)):
+        return str(validation.get("metric")), float(validation["value"])
+    return None
 
 
 def _selection_label(monitor: Any) -> str:
@@ -1147,10 +1147,7 @@ def facts_from_checkpoint(item: Any, workspaces: Sequence[Any], *,
     matched = [w for w in workspaces if _get(w, "name") in names]
     synthetic = any(origin_of(w) == "synthetic" for w in matched)
     sources = sources_text(_get(matched[0], "declared_releases")) if matched else ""
-    validation = _get(item, "validation")
-    figure = None
-    if isinstance(validation, Mapping) and isinstance(validation.get("value"), (int, float)):
-        figure = (str(validation.get("metric")), float(validation["value"]))
+    figure = validation_figure(item)
     architecture, run, filename = (_get(item, "architecture"), _get(item, "run"),
                                    _get(item, "filename"))
     warnings = []
@@ -1219,11 +1216,14 @@ def validation_text(validation: Optional[Tuple[str, float]], *, read: bool = Tru
 
 
 def validation_value(validation: Optional[Tuple[str, float]], *, read: bool = True) -> str:
-    """`validation_text` as a summary list's "Validation" value
-    (`summary_list`): its words without the key's ("pooled MRR (Trainer)
-    0.2867 — selection metric on val, not an independent test", "not
-    recorded in this checkpoint", "not read (record not readable)"), so the
-    row never reads "Validation Validation …"."""
+    """**The value of every details list's "Validation" row**
+    (`summary_list`; Model Facts, the Test page's model, Continue's chosen
+    checkpoint, Fine-tune's base: a listed item's figure by
+    `validation_figure`, its `read` by `record_read`): `validation_text`
+    without the key's words ("pooled MRR (Trainer) 0.2867 — selection metric
+    on val, not an independent test", "not recorded in this checkpoint",
+    "not read (record not readable)"), so the row never reads "Validation
+    Validation …"."""
     return (validation_text(validation, read=read)
             .removeprefix("Validation (Trainer): ").removeprefix("Validation "))
 
@@ -1834,8 +1834,8 @@ __all__ = [
     "trained_on_html",
     "validation_cell",
     "validation_text",
+    "validation_figure",
     "validation_value",
-    "validation_words",
     "word_groups",
     "workspace_choices",
 ]

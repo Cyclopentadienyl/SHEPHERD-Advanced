@@ -2207,12 +2207,17 @@ def test_the_chosen_checkpoints_details_say_what_its_option_does_not():
                   "LP accuracy (Trainer) 0.8123", "Model fingerprint", "cccccccccccc",
                   'data-copy="' + "c" * 64, "gatv2/20261024-163856_run_559817"):
         assert words in html, words
-    assert "epochs completed" not in html and "test" not in html.lower()
+    # Never a test result: the figure says it is the Trainer's selection
+    # metric on val, as every details list's Validation row does (B0c).
+    assert "LP accuracy (Trainer) 0.8123 — selection metric on val, not an independent test" \
+        in html
+    assert "epochs completed" not in html
+    assert "test" not in html.lower().replace("not an independent test", "")
     stopped = tc.parent_details_html({**item, "end": "stopped_early"})
     assert "not possible: it stopped early" in stopped
     child = tc.parent_details_html({**item, "learning_stage": "finetune", "task": "gene",
                                     "validation": None})
-    assert "Fine-tune · Gene" in child and "not recorded in this file" in child
+    assert "Fine-tune · Gene" in child and "not recorded in this checkpoint" in child
     weights = tc.parent_details_html(_item("demo", kind="weights").__dict__)
     assert "weights only (cannot be continued)" in weights and "Continuing" not in weights
     unread = tc.parent_details_html({**_item("demo").__dict__, "problem": "ValueError: <b>x"})

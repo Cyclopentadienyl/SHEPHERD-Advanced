@@ -2230,9 +2230,8 @@ def parent_details_html(item: Optional[Mapping[str, Any]]) -> str:
                 "stopped_early": "not possible: it stopped early"}.get(item.get("end") or "")
     if going_on and kind != "weights":
         rows.append(("Continuing", r.e(going_on)))
-    figure = r.validation_words(item)
-    rows.append(("Validation", r.e(figure.removeprefix("Validation ") if figure
-                                   else "not recorded in this file")))
+    rows.append(("Validation", r.e(r.validation_value(r.validation_figure(item),
+                                                      read=r.record_read(item)))))
     rows.append(("Selection", r.e(r.selection_words(item).removeprefix("Selection "))))
     rows.append(("Model fingerprint", r.fingerprint_value(item["sha256"],
                                                           what="model fingerprint")))

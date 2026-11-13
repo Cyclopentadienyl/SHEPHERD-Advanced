@@ -1418,13 +1418,10 @@ def model_html(page: Mapping[str, Any], models: Mapping[str, Any], key: Optional
         return _reason_html(f"{item.get('filename')}: metadata not readable · cannot be tested "
                             f"({redact(item.get('problem') or 'no digest was read', roots)})")
     workspaces = page.get("workspaces") or []
-    validation = item.get("validation")
-    figure = ((str(validation.get("metric")), float(validation["value"]))
-              if isinstance(validation, Mapping) and isinstance(validation.get("value"), (int, float))
-              else None)
     rows = [("Model", f'<span class="shep-w600">{e(r.model_name_line(item))}</span>'),
             ("File", f'<code>{e(item.get("filename"))}</code>'),
-            ("Validation", e(r.validation_value(figure, read=r.record_read(item)))),
+            ("Validation", e(r.validation_value(r.validation_figure(item),
+                                                read=r.record_read(item)))),
             ("Model fingerprint", r.fingerprint_value(item["sha256"], what="model fingerprint")),
             ("Dataset", r.trained_on_html(item.get("dataset_fingerprint"), workspaces))]
     return ('<div class="shep-test-model">'
