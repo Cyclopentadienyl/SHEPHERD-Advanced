@@ -108,6 +108,7 @@ from src.webui.components.chips import D8_SHORT
 from src.webui.components.help import copy_button, help_button, text_id
 from src.webui.components.renderers import IDENTITY_BANNERS
 from src.webui.components.renderers import NOT_A_MEDICAL_DEVICE as _NOT_A_MEDICAL_DEVICE
+from src.webui.components.renderers import OPTION_CHARS
 from src.webui.components.renderers import e as _e
 from src.webui.components.renderers import is_digest as _is_digest
 from src.webui.components.renderers import resources_html as _resources_html
@@ -2044,9 +2045,6 @@ def identity_outputs(view: Mapping[str, Any], state: Mapping[str, Any],
 # =============================================================================
 #: The task inputs' containers' own class (a view's classes are never empty).
 _TASK_BOX = ("shep-dx-task-box",)
-#: An option's visible text is at most this long (skill §8); its value is the
-#: version's full label.
-OPTION_MAX = 40
 #: The marks an option carries for a version the server would refuse: one
 #: mapped against another graph, one that cannot be read, and one of another
 #: kind, which holds no patients (`card.NOT_A_COHORT`), marked by its kind.
@@ -2115,7 +2113,7 @@ def _led_by_difference(label: str, other: str, room: int) -> Optional[str]:
 
 
 def _option_text(label: str, mark: str, others: List[str], taken: set) -> str:
-    """`label` and its `mark` within `OPTION_MAX` characters, unique among
+    """`label` and its `mark` within `OPTION_CHARS` characters, unique among
     `taken`, and telling the label from every other listed one (`others`): no
     other label fits its visible text (`_fits`). The first of these that
     does: the label whole; cut in the middle; led by the token where it first
@@ -2123,7 +2121,7 @@ def _option_text(label: str, mark: str, others: List[str], taken: set) -> str:
     cut elsewhere. A label no shortening tells apart keeps the middle cut,
     moved until unique; the full label is under the select once it is chosen
     (`cohort_info`)."""
-    room = OPTION_MAX - len(mark)
+    room = OPTION_CHARS - len(mark)
     keep = room - 1
     first = (keep + 1) // 2
 
@@ -2143,7 +2141,7 @@ def _option_text(label: str, mark: str, others: List[str], taken: set) -> str:
     for head in (first, *range(first - 1, -1, -1), *range(first + 1, keep + 1)):
         if cut(head) + mark not in taken:
             return cut(head) + mark
-    raise ValueError(f"no unique option of {OPTION_MAX} characters for {label!r}")
+    raise ValueError(f"no unique option of {OPTION_CHARS} characters for {label!r}")
 
 
 def cohort_choices(cohorts: Mapping[str, Any], current: Any
@@ -2151,7 +2149,7 @@ def cohort_choices(cohorts: Mapping[str, Any], current: Any
     """The Reference cohort options and the version chosen. Every listed
     version, as ``(text, full label)``: the text is the label with at most one
     mark ("another graph", "cannot be read", "KG edge set", "generated split"), at most
-    `OPTION_MAX` characters (a long label shortened where it shows what tells
+    `OPTION_CHARS` characters (a long label shortened where it shows what tells
     it from the others, `_option_text`) and unique. The chosen one is the
     current value while it is listed, else the first version mapped against
     the serving workspace's graph, else the first readable cohort; a KG edge

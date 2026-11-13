@@ -14,6 +14,7 @@ pytest.importorskip("gradio")
 import gradio as gr  # noqa: E402
 
 from src.webui.components import diagnosis_panel as dp  # noqa: E402
+from src.webui.components import renderers as r  # noqa: E402
 from tests.fixtures.clock_zone import utc_clock  # noqa: E402,F401
 
 
@@ -1842,7 +1843,7 @@ def _assert_options_tell_versions_apart(options):
     label and no other; so the texts are unique too."""
     labels = [value for _text, value in options]
     for text, label in options:
-        assert len(text) <= dp.OPTION_MAX and text.count(" · ") <= 1, text
+        assert len(text) <= r.OPTION_CHARS and text.count(" · ") <= 1, text
         shown = text.split(" · ")[0]
         pattern = ".*".join(re.escape(piece) for piece in shown.split("…"))
         assert [other for other in labels if re.fullmatch(pattern, other)] == [label], text
