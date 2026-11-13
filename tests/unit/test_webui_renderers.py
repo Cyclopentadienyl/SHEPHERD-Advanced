@@ -970,6 +970,16 @@ def test_every_details_list_escapes_keeps_words_says_no_repr_and_draws_one_box()
             "versions": [version], "roots": []}
     models = {"items": [item], "workspace": WORLDLY}
     facts = r.facts_from_checkpoint(item, page["workspaces"])
+    # The Test page's Result identity, from a kept report's record the one
+    # reader reads (the review of B0c: no row of it was checked here); its
+    # device is one the reader accepts (CUDA or CPU, else it is no result).
+    from tests.unit.test_webui_test_page import _task_record
+
+    record = _task_record("disease")
+    record["cohort"].update(label=HOSTILE, role=WORLDLY)
+    record["cohort_role"] = WORLDLY
+    result = tp._record_html(record, {}, {})
+    result = result[result.index('<dl class="shep-kv shep-test-ident-rows">'):]
     shown = {
         "parent details": tc.parent_details_html(item),
         "check": tc._check_html(preview, tc.CONTINUE_FROM_PATH),
@@ -979,6 +989,7 @@ def test_every_details_list_escapes_keeps_words_says_no_repr_and_draws_one_box()
         "Models identity": mp.identity_html(item, {"parent_state": "elsewhere",
                                                    "parent_workspace": WORLDLY}),
         "Model Facts": r.model_facts_html(facts),
+        "Test result identity": result[:result.index("</dl>") + 5],
     }
     for where, html_ in shown.items():
         assert "<dl class=\"shep-kv" in html_, where
@@ -994,3 +1005,11 @@ def test_every_details_list_escapes_keeps_words_says_no_repr_and_draws_one_box()
     assert rows["task"] == rows["task_loss_weight"] == "not taken by a base"
     assert rows["use_amp"] == "off" and rows["num_neighbors"] == "15, 10, 5"
     assert "Reference GATv2 spec" in check
+    # The result's determinism by the one value-words rule; a record
+    # without the flag holds none.
+    ident = dict(re.findall(r'<dt class="shep-k">([^<]*)</dt><dd class="shep-v">([^<]*)</dd>',
+                            shown["Test result identity"]))
+    assert ident["Deterministic algorithms"] == "on"
+    record["regime"]["deterministic_algorithms"] = False
+    assert ('Deterministic algorithms</dt><dd class="shep-v">off</dd>'
+            in tp._record_html(record, {}, {}))
