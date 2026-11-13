@@ -13,7 +13,13 @@ Research › Prepare › Fine-tune (K6 decisions 2, 9, 11).
 - **Start** sends the base's listed digest, the dataset fingerprint shown, the
   tasks in `TASKS` order and the settings the operator touched, whatever their
   value (decision S2), through the server's lists (never a client path); a
-  refusal is the runner's sentence, inline and escaped;
+  refusal is the runner's sentence, beside Start with the shared mark of a
+  refusal, escaped;
+- **the settings** (ops-wiring round, B2): what every chosen task's run takes
+  (`run_plan.new_run_settings`), the base's split seed and model never a field
+  but facts of its summary; a task's own settings only with one task, from its
+  reference; the hop list for any task set, its note the start's own check
+  against the base's encoder;
 - **the job card**: each child's status as colour (the ``--shep-status-*``
   tokens), shape and word; everything escaped; products for an operator only,
   once the child ended, the best save by the selection its files record (the
@@ -148,8 +154,8 @@ def test_the_chosen_bases_summary_says_what_start_sends_escaped(root, operator):
     html = fp._on_base_chosen(f"gatv2/{BASE_RUN}/model-03-0.8300.pt", parents)
     for words in ("Run", f"<code>gatv2/{BASE_RUN}</code>", "model-03-0.8300.pt", "Configuration",
                   "GATv2 · recipe changed in", "Holds", "Validation", "LP accuracy (Trainer)",
-                  "0.8300", "Selection", "Trained on", "not recorded", "Model fingerprint",
-                  item["sha256"][:12], f'data-copy="{item["sha256"]}"'):
+                  "0.8300", "Selection", "Trained on", "not recorded", "Split seed",
+                  "Model fingerprint", item["sha256"][:12], f'data-copy="{item["sha256"]}"'):
         assert words in html, words
     # The run is named by its directory, a fact the Run select above does not
     # give; never its option's words again (the WebUI skill §1.2).
@@ -159,6 +165,32 @@ def test_the_chosen_bases_summary_says_what_start_sends_escaped(root, operator):
     assert "<img" not in odd and "&lt;img" in odd and "another dataset" in odd
     same = fp.base_summary_html({**item, "trained_on_this_dataset": True})
     assert "the dataset selected" in same
+    # Each state by the shared status mark (colour, shape and word; B2's
+    # leftover: no ✓ of the page's own).
+    assert r.status_mark("ok", "the dataset selected") in same and r.CHECK not in same
+    assert r.status_mark("warn", "another dataset than the one selected (the start refuses a "
+                                 "parent of another knowledge graph)") in odd
+    assert r.status_mark("neutral", "not recorded") in html
+
+
+def test_the_bases_split_seed_and_model_are_facts_of_its_summary_never_fields(root, operator):
+    """B2 (decision S4): a finetune trains on its base's split and keeps its
+    base's graph side, so the split seed and the model spec are never fields
+    (`BASE_FACTS`); the summary says the split seed its record names
+    (`listed_record`'s `split_seed`, from ``data_roles["split"]``) and its
+    configuration. A record naming no split seed says so, never a number."""
+    parents = fp._on_finetune_bases(operator, {"name": "demo"}, None)[0]
+    item = parents[f"gatv2/{BASE_RUN}/last.pt"]
+    # The fixture's record names its split by a digest alone: no seed.
+    assert item["split_seed"] is None
+    assert "<dt class=\"shep-k\">Split seed</dt><dd class=\"shep-v\">not recorded</dd>" in (
+        fp.base_summary_html(item))
+    seeded = fp.base_summary_html({**item, "split_seed": 7})
+    assert "7 (every child trains on this split)" in seeded
+    assert seeded.count("Split seed") == 1 and "Configuration" in seeded
+    for tasks in ([], ["disease"], ["gene"], ["disease", "gene", "patients_like_me"]):
+        assert not set(fp.offered_settings(tasks)) & {"split_seed", "model_spec"}
+    assert not set(fp.FINETUNE_FIELDS) & fp.BASE_FACTS
 
 
 # --------------------------------------------------------------------------- the tasks
@@ -216,6 +248,20 @@ def started(monkeypatch):
     return calls
 
 
+def _values(**changed):
+    """The page's field values in `FINETUNE_FIELDS` order, each as its field
+    holds it when the page is built (`built_values`, `form_value`), those in
+    `changed` replaced."""
+    built = fp.built_values()
+    return [changed.get(name, tc.form_value(built[name])) for name in fp.FINETUNE_FIELDS]
+
+
+def _start_with(operator, ws, parents, key, tasks, touched, device="cpu", run_name="",
+                **changed):
+    return fp._on_finetune_start(operator, ws, parents, key, tasks, device, run_name, touched,
+                                 *_values(**changed))
+
+
 def test_start_sends_the_listed_digest_the_fingerprint_shown_and_what_was_touched(
         root, operator, started):
     from src.api.services.server_lists import resolve_checkpoint, resolve_workspace
@@ -223,9 +269,9 @@ def test_start_sends_the_listed_digest_the_fingerprint_shown_and_what_was_touche
     ws = tc.workspace_state("demo")
     parents = fp._on_finetune_bases(operator, ws, None)[0]
     key = f"gatv2/{BASE_RUN}/last.pt"
-    said = fp._on_finetune_start(operator, ws, parents, key, ["patients_like_me", "disease"],
-                                 "cpu", "  ft  ", ["seed"], 100, 7.0, "none")
-    assert said == ""
+    said, stop_notice = _start_with(operator, ws, parents, key, ["patients_like_me", "disease"],
+                                    ["seed"], run_name="  ft  ", seed=7.0)
+    assert (said, stop_notice) == ("", "")
     inputs, kwargs = started[-1]
     assert inputs.tasks == ("disease", "patients_like_me")           # TASKS order
     assert inputs.settings == {"seed": 7} and type(inputs.settings["seed"]) is int
@@ -235,13 +281,14 @@ def test_start_sends_the_listed_digest_the_fingerprint_shown_and_what_was_touche
     assert (inputs.device, inputs.run_name) == ("cpu", "ft")
     assert kwargs == {"expected_dataset_fingerprint": ws["row"]["dataset_fingerprint"]}
     # Untouched, nothing is sent, whatever the fields hold (decision S2) ...
-    fp._on_finetune_start(operator, ws, parents, key, ["gene"], "auto", "", [], 5, 7, "none")
+    _start_with(operator, ws, parents, key, ["gene"], [], device="auto", num_epochs=5, seed=7,
+                batch_size=8, learning_rate=0.5)
     assert started[-1][0].settings == {}
     # ... and touched, the recipe's own values are sent: equal to the
     # reference is never read as "not set".
-    fp._on_finetune_start(operator, ws, parents, key, ["gene"], "auto", "",
-                          ["num_epochs", "seed"], 100, 33, "none")
-    assert started[-1][0].settings == {"num_epochs": 100, "seed": 33}
+    _start_with(operator, ws, parents, key, ["gene"], ["num_epochs", "seed", "batch_size"],
+                device="auto")
+    assert started[-1][0].settings == {"num_epochs": 100, "seed": 33, "batch_size": 64}
 
 
 def test_a_frozen_graph_backbone_reaches_the_start_and_the_note_says_what_trains(
@@ -255,12 +302,12 @@ def test_a_frozen_graph_backbone_reaches_the_start_and_the_note_says_what_trains
     ws = tc.workspace_state("demo")
     parents = fp._on_finetune_bases(operator, ws, None)[0]
     key = f"gatv2/{BASE_RUN}/last.pt"
-    assert fp._on_finetune_start(operator, ws, parents, key, ["disease", "gene"], "cpu", "",
-                                 ["frozen_parts"], 100, 33, "graph_side") == ""
+    assert _start_with(operator, ws, parents, key, ["disease", "gene"], ["frozen_parts"],
+                       frozen_parts="graph_side") == ("", "")
     assert started[-1][0].settings == {"frozen_parts": "graph_side"}
     assert started[-1][0].tasks == ("disease", "gene")
-    fp._on_finetune_start(operator, ws, parents, key, ["disease"], "cpu", "", ["num_epochs"],
-                          5, 33, "none")
+    _start_with(operator, ws, parents, key, ["disease"], ["num_epochs"], num_epochs=5,
+                frozen_parts="graph_side")
     assert started[-1][0].settings == {"num_epochs": 5}
     assert fp.freeze_note_html("none") == ""
     # Which values leave parts untrained is the recipe's rule, read from it
@@ -279,10 +326,12 @@ def test_a_frozen_graph_backbone_reaches_the_start_and_the_note_says_what_trains
 @pytest.mark.parametrize("change, words", [
     ({"tasks": []}, "choose at least one task"),
     ({"key": None}, "choose a base checkpoint"),
-    ({"epochs": 0}, "Epochs must be between 1 and 10000, not 0."),
+    ({"num_epochs": 0}, "Epochs must be between 1 and 10000, not 0."),
     ({"seed": None}, "Seed must be set"),
     ({"frozen_parts": "all"}, "Graph backbone must be one of [&#x27;none&#x27;, "
                               "&#x27;graph_side&#x27;], not &#x27;all&#x27;."),
+    ({"num_neighbors": "15, x"}, "Neighbours per hop must be whole numbers separated by "
+                                 "commas"),
     ({"ws": {"name": None, "row": None}}, "select a dataset"),
 ])
 def test_start_refuses_what_it_cannot_send_and_starts_nothing(root, operator, started, change,
@@ -290,12 +339,14 @@ def test_start_refuses_what_it_cannot_send_and_starts_nothing(root, operator, st
     ws = tc.workspace_state("demo")
     parents = fp._on_finetune_bases(operator, ws, None)[0]
     args = {"ws": ws, "parents": parents, "key": f"gatv2/{BASE_RUN}/last.pt",
-            "tasks": ["disease"], "epochs": 100, "seed": 33, "frozen_parts": "none"}
-    args.update(change)
-    said = fp._on_finetune_start(operator, args["ws"], args["parents"], args["key"],
-                                 args["tasks"], "cpu", "", list(fp.FINETUNE_FIELDS),
-                                 args["epochs"], args["seed"], args["frozen_parts"])
+            "tasks": ["disease"]}
+    fields = {name: value for name, value in change.items() if name in fp.FINETUNE_FIELDS}
+    args.update({name: value for name, value in change.items() if name not in fields})
+    said, _stop = _start_with(operator, args["ws"], args["parents"], args["key"], args["tasks"],
+                              list(fp.FINETUNE_FIELDS), **fields)
     assert started == [] and words in said and "Not started" in said
+    # Beside Start, with the shared mark of a refusal (the skill's §6, §9).
+    assert said.startswith('<span class="shep-notice-t"><span class="shep-st shep-st-error">')
 
 
 def test_a_parent_listed_for_another_workspace_is_not_started(root, operator, started):
@@ -303,8 +354,7 @@ def test_a_parent_listed_for_another_workspace_is_not_started(root, operator, st
     parents = fp._on_finetune_bases(operator, ws, None)[0]
     key = f"gatv2/{BASE_RUN}/last.pt"
     parents = {key: {**parents[key], "workspace": "other"}}
-    said = fp._on_finetune_start(operator, ws, parents, key, ["disease"], "cpu", "", [], 100,
-                                 33, "none")
+    said, _stop = _start_with(operator, ws, parents, key, ["disease"], [])
     assert started == [] and "the list shows other’s bases, not demo’s" in said
 
 
@@ -315,24 +365,230 @@ def test_a_refused_start_shows_the_runners_sentence_escaped(root, operator, monk
                                                       "knowledge graph. Nothing was started."})
     ws = tc.workspace_state("demo")
     parents = fp._on_finetune_bases(operator, ws, None)[0]
-    said = fp._on_finetune_start(operator, ws, parents, f"gatv2/{BASE_RUN}/last.pt",
-                                 ["disease"], "cpu", "", [], 100, 33, "none")
+    key = f"gatv2/{BASE_RUN}/last.pt"
+    said, _stop = _start_with(operator, ws, parents, key, ["disease"], [])
     assert "<img" not in said and "&lt;img" in said and "another knowledge graph" in said
     # The runner's sentence already says nothing was started: not said twice
     # (K6 closing review: "Not started: … Nothing was started.").
     assert "Not started" not in said and said.count("Nothing was started.") == 1
+    assert 'class="shep-st shep-st-error"' in said
     # A refusal that does not say it keeps the page's lead.
     monkeypatch.setattr(fp.training_manager, "start_finetune",
                         lambda inputs, **k: {"success": False, "error": "The slot is busy."})
-    said = fp._on_finetune_start(operator, ws, parents, f"gatv2/{BASE_RUN}/last.pt",
-                                 ["disease"], "cpu", "", [], 100, 33, "none")
-    assert said == tc.notice_html("Not started: The slot is busy.")
+    said, _stop = _start_with(operator, ws, parents, key, ["disease"], [])
+    assert said == tc.notice_html("Not started: The slot is busy.", mark="error")
+
+
+def test_the_runners_refusal_of_the_settings_is_said_beside_start_in_its_words(
+        root, operator, monkeypatch):
+    """B2 (decisions S4, F3): the start's invalid settings (422 on the API)
+    and its checks against the base are said beside Start in the runner's
+    words, a sentence that names a setting first named by the field's label
+    (`training_console.labelled_problem`, as the Training page's Branch says
+    them); its other words, a hop list's among them, as the runner wrote
+    them."""
+    from types import SimpleNamespace
+
+    from src.api.services.training_manager import _finetune_base_problem
+    from src.models.bundle.record import listed_spec
+
+    ws = tc.workspace_state("demo")
+    parents = fp._on_finetune_bases(operator, ws, None)[0]
+    key = f"gatv2/{BASE_RUN}/last.pt"
+    # The runner's own check against the base (the fixture's base has one
+    # encoder layer): the reference hop list cannot run on it.
+    base = SimpleNamespace(model_spec=listed_spec(parents[key]["spec"]), data_roles={})
+    why = _finetune_base_problem({}, ("disease",), base)
+    assert why and "does not fit its base's encoder: num_neighbors needs 1 numbers" in why
+    for refusal, words in (
+            ({"error": f"{why} Nothing was started."},
+             r.e(f"{why} Nothing was started.")),
+            ({"error": "min_lr_ratio must be more than 0 when scheduler_type is onecycle. "
+                       "Nothing was started."},
+             "Final learning-rate ratio must be more than 0 when scheduler_type is onecycle.")):
+        monkeypatch.setattr(fp.training_manager, "start_finetune",
+                            lambda inputs, refusal=refusal, **k: {
+                                "success": False, "invalid_settings": True, **refusal})
+        said, _stop = _start_with(operator, ws, parents, key, ["disease"], [])
+        assert words in said, said
+        assert said.count("Nothing was started.") == 1 and "shep-st-error" in said
 
 
 def test_start_is_refused_for_a_read_only_request(root, started):
-    said = fp._on_finetune_start(READ_ONLY, tc.workspace_state("demo"), {}, None, ["disease"],
-                                 "cpu", "", [], 100, 33, "none")
-    assert "Refused" in said and started == []
+    said, _stop = fp._on_finetune_start(READ_ONLY, tc.workspace_state("demo"), {}, None,
+                                        ["disease"], "cpu", "", [], *_values())
+    assert "Refused" in said and started == [] and "shep-st-error" in said
+
+
+# --------------------------------------------------------------------------- the settings (B2)
+def _subsets():
+    from itertools import combinations
+
+    from src.models.bundle.spec import TASKS
+
+    return [list(c) for n in (1, 2, 3) for c in combinations(TASKS, n)]
+
+
+def test_the_fields_are_what_every_chosen_tasks_run_takes():
+    """B2 (decision S1): the page offers what every chosen task's run takes,
+    the intersection of `run_plan.new_run_settings` over the tasks (the job
+    runner's own rule of a Fine-tune start), but the base's facts; with one
+    task, everything its run takes; with several, a task's own setting only
+    where any task set takes it (the hop list). The page builds a field for
+    each, once (`FINETUNE_FIELDS`): common first, the rest one click away."""
+    from src.config.recipe import FINETUNE_TASKS
+    from src.utils.run_plan import new_run_settings
+
+    assert fp.COMMON_SHOWN == ("num_epochs", "seed", "frozen_parts")
+    assert len(set(fp.FINETUNE_FIELDS)) == len(fp.FINETUNE_FIELDS)
+    assert fp.TASK_OWN == frozenset().union(*FINETUNE_TASKS.values())
+    assert fp.ANY_TASKS == ("num_neighbors",) and fp.TASK_FIELDS[0] == "num_neighbors"
+    for tasks in _subsets():
+        every = frozenset.intersection(*(new_run_settings("finetune", t) for t in tasks))
+        offered = set(fp.offered_settings(tasks))
+        if len(tasks) == 1:
+            assert offered == every - fp.BASE_FACTS, tasks
+        else:
+            assert offered == every - fp.BASE_FACTS - (fp.TASK_OWN - {"num_neighbors"}), tasks
+            assert offered & fp.TASK_OWN == {"num_neighbors"}, tasks
+        assert offered <= set(fp.FINETUNE_FIELDS)
+        assert set(fp.COMMON_SHOWN + fp.MORE_FIELDS) <= offered, tasks
+    assert fp.offered_settings([]) == ()
+    assert set(fp.MORE_FIELDS) & fp.TASK_OWN == set()
+
+
+def test_task_settings_show_with_one_task_from_its_reference_and_not_with_two(
+        root, operator, started):
+    """B2: a task's own settings (learning rate, sample sizes, loss weights,
+    candidate size) show only when exactly one task is chosen, starting from
+    that task's reference; with two, a visible line says each child takes its
+    own task's reference, and a value left in a hidden field is never sent."""
+    from src.utils.run_plan import new_run_values
+
+    item = fp._on_finetune_bases(operator, {"name": "demo"}, None)[0][
+        f"gatv2/{BASE_RUN}/last.pt"]
+    one = fp.task_settings_view(["patients_like_me"], item)
+    shown = {name for name, update in zip(fp.TASK_FIELDS, one[1:-2], strict=True)
+             if update["visible"]}
+    assert shown == {"num_neighbors", "learning_rate", "sparse_sample_size", "task_loss_weight",
+                     "lp_loss_weight", "candidate_upsample_size"}
+    assert one[0]["visible"] is True and one[0]["label"] == "Patients-like-me settings"
+    assert one[-1] == ""
+    reference = new_run_values("finetune", "patients_like_me", {})
+    assert fp.task_starts(["patients_like_me"]) == {
+        name: tc.form_value(reference[name]) for name in shown}
+    assert fp.task_starts(["patients_like_me"])["learning_rate"] == 5e-05
+    two = fp.task_settings_view(["disease", "gene"], item)
+    assert {name for name, update in zip(fp.TASK_FIELDS, two[1:-2], strict=True)
+            if update["visible"]} == {"num_neighbors"}
+    assert two[0]["label"] == "Task settings"
+    line = two[-1]
+    assert "Each child takes its own task’s reference for these: Learning rate" in line
+    assert "Candidate sample size" in line and "Candidate upsample size" in line
+    assert fp.task_settings_view([], item)[0]["visible"] is False
+    # Start: a task setting the operator touched is sent with one task ...
+    ws = tc.workspace_state("demo")
+    parents = {f"gatv2/{BASE_RUN}/last.pt": item}
+    key = f"gatv2/{BASE_RUN}/last.pt"
+    _start_with(operator, ws, parents, key, ["disease"], ["learning_rate", "num_neighbors"],
+                learning_rate=0.002, num_neighbors="4")
+    assert started[-1][0].settings == {"learning_rate": 0.002, "num_neighbors": [4]}
+    # ... never with two, whatever its field still holds; the hop list is.
+    _start_with(operator, ws, parents, key, ["disease", "gene"],
+                ["learning_rate", "candidate_sample_size", "num_neighbors"],
+                learning_rate=0.002, num_neighbors="4")
+    assert started[-1][0].settings == {"num_neighbors": [4]}
+
+
+def test_a_change_of_tasks_starts_each_task_setting_again():
+    """The operator's own change of the tasks (`_on_tasks_input`): each task
+    setting's field starts again at the new tasks' reference and leaves the
+    form's record, so a value set for one task is never sent for another; a
+    hop list the operator set stays, theirs for every child. With several
+    tasks whose references differ, the hop list starts empty: left so, each
+    child takes its own (the note under it says which)."""
+    record, *updates = fp._on_tasks_input(["gene"], ["seed", "learning_rate", "batch_size"])
+    assert record == ["batch_size", "seed"]
+    by_name = dict(zip(fp.TASK_FIELDS, updates, strict=True))
+    assert by_name["learning_rate"]["value"] == 1e-05
+    assert by_name["candidate_upsample_size"]["value"] == 2
+    assert by_name["num_neighbors"]["value"] == "-1, 10, 5"
+    assert "value" not in by_name["candidate_sample_size"]          # not Gene's: kept, hidden
+    record, *updates = fp._on_tasks_input(["disease", "gene"],
+                                          ["num_neighbors", "sparse_sample_size"])
+    assert record == ["num_neighbors"]
+    assert all("value" not in update for update in updates)          # the hop list is theirs
+    record, *updates = fp._on_tasks_input(["disease", "gene"], [])
+    assert dict(zip(fp.TASK_FIELDS, updates, strict=True))["num_neighbors"]["value"] == ""
+    record, *updates = fp._on_tasks_input(["disease", "patients_like_me"], [])
+    assert dict(zip(fp.TASK_FIELDS, updates, strict=True))["num_neighbors"]["value"] == (
+        "15, 10, 5")
+    note = fp.hops_note_html(["disease", "gene"], None)
+    assert "Left empty, each child takes its task’s reference: Disease 15, 10, 5; Gene all " \
+           "neighbours, 10, 5." in note
+    assert fp.hops_note_html(["disease", "patients_like_me"], None) == ""
+
+
+def test_the_hop_list_against_the_bases_encoder_is_the_starts_own_check(root, operator):
+    """B2 (2b; decision S4): the hop list must fit its base's encoder (the
+    start's check of each child, `spec.hops_problem`). On a base whose
+    encoder layers differ from a task's reference hop list (the fixture's
+    one-layer base), the task settings open with that sentence beside the
+    field, by its label, for one task or several; a list typed is checked
+    the same way, and one that fits says nothing. A base whose encoder the
+    reference fits says nothing either."""
+    from dataclasses import replace
+
+    from src.models.bundle.spec import hops_problem, reference_spec
+
+    item = fp._on_finetune_bases(operator, {"name": "demo"}, None)[0][
+        f"gatv2/{BASE_RUN}/last.pt"]
+    encoder = item["spec"]["encoder"]
+    assert encoder["layers"] == 1
+    sentence = hops_problem([15, 10, 5], replace(reference_spec("base").encoder, layers=1))
+    assert sentence.startswith("num_neighbors needs 1 numbers")
+    labelled = sentence.replace("num_neighbors", "Neighbours per hop", 1)
+    for tasks in (["disease"], ["disease", "gene", "patients_like_me"]):
+        view = fp.task_settings_view(tasks, item)
+        assert view[0]["open"] is True and view[0]["visible"] is True, tasks
+        assert view[1]["visible"] is True                            # the hop list, first
+        note = view[-2]
+        assert r.status_mark("warn", f"{fp.HOPS_REFERENCE_LEAD}: {labelled}") in note, note
+    # A list typed that fits: no note, the section left as the operator has it.
+    fits = fp.task_settings_view(["disease"], item, ["num_neighbors"], "15")
+    assert "open" not in fits[0] and fits[-2] == ""
+    assert fp._on_hops_input(["disease"], f"gatv2/{BASE_RUN}/last.pt",
+                             {f"gatv2/{BASE_RUN}/last.pt": item}, [], "15") == ""
+    typed = fp._on_hops_input(["disease"], f"gatv2/{BASE_RUN}/last.pt",
+                              {f"gatv2/{BASE_RUN}/last.pt": item}, [], "15, 10")
+    assert "Neighbours per hop needs 1 numbers" in typed and fp.HOPS_REFERENCE_LEAD not in typed
+    # The reference base's encoder takes the reference hop lists.
+    reference = {**item, "spec": {k: v for k, v in reference_spec("base").to_dict().items()
+                                  if k != "sources"}}
+    view = fp.task_settings_view(["disease", "gene"], reference)
+    assert "open" not in view[0] and "shep-st-warn" not in view[-2]
+    # No base chosen, or a spec not read: nothing said (the start says it).
+    assert fp.hops_problems(["disease"], None) == []
+    assert fp.hops_problems(["disease"], {"spec": {"encoder": "?"}}) == []
+
+
+def test_a_setting_a_rule_reads_only_under_its_guard_is_shown_while_read():
+    """The common settings' guards are answered by the base form's one rule
+    (`training_console.guard_updates`): Warmup steps with the cosine scheduler
+    only, the final learning-rate ratio with a scheduler, the mixed precision
+    dtype with mixed precision on."""
+    dependent, guards = tc.rule_fields(fp.FINETUNE_FIELDS)
+    assert set(dependent) == {"warmup_steps", "min_lr_ratio", "amp_dtype"}
+    assert set(guards) == {"scheduler_type", "use_amp"} and set(dependent + guards) <= set(
+        fp.MORE_FIELDS)
+    values = {"scheduler_type": "none", "use_amp": False}
+    shown = dict(zip(dependent, (u["visible"] for u in fp._on_guards(
+        *(values[name] for name in guards))), strict=True))
+    assert shown == {"warmup_steps": False, "min_lr_ratio": False, "amp_dtype": False}
+    values = {"scheduler_type": "cosine", "use_amp": True}
+    shown = dict(zip(dependent, (u["visible"] for u in fp._on_guards(
+        *(values[name] for name in guards))), strict=True))
+    assert shown == {"warmup_steps": True, "min_lr_ratio": True, "amp_dtype": True}
 
 
 # --------------------------------------------------------------------------- the job card
@@ -654,23 +910,54 @@ def test_the_page_follows_the_contract():
     assert set(fp.FIELD_HELP) >= {"ft_dataset", "ft_run", "ft_checkpoint", "ft_tasks",
                                   "ft_num_epochs", "ft_seed", "ft_frozen_parts", "ft_device",
                                   "ft_run_name"}
-    # Epochs, Seed and Graph backbone, at the recipe's finetune values, each
-    # the one field of its setting (the freeze's options the field spec's
-    # values, shown by their words).
+    # Every field the page offers, each the one field of its setting at the
+    # value the run takes without it (`built_values`: the recipe's finetune
+    # values, else this build's defaults); the freeze's options the field
+    # spec's values, shown by their words.
     from src.config.recipe import FINETUNE
     from src.config.training_fields import by_name
 
-    assert fp.FINETUNE_FIELDS == ("num_epochs", "seed", "frozen_parts")
+    assert fp.FINETUNE_FIELDS == fp.COMMON_SHOWN + fp.MORE_FIELDS + fp.TASK_FIELDS
     assert {f"ft_{name}" for name in fp.FINETUNE_FIELDS} <= set(by_id)
-    assert all(name in FINETUNE for name in fp.FINETUNE_FIELDS)
+    assert {f"ft_{name}" for name in fp.FINETUNE_FIELDS} <= set(fp.FIELD_HELP)
     assert (by_id["ft_num_epochs"].value, by_id["ft_seed"].value) == (
         FINETUNE["num_epochs"], FINETUNE["seed"])
     assert by_id["ft_num_epochs"].precision == 0 and by_id["ft_seed"].precision == 0
+    assert by_id["ft_early_stopping_patience"].value == "off"
+    assert by_id["ft_num_neighbors"].value == "15, 10, 5"
     frozen = by_id["ft_frozen_parts"]
     assert isinstance(frozen, gr.Radio) and frozen.value == FINETUNE["frozen_parts"] == "none"
     assert frozen.choices == [(r.setting_words("frozen_parts", value), value)
                               for value in by_name("frozen_parts").choices]
     assert [words for words, _ in frozen.choices] == ["Trained", "Frozen"]
+    # The common settings in view without opening anything; the rest under
+    # "More settings"; the task settings in their own section, hidden until a
+    # task is chosen, the hop list beside its note; nothing of the base's.
+    def parents_of(block):
+        out, seen = [], block
+        while getattr(seen, "parent", None) is not None:
+            seen = seen.parent
+            out.append(seen)
+        return out
+
+    def accordion(name):
+        found = [b for b in parents_of(by_id[f"ft_{name}"]) if isinstance(b, gr.Accordion)]
+        return found[0].elem_id if found else None
+
+    assert [accordion(name) for name in fp.COMMON_SHOWN] == [None] * 3
+    assert {accordion(name) for name in fp.MORE_FIELDS} == {"ft_more"}
+    assert {accordion(name) for name in fp.TASK_FIELDS} == {"ft_task_more"}
+    assert by_id["ft_more"].label == "More settings" and by_id["ft_more"].open is False
+    assert by_id["ft_task_more"].visible is False
+    def row(elem_id):
+        return next(b for b in parents_of(by_id[elem_id]) if isinstance(b, gr.Row))
+
+    assert row("ft_hops_note") is row("ft_num_neighbors")
+    for gone in ("ft_split_seed", "ft_model_spec"):
+        assert gone not in by_id
+    # Start, its reason and its refusal on one row; Stop's notice beside Stop.
+    assert row("ft_notice") is row("ft_start") is row("ft_reason")
+    assert row("ft_stop_notice") is row("ft_stop")
     # The note starts empty (Trained) and is hidden while empty; the field's
     # change redraws it; Start takes the fields in `FINETUNE_FIELDS` order.
     assert by_id["ft_freeze_note"].value == ""
@@ -682,17 +969,31 @@ def test_the_page_follows_the_contract():
     (start,) = [fn for fn in fns if fn.fn is fp._on_finetune_start]
     assert start.inputs[-len(fp.FINETUNE_FIELDS):] == [
         by_id[f"ft_{name}"] for name in fp.FINETUNE_FIELDS]
+    assert start.outputs == [by_id["ft_notice"], by_id["ft_stop_notice"]]
     # Explicit is what the operator touched (decision S2): each field's input
     # (never its change) adds it to the form's record in the browser (the
-    # shared `record_touches`), which Start's own request carries.
+    # shared `record_touches`, wired before any other input listener), which
+    # Start's own request carries.
     touched = start.inputs[-len(fp.FINETUNE_FIELDS) - 1]
     assert touched is by_id["ft_touched"] and isinstance(touched, gr.JSON)
     assert touched.visible is False and touched.value == []
     for name in fp.FINETUNE_FIELDS:
         field = by_id[f"ft_{name}"]
-        (listener,) = [fn for fn in fns if (field._id, "input") in fn.targets]
-        assert listener.fn is None and listener.inputs == [touched] == listener.outputs
-        assert listener.js == tc.TOUCH_JS.replace("{key}", json.dumps(name))
-        assert listener.queue is False
-    for gone in ("ft_learning_rate", "ft_batch_size", "ft_task_loss_weight"):
-        assert gone not in by_id
+        listeners = [fn for fn in fns if (field._id, "input") in fn.targets]
+        first = listeners[0]
+        assert first.fn is None and first.inputs == [touched] == first.outputs
+        assert first.js == tc.TOUCH_JS.replace("{key}", json.dumps(name))
+        assert first.queue is False
+        assert [fn.fn for fn in listeners[1:]] == (
+            [fp._on_hops_input] if name in fp.ANY_TASKS else []), name
+    # The tasks: the operator's change starts the task settings again (and
+    # writes the record, as Reset does); any change redraws the section.
+    (restart,) = [fn for fn in fns if fn.fn is fp._on_tasks_input]
+    assert restart.targets == [(by_id["ft_tasks"]._id, "input")]
+    assert restart.outputs == [touched, *(by_id[f"ft_{name}"] for name in fp.TASK_FIELDS)]
+    views = [fn for fn in fns if fn.fn is fp._on_task_view]
+    assert any((by_id["ft_tasks"]._id, "change") in fn.targets for fn in views)
+    assert all(fn.outputs[0] is by_id["ft_task_more"] for fn in views)
+    (guards,) = [fn for fn in fns if fn.fn is fp._on_guards]
+    assert {block.elem_id for block in guards.outputs} == {
+        "ft_warmup_steps", "ft_min_lr_ratio", "ft_amp_dtype"}

@@ -715,6 +715,7 @@ def _dashboard_calls():
 
     path = tc.CONTINUE_FROM_PATH
     branch = [tc.form_value(tc._branch_field_value(name)) for name in tc.BRANCH_FIELDS]
+    finetune = [tc.form_value(fp.built_values()[name]) for name in fp.FINETUNE_FIELDS]
     every = ["all"] * 4
     # The Training page's handlers take the session's state (its run-bar
     # workspace, the drawer, the parent list): a fresh API session has no
@@ -747,7 +748,7 @@ def _dashboard_calls():
         # Fine-tune: a fresh session has no dataset, so the base list and
         # Start stop before their service when allowed.
         (fp._on_finetune_bases, [{}, None], None),
-        (fp._on_finetune_start, [{}, {}, None, [], "cpu", "", [], 100, 33, "none"], None),
+        (fp._on_finetune_start, [{}, {}, None, [], "cpu", "", [], *finetune], None),
         (fp._on_finetune_stop_request, [{}], None),         # asks, reading nothing
         (fp._on_finetune_stop, [{}], "stop_training"),
         # Models › Results: opening the segment and ↻ read the results; the

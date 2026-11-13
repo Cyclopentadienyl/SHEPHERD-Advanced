@@ -22,25 +22,44 @@ Module: src/webui/components/finetune_page.py
   never offered; a weights-only or early-stopped base is. Listing opens every
   checkpoint, so it is an operator control (D8). The chosen base's summary
   (key-value rows) says its run's directory, file, configuration, Trainer
-  validation figure, the dataset it trained on and the model fingerprint
-  Start sends.
+  validation figure, the dataset it trained on, its split seed and the model
+  fingerprint Start sends: **its split seed and its model are the base's
+  facts, never fields** (`BASE_FACTS`): a finetune trains on its base's split
+  and keeps its base's graph side.
 - **Tasks**: a checkbox group in `TASKS` order whose option text says whether
   each is ready on this workspace (`server_lists.task_readiness`, small JSON
   files only, no D8), and why not in the line under it.
-- **Epochs, Seed and Graph backbone** (`FINETUNE_FIELDS`, each the one field
-  of its setting, `training_console.setting_field`): settings every task
-  shares (`recipe.FINETUNE`), so one value is every child's. Each starts at
-  the recipe's and is sent when the operator touched it, whatever its value
-  (decision S2: `training_console.sent_settings`, the form's record of its
-  fields' input). Graph backbone is the freeze (Trained or Frozen,
-  the field spec's values); with Frozen chosen, a visible note under the
-  fields says what then trains (`freeze_note_html`). A task's own settings
-  (its learning rate, hop list, sample sizes and loss weights) have a
-  reference value per task, so one value would overwrite every child's;
-  this page offers none of them, and the other shared settings keep the
-  recipe's values.
-- Device and Run name; **Start**, its reason line, and any refusal inline
-  beside it (escaped).
+- **The settings** (ops-wiring round, decisions S1, S2, F1): what every
+  chosen task's run takes, the intersection of `run_plan.new_run_settings`
+  over the tasks (`offered_settings`), each the one field of its setting
+  (`training_console.setting_field`). **Epochs, Seed and Graph backbone**
+  first (`COMMON_SHOWN`; Graph backbone is the freeze, Trained or Frozen, the
+  field spec's values, and with Frozen chosen a visible note under the fields
+  says what then trains, `freeze_note_html`); the rest of the common settings
+  under **More settings** (`MORE_FIELDS`), a setting a rule across settings
+  reads only under its guard shown only while the run would read it (Warmup
+  steps with the cosine scheduler: `training_console.guard_updates`). **A
+  task's own settings** (`TASK_OWN`: the recipe gives each task its own
+  reference, its learning rate, sample sizes, loss weights and candidate
+  size) are offered under **"<Task> settings"** only when exactly one task is
+  chosen, each starting from that task's reference (`task_starts`); with
+  several, a visible line says each child takes its own task's reference
+  (`several_note_html`). **Neighbours per hop** is offered for any task set
+  (`ANY_TASKS`): its length is the base's encoder's to decide, so a base
+  whose encoder another hop count takes than a task's reference can be
+  fine-tuned from here; untouched, each child takes its task's reference.
+  When the start's own check (`spec.hops_problem`, on the base's listed
+  spec) says the reference, or the list typed, cannot run on the chosen base,
+  the task settings open and that sentence is beside the field
+  (`hops_note_html`). **Start sends what the operator touched** (decision S2:
+  `training_console.sent_settings`, the form's record of its fields' input,
+  `touched_record`), whatever its value, of the settings the chosen tasks
+  take; untouched, the run fills it (the recipe's or this build's default)
+  and records it so.
+- Device and Run name; **Start**, its reason line, and any refusal beside it
+  (the shared mark of a refusal, escaped): the page's own check of a value,
+  or the job runner's refusal in its words, a setting it names first by the
+  field's label (`training_console.labelled_problem`).
 
 **Start** (D8 first): the workspace and the parent are resolved by the server
 from its lists again (`resolve_workspace`, `resolve_checkpoint`; never a
@@ -48,8 +67,10 @@ client path), then the job runner's one Fine-tune start
 (`TrainingManager.start_finetune`) with the parent's listed digest and the
 dataset fingerprint shown. Its checks before anything starts (the parent a
 base with weights, its graph, each task's fixture, the settings, the freeze
-by `recipe.frozen_parts_problem` among them) are the runner's alone
-(decision 3); this page adds none.
+by `recipe.frozen_parts_problem`, and each child's hop list and a stated split
+seed against its base among them) are the runner's alone (decision 3); this
+page refuses nothing of its own but a value its field spec refuses, and its
+hop note asks the start's own check.
 
 **The job card** (right panel): `get_status()["finetune"]`, its parent, the
 start's graph backbone (`freeze_line_html`, the runner's own record of the
@@ -86,9 +107,13 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 import gradio as gr
 
 from src.api.services.training_manager import FinetuneInputs, training_manager
-from src.config.recipe import FINETUNE, FINETUNE_SOURCES, FROZEN_PARTS
+from src.config.recipe import FINETUNE, FINETUNE_SOURCES, FINETUNE_TASKS, FROZEN_PARTS
+from src.config.training_fields import by_name, not_read_by_rules
+from src.config.training_fields import names as field_names
 from src.evaluation.caveats import TASK_NAMES, task_list_text
-from src.models.bundle.spec import TASKS
+from src.models.bundle.record import listed_spec
+from src.models.bundle.spec import TASKS, hops_problem
+from src.utils.run_plan import new_run_settings, new_run_values
 from src.webui.components import model_list as ml
 from src.webui.components import renderers as r
 from src.webui.components import training_console as tc
@@ -101,11 +126,55 @@ from src.webui.shell import page_elem_id, plain_html
 
 logger = logging.getLogger(__name__)
 
-#: The settings this page offers (decision 11; the freeze, ops-wiring round
-#: decision F1), in the form's order, each a setting every task shares with
-#: its finetune reference value (`recipe.FINETUNE`) and its one field by the
-#: field spec (`training_console.setting_field`).
-FINETUNE_FIELDS = ("num_epochs", "seed", "frozen_parts")
+#: **The base's facts, never the page's fields** (ops-wiring round, B2;
+#: decision S4): a finetune trains on its base's split and keeps its base's
+#: graph side, so a split seed or a model spec stated here could only repeat
+#: the base's or be refused by the start's check against it. The base's
+#: summary says both (`base_summary_html`: its split seed and configuration).
+BASE_FACTS = frozenset({"split_seed", "model_spec"})
+#: **The common settings shown first** (decision F1 for the freeze): Epochs,
+#: Seed and Graph backbone, one value for every child.
+COMMON_SHOWN = ("num_epochs", "seed", "frozen_parts")
+#: **A task's own settings**: those the recipe gives each task its own
+#: reference for (`recipe.FINETUNE_TASKS`: its learning rate, hop list, sample
+#: sizes, loss weights and candidate size), so one value would overwrite each
+#: child's. Offered when exactly one task is chosen, but `ANY_TASKS`.
+TASK_OWN = frozenset().union(*FINETUNE_TASKS.values())
+#: **The task setting offered for any set of tasks**: the hop list, one number
+#: per hop of its base's encoder (`spec.hops_problem`, the start's check of
+#: every child against its base), so a base whose encoder takes another hop
+#: count than a task's reference can be fine-tuned from this page, one task or
+#: several. Untouched, each child takes its own task's reference.
+ANY_TASKS = ("num_neighbors",)
+
+
+def _ordered(settings: Any) -> Tuple[str, ...]:
+    """`settings` in the forms' order: the base form's
+    (`training_console.BASE_FIELDS`), then the field spec's."""
+    order = tuple(tc.BASE_FIELDS) + tuple(name for name in field_names()
+                                          if name not in tc.BASE_FIELDS)
+    return tuple(name for name in order if name in settings)
+
+
+def _takes(tasks: Any) -> frozenset:
+    """What every run of `tasks` takes (the intersection of
+    `run_plan.new_run_settings` over them, the job runner's own rule of a
+    Fine-tune start), but the base's facts (`BASE_FACTS`)."""
+    return frozenset.intersection(*(new_run_settings("finetune", task)
+                                    for task in tasks)) - BASE_FACTS
+
+
+#: **The rest of the common settings**, under "More settings": what every
+#: task's run takes but a task's own settings and those shown first.
+MORE_FIELDS = _ordered(_takes(TASKS) - TASK_OWN - set(COMMON_SHOWN))
+#: **The task settings**, under "<Task> settings": the hop list first
+#: (`ANY_TASKS`), then each task's own, in the forms' order.
+TASK_FIELDS = ANY_TASKS + _ordered(
+    (frozenset().union(*(_takes((task,)) for task in TASKS)) & TASK_OWN) - set(ANY_TASKS))
+#: **Every field of the page, in the order its handlers take their values**
+#: (Start's, the guards'), each the one field of its setting
+#: (`training_console.setting_field`).
+FINETUNE_FIELDS = COMMON_SHOWN + MORE_FIELDS + TASK_FIELDS
 #: What a Frozen graph backbone leaves to train, said under the fields while
 #: it is chosen (the WebUI skill §7: a fact that changes what happens is
 #: visible text, not only a bubble).
@@ -165,6 +234,159 @@ def _tasks_update(ws: Mapping[str, Any], chosen: Any) -> Tuple[Any, str]:
     return gr.update(choices=task_choices(readiness), value=kept), tasks_note_html(readiness)
 
 
+# ----------------------------------------------------------------- the settings
+def chosen_tasks(tasks: Any) -> Tuple[str, ...]:
+    """The chosen tasks in `TASKS` order (the children's order)."""
+    return tuple(task for task in TASKS if task in (tasks or ()))
+
+
+def offered_settings(tasks: Any) -> Tuple[str, ...]:
+    """**The settings Start offers for the chosen `tasks`** (decision S1), in
+    `FINETUNE_FIELDS` order: what every child's run takes (`_takes`: the
+    intersection of `run_plan.new_run_settings` over them, as the job
+    runner's start takes it), but the base's facts; with several tasks a
+    task's own setting only where any set of tasks takes it (`ANY_TASKS`),
+    since each child's reference is its own. None for no task."""
+    chosen = chosen_tasks(tasks)
+    if not chosen:
+        return ()
+    takes = _takes(chosen)
+    if len(chosen) > 1:
+        takes -= TASK_OWN - set(ANY_TASKS)
+    return tuple(name for name in FINETUNE_FIELDS if name in takes)
+
+
+def built_values() -> Dict[str, Any]:
+    """Each field's value when the page is built, in `FINETUNE_FIELDS` order:
+    the one fill of a new run (`run_plan.new_run_values`: the reference, else
+    this build's default) of the first task whose run takes it, which also
+    decides its field's kind (`training_console.value_field`: early
+    stopping's patience, None, is a text box reading "off"). The common
+    settings' are every task's."""
+    fills = [new_run_values("finetune", task, {}) for task in TASKS]
+    return {name: next(fill[name] for fill in fills if name in fill) for name in FINETUNE_FIELDS}
+
+
+def task_starts(tasks: Any) -> Dict[str, Any]:
+    """**Where each task setting's field starts for the chosen `tasks`**, as
+    its field holds it (`training_console.form_value`): with one task, each
+    of its own settings at its reference (`run_plan.new_run_values`); with
+    several, the hop list at the reference every chosen task shares, else
+    empty (untouched, each child takes its own: `hops_note_html` says which).
+    A field not named keeps its value."""
+    chosen = chosen_tasks(tasks)
+    fills = [new_run_values("finetune", task, {}) for task in chosen]
+    if len(chosen) == 1:
+        return {name: tc.form_value(fills[0][name]) for name in TASK_FIELDS if name in fills[0]}
+    starts = {}
+    for name in ANY_TASKS if chosen else ():
+        values = [fill[name] for fill in fills]
+        starts[name] = tc.form_value(values[0]) if all(v == values[0] for v in values) else ""
+    return starts
+
+
+def hops_problems(tasks: Any, item: Optional[Mapping[str, Any]], touched: Any = (),
+                  value: Any = None) -> List[str]:
+    """**Why the hop lists the chosen tasks' children would sample cannot
+    run on the base `item`** (a listed base, its encoder read from its listed
+    spec, `record.listed_spec`), by the start's own check of each child
+    against its base (`spec.hops_problem`): the list typed (`value`) when the
+    operator touched the field (`touched`), else each task's reference
+    (`run_plan.new_run_values`); each sentence once, the field named by its
+    label (`training_console.labelled_problem`). Empty when every one fits, no
+    task or base is chosen, the base's spec is not read or the text typed is
+    not a list (the start then says why)."""
+    chosen = chosen_tasks(tasks)
+    spec = listed_spec((item or {}).get("spec"))
+    if spec is None or not chosen:
+        return []
+    if "num_neighbors" in tc.touched_keys(touched):
+        typed, why = tc.parse_value(by_name("num_neighbors").kind, value)
+        if why:
+            return []
+        lists = [typed]
+    else:
+        lists = [new_run_values("finetune", task, {})["num_neighbors"] for task in chosen]
+    out: List[str] = []
+    for hops in lists:
+        problem = hops_problem(hops, spec.encoder)
+        if problem and tc.labelled_problem(problem) not in out:
+            out.append(tc.labelled_problem(problem))
+    return out
+
+
+#: The lead of the hop note when the reference does not fit the chosen base.
+HOPS_REFERENCE_LEAD = "The reference does not fit this base"
+
+
+def hops_note_html(tasks: Any, item: Optional[Mapping[str, Any]], touched: Any = (),
+                   value: Any = None) -> str:
+    """**The line beside Neighbours per hop**, escaped: when the hop list a
+    child would sample cannot run on the chosen base (`hops_problems`), that
+    sentence beside the ▲ of a condition to watch, led by
+    `HOPS_REFERENCE_LEAD` while it is a task's reference; else, with several
+    tasks whose references differ and the field untouched, each child's
+    ("Left empty, each child takes its task's reference: Disease 15, 10, 5;
+    Gene all neighbours, 10, 5."); else empty."""
+    problems = hops_problems(tasks, item, touched, value)
+    touched_hops = "num_neighbors" in tc.touched_keys(touched)
+    if problems:
+        words = " ".join(problems)
+        if not touched_hops:
+            words = f"{HOPS_REFERENCE_LEAD}: {words}"
+        return f'<p class="shep-ft-hops">{r.status_mark("warn", words)}</p>'
+    chosen = chosen_tasks(tasks)
+    references = {task: new_run_values("finetune", task, {})["num_neighbors"] for task in chosen}
+    if touched_hops or len({tuple(hops) for hops in references.values()}) < 2:
+        return ""
+    each = "; ".join(f"{TASK_NAMES[task]} {r.setting_words('num_neighbors', hops)}"
+                     for task, hops in references.items())
+    text = f"Left empty, each child takes its task’s reference: {each}."
+    return f'<p class="shep-ft-why">{r.e(text)}</p>'
+
+
+def several_note_html(tasks: Any) -> str:
+    """**The visible line with several tasks**, escaped: each child takes its
+    own task's reference for the task settings not offered then (`TASK_OWN`
+    of the chosen tasks but `ANY_TASKS`), each named by its label; empty for
+    one task or none."""
+    chosen = chosen_tasks(tasks)
+    if len(chosen) < 2:
+        return ""
+    own = _ordered((frozenset().union(*(_takes((task,)) for task in chosen)) & TASK_OWN)
+                   - set(ANY_TASKS))
+    names = task_list_text([r.SETTING_LABELS[name] for name in own])
+    text = (f"Each child takes its own task’s reference for these: {names}. Choose one task to "
+            "set them.")
+    return f'<p class="shep-ft-why">{r.e(text)}</p>'
+
+
+def task_settings_label(tasks: Any) -> str:
+    """The task settings' title: "Disease settings" for one task, "Task
+    settings" for several."""
+    chosen = chosen_tasks(tasks)
+    return f"{TASK_NAMES[chosen[0]]} settings" if len(chosen) == 1 else "Task settings"
+
+
+def task_settings_view(tasks: Any, item: Optional[Mapping[str, Any]], touched: Any = (),
+                       value: Any = None) -> List[Any]:
+    """**The task settings for the chosen `tasks` and base `item`**: their
+    section (shown for any task, titled by `task_settings_label`, and opened
+    when the hop list cannot run on the base, so its field and its sentence
+    are in view without opening anything: `hops_problems`), each task field
+    shown while the tasks take it (`offered_settings`), the hop note and the
+    several-task line. `touched` and `value` are the form's record and the
+    hop field's text."""
+    chosen = chosen_tasks(tasks)
+    offered = set(offered_settings(chosen))
+    section = {"visible": bool(chosen), "label": task_settings_label(chosen)}
+    if hops_problems(chosen, item, touched, value):
+        section["open"] = True
+    return [gr.update(**section),
+            *(gr.update(visible=name in offered) for name in TASK_FIELDS),
+            hops_note_html(chosen, item, touched, value), several_note_html(chosen)]
+
+
 def identity_html(ws: Mapping[str, Any]) -> str:
     """The chosen dataset's identity (the one place its fingerprint is
     shown), or why there is none."""
@@ -195,21 +417,26 @@ def base_summary_html(item: Optional[Mapping[str, Any]]) -> str:
     """The chosen base's summary in the one summary list
     (`renderers.summary_list`), saying what the two selects above do not:
     its run's directory (the Run select gives its name, architecture and
-    time), file, configuration, what it holds, its Trainer validation
-    figure, what its run's saves were ranked by
-    (`renderers.selection_value`), how its dataset stands to the one
-    selected, and the model fingerprint Start sends (copyable). Escaped;
-    empty when none is chosen."""
+    time), file, configuration (its model, a fact the children keep, never a
+    field: `BASE_FACTS`), what it holds, its Trainer validation figure, what
+    its run's saves were ranked by (`renderers.selection_value`), how its
+    dataset stands to the one selected (the shared status mark), the split
+    seed its record names, which every child trains on (a fact too), and the
+    model fingerprint Start sends (copyable). Escaped; empty when none is
+    chosen."""
     if not item:
         return ""
     trained = item.get("trained_on_this_dataset")
     if trained is True:
-        on = f'<span class="shep-ok-t">{r.CHECK} the dataset selected</span>'
+        on = r.status_mark("ok", "the dataset selected")
     elif trained is False:
         on = r.status_mark("warn", "another dataset than the one selected (the start "
                                    "refuses a parent of another knowledge graph)")
     else:
-        on = '<span class="shep-muted">not recorded</span>'
+        on = r.status_mark("neutral", r.NOT_RECORDED.lower())
+    seed = item.get("split_seed")
+    split = (f"{r.setting_words('split_seed', seed)} (every child trains on this split)"
+             if seed is not None else r.NOT_RECORDED.lower())
     kind = item.get("checkpoint_kind")
     rows = [
         ("Run", f"<code>{r.e(item.get('architecture'))}/{r.e(item.get('run'))}</code>"),
@@ -220,6 +447,7 @@ def base_summary_html(item: Optional[Mapping[str, Any]]) -> str:
                                               read=r.record_read(item)))),
         ("Selection", r.e(r.selection_value(item))),
         ("Trained on", on),
+        (r.SETTING_LABELS["split_seed"], r.e(split)),
         ("Model fingerprint", r.fingerprint_value(item.get("sha256"), what="model fingerprint")),
     ]
     return f'<div class="shep-ft-base">{r.summary_list(rows)}</div>'
@@ -545,6 +773,46 @@ def _on_base_chosen(key, parents):
     return base_summary_html((parents or {}).get(key) if key else None)
 
 
+def _on_task_view(tasks, key, parents, touched, hops):
+    """The tasks or the base changed (by the operator or by a page's own
+    write): the task settings for them (`task_settings_view`), `hops` the hop
+    field's text."""
+    return task_settings_view(tasks, (parents or {}).get(key) if key else None, touched, hops)
+
+
+def _on_tasks_input(tasks, touched):
+    """**The operator changed the tasks**: each task setting's field starts
+    again for them (`task_starts`: one task's reference, or for several the
+    hop list they share) and leaves the form's record of what was touched
+    (`training_console.touched_record`), so a value set for one task is never
+    sent for another; a hop list the operator set stays, theirs for every
+    child of any task set (`ANY_TASKS`). A page's write, as Reset to reference
+    is on the Training page: no field's input fires. Returns the record, then
+    each task field's update in `TASK_FIELDS` order."""
+    starts = task_starts(tasks)
+    keys = tc.touched_keys(touched)
+    kept = {name for name in ANY_TASKS if name in keys}
+    record = sorted(key for key in keys if key not in TASK_FIELDS or key in kept)
+    return [record, *(gr.update(value=starts[name]) if name in starts and name not in kept
+                      else gr.update() for name in TASK_FIELDS)]
+
+
+def _on_guards(*values):
+    """A guard of a rule across settings changed (the scheduler, mixed
+    precision): `training_console.guard_updates` of this page's settings
+    (`FINETUNE_FIELDS`), as the base form's guards are answered."""
+    return tc.guard_updates(FINETUNE_FIELDS, values)
+
+
+def _on_hops_input(tasks, key, parents, touched, hops):
+    """The hop field's input, after the record has its key
+    (`training_console.record_touches`, wired first; `touched_with` adds it
+    all the same): its note again, for the list typed (`hops_note_html`). It
+    writes only the note, never the record, which is the browser's."""
+    return hops_note_html(tasks, (parents or {}).get(key) if key else None,
+                          tc.touched_with(touched, "num_neighbors"), hops)
+
+
 def _on_finetune_start(request: gr.Request, ws, parents, key, tasks, device, run_name,
                        touched, *values):
     """Start: an operator control (D8), checked first on this event's own
@@ -553,14 +821,17 @@ def _on_finetune_start(request: gr.Request, ws, parents, key, tasks, device, run
     the fields the operator touched, as this click's own request carries it
     (`training_console.touched_record`).
 
-    Returns the notice: the refusal, inline and escaped, or nothing once
-    started (the card shows the job).
+    Returns the notice beside Start, a refusal with the shared mark of a
+    refusal, escaped (`training_console.notice_html`), or nothing once started
+    (the card shows the job); and the Stop's notice cleared, which spoke of a
+    job before this start.
     """
     access = operator_access(request)
     if not access.allowed:
-        return tc.notice_html(access.refusal)
-    return tc.notice_html(_start(ws, parents, key, tasks, device, run_name,
-                                 dict(zip(FINETUNE_FIELDS, values, strict=True)), touched))
+        return tc.notice_html(access.refusal, mark="error"), ""
+    said = _start(ws, parents, key, tasks, device, run_name,
+                  dict(zip(FINETUNE_FIELDS, values, strict=True)), touched)
+    return tc.notice_html(said, mark="error"), ""
 
 
 def _on_finetune_stop_request(request: gr.Request, mode):
@@ -584,13 +855,16 @@ def _on_finetune_stop(request: gr.Request, mode):
 def _start(ws, parents, key, tasks, device, run_name, values: Mapping[str, Any],
            touched: Any) -> str:
     """Start's work after D8, as a plain sentence ("" once started): the
-    chosen base and tasks (in `TASKS` order), the settings of `values` (the
-    fields', by `FINETUNE_FIELDS`) the operator touched (`touched`; decision
-    S2: `training_console.sent_settings`), whatever their value, sent as the
-    start's settings (`FinetuneInputs.settings`, which the runner checks), the
-    workspace and the parent resolved by the server from its lists again, and
-    the runner's Fine-tune start with the parent's listed digest and the
-    dataset fingerprint this session showed."""
+    chosen base and tasks (in `TASKS` order), the settings the chosen tasks
+    take (`offered_settings`) of `values` (the fields', by `FINETUNE_FIELDS`)
+    that the operator touched (`touched`; decision S2:
+    `training_console.sent_settings`), whatever their value, sent as the
+    start's settings (`FinetuneInputs.settings`, which the runner checks; a
+    field the tasks do not take, a task setting hidden with several tasks, is
+    never sent), the workspace and the parent resolved by the server from its
+    lists again, and the runner's Fine-tune start with the parent's listed
+    digest and the dataset fingerprint this session showed. The runner's
+    refusal is said in its words."""
     row = (ws or {}).get("row") or {}
     fingerprint = tc.workspace_fingerprint(ws)
     if not row or not fingerprint:
@@ -603,12 +877,12 @@ def _start(ws, parents, key, tasks, device, run_name, values: Mapping[str, Any],
     if item.get("workspace") != row.get("name"):
         return (f"Not started: the list shows {item.get('workspace')}’s bases, not "
                 f"{row.get('name')}’s; list them again (Refresh).")
-    chosen = tuple(task for task in TASKS if task in (tasks or ()))
+    chosen = chosen_tasks(tasks)
     if not chosen:
         return "Not started: choose at least one task."
     settings, problems = tc.sent_settings(
-        {name: values[name] for name in FINETUNE_FIELDS}, tc.touched_keys(touched),
-        {name: FINETUNE[name] for name in FINETUNE_FIELDS})
+        {name: values[name] for name in offered_settings(chosen)}, tc.touched_keys(touched),
+        new_run_values("finetune", chosen[0], {}))
     if problems:
         return "Not started: " + " ".join(problems)
     from src.api.services.server_lists import (
@@ -631,12 +905,36 @@ def _start(ws, parents, key, tasks, device, run_name, values: Mapping[str, Any],
         expected_dataset_fingerprint=fingerprint)
     if result.get("success"):
         return ""
-    return tc.not_started(result.get("error"))
+    error = result.get("error")
+    # A setting the runner names first by its record name, by the field's
+    # label instead, as the Training page's Branch says the runner's
+    # refusal of its settings (`labelled_problem`).
+    return tc.not_started(tc.labelled_problem(error) if result.get("invalid_settings")
+                          else error)
 
 
 # =============================================================================
 # Help
 # =============================================================================
+def task_setting_help(name: str) -> Tuple[str, str]:
+    """A task setting's help, ``(title, text)``: its label, what it is (its
+    field spec's description, as every form's help says it), each task's
+    reference (the one fill, `run_plan.new_run_values`, of each task whose
+    run takes it), and where its field starts and what is sent."""
+    each = "; ".join(f"{TASK_NAMES[task]} {r.setting_words(name, values[name])}"
+                     for task in TASKS
+                     for values in [new_run_values("finetune", task, {})] if name in values)
+    if name in ANY_TASKS:
+        where = ("With one task it starts at that task's reference. With several, left "
+                 "untouched each child takes its own; a value you set is every child's.")
+    else:
+        where = ("Offered with one task, starting at its reference; with several, each child "
+                 "takes its own.")
+    return (r.SETTING_LABELS[name],
+            f"{by_name(name).description}\n\nReference, by task: {each}.\n\n{where} Only a "
+            "value you edit is sent. Each reference is a provisional default from the source.")
+
+
 #: The fields' help, behind the shared ⓘ: ``{elem_id: (title, text)}``, each
 #: title its field's label.
 FIELD_HELP = {
@@ -673,8 +971,9 @@ FIELD_HELP = {
         "• Before anything starts, the server checks the parent, its graph and each fixture "
         "again; the training process checks the fixture's files.",
     ),
-    **{f"ft_{name}": tc.setting_help(name, FINETUNE, FINETUNE_SOURCES)
-       for name in FINETUNE_FIELDS},
+    **{f"ft_{name}": tc.setting_help(name, built_values(), FINETUNE_SOURCES)
+       for name in COMMON_SHOWN + MORE_FIELDS},
+    **{f"ft_{name}": task_setting_help(name) for name in TASK_FIELDS},
     "ft_device": (
         "Device",
         "auto: the GPU (CUDA). With no CUDA device visible, Start is refused: training never "
@@ -743,22 +1042,53 @@ def create_finetune_page(ctx: Any) -> None:
                 tasks = gr.CheckboxGroup(label="Tasks", choices=task_choices({}), value=[],
                                          elem_id="ft_tasks")
                 tasks_note = plain_html("", elem_id="ft_tasks_note")
+                # What every chosen task's run takes (decision S1), each field
+                # starting at the value the run takes without it: the common
+                # settings first, the rest one click away (a setting the run
+                # would not read hidden, decision S3), then the task settings.
+                values = built_values()
+                unread = not_read_by_rules(values)
+                fields: Dict[str, Any] = {}
                 with gr.Row(elem_classes=["shep-ft-settings"]):
-                    fields = {name: tc.setting_field(name, FINETUNE[name], elem_id=f"ft_{name}")
-                              for name in FINETUNE_FIELDS}
-                freeze_note = plain_html(freeze_note_html(FINETUNE["frozen_parts"]),
+                    for name in COMMON_SHOWN:
+                        fields[name] = tc.setting_field(name, values[name], elem_id=f"ft_{name}")
+                freeze_note = plain_html(freeze_note_html(values["frozen_parts"]),
                                          elem_id="ft_freeze_note")
+                with gr.Accordion("More settings", open=False, elem_id="ft_more"):
+                    with gr.Row(elem_classes=["shep-ft-settings", "shep-ft-grid"]):
+                        for name in MORE_FIELDS:
+                            fields[name] = tc.setting_field(name, values[name],
+                                                            elem_id=f"ft_{name}",
+                                                            visible=name not in unread)
+                # The task settings (`task_settings_view`): shown once a task is
+                # chosen, the hop list beside its note, a task's own with one.
+                with gr.Accordion(task_settings_label(()), open=False, visible=False,
+                                  elem_id="ft_task_more") as task_more:
+                    with gr.Row(elem_classes=["shep-ft-settings", "shep-ft-hops-row"]):
+                        for name in ANY_TASKS:
+                            fields[name] = tc.setting_field(name, values[name],
+                                                            elem_id=f"ft_{name}", visible=False)
+                        hops_note = plain_html("", elem_id="ft_hops_note")
+                    with gr.Row(elem_classes=["shep-ft-settings", "shep-ft-grid"]):
+                        for name in TASK_FIELDS:
+                            if name not in fields:
+                                fields[name] = tc.setting_field(name, values[name],
+                                                                elem_id=f"ft_{name}",
+                                                                visible=False)
+                several_note = plain_html("", elem_id="ft_several_note")
                 with gr.Row(elem_classes=["shep-ft-settings"]):
                     device = gr.Radio(label="Device", choices=["auto", "cuda", "cpu"],
                                       value="auto", elem_id="ft_device")
                     run_name = gr.Textbox(label="Run name", value="", max_lines=1,
                                           elem_id="ft_run_name")
             with gr.Column(elem_id="ft_start_ft", elem_classes=["shep-panel-ft"]):
+                # Start, its reason and its refusal on one row (the skill's §9:
+                # a refusal beside what it refuses).
                 with gr.Row(elem_classes=["shep-ft-start-row"]):
                     start = gr.Button(START_LABEL, variant="primary", interactive=False,
                                       scale=0, elem_id="ft_start")
                     reason = plain_html("", elem_id="ft_reason")
-                notice = plain_html("", elem_id="ft_notice")
+                    notice = plain_html("", elem_id="ft_notice")
         # ------------------------------------------------------------- the job
         with gr.Column(elem_id="shep-ft-job", elem_classes=["shep-panel"], scale=12,
                        min_width=360):
@@ -772,6 +1102,7 @@ def create_finetune_page(ctx: Any) -> None:
                     stop = gr.Button(STOP_LABEL, variant="secondary", interactive=False,
                                      scale=0, elem_id="ft_stop")
                     stop_reason = plain_html("", elem_id="ft_stop_reason")
+                    stop_notice = plain_html("", elem_id="ft_stop_notice")
                 with gr.Row(visible=False, elem_id="ft_confirm_row") as confirm_row:
                     stop_text = plain_html("", elem_id="ft_stop_text")
                     stop_confirm = gr.Button("■ Stop training", variant="stop", scale=0,
@@ -789,13 +1120,23 @@ def create_finetune_page(ctx: Any) -> None:
                   "show_progress": "hidden"}
     base_step = {"fn": _on_base_chosen, "inputs": [checkpoint, parents], "outputs": [base],
                  "show_progress": "hidden"}
+    # Explicit is what the operator touched (decision S2): the form's record,
+    # the browser's (`training_console.touched_record`), which Start's own
+    # request carries; each field's input adds it there.
+    touched = tc.touched_record("ft_touched")
+    hops = fields[ANY_TASKS[0]]
+    task_view_step = {"fn": _on_task_view, "inputs": [tasks, checkpoint, parents, touched, hops],
+                      "outputs": [task_more, *(fields[name] for name in TASK_FIELDS), hops_note,
+                                  several_note],
+                      "show_progress": "hidden"}
 
-    # The page shown: the list and the tasks, the bases (gated), the card.
+    # The page shown: the list and the tasks, the bases (gated), the task
+    # settings for them, the card.
     ctx.on_page_open(PAGE, {
         "fn": _open, "inputs": [ws, ctx.training_workspace, tasks],
         "outputs": [ws, dataset, identity, tasks, tasks_note],
         "show_progress": "hidden"}).then(**bases_step).then(**base_step).then(
-        **card_step).then(**ctx.chip_refresh)
+        **task_view_step).then(**card_step).then(**ctx.chip_refresh)
     # The shell's slow timer, a read-only poll without the queue.
     ctx.timer_slow.tick(_poll, inputs=[ctx.location, mode, cache],
                         outputs=[card, start, stop, reason, stop_reason, confirm_row, cache],
@@ -808,26 +1149,40 @@ def create_finetune_page(ctx: Any) -> None:
     refresh.click(**bases_step).then(**base_step).then(**ctx.chip_refresh)
     run_select.change(ml.on_run_chosen, inputs=[run_select, parents, checkpoint],
                       outputs=[checkpoint], show_progress="hidden")
-    checkpoint.change(**base_step)
+    # The base or the tasks changed: the task settings for them (shown, titled,
+    # opened when the hop list cannot run on the base, with its note).
+    checkpoint.change(**base_step).then(**task_view_step)
+    tasks.change(**task_view_step)
     fields["frozen_parts"].change(freeze_note_html, inputs=[fields["frozen_parts"]],
                                   outputs=[freeze_note], show_progress="hidden")
-    # Explicit is what the operator touched (decision S2): the form's record,
-    # the browser's (`training_console.touched_record`), which Start's own
-    # request carries; each field's input adds it there.
-    touched = tc.touched_record("ft_touched")
     for name in FINETUNE_FIELDS:
         tc.record_touches(fields[name], name, touched)
+    # The operator's own change of the tasks: each task setting starts again
+    # at their reference and leaves the record, a hop list set kept.
+    tasks.input(_on_tasks_input, inputs=[tasks, touched],
+                outputs=[touched, *(fields[name] for name in TASK_FIELDS)], queue=False,
+                show_progress="hidden")
+    # The hop list typed: its note again, for the list typed.
+    hops.input(_on_hops_input, inputs=[tasks, checkpoint, parents, touched, hops],
+               outputs=[hops_note], queue=False, trigger_mode="always_last",
+               show_progress="hidden")
+    # A setting a rule across settings reads only under its guard is shown while
+    # the run would read it (decision S3), as on the base form.
+    dependent, guards = tc.rule_fields(FINETUNE_FIELDS)
+    gr.on(triggers=[fields[name].change for name in guards], fn=_on_guards,
+          inputs=[fields[name] for name in guards],
+          outputs=[fields[name] for name in dependent], queue=False, show_progress="hidden")
 
     start.click(_on_finetune_start,
                 inputs=[ws, parents, checkpoint, tasks, device, run_name, touched,
                         *(fields[name] for name in FINETUNE_FIELDS)],
-                outputs=[notice], show_progress="hidden").then(
+                outputs=[notice, stop_notice], show_progress="hidden").then(
         tc.close_stop_question, inputs=[mode], outputs=[mode], show_progress="hidden").then(
         **card_step).then(**ctx.chip_refresh)
     # Stop asks first: the Training page's stop logic, D8 on each request.
     stop.click(_on_finetune_stop_request, inputs=[mode], outputs=[stop_text, mode],
                show_progress="hidden").then(**card_step).then(**ctx.chip_refresh)
-    stop_confirm.click(_on_finetune_stop, inputs=[mode], outputs=[notice, mode],
+    stop_confirm.click(_on_finetune_stop, inputs=[mode], outputs=[stop_notice, mode],
                        show_progress="hidden").then(**card_step).then(**ctx.chip_refresh)
     stop_keep.click(tc.close_stop_question, inputs=[mode], outputs=[mode],
                     show_progress="hidden").then(**card_step)
@@ -855,15 +1210,25 @@ PAGE_CSS = f"""
 /* The chosen base's details: the one summary list in the parameters' panel, no box of its own
    (`base_summary_html`; the skill's §2). */
 {_PAGE} .shep-ft-base .shep-kv {{ font-size: 14px; gap: 4px 14px; }}
-{_PAGE} #ft_base:not(:has(.shep-ft-base)), {_PAGE} #ft_tasks_note:not(:has(p)), {_PAGE} #ft_freeze_note:not(:has(p)) {{ display: none !important; }}
+{_PAGE} #ft_base:not(:has(.shep-ft-base)), {_PAGE} #ft_tasks_note:not(:has(p)), {_PAGE} #ft_freeze_note:not(:has(p)), {_PAGE} #ft_hops_note:not(:has(p)), {_PAGE} #ft_several_note:not(:has(p)) {{ display: none !important; }}
 {_PAGE} .shep-ft-why {{ margin: 0; font-size: 14px; color: var(--shep-text-2); }}
+/* The hop list and its note beside it (`hops_note_html`): the note takes the rest of the row and
+   wraps under the field when the row is narrow. */
+{_PAGE} .shep-ft-hops-row {{ align-items: flex-start !important; }}
+{_PAGE} .shep-ft-hops-row > .form:has(#ft_num_neighbors) {{ flex: 1 1 280px !important; min-width: 0 !important; }}
+{_PAGE} #ft_hops_note {{ flex: 2 1 240px !important; min-width: 0 !important; align-self: center; }}
+/* The settings under an accordion in columns of one width, as the base form's grid lays them. */
+{_PAGE} .shep-ft-grid > .form {{ display: grid !important; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px 16px !important; background: transparent !important; border: 0 !important; box-shadow: none !important; }}
+{_PAGE} .shep-ft-hops {{ margin: 0; font-size: 14px; overflow-wrap: anywhere; }}
 {_PAGE} .shep-ft-start-row, {_PAGE} .shep-ft-stop-row {{ align-items: center !important; flex-wrap: wrap !important; gap: 8px 14px !important; }}
 {_PAGE} .shep-ft-start-row > button, {_PAGE} .shep-ft-stop-row > button {{ flex: none !important; width: auto !important; min-width: max-content !important; padding: 0 14px !important; height: 40px; }}
-{_PAGE} #ft_reason, {_PAGE} #ft_stop_reason {{ flex: 1 1 240px !important; }}
+{_PAGE} #ft_reason, {_PAGE} #ft_stop_reason, {_PAGE} #ft_notice, {_PAGE} #ft_stop_notice {{ flex: 1 1 240px !important; min-width: 0 !important; }}
 {_PAGE} .shep-ft-reason {{ display: inline-flex; align-items: flex-start; gap: 6px; font-size: 15px; color: var(--shep-text-2); }}
 {_PAGE} .shep-ft-reason > svg {{ flex: none; margin-top: 3px; }}
-{_PAGE} #ft_notice {{ font-size: 15px; color: var(--shep-amber-800); overflow-wrap: anywhere; }}
-{_PAGE} #ft_notice:has(.html-container:empty) {{ display: none !important; }}
+/* Start's and Stop's notices, each beside its button: a refusal carries the shared mark of a
+   refusal (`training_console.notice_html`); an empty one takes no room. */
+{_PAGE} #ft_notice, {_PAGE} #ft_stop_notice {{ font-size: 15px; overflow-wrap: anywhere; }}
+{_PAGE} #ft_notice:not(:has(.shep-notice-t)), {_PAGE} #ft_stop_notice:not(:has(.shep-notice-t)) {{ display: none !important; }}
 {_PAGE} .shep-ft-card {{ display: flex; flex-direction: column; gap: 10px; font-size: 15px; }}
 {_PAGE} .shep-ft-empty {{ margin: 0; color: var(--shep-text-2); }}
 {_PAGE} .shep-ft-from {{ margin: 0; overflow-wrap: anywhere; }}
