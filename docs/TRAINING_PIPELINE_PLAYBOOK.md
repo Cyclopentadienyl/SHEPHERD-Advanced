@@ -151,9 +151,9 @@ here builds `shortest_paths.pt`, and the GB10 acceptance probe accepts a workspa
    base's encoder (the demo's two-layer base: set two numbers). Start sends
    what you touched, as the line "Set by you: …" says (Reset to reference
    clears it), and trains one child run per task, in order. The job card
-   shows the start's graph backbone, each child's status and, once it has ended, its best save by the selection its
-   files record (a task model's validation pooled MRR, higher is better),
-   named under it; **Stop** there names the queued children it cancels.
+   shows the start's graph backbone, each child's status and, once it has
+   ended, its best save by the selection its files record (a task model's
+   validation pooled MRR, higher is better), named under it; **Stop** there names the queued children it cancels.
 7. **The frozen-backbone control** (since research comparison Stage 9b,
    2026-11-10): a child with `frozen_parts` `graph_side` keeps its base's input
    module, encoder and LP head exactly as they are (no gradient, no optimizer
