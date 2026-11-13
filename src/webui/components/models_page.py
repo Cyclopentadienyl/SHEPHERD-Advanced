@@ -11,9 +11,10 @@ its one record per checkpoint: no order ranks a model by a test score.
 
 **One list, one Load.** The page places the research preset of the shared list
 (`ctx.create_model_list("research")`, `src/webui/components/model_list.py`): the
-workspace select (the chosen workspace's dataset identity said again under it, by
-the shared renderer, `workspace_line_html`), the table ("Fingerprints: model ·
-dataset trained on", the Trainer's validation figure, the recorded tests' state),
+workspace select (its options are the names; the chosen workspace's dataset
+identity is said once, under it, by the shared renderer, `workspace_line_html`),
+the table ("Fingerprints: model · dataset trained on", the Trainer's validation
+figure, the recorded tests' state),
 "In use (Diagnosis)" on the served row, and the one gated Load with its
 confirmation. This module never
 lists a checkpoint, never reloads and never writes a usage history entry itself:
@@ -1295,9 +1296,10 @@ def options_html(data: Mapping[str, Any], refused: Optional[str] = None) -> str:
 def workspace_line_html(listing: Mapping[str, Any]) -> str:
     """Under the workspace select: the chosen workspace's dataset identity
     without its name (the shared renderer, `dataset_identity_html`: the dataset
-    fingerprint with the digits the select's options use, "synthetic", the
-    record's state), so a long workspace name that the select cuts never hides
-    them. Nothing for a read-only request (no workspace is chosen there)."""
+    fingerprint with the digits that tell the listed fingerprints apart,
+    "synthetic", the record's state), said once here: the select's option is
+    the name (`renderers.workspace_choices`). Nothing for a read-only request
+    (no workspace is chosen there)."""
     if listing.get("refused"):
         return ""
     rows = listing.get("workspaces") or []
@@ -1815,8 +1817,8 @@ PAGE_CSS = f"""
   flex: none; display: grid !important; gap: 10px 10px !important; align-items: start;
   align-content: start;
   /* The workspace select takes the row but what the task select needs for its
-     longest option, "Patients-like-me" (the workspace value carries the name,
-     the fingerprint and "synthetic"; the identity line under it says them again). */
+     longest option, "Patients-like-me" (the workspace option is its name; the
+     identity line under it says its fingerprint and "synthetic", once). */
   grid-template-columns: minmax(0, 1fr) 170px;
   grid-template-rows: repeat(5, max-content);
   grid-template-areas: "lhd lhd" "ws task" "wsline wsline" "ctl ctl" "count count";

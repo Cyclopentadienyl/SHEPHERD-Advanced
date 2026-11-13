@@ -608,13 +608,17 @@ def workspace_choices(workspaces: Sequence[Any]) -> List[Tuple[str, str]]:
     name)``, the name first, at most `OPTION_CHARS` characters with one
     separator (the skill's §8; a long name shortened in its middle). A
     trainable workspace is its name: its identity (fingerprint, synthetic,
-    record) is shown beside the select, said once (the GB10 WebUI recheck:
-    said twice side by side). One that cannot be trained adds why in a few
-    words ("name · no split manifest"), read before choosing. Only where two
-    names would read alike do they add the synthetic flag where it applies
-    and their fingerprints' distinguishing digits (`distinguishing_digits`),
-    then a number where nothing recorded tells them apart. The value is the
-    listed name, whatever the words."""
+    record) is the chosen workspace's details, said once (the GB10 WebUI
+    recheck: said twice side by side): Training's dataset chip, the identity
+    line under Fine-tune's, Models' and Test's selects
+    (`dataset_identity_html`); the Diagnosis drawer has no such line, and each
+    of its checkpoint rows says what it was trained on (`trained_on_html`).
+    One that cannot be trained adds why in a few words ("name · no split
+    manifest"), read before choosing. Only where two names would read alike
+    do they add the synthetic flag where it applies and their fingerprints'
+    distinguishing digits (`distinguishing_digits`), then a number where
+    nothing recorded tells them apart. The value is the listed name, whatever
+    the words."""
     names = [str(_get(w, "name")) for w in workspaces]
     labels = [fit_option(name, _workspace_rest(w)) for name, w in zip(names, workspaces)]
     seen = Counter(labels)
