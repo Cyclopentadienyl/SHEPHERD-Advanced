@@ -3381,8 +3381,10 @@ model spec), each at the parent's value, a setting read only under another one s
 applies, as on the parameters; the settings a branch keeps are listed in the check. Only a field
 you edit is sent, recorded as yours, so editing none starts a same-settings branch; a value a
 field does not take, a setting the parent's stage does not read and a rule across settings are
-refused in the check's words, and an edit after a check asks for the check again (Start branch
-checks first). Since
+refused in the check's words, each setting named by its label as on the parameters ("Final
+learning-rate ratio must be more than 0 when …"), and an edit after a check asks for the check
+again (Start branch checks first). An edit never dismisses a refusal of the checkpoint itself:
+the fields hide with it. Since
 K8-7 (2026-11-08) a continued run inherits only the settings this version has: a setting the
 parent recorded that this version no longer has (`num_workers`, the old model settings such as
 `conv_type`) is neither inherited nor a reason to refuse, a parent missing a current setting is
@@ -3413,19 +3415,24 @@ fp32, paused and resumed (`L7.disease_frozen`); mixed precision and `torch.compi
 are not verified by that check, and stay available. While
 the drawer is open the run bar's Start is disabled ("close Continue… to start a new run"); **4.
 Start**, the drawer's footer under its fields, holds **Continue Training** (or **Start branch**)
-and **Cancel**, with the start's reason beside them ("Start branch disabled: the parent’s
-dataset is not this workspace’s current one."), said once: a start the check refuses adds no
-notice of its own, and one the job runner refuses after the check (a parent changed since) says
-so there. In a wide window the footer stays in view while the drawer's body scrolls.
+and **Cancel**, with the start's reason beside them, which says what stops it and what to do:
+"Start branch disabled: the parent’s dataset is not this workspace’s current one.", "… the check
+refuses a setting you edited; change it, then check again.", "… the checkpoint changed since it
+was chosen. Refresh the list, then check it again." or "… the check says this checkpoint cannot
+be branched." (the check says why). It is said once: a start the check refuses adds no notice of
+its own, and one the job runner refuses after the check (a parent changed since) says so there,
+led by the red ✕ of a refusal. In a wide window the footer stays in view while the drawer's body scrolls.
 A listed checkpoint is found again in the server's list. **The model fingerprint shown is the one
 continued or branched from** (implemented in the root-cause round). For a listed checkpoint,
 Check checkpoint and the start send the list's fingerprint; for a typed path, Check checkpoint
 reads the file and shows its fingerprint, and the start sends the one shown. The job runner's
 preview compares it on its read of the file, before loading it: another file is refused with
 "The checkpoint changed since it was chosen. It holds … now (chosen: …)." and what to do for
-where it was shown: "Refresh the list, then choose it again." for a listed checkpoint (the same
-option sends the list's fingerprint again until the list is read again), "Click Check checkpoint
-to read the file there now." for a typed path. The job runner then gives the
+where it was shown: "Refresh the list, then check it again." for a listed checkpoint (the same
+option sends the list's fingerprint again until the list is read again; a Refresh that finds
+another file under the chosen option shows its details and fingerprint and clears the check, so
+the start sends the fingerprint shown), "Click Check checkpoint to read the file there now." for
+a typed path. The job runner then gives the
 training process the digest of the parent it decided on (`train_model.py
 --expect-resume-sha256`, always, for every continued run; `--expect-parent-sha256` for a
 branch): the run's placement under the

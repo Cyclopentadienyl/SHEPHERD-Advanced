@@ -438,9 +438,9 @@ FIELDS: Tuple[FieldSpec, ...] = (
               current_api=None,
               known_divergence=True,
               divergence_note="CLI (--branch-from), the job runner's start (start_training "
-                              "with branch_from) and POST /training/branch. Not a WebUI "
-                              "field yet: the Training page's Branch mode is the ops-wiring "
-                              "round's stage B1.",
+                              "with branch_from), POST /training/branch and the Training "
+                              "page's Continue drawer (its operation Branch, a listed "
+                              "checkpoint).",
               description="The checkpoint a branch starts from: its stage, task, weights "
                           "and settings, none or some changed on the stage's list."),
     FieldSpec("task_loss_weight", "float", None, "loss", projects_to="TrainConfig.task_loss_weight",
@@ -584,9 +584,10 @@ FIELDS: Tuple[FieldSpec, ...] = (
     FieldSpec("extend_lr", "float", None, "trainer", projects_to="TrainConfig.extend_lr",
               valid={"gt": 0}, current_api={"gt": 0},
               known_divergence=True,
-              divergence_note="CLI (--extend-lr) and POST /training/start with resume_from: "
-                              "replaces a zero rate, and only a zero rate (the preview's "
-                              "zero_rate_groups names them). Not a WebUI field yet.",
+              divergence_note="CLI (--extend-lr), POST /training/start with resume_from "
+                              "and the Continue drawer's Extra-epoch rate, shown only for a "
+                              "finished parent with a group at 0: replaces a zero rate, and "
+                              "only a zero rate (the preview's zero_rate_groups names them).",
               description="Rate for parameter groups whose rate ended at 0, when extending."),
     FieldSpec("pause_after_epoch", "int", None, "runtime_setting",
               projects_to="TrainConfig.pause_after_epoch",

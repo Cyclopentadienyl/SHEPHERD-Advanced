@@ -221,9 +221,10 @@ names the downstream weights the stage started from (since the Stage 9b fixes).
 The child is a new run in its own folder and records its parent by SHA-256. To
 train from a checkpoint with other settings, or again with the same settings,
 branch it: a new run from its weights with a new optimizer, from the command line
-(`--branch-from`) or `POST /api/v1/training/branch`; the dashboard's Branch mode
-comes with the Training page's next stage. Models says what each branch changed,
-or "Same settings as its parent".
+(`--branch-from`), `POST /api/v1/training/branch` or the Training page's
+**Continue…** drawer, operation Branch (only the fields you edit are sent; none is
+a same-settings branch). Models says what each branch changed, or "Same settings
+as its parent".
 
 **Stop** asks first and says how much progress is lost; a stopped run shows
 **Stopped** and the latest checkpoint it can be continued from.

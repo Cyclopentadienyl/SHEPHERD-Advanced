@@ -3395,7 +3395,9 @@ with Extra epochs」），並列出取自 checkpoint 的設定，繼續訓練時
 絕不包括 freeze、split seed 或 model spec），每個都從 parent 的值開始，只在另一個設定下才讀取的
 設定，與參數欄一樣只在適用時顯示；分支保留的設定列在檢查中。只會送出你編輯過的欄位，並記錄為你
 設定的，所以完全不編輯就是相同設定的分支；欄位不接受的值、parent 的 stage 不讀取的設定，以及
-跨設定規則，都以檢查的用語拒絕；檢查之後再編輯，會要求重新檢查（Start branch 會先檢查）。自 K8-7（2026-11-08）起，續接的執行只繼承本版仍有的設定：parent 記錄了、但本版
+跨設定規則，都以檢查的用語拒絕，每個設定與參數欄一樣以其標籤稱呼（「Final learning-rate ratio
+must be more than 0 when …」）；檢查之後再編輯，會要求重新檢查（Start branch 會先檢查）。編輯
+絕不會撤下針對 checkpoint 本身的拒絕：這時欄位會隨之隱藏。自 K8-7（2026-11-08）起，續接的執行只繼承本版仍有的設定：parent 記錄了、但本版
 已沒有的設定（`num_workers`、舊的模型設定如 `conv_type`）既不繼承，也不構成拒絕的理由；缺少
 目前某個設定的 parent 會被拒絕；Check checkpoint 與訓練行程的判斷相同，用語也相同。自 research
 comparison Stage 9a（2026-11-10）起，新的 checkpoint 記錄 training rules 2，新增一個設定
@@ -3419,17 +3421,22 @@ resume 的一組仍寫明它開始時的下游權重（Models › Results 的 Co
 包括暫停後再 resume（`L7.disease_frozen`）；凍結下的混合精度與 `torch.compile` 不在這個檢查的
 範圍內，也仍然可用。抽屜打開
 期間，run bar 的 Start 停用（「close Continue… to start a new run」）；**4. Start** 是抽屜欄位下方
-的頁尾，放著 **Continue Training**（或 **Start branch**）與 **Cancel**，旁邊是啟動的原因（「Start
-branch disabled: the parent’s dataset is not this workspace’s current one.」），只說一次：被檢查
-拒絕的啟動不另加自己的通知，檢查之後被 job runner 拒絕的（之後 parent 已改變）則在那裡說明。在寬的
+的頁尾，放著 **Continue Training**（或 **Start branch**）與 **Cancel**，旁邊是啟動的原因，說明
+擋住它的是什麼、該怎麼做：「Start branch disabled: the parent’s dataset is not this workspace’s
+current one.」、「… the check refuses a setting you edited; change it, then check again.」、「… the
+checkpoint changed since it was chosen. Refresh the list, then check it again.」或「… the check
+says this checkpoint cannot be branched.」（原因寫在檢查中）。只說一次：被檢查拒絕的啟動不另加
+自己的通知，檢查之後被 job runner 拒絕的（之後 parent 已改變）則在那裡說明，以表示拒絕的紅色 ✕
+開頭。在寬的
 視窗中，抽屜內容捲動時頁尾仍留在畫面上。從清單選的
 checkpoint 會在伺服器的清單中重新找到。**繼續訓練或分支所用的就是所顯示的模型指紋**（於根因修正輪
 實作）。從清單選的 checkpoint，Check checkpoint 與啟動都送出清單上的指紋；手動輸入的路徑，則由
 Check checkpoint 讀取檔案並顯示它的指紋，啟動再送出所顯示的那個。
 job runner 的預覽在讀取檔案時、載入之前比對：不是那個檔案就以「The checkpoint changed since it
 was chosen. It holds … now (chosen: …).」拒絕，並依指紋顯示的地方說明該怎麼做：從清單選的是
-「Refresh the list, then choose it again.」（在清單重新讀取之前，同一個選項送出的仍是清單上的
-指紋），手動輸入的路徑是「Click Check checkpoint to read the file there now.」。接著 job runner 把它
+「Refresh the list, then check it again.」（在清單重新讀取之前，同一個選項送出的仍是清單上的
+指紋；Refresh 若在所選的選項下找到另一個檔案，會顯示它的詳細資料與指紋並清除檢查，所以啟動送出的
+就是所顯示的指紋），手動輸入的路徑是「Click Check checkpoint to read the file there now.」。接著 job runner 把它
 所決定的 parent 的 digest 交給訓練行程（`train_model.py --expect-resume-sha256`，每個繼續訓練的
 run 都會帶；分支則是 `--expect-parent-sha256`）：run 放在 parent 架構之下的位置與它的設定都來自那次讀取，啟動之後才被替換的檔案
 會在載入之前被訓練行程拒絕（`train_model: refused: The checkpoint changed since it was
