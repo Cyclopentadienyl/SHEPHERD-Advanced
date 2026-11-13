@@ -149,7 +149,7 @@ def test_the_form_is_exactly_the_recipes_base_settings_at_the_recipes_values():
     assert set(tc.BASE_FIELDS) == set(BASE) and len(tc.BASE_FIELDS) == len(BASE)
     for name in tc.BASE_FIELDS:
         field = by_id[name]
-        assert field.label == tc.SETTING_LABELS[name]
+        assert field.label == r.SETTING_LABELS[name]
         assert field.value == tc.form_value(name, BASE[name]), name
         if isinstance(field, gr.Number):
             assert field.precision == (0 if isinstance(BASE[name], int) or BASE[name] is None

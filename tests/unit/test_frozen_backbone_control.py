@@ -754,7 +754,7 @@ def test_both_arms_are_measured_registered_listed_and_exported_with_their_freeze
     digest = ("Training settings", "Weight transfer · Downstream initial SHA-256")
     assert shown["control"][digest] == shown["full"][digest] == (
         transfers["control"]["downstream_initial_sha256"])
-    from src.webui.components.results_segment import field_words
+    from src.webui.components.renderers import field_words
 
     assert {part: shown["control"][("Training settings",
                                     f"Weight transfer · Parts › {field_words(part)}")]

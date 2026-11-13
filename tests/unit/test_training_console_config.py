@@ -204,8 +204,8 @@ def test_each_settings_help_says_what_it_is_its_reference_and_its_source():
     for name in tc.BASE_FIELDS:
         title, text = tc.FIELD_HELP[name]
         lead = text.split("\n", 1)[0]
-        assert title == tc.SETTING_LABELS[name] and len(lead) <= 90, (name, lead)
-        assert f"Reference: {tc.setting_shown(name, BASE[name])}." in text
+        assert title == r.SETTING_LABELS[name] and len(lead) <= 90, (name, lead)
+        assert f"Reference: {r.setting_words(name, BASE[name])}." in text
         assert BASE_SOURCES[name] in text
 
 
@@ -222,7 +222,7 @@ def test_the_freeze_field_shows_plain_words_and_sends_the_field_specs_values():
     from src.config.training_fields import by_name
 
     choices = by_name("frozen_parts").choices
-    assert set(tc.SETTING_CHOICE_WORDS["frozen_parts"]) == set(choices)
+    assert set(r.SETTING_CHOICE_WORDS["frozen_parts"]) == set(choices)
     field = tc.setting_field("frozen_parts", FINETUNE["frozen_parts"], elem_id="f")
     assert isinstance(field, gr.Radio) and field.label == "Graph backbone"
     assert field.choices == [("Trained", "none"), ("Frozen", "graph_side")]
@@ -230,7 +230,7 @@ def test_the_freeze_field_shows_plain_words_and_sends_the_field_specs_values():
     assert field.value == "none" == FINETUNE["frozen_parts"]
     words = [words for words, _value in field.choices]
     assert len(set(words)) == len(words)
-    for label in (*words, tc.SETTING_LABELS["frozen_parts"]):
+    for label in (*words, r.SETTING_LABELS["frozen_parts"]):
         assert len(label) <= r.OPTION_CHARS and " · " not in label, label
     # The scheduler's values have no words: shown as they are.
     assert tc.setting_field("scheduler_type", "none", elem_id="s").choices == [

@@ -1133,20 +1133,23 @@ def parent_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]]) -> st
 def changes_html(changes: Any, *, values: bool = True) -> str:
     """What a branch changed from its parent, from its listed record
     (`parent_changes`, decision B4): `SAME_SETTINGS` for ``{}``; else each
-    setting changed, with its parent's value and its own as recorded
-    (`values`), or by name alone; "not read" when the list holds none."""
+    setting changed, by its words (`renderers.field_words`), with its
+    parent's value and its own in the one value-words rule
+    (`renderers.setting_words`, never Python's repr) (`values`), or by name
+    alone; "not read" when the list holds none."""
     if not isinstance(changes, Mapping):
         return '<span class="shep-muted">not read</span>'
     if not changes:
         return r.e(SAME_SETTINGS)
     names = sorted(str(name) for name in changes)
     if not values:
-        return "Changed: " + r.e(", ".join(names))
+        return "Changed: " + r.e(", ".join(r.field_words(name) for name in names))
     shown = []
     for name in names:
         change = changes[name] if isinstance(changes[name], Mapping) else {}
-        shown.append(f'{r.e(name)} <code>{r.e(repr(change.get("parent")))}</code> → '
-                     f'<code>{r.e(repr(change.get("new")))}</code>')
+        shown.append(f'{r.e(r.field_words(name))} '
+                     f'<code>{r.e(r.setting_words(name, change.get("parent")))}</code> → '
+                     f'<code>{r.e(r.setting_words(name, change.get("new")))}</code>')
     return "; ".join(shown)
 
 

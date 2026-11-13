@@ -1346,11 +1346,19 @@ def test_the_detail_says_what_the_model_is_and_its_relation_to_the_paper(world, 
     row = {"depth": 1, "parent_state": "listed"}
     assert mp.SAME_SETTINGS in _text(mp.lineage_cell_html(branch, row))
     changed = {**branch, "parent_changes": {"seed": {"parent": 1, "new": 5},
+                                            "scheduler_type": {"parent": "cosine", "new": "none"},
+                                            "early_stopping_patience": {"parent": 10,
+                                                                        "new": None},
                                             EVIL: {"parent": EVIL, "new": 2}}}
     html = mp.identity_html(changed, None)
-    assert "seed 1 → 5" in _text(html) and EVIL not in html
+    # Each setting by its words, each value in the one value-words rule,
+    # never Python's repr: no quotes, no bare None (B0c).
+    assert "Seed 1 → 5" in _text(html) and EVIL not in html
+    assert "Scheduler cosine → none" in _text(html)
+    assert "Early stopping patience 10 → off" in _text(html)
+    assert "'" not in _text(html) and "None" not in _text(html)
     lineage = mp.lineage_cell_html(changed, row)
-    assert "Changed: " in _text(lineage) and "seed" in _text(lineage) and EVIL not in lineage
+    assert "Changed: " in _text(lineage) and "Seed" in _text(lineage) and EVIL not in lineage
     assert "Settings changed" not in mp.identity_html(item, None)
     assert "Changed" not in mp.lineage_cell_html(item, row)
     # Load is off for the base, with its reason (the shared list's).

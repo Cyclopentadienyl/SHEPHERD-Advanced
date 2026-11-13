@@ -696,3 +696,48 @@ def test_each_missing_state_has_its_own_word_and_a_dash_never_stands_for_not_rec
                       None: ("neutral", "record unknown")}
     assert r.record_chip(workspace(binding="unrecorded")) == r.status_mark(
         "neutral", "record not recorded", as_chip=True)
+
+
+# --------------------------------------------------------------------------- shared details
+# The one summary list and the one value-words rule (ops-wiring round B0c;
+# the WebUI skill's §2, §4, §5, §6).
+HOSTILE = "<img src=x onerror=alert(1)>"
+WORLDLY = "中文標籤 🧬✨"
+
+
+def _shown_text(html_: str) -> str:
+    import html as html_lib
+
+    return " ".join(html_lib.unescape(re.sub(r"<[^>]+>", " ", html_)).split())
+
+
+def test_the_value_words_say_each_setting_by_its_meaning_never_by_repr():
+    """One rule for every page (B0c): on/off for a switch, a None by its
+    meaning per setting (the field spec's), a list as its items with -1 as
+    every neighbour, a number as typed, a closed value by its field's words;
+    never Python's repr, never a bare None."""
+    words = r.setting_words
+    assert (words("use_amp", True), words("use_amp", False)) == ("on", "off")
+    assert words("early_stopping_patience", None) == "off"
+    assert words("seed", None) == r.NOT_SET == "not set"
+    assert words("task_loss_weight", None, stage="finetune", task="disease") == (
+        "the task's reference")
+    for name in ("task_loss_weight", "candidate_sample_size", "task"):
+        assert words(name, None, stage="base") == r.NOT_TAKEN_BY_A_BASE, name
+    assert words("candidate_sample_size", None, stage="finetune", task="gene") == (
+        "not taken by the Gene task")
+    assert words("num_neighbors", [15, 10, 5]) == "15, 10, 5"
+    assert words("num_neighbors", [15, -1]) == "15, all neighbours"
+    assert words("exclude_relations", []) == "none"
+    assert (words("learning_rate", 0.0001), words("learning_rate", 1e-05),
+            words("max_grad_norm", 1.0), words("num_epochs", 30)) == ("0.0001", "1e-05",
+                                                                     "1.0", "30")
+    assert words("frozen_parts", "graph_side") == "Frozen"
+    assert words("frozen_parts", "none") == "Trained"
+    assert words("scheduler_type", "cosine") == "cosine"
+    assert words("gene", {"eta": 0.5, "augmentation": True}) == "eta: 0.5, augmentation: on"
+    assert words("run_name", WORLDLY) == WORLDLY                # text as it is
+    assert words("run_name", HOSTILE) == HOSTILE                # plain text: the caller escapes
+    for value in (None, True, [None, "a"], {"k": None}, ("x",), 0.5):
+        text = words("x", value)
+        assert "'" not in text and "None" not in text and "True" not in text, (value, text)

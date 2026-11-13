@@ -60,8 +60,8 @@ recorded and effective training settings, the data's identity and role, the
 measurement's settings, the environment (its native build line, and every
 recorded fact of each component under its name as recorded), the exposure)
 and each metric, each
-group once, in that order, each row named in words (`field_words`; its record
-key is its title). A nested value is one row per entry, so a difference
+group once, in that order, each row named in words (`renderers.field_words`;
+its record key is its title). A nested value is one row per entry, so a difference
 inside a nested setting is its own row (`_tree`), named by the entry's own
 words under a sub-heading row that says its path once. **Values side by
 side, as recorded; no difference is computed;** a number and a run id are
@@ -126,11 +126,6 @@ from src.webui.components import model_list as ml
 from src.webui.components import models_page as mp
 from src.webui.components import renderers as r
 from src.webui.components.help import help_button
-from src.webui.components.training_console import (
-    SETTING_CHOICE_WORDS,
-    SETTING_LABELS,
-    setting_shown,
-)
 from src.webui.exports import file_slug, write_new
 from src.webui.operator_access import operator_access
 from src.webui.shell import plain_html
@@ -730,63 +725,6 @@ _SAID_BY_THE_MODEL: Dict[str, Tuple[str, ...]] = {
 #: decides nothing).
 _GROUP_WORDS = {"uncontested": "agree", "contested": "differ",
                 "cannot_be_checked": "comparison incomplete"}
-#: Compare's words for the record keys its rows name where the Training page's
-#: labels (`training_console.SETTING_LABELS`) do not name them; any other key
-#: reads as its own words (`field_words`).
-_FIELD_WORDS = {
-    "eval_every_n_epochs": "Validation interval (epochs)",
-    "frozen_forward": "Frozen parts' forward mode",
-    "loaded_from_parent": "Loaded from the parent",
-    "min_lr_ratio": "Minimum learning-rate ratio",
-    # What it counts is its mode's (a KG link-prediction run's pairs, another
-    # mode's cases): one row of every column, in words of neither.
-    "n_ranked": "Number ranked",
-    # The Test page's word for a version's excluded cases in all.
-    "n_excluded": "Excluded",
-    "augmentation_k": "Augmentation neighbours (K)",
-    "val_without_negative": "Validation edges without a negative",
-    "save_top_k": "Top-k saves kept",
-    "terms_without_trainable_parameters": "Terms without a trainable parameter",
-}
-#: Abbreviations a key's words keep as they are written.
-_ABBREVIATIONS = {"amp": "AMP", "auc": "AUC", "cuda": "CUDA", "cudnn": "cuDNN", "gpu": "GPU",
-                  "id": "ID", "kg": "KG", "lp": "LP", "mrr": "MRR", "roc": "ROC",
-                  "sha256": "SHA-256", "url": "URL", "vcs": "VCS",
-                  # A source's toolchain names its tools as they are written.
-                  "gcc": "gcc", "g++": "g++", "nvcc": "nvcc"}
-#: Short forms a key's words write out in full (skill §5: full words).
-_SHORT_FORMS = {"concat": "concatenate", "dim": "dimension", "eps": "epsilon",
-                "grad": "gradient", "init": "initialisation", "lr": "learning rate",
-                "norm": "normalisation", "sp": "shortest-path", "val": "validation"}
-
-
-def field_words(key: Any) -> str:
-    """A record key as Compare's row names it (skill §5: sentence case, full
-    words): a learning setting by the Training page's label
-    (`training_console.SETTING_LABELS`, the one map of those: "Learning
-    rate"), a few other keys by Compare's words ("Top-k saves kept"), any
-    other by its own words, its abbreviations as written and its short forms
-    in full ("downstream_initial_sha256" → "Downstream initial SHA-256",
-    "base_lr" → "Base learning rate"). A key with a capital letter is a name
-    as recorded, as a build flag's environment variable is ("MAX_JOBS"), and
-    reads as written, as a tool's name does. The key itself is the row's
-    title (`compare_html`)."""
-    text = str(key)
-    if text in SETTING_LABELS:
-        return SETTING_LABELS[text]
-    if text in _FIELD_WORDS:
-        return _FIELD_WORDS[text]
-    if text != text.lower():
-        return text
-    words = [_ABBREVIATIONS.get(word) or _SHORT_FORMS.get(word, word)
-             for word in text.split("_") if word]
-    if not words:
-        return text
-    if words[0] not in _ABBREVIATIONS.values():
-        words[0] = words[0][:1].upper() + words[0][1:]
-    return " ".join(words)
-
-
 class _Field(NamedTuple):
     """One field of a result in Compare: its group, its row's words, its value
     as recorded (a mapping, or a list of named items, is one row per entry,
@@ -893,7 +831,7 @@ def _fields(row: Mapping[str, Any]) -> List[_Field]:
     out.append(_Field("Measurement", "Score semantics", row.get("semantics"), ref="semantics"))
     for name, value in measurement.items():
         if name not in _SHOWN_ELSEWHERE:
-            out.append(_Field("Measurement", field_words(name), value,
+            out.append(_Field("Measurement", r.field_words(name), value,
                               ref=f"measurement.{name}"))
     # A setting its record does not hold as a value (the service's
     # ``unknown``, "measurement.<block>.<field>"): Unknown, with why.
@@ -901,7 +839,7 @@ def _fields(row: Mapping[str, Any]) -> List[_Field]:
         block, _dot, name = path.partition(".")[2].partition(".")
         if path.startswith("measurement.") and name and name not in _SHOWN_ELSEWHERE \
                 and block in ("scoring", "regime"):
-            out.append(_Field("Measurement", field_words(name), None, reason,
+            out.append(_Field("Measurement", r.field_words(name), None, reason,
                               ref=f"measurement.{name}"))
     out.append(_Field("Measurement", "Run counts", row.get("run_counts"), why("run_counts"),
                       ref="run_counts"))
@@ -1061,7 +999,7 @@ def _tree(group: str, parts: Tuple[str, ...], ref: Optional[str], values: Sequen
                 child.append(NOT_APPLICABLE)
             else:
                 child.append(ABSENT)
-        words = key if named else field_words(key)
+        words = key if named else r.field_words(key)
         out.extend(_tree(group, (*parts, words), f"{ref}.{key}" if ref else key, child,
                          whys if place == 0 else said))
     return out
@@ -1171,9 +1109,9 @@ def _cell_html(value: Any, why: Optional[str], *, full: bool, run: bool = False,
     (``shep-num``: its cell does not wrap, Models' Results CSS); text as
     recorded, and a closed value of the setting `name` (the row's record
     key, its last entry) that the Fine-tune field says in words
-    (`training_console.SETTING_CHOICE_WORDS`) by those words and then the
-    value as recorded: "Frozen (graph_side)", "Trained (none)", since its row
-    is named by that field's label ("Graph backbone", `field_words`), under
+    (`renderers.SETTING_CHOICE_WORDS`) by those words and then the value as
+    recorded: "Frozen (graph_side)", "Trained (none)", since its row is named
+    by that field's label ("Graph backbone", `renderers.field_words`), under
     which the bare value would read as another fact."""
     if value is OTHER_PROTOCOL:
         return '<td class="shep-muted">another protocol</td>'
@@ -1199,8 +1137,8 @@ def _cell_html(value: Any, why: Optional[str], *, full: bool, run: bool = False,
         return f"<td><code>{r.e(text)}</code></td>"
     if isinstance(value, (int, float)):
         return f'<td class="shep-num">{r.e(recorded_value_text(value))}</td>'
-    if isinstance(value, str) and name in SETTING_CHOICE_WORDS:
-        words = setting_shown(name, value)
+    if isinstance(value, str) and name in r.SETTING_CHOICE_WORDS:
+        words = r.setting_words(name, value)
         if words != value:
             return f"<td>{r.e(words)} (<code>{r.e(value)}</code>)</td>"
     return f"<td>{r.e(value)}</td>"
@@ -1548,7 +1486,6 @@ __all__ = [
     "compare_state_html",
     "create_results_segment",
     "export_file",
-    "field_words",
     "filter_choices",
     "protocol_table_html",
     "read_results",

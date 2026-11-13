@@ -661,7 +661,7 @@ def test_the_page_follows_the_contract():
     assert by_id["ft_num_epochs"].precision == 0 and by_id["ft_seed"].precision == 0
     frozen = by_id["ft_frozen_parts"]
     assert isinstance(frozen, gr.Radio) and frozen.value == FINETUNE["frozen_parts"] == "none"
-    assert frozen.choices == [(tc.setting_shown("frozen_parts", value), value)
+    assert frozen.choices == [(r.setting_words("frozen_parts", value), value)
                               for value in by_name("frozen_parts").choices]
     assert [words for words, _ in frozen.choices] == ["Trained", "Frozen"]
     # The note starts empty (Trained) and is hidden while empty; the field's

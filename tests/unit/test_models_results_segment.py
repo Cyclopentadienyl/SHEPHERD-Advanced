@@ -34,6 +34,7 @@ import pytest
 
 pytest.importorskip("fastapi")
 
+from src.webui.components import renderers as r  # noqa: E402
 from tests.unit.test_results_export import (  # noqa: E402,F401  (the fixture)
     BASE_RUN,
     LABEL,
@@ -496,7 +497,7 @@ def test_compare_shows_what_was_in_effect_why_and_each_source_fact_as_its_own_ro
                          ("Source › Route", "local build"), ("Source › Requested › VCS", "git"),
                          ("Source › Flags › FORCE_CUDA", "1")):
         assert _cells(every, f"Component · test_attention › {label}") == [value, value]
-    assert rs.field_words("TORCH_CUDA_ARCH_LIST") == "TORCH_CUDA_ARCH_LIST"
+    assert r.field_words("TORCH_CUDA_ARCH_LIST") == "TORCH_CUDA_ARCH_LIST"
 
     before = next(row for row in _results(state)
                   if row["run_id"] == world["registered"].parent.name)
@@ -756,7 +757,6 @@ def test_the_shared_run_time_reads_a_run_id_as_the_test_page_does():
     `renderers.run_time` names a report store run id's time, to the minute and
     to the second, and names nothing else; the Test page names its report rows
     by this same function, not a copy of its own."""
-    from src.webui.components import renderers as r
     from src.webui.components import test_page as tp
 
     assert tp.run_time is r.run_time
@@ -1055,8 +1055,8 @@ def test_compare_rows_are_named_in_the_segments_words(world, monkeypatch):
     assert ('title="model.learning_settings.save_top_k" aria-label="Learning setting · Top-k '
             'saves kept">Top-k saves kept</th>') in markup
     assert 'title="metrics.pooled_mrr">Disease pooled MRR</th>' in markup
-    assert rs.field_words("cudnn_benchmark") == "cuDNN benchmark"
-    assert rs.field_words("cuda_version") == "CUDA version"
+    assert r.field_words("cudnn_benchmark") == "cuDNN benchmark"
+    assert r.field_words("cuda_version") == "CUDA version"
     # Short forms in full words, a count by the Test page's word (review of
     # the fix: "Base lr", "N excluded", "Val edges" and "eps" were left).
     finetune["model"]["effective_settings"] = {
@@ -1071,14 +1071,14 @@ def test_compare_rows_are_named_in_the_segments_words(world, monkeypatch):
         assert label in labels, label
     assert 'title="data.counts.n_excluded" aria-label="Data counts · Excluded">Excluded</th>' \
         in markup
-    assert (rs.field_words("distance_normalisation_eps"), rs.field_words("augmentation_k"),
-            rs.field_words("sp_lower"), rs.field_words("dim")) == (
+    assert (r.field_words("distance_normalisation_eps"), r.field_words("augmentation_k"),
+            r.field_words("sp_lower"), r.field_words("dim")) == (
         "Distance normalisation epsilon", "Augmentation neighbours (K)",
         "Shortest-path lower", "Dimension")
     # The spec's and the effective settings' other short forms, as the real
     # rows hold them ("Spec · Input › Init", "Effective setting · AMP › Grad
     # scaler", "Spec · Encoder › Norm" and "Concat" were left).
-    assert [rs.field_words(key) for key in ("init", "relation_init", "grad_scaler", "norm",
+    assert [r.field_words(key) for key in ("init", "relation_init", "grad_scaler", "norm",
                                             "concat")] == [
         "Initialisation", "Relation initialisation", "Gradient scaler", "Normalisation",
         "Concatenate"]

@@ -34,7 +34,7 @@ from datetime import datetime, timezone
 from typing import (Any, Callable, Dict, Hashable, Iterable, List, Mapping, NamedTuple,
                     Optional, Sequence, Tuple)
 
-from src.config.recipe import FROZEN_PARTS
+from src.config.recipe import FROZEN_PARTS, unread_settings
 from src.evaluation.caveats import (
     EXPOSURE_CAVEAT,
     GENERATED_EXPOSURE_NOTE,
@@ -43,6 +43,7 @@ from src.evaluation.caveats import (
     R10_UNVERIFIABLE_REASON,
     TASK_NAMES,
     exposure_text,
+    recorded_value_text,
 )
 from src.utils.run_plan import recorded_frozen_parts
 from src.webui.components.help import copy_button, help_button
@@ -1209,6 +1210,169 @@ def validation_text(validation: Optional[Tuple[str, float]], *, read: bool = Tru
     return f"{label} {value:.4f} — {_VALIDATION_NOTE}"
 
 
+# ---------------------------------------------------------------------------
+# Details: the one summary list and the words of a value (the skill's §4, §5)
+# ---------------------------------------------------------------------------
+#: **The label of each recipe setting a form offers**, one name per setting:
+#: the Training page's base form (`training_console.BASE_FIELDS`) and the
+#: Fine-tune page's (`finetune_page.FINETUNE_FIELDS`). Every other page names a
+#: learning setting by it too (`field_words`).
+SETTING_LABELS: Dict[str, str] = {
+    "num_epochs": "Epochs",
+    "learning_rate": "Learning rate",
+    "batch_size": "Batch size",
+    "seed": "Seed",
+    "num_neighbors": "Neighbours per hop",
+    "max_grad_norm": "Gradient clip",
+    "scheduler_type": "Scheduler",
+    "warmup_steps": "Warmup steps",
+    "weight_decay": "Weight decay",
+    "use_amp": "Mixed precision",
+    "early_stopping_patience": "Early stopping patience",
+    "frozen_parts": "Graph backbone",
+}
+#: **The words of a setting's closed values**, keyed by its field spec's
+#: ``choices`` (`training_fields.FieldSpec`): its radio shows the words and
+#: sends the value (Gradio's ``(label, value)`` tuples,
+#: `training_console.setting_field`), and every page says the words
+#: (`setting_words`), so a value is always the spec's and no page keeps a list
+#: of its own. A setting not named here shows its values as they are (the
+#: scheduler's ``none``, ``cosine`` …).
+SETTING_CHOICE_WORDS: Dict[str, Dict[str, str]] = {
+    "frozen_parts": {"none": "Trained", "graph_side": "Frozen"},
+}
+#: **What a setting left unset (None) means**, as its field spec says
+#: (`training_fields.FIELDS`: early stopping's patience "none … is no early
+#: stopping"; a task setting "unset is the task's reference"). Any other None
+#: reads "not set" (an unset seed); one the run's stage or task does not read
+#: reads so first (`setting_words`).
+SETTING_UNSET_WORDS: Dict[str, str] = {
+    "early_stopping_patience": OFF.lower(),
+    "task_loss_weight": "the task's reference",
+    "lp_loss_weight": "the task's reference",
+    "candidate_sample_size": "the task's reference",
+    "sparse_sample_size": "the task's reference",
+    "candidate_upsample_size": "the task's reference",
+}
+#: A None nothing else gives a meaning to: the value was not set.
+NOT_SET = "not set"
+#: A setting or a part a base does not read.
+NOT_TAKEN_BY_A_BASE = "not taken by a base"
+#: The sampler's every-neighbour hop (``-1``; `training_fields.value_problem`).
+ALL_NEIGHBOURS = "all neighbours"
+#: An empty list or mapping: a value with no item.
+NO_ITEM = "none"
+
+def _not_taken_words(stage: Any, task: Any) -> str:
+    """"not taken by a base", or "not taken by the Gene task"."""
+    if stage == "base":
+        return NOT_TAKEN_BY_A_BASE
+    return f"not taken by the {TASK_NAMES.get(task, str(task))} task"
+
+
+def _not_taken(name: str, stage: Any, task: Any) -> Optional[str]:
+    """"not taken by a base" (or "by the Gene task") when the run's stage and
+    task do not read the setting `name` (`recipe.unread_settings`; a base has
+    no task either), else None."""
+    if stage is None:
+        return None
+    try:
+        unread = unread_settings(stage, task)
+    except ValueError:
+        return None
+    if name not in unread and not (name == "task" and stage == "base"):
+        return None
+    return _not_taken_words(stage, task)
+
+
+def setting_words(name: Any, value: Any, *, stage: Any = None, task: Any = None) -> str:
+    """**The one rule of a value's words** (the skill's §5, §6), wherever a
+    page shows a recorded or chosen value of the setting `name` (a training
+    setting, a model spec's field): a closed value by its words
+    (`SETTING_CHOICE_WORDS`: "Frozen"); a switch on or off; a list as its items,
+    "15, 10, 5", a hop of ``-1`` as "all neighbours", an empty one "none"; a
+    mapping as its entries, "eta: 0.5"; a number as recorded, unrounded
+    (`caveats.recorded_value_text`: "0.0001", "1.0"); text as it is. **A None
+    by its meaning**: "not taken by a base" (or by the run's task) where the
+    run's `stage` and `task` do not read it, else what the field spec says it
+    means (`SETTING_UNSET_WORDS`: "off" for no patience), else "not set". Never
+    Python's repr, never a bare None. Plain text: the caller escapes it (`e`)."""
+    words = SETTING_CHOICE_WORDS.get(str(name), {})
+    if isinstance(value, str) and value in words:
+        return words[value]
+    if value is None:
+        return (_not_taken(str(name), stage, task)
+                or SETTING_UNSET_WORDS.get(str(name), NOT_SET))
+    if isinstance(value, bool):
+        return "on" if value else OFF.lower()
+    if isinstance(value, (list, tuple)):
+        return ", ".join(ALL_NEIGHBOURS if name == "num_neighbors" and item == -1
+                         else setting_words(None, item) for item in value) or NO_ITEM
+    if isinstance(value, Mapping):
+        return ", ".join(f"{key}: {setting_words(None, item)}"
+                         for key, item in value.items()) or NO_ITEM
+    if isinstance(value, (int, float)):
+        return recorded_value_text(value)
+    return str(value)
+
+
+#: The words of record keys the setting labels (`SETTING_LABELS`) do not name;
+#: any other key reads as its own words (`field_words`).
+_FIELD_WORDS = {
+    "eval_every_n_epochs": "Validation interval (epochs)",
+    "frozen_forward": "Frozen parts' forward mode",
+    "loaded_from_parent": "Loaded from the parent",
+    "min_lr_ratio": "Minimum learning-rate ratio",
+    # What it counts is its mode's (a KG link-prediction run's pairs, another
+    # mode's cases): one row of every column, in words of neither.
+    "n_ranked": "Number ranked",
+    # The Test page's word for a version's excluded cases in all.
+    "n_excluded": "Excluded",
+    "augmentation_k": "Augmentation neighbours (K)",
+    "val_without_negative": "Validation edges without a negative",
+    "save_top_k": "Top-k saves kept",
+    "terms_without_trainable_parameters": "Terms without a trainable parameter",
+}
+#: Abbreviations a key's words keep as they are written.
+_ABBREVIATIONS = {"amp": "AMP", "auc": "AUC", "cuda": "CUDA", "cudnn": "cuDNN", "gpu": "GPU",
+                  "id": "ID", "kg": "KG", "lp": "LP", "mrr": "MRR", "roc": "ROC",
+                  "sha256": "SHA-256", "url": "URL", "vcs": "VCS",
+                  # A source's toolchain names its tools as they are written.
+                  "gcc": "gcc", "g++": "g++", "nvcc": "nvcc"}
+#: Short forms a key's words write out in full (skill §5: full words).
+_SHORT_FORMS = {"concat": "concatenate", "dim": "dimension", "eps": "epsilon",
+                "grad": "gradient", "init": "initialisation", "lr": "learning rate",
+                "norm": "normalisation", "sp": "shortest-path", "val": "validation"}
+
+
+def field_words(key: Any) -> str:
+    """**A record key or a setting in words** (skill §5: sentence case, full
+    words), wherever a page names one (Compare's rows, Continue's settings): a
+    learning setting by its form's label (`SETTING_LABELS`, the one map of
+    those: "Learning rate"), a few other keys by their words ("Top-k saves
+    kept"), any other by its own words, its abbreviations as written and its
+    short forms in full ("downstream_initial_sha256" → "Downstream initial
+    SHA-256", "base_lr" → "Base learning rate"). A key with a capital letter is
+    a name as recorded, as a build flag's environment variable is
+    ("MAX_JOBS"), and reads as written, as a tool's name does. Where a page
+    shows the words, the key itself is their title (Compare's row,
+    `summary_list`'s `titles`)."""
+    text = str(key)
+    if text in SETTING_LABELS:
+        return SETTING_LABELS[text]
+    if text in _FIELD_WORDS:
+        return _FIELD_WORDS[text]
+    if text != text.lower():
+        return text
+    words = [_ABBREVIATIONS.get(word) or _SHORT_FORMS.get(word, word)
+             for word in text.split("_") if word]
+    if not words:
+        return text
+    if words[0] not in _ABBREVIATIONS.values():
+        words[0] = words[0][:1].upper() + words[0][1:]
+    return " ".join(words)
+
+
 def kv_cells(rows: Iterable[Tuple[str, str]], *, wide: Iterable[str] = ()) -> str:
     """Label/value cells for a ``.shep-kv`` grid; a label in `wide` (a digest's,
     whose full value is long) takes its own line over the whole grid, and its
@@ -1458,7 +1622,10 @@ __all__ = [
     "IDENTITY_BANNERS",
     "MODEL_TABLE_COLUMNS",
     "ModelFacts",
+    "ALL_NEIGHBOURS",
     "NOT_A_MEDICAL_DEVICE",
+    "NOT_SET",
+    "NOT_TAKEN_BY_A_BASE",
     "NO_READABLE_SPLIT_MANIFEST",
     "NO_SPLIT_MANIFEST",
     "R10_EVIDENCE_WORDS",
@@ -1466,6 +1633,9 @@ __all__ = [
     "RecordedTests",
     "OPTION_CHARS",
     "SELECTION_DIRECTIONS",
+    "SETTING_CHOICE_WORDS",
+    "SETTING_LABELS",
+    "SETTING_UNSET_WORDS",
     "VALIDATION_LABELS",
     "architecture_label",
     "best_saves",
@@ -1484,6 +1654,7 @@ __all__ = [
     "e",
     "epoch_words",
     "facts_from_checkpoint",
+    "field_words",
     "fingerprint_html",
     "fit_option",
     "fit_options",
@@ -1517,6 +1688,7 @@ __all__ = [
     "run_suffix",
     "run_time",
     "selection_words",
+    "setting_words",
     "short_hex",
     "short_reason",
     "sources_text",

@@ -253,15 +253,15 @@ def parent_line_html(finetune: Mapping[str, Any]) -> str:
 def freeze_line_html(finetune: Mapping[str, Any]) -> str:
     """The card's graph backbone: the freeze the start sent to every child
     (the runner's own record of its settings, `_Finetune.describe`), in the
-    field's words ("Frozen"; `training_console.setting_shown`), or "Trained
+    field's words ("Frozen"; `renderers.setting_words`), or "Trained
     (reference)" when it sent none, so the recipe's filled it. Escaped."""
     settings = finetune.get("settings") or {}
     if "frozen_parts" in settings:
-        words = tc.setting_shown("frozen_parts", settings["frozen_parts"])
+        words = r.setting_words("frozen_parts", settings["frozen_parts"])
     else:
-        words = f"{tc.setting_shown('frozen_parts', FINETUNE['frozen_parts'])} (reference)"
+        words = f"{r.setting_words('frozen_parts', FINETUNE['frozen_parts'])} (reference)"
     return (f'<p class="shep-ft-from"><span class="shep-ft-k">'
-            f'{r.e(tc.SETTING_LABELS["frozen_parts"])}</span> {r.e(words)}</p>')
+            f'{r.e(r.SETTING_LABELS["frozen_parts"])}</span> {r.e(words)}</p>')
 
 
 def freeze_note_html(value: Any) -> str:
