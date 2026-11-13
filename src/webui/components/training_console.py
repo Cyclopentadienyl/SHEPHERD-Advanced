@@ -840,11 +840,12 @@ def spec_facts_html() -> str:
     return r.summary_list(rows, classes="shep-train-spec-facts")
 
 
-def _rule_fields(fields: Sequence[str] = BASE_FIELDS) -> Tuple[Tuple[str, ...], Tuple[str, ...]]:
-    """A form's settings (`fields`, in its order: the base form's, or the
-    Continue drawer's Branch fields) that a rule across settings reads only
-    under its guard (`CROSS_FIELD_RULES`' ``read_only_when``), and the
-    settings of those guards, each in the form's order."""
+def rule_fields(fields: Sequence[str] = BASE_FIELDS) -> Tuple[Tuple[str, ...], Tuple[str, ...]]:
+    """A form's settings (`fields`, in its order: the base form's, the
+    Continue drawer's Branch fields or the Fine-tune page's) that a rule
+    across settings reads only under its guard (`CROSS_FIELD_RULES`'
+    ``read_only_when``), and the settings of those guards, each in the
+    form's order."""
     rules = [rule for rule in CROSS_FIELD_RULES if rule.kind == "read_only_when"]
     subjects = {rule.subject for rule in rules}
     guards = {name for rule in rules for name in (rule.when or {})}
@@ -852,16 +853,34 @@ def _rule_fields(fields: Sequence[str] = BASE_FIELDS) -> Tuple[Tuple[str, ...], 
             tuple(name for name in fields if name in guards))
 
 
-def _on_base_guards(*values: Any) -> List[Any]:
+def rule_unread(fields: Sequence[str], values: Sequence[Any]
+                ) -> Tuple[Tuple[str, ...], frozenset]:
+    """**What a form's guards leave unread**: ``(dependent, unread)``, the
+    settings of `fields` a rule across settings reads only under its guard
+    (`rule_fields`) and those of them the run would not read on the guards'
+    field `values` (in `rule_fields(fields)` order), by the rules
+    themselves (`not_read_by_rules`). The base form's, the Fine-tune page's
+    and the Branch fields' guards are answered by it."""
+    dependent, guards = rule_fields(fields)
+    return dependent, not_read_by_rules({name: parse_value(by_name(name).kind, value)[0]
+                                         for name, value in zip(guards, values, strict=True)})
+
+
+def guard_updates(fields: Sequence[str], values: Sequence[Any]) -> List[Any]:
     """A guard of a rule across settings changed (the scheduler, mixed
-    precision; by the operator or by Reset): each setting a rule reads only
-    under its guard is shown while the run would read it and hidden
-    otherwise (`not_read_by_rules`). `values` are the guards', in
-    `_rule_fields` order."""
-    dependent, guards = _rule_fields()
-    unread = not_read_by_rules({name: parse_value(by_name(name).kind, value)[0]
-                                for name, value in zip(guards, values, strict=True)})
+    precision; by the operator or by a page's own write): each setting of a
+    form's `fields` that a rule reads only under its guard is shown while the
+    run would read it and hidden otherwise (`rule_unread`). `values` are the
+    guards', in `rule_fields(fields)` order. The base form's guards
+    (`_on_base_guards`) and the Fine-tune page's are answered by it."""
+    dependent, unread = rule_unread(fields, values)
     return [gr.update(visible=name not in unread) for name in dependent]
+
+
+def _on_base_guards(*values: Any) -> List[Any]:
+    """The base form's guards changed (by the operator or by Reset):
+    `guard_updates` of its settings (`BASE_FIELDS`)."""
+    return guard_updates(BASE_FIELDS, values)
 
 
 def _base_input_listener(key: str) -> Callable[..., str]:
@@ -3491,11 +3510,9 @@ def _on_branch_guards(mode, *values):
     stage and task may change it (the last check's ``changeable``, which the
     session's parent record keeps) and the run would read it
     (`not_read_by_rules`), as the base form's do (`_on_base_guards`).
-    `values` are the guards', in `_rule_fields(BRANCH_FIELDS)` order."""
-    dependent, guards = _rule_fields(BRANCH_FIELDS)
+    `values` are the guards', in `rule_fields(BRANCH_FIELDS)` order."""
+    dependent, unread = rule_unread(BRANCH_FIELDS, values)
     changeable = set(((mode or {}).get("parent") or {}).get("changeable") or ())
-    unread = not_read_by_rules({name: parse_value(by_name(name).kind, value)[0]
-                                for name, value in zip(guards, values, strict=True)})
     return [gr.update(visible=name in changeable and name not in unread) for name in dependent]
 
 
@@ -4228,7 +4245,7 @@ def create_training_tab(ctx: Any) -> None:
     # A setting a rule across settings reads only under its guard is shown while
     # the run would read it (decision S3): its guards' change, by the operator
     # or by Reset, shows or hides it.
-    dependent, guards = _rule_fields()
+    dependent, guards = rule_fields()
     gr.on(triggers=[fields[name].change for name in guards], fn=_on_base_guards,
           inputs=[fields[name] for name in guards],
           outputs=[fields[name] for name in dependent], queue=False, show_progress="hidden")
@@ -4412,7 +4429,7 @@ def create_training_tab(ctx: Any) -> None:
           inputs=[mode], outputs=[continue_preview, mode], show_progress="hidden",
           trigger_mode="always_last").then(**view_step)
     branch_by_name = dict(zip(BRANCH_FIELDS, branch_fields, strict=True))
-    branch_dependent, branch_guards = _rule_fields(BRANCH_FIELDS)
+    branch_dependent, branch_guards = rule_fields(BRANCH_FIELDS)
     gr.on(triggers=[branch_by_name[name].change for name in branch_guards],
           fn=_on_branch_guards, inputs=[mode, *(branch_by_name[name] for name in branch_guards)],
           outputs=[branch_by_name[name] for name in branch_dependent], queue=False,

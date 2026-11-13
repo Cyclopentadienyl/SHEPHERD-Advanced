@@ -441,7 +441,7 @@ def test_a_setting_the_run_would_not_read_is_neither_offered_nor_sent(listed, st
     one is not sent; once the guard holds it is shown and sent."""
     references, _ = tc.base_references()
     assert references["scheduler_type"] == "none" and references["use_amp"] is False
-    dependent, guards = tc._rule_fields()
+    dependent, guards = tc.rule_fields()
     assert dependent == ("warmup_steps", "min_lr_ratio", "amp_dtype")
     assert guards == ("scheduler_type", "use_amp")
     assert tf.not_read_by_rules(references) == set(dependent)

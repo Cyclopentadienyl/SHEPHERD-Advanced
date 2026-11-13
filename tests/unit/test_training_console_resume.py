@@ -1201,7 +1201,7 @@ def test_a_branch_guard_shows_what_it_guards_only_where_the_parent_may_change_it
     precision's dtype with mixed precision on) shows while its guard holds
     and the last check's list (`changeable`) has it, as the base form's do;
     hidden otherwise, whatever the guard."""
-    dependent, guards = tc._rule_fields(tc.BRANCH_FIELDS)
+    dependent, guards = tc.rule_fields(tc.BRANCH_FIELDS)
     assert (dependent, guards) == (("warmup_steps", "min_lr_ratio", "amp_dtype"),
                                    ("scheduler_type", "use_amp"))
     every = {"parent": {"changeable": list(tc.BRANCH_FIELDS)}}
