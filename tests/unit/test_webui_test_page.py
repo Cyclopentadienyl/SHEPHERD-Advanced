@@ -3234,8 +3234,8 @@ def test_a_path_under_a_root_keeps_every_name_whole(name):
     """The review of B0c: the one pattern started a new absolute path at any
     slash after a character that is no word's, so the rest of a path under a
     root ("<workspaces>/demo (copy)/runs/…", an emoji or a "+" ending a name)
-    was cut and called a server path. A path starts only where a word could
-    (`path_redaction._START`), so each name stays whole, here and through the
+    was cut and called a server path. The rest of a path under a root is read with it
+    (`path_redaction._ROOTED`), so each name stays whole, here and through the
     dashboard's redaction, which joins plain whitespace only."""
     from pathlib import Path
 
@@ -3246,6 +3246,26 @@ def test_a_path_under_a_root_keeps_every_name_whole(name):
         f"<workspaces>/{name}/runs/gatv2/r/checkpoints/last.pt does not exist.")
     assert workspaces.redact(text, Path("/srv/ws")) == (
         f"{name}/runs/gatv2/r/checkpoints/last.pt does not exist.")
+
+
+@pytest.mark.parametrize("text", [
+    "cmd >/srv/clinic/MRN0012345/x.json failed", "🔒/srv/clinic/MRN0012345/x.json",
+    "a→/srv/clinic/MRN0012345/x.json", "(see above)/srv/clinic/MRN0012345/x.json",
+    "/srv/ws/demo (copy)/runs/a and /srv/clinic/MRN0012345/x.json",
+])
+def test_a_path_after_any_mark_that_is_no_words_is_still_replaced(text):
+    """The review of B0c's fixes: names under a root are kept whole by reading
+    the rest of a root's path with it (`path_redaction._ROOTED`), not by
+    narrowing where a path may start, so a path right after a symbol, an
+    emoji, an arrow or a closing bracket is replaced as before, under one root
+    or the dashboard's."""
+    from pathlib import Path
+
+    from src.webui.components import workspaces
+
+    for out in (tp.redact(text, [("/srv/ws", "<workspaces>")]),
+                workspaces.redact(text, Path("/srv/ws"))):
+        assert "/srv/clinic" not in out and "MRN0012345" not in out, out
 
 
 @pytest.mark.parametrize("text, kept", [

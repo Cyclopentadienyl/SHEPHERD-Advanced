@@ -63,8 +63,7 @@ def redact(text: Any, root: Optional[Path]) -> str:
         prefix = str(root)
         flat = flat.replace(f"the workspaces root {prefix}", "the workspaces root")
         flat = _RESOLVES_OUTSIDE.sub("resolves outside the workspaces root", flat)
-        flat = re.sub(re.escape(prefix) + r"[/\\]", "", flat)
-        roots.append((prefix, "the workspaces root"))
+        roots += [(prefix + "/", ""), (prefix + "\\", ""), (prefix, "the workspaces root")]
     return redact_paths(flat, roots, other=OUTSIDE_PATH)
 
 

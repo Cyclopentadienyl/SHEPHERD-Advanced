@@ -21,15 +21,9 @@ from typing import Any, Dict, Sequence, Tuple
 
 #: **The one pattern for an absolute path in a text** (M5-3 review
 #: ARCH-7: Datasets and Test had a copy each): POSIX (``/…``) or a drive letter
-#: (``C:\\…``). **It starts only where a word could**: at the start of the
-#: text or after a space, a quote or a backtick, an opening bracket, an ``=``,
-#: a comma or a semicolon (`_START`). A separator inside a word never
-#: starts one, so the rest of a path a root was cut from (`redact_paths`; the
-#: dashboard's `workspaces.redact`) stays whole whatever its names hold
-#: (``demo (copy)/runs/…``, ``ws🧬/runs/…``), and neither does a slash after a
-#: dot, a colon (``http://``) or a NUL (a root already replaced). Where it
-#: ends (SECURITY-4: a path ended at its first space, so the rest of
-#: ``/mnt/clinic share/MRN 0012345/cases.json`` was shown):
+#: (``C:\\…``), not right after a word, a dot, a colon (``http://``), a slash or a
+#: NUL. Where it ends (SECURITY-4: a path ended at its first space, so the rest
+#: of ``/mnt/clinic share/MRN 0012345/cases.json`` was shown):
 #:
 #: - after a quote (``'…'``, as Python's messages quote a path), at the
 #:   closing quote, spaces included;
@@ -46,38 +40,53 @@ from typing import Any, Dict, Sequence, Tuple
 #: extension after it (``/data/Jane Doe``) still ends at its space, and so does
 #: a bracketed part with a space inside it (``/data/Jane (MRN 1)/x.json``: its
 #: bracket on is shown).
+#:
+#: **A path under a named directory ends by the same rules** (`_ROOTED`): the
+#: directory is a mark (`redact_paths`), and the rest of that path is read with
+#: it, as one match the scan keeps, so no name inside it starts another path
+#: (``<workspaces>/demo (copy)/runs/…``, ``ws🧬/runs/…``).
 _P = r"""[^\s'"(),;\x00]"""
 #: A path's character, or a bracketed part with no space inside it.
 _G = rf"""(?:{_P}|\({_P}*\))"""
 _NOT_ABSOLUTE = r"""(?![/\\]|[A-Za-z]:[\\/])"""
-#: Where an absolute path may start: the start of the text, or right after
-#: one of these.
-_START = r"""(?:^|(?<=[\s'"`(\[{<=,;]))"""
-_ABSOLUTE = re.compile(rf"""
-    {_START}
+#: The rest of a path after its first character, or after a named directory.
+_REST = rf"""
+    {_G}*
+    (?: (?:[ \t]+{_NOT_ABSOLUTE}{_G}+)* [ \t]+{_NOT_ABSOLUTE}{_G}*[/\\]{_G}* )?
+    (?: [ \t]+{_NOT_ABSOLUTE}[^\s'"(),;\x00/\\]*\.[A-Za-z][A-Za-z0-9]{{0,7}}(?!{_P}) )?"""
+_ABSOLUTE = rf"""
+    (?<![\w.:/\\\x00])
     (?:
         (?<=['"]) (?:/[^\s'"/\x00]|[A-Za-z]:[\\/]) [^'"\n\x00]*
-      | (?:/[^\s'"(),;/\x00]|[A-Za-z]:[\\/]) {_G}*
-        (?: (?:[ \t]+{_NOT_ABSOLUTE}{_G}+)* [ \t]+{_NOT_ABSOLUTE}{_G}*[/\\]{_G}* )?
-        (?: [ \t]+{_NOT_ABSOLUTE}[^\s'"(),;\x00/\\]*\.[A-Za-z][A-Za-z0-9]{{0,7}}(?!{_P}) )?
-    )""", re.VERBOSE)
+      | (?:/[^\s'"(),;/\x00]|[A-Za-z]:[\\/]) {_REST}
+    )"""
+#: A named directory's mark (`redact_paths`) and the rest of its path.
+_ROOTED = rf"""
+    (?<=['"]) \x00\d+\x00 [^'"\n\x00]*
+  | \x00\d+\x00 {_REST}"""
+_SCAN = re.compile(rf"(?P<rooted>{_ROOTED})|{_ABSOLUTE}", re.VERBOSE)
 
 
 def redact_paths(text: Any, roots: Sequence[Tuple[str, str]], *, other: str) -> str:
     """`text` with no absolute server path left: one under a named server
     directory (`roots`: ``(path, name)``, longest first) is shown under its
-    name, any other replaced by `other` (`_ABSOLUTE`). The one redaction every
-    surface uses, for one root (the dashboard's `workspaces.redact`) or several
-    (the Test page's, the results service's)."""
+    name, any other replaced by `other` (`_SCAN`). A path that ends in a
+    separator names the directory's inside: what follows it is shown under
+    `name` as it is (an empty name: the path inside it, the dashboard's
+    ``<workspace>/runs/…``). The rest of a path under a named directory is
+    read with it (`_ROOTED`), so no name in it starts another path. The one
+    redaction every surface uses, for one root (the dashboard's
+    `workspaces.redact`) or several (the Test page's, the results service's)."""
     flat = str(text if text is not None else "")
     marks: Dict[str, str] = {}
     for index, (prefix, token) in enumerate(roots):
         if not prefix:
             continue
         mark = f"\x00{index}\x00"
-        flat = re.sub(re.escape(prefix) + r"(?=$|[/\\\s'\"(),;:])", mark, flat)
+        bound = "" if prefix.endswith(("/", "\\")) else r"(?=$|[/\\\s'\"(),;:])"
+        flat = re.sub(re.escape(prefix) + bound, mark, flat)
         marks[mark] = token
-    flat = _ABSOLUTE.sub(other, flat)
+    flat = _SCAN.sub(lambda m: m.group(0) if m.group("rooted") is not None else other, flat)
     for mark, token in marks.items():
         flat = flat.replace(mark, token)
     return flat
