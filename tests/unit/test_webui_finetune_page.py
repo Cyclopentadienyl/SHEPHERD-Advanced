@@ -955,6 +955,11 @@ def test_the_page_follows_the_contract():
     assert row("ft_hops_note") is row("ft_num_neighbors")
     for gone in ("ft_split_seed", "ft_model_spec"):
         assert gone not in by_id
+    # The dataset with its identity beside it, and Run → Checkpoint side by
+    # side with the list's Refresh, so the common settings come into view at
+    # the deployment window (each row wraps on a narrow form).
+    assert row("ft_identity") is row("ft_dataset")
+    assert row("ft_run") is row("ft_checkpoint") is row("ft_refresh")
     # Start, its reason and its refusal on one row; Stop's notice beside Stop.
     assert row("ft_notice") is row("ft_start") is row("ft_reason")
     assert row("ft_stop_notice") is row("ft_stop")

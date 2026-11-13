@@ -1028,15 +1028,21 @@ def create_finetune_page(ctx: Any) -> None:
                        '<span class="shep-panel-right">one child run per task</span></div>',
                        elem_id="ft_form_hd")
             with gr.Column(elem_id="ft_form_bd", elem_classes=["shep-ft-bd"]):
-                dataset = gr.Dropdown(label="Dataset", choices=[], value=None,
-                                      elem_id="ft_dataset")
-                identity = plain_html(identity_html({}), elem_id="ft_identity")
+                # The dataset and its identity beside it (under it on a narrow
+                # form), so the common settings below come into view sooner.
+                with gr.Row(elem_classes=["shep-ft-ds-row"]):
+                    dataset = gr.Dropdown(label="Dataset", choices=[], value=None,
+                                          elem_id="ft_dataset")
+                    identity = plain_html(identity_html({}), elem_id="ft_identity")
+                # Run → Checkpoint, two cascading selects side by side (the
+                # skill's §4), then the list's Refresh; on a narrow form they
+                # wrap, one under the other.
                 with gr.Row(elem_classes=["shep-ft-parent-row"]):
                     run_select = gr.Dropdown(label="Run", choices=[], value=None,
                                              elem_id="ft_run")
+                    checkpoint = gr.Dropdown(label="Checkpoint", choices=[], value=None,
+                                             elem_id="ft_checkpoint")
                     refresh = gr.Button("Refresh", size="sm", scale=0, elem_id="ft_refresh")
-                checkpoint = gr.Dropdown(label="Checkpoint", choices=[], value=None,
-                                         elem_id="ft_checkpoint")
                 bases_note = plain_html("", elem_id="ft_bases_note")
                 base = plain_html("", elem_id="ft_base")
                 tasks = gr.CheckboxGroup(label="Tasks", choices=task_choices({}), value=[],
@@ -1201,15 +1207,18 @@ _PAGE = "#" + page_elem_id(PAGE)
 #: Nothing under 14 px; status colours only through the ``--shep-status-*``
 #: tokens.
 PAGE_CSS = f"""
-{_PAGE} .shep-ft-bd {{ padding: 8px 16px 12px !important; gap: 10px !important; }}
-{_PAGE} .shep-ft-parent-row {{ align-items: flex-end !important; flex-wrap: nowrap !important; }}
-{_PAGE} #ft_run {{ flex: 1 1 auto !important; min-width: 0 !important; }}
+{_PAGE} .shep-ft-bd {{ padding: 8px 16px 12px !important; gap: 8px !important; }}
+{_PAGE} .shep-ft-parent-row {{ align-items: flex-end !important; flex-wrap: wrap !important; gap: 8px 12px !important; }}
+{_PAGE} #ft_run, {_PAGE} #ft_checkpoint {{ flex: 1 1 300px !important; min-width: 0 !important; }}
 {_PAGE} #ft_refresh {{ flex: none !important; width: auto !important; min-width: max-content !important; }}
 {_PAGE} .shep-ft-settings {{ flex-wrap: wrap !important; gap: 8px 16px !important; }}
 {_PAGE} .shep-ft-ds {{ font-size: 15px; display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; }}
+{_PAGE} .shep-ft-ds-row {{ align-items: flex-end !important; flex-wrap: wrap !important; gap: 8px 12px !important; }}
+{_PAGE} .shep-ft-ds-row > .form:has(#ft_dataset) {{ flex: 1 1 280px !important; min-width: 0 !important; }}
+{_PAGE} #ft_identity {{ flex: 2 1 420px !important; min-width: 0 !important; padding-bottom: 6px; }}
 /* The chosen base's details: the one summary list in the parameters' panel, no box of its own
    (`base_summary_html`; the skill's §2). */
-{_PAGE} .shep-ft-base .shep-kv {{ font-size: 14px; gap: 4px 14px; }}
+{_PAGE} .shep-ft-base .shep-kv {{ font-size: 14px; gap: 2px 14px; }}
 {_PAGE} #ft_base:not(:has(.shep-ft-base)), {_PAGE} #ft_tasks_note:not(:has(p)), {_PAGE} #ft_freeze_note:not(:has(p)), {_PAGE} #ft_hops_note:not(:has(p)), {_PAGE} #ft_several_note:not(:has(p)) {{ display: none !important; }}
 {_PAGE} .shep-ft-why {{ margin: 0; font-size: 14px; color: var(--shep-text-2); }}
 /* The hop list and its note beside it (`hops_note_html`): the note takes the rest of the row and
