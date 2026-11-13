@@ -165,7 +165,9 @@ RECORDS, USAGE, RESULTS = "records", "usage", "results"
 #: By family's groups and extra column (the files whose record was refused or
 #: never read are each grouped under their own `record_kind_text` word, the
 #: one their rows lead with).
-FAMILY_TITLE = "Family from run {run} · {count} file{s}"
+#: A family's group title on Models' By family order: its root run in the
+#: one run words (`model_list.run_words`, which hold the title's one " · ").
+FAMILY_TITLE = "Family from run {run} ({count} file{s})"
 LINEAGE_COLUMN = "Lineage"
 FAMILY_NOT_READ = "the family view was not read with this list"
 #: A model record's operation (`record.OPERATIONS`) as the lineage says it.
@@ -1102,26 +1104,23 @@ def controls(data: Mapping[str, Any], order: Any, task: Any) -> Dict[str, Any]:
     return {"task": chosen_task, "order": mode}
 
 
-def run_words(run: Any) -> str:
-    """"run 2026-10-01 00:00" for a run named by its start time, else its name."""
-    started = r.run_started(run)
-    return f"run {started}" if started else f"run {run}"
-
-
 def parent_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]]) -> str:
     """Where the exact parent file a model's record names is (its 12-hex and
     run; listed here, in another listed workspace, or not available and why,
-    from the family view's row); "none: a new run" for a file with no parent."""
+    from the family view's row); "none: a new run" for a file with no parent.
+    The run is named by the one run words (`model_list.run_words`; the record
+    names its directory alone, so no layout), where it is, after a semicolon,
+    so the row keeps the words' one " · "."""
     sha = item.get("parent_sha256")
     if not r.is_digest(sha):
         return "none: a new run"
-    where = (f'<code class="shep-fpv">{r.e(r.short_hex(sha))}</code> of '
-             f'{r.e(run_words(item.get("parent_run")))}')
+    where = (f'<code class="shep-fpv">{r.e(r.short_hex(sha))}</code> of run '
+             f'{r.e(ml.run_words(None, item.get("parent_run")))}')
     state = (row or {}).get("parent_state")
     if state == "listed":
-        return f"{where} · listed here"
+        return f"{where}; listed here"
     if state == "elsewhere":
-        return f'{where} · in workspace <b>{r.e(row.get("parent_workspace"))}</b>'
+        return f'{where}; in workspace <b>{r.e(row.get("parent_workspace"))}</b>'
     if state == "unavailable":
         return (f'{where}<div>'
                 + r.status_mark("warn", "parent unavailable: "
@@ -1218,7 +1217,7 @@ def family_view(listing: Mapping[str, Any], task: str) -> Optional[Dict[str, Any
     for group in groups.values():
         kind, name = group.pop("group")
         count = len(group["keys"])
-        group["title"] = (FAMILY_TITLE.format(run=(r.run_started(name) or name), count=count,
+        group["title"] = (FAMILY_TITLE.format(run=ml.run_words(None, name), count=count,
                                               s="s" if count != 1 else "")
                           if kind == "family" else name)
     ordered = list(groups.values())
@@ -1354,7 +1353,7 @@ def identity_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]]) -> 
                  ("Parent", parent_html(item, row)),
                  *([("Settings changed", changes_html(item.get("parent_changes")))]
                    if operation == "branch" else []),
-                 ("Family", r.e(run_words(item.get("family_id")))),
+                 ("Family", r.e(f'run {ml.run_words(None, item.get("family_id"))}')),
                  ("Encoder", r.e(r.architecture_label(item.get("encoder")))),
                  ("Relation to the paper", relation)]
     return r.summary_list(rows, classes="shep-mp-ident")

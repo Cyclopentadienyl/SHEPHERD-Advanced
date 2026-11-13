@@ -282,31 +282,39 @@ def _run_parts(architecture: Any, run: Any, level: int = 0) -> Tuple[str, Option
     name when it was given one, else its start time, else (a directory not
     named by its start time) its whole name; then the architecture (past
     `_ARCHITECTURE_CHARS` shortened in its middle; whole in the details), and
-    the start time after a name. `level` tells alike runs apart
+    the start time after a name. An `architecture` of None is a run a record
+    names by its directory alone (a parent's, a family's root run): nothing
+    is said in its place. `level` tells alike runs apart
     (`renderers.distinct_names`): 1 gives the time to the second, 2 adds the
     run's own 6-hex id."""
-    arch = r.middle_cut(r.architecture_label(architecture), _ARCHITECTURE_CHARS)
+    arch = ("" if architecture is None
+            else r.middle_cut(r.architecture_label(architecture), _ARCHITECTURE_CHARS))
     started = r.run_started(run, seconds=level >= 1)
     if not started:
-        return str(run), arch
+        return str(run), arch or None
     found = _RUN_ID.search(str(run))
     rid = f" {found.group(1)}" if level >= 2 and found else ""
     name = r.run_name(run)
     if name and name != "run":
-        return name, f"{arch} {started}{rid}"
-    return started, f"{arch}{rid}"
+        return name, f"{arch} {started}{rid}".strip()
+    return started, f"{arch}{rid}".strip() or None
 
 
 def run_words(architecture: Any, run: Any) -> str:
-    """**A run as a person names it, its distinguishing token first**: its
-    name, then the architecture and its start time,
-    "ui-live-stop-02 · GATv2 2026-10-24 17:39" from
+    """**A run as a person names it, its distinguishing token first**, on
+    every page that names a run by its directory (the Run select, the
+    Fine-tune base, the Training run view, a model's parent and family on
+    Models and in Results): its name, then the architecture and its start
+    time, "ui-live-stop-02 · GATv2 2026-10-24 17:39" from
     ``gatv2/20261024-173909_ui-live-stop-02_c1d9cf``; an unnamed run ("run")
     is its start time and architecture, "2026-10-24 16:38 · GATv2"; a
     directory not named by its start time is its whole name, "my-old-run ·
-    HGT". One separator, at most `renderers.OPTION_CHARS` characters (a long
-    name or architecture shortened in its middle); the run's directory is in
-    the chosen item's details."""
+    HGT". A run a record names without its layout (`architecture` None: a
+    parent's or a family's root run) is the same words without one,
+    "ui-live-stop-02 · 2026-10-24 17:39", "2026-10-24 16:38". One separator,
+    at most `renderers.OPTION_CHARS` characters (a long name or architecture
+    shortened in its middle); the run's directory is in the chosen item's
+    details."""
     return r.fit_option(*_run_parts(architecture, run))
 
 

@@ -2045,6 +2045,16 @@ def test_a_run_reads_as_its_name_architecture_and_start_time():
     _option_rules([long, named, *(ml.run_words(layout, run) for run in (
         "20261024-173909_a_c1d9cf", "20261024-173909_run_c1d9cf", "my-very-long-old-run-dir-x"))],
         chosen, [item["run_key"] for item in twins.values()])
+    # A run a record names by its directory alone (a parent's, a family's
+    # root run: ops-wiring round B0c, where Models said "run 2026-10-01
+    # 00:00" and dropped the name): the same words, with no layout said.
+    assert ml.run_words(None, "20261024-173909_ui-live-stop-02_c1d9cf") == \
+        "ui-live-stop-02 · 2026-10-24 17:39"
+    assert ml.run_words(None, "20261024-163856_run_559817") == "2026-10-24 16:38"
+    assert ml.run_words(None, "my-old-run") == "my-old-run"
+    from src.webui.components import models_page
+
+    assert not hasattr(models_page, "run_words")     # its own words retired into these
 
 
 def test_the_drawer_lists_runs_then_the_chosen_runs_checkpoints():

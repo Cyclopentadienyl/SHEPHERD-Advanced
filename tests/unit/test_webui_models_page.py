@@ -1203,8 +1203,10 @@ def test_by_family_draws_each_family_parent_first_with_its_lineage(world, monkey
     # without a model spec, refused by the record reader, under the word each
     # of their rows leads with (K6 closing review: no page word of its own).
     refused_word = r.record_kind_text({"record": "refused"})
-    assert titles == ["Family from run 2026-10-01 00:00 · 3 files",
-                      "Family from run 2026-10-04 00:00 · 1 file",
+    # A family by its root run in the one run words (`model_list.run_words`:
+    # its name first, as the Run select names it), one " · ".
+    assert titles == ["Family from run base · 2026-10-01 00:00 (3 files)",
+                      "Family from run disease · 2026-10-04 00:00 (1 file)",
                       refused_word, "Record not read"]
     assert not hasattr(mp, "GROUP_HISTORY")
     assert {r.record_kind_text(ml.find_item(listing, key))
@@ -1230,7 +1232,7 @@ def test_by_family_draws_each_family_parent_first_with_its_lineage(world, monkey
     # The shared list draws them: groups in order, the Lineage column.
     html = ml.list_html(listing, None, ml.PRESETS["research"], view=view)
     assert ">Lineage</th>" in html and EVIL not in html
-    assert html.index("Family from run 2026-10-01") < html.index(f">{refused_word}<")
+    assert html.index("Family from run base · 2026-10-01") < html.index(f">{refused_word}<")
     # A record this build refused and a file never read: two groups, each
     # titled with its own word (skill §6: missing states are never merged).
     broken = ml.find_item(listing, _key(world, "broken.pt"))
@@ -1305,8 +1307,10 @@ def test_the_detail_says_what_the_model_is_and_its_relation_to_the_paper(world, 
     assert keys == ["Kind", "Operation", "Parent", "Family", "Encoder", "Relation to the paper"]
     text = _text(ident)
     assert "Disease" in text and "Finetune" in text and "GATv2" in text
-    assert f"{shas['base'][:12]} of run 2026-10-01 00:00 · listed here" in text
-    assert "Family" in text and "run 2026-10-01 00:00" in text
+    # The parent's and the family's run in the one run words, its name first
+    # (the review of B0b: "run 2026-10-01 00:00" dropped it), one " · ".
+    assert f"{shas['base'][:12]} of run base · 2026-10-01 00:00; listed here" in text
+    assert "Familyrun base · 2026-10-01 00:00Encoder" in text
     assert "differs in: " in text and "encoder.hidden" in text   # a shrunk test spec
     assert "Configuration" not in top and ">Task<" not in top
     specless = mp.detail_parts(listing, data, _key(world, "model-05.pt"), ctl)["top"]
