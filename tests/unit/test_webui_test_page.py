@@ -284,7 +284,7 @@ def test_a_cancelled_runs_output_is_folded_and_a_failed_runs_shown():
     html = tp.job_html(job, [], ("none", ""))
     assert '<details class="shep-test-fold">' in html and "KeyboardInterrupt" in html
     failed = tp.job_html(dict(job, status="failed"), [], ("none", ""))
-    assert "<details" not in failed and "KeyboardInterrupt" in failed
+    assert '<details class="shep-test-fold">' not in failed and "KeyboardInterrupt" in failed
 
 
 def test_the_pill_is_never_green_for_a_failed_or_cancelled_run():
@@ -4028,8 +4028,12 @@ def test_the_job_card_names_the_runs_protocol_escaped():
     rows = _identity_rows(body)
     assert rows["Measurement"] == "Gene task" and " · " not in "".join(rows.values())
     assert rows["Model"] == "c" * 12 and f'title="{"c" * 64}"' in body
+    # What it measures in view; its settings one Details › away, so the card
+    # at the Run panel's foot leaves the choices above it their room.
     assert list(rows) == ["Version", "Model", "Measurement", "Workspace", "Register",
                           "Deterministic algorithms", "Device", "R10 evidence"]
+    shown = re.sub(r'<details class="shep-more">.*?</details>', "", body, flags=re.S)
+    assert list(_identity_rows(shown)) == ["Version", "Model", "Measurement"]
     other = dict(job, inputs={**job["inputs"], "protocol": "p2", "task": "disease"})
     body = tp.job_body_html(other, [], ("busy", ""))
     assert _identity_rows(body)["Measurement"] == "Mode p2, not described by this version"
@@ -4710,16 +4714,19 @@ def test_one_screen_says_the_models_fingerprint_once(site, monkeypatch):
     # card says its own inputs, once each, a row each, drawn from the job
     # alone (the poll writes it without the selection, so it holds while
     # another model or version is chosen: the two can differ, the skill's
-    # §1.2), so the model's and the version's 12 hex digits and the
-    # workspace's name each appear once more, never more.
+    # §1.2), so the model's and the version's 12 hex digits each appear once
+    # more, never more.
     job = {"status": "running", "start_time": None, "log": [],
            "inputs": {"version_label": LABEL, "version_sha256": version["manifest_sha256"],
                       "checkpoint_sha256": site.sha, "workspace": str(site.demo),
                       "protocol": "disease", "record": True, "deterministic": False,
                       "device": "cpu", "version_kind": "supplied"}}
-    card = _plain(tp.job_head_html(job) + tp.job_body_html(job, [], ("busy", "GPU job")))
+    card = _plain(re.sub(r'<details class="[^"]*">.*?</details>', " ",
+                         tp.job_head_html(job) + tp.job_body_html(job, [], ("busy", "GPU job")),
+                         flags=re.S))
     with_card = without_run_id + " " + card
     assert card.count(site.sha[:12]) == 1 and with_card.count(site.sha[:12]) == 2
     assert with_card.count(version["manifest_sha256"][:12]) == 2
     assert with_card.count(dataset[:12]) == 1
-    assert len(re.findall(r"(?<!Role )\bdemo\b(?!-)", card)) == 1
+    # Its workspace is one Details › away, not in the screen's text.
+    assert not re.search(r"(?<!Role )\bdemo\b(?!-)", card), card

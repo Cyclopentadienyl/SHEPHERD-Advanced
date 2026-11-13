@@ -1724,14 +1724,17 @@ def job_head_html(job: Mapping[str, Any]) -> str:
 def job_inputs_html(job: Mapping[str, Any]) -> str:
     """**What a test run was given, as its inputs recorded them**, in the one
     summary list (the skill's §4, §5: a fact a row, never a chain of " · "):
-    its version (label and fingerprint), its model (its fingerprint, the one
-    digest value), its measurement (`_job_measurement`), its workspace, and
-    its register, determinism and device settings, its R10 evidence (by its
-    own kind, the runner's choice: none for a KG edge set or a generated
-    split) and its start. Drawn from the job alone, never from the selection
-    (the poll writes the card, `_card_outputs`), so a run keeps its own
-    identity while another model or version is chosen: these rows are the
-    run's, which can differ from the selection's (the skill's §1.2)."""
+    what it measures, its version (label and fingerprint), its model (its
+    fingerprint, the one digest value) and its measurement
+    (`_job_measurement`), and its start; the rest one "Details ›" away (the
+    skill's §1.5, so the card at the panel's foot leaves the choices above it
+    their room): its workspace, its register, determinism and device
+    settings (the Result's keys for them) and its R10 evidence (by its own
+    kind, the runner's choice: none for a KG edge set or a generated split).
+    Drawn from the job alone, never from the selection (the poll writes the
+    card, `_card_outputs`), so a run keeps its own identity while another
+    model or version is chosen: these rows are the run's, which can differ
+    from the selection's (the skill's §1.2)."""
     inputs = job.get("inputs") or {}
     started = utc_time(job.get("start_time"))
     evidence = inputs.get("evidence_dirs") or []
@@ -1744,8 +1747,10 @@ def job_inputs_html(job: Mapping[str, Any]) -> str:
     rows = [("Version", version),
             ("Model", r.fingerprint_value(inputs.get("checkpoint_sha256"),
                                           what="model fingerprint", copy=False)),
-            ("Measurement", _job_measurement(inputs.get("protocol"))),
-            ("Workspace", e(workspace) if workspace
+            ("Measurement", _job_measurement(inputs.get("protocol")))]
+    if started:
+        rows.append(("Started", e(started)))
+    more = [("Workspace", e(workspace) if workspace
              else r.status_mark("neutral", r.NOT_RECORDED)),
             ("Register", e(r.setting_words("record", bool(inputs.get("record"))))),
             ("Deterministic algorithms",
@@ -1754,9 +1759,8 @@ def job_inputs_html(job: Mapping[str, Any]) -> str:
             ("R10 evidence", e("the workspace" + (
                 f" + {len(evidence)} director{'ies' if len(evidence) != 1 else 'y'}"
                 if evidence else "")) if takes else r.status_mark("neutral", r.NOT_APPLICABLE))]
-    if started:
-        rows.append(("Started", e(started)))
-    return r.summary_list(rows, classes="shep-test-ident-rows")
+    return (r.summary_list(rows, classes="shep-test-ident-rows")
+            + r.details_list(more, classes="shep-test-ident-rows"))
 
 
 def job_body_html(job: Mapping[str, Any], roots: Sequence[Tuple[str, str]],
