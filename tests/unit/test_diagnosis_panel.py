@@ -434,6 +434,27 @@ def test_the_model_in_use_is_not_read_while_the_app_is_built(monkeypatch):
     assert len(bodies) == 1 and "Checking the model in use" in bodies[0].value
 
 
+def test_after_a_stop_the_card_points_back_to_research(monkeypatch):
+    """B4 (2): after a stop the card's "Back to research ›" (its state
+    Stopped, from the backend) opens Research › Training, as the header's
+    Research switch would; a click on the card for anything else navigates
+    nowhere."""
+    demo, ctx = _build_tab(monkeypatch)
+    body = next(b for b in demo.blocks.values()
+                if getattr(b, "elem_id", None) == "shep-dx-card-body")
+    (handler,) = _named(demo, "_to_research")
+    assert [t[0] for t in handler.targets] == [body._id]
+    assert list(handler.outputs) == list(ctx.nav_outputs)
+
+    class Event:
+        def __init__(self, key):
+            self._data = {"key": key}
+
+    nav, research_nav, page = handler.fn(Event("research"))
+    assert (nav.selected, research_nav.selected, page) == ("research", "training", "training")
+    assert handler.fn(Event("refresh")) == ctx.no_nav()
+
+
 def test_the_card_is_read_on_load_when_shown_after_a_load_and_on_the_timer(monkeypatch):
     demo, ctx = _build_tab(monkeypatch)
     refreshes = _named(demo, "_card_refresh")
@@ -1225,8 +1246,11 @@ def test_run_is_greyed_with_a_bubble_and_a_reason_when_no_model_is_loaded():
     assert f'aria-describedby="{text_id("dx-run-no-model")}"' in run["run_cover"]
     assert 'class="shep-i shep-i-cover"' in run["run_cover"]
     assert dp.RUN_DISABLED_NO_MODEL in run["run_reason"]
+    # B4: one reason, "Disabled until a model is loaded", whoever reads it:
+    # the card says why, and who can load one (its gated action).
+    assert dp.RUN_DISABLED_NO_MODEL == "Disabled until a model is loaded."
     read_only = dp.run_controls(_card(_no_model_status(), operator=False), "idle")
-    assert dp._e(dp.RUN_DISABLED_NO_MODEL_READ_ONLY) in read_only["run_reason"]
+    assert dp.RUN_DISABLED_NO_MODEL in read_only["run_reason"]
     assert "dx-run-no-model" in dp.TOPIC_HELP
 
 
@@ -1330,40 +1354,40 @@ def test_the_page_passes_the_model_change_phase_to_the_identity_drawer(monkeypat
         assert any(i in phase_states for i in fn.inputs), name
 
 
-def test_the_card_says_this_pages_load_is_in_progress_until_its_answer(monkeypatch):
-    """M5-3 (the mockup's state 3): while this page's Load reloads, the card says
-    "Loading <12 hex> for every session… <elapsed>" (the page's script keeps
-    the count and swaps in the second sentence when it stops waiting) and Run
-    Diagnosis is off with the load's reason; both are sent in the step before
-    the reload, and taken back after its answer, whatever it was."""
+def test_this_pages_load_is_said_by_the_server_and_run_waits_for_its_answer(monkeypatch):
+    """B4 (README §6, the note from A3b's review): the page's own "Loading
+    <12 hex> for every session…" line folds into the server's Loading state,
+    said once (`diagnosis_card.serving_state`, `loading_too`): the page draws
+    no line of its own. Run Diagnosis is off with the load's reason in the
+    step before the reload, and taken back after its answer, whatever it
+    was."""
     plan = {"to": {"sha256": "e" * 64}}
-    line = dp.loading_line_html(plan)
-    assert "Loading <code>eeeeeeeeeeee</code> for every session…\u00a0" in line
-    assert "data-shep-load-elapsed>00:00:00<" in line and "data-shep-load-card" in line
-    assert '<span class="shep-load-off" hidden>The page stopped waiting for' in line
-    assert "after 180 s; the server may still finish the reload." in line
-    assert dp.loading_line_html(None) == "" and dp.loading_line_html({"to": None}) == ""
     state = _card(_status_serving(_served_identity()))
-    html, run_btn, cover, reason = dp.card_loading_outputs(plan, state)
-    assert html == line and run_btn["interactive"] is False
+    run_btn, cover, reason = dp.card_loading_outputs(plan, state)
+    assert run_btn["interactive"] is False
     assert "dx-run-loading" in cover and dp.RUN_DISABLED_LOADING in reason
-    assert dp.card_loading_outputs(None, state) == (gr.update(),) * 4
-    html, run_btn, cover, reason = dp.card_loaded_outputs(state, "idle")
-    assert html == "" and run_btn["interactive"] is True and cover == "" and reason == ""
-    # The page as built: the card's line rides on the list's step before the
-    # reload, and is taken back by a step after the reload's answer.
+    assert dp.card_loading_outputs(None, state) == (gr.update(),) * 3
+    run_btn, cover, reason = dp.card_loaded_outputs(state, "idle")
+    assert run_btn["interactive"] is True and cover == "" and reason == ""
+    assert not hasattr(dp, "loading_line_html")
+    # The page as built: no line of its own; Run rides on the list's step
+    # before the reload and is taken back by a step after its answer.
     demo, _ctx = _build_tab(monkeypatch)
-    card_line = next(b for b in demo.blocks.values()
-                     if getattr(b, "elem_id", None) == "shep-dx-card-loading")
+    assert not any(getattr(b, "elem_id", None) == "shep-dx-card-loading"
+                   for b in demo.blocks.values())
     run_button = next(b for b in demo.blocks.values()
                       if getattr(b, "elem_id", None) == "shep-dx-run-btn")
     (loading,) = _named(demo, "_loading")
-    assert card_line in loading.outputs and run_button in loading.outputs
+    assert run_button in loading.outputs
     (confirm,) = _named(demo, "_confirm")
     after = [fn for fn in demo.fns.values() if fn.trigger_after == confirm._id]
     answered = [fn for fn in after if fn.name == "_reload_answered"]
-    assert len(answered) == 1 and card_line in answered[0].outputs
-    assert run_button in answered[0].outputs
+    assert len(answered) == 1 and run_button in answered[0].outputs
+    # The server's load is the card's, beside Serving while a model serves.
+    reloading = dp.card_outputs(_card({**_status_serving(_served_identity()), "loading": True}),
+                                None, "loading")
+    assert reloading["card_body"].count("Loading") == 1
+    assert "for every session" not in reloading["card_body"]
 
 
 def test_the_compare_link_keeps_each_arrow_with_its_word(monkeypatch):
@@ -2406,7 +2430,8 @@ def test_run_diagnosis_never_writes_the_stop_views():
 def test_run_diagnosis_is_off_while_inference_stops():
     run = dp.run_controls(_serving_card(serving="stopping"), "idle")
     assert run["run_btn"]["interactive"] is False
-    assert dp.RUN_DISABLED_STOPPING in run["run_reason"]
+    # The reason refers to the card's state (B4); the bubble is the stop's.
+    assert dp.RUN_DISABLED_NO_MODEL in run["run_reason"]
     assert 'data-help="dx-run-stopping"' in run["run_cover"]
     assert dp.run_controls(_serving_card(), "idle")["run_btn"]["interactive"] is True
 

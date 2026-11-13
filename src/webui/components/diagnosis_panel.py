@@ -32,19 +32,23 @@ scrolls.
   calls): the diagnoses already accepted finish, new ones are refused until a
   model is loaded, and it says what the stop said, with the resources reading
   taken after it (never a promise that memory was returned). The card then
-  shows the server's state in its own words (`diagnosis_card.serving_state`).
+  shows the server's state in its own words (`diagnosis_card.serving_state`:
+  Stopped, the backend's lead "By an operator at …", its reason under
+  Details ›) and the way back to research ("Back to research ›", Research ›
+  Training).
   **The card's reads own what the stop shows**: its question closes, and what
   it said goes, once a read no longer offers the model they were bound to
   (`stop_views_closed`), so nothing the page holds outlives the state it
   describes (a "stopped" notice after a model is loaded again, say).
-- **Run Diagnosis** is greyed out and not clickable when no model is loaded
-  or inference is stopping (a bubble on hover and on keyboard focus says why,
-  and the reason is visible
-  text under it) and while a model change is open; while this page's Load
-  reloads, the card says "Loading <12 hex> for every session… <elapsed>" and
-  Run Diagnosis says the load is in progress (the mockup's state 3; set in the
-  list's step before the reload, taken back after its answer). With no model
-  loaded the API refuses a diagnosis (503) with its reason, for every client.
+- **Run Diagnosis** is greyed out and not clickable when nothing is served
+  or inference is stopping ("Disabled until a model is loaded" under it, a
+  bubble on hover and on keyboard focus for each cause; the card above says
+  which, once) and while a model change is open; while this page's Load
+  reloads, Run Diagnosis waits for its answer (set in the list's step before
+  the reload, taken back after its answer), and the load itself is the
+  card's Loading, read from the server's status like every state, never a
+  line of the page's own. With nothing served the API refuses a diagnosis
+  (503) with its reason, for every client.
 - **The candidates**: the results badge ("Produced by the model in use" /
   "Produced by an earlier model or pipeline — N parts differ ›" / "Cannot
   check against the model in use yet" with its one reason), the identity
@@ -1383,15 +1387,15 @@ TOPIC_HELP = {
     ),
     "dx-run-no-model": (
         "Run Diagnosis is disabled",
-        "No model loaded: nothing is served on this server, so nothing would compute a "
-        "diagnosis. An operator loads one with \"Load a model…\" on the card above. (An API "
-        "client asking now is refused, with this reason.)",
+        "Nothing is served on this server, so nothing would compute a diagnosis. The card above "
+        "says why, and an operator loads a model with its \"Load a model…\". (An API client "
+        "asking now is refused, with the server's reason.)",
     ),
     "dx-run-stopping": (
         "Run Diagnosis is disabled",
         "Inference is stopping: the diagnoses already accepted finish, and new ones are refused; "
-        "then no model is loaded. An operator loads one again with \"Load a model…\" on the "
-        "card above. (An API client asking now is refused, with the server's reason.)",
+        "then nothing is served until an operator loads a model again with \"Load a model…\" "
+        "on the card above. (An API client asking now is refused, with the server's reason.)",
     ),
     "dx-run-change": (
         "Run Diagnosis is disabled",
@@ -1400,9 +1404,9 @@ TOPIC_HELP = {
     ),
     "dx-run-loading": (
         "Run Diagnosis is disabled",
-        "This page started a model load: the pipeline reloads for every session, and the server "
-        "answers no diagnosis until it finishes. Closing the change-model drawer does not stop "
-        "it.",
+        "This page started a model load, which reloads the pipeline for every session; Run "
+        "Diagnosis waits for its answer, so no result is produced here while what is served "
+        "changes. The card shows the server's state. Closing the drawer does not stop the load.",
     ),
     "dx-run-no-cohort": (
         "Run Diagnosis is disabled",
@@ -1414,13 +1418,12 @@ TOPIC_HELP = {
     **{f"dx-banner-{key}": (headline, detail) for key, (headline, detail) in IDENTITY_BANNERS.items()},
 }
 
-#: Why Run Diagnosis is off, as visible text under it.
-RUN_DISABLED_NO_MODEL = "Disabled: no model loaded. Load one with “Load a model…” above."
-RUN_DISABLED_NO_MODEL_READ_ONLY = (
-    "Disabled: no model loaded. An operator on the server's machine can load one.")
-RUN_DISABLED_STOPPING = "Disabled: inference is stopping; new diagnoses are refused."
+#: Why Run Diagnosis is off, as visible text under it. Nothing served (no
+#: model, or a stop letting the accepted diagnoses finish) is said once, by
+#: the card's state and the backend's lead above it; this refers to it.
+RUN_DISABLED_NO_MODEL = "Disabled until a model is loaded."
 RUN_DISABLED_CHANGE = "Disabled: finish or cancel the model change first."
-RUN_DISABLED_LOADING = "Disabled: a model load is in progress; diagnoses wait until it finishes."
+RUN_DISABLED_LOADING = "Disabled until the model load started here answers."
 #: A patients-like-me model with no reference cohort version to rank: the
 #: lead, then the cause in its own words with who can act (skill §9). The
 #: registry setting's own words (its name, a command's flag) are an
@@ -1497,9 +1500,10 @@ def task_view(task: Any) -> Dict[str, str]:
 
 def results_header_html(result: Optional[Mapping[str, Any]]) -> str:
     """"Diagnosis results" and, at its right, how many candidates, how long and
-    when it was produced (or "no result yet")."""
+    when it was produced; nothing at its right before a result (the panel's
+    body says "No result yet", once)."""
     if not isinstance(result, Mapping):
-        right = '<span class="shep-panel-right">no result yet</span>'
+        right = ""
     else:
         n = len(result.get("candidates") or [])
         ms = result.get("inference_time_ms")
@@ -1509,17 +1513,16 @@ def results_header_html(result: Optional[Mapping[str, Any]]) -> str:
     return f'<div class="shep-panel-hd"><h2>Diagnosis results</h2>{right}</div>'
 
 
-def empty_results_html(no_model: bool = False, notice: Optional[str] = None) -> str:
-    """The results panel with no result: what to do, or `notice` (a refusal,
-    an error, inputs changed since the last run)."""
+def empty_results_html(notice: Optional[str] = None) -> str:
+    """The results panel with no result: "No result yet" (said once on the
+    page) and what to do, or `notice` (a refusal, an error, inputs changed
+    since the last run). Whether a model is served is the card's to say."""
     if notice:
         return f'<div class="shep-dx-notice">{notice}</div>'
-    first = ("Run Diagnosis needs a loaded model. The card on the left says what is loaded."
-             if no_model else
-             "Enter the HPO terms, check the model in use on the left, then Run Diagnosis.")
     return ('<div class="shep-dx-empty"><p class="shep-dx-empty-h">No result yet</p>'
-            f'<p>{_e(first)}</p><p class="shep-note">Each result says what produced it, compared '
-            'with the model in use.</p></div>')
+            '<p>Enter the HPO terms, check the model in use on the left, then Run Diagnosis.</p>'
+            '<p class="shep-note">Each result says what produced it, compared with the model in '
+            'use.</p></div>')
 
 
 def compare_with_served(result: Mapping[str, Any], state: Mapping[str, Any]) -> Dict[str, Any]:
@@ -2222,11 +2225,11 @@ def run_controls(state: Mapping[str, Any], phase: Any) -> Dict[str, Any]:
         key, why = "dx-run-loading", RUN_DISABLED_LOADING
     elif phase not in (None, "idle"):
         key, why = "dx-run-change", RUN_DISABLED_CHANGE
-    elif card.run_blocked(state) and card.stopping(state):
-        key, why = "dx-run-stopping", RUN_DISABLED_STOPPING
     elif card.run_blocked(state):
-        key = "dx-run-no-model"
-        why = RUN_DISABLED_NO_MODEL if state.get("operator") else RUN_DISABLED_NO_MODEL_READ_ONLY
+        # One reason for both (the card says which: Stopping, or nothing
+        # served), each cause's own bubble.
+        key = "dx-run-stopping" if card.stopping(state) else "dx-run-no-model"
+        why = RUN_DISABLED_NO_MODEL
     elif no_cohort is not None:
         key, why = "dx-run-no-cohort", no_cohort
     else:
@@ -2239,45 +2242,28 @@ def run_controls(state: Mapping[str, Any], phase: Any) -> Dict[str, Any]:
             "run_reason": f'<p class="shep-dx-why"><span aria-hidden="true">⊖</span> {_e(why)}</p>'}
 
 
-def loading_line_html(plan: Any) -> str:
-    """The card's line while this page's Load reloads the pipeline (the
-    mockup's state 3): "Loading <12 hex> for every session… 00:00:00", the
-    count kept by the page's own script (`model_list.start_wait_js`, which
-    also swaps in the second sentence when the page stops waiting after
-    `PAGE_WAIT_SECONDS`, as the drawer says). "" without a plan."""
-    from src.webui.components.model_list import PAGE_WAIT_SECONDS
-
-    if not isinstance(plan, Mapping) or not isinstance(plan.get("to"), Mapping):
-        return ""
-    new = _e(_short_hex(plan["to"].get("sha256")))
-    return ('<p class="shep-dx-loading" role="status" data-shep-load-card>'
-            '<span class="shep-load-on"><span class="shep-spinner" aria-hidden="true"></span> '
-            f'Loading <code>{new}</code> for every session…\u00a0'
-            '<span class="shep-elapsed" data-shep-load-elapsed>00:00:00</span></span>'
-            f'<span class="shep-load-off" hidden>The page stopped waiting for <code>{new}</code> '
-            f'after {PAGE_WAIT_SECONDS} s; the server may still finish the reload.</span></p>')
-
-
 def _run_tuple(state: Mapping[str, Any], phase: Any) -> Tuple[Any, Any, Any]:
     run = run_controls(state, phase)
     return run["run_btn"], run["run_cover"], run["run_reason"]
 
 
 def card_loading_outputs(plan: Any, state: Any) -> Tuple[Any, ...]:
-    """The card's part of the step "Reload with …" runs before the reload (the
-    shared list's ``on_loading``): the "Loading …" line and Run Diagnosis off
-    with its reason, shown before the reload holds the server. Nothing when
-    there was no plan (nothing is loading)."""
+    """The page's part of the step "Reload with …" runs before the reload
+    (the shared list's ``on_loading``): Run Diagnosis off with its reason,
+    shown before the reload holds the server. The load itself is said by
+    the card, from the server's status (`diagnosis_card.serving_state`,
+    `loading_too`), never by a line of the page's own. Nothing when there
+    was no plan (nothing is loading)."""
     if not plan:
-        return gr.update(), gr.update(), gr.update(), gr.update()
+        return gr.update(), gr.update(), gr.update()
     state = state if isinstance(state, Mapping) else card.new_state()
-    return (loading_line_html(plan), *_run_tuple(state, "loading"))
+    return _run_tuple(state, "loading")
 
 
 def card_loaded_outputs(state: Mapping[str, Any], phase: Any) -> Tuple[Any, ...]:
-    """After the reload's answer: no "Loading …" line, and Run Diagnosis as
-    the phase now says (idle, or a confirmation shown again)."""
-    return ("", *_run_tuple(state, phase))
+    """After the reload's answer: Run Diagnosis as the phase now says (idle,
+    or a confirmation shown again)."""
+    return _run_tuple(state, phase)
 
 
 #: The outputs that follow the served task (`card_outputs(..., inputs=True)`):
@@ -2325,7 +2311,7 @@ def card_outputs(state: Mapping[str, Any], result: Optional[Mapping[str, Any]], 
         "badge": badge_html(result, state),
     }
     if not isinstance(result, Mapping):
-        fresh["results_body"] = empty_results_html(card.run_blocked(state))
+        fresh["results_body"] = empty_results_html()
     if view.get("open"):
         for name, update in identity_outputs(view, state, result).items():
             fresh[name] = update
@@ -2418,10 +2404,10 @@ def _clamped_top_k(top_k: Any) -> int:
     return max(1, min(20, value))
 
 
-def _no_result_outputs(state: Mapping[str, Any], notice: Optional[str]) -> Dict[str, Any]:
+def _no_result_outputs(notice: Optional[str]) -> Dict[str, Any]:
     return {
         "results_hd": results_header_html(None), "badge": "",
-        "results_body": empty_results_html(card.run_blocked(state), notice),
+        "results_body": empty_results_html(notice),
         "results_state": None, "selected": None,
         "export_csv": _EXPORTS_HIDDEN, "export_report": _EXPORTS_HIDDEN,
         **details_outputs(None, None),
@@ -2454,7 +2440,7 @@ def diagnose(phenotype_text: str, patient_id: str, top_k: Any, explanations: boo
     view = view if isinstance(view, Mapping) else {}
     hpo_ids = _parse_hpo_ids(phenotype_text)
     if not hpo_ids:
-        out = _no_result_outputs(state, (
+        out = _no_result_outputs((
             '<p class="shep-dx-warn"><b>No valid HPO terms found.</b> Enter HPO ids like '
             '<code>HP:0001250</code> — one per line, or comma/space-separated; names are '
             'optional.</p>'))
@@ -2462,7 +2448,7 @@ def diagnose(phenotype_text: str, patient_id: str, top_k: Any, explanations: boo
     task = card.served_task(state.get("status"))
     genes = _parse_gene_list(genes_text) if task == "gene" else None
     if task == "gene" and not genes:
-        return _no_result_outputs(state, NO_CANDIDATE_GENES)
+        return _no_result_outputs(NO_CANDIDATE_GENES)
     reference = cohort if task == "patients_like_me" and isinstance(cohort, str) and cohort \
         else None
     explanations = bool(explanations)
@@ -2471,7 +2457,7 @@ def diagnose(phenotype_text: str, patient_id: str, top_k: Any, explanations: boo
                             reference_cohort=reference)
     if "error" in result:
         error = _e(result["error"]).replace("\n\n", "<br><br>")
-        return _no_result_outputs(state, f'<p class="shep-dx-error"><b>Error:</b> {error}</p>')
+        return _no_result_outputs(f'<p class="shep-dx-error"><b>Error:</b> {error}</p>')
     result["_query_phenotypes"] = hpo_ids
     if genes is not None:
         result["_query_candidate_genes"] = genes
@@ -2519,8 +2505,8 @@ def phenotypes_changed(result: Any, state: Any) -> Dict[str, Any]:
     if not result:
         return {}
     state = state if isinstance(state, Mapping) else card.new_state()
-    out = _no_result_outputs(state, '<p class="shep-dx-notice-p">Inputs changed — Run Diagnosis '
-                                    'to refresh the results.</p>')
+    out = _no_result_outputs('<p class="shep-dx-notice-p">Inputs changed — Run Diagnosis '
+                             'to refresh the results.</p>')
     out["card_state"] = {**state, "rendered": {
         **(state.get("rendered") or {}), "badge": ""}}
     return out
@@ -2893,9 +2879,6 @@ def create_diagnosis_tab(ctx: Any) -> None:
                                     'data-key="refresh" aria-label="Read the model in use again" '
                                     'title="Read again">↻</button>', elem_id="shep-dx-reread",
                                     js_on_load=MODEL_LIST_JS)
-                        # "Loading <12 hex> for every session… 00:00:42" while this
-                        # page's Load reloads the pipeline (`loading_line_html`).
-                        card_loading = plain_html("", elem_id="shep-dx-card-loading")
                         card_body = plain_html(card.body_html(card.new_state()),
                                                elem_id="shep-dx-card-body",
                                                js_on_load=MODEL_LIST_JS)
@@ -2990,7 +2973,7 @@ def create_diagnosis_tab(ctx: Any) -> None:
                 handle = ctx.create_model_list(
                     "clinical", head=_head, foot=_foot,
                     on_loading={"fn": card_loading_outputs, "inputs": [card_state],
-                                "outputs": [card_loading, run_btn, run_cover, run_reason]},
+                                "outputs": [run_btn, run_cover, run_reason]},
                     close_while_loading=CLOSE_WHILE_LOADING)
 
         # --- the candidates ---------------------------------------------------
@@ -3097,15 +3080,15 @@ def create_diagnosis_tab(ctx: Any) -> None:
                         outputs=outputs("run_btn", "run_cover", "run_reason"),
                         show_progress="hidden")
 
-    # The reload's answer (reloaded or not): the card's "Loading …" line goes
-    # and Run Diagnosis follows the phase again, whatever the answer was (a
-    # refused reload changes nothing served, so no card refresh would run).
+    # The reload's answer (reloaded or not): Run Diagnosis follows the phase
+    # again, whatever the answer was (a refused reload changes nothing served,
+    # so no card refresh would run).
     def _reload_answered(state, phase):
         return card_loaded_outputs(state if isinstance(state, Mapping) else card.new_state(),
                                    phase)
 
     handle.reload_done.then(_reload_answered, inputs=[card_state, handle.phase],
-                            outputs=[card_loading, run_btn, run_cover, run_reason],
+                            outputs=[run_btn, run_cover, run_reason],
                             show_progress="hidden")
 
     # --- the card's own links: dismiss, Retry / read it, Recorded results ›
@@ -3162,6 +3145,13 @@ def create_diagnosis_tab(ctx: Any) -> None:
         return ctx.go("models") if _event_key(evt) == "models" else ctx.no_nav()
 
     id_model.click(_to_models, inputs=None, outputs=ctx.nav_outputs, show_progress="hidden")
+
+    # After a stop, the card's way back to research (`card.BACK_TO_RESEARCH`):
+    # Research › Training, where a GPU job starts.
+    def _to_research(evt: gr.EventData):
+        return ctx.go("training") if _event_key(evt) == "research" else ctx.no_nav()
+
+    card_body.click(_to_research, inputs=None, outputs=ctx.nav_outputs, show_progress="hidden")
     links["compare"].click(_to_models, inputs=None, outputs=ctx.nav_outputs,
                            show_progress="hidden")
 
@@ -3352,10 +3342,11 @@ PAGE_CSS = f"""
 {_TAB} .shep-tag-dashed {{ border-style: dashed !important; }}
 {_TAB} .shep-dx-state {{ display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: 14px; color: var(--shep-grey-800); margin-bottom: 2px; }}
 {_TAB} .shep-dx-state .shep-dx-retry {{ height: 24px; padding: 0 6px; }}
-/* This page's Load in progress (the mockup's state 3): one accent line over the card's model. */
-{_TAB} #shep-dx-card-loading:not(:has(.shep-dx-loading)) {{ display: none !important; }}
-{_TAB} .shep-dx-loading {{ margin: 0; font-size: 15px; line-height: 1.35; color: var(--shep-accent-text); overflow-wrap: anywhere; }}
-{_TAB} .shep-dx-loading .shep-load-off {{ color: var(--shep-grey-800); }}
+/* Nothing served: the backend's lead under the state, its whole reason one click away. */
+{_TAB} .shep-dx-serving .shep-st + .shep-st {{ margin-left: 8px; }}
+{_TAB} .shep-dx-why-more {{ font-size: 14px; }}
+{_TAB} .shep-dx-why-more > .shep-dx-line {{ margin-top: 2px; color: var(--shep-grey-800); }}
+{_TAB} button.shep-dx-back {{ min-height: 24px; }}
 {_TAB} .shep-dx-change {{ display: flex; align-items: flex-start; gap: 8px; margin-bottom: 2px; padding: 4px 8px; }}
 {_TAB} button.shep-dx-x {{ margin-left: auto; border: 0; background: none; color: var(--shep-amber-800); font-size: 18px; line-height: 1; cursor: pointer; padding: 0 2px; }}
 {_TAB} button.shep-dx-link {{ border: 0; background: none; padding: 0; color: var(--shep-accent-text); font: inherit; cursor: pointer; }}

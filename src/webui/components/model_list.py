@@ -1461,14 +1461,8 @@ _START_WAIT_JS = r"""
         var s = Math.floor((Date.now() - started) / 1000);
         var hh = String(Math.floor(s / 3600)).padStart(2, '0'), mm = String(Math.floor(s / 60) % 60).padStart(2, '0'), ss = String(s % 60).padStart(2, '0');
         var el = wait.querySelector('.shep-elapsed'); if (el) { el.textContent = hh + ':' + mm + ':' + ss; }
-        // The same count wherever the page shows this load (Diagnosis' card).
-        document.querySelectorAll('[data-shep-load-elapsed]').forEach(function (e) { e.textContent = hh + ':' + mm + ':' + ss; });
         if (Date.now() - started >= limit) {
           wait.hidden = true; if (out) { out.hidden = false; } root.classList.add('shep-waited'); clearInterval(timer);
-          document.querySelectorAll('[data-shep-load-card]').forEach(function (c) {
-            var on = c.querySelector('.shep-load-on'), off = c.querySelector('.shep-load-off');
-            if (on) { on.hidden = true; } if (off) { off.hidden = false; }
-          });
         }
       }, 1000);
     }
@@ -1485,10 +1479,10 @@ def start_wait_js(confirm_elem_id: str, reload_elem_id: Optional[str] = None,
     ask for a second reload before the answer hides it; the 180 s count in
     **this** list's confirmation (its element id), so a list placed twice on a
     page (Diagnosis' drawer and Models) counts in the one whose Reload was
-    clicked, and in any element of the page marked ``data-shep-load-elapsed``
-    (the count) or ``data-shep-load-card`` (its words when the page stops
-    waiting: Diagnosis' card); with `guard` (`load_guard`), until the reload
-    answers, a close done in the page at once and held for the server."""
+    clicked (a page says the load itself from the server's status, as the
+    Diagnosis card does, never from this count); with `guard` (`load_guard`),
+    until the reload answers, a close done in the page at once and held for
+    the server."""
     from src.webui.components.help import as_json_for_script
 
     return (_START_WAIT_JS.replace("__CONFIRM_ID__", as_json_for_script(confirm_elem_id))
@@ -1582,7 +1576,7 @@ class ModelList:
       ``head`` and ``foot`` builders returned;
     - ``reload_done``: the event that ends a Reload (its answer: reloaded or
       not, the phase back to idle or confirming), for a page to chain
-      ``.then(…)`` on, as Diagnosis clears its card's "Loading …" line;
+      ``.then(…)`` on, as Diagnosis puts Run Diagnosis back;
     - ``after_close_js``: the page step a page chains at the end of its own
       close named in ``close_while_loading`` (`load_closed_js`).
     """
@@ -1641,8 +1635,8 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
     to the step "Reload with …" runs before the reload, in the same answer (so
     they show before the reload holds the server): ``fn(plan, *inputs)``
     returns one value per output, `plan` None when there was nothing to load
-    (Diagnosis: its card's "Loading … for every session" line and Run
-    Diagnosis' reason). `close_while_loading` (``{"hide", "then", "also",
+    (Diagnosis: Run Diagnosis off with its reason; its card says the load
+    from the server's status). `close_while_loading` (``{"hide", "then", "also",
     "openers"}``, `load_guard`) is what Close does while a reload runs when
     the list sits in a page's drawer: the drawer hides at once, and its own
     close is sent when the reload answers; the page chains

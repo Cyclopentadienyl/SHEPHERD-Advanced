@@ -262,7 +262,12 @@ def test_a_read_only_request_opens_no_checkpoint_and_is_told_why(root, no_checkp
     body = card.body_html(state)
     assert card.TRAINED_NOT_SHOWN in body
     assert "not recorded" not in body
+    # B4 (the skill's §3): a lock marks a refused control with its reason
+    # beside it, the card's buttons; the fact not read here says why in its
+    # own words, with no lock of its own.
+    assert "🔒" not in body
     assert card.change_button(state)["interactive"] is False
+    assert card.change_button(state)["value"].startswith("🔒 ")
     # The reason is visible text in two word groups: a line breaks between
     # them, never inside "request not local" (M5-3: "to M1" alone on a line).
     assert card.change_reason_html(state) == (
@@ -507,6 +512,43 @@ def test_the_normal_card_names_the_model_its_fingerprint_and_its_states(root):
     assert "Recorded results: no ledger" in body
 
 
+def test_a_served_frozen_backbone_child_is_named_as_such_on_the_card_and_in_the_drawer(root):
+    """B4 (decision F1, wherever a model is described): the served weight
+    transfer the status carries (`checkpoint_meta`, read once at the load;
+    no checkpoint is opened here) names a task model whose graph backbone
+    kept its base's weights, on the card and in the identity drawer's Task
+    row (`renderers.model_kind_text`); a full fine-tune reads as its task."""
+    frozen = {"parts": {"input": "frozen", "encoder": "frozen", "lp_head": "frozen",
+                        "patient_encoder": "trainable", "task_head": "trainable"}}
+    full = {"parts": dict.fromkeys(frozen["parts"], "trainable")}
+    for transfer, name, kind in ((frozen, "Disease task model · frozen graph backbone",
+                                  "Disease · frozen graph backbone"),
+                                 (full, "Disease task model", "Disease"),
+                                 (None, "Disease task model", "Disease")):
+        status = _status(root)
+        status["checkpoint_meta"] = {**status["checkpoint_meta"], "weight_transfer": transfer}
+        state = _state(root, status=status)
+        assert f'<p class="shep-dx-name">{name}</p>' in card.body_html(state)
+        assert card.served_kind_words(status) == kind
+        assert (f'<dt class="shep-k">Task</dt><dd class="shep-v">{kind}</dd>'
+                in card.served_facts_html(state))
+        assert state["facts"]["item"]["weight_transfer"] == transfer
+    assert card.served_kind_words({"initialized": False}) is None
+
+
+def test_the_cards_verified_marks_are_the_shared_status_mark(root):
+    """B4 (BACKLOG 72, B3's record): the card's model fingerprint and what
+    serving reads say verified by the shared mark (`renderers.status_mark`),
+    never a ✓ drawn by the card."""
+    state = _state(root)
+    body = card.body_html(state)
+    assert r.status_mark("ok", "verified") in body and r.CHECK not in body
+    data = _section(card.served_facts_html(state), "data")
+    assert ('<dt class="shep-k">Graph</dt><dd class="shep-v">'
+            f'{r.status_mark("ok", "verified")}</dd>') in data
+    assert "✓" not in data
+
+
 def test_mode_chips_appear_only_when_true(root):
     # A dataset of origin "files" gets no chip.
     task = _status(root)
@@ -556,9 +598,11 @@ def test_details_add_what_a_served_model_has_to_model_facts(root):
         assert text in identity
     assert ('<dt class="shep-k">Validation' in html
             and "pooled MRR (Trainer) 0.2410 — selection metric on val" in html)
-    # The card reads no model record: no Task or Configuration row claims one
-    # is unreadable (K6 decision 4 names the task in the name line instead).
-    assert "Record not" not in html and 'class="shep-k">Task<' not in identity
+    # The card reads no model record: no row claims one is unreadable, and
+    # no Configuration row; the Task row is what the status says it serves,
+    # in every page's words (B4: `served_kind_words`).
+    assert "Record not" not in html
+    assert '<dt class="shep-k">Task</dt><dd class="shep-v">Disease</dd>' in identity
     assert 'class="shep-k">Configuration<' not in identity
     # The link to the full records is Model Facts' own slot under Evidence's
     # rows (`ModelFacts.evidence_more`), never spliced into its markup.
@@ -846,34 +890,126 @@ def test_the_serving_state_is_the_status_s_in_its_own_words(lifecycle, state, wo
     assert card.serving_state(None) == ("unknown", "Unknown")
 
 
-def test_each_state_shows_its_words_and_the_backend_s_reason_escaped(root):
-    reason = "Inference was stopped by an operator at 10:15: <img src=x onerror=alert(1)>."
-    not_loaded = _state(root, status={"initialized": False, "serving": "not_loaded",
-                                      "loading": False, "in_flight": 0,
-                                      "not_serving_reason": reason})
-    body = card.body_html(not_loaded)
-    assert "Not loaded" in body and "○" in body
-    assert "&lt;img src=x onerror=alert(1)&gt;" in body and "<img" not in body
-    assert card.run_blocked(not_loaded) and not card.stop_offered(not_loaded)
-    loading = _state(root, status={"initialized": False, "serving": "not_loaded",
-                                   "loading": True, "in_flight": 0,
-                                   "not_serving_reason": "No model is loaded yet: a load is in "
-                                                         "progress."})
-    assert "Loading" in card.body_html(loading) and "shep-spinner" in card.body_html(loading)
+def _not_serving(state, lead, at=None, sha12=None):
+    """A status's ``not_serving`` as the status route gives it
+    (`AppState.not_serving_words`)."""
+    return {"state": state, "lead": lead, "at": at, "model_sha12": sha12}
+
+
+def _nothing_served(not_serving, reason, **lifecycle):
+    return {"initialized": False, "serving": "not_loaded", "loading": False, "in_flight": 0,
+            "not_serving_reason": reason, "not_serving": not_serving, **lifecycle}
+
+
+#: The whole reason of nothing loaded, as the backend says it (about 50
+#: words, naming the start-up settings and a route): one click away.
+NEVER_LOADED = ("No model is loaded, so no diagnosis can be produced. An operator loads one "
+                "with “Load a model…” on the Diagnosis page or POST /api/v1/pipeline/reload, "
+                "or starts the service with SHEPHERD_KG_PATH, SHEPHERD_DATA_DIR and "
+                "SHEPHERD_CHECKPOINT_PATH naming a workspace and a model trained on it.")
+
+
+def test_each_state_shows_its_words_and_the_backend_s_lead_escaped(root):
+    """B4 (README §6, the note from A3b's review): the state in its own word
+    and the backend's lead visible (who stopped it and when, why a load was
+    refused and its holder), the whole reason one click away under "Details
+    ›"; every word escaped."""
+    never = _state(root, status=_nothing_served(
+        _not_serving("not_loaded", "Nothing has been loaded since the service started"),
+        NEVER_LOADED))
+    body = card.body_html(never)
+    assert r.status_mark("neutral", "Not loaded", as_chip=True) in body
+    assert ('<p class="shep-dx-line shep-dx-reason">Nothing has been loaded since the service '
+            "started</p>") in body
+    assert ('<details class="shep-more shep-dx-why-more"><summary>Details ›</summary>'
+            f'<p class="shep-dx-line">{r.e(NEVER_LOADED)}</p></details>') in body
+    # The whole reason is one click away, never the visible lead.
+    assert body.index("<summary>") < body.index("SHEPHERD_KG_PATH")
+    assert card.run_blocked(never) and not card.stop_offered(never)
+    assert card.BACK_TO_RESEARCH not in body
+
+    stopped = _state(root, status=_nothing_served(
+        _not_serving("stopped", "By <img src=x onerror=alert(1)>", "2026-10-20T10:15:00+00:00",
+                     "3fa9c1a2b3c4"),
+        "Inference was stopped by an operator at 2026-10-20T10:15:00+00:00: <b>x</b>."))
+    body = card.body_html(stopped)
+    assert r.status_mark("neutral", "Stopped", as_chip=True) in body
+    assert "By &lt;img src=x onerror=alert(1)&gt; at 10:15:00 UTC</p>" in body
+    assert "&lt;b&gt;x&lt;/b&gt;" in body and "<img" not in body and "<b>x" not in body
+    # After a stop, the way back to research (Research › Training).
+    assert f'data-key="research" aria-label="Back to research: open Research › Training">' \
+           f'{r.e(card.BACK_TO_RESEARCH)}</button>' in body
+    assert card.serving_state(stopped["status"]) == ("stopped", "Stopped")
+
+    holder = ("CUDA inference is refused: the GPU is in use by a training job (train_model.py, "
+              "pid 4321, since 10:12 UTC). Load again once it has ended")
+    refused = _state(root, status=_nothing_served(
+        _not_serving("load_refused", holder, "2026-10-20T10:16:00+00:00"),
+        f"No model is loaded: the last load was refused at 2026-10-20T10:16:00+00:00: {holder}. "
+        "An operator loads one …"))
+    body = card.body_html(refused)
+    assert r.status_mark("error", "Load refused", as_chip=True) in body
+    assert f'<p class="shep-dx-line shep-dx-reason">{r.e(holder)} (10:16:00 UTC)</p>' in body
+    assert card.BACK_TO_RESEARCH not in body
+    startup = _nothing_served(_not_serving("startup_refused", "At start-up: it could not be "
+                                           "initialized"), "A pipeline is configured …")
+    assert card.serving_state(startup) == ("refused", "Load refused")
+
+    loading = _state(root, status=_nothing_served(
+        _not_serving("loading", "No diagnosis can be produced until the load publishes a model"),
+        "No model is loaded yet: a load is in progress.", loading=True))
+    body = card.body_html(loading)
+    assert "Loading" in body and "shep-spinner" in body
+    assert "until the load publishes a model</p>" in body
+
     serving = _state(root, status=_status(root, serving="serving", loading=False, in_flight=0,
                                           not_serving_reason=None))
     body = card.body_html(serving)
     assert r.status_mark("ok", "Serving") in body
-    assert "shep-dx-reason" not in body
+    assert "shep-dx-reason" not in body and "Details ›" not in body
     assert not card.run_blocked(serving) and card.stop_offered(serving)
+    # A load while a model serves is the server's Loading beside Serving:
+    # said once, by the server, never by a line of the page's own.
+    reloading = _state(root, status=_status(root, loading=True))
+    body = card.body_html(reloading)
+    assert f'{r.status_mark("ok", "Serving")} {r.status_mark("running", "Loading")}' in body
+    assert card.loading_too(reloading["status"]) and not card.loading_too(never["status"])
+
     stopping = _state(root, status=_status(
         root, serving="stopping", loading=False, in_flight=2,
-        not_serving_reason="Inference is stopping: the diagnoses already accepted finish."))
+        not_serving_reason="Inference is stopping: the diagnoses already accepted finish.",
+        not_serving=_not_serving("stopping", "The diagnoses already accepted finish; new ones "
+                                             "are refused")))
     body = card.body_html(stopping)
     assert "Stopping · 2 in flight" in body and "shep-tag-amber" in body
-    assert "the diagnoses already accepted finish" in body
+    assert "The diagnoses already accepted finish; new ones are refused</p>" in body
+    # Its model still has the card's own Details ›: no second one here.
+    assert "shep-dx-why-more" not in body
     assert card.run_blocked(stopping) and card.stopping(stopping)
     assert not card.stop_offered(stopping)
+
+
+def test_no_model_loaded_is_said_once_on_the_card_with_its_one_action(root):
+    """B4 (1): nothing served is said once, by the card's state, with its one
+    action (Load a model…); Run Diagnosis' reason refers to it, the results
+    panel says "No result yet" once and the identity drawer says the card
+    says why, never "no model loaded" again."""
+    from src.webui.components import diagnosis_panel as dp
+
+    state = _state(root, status=_nothing_served(
+        _not_serving("not_loaded", "Nothing has been loaded since the service started"),
+        NEVER_LOADED))
+    out = dp.card_outputs(state, None, "idle")
+    page = " ".join(str(v) for k, v in out.items() if k != "card_state")
+    visible = re.sub(r"<details.*?</details>|<[^>]+>", " ", page, flags=re.S)
+    assert len(re.findall(r"(?i)no model (is )?loaded", visible)) == 0
+    assert visible.count("Not loaded") == 1
+    assert out["change_btn"]["value"] == "Load a model…"
+    assert dp.RUN_DISABLED_NO_MODEL == "Disabled until a model is loaded."
+    assert dp.RUN_DISABLED_NO_MODEL in out["run_reason"]
+    assert out["results_body"].count("No result yet") == 1
+    assert "No result yet" not in dp.results_header_html(None)
+    assert "no model" not in card.served_facts_html(state).lower()
 
 
 def test_stop_inference_is_offered_while_a_model_serves_and_locked_for_a_read_only_request(

@@ -19,19 +19,26 @@ it is shown, after each diagnosis, after a Load ("served model changed") and on
 - *current*: the last read succeeded and is not older than the result shown;
 - *cannot check*: the last read failed (timed out after 5 s, or the status
   could not be read): grey, "last known HH:MM:SS · not current", Retry; the
-  identity lines lose their ✓;
+  identity lines lose their verified mark;
 - *stale*: the last good read is older than the result shown: grey, "read
   HH:MM:SS · older than this result";
 - *changed*: a read found something else served than this session's last read
   did: the dismissable "Model changed at HH:MM UTC — was …, now …";
-- what is served: *no model loaded* (no pipeline: the service refuses every
-  diagnosis, Run Diagnosis is disabled with its reason and a bubble, and the
-  card offers "Load a model…"), or a model read from its checkpoint;
+- what is served: nothing (no pipeline: the service refuses every diagnosis,
+  Run Diagnosis is disabled until a model is loaded, with a bubble, and the
+  card offers its one action, "Load a model…"), or a model read from its
+  checkpoint;
 - **the serving state in its own words**, from the status's lifecycle fields
-  (`serving_state`, never a page flag): Serving, Loading, Stopping with the
-  accepted diagnoses still in flight, or Not loaded, each with the backend's
-  own not-serving reason (stopped, a load or the start-up refused, nothing
-  loaded) when no diagnosis is admitted. While Serving, an operator's **Stop
+  (`serving_state`, never a page flag): Serving (with Loading beside it while
+  a load runs, `loading_too`), Loading, Stopping with the accepted diagnoses
+  still in flight, Stopped, Load refused or Not loaded (nothing loaded since
+  the service started). When no diagnosis is admitted, **the backend's lead**
+  under it (``not_serving``, `not_serving_lead`: who stopped it and when, why
+  a load was refused and the GPU lock's holder) and its whole reason one click
+  away ("Details ›", ``not_serving_reason``: the load hint, the start-up
+  settings): said once, here. After a stop, "Back to research ›" opens
+  Research › Training. A load is said by the server's state alone: the page
+  draws no "Loading" of its own. While Serving, an operator's **Stop
   inference** asks first and is bound to the model shown
   (`diagnosis_panel`): accepted diagnoses finish, new ones are refused until
   a model is loaded.
@@ -48,8 +55,14 @@ it is shown, after each diagnosis, after a Load ("served model changed") and on
   "Disease task model", with "… · GATv2 …, 6 epochs completed" on the line
   under it; the task is read from the served identity's scoring mode through
   the one task table
-  (`served_task`, `src.core.types.SCORING_MODE_TASKS`);
-- "model fingerprint <12 hex> ✓ verified" from the served identity;
+  (`served_task`, `src.core.types.SCORING_MODE_TASKS`); **a task model with
+  a frozen graph backbone is named as such** (decision F1), "Disease task
+  model · frozen graph backbone", from the weight transfer the status
+  carries (`served_transfer`: read once when the model was loaded; no
+  checkpoint is opened for it), in the words `renderers.model_kind_text`
+  adds, which the identity drawer's Task row says whole (`served_kind_words`);
+- "model fingerprint <12 hex> ● verified" from the served identity (the
+  shared mark, `renderers.status_mark`);
 - "trained on <name> · dataset fingerprint <12 hex>" from **the checkpoint's own
   record** (``training_input_digests.split_manifest``: the served file, found
   in the server's list by `resolve_checkpoint` and read once by the one
@@ -57,7 +70,8 @@ it is shown, after each diagnosis, after a Load ("served model changed") and on
   away on that read before they are parsed), **never the served workspace's
   manifest**. Reading a checkpoint is an operator control (SPEC_4 C3, D8), so
   a read-only request sees "not shown · reading the checkpoint is an operator
-  control". Only the served file is opened, on a queued refresh, once per
+  control" (no lock: a lock marks a refused control, the card's buttons, with
+  "Operator controls only: …" beside them). Only the served file is opened, on a queued refresh, once per
   served model per session (what it records is kept while the served
   identity is the same); the timer's read never opens a checkpoint;
 - the mode chip, only when true: amber "synthetic data";
@@ -134,9 +148,9 @@ CARD_HELP = (
     "What every session is served now, read from the server's status for this page: the model "
     "(its task, architecture, run, epoch), its model fingerprint, the dataset it records it was "
     "trained on, and the state that changes results (synthetic data). Its state is the "
-    "server's: Serving, Loading, Stopping (the diagnoses already accepted finish) or Not loaded, "
-    "with the server's reason. With no model loaded, diagnoses are refused until one is "
-    "loaded; nothing loads one by itself. It is read when the page opens, every 5 s while "
+    "server's: Serving, Loading, Stopping (the diagnoses already accepted finish), Stopped, "
+    "Load refused or Not loaded, with the server's lead and its whole reason under Details. "
+    "Nothing loads a model by itself. It is read when the page opens, every 5 s while "
     "Diagnosis is shown, after each diagnosis, after a model change and with ↻; the recorded "
     "tests and the dataset names are read again each time Diagnosis is shown, after each "
     "diagnosis, after a model change and with ↻. A read that fails or is older than the result "
@@ -217,19 +231,31 @@ def served_kind(status: Optional[Mapping[str, Any]]) -> str:
     return "unknown"
 
 
-#: The serving states, by the status's lifecycle (`serving_state`).
+#: The serving states, by the status's lifecycle (`serving_state`): a model
+#: serving, a load with nothing served yet, a stop letting the accepted
+#: diagnoses finish, nothing served after a stop, after a refused load or
+#: start-up, or since the service started.
 SERVING, LOADING, STOPPING, NOT_LOADED = "serving", "loading", "stopping", "not_loaded"
+STOPPED, REFUSED = "stopped", "refused"
+#: The status's not-serving states (`AppState.not_serving_words`) that name
+#: their own card state; any other is Not loaded.
+_NOT_SERVING_STATES = {"stopped": STOPPED, "load_refused": REFUSED,
+                       "startup_refused": REFUSED}
 
 
 def serving_state(status: Optional[Mapping[str, Any]]) -> Tuple[str, str]:
     """``(state, words)`` of what the service does now, read from the status's
-    lifecycle fields (``serving``, ``loading``, ``in_flight``; the status
-    route's `AppState.snapshot`), never from a page flag: ``serving``
-    ("Serving"), ``stopping`` ("Stopping · N in flight": the accepted
-    diagnoses still running), ``loading`` ("Loading": nothing served yet, a
-    load runs) or ``not_loaded`` ("Not loaded", `renderers.NOT_LOADED`);
-    ``unknown`` ("Unknown", `renderers.UNKNOWN`) without a status. The status route always carries these fields
-    (`PipelineStatusResponse`), so they are read as it gives them."""
+    lifecycle fields (``serving``, ``loading``, ``in_flight``, the state of
+    ``not_serving``; the status route's `AppState.snapshot`), never from a
+    page flag: ``serving`` ("Serving"), ``stopping`` ("Stopping · N in
+    flight": the accepted diagnoses still running), ``loading`` ("Loading":
+    nothing served yet, a load runs), ``stopped`` ("Stopped"), ``refused``
+    ("Load refused": a load's or the start-up's), or ``not_loaded`` ("Not
+    loaded", `renderers.NOT_LOADED`: nothing loaded since the service
+    started); ``unknown`` ("Unknown", `renderers.UNKNOWN`) without a status.
+    The status route always carries these fields (`PipelineStatusResponse`),
+    so they are read as it gives them. A load while a model serves is the
+    card's second mark (`loading_too`), never another state."""
     if not isinstance(status, Mapping):
         return "unknown", r.UNKNOWN
     serving = status.get("serving")
@@ -241,7 +267,46 @@ def serving_state(status: Optional[Mapping[str, Any]]) -> Tuple[str, str]:
         return SERVING, "Serving"
     if status.get("loading"):
         return LOADING, "Loading"
-    return NOT_LOADED, r.NOT_LOADED
+    state = _NOT_SERVING_STATES.get(_part(status, "not_serving", "state"), NOT_LOADED)
+    return state, {STOPPED: "Stopped", REFUSED: "Load refused"}.get(state, r.NOT_LOADED)
+
+
+def loading_too(status: Optional[Mapping[str, Any]]) -> bool:
+    """Whether a load runs while a model serves (the status's ``loading``
+    beside ``serving``): the card says Loading beside Serving, so a load is
+    said once, by the server, whichever page or client started it."""
+    return (serving_state(status)[0] == SERVING
+            and bool(isinstance(status, Mapping) and status.get("loading")))
+
+
+def _when(at: Any) -> Optional[str]:
+    """A not-serving record's ISO time (`AppState`'s, with its zone) as the
+    dashboard says a clock time (`renderers.clock_utc`), or None."""
+    if not isinstance(at, str):
+        return None
+    try:
+        moment = datetime.fromisoformat(at)
+    except ValueError:
+        return None
+    return r.clock_utc(moment) if moment.tzinfo is not None else None
+
+
+def not_serving_lead(status: Optional[Mapping[str, Any]]) -> Optional[str]:
+    """The backend's lead of why nothing is admitted (``not_serving``'s
+    ``lead``: who stopped it, why a load was refused and the GPU lock's
+    holder, a load in progress), with when for a stop ("By an operator at
+    10:15:00 UTC") or a refusal ("… (10:15:00 UTC)"); None without one (a
+    model serving)."""
+    lead = _part(status, "not_serving", "lead")
+    if not isinstance(lead, str) or not lead:
+        return None
+    when = _when(_part(status, "not_serving", "at"))
+    state = serving_state(status)[0]
+    if when and state == STOPPED:
+        return f"{lead} at {when}"
+    if when and state == REFUSED:
+        return f"{lead} ({when})"
+    return lead
 
 
 def served_task(status: Optional[Mapping[str, Any]]) -> Optional[str]:
@@ -255,10 +320,36 @@ def served_task(status: Optional[Mapping[str, Any]]) -> Optional[str]:
     return SCORING_MODE_TASKS.get(_part(status, "served_identity", "scoring_mode"))
 
 
-def task_model_name(task: str) -> str:
+def served_transfer(status: Optional[Mapping[str, Any]]) -> Any:
+    """The served checkpoint's weight transfer as the model lists show it
+    (the status's ``checkpoint_meta``, read once when the model was loaded:
+    no checkpoint is opened for it), or None."""
+    return _part(status, "checkpoint_meta", "weight_transfer")
+
+
+def served_kind_words(status: Optional[Mapping[str, Any]]) -> Optional[str]:
+    """What the served model is, in the words every page describes a model
+    by (`renderers.model_kind_text`): "Disease", "Gene", "Patients-like-me",
+    and for a task model whose graph backbone kept its base's weights
+    "Disease · frozen graph backbone" (decision F1); None for no model. The
+    identity drawer's Task row says it."""
+    task = served_task(status)
+    if task is None:
+        return None
+    return r.model_kind_text({"record": "model", "learning_stage": "finetune", "task": task,
+                              "weight_transfer": served_transfer(status)})
+
+
+def task_model_name(task: str, transfer: Any = None) -> str:
     """"Disease task model", "Gene task model", "Patients-like-me task model"
-    (`caveats.TASK_NAMES`, the one vocabulary)."""
-    return f"{TASK_NAMES[task]} task model"
+    (`caveats.TASK_NAMES`, the one vocabulary), and for a task model whose
+    graph backbone kept its base's weights "Disease task model · frozen graph
+    backbone": the words `renderers.model_kind_text` adds for it
+    (`renderers.freeze_words`, from `transfer`, the served weight transfer),
+    never the base's (decision F1)."""
+    name = f"{TASK_NAMES[task]} task model"
+    words = r.freeze_words({"weight_transfer": transfer})
+    return f"{name} · {words}" if words else name
 
 
 #: What an absolute path the cohort registry does not hold reads as.
@@ -345,8 +436,8 @@ def served_item(status: Mapping[str, Any], serving: Optional[str], *,
                 ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
     """The served checkpoint as an item of the serving workspace's runs
     (architecture, run, file, the served digest, the status's epoch index and
-    completed epochs, and the Trainer's validation figure), or ``(None,
-    why)``. Its place comes from the status's served paths and is found again
+    completed epochs, the Trainer's validation figure and the record's weight
+    transfer, `served_transfer`), or ``(None, why)``. Its place comes from the status's served paths and is found again
     in the server's list (`resolve_checkpoint`, which reads no file); no
     checkpoint is opened."""
     from src.api.services.server_lists import ServerListRefused, resolve_checkpoint
@@ -379,7 +470,8 @@ def served_item(status: Mapping[str, Any], serving: Optional[str], *,
     return ({"workspace": serving, "architecture": architecture, "run": run,
              "filename": filename, "sha256": sha, "epoch": whole(meta.get("epoch")),
              "completed_epochs": whole(meta.get("completed_epochs")),
-             "validation": _validation(meta), "dataset_fingerprint": None, "problem": None},
+             "validation": _validation(meta), "dataset_fingerprint": None, "problem": None,
+             "weight_transfer": meta.get("weight_transfer")},
             None)
 
 
@@ -573,7 +665,8 @@ def advance(state: Optional[Mapping[str, Any]], status: Optional[Mapping[str, An
 
 
 def _kind_word(kind: str) -> str:
-    return {"no_model": "no model loaded"}.get(kind, "not known")
+    # Nothing served is said once, by the card's state; the notice says none.
+    return {"no_model": "none"}.get(kind, "not known")
 
 
 def dismiss_change(state: Mapping[str, Any]) -> Dict[str, Any]:
@@ -647,11 +740,6 @@ def stop_button(state: Mapping[str, Any]) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Rendering the card
 # ---------------------------------------------------------------------------
-_CHECK = ('<svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true" focusable="false">'
-          '<path d="M3.2 8.6l3 3 6.6-7.4" fill="none" stroke="currentColor" stroke-width="2.2" '
-          'stroke-linecap="round" stroke-linejoin="round"/></svg>')
-
-
 def time_html(state: Mapping[str, Any], produced_at: Any = None) -> str:
     """The title row's right side: "checked HH:MM:SS UTC" while the card is current."""
     if card_mode(state, produced_at) != "current":
@@ -665,7 +753,10 @@ def _trained_html(facts: Mapping[str, Any]) -> str:
     if state == "read":
         return r.trained_on_html(trained.get("fingerprint"), facts.get("workspaces") or [])
     if state == "not_shown":
-        return (f'<span class="shep-trained">trained on: <span class="shep-muted">{LOCK} '
+        # No lock here: a lock marks a refused control, with its reason beside
+        # it (the card's buttons and `change_reason_html`); this is a fact not
+        # read for this request, and says why in its own words.
+        return (f'<span class="shep-trained">trained on: <span class="shep-muted">'
                 f'{r.e(TRAINED_NOT_SHOWN)}</span></span>')
     if state == "pending":
         return (f'<span class="shep-trained">trained on: <span class="shep-muted">'
@@ -686,16 +777,25 @@ def _chips(status: Mapping[str, Any], *, grey: bool) -> List[str]:
 
 #: The serving state's mark (`renderers.status_mark`, the skill's §6: shape
 #: and word with the colour): its row, and whether it stands out as a tag (a
-#: stop to watch, nothing loaded).
+#: stop to watch, nothing loaded, a refusal).
 _STATE_MARK = {SERVING: ("ok", False), LOADING: ("running", False),
-               STOPPING: ("warn", True), NOT_LOADED: ("neutral", True)}
+               STOPPING: ("warn", True), NOT_LOADED: ("neutral", True),
+               STOPPED: ("neutral", True), REFUSED: ("error", True)}
+
+#: The card's way back to research after a stop (the header's Research
+#: switch): Research › Training, where a GPU job starts.
+BACK_TO_RESEARCH = "Back to research ›"
 
 
 def _serving_html(status: Mapping[str, Any], *, grey: bool) -> str:
-    """The serving state's line (`serving_state`), and under it the backend's
-    own reason when no diagnosis is admitted (``not_serving_reason``, which
-    the service gives whenever nothing is admitted, and which names no
-    path). Grey while the card is not current: the last known state."""
+    """The serving state in the backend's words (`serving_state`; a load
+    while a model serves beside it, `loading_too`), and when no diagnosis is
+    admitted the backend's lead under it (`not_serving_lead`: who stopped it
+    and when, why a load was refused and the holder) with its whole reason
+    one click away ("Details ›", ``not_serving_reason``: the load hint, the
+    start-up settings), and after a stop the way back to research. Grey
+    while the card is not current: the last known state. Nothing here names
+    a path: the backend's words name none."""
     state, words = serving_state(status)
     if state == "unknown":
         return ""
@@ -704,10 +804,24 @@ def _serving_html(status: Mapping[str, Any], *, grey: bool) -> str:
     else:
         kind, as_chip = _STATE_MARK[state]
         mark = r.status_mark(kind, words, as_chip=as_chip)
+        if loading_too(status):
+            mark += " " + r.status_mark("running", "Loading")
     line = f'<p class="shep-dx-line shep-dx-serving" data-state="{r.e(state)}">{mark}</p>'
+    if state == SERVING:
+        return line
+    lead = not_serving_lead(status)
     reason = status.get("not_serving_reason")
-    if state != SERVING and isinstance(reason, str) and reason:
-        line += f'<p class="shep-dx-line shep-dx-reason">{r.e(reason)}</p>'
+    if lead:
+        line += f'<p class="shep-dx-line shep-dx-reason">{r.e(lead)}</p>'
+    # The whole reason only where nothing is served (a stop's model still has
+    # the card's own Details ›), one level, never inside another disclosure.
+    if state != STOPPING and isinstance(reason, str) and reason:
+        line += ('<details class="shep-more shep-dx-why-more"><summary>Details ›</summary>'
+                 f'<p class="shep-dx-line">{r.e(reason)}</p></details>')
+    if state == STOPPED and not grey:
+        line += ('<p class="shep-dx-line"><button type="button" class="shep-dx-link '
+                 'shep-dx-back" data-key="research" aria-label="Back to research: open '
+                 f'Research › Training">{r.e(BACK_TO_RESEARCH)}</button></p>')
     return line
 
 
@@ -769,8 +883,9 @@ def body_html(state: Mapping[str, Any], produced_at: Any = None) -> str:
     kind = served_kind(status)
     lines: List[str] = []
     if kind == "no_model":
-        # The state in its own words and the backend's reason (stopped, a load
-        # or the start-up refused, nothing loaded, a load running).
+        # The state in its own words, the backend's lead and its reason one
+        # click away (stopped, a load or the start-up refused, nothing loaded,
+        # a load running): said once, here, with the card's one action.
         lines.append(_serving_html(status, grey=grey))
     elif kind == "model":
         item = facts.get("item")
@@ -783,11 +898,12 @@ def body_html(state: Mapping[str, Any], produced_at: Any = None) -> str:
             meta = status.get("checkpoint_meta") or {}
             run = f"Checkpoint · {r.e(r.epoch_words(meta if isinstance(meta, Mapping) else {}))}"
             why = r.e(facts.get("item_problem") or "")
-        # The task, named once on the card (K6 decision 4); the run under it.
-        # Every served model is a finetuned task's (its scoring mode names one).
-        name = (f'<p class="shep-dx-name">{r.e(task_model_name(task))}</p>'
-                f'<p class="shep-dx-line shep-dx-sub">{run}{f" · {why}" if why else ""}</p>')
-        mark = "" if grey else f' <span class="shep-ok-t">{_CHECK} verified</span>'
+        # The task, named once on the card (K6 decision 4), a frozen-backbone
+        # child as such (decision F1); the run under it. Every served model is
+        # a finetuned task's (its scoring mode names one).
+        name = (f'<p class="shep-dx-name">{r.e(task_model_name(task, served_transfer(status)))}'
+                f'</p><p class="shep-dx-line shep-dx-sub">{run}{f" · {why}" if why else ""}</p>')
+        mark = "" if grey else " " + r.status_mark("ok", "verified")
         lines.append(f'{_serving_html(status, grey=grey)}{name}'
                      f'<p class="shep-dx-line">{r.fingerprint_html("model fingerprint", sha, copy=False)}'
                      f'{mark}</p>'
@@ -848,27 +964,29 @@ def served_warnings(status: Mapping[str, Any]) -> List[Tuple[str, str]]:
 def _serving_rows(status: Mapping[str, Any], facts: Mapping[str, Any],
                   trained: Optional[str]) -> Tuple[Tuple[str, str], ...]:
     """What serving reads, a row each of Model Facts' Data
-    (`renderers.ModelFacts.serving_rows`; the skill's §5: never a chain of
-    " · "): the workspace it reads and how its dataset stands to the served
-    model's, the graph's state, whether the task reads shortest paths, and
-    the dataset record when it is verified (its origin is Identity's served
-    row, said once)."""
+    (`renderers.ModelFacts.serving_rows`, escaped HTML; the skill's §5: never
+    a chain of " · "): the workspace it reads and how its dataset stands to
+    the served model's, the graph's state, whether the task reads shortest
+    paths, and the dataset record when it is verified (its origin is
+    Identity's served row, said once). A verified part is the shared mark
+    (`renderers.status_mark`), never a ✓ of the card's own."""
     identity = status.get("served_identity") or {}
     serving = facts.get("serving")
     manifest = _part(identity, "graph", "split_manifest_sha256")
+    verified = r.status_mark("ok", "verified")
     rows = []
     if serving:
-        same = ("the same dataset ✓" if trained and trained == manifest
-                else "another dataset" if trained else "dataset not compared")
-        rows.append(("Serving", f"reads workspace {serving}: {same}"))
+        same = (r.status_mark("ok", "the same dataset") if trained and trained == manifest
+                else r.e("another dataset") if trained else r.e("dataset not compared"))
+        rows.append(("Serving", f"{r.e(f'reads workspace {serving}')}: {same}"))
     graph_state = _part(identity, "graph", "state")
-    rows.append(("Graph", "✓ verified" if graph_state == "verified"
-                 else graph_state or "not reported"))
+    rows.append(("Graph", verified if graph_state == "verified"
+                 else r.e(graph_state or "not reported")))
     sp = _part(identity, "shortest_paths", "state")
-    rows.append(("Shortest paths", "from the graph view" if sp == "computed"
-                 else "not used by this task"))
+    rows.append(("Shortest paths", r.e("from the graph view" if sp == "computed"
+                                       else "not used by this task")))
     if _part(identity, "dataset_record", "state") == "verified":
-        rows.append(("Dataset record", "✓ verified"))
+        rows.append(("Dataset record", verified))
     return tuple(rows)
 
 
@@ -888,8 +1006,9 @@ def served_facts_html(state: Mapping[str, Any], *, open_section: str = "identity
                 f'{r.e(hhmmss(state.get("good_at")))}, not current: {r.e(state.get("problem"))}.'
                 '</div>')
     if kind == "no_model":
-        return note + ('<div class="shep-reason">No model loaded: nothing is served, and '
-                       'diagnoses are refused until a model is loaded.</div>')
+        # The card says why, once (its state, the backend's lead and reason).
+        return note + ('<div class="shep-reason">Nothing is served now: the card says why.'
+                       '</div>')
     if kind == "unknown":
         return note + ('<div class="shep-reason shep-reason-grey">The status did not say what is '
                        'served.</div>')
@@ -911,7 +1030,8 @@ def served_facts_html(state: Mapping[str, Any], *, open_section: str = "identity
         meta = status.get("checkpoint_meta") if isinstance(status.get("checkpoint_meta"), dict) else {}
         item = {"architecture": None, "run": None, "filename": None, "sha256": sha,
                 "epoch": meta.get("epoch"), "completed_epochs": meta.get("completed_epochs"),
-                "validation": _validation(meta), "dataset_fingerprint": None, "problem": None}
+                "validation": _validation(meta), "dataset_fingerprint": None, "problem": None,
+                "weight_transfer": meta.get("weight_transfer")}
     trained = facts.get("trained") or {}
     shown = trained.get("state") == "read"
     if shown:
@@ -941,8 +1061,12 @@ def served_facts_html(state: Mapping[str, Any], *, open_section: str = "identity
             (TRAINED_NOT_READ_YET if trained.get("state") == "pending"
              else f"not read · {trained.get('problem') or 'not read'}")
         unread = (words, _FINGERPRINT_NOT_READ.get(trained.get("state"), "not read"))
+    # What the model is, in every page's words (`served_kind_words`: a
+    # frozen-backbone child named as such, decision F1), from the status: the
+    # card reads no model record, so no Configuration row claims one.
     model_facts = model_facts._replace(
-        name_line=name_line, warnings=(*warnings, *item_warnings), served_rows=tuple(served_rows),
+        name_line=name_line, task=served_kind_words(status),
+        warnings=(*warnings, *item_warnings), served_rows=tuple(served_rows),
         serving_rows=_serving_rows(status, facts,
                                    trained.get("fingerprint") if shown else None),
         trained_on_unread=unread,
@@ -952,6 +1076,7 @@ def served_facts_html(state: Mapping[str, Any], *, open_section: str = "identity
 
 
 __all__ = [
+    "BACK_TO_RESEARCH",
     "CARD_HELP",
     "NOT_A_COHORT",
     "SERVER_PATH",
@@ -967,8 +1092,10 @@ __all__ = [
     "details_visible",
     "dismiss_change",
     "hhmmss",
-    "parse_local",
+    "loading_too",
     "new_state",
+    "not_serving_lead",
+    "parse_local",
     "problem_sentence",
     "read_status_within",
     "recorded_for",
@@ -979,8 +1106,11 @@ __all__ = [
     "served_facts_html",
     "served_item",
     "served_kind",
+    "served_kind_words",
     "served_task",
+    "served_transfer",
     "served_warnings",
+    "serving_state",
     "stamp",
     "task_model_name",
     "time_html",

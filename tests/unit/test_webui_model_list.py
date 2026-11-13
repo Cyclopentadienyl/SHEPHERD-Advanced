@@ -1291,14 +1291,15 @@ def test_while_a_reload_runs_the_confirmation_shows_only_its_status_and_close():
     """M5-3 (the mockup's footer after "Reload with …"): Reload and Keep were
     still drawn while the reload ran, and a second click could ask for a second
     reload. The step before the reload hides Reload and makes Keep "Close"
-    (closing does not stop it); the page's script disables Reload at once, and
-    counts in any element marked for this load (Diagnosis' card)."""
+    (closing does not stop it); the page's script disables Reload at once and
+    counts in this list's confirmation only: a page says the load from the
+    server's status (B4: Diagnosis' card), never from this count."""
     phase, reload_, keep = ml.loading_buttons({"to": {"sha256": "a" * 64}})
     assert phase == "loading" and reload_["visible"] is False and keep["value"] == "Close"
     assert ml.loading_buttons(None) == ("idle", gr.update(), gr.update())
     script = ml.start_wait_js("x-confirm", "x-reload")
     assert 'getElementById("x-reload")' in script and "again.disabled = true" in script
-    assert "data-shep-load-elapsed" in script and "data-shep-load-card" in script
+    assert "data-shep-load-elapsed" not in script and "data-shep-load-card" not in script
     # A page's own outputs ride on the same step, before the reload holds the server.
     from src.webui.shell import standalone_context
 

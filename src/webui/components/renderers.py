@@ -1198,8 +1198,9 @@ def model_table_row_html(item: Any, workspaces: Sequence[Any], *,
 # ---------------------------------------------------------------------------
 class ModelFacts(NamedTuple):
     """What Model Facts shows for one model, from what the server listed.
-    `task` is its record's kind (`record_kind_text`) and `configuration` its
-    encoder and relation to the reference recipe (`configuration_text`)."""
+    `task` is what its record says it is (`model_kind_text`) and
+    `configuration` its encoder and relation to the reference recipe
+    (`configuration_text`)."""
 
     name_line: str
     run: Optional[str]
@@ -1213,11 +1214,12 @@ class ModelFacts(NamedTuple):
     validation: Optional[Tuple[str, float]]
     recorded: Optional[RecordedTests]
     warnings: Tuple[Tuple[str, str], ...]
-    #: What serving reads, as ``(label, words)`` rows of plain text, each a
-    #: row of Data's summary list (the skill's §5: a fact a row, never a chain
-    #: of " · "): the workspace it reads and how its dataset stands to this
+    #: What serving reads, as ``(label, escaped HTML)`` rows, each a row of
+    #: Data's summary list (the skill's §5: a fact a row, never a chain of
+    #: " · "): the workspace it reads and how its dataset stands to this
     #: file's (`facts_from_checkpoint`), and on the Diagnosis card the graph,
-    #: the shortest paths and the dataset record it serves.
+    #: the shortest paths and the dataset record it serves, a verified one by
+    #: the shared mark (`status_mark`).
     serving_rows: Tuple[Tuple[str, str], ...] = ()
     task: Optional[str] = None
     configuration: Optional[str] = None
@@ -1271,8 +1273,8 @@ def facts_from_checkpoint(item: Any, workspaces: Sequence[Any], *,
     if serving_workspace is not None:
         same = (is_digest(fingerprint)
                 and _get(serving_workspace, "dataset_fingerprint") == fingerprint)
-        serving_rows = (("Serving", f"reads workspace {_get(serving_workspace, 'name')}: "
-                                    + ("the same dataset" if same else "another dataset")),)
+        serving_rows = (("Serving", e(f"reads workspace {_get(serving_workspace, 'name')}: "
+                                      + ("the same dataset" if same else "another dataset"))),)
     return ModelFacts(
         name_line=model_name_line(item),
         run=f"{architecture}/{run}" if architecture and run else None,
@@ -1288,10 +1290,12 @@ def facts_from_checkpoint(item: Any, workspaces: Sequence[Any], *,
         recorded=recorded,
         warnings=tuple(warnings),
         serving_rows=serving_rows,
-        # Task and Configuration come from the file's model record; an item
-        # built without reading one (the Diagnosis card's served item, which
-        # names its task in the name line, K6 decision 4) shows neither row.
-        task=record_kind_text(item) if _get(item, "record") is not None else None,
+        # Task and Configuration come from the file's model record, the task
+        # in the words every page describes a model by (`model_kind_text`: a
+        # task model with a frozen graph backbone named as such, decision F1);
+        # an item built without reading one (the Diagnosis card's served item,
+        # whose card fills Task from the status) shows neither row.
+        task=model_kind_text(item) if _get(item, "record") is not None else None,
         configuration=(configuration_text(item) if _get(item, "record") is not None
                        else None),
         validation_read=record_read(item),
@@ -1961,7 +1965,7 @@ def model_facts_html(facts: ModelFacts, *, open_section: str = "identity") -> st
                                     missing=unread[1] if unread else NOT_RECORDED.lower()))]
     if facts.sources:
         data_rows.append(("Sources", e(facts.sources)))
-    data_rows.extend((label, e(words)) for label, words in facts.serving_rows)
+    data_rows.extend(facts.serving_rows)
     evidence = summary_list([
         ("Validation", e(validation_value(facts.validation, read=facts.validation_read))),
         ("Recorded results",
