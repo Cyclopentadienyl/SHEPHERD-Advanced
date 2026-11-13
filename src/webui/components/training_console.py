@@ -3252,8 +3252,9 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} .shep-check-h {{ font-weight: 600; margin-bottom: 4px; }}
 {_PAGE} .shep-check code, {_PAGE} .shep-rv-snap code {{ overflow-wrap: anywhere; word-break: normal; }}
 /* The check's model spec and settings (`_check_html`): summary lists and one closed disclosure in
-   the check, none a bordered box of its own (the skill's §2). */
-{_PAGE} .shep-check .shep-kv {{ font-size: 14px; gap: 4px 14px; margin-top: 6px; }}
+   the check, none a bordered box of its own (the skill's §2), at the check's own size (15 px; the
+   dense drawer below sets the whole check at 14 px to fit). */
+{_PAGE} .shep-check .shep-kv {{ font-size: inherit; gap: 4px 14px; margin-top: 6px; }}
 {_PAGE} .shep-inherit {{ margin-top: 8px; }}
 {_PAGE} .shep-inherit > summary {{ cursor: pointer; font-weight: 600; min-height: 24px; }}
 {_PAGE} .shep-drawer-why {{ font-size: 15px; color: var(--shep-text-2); }}

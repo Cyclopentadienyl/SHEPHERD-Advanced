@@ -902,6 +902,26 @@ def _nested_boxes(html_: str, bordered: set) -> list:
     return found
 
 
+def test_a_summary_lists_values_keep_their_regions_size():
+    """The review of B0c: the check's lists and the spec's Details set their
+    values at 14 px, under the 15 px the summary list's values take (the
+    skill's §2: keys 14 px, values 15 px). The spec's Details sets no size of
+    its own; the check's lists take the check's (15 px; 14 px where the
+    dense drawer sets the whole check so, to fit)."""
+    from src.webui.components import training_console as tc
+    from src.webui.style import SHELL_CSS
+
+    def body(css, selector):
+        found = re.search(re.escape(selector) + r"\s*\{([^}]*)\}", css)
+        assert found, selector
+        return found.group(1)
+
+    assert "font-size: 15px" in body(SHELL_CSS, ".shep-kv")
+    assert "font-size" not in body(SHELL_CSS, ".shep-more > .shep-kv")
+    assert "font-size: inherit" in body(tc.PAGE_CSS, ".shep-check .shep-kv")
+    assert "font-size: 15px" in body(tc.PAGE_CSS, ".shep-cmp, " + tc._PAGE + " .shep-check")
+
+
 def test_every_details_lists_validation_row_reads_the_one_way():
     """The review of B0c: Continue's chosen checkpoint and Fine-tune's base
     cut the figure's prefix themselves, so one fact read three ways ("not

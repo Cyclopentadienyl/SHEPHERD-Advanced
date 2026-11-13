@@ -322,7 +322,9 @@ body { color: var(--shep-text); }
 .shep-card-hd { padding: 9px 12px; border-bottom: 1px solid var(--shep-border); font-weight: 600; font-size: 15px; }
 /* The one key-value summary list (`renderers.summary_list`, the skill's §4): a
    dl, its key column 8 to 12em (a longer key wraps), keys at 14 px, values at
-   15 px; no border of its own (one container level per region). */
+   15 px (a region that sets its own text size, the Continue drawer's dense
+   check at 14 px, sets its lists' values with it); no border of its own (one
+   container level per region). */
 .shep-kv { display: grid; grid-template-columns: fit-content(12em) minmax(0, 1fr); gap: 6px 14px; font-size: 15px; align-items: baseline; margin: 0; }
 .shep-kv > dt, .shep-kv > dd { margin: 0; }
 .shep-kv:not(.shep-kv-2) > .shep-k { min-width: 8em; }
@@ -336,7 +338,7 @@ body { color: var(--shep-text); }
 .shep-more > summary::-webkit-details-marker { display: none; }
 .shep-more > summary:hover { text-decoration: underline; }
 .shep-more > summary:focus-visible { outline: 2px solid var(--shep-accent); outline-offset: 2px; }
-.shep-more > .shep-kv { font-size: 14px; gap: 2px 12px; }
+.shep-more > .shep-kv { gap: 2px 12px; }
 /* A digest row (`renderers.summary_list`'s wide rows): its label on a line of
    its own over the whole list, its full value with an icon-only Copy on the
    line under it. */
