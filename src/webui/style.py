@@ -422,7 +422,10 @@ button.shep-row {
 
 /* ---------------------------------------------------------------- the runtime line */
 #runtime_footer { padding: 4px 16px !important; font-size: 14px; }
-#runtime_footer p { margin: 0; }
+/* The consequence first, then "Versions ›", whose line opens beside it. */
+.shep-rt { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; }
+.shep-rt-v { display: inline-flex; flex-wrap: wrap; gap: 0 8px; align-items: baseline; }
+.shep-rt-v > span { color: var(--shep-text-2); }
 
 /* ---------------------------------------------------------------- the layout rule */
 /* Wide (>= 1400 x 760 CSS px): one screen. The selected page fills the space

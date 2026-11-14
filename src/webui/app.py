@@ -46,6 +46,7 @@ from src.webui.components import (
     test_page,
     training_console,
 )
+from src.webui.components import renderers as r
 from src.webui.components.datasets_page import create_datasets_page
 from src.webui.components.diagnosis_panel import create_diagnosis_tab
 from src.webui.components.help import HELP_CSS, HELP_HEAD, HelpRegistry
@@ -57,12 +58,23 @@ if TYPE_CHECKING:
     from fastapi import FastAPI
 
 
-def _runtime_footer() -> str:
-    """Markdown for the always-visible runtime line.
+#: The runtime line's words when every checked module imports (a normal state:
+#: quiet, no mark; the WebUI skill's §6).
+RUNTIME_OK = "Runtime: every checked module imports."
 
-    Colour carries the severity so it reads at a glance: red when a capability
-    is gone (torch or PyG will not import — GNN scoring cannot run), amber for
-    performance-only or optional gaps, plain grey when everything is present.
+
+def _runtime_footer() -> str:
+    """The always-visible runtime line, as HTML every value of which is
+    escaped (the probe's words carry exception text).
+
+    **The consequence first** (the WebUI skill's §6): a degraded runtime's
+    issues (a capability is gone: torch or PyG will not import, so GNN
+    scoring cannot run) lead with the shared mark of an error, a notice's (a
+    performance-only or optional gap, no CUDA device visible) with the mark of
+    a condition to watch, each issue in the probe's own consequence-first
+    words (`version_checker`); a runtime with no issue reads quietly. The
+    versions (`format_runtime_line`) are one click away ("Versions ›"). The
+    colours are the status tokens, never a raw hex.
 
     Wrapped: this footer exists to report a broken environment, so it must not
     itself break in one. Its own failure is rendered rather than raised.
@@ -71,26 +83,17 @@ def _runtime_footer() -> str:
         report = probe_runtime()
         line = format_runtime_line(report)
         status = report.get("status")
-        issues = report.get("issues", [])
+        issues = [str(issue) for issue in report.get("issues", [])]
     except Exception as exc:  # noqa: BLE001 — a footer that raises reports nothing
-        return (
-            '<span style="color:#d32f2f"><b>Runtime status unavailable</b> — '
-            f"could not probe the environment: {exc}</span>"
-        )
-
-    if status == DEGRADED:
-        detail = " ".join(issues)
-        return (
-            f'<span style="color:#d32f2f"><b>⛔ Degraded runtime</b> — {line}<br>'
-            f"{detail}</span>"
-        )
-    if status == NOTICE:
-        detail = " ".join(issues)
-        # One line, at the page's size: text is never under 14 px (M5-2).
-        return (
-            f'<span style="color:#b45309"><b>⚠️ {line}</b> — {detail}</span>'
-        )
-    return f'<span style="color:#888">{line}</span>'
+        return ('<div class="shep-rt">' + r.status_mark(
+            "error", f"Runtime status unavailable: could not probe the environment ({exc}).")
+            + "</div>")
+    if status in (DEGRADED, NOTICE) and issues:
+        lead = r.status_mark("error" if status == DEGRADED else "warn", " ".join(issues))
+    else:
+        lead = f"<span>{r.e(RUNTIME_OK)}</span>"
+    return (f'<div class="shep-rt">{lead}<details class="shep-more shep-rt-v">'
+            f"<summary>Versions ›</summary><span>{r.e(line)}</span></details></div>")
 
 
 #: The dashboard's CSS: the IBM Plex font files (served by the API at /static,
@@ -245,7 +248,7 @@ def create_gradio_app() -> gr.Blocks:
         # combination is actually running, and make a degraded environment
         # impossible to miss. A deployment can lose its GNN without any error
         # appearing here, so absence has to be shown, not merely not-shown.
-        gr.Markdown(_runtime_footer(), elem_id="runtime_footer")
+        shell.plain_html(_runtime_footer(), elem_id="runtime_footer")
 
     return app
 

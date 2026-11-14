@@ -22,6 +22,7 @@ needed, which is worse than having no reporter — the page would fail to render
 rather than render the bad news.
 """
 import importlib
+import re
 
 import pytest
 
@@ -307,18 +308,69 @@ def test_footer_renders_bad_news_instead_of_raising(monkeypatch):
 
 
 def test_footer_is_red_when_a_capability_is_gone(monkeypatch):
+    """A capability gone leads the line with the shared mark of an error, in
+    its status token's class, never a raw hex colour."""
     pytest.importorskip("gradio")
     from src.webui import app as webui_app
 
     monkeypatch.setattr(
         webui_app,
         "probe_runtime",
-        lambda *a, **k: {"status": DEGRADED, "issues": ["torch is not importable: boom"]},
+        lambda *a, **k: {"status": DEGRADED,
+                         "issues": ["GNN scoring cannot run: torch is not importable (boom)."]},
     )
     monkeypatch.setattr(webui_app, "format_runtime_line", lambda r: "torch MISSING")
 
     footer = webui_app._runtime_footer()
 
-    assert "#d32f2f" in footer  # red
-    assert "Degraded runtime" in footer
-    assert "torch is not importable" in footer
+    assert "shep-st-error" in footer and "✕" in footer
+    assert footer.index("GNN scoring cannot run") < footer.index("torch MISSING")
+    assert not re.search(r"#[0-9a-fA-F]{3,6}\b", footer), "no raw hex colour"
+
+
+def test_footer_leads_with_the_consequence_and_keeps_versions_one_click_away(monkeypatch):
+    """The skill's §6: an environment warning leads with what the operator
+    loses ("No CUDA device visible: GPU training is unavailable"), marked as a
+    condition to watch; the versions sit behind "Versions ›"; a runtime with
+    no issue reads quietly, with no mark."""
+    pytest.importorskip("gradio")
+    import torch
+
+    from src.webui import app as webui_app
+
+    monkeypatch.setattr(version_checker, "_probe_torch", lambda: {
+        "available": True, "version": torch.__version__, "error": None,
+        "cuda_build": "13.0", "cuda_available": False, "device_name": None})
+    report = probe_runtime(force=True)
+    (issue,) = [i for i in report["issues"] if "CUDA" in i]
+    assert issue.startswith("No CUDA device visible: GPU training is unavailable.")
+    footer = webui_app._runtime_footer()
+    assert "shep-st-warn" in footer and "▲" in footer
+    lead, versions = footer.split("<summary>Versions ›</summary>")
+    assert "No CUDA device visible: GPU training is unavailable." in lead
+    assert torch.__version__ not in lead and f"torch {torch.__version__}" in versions
+    monkeypatch.setattr(webui_app, "probe_runtime",
+                        lambda *a, **k: {"status": OK, "issues": []})
+    quiet = webui_app._runtime_footer()
+    assert webui_app.RUNTIME_OK in quiet and "shep-st" not in quiet
+
+
+def test_footer_shows_markup_in_an_exception_as_literal_text(monkeypatch):
+    """Every value the footer shows is escaped: markup in an exception's text
+    (the probe's own failure, an issue, a version) reads as literal text."""
+    pytest.importorskip("gradio")
+    from src.webui import app as webui_app
+
+    hostile = "<img src=x onerror=alert(1)>"
+
+    def exploding(*a, **k):
+        raise RuntimeError(hostile)
+
+    monkeypatch.setattr(webui_app, "probe_runtime", exploding)
+    footer = webui_app._runtime_footer()
+    assert hostile not in footer and "&lt;img src=x onerror=alert(1)&gt;" in footer
+    monkeypatch.setattr(webui_app, "probe_runtime",
+                        lambda *a, **k: {"status": NOTICE, "issues": [f"Slower kernels: {hostile}"]})
+    monkeypatch.setattr(webui_app, "format_runtime_line", lambda r: f"torch {hostile}")
+    footer = webui_app._runtime_footer()
+    assert hostile not in footer and footer.count("&lt;img src=x onerror=alert(1)&gt;") == 2

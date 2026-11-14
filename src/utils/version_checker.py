@@ -18,6 +18,10 @@ so a broken torch has to come back as data, not as a traceback — otherwise it
 disappears exactly when it is needed. Every probe is wrapped, and so is the
 public entry point.
 
+Each issue leads with its consequence ("No CUDA device visible: GPU training
+is unavailable. …"), then the cause, so the one sentence a page shows first
+says what the operator loses (the WebUI skill's §6).
+
 Severity levels:
   ok        everything present
   notice    optional or performance-only: native extensions on fallback kernels,
@@ -128,7 +132,7 @@ def probe_runtime(force: bool = False) -> Dict[str, Any]:
     except Exception as exc:  # noqa: BLE001 — a reporter that dies reports nothing
         report = {
             "status": DEGRADED,
-            "issues": [f"runtime probe failed: {exc}"],
+            "issues": [f"Runtime state unknown: the runtime probe failed ({exc})."],
             "python": platform.python_version(),
             "platform": f"{platform.system()} {platform.machine()}",
             "torch": {"available": False, "version": None, "error": str(exc)},
@@ -163,23 +167,23 @@ def _build_report(force: bool = False) -> Dict[str, Any]:
 
     if not torch_info["available"]:
         status = DEGRADED
-        issues.append(f"torch is not importable: {torch_info['error']}")
+        issues.append(f"GNN scoring cannot run: torch is not importable ({torch_info['error']}).")
     elif not pyg_info["available"]:
         status = DEGRADED
-        issues.append("torch_geometric is not importable — GNN scoring cannot run")
+        issues.append("GNN scoring cannot run: torch_geometric is not importable.")
     else:
         missing = [n for n, s in native.items() if not s["available"]]
         if missing:
             status = NOTICE
             issues.append(
-                "PyG native extensions missing (" + ", ".join(missing) + ") — "
-                "affected kernels fall back to slower implementations"
+                "Slower kernels: the PyG native extensions " + ", ".join(missing) + " are "
+                "missing, so the affected kernels fall back to slower implementations."
             )
         if torch_info["cuda_build"] and not torch_info["cuda_available"]:
             status = NOTICE
             issues.append(
-                f"torch is built for CUDA {torch_info['cuda_build']} but no device is "
-                "visible — check the driver and CUDA libraries"
+                "No CUDA device visible: GPU training is unavailable. torch is built for "
+                f"CUDA {torch_info['cuda_build']}; check the driver and CUDA libraries."
             )
 
     # Retrieval backends do not depend on torch, and the subsystem is detached
@@ -197,19 +201,18 @@ def _build_report(force: bool = False) -> Dict[str, Any]:
         # an error. Detached from diagnosis, so a notice rather than degraded —
         # but never silence, which is what omitting it from the line amounted to.
         _note(
-            "Voyager is not importable — the retained CPU vector-index backend is "
-            f"unavailable ({retrieval['voyager']['error']})"
+            "The CPU vector-index backend is unavailable: Voyager is not importable "
+            f"({retrieval['voyager']['error']})."
         )
     if cuvs_package["available"] and not retrieval["cuvs"]["available"]:
         _note(
-            "cuVS is installed but cuvs.neighbors is not importable — the GPU "
-            "vector backend cannot be constructed "
-            f"({retrieval['cuvs']['error']})"
+            "The GPU vector backend cannot be constructed: cuVS is installed but "
+            f"cuvs.neighbors is not importable ({retrieval['cuvs']['error']})."
         )
     elif retrieval["cuvs"]["available"] and not retrieval["cupy"]["available"]:
         _note(
-            "cuVS is installed but cupy is missing — the GPU vector backend "
-            "cannot be constructed (Voyager/CPU is unaffected)"
+            "The GPU vector backend cannot be constructed: cuVS is installed but cupy is "
+            "missing (Voyager on the CPU is unaffected)."
         )
 
     return {
