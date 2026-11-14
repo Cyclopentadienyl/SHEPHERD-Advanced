@@ -573,6 +573,10 @@ def run_reload(request: PipelineReloadRequest) -> PipelineReloadResponse:
         with app_state.loading() as load:
             response = _reload(request, load)
             if not response.success:
+                # The service log is the operator surface that may name paths:
+                # the open record of a refusal points here (`RELOAD_REFUSED`),
+                # so every refused reload says why here, once.
+                logger.warning("Reload refused: %s", response.message)
                 shown = request.expected_checkpoint_sha256
                 app_state.record_refusal(LOAD_REFUSED, load.lock_refusal or RELOAD_REFUSED,
                                          shown[:12] if shown else None)
@@ -844,7 +848,6 @@ def _reload(request: PipelineReloadRequest, load: Any) -> PipelineReloadResponse
             f"{_still_serving()}", files
         )
     except Exception as e:
-        logger.error(f"Pipeline reload failed: {e}")
         if _out_of_memory(e):
             # **Never by unloading first** (I5): the candidate is refused, and
             # the model in use keeps serving and its holding.

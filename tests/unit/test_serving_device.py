@@ -574,15 +574,21 @@ def test_without_pytorch_a_reload_is_refused_naming_pytorch_and_keeps_serving(
 
 @pytest.mark.parametrize("device", [None, "auto"])
 def test_a_reload_refused_for_its_device_reads_no_candidate_checkpoint(
-    no_cuda, no_device_configured, serving, workspace, device
+    no_cuda, no_device_configured, serving, workspace, device, caplog
 ):
     """Automatic selection reads every candidate in the run layout to choose
     one (the reload names a task, so a scan would otherwise run). A device
     this host cannot provide refuses the reload whatever is chosen, so the
     refusal comes first: catches the check left inside `build_pipeline`
-    alone, after the scan has read each checkpoint."""
+    alone, after the scan has read each checkpoint.
+
+    The refusal is written to the service log once, with its message, at the
+    one place a refused reload is recorded (`run_reload`): the open record
+    of why nothing is served points there (`RELOAD_REFUSED`), and the
+    round's closing check found the log silent for this refusal."""
     import shutil
 
+    import src.api.routes.pipeline as pipeline_routes
     from src.api.routes.pipeline import PipelineReloadRequest, reload_pipeline
 
     api = no_device_configured
@@ -592,7 +598,8 @@ def test_a_reload_refused_for_its_device_reads_no_candidate_checkpoint(
     candidate = run / "model.pt"
     shutil.copyfile(checkpoint, candidate)
 
-    with count_opens() as opens:
+    with count_opens() as opens, caplog.at_level(logging.INFO,
+                                                  logger=pipeline_routes.__name__):
         result = reload_pipeline(PipelineReloadRequest(
             data_dir=str(data_dir), device=device, task="disease",
         ))
@@ -601,3 +608,7 @@ def test_a_reload_refused_for_its_device_reads_no_candidate_checkpoint(
     assert REMEDY in result.message
     assert not opens.opens(candidate), "the scan read a candidate before the device refused"
     assert api.app_state.pipeline is serving
+    said = [record for record in caplog.records if record.name == pipeline_routes.__name__
+            and record.levelno >= logging.WARNING]
+    assert [(record.levelno, record.getMessage()) for record in said] == [
+        (logging.WARNING, f"Reload refused: {result.message}")]
